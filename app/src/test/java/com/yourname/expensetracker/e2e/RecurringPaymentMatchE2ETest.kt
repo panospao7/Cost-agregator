@@ -13,6 +13,7 @@ import com.yourname.expensetracker.domain.recurring.OccurrenceConflictResolver
 import com.yourname.expensetracker.domain.recurring.RecurringOccurrenceExpander
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceMaterializer
+import com.yourname.expensetracker.domain.recurring.lifecycle.RoomRecurringLifecycleEventWriter
 import com.yourname.expensetracker.golden.GoldenTestBase
 import com.yourname.expensetracker.testfixtures.golden.GoldenScenarioVerifier
 import io.mockk.coEvery
@@ -58,7 +59,11 @@ class RecurringPaymentMatchE2ETest : GoldenTestBase() {
             occurrenceDao = database.recurringOccurrenceDao(),
             reminderDeliveryDao = database.recurringReminderDeliveryDao(),
             timeProvider = timeProvider,
-            lifecycleEventDao = database.recurringLifecycleEventDao(),
+            eventWriter = RoomRecurringLifecycleEventWriter(
+                dao = database.recurringLifecycleEventDao(),
+                timeProvider = timeProvider,
+                writeBarrier = writeBarrier
+            ),
             plannedExpenseDao = database.plannedExpenseDao()
         )
 

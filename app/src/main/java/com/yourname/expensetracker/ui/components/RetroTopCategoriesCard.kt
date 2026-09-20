@@ -60,8 +60,9 @@ fun RetroTopCategoriesCard(
     
     selectedCategory?.let { category ->
         val trendInfo = categoryTrends[category.category.id]
-        // Filter transactions for this category
-        val categoryTransactions = transactions.filter { it.categoryId == category.category.id }
+        // P5-012: the Uncategorized pseudo-category buckets null-categoryId rows
+        // (its 0L id is reserved and matches no real transaction).
+        val categoryTransactions = transactionsForCategory(transactions, category)
         RetroCategoryDetailDialog(
             category = category,
             trendInfo = trendInfo,
@@ -879,6 +880,22 @@ data class CategoryTrendInfo(
     val averageOverMonths: Double?,
     val monthsOfData: Int
 )
+
+/**
+ * P5-012 (RP-05): transactions shown in a category's detail dialog. The
+ * Uncategorized pseudo-category (isUncategorized, reserved id 0L) is built from
+ * the null-categoryId bucket, so it resolves null-categoryId rows -- a plain
+ * categoryId match against 0L would return nothing.
+ */
+internal fun transactionsForCategory(
+    transactions: List<DashboardExpense>,
+    category: CategorySpending
+): List<DashboardExpense> =
+    if (category.isUncategorized) {
+        transactions.filter { it.categoryId == null }
+    } else {
+        transactions.filter { it.categoryId == category.category.id }
+    }
 
 // Color palette for categories card
 private object RetroColorsCategories {

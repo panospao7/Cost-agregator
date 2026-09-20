@@ -7,6 +7,11 @@ import com.yourname.expensetracker.data.backup.RestoreDatabaseOpener
 import com.yourname.expensetracker.data.backup.RestoreJournal
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import io.mockk.mockk
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -29,9 +34,14 @@ import java.io.File
  * cross-restart persistence is genuinely modelled rather than mocked. Process restart is
  * simulated by constructing a fresh [RestoreMaintenanceMode]/[AppStartupCoordinator] pair
  * that reads the persisted mode and (renamed) journal files, exactly as a new process would.
+ *
+ * The ASSETS_RESTORING resume runs on an injected application scope; by default the tests
+ * inject an eager [Dispatchers.Unconfined] scope so completion stays synchronous, and the
+ * non-blocking test injects a deferred dispatcher to prove the startup call does not wait.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class AppStartupCoordinatorRecoveryTest {
 
     private lateinit var context: Context
@@ -55,7 +65,9 @@ class AppStartupCoordinatorRecoveryTest {
         mode: RestoreMaintenanceMode,
         journal: RestoreJournal,
         timeProvider: com.yourname.expensetracker.domain.util.TimeProvider =
-            com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L)
+            com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L),
+        resumeScope: CoroutineScope =
+            CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
     ): AppStartupCoordinator =
         AppStartupCoordinator(
             appContext = context,
@@ -68,7 +80,8 @@ class AppStartupCoordinatorRecoveryTest {
             workerExecutionGuard = mockk(relaxed = true),
             restoreJournalImporter = mockk(relaxed = true),
             intakeRecoveryScheduler = mockk(relaxed = true),
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            applicationScope = resumeScope
         )
 
     /**
@@ -185,7 +198,9 @@ class AppStartupCoordinatorRecoveryTest {
                     receiptId = 5L,
                     sourceRelativePath = "5_photo.jpg",
                     status = RestoreJournal.AssetRestoreStatus.PENDING,
-                    targetPath = File(File(context.filesDir, "receipts"), "restored_5_fixed.jpg").absolutePath
+                    // RP-03 fix: the journal name must equal the identity-derived name
+                    // (restored_{receiptId}.{allowlisted ext}) - it is a cross-check now.
+                    targetPath = File(File(context.filesDir, "receipts"), "restored_5.jpg").absolutePath
                 )
             ),
             extractTempDirPath = extractDir.absolutePath,
@@ -198,10 +213,10 @@ class AppStartupCoordinatorRecoveryTest {
             RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED,
             mode.currentMode()
         )
-        val finalFile = File(File(context.filesDir, "receipts"), "restored_5_fixed.jpg")
-        assertTrue("Resumed asset must be restored under the journal-recorded target name", finalFile.exists())
+        val finalFile = File(File(context.filesDir, "receipts"), "restored_5.jpg")
+        assertTrue("Resumed asset must be restored under the identity-derived target name", finalFile.exists())
         assertTrue("Resumed asset must keep its bytes", finalFile.length() == 5L)
-        assertFalse("Temp copy must be gone after the durable rename", File(File(context.filesDir, "receipts"), "restored_5_fixed.jpg.tmp").exists())
+        assertFalse("Temp copy must be gone after the durable rename", File(File(context.filesDir, "receipts"), "restored_5.jpg.tmp").exists())
         assertFalse(journal.hasJournal())
         assertEquals(
             "Resumed task must be recorded COMPLETED in the success journal",
@@ -210,6 +225,221 @@ class AppStartupCoordinatorRecoveryTest {
         )
         // No temp residue in the extraction workspace is required — sources may stay
         // (they are cache files owned by the operation), but the journal is consumed.
+    }
+
+    // -- RP-03 fix: startup asset-resume hardening -----------------
+
+    @Test
+    fun `ASSETS_RESTORING resume does not block the startup thread`() = runTest {
+        val mode = RestoreMaintenanceMode(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
+        val journal = RestoreJournal(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
+        val liveDbFile = File(context.filesDir, "expense_tracker_db")
+        createValidSqliteFile(liveDbFile)
+        writeAssetsRestoringJournal(
+            journal = journal,
+            tasks = listOf(
+                RestoreJournal.AssetRestoreTask(
+                    receiptId = 5L,
+                    sourceRelativePath = "5_photo.jpg",
+                    status = RestoreJournal.AssetRestoreStatus.PENDING,
+                    targetPath = "restored_5.jpg"
+                )
+            ),
+            extractTempDirPath = null,
+            liveDbFile = liveDbFile
+        )
+
+        // Deferred dispatcher: nothing runs until the scheduler is advanced.
+        val deferredScope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        newCoordinator(mode, journal, resumeScope = deferredScope).checkRestoreJournal()
+
+        // The startup call returned WITHOUT running the resume: the fail-closed
+        // maintenance-mode decision is already in place and the journal is intact.
+        assertEquals(
+            "Write barrier must be armed synchronously before the async resume",
+            RestoreMaintenanceMode.Mode.ASSETS_RESTORING,
+            mode.currentMode()
+        )
+        assertTrue("Journal must still be present while the resume is pending", journal.hasJournal())
+
+        // Draining the dispatcher completes the idempotent resume and consumes the journal.
+        testScheduler.advanceUntilIdle()
+        assertEquals(
+            RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED,
+            mode.currentMode()
+        )
+        assertFalse(journal.hasJournal())
+    }
+
+    @Test
+    fun `ASSETS_RESTORING resume derives name from task identity and rejects tampered target path`() {
+        val mode = RestoreMaintenanceMode(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
+        val journal = RestoreJournal(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
+        val liveDbFile = File(context.filesDir, "expense_tracker_db")
+        createValidSqliteFile(liveDbFile)
+        val extractDir = File(context.cacheDir, "extract_tampered_target")
+        val sourceFile = File(extractDir, "receipts/5_photo.jpg")
+        sourceFile.parentFile?.mkdirs()
+        sourceFile.writeBytes(byteArrayOf(1, 2, 3))
+
+        writeAssetsRestoringJournal(
+            journal = journal,
+            tasks = listOf(
+                RestoreJournal.AssetRestoreTask(
+                    receiptId = 5L,
+                    sourceRelativePath = "5_photo.jpg",
+                    status = RestoreJournal.AssetRestoreStatus.PENDING,
+                    // Tampered journal name - must never become the write target.
+                    targetPath = "../../evil_hijack.jpg"
+                )
+            ),
+            extractTempDirPath = extractDir.absolutePath,
+            liveDbFile = liveDbFile
+        )
+
+        newCoordinator(mode, journal).checkRestoreJournal()
+
+        val successEntry = journal.readSuccessJournal()!!
+        assertEquals(
+            "Tampered target name must fail the task closed",
+            RestoreJournal.AssetRestoreStatus.FAILED,
+            successEntry.assetTasks.first().status
+        )
+        assertEquals(
+            RestoreJournal.ASSET_REASON_INVALID_TARGET,
+            successEntry.assetTasks.first().error
+        )
+        val receiptsDir = File(context.filesDir, "receipts")
+        assertTrue(
+            "No file may be written when the journal name mismatches the derived name",
+            receiptsDir.listFiles().isNullOrEmpty()
+        )
+    }
+
+    @Test
+    fun `ASSETS_RESTORING resume rejects non-allowlisted source extension`() {
+        val mode = RestoreMaintenanceMode(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
+        val journal = RestoreJournal(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
+        val liveDbFile = File(context.filesDir, "expense_tracker_db")
+        createValidSqliteFile(liveDbFile)
+        val extractDir = File(context.cacheDir, "extract_bad_ext")
+        val sourceFile = File(extractDir, "receipts/5_payload.exe")
+        sourceFile.parentFile?.mkdirs()
+        sourceFile.writeBytes(byteArrayOf(0, 0x4d, 0x5a))
+
+        writeAssetsRestoringJournal(
+            journal = journal,
+            tasks = listOf(
+                RestoreJournal.AssetRestoreTask(
+                    receiptId = 5L,
+                    sourceRelativePath = "5_payload.exe",
+                    status = RestoreJournal.AssetRestoreStatus.PENDING,
+                    targetPath = "restored_5.exe"
+                )
+            ),
+            extractTempDirPath = extractDir.absolutePath,
+            liveDbFile = liveDbFile
+        )
+
+        newCoordinator(mode, journal).checkRestoreJournal()
+
+        val successEntry = journal.readSuccessJournal()!!
+        assertEquals(RestoreJournal.AssetRestoreStatus.FAILED, successEntry.assetTasks.first().status)
+        assertEquals(RestoreJournal.ASSET_REASON_INVALID_TARGET, successEntry.assetTasks.first().error)
+        assertFalse("Non-allowlisted extension must not produce a final file", File(File(context.filesDir, "receipts"), "restored_5.exe").exists())
+    }
+
+    @Test
+    fun `ASSETS_RESTORING resume never overwrites an existing final file on collision`() {
+        val mode = RestoreMaintenanceMode(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
+        val journal = RestoreJournal(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
+        val liveDbFile = File(context.filesDir, "expense_tracker_db")
+        createValidSqliteFile(liveDbFile)
+        val extractDir = File(context.cacheDir, "extract_collision")
+        val sourceFile = File(extractDir, "receipts/5_photo.jpg")
+        sourceFile.parentFile?.mkdirs()
+        sourceFile.writeBytes(byteArrayOf(1, 1, 1))
+
+        // Foreign file already owns the deterministic final name.
+        val foreignBytes = byteArrayOf(9, 9, 9, 9)
+        val finalFile = File(File(context.filesDir, "receipts"), "restored_5.jpg").apply {
+            parentFile?.mkdirs()
+            writeBytes(foreignBytes)
+        }
+
+        writeAssetsRestoringJournal(
+            journal = journal,
+            tasks = listOf(
+                RestoreJournal.AssetRestoreTask(
+                    receiptId = 5L,
+                    sourceRelativePath = "5_photo.jpg",
+                    status = RestoreJournal.AssetRestoreStatus.PENDING,
+                    targetPath = "restored_5.jpg"
+                )
+            ),
+            extractTempDirPath = extractDir.absolutePath,
+            liveDbFile = liveDbFile
+        )
+
+        newCoordinator(mode, journal).checkRestoreJournal()
+
+        val successEntry = journal.readSuccessJournal()!!
+        assertEquals(
+            "Existing final file must cause a fail-closed collision failure",
+            RestoreJournal.AssetRestoreStatus.FAILED,
+            successEntry.assetTasks.first().status
+        )
+        assertEquals(RestoreJournal.ASSET_REASON_TARGET_COLLISION, successEntry.assetTasks.first().error)
+        assertTrue("Foreign file bytes must be untouched", finalFile.readBytes().contentEquals(foreignBytes))
+        assertFalse("Temp copy must not linger after collision rejection", File(finalFile.parentFile, "restored_5.jpg.tmp").exists())
+    }
+
+    @Test
+    fun `ASSETS_RESTORING resume fails duplicate receipt-id tasks closed`() {
+        val mode = RestoreMaintenanceMode(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
+        val journal = RestoreJournal(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
+        val liveDbFile = File(context.filesDir, "expense_tracker_db")
+        createValidSqliteFile(liveDbFile)
+        val extractDir = File(context.cacheDir, "extract_duplicate_ids")
+        listOf("5_a.jpg", "5_b.jpg").forEach { name ->
+            val f = File(extractDir, "receipts/$name")
+            f.parentFile?.mkdirs()
+            f.writeBytes(byteArrayOf(1))
+        }
+
+        writeAssetsRestoringJournal(
+            journal = journal,
+            tasks = listOf(
+                RestoreJournal.AssetRestoreTask(
+                    receiptId = 5L,
+                    sourceRelativePath = "5_a.jpg",
+                    status = RestoreJournal.AssetRestoreStatus.PENDING,
+                    targetPath = "restored_5.jpg"
+                ),
+                RestoreJournal.AssetRestoreTask(
+                    receiptId = 5L,
+                    sourceRelativePath = "5_b.jpg",
+                    status = RestoreJournal.AssetRestoreStatus.PENDING,
+                    targetPath = "restored_5.jpg"
+                )
+            ),
+            extractTempDirPath = extractDir.absolutePath,
+            liveDbFile = liveDbFile
+        )
+
+        newCoordinator(mode, journal).checkRestoreJournal()
+
+        val successEntry = journal.readSuccessJournal()!!
+        assertEquals(
+            "ALL duplicate receipt-id tasks must fail (no first-wins)",
+            listOf(RestoreJournal.AssetRestoreStatus.FAILED, RestoreJournal.AssetRestoreStatus.FAILED),
+            successEntry.assetTasks.map { it.status }
+        )
+        assertTrue(
+            "No task may carry a different reason",
+            successEntry.assetTasks.all { it.error == RestoreJournal.ASSET_REASON_DUPLICATE_TASK }
+        )
+        assertFalse("No final file may be created for duplicate tasks", File(File(context.filesDir, "receipts"), "restored_5.jpg").exists())
     }
 
     @Test
@@ -316,6 +546,79 @@ class AppStartupCoordinatorRecoveryTest {
         )
         assertFalse("pre_restore snapshot must be consumed and cleaned after successful recovery", preRestoreFile.exists())
         assertFalse(journal.hasJournal())
+    }
+
+    // -- RP-03 fix: .pre_restore residue after safety-backup recovery --
+
+    @Test
+    fun `safety backup recovery removes stale pre_restore residue`() {
+        val mode = RestoreMaintenanceMode(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
+        val journal = RestoreJournal(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
+        val liveDbFile = File(context.filesDir, "expense_tracker_db")
+        liveDbFile.parentFile?.mkdirs()
+        liveDbFile.writeBytes("corrupt swapped db".toByteArray())
+        val safetyBackupFile = File(context.filesDir, "safety_backup_wins.db")
+        createValidSqliteFile(safetyBackupFile)
+        // Stale .pre_restore from an older generation - must not linger forever once
+        // the journal-recorded safety backup has been consumed successfully.
+        val stalePreRestore = File(context.filesDir, "expense_tracker_db.pre_restore").apply {
+            writeBytes("stale older snapshot".toByteArray())
+        }
+
+        writeAssetsRestoringJournal(
+            journal = journal,
+            tasks = emptyList(),
+            extractTempDirPath = null,
+            liveDbFile = liveDbFile,
+            safetyBackupPath = safetyBackupFile.absolutePath
+        )
+
+        newCoordinator(mode, journal).checkRestoreJournal()
+
+        assertEquals(
+            "Recovery must consume the safety backup and reset to NORMAL",
+            RestoreMaintenanceMode.Mode.NORMAL,
+            mode.currentMode()
+        )
+        assertFalse(
+            "Stale .pre_restore must be deleted after successful safety-backup recovery",
+            stalePreRestore.exists()
+        )
+        assertFalse(journal.hasJournal())
+    }
+
+    @Test
+    fun `failed safety recovery keeps pre_restore as the last recovery source`() {
+        val mode = RestoreMaintenanceMode(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
+        val journal = RestoreJournal(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
+        val liveDbFile = File(context.filesDir, "expense_tracker_db")
+        liveDbFile.parentFile?.mkdirs()
+        liveDbFile.writeBytes("corrupt swapped db".toByteArray())
+        // No usable safety backup and an unusable .pre_restore - both candidates fail
+        // verification, so recovery must fail closed and keep every source on disk.
+        val stalePreRestore = File(context.filesDir, "expense_tracker_db.pre_restore").apply {
+            writeBytes("not a sqlite file either".toByteArray())
+        }
+
+        writeAssetsRestoringJournal(
+            journal = journal,
+            tasks = emptyList(),
+            extractTempDirPath = null,
+            liveDbFile = liveDbFile,
+            safetyBackupPath = File(context.filesDir, "missing_safety_backup.db").absolutePath
+        )
+
+        newCoordinator(mode, journal).checkRestoreJournal()
+
+        assertEquals(
+            "Unusable recovery sources must fail closed into the critical mode",
+            RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED,
+            mode.currentMode()
+        )
+        assertTrue(
+            ".pre_restore must be kept on unsafe outcomes (last recovery source)",
+            stalePreRestore.exists()
+        )
     }
 
     @Test

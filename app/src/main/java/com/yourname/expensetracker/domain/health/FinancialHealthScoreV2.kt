@@ -95,8 +95,11 @@ class FinancialHealthScoreV2 @Inject constructor(
         } catch (e: Exception) {
             // U-001 (RP-01): caller cancellation propagates; only genuine
             // unavailability becomes the typed IllegalStateException.
+            // G-PII-01: bounded detail only — exception class name, never e.message.
             if (e is CancellationException) throw e
-            throw IllegalStateException("Home currency unavailable: ${e.message}")
+            throw IllegalStateException(
+                "Home currency unavailable: ${e::class.java.simpleName}"
+            )
         }
         
         return try {
@@ -391,7 +394,10 @@ class FinancialHealthScoreV2 @Inject constructor(
             currencySettingsRepository.homeCurrency().first()
         } catch (e: Exception) {
             if (e is CancellationException) throw e
-            throw IllegalStateException("Home currency unavailable: ${e.message}")
+            // G-PII-01: bounded detail only — exception class name, never e.message.
+            throw IllegalStateException(
+                "Home currency unavailable: ${e::class.java.simpleName}"
+            )
         }
         val normalized = try {
             analyticsCurrencyNormalizer.normalizeExpenses(historicalExpenses, homeCurrency)

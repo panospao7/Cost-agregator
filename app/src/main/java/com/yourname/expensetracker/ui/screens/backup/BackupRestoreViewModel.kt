@@ -50,6 +50,12 @@ class BackupRestoreViewModel @Inject constructor(
     }
 
     /**
+     * G-TIME-01: the screen's single TimeProvider-backed "now" source
+     * (same exposure pattern as ReviewViewModel.referenceNowMillis).
+     */
+    fun referenceNowMillis(): Long = timeProvider.now()
+
+    /**
      * Loads last backup timestamp from the maintenance mode prefs or database stats.
      */
     private fun loadLastBackupInfo() {

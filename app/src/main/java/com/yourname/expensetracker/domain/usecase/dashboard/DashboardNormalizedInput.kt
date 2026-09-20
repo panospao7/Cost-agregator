@@ -25,14 +25,19 @@ sealed interface DashboardNormalizedInputResult {
  * already-fetched six-month source window — no DAO re-read and no second
  * normalization pass (aggregates reuse the same engine and rate basis).
  *
- * [hasPurchases] distinguishes a real zero-spend month (rows exist) from a
- * month with no observed data; both carry a zero [aggregate].
+ * [hasPurchases] marks months with observed purchase rows. A month with
+ * deposits but no purchases is still OBSERVED zero-spend history -- [hasDeposits]
+ * carries that signal (canonical deposit predicate). Only a month with neither
+ * flag holds no observed data; months without purchases carry a zero
+ * [aggregate] regardless.
  */
 data class HistoricalMonthAggregate(
     val monthStart: Long,
     val monthEnd: Long,
     val aggregate: MoneyAggregate,
-    val hasPurchases: Boolean
+    val hasPurchases: Boolean,
+    /** P5-003: observed deposit rows exist (canonical deposit predicate) -- additive. */
+    val hasDeposits: Boolean = false
 )
 
 /**

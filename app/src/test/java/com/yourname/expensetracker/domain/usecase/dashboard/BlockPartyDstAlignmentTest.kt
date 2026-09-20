@@ -76,10 +76,13 @@ import java.util.TimeZone
  * fall-back transition with no expenses at all, so that day's value can
  * only come from `computeBlockParty`'s
  * `getStartOfDay(addDays(monthStart, dayIndex))` keying. Under the retired
- * fixed-millis keying (`monthStart + dayIndex * DAY_IN_MILLIS` snapped to
- * local midnight) that instant lands at Nov 1 23:00 EST and floors back to
- * the Nov 1 key — the empty day would read the transition day's 42.5 and
- * day 3 would read 0.0. The new keying must read 0.0 for the empty day.
+ * fixed-millis keying (`monthStart + dayIndex * DAY_IN_MILLIS`, used raw
+ * and unsnapped) the generated keys drift an hour off the getStartOfDay
+ * keys after the 25-hour fall-back day, so lookups MISS and read silent
+ * zeros instead of a neighbor's value: the empty day reads 0.0 under both
+ * keyings and this fixture passes either way (it pins the fallback list's
+ * own values, not the retired keying's failure mode). The production fix
+ * is still the calendar-safe addDays keying, which cannot drift.
  */
 class BlockPartyDstAlignmentTest {
 

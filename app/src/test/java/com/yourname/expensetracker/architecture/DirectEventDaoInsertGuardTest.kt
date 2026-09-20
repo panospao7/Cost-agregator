@@ -161,11 +161,9 @@ class DirectEventDaoInsertGuardTest {
                 "Recurring", "P4 rule lifecycle coordinator", "MIT-043",
                 LocalDate.of(2026, 12, 31)
             ),
-            DirectEventAllowlistEntry(
-                "RecurringOccurrenceMaterializer.kt", "DIRECT_RECURRING_EVENT_DAO_INSERT", "SERVICE",
-                "Recurring", "P4 materializer (known LEGAL_PATHS deviation)", "MIT-043",
-                LocalDate.of(2026, 12, 31)
-            ),
+            // RP-02: RecurringOccurrenceMaterializer entry removed — its event
+            // writes now route through RecurringLifecycleEventWriter, so the file
+            // is fully enforced by this guard.
             DirectEventAllowlistEntry(
                 "RecurringLifecycleEventWriter.kt", "DIRECT_RECURRING_EVENT_DAO_INSERT", "WRITER_IMPLEMENTATION",
                 "Recurring", "P4 event writer (contains Room impl)", "MIT-043",

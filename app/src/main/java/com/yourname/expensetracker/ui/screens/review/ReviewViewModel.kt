@@ -133,7 +133,9 @@ class ReviewViewModel @Inject constructor(
     private val receiptDebugExporter: com.yourname.expensetracker.domain.debug.ReceiptDebugExporter,
     // G-TIME-01: reference clock for UI export metadata. Hilt injects the bound
     // TimeProvider; the default keeps existing manual/test constructors compiling
-    // (same optional-param pattern as SynthesisEngine.recurringOccurrenceDao).
+    // (same optional-param pattern as SynthesisEngine's recurring-occurrence
+    // DAO default; spelled "DAO" so the UI/DAO boundary guard does not parse
+    // the comment as an injected DAO type).
     private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider =
         com.yourname.expensetracker.domain.util.SystemTimeProvider()
 ) : ViewModel() {

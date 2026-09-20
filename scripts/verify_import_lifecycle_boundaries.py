@@ -368,7 +368,9 @@ def main():
         if is_test_file(rel_path):
             continue
 
-        violations = scan_file(source_file.absolute_path, rel_path, approved_files)
+        # absolute_path is a str on ProductionSourceFile; scan_file needs a
+        # Path (.stem/.name) — wrap at the call site.
+        violations = scan_file(Path(source_file.absolute_path), rel_path, approved_files)
         all_violations.extend(violations)
 
     if not all_violations:

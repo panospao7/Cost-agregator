@@ -12,15 +12,15 @@ import com.yourname.expensetracker.domain.util.CancellationSafe
 import com.yourname.expensetracker.data.backup.RestoreJournal
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+import com.yourname.expensetracker.di.ApplicationScope
 import com.yourname.expensetracker.domain.workers.WorkerRegistry
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.ai.usecase.SyncProactiveBriefingWorkUseCase
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import timber.log.Timber
 import java.io.File
-import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -36,7 +36,8 @@ class AppStartupCoordinator @Inject constructor(
     private val workerExecutionGuard: com.yourname.expensetracker.domain.workers.WorkerExecutionGuard,
     private val restoreJournalImporter: com.yourname.expensetracker.data.backup.RestoreJournalImporter,
     private val intakeRecoveryScheduler: com.yourname.expensetracker.domain.notification.capture.NotificationIntakeRecoveryScheduler,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    @ApplicationScope private val applicationScope: CoroutineScope
 ) {
 
     fun initialize(application: Application) {
@@ -269,6 +270,13 @@ class AppStartupCoordinator @Inject constructor(
                 if (sourceKind == RecoverySourceKind.PRE_RESTORE_SNAPSHOT) {
                     // P7-004: the .pre_restore snapshot has been successfully consumed.
                     runCatching { sourceFile.delete() }
+                } else {
+                    // RP-03 fix: recovery consumed the SAFETY BACKUP, so a stale
+                    // .pre_restore snapshot (left over from this restore's pre-swap
+                    // step) is residue - remove it now instead of letting it linger
+                    // in filesDir forever. It is only kept on CRITICAL/unsafe
+                    // outcomes below, where it remains the last recovery source.
+                    runCatching { File("$liveDbPath.pre_restore").delete() }
                 }
                 return true
             }
@@ -328,9 +336,24 @@ class AppStartupCoordinator @Inject constructor(
     private fun handleAssetsIncompleteRecovery(entry: RestoreJournal.JournalEntry) {
         Timber.w("Startup: journal in ASSETS_RESTORING — resuming receipt asset recovery")
         // Ensure the write barrier is active and restore-internal writes are permitted
-        // even if the persisted mode drifted while the journal survived.
+        // even if the persisted mode drifted while the journal survived. This
+        // maintenance-mode decision stays SYNCHRONOUS on the main thread: writes are
+        // blocked the moment startup observes the journal (fail-closed), regardless
+        // of the async resume below.
         restoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.ASSETS_RESTORING)
 
+        // RP-03 fix: the resume is N x (copy + fsync + rename + Room write) - running
+        // it with runBlocking on the main thread during onCreate is an ANR risk. Run
+        // it on the application-scoped IO scope. The journal remains the source of
+        // truth and the resume is idempotent, so a crash or cancellation mid-resume
+        // leaves the journal in ASSETS_RESTORING (writes stay blocked) and the next
+        // launch simply retries.
+        applicationScope.launch {
+            resumeAssetsIncompleteRecovery(entry)
+        }
+    }
+
+    private suspend fun resumeAssetsIncompleteRecovery(entry: RestoreJournal.JournalEntry) {
         // 1. Re-verify the swapped DB before touching anything.
         val dbHealthy = entry.liveDbPath?.let { verifySafetyRestoredDb(File(it)) } ?: false
         if (!dbHealthy) {
@@ -356,21 +379,20 @@ class AppStartupCoordinator @Inject constructor(
 
         // 2. Resume the asset ledger idempotently (best-effort image restore).
         var finalEntry = entry
-        runCatching {
-            // Startup runs before any coroutine scope exists; the resume is small,
-            // bounded IO + Room suspend DAO calls (Room dispatches to its own
-            // executors, so blocking here cannot deadlock).
-            runBlocking { finalEntry = resumePendingAssetTasks(entry) }
-        }.onFailure { e ->
-            // RP-01 contract: caller cancellation propagates. ASSETS_RESTORING stays
-            // active with the journal intact, so the next launch simply retries the
-            // idempotent resume instead of marking unfinished tasks FAILED.
-            if (e is kotlinx.coroutines.CancellationException) throw e
+        try {
+            finalEntry = resumePendingAssetTasks(entry)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // RP-01 contract: caller cancellation propagates - never swallowed.
+            // ASSETS_RESTORING stays active with the journal intact, so the next
+            // launch simply retries the idempotent resume instead of marking
+            // unfinished tasks FAILED.
+            throw e
+        } catch (e: Exception) {
             Timber.e("Startup: asset resume failed (%s) — marking remaining tasks FAILED", e.javaClass.simpleName)
             // Base the finalization on the latest journaled ledger so tasks already
             // completed before the failure are not clobbered.
             val latest = restoreJournal.readJournal() ?: finalEntry
-            runCatching { finalEntry = markUnfinishedAssetTasksFailed(latest, "ASSET_RESUME_FAILED") }
+            CancellationSafe.runCatchingCancellable { finalEntry = markUnfinishedAssetTasksFailed(latest, "ASSET_RESUME_FAILED") }
         }
 
         // 3. Finalize the journal forward — per-task failures are recorded in the
@@ -392,6 +414,18 @@ class AppStartupCoordinator @Inject constructor(
         val pending = entry.assetTasks.filter { it.status != RestoreJournal.AssetRestoreStatus.COMPLETED }
         if (pending.isEmpty()) return entry
 
+        // RP-03 fix (fail-closed duplicate rejection): the plan contract rejects
+        // duplicate asset IDs / duplicate receipt+kind keys. With identity-derived
+        // final names, two tasks for one receiptId resolve to the SAME final file -
+        // ALL conflicting tasks fail with ASSET_REASON_DUPLICATE_TASK (no silent
+        // overwrite, no arbitrary first-wins preference). Duplicates are detected
+        // across the whole ledger: a COMPLETED duplicate still owns the derived
+        // name, so its pending twin must not run either.
+        val duplicateIds = entry.assetTasks
+            .groupBy { it.receiptId }
+            .filterValues { it.size > 1 }
+            .keys
+
         val sourceDir = entry.extractTempDirPath?.let { File(it, "receipts") }
         val receiptsDir = File(appContext.filesDir, "receipts").apply { mkdirs() }
         var current = entry
@@ -399,7 +433,15 @@ class AppStartupCoordinator @Inject constructor(
         try {
             val dao = db.scannedReceiptDao()
             for (task in pending) {
-                current = resumeSingleAssetTask(current, task, sourceDir, receiptsDir, dao)
+                current = if (duplicateIds.contains(task.receiptId)) {
+                    updateAssetTask(
+                        current, task,
+                        RestoreJournal.AssetRestoreStatus.FAILED,
+                        RestoreJournal.ASSET_REASON_DUPLICATE_TASK
+                    )
+                } else {
+                    resumeSingleAssetTask(current, task, sourceDir, receiptsDir, dao)
+                }
             }
         } finally {
             CancellationSafe.runCatchingCancellable { db.close() }
@@ -422,13 +464,46 @@ class AppStartupCoordinator @Inject constructor(
                 return updateAssetTask(entry, task, RestoreJournal.AssetRestoreStatus.FAILED, "SOURCE_MISSING")
             }
 
-            // P7-009: deterministic per-asset identity — reuse the journal-recorded
-            // target name across retries; generate (and journal) one only if absent.
-            val extension = sourceFile.extension.takeIf { it.isNotBlank() } ?: "jpg"
-            val finalName = task.targetPath?.let { File(it).name }
-                ?: "restored_${task.receiptId}_${UUID.randomUUID()}.$extension"
+            // P7-009 + RP-03 fix: the final file name is DERIVED from the task's own
+            // identity (receiptId + allowlisted source extension) and is deterministic
+            // across retries. The journal-recorded target name is a cross-check only -
+            // never the source of the name - so a tampered or stale journal cannot
+            // steer the write target.
+            val finalName = RestoreJournal.deriveAssetTargetName(task.receiptId, sourceFile.extension)
+                ?: return updateAssetTask(
+                    entry, task,
+                    RestoreJournal.AssetRestoreStatus.FAILED,
+                    RestoreJournal.ASSET_REASON_INVALID_TARGET
+                )
+            val journalName = task.targetPath?.let { File(it).name }
+            if (journalName != null && journalName != finalName) {
+                Timber.w(
+                    "Startup: journal target name mismatch for receiptId=%d - marking FAILED(%s)",
+                    task.receiptId, RestoreJournal.ASSET_REASON_INVALID_TARGET
+                )
+                return updateAssetTask(
+                    entry, task,
+                    RestoreJournal.AssetRestoreStatus.FAILED,
+                    RestoreJournal.ASSET_REASON_INVALID_TARGET
+                )
+            }
             val finalFile = File(receiptsDir, finalName)
             val tempFile = File(receiptsDir, "$finalName.tmp")
+
+            // RP-03 fix (fail-closed collision rejection): an existing final file may
+            // belong to a foreign/earlier asset - never overwrite it (a plain rename
+            // would silently replace it). Both checks below guard the rename.
+            if (finalFile.exists()) {
+                Timber.w(
+                    "Startup: asset target collision for receiptId=%d - marking FAILED(%s)",
+                    task.receiptId, RestoreJournal.ASSET_REASON_TARGET_COLLISION
+                )
+                return updateAssetTask(
+                    entry, task,
+                    RestoreJournal.AssetRestoreStatus.FAILED,
+                    RestoreJournal.ASSET_REASON_TARGET_COLLISION
+                )
+            }
 
             // FINAL_DURABLE: copy + fsync, then atomic rename, BEFORE any DB write.
             sourceFile.inputStream().use { input ->
@@ -439,6 +514,16 @@ class AppStartupCoordinator @Inject constructor(
                 }
             }
             if (!tempFile.renameTo(finalFile)) {
+                if (finalFile.exists()) {
+                    // A foreign file appeared between the pre-check and the rename -
+                    // fail closed instead of overwriting it via the copy fallback.
+                    CancellationSafe.runCatchingCancellable { tempFile.delete() }
+                    return updateAssetTask(
+                        entry, task,
+                        RestoreJournal.AssetRestoreStatus.FAILED,
+                        RestoreJournal.ASSET_REASON_TARGET_COLLISION
+                    )
+                }
                 tempFile.copyTo(finalFile, overwrite = true)
                 tempFile.delete()
             }

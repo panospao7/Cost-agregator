@@ -643,13 +643,15 @@ fun HomeScreen(
                                         categoryTrends = state.categoryTrends,
                                         transactions = recentExpenses,
                                         modifier = Modifier.fillMaxWidth(),
-                                        onViewAllTransactions = { 
+                                        onViewAllTransactions = {
                                             // Navigate to transactions filtered by top category
                                             if (widget.categories.isNotEmpty()) {
                                                 onNavigateToTransactions(
                                                     TransactionFilter(
                                                         dateRange = monthRange,
-                                                        categoryId = widget.categories.first().category.id
+                                                        // P5-012: 0L is the reserved Uncategorized
+                                                        // pseudo-id -- null, never a categoryId=0 query.
+                                                        categoryId = topCategoryFilterId(widget.categories.first())
                                                     )
                                                 )
                                             }
@@ -1065,6 +1067,15 @@ fun WidgetWrapper(
 // S4-001R: isFullSpan now derived from DashboardWidgetRegistry metadata
 private fun isFullSpan(widget: DashboardWidget): Boolean =
     DashboardWidgetRegistry.isFullSpan(widget)
+
+/**
+ * P5-012 (RP-05): categoryId for the transactions filter built from a
+ * top-category row. The Uncategorized pseudo-category carries the reserved id
+ * 0L, which no persisted row matches -- null keeps the TransactionFilter
+ * unfiltered by category instead of querying categoryId=0 as a real category.
+ */
+internal fun topCategoryFilterId(category: DomainCategorySpending): Long? =
+    if (category.isUncategorized) null else category.category.id
 
 @Composable
 fun QuickSettingsDialog(

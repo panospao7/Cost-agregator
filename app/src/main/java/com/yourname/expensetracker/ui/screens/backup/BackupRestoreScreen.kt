@@ -185,9 +185,15 @@ fun BackupRestoreScreen(
                     Button(
                         onClick = {
                             // RP-03A (P7-003): pick the SAF destination first, then create.
+                            // G-TIME-01: derive the filename timestamp from the
+                            // ViewModel's TimeProvider (same zone as LocalDateTime.now()).
                             val timestamp = java.time.format.DateTimeFormatter
                                 .ofPattern("yyyy-MM-dd_HH-mm-ss")
-                                .format(java.time.LocalDateTime.now())
+                                .format(
+                                    java.time.Instant.ofEpochMilli(viewModel.referenceNowMillis())
+                                        .atZone(java.time.ZoneId.systemDefault())
+                                        .toLocalDateTime()
+                                )
                             createDestinationLauncher.launch("expense_tracker_backup_${timestamp}.costbackup")
                         },
                         modifier = Modifier.fillMaxWidth(),

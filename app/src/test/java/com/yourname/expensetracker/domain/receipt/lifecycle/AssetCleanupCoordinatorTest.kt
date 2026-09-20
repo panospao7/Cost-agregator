@@ -127,6 +127,26 @@ class AssetCleanupCoordinatorTest {
         assertFalse(result)
     }
 
+    // G-CANCEL-01: cancellation from the delete step must propagate, not be
+    // swallowed by the best-effort broad catch.
+    @Test
+    fun `cancellation from asset delete propagates`() = runTest {
+        val file = newAssetFile()
+        val cancellingStore = mockk<ReceiptAssetStore>()
+        every { cancellingStore.deleteAsset(any()) } throws kotlinx.coroutines.CancellationException("cancel")
+
+        val thrown = runCatching {
+            coordinator(cancellingStore).cleanupUncommittedAsset(
+                path = file.absolutePath, attemptId = "attempt-1", reason = "TEST"
+            )
+        }.exceptionOrNull()
+
+        assertTrue(
+            "CancellationException must propagate out of cleanup",
+            thrown is kotlinx.coroutines.CancellationException
+        )
+    }
+
     @Test
     fun `blocked write barrier refuses cleanup without throwing`() = runTest {
         val file = newAssetFile()

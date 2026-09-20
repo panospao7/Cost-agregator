@@ -5,6 +5,8 @@
 > `RP-00-DECISIONS-RECORDED.md`. Lane branches: `rp-01-wip`, `rp-02-wip`,
 > `rp-03-wip` (one worktree each); integration line:
 > `atomicity-pr21-enforcement-final`. Nothing pushed.
+> Qualification: the materializer direct critical-event insert routing
+> (RP-02 deliverable) has not landed.
 
 ## Landed
 

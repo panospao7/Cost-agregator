@@ -930,7 +930,7 @@
     
     <!-- ComputeDashboardWidgetsUseCase -->
     <string name="widget_budget_exceeded_format">%1$d budgets exceeded!</string>
-    <string name="widget_insight_spent_less_format">Spent %1$.0f less than last month so far.</string>
+    <string name="widget_insight_spent_less_format">On pace to spend %1$.0f less than last month.</string>
     <string name="widget_insight_spent_higher_format">Spending is %1$.0f higher than last month.</string>
     <string name="widget_insight_today_spent_format">Spent %1$.2f today across %2$d transactions.</string>
     <string name="money_radar_reason_single_bill_due_format">1 bill due soon: %1$s</string>

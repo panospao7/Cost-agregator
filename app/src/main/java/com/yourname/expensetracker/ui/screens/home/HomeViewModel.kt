@@ -673,8 +673,14 @@ class HomeViewModel @Inject constructor(
                 val categories = whenResult[2] as List<CategoryBreakdown>
                 
                 // P5-014 (RP-07): drill-down statuses are a comparison against
-                // completed-history — exclude the in-progress period.
-                val average = totalsAggregationEngine.getAverageForPeriodType(newLevel, excludeCurrent = true)
+                // completed-history — exclude the in-progress period. Only
+                // month/week comparison levels pass true per the documented
+                // matrix (daily callers keep false; the engine's DAY branch
+                // ignores the flag either way).
+                val average = totalsAggregationEngine.getAverageForPeriodType(
+                    newLevel,
+                    excludeCurrent = newLevel == PeriodType.MONTH || newLevel == PeriodType.WEEK
+                )
                 val updatedTotals = newTotals.map { p ->
                     p.copy(status = totalsAggregationEngine.getPeriodStatus(p.totalAmount, average))
                 }

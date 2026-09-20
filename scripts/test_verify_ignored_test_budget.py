@@ -402,6 +402,94 @@ def test_empty_string_reason_is_detected(tmp_path):
         f"Expected annotation_type=Ignore, got {annotation_type}"
 
 
+# ── Test: concatenated multi-line @Ignore reason parses ─────────────────────
+
+
+def test_concatenated_multiline_reason_parses(tmp_path):
+    """A multi-line constant-concatenated @Ignore reason is extracted as one
+    string instead of being flagged as missing."""
+    _write_test_file(
+        tmp_path,
+        "app/src/test/java/com/example/ConcatTest.kt",
+        textwrap.dedent("""\
+            package com.example
+
+            import org.junit.Ignore
+            import org.junit.Test
+
+            class ConcatTest {
+                @Ignore(
+                    "Hangs under the validation runner (no output after MockK agent attach, " +
+                        "vr-20260917-225955-fb1021d9 TIMEOUT; kept as the executable spec.)"
+                )
+                @Test
+                fun hangs() {}
+
+                @Ignore(value =
+                    "value = form " +
+                        "across lines")
+                @Test
+                fun valueForm() {}
+
+                @Ignore("escaped \\"inner\\" quote " + "tail")
+                @Test
+                fun escapedQuotes() {}
+            }
+        """),
+    )
+
+    results = guard.scan_ignored_tests(tmp_path)
+    assert len(results) == 3, f"Expected 3 ignored tests, got {len(results)}"
+
+    reasons = {r[2] for r in results}
+    assert (
+        "Hangs under the validation runner (no output after MockK agent attach, "
+        "vr-20260917-225955-fb1021d9 TIMEOUT; kept as the executable spec.)"
+    ) in reasons, f"Concatenated reason not reconstructed: {reasons!r}"
+    assert "value = form across lines" in reasons, f"value = concat missing: {reasons!r}"
+    assert 'escaped "inner" quote tail' in reasons, f"escaped-quote concat missing: {reasons!r}"
+
+    for filepath, line, reason, category, annotation_type in results:
+        assert reason != "", f"@Ignore at {filepath}:{line} has empty reason"
+        assert category != "missing_reason", \
+            f"@Ignore at {filepath}:{line} categorized as missing_reason: {reason!r}"
+
+
+def test_concatenation_with_non_literal_still_flagged_missing(tmp_path):
+    """A concatenated reason that references a non-literal constant cannot be
+    evaluated and must still be flagged as a missing reason."""
+    _write_test_file(
+        tmp_path,
+        "app/src/test/java/com/example/NonLiteralConcatTest.kt",
+        textwrap.dedent("""\
+            package com.example
+
+            import org.junit.Ignore
+            import org.junit.Test
+
+            private const val VR_NOTE = "vr-20260917 TIMEOUT"
+
+            class NonLiteralConcatTest {
+                @Ignore(
+                    VR_NOTE +
+                        " — reason lives in a constant"
+                )
+                @Test
+                fun undocumented() {}
+            }
+        """),
+    )
+
+    results = guard.scan_ignored_tests(tmp_path)
+    assert len(results) == 1, f"Expected 1 ignored test, got {len(results)}"
+
+    _, _, reason, category, annotation_type = results[0]
+    assert reason == "", f"Expected empty reason for non-literal concat, got {reason!r}"
+    assert category == "missing_reason", \
+        f"Expected missing_reason for non-literal concat, got {category}"
+    assert annotation_type == "Ignore"
+
+
 # ── Test: missing denylist is fatal (exit code 2) ───────────────────────────
 
 def test_missing_denylist_is_fatal():

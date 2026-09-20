@@ -128,4 +128,67 @@ class BackupRestoreArchitectureGuardTest {
             debugCallerExists
         )
     }
+
+    // -- RP-03 fix: restoreCostBackup post-swap failure + success-ledger wiring --
+
+    /**
+     * RP-03: the OUTER generic catch of restoreCostBackup must mirror the
+     * CancellationException handler - a post-swap failure keeps the journal and the
+     * bundle extraction dir resumable (the startup asset-resume source), cleaning only
+     * the staged DB trio. Full staging cleanup is reserved for pre-swap failures.
+     */
+    @Test
+    fun `post-swap generic failure preserves the extraction dir for startup resume`() {
+        val source = readSource(
+            "com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt"
+        )
+        val marker = source.indexOf("Failed to restore .costbackup bundle")
+        assertTrue(
+            "Outer generic catch marker not found - guard cannot verify post-swap cleanup behavior",
+            marker >= 0
+        )
+        val window = source.substring(marker, minOf(marker + 2500, source.length))
+
+        assertTrue(
+            "RP-03 regression: the generic catch must branch on isPostSwapJournalState " +
+                "before any cleanup (mirrors the CancellationException handler).",
+            window.contains("isPostSwapJournalState(journalEntry.state)")
+        )
+        val trioIdx = window.indexOf("cleanupStagedDbTrio(stagedDbPath)")
+        val fullIdx = window.indexOf("cleanupRestoreStaging(stagedDbPath, tempDir)")
+        assertTrue(
+            "RP-03 regression: the post-swap branch must clean only the staged trio " +
+                "(cleanupStagedDbTrio), never the extraction dir.",
+            trioIdx >= 0
+        )
+        assertTrue(
+            "RP-03 regression: pre-swap failures must keep the FULL cleanup " +
+                "(cleanupRestoreStaging with the extraction dir).",
+            fullIdx > trioIdx
+        )
+    }
+
+    /**
+     * RP-03: the success path must commit the journal entry carrying the per-task
+     * asset ledger written during restoreReceiptAssets - not the pre-loop local with
+     * an empty assetTasks list.
+     */
+    @Test
+    fun `successful restore commits the asset ledger written during the loop`() {
+        val source = readSource(
+            "com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt"
+        )
+        val wiringIdx = source.indexOf("assetOutcome.journalEntry ?: journalEntry")
+        assertTrue(
+            "RP-03 regression: restoreCostBackup must carry the asset ledger from the " +
+                "restoreReceiptAssets outcome into the journal entry it commits.",
+            wiringIdx >= 0
+        )
+        val completeIdx = source.indexOf("RestoreJournal.JournalState.COMPLETE")
+        assertTrue(
+            "RP-03 regression: the COMPLETE transition must happen AFTER the ledger is " +
+                "carried into the committed entry.",
+            completeIdx > wiringIdx
+        )
+    }
 }

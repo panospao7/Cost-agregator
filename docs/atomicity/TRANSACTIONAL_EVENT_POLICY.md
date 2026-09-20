@@ -225,7 +225,7 @@ Only these coordinators may write to their respective state+event pairs:
 | Expense CRUD | `TransactionLifecycleCoordinator` | `GroupTransactionCoordinator` (group expenses only) |
 | Receipt lifecycle | `ReceiptLifecycleCoordinator` | `ReceiptMatchLifecycleService` (matches only), `BankStatementLifecycleProcessor` (bank imports only) |
 | Recurring rules | `RecurringRuleLifecycleCoordinator` | — |
-| Recurring lifecycle | `RecurringLifecycleCoordinator` | `RecurringOccurrenceMaterializer` — use `materializeInCurrentTransaction()` (shares caller's transaction) as the approved coordinator-call path. ⚠️ **Known LEGAL_PATHS deviation:** Materializer injects `RecurringLifecycleEventDao` directly rather than using `RecurringLifecycleEventWriter`. To be resolved in PR 3+. |
+| Recurring lifecycle | `RecurringLifecycleCoordinator` | `RecurringOccurrenceMaterializer` — use `materializeInCurrentTransaction()` (shares caller's transaction) as the approved coordinator-call path; its lifecycle events are written through `RecurringLifecycleEventWriter` (RP-02 rewiring resolved the former direct `RecurringLifecycleEventDao` deviation). |
 | Groups | `GroupLifecycleCoordinator` | — |
 | Worker runs | `WorkerExecutionGuard` + `WorkerRunLogger` | — |
 | Operation runs | `OperationRunRecorder` | — |

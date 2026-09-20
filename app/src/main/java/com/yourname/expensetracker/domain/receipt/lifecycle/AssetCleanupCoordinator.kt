@@ -97,6 +97,8 @@ class AssetCleanupCoordinator @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                // G-CANCEL-01: never swallow cancellation in best-effort cleanup.
+                if (e is CancellationException) throw e
                 Timber.w("Asset cleanup delete failed (%s)", reason)
                 false
             }

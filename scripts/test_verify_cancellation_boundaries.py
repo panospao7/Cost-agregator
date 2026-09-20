@@ -713,3 +713,124 @@ def test_undeclared_root_file_is_never_scanned(tmp_path, monkeypatch, capsys):
 
     assert code == 0
     assert "BadRunner" not in out.out
+
+
+# ── Tests: preceding sibling CE catch (JUnit-guard parity) ──────────────────
+
+def test_preceding_sibling_ce_catch_same_line_passes(tmp_path):
+    """Broad catch preceded by a sibling `catch (e: CancellationException) { throw e }`
+    in the same try block is safe — Kotlin clause order means the broad catch
+    can never observe a CancellationException."""
+    kt_file = _write_kt(
+        tmp_path,
+        "SiblingSafeService.kt",
+        """package com.example
+
+class SiblingSafeService {
+    suspend fun fetchData(): String {
+        try {
+            return loadFromNetwork()
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (e: Exception) {
+            log("failed")
+            return ""
+        }
+    }
+}
+""",
+    )
+    allowlist = load_allowlist(_make_allowlist(tmp_path, "# empty allowlist\n"))
+    violations, fatal = scan_file(kt_file, allowlist)
+    assert fatal is False
+    assert violations == []
+
+
+def test_preceding_sibling_ce_catch_block_form_passes(tmp_path):
+    """Same acceptance when the sibling CE rethrow is on its own line(s)."""
+    kt_file = _write_kt(
+        tmp_path,
+        "SiblingBlockSafeService.kt",
+        """package com.example
+
+class SiblingBlockSafeService {
+    suspend fun fetchData(): String {
+        try {
+            return loadFromNetwork()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log("failed")
+            return ""
+        }
+    }
+}
+""",
+    )
+    allowlist = load_allowlist(_make_allowlist(tmp_path, "# empty allowlist\n"))
+    violations, fatal = scan_file(kt_file, allowlist)
+    assert fatal is False
+    assert violations == []
+
+
+def test_sibling_ce_catch_without_rethrow_still_flagged(tmp_path):
+    """A sibling CE catch that does NOT rethrow must not mark the broad catch safe."""
+    kt_file = _write_kt(
+        tmp_path,
+        "SiblingNoRethrowService.kt",
+        """package com.example
+
+class SiblingNoRethrowService {
+    suspend fun fetchData(): String {
+        try {
+            return loadFromNetwork()
+        } catch (e: CancellationException) {
+            log("cancelled")
+        } catch (e: Exception) {
+            log("failed")
+            return ""
+        }
+    }
+}
+""",
+    )
+    allowlist = load_allowlist(_make_allowlist(tmp_path, "# empty allowlist\n"))
+    violations, fatal = scan_file(kt_file, allowlist)
+    assert fatal is False
+    assert len(violations) == 1
+    assert "G-CANCEL-01" in violations[0]
+
+
+def test_enclosing_try_ce_catch_does_not_mark_inner_safe(tmp_path):
+    """An outer try's CE catch must not make an inner broad catch safe.
+    The outer CE catch is placed >15 lines below the inner broad catch so the
+    pre-existing forward window cannot see it; only the (correctly refused)
+    sibling path could mark the inner catch safe."""
+    filler = "\n".join(f"        val filler{i} = {i}" for i in range(20))
+    kt_source = (
+        "package com.example\n\n"
+        "class EnclosingTryService {\n"
+        "    suspend fun fetchData(): String {\n"
+        "        try {\n"
+        "            try {\n"
+        "                return loadFromNetwork()\n"
+        "            } catch (e: Exception) {\n"
+        '                log("failed")\n'
+        '                return ""\n'
+        "            }\n"
+        + filler + "\n"
+        "        } catch (e: CancellationException) {\n"
+        "            throw e\n"
+        "        }\n"
+        "    }\n"
+        "}\n"
+    )
+    kt_file = _write_kt(
+        tmp_path,
+        "EnclosingTryService.kt",
+        kt_source,
+    )
+    allowlist = load_allowlist(_make_allowlist(tmp_path, "# empty allowlist\n"))
+    violations, fatal = scan_file(kt_file, allowlist)
+    assert fatal is False
+    assert len(violations) == 1
+    assert "G-CANCEL-01" in violations[0]

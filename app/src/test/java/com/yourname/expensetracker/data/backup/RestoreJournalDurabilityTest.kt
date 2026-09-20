@@ -2,7 +2,9 @@ package com.yourname.expensetracker.data.backup
 
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -122,5 +124,43 @@ class RestoreJournalDurabilityTest {
             RestoreJournal.AssetRestoreStatus.COMPLETED,
             readBack.assetTasks.first { it.receiptId == 6L }.status
         )
+    }
+
+    /**
+     * RP-03 fix: the final asset name must be derived from the task's own identity
+     * (receiptId + allowlisted extension) - deterministic across retries - and must
+     * reject any extension the backup write side cannot produce.
+     */
+    @Test
+    fun `deriveAssetTargetName is identity-derived, deterministic, and extension-validated`() {
+        // Deterministic per task identity - same task always yields the same name.
+        assertEquals(
+            "restored_5.jpg",
+            RestoreJournal.deriveAssetTargetName(5L, "jpg")
+        )
+        assertEquals(
+            "Retry with the same identity must derive the identical name",
+            RestoreJournal.deriveAssetTargetName(5L, "jpg"),
+            RestoreJournal.deriveAssetTargetName(5L, "jpg")
+        )
+
+        // Extension is normalized (case/whitespace) and legacy-tolerated types pass.
+        assertEquals("restored_5.jpg", RestoreJournal.deriveAssetTargetName(5L, "JPG"))
+        assertEquals("restored_5.jpg", RestoreJournal.deriveAssetTargetName(5L, " jpg "))
+        assertEquals("restored_7.png", RestoreJournal.deriveAssetTargetName(7L, "png"))
+        assertEquals("restored_7.webp", RestoreJournal.deriveAssetTargetName(7L, "webp"))
+        assertEquals("restored_7.jpeg", RestoreJournal.deriveAssetTargetName(7L, "jpeg"))
+
+        // Distinct identities never share a final name key.
+        assertNotEquals(
+            RestoreJournal.deriveAssetTargetName(5L, "jpg"),
+            RestoreJournal.deriveAssetTargetName(6L, "jpg")
+        )
+
+        // Anything outside the fixed allowlist fails closed (null).
+        assertNull(RestoreJournal.deriveAssetTargetName(5L, "exe"))
+        assertNull(RestoreJournal.deriveAssetTargetName(5L, "html"))
+        assertNull(RestoreJournal.deriveAssetTargetName(5L, ""))
+        assertNull(RestoreJournal.deriveAssetTargetName(5L, "jpg.exe"))
     }
 }

@@ -250,6 +250,8 @@ class ReceiptOcrService @Inject constructor(
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
+                // G-CANCEL-01: never wrap cancellation in the typed failure.
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 // P3-008: pass the owned saved path through the typed failure —
                 // the caller must not double-save the same attempt's asset.
                 throw OcrRecognitionFailedException(savedPath, e)

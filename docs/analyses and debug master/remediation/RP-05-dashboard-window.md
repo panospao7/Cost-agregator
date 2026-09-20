@@ -1,6 +1,6 @@
 # RP-05 - Dashboard window, income, and historical baseline correctness
 
-> **Status:** corrected implementation plan; not implemented.
+> **Status:** batches 1-2 merged on bug-fixes; known issues from strict review tracked in RP-00-10_MERGED_STRICT_REVIEW.md.
 > **Scope:** dashboard aggregation and input preparation (Pipeline 5 / Segment 10).
 > **Mode:** strict, money-adjacent. The change alters user-visible totals, forecast inputs, and category percentages.
 > **Must land before:** RP-06 and RP-07.

@@ -17,8 +17,10 @@ import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.privacy.PrivacySettings
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.slot
 import io.mockk.verify
 import io.mockk.verifyOrder
 import io.mockk.mockkObject
@@ -785,6 +787,134 @@ class DatabaseBackupRepositoryImplTest {
         } finally {
             unmockkObject(CostbackupBundle)
         }
+    }
+
+    // -- RP-03 fix: restoreReceiptAssets identity-derived names + fail-closed guards --
+
+    /**
+     * Runs [DatabaseBackupRepositoryImpl.restoreReceiptAssets] directly (test seam)
+     * against a mocked Room DB and a real file-backed journal, with [sourceFiles]
+     * placed in the extracted bundle's receipts dir.
+     */
+    private suspend fun runDirectAssetRestore(
+        journal: RestoreJournal,
+        vararg sourceFiles: String
+    ): Pair<DatabaseBackupRepositoryImpl.ReceiptAssetRestoreOutcome, com.yourname.expensetracker.data.database.dao.ScannedReceiptDao> {
+        val assetsDir = File(tempDir, "asset_extract")
+        assetsDir.deleteRecursively()
+        val receiptsSrc = File(assetsDir, "receipts")
+        receiptsSrc.mkdirs()
+        sourceFiles.forEach { name -> File(receiptsSrc, name).writeBytes(byteArrayOf(1, 2, 3)) }
+
+        val dao = mockk<com.yourname.expensetracker.data.database.dao.ScannedReceiptDao>(relaxed = true)
+        coEvery { dao.getById(any()) } returns com.yourname.expensetracker.data.database.entity.ScannedReceipt(
+            id = 5L,
+            imagePath = "/legacy/photo.jpg",
+            rawOcrText = "seed",
+            parsedTotal = null,
+            parsedMerchant = null,
+            parsedDate = null,
+            parsedItems = null,
+            parsedTaxAmount = null,
+            confidence = 0.5f
+        )
+        val assetDb = mockk<AppDatabase>(relaxed = true)
+        every { assetDb.scannedReceiptDao() } returns dao
+
+        // RestoreInternalWriteScope permits writes only in restore modes.
+        every { mockRestoreMaintenanceMode.currentMode() } returns RestoreMaintenanceMode.Mode.ASSETS_RESTORING
+
+        var entry = journal.beginJournal(
+            sourceBackupPath = File(tempDir, "bundle.costbackup").absolutePath,
+            stagedDbPath = File(tempDir, "staged_restore.db").absolutePath,
+            liveDbPath = dbFile.absolutePath
+        )
+        entry = journal.transitionTo(entry, RestoreJournal.JournalState.ASSETS_RESTORING)
+
+        val repo = createRepository(journal = journal)
+        val outcome = repo.restoreReceiptAssets(
+            assetsDir = assetsDir,
+            manifest = tier1Manifest(BackupVerifier.requiredManifestTables(1).associateWith { 1 }),
+            db = assetDb,
+            journalEntry = entry
+        )
+        return outcome to dao
+    }
+
+    @Test
+    fun `restoreReceiptAssets restores under identity-derived name and returns ledger for the caller`() = runTest(testDispatcher) {
+        val journal = newRealJournal()
+        val (outcome, dao) = runDirectAssetRestore(journal, "5_photo.jpg")
+
+        val finalFile = File(File(tempDir, "receipts"), "restored_5.jpg")
+        assertTrue("Asset must be restored under the identity-derived final name", finalFile.exists())
+        assertEquals("Asset bytes must be preserved", 3L, finalFile.length())
+        assertFalse("Temp copy must be gone after the durable rename", File(finalFile.parentFile, "restored_5.jpg.tmp").exists())
+
+        // The returned ledger (RP-03 fix: caller carries it into the committed journal).
+        val ledger = outcome.journalEntry!!.assetTasks
+        assertEquals(1, ledger.size)
+        assertEquals(RestoreJournal.AssetRestoreStatus.COMPLETED, ledger[0].status)
+        assertTrue("Ledger target must point at the derived final name", ledger[0].targetPath!!.endsWith("restored_5.jpg"))
+        // The journal persisted during the loop round-trips basename-only targets.
+        val onDisk = journal.readJournal()!!
+        assertEquals(RestoreJournal.AssetRestoreStatus.COMPLETED, onDisk.assetTasks.single().status)
+        assertEquals("restored_5.jpg", onDisk.assetTasks.single().targetPath)
+
+        val updated = slot<com.yourname.expensetracker.data.database.entity.ScannedReceipt>()
+        coVerify(exactly = 1) { dao.update(capture(updated)) }
+        assertEquals(finalFile.absolutePath, updated.captured.imagePath)
+    }
+
+    @Test
+    fun `restoreReceiptAssets never overwrites an existing final file on collision`() = runTest(testDispatcher) {
+        val journal = newRealJournal()
+        val foreignBytes = byteArrayOf(7, 7, 7, 7)
+        val finalFile = File(File(tempDir, "receipts"), "restored_5.jpg").apply {
+            parentFile?.mkdirs()
+            writeBytes(foreignBytes)
+        }
+
+        val (outcome, dao) = runDirectAssetRestore(journal, "5_photo.jpg")
+
+        val task = outcome.journalEntry!!.assetTasks.single()
+        assertEquals(RestoreJournal.AssetRestoreStatus.FAILED, task.status)
+        assertEquals(RestoreJournal.ASSET_REASON_TARGET_COLLISION, task.error)
+        assertTrue("Foreign final file bytes must be untouched", finalFile.readBytes().contentEquals(foreignBytes))
+        assertFalse("No temp residue may linger", File(finalFile.parentFile, "restored_5.jpg.tmp").exists())
+        coVerify(exactly = 0) { dao.update(any()) }
+    }
+
+    @Test
+    fun `restoreReceiptAssets fails duplicate receipt-id tasks closed`() = runTest(testDispatcher) {
+        val journal = newRealJournal()
+
+        val (outcome, dao) = runDirectAssetRestore(journal, "5_a.jpg", "5_b.jpg")
+
+        val tasks = outcome.journalEntry!!.assetTasks
+        assertEquals(2, tasks.size)
+        assertTrue(
+            "ALL duplicate receipt-id tasks must fail (no first-wins)",
+            tasks.all { it.status == RestoreJournal.AssetRestoreStatus.FAILED && it.error == RestoreJournal.ASSET_REASON_DUPLICATE_TASK }
+        )
+        coVerify(exactly = 0) { dao.update(any()) }
+        assertFalse(
+            "No final file may be created for duplicate tasks",
+            File(File(tempDir, "receipts"), "restored_5.jpg").exists()
+        )
+    }
+
+    @Test
+    fun `restoreReceiptAssets rejects non-allowlisted source extension`() = runTest(testDispatcher) {
+        val journal = newRealJournal()
+
+        val (outcome, dao) = runDirectAssetRestore(journal, "5_payload.exe")
+
+        val task = outcome.journalEntry!!.assetTasks.single()
+        assertEquals(RestoreJournal.AssetRestoreStatus.FAILED, task.status)
+        assertEquals(RestoreJournal.ASSET_REASON_INVALID_TARGET, task.error)
+        assertFalse("No file may be produced for a rejected extension", File(File(tempDir, "receipts"), "restored_5.exe").exists())
+        coVerify(exactly = 0) { dao.update(any()) }
     }
 
     private fun createRepository(

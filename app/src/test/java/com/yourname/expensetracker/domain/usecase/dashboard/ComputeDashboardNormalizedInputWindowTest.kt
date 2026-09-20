@@ -253,4 +253,57 @@ class ComputeDashboardNormalizedInputWindowTest {
         assertEquals(5, buckets.size)
         assertTrue(buckets.none { it.hasPurchases })
     }
+
+    /**
+     * P5-003: a completed month with deposits recorded but nothing bought is
+     * OBSERVED zero-spend history -- the bucket must carry the deposit signal so
+     * the baseline mean keeps it as zero. Months with no rows of any kind stay
+     * unobserved on both signals (pre-install months stay excluded).
+     */
+    @Test
+    fun `deposit-only completed month is flagged observed without purchases`() = runTest {
+        val (periodStart, periodEnd) = TimePeriodUtils.getMonthRange(NOW)
+        val m2 = TimePeriodUtils.getMonthRange(NOW, -2)
+        val m4 = TimePeriodUtils.getMonthRange(NOW, -4)
+        val expenses = listOf(
+            deposit(1, 500.0, m2.first + 86_400_000L, shared = false)
+        )
+
+        val result = useCase.produceDashboardNormalizedInput(expenses, periodStart, periodEnd)
+            as DashboardNormalizedInputResult.Available
+
+        val m2Bucket = result.input.historicalMonthAggregates.single { it.monthStart == m2.first }
+        assertEquals(false, m2Bucket.hasPurchases)
+        assertEquals(true, m2Bucket.hasDeposits)
+        assertEquals(0.0, m2Bucket.aggregate.displayAmount, 0.001)
+        val noRowBucket = result.input.historicalMonthAggregates.single { it.monthStart == m4.first }
+        assertEquals(false, noRowBucket.hasPurchases)
+        assertEquals(false, noRowBucket.hasDeposits)
+    }
+
+    /**
+     * P5-003/P5-004: only the canonical deposit predicate (DEPOSIT, mine, not a
+     * shared expense) marks a month observed -- shared or not-mine deposits alone
+     * must not fabricate zero-spend history.
+     */
+    @Test
+    fun `shared and not-mine deposits do not mark a completed month observed`() = runTest {
+        val (periodStart, periodEnd) = TimePeriodUtils.getMonthRange(NOW)
+        val m1 = TimePeriodUtils.getMonthRange(NOW, -1)
+        val m3 = TimePeriodUtils.getMonthRange(NOW, -3)
+        val expenses = listOf(
+            deposit(1, 100.0, m1.first + 86_400_000L, shared = true),
+            deposit(2, 100.0, m3.first + 86_400_000L, shared = false).copy(isNotMine = true)
+        )
+
+        val result = useCase.produceDashboardNormalizedInput(expenses, periodStart, periodEnd)
+            as DashboardNormalizedInputResult.Available
+
+        val m1Bucket = result.input.historicalMonthAggregates.single { it.monthStart == m1.first }
+        assertEquals(false, m1Bucket.hasPurchases)
+        assertEquals(false, m1Bucket.hasDeposits)
+        val m3Bucket = result.input.historicalMonthAggregates.single { it.monthStart == m3.first }
+        assertEquals(false, m3Bucket.hasPurchases)
+        assertEquals(false, m3Bucket.hasDeposits)
+    }
 }

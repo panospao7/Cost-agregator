@@ -138,6 +138,39 @@ def _has_safe_pattern_in_window(lines: List[str], start: int, window: int = 15) 
     return False
 
 
+def _has_preceding_sibling_ce_catch(lines: List[str], idx: int, window: int = 15) -> bool:
+    """True when the broad catch at `idx` is preceded within the same try
+    block by a sibling CancellationException catch that rethrows.
+
+    Mirrors the JUnit guard's precedingSiblingCeCatch acceptance: Kotlin
+    evaluates catch clauses in order, so a preceding CE rethrow means the
+    broad catch below it can never observe a CancellationException. The
+    upward scan stops at a `try` opener so an enclosing try's CE catch can
+    never mark an inner broad catch safe.
+    """
+    start = max(0, idx - window)
+    for j in range(idx - 1, start - 1, -1):
+        line = lines[j]
+        stripped = line.strip()
+        if stripped.startswith("//") or stripped.startswith("*") or stripped.startswith("/*"):
+            continue
+        if re.search(r'\btry\b', line):
+            return False
+        if not CATCH_CANCELLATION_RE.search(line):
+            continue
+        # Same-line rethrow (e.g. catch (e: CancellationException) { throw e })
+        if RETHROW_CAUGHT_RE.search(line):
+            return True
+        # Rethrow on the first code line of the sibling catch block
+        for k in range(j + 1, min(idx, j + 6)):
+            inner = lines[k].strip()
+            if inner.startswith("//") or inner.startswith("*"):
+                continue
+            return bool(RETHROW_CAUGHT_RE.search(lines[k]))
+        return False
+    return False
+
+
 def _find_suspend_ranges(lines: List[str]) -> List[Tuple[int, int]]:
     """Find line ranges (start, end inclusive) of suspend functions using
     brace-depth tracking. Returns list of (start_line, end_line) 1-indexed."""
@@ -269,6 +302,8 @@ def scan_file(
         # Check if cancellation is handled nearby
         if _has_safe_pattern_in_window(lines, i, window=15):
             continue
+        if _has_preceding_sibling_ce_catch(lines, i):
+            continue
 
         # Also check the catch line itself for inline safe patterns
         # (e.g., catch (e: Exception) { if (e is CancellationException) throw e })
@@ -338,6 +373,8 @@ def scan_file(
 
         # Check if cancellation handling is nearby
         if _has_safe_pattern_in_window(lines, i, window=15):
+            continue
+        if _has_preceding_sibling_ce_catch(lines, i):
             continue
 
         ctx = "suspend function" if in_suspend else "worker path"

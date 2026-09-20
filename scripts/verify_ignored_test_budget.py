@@ -56,6 +56,120 @@ def categorize_reason(reason: str) -> str:
     return "other"
 
 
+# Kotlin escape sequences that may appear inside an @Ignore reason literal.
+_KOTLIN_ESCAPES = {
+    "n": "\n",
+    "t": "\t",
+    "r": "\r",
+    "b": "\b",
+    '"': '"',
+    "'": "'",
+    "\\": "\\",
+    "$": "$",
+    "0": "\0",
+}
+
+
+def _collect_annotation_argument(lines: List[str], start_idx: int) -> Optional[str]:
+    """Collect the raw parenthesized annotation argument starting on lines[start_idx].
+
+    Scans from the first '(' on the start line to its matching ')'. Parentheses
+    inside string literals do not affect depth; escaped quotes are skipped.
+    Returns the argument text without the outer parentheses, or None when no
+    '(' starts on the line or the block never closes.
+    """
+    open_pos = lines[start_idx].find("(")
+    if open_pos < 0:
+        return None
+    chars: List[str] = []
+    depth = 0
+    in_string = False
+    i = open_pos
+    j = start_idx
+    while j < len(lines):
+        line = lines[j]
+        while i < len(line):
+            c = line[i]
+            chars.append(c)
+            if in_string:
+                if c == "\\" and i + 1 < len(line):
+                    chars.append(line[i + 1])
+                    i += 2
+                    continue
+                if c == '"':
+                    in_string = False
+                i += 1
+                continue
+            if c == '"':
+                in_string = True
+            elif c == "(":
+                depth += 1
+            elif c == ")":
+                depth -= 1
+                if depth == 0:
+                    raw = "".join(chars)
+                    return raw[1:-1]
+            i += 1
+        chars.append("\n")
+        j += 1
+        i = 0
+    return None
+
+
+def _evaluate_string_literal_argument(arg: str) -> Optional[str]:
+    """Evaluate a simple constant string-literal annotation argument.
+
+    Accepts an optional 'value =' prefix followed by one or more string
+    literals joined by '+' (constant concatenation), with arbitrary
+    whitespace/newlines between tokens, and escaped characters (including
+    escaped quotes) inside the literals.
+
+    Returns the concatenated reason, or None when the argument is not a plain
+    literal expression (constants, templates, calls) so those keep the
+    missing-reason flag instead of being silently accepted.
+    """
+    text = arg.strip()
+    value_m = re.match(r"^value\s*=\s*(.*)$", text, re.DOTALL)
+    if value_m:
+        text = value_m.group(1).strip()
+    parts: List[str] = []
+    i = 0
+    n = len(text)
+    while True:
+        while i < n and text[i].isspace():
+            i += 1
+        if i >= n:
+            break
+        if text[i] != '"':
+            return None
+        i += 1
+        chunk: List[str] = []
+        terminated = False
+        while i < n:
+            c = text[i]
+            if c == "\\" and i + 1 < n:
+                chunk.append(_KOTLIN_ESCAPES.get(text[i + 1], text[i + 1]))
+                i += 2
+                continue
+            if c == '"':
+                i += 1
+                terminated = True
+                break
+            chunk.append(c)
+            i += 1
+        if not terminated:
+            return None
+        parts.append("".join(chunk))
+        while i < n and text[i].isspace():
+            i += 1
+        if i >= n:
+            break
+        if text[i] != "+":
+            return None
+        i += 1
+    return "".join(parts) if parts else None
+
+
 # ── Scanning ──────────────────────────────────────────────────
 
 def scan_ignored_tests(root_dir: Path) -> List[Tuple[str, int, str, str, str]]:
@@ -107,20 +221,26 @@ def _scan_file(
         if stripped.startswith("//") and ("@Ignore" in stripped or "@Disabled" in stripped):
             continue
 
-        # Match @Ignore or @Disabled with an optional parenthesized reason string
-        # Patterns:
-        #   @Ignore("reason")
+        # Match @Ignore or @Disabled with an optional parenthesized reason.
+        # The argument may span multiple lines and be a simple constant
+        # concatenation of string literals:
         #   @Ignore
+        #   @Ignore("reason")
         #   @Ignore(value = "reason")
-        #   @Disabled("reason")
-        #   @Disabled
-        #   @Disabled(value = "reason")
-        m = re.match(r'@(Ignore|Disabled)\s*(?:\((?:(?:value\s*=\s*)?\s*"([^"]*)"\s*)?\))?', stripped)
+        #   @Ignore(
+        #       "multi-line " +
+        #           "concatenated reason"
+        #   )
+        m = re.match(r"@(Ignore|Disabled)\b", stripped)
         if not m:
             continue
 
         annotation_type = m.group(1)  # "Ignore" or "Disabled"
-        reason = m.group(2)
+        reason: Optional[str] = None
+        if "(" in stripped:
+            argument = _collect_annotation_argument(lines, i - 1)
+            if argument is not None:
+                reason = _evaluate_string_literal_argument(argument)
         if reason is None:
             reason = ""
 

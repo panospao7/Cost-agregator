@@ -758,5 +758,39 @@ class RestoreJournal @Inject constructor(
         private const val JOURNAL_FILENAME = "restore_journal.json"
         const val FAILURE_JOURNAL_FILENAME = "restore_journal_last_failure.json"
         const val SUCCESS_JOURNAL_FILENAME = "restore_journal_last_success.json"
+
+        // -- RP-03B asset-restore controlled reason codes ------------
+        // Controlled constants only - never payload-, path-, or exception-derived.
+
+        /** Source extension outside the allowlist, or journal-recorded target name mismatch (identity-derived name contract). */
+        const val ASSET_REASON_INVALID_TARGET = "INVALID_ASSET_TARGET"
+
+        /** Deterministic final file already exists - refusing to overwrite a foreign file. */
+        const val ASSET_REASON_TARGET_COLLISION = "ASSET_TARGET_COLLISION"
+
+        /** Duplicate receipt-id asset tasks in one journal - all conflicting tasks fail closed. */
+        const val ASSET_REASON_DUPLICATE_TASK = "DUPLICATE_ASSET_TASK"
+
+        /**
+         * File extensions a restored receipt asset may use. The backup write side
+         * (ReceiptAssetStore / ReceiptOcrService) produces jpg; jpeg/png/webp are
+         * legacy-tolerated (same set ReceiptAssistInputBuilder accepts).
+         */
+        private val ASSET_EXTENSION_ALLOWLIST = setOf("jpg", "jpeg", "png", "webp")
+
+        /**
+         * RP-03B fix: derives the final receipt-asset file name from the task's own
+         * identity (receiptId + allowlisted source extension). The name is
+         * deterministic per task so retries reuse it; a journal-recorded target name
+         * is only ever a cross-check, never the source of the name.
+         *
+         * @return the derived final file name, or null when the extension is not
+         *         in the fixed allowlist (caller must fail the task closed).
+         */
+        fun deriveAssetTargetName(receiptId: Long, sourceExtension: String): String? {
+            val ext = sourceExtension.trim().lowercase()
+            if (ext !in ASSET_EXTENSION_ALLOWLIST) return null
+            return "restored_${receiptId}.$ext"
+        }
     }
 }

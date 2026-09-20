@@ -383,10 +383,11 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val todayStart = TimePeriodUtils.getStartOfDay(periodEnd)
         val weekStart = TimePeriodUtils.getStartOfWeek(periodEnd)
 
-        // P5-001 (RP-05): the adapter fetches a TWO-month window (current +
-        // previous) so month-over-month comparison works. Every aggregate the
-        // dashboard consumes as CURRENT-month must be scoped to
-        // [periodStart, periodEnd); only previousMonthAggregate and
+        // P5-001/P5-005 (RP-05): the adapter fetches a six-month window (current
+        // + five completed months) so month-over-month comparison and the
+        // completed-history baseline work. Every aggregate the dashboard consumes
+        // as CURRENT-month must be scoped to [periodStart, periodEnd); only
+        // previousMonthAggregate, historicalMonthAggregates and
         // normalizedExpenses (the forecast baseline) may see the wider fetch.
         val currentPeriodExpenses = expenses.filter { it.date >= periodStart && it.date < periodEnd }
         val previousMonthBounds = TimePeriodUtils.getMonthRange(periodStart, -1)
@@ -437,11 +438,21 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
                 it.date >= bounds.first && it.date < bounds.second &&
                     it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE && !it.isNotMine
             }
+            // P5-003: parallel observed-activity signal -- a completed month with
+            // deposits (canonical predicate) but no purchases is RECORDED zero-spend
+            // history and must stay in the baseline mean as zero; only months with
+            // neither purchases nor deposits count as unobserved.
+            val monthHasDeposits = expenses.any {
+                it.date >= bounds.first && it.date < bounds.second &&
+                    it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT &&
+                    !it.isNotMine && !it.isSharedExpense
+            }
             HistoricalMonthAggregate(
                 monthStart = bounds.first,
                 monthEnd = bounds.second,
                 aggregate = engine.aggregateExpenses(monthPurchases, homeCurrency, rateBasis, com.yourname.expensetracker.domain.core.money.TransactionTypeFilter.PURCHASE_ONLY),
-                hasPurchases = monthPurchases.isNotEmpty()
+                hasPurchases = monthPurchases.isNotEmpty(),
+                hasDeposits = monthHasDeposits
             )
         }
 
@@ -520,8 +531,12 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val purchases = expenses.filter {
             it.transactionType == DashboardTransactionType.PURCHASE && !it.isNotMine
         }
-        // P5-PR2 (NEW-P5-003): Exclude not-mine shared expenses from deposit totals
-        val deposits = expenses.filter { it.transactionType == DashboardTransactionType.DEPOSIT && !it.isNotMine }
+        // P5-PR2 (NEW-P5-003)/P5-004 (RP-05): canonical deposit predicate --
+        // not-mine and shared-expense deposits are excluded, matching every other
+        // deposit list in this pipeline.
+        val deposits = expenses.filter {
+            it.transactionType == DashboardTransactionType.DEPOSIT && !it.isNotMine && !it.isSharedExpense
+        }
 
         val todayPurchases = purchases.filter { it.date >= todayStart }
         val daysInMonth = TimePeriodUtils.getDaysInMonth(now)
@@ -639,12 +654,13 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         // COMPLETED-month history, never current MTD — MTD early in the month gave
         // SynthesisEngine a tiny baseline and bypassed the null-baseline confidence
         // penalty. Policy: with ≥2 completed months holding history, use their mean
-        // (a recorded zero-spend month is real history and stays in the mean);
-        // with fewer, fall back to the previous complete month only when it has
-        // spend; otherwise null keeps the confidence penalty. Months with no
-        // observed rows (e.g. pre-install) are not counted as zero history.
+        // (a recorded zero-spend month -- observed purchases OR deposits -- is real
+        // history and stays in the mean as zero); with fewer, fall back to the
+        // previous complete month only when it has spend; otherwise null keeps the
+        // confidence penalty. Months with no observed rows of any kind (e.g.
+        // pre-install) are not counted as zero history.
         // previousMonthTotal stays the separate comparison baseline.
-        val monthsWithHistory = normalized.historicalMonthAggregates.filter { it.hasPurchases }
+        val monthsWithHistory = normalized.historicalMonthAggregates.filter { it.hasPurchases || it.hasDeposits }
         val historicalAverage: Double? = when {
             monthsWithHistory.size >= 2 ->
                 monthsWithHistory.sumOf { it.aggregate.displayAmount } / monthsWithHistory.size

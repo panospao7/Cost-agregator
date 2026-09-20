@@ -1154,10 +1154,18 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     )
                     restoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.ASSETS_RESTORING)
 
-                    val receiptWarnings = if (tempDir.exists()) {
-                        restoreReceiptAssets(tempDir, manifest, freshDb, journalEntry, restoreEvents)
+                    val receiptWarnings: List<String>
+                    if (tempDir.exists()) {
+                        val assetOutcome = restoreReceiptAssets(tempDir, manifest, freshDb, journalEntry, restoreEvents)
+                        receiptWarnings = assetOutcome.warnings
+                        // RP-03 fix: carry the per-task COMPLETED/FAILED ledger written
+                        // during the loop into the journal entry that is transitioned to
+                        // COMPLETE below - the local journalEntry still predates the loop
+                        // and would otherwise commit an empty assetTasks ledger (mirrors
+                        // the startup-resume path, which finalizes the merged entry).
+                        journalEntry = assetOutcome.journalEntry ?: journalEntry
                     } else {
-                        emptyList()
+                        receiptWarnings = emptyList()
                     }
 
                     preRestoreFile.delete()
@@ -1269,14 +1277,20 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             // after staging cleanup and a terminal failed journal (RP-03B).
             if (isPostSwapJournalState(journalEntry.state)) {
                 restoreMaintenanceMode.exit(forceRestartRequired = true)
+                // RP-03 fix: mirror the CancellationException handler above - a
+                // post-swap generic failure must PRESERVE the extraction dir (the
+                // startup asset-resume source; the journal is deliberately left in a
+                // resumable state). Only the staged trio is residue here. Pre-swap
+                // failures get the full cleanup below.
+                cleanupStagedDbTrio(stagedDbPath)
             } else {
                 restoreJournal.failJournal(journalEntry, "RESTORE_FAILED")
                 restoreMaintenanceMode.exit(forceRestartRequired = false)
+                // P7-006: the outer failure path previously cleaned nothing - staged trio
+                // and extraction workspace leaked. (.pre_restore is kept as a recovery
+                // source for the startup path.)
+                cleanupRestoreStaging(stagedDbPath, tempDir)
             }
-            // P7-006: the outer failure path previously cleaned nothing — staged trio
-            // and extraction workspace leaked. (.pre_restore is kept as a recovery
-            // source for the startup path.)
-            cleanupRestoreStaging(stagedDbPath, tempDir)
             // Use finalizeRunFailed which respects roomAllowed flag
             restoreEvents.finalizeRunFailed("RESTORE_FAILED", e)
             Result.failure(e)
@@ -1300,10 +1314,19 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
      * (db/-wal/-shm) and the bundle extraction workspace. Never throws.
      */
     private fun cleanupRestoreStaging(stagedDbPath: String, tempDir: File?) {
+        cleanupStagedDbTrio(stagedDbPath)
+        runCatching { tempDir?.deleteRecursively() }
+    }
+
+    /**
+     * P7-006: best-effort deletion of the staged DB trio only, keeping the bundle
+     * extraction workspace intact (RP-03: post-swap failures must preserve it as the
+     * startup asset-resume source). Never throws.
+     */
+    private fun cleanupStagedDbTrio(stagedDbPath: String) {
         runCatching { File(stagedDbPath).delete() }
         runCatching { File(stagedDbPath + "-wal").delete() }
         runCatching { File(stagedDbPath + "-shm").delete() }
-        runCatching { tempDir?.deleteRecursively() }
     }
 
     /**
@@ -1337,26 +1360,43 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
     }
 
     /**
+     * RP-03 fix: result of the receipt-asset restore loop - the user-facing
+     * warnings plus the final journal ledger (per-task COMPLETED/FAILED states),
+     * so the caller can carry the real ledger into the committed journal.
+     */
+    internal data class ReceiptAssetRestoreOutcome(
+        val warnings: List<String>,
+        val journalEntry: RestoreJournal.JournalEntry?
+    )
+
+    /**
      * Restores receipt asset files from the extracted bundle and updates
      * the [ScannedReceipt.imagePath] in the database to point to the new location.
      *
      * Backup files are named as "{receiptId}_{originalFilename}", so we parse the
      * receipt ID from the filename to locate the corresponding DB record.
      *
+     * RP-03 fix: the final file name is derived from the task's own identity
+     * (receiptId + allowlisted source extension) - deterministic across retries.
+     * The journal-recorded target name is only a cross-check; existing final files
+     * are never overwritten (fail-closed collision rejection) and duplicate
+     * receipt-id tasks in one batch all fail closed.
+     *
      * ## Idempotency
      * Asset restore is best-effort. If the DB transaction that updates image paths
      * is rolled back, the DB remains consistent — orphan asset files left on disk
      * are cleaned up by the periodic receipt asset cleanup job.
      *
-     * @return list of warning messages for any files that could not be restored.
+     * @return warnings plus the final journal entry carrying the asset-task ledger.
      */
-    private suspend fun restoreReceiptAssets(
+    @androidx.annotation.VisibleForTesting
+    internal suspend fun restoreReceiptAssets(
         assetsDir: java.io.File,
         manifest: CostbackupBundle.BackupManifest,
         db: com.yourname.expensetracker.data.database.AppDatabase,
         journalEntry: RestoreJournal.JournalEntry? = null,
         restoreEvents: com.yourname.expensetracker.data.backup.RestoreDiagnosticsSink? = null
-    ): List<String> {
+    ): ReceiptAssetRestoreOutcome {
         val warnings = mutableListOf<String>()
         val receiptsDir = java.io.File(context.filesDir, "receipts")
         receiptsDir.mkdirs()
@@ -1364,13 +1404,13 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         val receiptsSubdir = java.io.File(assetsDir, "receipts")
         if (!receiptsSubdir.exists()) {
             Timber.d("No receipt assets to restore")
-            return warnings
+            return ReceiptAssetRestoreOutcome(warnings, journalEntry)
         }
 
         val receiptFiles = receiptsSubdir.listFiles { f -> f.isFile } ?: emptyArray()
         if (receiptFiles.isEmpty()) {
             Timber.d("No receipt asset files in bundle")
-            return warnings
+            return ReceiptAssetRestoreOutcome(warnings, journalEntry)
         }
 
         val dao = db.scannedReceiptDao()
@@ -1396,21 +1436,46 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         // journal before any copy/DB work begins. A crash mid-loop will leave a journal
         // that shows which tasks were still PENDING and can be resumed.
         if (currentJournalEntry != null) {
+            // RP-03 fix (fail-closed duplicate rejection): the plan contract rejects
+            // duplicate asset IDs / duplicate receipt+kind keys. With identity-derived
+            // final names, two files for one receiptId resolve to the SAME final file -
+            // ALL conflicting tasks are journaled FAILED and never run, so neither can
+            // silently overwrite the other (no first-wins preference).
+            val duplicateReceiptIds = receiptFiles
+                .mapNotNull { it.nameWithoutExtension.substringBefore("_").toLongOrNull() }
+                .filter { it > 0L }
+                .groupingBy { it }
+                .eachCount()
+                .filterValues { it > 1 }
+                .keys
+
             val pendingTasks = receiptFiles.mapNotNull { assetFile ->
                 val receiptId = assetFile.nameWithoutExtension
                     .substringBefore("_")
                     .toLongOrNull()
                 if (receiptId != null && receiptId > 0L) {
-                    // P7-009: deterministic per-asset identity — the final file name is
-                    // chosen once and journaled while the task is PENDING, so retries
-                    // and startup resume reuse the same final path instead of
-                    // regenerating a UUID (which would leak an orphan per attempt).
-                    val extension = assetFile.extension.takeIf { it.isNotBlank() } ?: "jpg"
+                    // P7-009 + RP-03 fix: the final name is derived from the task's own
+                    // identity (receiptId + extension validated against the FIXED
+                    // allowlist) and journaled while PENDING, so retries and startup
+                    // resume reuse the same final path - the journal never supplies
+                    // the name itself.
+                    val derivedName = RestoreJournal.deriveAssetTargetName(receiptId, assetFile.extension)
+                    val isDuplicate = duplicateReceiptIds.contains(receiptId)
                     RestoreJournal.AssetRestoreTask(
                         receiptId = receiptId,
                         sourceRelativePath = assetFile.name,
-                        status = RestoreJournal.AssetRestoreStatus.PENDING,
-                        targetPath = java.io.File(receiptsDir, "${UUID.randomUUID()}.$extension").absolutePath
+                        status = when {
+                            isDuplicate -> RestoreJournal.AssetRestoreStatus.FAILED
+                            derivedName == null -> RestoreJournal.AssetRestoreStatus.FAILED
+                            else -> RestoreJournal.AssetRestoreStatus.PENDING
+                        },
+                        targetPath = if (isDuplicate) null
+                            else derivedName?.let { java.io.File(receiptsDir, it).absolutePath },
+                        error = when {
+                            isDuplicate -> RestoreJournal.ASSET_REASON_DUPLICATE_TASK
+                            derivedName == null -> RestoreJournal.ASSET_REASON_INVALID_TARGET
+                            else -> null
+                        }
                     )
                 } else null
             }
@@ -1434,27 +1499,61 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     continue
                 }
 
+                // RP-03 fix: tasks already rejected at pre-population (duplicate
+                // receipt-id or non-allowlisted extension) never run.
+                val ledgerTask = currentJournalEntry?.assetTasks
+                    ?.firstOrNull { it.receiptId == receiptId }
+                if (ledgerTask?.status == RestoreJournal.AssetRestoreStatus.FAILED) {
+                    val rejectReason = ledgerTask.error ?: RestoreJournal.ASSET_REASON_INVALID_TARGET
+                    warnings.add("Receipt asset task rejected: $rejectReason")
+                    Timber.w("Receipt asset task rejected for receiptId=%d (%s)", receiptId, rejectReason)
+                    continue
+                }
+
                 // 2. Validate receipt row exists before copying asset
                 val receipt = dao.getById(receiptId)
                 if (receipt == null) {
                     val msg = "Receipt record not found for restored asset (id=$receiptId, file=${assetFile.name})"
                     warnings.add(msg)
                     Timber.w(msg)
+                    currentJournalEntry = markAssetTaskFailed(currentJournalEntry, receiptId, "RECEIPT_ROW_MISSING")
                     continue
                 }
 
                 // 3. Copy asset to a durable final file FIRST, then update the DB pointer.
                 //    P7-009: the DB update must follow the successful rename so a failed
-                //    copy/rename never leaves imagePath targeting a missing file, and the
-                //    final name is deterministic across retries (journal-recorded target).
-                val extension = assetFile.extension.takeIf { it.isNotBlank() } ?: "jpg"
-                val finalName = currentJournalEntry?.assetTasks
-                    ?.firstOrNull { it.receiptId == receiptId }
-                    ?.targetPath
-                    ?.let { java.io.File(it).name }
-                    ?: "${UUID.randomUUID()}.$extension"
+                //    copy/rename never leaves imagePath targeting a missing file.
+                //    RP-03 fix: the final name is DERIVED from the task identity
+                //    (receiptId + allowlisted source extension) and deterministic across
+                //    retries; the journal-recorded target name is a cross-check only -
+                //    never the source of the name.
+                val finalName = RestoreJournal.deriveAssetTargetName(receiptId, assetFile.extension)
+                val journalName = ledgerTask?.targetPath?.let { java.io.File(it).name }
+                if (finalName == null || (journalName != null && journalName != finalName)) {
+                    warnings.add("Receipt asset rejected: ${RestoreJournal.ASSET_REASON_INVALID_TARGET}")
+                    Timber.w(
+                        "Receipt asset rejected for receiptId=%d (%s)",
+                        receiptId, RestoreJournal.ASSET_REASON_INVALID_TARGET
+                    )
+                    currentJournalEntry = markAssetTaskFailed(
+                        currentJournalEntry, receiptId, RestoreJournal.ASSET_REASON_INVALID_TARGET
+                    )
+                    continue
+                }
                 val finalFile = java.io.File(receiptsDir, finalName)
                 val tempFile = java.io.File(receiptsDir, "$finalName.tmp")
+
+                // RP-03 fix (fail-closed collision rejection): never overwrite an
+                // existing final file - a rename/copy onto it would silently replace a
+                // foreign asset. Both this check and the post-rename fallback guard it.
+                if (finalFile.exists()) {
+                    warnings.add("Receipt asset rejected: ${RestoreJournal.ASSET_REASON_TARGET_COLLISION}")
+                    Timber.w("Receipt asset target collision for receiptId=%d", receiptId)
+                    currentJournalEntry = markAssetTaskFailed(
+                        currentJournalEntry, receiptId, RestoreJournal.ASSET_REASON_TARGET_COLLISION
+                    )
+                    continue
+                }
                 try {
                     assetFile.inputStream().use { input ->
                         java.io.FileOutputStream(tempFile).use { output ->
@@ -1465,6 +1564,17 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                         }
                     }
                     if (!tempFile.renameTo(finalFile)) {
+                        if (finalFile.exists()) {
+                            // A foreign file appeared between the pre-check and the
+                            // rename - fail closed instead of the copy fallback.
+                            runCatching { tempFile.delete() }
+                            warnings.add("Receipt asset rejected: ${RestoreJournal.ASSET_REASON_TARGET_COLLISION}")
+                            Timber.w("Receipt asset target collision for receiptId=%d", receiptId)
+                            currentJournalEntry = markAssetTaskFailed(
+                                currentJournalEntry, receiptId, RestoreJournal.ASSET_REASON_TARGET_COLLISION
+                            )
+                            continue
+                        }
                         tempFile.copyTo(finalFile, overwrite = true)
                         tempFile.delete()
                     }
@@ -1529,15 +1639,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     }
                 }
                 // Update journal ledger: mark task FAILED
-                if (currentJournalEntry != null && receiptId != null) {
-                    val updatedTasks = currentJournalEntry.assetTasks.map { t ->
-                        if (t.receiptId == receiptId) t.copy(
-                            status = RestoreJournal.AssetRestoreStatus.FAILED,
-                            error = "ASSET_RESTORE_FAILED"
-                        ) else t
-                    }
-                    currentJournalEntry = currentJournalEntry.copy(assetTasks = updatedTasks)
-                    runCatching { restoreJournal.writeJournal(currentJournalEntry) }
+                if (receiptId != null) {
+                    currentJournalEntry = markAssetTaskFailed(currentJournalEntry, receiptId, "ASSET_RESTORE_FAILED")
                 }
             }
         }
@@ -1553,7 +1656,31 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 restoredCount
             )
         }
-        return warnings
+        return ReceiptAssetRestoreOutcome(warnings, currentJournalEntry)
+    }
+
+    /**
+     * RP-03 fix: marks the ledger task for [receiptId] FAILED with a controlled
+     * reason code and persists the updated journal (best-effort). Returns the
+     * updated entry, or null when there is no ledger to update.
+     */
+    private fun markAssetTaskFailed(
+        entry: RestoreJournal.JournalEntry?,
+        receiptId: Long,
+        reasonCode: String
+    ): RestoreJournal.JournalEntry? {
+        if (entry == null) return null
+        val updated = entry.copy(
+            assetTasks = entry.assetTasks.map { t ->
+                if (t.receiptId == receiptId) {
+                    t.copy(status = RestoreJournal.AssetRestoreStatus.FAILED, error = reasonCode)
+                } else {
+                    t
+                }
+            }
+        )
+        runCatching { restoreJournal.writeJournal(updated) }
+        return updated
     }
 
     /**

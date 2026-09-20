@@ -5480,25 +5480,6 @@ entries:
   parameterTypes:
   - List<com.yourname.expensetracker.domain.recurring.OccurrenceConflictResolver.ResolvedOccurrence>
   - com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceMaterializer.MaterializationOptions
-  daoAccessor: lifecycleEventDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08i2 EXACT_POLICY: writes the durable recurring lifecycle events (OCCURRENCE_STATUS_CHANGED,
-    PLANNED_FULFILLED, PLANNED_FULFILLMENT_SKIPPED, OCCURRENCE_GENERATED, REMINDER_SCHEDULE_SKIPPED,
-    REMINDER_SCHEDULED) inside the same transaction as the mutations they audit; the
-    8 call sites share this one fingerprint (identical callable + DAO + operation
-    identity)'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08I
-- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringOccurrenceMaterializer.kt
-  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceMaterializer
-  kind: function
-  method: materializeInCurrentTransaction
-  receiver: null
-  parameterTypes:
-  - List<com.yourname.expensetracker.domain.recurring.OccurrenceConflictResolver.ResolvedOccurrence>
-  - com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceMaterializer.MaterializationOptions
   daoAccessor: occurrenceDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
   operation: insert
