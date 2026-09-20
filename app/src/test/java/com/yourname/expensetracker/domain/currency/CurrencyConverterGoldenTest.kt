@@ -17,14 +17,14 @@ class CurrencyConverterGoldenTest : AnalyticsEngineTestBase() {
     private lateinit var converter: CurrencyConverter
 
     /** Fixed clock: makes rate-age assertions deterministic (D4 policy). */
-    private val fixedNow = 1_700_000_000_000L
+    private val converterFixedNow = 1_700_000_000_000L
 
     @Before
     override fun setUp() {
         super.setUp()
         exchangeRateStore = mockk(relaxed = true)
         converter = CurrencyConverter(exchangeRateStore, timeProvider = object : TimeProvider {
-            override fun now(): Long = fixedNow
+            override fun now(): Long = converterFixedNow
         })
     }
 
@@ -53,14 +53,14 @@ class CurrencyConverterGoldenTest : AnalyticsEngineTestBase() {
             fromCurrency = "GBP",
             toCurrency = "EUR",
             rate = 1.17,
-            lastUpdated = fixedNow - 1,
+            lastUpdated = converterFixedNow - 1,
             source = "golden"
         )
         coEvery { exchangeRateStore.getRate("EUR", "JPY") } returns DomainExchangeRate(
             fromCurrency = "EUR",
             toCurrency = "JPY",
             rate = 162.50,
-            lastUpdated = fixedNow - 1,
+            lastUpdated = converterFixedNow - 1,
             source = "golden"
         )
 

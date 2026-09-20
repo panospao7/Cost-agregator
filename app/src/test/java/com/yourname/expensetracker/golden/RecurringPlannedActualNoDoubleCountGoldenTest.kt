@@ -253,6 +253,29 @@ class RecurringPlannedActualNoDoubleCountGoldenTest : GoldenTestBase() {
         val expenseDao = database.expenseDao()
         val ruleDao = database.manualRecurringExpenseDao()
 
+        // Shared event writer (hoisted from two identical inline literals):
+        // only inserts into eventDao. Used by both coordinator eventWriter
+        // params and both RecurringOccurrenceMaterializer eventWriter params.
+        val eventWriter = object : com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleEventWriter {
+            override suspend fun writeCritical(
+                occurrenceId: Long?,
+                eventType: String,
+                oldStatus: String?,
+                newStatus: String?,
+                metadata: String?,
+                occurredAt: Long
+            ): Long = eventDao.insert(
+                com.yourname.expensetracker.data.database.entity.RecurringLifecycleEvent(
+                    occurrenceId = occurrenceId,
+                    eventType = eventType,
+                    occurredAt = if (occurredAt == 0L) fixedNow else occurredAt,
+                    oldStatus = oldStatus,
+                    newStatus = newStatus,
+                    metadata = metadata
+                )
+            )
+        }
+
         val lifecycleCoordinator = com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator(
             database = database,
             expander = com.yourname.expensetracker.domain.recurring.RecurringOccurrenceExpander(),
@@ -263,7 +286,7 @@ class RecurringPlannedActualNoDoubleCountGoldenTest : GoldenTestBase() {
                 occurrenceDao = occurrenceDao,
                 reminderDeliveryDao = deliveryDao,
                 timeProvider = timeProvider,
-                lifecycleEventDao = eventDao,
+                eventWriter = eventWriter,
                 plannedExpenseDao = plannedDao
             ),
             occurrenceDao = occurrenceDao,
@@ -293,25 +316,7 @@ class RecurringPlannedActualNoDoubleCountGoldenTest : GoldenTestBase() {
                     )
                 )
             },
-            eventWriter = object : com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleEventWriter {
-                override suspend fun writeCritical(
-                    occurrenceId: Long?,
-                    eventType: String,
-                    oldStatus: String?,
-                    newStatus: String?,
-                    metadata: String?,
-                    occurredAt: Long
-                ): Long = eventDao.insert(
-                    com.yourname.expensetracker.data.database.entity.RecurringLifecycleEvent(
-                        occurrenceId = occurrenceId,
-                        eventType = eventType,
-                        occurredAt = if (occurredAt == 0L) fixedNow else occurredAt,
-                        oldStatus = oldStatus,
-                        newStatus = newStatus,
-                        metadata = metadata
-                    )
-                )
-            }
+            eventWriter = eventWriter
         )
 
         val projectionService = com.yourname.expensetracker.domain.recurring.RecurringPlanProjectionService(
@@ -337,29 +342,11 @@ class RecurringPlannedActualNoDoubleCountGoldenTest : GoldenTestBase() {
                 occurrenceDao = occurrenceDao,
                 reminderDeliveryDao = deliveryDao,
                 timeProvider = timeProvider,
-                lifecycleEventDao = eventDao,
+                eventWriter = eventWriter,
                 plannedExpenseDao = plannedDao
             ),
             expenseDao = expenseDao,
-            eventWriter = object : com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleEventWriter {
-                override suspend fun writeCritical(
-                    occurrenceId: Long?,
-                    eventType: String,
-                    oldStatus: String?,
-                    newStatus: String?,
-                    metadata: String?,
-                    occurredAt: Long
-                ): Long = eventDao.insert(
-                    com.yourname.expensetracker.data.database.entity.RecurringLifecycleEvent(
-                        occurrenceId = occurrenceId,
-                        eventType = eventType,
-                        occurredAt = if (occurredAt == 0L) fixedNow else occurredAt,
-                        oldStatus = oldStatus,
-                        newStatus = newStatus,
-                        metadata = metadata
-                    )
-                )
-            },
+            eventWriter = eventWriter,
             planProjectionService = dagger.Lazy { projectionService }
         )
     }
