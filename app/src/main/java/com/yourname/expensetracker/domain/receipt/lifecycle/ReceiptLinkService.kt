@@ -172,6 +172,11 @@ class ReceiptLinkService @Inject constructor(
 
         val now = timeProvider.now()
 
+        // RP-11 FIX 4: captured across the transaction boundary — the lambda scope
+        // closes before the post-commit dispatch below runs, so the flag must be
+        // declared in the enclosing function scope to be visible there.
+        var assignedCategoryId: Long? = null
+
         // 2. Insert + legacy update + event inside a single database transaction
         //    The receipt eligibility read is also inside the transaction (P3-004,
         //    RP-12 12b) so existence and documentType are fresh at write time.
@@ -181,7 +186,7 @@ class ReceiptLinkService @Inject constructor(
         //    claim affects 0 rows and we throw ReceiptAlreadyClaimedException to roll back
         //    the just-inserted link, then convert it to a Result.failure below.
         return try {
-            transactionRunner.runInTransaction(
+            val result = transactionRunner.runInTransaction(
                 correlationId = java.util.UUID.randomUUID().toString(),
                 operationId = "receipt.link_to_expense",
                 source = "ReceiptLinkService"
@@ -285,6 +290,12 @@ class ReceiptLinkService @Inject constructor(
 
             // RCP-30: Propagate item majority category to expense if the expense
             // currently has no categoryId. Failures are logged but do not break linking.
+            // RP-11 FIX 4: the port call commits the assignment + event only;
+            // the side-effect dispatch is deferred to AFTER this transaction
+            // commits (see below) — Room transactions are re-entrant, so a
+            // dispatch made in here would join the outer transaction. The
+            // assignedCategoryId write targets the function-scope var declared
+            // above so the post-commit block can see it.
             try {
                 val categorizations = receiptItemCategorizationDao.getByReceiptId(receiptId)
                 if (categorizations.isNotEmpty()) {
@@ -295,12 +306,14 @@ class ReceiptLinkService @Inject constructor(
                     if (bestCategoryId != null) {
                         val existingExpense = expenseDao.getById(expenseId)
                         if (existingExpense != null && existingExpense.categoryId == null) {
-                            categoryAssignmentPort.assignCategoryIfUnset(
+                            val outcome = categoryAssignmentPort.assignCategoryIfUnset(
                                 expenseId = expenseId,
                                 categoryId = bestCategoryId,
                                 source = "RECEIPT_ITEM_MAJORITY"
                             )
-                            Timber.d("RCP-30: Category %d propagated to expense %d via port", bestCategoryId, expenseId)
+                            if (outcome is CategoryAssignmentOutcome.Assigned) {
+                                assignedCategoryId = bestCategoryId
+                            }
                         }
                     }
                     val categoryFrequencies = categorizations
@@ -344,6 +357,34 @@ class ReceiptLinkService @Inject constructor(
             // 6. Return the link with actual DB-generated ID
             Result.success(link.copy(id = linkId))
             }
+
+            // RP-11 FIX 4: post-commit side-effect dispatch for a category
+            // assignment that committed inside the transaction above. Running
+            // it here — after runInTransaction returned — guarantees the budget
+            // recheck / anomaly alert see committed data and never run for a
+            // rolled-back link transaction (no phantom side effects, no
+            // extended lock window). Best-effort: failures are logged by the
+            // port and must not fail the already-committed link.
+            if (assignedCategoryId != null) {
+                try {
+                    categoryAssignmentPort.dispatchAssignedCategorySideEffects(
+                        expenseId = expenseId,
+                        source = "RECEIPT_ITEM_MAJORITY"
+                    )
+                    Timber.d(
+                        "RCP-30: Post-commit side effects dispatched for expense %d (category %d)",
+                        expenseId, assignedCategoryId
+                    )
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Timber.w(e, "RCP-30: Post-commit side-effect dispatch failed for expense %d", expenseId)
+                }
+            }
+
+            // 6b. The transaction's link outcome is the function result; the dispatch
+            // above is strictly post-commit and cannot alter it.
+            result
         } catch (e: ReceiptAlreadyClaimedException) {
             // S6: concurrent run already resolved the receipt; the inserted link
             // was rolled back with the transaction. Surface as a failure the worker

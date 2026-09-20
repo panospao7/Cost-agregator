@@ -62,5 +62,10 @@ enum class DiagnosticReasonCode {
     ENQUEUE_FAILED,
 
     // RP-10 10b (P1-004): caller cancellation accounted for, never swallowed.
-    CAPTURE_CANCELLED
+    CAPTURE_CANCELLED,
+
+    // RP-11 11c (NEW-P2-016): home-currency settings could not be resolved
+    // (DataStore error/timeout) — no fabricated base snapshot; conversion
+    // fields marked unavailable via the existing sentinel model.
+    HOME_CURRENCY_UNAVAILABLE
 }

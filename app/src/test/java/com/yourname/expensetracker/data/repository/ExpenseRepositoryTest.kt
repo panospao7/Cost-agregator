@@ -10,6 +10,7 @@ import com.yourname.expensetracker.data.database.entity.UserCorrection
 import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.data.database.dao.MerchantSuggestion
+import com.yourname.expensetracker.domain.transaction.lifecycle.DuplicateUpdateException
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import androidx.room.withTransaction
 import io.mockk.*
@@ -45,6 +46,13 @@ class ExpenseRepositoryTest {
         // Mock internal flow to avoid lateinit issues
         // A.9: repository now calls the uncapped Flow variant
         every { expenseDao.getAllFlowUncapped() } returns flowOf(emptyList())
+
+        // P2-003: bulkUpdateMerchant returns Result<Unit>; a relaxed mock's
+        // default for a value-class-parameterized generic is unreliable, so
+        // stub the success path explicitly for delegate tests.
+        coEvery {
+            transactionLifecycleCoordinator.bulkUpdateMerchant(any(), any(), any(), any(), any())
+        } returns Result.success(Unit)
 
         // withTransaction inline mock removed — mockk(relaxed=true) handles underlying RoomDatabase methods
 
@@ -162,6 +170,73 @@ class ExpenseRepositoryTest {
         coVerify(exactly = 0) { expenseDao.updateMerchantForMerchant(any(), any(), any()) }
         coVerify(exactly = 0) { pendingReviewDao.bulkRenameMerchant(any(), any(), any(), any()) }
         coVerify(exactly = 0) { merchantNormalizer.learnMerchantAlias(any(), any()) }
+    }
+
+    /**
+     * P2-003 all-or-nothing contract at the repository boundary: when the
+     * coordinator aborts the bulk merchant rename with
+     * [DuplicateUpdateException] (MERCHANT_RENAME_DUPLICATE), the pending-review
+     * rename and the alias-learning side effects must NOT run — no store is
+     * left half-renamed.
+     */
+    @Test
+    fun `updateExpenseMerchantApplyToAllAbortsPendingReviewRenameOnBulkFailure`() = runTest {
+        val oldMerchant = "Old Store"
+        val newMerchant = "New Store"
+        val expense = Expense(
+            id = 404L,
+            amount = 15.0,
+            merchant = oldMerchant,
+            categoryId = 3L,
+            transactionType = TransactionType.PURCHASE,
+            date = 1_700_000_000_000L
+        )
+
+        coEvery {
+            transactionLifecycleCoordinator.bulkUpdateMerchant(oldMerchant, newMerchant, any(), any(), any())
+        } returns Result.failure(
+            DuplicateUpdateException(
+                TransactionLifecycleCoordinator.BulkMerchantRenameFailure.MERCHANT_RENAME_DUPLICATE
+            )
+        )
+
+        try {
+            repository.updateExpenseMerchant(expense, newMerchant, applyToAll = true)
+            assertTrue("Expected IllegalStateException from applyToAll bulk failure", false)
+        } catch (expected: IllegalStateException) {
+            // P2-003: typed failure surfaces before any side-effect write.
+        }
+
+        // The "no half-renamed stores" guarantee: pending-review rename and
+        // alias learning must be skipped when the bulk rename aborts.
+        coVerify(exactly = 0) { pendingReviewDao.bulkRenameMerchant(any(), any(), any(), any()) }
+        coVerify(exactly = 0) { merchantNormalizer.learnMerchantAlias(any(), any()) }
+    }
+
+    /**
+     * P2-001 route-level pin: the repository id-path must go through the
+     * coordinator (no pre-check read) and surface the coordinator's typed
+     * NotFound failure as [IllegalArgumentException] via [Result.getOrThrow].
+     */
+    @Test
+    fun `deleteExpenseMissingRowThrowsIllegalArgumentExceptionThroughCoordinator`() = runTest {
+        coEvery {
+            transactionLifecycleCoordinator.deleteExpense(any())
+        } returns Result.failure(IllegalArgumentException("Expense not found: 77"))
+
+        try {
+            repository.deleteExpense(77L)
+            assertTrue("Expected IllegalArgumentException from coordinator NotFound", false)
+        } catch (expected: IllegalArgumentException) {
+            assertEquals("Expense not found: 77", expected.message)
+        }
+
+        // Route pin: the coordinator was called (stub entity carrying the id),
+        // and the old pre-check read is gone.
+        coVerify(exactly = 1) {
+            transactionLifecycleCoordinator.deleteExpense(match { it.id == 77L })
+        }
+        coVerify(exactly = 0) { expenseDao.getById(any()) }
     }
 
     @Test

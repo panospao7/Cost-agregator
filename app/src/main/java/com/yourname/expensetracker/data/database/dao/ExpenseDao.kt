@@ -542,6 +542,12 @@ suspend fun updateDedupeKey(expenseId: Long, dedupeKey: String)
      *
      * Type compatibility: if [transactionType] is `'UNKNOWN'`, any type matches;
      * otherwise the existing row must be `UNKNOWN` or equal to [transactionType].
+     *
+     * P2-008 (11c): BLOCKING dedupe query family — intentionally INCLUDES
+     * `isNotMine` rows: a not-mine expense occupying the same identity space must
+     * still block a duplicate create/update. Resolution/suggestion queries
+     * ([getDuplicateCandidateByMerchantKeyInRangeCurrencyAware] family,
+     * [findDuplicateIdCurrencyAware]) intentionally EXCLUDE not-mine rows instead.
      */
     @Query("""
         SELECT EXISTS(
@@ -652,6 +658,13 @@ AND LENGTH(:merchantKey) >= 8
     /**
      * Fetch the best duplicate candidate by **merchantKey** within a time/amount
      * range, restricted to the given currency and compatible transaction type.
+     *
+     * P2-008 (11c): RESOLUTION/SUGGESTION query — intentionally EXCLUDES
+     * `isNotMine` rows. The blocking precheck family
+     * ([existsByMerchantKeyInRangeCurrencyAware] and siblings) intentionally
+     * INCLUDES not-mine rows; the fuzzy resolver [findDuplicateIdCurrencyAware]
+     * must never resolve to one. Also feeds the import-suggestion path
+     * [getDuplicateCandidateForImportCurrencyAware].
      */
     @Query("""
         SELECT * FROM expenses
@@ -665,6 +678,7 @@ AND LENGTH(:merchantKey) >= 8
               OR transactionType = 'UNKNOWN'
               OR transactionType = :transactionType
           )
+          AND isNotMine = 0
         ORDER BY date DESC
         LIMIT 1
     """)
@@ -687,6 +701,9 @@ AND LENGTH(:merchantKey) >= 8
      * [Expense] row instead of a Boolean.  Catches cross-source duplicates where
      * one source includes the store branch/address and the other has just the
      * store name.
+     *
+     * P2-008 (11c): RESOLUTION/SUGGESTION query — intentionally EXCLUDES
+     * `isNotMine` rows (see [getDuplicateCandidateByMerchantKeyInRangeCurrencyAware]).
      */
     @Query("""
         SELECT * FROM expenses
@@ -705,6 +722,7 @@ AND LENGTH(:merchantKey) >= 8
             OR transactionType = 'UNKNOWN'
             OR transactionType = :transactionType
         )
+        AND isNotMine = 0
         ORDER BY date DESC
         LIMIT 1
     """)
@@ -722,6 +740,9 @@ AND LENGTH(:merchantKey) >= 8
      * Fetch the best duplicate candidate by raw **merchant** name within a
      * time/amount range, restricted to the given currency and compatible
      * transaction type.
+     *
+     * P2-008 (11c): RESOLUTION/SUGGESTION query — intentionally EXCLUDES
+     * `isNotMine` rows (see [getDuplicateCandidateByMerchantKeyInRangeCurrencyAware]).
      */
     @Query("""
         SELECT * FROM expenses
@@ -735,6 +756,7 @@ AND LENGTH(:merchantKey) >= 8
               OR transactionType = 'UNKNOWN'
               OR transactionType = :transactionType
           )
+          AND isNotMine = 0
         ORDER BY date DESC
         LIMIT 1
     """)
@@ -775,6 +797,13 @@ AND LENGTH(:merchantKey) >= 8
      * Backward compatibility with mixed old/new dedupe-key rows is maintained by
      * the merchant/amount/date/currency/type range queries below, which catch
      * legacy rows regardless of their key format.
+     *
+     * P2-008 (11c): BLOCKING dedupe policy — this precheck intentionally INCLUDES
+     * `isNotMine` rows (via the [existsByMerchantKeyInRangeCurrencyAware] family):
+     * a not-mine expense occupying the same identity space must still block a
+     * duplicate create/update. Resolution/suggestion queries
+     * ([getDuplicateCandidateByMerchantKeyInRangeCurrencyAware] family,
+     * [findDuplicateIdCurrencyAware]) intentionally EXCLUDE not-mine rows instead.
      */
     @Transaction
     suspend fun isDuplicateCurrencyAware(
@@ -846,7 +875,21 @@ AND LENGTH(:merchantKey) >= 8
      * Returns the ID of the first matching expense, or `null` if no duplicate
      * is found within the configured time/amount window.
      *
+     * P2-008 (11c): fuzzy RESOLVER — this method must NEVER return a not-mine
+     * row. It runs on the resolution/suggestion candidate family
+     * ([getDuplicateCandidateByMerchantKeyInRangeCurrencyAware] and siblings),
+     * which filters `isNotMine = 0` in SQL; the blocking precheck
+     * ([isDuplicateCurrencyAware]) intentionally keeps including not-mine rows.
+     *
+     * RP-11 FIX 2: this resolver family must NOT be used for mutation collision
+     * preflights (updateExpense/updateMerchant/updateType/updateTypeAndTransferDetails/
+     * bulkUpdateMerchant) or post-blocking audit lookups — those must use the
+     * not-mine-INCLUSIVE [findBlockingDuplicateIdCurrencyAware], otherwise a
+     * not-mine row occupying the target identity slips past the preflight and
+     * the write dies on the raw dedupeKey unique-index constraint.
+     *
      * @see isDuplicateCurrencyAware
+     * @see findBlockingDuplicateIdCurrencyAware
      */
     @Transaction
     suspend fun findDuplicateIdCurrencyAware(
@@ -909,6 +952,196 @@ AND LENGTH(:merchantKey) >= 8
             )?.id
         }
     }
+
+    /**
+     * Policy-aware duplicate ID retrieval for COLLISION preflights and
+     * post-blocking audit lookups.
+     *
+     * Mirrors the resolver [findDuplicateIdCurrencyAware] three-tier matching
+     * (exact merchantKey → prefix containment → raw merchant) but — matching the
+     * blocking precheck [isDuplicateCurrencyAware] — intentionally INCLUDES
+     * `isNotMine` rows: a not-mine expense occupying the target identity space
+     * must still abort a colliding update/rename with a typed
+     * [com.yourname.expensetracker.domain.transaction.lifecycle.DuplicateUpdateException]
+     * instead of letting the write die on the raw dedupeKey unique index.
+     *
+     * RP-11 FIX 2: use this family for mutation collision preflights
+     * (updateExpense/updateMerchant/updateType/updateTypeAndTransferDetails/
+     * bulkUpdateMerchant) and duplicate-ledger audit lookups. The
+     * `isNotMine = 0` exclusion stays ONLY on the fuzzy resolver
+     * ([findDuplicateIdCurrencyAware]) and suggestion paths (P2-008 intent).
+     *
+     * @see findDuplicateIdCurrencyAware
+     */
+    @Transaction
+    suspend fun findBlockingDuplicateIdCurrencyAware(
+        amount: Double,
+        merchant: String,
+        date: Long,
+        currency: String,
+        transactionType: String,
+        windowMs: Long = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS,
+        merchantKey: String? = null,
+        dedupeKey: String? = null
+    ): Long? {
+        val startDate = date - windowMs
+        // Must match DuplicateDetectionPolicy.windowEndExclusive(date, windowMs).
+        // Kept as arithmetic because DAOs cannot call Kotlin utility methods in SQL.
+        val endDate = date + windowMs + 1
+        val tolerance = DuplicateDetectionPolicy.AMOUNT_TOLERANCE
+        val minAmount = amount - tolerance
+        val maxAmount = amount + tolerance
+        val normalizedCurrency = DuplicateDetectionPolicy.normalizeCurrency(currency)
+
+        val normalizedMerchantKey = merchantKey?.takeIf { it.isNotBlank() }
+        return if (normalizedMerchantKey != null) {
+            getBlockingCandidateByMerchantKeyInRangeCurrencyAware(
+                merchantKey = normalizedMerchantKey,
+                startDate = startDate,
+                endDate = endDate,
+                minAmount = minAmount,
+                maxAmount = maxAmount,
+                currency = normalizedCurrency,
+                transactionType = transactionType
+            )?.id
+                ?: getBlockingCandidateByMerchantKeyPrefixInRangeCurrencyAware(
+                    merchantKey = normalizedMerchantKey,
+                    startDate = startDate,
+                    endDate = endDate,
+                    minAmount = minAmount,
+                    maxAmount = maxAmount,
+                    currency = normalizedCurrency,
+                    transactionType = transactionType
+                )?.id
+                ?: getBlockingCandidateByMerchantInRangeCurrencyAware(
+                    merchant = merchant,
+                    startDate = startDate,
+                    endDate = endDate,
+                    minAmount = minAmount,
+                    maxAmount = maxAmount,
+                    currency = normalizedCurrency,
+                    transactionType = transactionType
+                )?.id
+        } else {
+            getBlockingCandidateByMerchantInRangeCurrencyAware(
+                merchant = merchant,
+                startDate = startDate,
+                endDate = endDate,
+                minAmount = minAmount,
+                maxAmount = maxAmount,
+                currency = normalizedCurrency,
+                transactionType = transactionType
+            )?.id
+        }
+    }
+
+    /**
+     * Blocking-collision candidate by **merchantKey** within a time/amount
+     * range, restricted to the given currency and compatible transaction type.
+     *
+     * RP-11 FIX 2: COLLISION query — intentionally INCLUDES `isNotMine` rows
+     * (no ownership filter), mirroring the blocking precheck
+     * [existsByMerchantKeyInRangeCurrencyAware]. The resolver twin
+     * [getDuplicateCandidateByMerchantKeyInRangeCurrencyAware] keeps its
+     * `isNotMine = 0` exclusion.
+     */
+    @Query("""
+        SELECT * FROM expenses
+        WHERE merchantKey = :merchantKey
+          AND date >= :startDate
+          AND date < :endDate
+          AND amount BETWEEN :minAmount AND :maxAmount
+          AND UPPER(currency) = UPPER(:currency)
+          AND (
+              :transactionType = 'UNKNOWN'
+              OR transactionType = 'UNKNOWN'
+              OR transactionType = :transactionType
+          )
+        ORDER BY date DESC
+        LIMIT 1
+    """)
+    suspend fun getBlockingCandidateByMerchantKeyInRangeCurrencyAware(
+        merchantKey: String,
+        startDate: Long,
+        endDate: Long,
+        minAmount: Double,
+        maxAmount: Double,
+        currency: String,
+        transactionType: String
+    ): Expense?
+
+    /**
+     * Blocking-collision candidate by **merchantKey prefix containment** within
+     * a time/amount range, restricted to the given currency and compatible
+     * transaction type.
+     *
+     * RP-11 FIX 2: COLLISION query — intentionally INCLUDES `isNotMine` rows
+     * (no ownership filter); mirrors
+     * [existsByMerchantKeyPrefixInRangeCurrencyAware]. Resolver twin:
+     * [getDuplicateCandidateByMerchantKeyPrefixInRangeCurrencyAware].
+     */
+    @Query("""
+        SELECT * FROM expenses
+        WHERE (
+            :merchantKey LIKE merchantKey || '%'
+            OR merchantKey LIKE :merchantKey || '%'
+        )
+        AND LENGTH(merchantKey) >= 8
+        AND LENGTH(:merchantKey) >= 8
+        AND date >= :startDate
+        AND date < :endDate
+        AND amount BETWEEN :minAmount AND :maxAmount
+        AND UPPER(currency) = UPPER(:currency)
+        AND (
+            :transactionType = 'UNKNOWN'
+            OR transactionType = 'UNKNOWN'
+            OR transactionType = :transactionType
+        )
+        ORDER BY date DESC
+        LIMIT 1
+    """)
+    suspend fun getBlockingCandidateByMerchantKeyPrefixInRangeCurrencyAware(
+        merchantKey: String,
+        startDate: Long,
+        endDate: Long,
+        minAmount: Double,
+        maxAmount: Double,
+        currency: String,
+        transactionType: String
+    ): Expense?
+
+    /**
+     * Blocking-collision candidate by raw **merchant** name within a time/amount
+     * range, restricted to the given currency and compatible transaction type.
+     *
+     * RP-11 FIX 2: COLLISION query — intentionally INCLUDES `isNotMine` rows
+     * (no ownership filter); mirrors [existsByMerchantInRangeCurrencyAware].
+     * Resolver twin: [getDuplicateCandidateByMerchantInRangeCurrencyAware].
+     */
+    @Query("""
+        SELECT * FROM expenses
+        WHERE merchant = :merchant
+          AND date >= :startDate
+          AND date < :endDate
+          AND amount BETWEEN :minAmount AND :maxAmount
+          AND UPPER(currency) = UPPER(:currency)
+          AND (
+              :transactionType = 'UNKNOWN'
+              OR transactionType = 'UNKNOWN'
+              OR transactionType = :transactionType
+          )
+        ORDER BY date DESC
+        LIMIT 1
+    """)
+    suspend fun getBlockingCandidateByMerchantInRangeCurrencyAware(
+        merchant: String,
+        startDate: Long,
+        endDate: Long,
+        minAmount: Double,
+        maxAmount: Double,
+        currency: String,
+        transactionType: String
+    ): Expense?
 
     /**
      * Policy-aware duplicate candidate retrieval for import / review flows.
@@ -1007,6 +1240,21 @@ AND LENGTH(:merchantKey) >= 8
      */
     @Query("SELECT id FROM expenses WHERE dedupeKey = :dedupeKey LIMIT 1")
     suspend fun findIdByDedupeKey(dedupeKey: String): Long?
+
+    /**
+     * P2-002: indexed lookup of an expense by its unique [rawNotificationId]
+     * source identity. Read query on the existing unique index — no new index.
+     *
+     * P2-008 (11c): identity lookups intentionally include `isNotMine` rows —
+     * a not-mine expense with the same rawNotificationId is still THE expense
+     * created from that notification, so blocking/resolution must see it.
+     * The not-mine exclusion applies to fuzzy suggestion queries only.
+     *
+     * Used by [TransactionLifecycleCoordinator.resolveExistingIdAfterInsertConflict]
+     * to prove which identity actually rejected an insert.
+     */
+    @Query("SELECT id FROM expenses WHERE rawNotificationId = :rawNotificationId LIMIT 1")
+    suspend fun findIdByRawNotificationId(rawNotificationId: Long): Long?
 
     // TODO (P5-P1-5): Remove after all callers migrate to MultiCurrencyRepository
     @Deprecated(

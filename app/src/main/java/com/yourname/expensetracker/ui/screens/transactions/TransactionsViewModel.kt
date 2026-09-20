@@ -1,4 +1,4 @@
-﻿package com.yourname.expensetracker.ui.screens.transactions
+package com.yourname.expensetracker.ui.screens.transactions
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -571,7 +571,16 @@ class TransactionsViewModel @Inject constructor(
     ) {
         viewModelScope.launch {
             try {
-                expenseRepository.updateTransferDetails(expense, transferDirection, transferAccountName.takeIf { it.isNotBlank() })
+                // P2-007: fresh caller correlation id — travels into both the
+                // UPDATED lifecycle event and the planned post-commit batch.
+                val correlationId =
+                    com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
+                expenseRepository.updateTransferDetails(
+                    expense,
+                    transferDirection,
+                    transferAccountName.takeIf { it.isNotBlank() },
+                    correlationId
+                )
                 _successMessage.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Transfer details updated"))
                 refreshPagedExpensesAfterMutation()
             } catch (e: Exception) {

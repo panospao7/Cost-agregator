@@ -117,6 +117,14 @@ class GroupTransactionCoordinatorTest {
         every { restoreMode.isWritesAllowed() } returns true
         every { restoreMode.currentMode() } returns RestoreMaintenanceMode.Mode.NORMAL
         val tlcWriteBarrier = DatabaseWriteBarrier(restoreMode)
+        // NEW-P2-016 (11c): relaxed mocks cannot fabricate a sealed
+        // HomeCurrencyResolution return value — stub the typed resolver
+        // contract explicitly with the test currency.
+        val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
+            com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Resolved(
+                com.yourname.expensetracker.domain.core.money.CurrencyCode("EUR")
+            )
         transactionLifecycleCoordinator = TransactionLifecycleCoordinator(
             database, expenseDao, transactionEventDao, timeProvider,
             mockk<CurrencyConverter>(relaxed = true),
@@ -125,7 +133,7 @@ class GroupTransactionCoordinatorTest {
             mockk<PostCommitActionRunner>(relaxed = true),
             mockk<RecurringLifecycleCoordinator>(relaxed = true),
             tlcWriteBarrier,
-            mockk<CurrencySettingsRepository>(relaxed = true),
+            currencySettingsRepository,
             mockk(relaxed = true),
             mockk(relaxed = true),
             mockk(relaxed = true)

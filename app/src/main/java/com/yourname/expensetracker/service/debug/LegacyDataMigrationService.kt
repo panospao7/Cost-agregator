@@ -294,7 +294,7 @@ class LegacyDataMigrationService @Inject constructor(
             placeId = cursor.getStringOrNull("placeId"),
             resolvedAddress = cursor.getStringOrNull("resolvedAddress"),
             deduplicationMode = DeduplicationMode.BULK_IMPORT,
-            skipDeduplication = false
+            skipPreflightDeduplication = false
         )
     }
 

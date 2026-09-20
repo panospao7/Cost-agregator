@@ -62,7 +62,13 @@ import com.yourname.expensetracker.domain.provenance.SourceLinkPayload
  *   New callsites should prefer sourceLinks directly.
  * // -- Policy fields --
  * @property deduplicationMode Deduplication strategy (default STANDARD).
- * @property skipDeduplication Whether to skip deduplication entirely (default false).
+ * @property skipPreflightDeduplication Preflight-only dedup bypass (default false).
+ *   P2-004: This flag ONLY bypasses the coordinator's in-transaction preflight
+ *   duplicate checks. The authoritative identity constraints — the nullable
+ *   [rawNotificationId] unique index and the unique [dedupeKey] DB constraint —
+ *   are ALWAYS enforced by the database. If a constraint collides, the insert
+ *   returns a typed duplicate/conflict result (never a disguised new row, and
+ *   never a random-UUID key rewrite of the caller's source identity).
  * @property idempotencyKey Optional. Idempotency key for safe retries.
  */
 data class CreateExpenseRequest(
@@ -126,7 +132,7 @@ data class CreateExpenseRequest(
 
     // ── Policy fields ───────────────────────────────────────────────────────────
     val deduplicationMode: DeduplicationMode = DeduplicationMode.STANDARD,
-    val skipDeduplication: Boolean = false,
+    val skipPreflightDeduplication: Boolean = false,
     val idempotencyKey: String? = null,
     /** Optional correlation ID propagated from the triggering input (notification/bank/email). */
     val correlationId: String? = null,

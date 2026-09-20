@@ -7,7 +7,12 @@ import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.entity.Category
+import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
@@ -81,6 +86,13 @@ class TransactionLifecycleCoordinatorDbContractTest {
             )
         } coAnswers { secondArg<suspend () -> Any?>().invoke() }
 
+        // NEW-P2-016 (11c): relaxed mocks cannot fabricate a sealed
+        // HomeCurrencyResolution return value — stub the typed resolver
+        // contract explicitly with the test currency.
+        val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
+            HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
+
         coordinator = TransactionLifecycleCoordinator(
             database = db,
             expenseDao = db.expenseDao(),
@@ -92,7 +104,7 @@ class TransactionLifecycleCoordinatorDbContractTest {
             runner = mockk(relaxed = true),
             recurringLifecycleCoordinator = mockk(relaxed = true),
             writeBarrier = writeBarrier,
-            currencySettingsRepository = mockk(relaxed = true),
+            currencySettingsRepository = currencySettingsRepository,
             sourceLinkWriter = mockk(relaxed = true),
             transactionValidator = mockk(relaxed = true),
             diagnosticEventWriter = mockk(relaxed = true)
@@ -297,5 +309,174 @@ class TransactionLifecycleCoordinatorDbContractTest {
             it.eventType == LifecycleEventType.DELETED.name
         }
         assertEquals("Should have exactly 1 DELETED event", 1, deletedEvents.size)
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Test 5 (P2-001): deleteExpense on a missing row returns a typed failure
+    // with no DELETED event and no post-commit side effects
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `deleteExpense missing row returns failure with no DELETED event`() = runTest {
+        // GIVEN: a stale entity reference whose row no longer exists
+        val staleExpense = com.yourname.expensetracker.data.database.entity.Expense(
+            id = 9999L,
+            amount = 10.0,
+            currency = "EUR",
+            merchant = "Ghost Merchant",
+            transactionType = TransactionType.PURCHASE,
+            date = timeProvider.now()
+        )
+
+        // WHEN: deleteExpense with the stale entity
+        val deleteResult = coordinator.deleteExpense(staleExpense)
+
+        // THEN: the result is a typed failure (not silent success)
+        assertTrue("Delete of missing row should fail", deleteResult.isFailure)
+        assertTrue(
+            "Failure should be IllegalArgumentException, got ${deleteResult.exceptionOrNull()}",
+            deleteResult.exceptionOrNull() is IllegalArgumentException
+        )
+
+        // THEN: no DELETED event was written for the missing id
+        val events = db.transactionEventDao().getEventsForExpense(9999L)
+        assertTrue("No events should exist for the missing expense", events.isEmpty())
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // P2-008 (11c): blocking vs resolution dedupe policy
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * P2-008: the BLOCKING dedupe precheck intentionally INCLUDES `isNotMine`
+     * rows while the fuzzy RESOLVER must never resolve to one.
+     */
+    @Test
+    fun `blocking duplicate check includes not-mine rows while resolver excludes them`() = runTest {
+        // GIVEN: a not-mine expense matching the canonical dedupe identity
+        val notMineId = db.expenseDao().insert(
+            Expense(
+                amount = 12.34,
+                currency = "EUR",
+                merchant = "NotMine Store",
+                merchantKey = "notminestore",
+                transactionType = TransactionType.PURCHASE,
+                date = timeProvider.now(),
+                isNotMine = true
+            )
+        )
+        assertTrue(notMineId > 0L)
+
+        // WHEN: blocking precheck (the family used by create/update dedupe)
+        val isDuplicate = db.expenseDao().isDuplicateCurrencyAware(
+            amount = 12.34,
+            merchant = "NotMine Store",
+            date = timeProvider.now(),
+            currency = "EUR",
+            transactionType = "PURCHASE",
+            merchantKey = "notminestore"
+        )
+
+        // THEN: blocking intentionally sees not-mine rows
+        assertTrue("Blocking precheck must include isNotMine rows", isDuplicate)
+
+        // WHEN: fuzzy resolver
+        val resolvedId = db.expenseDao().findDuplicateIdCurrencyAware(
+            amount = 12.34,
+            merchant = "NotMine Store",
+            date = timeProvider.now(),
+            currency = "EUR",
+            transactionType = "PURCHASE",
+            merchantKey = "notminestore"
+        )
+
+        // THEN: the resolver can never return the not-mine row
+        assertNull("Fuzzy resolver must never return an isNotMine row", resolvedId)
+    }
+
+    /**
+     * P2-008 control: with an otherwise identical MINE row, both the blocking
+     * precheck and the fuzzy resolver agree — proving the resolver's null above
+     * is the ownership filter, not a broken query.
+     */
+    @Test
+    fun `duplicate resolver still returns a matching mine row`() = runTest {
+        val mineId = db.expenseDao().insert(
+            Expense(
+                amount = 12.34,
+                currency = "EUR",
+                merchant = "Mine Store",
+                merchantKey = "minestore",
+                transactionType = TransactionType.PURCHASE,
+                date = timeProvider.now(),
+                isNotMine = false
+            )
+        )
+        assertTrue(mineId > 0L)
+
+        val resolvedId = db.expenseDao().findDuplicateIdCurrencyAware(
+            amount = 12.34,
+            merchant = "Mine Store",
+            date = timeProvider.now(),
+            currency = "EUR",
+            transactionType = "PURCHASE",
+            merchantKey = "minestore"
+        )
+
+        assertEquals("Resolver must still resolve mine rows", mineId, resolvedId)
+    }
+
+    /**
+     * P2-008 (11c): `findIdByRawNotificationId` is the identity lookup used to
+     * prove which expense a raw notification produced. The lookup intentionally
+     * INCLUDES `isNotMine` rows — a not-mine expense with the same
+     * rawNotificationId is still THE expense created from that notification
+     * (the not-mine exclusion applies to fuzzy suggestion queries only).
+     * Two expenses cannot share a rawNotificationId (unique index), so the
+     * identity contract is: one notification → exactly one resolvable row,
+     * not-mine or not.
+     */
+    @Test
+    fun `findIdByRawNotificationIdResolvesRowIncludingNotMineRow`() = runTest {
+        // GIVEN: the FK parent row (expenses.rawNotificationId → raw_notifications)
+        val rawNotificationId = db.rawNotificationDao().insert(
+            RawNotification(
+                packageName = "com.test.identity",
+                appName = "Test App",
+                title = null,
+                text = null,
+                timestamp = timeProvider.now(),
+                capturedAt = timeProvider.now()
+            )
+        )
+        assertTrue(rawNotificationId > 0L)
+
+        // AND: the expense created from that notification is marked not-mine
+        val notMineId = db.expenseDao().insert(
+            Expense(
+                amount = 7.5,
+                currency = "EUR",
+                merchant = "Identity Store",
+                merchantKey = "identitystore",
+                transactionType = TransactionType.PURCHASE,
+                date = timeProvider.now(),
+                rawNotificationId = rawNotificationId,
+                isNotMine = true
+            )
+        )
+        assertTrue(notMineId > 0L)
+
+        // THEN: the identity lookup resolves the not-mine row
+        assertEquals(
+            "Identity lookup must include isNotMine rows (P2-008 policy)",
+            notMineId,
+            db.expenseDao().findIdByRawNotificationId(rawNotificationId)
+        )
+
+        // AND: an absent rawNotificationId resolves to null
+        assertNull(
+            "Identity lookup must return null for an absent id",
+            db.expenseDao().findIdByRawNotificationId(rawNotificationId + 10_000L)
+        )
     }
 }

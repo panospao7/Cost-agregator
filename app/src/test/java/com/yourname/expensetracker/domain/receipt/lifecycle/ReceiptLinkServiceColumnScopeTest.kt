@@ -12,6 +12,10 @@ import com.yourname.expensetracker.data.database.entity.MatchStatus
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.transaction.CategoryAssignmentOutcome
+import com.yourname.expensetracker.domain.transaction.ExpenseCategoryAssignmentPort
+import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
@@ -49,6 +53,7 @@ class ReceiptLinkServiceColumnScopeTest {
     private val timeProvider: TimeProvider = object : TimeProvider { override fun now() = now }
 
     private val maintenanceMode = mockk<RestoreMaintenanceMode>()
+    private lateinit var writeBarrier: DatabaseWriteBarrier
     private lateinit var linkService: ReceiptLinkService
     private lateinit var matchLifecycleService: ReceiptMatchLifecycleService
 
@@ -62,7 +67,7 @@ class ReceiptLinkServiceColumnScopeTest {
         // NORMAL mode: the canonical write barrier allows plain lifecycle writes.
         every { maintenanceMode.currentMode() } returns RestoreMaintenanceMode.Mode.NORMAL
         every { maintenanceMode.isWritesAllowed() } returns true
-        val writeBarrier = DatabaseWriteBarrier(maintenanceMode)
+        writeBarrier = DatabaseWriteBarrier(maintenanceMode)
 
         linkService = ReceiptLinkService(
             database = database,
@@ -204,5 +209,61 @@ class ReceiptLinkServiceColumnScopeTest {
         assertEquals(expenseId, after.suggestedExpenseId)
         assertEquals(MatchStatus.SUGGESTED, after.matchStatus)
         assertEquals(0.75f, after.matchConfidence!!, 0.0001f)
+    }
+
+    /**
+     * RP-11 FIX 4: the category-assignment side-effect dispatch is post-commit.
+     * A link transaction that ROLLS BACK (here: the atomic requireUnmatchedClaim
+     * compare-and-set claims 0 rows because the receipt was already resolved)
+     * must produce NO side-effect dispatch — the assignment itself rolled back
+     * with the transaction, so dispatching would be a phantom side effect.
+     */
+    @Test
+    fun `rolled back link transaction produces no category side-effect dispatch`() = runTest {
+        val dao = database.scannedReceiptDao()
+        val receiptId = dao.insert(
+            receipt(createdAt = now - 10_000).copy(matchStatus = MatchStatus.AUTO_MATCHED)
+        )
+        val expenseId = database.expenseDao().insert(expense("Groceries"))
+
+        val dispatchPort = mockk<ExpenseCategoryAssignmentPort>()
+        coEvery {
+            dispatchPort.assignCategoryIfUnset(any(), any(), any(), any())
+        } returns CategoryAssignmentOutcome.Assigned
+        coEvery {
+            dispatchPort.dispatchAssignedCategorySideEffects(any(), any(), any())
+        } returns Unit
+        val rollbackService = ReceiptLinkService(
+            database = database,
+            receiptExpenseLinkDao = database.receiptExpenseLinkDao(),
+            scannedReceiptDao = database.scannedReceiptDao(),
+            receiptLifecycleEventWriter = mockk(relaxed = true),
+            receiptItemCategorizationDao = database.receiptItemCategorizationDao(),
+            warrantyDao = database.warrantyDao(),
+            returnWindowDao = database.returnWindowDao(),
+            expenseDao = database.expenseDao(),
+            timeProvider = timeProvider,
+            writeBarrier = writeBarrier,
+            sourceLinkWriter = mockk(relaxed = true),
+            categoryAssignmentPort = dispatchPort,
+            transactionRunner = RoomDomainTransactionRunner(database, timeProvider)
+        )
+
+        // Receipt is already claimed/resolved (not UNMATCHED/SUGGESTED) → the
+        // atomic claim affects 0 rows → ReceiptAlreadyClaimedException rolls
+        // back the just-inserted link (and any in-transaction assignment).
+        val result = rollbackService.linkReceiptToExpense(
+            receiptId = receiptId,
+            expenseId = expenseId,
+            linkType = "AUTO_MATCH",
+            source = "TEST",
+            requireUnmatchedClaim = true
+        )
+        assertTrue("Expected failure for already-claimed receipt", result.isFailure)
+
+        // The rolled-back transaction dispatched nothing.
+        coVerify(exactly = 0) {
+            dispatchPort.dispatchAssignedCategorySideEffects(any(), any(), any())
+        }
     }
 }

@@ -548,7 +548,11 @@ class BankStatementLifecycleProcessor @Inject constructor(
                     if (hasExpenseDuplicate) {
                         duplicatesSkipped++
                         // PR15: Fetch the actual duplicate expense ID for ledger auditing.
-                        val duplicateExpenseId = expenseDao.findDuplicateIdCurrencyAware(
+                        // RP-11 FIX 2: blocking-consistent (not-mine-INCLUSIVE) lookup —
+                        // the blocking precheck above already saw the row; the audit
+                        // lookup must see the same row (including isNotMine) or the
+                        // ledger would record a degraded null expenseId/reason.
+                        val duplicateExpenseId = expenseDao.findBlockingDuplicateIdCurrencyAware(
                             amount = tx.amount,
                             merchant = normalizedMerchant,
                             date = transactionDate,
