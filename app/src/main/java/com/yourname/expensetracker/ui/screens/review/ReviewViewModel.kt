@@ -480,8 +480,20 @@ class ReviewViewModel @Inject constructor(
                         }
 
                         if (finalMerchant != null && originalMerchant != null && finalMerchant != originalMerchant) {
-                            expenseRepository.updateExpenseMerchantBulk(originalMerchant, finalMerchant)
-                            reviewQueueRepository.updatePendingReviewMerchantBulk(originalMerchant, finalMerchant)
+                            // P2-003: bulk merchant rename is atomic all-or-nothing —
+                            // a duplicate-key collision aborts every row change.
+                            try {
+                                expenseRepository.updateExpenseMerchantBulk(originalMerchant, finalMerchant)
+                                reviewQueueRepository.updatePendingReviewMerchantBulk(originalMerchant, finalMerchant)
+                            } catch (e: Exception) {
+                                if (e is kotlinx.coroutines.CancellationException) throw e
+                                Timber.e(e, "Bulk merchant rename rejected or failed")
+                                // S6-D5-006: bounded conflict message — primary review
+                                // succeeded, but the bulk rename was aborted with no
+                                // partial state. Never echoes raw exception text.
+                                _errorMessage.value =
+                                    "Primary review approved, but bulk merchant rename was rejected: another transaction already uses that merchant for one of these dates."
+                            }
                         }
                     } catch (e: Exception) {
                         Timber.e(e, "Failed to apply bulk category update")

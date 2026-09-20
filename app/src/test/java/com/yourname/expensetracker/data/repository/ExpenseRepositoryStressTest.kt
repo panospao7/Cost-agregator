@@ -138,7 +138,11 @@ class ExpenseRepositoryStressTest {
 
     @Test
     fun `stress - updateExpenseMerchantBulk for many merchants`() = runTest {
-        coEvery { expenseDao.updateMerchantForMerchant(any(), any(), any()) } returns Unit
+        // P2-003: bulkUpdateMerchant now returns Result<Unit>; a relaxed mock of
+        // a Result-returning suspend function is unreliable, so stub success.
+        coEvery {
+            transactionLifecycleCoordinator.bulkUpdateMerchant(any(), any(), any(), any(), any())
+        } returns Result.success(Unit)
         coEvery { merchantNormalizer.learnMerchantAlias(any(), any()) } returns Unit
 
         repeat(50) { i ->

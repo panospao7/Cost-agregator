@@ -19,14 +19,20 @@ import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.capture
 import io.mockk.every
+import io.mockk.match
 import io.mockk.mockk
 import io.mockk.mockkStatic
+import io.mockk.slot
 import io.mockk.unmockkStatic
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.diagnostics.AppPipeline
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.sideeffect.PostCommitAction
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionBatch
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
@@ -64,6 +70,7 @@ class TransactionLifecycleCoordinatorTest {
     private lateinit var restoreMaintenanceMode: RestoreMaintenanceMode
     private lateinit var writeBarrier: DatabaseWriteBarrier
     private lateinit var currencySettingsRepository: CurrencySettingsRepository
+    private lateinit var diagnosticEventWriter: DiagnosticEventWriter
     private lateinit var runner: PostCommitActionRunner
     private lateinit var planner: TransactionSideEffectPlanner
     private lateinit var transactionValidator: TransactionValidator
@@ -105,6 +112,7 @@ class TransactionLifecycleCoordinatorTest {
             secondArg<suspend () -> Any>().invoke()
         }
         currencySettingsRepository = mockk(relaxed = true)
+        diagnosticEventWriter = mockk(relaxed = true)
 
         every { timeProvider.now() } returns now
         every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
@@ -136,7 +144,7 @@ class TransactionLifecycleCoordinatorTest {
             currencySettingsRepository = currencySettingsRepository,
             sourceLinkWriter = mockk(relaxed = true),
             transactionValidator = transactionValidator,
-            diagnosticEventWriter = mockk(relaxed = true)
+            diagnosticEventWriter = diagnosticEventWriter
         )
     }
 
@@ -363,7 +371,9 @@ class TransactionLifecycleCoordinatorTest {
         // 8 positional matchers: the DAO method has 8 params (windowMs has a
         // default in the middle, ExpenseDao.kt:852-861) — a 7-any() stub misses
         // the recorded call and the relaxed mock returns 0L (a phantom duplicate).
-        coEvery { expenseDao.findDuplicateIdCurrencyAware(any(), any(), any(), any(), any(), any(), any(), any()) } returns null
+        // RP-11 FIX 2: updateType's collision preflight uses the
+        // blocking-consistent findBlockingDuplicateIdCurrencyAware.
+        coEvery { expenseDao.findBlockingDuplicateIdCurrencyAware(any(), any(), any(), any(), any(), any(), any(), any()) } returns null
         coEvery { planner.planUpdated(any(), any(), any(), TransactionUpdateKind.TYPE) } returns nonEmptyBatch()
         coEvery { runner.run(any()) } throws CancellationException("Cancelled")
 
@@ -411,6 +421,47 @@ class TransactionLifecycleCoordinatorTest {
         coVerify(exactly = 1) { expenseDao.delete(any()) }
     }
 
+    // ── P2-001: delete missing-row semantics ─────────────────────────────────
+
+    @Test
+    fun `deleteExpense present row succeeds with event and planner dispatch`() = runTest(timeout = 60.seconds) {
+        val expense = Expense(
+            id = 1L, amount = 10.0, merchant = "Test",
+            transactionType = TransactionType.PURCHASE, date = now,
+            currency = "EUR", dedupeKey = "old-dk", merchantKey = "mk"
+        )
+        coEvery { expenseDao.getById(1L) } returns expense
+        coEvery { planner.planDeleted(1L, any(), any()) } returns nonEmptyBatch()
+
+        val result = coordinator.deleteExpense(expense)
+
+        assertTrue("Expected success, got $result", result.isSuccess)
+        coVerify(exactly = 1) { transactionEventDao.insert(any()) }
+        coVerify(exactly = 1) { planner.planDeleted(1L, any(), any()) }
+        coVerify(exactly = 1) { expenseDao.delete(any()) }
+    }
+
+    @Test
+    fun `deleteExpense missing row returns typed failure with no event and no planner call`() = runTest(timeout = 60.seconds) {
+        val expense = Expense(
+            id = 404L, amount = 10.0, merchant = "Test",
+            transactionType = TransactionType.PURCHASE, date = now,
+            currency = "EUR", dedupeKey = "old-dk", merchantKey = "mk"
+        )
+        coEvery { expenseDao.getById(404L) } returns null
+
+        val result = coordinator.deleteExpense(expense)
+
+        assertTrue("Expected failure, got $result", result.isFailure)
+        assertTrue(
+            "Expected IllegalArgumentException cause, got ${result.exceptionOrNull()}",
+            result.exceptionOrNull() is IllegalArgumentException
+        )
+        coVerify(exactly = 0) { transactionEventDao.insert(any()) }
+        coVerify(exactly = 0) { planner.planDeleted(any(), any(), any()) }
+        coVerify(exactly = 0) { expenseDao.delete(any()) }
+    }
+
     @Test
     fun `updateType runner non-cancellation failure does not rollback committed update`() = runTest(timeout = 60.seconds) {
         val expenseId = 1L
@@ -421,7 +472,9 @@ class TransactionLifecycleCoordinatorTest {
         )
         coEvery { expenseDao.getById(expenseId) } returns existingExpense
         // 8 positional matchers (see note above): 7-any() misses the recorded call.
-        coEvery { expenseDao.findDuplicateIdCurrencyAware(any(), any(), any(), any(), any(), any(), any(), any()) } returns null
+        // RP-11 FIX 2: updateType's collision preflight uses the
+        // blocking-consistent findBlockingDuplicateIdCurrencyAware.
+        coEvery { expenseDao.findBlockingDuplicateIdCurrencyAware(any(), any(), any(), any(), any(), any(), any(), any()) } returns null
         coEvery { planner.planUpdated(any(), any(), any(), TransactionUpdateKind.TYPE) } returns nonEmptyBatch()
         coEvery { runner.run(any()) } throws RuntimeException("Best-effort failure")
 
@@ -429,4 +482,191 @@ class TransactionLifecycleCoordinatorTest {
 
         coVerify(exactly = 1) { expenseDao.updateTransactionType(expenseId, TransactionType.TRANSFER.name, any()) }
     }
+
+    // ── NEW-P2-016 (11c): home-currency resolution fails closed ─────────────
+
+    private fun request(currency: String = "EUR") = CreateExpenseRequest(
+        merchant = "Test",
+        amount = 10.0,
+        currency = currency,
+        date = now,
+        transactionType = TransactionType.PURCHASE,
+        source = ExpenseSource.MANUAL_ENTRY
+    )
+
+    /**
+     * NEW-P2-016: a Failed home-currency resolution (DataStore error/timeout)
+     * must complete bounded, never invent a currency, and persist the expense
+     * with the existing sentinel conversion fields — never a fabricated base.
+     */
+    @Test
+    fun `createExpense with failed home currency resolution marks conversion fields unavailable`() =
+        runTest(timeout = 60.seconds) {
+            coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
+                HomeCurrencyResolution.Failed("Timeout reading home currency (5s)")
+            val insertedSlot = slot<Expense>()
+            coEvery { expenseDao.insertAtomic(capture(insertedSlot)) } returns 42L
+
+            val result = coordinator.createExpense(request(currency = "USD"))
+
+            // The create itself completes bounded with a controlled outcome.
+            assertTrue("Expected Created, got $result", result is CreateExpenseResult.Created)
+            // No invented currency / fabricated base snapshot.
+            val inserted = insertedSlot.captured
+            assertTrue(
+                "baseAmount must be sentinel 0.0, was ${inserted.baseAmount}",
+                inserted.baseAmount == 0.0
+            )
+            assertTrue(
+                "baseCurrency must not invent a currency, was '${inserted.baseCurrency}'",
+                inserted.baseCurrency.isEmpty()
+            )
+            assertTrue(
+                "exchangeRateUsed must be sentinel 0.0, was ${inserted.exchangeRateUsed}",
+                inserted.exchangeRateUsed == 0.0
+            )
+            // No conversion was attempted against a substituted home currency.
+            coVerify(exactly = 0) {
+                currencyConverter.convertAsOf(any<Double>(), any<String>(), any<String>(), any<Long>())
+            }
+            // Exactly one bounded diagnostic with the controlled constant.
+            coVerify(exactly = 1) {
+                diagnosticEventWriter.emit(
+                    match {
+                        it.reasonCode == DiagnosticReasonCode.HOME_CURRENCY_UNAVAILABLE &&
+                            it.exception == null
+                    }
+                )
+            }
+            coVerify(exactly = 0) {
+                diagnosticEventWriter.emit(match { it.reasonCode != DiagnosticReasonCode.HOME_CURRENCY_UNAVAILABLE })
+            }
+        }
+
+    /**
+     * NEW-P2-016: a never-emitting home-currency flow must complete in bounded
+     * time (the typed resolver contract's timeout path) with the same
+     * fail-closed sentinel marking — never hang, never fabricate.
+     */
+    @Test
+    fun `createExpense with never-emitting home currency settings completes bounded and fails closed`() =
+        runTest(timeout = 60.seconds) {
+            val neverEmittingCoordinator = TransactionLifecycleCoordinator(
+                database = database,
+                expenseDao = expenseDao,
+                transactionEventDao = transactionEventDao,
+                timeProvider = timeProvider,
+                currencyConverter = currencyConverter,
+                sideEffectDispatcher = sideEffectDispatcher,
+                planner = planner,
+                runner = runner,
+                recurringLifecycleCoordinator = recurringLifecycleCoordinator,
+                writeBarrier = writeBarrier,
+                currencySettingsRepository = NeverEmittingHomeCurrencySettingsRepository(),
+                sourceLinkWriter = mockk(relaxed = true),
+                transactionValidator = transactionValidator,
+                diagnosticEventWriter = diagnosticEventWriter
+            )
+            val insertedSlot = slot<Expense>()
+            coEvery { expenseDao.insertAtomic(capture(insertedSlot)) } returns 42L
+
+            val result = neverEmittingCoordinator.createExpense(request(currency = "USD"))
+
+            assertTrue("Expected Created, got $result", result is CreateExpenseResult.Created)
+            val inserted = insertedSlot.captured
+            assertTrue("baseAmount must be sentinel 0.0", inserted.baseAmount == 0.0)
+            assertTrue("baseCurrency must be empty", inserted.baseCurrency.isEmpty())
+            assertTrue("exchangeRateUsed must be sentinel 0.0", inserted.exchangeRateUsed == 0.0)
+            coVerify(exactly = 1) {
+                diagnosticEventWriter.emit(
+                    match { it.reasonCode == DiagnosticReasonCode.HOME_CURRENCY_UNAVAILABLE }
+                )
+            }
+        }
+
+    /**
+     * NEW-P2-016 happy-path pin: Resolved home currency converts a foreign
+     * currency row with the resolved home as the base snapshot.
+     */
+    @Test
+    fun `createExpense with resolved home currency pins converted base snapshot`() =
+        runTest(timeout = 60.seconds) {
+            coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
+                HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
+            coEvery {
+                currencyConverter.convertAsOf(any<Double>(), "USD", "EUR", any<Long>())
+            } returns com.yourname.expensetracker.domain.currency.ConversionResult(
+                originalAmount = 10.0,
+                originalCurrency = "USD",
+                convertedAmount = 9.2,
+                targetCurrency = "EUR",
+                rateUsed = 0.92,
+                timestamp = now
+            )
+            val insertedSlot = slot<Expense>()
+            coEvery { expenseDao.insertAtomic(capture(insertedSlot)) } returns 42L
+
+            val result = coordinator.createExpense(request(currency = "USD"))
+
+            assertTrue("Expected Created, got $result", result is CreateExpenseResult.Created)
+            val inserted = insertedSlot.captured
+            assertTrue("baseAmount should be converted", inserted.baseAmount == 9.2)
+            assertTrue("baseCurrency should be the resolved home", inserted.baseCurrency == "EUR")
+            assertTrue("rateUsed should be pinned", inserted.exchangeRateUsed == 0.92)
+            coVerify(exactly = 0) { diagnosticEventWriter.emit(any()) }
+        }
+
+    /**
+     * NEW-P2-016 happy-path pin: FirstRunDefault (no setting stored yet)
+     * proceeds exactly like Resolved — same-currency row keeps its identity
+     * base snapshot without touching the converter.
+     */
+    @Test
+    fun `createExpense with first-run default home currency pins identity base snapshot`() =
+        runTest(timeout = 60.seconds) {
+            coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
+                HomeCurrencyResolution.FirstRunDefault(CurrencyCode("EUR"))
+            val insertedSlot = slot<Expense>()
+            coEvery { expenseDao.insertAtomic(capture(insertedSlot)) } returns 42L
+
+            val result = coordinator.createExpense(request(currency = "EUR"))
+
+            assertTrue("Expected Created, got $result", result is CreateExpenseResult.Created)
+            val inserted = insertedSlot.captured
+            assertTrue("same-currency base amount is the amount", inserted.baseAmount == 10.0)
+            assertTrue("baseCurrency is the first-run default", inserted.baseCurrency == "EUR")
+            assertTrue("identity rate is 1.0", inserted.exchangeRateUsed == 1.0)
+            coVerify(exactly = 0) {
+                currencyConverter.convertAsOf(any<Double>(), any<String>(), any<String>(), any<Long>())
+            }
+            coVerify(exactly = 0) { diagnosticEventWriter.emit(any()) }
+        }
 }
+
+/**
+ * NEW-P2-016 test fake: settings repository whose [homeCurrency] flow never
+ * emits and never completes. The interface's default [resolveHomeCurrency]
+ * wraps the read in a bounded timeout, so the coordinator must complete
+ * with a [HomeCurrencyResolution.Failed] rather than hanging.
+ */
+private class NeverEmittingHomeCurrencySettingsRepository : CurrencySettingsRepository {
+    override fun homeCurrency(): kotlinx.coroutines.flow.Flow<String> =
+        kotlinx.coroutines.flow.flow { awaitCancellation() }
+
+    override suspend fun setHomeCurrency(currencyCode: String) = Unit
+
+    override fun lastRateUpdate(): kotlinx.coroutines.flow.Flow<Long> =
+        kotlinx.coroutines.flow.flow { awaitCancellation() }
+
+    override suspend fun setLastRateUpdate(timestamp: Long) = Unit
+
+    override suspend fun areRatesStale(thresholdMs: Long): Boolean = false
+
+    override fun emergencyBuffer(): kotlinx.coroutines.flow.Flow<Double> =
+        kotlinx.coroutines.flow.flow { awaitCancellation() }
+
+    override suspend fun setEmergencyBuffer(amount: Double) = Unit
+
+    override suspend fun clear() = Unit
+}
+

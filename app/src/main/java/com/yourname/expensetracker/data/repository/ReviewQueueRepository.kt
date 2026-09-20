@@ -253,7 +253,7 @@ class ReviewQueueRepository @Inject constructor(
                     rawNotificationId = review.rawNotificationId,
                     pendingReviewId = reviewId,
                     scannedReceiptId = review.scannedReceiptId,
-                    skipDeduplication = false
+                    skipPreflightDeduplication = false
                 )
 
                 val mutation = transactionLifecycleCoordinator.createExpenseDbOnlyV2(request)

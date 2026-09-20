@@ -1299,7 +1299,10 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             longitude = preDb.deviceGps?.second,
             locationSource = if (preDb.deviceGps != null) "DEVICE_GPS" else null,
             rawNotificationId = rawId,
-            skipDeduplication = true,
+            // P2-004: preflight-only bypass — the rawNotificationId unique index
+            // and dedupeKey DB constraint are always enforced; a collision
+            // surfaces as a typed duplicate/conflict result below.
+            skipPreflightDeduplication = true,
             correlationId = correlationId  // DDL-512-05: propagate notification listener correlation
         )
 
@@ -1400,8 +1403,34 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             }
 
             is CreateExpenseResult.InsertConflict -> {
-                check(hasCanonicalExpenseDuplicate(preDb)) {
-                    "Expense insert conflicted without a canonical duplicate for rawId=$rawId"
+                // P2-002: terminal transition — no check(...) retry loop. The
+                // conflict is either resolved to a proven identity or UNRESOLVED;
+                // both are terminal here: mark irrelevant, count the duplicate
+                // exactly once, link the dedupe source, and mark processed.
+                if (result.reasonCode == com.yourname.expensetracker.domain.transaction.InsertConflictCodes.UNRESOLVED) {
+                    // P2-002: bounded diagnostic — controlled constant only,
+                    // never raw notification text or payload fields.
+                    try {
+                        diagnosticEmitter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                            pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                            stage = "auto_accept_insert_conflict",
+                            outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
+                            severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.WARNING,
+                            reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.DUPLICATE,
+                            entityType = "RawNotification",
+                            entityId = rawId,
+                            sourceType = ExpenseSource.NOTIFICATION_AUTO_ACCEPT.name,
+                            correlationId = correlationId ?: com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId(),
+                            metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                                .put("conflictReasonCode", result.reasonCode)
+                                .putHashed("packageName", notification.packageName)
+                                .build(),
+                            isTerminal = true
+                        ))
+                    } catch (e: Exception) {
+                        if (e is CancellationException) throw e
+                        Timber.w(e, "P2-002: failed to emit CONFLICT_UNRESOLVED diagnostic for rawId=%d", rawId)
+                    }
                 }
                 // GR-14p-c: canonical direct scope — the mutations' proof is local
                 // to the legal writer, independent of caller context.

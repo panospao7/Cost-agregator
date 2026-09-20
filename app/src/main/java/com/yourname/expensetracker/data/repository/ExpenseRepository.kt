@@ -424,13 +424,26 @@ class ExpenseRepository @Inject constructor(
      * This ensures a TransactionEvent (DELETED) is written and the row is
      * removed atomically.
      *
+     * P2-001: no pre-check read — the coordinator re-reads the row inside its
+     * transaction (TOCTOU-safe) and returns a typed NotFound outcome for a
+     * missing row, which surfaces here as the same [IllegalArgumentException]
+     * with no DELETED event and no post-commit side effects. The stub entity
+     * carries only the id; all persisted fields come from the coordinator's
+     * transactional re-read.
+     *
      * @param id The ID of the expense to delete.
      * @throws IllegalArgumentException if no expense exists with the given ID.
      */
     suspend fun deleteExpense(id: Long) {
-        val expense = expenseDao.getById(id)
-            ?: throw IllegalArgumentException("Expense not found: $id")
-        deleteExpense(expense)
+        val stub = Expense(
+            id = id,
+            amount = 0.0,
+            merchant = "",
+            transactionType = TransactionType.PURCHASE,
+            date = 0L
+        )
+        transactionLifecycleCoordinator.deleteExpense(stub)
+            .getOrThrow()
     }
 
     /**
@@ -501,11 +514,18 @@ class ExpenseRepository @Inject constructor(
         }
     }
 
+    /**
+     * P2-003: propagates the coordinator's typed bulk-merchant result.
+     *
+     * @throws IllegalArgumentException (from [Result.getOrThrow]) when the
+     * coordinator reports `MERCHANT_RENAME_DUPLICATE` (all-or-nothing abort —
+     * no rows changed) or any other bulk-update failure.
+     */
     @Deprecated("Use TransactionLifecycleCoordinator.bulkUpdateMerchant() instead for proper lifecycle tracking.")
     suspend fun updateExpenseMerchantBulk(oldMerchant: String, newMerchant: String) {
         transactionLifecycleCoordinator.bulkUpdateMerchant(
             oldMerchant = oldMerchant, newMerchant = newMerchant, source = "USER_EDIT"
-        )
+        ).getOrThrow()
         merchantNormalizer.learnMerchantAlias(oldMerchant, newMerchant)
     }
 
@@ -516,9 +536,16 @@ class ExpenseRepository @Inject constructor(
         val oldMerchant = expense.merchant
 
         if (applyToAll) {
-            // Bulk path: use coordinator.bulkUpdateMerchant() but keep pendingReview
-            // bulk rename here (coordinator doesn't handle cross-table pending review updates)
+            // P2-003: bulk merchant rename is atomic all-or-nothing; a target-key
+            // collision surfaces as a typed failure BEFORE the pending-review
+            // rename runs, so neither store is left half-renamed.
             transactionLifecycleCoordinator.bulkUpdateMerchant(oldMerchant, newMerchant)
+                .getOrElse {
+                    throw IllegalStateException(
+                        "Bulk merchant rename rejected: MERCHANT_RENAME_DUPLICATE",
+                        it
+                    )
+                }
             val oldMerchantKey = MerchantKeyGenerator.generate(oldMerchant)
             val newMerchantKey = MerchantKeyGenerator.generate(newMerchant)
             pendingReviewDao.bulkRenameMerchant(oldMerchantKey, oldMerchant, newMerchant, newMerchantKey)
@@ -550,13 +577,15 @@ class ExpenseRepository @Inject constructor(
     suspend fun updateTransferDetails(
         expense: Expense,
         transferDirection: TransferDirection?,
-        transferAccountName: String?
+        transferAccountName: String?,
+        correlationId: String? = null
     ) {
         transactionLifecycleCoordinator.updateTransferDetails(
             expenseId = expense.id,
             transferDirection = transferDirection,
             transferAccountName = transferAccountName,
-            source = "USER_EDIT"
+            source = "USER_EDIT",
+            correlationId = correlationId  // P2-007
         )
 
         // Side effect (non-lifecycle, best-effort)
@@ -578,14 +607,16 @@ class ExpenseRepository @Inject constructor(
         expense: Expense,
         newType: TransactionType,
         transferDirection: TransferDirection?,
-        transferAccountName: String?
+        transferAccountName: String?,
+        correlationId: String? = null
     ) {
         transactionLifecycleCoordinator.updateTypeAndTransferDetails(
             expenseId = expense.id,
             newType = newType,
             transferDirection = transferDirection,
             transferAccountName = transferAccountName,
-            source = "USER_EDIT"
+            source = "USER_EDIT",
+            correlationId = correlationId  // P2-007
         )
     }
 

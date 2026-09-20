@@ -31,7 +31,7 @@ import com.yourname.expensetracker.domain.provenance.SourceLinkPayload
 import com.yourname.expensetracker.domain.provenance.SourceLinkWriteResult
 import com.yourname.expensetracker.domain.provenance.SourceLinkWriteException
 import com.yourname.expensetracker.domain.provenance.SourceLinkWriter
-import kotlinx.coroutines.flow.first
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.sideeffect.MutationResult
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionBatch
@@ -145,29 +145,55 @@ class TransactionLifecycleCoordinator @Inject constructor(
             ?.let { expenseDao.findIdByDedupeKey(it) }
     }
 
+    /**
+     * P2-002: resolves the existing expense ID after an insert conflict, in the
+     * order of the identity that most plausibly rejected the insert:
+     * rawNotificationId (unique index) → dedupeKey (unique index) →
+     * bounded fuzzy window (STANDARD/BULK_IMPORT only; STRICT modes never
+     * fuzzy-match). Returns the resolved ID (or null) paired with a controlled
+     * [InsertConflictCodes] constant describing how the ID was proven.
+     */
     private suspend fun resolveExistingIdAfterInsertConflict(
         expense: Expense,
         dedupMode: DeduplicationMode
-    ): Long? {
-        // 1. Exact dedupe-key lookup first.
+    ): Pair<Long?, String> {
+        // 1. Exact source-identity lookup first — the unique rawNotificationId
+        //    index may be the index that actually rejected the insert.
+        //    P2-008 (11c): exact identity lookups intentionally include
+        //    isNotMine rows; the not-mine exclusion applies to the fuzzy
+        //    resolver's candidate SQL only (ExpenseDao.getDuplicateCandidateBy*).
+        if (expense.rawNotificationId != null) {
+            val byRawNotificationId = expenseDao.findIdByRawNotificationId(expense.rawNotificationId)
+            if (byRawNotificationId != null) {
+                return Pair(byRawNotificationId, InsertConflictCodes.RESOLVED_RAW_NOTIFICATION_ID)
+            }
+        }
+
+        // 2. Exact dedupe-key lookup.
         val byDedupeKey = expense.dedupeKey
             ?.takeIf { it.isNotBlank() }
             ?.let { expenseDao.findIdByDedupeKey(it) }
 
-        if (byDedupeKey != null) return byDedupeKey
+        if (byDedupeKey != null) {
+            return Pair(byDedupeKey, InsertConflictCodes.RESOLVED_DEDUPE_KEY)
+        }
 
-        // 2. STRICT_EXTERNAL_ID should not fuzzy-match.
+        // 3. STRICT_EXTERNAL_ID should not fuzzy-match.
         if (dedupMode == DeduplicationMode.STRICT_EXTERNAL_ID) {
-            return null
+            return Pair(null, InsertConflictCodes.UNRESOLVED)
         }
 
-        // 3. Debug restore intentionally skips dedupe.
+        // 4. Debug restore intentionally skips dedupe.
         if (dedupMode == DeduplicationMode.SKIP_FOR_DEBUG_RESTORE) {
-            return null
+            return Pair(null, InsertConflictCodes.UNRESOLVED)
         }
 
-        // 4. STANDARD/BULK fallback: resolve by same policy as duplicate precheck.
-        return expenseDao.findDuplicateIdCurrencyAware(
+        // 5. STANDARD/BULK fallback: resolve by same policy as duplicate precheck.
+        //    P2-008 (11c): the fuzzy resolver never returns a not-mine row —
+        //    the guard lives in the resolution/suggestion candidate SQL
+        //    (ExpenseDao.getDuplicateCandidateBy*CurrencyAware, isNotMine = 0);
+        //    the blocking precheck family intentionally still includes not-mine rows.
+        val byFuzzyWindow = expenseDao.findDuplicateIdCurrencyAware(
             amount = expense.amount,
             merchant = expense.merchant,
             date = expense.date,
@@ -176,6 +202,11 @@ class TransactionLifecycleCoordinator @Inject constructor(
             merchantKey = expense.merchantKey,
             dedupeKey = expense.dedupeKey
         )
+        return if (byFuzzyWindow != null) {
+            Pair(byFuzzyWindow, InsertConflictCodes.RESOLVED_FUZZY_WINDOW)
+        } else {
+            Pair(null, InsertConflictCodes.UNRESOLVED)
+        }
     }
 
     // ---- Diagnostics helpers ----
@@ -231,6 +262,42 @@ class TransactionLifecycleCoordinator @Inject constructor(
             throw e
         } catch (e: Exception) {
             Timber.w(e, "Failed to emit restore-blocked create diagnostic")
+            false
+        }
+    }
+
+    /**
+     * NEW-P2-016: bounded best-effort diagnostic for an unresolvable home
+     * currency (DataStore error/timeout). Controlled constant reason code
+     * only — never raw settings/exception text. Preserves caller cancellation.
+     */
+    private suspend fun emitHomeCurrencyUnavailableDiagnosticBestEffort(
+        operation: String,
+        entityType: String,
+        entityId: Long?
+    ): Boolean {
+        return try {
+            diagnosticEventWriter.emit(
+                DiagnosticEvent(
+                    pipeline = AppPipeline.TRANSACTION,
+                    stage = operation,
+                    outcome = EventOutcome.FAILED_FINAL,
+                    severity = EventSeverity.WARNING,
+                    reasonCode = DiagnosticReasonCode.HOME_CURRENCY_UNAVAILABLE,
+                    entityType = entityType,
+                    entityId = entityId,
+                    metadata = SafeEventMetadata.builder()
+                        .put("operation", operation)
+                        .put("reason", HomeCurrencyFailureReason.HOME_CURRENCY_UNAVAILABLE)
+                        .build(),
+                    isTerminal = false
+                )
+            )
+            true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.w(e, "Failed to emit home-currency-unavailable diagnostic")
             false
         }
     }
@@ -441,13 +508,29 @@ class TransactionLifecycleCoordinator @Inject constructor(
         // ── Currency conversion snapshot ──────────────────────────────────
         // Populate baseAmount/baseCurrency/exchangeRateUsed so reports can
         // reconstruct the home-currency value without re-converting.
-        val homeCurrency = try {
-            currencySettingsRepository.homeCurrency().first()
-        } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-            CurrencyConverter.DEFAULT_BASE_CURRENCY
+        // NEW-P2-016: resolveHomeCurrency() is the typed contract — Resolved and
+        // FirstRunDefault proceed as before; Failed (including DataStore read
+        // timeout) fails CLOSED: no silent DEFAULT_BASE_CURRENCY substitution
+        // and no fabricated base snapshot. Conversion fields are marked with the
+        // existing sentinels (baseAmount <= 0.0 → downstream fallback to raw
+        // effectiveAmount) and a bounded controlled diagnostic is recorded.
+        val homeCurrency = when (val resolution = currencySettingsRepository.resolveHomeCurrency()) {
+            is HomeCurrencyResolution.Resolved -> resolution.currency.code
+            is HomeCurrencyResolution.FirstRunDefault -> resolution.currency.code
+            is HomeCurrencyResolution.Failed -> null
         }
-        if (expense.currency != homeCurrency) {
+        if (homeCurrency == null) {
+            expense = expense.copy(
+                baseAmount = 0.0,
+                baseCurrency = "",
+                exchangeRateUsed = 0.0
+            )
+            emitHomeCurrencyUnavailableDiagnosticBestEffort(
+                operation = "createExpense",
+                entityType = "Expense",
+                entityId = null
+            )
+        } else if (expense.currency != homeCurrency) {
             val conversion = try {
                 currencyConverter.convertAsOf(
                     amount = expense.amount,
@@ -482,7 +565,10 @@ class TransactionLifecycleCoordinator @Inject constructor(
 
         // 4. Deduplication — behaviour depends on mode
         val dedupMode = request.deduplicationMode
-        val skipDedup = request.skipDeduplication
+        // P2-004: preflight-only bypass. The nullable rawNotificationId and unique
+        // dedupeKey DB constraints are ALWAYS enforced — the database still returns
+        // a typed duplicate/conflict when an identity collides.
+        val skipDedup = request.skipPreflightDeduplication
 
         if (!skipDedup) {
             when (dedupMode) {
@@ -630,8 +716,11 @@ class TransactionLifecycleCoordinator @Inject constructor(
         }
 
         if (insertedId <= 0L) {
-            // Try to resolve the existing expense ID before declaring unresolved conflict
-            val existingId = resolveExistingIdAfterInsertConflict(expense, dedupMode)
+            // P2-002: Try to resolve the existing expense ID before declaring
+            // an unresolved conflict. [resolutionCode] records which identity
+            // actually proved the conflicting row (controlled constant only).
+            val (existingId, resolutionCode) =
+                resolveExistingIdAfterInsertConflict(expense, dedupMode)
 
             if (existingId != null) {
                 // Resolved — treat as duplicate
@@ -703,7 +792,13 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     )
                 )
             }
-            return Pair(CreateExpenseResult.InsertConflict(expense.dedupeKey ?: "unknown"), PostCommitActionBatch.empty(correlationId))
+            return Pair(
+                CreateExpenseResult.InsertConflict(
+                    dedupeKey = expense.dedupeKey ?: "unknown",
+                    reasonCode = resolutionCode
+                ),
+                PostCommitActionBatch.empty(correlationId)
+            )
         }
 
         // 6. Plan side effects — always deferred to caller
@@ -857,13 +952,25 @@ class TransactionLifecycleCoordinator @Inject constructor(
         val now = timeProvider.now()
 
         // ── Currency conversion snapshot (may do network I/O — stays outside txn) ──
-        val homeCurrencyUpdate = try {
-            currencySettingsRepository.homeCurrency().first()
-        } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-            CurrencyConverter.DEFAULT_BASE_CURRENCY
+        // NEW-P2-016: typed home-currency resolution — Resolved and FirstRunDefault
+        // proceed as before; Failed (including DataStore read timeout) fails CLOSED:
+        // no silent DEFAULT_BASE_CURRENCY substitution, no fabricated base snapshot.
+        // Conversion fields are marked with the existing sentinels (baseAmount <= 0.0
+        // → downstream fallback to raw effectiveAmount) and a bounded controlled
+        // diagnostic is recorded.
+        val homeCurrencyUpdate = when (val resolution = currencySettingsRepository.resolveHomeCurrency()) {
+            is HomeCurrencyResolution.Resolved -> resolution.currency.code
+            is HomeCurrencyResolution.FirstRunDefault -> resolution.currency.code
+            is HomeCurrencyResolution.Failed -> {
+                emitHomeCurrencyUnavailableDiagnosticBestEffort(
+                    operation = "updateExpense",
+                    entityType = "Expense",
+                    entityId = expense.id
+                )
+                null
+            }
         }
-        val preComputedConversion = if (expense.currency != homeCurrencyUpdate) {
+        val preComputedConversion = if (homeCurrencyUpdate != null && expense.currency != homeCurrencyUpdate) {
             try {
                 currencyConverter.convertAsOf(
                     amount = expense.amount,
@@ -926,7 +1033,10 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     dedupeKey = expenseWithNewKey.dedupeKey
                 )
                 if (isDuplicate) {
-                    val dupId = expenseDao.findDuplicateIdCurrencyAware(
+                    // RP-11 FIX 2: blocking-consistent (not-mine-INCLUSIVE) lookup —
+                    // the fuzzy resolver would miss a not-mine row occupying the
+                    // target identity and the write would die on the raw unique index.
+                    val dupId = expenseDao.findBlockingDuplicateIdCurrencyAware(
                         amount = expenseWithNewKey.amount,
                         merchant = expenseWithNewKey.merchant,
                         date = expenseWithNewKey.date,
@@ -947,8 +1057,12 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 expense
             }
 
-            // Apply currency conversion (pre-computed outside txn)
-            val finalExpense = if (expense.currency != homeCurrencyUpdate && preComputedConversion != null) {
+            // Apply currency conversion (pre-computed outside txn).
+            // NEW-P2-016: homeCurrencyUpdate == null (Failed resolution) falls
+            // through to the sentinel-clearing branch below — no invented base.
+            val finalExpense = if (homeCurrencyUpdate != null &&
+                expense.currency != homeCurrencyUpdate && preComputedConversion != null
+            ) {
                 updatedExpense.copy(
                     baseAmount = preComputedConversion.convertedAmount,
                     baseCurrency = homeCurrencyUpdate,
@@ -1045,14 +1159,26 @@ class TransactionLifecycleCoordinator @Inject constructor(
 
         // GR-14p-a: canonical direct scope — the mutations' proof is local
         // to the legal writer, independent of caller context.
+        //
+        // P2-005: typed outcome from the transaction — only a real update
+        // dispatches; unchanged values are idempotent no-ops; missing rows
+        // are typed failures. No event or dispatch for NoChange/NotFound.
+        var outcome = ExpenseUpdateOutcome.NotFound
         writeBarrier.runWrite(
             DatabaseAccessOperation(
                 "TransactionLifecycleCoordinator.updateCategory"
             )
         ) {
             database.withTransaction {
-            val existing = expenseDao.getById(expenseId) ?: return@withTransaction
-            if (existing.categoryId == newCategoryId) return@withTransaction
+            val existing = expenseDao.getById(expenseId)
+            if (existing == null) {
+                outcome = ExpenseUpdateOutcome.NotFound
+                return@withTransaction
+            }
+            if (existing.categoryId == newCategoryId) {
+                outcome = ExpenseUpdateOutcome.NoChange
+                return@withTransaction
+            }
 
             val beforeSnapshot = expenseToSnapshot(existing)
             val updated = existing.copy(categoryId = newCategoryId)
@@ -1074,16 +1200,23 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     correlationId = correlationId
                 )
             )
+            outcome = ExpenseUpdateOutcome.Updated
             }
         }
 
-        // Post-update side effects via planner + runner (best-effort)
-        val batch = planner.planUpdated(expenseId, source, correlationId, TransactionUpdateKind.CATEGORY_ONLY)
-        runner.runBestEffortAfterCommit(
-            batch = batch,
-            logMessage = "Non-critical: side effects failed after updating category for expense",
-            targetId = expenseId
-        )
+        when (outcome) {
+            ExpenseUpdateOutcome.Updated -> {
+                // Post-update side effects via planner + runner (best-effort)
+                val batch = planner.planUpdated(expenseId, source, correlationId, TransactionUpdateKind.CATEGORY_ONLY)
+                runner.runBestEffortAfterCommit(
+                    batch = batch,
+                    logMessage = "Non-critical: side effects failed after updating category for expense",
+                    targetId = expenseId
+                )
+            }
+            ExpenseUpdateOutcome.NoChange -> Unit
+            ExpenseUpdateOutcome.NotFound -> throw IllegalArgumentException("Expense not found: $expenseId")
+        }
     }
 
     /**
@@ -1115,10 +1248,23 @@ class TransactionLifecycleCoordinator @Inject constructor(
 
         val now = timeProvider.now()
 
+        // P2-005: typed outcome from the transaction — only a real update writes
+        // the event; unchanged values are idempotent no-ops; missing rows are
+        // typed failures. Side effects remain intentionally skipped for
+        // location-only updates — location does not affect budget/anomaly/
+        // merchant/recurring matching logic.
+        var outcome = ExpenseUpdateOutcome.NotFound
         database.withTransaction {
-            val existing = expenseDao.getById(expenseId) ?: return@withTransaction
+            val existing = expenseDao.getById(expenseId)
+            if (existing == null) {
+                outcome = ExpenseUpdateOutcome.NotFound
+                return@withTransaction
+            }
             if (existing.latitude == latitude && existing.longitude == longitude &&
-                existing.placeId == placeId && existing.resolvedAddress == resolvedAddress) return@withTransaction
+                existing.placeId == placeId && existing.resolvedAddress == resolvedAddress) {
+                outcome = ExpenseUpdateOutcome.NoChange
+                return@withTransaction
+            }
 
             val beforeSnapshot = expenseToSnapshot(existing)
             val updated = existing.copy(
@@ -1137,10 +1283,13 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 metadata = null, reason = reason,
                 correlationId = correlationId  // DDL-C67-10
             ))
+            outcome = ExpenseUpdateOutcome.Updated
         }
 
-        // Side effects intentionally skipped for location-only updates — location
-        // does not affect budget/anomaly/merchant/recurring matching logic.
+        when (outcome) {
+            ExpenseUpdateOutcome.Updated, ExpenseUpdateOutcome.NoChange -> Unit
+            ExpenseUpdateOutcome.NotFound -> throw IllegalArgumentException("Expense not found: $expenseId")
+        }
     }
 
     /**
@@ -1336,17 +1485,32 @@ class TransactionLifecycleCoordinator @Inject constructor(
         val now = timeProvider.now()
         val newMerchantKey = MerchantKeyGenerator.generate(newMerchant)
 
+        // P2-005: typed outcome from the transaction — only a real update writes
+        // the event and dispatches; unchanged values are idempotent no-ops;
+        // missing rows are typed failures. Collision still throws
+        // DuplicateUpdateException (rolls back inside the transaction).
+        var outcome = ExpenseUpdateOutcome.NotFound
         database.withTransaction {
-            val existing = expenseDao.getById(expenseId) ?: return@withTransaction
-            if (existing.merchant == newMerchant) return@withTransaction
+            val existing = expenseDao.getById(expenseId)
+            if (existing == null) {
+                outcome = ExpenseUpdateOutcome.NotFound
+                return@withTransaction
+            }
+            if (existing.merchant == newMerchant) {
+                outcome = ExpenseUpdateOutcome.NoChange
+                return@withTransaction
+            }
 
             val beforeSnapshot = expenseToSnapshot(existing)
             val newDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
                 existing.amount, newMerchant, existing.date, existing.currency, existing.transactionType
             )
 
-            // Collision check inside transaction for TOCTOU safety
-            val collidingId = expenseDao.findDuplicateIdCurrencyAware(
+            // Collision check inside transaction for TOCTOU safety.
+            // RP-11 FIX 2: blocking-consistent (not-mine-INCLUSIVE) lookup —
+            // a not-mine row occupying the target identity must still abort
+            // the rename with a typed DuplicateUpdateException.
+            val collidingId = expenseDao.findBlockingDuplicateIdCurrencyAware(
                 amount = existing.amount,
                 merchant = newMerchant,
                 date = existing.date,
@@ -1384,15 +1548,22 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     correlationId = correlationId  // DDL-C67-10
                 )
             )
+            outcome = ExpenseUpdateOutcome.Updated
         }
 
-        // Post-update side effects via planner + runner (best-effort)
-        val batch = planner.planUpdated(expenseId, source, correlationId, TransactionUpdateKind.MERCHANT)
-        runner.runBestEffortAfterCommit(
-            batch = batch,
-            logMessage = "Non-critical: side effects failed after updating merchant for expense",
-            targetId = expenseId
-        )
+        when (outcome) {
+            ExpenseUpdateOutcome.Updated -> {
+                // Post-update side effects via planner + runner (best-effort)
+                val batch = planner.planUpdated(expenseId, source, correlationId, TransactionUpdateKind.MERCHANT)
+                runner.runBestEffortAfterCommit(
+                    batch = batch,
+                    logMessage = "Non-critical: side effects failed after updating merchant for expense",
+                    targetId = expenseId
+                )
+            }
+            ExpenseUpdateOutcome.NoChange -> Unit
+            ExpenseUpdateOutcome.NotFound -> throw IllegalArgumentException("Expense not found: $expenseId")
+        }
     }
 
     /**
@@ -1418,20 +1589,35 @@ class TransactionLifecycleCoordinator @Inject constructor(
 
         // GR-14j: canonical direct scope — the mutation's proof must be
         // local to the legal writer, independent of caller context.
+        //
+        // P2-005: typed outcome from the transaction — only a real update
+        // dispatches; unchanged values are idempotent no-ops; missing rows
+        // are typed failures. No event or dispatch for NoChange/NotFound.
+        var outcome = ExpenseUpdateOutcome.NotFound
         writeBarrier.runWrite(
             DatabaseAccessOperation("TransactionLifecycleCoordinator.updateType")
         ) {
             database.withTransaction {
-                val existing = expenseDao.getById(expenseId) ?: return@withTransaction
-                if (existing.transactionType == newType) return@withTransaction
+                val existing = expenseDao.getById(expenseId)
+                if (existing == null) {
+                    outcome = ExpenseUpdateOutcome.NotFound
+                    return@withTransaction
+                }
+                if (existing.transactionType == newType) {
+                    outcome = ExpenseUpdateOutcome.NoChange
+                    return@withTransaction
+                }
 
                 val beforeSnapshot = expenseToSnapshot(existing)
                 val newDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
                     existing.amount, existing.merchant, existing.date, existing.currency, newType
                 )
 
-                // Collision check inside transaction for TOCTOU safety
-                val collidingId = expenseDao.findDuplicateIdCurrencyAware(
+                // Collision check inside transaction for TOCTOU safety.
+                // RP-11 FIX 2: blocking-consistent (not-mine-INCLUSIVE) lookup —
+                // a not-mine row occupying the target identity must still abort
+                // the update with a typed DuplicateUpdateException.
+                val collidingId = expenseDao.findBlockingDuplicateIdCurrencyAware(
                     amount = existing.amount,
                     merchant = existing.merchant,
                     date = existing.date,
@@ -1468,16 +1654,23 @@ class TransactionLifecycleCoordinator @Inject constructor(
                         correlationId = correlationId  // DDL-C67-10
                     )
                 )
+                outcome = ExpenseUpdateOutcome.Updated
             }
         }
 
-        // Post-update side effects via planner + runner (best-effort)
-        val batch = planner.planUpdated(expenseId, source, correlationId, TransactionUpdateKind.TYPE)
-        runner.runBestEffortAfterCommit(
-            batch = batch,
-            logMessage = "Non-critical: side effects failed after updating type for expense",
-            targetId = expenseId
-        )
+        when (outcome) {
+            ExpenseUpdateOutcome.Updated -> {
+                // Post-update side effects via planner + runner (best-effort)
+                val batch = planner.planUpdated(expenseId, source, correlationId, TransactionUpdateKind.TYPE)
+                runner.runBestEffortAfterCommit(
+                    batch = batch,
+                    logMessage = "Non-critical: side effects failed after updating type for expense",
+                    targetId = expenseId
+                )
+            }
+            ExpenseUpdateOutcome.NoChange -> Unit
+            ExpenseUpdateOutcome.NotFound -> throw IllegalArgumentException("Expense not found: $expenseId")
+        }
     }
 
     /**
@@ -1490,13 +1683,16 @@ class TransactionLifecycleCoordinator @Inject constructor(
      * @param transferAccountName The new transfer account name (nullable).
      * @param reason              Optional human-readable explanation.
      * @param source              The source system/component that triggered the update.
+     * @param correlationId       Optional caller correlation ID (P2-007) carried into
+     *                            both the UPDATED event and the planned side-effect batch.
      */
     suspend fun updateTransferDetails(
         expenseId: Long,
         transferDirection: com.yourname.expensetracker.data.database.entity.TransferDirection?,
         transferAccountName: String?,
         reason: String? = null,
-        source: String = "USER_EDIT"
+        source: String = "USER_EDIT",
+        correlationId: String? = null
     ) {
         writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.updateTransferDetails")
 
@@ -1504,14 +1700,26 @@ class TransactionLifecycleCoordinator @Inject constructor(
 
         // GR-14k: canonical direct scope — the mutations' proof is local
         // to the legal writer, independent of caller context.
+        //
+        // P2-005: typed outcome from the transaction — only a real update
+        // writes the event and dispatches; unchanged values are idempotent
+        // no-ops; missing rows are typed failures. No event/dispatch otherwise.
+        var outcome = ExpenseUpdateOutcome.NotFound
         writeBarrier.runWrite(
             DatabaseAccessOperation(
                 "TransactionLifecycleCoordinator.updateTransferDetails"
             )
         ) {
             database.withTransaction {
-            val existing = expenseDao.getById(expenseId) ?: return@withTransaction
-            if (existing.transferDirection == transferDirection && existing.transferAccountName == transferAccountName) return@withTransaction
+            val existing = expenseDao.getById(expenseId)
+            if (existing == null) {
+                outcome = ExpenseUpdateOutcome.NotFound
+                return@withTransaction
+            }
+            if (existing.transferDirection == transferDirection && existing.transferAccountName == transferAccountName) {
+                outcome = ExpenseUpdateOutcome.NoChange
+                return@withTransaction
+            }
 
             val beforeSnapshot = expenseToSnapshot(existing)
             val updated = existing.copy(
@@ -1551,19 +1759,28 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     beforeSnapshot = beforeSnapshot,
                     afterSnapshot = expenseToSnapshot(expenseId, updated),
                     metadata = null,
-                    reason = reason
+                    reason = reason,
+                    correlationId = correlationId  // P2-007
                 )
             )
+            outcome = ExpenseUpdateOutcome.Updated
             }
         }
 
-        // Post-update side effects via planner + runner (best-effort)
-        val batch = planner.planUpdated(expenseId, source, null, TransactionUpdateKind.TRANSFER_DETAILS)
-        runner.runBestEffortAfterCommit(
-            batch = batch,
-            logMessage = "Non-critical: side effects failed after updating transfer details for expense",
-            targetId = expenseId
-        )
+        when (outcome) {
+            ExpenseUpdateOutcome.Updated -> {
+                // Post-update side effects via planner + runner (best-effort).
+                // P2-007: caller correlation propagates into the planned batch.
+                val batch = planner.planUpdated(expenseId, source, correlationId, TransactionUpdateKind.TRANSFER_DETAILS)
+                runner.runBestEffortAfterCommit(
+                    batch = batch,
+                    logMessage = "Non-critical: side effects failed after updating transfer details for expense",
+                    targetId = expenseId
+                )
+            }
+            ExpenseUpdateOutcome.NoChange -> Unit
+            ExpenseUpdateOutcome.NotFound -> throw IllegalArgumentException("Expense not found: $expenseId")
+        }
     }
 
     /**
@@ -1571,29 +1788,55 @@ class TransactionLifecycleCoordinator @Inject constructor(
      * DB transaction with one lifecycle event and one side-effect dispatch.
      * Replaces the two-call pattern (updateType + updateTransferDetails) that
      * could leave the row inconsistent if the second call failed.
+     *
+     * P2-005: typed outcome from the transaction — only a real update writes
+     * the event and dispatches; unchanged values are idempotent no-ops; missing
+     * rows are typed failures. The dedupe-key collision check runs whenever the
+     * recomputed key differs from the stored key, even if the type is unchanged.
      */
     suspend fun updateTypeAndTransferDetails(
         expenseId: Long,
         newType: TransactionType,
         transferDirection: com.yourname.expensetracker.data.database.entity.TransferDirection?,
         transferAccountName: String?,
-        source: String = "USER_EDIT"
+        source: String = "USER_EDIT",
+        correlationId: String? = null
     ) {
         writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.updateTypeAndTransferDetails")
 
         val now = timeProvider.now()
 
+        var outcome = ExpenseUpdateOutcome.NotFound
         database.withTransaction {
-            val existing = expenseDao.getById(expenseId) ?: return@withTransaction
+            val existing = expenseDao.getById(expenseId)
+            if (existing == null) {
+                outcome = ExpenseUpdateOutcome.NotFound
+                return@withTransaction
+            }
+
             val beforeSnapshot = expenseToSnapshot(existing)
 
             val newDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
                 existing.amount, existing.merchant, existing.date, existing.currency, newType
             )
+            val dedupeKeyChanged = existing.dedupeKey != newDedupeKey
 
-            // Collision check inside transaction for TOCTOU safety
-            if (existing.transactionType != newType) {
-                val collidingId = expenseDao.findDuplicateIdCurrencyAware(
+            // No-op detection: recomputed key unchanged AND transfer metadata unchanged
+            if (!dedupeKeyChanged &&
+                existing.transferDirection == transferDirection &&
+                existing.transferAccountName == transferAccountName
+            ) {
+                outcome = ExpenseUpdateOutcome.NoChange
+                return@withTransaction
+            }
+
+            // Collision check inside transaction for TOCTOU safety —
+            // key-differs check (not type-differs): whenever the recomputed key
+            // differs from the stored key, the new key must not collide with
+            // another expense's dedupeKey unique index.
+            // RP-11 FIX 2: blocking-consistent (not-mine-INCLUSIVE) lookup.
+            if (dedupeKeyChanged) {
+                val collidingId = expenseDao.findBlockingDuplicateIdCurrencyAware(
                     amount = existing.amount,
                     merchant = existing.merchant,
                     date = existing.date,
@@ -1649,18 +1892,27 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     beforeSnapshot = beforeSnapshot,
                     afterSnapshot = expenseToSnapshot(expenseId, updated),
                     metadata = null,
-                    reason = null
+                    reason = null,
+                    correlationId = correlationId  // P2-007
                 )
             )
+            outcome = ExpenseUpdateOutcome.Updated
         }
 
-        // One side-effect dispatch after commit via planner + runner
-        val batch = planner.planUpdated(expenseId, source, null, TransactionUpdateKind.FULL)
-        runner.runBestEffortAfterCommit(
-            batch = batch,
-            logMessage = "Non-critical: side effects failed after updateTypeAndTransferDetails for expense",
-            targetId = expenseId
-        )
+        when (outcome) {
+            ExpenseUpdateOutcome.Updated -> {
+                // One side-effect dispatch after commit via planner + runner.
+                // P2-007: caller correlation propagates into the planned batch.
+                val batch = planner.planUpdated(expenseId, source, correlationId, TransactionUpdateKind.FULL)
+                runner.runBestEffortAfterCommit(
+                    batch = batch,
+                    logMessage = "Non-critical: side effects failed after updateTypeAndTransferDetails for expense",
+                    targetId = expenseId
+                )
+            }
+            ExpenseUpdateOutcome.NoChange -> Unit
+            ExpenseUpdateOutcome.NotFound -> throw IllegalArgumentException("Expense not found: $expenseId")
+        }
     }
 
     /**
@@ -1884,6 +2136,36 @@ class TransactionLifecycleCoordinator @Inject constructor(
     }
 
     /**
+     * NEW-P2-005: coordinator-owned post-commit side effects for an already
+     * committed `EXPENSE_CATEGORY_ASSIGNED` lifecycle step (receipt item
+     * majority category propagation via [ExpenseCategoryAssignmentPort]).
+     *
+     * The port keeps its atomic update + distinct `EXPENSE_CATEGORY_ASSIGNED`
+     * event (type and payload preserved — no listener compatibility risk);
+     * this hook adds the previously missing post-commit dispatch (budget
+     * recheck + anomaly alert for a category change), following the same
+     * CATEGORY_ONLY plan as [updateCategory]. Best-effort: failures are
+     * logged and never propagate into receipt linking.
+     */
+    suspend fun dispatchCategoryAssignmentSideEffects(
+        expenseId: Long,
+        source: String,
+        correlationId: String? = null
+    ) {
+        val batch = planner.planUpdated(
+            expenseId,
+            source,
+            correlationId,
+            TransactionUpdateKind.CATEGORY_ONLY
+        )
+        runner.runBestEffortAfterCommit(
+            batch = batch,
+            logMessage = "Non-critical: side effects failed after category assignment for expense",
+            targetId = expenseId
+        )
+    }
+
+    /**
      * P2-07: Aggregate post-commit recalculation for bulk operations.
      * Instead of per-row side effects flooded across N expenses, dispatch a
      * single budget recheck and cache invalidation. This prevents storms while
@@ -1905,9 +2187,38 @@ class TransactionLifecycleCoordinator @Inject constructor(
     }
 
     /**
+     * P2-003: controlled failure reason for an atomic bulk merchant rename that
+     * was aborted because at least one target key would collide with an
+     * existing expense outside the renamed set.
+     */
+    object BulkMerchantRenameFailure {
+        const val MERCHANT_RENAME_DUPLICATE = "MERCHANT_RENAME_DUPLICATE"
+    }
+
+    /**
+     * NEW-P2-016: bounded, controlled reason constants for a lifecycle mutation
+     * whose home-currency settings could not be resolved (DataStore error or
+     * read timeout). Reason-code fields must contain these constants only —
+     * never raw settings text, exception text, or payload-derived values.
+     */
+    object HomeCurrencyFailureReason {
+        const val HOME_CURRENCY_UNAVAILABLE = "HOME_CURRENCY_UNAVAILABLE"
+    }
+
+    /**
      * Bulk-updates the merchant for all expenses matching the old merchant key.
      * Writes a single BULK_UPDATED TransactionEvent (not per-row) with
      * JSON metadata describing the operation.
+     *
+     * P2-003: atomic all-or-nothing contract. Every target (merchant, dedupeKey)
+     * pair is preflighted inside the transaction BEFORE any row is written; a
+     * single collision aborts all changes, writes no lifecycle event, dispatches
+     * no side effects, and returns [Result.failure] with the controlled
+     * [BulkMerchantRenameFailure.MERCHANT_RENAME_DUPLICATE] reason. A successful
+     * operation returns [Result.success] after emitting the existing one
+     * aggregate BULK_UPDATED event and dispatching the one aggregate
+     * post-commit batch. Zero matching rows is a successful no-op (no event,
+     * no dispatch). Per-row partial success is intentionally not supported.
      *
      * @param oldMerchant The current merchant name (used to derive old merchant key).
      * @param newMerchant The new merchant name to apply.
@@ -1920,19 +2231,54 @@ class TransactionLifecycleCoordinator @Inject constructor(
         source: String = "USER_EDIT",
         reason: String? = null,
         correlationId: String? = null
-    ) {
+    ): Result<Unit> {
         writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.bulkUpdateMerchant")
-        if (oldMerchant == newMerchant) return
+        if (oldMerchant == newMerchant) return Result.success(Unit)
         val oldMerchantKey = MerchantKeyGenerator.generate(oldMerchant)
         val newMerchantKey = MerchantKeyGenerator.generate(newMerchant)
         val now = timeProvider.now()
         var affectedCount = 0
 
-        database.withTransaction {
+        return try {
+            writeBarrier.runWrite(
+                DatabaseAccessOperation(
+                    "TransactionLifecycleCoordinator.bulkUpdateMerchant"
+                )
+            ) {
+            database.withTransaction {
             // Fetch affected rows inside transaction to prevent TOCTOU race
             val affectedExpenses = expenseDao.getExpensesByMerchantKey(oldMerchantKey)
             if (affectedExpenses.isEmpty()) return@withTransaction
             affectedCount = affectedExpenses.size
+
+            // P2-003: preflight every target key INSIDE the transaction before
+            // writing anything. A collision is detected by the recomputed dedupe
+            // key landing on an expense that is not part of this rename set.
+            // RP-11 FIX 2: blocking-consistent (not-mine-INCLUSIVE) lookup —
+            // a not-mine row occupying a target key must abort the whole rename
+            // with the controlled MERCHANT_RENAME_DUPLICATE reason instead of
+            // letting a row write die on the raw dedupeKey unique index.
+            val targetIds = affectedExpenses.map { it.id }.toHashSet()
+            for (expense in affectedExpenses) {
+                val newDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
+                    expense.amount, newMerchant, expense.date, expense.currency, expense.transactionType
+                )
+                val collidingId = expenseDao.findBlockingDuplicateIdCurrencyAware(
+                    amount = expense.amount,
+                    merchant = newMerchant,
+                    date = expense.date,
+                    currency = expense.currency,
+                    transactionType = expense.transactionType.name,
+                    merchantKey = newMerchantKey,
+                    dedupeKey = newDedupeKey
+                )
+                if (collidingId != null && collidingId !in targetIds) {
+                    // Abort everything: no row written, no event, no dispatch.
+                    throw DuplicateUpdateException(
+                        BulkMerchantRenameFailure.MERCHANT_RENAME_DUPLICATE
+                    )
+                }
+            }
 
             for (expense in affectedExpenses) {
                 val newDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
@@ -1957,10 +2303,25 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 reason = reason,
                 correlationId = correlationId  // DDL-C67-10
             ))
-        }
+            }
+            }
 
-        // P2-07: Dispatch single aggregate post-commit recalculation for bulk updates.
-        dispatchBulkPostCommitSideEffects(source, affectedCount, setOf(BulkChangedField.MERCHANT, BulkChangedField.MERCHANT_KEY))
+            // P2-07: Dispatch single aggregate post-commit recalculation for bulk updates.
+            // Metrics/dispatch only after actual commit success (all-or-nothing),
+            // and only when rows were actually changed — zero matching rows is a
+            // successful no-op with no event and no dispatch (FIX 3).
+            if (affectedCount > 0) {
+                dispatchBulkPostCommitSideEffects(source, affectedCount, setOf(BulkChangedField.MERCHANT, BulkChangedField.MERCHANT_KEY))
+            }
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: DuplicateUpdateException) {
+            // Controlled duplicate-reason failure — no partial state, no event.
+            Result.failure(e)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
     }
 
     /**
@@ -1992,10 +2353,16 @@ class TransactionLifecycleCoordinator @Inject constructor(
         return try {
             val now = timeProvider.now()
 
-            // Write lifecycle event + delete inside a single transaction
-            // P2-08: Re-read inside transaction for TOCTOU-safe snapshot
+            // P2-001: typed outcome from the transaction — only an actual delete
+            // writes the DELETED event and dispatches post-commit work.
+            // P2-08: Re-read inside transaction for TOCTOU-safe snapshot.
+            var outcome = ExpenseDeleteOutcome.NotFound
             database.withTransaction {
-                val fresh = expenseDao.getById(expense.id) ?: return@withTransaction
+                val fresh = expenseDao.getById(expense.id)
+                if (fresh == null) {
+                    outcome = ExpenseDeleteOutcome.NotFound
+                    return@withTransaction
+                }
                 val snapshot = expenseToSnapshot(fresh)
 
                 transactionEventDao.insert(
@@ -2016,6 +2383,13 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 )
 
                 expenseDao.delete(fresh)
+                outcome = ExpenseDeleteOutcome.Deleted
+            }
+
+            if (outcome == ExpenseDeleteOutcome.NotFound) {
+                return Result.failure(
+                    IllegalArgumentException("Expense not found: ${expense.id}")
+                )
             }
 
             // Post-delete side effects via planner + runner (best-effort)
@@ -2174,6 +2548,29 @@ class TransactionLifecycleCoordinator @Inject constructor(
  * Exception thrown when an update would create a duplicate expense.
  */
 class DuplicateUpdateException(message: String) : IllegalStateException(message)
+
+/**
+ * P2-005: Internal typed outcome for targeted expense updates.
+ * Returned from the database transaction; only [Updated] writes a lifecycle
+ * event and dispatches post-commit work. [NoChange] is a successful idempotent
+ * no-op; [NotFound] is a typed missing-row failure.
+ */
+private enum class ExpenseUpdateOutcome {
+    Updated,
+    NoChange,
+    NotFound
+}
+
+/**
+ * P2-001: Internal typed outcome for expense delete.
+ * Only [Deleted] writes the DELETED event, plans side effects, and returns
+ * [Result.success]; [NotFound] is a typed missing-row failure with no
+ * planner/dispatcher call.
+ */
+private enum class ExpenseDeleteOutcome {
+    Deleted,
+    NotFound
+}
 
 /**
  * Result of a DB-only ownership update operation.
