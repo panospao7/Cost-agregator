@@ -324,4 +324,88 @@ class SynthesisEngineBlockPartyMultiCurrencyTest {
         assertEquals(30.0, day10.actualSpent, 0.0001)
         assertFalse(day10.actualSpent == 99.0)
     }
+
+    // ── 6. RP-06 D6: per-day conversion-failure count on BlockPartyDay ──
+
+    @Test
+    fun `转换失败的当日携带conversionFailureCount其余天为0`() = runTest {
+        stubUsdFailed()
+
+        val forecast = forecast("EUR")
+        // day 10: EUR 30 (identity) + USD 50 (Failed → excluded) → 1 failure
+        val blockParty = engine.calculateBlockPartyData(
+            forecast = forecast,
+            expenses = listOf(
+                tx(30.0, day = 10, currency = "EUR"),
+                tx(50.0, day = 10, currency = "USD")
+            ),
+            dailySpending = List(31) { 0f },
+            budgetLimit = 2000.0
+        )
+
+        val day10 = blockParty.first { it.dayOfMonth == 10 }
+        assertEquals(
+            "Failed-conversion day must carry the failure count",
+            1, day10.conversionFailureCount
+        )
+        // 所有其他天：无失败 → 计数为 0
+        val otherDays = blockParty.filter { it.dayOfMonth != 10 }
+        assertTrue(otherDays.isNotEmpty())
+        assertTrue(
+            "Days without conversion failures must carry 0",
+            otherDays.all { it.conversionFailureCount == 0 }
+        )
+        // 汇总守恒：单日失败数之和 = 引擎日志计数（此处仅 day10 一项失败）
+        assertEquals(1, blockParty.sumOf { it.conversionFailureCount })
+    }
+
+    @Test
+    fun `恒等路径天conversionFailureCount全为0且不触发converter`() = runTest {
+        coEvery {
+            currencyConverter.convertOutcome(any(), any(), any(), any(), any(), any())
+        } throws AssertionError("blank displayCurrency must not call convertOutcome")
+
+        // blank bpCurrency → identity sum（旧版 golden 场景），永不失败
+        val forecast = forecast("")
+        val blockParty = engine.calculateBlockPartyData(
+            forecast = forecast,
+            expenses = listOf(
+                tx(30.0, day = 10, currency = "EUR"),
+                tx(50.0, day = 12, currency = "USD")   // 混币种也不转换——identity 路径
+            ),
+            dailySpending = List(31) { 0f },
+            budgetLimit = 2000.0
+        )
+
+        assertTrue(
+            "Identity-path days must carry 0 conversion failures",
+            blockParty.all { it.conversionFailureCount == 0 }
+        )
+        coVerify(exactly = 0) {
+            currencyConverter.convertOutcome(any(), any(), any(), any(), any(), any())
+        }
+    }
+
+    @Test
+    fun `全转换成功的天conversionFailureCount为0`() = runTest {
+        stubUsdConverted()
+
+        val forecast = forecast("EUR")
+        val blockParty = engine.calculateBlockPartyData(
+            forecast = forecast,
+            expenses = listOf(
+                tx(30.0, day = 10, currency = "EUR"),
+                tx(50.0, day = 12, currency = "USD")   // Converted → 计入，不失败
+            ),
+            dailySpending = List(31) { 0f },
+            budgetLimit = 2000.0
+        )
+
+        assertTrue(
+            "Days whose conversions all succeed must carry 0",
+            blockParty.all { it.conversionFailureCount == 0 }
+        )
+        val day12 = blockParty.first { it.dayOfMonth == 12 }
+        assertEquals(50.0, day12.actualSpent, 0.0001)
+    }
 }

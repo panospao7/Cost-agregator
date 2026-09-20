@@ -288,4 +288,194 @@ class MoneyAggregateBuilderTest {
             8, result.totalTransactionCount
         )
     }
+
+    // ── NEW-P5-009: counts/buckets size-mismatch count integrity ──────────
+
+    @Test
+    fun `shorter counts list marks aggregate partial with countsIncomplete`() = runTest {
+        coEvery {
+            mockConverter.convertMultiple(listOf(100.0 to "USD", 50.0 to "GBP"), "EUR")
+        } returns MultiConversionAggregate(
+            total = 145.0,
+            targetCurrency = "EUR",
+            failedConversions = emptyList()
+        )
+
+        @Suppress("DEPRECATION")
+        val result = MoneyAggregateBuilder.fromBuckets(
+            buckets = listOf(100.0 to "USD", 50.0 to "GBP"),
+            homeCurrency = "EUR",
+            converter = mockConverter,
+            transactionCounts = listOf(1) // 1 count for 2 buckets — SHORTER
+        )
+
+        assertTrue("Size mismatch must mark the aggregate partial", result.isPartial)
+        assertTrue(
+            "Metadata must carry countsIncomplete for a shorter counts list",
+            result.metadata.countsIncomplete
+        )
+        assertNotNull("Controlled warning must be present", result.warningMessage)
+        assertTrue(
+            "Warning must be the controlled count-integrity text",
+            result.warningMessage!!.contains("Transaction counts incomplete")
+        )
+        // Missing count stays silently-defaulted 0 (never a negative sentinel),
+        // but the incompletion is now visible via isPartial + metadata.
+        assertEquals(1, result.totalTransactionCount)
+        assertTrue("No negative sentinels", result.totalTransactionCount >= 0)
+        // Converted amounts remain trustworthy — only counts are suspect.
+        assertEquals(145.0, result.displayAmount, 0.001)
+        assertTrue(result.conversionFailures.isEmpty())
+    }
+
+    @Test
+    fun `longer counts list marks aggregate partial with countsIncomplete`() = runTest {
+        coEvery {
+            mockConverter.convertMultiple(listOf(100.0 to "USD", 50.0 to "GBP"), "EUR")
+        } returns MultiConversionAggregate(
+            total = 145.0,
+            targetCurrency = "EUR",
+            failedConversions = emptyList()
+        )
+
+        @Suppress("DEPRECATION")
+        val result = MoneyAggregateBuilder.fromBuckets(
+            buckets = listOf(100.0 to "USD", 50.0 to "GBP"),
+            homeCurrency = "EUR",
+            converter = mockConverter,
+            transactionCounts = listOf(1, 2, 3) // 3 counts for 2 buckets — LONGER
+        )
+
+        assertTrue("Longer counts list must also mark the aggregate partial", result.isPartial)
+        assertTrue(
+            "Metadata must carry countsIncomplete for a longer counts list",
+            result.metadata.countsIncomplete
+        )
+        assertTrue(
+            "Warning must be the controlled count-integrity text",
+            result.warningMessage!!.contains("Transaction counts incomplete")
+        )
+        // Counts 1 + 2 land in buckets; the third count has no bucket and is
+        // never folded into any total (no fabricated counts).
+        assertEquals(3, result.totalTransactionCount)
+        assertEquals(145.0, result.displayAmount, 0.001)
+    }
+
+    @Test
+    fun `empty counts list stays count-agnostic and not partial`() = runTest {
+        coEvery {
+            mockConverter.convertMultiple(listOf(100.0 to "USD"), "EUR")
+        } returns MultiConversionAggregate(
+            total = 92.0,
+            targetCurrency = "EUR",
+            failedConversions = emptyList()
+        )
+
+        @Suppress("DEPRECATION")
+        val result = MoneyAggregateBuilder.fromBuckets(
+            buckets = listOf(100.0 to "USD"),
+            homeCurrency = "EUR",
+            converter = mockConverter
+            // transactionCounts omitted — the count-agnostic opt-out default
+        )
+
+        assertFalse(
+            "Count-agnostic (empty) counts list is unknown-by-design, not damaged",
+            result.isPartial
+        )
+        assertFalse("Empty counts list must NOT set countsIncomplete", result.metadata.countsIncomplete)
+        assertNull("No warning for the count-agnostic path", result.warningMessage)
+        assertEquals(92.0, result.displayAmount, 0.001)
+    }
+
+    @Test
+    fun `complete counts list regression unchanged behavior`() = runTest {
+        coEvery {
+            mockConverter.convertMultiple(listOf(200.0 to "EUR", 100.0 to "USD"), "EUR")
+        } returns MultiConversionAggregate(
+            total = 292.0,
+            targetCurrency = "EUR",
+            failedConversions = emptyList()
+        )
+
+        @Suppress("DEPRECATION")
+        val result = MoneyAggregateBuilder.fromBuckets(
+            buckets = listOf(200.0 to "EUR", 100.0 to "USD"),
+            homeCurrency = "EUR",
+            converter = mockConverter,
+            transactionCounts = listOf(5, 3) // matches buckets — COMPLETE
+        )
+
+        assertFalse("Complete lists must not be partial", result.isPartial)
+        assertFalse(
+            "Complete lists must leave countsIncomplete false",
+            result.metadata.countsIncomplete
+        )
+        assertNull("Complete lists must have no warning", result.warningMessage)
+        assertEquals(292.0, result.displayAmount, 0.001)
+        assertEquals(8, result.totalTransactionCount)
+    }
+
+    @Test
+    fun `count mismatch combines warning with conversion-failure warning`() = runTest {
+        coEvery {
+            mockConverter.convertMultiple(listOf(100.0 to "USD"), "EUR")
+        } returns MultiConversionAggregate(
+            total = 0.0,
+            targetCurrency = "EUR",
+            failedConversions = listOf(
+                FailedConversion(
+                    originalAmount = 100.0,
+                    originalCurrency = "USD",
+                    targetCurrency = "EUR",
+                    reason = "Missing exchange rate from USD to EUR",
+                    failureType = FailedConversion.MISSING_RATE
+                )
+            )
+        )
+
+        @Suppress("DEPRECATION")
+        val result = MoneyAggregateBuilder.fromBuckets(
+            buckets = listOf(100.0 to "USD"),
+            homeCurrency = "EUR",
+            converter = mockConverter,
+            transactionCounts = listOf(2, 7) // longer than buckets — mismatch
+        )
+
+        assertTrue(result.isPartial)
+        assertTrue(result.metadata.countsIncomplete)
+        assertNotNull(result.warningMessage)
+        assertTrue(
+            "Both count-integrity and conversion warnings must be present",
+            result.warningMessage!!.contains("Transaction counts incomplete") &&
+                result.warningMessage!!.contains("currency bucket(s)")
+        )
+        assertEquals(1, result.conversionFailures.size)
+    }
+
+    @Test
+    fun `count mismatch on home-currency-only path still marks partial`() = runTest {
+        // Home-currency-only input returns BEFORE conversion — the mismatch
+        // flag must survive that early return. Negative wiring check: if the
+        // converter were ever reached, this stub fails the test loudly.
+        coEvery {
+            mockConverter.convertMultiple(any(), any())
+        } throws AssertionError("home-currency-only buckets must not reach the converter")
+
+        @Suppress("DEPRECATION")
+        val result = MoneyAggregateBuilder.fromBuckets(
+            buckets = listOf(150.0 to "EUR"),
+            homeCurrency = "EUR",
+            converter = mockConverter,
+            transactionCounts = listOf(1, 2) // longer than buckets — mismatch
+        )
+
+        assertEquals(150.0, result.displayAmount, 0.001)
+        assertEquals(1, result.totalTransactionCount)
+        assertTrue("Early-return path must still flag count incompletion", result.isPartial)
+        assertTrue(result.metadata.countsIncomplete)
+        assertTrue(
+            result.warningMessage!!.contains("Transaction counts incomplete")
+        )
+    }
 }

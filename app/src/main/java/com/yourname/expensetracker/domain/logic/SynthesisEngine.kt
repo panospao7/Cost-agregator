@@ -608,12 +608,17 @@ class SynthesisEngine @Inject constructor(
             // G-TIME-01: noon of each day derived from the injected TimeProvider instant.
             val dateMs = nowDate.withDayOfMonth(day).atTime(12, 0).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
 
+            // RP-06 D6 (6b deferral resolution): per-day conversion-failure count,
+            // surfaced on the returned BlockPartyDay (bounded count only — no
+            // amounts, no currencies, no exception text).
+            var dayConversionFailures = 0
+
             // 1. Use pre-calculated recurring expenses for this day
             val recurringItemsOnDay = recurringByDay[day] ?: emptyList()
             val recurringOnDay = recurringItemsOnDay.sumOf { pattern ->
                 if (bpCurrency.isBlank()) pattern.averageAmount
                 else convertAmount(pattern.averageAmount, pattern.currency, bpCurrency)
-                    ?: run { bpConversionFailures++; 0.0 }
+                    ?: run { bpConversionFailures++; dayConversionFailures++; 0.0 }
             }
             val recurringNames = recurringItemsOnDay.map { it.merchantName }
 
@@ -630,7 +635,7 @@ class SynthesisEngine @Inject constructor(
                     }
                     if (bpCurrency.isBlank()) raw
                     else convertAmount(raw, expense.currency, bpCurrency)
-                        ?: run { bpConversionFailures++; 0.0 }
+                        ?: run { bpConversionFailures++; dayConversionFailures++; 0.0 }
                 }
             val plannedNames = plannedItemsOnDay.map { it.description }
 
@@ -649,7 +654,7 @@ class SynthesisEngine @Inject constructor(
                 else -> expensesByDay[day]!!.sumOf { item ->
                     if (item.currency.isBlank()) item.effectiveAmount
                     else convertAmount(item.effectiveAmount, item.currency, bpCurrency)
-                        ?: run { bpConversionFailures++; 0.0 }
+                        ?: run { bpConversionFailures++; dayConversionFailures++; 0.0 }
                 }
             }
             // FCST-3: Sum actual occurrences correctly — prefer expenses from the expense
@@ -690,13 +695,17 @@ class SynthesisEngine @Inject constructor(
                 plannedImpact = plannedOnDay,
                 recurringItems = recurringNames,
                 plannedItems = plannedNames,
-                topTransactions = dayTransactions
+                topTransactions = dayTransactions,
+                conversionFailureCount = dayConversionFailures
             )
         }
 
-        // RP-06 6b slice 2: block-party 自身的转换失败计数（仅受控计数，无敏感内容）。
-        // 返回结构 BlockPartyDay 无字段可承载该计数（新增字段会破坏现有调用方映射），
-        // 故仅记日志——见实现报告中的"计数不可见"条目。
+        // RP-06 6b slice 2 / D6: bounded engine-level log of ALL block-party
+        // conversion failures (monthly totals + per-day items; controlled count
+        // only, no sensitive content). Day-scoped failures are additionally
+        // carried on each BlockPartyDay.conversionFailureCount (D6 resolution of
+        // the former "no field to carry the count" deferral). Month-level
+        // failures remain log-only by design.
         if (bpConversionFailures > 0) {
             Timber.w("$TAG: block-party %d item(s) excluded due to currency conversion failure", bpConversionFailures)
         }

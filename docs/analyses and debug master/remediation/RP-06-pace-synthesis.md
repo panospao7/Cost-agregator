@@ -222,11 +222,16 @@ merge.
   Failures now exclude (contribute 0) and count into a local
   `bpConversionFailures`. The only permitted fallback remains same-currency
   identity conversion inside `convertAmount`.
-- **Block-party excluded-count surfacing: partial.** `BlockPartyDay` has no
-  field to carry the count; adding one would break every caller's positional
-  mapping. Current state: bounded Timber.w (count only, privacy-safe).
-  Forced model change rejected per slice instructions — needs a separate
-  decision (e.g. return tuple or new field with caller migration).
+- **Block-party excluded-count surfacing: RESOLVED (RP-06 lane D6,
+  2026-09-19 — uncommitted, validation NOT RUN).** `BlockPartyDay` now carries
+  a defaulted `conversionFailureCount: Int = 0` field; the engine threads the
+  day-scoped failure count into each returned day (bounded, count-only,
+  privacy-safe). The single construction site uses named args, so all existing
+  callers compile unchanged. The engine-level bounded Timber.w log is kept for
+  the total (month-level + day-level). Original slice-2 note: `BlockPartyDay`
+  had no field to carry the count and a forced model change was rejected at
+  the time — superseded by the lane-D decision; see the "Slice D3+D4+D6
+  status" section at the end of this document.
 
 **Normalized-daily-authoritative mismatch (deferred — stop-condition item)**
 
@@ -332,14 +337,364 @@ typed converter.**
 7. `有raw list时当日不回退到history` — FCST-3 precedence with conversion:
    raw present (30 converted) + history 99 → actualSpent = 30.0, not 99.0.
 
-**Recorded limitation:** `BlockPartyDay` still has no per-day (or
-engine-level, beyond log) failure field — `bpConversionFailures` is visible
-only via the bounded Timber.w log. The forecast-level
-`excludedCount`/`isPartial` do NOT include block-party failures (they are
-computed in `synthesize`, before block-party runs). Surfacing needs a
-separate model/caller decision, same as the slice-2 note.
+**Recorded limitation (RESOLVED by RP-06 lane D6, 2026-09-19 — uncommitted,
+validation NOT RUN):** `BlockPartyDay` previously had no per-day (or
+engine-level, beyond log) failure field — `bpConversionFailures` was visible
+only via the bounded Timber.w log. Lane D6 added a defaulted
+`conversionFailureCount: Int = 0` field to `BlockPartyDay` and the engine now
+threads day-scoped failure counts into each returned day (the engine-level
+log is retained; month-level recurring/planned-total failures remain
+log-only). The forecast-level `excludedCount`/`isPartial` still do NOT
+include block-party failures (they are computed in `synthesize`, before
+block-party runs) — unchanged, by design. See the "Slice D3+D4+D6 status"
+section at the end of this document.
 
 **Status:** implemented, **validated** (2026-09-19): compile PASS
 (vr-20260919-124317-74a75cff), `*SynthesisEngine*` targeted shard PASS
 (vr-20260919-124955-afc3e3b1, incl. new SynthesisEngineBlockPartyMultiCurrencyTest
 7/7), all via the runner. Lane not yet merged.
+
+### Slice D1 (P5-008 core) - implemented, validation NOT RUN (2026-09-19)
+
+**Typed unavailable health score (batch 6c, lane `rp-06c-wip`).**
+
+- `FinancialHealthScoreV2.kt` (domain/health) now declares the plan's typed
+  outcome exactly as specified: `sealed interface HealthScoreOutcome`
+  (`Available(result)` / `Unavailable(reason)`) plus closed enum
+  `HealthScoreUnavailableReason` = { HOME_CURRENCY_UNAVAILABLE,
+  NORMALIZATION_FAILED, DATA_LOAD_FAILED }. A file-private
+  `HealthScoreUnavailableError(reason)` control-flow signal propagates typed
+  reasons out of nested helpers (baseline derivation) into the broad catch;
+  it never escapes and carries no exception text.
+- `calculateHealthScore` returns `HealthScoreOutcome`. BOTH raw fallbacks
+  removed: the main-path `?: expenses.map { it.toExpenseSnapshot() }` AND the
+  second one inside `calculateHistoricalMonthlyBaseline` (`?: it.effectiveAmount`
+  + the `?: emptyMap()` association fallback). Normalization failure or
+  `excludedCount > 0` (main path or baseline path, including a row missing
+  from the normalized association) — `Unavailable(NORMALIZATION_FAILED)`.
+  Empty-but-valid normalization (excludedCount = 0) keeps the existing neutral
+  component policy (product rule). The private `Expense.toExpenseSnapshot()`
+  mapper and the unused `DomainTransferDirection` import were deleted.
+- `saveToHistory` reached only from the Available path; Unavailable never
+  persists. No placeholder row, no schema change, DAO untouched.
+- CE discipline (RP-01) preserved/added: home-currency fetch, main
+  normalization inner catch, baseline home-currency + normalization inner
+  catches, and the broad catch all rethrow `CancellationException` first.
+  The pre-existing `IllegalStateException("Home currency unavailable: ${e.message}")`
+  rethrow in the baseline was replaced by the typed error signal - this also
+  removes the e.message leak at that site.
+- Broad catch now: `catch (CE) throw` — `catch (HealthScoreUnavailableError)`
+  — `Unavailable(reason)` — `catch (Exception)` — bounded diagnostic
+  (exception class simple name only) + `Unavailable(DATA_LOAD_FAILED)`.
+  The all-50 fabricated `FinancialHealthResult` is gone. Known pre-existing
+  non-CE-hardened narrow catch (upcoming-bills `catch (e: Exception)` inside
+  `calculateRunwayScore`, returns 0.0) is unchanged in this slice - pre-dates
+  P5-008, still covered by the file's MIT-034 allowlist entry.
+- `ComputeDashboardWidgetsUseCase.computeHealthScoreV2` maps
+  `Available — FinancialHealthScoreV2Widget(result)` as before;
+  `Unavailable ?` bounded Timber.w with the reason constant and NO widget.
+  **V1-fallback decision (orchestrator-approved, recorded per plan):** the
+  legacy `FinancialHealthScoreWidget` fallback is REMOVED for the
+  Unavailable path - "no widget/unknown UI state" governs. The now-dead
+  `computeHealthScore` (V1) method and the `healthScore` parameter of
+  `assembleWidgets` were deleted (dead code after the decision); the
+  `FinancialHealthScoreV2Widget` data class and registry mapping remain
+  unchanged. `healthCalculator` DI dependency is retained (other consumers).
+- History tolerance verified by reading: `HealthScoreHistoryDao.getMostRecentBefore`
+  returns a nullable row (`HealthScoreHistory?`); `determineTrend` treats a
+  null previous record as STABLE - absence is already legal. No test added
+  (no co-located seam; existing trend tests cover both branches).
+- Guard allowlist review: `CancellationSafetyArchitectureGuardTest` entry for
+  `FinancialHealthScoreV2.kt` (CATCH_WITHOUT_CE_RETHROW, MIT-034) left
+  UNTOUCHED - the file still contains the pre-existing non-CE-hardened
+  upcoming-bills broad catch, so the entry is not stale-protective. No
+  shrink, no growth (FG-06 compliant).
+- Tests updated/added (MockK dashboard-stub sweep deferred to D2):
+  - `FinancialHealthScoreV2Test`: removed `toTestExpenseSnapshot` (mirrored
+    the deleted production fallback; stub now uses the shared
+    `AnalyticsTestCompat.toExpenseSnapshot`); 11 call sites unwrapped via a
+    private `availableResult()` helper; NEW tests (5):
+    normalization-throw — Unavailable(NORMALIZATION_FAILED) + no history
+    writes; excluded-row — same; data-load-throw — DATA_LOAD_FAILED + no
+    history writes; home-currency-throw — HOME_CURRENCY_UNAVAILABLE + no
+    history writes; CancellationException propagates (not swallowed into
+    Unavailable).
+  - `HealthScoreGoldenTest`: return-type migration via `availableResult()`;
+    golden pins (55.0 / IMPROVING) unchanged. NOTE: the normalizer mock is
+    relaxed (empty-but-valid, excludedCount = 0), so the pin exercises the
+    empty-valid — Available neutral path on real golden data - NO identity
+    stub was added (an identity stub would change the pinned component
+    scores; the empty-valid path is the behavior the pins encode).
+  - `HealthScoreEdgeCaseTest`: stub fixed to model fully-successful
+    normalization (normalizedExpenses now mirrors inputs; the old stub had
+    normalizedExpenses = emptyList() with non-zero input, which would
+    trip the new excludedCount gate); 5 call sites migrated + helper.
+  - `EmptyZeroNullResilienceTest` (~:220): empty-data neutral pin preserved;
+    result now unwrapped from the typed outcome (unavailable — loud error).
+- Privacy: all new/changed diagnostics emit controlled reason constants
+  only; no e.message, no exception text, no payloads, no stack traces.
+- Status: implemented, **validation NOT RUN** (no Gradle per slice rules).
+- Known compile risk (deliberate): the 8 MockK dashboard test files still
+  stub `calculateHealthScore(any(), any())` returning `FinancialHealthResult`
+  - they will not compile until D2 retargets them to
+  `HealthScoreOutcome.Available(...)`. Suggested targeted commands (via
+  validation-runner profiles): compile; then targeted-unit-test shards
+  `*FinancialHealthScoreV2*`, `*HealthScoreGolden*`, `*HealthScoreEdgeCase*`,
+  `*EmptyZeroNullResilience*`, `*CancellationSafetyArchitectureGuard*`.
+
+### Slice D2 status (2026-09-19) — implemented, validation NOT RUN
+
+**MockK dashboard-stub retarget to typed `HealthScoreOutcome` (lane `rp-06c-wip`).**
+
+- All 9 stub sites in 8 files mechanically wrapped: existing
+  `coEvery { healthScoreV2.calculateHealthScore(any(), any()) } returns
+  FinancialHealthResult(...)` → `returns HealthScoreOutcome.Available(
+  FinancialHealthResult(...))`, same fixture values, no assertion changes.
+  `HealthScoreOutcome` import added to each file.
+  Files: `DashboardContractsAdapterTest` (2 sites, ~:227/~:480),
+  `DashboardWidgetConsistencyTest` (~:93), `DashboardCurrencyIntegrationTest`
+  (~:103), `BlockPartyDstAlignmentTest` (~:111),
+  `ComputeDashboardWidgetsInsightMoMTest` (~:73),
+  `ComputeDashboardWidgetsUseCaseDaysRemainingBoundaryTest` (~:72),
+  `ComputeDashboardWidgetsUseCasePaceWiringTest` (~:68),
+  `FinancialRunwayNoBurnTest` (~:88).
+- `CrossGroupIntegrationTest` (~:240): the relaxed mock never stubbed
+  `calculateHealthScore` — a relaxed MockK cannot fabricate a sealed child,
+  so an explicit `HealthScoreOutcome.Available(...)` stub (standard neutral
+  50/STABLE fixture, fully-qualified style matching the file) was added. No
+  health assertions exist in that file; behavior is unchanged, just sealed.
+- Verified NO-EDIT (compile-safe against D1): `NotificationExpenseDashboardPipelineTest`
+  (real `FinancialHealthScoreV2` construction, constructor unchanged; failure
+  path now yields Unavailable → no widget, tests assert only totals —
+  behavior-compatible); `ComputeDashboardNormalizedInputWindowTest` (relaxed
+  mock, only `produceDashboardNormalizedInput` exercised);
+  `DashboardWidgetRenderCoverageTest` (V1 `FinancialHealthScoreWidget` data
+  class still exists; sealed-subclass count 21 unchanged).
+- Sweep results: no test-source references to the deleted `computeHealthScore(`
+  (V1) remain; no test constructs `FinancialHealthScoreWidget(` directly;
+  `SubscriptionManagerEngine.calculateHealthScore` untouched.
+- Assertion changes: NONE. No tests deleted, skipped, or weakened.
+- Status: implemented, **validation NOT RUN** (no Gradle per slice rules).
+- Suggested validation (via validation-runner): compile profile first, then
+  targeted-unit-test shards: `*DashboardContractsAdapter*`,
+  `*DashboardWidgetConsistency*`, `*DashboardCurrencyIntegration*`,
+  `*BlockPartyDstAlignment*`, `*InsightMoM*`, `*DaysRemainingBoundary*`,
+  `*PaceWiring*`, `*FinancialRunwayNoBurn*`, `*CrossGroupIntegration*`,
+  `*NotificationExpenseDashboardPipeline*`.
+
+### Slice D3+D4+D6 status (2026-09-19) — implemented, validation NOT RUN
+
+Lane `rp-06c-wip`, one continuation after D1/D2. Static work only: NO
+commits, NO Gradle/test execution (slice rules). Nothing below is validated;
+see suggested validation commands at the end.
+
+**D3 — NEW-P5-009 count integrity (§6c):**
+
+- `MoneyAggregateMetadata` gains defaulted `countsIncomplete: Boolean = false`
+  (KDoc states the contract: non-empty counts list misaligned with buckets —
+  shorter OR longer — sets the flag; empty counts list is the count-agnostic
+  opt-out and is NOT flagged; no negative sentinels).
+- `MoneyAggregateBuilder` legacy `fromBuckets` overload: mismatch detection
+  now covers BOTH directions (`transactionCounts.isNotEmpty() &&
+  transactionCounts.size != buckets.size`). The pre-existing code detected
+  only shorter. On mismatch the aggregate is marked `isPartial = true` with a
+  controlled warning constant (`"Transaction counts incomplete: count list
+  does not match bucket list; per-bucket counts are approximate"` — counts
+  and booleans only, no payloads). No silent zero-count fabrication without
+  the flag; no negative sentinels. Both return paths honor the flag: the
+  home-currency-only early return applies it via `aggregate.copy(...)` (that
+  path has no conversion failure warning to combine), and the conversion path
+  COMBINES the count-integrity warning with the existing
+  conversion-failure warning (`"Transaction counts incomplete: … Total
+  excludes N transaction(s) across M currency bucket(s)"`). Metadata is
+  explicitly constructed (`MoneyAggregateMetadata(countsIncomplete = …)`) —
+  note this legacy overload never populated other metadata fields before;
+  they remain at their defaults.
+- **Deliberate boundary decision (recorded):** an EMPTY `transactionCounts`
+  list (the parameter default) keeps the legacy non-flagged semantics — it
+  means "counts unknown by design" (count-agnostic callers), not "count
+  integrity damaged". Flagging it would mark every count-agnostic aggregate
+  partial (TravelDetectionEngine, AreaSpendingEngine,
+  NaturalLanguageSearchViewModel, several InvestmentTracker sites, and the
+  TaxEstimator VAT re-aggregation call the builder without counts), which is
+  a consumer behavior change explicitly out of this slice's scope. The
+  pre-existing guard's `isNotEmpty()` conjunct is therefore preserved and its
+  meaning now pinned by test. If the orchestrator wants count-agnostic
+  aggregates flagged too, that is a separate decision with its own consumer
+  audit.
+- Consumer audit (grep-based, audit-only per slice instructions — no behavior
+  changes): legacy-overload callers with real counts =
+  `AnalyticsRepository` (~:368 location merchant stats →
+  `totalTransactionCount`), `WarrantyTrackerRepository` (~:329 → protected
+  value aggregate), `TaxEstimator` (~:288 deductible / ~:311 income →
+  aggregates), `SubscriptionManagerEngine` (~:628 → monthly totals),
+  `AccountantReportPdfExporter` (~:68 → deductible aggregate),
+  `MultiCurrencyRepository` (~:883 `aggregateToMoneyAggregate`, ~:928
+  `aggregateCurrencyTotalsToMoneyAggregate` — dashboard/trend pipelines).
+  These now surface `isPartial=true` + the controlled warning + metadata flag
+  on a counts/bucket mismatch (previously silent zero counts). Count-agnostic
+  callers (no counts arg): `TravelDetectionEngine` ~:379,
+  `AreaSpendingEngine` ~:218, `NaturalLanguageSearchViewModel` ~:135,
+  `InvestmentTracker` (~:237/240/250/307/310/440/443/559 — includes two
+  derived re-aggregations over prior `sourceBuckets`), `TaxEstimator` ~:145
+  (VAT re-aggregation) — unchanged behavior (empty-list opt-out, see above).
+  Downstream count consumers (via `aggregate.totalTransactionCount` /
+  `failedTransactionCount` / `isPartial` / `warningMessage` /
+  `aggregate.metadata.*`): `TotalsAggregationEngine` (~:109/171/216/243/279/
+  357), `DashboardContractsAdapter` (~:94/143-145/179-180), `BudgetRepository`
+  (~:220-221/258/291-293/309/349), `DashboardNormalizedInput` (~:77-83
+  metadata→dataQuality mapping, merge at ~:92-98 — note: merge currently drops
+  `countsIncomplete`; out of scope here), `CashFlowCalculator` (~:376/385),
+  `ForecastInputAssembler` (~:551/706), `AnalyticsViewModel` (~:1172),
+  `MoneyDisplayUi` (~:48-51), `HomeScreen`/`FinancialRunwayCard` (warning
+  display), `HomeViewModel` (~:401). Rollover: `BudgetRepository` rollover
+  gating at ~:258 keys on `initialLimitAggregate.isPartial` — a mismatched
+  counts list on the initial-limit aggregate now (correctly, per plan §6c)
+  affects that gate; flagged for reviewer attention, behavior intentional.
+  Export/diagnostics consumers read only `warningMessage`/`isPartial` — no
+  code changes needed.
+
+**D4 — NEW-P5-012 stale-rate policy explicit (§6c):**
+
+- `CurrencyConverter`: the hard-coded `MAX_RATE_AGE_MS` const (24h) is
+  REMOVED; both staleness checks in the legacy `convert` path (direct rate +
+  via-EUR composite) now read `StaleRatePolicy.Default.maxAgeMs` — the named
+  policy constant. Behavior is byte-identical (same 24h number, same
+  `>` comparison against `lastUpdated`, same stale → unavailable → composite
+  → MISSING_RATE-null flow). The `?: error("StaleRatePolicy.Default must
+  define maxAgeMs")` guards are unreachable-by-construction defensive reads
+  of a `Long?` field (Default always sets a value). The `TODO — make
+  configurable via AppConfig` is resolved-by-removal (policy now named in
+  code; AppConfig configurability remains future work, no TODO left).
+  No caller changed (grep-verified: the constant had zero production
+  references outside the converter; test references updated, see below).
+- `convertOutcome`'s default `stalePolicy = StaleRatePolicy.Default` verified
+  unchanged and now pinned by test. `convertAsOf` verified TTL-exempt
+  (no staleness check on the as-of path at all; transaction-date basis) and
+  now pinned by test. KDoc updated on `convert` (policy named; legacy
+  compatibility note), `convertAsOf` (TTL-EXEMPT paragraph), and
+  `convertOutcome` (default + forBasis guidance).
+- Grep sweep: no `MAX_RATE_AGE_MS` references remain anywhere under
+  `app/src/` (production or test) — the two test files that referenced the
+  constant were retargeted to `StaleRatePolicy.Default.maxAgeMs`.
+
+**D6 — 6b deferral resolution: BlockPartyDay failure surfacing:**
+
+- `BlockPartyDay` gains defaulted
+  `conversionFailureCount: Int = 0` (last field; KDoc bounds it: count-only,
+  no amounts/currencies/exception text). Scout claim verified before edit:
+  single production construction site (`SynthesisEngine.calculateBlockPartyData`,
+  named args) and NO test constructs `BlockPartyDay` directly, so every
+  existing construction compiles unchanged via the default.
+- `SynthesisEngine.calculateBlockPartyData` threads the per-day share of the
+  engine's `bpConversionFailures` into each returned `BlockPartyDay` via a
+  local `dayConversionFailures` counter incremented at the three DAY-scoped
+  failure sites (recurringOnDay ~:621, plannedOnDay ~:638, actual-spend items
+  ~:657). The two MONTH-level sites (totalMonthlyRecurring ~:539,
+  totalMonthlyPlanned ~:558) still count into the engine total only —
+  day-scoping them is not well-defined; the existing bounded Timber.w log
+  (kept unchanged) remains the surfacing for the engine total.
+- UI consumers (cards) tolerate the added field: verified the single consumer
+  chain `ComputeDashboardWidgetsUseCase.computeBlockParty` →
+  `DomainDayBudgetStatus` mapping (~:838-871) reads only named fields and is
+  unaffected (a day-level failure-count display decision belongs to UI work,
+  not this slice).
+
+**Tests added/updated (exact names):**
+
+- `MoneyAggregateBuilderTest` (+6): `shorter counts list marks aggregate
+  partial with countsIncomplete`, `longer counts list marks aggregate partial
+  with countsIncomplete`, `empty counts list stays count-agnostic and not
+  partial`, `complete counts list regression unchanged behavior`, `count
+  mismatch combines warning with conversion-failure warning`, `count mismatch
+  on home-currency-only path still marks partial` (negative wiring check: the
+  early-return path must not reach the converter).
+- `P5AnalyticsFixesTest`: `builder_warns_on_size_mismatch` extended — same
+  structural pins kept (total 270.0, per-bucket 1+0) PLUS
+  `isPartial`/`metadata.countsIncomplete`/controlled-warning assertions.
+- `ConversionSemanticsHardeningTest` (+6): `legacy convert direct rate 24h
+  boundary just under passes just over fails`, `legacy convert via EUR
+  composite fails when either leg exceeds 24h` (fresh / one-leg-stale /
+  both-legs-stale), `legacy convert boundary is derived from StaleRatePolicy
+  Default`, `convertOutcome default stalePolicy is StaleRatePolicy Default
+  24h`, `convertAsOf is exempt from latest-rate TTL old-but-valid rate
+  converts`, `same aged rate via legacy latest path is refused while asOf
+  converts` (contrast pin: 90-day-old rate — asOf path converts, latest path
+  refuses).
+- `CurrencyNormalizationPost9a6Test` (+2): `forBasis latest 7d boundary just
+  under passes just over excludes`, `engine normalizeExpense honors 7d
+  LatestDefault boundary` — via a boundary-controlled `BoundaryRateStore`
+  (the shared TestStore returns a fixed 10-day-old rate and cannot express
+  ±1ms around the boundary).
+- `CurrencyRateStalenessScenarioTest`: retargeted off the deleted
+  `CurrencyConverter.MAX_RATE_AGE_MS` constant onto
+  `StaleRatePolicy.Default.maxAgeMs` (imports/comment updates; assertions
+  unchanged in meaning, none weakened).
+- `SynthesisEngineBlockPartyMultiCurrencyTest` (+3): `转换失败的当日携带
+  conversionFailureCount其余天为0` (failed day carries 1, all other days 0,
+  per-day sum conserves the engine total), `恒等路径天
+  conversionFailureCount全为0且不触发converter` (blank displayCurrency
+  identity path, converter never called), `全转换成功的天
+  conversionFailureCount为0` (successful-conversion day carries 0).
+- No tests deleted, skipped, or weakened; no `@Ignore` added; assertions on
+  pre-existing behavior only strengthened.
+
+**Status: implemented, validation NOT RUN** (no Gradle per slice rules).
+Nothing here is DONE/GREEN until the reviewer gate + validation pass.
+
+Suggested validation (via validation-runner, in order): `compile` profile
+first, then targeted-unit-test shards: `*MoneyAggregateBuilder*`,
+`*P5AnalyticsFixes*`, `*ConversionSemanticsHardening*`,
+`*CurrencyNormalizationPost9a6*`, `*CurrencyRateStaleness*`,
+`*SynthesisEngineBlockPartyMultiCurrency*`, `*CurrencyConverter*`,
+`*Curr587*`, then the D1/D2 shards from the sections above.
+
+Known compile-risk areas: none identified for D3/D4/D6 (all new parameters
+have defaults; deleted constant verified unreferenced; `assertNotNull`
+result-value usage avoided). Residual risks: (1) `BudgetRepository` rollover
+gate now sees `isPartial=true` for counts-mismatched initial-limit aggregates
+— intended per plan but changes a real gate's input; reviewer should confirm
+acceptance. (2) The `MoneyAggregate` `metadata` default-construction on the
+legacy path means previously-`MoneyAggregateMetadata()`-equal aggregates now
+carry `countsIncomplete=true` on mismatch — any structural test comparing
+full metadata equality on mismatched fixtures would notice (none found via
+grep). (3) D6: `conversionFailureCount` currently has no UI reader — pure
+surfacing for downstream decisions; harmless but dormant until a card renders
+it.
+
+**Review-fix addendum (2026-09-19, static test-review round — still
+validation NOT RUN):** gaps found by the static test reviewer, fixed in the
+same lane:
+
+- V1-fallback suppression PINNED (the lane's actual production behavior
+  change): `DashboardContractsAdapterTest` gains
+  `computeHealthScoreV2 unavailable emits no health widget and no V1
+  fallback` — Unavailable(NORMALIZATION_FAILED) stub through the full
+  `compute()` path asserts NEITHER `FinancialHealthScoreV2Widget` NOR legacy
+  `FinancialHealthScoreWidget` appears (filterIsInstance isEmpty both ways)
+  while unrelated always-on widgets still emit. The
+  `windowTestComputeUseCase` harness gained a defaulted
+  `healthScoreOutcome` parameter (default = the existing Available fixture,
+  so all prior call sites are unchanged).
+- Baseline raw-fallback site pinned:
+  `FinancialHealthScoreV2Test` gains `baseline normalization failure returns
+  unavailable normalization failed` (early-month fixture mirroring the
+  baseline-blend test; only the BASELINE normalization fails — proves the
+  typed reason propagates from `calculateHistoricalMonthlyBaseline`) and
+  `baseline row missing from normalized association returns unavailable
+  normalization failed` (association-miss: excludedCount 0 but a historical
+  row absent from the normalized map → per-row typed throw).
+- `saveToHistory` side-effect pin: `unavailable outcome never persists
+  placeholder or fabricated row` now also asserts
+  `deleteOlderThan` is never called on the Unavailable path.
+- Contradictory pre-existing currency tests retargeted to the D4 policy:
+  `CurrencyConverterEdgeCaseTest.stale direct rate is still used and
+  timestamp is preserved` (which asserted the OPPOSITE of the 24h policy
+  under a relaxed TimeProvider) is replaced by `stale direct rate is refused
+  by legacy convert 24h policy` (fixed clock, just-over-24h → null) plus a
+  companion `fresh direct rate within 24h converts and preserves rate
+  timestamp` pin; `CurrencyConverterGoldenTest` got a fixed TimeProvider and
+  fresh fixture rates (the relaxed clock had made now()=0, so the TTL path
+  never fired and the 2023-era fixtures silently bypassed the policy).
+  Golden numbers unchanged. No tests deleted; the replaced test's intent is
+  inverted to match production policy, not weakened.

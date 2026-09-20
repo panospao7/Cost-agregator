@@ -7,7 +7,6 @@ import com.yourname.expensetracker.domain.analytics.AnalyticsNormalizationResult
 import com.yourname.expensetracker.domain.cashflow.CashFlowCalculator
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.model.DomainTransactionType
-import com.yourname.expensetracker.domain.model.DomainTransferDirection
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.model.SavingsGoal
 import com.yourname.expensetracker.data.repository.BudgetRepository
@@ -22,6 +21,39 @@ import kotlinx.coroutines.flow.first
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
+
+/**
+ * Typed outcome of a health-score calculation (RP-06 P5-008).
+ *
+ * [Available] carries a fully computed [FinancialHealthResult]; [Unavailable]
+ * carries a controlled reason constant and must never be persisted to history
+ * or converted into a fabricated score.
+ */
+sealed interface HealthScoreOutcome {
+    data class Available(val result: FinancialHealthResult) : HealthScoreOutcome
+    data class Unavailable(val reason: HealthScoreUnavailableReason) : HealthScoreOutcome
+}
+
+/**
+ * Closed set of controlled reason codes for [HealthScoreOutcome.Unavailable].
+ * These are the only values allowed in reason fields — no exception text,
+ * messages, or raw payloads.
+ */
+enum class HealthScoreUnavailableReason {
+    HOME_CURRENCY_UNAVAILABLE,
+    NORMALIZATION_FAILED,
+    DATA_LOAD_FAILED
+}
+
+/**
+ * Internal control-flow signal used by helper methods (e.g. the historical
+ * baseline derivation) to abort a calculation with a typed unavailable reason.
+ * It is caught by [FinancialHealthScoreV2.calculateHealthScore]'s broad catch
+ * and converted to [HealthScoreOutcome.Unavailable]; it never escapes to
+ * callers and never carries exception text or payloads.
+ */
+private class HealthScoreUnavailableError(val reason: HealthScoreUnavailableReason) :
+    RuntimeException("health-score-unavailable")
 
 /**
  * Financial Health Score Calculator Version 2.0
@@ -75,30 +107,42 @@ class FinancialHealthScoreV2 @Inject constructor(
     /**
      * Calculate comprehensive financial health score (0-100).
      *
-     * NOTE: This method has a side-effect — it persists the calculated result to
-     * `healthScoreHistoryDao` via [saveToHistory]. Callers that need a pure
-     * read without persistence should use the component methods directly
+     * NOTE: On success ([HealthScoreOutcome.Available]) this method has a
+     * side-effect — it persists the calculated result to `healthScoreHistoryDao`
+     * via [saveToHistory]. [HealthScoreOutcome.Unavailable] never persists and
+     * never fabricates a placeholder score. Callers that need a pure read
+     * without persistence should use the component methods directly
      * (calculateSavingsRateScore, calculateRunwayScore, etc.) and avoid
      * this convenience method.
      *
+     * P5-008: the raw `Expense.toExpenseSnapshot()` fallbacks are removed.
+     * Normalization failure or any excluded row makes the score
+     * [HealthScoreUnavailableReason.NORMALIZATION_FAILED]; a failed home-currency
+     * read makes it [HealthScoreUnavailableReason.HOME_CURRENCY_UNAVAILABLE];
+     * any other calculation failure makes it [HealthScoreUnavailableReason.DATA_LOAD_FAILED].
+     * An empty but valid single-currency input remains eligible for the existing
+     * neutral component policy (product rule, not an error).
+     *
      * @param periodStart Start of the evaluation period (inclusive)
      * @param periodEnd End of the evaluation period (inclusive)
-     * @return FinancialHealthResult containing the score and all component breakdowns
+     * @return [HealthScoreOutcome] — Available with the full result, or Unavailable
+     *   with a controlled reason code
      */
     suspend fun calculateHealthScore(
         periodStart: Long = TimePeriodUtils.getStartOfMonth(timeProvider.now()),
         periodEnd: Long = TimePeriodUtils.getEndOfMonth(timeProvider.now())
-    ): FinancialHealthResult {
+    ): HealthScoreOutcome {
         val startTime = timeProvider.now()
         val homeCurrency = try {
             currencySettingsRepository.homeCurrency().first()
         } catch (e: Exception) {
-            // U-001 (RP-01): caller cancellation propagates; only genuine
-            // unavailability becomes the typed IllegalStateException.
+            // U-001 (RP-01): caller cancellation propagates; genuine
+            // unavailability becomes the typed Unavailable reason.
             if (e is CancellationException) throw e
-            throw IllegalStateException("Home currency unavailable: ${e.message}")
+            Timber.w("Health score unavailable: home currency could not be resolved")
+            return HealthScoreOutcome.Unavailable(HealthScoreUnavailableReason.HOME_CURRENCY_UNAVAILABLE)
         }
-        
+
         return try {
             // Fetch all necessary data
             val expenses = expenseRepository.getExpensesBetween(periodStart, periodEnd)
@@ -108,8 +152,13 @@ class FinancialHealthScoreV2 @Inject constructor(
                 if (e is CancellationException) throw e
                 null
             }
-            val normalizedExpenses = normalized?.includedExpenses
-                ?: expenses.map { it.toExpenseSnapshot() }
+            // P5-008: normalization failure or any excluded row is a typed
+            // unavailable — the raw Expense fallback is gone.
+            if (normalized == null || normalized.excludedCount > 0) {
+                Timber.w("Health score unavailable: expense normalization failed (normalized=${normalized != null})")
+                return HealthScoreOutcome.Unavailable(HealthScoreUnavailableReason.NORMALIZATION_FAILED)
+            }
+            val normalizedExpenses = normalized.includedExpenses
 
             val purchases = normalizedExpenses.filter {
                 it.transactionType == DomainTransactionType.PURCHASE && !it.isNotMine
@@ -208,36 +257,36 @@ class FinancialHealthScoreV2 @Inject constructor(
             val duration = timeProvider.now() - startTime
             Timber.d("FinancialHealthScoreV2 calculated in ${duration}ms: overall=$overallScore, savings=$savingsRateScore, runway=$runwayScore, budget=$budgetAdherenceScore, bills=$billReliabilityScore")
             
-            FinancialHealthResult(
-                overallScore = overallScore,
-                savingsRateScore = savingsRateScore,
-                runwayScore = runwayScore,
-                budgetAdherenceScore = budgetAdherenceScore,
-                billReliabilityScore = billReliabilityScore,
-                factorContributions = factorContributions,
-                trend = trend,
-                recommendation = recommendation,
-                displayCurrency = homeCurrency,
-                conversionConfidence = conversionConfidence
+            // P5-008: Available wraps the result. Persistence happens inside the
+            // success path only — an Unavailable outcome never reaches saveToHistory.
+            HealthScoreOutcome.Available(
+                FinancialHealthResult(
+                    overallScore = overallScore,
+                    savingsRateScore = savingsRateScore,
+                    runwayScore = runwayScore,
+                    budgetAdherenceScore = budgetAdherenceScore,
+                    billReliabilityScore = billReliabilityScore,
+                    factorContributions = factorContributions,
+                    trend = trend,
+                    recommendation = recommendation,
+                    displayCurrency = homeCurrency,
+                    conversionConfidence = conversionConfidence
+                )
             )
-            
         } catch (e: CancellationException) {
             throw e
+        } catch (e: HealthScoreUnavailableError) {
+            // P5-008: typed unavailability propagated from a nested helper
+            // (e.g. baseline derivation). Bounded diagnostic, controlled
+            // reason constant only — never a fabricated score, never
+            // saveToHistory.
+            Timber.w("Health score unavailable: ${e.reason.name}")
+            HealthScoreOutcome.Unavailable(e.reason)
         } catch (e: Exception) {
-            Timber.e(e, "Failed to calculate financial health score")
-            // Return a default result with warning status
-            FinancialHealthResult(
-                overallScore = 50,
-                savingsRateScore = 50,
-                runwayScore = 50,
-                budgetAdherenceScore = 50,
-                billReliabilityScore = 50,
-                factorContributions = emptyList(),
-                trend = HealthTrend.STABLE,
-                recommendation = "Unable to calculate full health score. Please check your data.",
-                displayCurrency = homeCurrency,
-                conversionConfidence = 0.5f
-            )
+            // P5-008: never fabricate an all-50 result. Bounded diagnostic only
+            // (exception class name; no message text, no payload, no stack trace).
+            Timber.e("Health score unavailable: data load failed (%s)", e.javaClass.simpleName)
+            HealthScoreOutcome.Unavailable(HealthScoreUnavailableReason.DATA_LOAD_FAILED)
         }
     }
     
@@ -390,17 +439,29 @@ class FinancialHealthScoreV2 @Inject constructor(
         val homeCurrency = try {
             currencySettingsRepository.homeCurrency().first()
         } catch (e: Exception) {
+            // U-001 (RP-01): caller cancellation propagates; genuine
+            // unavailability surfaces as the typed Unavailable reason.
             if (e is CancellationException) throw e
-            throw IllegalStateException("Home currency unavailable: ${e.message}")
+            Timber.w("Health score unavailable: home currency could not be resolved for baseline")
+            throw HealthScoreUnavailableError(HealthScoreUnavailableReason.HOME_CURRENCY_UNAVAILABLE)
         }
+        // P5-008: raw effectiveAmount fallback is gone. Baseline normalization
+        // failure (or any excluded row) aborts baseline derivation; the score
+        // becomes Unavailable(NORMALIZATION_FAILED) via HealthScoreUnavailableError.
+        // A null baseline (no historical rows) remains a legitimate optional
+        // outcome handled by the runway neutral/coverage policy — it is not an
+        // error, because the score computes from the current-month projection.
         val normalized = try {
             analyticsCurrencyNormalizer.normalizeExpenses(historicalExpenses, homeCurrency)
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             null
         }
-        val normalizedAmountById = normalized?.includedExpenses?.associateBy { it.id }
-            ?: emptyMap()
+        if (normalized == null || normalized.excludedCount > 0) {
+            Timber.w("Health score unavailable: baseline expense normalization failed (normalized=${normalized != null})")
+            throw HealthScoreUnavailableError(HealthScoreUnavailableReason.NORMALIZATION_FAILED)
+        }
+        val normalizedAmountById = normalized.includedExpenses.associateBy { it.id }
 
         // SAFE: normalized via AnalyticsCurrencyNormalizer before summing
         val monthlyTotals = historicalExpenses
@@ -409,7 +470,8 @@ class FinancialHealthScoreV2 @Inject constructor(
             }
             .values
             .map { monthRows -> monthRows.sumOf {
-                normalizedAmountById[it.id]?.effectiveAmount ?: it.effectiveAmount
+                normalizedAmountById[it.id]?.effectiveAmount
+                    ?: throw HealthScoreUnavailableError(HealthScoreUnavailableReason.NORMALIZATION_FAILED)
             } }
             .filter { it > 0.0 }
 
@@ -711,34 +773,6 @@ class FinancialHealthScoreV2 @Inject constructor(
             com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
             com.yourname.expensetracker.data.database.entity.TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
         }
-
-    /**
-     * Converts a data-layer [Expense] into a domain [ExpenseSnapshot] preserving
-     * the original effective amount and currency. Used as a fallback when
-     * cross-currency normalization is unavailable.
-     */
-    private fun com.yourname.expensetracker.data.database.entity.Expense.toExpenseSnapshot(): ExpenseSnapshot =
-        ExpenseSnapshot(
-            id = id,
-            amount = effectiveAmount,
-            effectiveAmount = effectiveAmount,
-            currency = currency,
-            merchant = merchant,
-            merchantKey = merchantKey,
-            transactionType = transactionType.toDomain(),
-            date = date,
-            categoryId = categoryId,
-            isNotMine = isNotMine,
-            transferDirection = transferDirection?.let { d ->
-                when (d) {
-                    com.yourname.expensetracker.data.database.entity.TransferDirection.INCOMING ->
-                        DomainTransferDirection.INCOMING
-                    com.yourname.expensetracker.data.database.entity.TransferDirection.OUTGOING ->
-                        DomainTransferDirection.OUTGOING
-                }
-            },
-            notes = notes
-        )
 
     /**
      * Compute conversion confidence based on the share of transactions that failed normalization.

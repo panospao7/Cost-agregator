@@ -48,6 +48,16 @@ data class TransactionSummary(
     }
 }
 
+/**
+ * Domain DTO for one block-party day.
+ *
+ * @property conversionFailureCount RP-06 D6 (6b deferral resolution): number of
+ *   items on THIS day excluded because currency conversion failed (bounded,
+ *   count-only — no amounts, no currencies, no exception text). 0 when the day
+ *   took the identity path or all conversions succeeded. Month-level conversion
+ *   failures (monthly recurring/planned totals) remain engine-log-only; this
+ *   field carries day-scoped counts.
+ */
 data class BlockPartyDay(
     val dayOfMonth: Int,
     val date: Long,
@@ -60,7 +70,8 @@ data class BlockPartyDay(
     val plannedImpact: Double,
     val recurringItems: List<String>,
     val plannedItems: List<String>,
-    val topTransactions: List<TransactionSummary>
+    val topTransactions: List<TransactionSummary>,
+    val conversionFailureCount: Int = 0
 ) {
     init {
         require(dayOfMonth in 1..31) { "dayOfMonth must be between 1 and 31" }

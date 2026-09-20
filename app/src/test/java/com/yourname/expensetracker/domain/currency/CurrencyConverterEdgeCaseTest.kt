@@ -1,6 +1,8 @@
 package com.yourname.expensetracker.domain.currency
 
 import com.yourname.expensetracker.assertApproxEquals
+import com.yourname.expensetracker.domain.core.money.StaleRatePolicy
+import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -28,9 +30,22 @@ class CurrencyConverterEdgeCaseTest {
     }
 
     @Test
-    fun `stale direct rate is still used and timestamp is preserved`() = runTest {
-        // Arrange
-        val staleTimestamp = 1_577_836_800_000L // 2020-01-01 UTC
+    fun `stale direct rate is refused by legacy convert 24h policy`() = runTest {
+        // NEW-P5-012 (D4): the legacy convert path enforces the named
+        // StaleRatePolicy.Default (24h). A direct rate older than 24h must be
+        // REFUSED (treated as unavailable → null when no composite exists),
+        // never silently used. The pre-D4 version of this test asserted the
+        // OPPOSITE ("stale direct rate is still used") — an artifact of a
+        // relaxed TimeProvider whose now()=0 made every fixture rate look
+        // fresh; that relaxation also masked the TTL path entirely.
+        val fixedNow = 1_700_000_000_000L
+        val staleTimestamp = fixedNow - StaleRatePolicy.Default.maxAgeMs!! - 1 // just over 24h
+        val fixedClockConverter = CurrencyConverter(
+            exchangeRateStore,
+            timeProvider = object : TimeProvider {
+                override fun now(): Long = fixedNow
+            }
+        )
         coEvery { exchangeRateStore.getRate("USD", "EUR") } returns DomainExchangeRate(
             fromCurrency = "USD",
             toCurrency = "EUR",
@@ -38,15 +53,42 @@ class CurrencyConverterEdgeCaseTest {
             lastUpdated = staleTimestamp,
             source = "stale-fixture"
         )
+        // No EUR-composite legs exist → the refused direct rate yields null.
 
         // Act
-        val result = converter.convert(100.0, "USD", "EUR")
+        val result = fixedClockConverter.convert(100.0, "USD", "EUR")
 
-        // Assert
+        // Assert — D4 policy: stale → unavailable
+        assertNull("Rate older than 24h must be refused by the legacy 24h policy", result)
+    }
+
+    @Test
+    fun `fresh direct rate within 24h converts and preserves rate timestamp`() = runTest {
+        // Companion pin: the D4 policy is a 24h TTL, not a blanket refusal —
+        // a rate just inside the threshold still converts and carries the
+        // rate's own lastUpdated as the result timestamp.
+        val fixedNow = 1_700_000_000_000L
+        val freshTimestamp = fixedNow - StaleRatePolicy.Default.maxAgeMs!! + 1 // just under 24h
+        val fixedClockConverter = CurrencyConverter(
+            exchangeRateStore,
+            timeProvider = object : TimeProvider {
+                override fun now(): Long = fixedNow
+            }
+        )
+        coEvery { exchangeRateStore.getRate("USD", "EUR") } returns DomainExchangeRate(
+            fromCurrency = "USD",
+            toCurrency = "EUR",
+            rate = 0.91,
+            lastUpdated = freshTimestamp,
+            source = "fresh-fixture"
+        )
+
+        val result = fixedClockConverter.convert(100.0, "USD", "EUR")
+
         assertNotNull(result)
         assertApproxEquals(91.0, result!!.convertedAmount, 0.000001)
         assertApproxEquals(0.91, result.rateUsed, 0.000001)
-        assertEquals(staleTimestamp, result.timestamp)
+        assertEquals(freshTimestamp, result.timestamp)
     }
 
     @Test

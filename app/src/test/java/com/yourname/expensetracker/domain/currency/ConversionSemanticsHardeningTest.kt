@@ -174,6 +174,138 @@ class ConversionSemanticsHardeningTest {
         assertEquals(ConversionFailureType.STALE_RATE, (outcome as ConversionOutcome.Failed).failureType)
     }
 
+    // ── NEW-P5-012: legacy convert() path pinned to StaleRatePolicy.Default ──
+
+    /**
+     * Direct-rate 24h boundary via [CurrencyConverter.convert] (String API):
+     * just-under passes, just-over falls through to unavailable (null — the
+     * composite legs are absent in this fixture).
+     */
+    @Test
+    fun `legacy convert direct rate 24h boundary just under passes just over fails`() = runTest {
+        val rate = rate("USD", "EUR", 0.90, validDate = NOW, lastUpdated = NOW - StaleRatePolicy.Default.maxAgeMs!!)
+
+        // JUST UNDER: age = maxAge - 1ms → fresh
+        store.latestRates["USD_EUR"] = rate.copy(lastUpdated = NOW - StaleRatePolicy.Default.maxAgeMs!! + 1)
+        val fresh = converter.convert(100.0, "USD", "EUR")
+        assertTrue("Just-under-24h direct rate must convert", fresh is ConversionResult)
+        assertEquals(90.0, fresh!!.convertedAmount, 0.001)
+
+        // JUST OVER: age = maxAge + 1ms → stale → direct leg unavailable
+        store.latestRates["USD_EUR"] = rate.copy(lastUpdated = NOW - StaleRatePolicy.Default.maxAgeMs!! - 1)
+        val stale = converter.convert(100.0, "USD", "EUR")
+        assertNull(
+            "Just-over-24h direct rate must be treated as unavailable (null)",
+            stale
+        )
+    }
+
+    /**
+     * Via-EUR composite 24h boundary: BOTH legs must be within 24h. A composite
+     * with one leg just-over fails even though the other leg is fresh.
+     */
+    @Test
+    fun `legacy convert via EUR composite fails when either leg exceeds 24h`() = runTest {
+        // Fresh composite: both legs well within 24h → converts
+        store.latestRates["GBP_EUR"] = rate("GBP", "EUR", 1.17, validDate = NOW, lastUpdated = NOW - 1)
+        store.latestRates["EUR_JPY"] = rate("EUR", "JPY", 160.0, validDate = NOW, lastUpdated = NOW - 1)
+        val ok = converter.convert(100.0, "GBP", "JPY")
+        assertTrue("Both legs fresh → composite converts", ok is ConversionResult)
+        assertEquals(100.0 * 1.17 * 160.0, ok!!.convertedAmount, 0.001)
+
+        // ONE leg just-over 24h → composite unavailable
+        store.latestRates["EUR_JPY"] = rate("EUR", "JPY", 160.0, validDate = NOW, lastUpdated = NOW - StaleRatePolicy.Default.maxAgeMs!! - 1)
+        val staleLeg = converter.convert(100.0, "GBP", "JPY")
+        assertNull("One stale composite leg must fail the whole composite", staleLeg)
+
+        // BOTH legs just-over 24h → still unavailable
+        store.latestRates["GBP_EUR"] = rate("GBP", "EUR", 1.17, validDate = NOW, lastUpdated = NOW - StaleRatePolicy.Default.maxAgeMs!! - 1)
+        val bothStale = converter.convert(100.0, "GBP", "JPY")
+        assertNull("Both legs stale must also fail", bothStale)
+    }
+
+    /**
+     * Policy-source pin: the legacy threshold must BE
+     * [StaleRatePolicy.Default.maxAgeMs] — a hypothetical policy change would
+     * move this boundary (the boundary tests above derive expectations from the
+     * policy constant, so they cannot silently diverge from it).
+     */
+    @Test
+    fun `legacy convert boundary is derived from StaleRatePolicy Default`() {
+        assertEquals(
+            "Legacy 24h threshold must equal StaleRatePolicy.Default.maxAgeMs",
+            24L * 60L * 60L * 1000L,
+            StaleRatePolicy.Default.maxAgeMs
+        )
+    }
+
+    /**
+     * Default-parameter pin: [CurrencyConverter.convertOutcome] without an
+     * explicit stalePolicy behaves as [StaleRatePolicy.Default] (24h) — a
+     * 25-hour-old rate is STALE_RATE under the default, while it would still
+     * pass under LatestDefault (7d). This proves the default did not silently
+     * drift to the latest-basis policy.
+     */
+    @Test
+    fun `convertOutcome default stalePolicy is StaleRatePolicy Default 24h`() = runTest {
+        // Rate aged 24h + 1ms (age via validDate, compareAgainst NOW)
+        store.latestRates["USD_EUR"] = rate(
+            "USD", "EUR", 0.90,
+            validDate = NOW - StaleRatePolicy.Default.maxAgeMs!! - 1,
+            lastUpdated = NOW
+        )
+
+        // No stalePolicy argument → exercises the default parameter
+        val outcome = converter.convertOutcome(
+            100.0, "USD", "EUR", RateBasis.LATEST_AVAILABLE
+        )
+
+        assertTrue("25h-old rate must be stale under the 24h default policy", outcome is ConversionOutcome.Failed)
+        assertEquals(ConversionFailureType.STALE_RATE, (outcome as ConversionOutcome.Failed).failureType)
+    }
+
+    // ── NEW-P5-012: convertAsOf is TTL-EXEMPT (transaction-date basis) ──
+
+    /**
+     * Pin: [CurrencyConverter.convertAsOf] must NOT apply latest-rate TTL
+     * rules. A rate whose lastUpdated is months old but whose validDate covers
+     * the requested transaction date converts successfully — the same age
+     * fails the 24h policy on the legacy [CurrencyConverter.convert] path.
+     */
+    @Test
+    fun `convertAsOf is exempt from latest-rate TTL old-but-valid rate converts`() = runTest {
+        val txDate = NOW - 90 * DAY
+        // Historical rate valid ON the tx date; lastUpdated equally old.
+        // Age vs NOW is 90 days — would be stale under any latest-rate TTL.
+        store.asOfRates["USD_EUR_$txDate"] =
+            rate("USD", "EUR", 0.85, validDate = txDate, lastUpdated = txDate)
+
+        val result = converter.convertAsOf(100.0, "USD", "EUR", txDate)
+
+        assertTrue("Historical rate valid on tx date must convert", result is ConversionResult)
+        assertEquals(85.0, result!!.convertedAmount, 0.001)
+        assertEquals(txDate, result.timestamp)
+    }
+
+    /**
+     * Contrast pin: the SAME aged rate through the legacy latest path is
+     * refused (24h TTL) — proving the exemption is path-specific, not a
+     * global TTL relaxation.
+     */
+    @Test
+    fun `same aged rate via legacy latest path is refused while asOf converts`() = runTest {
+        val txDate = NOW - 90 * DAY
+        val oldRate = rate("USD", "EUR", 0.85, validDate = txDate, lastUpdated = txDate)
+        store.asOfRates["USD_EUR_$txDate"] = oldRate
+        store.latestRates["USD_EUR"] = oldRate
+
+        val asOf = converter.convertAsOf(100.0, "USD", "EUR", txDate)
+        assertTrue("as-of path: transaction-date basis, TTL-exempt", asOf is ConversionResult)
+
+        val legacy = converter.convert(100.0, "USD", "EUR")
+        assertNull("latest path: 90-day-old rate must fail the 24h policy", legacy)
+    }
+
     // ── CURR-70F-03: Composite EUR-bridge weakest-leg provenance ───────
 
     @Test

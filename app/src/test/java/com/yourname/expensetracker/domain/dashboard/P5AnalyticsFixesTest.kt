@@ -207,11 +207,10 @@ class P5AnalyticsFixesTest {
         exchangeRateStore.rates["USD_EUR"] = DomainExchangeRate("USD", "EUR", 0.90, NOW, "api", NOW)
         val converter = CurrencyConverter(exchangeRateStore, TestTime(NOW))
 
-        // When transactionCounts is shorter than buckets, a warning should be logged
-        // and missing counts should be defaulted to 0 (existing behavior).
-        // We cannot easily capture Timber logs in unit tests, so we verify the
-        // structural behavior: fewer counts than buckets should still produce a valid
-        // MoneyAggregate with zero transaction count for the missing bucket.
+        // When transactionCounts is shorter than buckets, the aggregate keeps the
+        // pre-existing structural behavior (valid total, missing count defaulted
+        // to 0 — never a negative sentinel) but is now EXPLICITLY marked:
+        // isPartial + metadata.countsIncomplete + controlled warning (RP-06 D3).
 
         @Suppress("DEPRECATION")
         val result = MoneyAggregateBuilder.fromBuckets(
@@ -230,6 +229,18 @@ class P5AnalyticsFixesTest {
         assertEquals(2, usdBuckets.size)
         // The second bucket (index 1) had no matching count, so it should be 0
         assertEquals(1, usdBuckets.sumOf { it.transactionCount }) // 1 + 0
+
+        // D3 pin: the mismatch is surfaced, not silent.
+        assertTrue("Mismatch must mark the aggregate partial", result.isPartial)
+        assertTrue(
+            "Mismatch must set metadata.countsIncomplete",
+            result.metadata.countsIncomplete
+        )
+        assertNotNull(result.warningMessage)
+        assertTrue(
+            "Controlled count-integrity warning must be present",
+            result.warningMessage!!.contains("Transaction counts incomplete")
+        )
     }
 
     // ── NEW-P5-014: Trend builder uses ZonedDateTime (DST-safe) ─────────────

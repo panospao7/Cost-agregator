@@ -83,8 +83,14 @@ class CurrencyConverter @Inject constructor(
 ) {
     companion object {
         const val DEFAULT_BASE_CURRENCY = "EUR"
-        /** NEW-P5-012: Stale-rate threshold. TODO — make configurable via AppConfig. */
-        const val MAX_RATE_AGE_MS = 24 * 60 * 60 * 1000L  // 24 hours
+
+        // NEW-P5-012: The legacy [convert] path's 24-hour staleness threshold is
+        // now READ from [StaleRatePolicy.Default] — the single named policy
+        // constant. There is no local TTL number left in this file. Rate-basis-
+        // aware callers select [StaleRatePolicy.forBasis] / [StaleRatePolicy.LatestDefault]
+        // (7 days for LATEST_AVAILABLE) explicitly via [convertOutcome]; the
+        // historical [convertAsOf] path is TTL-exempt (transaction-date basis,
+        // never subjected to latest-rate TTL rules).
 
         /** Rate bases that require atMillis and use getRateAsOf (CURR-70F-01). */
         private val historicalBases = setOf(
@@ -110,6 +116,14 @@ class CurrencyConverter @Inject constructor(
      * >   rate that was valid on a specific past date (e.g. `expense.date`).
      *
      * Returns null if no exchange rate is available.
+     *
+     * NEW-P5-012: the staleness threshold on this path is explicitly
+     * [com.yourname.expensetracker.domain.core.money.StaleRatePolicy.Default]
+     * (24 hours, compared against now, on [DomainExchangeRate.lastUpdated]).
+     * This method is legacy compatibility; rate-basis-aware callers should use
+     * [convertOutcome] with an explicit [StaleRatePolicy]
+     * (e.g. [StaleRatePolicy.forBasis]). Historical conversion uses [convertAsOf],
+     * which is TTL-exempt (transaction-date basis).
      *
      * CURR-15: Prefer [convert(amount, fromCurrency, toCurrency)] with
      * CurrencyCode parameters where possible.
@@ -137,9 +151,14 @@ class CurrencyConverter @Inject constructor(
         )
 
         if (directRate != null) {
-            // Check staleness — if the rate is older than the threshold, treat as unavailable
+            // NEW-P5-012: staleness threshold comes from the named
+            // [StaleRatePolicy.Default] policy (24h) — same behavior as before,
+            // now sourced from the explicit policy constant. Stale → the direct
+            // rate is treated as unavailable (fall through to the EUR composite).
             val now = timeProvider.now()
-            if ((now - directRate.lastUpdated) > MAX_RATE_AGE_MS) {
+            val directMaxAgeMs = StaleRatePolicy.Default.maxAgeMs
+                ?: error("StaleRatePolicy.Default must define maxAgeMs")
+            if ((now - directRate.lastUpdated) > directMaxAgeMs) {
                 Timber.d("Rate from %s to %s is %s (last updated %d ms ago)", fromCurrency, toCurrency, FailedConversion.STALE_RATE, now - directRate.lastUpdated)
             } else {
                 return@withContext ConversionResult(
@@ -164,9 +183,13 @@ class CurrencyConverter @Inject constructor(
         )
 
         if (toEurRate != null && fromEurRate != null) {
-            // Check staleness — if either leg is stale, treat the composite as unavailable
+            // NEW-P5-012: both composite legs are held to the same named
+            // [StaleRatePolicy.Default] (24h) threshold; if either leg is stale,
+            // the composite is treated as unavailable (→ MISSING_RATE fallthrough).
             val now = timeProvider.now()
-            if ((now - toEurRate.lastUpdated) > MAX_RATE_AGE_MS || (now - fromEurRate.lastUpdated) > MAX_RATE_AGE_MS) {
+            val compositeMaxAgeMs = StaleRatePolicy.Default.maxAgeMs
+                ?: error("StaleRatePolicy.Default must define maxAgeMs")
+            if ((now - toEurRate.lastUpdated) > compositeMaxAgeMs || (now - fromEurRate.lastUpdated) > compositeMaxAgeMs) {
                 Timber.d("Composite rate via EUR is %s for %s -> %s", FailedConversion.STALE_RATE, fromCurrency, toCurrency)
             } else {
                 val combinedRate = toEurRate.rate * fromEurRate.rate
@@ -196,6 +219,12 @@ class CurrencyConverter @Inject constructor(
      *
      * Falls back through direct rate → via EUR intermediate, matching the
      * same strategy as [convert]. Returns null if no historical rate is found.
+     *
+     * NEW-P5-012: this path is **TTL-EXEMPT**. Staleness is judged against the
+     * transaction date basis ([atMillis]), not the current wall clock — a rate
+     * that is months old but was the valid rate on the transaction date is
+     * correct here. Latest-rate TTL rules ([StaleRatePolicy.Default] /
+     * [StaleRatePolicy.LatestDefault]) are NOT applied on this path.
      *
      * CURR-15: Prefer [convertAsOf(amount, fromCurrency, toCurrency, atMillis)]
      * with CurrencyCode parameters where possible.
@@ -270,6 +299,9 @@ class CurrencyConverter @Inject constructor(
      * @param rateBasis Which temporal basis to use for rate lookup.
      * @param atMillis Required when [rateBasis] is TRANSACTION_DATE, PERIOD_START, PERIOD_END.
      * @param stalePolicy Controls when a rate is considered too old.
+     *   NEW-P5-012: defaults to [StaleRatePolicy.Default] (24h) — pinned by test.
+     *   Rate-basis-aware callers should pass [StaleRatePolicy.forBasis] explicitly
+     *   (LATEST_AVAILABLE → LatestDefault, 7 days).
      */
     suspend fun convertOutcome(
         amount: Double,
