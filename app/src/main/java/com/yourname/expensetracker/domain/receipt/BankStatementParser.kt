@@ -460,9 +460,23 @@ class BankStatementParser @Inject constructor(
             return null
         }
         
+        // RP-13 Gate B (P3-010): a currency parsed from an explicit symbol in the
+        // row is PARSED_FROM_SOURCE; the home currency default stays marked as an
+        // assumption so downstream policy never treats it as known.
         var currency = homeCurrency
-        if (txAmountStr.contains("£")) currency = "GBP"
-        if (txAmountStr.contains("$")) currency = "USD"
+        var currencyAssumption = com.yourname.expensetracker.domain.core.money.CurrencyAssumption.ASSUMED_HOME_CURRENCY
+        if (txAmountStr.contains("€")) {
+            currency = "EUR"
+            currencyAssumption = com.yourname.expensetracker.domain.core.money.CurrencyAssumption.PARSED_FROM_SOURCE
+        }
+        if (txAmountStr.contains("£")) {
+            currency = "GBP"
+            currencyAssumption = com.yourname.expensetracker.domain.core.money.CurrencyAssumption.PARSED_FROM_SOURCE
+        }
+        if (txAmountStr.contains("$")) {
+            currency = "USD"
+            currencyAssumption = com.yourname.expensetracker.domain.core.money.CurrencyAssumption.PARSED_FROM_SOURCE
+        }
 
         // 3. Determine if it's Money Out or Money In by spatial position
         // Find the block that contains the transaction amount to determine its X position
@@ -519,7 +533,8 @@ class BankStatementParser @Inject constructor(
             type = type,
             confidence = 0.95f,
             date = timestamp,
-            validationNowEpochMs = timeProvider.now()
+            validationNowEpochMs = timeProvider.now(),
+            currencyAssumption = currencyAssumption
         )
         if (BuildConfig.DEBUG) Timber.d("RevolutParser: Successfully parsed -> [REDACTED] | [REDACTED] | [REDACTED]")
         return tx
@@ -624,7 +639,10 @@ class BankStatementParser @Inject constructor(
                     type = type,
                     confidence = 0.90f,
                     date = timestamp,
-                    validationNowEpochMs = timeProvider.now()
+                    validationNowEpochMs = timeProvider.now(),
+                    // RP-13 Gate B: NBG rows carry no explicit currency token —
+                    // the currency is a home-currency assumption, never "known".
+                    currencyAssumption = com.yourname.expensetracker.domain.core.money.CurrencyAssumption.ASSUMED_HOME_CURRENCY
                 )
             } else {
                 // ── Old format ───────────────────────────────────────────────
@@ -679,7 +697,10 @@ class BankStatementParser @Inject constructor(
                     type = type,
                     confidence = 0.90f,
                     date = timestamp,
-                    validationNowEpochMs = timeProvider.now()
+                    validationNowEpochMs = timeProvider.now(),
+                    // RP-13 Gate B: NBG rows carry no explicit currency token —
+                    // the currency is a home-currency assumption, never "known".
+                    currencyAssumption = com.yourname.expensetracker.domain.core.money.CurrencyAssumption.ASSUMED_HOME_CURRENCY
                 )
             }
         } catch (e: Exception) {
@@ -870,11 +891,15 @@ class BankStatementParser @Inject constructor(
         
         if (absAmount <= 0.0 || !absAmount.isFinite()) return null
         
-        // Use more specific currency check
+        // Use more specific currency check.
+        // RP-13 Gate B: explicit token/symbol → PARSED_FROM_SOURCE; home default
+        // stays an assumption so downstream policy never treats it as known.
         var currency = homeCurrency
+        var currencyAssumption = com.yourname.expensetracker.domain.core.money.CurrencyAssumption.ASSUMED_HOME_CURRENCY
         val currencyGroup = bestCandidate.leadingCurrency ?: bestCandidate.trailingCurrency
         if (currencyGroup != null && currencyGroup.matches(Regex("""^(?:[€$£]|EUR|USD|GBP)$""", RegexOption.IGNORE_CASE))) {
             currency = currencyNormalizer.normalize(currencyGroup)
+            currencyAssumption = com.yourname.expensetracker.domain.core.money.CurrencyAssumption.PARSED_FROM_SOURCE
         }
 
         // 3. Detect Transaction Type
@@ -934,7 +959,8 @@ class BankStatementParser @Inject constructor(
             type = type,
             confidence = com.yourname.expensetracker.domain.util.AppConstants.Confidence.RECEIPT_FALLBACK,
             date = dateValue,
-            validationNowEpochMs = timeProvider.now()
+            validationNowEpochMs = timeProvider.now(),
+            currencyAssumption = currencyAssumption
         )
     }
 

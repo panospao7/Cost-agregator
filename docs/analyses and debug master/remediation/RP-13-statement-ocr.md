@@ -1,8 +1,79 @@
 # RP-13 — Statement import and OCR robustness
 
-> **Status:** BLOCKED at two contract gates; not implementation-ready until they are approved.
+> **Status:** PARTIAL — Gate A (identity, register D10) and Gate B (currency, register D11)
+> approved 2026-09-20 and implemented (P3-002, P3-010, 13a/P3-003). Gate B' (resume
+> identity/state machine, P3-005) and final-state semantics (P3-006) remain PENDING —
+> no resume/schema work has been done.
 > **Mode:** strict (AI identity, statement lifecycle, OCR cancellation, and Room state).
-> **Depends on:** RP-12 for shared receipt-processing outcomes.
+> **Depends on:** RP-12 for shared receipt-processing outcomes (satisfied on base 2c2742d5).
+> **Validation: NOT RUN** — static edits only; targeted tests authored for the serialized
+> validation queue (`*BankStatement*`, `*ValidateBankStatement*`, `*ReceiptOcrService*`,
+> `*ReceiptRepository*`, `*Migration*`).
+
+## Implementation status (2026-09-20, lane RP-13)
+
+Applied on `rp-13-wip` (base 2c2742d5). No Room schema change was required; DB version
+unchanged by this lane.
+
+- **P3-002 / Gate A (D10) — DONE.** Explicit stable `candidateId` contract end to end:
+  `DebugTransaction`/`CleanTransaction` carry an immutable parser-assigned `candidateId`;
+  the prompt lists candidates with their ids and requires a JSON array with EXACTLY ONE
+  object per candidate in candidate order, each echoing `candidateId` as a JSON integer
+  plus an explicit `status` of `accepted`/`rejected`. `ValidateBankStatementTransactionsUseCase`
+  returns a typed `StatementValidationOutcome` (`Validated` / `ParserOnly` / `IdentityMismatch`
+  with controlled detail codes `DUPLICATE_CANDIDATE_ID`, `MISSING_CANDIDATE_ID`,
+  `MALFORMED_CANDIDATE_ID`, `OUT_OF_RANGE_CANDIDATE_ID`, `OMITTED_CANDIDATE_ID`,
+  `EXTRA_ENTRY`, `REORDERED_CANDIDATE_IDS`, `MALFORMED_ENTRY`). Any identity/cardinality
+  failure yields `AI_IDENTITY_MISMATCH` and a parser-echo fallback — merging is by
+  `candidateId` only, never position. AI-`rejected` rows (identity proven) become
+  `SKIPPED` ledger items with reason `AI_REJECTED` in
+  `BankStatementLifecycleProcessor`.
+- **P3-010 / Gate B (D11) — DONE.** No hard-coded EUR default, no home-currency fallback.
+  `ParsedTransaction` gained an additive `currencyAssumption` field
+  (`PARSED_FROM_SOURCE` vs `ASSUMED_HOME_CURRENCY`/`UNKNOWN`); the statement parser marks
+  explicit symbols/tokens (`€`, `£`, `$`, ISO codes) as parsed-from-source. The validator
+  resolves currency as: validated AI currency → explicitly parsed source currency →
+  typed `CURRENCY_UNKNOWN` (blank sentinel). The processor turns blank currency into a
+  `SKIPPED` ledger item with reason `CURRENCY_UNKNOWN` (renamed from `MISSING_CURRENCY`);
+  no guessed currency reaches a review or dedupe key.
+- **13a / P3-003 — DONE.** `ReceiptOcrService.runWithRetry` catches
+  `TimeoutCancellationException` FIRST, retries only while the parent coroutine is active,
+  rethrows genuine cancellation, and converts exhausted timeouts to the typed
+  non-cancellation `OcrTimeoutException`. Per-item isolation via `runOcrItemIsolated`
+  (`IsolatedOcrResult.Ok/Failed` with controlled codes `OCR_PAGE_TIMEOUT`/`OCR_PAGE_FAILED`):
+  one failed PDF page no longer cancels sibling pages; all-pages-failed surfaces the typed
+  `OcrRecognitionFailedException` (save-first path preserved). `OcrResult` gained an
+  additive `failedPages` field. `ReceiptRepository.processBatch` now collects results
+  per item under `supervisorScope` (sibling items continue on item failure; caller
+  cancellation still propagates). The AI calls in the validator also rethrow caller
+  cancellation instead of `runCatching`-swallowing it.
+- **P3-005 / P3-006 — PENDING.** Resume identity/state machine and final-status
+  separation (COMPLETED_WITH_SKIPS vs FAILED) await their gate; current finalization
+  semantics (skips count toward run failure) are unchanged.
+
+Tests authored (targeted, queued for execution — NOT RUN):
+
+- `ValidateBankStatementTransactionsUseCaseTest` — identity faults (omitted middle
+  candidate, reordered, duplicate id, out-of-range id, extra entry, string/fractional
+  malformed id, omitted id field), rejected-status handling, mismatch→parser-echo fallback,
+  cloud recovery after on-device mismatch, and currency cases (blank AI currency with USD
+  source, blank source with home available — must NOT fall back, both unknown, invalid AI
+  currency, parser-only echo policy).
+- `ReceiptOcrRetryIsolationTest` — timeout twice then success; exhausted timeout → typed
+  non-cancellation failure; non-timeout failure; caller cancellation propagation; timeout
+  on cancelled parent; one failed item among three; controlled isolation reason codes.
+- `BankStatementParserTest` — currency-assumption provenance (explicit €/token vs assumed
+  home).
+
+Known interactions / notes:
+
+- With AI unavailable and no explicitly parsed currency, rows now land as
+  `CURRENCY_UNKNOWN` skips; under the unchanged finalization rule such runs report
+  FAILED. P3-006 (COMPLETED_WITH_SKIPS) is expected to revise this after its gate.
+- `config/guards/db_ownership_policy.yml` `reason:` text for the item-ledger insert still
+  mentions `MISSING_CURRENCY`; the policy match (method/dao/operation) is unchanged. The
+  descriptive string is left untouched (guarded config — no-weakening rule).
+
 
 ## Scope and source facts
 

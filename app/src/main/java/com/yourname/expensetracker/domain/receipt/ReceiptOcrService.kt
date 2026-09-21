@@ -16,7 +16,10 @@ import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.text.PDFTextStripper
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -51,6 +54,30 @@ class OcrRecognitionFailedException(
     cause: Throwable?
 ) : RuntimeException("OCR recognition failed", cause)
 
+/**
+ * RP-13 13a (P3-003): typed, NON-cancellation OCR timeout failure.
+ *
+ * [TimeoutCancellationException] is a [CancellationException], so letting it
+ * escape a retry loop would cancel the whole import scope. After the bounded
+ * retry attempts are exhausted, the timeout is converted to this regular
+ * exception so an individual OCR item/page can be marked failed while sibling
+ * items continue.
+ */
+class OcrTimeoutException(
+    val attempts: Int
+) : RuntimeException("OCR recognition timed out after $attempts attempts")
+
+/**
+ * RP-13 13a (P3-003): per-item OCR isolation outcome. A failed item carries a
+ * controlled reason code — never OCR text, paths, or exception messages.
+ * Generic over the recognition result type so isolation behavior is unit-testable
+ * on the JVM without ML Kit types.
+ */
+sealed class IsolatedOcrResult<out T> {
+    data class Ok<out T>(val value: T) : IsolatedOcrResult<T>()
+    data class Failed(val reasonCode: String) : IsolatedOcrResult<Nothing>()
+}
+
 data class OcrResult(
     val fullText: String,
     val blocks: List<TextBlock>,
@@ -59,7 +86,10 @@ data class OcrResult(
     val warrantyExtractionResult: com.yourname.expensetracker.domain.usecase.warranty.WarrantyCreationResult? = null,
     // P2-15: PDF truncation metadata — populated when processing multi-page PDFs
     val pagesProcessed: Int? = null,
-    val totalPages: Int? = null
+    val totalPages: Int? = null,
+    // RP-13 13a (P3-003): pages whose OCR failed after retries while sibling
+    // pages succeeded (per-page isolation). Null when no page failed.
+    val failedPages: Int? = null
 )
 
 data class TextBlock(
@@ -107,6 +137,83 @@ class ReceiptOcrService @Inject constructor(
     }
 
     companion object {
+        // RP-13 13a (P3-003): retry/isolation helpers live on the companion
+        // object (no instance state) so they are unit-testable on the JVM.
+
+        /**
+         * Run [block] with bounded retries.
+         *
+         * RP-13 13a (P3-003): [TimeoutCancellationException] (thrown by the
+         * per-attempt [withTimeout] around recognition) IS a
+         * [CancellationException], so the previous catch order exited on the first
+         * timeout. The timeout is now caught FIRST and retried while the parent
+         * coroutine remains active; once the attempts are exhausted it is converted
+         * to the typed, non-cancellation [OcrTimeoutException] so an individual
+         * item/page can be marked failed without cancelling the whole import.
+         * Genuine caller cancellation ([CancellationException] that is not a
+         * timeout, or a timeout observed on an already-cancelled job) always
+         * propagates.
+         */
+        internal suspend fun <T> runWithRetry(
+            maxAttempts: Int = 3,
+            initialDelayMs: Long = 500,
+            maxDelayMs: Long = 2000,
+            block: suspend () -> T
+        ): T {
+            var currentDelay = initialDelayMs
+            repeat(maxAttempts) { attempt ->
+                try {
+                    return block()
+                } catch (e: TimeoutCancellationException) {
+                    // P3-003: retry only while the parent coroutine is still active;
+                    // a timeout on a dead job is genuine cancellation — rethrow it.
+                    if (!currentCoroutineContext().isActive) {
+                        throw e
+                    }
+                    if (attempt == maxAttempts - 1) {
+                        Timber.e("OCR timed out after %d attempts (P3-003)", maxAttempts)
+                        throw OcrTimeoutException(maxAttempts)
+                    }
+                    Timber.w("OCR attempt %d timed out, retrying in %dms (P3-003)", attempt + 1, currentDelay)
+                    delay(currentDelay)
+                    currentDelay = (currentDelay * 2).coerceAtMost(maxDelayMs)
+                } catch (e: CancellationException) {
+                    // G-CANCEL-01: genuine caller cancellation propagates untouched.
+                    throw e
+                } catch (e: Exception) {
+                    if (attempt == maxAttempts - 1) {
+                        Timber.e(e, "OCR failed after %d attempts", maxAttempts)
+                        throw e
+                    }
+                    Timber.w(e, "OCR attempt %d failed, retrying in %dms...", attempt + 1, currentDelay)
+                    delay(currentDelay)
+                    currentDelay = (currentDelay * 2).coerceAtMost(maxDelayMs)
+                }
+            }
+            throw IllegalStateException("Should not reach here")
+        }
+
+        /**
+         * RP-13 13a (P3-003): run one OCR item (e.g. a single PDF page) in isolation.
+         *
+         * A failed item becomes [IsolatedOcrResult.Failed] with a controlled reason
+         * code so sibling items continue; caller cancellation still propagates.
+         */
+        internal suspend fun <T> runOcrItemIsolated(
+            block: suspend () -> T
+        ): IsolatedOcrResult<T> {
+            return try {
+                IsolatedOcrResult.Ok(runWithRetry(maxAttempts = 3) { block() })
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: OcrTimeoutException) {
+                IsolatedOcrResult.Failed("OCR_PAGE_TIMEOUT")
+            } catch (e: Exception) {
+                Timber.w(e, "OCR item failed after retries (P3-003) — continuing with sibling items")
+                IsolatedOcrResult.Failed("OCR_PAGE_FAILED")
+            }
+        }
+
         private val ALLOWED_IMAGE_TYPES = setOf(
             "image/jpeg",
             "image/png", 
@@ -507,6 +614,8 @@ class ReceiptOcrService @Inject constructor(
             val allFullText = StringBuilder()
             val allBlocks = mutableListOf<TextBlock>()
             var savedThumbnailPath = ""
+            // RP-13 13a (P3-003): per-page OCR isolation counter
+            var failedPages = 0
             
             // Limit to first 3-5 pages for performance (Rich functionality requirement)
             val pageLimit = 5
@@ -544,29 +653,44 @@ class ReceiptOcrService @Inject constructor(
                             savedThumbnailPath = saveReceiptImage(bitmap)
                         }
                         
-                        // Run OCR on this page with retry (matching processImage path)
+                        // RP-13 13a (P3-003): run OCR on this page in isolation —
+                        // a failed page records a controlled reason code and
+                        // sibling pages continue (one failed page among three
+                        // must not cancel the rest).
                         val inputImage = InputImage.fromBitmap(bitmap, 0)
-                        val visionText = runWithRetry(maxAttempts = 3) {
-                            recognizeText(inputImage)
-                        }
-                        
-                        // Add full text
-                        allFullText.append(visionText.text).append("\n\n")
-                        
-                        // Add blocks with offset (Virtual Long Page strategy)
-                        visionText.textBlocks.forEach { block ->
-                            allBlocks.add(
-                                TextBlock(
-                                    text = block.text,
-                                    confidence = block.lines.firstOrNull()?.confidence,
-                                    left = block.boundingBox?.left ?: 0,
-                                    top = (block.boundingBox?.top ?: 0) + verticalOffset,
-                                    right = block.boundingBox?.right ?: 0,
-                                    bottom = (block.boundingBox?.bottom ?: 0) + verticalOffset
+                        var pageText: com.google.mlkit.vision.text.Text? = null
+                        when (val outcome = runOcrItemIsolated { recognizeText(inputImage) }) {
+                            is IsolatedOcrResult.Ok -> pageText = outcome.value
+                            is IsolatedOcrResult.Failed -> {
+                                failedPages++
+                                Timber.w(
+                                    "PDF page OCR failed (reason=%s) — continuing with sibling pages",
+                                    outcome.reasonCode
                                 )
-                            )
+                            }
                         }
-                        
+
+                        if (pageText != null) {
+                            // Add full text
+                            allFullText.append(pageText.text).append("\n\n")
+
+                            // Add blocks with offset (Virtual Long Page strategy)
+                            pageText.textBlocks.forEach { block ->
+                                allBlocks.add(
+                                    TextBlock(
+                                        text = block.text,
+                                        confidence = block.lines.firstOrNull()?.confidence,
+                                        left = block.boundingBox?.left ?: 0,
+                                        top = (block.boundingBox?.top ?: 0) + verticalOffset,
+                                        right = block.boundingBox?.right ?: 0,
+                                        bottom = (block.boundingBox?.bottom ?: 0) + verticalOffset
+                                    )
+                                )
+                            }
+                        }
+
+                        // Keep the vertical page mapping consistent even when a
+                        // page failed, so later pages' block offsets stay correct.
                         verticalOffset += bitmapHeight
                         
                     } finally {
@@ -577,15 +701,30 @@ class ReceiptOcrService @Inject constructor(
                 }
             }
             
+            // RP-13 13a (P3-003): if EVERY page failed, the whole input failed —
+            // typed, non-cancellation failure so callers mark the item failed
+            // without treating it as scope cancellation.
+            if (pagesToProcess > 0 && failedPages == pagesToProcess) {
+                throw OcrRecognitionFailedException(
+                    savedImagePath = savedThumbnailPath.ifEmpty { null },
+                    cause = null
+                )
+            }
+
             return OcrResult(
                 fullText = allFullText.toString().trim(),
                 blocks = allBlocks,
                 savedImagePath = savedThumbnailPath,
                 pagesProcessed = pagesToProcess,
-                totalPages = totalPages
+                totalPages = totalPages,
+                failedPages = failedPages.takeIf { it > 0 }
             )
             
         } catch (e: CancellationException) {
+            throw e
+        } catch (e: OcrRecognitionFailedException) {
+            // RP-13 13a (P3-003): the typed all-pages-failed outcome must keep
+            // its saved-path contract — do not re-wrap it.
             throw e
         } catch (e: Exception) {
             Timber.e(e, "PDF processing failed")
@@ -786,30 +925,5 @@ class ReceiptOcrService @Inject constructor(
             recognizer?.close()
             recognizer = null
         }
-    }
-
-    private suspend fun <T> runWithRetry(
-        maxAttempts: Int = 3,
-        initialDelayMs: Long = 500,
-        maxDelayMs: Long = 2000,
-        block: suspend () -> T
-    ): T {
-        var currentDelay = initialDelayMs
-        repeat(maxAttempts) { attempt ->
-            try {
-                return block()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                if (attempt == maxAttempts - 1) {
-                    Timber.e(e, "OCR failed after $maxAttempts attempts")
-                    throw e
-                }
-                Timber.w(e, "OCR attempt ${attempt + 1} failed, retrying in ${currentDelay}ms...")
-                delay(currentDelay)
-                currentDelay = (currentDelay * 2).coerceAtMost(maxDelayMs)
-            }
-        }
-        throw IllegalStateException("Should not reach here")
     }
 }

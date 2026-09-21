@@ -22,10 +22,13 @@ import com.yourname.expensetracker.data.repository.toDbTransactionType
 import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
-import com.yourname.expensetracker.domain.ai.usecase.CleanTransaction
 import com.yourname.expensetracker.domain.ai.usecase.DebugTransaction
+import com.yourname.expensetracker.domain.ai.usecase.StatementValidationContracts
+import com.yourname.expensetracker.domain.ai.usecase.StatementValidationOutcome
 import com.yourname.expensetracker.domain.ai.usecase.ValidateBankStatementTransactionsUseCase
+import com.yourname.expensetracker.domain.core.money.CurrencyAssumption
 import com.yourname.expensetracker.domain.debug.DebugData
+import com.yourname.expensetracker.domain.parser.ParsedTransaction
 import com.yourname.expensetracker.domain.parser.ParsedTransactionType
 import com.yourname.expensetracker.domain.receipt.BankStatementParser
 import com.yourname.expensetracker.domain.receipt.ReceiptDocumentType
@@ -214,54 +217,116 @@ class BankStatementLifecycleProcessor @Inject constructor(
             // ── Step 3c: AI validation ─────────────────────────────────────────
             // Use ValidateBankStatementTransactionsUseCase to validate/correct
             // parser candidates with on-device (or cloud) AI.
-            val debugTransactions = parsedTransactions.map { DebugTransaction.fromParsedTransaction(it) }
-            val validatedTransactions = transactionValidator.validateTransactions(
+            // RP-13 Gate A (P3-002 / D10): every candidate carries an immutable
+            // candidateId derived from the parser source-line identity; results
+            // merge back BY candidateId — never by response position.
+            val debugTransactions = parsedTransactions.mapIndexed { index, tx ->
+                DebugTransaction.fromParsedTransaction(tx, candidateId = index)
+            }
+            val validationOutcome = transactionValidator.validateTransactions(
                 rawOcrText = ocrResult.fullText,
                 candidateTransactions = debugTransactions,
                 homeCurrency = homeCurrency
             )
-            val validationSources: Map<Int, String> = validatedTransactions
-                .mapIndexed { i, tx -> i to tx.source }
-                .toMap()
+            val validatedTransactions = validationOutcome.transactions
 
-            // Log the AI validation split
-            val aiValidatedCount = validationSources.count { it.value.startsWith("AI_") }
+            when (validationOutcome) {
+                is StatementValidationOutcome.IdentityMismatch ->
+                    parsingLogs.add(
+                        "AI_IDENTITY_MISMATCH (${validationOutcome.detailCode}): falling back to parser-only"
+                    )
+                is StatementValidationOutcome.ParserOnly ->
+                    parsingLogs.add("AI validation unavailable (${validationOutcome.reasonCode}): parser-only")
+                is StatementValidationOutcome.Validated -> Unit
+            }
+
+            // Log the AI validation split. AI_REJECTED rows are identity-proven
+            // skips (candidateId owned), not validations.
+            val aiValidatedCount = validatedTransactions.count {
+                it.source == StatementValidationContracts.SOURCE_AI_VALIDATED ||
+                    it.source == StatementValidationContracts.SOURCE_AI_CORRECTED
+            }
+            val aiRejectedCount = validatedTransactions.count {
+                it.source == StatementValidationContracts.SOURCE_AI_REJECTED
+            }
             parsingLogs.add("AI validation: $aiValidatedCount/${validatedTransactions.size} transactions AI-validated or corrected")
+            if (aiRejectedCount > 0) {
+                parsingLogs.add("  AI_REJECTED: $aiRejectedCount")
+            }
             if (aiValidatedCount > 0) {
-                val correctedCount = validationSources.count { it.value == "AI_CORRECTED" }
+                val correctedCount = validatedTransactions.count {
+                    it.source == StatementValidationContracts.SOURCE_AI_CORRECTED
+                }
                 parsingLogs.add("  AI_CORRECTED: $correctedCount, AI_VALIDATED: ${aiValidatedCount - correctedCount}")
             }
 
             // Build a merged list: use AI-validated values when confidence > 0.5,
             // fall back to parser-only values otherwise.
+            // Gate A: ownership is proven by candidateId — never merge by position.
             data class MergedTransaction(
+                val candidateId: Int,
                 val merchant: String,
                 val amount: Double,
                 val currency: String,
                 val date: Long?,
                 val confidence: Float,
-                val type: ParsedTransactionType
+                val type: ParsedTransactionType,
+                val source: String
             )
-            val mergedTransactions = validatedTransactions.mapIndexed { i, cleanTx ->
-                val originalTx = parsedTransactions[i]
-                if (cleanTx.source.startsWith("AI_") && cleanTx.confidence > 0.5f) {
-                    MergedTransaction(
-                        merchant = cleanTx.merchant,
-                        amount = cleanTx.amount,
-                        currency = cleanTx.currency,
-                        date = if (cleanTx.date > 0L) cleanTx.date else originalTx.date,
-                        confidence = cleanTx.confidence,
-                        type = originalTx.type
-                    )
+
+            // Gate B currency policy for parser-derived values (P3-010 / D11):
+            // an explicitly parsed source currency is kept; a home/unknown
+            // assumption is never treated as known — the typed CURRENCY_UNKNOWN
+            // blank reaches the ledger skip instead of a fabricated currency.
+            fun parserPolicyCurrency(originalTx: ParsedTransaction): String =
+                if (originalTx.currencyAssumption == CurrencyAssumption.PARSED_FROM_SOURCE) {
+                    originalTx.currency
                 } else {
-                    MergedTransaction(
-                        merchant = originalTx.merchant,
-                        amount = originalTx.amount,
-                        currency = originalTx.currency,
-                        date = originalTx.date,
-                        confidence = originalTx.confidence,
-                        type = originalTx.type
-                    )
+                    StatementValidationContracts.CURRENCY_UNKNOWN
+                }
+
+            val mergedTransactions = validatedTransactions.map { cleanTx ->
+                val candidateId = cleanTx.candidateId
+                require(candidateId in parsedTransactions.indices) {
+                    "AI candidateId outside proven candidate range"
+                }
+                val originalTx = parsedTransactions[candidateId]
+                when {
+                    cleanTx.source == StatementValidationContracts.SOURCE_AI_REJECTED ->
+                        // Identity-proven AI rejection: parser fields remain the
+                        // authoritative description of the skipped row.
+                        MergedTransaction(
+                            candidateId = candidateId,
+                            merchant = originalTx.merchant,
+                            amount = originalTx.amount,
+                            currency = parserPolicyCurrency(originalTx),
+                            date = originalTx.date,
+                            confidence = originalTx.confidence,
+                            type = originalTx.type,
+                            source = cleanTx.source
+                        )
+                    cleanTx.source.startsWith("AI_") && cleanTx.confidence > 0.5f ->
+                        MergedTransaction(
+                            candidateId = candidateId,
+                            merchant = cleanTx.merchant,
+                            amount = cleanTx.amount,
+                            currency = cleanTx.currency,
+                            date = if (cleanTx.date > 0L) cleanTx.date else originalTx.date,
+                            confidence = cleanTx.confidence,
+                            type = originalTx.type,
+                            source = cleanTx.source
+                        )
+                    else ->
+                        MergedTransaction(
+                            candidateId = candidateId,
+                            merchant = originalTx.merchant,
+                            amount = originalTx.amount,
+                            currency = parserPolicyCurrency(originalTx),
+                            date = originalTx.date,
+                            confidence = originalTx.confidence,
+                            type = originalTx.type,
+                            source = cleanTx.source
+                        )
                 }
             }
 
@@ -391,8 +456,37 @@ class BankStatementLifecycleProcessor @Inject constructor(
             var duplicatesSkipped = 0
             var failedItemCount = 0
 
-            for ((index, tx) in mergedTransactions.withIndex()) {
+            for (tx in mergedTransactions) {
+                // RP-13 Gate A: the ledger index is the parser source-line
+                // identity (candidateId), not the outcome list position.
+                val index = tx.candidateId
                 try {
+                    // ── RP-13 Gate A (P3-002): identity-proven AI rejection ──
+                    // The candidateId was contract-validated, so the rejection
+                    // is recorded as a ledger skip without a review; the parser
+                    // row stays the authoritative candidate description.
+                    if (tx.source == StatementValidationContracts.SOURCE_AI_REJECTED) {
+                        bankStatementImportItemDao.insert(
+                            BankStatementImportItem(
+                                runId = importRunId,
+                                itemIndex = index,
+                                transactionFingerprint = null,
+                                status = BankStatementImportItem.STATUS_SKIPPED,
+                                merchant = sanitizeMerchant(tx.merchant),
+                                amount = tx.amount,
+                                currency = tx.currency.ifBlank { null },
+                                transactionDate = tx.date ?: now,
+                                errorReason = "AI_REJECTED",
+                                duplicateReason = null,
+                                expenseId = null,
+                                createdAt = now,
+                                updatedAt = now
+                            )
+                        )
+                        parsingLogs.add("Skipped item $index: AI_REJECTED")
+                        continue
+                    }
+
                     // ── PR15: Pre-mutation validation ──────────────────────────
                     if (tx.amount.isNaN() || tx.amount.isInfinite()) {
                         bankStatementImportItemDao.insert(
@@ -403,7 +497,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                                 status = BankStatementImportItem.STATUS_SKIPPED,
                                 merchant = sanitizeMerchant(tx.merchant),
                                 amount = null,
-                                currency = tx.currency,
+                                currency = tx.currency.ifBlank { null },
                                 transactionDate = tx.date ?: now,
                                 errorReason = "INVALID_AMOUNT",
                                 duplicateReason = null,
@@ -413,7 +507,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                             )
                         )
                         failedItemCount++
-                        parsingLogs += "Skipped item $index: invalid amount (${tx.amount})"
+                        parsingLogs.add("Skipped item $index: invalid amount (${tx.amount})")
                         continue
                     }
 
@@ -426,7 +520,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                                 status = BankStatementImportItem.STATUS_SKIPPED,
                                 merchant = sanitizeMerchant(tx.merchant),
                                 amount = null,
-                                currency = tx.currency,
+                                currency = tx.currency.ifBlank { null },
                                 transactionDate = tx.date ?: now,
                                 errorReason = "NON_POSITIVE_AMOUNT",
                                 duplicateReason = null,
@@ -436,10 +530,14 @@ class BankStatementLifecycleProcessor @Inject constructor(
                             )
                         )
                         failedItemCount++
-                        parsingLogs += "Skipped item $index: non-positive amount (${tx.amount})"
+                        parsingLogs.add("Skipped item $index: non-positive amount (${tx.amount})")
                         continue
                     }
 
+                    // ── RP-13 Gate B (P3-010 / D11): typed currency unknown ──
+                    // The validator applies the explicit-source/validated policy;
+                    // a blank currency here is CURRENCY_UNKNOWN — no home fallback,
+                    // no guessed currency in a review or dedupe key.
                     if (tx.currency.isBlank()) {
                         bankStatementImportItemDao.insert(
                             BankStatementImportItem(
@@ -451,7 +549,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                                 amount = tx.amount,
                                 currency = null,
                                 transactionDate = tx.date ?: now,
-                                errorReason = "MISSING_CURRENCY",
+                                errorReason = "CURRENCY_UNKNOWN",
                                 duplicateReason = null,
                                 expenseId = null,
                                 createdAt = now,
@@ -459,7 +557,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                             )
                         )
                         failedItemCount++
-                        parsingLogs += "Skipped item $index: blank currency"
+                        parsingLogs.add("Skipped item $index: CURRENCY_UNKNOWN")
                         continue
                     }
 

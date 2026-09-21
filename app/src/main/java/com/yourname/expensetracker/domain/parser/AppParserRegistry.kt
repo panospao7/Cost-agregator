@@ -39,7 +39,16 @@ data class ParsedTransaction(
     val transferDirection: ParsedTransferDirection? = null,
     val transferAccountName: String? = null,
     @Deprecated("Pass timeProvider.now() explicitly. The 0L default disables the future-date check.")
-    private val validationNowEpochMs: Long = 0L
+    private val validationNowEpochMs: Long = 0L,
+    /**
+     * RP-13 Gate B (P3-010): how [currency] was assigned.
+     * PARSED_FROM_SOURCE when an explicit currency token/symbol was parsed from
+     * the input; ASSUMED_HOME_CURRENCY (or UNKNOWN for legacy callers) when the
+     * parser defaulted. Additive defaulted param — existing call sites keep
+     * compiling and keep their previous UNKNOWN meaning.
+     */
+    val currencyAssumption: com.yourname.expensetracker.domain.core.money.CurrencyAssumption =
+        com.yourname.expensetracker.domain.core.money.CurrencyAssumption.UNKNOWN
 ) {
     /**
      * Helper property to quickly check if this is an incoming transaction
