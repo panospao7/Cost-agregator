@@ -1,7 +1,6 @@
 package com.yourname.expensetracker.domain.util
 
 import com.google.common.truth.Truth.assertThat
-import org.junit.Ignore
 import org.junit.Test
 
 /**
@@ -274,15 +273,119 @@ class NotificationIdGeneratorTest {
 
     // ==================== EDGE CASE TESTS ====================
 
-    @Ignore("Negative IDs are unsupported for receipt notification mapping")
     @Test
-    fun `negative long ID is handled correctly`() {
-        // In Kotlin, -1L % 9999 is negative, but we convert to Int which handles it
+    fun `negative long ID is mapped by floor-mod into range`() {
+        // RP-16 16-A: positiveRangeOffset uses Math.floorMod, which maps negative
+        // inputs into the non-negative domain: floorMod(-1, 9999) == 9998.
         val id = NotificationIdGenerator.forReceipt(-1L)
-        
-        // Should still be in valid range (modulo of negative is implementation dependent)
+
+        assertThat(id).isEqualTo(20000 + 9998)
         assertThat(id).isAtLeast(20000)
         assertThat(id).isAtMost(29999)
+    }
+
+    @Test
+    fun `negative long ID extreme values stay in range`() {
+        val idMin = NotificationIdGenerator.forBill(Long.MIN_VALUE)
+        val idNeg = NotificationIdGenerator.forBudget(-12345L)
+
+        assertThat(idMin).isAtLeast(30000)
+        assertThat(idMin).isAtMost(39999)
+        assertThat(idNeg).isAtLeast(1)
+        assertThat(idNeg).isAtMost(9999)
+    }
+
+    // ==================== RP-16 16-A: TYPED BOUNDARY TESTS ====================
+
+    @Test
+    fun `NotificationId factories delegate to generator for all kinds`() {
+        assertThat(NotificationId.forBill(500L).value).isEqualTo(NotificationIdGenerator.forBill(500L))
+        assertThat(NotificationId.forWarranty(500L, 7).value).isEqualTo(NotificationIdGenerator.forWarranty(500L, 7))
+        assertThat(NotificationId.forWarranty(500L, 30).value).isEqualTo(NotificationIdGenerator.forWarranty(500L, 30))
+        assertThat(NotificationId.forReceipt(500L).value).isEqualTo(NotificationIdGenerator.forReceipt(500L))
+        assertThat(NotificationId.forBudget(500L).value).isEqualTo(NotificationIdGenerator.forBudget(500L))
+        assertThat(NotificationId.forGeneral(500L).value).isEqualTo(NotificationIdGenerator.forGeneral(500L))
+    }
+
+    @Test
+    fun `NotificationId stays in reserved range for large and negative source IDs`() {
+        val bill = NotificationId.forBill(Long.MAX_VALUE)
+        val billNeg = NotificationId.forBill(Long.MIN_VALUE)
+
+        assertThat(bill.value).isAtLeast(30000)
+        assertThat(bill.value).isAtMost(39999)
+        assertThat(billNeg.value).isAtLeast(30000)
+        assertThat(billNeg.value).isAtMost(39999)
+    }
+
+    @Test
+    fun `NotificationKey derives generator-only IDs per kind`() {
+        assertThat(NotificationKey.Bill(123L).notificationId.value)
+            .isEqualTo(NotificationIdGenerator.forBill(123L))
+        assertThat(NotificationKey.Warranty(123L, 7).notificationId.value)
+            .isEqualTo(NotificationIdGenerator.forWarranty(123L, 7))
+        assertThat(NotificationKey.Receipt(123L).notificationId.value)
+            .isEqualTo(NotificationIdGenerator.forReceipt(123L))
+        assertThat(NotificationKey.Budget(123L).notificationId.value)
+            .isEqualTo(NotificationIdGenerator.forBudget(123L))
+        assertThat(NotificationKey.General(123L).notificationId.value)
+            .isEqualTo(NotificationIdGenerator.forGeneral(123L))
+    }
+
+    @Test
+    fun `cross-kind collision separation via typed keys`() {
+        val sameSource = 987654321L
+        val ids = setOf(
+            NotificationKey.Bill(sameSource).notificationId.value,
+            NotificationKey.Warranty(sameSource, 7).notificationId.value,
+            NotificationKey.Warranty(sameSource, 30).notificationId.value,
+            NotificationKey.Receipt(sameSource).notificationId.value,
+            NotificationKey.Budget(sameSource).notificationId.value,
+            NotificationKey.General(sameSource).notificationId.value
+        )
+        // Bill/Warranty7/Warranty30/Receipt/Budget/General live in disjoint ranges.
+        assertThat(ids).hasSize(6)
+    }
+
+    @Test
+    fun `helper-mediated posting cannot pass raw IDs — value comes from generator`() {
+        val fake = CapturingNotificationService()
+
+        val sourceId = 4_500_000_000L // > Int.MAX_VALUE — legacy (id % Int.MAX_VALUE) would overflow/collide
+        fake.postBudgetAlert(NotificationId.forBill(sourceId), "title", "msg")
+
+        assertThat(fake.lastPostedId).isEqualTo(NotificationIdGenerator.forBill(sourceId))
+        assertThat(fake.lastPostedId).isAtLeast(30000)
+        assertThat(fake.lastPostedId).isAtMost(39999)
+    }
+
+    @Test
+    fun `posting helper for anomaly uses generator general range`() {
+        val fake = CapturingNotificationService()
+
+        fake.postAnomalyAlert(NotificationId.forGeneral(77L), "t", "m", 77L)
+
+        assertThat(fake.lastPostedId).isEqualTo(NotificationIdGenerator.forGeneral(77L))
+        assertThat(fake.lastPostedId).isAtLeast(40000)
+        assertThat(fake.lastPostedId).isAtMost(49999)
+    }
+
+    /** Minimal fake that captures the raw Int the mediated helper delegates to. */
+    private class CapturingNotificationService : com.yourname.expensetracker.domain.service.NotificationService {
+        var lastPostedId: Int = -1
+
+        override fun sendBudgetAlert(notificationId: Int, title: String, message: String): com.yourname.expensetracker.domain.service.NotificationService.DeliveryResult {
+            lastPostedId = notificationId
+            return com.yourname.expensetracker.domain.service.NotificationService.DeliveryResult.DELIVERED
+        }
+
+        override fun sendAiBriefingReady(notificationId: Int, title: String, message: String, targetKey: String) {
+            lastPostedId = notificationId
+        }
+
+        override fun sendAnomalyAlert(notificationId: Int, title: String, message: String, expenseId: Long) {
+            lastPostedId = notificationId
+        }
     }
 
     @Test

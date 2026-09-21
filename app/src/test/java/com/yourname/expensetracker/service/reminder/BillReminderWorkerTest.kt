@@ -23,10 +23,12 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
+import io.mockk.slot
 import io.mockk.unmockkStatic
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -275,9 +277,9 @@ class BillReminderWorkerTest {
         mockkStatic(NotificationManagerCompat::class)
         val mockNm = mockk<NotificationManagerCompat>(relaxed = true)
         every { NotificationManagerCompat.from(any<Context>()) } returns mockNm
-        // notificationId = delivery.id % Int.MAX_VALUE
-        every { mockNm.notify(1, any()) } throws SecurityException("Missing notification permission")
-        every { mockNm.notify(2, any()) } returns Unit
+        // RP-16 16-A: worker posts with NotificationIdGenerator.forBill(delivery.id).
+        every { mockNm.notify(com.yourname.expensetracker.domain.util.NotificationIdGenerator.forBill(1L), any()) } throws SecurityException("Missing notification permission")
+        every { mockNm.notify(com.yourname.expensetracker.domain.util.NotificationIdGenerator.forBill(2L), any()) } returns Unit
 
         val result = buildWorker().doWork()
 
@@ -293,5 +295,42 @@ class BillReminderWorkerTest {
         // never FAILED_PERMISSION, never FAILED_TRANSIENT.
         coVerify(exactly = 1) { coordinator.cancelClaimedReminderDelivery(1L, "notification_permission_revoked") }
         coVerify(exactly = 0) { coordinator.markReminderFailed(1L, any()) }
+    }
+
+    // ─── RP-16 16-D: scanned-work counting + 16-A typed bill ID ───
+
+    @Test
+    fun `bill_reminder_counts_each_due_reminder_as_scanned_and_posts_generator_bill_id`() = runTest {
+        val reminder = testReminder(id = 7L)
+        setupNotificationDispatchPath(reminder)
+
+        // Capture the run context the worker actually receives so counters can be verified.
+        val ctxMock = mockk<WorkerRunContext>(relaxed = true)
+        coEvery {
+            executionGuard.runGuardedWithContext(any(), any<suspend (WorkerRunContext) -> Any>())
+        } coAnswers {
+            val block = secondArg<suspend (WorkerRunContext) -> Any>()
+            WorkerGuardResult.Success(block.invoke(ctxMock))
+        }
+        coEvery { coordinator.markReminderSent(reminder.id, any()) } returns true
+
+        mockkStatic(NotificationManagerCompat::class)
+        val mockNm = mockk<NotificationManagerCompat>(relaxed = true)
+        every { NotificationManagerCompat.from(any<Context>()) } returns mockNm
+        val postedId = slot<Int>()
+        every { mockNm.notify(capture(postedId), any()) } returns Unit
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.success(), result)
+        // RP-16 16-D: BillReminder counts scanned work for every due reminder examined.
+        coVerify(exactly = 1) { ctxMock.addRowsScanned() }
+        coVerify(exactly = 1) { ctxMock.addNotificationsSent() }
+        // RP-16 16-A: the posted ID must come from the reserved bill range (30000-39999).
+        assertTrue(postedId.captured >= 30000 && postedId.captured <= 39999)
+        assertEquals(
+            com.yourname.expensetracker.domain.util.NotificationIdGenerator.forBill(7L),
+            postedId.captured
+        )
     }
 }

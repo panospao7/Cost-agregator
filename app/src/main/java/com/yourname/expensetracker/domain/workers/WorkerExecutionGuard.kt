@@ -337,36 +337,39 @@ class WorkerExecutionGuard @Inject constructor(
             try {
                 val spec = WorkerSpec.DEFAULTS[request.workerName]
                 if (spec != null && !spec.enabled) {
-                    guardTerminal(run, "SKIPPED", DiagnosticReasonCode.PROVIDER_DISABLED.name) { run.skipped(DiagnosticReasonCode.PROVIDER_DISABLED.name) }
+                    guardTerminal(run, "SKIPPED", DiagnosticReasonCode.PROVIDER_DISABLED.name) {
+                        run.skipped(DiagnosticReasonCode.PROVIDER_DISABLED.name, snapshotProvider = { ctx.snapshot() })
+                    }
                     return WorkerGuardResult.Skipped("Worker disabled by spec")
                 }
 
                 for (capability in request.requiredCapabilities) {
                     when (val decision = privacyGate.check(capability)) {
                         is PrivacyDecision.Denied -> {
-                            return applyPrivacyPolicy(request, run, DiagnosticReasonCode.WORKER_PRIVACY_DENIED.name)
+                            return applyPrivacyPolicy(request, run, DiagnosticReasonCode.WORKER_PRIVACY_DENIED.name, ctx)
                         }
                         is PrivacyDecision.FailClosed -> {
-                            return applyPrivacyPolicy(request, run, DiagnosticReasonCode.WORKER_PRIVACY_FAIL_CLOSED.name)
+                            return applyPrivacyPolicy(request, run, DiagnosticReasonCode.WORKER_PRIVACY_FAIL_CLOSED.name, ctx)
                         }
                         else -> { }
                     }
                 }
 
                 if (request.requiresNotificationPermission && !notificationPermissionChecker.areNotificationsEnabled()) {
-                    return applyNotificationPermissionPolicy(request, run, DiagnosticReasonCode.WORKER_NOTIFICATION_PERMISSION_DENIED.name)
+                    return applyNotificationPermissionPolicy(request, run, DiagnosticReasonCode.WORKER_NOTIFICATION_PERMISSION_DENIED.name, ctx)
                 }
 
                 val result = block(ctx)
-                val noWork = ctx.rowsScanned == 0 && ctx.rowsUpdated == 0 && ctx.notificationsSent == 0
+                // RP-16 16-D: NO_WORK means nothing scanned, updated, sent,
+                // skipped, or errored — a run that only skipped work is not "no work".
+                val noWork = ctx.rowsScanned == 0 && ctx.rowsUpdated == 0 && ctx.notificationsSent == 0 &&
+                    ctx.rowsSkipped == 0 && ctx.errors == 0
                 val reason = if (noWork) DiagnosticReasonCode.WORKER_NO_WORK.name else DiagnosticReasonCode.WORKER_SUCCESS.name
                 guardTerminal(run, "SUCCESS", reason) {
                     run.success(
-                        rowsScanned = ctx.rowsScanned,
-                        rowsUpdated = ctx.rowsUpdated,
-                        notificationsSent = ctx.notificationsSent,
                         message = if (noWork) "NO_WORK" else null,
-                        reasonCode = reason
+                        reasonCode = reason,
+                        snapshotProvider = { ctx.snapshot() }
                     )
                 }
                 return WorkerGuardResult.Success(result)
@@ -379,26 +382,32 @@ class WorkerExecutionGuard @Inject constructor(
                 if (e is kotlinx.coroutines.TimeoutCancellationException) {
                     return when (request.timeoutPolicy) {
                         WorkerTimeoutPolicy.RETRY -> {
-                            guardTerminal(run, "RETRY", DiagnosticReasonCode.WORKER_TIMEOUT.name) { run.retry(DiagnosticReasonCode.WORKER_TIMEOUT.name, e) }
+                            guardTerminal(run, "RETRY", DiagnosticReasonCode.WORKER_TIMEOUT.name) {
+                                run.retry(DiagnosticReasonCode.WORKER_TIMEOUT.name, e, snapshotProvider = { ctx.snapshot() })
+                            }
                             WorkerGuardResult.Retry(DiagnosticReasonCode.WORKER_TIMEOUT.name, e)
                         }
                         WorkerTimeoutPolicy.PROPAGATE_CANCELLATION -> {
-                            guardTerminal(run, "CANCELLED", DiagnosticReasonCode.WORKER_CANCELLED.name) { run.cancelled(DiagnosticReasonCode.WORKER_CANCELLED.name) }
+                            guardTerminal(run, "CANCELLED", DiagnosticReasonCode.WORKER_CANCELLED.name) {
+                                run.cancelled(DiagnosticReasonCode.WORKER_CANCELLED.name, snapshotProvider = { ctx.snapshot() })
+                            }
                             throw e
                         }
                     }
                 }
                 if (e is kotlinx.coroutines.CancellationException) {
-                    guardTerminal(run, "CANCELLED", DiagnosticReasonCode.WORKER_CANCELLED.name) { run.cancelled(DiagnosticReasonCode.WORKER_CANCELLED.name) }
+                    guardTerminal(run, "CANCELLED", DiagnosticReasonCode.WORKER_CANCELLED.name) {
+                        run.cancelled(DiagnosticReasonCode.WORKER_CANCELLED.name, snapshotProvider = { ctx.snapshot() })
+                    }
                     throw e
                 }
                 if (e is WorkerCheckpointBlockedException) {
                     val code = e.reasonCode
                     val outcome = withBoundedTerminalWrite {
                         when (request.blockedPolicy) {
-                            BlockedPolicy.RETRY -> run.retry(code, e)
-                            BlockedPolicy.SKIP_SUCCESS -> run.skipped(code)
-                            BlockedPolicy.FAIL -> run.failure(code, e)
+                            BlockedPolicy.RETRY -> run.retry(code, e, snapshotProvider = { ctx.snapshot() })
+                            BlockedPolicy.SKIP_SUCCESS -> run.skipped(code, snapshotProvider = { ctx.snapshot() })
+                            BlockedPolicy.FAIL -> run.failure(code, e, snapshotProvider = { ctx.snapshot() })
                         }
                     } ?: TerminalWriteOutcome.NotDurable("CHECKPOINT_BLOCKED", code, "TERMINAL_WRITE_TIMEOUT", "TimeoutCancellationException")
                     recordTerminalOutcome(run, outcome, when (request.blockedPolicy) {
@@ -415,15 +424,15 @@ class WorkerExecutionGuard @Inject constructor(
                 // fallback for every other exception.
                 return if (e is RetryableWorkerException) {
                     val reason = WorkerReasonCodes.sanitizeReasonCode(e.reasonCode)
-                    guardTerminal(run, "RETRY", reason) { run.retry(reason, e) }
+                    guardTerminal(run, "RETRY", reason) { run.retry(reason, e, snapshotProvider = { ctx.snapshot() }) }
                     WorkerGuardResult.Retry(reason, e)
                 } else if (classifyTransient(e)) {
                     val reason = DiagnosticReasonCode.WORKER_TRANSIENT_ERROR.name
-                    guardTerminal(run, "RETRY", reason) { run.retry(reason, e) }
+                    guardTerminal(run, "RETRY", reason) { run.retry(reason, e, snapshotProvider = { ctx.snapshot() }) }
                     WorkerGuardResult.Retry(reason, e)
                 } else {
                     val reason = DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name
-                    guardTerminal(run, "FAILED", reason) { run.failure(reason, e) }
+                    guardTerminal(run, "FAILED", reason) { run.failure(reason, e, snapshotProvider = { ctx.snapshot() }) }
                     WorkerGuardResult.Failed(reason, e)
                 }
             }
@@ -504,21 +513,26 @@ class WorkerExecutionGuard @Inject constructor(
         recordTerminalOutcome(run, outcome, intendedStatus)
     }
 
+    /** RP-16 16-B: provider that captures the context snapshot under the terminal mutex. */
+    private fun WorkerRunContext?.snapshotProvider(): (() -> WorkerRunCounters?)? =
+        this?.let { ctx -> { ctx.snapshot() } }
+
     private suspend fun applyPrivacyPolicy(
         request: WorkerGuardRequest,
         run: WorkerRunHandle,
-        code: String
+        code: String,
+        ctx: WorkerRunContext? = null
     ): WorkerGuardResult<Nothing> = when (request.privacyPolicy) {
         PrivacyPolicy.SKIP_SUCCESS -> {
-            guardTerminal(run, "SKIPPED", code) { run.skipped(code) }
+            guardTerminal(run, "SKIPPED", code) { run.skipped(code, snapshotProvider = ctx.snapshotProvider()) }
             WorkerGuardResult.Skipped(code)
         }
         PrivacyPolicy.RETRY -> {
-            guardTerminal(run, "RETRY", code) { run.retry(code) }
+            guardTerminal(run, "RETRY", code) { run.retry(code, snapshotProvider = ctx.snapshotProvider()) }
             WorkerGuardResult.Retry(code)
         }
         PrivacyPolicy.FAIL -> {
-            guardTerminal(run, "FAILED", code) { run.failure(code) }
+            guardTerminal(run, "FAILED", code) { run.failure(code, snapshotProvider = ctx.snapshotProvider()) }
             WorkerGuardResult.Failed(code)
         }
     }
@@ -526,18 +540,19 @@ class WorkerExecutionGuard @Inject constructor(
     private suspend fun applyNotificationPermissionPolicy(
         request: WorkerGuardRequest,
         run: WorkerRunHandle,
-        code: String
+        code: String,
+        ctx: WorkerRunContext? = null
     ): WorkerGuardResult<Nothing> = when (request.notificationPermissionPolicy) {
         PermissionPolicy.SKIP_SUCCESS -> {
-            guardTerminal(run, "SKIPPED", code) { run.skipped(code) }
+            guardTerminal(run, "SKIPPED", code) { run.skipped(code, snapshotProvider = ctx.snapshotProvider()) }
             WorkerGuardResult.Skipped(code)
         }
         PermissionPolicy.RETRY -> {
-            guardTerminal(run, "RETRY", code) { run.retry(code) }
+            guardTerminal(run, "RETRY", code) { run.retry(code, snapshotProvider = ctx.snapshotProvider()) }
             WorkerGuardResult.Retry(code)
         }
         PermissionPolicy.FAIL -> {
-            guardTerminal(run, "FAILED", code) { run.failure(code) }
+            guardTerminal(run, "FAILED", code) { run.failure(code, snapshotProvider = ctx.snapshotProvider()) }
             WorkerGuardResult.Failed(code)
         }
     }

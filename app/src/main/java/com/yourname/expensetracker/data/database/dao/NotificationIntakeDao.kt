@@ -95,6 +95,7 @@ interface NotificationIntakeDao {
             updatedAt = :nowMs
         WHERE id = :id
           AND status IN ('RECEIVED', 'FAILED_RETRYABLE')
+          AND (:nowMs >= COALESCE(nextAttemptAt, 0))
     """)
     suspend fun claimForProcessing(id: Long, nowMs: Long, workerId: String): Int
 

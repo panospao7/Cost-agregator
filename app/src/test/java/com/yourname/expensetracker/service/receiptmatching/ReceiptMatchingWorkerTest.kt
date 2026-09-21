@@ -204,7 +204,7 @@ class ReceiptMatchingWorkerTest {
             matchService.recordAutoMatchLinkFailed(30L, 900L, "RECEIPT_LINK_INVALID_STATE", "IllegalStateException")
         }
         // A failed link must not be treated as an auto-match success notification.
-        coVerify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 0) { notificationService.postBudgetAlert(any(), any(), any()) }
     }
 
     @Test
@@ -221,11 +221,14 @@ class ReceiptMatchingWorkerTest {
                 any(), any(), any(), any(), any(), any(), any(), any(), any(), any()
             )
         } returns kotlin.Result.success(sampleLink(receiptId = 40L, expenseId = 901L))
+        // RP-16 16-D: worker counts only DELIVERED results as notificationsSent.
+        coEvery { notificationService.postBudgetAlert(any(), any(), any()) } returns
+            NotificationService.DeliveryResult.DELIVERED
 
         val result = buildWorker().doWork()
 
         assertEquals(Result.success(), result)
-        coVerify(exactly = 1) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 1) { notificationService.postBudgetAlert(any(), any(), any()) }
         coVerify(exactly = 0) { matchService.recordAutoMatchLinkFailed(any(), any(), any(), any()) }
         // P9-S4 counts: a successful auto-match scans, updates, and notifies.
         coVerify(exactly = 1) { ctx.addRowsScanned() }
@@ -254,7 +257,7 @@ class ReceiptMatchingWorkerTest {
         assertEquals(Result.success(), result)
         // Already-claimed is a benign no-op, not a link failure.
         coVerify(exactly = 0) { matchService.recordAutoMatchLinkFailed(any(), any(), any(), any()) }
-        coVerify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 0) { notificationService.postBudgetAlert(any(), any(), any()) }
     }
 
     // ── PR12L-2: structured link-failure diagnostics ─────────────────────────
@@ -352,7 +355,7 @@ class ReceiptMatchingWorkerTest {
         coEvery {
             receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         } returns kotlin.Result.success(sampleLink(receiptId = 81L, expenseId = 931L))
-        coEvery { notificationService.sendBudgetAlert(any(), any(), any()) } throws SecurityException("notif denied")
+        coEvery { notificationService.postBudgetAlert(any(), any(), any()) } throws SecurityException("notif denied")
 
         val result = buildWorker().doWork()
 
@@ -382,7 +385,7 @@ class ReceiptMatchingWorkerTest {
         coEvery {
             receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         } returns kotlin.Result.success(sampleLink(receiptId = 82L, expenseId = 932L))
-        coEvery { notificationService.sendBudgetAlert(any(), any(), any()) } throws RuntimeException("notification service unavailable")
+        coEvery { notificationService.postBudgetAlert(any(), any(), any()) } throws RuntimeException("notification service unavailable")
 
         val result = buildWorker().doWork()
 
@@ -413,7 +416,7 @@ class ReceiptMatchingWorkerTest {
         coEvery {
             receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         } returns kotlin.Result.success(sampleLink(receiptId = 83L, expenseId = 933L))
-        coEvery { notificationService.sendBudgetAlert(any(), any(), any()) } throws CancellationException("job cancelled")
+        coEvery { notificationService.postBudgetAlert(any(), any(), any()) } throws CancellationException("job cancelled")
 
         val result = buildWorker().doWork()
 
@@ -560,7 +563,7 @@ class ReceiptMatchingWorkerTest {
         val result = buildWorker().doWork()
 
         assertEquals(Result.success(), result)
-        coVerify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 0) { notificationService.postBudgetAlert(any(), any(), any()) }
         coVerify(exactly = 0) { ctx.addNotificationsSent() }
         // Link and metric for rows updated must still happen.
         coVerify(exactly = 1) { ctx.addRowsUpdated() }
@@ -578,13 +581,13 @@ class ReceiptMatchingWorkerTest {
         coEvery {
             receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         } returns kotlin.Result.success(sampleLink(receiptId = 104L, expenseId = 913L))
-        coEvery { notificationService.sendBudgetAlert(any(), any(), any()) } throws SecurityException("notif denied")
+        coEvery { notificationService.postBudgetAlert(any(), any(), any()) } throws SecurityException("notif denied")
 
         val result = buildWorker().doWork()
 
         assertEquals(Result.success(), result)
         // Notification was attempted but threw; metric must NOT be incremented.
-        coVerify(exactly = 1) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 1) { notificationService.postBudgetAlert(any(), any(), any()) }
         coVerify(exactly = 0) { ctx.addNotificationsSent() }
         // Link still succeeded.
         coVerify(exactly = 1) { ctx.addRowsUpdated() }
@@ -601,11 +604,13 @@ class ReceiptMatchingWorkerTest {
         coEvery {
             receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         } returns kotlin.Result.success(sampleLink(receiptId = 105L, expenseId = 914L))
+        coEvery { notificationService.postBudgetAlert(any(), any(), any()) } returns
+            NotificationService.DeliveryResult.DELIVERED
 
         val result = buildWorker().doWork()
 
         assertEquals(Result.success(), result)
-        coVerify(exactly = 1) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 1) { notificationService.postBudgetAlert(any(), any(), any()) }
         coVerify(exactly = 1) { ctx.addNotificationsSent() }
     }
 
@@ -627,15 +632,51 @@ class ReceiptMatchingWorkerTest {
             kotlin.Result.success(sampleLink(receiptId = 106L, expenseId = 915L)),
             kotlin.Result.success(sampleLink(receiptId = 107L, expenseId = 916L))
         )
+        coEvery { notificationService.postBudgetAlert(any(), any(), any()) } returns
+            NotificationService.DeliveryResult.DELIVERED
 
         val result = buildWorker().doWork()
 
         assertEquals(Result.success(), result)
         // Exactly one notification sent (second receipt allowed), so metric is 1.
-        coVerify(exactly = 1) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 1) { notificationService.postBudgetAlert(any(), any(), any()) }
         coVerify(exactly = 1) { ctx.addNotificationsSent() }
         // Both receipts were updated (linked).
         coVerify(exactly = 2) { ctx.addRowsUpdated() }
+    }
+
+    @Test
+    fun `receipt_matching_counts_only_DELIVERED_results_and_records_suppression`() = runTest {
+        // RP-16 16-D: a NOT_DELIVERED result is NOT counted as notificationsSent.
+        // It is recorded as a controlled suppression (constant reason code, error
+        // class null — no payload leakage) and counted as a skipped row.
+        val receipt = sampleReceipt(id = 108L, parsedMerchant = "NotDeliveredStore")
+        val expense = sampleExpense(id = 917L)
+        coEvery { notificationPermissionChecker.areNotificationsEnabled() } returns true
+        coEvery { receiptRepository.getProcessableReceipts() } returns listOf(receipt)
+        coEvery { matcher.findBestMatch(receipt, any()) } returns MatchResult.AutoMatch(expense, 0.94)
+        coEvery {
+            receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        } returns kotlin.Result.success(sampleLink(receiptId = 108L, expenseId = 917L))
+        coEvery { notificationService.postBudgetAlert(any(), any(), any()) } returns
+            NotificationService.DeliveryResult.NOT_DELIVERED
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.success(), result)
+        coVerify(exactly = 1) { notificationService.postBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 0) { ctx.addNotificationsSent() }
+        coVerify(exactly = 1) { ctx.addRowsSkipped() }
+        coVerify(exactly = 1) {
+            matchService.recordNotificationSuppressed(
+                receiptId = 108L,
+                expenseId = 917L,
+                reasonCode = "RECEIPT_MATCH_NOTIFICATION_SUPPRESSED_NOT_DELIVERED",
+                errorClass = null
+            )
+        }
+        // Link still counted as updated work.
+        coVerify(exactly = 1) { ctx.addRowsUpdated() }
     }
 
     private fun sampleReceipt(

@@ -47,7 +47,7 @@ class DatabaseMigrationProofTest {
      * data survived.
      */
     @Test
-    fun migration_145_to_148_chain_passes() {
+    fun migration_145_to_current_chain_passes() {
         var db = helper.createDatabase(TEST_DB, DatabaseSchemaPolicy.MIGRATION_BASELINE)
 
         // Seed a minimal expense row at the baseline schema

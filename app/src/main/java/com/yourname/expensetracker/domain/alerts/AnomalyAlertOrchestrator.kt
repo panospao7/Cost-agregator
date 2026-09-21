@@ -14,6 +14,7 @@ import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.DomainTransferDirection
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.service.NotificationService
+import com.yourname.expensetracker.domain.util.NotificationId
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
@@ -56,9 +57,6 @@ class AnomalyAlertOrchestrator @Inject constructor(
 
         // User feedback threshold - if user marked "looks_normal" 2+ times, reduce alerts
         private const val LOOKS_NORMAL_THRESHOLD = 2
-
-        // Notification ID base for anomaly alerts (avoid collision with budget alerts)
-        private const val ANOMALY_NOTIFICATION_BASE_ID = 100000
     }
 
     /**
@@ -173,7 +171,9 @@ class AnomalyAlertOrchestrator @Inject constructor(
                 // Build and send notification
                 val normalizedExpense = expenseSnapshots.firstOrNull { it.id == expenseId }
                 val message = buildNotificationMessage(normalizedExpense ?: expense.expense.toSnapshot(), expenseAnomalies)
-                val notificationId = ANOMALY_NOTIFICATION_BASE_ID + (expenseId % 100000).toInt()
+                // RP-16 16-A / D6: notification IDs may only originate from the
+                // NotificationIdGenerator typed boundary — never raw arithmetic.
+                val notificationId = NotificationId.forGeneral(expenseId)
 
                 // Record the alert in database
                 val alert = NewAnomalyAlert(
@@ -190,13 +190,12 @@ class AnomalyAlertOrchestrator @Inject constructor(
                 Timber.d("Created anomaly alert $alertId for expense $expenseId")
 
                 // Send the notification
-                notificationService.sendAnomalyAlert(
+                notificationService.postAnomalyAlert(
                     notificationId = notificationId,
                     title = "Unusual Charge Detected",
                     message = message,
                     expenseId = expenseId
                 )
-
                 Timber.i(
                     "Anomaly alert sent for %s: %s",
                     expense.expense.merchant,

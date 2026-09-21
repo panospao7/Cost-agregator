@@ -41,12 +41,26 @@ interface WorkerRunHandle {
     val workerName: String
     val workId: String?
     val runAttempt: Int?
-    suspend fun success(rowsScanned: Int = 0, rowsUpdated: Int = 0, notificationsSent: Int = 0, message: String? = null, reasonCode: String? = null): TerminalWriteOutcome
-    suspend fun skipped(reason: String): TerminalWriteOutcome
-    suspend fun retry(reason: String, error: Throwable? = null): TerminalWriteOutcome
-    suspend fun failure(reason: String, error: Throwable? = null): TerminalWriteOutcome
-    suspend fun cancelled(reason: String): TerminalWriteOutcome
-    suspend fun staleAborted(): TerminalWriteOutcome
+
+    /**
+     * RP-16 16-B: [snapshotProvider] is invoked inside the terminal mutex,
+     * immediately before the terminal persistence, so the persisted counters
+     * are the exact measured totals. `null` (default) keeps the legacy scalar
+     * defaults for old callers.
+     */
+    suspend fun success(
+        rowsScanned: Int = 0,
+        rowsUpdated: Int = 0,
+        notificationsSent: Int = 0,
+        message: String? = null,
+        reasonCode: String? = null,
+        snapshotProvider: (() -> WorkerRunCounters?)? = null
+    ): TerminalWriteOutcome
+    suspend fun skipped(reason: String, snapshotProvider: (() -> WorkerRunCounters?)? = null): TerminalWriteOutcome
+    suspend fun retry(reason: String, error: Throwable? = null, snapshotProvider: (() -> WorkerRunCounters?)? = null): TerminalWriteOutcome
+    suspend fun failure(reason: String, error: Throwable? = null, snapshotProvider: (() -> WorkerRunCounters?)? = null): TerminalWriteOutcome
+    suspend fun cancelled(reason: String, snapshotProvider: (() -> WorkerRunCounters?)? = null): TerminalWriteOutcome
+    suspend fun staleAborted(snapshotProvider: (() -> WorkerRunCounters?)? = null): TerminalWriteOutcome
 }
 
 @Singleton
@@ -182,7 +196,9 @@ class WorkerRunLoggerImpl @Inject constructor(
             val terminalReasonCode: String? = null,
             val terminalDiagnosticCode: String? = null,
             val partialFailureCount: Int? = null,
-            val failedTargetCount: Int? = null
+            val failedTargetCount: Int? = null,
+            /** RP-16 16-B: invoked under the terminal mutex, right before persistence. */
+            val snapshotProvider: (() -> WorkerRunCounters?)? = null
         )
 
         private suspend fun terminal(
@@ -193,15 +209,31 @@ class WorkerRunLoggerImpl @Inject constructor(
             try {
                 if (completed) return TerminalResult.AlreadyCompletedLocal
 
+                // RP-16 16-B (D9): capture the immutable counter snapshot INSIDE the
+                // terminal mutex, immediately before persistence, so no counter can
+                // change between measurement and the durable write.
+                val snapshot: WorkerRunCounters? = try {
+                    args.snapshotProvider?.invoke()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // A snapshot that cannot be read is treated as "not supplied"
+                    // (unknown), never as fake zeros.
+                    null
+                }
+
                 val affected = try {
                     withTimeout(TERMINAL_WRITE_TIMEOUT_MS) {
                         dao.completeTerminal(
                             id = runId,
                             status = status,
                             finishedAt = timeProvider.now(),
-                            rowsScanned = args.rowsScanned,
-                            rowsUpdated = args.rowsUpdated,
-                            notificationsSent = args.notificationsSent,
+                            // Scalar mapping only — never a data object / COALESCE.
+                            rowsScanned = snapshot?.rowsScanned ?: args.rowsScanned,
+                            rowsUpdated = snapshot?.rowsUpdated ?: args.rowsUpdated,
+                            notificationsSent = snapshot?.notificationsSent ?: args.notificationsSent,
+                            rowsSkipped = snapshot?.rowsSkipped ?: 0,
+                            errors = snapshot?.errors ?: 0,
                             statusReason = args.statusReason,
                             retryReason = args.retryReason,
                             errorMessage = args.errorMessage,
@@ -209,8 +241,8 @@ class WorkerRunLoggerImpl @Inject constructor(
                             cancellationReason = args.cancellationReason,
                             terminalReasonCode = args.terminalReasonCode,
                             terminalDiagnosticCode = args.terminalDiagnosticCode,
-                            partialFailureCount = args.partialFailureCount,
-                            failedTargetCount = args.failedTargetCount
+                            partialFailureCount = snapshot?.partialFailureCount ?: args.partialFailureCount,
+                            failedTargetCount = snapshot?.failedTargetCount ?: args.failedTargetCount
                         )
                     }
                 } catch (e: TimeoutCancellationException) {
@@ -238,7 +270,14 @@ class WorkerRunLoggerImpl @Inject constructor(
             }
         }
 
-        override suspend fun success(rowsScanned: Int, rowsUpdated: Int, notificationsSent: Int, message: String?, reasonCode: String?): TerminalWriteOutcome {
+        override suspend fun success(
+            rowsScanned: Int,
+            rowsUpdated: Int,
+            notificationsSent: Int,
+            message: String?,
+            reasonCode: String?,
+            snapshotProvider: (() -> WorkerRunCounters?)?
+        ): TerminalWriteOutcome {
             val code = reasonCode ?: com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.WORKER_SUCCESS.name
             val safeReason = WorkerReasonCodes.sanitizeReasonCode(code)
             val result = terminal("SUCCESS", TerminalArgs(
@@ -247,62 +286,68 @@ class WorkerRunLoggerImpl @Inject constructor(
                 notificationsSent = notificationsSent,
                 statusReason = safeReason,
                 terminalReasonCode = safeReason,
-                terminalDiagnosticCode = safeReason
+                terminalDiagnosticCode = safeReason,
+                snapshotProvider = snapshotProvider
             ))
             return result.toOutcome("SUCCESS", safeReason, null)
         }
 
-        override suspend fun skipped(reason: String): TerminalWriteOutcome {
+        override suspend fun skipped(reason: String, snapshotProvider: (() -> WorkerRunCounters?)?): TerminalWriteOutcome {
             val safeReason = WorkerReasonCodes.sanitizeReasonCode(reason)
             val result = terminal("SKIPPED", TerminalArgs(
                 statusReason = safeReason,
                 terminalReasonCode = safeReason,
-                terminalDiagnosticCode = safeReason
+                terminalDiagnosticCode = safeReason,
+                snapshotProvider = snapshotProvider
             ))
             return result.toOutcome("SKIPPED", safeReason, null)
         }
 
-        override suspend fun retry(reason: String, error: Throwable?): TerminalWriteOutcome {
+        override suspend fun retry(reason: String, error: Throwable?, snapshotProvider: (() -> WorkerRunCounters?)?): TerminalWriteOutcome {
             val safeReason = WorkerReasonCodes.sanitizeReasonCode(reason)
             val result = terminal("RETRY", TerminalArgs(
                 retryReason = safeReason,
                 errorMessage = sanitizer.sanitizeExceptionMessage(error?.message),
                 errorClass = error?.javaClass?.simpleName,
                 terminalReasonCode = safeReason,
-                terminalDiagnosticCode = classifyDiagnostic(safeReason, error)
+                terminalDiagnosticCode = classifyDiagnostic(safeReason, error),
+                snapshotProvider = snapshotProvider
             ))
             return result.toOutcome("RETRY", safeReason, error)
         }
 
-        override suspend fun failure(reason: String, error: Throwable?): TerminalWriteOutcome {
+        override suspend fun failure(reason: String, error: Throwable?, snapshotProvider: (() -> WorkerRunCounters?)?): TerminalWriteOutcome {
             val safeReason = WorkerReasonCodes.sanitizeReasonCode(reason)
             val result = terminal("FAILED", TerminalArgs(
                 statusReason = safeReason,
                 errorMessage = sanitizer.sanitizeExceptionMessage(error?.message),
                 errorClass = error?.javaClass?.simpleName,
                 terminalReasonCode = safeReason,
-                terminalDiagnosticCode = classifyDiagnostic(safeReason, error)
+                terminalDiagnosticCode = classifyDiagnostic(safeReason, error),
+                snapshotProvider = snapshotProvider
             ))
             return result.toOutcome("FAILED", safeReason, error)
         }
 
-        override suspend fun cancelled(reason: String): TerminalWriteOutcome {
+        override suspend fun cancelled(reason: String, snapshotProvider: (() -> WorkerRunCounters?)?): TerminalWriteOutcome {
             val safeReason = WorkerReasonCodes.sanitizeReasonCode(reason)
             val result = terminal("CANCELLED", TerminalArgs(
                 statusReason = safeReason,
                 cancellationReason = safeReason,
                 terminalReasonCode = safeReason,
-                terminalDiagnosticCode = safeReason
+                terminalDiagnosticCode = safeReason,
+                snapshotProvider = snapshotProvider
             ))
             return result.toOutcome("CANCELLED", safeReason, null)
         }
 
-        override suspend fun staleAborted(): TerminalWriteOutcome {
+        override suspend fun staleAborted(snapshotProvider: (() -> WorkerRunCounters?)?): TerminalWriteOutcome {
             val reason = "STALE_RUNNING_ABORTED"
             val result = terminal("STALE_ABORTED", TerminalArgs(
                 statusReason = reason,
                 terminalReasonCode = reason,
-                terminalDiagnosticCode = reason
+                terminalDiagnosticCode = reason,
+                snapshotProvider = snapshotProvider
             ))
             return result.toOutcome("STALE_ABORTED", reason, null)
         }

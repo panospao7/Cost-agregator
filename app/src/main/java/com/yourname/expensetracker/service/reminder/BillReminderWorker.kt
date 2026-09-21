@@ -12,6 +12,7 @@ import androidx.hilt.work.HiltWorker
 import androidx.work.*
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+import com.yourname.expensetracker.domain.util.NotificationId
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.workers.BlockedPolicy
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
@@ -77,6 +78,9 @@ class BillReminderWorker @AssistedInject constructor(
                 for (reminder in dueReminders) {
                     if (isStopped) break
 
+                    // RP-16 16-D: every due reminder examined is scanned work.
+                    ctx.addRowsScanned()
+
                     ctx.checkpoint("bill_reminder")
 
                     if (!coordinator.claimReminderDelivery(reminder.id)) {
@@ -104,7 +108,7 @@ class BillReminderWorker @AssistedInject constructor(
 
                     when (result) {
                         is NotificationSendResult.Sent -> {
-                            val marked = coordinator.markReminderSent(reminder.id, result.notificationId)
+                            val marked = coordinator.markReminderSent(reminder.id, result.notificationId.value)
                             if (marked) {
                                 ctx.addNotificationsSent()
                                 try {
@@ -116,7 +120,7 @@ class BillReminderWorker @AssistedInject constructor(
                                         entityId = reminder.id,
                                         metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
                                             .put("delivered", true)
-                                            .put("notificationId", result.notificationId)
+                                            .put("notificationId", result.notificationId.value)
                                             .build()
                                     ))
                                 } catch (e: Exception) {
@@ -187,7 +191,7 @@ class BillReminderWorker @AssistedInject constructor(
      * Result of attempting to send a notification.
      */
     private sealed interface NotificationSendResult {
-        data class Sent(val notificationId: Int) : NotificationSendResult
+        data class Sent(val notificationId: NotificationId) : NotificationSendResult
         data class Failed(val reason: String) : NotificationSendResult
     }
 
@@ -196,6 +200,10 @@ class BillReminderWorker @AssistedInject constructor(
      * Creates the notification channel on first invocation if needed.
      * Adds Snooze (24h) and Dismiss action buttons via [SnoozeReminderReceiver]
      * and [DismissReminderReceiver] broadcast receivers.
+     *
+     * RP-16 16-A: the notification ID comes exclusively from the typed
+     * allocation boundary ([NotificationId.forBill] → NotificationIdGenerator),
+     * never from raw `(delivery.id % Int.MAX_VALUE)` arithmetic.
      *
      * @return [NotificationSendResult.Sent] with the notificationId on success,
      *         or [NotificationSendResult.Failed] with a reason on failure.
@@ -207,13 +215,16 @@ class BillReminderWorker @AssistedInject constructor(
     ): NotificationSendResult {
         ensureChannelExists()
 
+        // RP-16 16-A: typed ID from the reserved bill range (30000-39999).
+        val notificationId = NotificationId.forBill(delivery.id)
+
         // Snooze action — marks delivery SNOOZED for 24h
         val snoozeIntent = Intent(applicationContext, SnoozeReminderReceiver::class.java).apply {
             putExtra("deliveryId", delivery.id)
         }
-        // P4-NEW-005/006: Use stable ID derived from delivery.id (not hashCode)
-        // to ensure PendingIntent request codes are deterministic across restarts.
-        val snoozeRequestCode = (delivery.id % Int.MAX_VALUE).toInt()
+        // P4-NEW-005/006: Use the generator-derived notification ID (stable across
+        // restarts) as the PendingIntent request code so it is deterministic.
+        val snoozeRequestCode = notificationId.value
         val snoozePendingIntent = PendingIntent.getBroadcast(
             applicationContext,
             snoozeRequestCode,
@@ -244,9 +255,8 @@ class BillReminderWorker @AssistedInject constructor(
             .addAction(R.drawable.ic_dismiss, "Dismiss", dismissPendingIntent)
             .build()
 
-        val notificationId = (delivery.id % Int.MAX_VALUE).toInt()
         return try {
-            NotificationManagerCompat.from(applicationContext).notify(notificationId, notification)
+            NotificationManagerCompat.from(applicationContext).notify(notificationId.value, notification)
             NotificationSendResult.Sent(notificationId)
         } catch (e: SecurityException) {
             Log.w(TAG, "Missing notification permission — cannot send notification", e)
