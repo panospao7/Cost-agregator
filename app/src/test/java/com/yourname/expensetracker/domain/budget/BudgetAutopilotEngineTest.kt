@@ -4,6 +4,7 @@ import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.BudgetForecastDao
 import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
+import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.BudgetTrend
@@ -22,8 +23,8 @@ import com.yourname.expensetracker.domain.core.money.RateBasis
 import com.yourname.expensetracker.domain.core.money.SpendScope
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
-import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
@@ -82,6 +83,17 @@ class BudgetAutopilotEngineTest {
         )
 
         coEvery { budgetRepository.getActiveBudgets() } returns emptyList()
+
+        // RP-09 9c: the forecasting engine sources period spend through the
+        // repository's period-end aggregate; the strict mock needs a default
+        // empty COMPLETE aggregate (spentToDate = 0.0, matching pre-RP-09
+        // behavior) or uncoached generateForecast paths error out.
+        coEvery {
+            budgetRepository.getCurrentPeriodPurchaseSpendAtPeriodEnd(any(), any(), any(), any())
+        } returns BudgetRepository.CurrentPeriodSpendAtPeriodEnd(
+            aggregate = MoneyAggregate.empty(CurrencyCode("EUR"), RateBasis.PERIOD_END),
+            rateAsOfMillis = now
+        )
 
         val sharedCurrencySettingsRepo = mockk<CurrencySettingsRepository>(relaxed = true).also {
             coEvery { it.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))

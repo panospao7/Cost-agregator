@@ -1,8 +1,7 @@
 # RP-09 - Budget partial-data handling and FX-basis consistency (Pipeline 6)
 
-> **Status:** CONDITIONAL. The correctness work below is executable after the stated contracts are
-> verified. The risk-threshold redesign is deliberately a separate product decision, not a hidden
-> side effect of a currency bug fix.
+> **Status:** CONDITIONAL — PARTIAL IMPLEMENTATION (RP lane RP-09: 9b + 9c done; 9a PENDING).
+> See "Implementation status (RP-09 lane)" at the bottom of this document.
 > **Mode:** strict (money, forecasting, recurring occurrence state, and UI data quality).
 > **Depends on:** RP-08 for shared history-builder semantics. Do not change the same forecast file
 > concurrently without reconciling the rate-basis contract.
@@ -193,3 +192,152 @@ source field exists.
 Tests were not run while this plan was rewritten. Land in order: RP-08, 9a, 9b, then 9c. Stop if
 the repository reveals a different occurrence-status or conversion-quality contract; do not widen
 the batch by inventing a new risk product.
+
+---
+
+## Implementation status (RP-09 lane, worktree rp-09, branch rp-09-wip @ 2c2742d5)
+
+Scope of this lane: budget FX correctness (9b + 9c). Lane rule: rollover arithmetic and period
+ordering UNCHANGED. Sections 9a and 9d are NOT part of this lane and remain PENDING (9d is a
+deferred product decision by design).
+
+### Done — 9b P6-005 (percentKnown preferred contract)
+
+- `BudgetStatus` gains `percentKnown: Boolean = true` (preferred path; `percentUsed` stays
+  non-null `Float` — no consumer migration churn).
+- `BudgetRepository.createBudgetStatus` sets `percentKnown=false`, `percentUsed=0f` placeholder,
+  `healthStatus=UNKNOWN` and the controlled `conversionWarning` only when the limit conversion
+  is `ConversionQuality.UNAVAILABLE`. Partially-converted spend with a usable limit keeps
+  `percentKnown=true`, preserves `isPartial=true`, and allows threshold checks.
+- `BudgetMonitor`: alerts are gated on `percentKnown` (a `STATUS_SKIPPED` diagnostic with
+  controlled reason `PERCENT_UNKNOWN` is recorded instead — no amounts/paths/exception text);
+  `STATUS_COMPUTED` gains a `partialData` boolean diagnostic field; a notification carries a
+  bounded constant qualifier ("Some transactions were excluded (missing exchange rates).") when
+  spend was partially converted.
+- `BudgetScreen.BudgetCard`: the over/remaining row is rendered only when `percentKnown` — the
+  existing data-quality chip explains the degraded state. The summary card already excludes
+  UNKNOWN/partial from the on-track count.
+- Other `percentUsed` consumers are inherently gated: `DashboardBriefingInputBuilder` only reads
+  percent for `EXCEEDED`/`CRITICAL` healths (impossible when unknown); dashboard/assembler
+  adapters forward `healthStatus`/`isPartial` unchanged.
+
+### Done — 9b P6-006 (usable fallback vs unavailable limit in rollover)
+
+- `convertBudgetAmountToHomeCurrencyAsOf` outcome contract documented explicitly: historical
+  success → COMPLETE; latest-rate fallback → `isPartial=true` + warning, quality COMPLETE
+  (usable home currency); total failure → empty + `ConversionQuality.UNAVAILABLE`.
+- Rollover gate changed from `!initialLimitAggregate.isPartial` to
+  `initialLimitAggregate.conversionQuality != ConversionQuality.UNAVAILABLE`: rollover now runs
+  for usable fallbacks (was wrongly suppressed) and still skips total failures. The loop body,
+  carryover arithmetic, and period ordering are byte-for-byte unchanged.
+- Percent/remaining/UNKNOWN health now keyed on UNAVAILABLE (was `isPartial`), so a usable
+  fallback no longer zeroes the percent.
+
+### Done — 9c P6-007 (one basis for current-period risk math)
+
+- New repository-owned method `BudgetRepository.getCurrentPeriodPurchaseSpendAtPeriodEnd()`
+  (returns `CurrentPeriodSpendAtPeriodEnd(aggregate, rateAsOfMillis)`): bounded grouped-by-currency
+  PURCHASE aggregate at `RateBasis.PERIOD_END`, spend window `[periodStart, elapsedEnd)`, rate
+  as-of periodEnd. The domain engine does not touch a DAO. `getAggregateSpent` now delegates to it
+  (status path unchanged: window = period).
+- `BudgetForecastingEngine.generateForecastResult` now uses that aggregate for `spentToDate`,
+  risk level, overspend probability, and predicted remaining — the same PERIOD_END basis as the
+  budget-limit conversion. The normalizer-based `getSpentAmount` (TRANSACTION_DATE) was removed;
+  transaction-date rates remain for historical series only.
+- Missing-rate results: `conversionQuality == UNAVAILABLE` spend → existing typed
+  `BudgetForecastResult.Unavailable(MISSING_RATE)` + `FORECAST_UNAVAILABLE` diagnostic, nothing
+  persisted. Partial spend → rows excluded counted into `excludedExpenseCount`, a controlled
+  `PERIOD_SPEND_PARTIAL` quality warning, and the same bounded exclusion-proportional confidence
+  penalty used for history exclusions.
+- Persisted `BudgetForecast.rateBasis = PERIOD_END`; field KDoc updated (readers must treat it as
+  the single risk-calculation basis). Historical-series basis is in-memory only.
+- Behavior note (sanctioned by the plan): the current-period risk-math spend aggregate is
+  PURCHASE-only, bounded per-currency (the old normalizer path also counted WITHDRAWAL).
+
+### Tests added (authored; first validation run done — see Validation; post-fix re-run PENDING)
+
+BudgetRepositoryHistoricalStatusTest:
+- `total limit conversion failure marks percent unknown with unknown health`
+- `usable latest-rate fallback keeps percent known and thresholds active`
+- `current period spend repository method pins period-end rate basis`
+
+BudgetRolloverTest (real calculator, real aggregate path):
+- `rollover applies when limit converts at exact period-end historical rate`
+- `rollover applies on usable latest-rate fallback keeping partial marker`
+- `total limit conversion failure skips rollover and leaves percent unknown`
+- `partial prior-period spend keeps percent known and flags status partial`
+
+BudgetMonitorTest:
+- `monitor skips alerts when percent is unknown`
+- `monitor appends partial-data qualifier when spend conversion was partial`
+- `monitor records partialData flag in status computed diagnostic`
+
+BudgetForecastingEngineTest (updated `TRANSACTION_DATE` → `PERIOD_END` assertion; default
+period-spend stub added to setUp) plus golden tests:
+- `single currency parity - period risk math uses repository period-end aggregate`
+- `mid-period rate depreciation does not move spent to date off the period-end basis`
+- `mixed currency period spend is risk-mathed post-conversion at one basis`
+- `unconvertible period spend returns typed unavailable and persists nothing`
+- `partial period spend conversion lowers confidence and marks forecast partial`
+- `period window is elapsed-bounded while the rate basis stays period end`
+
+BudgetForecastingEngineDiagnosticsTest: deterministic period-spend stub added to setUp.
+
+UI warning text (P6-005 "UI warning text" test item): the budget screen renders the existing
+`DataQualityWarningChip` + `budget_partial_currency_warning` string for partial statuses
+(pre-existing, unchanged); percentKnown only gates the placeholder over/remaining row, which has
+no new string. Compose-UI row rendering is not unit-testable in this suite without a new UI test
+harness; the gating logic is repository-observable via `percentKnown` (covered above).
+
+### Validation
+
+- command: RUN — `targeted-unit-test` profile, `gradlew :app:testDebugUnitTest --tests "*Budget*"`
+  (serialized runner; e.g. run `vr-20260920-204705-4db30549`, exit 1)
+- result: CONDITIONAL — 2 lane-caused failures found and root-caused; fixes applied as test-only
+  changes (see below). Post-fix re-validation via validation-runner: PENDING. Strict review:
+  NOT RUN.
+- attribution (attribution run on the base revision, confirmed by coordinator): 22 budget-suite
+  failures are PRE-EXISTING on the base and unaffected by this lane — do not attribute them to
+  RP-09. Suites: BudgetMonitorStressTest (5), BudgetMonitorTest (3 — the pre-existing
+  warning/critical/exceeded timestamp tests), BudgetAlertPipelineTest (3), P6BudgetCleanupTest (4),
+  BudgetForecastingEngineTest (4), SharedBudgetManagerTest (1), BudgetRepositoryDiagnosticsTest (1),
+  BudgetCalculatorTimeBoundaryTest (1), BudgetCalculatorGoldenTest (1). Not touched by this lane.
+- lane-caused failures (both fixed; both were TEST bugs — production behavior matched the plan):
+  - `BudgetMonitorTest > monitor appends partial-data qualifier when spend conversion was partial` —
+    the alert never delivered because the test relied on MockK's relaxed default for the
+    `NotificationService.sendBudgetAlert` enum return; in MockK 1.13.8 a relaxed mock does NOT
+    return the first enum constant for an enum return type, so `delivered` was false and the
+    monitor's BUD-3 delivered-gate correctly skipped `updateWarningNotification`. Fix: the test now
+    stubs `sendBudgetAlert(...) returns DeliveryResult.DELIVERED` explicitly (same idiom as
+    `WarrantyExpirationWorkerTest`). Monitor gating/thresholds unchanged (percentKnown stays true
+    for a partial-but-known status; qualifier appended).
+  - `BudgetRolloverTest > partial prior-period spend keeps percent known and flags status partial` —
+    the test seeded the partial USD bucket into completed window `[2026-02-10, 2026-03-10)`, but
+    with NOW = 2026-04-10 and a monthly ROLLING anchor of 2026-03-10 the single completed window is
+    `[2026-03-10, 2026-04-10)` (the active window is `[2026-04-10, 2026-05-10)`), so the stub never
+    fed the USD bucket and `isPartial` stayed false. Fix: the stub now derives the completed-window
+    start from the same real `BudgetCalculator` the repository uses (timezone-independent) and keys
+    the USD bucket on that boundary; the stale section-header comment was corrected. Repository
+    rollover/partial-folding logic unchanged.
+- notes: strict review NOT RUN yet. Known test-behavior deltas reviewers should confirm:
+  `BudgetForecastingEngineTest` spentToDate now comes from the stubbed repository aggregate
+  (0.0 default — same effective value as the previous empty-snapshot path); verification suites
+  (CrossGroup/GoldenMaster) rely on relaxed `budgetRepository` mocks returning a non-UNAVAILABLE
+  quality for the new method.
+
+### Decisions applied
+
+- P6-005: preferred contract chosen (`percentKnown: Boolean = true`); nullable-percent migration
+  rejected (plan marks it optional and far larger).
+- P6-006 discriminator: `ConversionQuality.UNAVAILABLE` (already emitted by the total-failure
+  path since CURR-C62-14); no new enum needed.
+- P6-007 unavailable reason: existing `ForecastUnavailableReason.MISSING_RATE` reused (no enum
+  growth); `detail=PERIOD_SPEND_UNAVAILABLE` in the diagnostic metadata.
+- Rollover FX basis: limit is converted ONCE at period end and the converted (home-currency)
+  base feeds the existing rollover accumulator — rollover arithmetic untouched.
+
+### PENDING (not in this lane / deferred)
+
+- 9a P6-001, P6-008, P6-009a, P6-010, NEW-P6-010, P6-P1-13 — stress-engine occurrence work:
+  PENDING (separate lane).
+- 9d CFC absolute risk bands, NEW-P6-015 — deferred product decisions: PENDING by design.

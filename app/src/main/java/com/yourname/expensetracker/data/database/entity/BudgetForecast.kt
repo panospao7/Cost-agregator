@@ -155,7 +155,17 @@ data class BudgetForecast(
     val excludedExpenseCount: Int = 0,
     /** JSON array of data-quality warnings raised during generation; null when none. */
     val qualityWarningsJson: String? = null,
-    /** Descriptor of the spend-rate basis used for this forecast; null when unspecified. */
+    /**
+     * RP-09 (P6-007): descriptor of the FX rate basis used for the PERSISTED RISK
+     * CALCULATION (spentToDate, riskLevel, overspendProbability, predictedRemaining).
+     * The production engine computes both the budget-limit conversion and the
+     * current-period spend aggregate at `PERIOD_END` so the risk ratio does not move
+     * merely because rates changed after a purchase; readers must treat this field as
+     * that single basis and must NOT reinterpret it as a per-transaction basis.
+     * Transaction-date rates are used only for the in-memory historical series and
+     * are deliberately NOT recorded here.
+     * Legacy rows: null when unspecified.
+     */
     val rateBasis: String? = null
 ) {
     /** S8-003: Not persisted — set by engine after generation for ViewModel use. */

@@ -662,21 +662,27 @@ fun BudgetCard(
                 )
             }
 
-            if (displayPercentUsed > 1f) {
-                Text(
-                    text = stringResource(R.string.budget_over_format, displaySpend - status.effectiveLimit),
-                    color = SemanticColors.DangerRed,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(top = 4.dp)
-                )
-            } else {
-                Text(
-                    text = stringResource(R.string.budget_remaining_format, displayRemainingAmount),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.secondary,
-                    modifier = Modifier.padding(top = 4.dp)
-                )
+            // RP-09 (P6-005): when percentKnown is false the limit could not be converted
+            // to home currency, so percent/remaining are placeholders (0f / 0.0) — never
+            // present them as a real "0 remaining" or over-budget figure. The data-quality
+            // chip above carries the explanation.
+            if (status.percentKnown) {
+                if (displayPercentUsed > 1f) {
+                    Text(
+                        text = stringResource(R.string.budget_over_format, displaySpend - status.effectiveLimit),
+                        color = SemanticColors.DangerRed,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                } else {
+                    Text(
+                        text = stringResource(R.string.budget_remaining_format, displayRemainingAmount),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.secondary,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
             }
             
             // AI Forecast Button

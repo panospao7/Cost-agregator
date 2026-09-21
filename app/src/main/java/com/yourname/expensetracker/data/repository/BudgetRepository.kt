@@ -214,6 +214,15 @@ class BudgetRepository @Inject constructor(
             sourceCurrency = budget.currency,
             asOfMillis = periodEnd
         )
+        // RP-09 (P6-006): `isPartial` alone conflates a usable latest-rate fallback
+        // (partial basis, but the value IS a home-currency limit) with a total
+        // conversion failure (no home-currency limit exists). Only
+        // [ConversionQuality.UNAVAILABLE] means the limit is unusable: rollover is
+        // skipped, percent is unknown, and health is UNKNOWN. A usable fallback
+        // keeps `isPartial == true` + the warning while allowing rollover and
+        // threshold checks.
+        val limitConversionUnavailable =
+            initialLimitAggregate.conversionQuality == ConversionQuality.UNAVAILABLE
         val spentAggregate = getAggregateSpent(budget.categoryId, window.startInclusiveMillis, window.endExclusiveMillis)
         val spent = spentAggregate.displayAmount
         val baseLimit = initialLimitAggregate.displayAmount
@@ -255,7 +264,12 @@ class BudgetRepository @Inject constructor(
         // When `rolloverDeficitTracking` is true, deficits (negative surplus)
         // are carried forward to reduce the next period's effective limit.
         // When false (default), only surplus is carried forward (surplus-only mode).
-        if (budget.rollover && !initialLimitAggregate.isPartial) {
+        // RP-09 (P6-006): rollover runs whenever a usable home-currency limit exists
+        // (exact historical conversion OR usable latest-rate fallback). Only a total
+        // conversion failure (UNAVAILABLE) skips rollover — subtracting home-currency
+        // spend from a source-currency limit would mix currencies. Rollover arithmetic
+        // and period ordering are unchanged.
+        if (budget.rollover && !limitConversionUnavailable) {
             val budgetFirstStart = budget.startDate
             // Sliding window of retained periods. ArrayDeque keeps insertion order
             // (head = oldest, tail = newest) so the carryover accumulator below still
@@ -301,19 +315,18 @@ class BudgetRepository @Inject constructor(
             effectiveLimit = runningEffectiveLimit
         }
 
-        // BUD-P5-P1-1: Guard against mixed-currency percent computation.
-        // When the budget limit could not be converted to home currency,
-        // initialLimitAggregate.isPartial is true and baseLimit/effectiveLimit
-        // is in the budget's source currency, while spent is always in home
-        // currency.  Computing spent / effectiveLimit would mix currencies.
-        val budgetConversionFailed = initialLimitAggregate.isPartial
-        val percent = if (effectiveLimit > 0 && !budgetConversionFailed) {
+        // BUD-P5-P1-1 / RP-09 (P6-005): Guard against mixed-currency percent computation.
+        // When the budget limit could not be converted to home currency (UNAVAILABLE),
+        // baseLimit/effectiveLimit is not a home-currency value while spent is always in
+        // home currency. Computing spent / effectiveLimit would mix currencies, so the
+        // percent is a 0f placeholder flagged with percentKnown == false.
+        val percent = if (effectiveLimit > 0 && !limitConversionUnavailable) {
             (spent / effectiveLimit).toFloat()
         } else {
             0f
         }
         // Do not compute remaining with mixed currencies when limit conversion failed
-        val remaining = if (!budgetConversionFailed) {
+        val remaining = if (!limitConversionUnavailable) {
             (effectiveLimit - spent).coerceAtLeast(0.0)
         } else {
             0.0
@@ -321,9 +334,10 @@ class BudgetRepository @Inject constructor(
 
         val health = when {
             // When conversion failed, status is genuinely unknown — do not mislead
-            // the user with a green ON_TRACK indicator. The isPartial and
-            // conversionWarning fields provide additional context for the UI.
-            budgetConversionFailed -> BudgetHealthStatus.UNKNOWN
+            // the user with a green ON_TRACK indicator. The percentKnown=false flag,
+            // isPartial and conversionWarning fields provide additional context for
+            // the UI and gate monitor alerts.
+            limitConversionUnavailable -> BudgetHealthStatus.UNKNOWN
             percent >= 1.0f -> BudgetHealthStatus.EXCEEDED
             percent >= budget.notifyAtCritical -> BudgetHealthStatus.CRITICAL
             percent >= budget.notifyAtWarning -> BudgetHealthStatus.WARNING
@@ -349,7 +363,8 @@ class BudgetRepository @Inject constructor(
             conversionWarning = listOfNotNull(budgetWarningMessage, spentAggregate.warningMessage)
                 .distinct()
                 .takeIf { it.isNotEmpty() }
-                ?.joinToString(" ")
+                ?.joinToString(" "),
+            percentKnown = !limitConversionUnavailable
         )
     }
 
@@ -403,19 +418,68 @@ class BudgetRepository @Inject constructor(
         start: Long,
         end: Long
     ): com.yourname.expensetracker.domain.core.money.MoneyAggregate {
+        return getCurrentPeriodPurchaseSpendAtPeriodEnd(
+            categoryId = categoryId,
+            periodStart = start,
+            periodEnd = end,
+            elapsedEnd = end
+        ).aggregate
+    }
+
+    /**
+     * RP-09 (P6-007): repository-owned bounded current-period PURCHASE aggregate for
+     * the budget forecasting risk math, converted at [com.yourname.expensetracker.domain.core.money.RateBasis.PERIOD_END].
+     *
+     * This is the ONE legal path for a domain forecast engine to obtain current-period
+     * spend: the domain layer must not reach into a DAO itself. The aggregate is
+     * bounded (grouped-by-currency DAO query, O(currencies), no uncapped row scan —
+     * same truncation-safety contract as [getAggregateSpent]) and every currency
+     * bucket is converted at the rate as of [periodEnd], so the risk ratio
+     * (spend vs budget limit, which is also converted at PERIOD_END) no longer moves
+     * merely because rates changed after a purchase. Transaction-date rates remain
+     * reserved for historical series/analytics.
+     *
+     * Missing-rate semantics are carried on the returned [MoneyAggregate]:
+     * `conversionQuality == PARTIAL` when some rows were excluded,
+     * `conversionQuality == UNAVAILABLE` when no conversion was possible (callers
+     * must treat that as unavailable — never fall back to a fabricated currency).
+     *
+     * @param categoryId budget category filter, or null for the overall budget
+     * @param periodStart start (inclusive) of the budget period
+     * @param periodEnd end (exclusive) of the budget period; ALSO the rate as-of instant
+     * @param elapsedEnd window end (exclusive) for spend accumulation — typically
+     *   `min(now, periodEnd)` so an in-flight period only counts elapsed spend
+     * @return the aggregate plus [CurrentPeriodSpendAtPeriodEnd.rateAsOfMillis] (the
+     *   period-end timestamp the PERIOD_END rates were resolved at)
+     */
+    suspend fun getCurrentPeriodPurchaseSpendAtPeriodEnd(
+        categoryId: Long?,
+        periodStart: Long,
+        periodEnd: Long,
+        elapsedEnd: Long
+    ): CurrentPeriodSpendAtPeriodEnd {
         val homeCurrency = resolveHomeCurrency()
         // TODO (P3-05): N+1 category budget query — getHomeCurrencyPurchaseCategoryTotalsAsOf is
         // called once per budget period in the rollover loop. Batch all periods into a single DAO
         // query that returns per-category totals grouped by period to eliminate the N+1 pattern.
-        return if (categoryId != null) {
-            multiCurrencyRepository.getHomeCurrencyPurchaseCategoryTotalsAsOf(start, end, end)[categoryId]
+        val aggregate = if (categoryId != null) {
+            multiCurrencyRepository.getHomeCurrencyPurchaseCategoryTotalsAsOf(periodStart, elapsedEnd, periodEnd)[categoryId]
                 ?: com.yourname.expensetracker.domain.core.money.MoneyAggregate.empty(
-                    CurrencyCode(homeCurrency)
+                    CurrencyCode(homeCurrency),
+                    com.yourname.expensetracker.domain.core.money.RateBasis.PERIOD_END
                 )
         } else {
-            multiCurrencyRepository.getHomeCurrencyPurchaseTotalAsOf(start, end, end)
+            multiCurrencyRepository.getHomeCurrencyPurchaseTotalAsOf(periodStart, elapsedEnd, periodEnd)
         }
+        return CurrentPeriodSpendAtPeriodEnd(aggregate = aggregate, rateAsOfMillis = periodEnd)
     }
+
+    /** RP-09 (P6-007): see [getCurrentPeriodPurchaseSpendAtPeriodEnd]. */
+    data class CurrentPeriodSpendAtPeriodEnd(
+        val aggregate: com.yourname.expensetracker.domain.core.money.MoneyAggregate,
+        /** The period-end instant the [com.yourname.expensetracker.domain.core.money.RateBasis.PERIOD_END] rates were resolved at. */
+        val rateAsOfMillis: Long
+    )
 
     /**
      * Converts a budget amount to home currency using the **latest** available exchange rate.
@@ -466,9 +530,15 @@ class BudgetRepository @Inject constructor(
      * budget limits are converted at the same historical rate basis as expenses
      * (i.e. the rate closest to, but not after, the period end).
      *
-     * Falls back to the latest rate via [convertBudgetAmountToHomeCurrencyLatest]
-     * if no historical rate is available, but marks the result as partial with a
-     * warning so consumers know the rate basis is not period-accurate.
+     * RP-09 (P6-006) outcome contract (explicit, callers must discriminate on it):
+     *  - exact historical rate available → [MoneyAggregate] with
+     *    [com.yourname.expensetracker.domain.core.money.ConversionQuality.COMPLETE];
+     *  - historical rate missing but latest-rate fallback produced a usable
+     *    home-currency value → `isPartial == true` with a warning, quality stays
+     *    COMPLETE (the value IS usable home currency);
+     *  - no conversion possible → empty aggregate with `isPartial == true` and
+     *    [com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE].
+     *    A raw source-currency amount is never returned (CURR-C62-14).
      *
      * @param amount       the budget amount in its source currency
      * @param sourceCurrency the budget's declared currency code

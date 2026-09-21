@@ -69,6 +69,19 @@ class BudgetForecastingEngineDiagnosticsTest : AnalyticsEngineTestBase() {
         budgetForecastDao = mockk(relaxed = true)
         coEvery { budgetForecastDao.insertWithDeactivation(any()) } returns 1L
 
+        // RP-09 (P6-007): deterministic PERIOD_END period-spend aggregate so the
+        // risk-math path always proceeds (never the typed-unavailable branch) in
+        // these diagnostics-focused tests.
+        coEvery {
+            budgetRepository.getCurrentPeriodPurchaseSpendAtPeriodEnd(any(), any(), any(), any())
+        } returns BudgetRepository.CurrentPeriodSpendAtPeriodEnd(
+            aggregate = com.yourname.expensetracker.domain.core.money.MoneyAggregate.empty(
+                com.yourname.expensetracker.domain.core.money.CurrencyCode("EUR"),
+                com.yourname.expensetracker.domain.core.money.RateBasis.PERIOD_END
+            ),
+            rateAsOfMillis = fixedNow
+        )
+
         mockExpenseRepo = mockk(relaxed = true)
         mockCurrencyNormalizer = mockk(relaxed = true)
         mockCurrencySettingsRepo = mockk(relaxed = true)

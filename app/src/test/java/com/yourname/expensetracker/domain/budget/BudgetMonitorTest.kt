@@ -215,6 +215,88 @@ class BudgetMonitorTest {
         )
     }
 
+    @Test
+    fun `monitor skips alerts when percent is unknown`() = runTest(testDispatcher) {
+        // RP-09 (P6-005): percentKnown=false (limit conversion failed) — the placeholder
+        // 0f percent must never drive a threshold comparison or an alert.
+        val now = atDateTime(2026, 4, 11, 9, 0)
+        every { timeProvider.now() } returns now
+        val status = budgetStatus(
+            budget = budget(id = 66L, period = BudgetPeriod.MONTHLY),
+            spentAmount = 80.0,
+            percentUsed = 0.95f,
+            periodStart = dateToMillis("2026-04-01")
+        ).copy(percentKnown = false)
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(status))
+
+        monitor.checkBudgets()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 0) { budgetRepository.updateWarningNotification(any(), any()) }
+        coVerify(exactly = 0) { budgetRepository.updateCriticalNotification(any(), any()) }
+        coVerify(exactly = 0) { budgetRepository.updateExceededNotification(any(), any()) }
+        val skip = emittedEvents.singleOrNull { it.stage == "STATUS_SKIPPED" }
+        assertTrue("Expected a STATUS_SKIPPED diagnostic for unknown percent", skip != null)
+        assertTrue("Skip must record the PERCENT_UNKNOWN reason", skip!!.metadata.toJson().contains("PERCENT_UNKNOWN"))
+    }
+
+    @Test
+    fun `monitor appends partial-data qualifier when spend conversion was partial`() = runTest(testDispatcher) {
+        // RP-09 (P6-005): with a known limit but partially converted spend, the alert
+        // fires normally AND carries the bounded "some transactions excluded" qualifier.
+        val now = atDateTime(2026, 4, 12, 9, 0)
+        every { timeProvider.now() } returns now
+        val status = budgetStatus(
+            budget = budget(id = 77L, period = BudgetPeriod.MONTHLY),
+            spentAmount = 80.0,
+            percentUsed = 0.80f,
+            periodStart = dateToMillis("2026-04-01")
+        ).copy(isPartial = true)
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(status))
+        // Delivery must be pinned explicitly: MockK's relaxed default for an enum
+        // return type is not DeliveryResult.DELIVERED, and the monitor only records
+        // the notification timestamp after a real delivered result (BUD-3).
+        every { notificationService.sendBudgetAlert(any(), any(), any()) } returns
+            NotificationService.DeliveryResult.DELIVERED
+
+        monitor.checkBudgets()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        coVerify(exactly = 1) { budgetRepository.updateWarningNotification(77L, now) }
+        verify(exactly = 1) {
+            notificationService.sendBudgetAlert(
+                77,
+                "Budget Warning",
+                "You've spent €80.00 (80%) of your Groceries budget (€100.00)." +
+                    " Some transactions were excluded (missing exchange rates)."
+            )
+        }
+    }
+
+    @Test
+    fun `monitor records partialData flag in status computed diagnostic`() = runTest(testDispatcher) {
+        // RP-09 (P6-005): STATUS_COMPUTED must carry the partialData diagnostic field.
+        val now = atDateTime(2026, 4, 13, 9, 0)
+        every { timeProvider.now() } returns now
+        val status = budgetStatus(
+            budget = budget(id = 88L, period = BudgetPeriod.MONTHLY),
+            spentAmount = 80.0,
+            percentUsed = 0.80f,
+            periodStart = dateToMillis("2026-04-01")
+        ).copy(isPartial = true, percentKnown = true)
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(status))
+
+        monitor.checkBudgets()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val computed = emittedEvents.singleOrNull { it.stage == "STATUS_COMPUTED" }
+        assertTrue("Expected a STATUS_COMPUTED diagnostic event", computed != null)
+        val parsed = org.json.JSONObject(computed!!.metadata.toJson())
+        assertTrue("STATUS_COMPUTED must include partialData flag", parsed.has("partialData"))
+        assertTrue("partialData must be true for a partial status", parsed.getBoolean("partialData"))
+    }
+
     private fun budget(id: Long, period: BudgetPeriod): Budget {
         return Budget(
             id = id,

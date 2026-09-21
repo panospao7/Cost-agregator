@@ -247,6 +247,38 @@ class BudgetMonitor @Inject constructor(
         val categoryName = status.category?.name ?: "Overall"
         val periodStart = status.periodStart
 
+        // RP-09 (P6-005): percent-gated alerting. When the budget limit could not be
+        // converted to home currency (percentKnown == false), no home-currency percent
+        // exists: BudgetStatus.percentUsed is a 0f placeholder that must never enter a
+        // threshold comparison or an alert. Record a durable SKIPPED diagnostic with a
+        // controlled reason code and move on — other budgets are unaffected.
+        if (!status.percentKnown) {
+            withContext(ioDispatcher) {
+                try {
+                    writeBarrier.checkWritesAllowed("BudgetMonitor.diagnostic")
+                    diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                        pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.BUDGET,
+                        stage = "STATUS_SKIPPED",
+                        outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.SKIPPED,
+                        entityType = "BudgetStatus",
+                        entityId = budget.id,
+                        metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                            .put("grossFallback", grossFallback)
+                            .put("reason", "PERCENT_UNKNOWN")
+                            .build()
+                    ))
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    if (e is com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException) {
+                        diagnosticSink.recordBlockedOperation("BudgetMonitor.diagnostic", e.mode, "P6")
+                    } else {
+                        Timber.w(e, "BudgetMonitor: skipping diagnostic insert")
+                    }
+                }
+            }
+            return
+        }
+
         // P6-CURRENT-027(a): the early no-op return previously emitted nothing, leaving a gap
         // in the budget-check audit trail. Emit a durable SKIPPED diagnostic so a non-positive
         // spend/limit no-op is observable. Best-effort, write-barrier-guarded, exception-tolerant.
@@ -299,6 +331,7 @@ class BudgetMonitor @Inject constructor(
                         .put("limit", effectiveLimit)
                         .put("percent", adjustedPercent)
                         .put("partial", status.isPartial)
+                        .put("partialData", status.isPartial)
                         .put("grossFallback", grossFallback)
                         .build()
                 ))
@@ -318,7 +351,7 @@ class BudgetMonitor @Inject constructor(
         when {
             adjustedPercent >= 1.0f -> {
                 if (shouldNotify(budget.lastExceededNotifiedAt, now, periodStart, budget.period)) {
-                    val delivered = sendNotification(budget.id.toInt(), budget, spent, effectiveLimit, "Budget Exceeded!", categoryName, adjustedPercent, status.currency)
+                    val delivered = sendNotification(budget.id.toInt(), budget, spent, effectiveLimit, "Budget Exceeded!", categoryName, adjustedPercent, status.currency, partialData = status.isPartial)
                     if (delivered) {
                         budgetRepository.updateExceededNotification(budget.id, now)
                     }
@@ -329,7 +362,7 @@ class BudgetMonitor @Inject constructor(
             }
             adjustedPercent >= budget.notifyAtCritical && adjustedPercent < 1.0f -> {
                 if (shouldNotify(budget.lastCriticalNotifiedAt, now, periodStart, budget.period)) {
-                    val delivered = sendNotification(budget.id.toInt(), budget, spent, effectiveLimit, "Critical Budget Warning", categoryName, adjustedPercent, status.currency)
+                    val delivered = sendNotification(budget.id.toInt(), budget, spent, effectiveLimit, "Critical Budget Warning", categoryName, adjustedPercent, status.currency, partialData = status.isPartial)
                     if (delivered) {
                         budgetRepository.updateCriticalNotification(budget.id, now)
                     }
@@ -340,7 +373,7 @@ class BudgetMonitor @Inject constructor(
             }
             adjustedPercent >= budget.notifyAtWarning && adjustedPercent < budget.notifyAtCritical -> {
                 if (shouldNotify(budget.lastWarningNotifiedAt, now, periodStart, budget.period)) {
-                    val delivered = sendNotification(budget.id.toInt(), budget, spent, effectiveLimit, "Budget Warning", categoryName, adjustedPercent, status.currency)
+                    val delivered = sendNotification(budget.id.toInt(), budget, spent, effectiveLimit, "Budget Warning", categoryName, adjustedPercent, status.currency, partialData = status.isPartial)
                     if (delivered) {
                         budgetRepository.updateWarningNotification(budget.id, now)
                     }
@@ -405,7 +438,8 @@ class BudgetMonitor @Inject constructor(
         title: String,
         categoryName: String,
         percentUsed: Float,
-        displayCurrency: String = budget.currency
+        displayCurrency: String = budget.currency,
+        partialData: Boolean = false
     ): Boolean {
         // Always use effectiveLimit (rollover-aware) — never fall back
         // to budget.amount which omits rollover adjustments.
@@ -419,15 +453,22 @@ class BudgetMonitor @Inject constructor(
         // repository normalization), so the formatted symbol matches the amounts.
         val currencySymbol = com.yourname.expensetracker.domain.currency.SupportedCurrency
             .fromCode(displayCurrency)?.symbol ?: displayCurrency
+        // RP-09 (P6-005): bounded qualifier when some transactions were excluded from
+        // the spend aggregate (missing exchange rates). Constant text only — no
+        // amounts, paths, or exception details are ever appended here.
+        val partialQualifier = if (partialData) {
+            " Some transactions were excluded (missing exchange rates)."
+        } else ""
         val content = String.format(
             Locale.US,
-            "You've spent %s%.2f (%d%%) of your %s budget (%s%.2f).",
+            "You've spent %s%.2f (%d%%) of your %s budget (%s%.2f).%s",
             currencySymbol,
             spent,
             percent,
             categoryName,
             currencySymbol,
-            limit
+            limit,
+            partialQualifier
         )
 
         return notificationService.sendBudgetAlert(notificationId, title, content) ==
