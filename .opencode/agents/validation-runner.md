@@ -1,7 +1,7 @@
 ---
 description: Execution-only owner for serialized compilation, tests, lint, and canonical guard validation.
 mode: subagent
-model: 4router-gift/glm-5.3-flash
+model: merge-gateway/glm-5.3-flash
 variant: max
 temperature: 0
 steps: 80

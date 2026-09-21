@@ -15,7 +15,11 @@ $ARGUMENTS
 ## Instructions
 
 1. Inspect current git status and diff if allowed.
-2. Do not edit files unless the user explicitly asks for a handoff document file.
+2. Persist the packet to `workflows/active/<workflow-id>-handoff.md`
+   (or `workflows/active/handoff-<short-slug>.md` when no workflow id is in
+   context). Fresh debug/review sessions read this file, not prior chat —
+   writing it is part of the command, not optional. Always also return the
+   summary in chat.
 3. Summarize:
    - changed files
    - behavior changed

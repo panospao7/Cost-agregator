@@ -1,7 +1,7 @@
 name = "swarm-coder"
 description = "Bulk mechanical implementation agent for repetitive independent edits across many files."
-model = "gpt-5.6-luna"
-model_reasoning_effort = "low"
+model = "gpt-5.6-sol"
+model_reasoning_effort = "high"
 developer_instructions = '''
 # Role: Swarm Coder
 

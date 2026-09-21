@@ -1,6 +1,6 @@
 name = "privacy-security-guardian"
 description = "Read-only privacy and security guardian for fail-closed behavior, diagnostics, permissions, and sensitive data handling."
-model = "gpt-5.6-sol"
+model = "gpt-6-astra"
 model_reasoning_effort = "high"
 sandbox_mode = "read-only"
 developer_instructions = '''

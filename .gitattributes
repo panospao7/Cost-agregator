@@ -1,0 +1,10 @@
+# Byte-stable guard artifacts: the DB policy signature generator hashes the
+# raw bytes of these files (sourcePolicySha256 / candidateSha256 pair), so a
+# CRLF working-tree checkout would fail the byte-exact tripwires on any
+# platform.  Force LF for the migration inputs and the tracked pair they
+# regenerate (see docs/ci/db-mediation/GR-14_HANDOFF.md, scripts/ci/
+# guard_registry.py "db_artifact_sync").
+config/guards/db_ownership_policy.legacy.yml   text eol=lf
+config/guards/db_ownership_policy.signatures.candidate.yml text eol=lf
+config/guards/db_ownership_policy.signatures.accounting.json text eol=lf
+docs/ci/db-findings/GR-08-seeds.yml            text eol=lf

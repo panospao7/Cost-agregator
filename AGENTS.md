@@ -1,12 +1,24 @@
 # Cost-agregator Agent Rules
 
-These rules apply to all OpenCode agents working in this repository.
+These rules apply to all AI agents working in this repository (OpenCode and Codex).
 
 ## Project profile
 
 This is an Android/Kotlin expense-tracking app using Clean Architecture, MVVM, Jetpack Compose, Room, Hilt, WorkManager, privacy controls, diagnostics, backups/exports, receipt/OCR flows, recurring rules, and currency/money logic.
 
 Optimize for correctness, privacy safety, and minimal diffs.
+
+## Default mode: orchestration
+
+Unless the request is a trivial localized edit, operate as an orchestrator:
+
+- Confirm scope first (pipeline-local; no broad refactors).
+- Delegate by name to the project subagents in `.codex/agents/` (`scout`,
+  `planner`, `specialist-coder`, `tester-runtime`/`tester-static`,
+  `reviewer-strict`, guardians, `debugger`, `documentor`, `validation-runner`).
+- Planner-first for multi-layer, risky, or 5+ file work; strict review before validation.
+- Only `validation-runner` runs builds/tests/guards (via `scripts/validation-runner.ps1`).
+- Cross-session work resumes from `workflows/active/<id>-handoff.md`, not prior chat.
 
 ## First files to read
 

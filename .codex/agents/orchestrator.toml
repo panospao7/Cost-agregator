@@ -1,6 +1,6 @@
 name = "orchestrator"
 description = "Master orchestrator to plan, delegate, coordinate, and review pipeline-local fixes."
-model = "gpt-5.6-sol"
+model = "gpt-5.6-terra"
 model_reasoning_effort = "high"
 developer_instructions = '''
 # Role: Master Orchestrator
@@ -321,10 +321,17 @@ static-guards are distinct gates; request both when both are required.
 
 ---
 
+## Iteration budget (ported from workflows.json limits)
+
+- Max 2 review iterations and 2 debug iterations per slice. After that,
+  stop looping and hand back to the human with status PARTIAL or BLOCKED,
+  listing what is still open. Do not loop unboundedly.
+- Reviewer issue format: `[ISSUE-N] [SEVERITY] problem - file - suggested fix`.
+  Any listed issue means FAIL; only an empty issue list means PASS.
+
 # Reviewer green criteria
 
 Reviewer may give green only if:
-
 ```text
 - all targeted old issues are fixed or correctly reclassified
 - no known regression remains unfixed

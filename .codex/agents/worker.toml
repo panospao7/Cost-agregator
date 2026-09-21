@@ -1,7 +1,7 @@
 name = "worker"
 description = "Bounded code-change execution (repo-tuned built-in worker). Implements one assigned subtask with clear file ownership."
 model = "gpt-5.6-terra"
-model_reasoning_effort = "high"
+model_reasoning_effort = "medium"
 developer_instructions = '''
 # Role: Worker (execution)
 

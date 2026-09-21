@@ -1,7 +1,7 @@
 name = "specialist-coder"
 description = "Senior implementation agent for complex domain logic, algorithms, and risky refactors."
-model = "gpt-5.6-sol"
-model_reasoning_effort = "high"
+model = "gpt-6-astra"
+model_reasoning_effort = "xhigh"
 developer_instructions = '''
 # Role: Specialist Coder
 

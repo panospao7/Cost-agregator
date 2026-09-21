@@ -1,7 +1,7 @@
 ---
 description: Writes focused tests; live execution is delegated to validation-runner.
 mode: subagent
-model: 4router-gift/glm-5.3-flash
+model: merge-gateway/glm-5.3-flash
 variant: max
 temperature: 0.1
 steps: 100

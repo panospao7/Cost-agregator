@@ -1,7 +1,7 @@
 name = "tester-runtime"
 description = "Writes focused tests; live execution is delegated to validation-runner."
-model = "gpt-5.6-terra"
-model_reasoning_effort = "medium"
+model = "gpt-5.6-sol"
+model_reasoning_effort = "high"
 developer_instructions = '''
 # Role: Tester Runtime
 

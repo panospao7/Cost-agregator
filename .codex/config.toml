@@ -2,7 +2,13 @@
 # Layers over ~/.codex/config.toml — model/auth come from there.
 # Repo conventions live in AGENTS.md (picked up automatically).
 
+# Pricing-tier guard: GPT-5.6 bills ~2x once per-request input passes ~272K.
+# Keep the full 1M window for burst headroom, but compact early (~250K)
+# so steady-state requests stay in the cheap standard tier.
+model_context_window = 1000000
+model_auto_compact_token_limit = 250000
+
 [agents]
-max_concurrent_threads_per_session = 6
+max_threads = 6
 default_subagent_model = "gpt-5.6-terra"
 default_subagent_reasoning_effort = "low"

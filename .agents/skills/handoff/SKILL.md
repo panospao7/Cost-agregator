@@ -12,7 +12,12 @@ Delegate the summary to the `documentor` agent.
 ## Instructions
 
 1. Inspect current git status and diff if allowed.
-2. Do not edit files unless the user explicitly asks for a handoff document file.
+2. Persist the packet to disk (this is the cross-session handoff protocol —
+   fresh debug/review sessions read this file, not prior chat):
+   - If the invoking message names a workflow id, write
+     `workflows/active/<workflow-id>-handoff.md`.
+   - Otherwise write `workflows/active/handoff-<short-slug>.md` and report the path.
+   - Always also return the summary in chat.
 3. Summarize:
    - changed files
    - behavior changed
