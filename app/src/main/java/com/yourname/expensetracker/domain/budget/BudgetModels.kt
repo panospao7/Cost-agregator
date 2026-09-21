@@ -10,6 +10,12 @@ data class BudgetStatus(
     val category: Category?,
     val spentAmount: Double,
     val remainingAmount: Double,
+    /**
+     * RP-09 (P6-005): kept NON-null as a source-compatibility value. When
+     * [percentKnown] is false this field is a placeholder `0f` and MUST NOT be
+     * presented as "0% used" or enter any threshold comparison — consumers gate
+     * display and alerts on [percentKnown] instead.
+     */
     val percentUsed: Float,
     val healthStatus: BudgetHealthStatus,
     val periodStart: Long,
@@ -19,7 +25,20 @@ data class BudgetStatus(
     val currency: String = budget.currency,
     val currencyAssumption: String = budget.currencyAssumption,
     val isPartial: Boolean = false,
-    val conversionWarning: String? = null
+    val conversionWarning: String? = null,
+    /**
+     * RP-09 (P6-005, preferred contract): false when the budget limit could not
+     * be converted to home currency at all
+     * ([com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE]),
+     * so no home-currency percent can exist. Then [percentUsed] is a `0f`
+     * placeholder, [healthStatus] is [BudgetHealthStatus.UNKNOWN], and a
+     * controlled [conversionWarning] explains the conversion failure.
+     *
+     * When only some spend rows were excluded (partial conversion) but the limit
+     * is known, this stays `true` while [isPartial] is `true` and threshold
+     * checks remain allowed.
+     */
+    val percentKnown: Boolean = true
 ) {
     val moneySpentAmount: MoneyAmount get() = MoneyAmount(spentAmount, CurrencyCode(currency))
     val moneyRemainingAmount: MoneyAmount get() = MoneyAmount(remainingAmount, CurrencyCode(currency))

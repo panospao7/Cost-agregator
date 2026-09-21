@@ -38,7 +38,8 @@ import kotlin.math.min
  * CURRENCY NOTE: All monetary operations go through [AnalyticsCurrencyNormalizer]
  * to ensure multi-currency expenses are normalized to the home currency before
  * any sum, comparison, or trend computation. The engine no longer uses raw
- * SQL sums that bypass currency conversion (see getSpentAmount replacement).
+ * SQL sums that bypass currency conversion (see RP-09 P6-007: current-period spend now
+ * comes from BudgetRepository.getCurrentPeriodPurchaseSpendAtPeriodEnd).
  */
 @Singleton
 class BudgetForecastingEngine @Inject constructor(
@@ -150,7 +151,45 @@ class BudgetForecastingEngine @Inject constructor(
         }
 
         val elapsedEnd = now.coerceAtMost(periodEnd)
-        val spentToDate = getSpentAmount(budget, periodStart, elapsedEnd, homeCurrency)
+        // RP-09 (P6-007): current-period spend comes from the repository-owned bounded
+        // PERIOD_END aggregate — the SAME rate basis as the budget-limit conversion above.
+        // This keeps the risk ratio stable: it no longer moves solely because rates
+        // changed after a purchase. Transaction-date rates remain reserved for the
+        // historical series (getHistoricalSpendingData) and analytics only.
+        val periodSpend = budgetRepository.getCurrentPeriodPurchaseSpendAtPeriodEnd(
+            categoryId = budget.categoryId,
+            periodStart = periodStart,
+            periodEnd = periodEnd,
+            elapsedEnd = elapsedEnd
+        )
+        val spendAggregate = periodSpend.aggregate
+        // Missing/unconvertible rates leave the risk math undefined: return the existing
+        // typed unavailable result (MISSING_RATE) — never fall back to a fabricated value.
+        if (spendAggregate.conversionQuality ==
+            com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE
+        ) {
+            emitForecastDiagnostic(
+                stage = "FORECAST_UNAVAILABLE",
+                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.SKIPPED,
+                budgetId = budget.id,
+                severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.WARNING,
+                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                    .put("reason", ForecastUnavailableReason.MISSING_RATE)
+                    .put("detail", "PERIOD_SPEND_UNAVAILABLE")
+                    .build()
+            )
+            return@withContext BudgetForecastResult.Unavailable(
+                budgetId = budget.id,
+                reasonCode = ForecastUnavailableReason.MISSING_RATE,
+                reason = "Current-period spend unavailable: exchange rates missing for the budget period",
+                createdAt = now
+            )
+        }
+        val spentToDate = spendAggregate.displayAmount
+        // RP-09 (P6-007): rows excluded from the PERIOD_END spend conversion (missing
+        // rates) are recorded as forecast data-quality loss and lower confidence below.
+        val spendExcludedCount = spendAggregate.failedTransactionCount
+        val spendInputCount = spendAggregate.totalTransactionCount
         val remainingForecastDays = com.yourname.expensetracker.domain.util.TimePeriodUtils.daysBetween(elapsedEnd, periodEnd).coerceAtLeast(0).toDouble()
         val historicalData = getHistoricalSpendingData(budget, homeCurrency)
         val predictedSpending = calculatePredictedSpending(historicalData, remainingForecastDays)
@@ -175,17 +214,33 @@ class BudgetForecastingEngine @Inject constructor(
             historicalData.excludedExpenseCount.toDouble() / historicalData.inputExpenseCount
         } else 0.0
         val retentionFactor = 1.0 - (exclusionRatio * EXCLUSION_CONFIDENCE_PENALTY_WEIGHT)
-        val confidence = (baseConfidence * retentionFactor).coerceIn(0.0, 1.0)
+        // RP-09 (P6-007): apply the same bounded, exclusion-proportional penalty to
+        // current-period spend rows excluded by the PERIOD_END conversion. Partial spend
+        // data lowers confidence instead of silently reading as zero/low spend.
+        val spendExclusionRatio = if (spendInputCount > 0) {
+            spendExcludedCount.toDouble() / spendInputCount
+        } else 0.0
+        val spendRetentionFactor = 1.0 - (spendExclusionRatio * EXCLUSION_CONFIDENCE_PENALTY_WEIGHT)
+        val confidence = (baseConfidence * retentionFactor * spendRetentionFactor).coerceIn(0.0, 1.0)
         val riskLevel = determineRiskLevel(budget, predictedSpending, confidence, spentToDate, normalizedBudgetAmount)
         val overspendProbability = calculateOverspendProbability(normalizedBudgetAmount, predictedSpending, spentToDate, confidence)
         val predictedRemaining = normalizedBudgetAmount - spentToDate - predictedSpending
 
         // P6-CURRENT-010: Persist forecast data-quality. excludedExpenseCount/qualityWarnings come
-        // from the same normalizer pass that gathered history; rateBasis records the FX basis used
-        // for spend normalization (AnalyticsCurrencyNormalizer converts historical/period spend at
-        // RateBasis.TRANSACTION_DATE — see AnalyticsCurrencyNormalizer.normalizeInternal).
-        val excludedExpenseCount = historicalData.excludedExpenseCount
-        val qualityWarnings = historicalData.qualityWarnings
+        // from the normalizer pass that gathered history (TRANSACTION_DATE basis — historical
+        // series only) and from the PERIOD_END current-period spend conversion above.
+        // RP-09 (P6-007): rateBasis records the FX basis of the PERSISTED RISK CALCULATION
+        // (spentToDate, risk level, overspend probability, predicted remaining), which now
+        // uses PERIOD_END for both the spend aggregate and the budget limit. Historical-series
+        // basis is in-memory only and is NOT recorded on this field.
+        val excludedExpenseCount = historicalData.excludedExpenseCount + spendExcludedCount
+        val spendQualityWarnings = if (spendExcludedCount > 0) {
+            listOf(
+                "PERIOD_SPEND_PARTIAL: $spendExcludedCount current-period transaction(s) excluded " +
+                    "from spend (missing exchange rates)"
+            )
+        } else emptyList()
+        val qualityWarnings = historicalData.qualityWarnings + spendQualityWarnings
         val isPartial = excludedExpenseCount > 0 || qualityWarnings.isNotEmpty()
 
         val forecast = BudgetForecast(
@@ -203,7 +258,7 @@ class BudgetForecastingEngine @Inject constructor(
             isPartial = isPartial,
             excludedExpenseCount = excludedExpenseCount,
             qualityWarningsJson = serializeQualityWarnings(qualityWarnings),
-            rateBasis = com.yourname.expensetracker.domain.core.money.RateBasis.TRANSACTION_DATE.name
+            rateBasis = com.yourname.expensetracker.domain.core.money.RateBasis.PERIOD_END.name
         )
         val persistedId = when (val insertResult = insertForecast(forecast)) {
             is ForecastInsertResult.Inserted -> insertResult.id
@@ -603,52 +658,11 @@ class BudgetForecastingEngine @Inject constructor(
         return probability * confidence
     }
     
-    /**
-     * Get amount already spent in current period, normalized to home currency.
-     *
-     * Replaces raw DAO SQL sums (which mixed currencies) with a normalizer-based
-     * computation that converts all expenses to [homeCurrency] before summing.
-     * Conversion warnings from the normalizer are logged but do not block the
-     * computation — partially converted data is still used for the forecast.
-     */
-    private suspend fun getSpentAmount(
-        budget: Budget,
-        periodStart: Long,
-        periodEnd: Long,
-        homeCurrency: String
-    ): Double {
-        if (periodEnd <= periodStart) return 0.0
+    // RP-09 (P6-007): the previous getSpentAmount() (AnalyticsCurrencyNormalizer at
+    // TRANSACTION_DATE) was removed — current-period spend for the risk math now comes
+    // exclusively from BudgetRepository.getCurrentPeriodPurchaseSpendAtPeriodEnd()
+    // (bounded PERIOD_END aggregate) so spend and limit share one rate basis.
 
-        // Fetch raw expenses in the period and normalize to home currency
-        val rawExpenses = expenseRepository.getExpenseSnapshotsBetween(periodStart, periodEnd)
-        val normalized = analyticsCurrencyNormalizer.normalizeSnapshots(rawExpenses, homeCurrency)
-        val relevantExpenses = normalized.includedExpenses
-
-        // Filter by category if needed
-        val filtered = if (budget.categoryId != null) {
-            relevantExpenses.filter { it.categoryId == budget.categoryId }
-        } else {
-            relevantExpenses
-        }
-
-        // Sum only spending-type expenses (PURCHASE/WITHDRAWAL) that belong to the user
-        val total = filtered
-            .filter { (it.transactionType == DomainTransactionType.PURCHASE ||
-                       it.transactionType == DomainTransactionType.WITHDRAWAL) &&
-                      !it.isNotMine }
-            .sumOf { it.effectiveAmount }
-
-        // Log conversion warnings if any occurred
-        if (normalized.hasWarnings) {
-            Timber.w(
-                "BudgetForecastingEngine: ${normalized.warnings.size} conversion warning(s), " +
-                "${normalized.excludedCount} transactions excluded"
-            )
-        }
-
-        return total
-    }
-    
 
 }
 

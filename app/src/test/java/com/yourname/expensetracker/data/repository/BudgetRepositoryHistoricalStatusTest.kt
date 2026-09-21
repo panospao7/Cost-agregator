@@ -426,6 +426,106 @@ class BudgetRepositoryHistoricalStatusTest {
         assertThat(status.conversionWarning).contains("latest rate")
     }
 
+    // ── RP-09 (P6-005 / P6-006): percentKnown + conversion-quality contract ────────
+
+    @Suppress("DEPRECATION_ERROR")
+    @Test
+    fun `total limit conversion failure marks percent unknown with unknown health`() = runTest(UnconfinedTestDispatcher()) {
+        val budget = budget(amount = 1_000.0, categoryId = null).copy(currency = "USD")
+        val evaluationTime = utcMs(2026, Calendar.MARCH, 15)
+        val start = utcMs(2026, Calendar.MARCH, 1)
+        val end = utcMs(2026, Calendar.APRIL, 1)
+
+        every { timeProvider.now() } returns evaluationTime
+        coEvery { budgetDao.getActiveBudgets() } returns listOf(budget)
+        coEvery { categoryDao.getAll() } returns emptyList()
+        every { budgetCalculator.calculatePeriodRange(budget, evaluationTime) } returns (start to end)
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(start, end) } returns listOf(CurrencyTotal("EUR", 200.0, 1))
+        // No historical rate AND no latest rate — total conversion failure (UNAVAILABLE).
+        coEvery {
+            currencyConverter.convertAsOf(any<Double>(), any<String>(), any<String>(), any<Long>())
+        } returns null
+        coEvery {
+            currencyConverter.convert(any<Double>(), any<String>(), any<String>())
+        } returns null
+
+        val status = repository.getBudgetStatusesAt(evaluationTime).single()
+
+        // percentKnown=false contract: placeholder 0f, UNKNOWN health, no usable limit.
+        assertThat(status.percentKnown).isFalse()
+        assertThat(status.percentUsed).isEqualTo(0f)
+        assertThat(status.healthStatus).isEqualTo(BudgetHealthStatus.UNKNOWN)
+        assertThat(status.effectiveLimit).isEqualTo(0.0)
+        assertThat(status.remainingAmount).isEqualTo(0.0)
+        assertThat(status.isPartial).isTrue()
+        assertThat(status.conversionWarning).isNotEmpty()
+    }
+
+    @Suppress("DEPRECATION_ERROR")
+    @Test
+    fun `usable latest-rate fallback keeps percent known and thresholds active`() = runTest(UnconfinedTestDispatcher()) {
+        val budget = budget(amount = 500.0, categoryId = null).copy(currency = "GBP")
+        val evaluationTime = utcMs(2026, Calendar.MARCH, 15)
+        val start = utcMs(2026, Calendar.MARCH, 1)
+        val end = utcMs(2026, Calendar.APRIL, 1)
+
+        every { timeProvider.now() } returns evaluationTime
+        coEvery { budgetDao.getActiveBudgets() } returns listOf(budget)
+        coEvery { categoryDao.getAll() } returns emptyList()
+        every { budgetCalculator.calculatePeriodRange(budget, evaluationTime) } returns (start to end)
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(start, end) } returns listOf(CurrencyTotal("EUR", 100.0, 1))
+        coEvery {
+            currencyConverter.convertAsOf(any<Double>(), any<String>(), any<String>(), any<Long>())
+        } returns null
+        coEvery {
+            currencyConverter.convert(500.0, "GBP", "EUR")
+        } returns com.yourname.expensetracker.domain.currency.ConversionResult(
+            originalAmount = 500.0,
+            originalCurrency = "GBP",
+            convertedAmount = 580.0,
+            targetCurrency = "EUR",
+            rateUsed = 1.16,
+            timestamp = 0L
+        )
+
+        val status = repository.getBudgetStatusesAt(evaluationTime).single()
+
+        // Usable fallback: the limit IS home currency, so percent is known and
+        // threshold checks stay active, while isPartial + warning flag the basis.
+        assertThat(status.percentKnown).isTrue()
+        assertThat(status.isPartial).isTrue()
+        assertThat(status.effectiveLimit).isEqualTo(580.0)
+        assertThat(status.percentUsed).isWithin(1e-6f).of((100.0 / 580.0).toFloat())
+        assertThat(status.healthStatus).isEqualTo(BudgetHealthStatus.ON_TRACK)
+    }
+
+    @Suppress("DEPRECATION_ERROR")
+    @Test
+    fun `current period spend repository method pins period-end rate basis`() = runTest(UnconfinedTestDispatcher()) {
+        // RP-09 (P6-007): the repository-owned forecast spend method must bound the
+        // spend window by [periodStart, elapsedEnd) while resolving rates as of
+        // periodEnd, and must report that as-of instant back to the caller.
+        val start = utcMs(2026, Calendar.MARCH, 1)
+        val end = utcMs(2026, Calendar.APRIL, 1)
+        val elapsedEnd = utcMs(2026, Calendar.MARCH, 15)
+
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(start, elapsedEnd) } returns listOf(CurrencyTotal("EUR", 400.0, 4))
+
+        val result = repository.getCurrentPeriodPurchaseSpendAtPeriodEnd(
+            categoryId = null,
+            periodStart = start,
+            periodEnd = end,
+            elapsedEnd = elapsedEnd
+        )
+
+        assertThat(result.rateAsOfMillis).isEqualTo(end)
+        assertThat(result.aggregate.displayAmount).isEqualTo(400.0)
+        assertThat(result.aggregate.rateBasis).isEqualTo(RateBasis.PERIOD_END)
+        // The spend WINDOW is the elapsed window, NOT the full period.
+        coVerify(exactly = 1) { expenseDao.getTotalSpentBetweenByCurrency(start, elapsedEnd) }
+        coVerify(exactly = 0) { expenseDao.getTotalSpentBetweenByCurrency(start, end) }
+    }
+
     // ── G6: delete/restore forecast policy (P6-CURRENT-005 / P6-P1-15) ─────────────
     //
     // HARNESS NOTE: this test class uses pure mockk DAOs — there is NO real Room DB,

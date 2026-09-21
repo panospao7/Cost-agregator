@@ -20,7 +20,11 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.BudgetForecastDao
+import com.yourname.expensetracker.domain.core.money.ConversionFailureType
+import com.yourname.expensetracker.domain.core.money.ConversionOutcome
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.RateBasis
+import com.yourname.expensetracker.domain.currency.ConversionResult
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import io.mockk.*
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -476,6 +480,160 @@ class BudgetRolloverTest {
         // Only active budgets should appear
         assertThat(statuses).hasSize(1)
         assertThat(statuses[0].budget.isActive).isTrue()
+    }
+
+    // ============================================================================
+    // RP-09 (P6-006): FX-basis rollover contract.
+    //
+    // Rollover must run whenever a usable home-currency limit exists (exact
+    // historical conversion OR usable latest-rate fallback) and must be skipped
+    // only on a total conversion failure (ConversionQuality.UNAVAILABLE).
+    // Rollover arithmetic and period ordering are unchanged.
+    // Fixed calendar: NOW = 2026-04-10, monthly ROLLING anchor 2026-03-10: the
+    // cycle containing NOW is [2026-04-10, 2026-05-10), so exactly one completed
+    // window [2026-03-10, 2026-04-10) precedes it.
+    // ============================================================================
+
+    @Test
+    fun `rollover applies when limit converts at exact period-end historical rate`() = runTest(UnconfinedTestDispatcher()) {
+        val start = makeUtcMs(2026, 3, 10)
+        val budget = createBudget(rollover = true, amount = 1000.0, startDate = start).copy(currency = "USD")
+
+        every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(budget))
+        every { categoryDao.getAllFlow() } returns flowOf(emptyList<Category>())
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 100.0, 1))
+
+        // Exact historical (period-end) rate: 1000 USD -> 850 EUR.
+        coEvery {
+            currencyConverter.convertAsOf(1000.0, "USD", "EUR", any())
+        } returns ConversionResult(
+            originalAmount = 1000.0,
+            originalCurrency = "USD",
+            convertedAmount = 850.0,
+            targetCurrency = "EUR",
+            rateUsed = 0.85,
+            timestamp = 0L
+        )
+
+        val status = budgetRepository.getBudgetStatuses().first().single()
+
+        // Rollover ran on the home-currency base: 850 + (850 - 100) = 1600.
+        assertThat(status.effectiveLimit).isEqualTo(1600.0)
+        assertThat(status.percentKnown).isTrue()
+        assertThat(status.isPartial).isFalse()
+        // Exact historical path must not touch the latest-rate fallback.
+        coVerify(exactly = 0) { currencyConverter.convert(1000.0, "USD", "EUR") }
+    }
+
+    @Test
+    fun `rollover applies on usable latest-rate fallback keeping partial marker`() = runTest(UnconfinedTestDispatcher()) {
+        val start = makeUtcMs(2026, 3, 10)
+        val budget = createBudget(rollover = true, amount = 1000.0, startDate = start).copy(currency = "GBP")
+
+        every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(budget))
+        every { categoryDao.getAllFlow() } returns flowOf(emptyList<Category>())
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 100.0, 1))
+
+        // Historical rate missing; latest rate produces a usable home-currency limit.
+        coEvery {
+            currencyConverter.convertAsOf(any<Double>(), any<String>(), any<String>(), any<Long>())
+        } returns null
+        coEvery {
+            currencyConverter.convert(1000.0, "GBP", "EUR")
+        } returns ConversionResult(
+            originalAmount = 1000.0,
+            originalCurrency = "GBP",
+            convertedAmount = 580.0,
+            targetCurrency = "EUR",
+            rateUsed = 0.58,
+            timestamp = 0L
+        )
+
+        val status = budgetRepository.getBudgetStatuses().first().single()
+
+        // Rollover ran: 580 + (580 - 100) = 1060; basis degradation stays visible.
+        assertThat(status.effectiveLimit).isEqualTo(1060.0)
+        assertThat(status.percentKnown).isTrue()
+        assertThat(status.isPartial).isTrue()
+        assertThat(status.conversionWarning).contains("latest rate")
+        assertThat(status.healthStatus).isEqualTo(BudgetHealthStatus.ON_TRACK)
+    }
+
+    @Test
+    fun `total limit conversion failure skips rollover and leaves percent unknown`() = runTest(UnconfinedTestDispatcher()) {
+        val start = makeUtcMs(2026, 3, 10)
+        val budget = createBudget(rollover = true, amount = 1000.0, startDate = start).copy(currency = "USD")
+
+        every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(budget))
+        every { categoryDao.getAllFlow() } returns flowOf(emptyList<Category>())
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 100.0, 1))
+
+        // Total conversion failure: no historical and no latest rate.
+        coEvery {
+            currencyConverter.convertAsOf(any<Double>(), any<String>(), any<String>(), any<Long>())
+        } returns null
+        coEvery {
+            currencyConverter.convert(any<Double>(), any<String>(), any<String>())
+        } returns null
+
+        val status = budgetRepository.getBudgetStatuses().first().single()
+
+        // No usable limit: rollover skipped (a source-currency limit must never be
+        // compared against home-currency spend), percent unknown, health UNKNOWN.
+        assertThat(status.effectiveLimit).isEqualTo(0.0)
+        assertThat(status.percentKnown).isFalse()
+        assertThat(status.percentUsed).isEqualTo(0f)
+        assertThat(status.healthStatus).isEqualTo(BudgetHealthStatus.UNKNOWN)
+        assertThat(status.isPartial).isTrue()
+        // Exactly one spend aggregate call: the active window only — the completed
+        // period loop never ran.
+        coVerify(exactly = 1) { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) }
+    }
+
+    @Test
+    fun `partial prior-period spend keeps percent known and flags status partial`() = runTest(UnconfinedTestDispatcher()) {
+        val start = makeUtcMs(2026, 3, 10)
+        // Home-currency budget (EUR) — limit needs no conversion.
+        val budget = createBudget(rollover = true, amount = 1000.0, startDate = start)
+
+        every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(budget))
+        every { categoryDao.getAllFlow() } returns flowOf(emptyList<Category>())
+        // The single completed window is [start, start + 1 month) — derive its start
+        // with the same real calculator the repository uses so the stub matches the
+        // queried boundary regardless of the test JVM's default timezone.
+        val completedWindowStart = budgetCalculator.calculatePeriodWindowForTime(
+            BudgetPeriod.MONTHLY, start, start
+        ).startInclusiveMillis
+        // Active window: EUR 100 (converts trivially). Completed window: EUR 100 plus a
+        // USD 50 bucket whose PERIOD_END conversion fails (partial prior-period aggregate).
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } answers {
+            if (firstArg<Long>() == completedWindowStart) {
+                listOf(CurrencyTotal("EUR", 100.0, 1), CurrencyTotal("USD", 50.0, 2))
+            } else {
+                listOf(CurrencyTotal("EUR", 100.0, 1))
+            }
+        }
+        coEvery {
+            currencyConverter.convertOutcome(50.0, "USD", "EUR", any(), any(), any())
+        } returns ConversionOutcome.Failed(
+            originalAmount = 50.0,
+            originalCurrency = "USD",
+            targetCurrency = "EUR",
+            rateBasis = RateBasis.PERIOD_END,
+            failureType = ConversionFailureType.MISSING_RATE,
+            message = "no rate"
+        )
+
+        val status = budgetRepository.getBudgetStatuses().first().single()
+
+        // Limit known (identity) -> threshold checks stay active despite the partial
+        // prior-period spend; the excluded rows are flagged on the status.
+        assertThat(status.percentKnown).isTrue()
+        assertThat(status.isPartial).isTrue()
+        assertThat(status.conversionWarning).contains("excludes 2 transaction(s)")
+        // Rollover still ran on the converted partial aggregate: 1000 + (1000 - 100) = 1900.
+        assertThat(status.effectiveLimit).isEqualTo(1900.0)
+        assertThat(status.healthStatus).isEqualTo(BudgetHealthStatus.ON_TRACK)
     }
 
     // â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

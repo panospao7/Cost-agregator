@@ -15,7 +15,16 @@ import com.yourname.expensetracker.domain.analytics.AnalyticsConversionWarningTy
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.analytics.AnalyticsNormalizationResult
 import com.yourname.expensetracker.domain.analytics.NormalizedExpenseSnapshot
+import com.yourname.expensetracker.domain.core.money.ConversionOutcome
+import com.yourname.expensetracker.domain.core.money.ConversionPath
+import com.yourname.expensetracker.domain.core.money.ConversionQuality
+import com.yourname.expensetracker.domain.core.money.ConversionFailure
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.FailureReason
+import com.yourname.expensetracker.domain.core.money.MoneyAggregate
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
+import com.yourname.expensetracker.domain.core.money.MoneyBucket
+import com.yourname.expensetracker.domain.core.money.RateBasis
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
@@ -71,6 +80,17 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
         every { timeProvider.now() } returns now
         coEvery { budgetForecastDao.insert(any()) } returns 1L
         coEvery { budgetForecastDao.insertWithDeactivation(any()) } returns 1L
+
+        // RP-09 (P6-007): the engine sources current-period spend from the repository
+        // PERIOD_END aggregate. Default: an empty COMPLETE aggregate (spentToDate = 0.0,
+        // matching the pre-RP-09 behavior of the tests in this suite); individual tests
+        // override this stub for FX-basis scenarios.
+        coEvery {
+            budgetRepository.getCurrentPeriodPurchaseSpendAtPeriodEnd(any(), any(), any(), any())
+        } returns BudgetRepository.CurrentPeriodSpendAtPeriodEnd(
+            aggregate = MoneyAggregate.empty(CurrencyCode("EUR"), RateBasis.PERIOD_END),
+            rateAsOfMillis = now
+        )
 
         // Mock the new code path used by production BudgetForecastingEngine.
         // The engine now goes through expenseRepository + analyticsCurrencyNormalizer
@@ -823,7 +843,225 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
             "qualityWarningsJson must be non-null and non-empty",
             json != null && json.isNotBlank() && json != "[]"
         )
-        // Confirm the FX RateBasis used for spend normalization is recorded.
-        assertEquals("TRANSACTION_DATE", partial.rateBasis)
+        // Confirm the FX RateBasis of the persisted RISK CALCULATION is recorded.
+        // RP-09 (P6-007): both the spend aggregate and the budget limit now use
+        // PERIOD_END; transaction-date rates remain historical-series only.
+        assertEquals("PERIOD_END", partial.rateBasis)
+    }
+
+    // =========================================================================
+    // RP-09 (P6-007): ONE FX basis for the current-period risk math.
+    //
+    // Golden scenarios: single-currency parity, mid-period rate movement,
+    // mixed currencies, missing rates (typed unavailable), partial spend
+    // conversion (confidence penalty), and the period window boundary.
+    // =========================================================================
+
+    private fun stubPeriodSpend(aggregate: MoneyAggregate, rateAsOfMillis: Long = now) {
+        coEvery {
+            budgetRepository.getCurrentPeriodPurchaseSpendAtPeriodEnd(any(), any(), any(), any())
+        } returns BudgetRepository.CurrentPeriodSpendAtPeriodEnd(
+            aggregate = aggregate,
+            rateAsOfMillis = rateAsOfMillis
+        )
+    }
+
+    private fun convertedLimit(amount: Double): ConversionOutcome.Converted = ConversionOutcome.Converted(
+        originalAmount = amount,
+        originalCurrency = CurrencyCode("EUR"),
+        convertedAmount = amount,
+        targetCurrency = CurrencyCode("EUR"),
+        rateUsed = 1.0,
+        rateBasis = RateBasis.PERIOD_END,
+        rateValidDate = now,
+        rateLastUpdated = now,
+        rateSource = "test",
+        conversionPath = ConversionPath.DIRECT
+    )
+
+    @Test
+    fun `single currency parity - period risk math uses repository period-end aggregate`() = runTest {
+        val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
+        coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns listOf(
+            snapshot("2026-02", 300.0, 1L),
+            snapshot("2026-03", 300.0, 1L)
+        )
+        coEvery { mockConverter.convertOutcome(any(), any(), any(), any(), any(), any()) } returns convertedLimit(1000.0)
+        stubPeriodSpend(MoneyAggregate.singleCurrency(400.0, CurrencyCode("EUR")))
+
+        val result = engine.generateForecastResult(budget)
+        val forecast = (result as BudgetForecastResult.Available).forecast
+
+        // spentToDate is exactly the PERIOD_END aggregate — never a recomputation.
+        assertApproxEquals(400.0, forecast.spentToDate, 0.01)
+        assertApproxEquals(300.0, forecast.predictedSpending, 0.01)
+        assertApproxEquals(300.0, forecast.predictedRemaining, 0.01)
+        // remaining 600, predicted 300 → usageRatio 0.5 → LOW.
+        assertEquals(ForecastRiskLevel.LOW, forecast.riskLevel)
+        assertEquals("PERIOD_END", forecast.rateBasis)
+    }
+
+    @Test
+    fun `mid-period rate depreciation does not move spent to date off the period-end basis`() = runTest {
+        val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
+        // Transaction-date view of the current period: 1000 of effective amounts.
+        // (The April snapshot is excluded from the trimmed historical series, as in
+        // the existing RP-08 tests, so history contributes no predicted spending.)
+        val currentPeriodSnapshot = snapshot("2026-04", 1000.0, 1L).copy(
+            date = LocalDate.of(2026, 4, 10)
+                .atStartOfDay(ZoneId.systemDefault())
+                .toInstant()
+                .toEpochMilli()
+        )
+        coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns listOf(currentPeriodSnapshot)
+        coEvery { mockConverter.convertOutcome(any(), any(), any(), any(), any(), any()) } returns convertedLimit(1000.0)
+        // PERIOD_END basis: rates moved after the purchases, so the same period
+        // spend aggregates to 800 at period-end rates. Risk math must use 800 —
+        // the raw transaction-date sum must NOT leak into the risk ratio.
+        stubPeriodSpend(MoneyAggregate.singleCurrency(800.0, CurrencyCode("EUR")))
+
+        val result = engine.generateForecastResult(budget)
+        val forecast = (result as BudgetForecastResult.Available).forecast
+
+        assertApproxEquals(800.0, forecast.spentToDate, 0.01)
+        // spentToDate 800 < limit 1000 → not the CRITICAL the raw sum would force.
+        assertEquals(ForecastRiskLevel.LOW, forecast.riskLevel)
+        assertEquals("PERIOD_END", forecast.rateBasis)
+    }
+
+    @Test
+    fun `mixed currency period spend is risk-mathed post-conversion at one basis`() = runTest {
+        val budget = Budget(categoryId = null, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
+        coEvery { mockConverter.convertOutcome(any(), any(), any(), any(), any(), any()) } returns convertedLimit(1000.0)
+        // Mixed buckets already converted at the single PERIOD_END basis:
+        // 400 EUR (home) + 300 USD-converted = 700, no failures.
+        stubPeriodSpend(
+            MoneyAggregate(
+                displayAmount = 700.0,
+                displayCurrency = CurrencyCode("EUR"),
+                sourceBuckets = listOf(
+                    MoneyBucket(CurrencyCode("EUR"), 400.0, 2),
+                    MoneyBucket(CurrencyCode("USD"), 300.0, 1)
+                ),
+                conversionFailures = emptyList(),
+                rateBasis = RateBasis.PERIOD_END
+            )
+        )
+
+        val result = engine.generateForecastResult(budget)
+        val forecast = (result as BudgetForecastResult.Available).forecast
+
+        assertApproxEquals(700.0, forecast.spentToDate, 0.01)
+        assertEquals(false, forecast.isPartial)
+        assertEquals("PERIOD_END", forecast.rateBasis)
+    }
+
+    @Test
+    fun `unconvertible period spend returns typed unavailable and persists nothing`() = runTest {
+        val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
+        coEvery { mockConverter.convertOutcome(any(), any(), any(), any(), any(), any()) } returns convertedLimit(1000.0)
+        // Total conversion failure for the period spend — no fabricated fallback value.
+        stubPeriodSpend(
+            MoneyAggregate(
+                displayAmount = 0.0,
+                displayCurrency = CurrencyCode("EUR"),
+                sourceBuckets = listOf(MoneyBucket(CurrencyCode("USD"), 100.0, 1)),
+                conversionFailures = listOf(
+                    ConversionFailure(
+                        originalAmount = MoneyAmount(100.0, CurrencyCode("USD")),
+                        targetCurrency = CurrencyCode("EUR"),
+                        reason = FailureReason.MISSING_RATE,
+                        transactionCount = 1
+                    )
+                ),
+                isPartial = true,
+                conversionQuality = ConversionQuality.UNAVAILABLE
+            )
+        )
+
+        val result = engine.generateForecastResult(budget)
+
+        val unavailable = result as? BudgetForecastResult.Unavailable
+        assertTrue("expected an Unavailable forecast", unavailable != null)
+        assertEquals(ForecastUnavailableReason.MISSING_RATE, unavailable!!.reasonCode)
+        // Nothing is persisted when the risk math is undefined.
+        coVerify(exactly = 0) { budgetForecastDao.insertWithDeactivation(any()) }
+    }
+
+    @Test
+    fun `partial period spend conversion lowers confidence and marks forecast partial`() = runTest {
+        val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
+        coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns listOf(
+            snapshot("2026-02", 300.0, 1L),
+            snapshot("2026-03", 300.0, 1L)
+        )
+        coEvery { mockConverter.convertOutcome(any(), any(), any(), any(), any(), any()) } returns convertedLimit(1000.0)
+        // Baseline: same history, complete spend aggregate (default setUp stub).
+        val baseline = engine.generateForecast(budget, forecastPeriodDays = 30)
+
+        // 2 converted + 3 excluded transactions in the PERIOD_END spend conversion.
+        stubPeriodSpend(
+            MoneyAggregate(
+                displayAmount = 200.0,
+                displayCurrency = CurrencyCode("EUR"),
+                sourceBuckets = listOf(MoneyBucket(CurrencyCode("EUR"), 200.0, 2)),
+                conversionFailures = listOf(
+                    ConversionFailure(
+                        originalAmount = MoneyAmount(50.0, CurrencyCode("USD")),
+                        targetCurrency = CurrencyCode("EUR"),
+                        reason = FailureReason.MISSING_RATE,
+                        transactionCount = 3
+                    )
+                ),
+                isPartial = true
+            )
+        )
+        val partial = engine.generateForecast(budget, forecastPeriodDays = 30)
+
+        assertTrue("confidence must drop when period spend rows are excluded",
+            partial.confidenceScore < baseline.confidenceScore)
+        // spendRetention = 1 - (3/2 * 0.5) = 0.25 → base 0.7333 * 0.25 ≈ 0.18333.
+        assertApproxEquals(0.18333333333333332, partial.confidenceScore, 0.001)
+        assertTrue(partial.isPartial)
+        assertEquals(3, partial.excludedExpenseCount)
+        val json = partial.qualityWarningsJson
+        assertTrue("qualityWarnings must include the period-spend partial code",
+            json != null && json.contains("PERIOD_SPEND_PARTIAL"))
+    }
+
+    @Test
+    fun `period window is elapsed-bounded while the rate basis stays period end`() = runTest {
+        val periodStart = LocalDate.of(2026, 4, 1)
+            .atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val periodEnd = LocalDate.of(2026, 5, 1)
+            .atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = periodStart)
+        coEvery { mockConverter.convertOutcome(any(), any(), any(), any(), any(), any()) } returns convertedLimit(1000.0)
+
+        val capturedStarts = mutableListOf<Long>()
+        val capturedEnds = mutableListOf<Long>()
+        val capturedElapsed = mutableListOf<Long>()
+        coEvery {
+            budgetRepository.getCurrentPeriodPurchaseSpendAtPeriodEnd(
+                any(),
+                capture(capturedStarts),
+                capture(capturedEnds),
+                capture(capturedElapsed)
+            )
+        } returns BudgetRepository.CurrentPeriodSpendAtPeriodEnd(
+            aggregate = MoneyAggregate.singleCurrency(50.0, CurrencyCode("EUR")),
+            rateAsOfMillis = periodEnd
+        )
+
+        val result = engine.generateForecastResult(budget)
+
+        assertTrue(result is BudgetForecastResult.Available)
+        // now = Apr 15, so the spend window is [Apr 1, Apr 15) while the as-of rate
+        // instant is the period end (May 1).
+        assertEquals(periodStart, capturedStarts.single())
+        assertEquals(periodEnd, capturedEnds.single())
+        assertEquals(now, capturedElapsed.single())
+        assertTrue("elapsed window end must be clamped inside the period",
+            capturedElapsed.single() <= capturedEnds.single())
     }
 }
