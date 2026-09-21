@@ -52,7 +52,12 @@ enum class ExtractionState {
         Index(value = ["status"]),
         Index(value = ["status", "createdAt"]),
         Index(value = ["suggestedMerchantKey"]),
-        Index(value = ["status", "suggestedMerchantKey", "suggestedDate"])
+        Index(value = ["status", "suggestedMerchantKey", "suggestedDate"]),
+        // RP-17 17-D: stable cross-run bank-review identity. Unique — makes duplicate
+        // bank review creation impossible under concurrent syncs (atomic insert-if-absent
+        // via OnConflictStrategy.IGNORE). NULL (non-bank reviews) never conflicts.
+        Index(value = ["bankReviewIdentity"], unique = true),
+        Index(value = ["bankConnectionScopeHash"])
     ]
 )
 data class PendingReview(
@@ -83,7 +88,16 @@ data class PendingReview(
     val suggestedLongitude: Double? = null,
     // Extraction state (v110) — marks whether suggested values are real or synthetic
     @ColumnInfo(defaultValue = "REAL_EXTRACTION")
-    val extractionState: ExtractionState = ExtractionState.REAL_EXTRACTION
+    val extractionState: ExtractionState = ExtractionState.REAL_EXTRACTION,
+    // RP-17 17-D (v149): stable privacy-safe bank review identity.
+    // HMAC("<bankId>|<connectionId>|<providerTransactionId>", purpose=bankReviewIdentity).
+    // Cross-run stable: a re-sync of the same provider transaction collides on the
+    // unique index and is skipped, never duplicated. Null for non-bank reviews.
+    val bankReviewIdentity: String? = null,
+    // RP-17 17-D (v149): connection/account scope hash (HMAC(connectionId,
+    // purpose=bankAccountId)) so disconnect can delete ONLY this connection's
+    // bank reviews. Null for non-bank reviews.
+    val bankConnectionScopeHash: String? = null
 ) {
     @get:Ignore
     val suggestedMoneyAmount: MoneyAmount?

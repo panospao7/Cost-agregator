@@ -680,4 +680,17 @@ AND LENGTH(:merchantKey) >= 8
           AND (notificationText IS NOT NULL OR notificationTitle IS NOT NULL)
     """)
     suspend fun redactNotificationTextOlderThan(cutoffMs: Long): Int
+
+    /**
+     * RP-17 17-E: deletes ONLY the bank pending reviews scoped to one stable
+     * bank connection identity (17-D scope hash). Called from the disconnect
+     * barrier/transaction; non-bank reviews and other connections are untouched.
+     * @return number of rows deleted
+     */
+    @Query("DELETE FROM pending_reviews WHERE bankConnectionScopeHash = :scopeHash")
+    suspend fun deleteByBankConnectionScope(scopeHash: String): Int
+
+    /** RP-17 17-D: lookup by stable bank review identity (diagnostics/tests). */
+    @Query("SELECT * FROM pending_reviews WHERE bankReviewIdentity = :identity LIMIT 1")
+    suspend fun getByBankIdentity(identity: String): PendingReview?
 }

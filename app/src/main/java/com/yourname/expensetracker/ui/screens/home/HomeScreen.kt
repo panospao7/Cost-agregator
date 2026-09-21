@@ -1532,7 +1532,14 @@ private fun FeaturesMenu(
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    FeatureConfig.allFeatures.forEach { feature ->
+                    // RP-17 17-A / D1: bank-connections entry is withheld when the
+                    // bank-sync surface is unavailable (release builds).
+                    val menuFeatures = androidx.compose.runtime.remember {
+                        FeatureConfig.availableFeatures(
+                            com.yourname.expensetracker.domain.bank.BankFeatureAvailability().isBankSyncAvailable
+                        )
+                    }
+                    menuFeatures.forEach { feature ->
                         FeatureItem(
                             icon = feature.icon,
                             title = stringResource(feature.titleRes),

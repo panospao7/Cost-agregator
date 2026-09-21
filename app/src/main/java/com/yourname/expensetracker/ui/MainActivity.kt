@@ -107,6 +107,10 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var gson: Gson
 
+    /** RP-17 17-A: central bank-sync availability gate (D1). */
+    @Inject
+    lateinit var bankFeatureAvailability: com.yourname.expensetracker.domain.bank.BankFeatureAvailability
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -166,6 +170,21 @@ class MainActivity : ComponentActivity() {
     private fun handleIntent(intent: Intent?): Boolean {
         val data = intent?.data ?: return false
         if (data.scheme != "expensetracker") return false
+
+        // RP-17 17-A: bank deep-link hosts are recognized and REJECTED at the
+        // contract boundary. There is intentionally no bank deep-link route and
+        // none may appear implicitly: routing a bank host later requires
+        // consciously removing it from BANK_DEEP_LINK_HOSTS and passing the
+        // central availability gate (D1). Rejection lands on Home — never a
+        // silent no-op, never provider integration.
+        if (com.yourname.expensetracker.domain.bank.BankFeatureAvailability.isBankDeepLinkHost(data.host)) {
+            Timber.w(
+                "Bank deep link rejected: reason=FEATURE_UNAVAILABLE available=%s",
+                bankFeatureAvailability.isBankSyncAvailable
+            )
+            mainViewModel.navigateTo(NavigationDestination.Home)
+            return true
+        }
 
         when (data.host) {
             "home", "dashboard" -> {
@@ -291,6 +310,10 @@ fun MainScreen(
     expenseRepository: ExpenseRepository,
     gson: Gson
 ) {
+    // RP-17 17-A / D1: availability resolved here (same seam as
+    // NavigationController/HomeScreen) — the Activity's injected instance is
+    // not in scope inside this top-level composable.
+    val bankSyncAvailable = remember { com.yourname.expensetracker.domain.bank.BankFeatureAvailability().isBankSyncAvailable }
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
 
     val transactionFilterSaver = remember {
@@ -704,13 +727,23 @@ fun MainScreen(
                     )
                 }
                 is NavigationDestination.BankConnections -> {
-                    BankConnectionsScreen(
-                        onNavigateBack = { navigation.navigateBack() },
-                        onAddConnection = { 
-                            // Show "Coming soon" since add bank connection flow not implemented
-                            navigation.navigateBack()
+                    // RP-17 17-A: release builds never render the bank screen, never
+                    // silently render empty, and never enter integration — the gated
+                    // destination is replaced by navigating back to the previous
+                    // screen (restore path already maps the token to Home).
+                    if (bankSyncAvailable) {
+                        BankConnectionsScreen(
+                            onNavigateBack = { navigation.navigateBack() },
+                            onAddConnection = {
+                                // Show "Coming soon" since add bank connection flow not implemented
+                                navigation.navigateBack()
+                            }
+                        )
+                    } else {
+                        androidx.compose.runtime.LaunchedEffect(Unit) {
+                            navigation.navigateHome()
                         }
-                    )
+                    }
                 }
                 is NavigationDestination.BillReminders -> {
                     BillRemindersScreen(

@@ -67,5 +67,15 @@ enum class DiagnosticReasonCode {
     // RP-11 11c (NEW-P2-016): home-currency settings could not be resolved
     // (DataStore error/timeout) — no fabricated base snapshot; conversion
     // fields marked unavailable via the existing sentinel model.
-    HOME_CURRENCY_UNAVAILABLE
+    HOME_CURRENCY_UNAVAILABLE,
+
+    // RP-17 17-C: bank transaction contract skips (before lifecycle; typed
+    // controlled codes, never payload-derived).
+    TRANSFER_METADATA_MISSING,
+    REFUND_UNSUPPORTED,
+    INVALID_AMOUNT,
+
+    // RP-17 17-E: connection was disconnected when a token write was attempted
+    // (conditional update affected zero rows).
+    CONNECTION_DISCONNECTED
 }

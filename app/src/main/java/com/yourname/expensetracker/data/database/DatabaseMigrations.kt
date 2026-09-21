@@ -70,6 +70,34 @@ object DatabaseMigrations {
         }
     }
 
+    /**
+     * RP-17 17-D (register D12): stable privacy-safe bank-review identity.
+     * Adds pending_reviews.bankReviewIdentity (unique index — atomic
+     * insert-if-absent for bank reviews under concurrent syncs) and
+     * pending_reviews.bankConnectionScopeHash (indexed — disconnect deletes only
+     * the reviews scoped to one connection identity). Both nullable; existing
+     * (non-bank) rows keep NULL, which never conflicts on a unique index.
+     */
+    val MIGRATION_148_149 = object : Migration(148, 149) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL("ALTER TABLE pending_reviews ADD COLUMN `bankReviewIdentity` TEXT")
+            database.execSQL("ALTER TABLE pending_reviews ADD COLUMN `bankConnectionScopeHash` TEXT")
+            database.execSQL(
+                "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                    "`index_pending_reviews_bankReviewIdentity` ON `pending_reviews` (`bankReviewIdentity`)"
+            )
+            database.execSQL(
+                "CREATE INDEX IF NOT EXISTS " +
+                    "`index_pending_reviews_bankConnectionScopeHash` ON `pending_reviews` (`bankConnectionScopeHash`)"
+            )
+        }
+    }
+
     /** All registered migrations, starting from v145 baseline. */
-    val ALL: Array<Migration> = arrayOf(MIGRATION_145_146, MIGRATION_146_147, MIGRATION_147_148)
+    val ALL: Array<Migration> = arrayOf(
+        MIGRATION_145_146,
+        MIGRATION_146_147,
+        MIGRATION_147_148,
+        MIGRATION_148_149
+    )
 }

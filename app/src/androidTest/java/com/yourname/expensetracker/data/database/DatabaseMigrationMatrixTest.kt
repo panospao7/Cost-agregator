@@ -43,7 +43,7 @@ class DatabaseMigrationMatrixTest {
     private val MIGRATION_BASELINE = 145
 
     // Current latest DB version.
-    private val CURRENT_VERSION = 148
+    private val CURRENT_VERSION = 149
 
     // ── Baseline Chain Tests ──────────────────────────────────────────
 
@@ -155,6 +155,36 @@ class DatabaseMigrationMatrixTest {
         assertTrue("terminalDiagnosticCode column missing", columns.contains("terminalDiagnosticCode"))
         assertTrue("partialFailureCount column missing", columns.contains("partialFailureCount"))
         assertTrue("failedTargetCount column missing", columns.contains("failedTargetCount"))
+
+        db.close()
+    }
+
+    /**
+     * Individual migration: v148 → v149 (RP-17 17-D: bank review identity
+     * columns + unique index). Runs once the v149 schema snapshot is exported
+     * by the Room annotation processor; skipped (assumeTrue) until then.
+     */
+    @Test
+    @Throws(IOException::class)
+    fun migrate_148_to_149_adds_bank_review_identity() {
+        assumeTrue(hasSchema(148) && hasSchema(149))
+
+        var db = helper.createDatabase("matrix-148-149", 148)
+        db.close()
+
+        db = helper.runMigrationsAndValidate("matrix-148-149", 149, true, DatabaseMigrations.MIGRATION_148_149)
+
+        val colCursor = db.query("PRAGMA table_info(pending_reviews)")
+        val columns = mutableListOf<String>()
+        while (colCursor.moveToNext()) {
+            columns.add(colCursor.getString(colCursor.getColumnIndex("name")))
+        }
+        colCursor.close()
+        assertTrue("bankReviewIdentity column missing", columns.contains("bankReviewIdentity"))
+        assertTrue("bankConnectionScopeHash column missing", columns.contains("bankConnectionScopeHash"))
+
+        assertTrue(hasIndex(db, "index_pending_reviews_bankReviewIdentity"))
+        assertTrue(hasIndex(db, "index_pending_reviews_bankConnectionScopeHash"))
 
         db.close()
     }

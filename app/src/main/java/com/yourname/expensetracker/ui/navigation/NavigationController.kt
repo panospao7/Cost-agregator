@@ -167,7 +167,10 @@ internal fun NavigationDestination.toSaveToken(): String = when (this) {
     is NavigationDestination.Debug -> "debug"
 }
 
-internal fun destinationFromSaveToken(token: String): NavigationDestination? {
+internal fun destinationFromSaveToken(
+    token: String,
+    bankSyncAvailable: Boolean = true
+): NavigationDestination? {
     // Backward compatibility with older persisted format: visual_split_editor:<templateId>
     if (token.startsWith("visual_split_editor:")) {
         val templateId = token.substringAfter(':', "")
@@ -213,7 +216,12 @@ internal fun destinationFromSaveToken(token: String): NavigationDestination? {
         baseToken == "smart_search" -> NavigationDestination.SmartSearch
         baseToken == "receipt_matching" -> NavigationDestination.ReceiptMatching
         baseToken == "investment_portfolio" -> NavigationDestination.InvestmentPortfolio
+        // RP-17 17-A / D1: the bank destination is only restorable while the
+        // bank-sync surface is available (debug/provider mode). An unavailable
+        // build returns null — callers fall back (Home / back-stack filtering)
+        // instead of rendering or entering the feature.
         baseToken == "bank_connections" -> NavigationDestination.BankConnections
+            .takeIf { bankSyncAvailable }
         baseToken == "bill_reminders" -> NavigationDestination.BillReminders
         baseToken == "spending_challenges" -> NavigationDestination.SpendingChallenges(
             showCreateDialog = params["create"]?.toBooleanStrictOrNull() == true
@@ -472,8 +480,15 @@ fun ProvideNavigationController(
     var persistedState by rememberSaveable(stateSaver = PersistedNavigationState.Saver) {
         mutableStateOf(PersistedNavigationState.fromDestination(initialDestination))
     }
-    val restoredDestination = destinationFromSaveToken(persistedState.destinationToken) ?: initialDestination
-    val restoredBackStack = persistedState.backStackTokens.mapNotNull(::destinationFromSaveToken)
+    // RP-17 17-A / D1: persisted bank destination is replaced (never rendered)
+    // when the bank-sync surface is unavailable in this build.
+    val bankSyncAvailable = remember { com.yourname.expensetracker.domain.bank.BankFeatureAvailability().isBankSyncAvailable }
+    val restoredDestination = destinationFromSaveToken(
+        token = persistedState.destinationToken,
+        bankSyncAvailable = bankSyncAvailable
+    ) ?: initialDestination
+    val restoredBackStack = persistedState.backStackTokens
+        .mapNotNull { destinationFromSaveToken(it, bankSyncAvailable) }
 
     val currentDestination = remember {
         mutableStateOf(restoredDestination)

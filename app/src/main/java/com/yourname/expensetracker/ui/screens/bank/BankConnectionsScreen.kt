@@ -38,9 +38,25 @@ fun BankConnectionsScreen(
         connections.filterNot { it.id in hiddenConnectionIds }
     }
     val isLoading by viewModel.isLoading.collectAsState()
+    // RP-17 17-B (register D12): in-flight syncs are ViewModel-only state.
+    val syncingConnectionIds by viewModel.syncingConnectionIds.collectAsState()
+    val userMessage by viewModel.userMessage.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     var pendingDisconnect by remember { mutableStateOf<BankConnectionSummary?>(null) }
+
+    // RP-17 17-B: typed outcomes surface as snackbar/reauth messages.
+    userMessage?.let { message ->
+        val text = when (message) {
+            is BankSyncUserMessage.SyncResult -> stringResource(message.messageRes)
+            BankSyncUserMessage.ReauthRequired ->
+                stringResource(R.string.bank_sync_result_reauth_required)
+        }
+        LaunchedEffect(message) {
+            snackbarHostState.showSnackbar(text)
+            viewModel.consumeUserMessage()
+        }
+    }
     
     Scaffold(
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
@@ -81,6 +97,7 @@ fun BankConnectionsScreen(
                     items(visibleConnections) { connection ->
                         BankConnectionCard(
                             connection = connection,
+                            isSyncing = connection.id in syncingConnectionIds,
                             onSync = { viewModel.syncConnection(connection.id) },
                             onDisconnect = { pendingDisconnect = connection }
                         )
@@ -191,6 +208,7 @@ private fun EmptyBankConnectionsView(onAddConnection: () -> Unit) {
 @Composable
 private fun BankConnectionCard(
     connection: BankConnectionSummary,
+    isSyncing: Boolean,
     onSync: () -> Unit,
     onDisconnect: () -> Unit
 ) {
@@ -241,7 +259,10 @@ private fun BankConnectionCard(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 if (connection.isConnected) {
-                    OutlinedButton(onClick = onSync) {
+                    OutlinedButton(
+                        onClick = onSync,
+                        enabled = !isSyncing
+                    ) {
                         Icon(Icons.Default.Sync, null)
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(stringResource(R.string.label_sync_now))
