@@ -145,7 +145,8 @@ class AnalyticsPipelineTest : AnalyticsEngineTestBase() {
 
         assertApproxEquals(991.79, pace.currentMonthSpent, 0.01)
         assertApproxEquals(15.0, pace.daysElapsed.toDouble(), 0.0)
-        assertApproxEquals(2049.03, pace.projectedTotal, 0.01)
+        // Canonical projection: 991.79 * daysInMonth(31) / 15 (P5-013).
+        assertApproxEquals(2049.70, pace.projectedTotal, 0.01)
         assertApproxEquals(175.0f, pace.pacePercentage, 0.1f)
         assertEquals(PaceStatus.OVER_PACE, pace.paceStatus)
     }
@@ -165,51 +166,38 @@ class AnalyticsPipelineTest : AnalyticsEngineTestBase() {
     fun `extreme merchant outlier is detected as anomaly`() = runTest {
         every { timeProvider.now() } returns dateToMillisWithTime("2026-03-31", 23, 59, 59)
 
+        // Merchant-level detection is in-memory: it groups current-month
+        // purchases by merchantKey and compares the merchant max against the
+        // same merchant's PURCHASE history inside the expense list (>= 3
+        // history rows required, adaptive multiplier 5x below 5 rows), so the
+        // fixture must carry that history explicitly.
+        val luxuryKey = MerchantKeyGenerator.generate("Luxury Purchase")
+        val historicalLuxury = listOf(
+            createExpense("2026-02-03", 200.00, merchant = "Luxury Purchase", id = 991L)
+                .copy(merchantKey = luxuryKey),
+            createExpense("2026-02-10", 200.00, merchant = "Luxury Purchase", id = 992L)
+                .copy(merchantKey = luxuryKey),
+            createExpense("2026-02-20", 200.00, merchant = "Luxury Purchase", id = 993L)
+                .copy(merchantKey = luxuryKey)
+        )
         val outlier = createExpense(
             date = "2026-03-16",
             amount = 5000.0,
             merchant = "Luxury Purchase",
             category = "utilities",
             id = 999L
-        )
+        ).copy(merchantKey = luxuryKey)
 
-        val allExpenses = goldenMarchAndFebruaryExpenses() + outlier
+        val allExpenses = goldenMarchAndFebruaryExpenses() + historicalLuxury + outlier
         stubAnalyticsDao(allExpenses)
-
-        val merchantKey = outlier.merchantKey ?: MerchantKeyGenerator.generate(outlier.merchant)
-        coEvery { expenseDao.getMerchantStats() } returns listOf(
-            MerchantStats(
-                merchantName = merchantKey,
-                displayName = outlier.merchant,
-                totalAmount = 3000.0,
-                transactionCount = 6,
-                averageAmount = 500.0,
-                minAmount = 400.0,
-                maxAmount = 650.0,
-                firstDate = february2026Start,
-                lastDate = march2026Start
-            )
-        )
-        coEvery { expenseDao.getTopMerchantsForPeriod(any(), any(), any()) } returns listOf(
-            MerchantStats(
-                merchantName = merchantKey,
-                displayName = outlier.merchant,
-                totalAmount = outlier.effectiveAmount,
-                transactionCount = 1,
-                averageAmount = outlier.effectiveAmount,
-                minAmount = outlier.effectiveAmount,
-                maxAmount = outlier.effectiveAmount,
-                firstDate = outlier.date,
-                lastDate = outlier.date
-            )
-        )
-        coEvery { expenseDao.getLargestExpenseForMerchant(merchantKey, any(), any()) } returns outlier
 
         val snapshot = insightsEngine.generateInsights(analyticsCategories.toAnalyticsCategoryRefs(), allExpenses.toExpenseSnapshots(), "EUR")
         val detected = snapshot.anomalies.firstOrNull { it.expense.id == outlier.id }
 
         assertTrue(detected != null)
         assertEquals(AnomalyMethod.MULTIPLIER, detected?.detectionMethod)
+        // 3 history rows at 200.00 -> historical average 200, 5000 > 5x200.
+        assertApproxEquals(200.0, detected?.merchantAvg ?: 0.0, 0.01)
         assertApproxEquals(5000.0, detected?.expense?.effectiveAmount ?: 0.0, 0.01)
     }
 

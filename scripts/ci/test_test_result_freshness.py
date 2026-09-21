@@ -612,6 +612,9 @@ class TestCli:
     ):
         repo, results = results_env
         _write_stamp(results, commit_sha=SHA_A)
+        # The stamp carries FIXED_NOW; pin the module clock to it so the
+        # 24h age check stays deterministic (the CLI path uses _utc_now()).
+        monkeypatch.setattr(trf, "_utc_now", lambda: FIXED_NOW)
 
         def forbidden(root, ref):
             raise AssertionError("git must not be consulted")

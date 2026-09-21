@@ -5090,12 +5090,12 @@ def test_checked_in_structural_only_manifest_contract_via_production_apis():
 
     Activated truth (PR-GR-07 wave 2): the ACTIVE ownership policy IS the
     promoted schemaVersion-2 document.  It loads cleanly through the
-    production v2 loader into exactly 477 immutable typed entries — a v1
+    production v2 loader into exactly 406 immutable typed entries — a v1
     document can never occupy the active path again, so there is no
     not-v2 rejection left to pin here.
 
-    Derivation of the 477 pin: the checked-in active document
-    ``config/guards/db_ownership_policy.yml`` carries 477 schemaVersion-2
+    Derivation of the 406 pin: the checked-in active document
+    ``config/guards/db_ownership_policy.yml`` carries 406 schemaVersion-2
     entry rows (each with exactly one ``ownerFqcn``/``daoAccessor``/
     ``operation`` mutation identity; the v2 loader performs no dedupe), as
     of the GR-14a exact-policy wave (5 rows for the default-@Transaction
@@ -5106,13 +5106,18 @@ def test_checked_in_structural_only_manifest_contract_via_production_apis():
     reduced 477 -> 475 by the GR-14c Pattern E removal of the two dead
     legacy MIT-003 rows (DataRetentionWorker.doWork|privacyAuditDao and
     WorkerRunLoggerImpl.start|backgroundJobRunDao; each write stays
-    authorized by its surviving GR-08p1 exact row).
+    authorized by its surviving GR-08p1 exact row), and reduced
+    475 -> 406 through the GR-14h..GR-14u37 dead-writer/Pattern-E tranches
+    plus the RP-02 removal (2026-09-20) of the stale
+    RecurringOccurrenceMaterializer|lifecycleEventDao|insert row after its
+    8 critical writes were rerouted through
+    RoomRecurringLifecycleEventWriter.writeCritical.
     Re-derive this pin after every policy promotion.
     """
     from scripts.db_guard.source_roots import load_source_root_manifest
 
     entries = load_db_ownership_policy()
-    assert len(entries) == 475
+    assert len(entries) == 406
     # Every loaded row is an immutable typed v2 entry: no legacy dict rows.
     for entry in entries:
         assert hasattr(entry, "owner_fqcn")
@@ -5485,9 +5490,10 @@ def test_current_db_gate_activated_policy_real_config_pipeline(tmp_path, monkeyp
         _mod.OWNERSHIP_POLICY_PATH
     )
     assert loaded
-    # 475 post-GR-14c (two dead legacy MIT-003 rows removed; re-derived
-    # per the checked-in-manifest contract pin above).
-    assert len(entries) == 475
+    # 406 post-GR-14u37/RP-02 (dead-writer tranches and the stale
+    # RecurringOccurrenceMaterializer lifecycleEventDao insert row removed;
+    # re-derived per the checked-in-manifest contract pin above).
+    assert len(entries) == 406
 
     # The structural gate really ran (post-activation it is no longer
     # short-circuited by a loader block) and stayed clean.

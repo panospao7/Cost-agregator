@@ -287,6 +287,14 @@ def _patch(monkeypatch, tmp_path, source: str, entries, observations=None):
     monkeypatch.setattr(
         shadow_cli, "_production_contract", lambda: _CONTRACT
     )
+    # GR-15 made the owner-acceptance registry a mandatory fail-closed gate
+    # input; these tests exercise other branches, so inject an empty-row
+    # registry (applies nothing, mismatches nothing) via the existing seam.
+    monkeypatch.setattr(
+        shadow_cli,
+        "_load_acceptance_registry",
+        lambda path: ({"schemaVersion": 1, "record": "test", "caveat": "test", "rows": []}, ()),
+    )
 
     def _fake_scan(root, policy, structural, raw_query, mutation_observation_sink=None):
         if mutation_observation_sink is not None:
@@ -586,6 +594,13 @@ class TestWorkerRootDispositions:
         )
         monkeypatch.setattr(
             shadow_cli, "_production_contract", lambda: _CONTRACT
+        )
+        # GR-15 acceptance-registry seam: empty-row registry applies nothing,
+        # so the worker-disposition branches under test are still reached.
+        monkeypatch.setattr(
+            shadow_cli,
+            "_load_acceptance_registry",
+            lambda path: ({"schemaVersion": 1, "record": "test", "caveat": "test", "rows": []}, ()),
         )
 
         def _fake_scan(root, policy, structural, raw_query,

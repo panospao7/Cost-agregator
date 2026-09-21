@@ -184,14 +184,14 @@ class DatabaseBackupRepositoryImplTest {
         // Simulate barrier defeated — writes are allowed during snapshot
         every { mockRestoreMaintenanceMode.isWritesAllowed() } returns true
 
-        val result = runCatching {
-            repository.createCostBackup(
-                password = "test_password",
-                includeReceiptImages = false,
-                redacted = true,
-                privacyMode = null
-            )
-        }
+        // The barrier double-check's require() is caught by the export flow and
+        // converted into a failed Result — the call does not throw.
+        val result = repository.createCostBackup(
+            password = "test_password",
+            includeReceiptImages = false,
+            redacted = true,
+            privacyMode = null
+        )
 
         assertTrue(result.isFailure)
         assertTrue(
@@ -318,8 +318,10 @@ class DatabaseBackupRepositoryImplTest {
         assertTrue(result.isFailure)
         assertEquals(1, countRows(dbFile, "expenses"))
         assertEquals(1, countRows(dbFile, "categories"))
+        // Post-swap failures roll back from the safety backup and surface the
+        // controlled reason code IMPORT_FAILED_ROLLED_BACK, not prose.
         assertTrue(
-            result.exceptionOrNull()?.message?.contains("restored from safety backup") == true
+            result.exceptionOrNull()?.message?.contains("IMPORT_FAILED_ROLLED_BACK") == true
         )
     }
 
@@ -445,7 +447,8 @@ class DatabaseBackupRepositoryImplTest {
         val result = repository.importDatabase(sourceBackup)
 
         assertTrue(result.isFailure)
-        assertTrue(result.exceptionOrNull()?.message?.contains("Unsupported budgets schema") == true)
+        // Import sanitizes source-validation failures to the controlled code.
+        assertTrue(result.exceptionOrNull()?.message?.contains("SOURCE_VALIDATION_FAILED") == true)
         assertEquals(1, countRows(dbFile, "expenses"))
     }
 
@@ -466,8 +469,9 @@ class DatabaseBackupRepositoryImplTest {
         val result = repository.importDatabase(sourceBackup)
 
         assertTrue(result.isFailure)
-        assertTrue(result.exceptionOrNull()?.message?.contains("Unsupported budgets schema") == true)
-        assertTrue(result.exceptionOrNull()?.message?.contains("invalid unique index metadata") == true)
+        // Import sanitizes source-validation failures to the controlled code;
+        // the internal budgets-index detail is no longer part of the public error.
+        assertTrue(result.exceptionOrNull()?.message?.contains("SOURCE_VALIDATION_FAILED") == true)
         assertEquals(1, countRows(dbFile, "expenses"))
     }
 
@@ -665,7 +669,9 @@ class DatabaseBackupRepositoryImplTest {
         assertTrue(result.isFailure)
         assertNotNull(File(tempDir, "safety_backups").listFiles()?.firstOrNull())
         assertEquals(2, countRows(dbFile, "expenses"))
-        assertTrue(result.exceptionOrNull()?.message?.contains("restored from safety backup") == true)
+        // Post-swap failures roll back from the safety backup and surface the
+        // controlled reason code IMPORT_FAILED_ROLLED_BACK, not prose.
+        assertTrue(result.exceptionOrNull()?.message?.contains("IMPORT_FAILED_ROLLED_BACK") == true)
     }
 
     // ── RP-03B batch 3b: restoreCostBackup state machine tests ─────

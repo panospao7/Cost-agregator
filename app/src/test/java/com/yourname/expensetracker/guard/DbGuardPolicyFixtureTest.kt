@@ -13,25 +13,30 @@ import java.io.File
  *
  * ## Coverage
  * - **Structural exceptions:** Exact class, method_pattern, operation, and path
- *   matching for the 62-entry structural policy (migrations, rescue,
+ *   matching for the 64-entry structural policy (migrations, rescue,
  *   backup/restore, diagnostics, privacy export, restore verification).
  * - **Structural manifest:** The checked-in
  *   `config/guards/db_structural_exceptions_expected_methods.yml` is loaded and
- *   validated directly — counts block (`structural_entries: 62` ONLY; ownership
+ *   validated directly — counts block (`structural_entries: 64` ONLY; ownership
  *   cardinality is not manifest metadata and an `ownership_entries` counts key
  *   fails closed), expected
- *   58 + fixtures 4, exact union equality with the structural YAML tuple set,
+ *   60 + fixtures 4, exact union equality with the structural YAML tuple set,
  *   expected/fixtures disjointness, a single global tuple-identity set across
  *   BOTH sections (a cross-section duplicate fails closed), and no
  *   duplicate/wildcard/raw/write tuples.
      * - **Ownership policy:** The active `db_ownership_policy.yml` is the
-     *   activated v2 document (`schemaVersion: 2`, 471 entries — one entry per
+     *   activated v2 document (`schemaVersion: 2`, 406 entries — one entry per
      *   canonical mutation key, with `ownerFqcn` / `daoAccessor` / `barrierMode`
      *   fields). The fixture parser accepts the v2 document header and entry
      *   schema and maps v2 fields onto the shared [ParsedEntry] model; legacy
      *   v1 pins that reference the archived 99-entry contract are documented
      *   per-test. Every approved writer still enumerates an exact DAO
      *   operation (never the generic `write` value, which the loader rejects).
+ * - **2026-09-20 truth-sync:** pins re-synced to the tracked YAML after the
+ *   dead-writer tranches GR-14h..GR-14u37 and the GR-08o/p1/l1 adjudications
+ *   (v2 source accessor spellings + barrier-honest modes + linked issues), the
+ *   GR-08j1/j2 named migration-object structural rows, and the RP-02
+ *   RecurringOccurrenceMaterializer row drop.
  * - **Negative tests:** Unrelated class/method/DAO combinations assert they are
  *   NOT present in the policies; wildcard `method = "*"` entries are rejected.
  * - **Parser fail-closed:** unknown keys, missing required fields (including
@@ -1063,25 +1068,25 @@ class DbGuardPolicyFixtureTest {
     // ══════════════════════════════════════════════════════════════════
 
     @Test
-    fun `manifest — ownership policy has exactly 471 entries`() {
+    fun `manifest — ownership policy has exactly 406 entries`() {
         val entries = parseEntries(ownershipPolicyFile)
-        assertEquals("Ownership policy must have exactly 471 entries", 471, entries.size)
+        assertEquals("Ownership policy must have exactly 406 entries", 406, entries.size)
     }
 
     @Test
-    fun `manifest — structural exceptions has exactly 62 entries`() {
+    fun `manifest — structural exceptions has exactly 64 entries`() {
         val entries = parseEntries(structuralExceptionsFile)
-        assertEquals("Structural exceptions must have exactly 62 entries", 62, entries.size)
+        assertEquals("Structural exceptions must have exactly 64 entries", 64, entries.size)
     }
 
     @Test
-    fun `manifest — counts block pins structural 62 only`() {
+    fun `manifest — counts block pins structural 64 only`() {
         // GR-04 decoupling: the manifest governs structural exceptions ONLY.
         // Its counts block carries structural_entries and nothing else; the
         // ownership policy's own 99-entry size is an independent property of
         // the policy file, never manifest metadata.
         val manifest = parseStructuralManifest(structuralManifestFile)
-        assertEquals("Manifest structural_entries count", 62, manifest.structuralEntries)
+        assertEquals("Manifest structural_entries count", 64, manifest.structuralEntries)
         assertEquals(
             "Manifest structural count must match the checked-in structural YAML",
             parseEntries(structuralExceptionsFile).size, manifest.structuralEntries
@@ -1119,13 +1124,13 @@ class DbGuardPolicyFixtureTest {
     }
 
     @Test
-    fun `manifest — expected has exactly 58 tuples and fixtures exactly 4`() {
+    fun `manifest — expected has exactly 60 tuples and fixtures exactly 4`() {
         val manifest = parseStructuralManifest(structuralManifestFile)
-        assertEquals("Manifest expected tuples", 58, manifest.expected.size)
+        assertEquals("Manifest expected tuples", 60, manifest.expected.size)
         assertEquals("Manifest fixture tuples", 4, manifest.fixtures.size)
         assertEquals(
-            "expected + fixtures must total the structural 62",
-            62, manifest.expected.size + manifest.fixtures.size
+            "expected + fixtures must total the structural 64",
+            64, manifest.expected.size + manifest.fixtures.size
         )
     }
 
@@ -1136,7 +1141,7 @@ class DbGuardPolicyFixtureTest {
             .map { it.toManifestTuple() }
             .toSet()
         val union = (manifest.expected + manifest.fixtures).toSet()
-        assertEquals("Expected+fixtures union must have exactly 62 distinct tuples", 62, union.size)
+        assertEquals("Expected+fixtures union must have exactly 64 distinct tuples", 64, union.size)
         assertEquals(
             "Expected+fixtures union must EXACTLY equal the structural YAML tuple set",
             structuralTuples, union
@@ -1157,7 +1162,7 @@ class DbGuardPolicyFixtureTest {
     @Test
     fun `manifest — expected has no duplicate, wildcard, raw, or write tuples`() {
         val manifest = parseStructuralManifest(structuralManifestFile)
-        assertEquals("expected must have 58 distinct tuples", 58, manifest.expected.toSet().size)
+        assertEquals("expected must have 60 distinct tuples", 60, manifest.expected.toSet().size)
         for (tuple in manifest.expected) {
             assertValidStructuralTuple(
                 tuple,
@@ -1182,7 +1187,7 @@ class DbGuardPolicyFixtureTest {
     fun `structural exceptions — no duplicate tuples, wildcard, raw, or write operations`() {
         val entries = parseEntries(structuralExceptionsFile)
         val tuples = entries.map { it.toManifestTuple() }
-        assertEquals("Structural YAML must have 62 distinct tuples", 62, tuples.toSet().size)
+        assertEquals("Structural YAML must have 64 distinct tuples", 64, tuples.toSet().size)
         for (tuple in tuples) {
             assertValidStructuralTuple(
                 tuple,
@@ -1199,46 +1204,54 @@ class DbGuardPolicyFixtureTest {
     fun `ownership — GroupTransactionCoordinator entries are exactly enumerated with exact DAOs and operations`() {
         val entries = parseEntries(ownershipPolicyFile)
         // Every approved (method, DAO, operation) triple — no wildcard entry.
-        // DAO accessor identities: ExpenseGroupDao -> expenseGroupDao,
-        // GroupMemberDao -> groupMemberDao, GroupExpenseDao -> groupExpenseDao,
-        // ExpenseDao -> expenseDao.
-        data class Spec(val daos: Set<String>, val operation: String, val hint: String)
+        // DAO accessor identities (v2 source spellings): ExpenseGroupDao ->
+        // groupDao, GroupMemberDao -> memberDao, GroupExpenseDao ->
+        // groupExpenseDao, ExpenseDao -> expenseDao.
+        // GR-08i1 truth: every row is helper-barriered (transaction-scoped) and
+        // MIT-DB-08I, except addExpenseToGroupAtomic (direct barrier, MIT-003).
+        data class Spec(
+            val daos: Set<String>,
+            val operation: String,
+            val hint: String,
+            val barrierRequired: Boolean,
+            val linkedIssue: String
+        )
 
         val expected = mapOf(
             "createGroupWithMembers" to listOf(
-                Spec(setOf("expenseGroupDao"), "insert", "group"),
-                Spec(setOf("groupMemberDao"), "insertAll", "member")
+                Spec(setOf("groupDao"), "insert", "group", false, "MIT-DB-08I"),
+                Spec(setOf("memberDao"), "insertAll", "member", false, "MIT-DB-08I")
             ),
             "addMemberToGroup" to listOf(
-                Spec(setOf("groupMemberDao"), "insert", "member")
+                Spec(setOf("memberDao"), "insert", "member", false, "MIT-DB-08I")
             ),
             "addExpenseToGroup" to listOf(
-                Spec(setOf("groupExpenseDao"), "insert", "group")
+                Spec(setOf("groupExpenseDao"), "insert", "group", false, "MIT-DB-08I")
             ),
             "addExpenseWithLink" to listOf(
-                Spec(setOf("groupExpenseDao"), "insert", "group")
+                Spec(setOf("groupExpenseDao"), "insert", "group", false, "MIT-DB-08I")
             ),
             "deleteGroup" to listOf(
-                Spec(setOf("expenseGroupDao"), "archiveGroup", "soft")
+                Spec(setOf("groupDao"), "archiveGroup", "soft", false, "MIT-DB-08I")
             ),
             "archiveGroup" to listOf(
-                Spec(setOf("expenseGroupDao"), "archiveGroup", "archive")
+                Spec(setOf("groupDao"), "archiveGroup", "archive", false, "MIT-DB-08I")
             ),
             "createGroupWithMembersAtomic" to listOf(
-                Spec(setOf("expenseGroupDao"), "insert", "group"),
-                Spec(setOf("groupMemberDao"), "insertAll", "member")
+                Spec(setOf("groupDao"), "insert", "group", false, "MIT-DB-08I"),
+                Spec(setOf("memberDao"), "insertAll", "member", false, "MIT-DB-08I")
             ),
             "createSystemExpenseAndLinkToGroup" to listOf(
-                Spec(setOf("groupExpenseDao"), "insert", "system")
+                Spec(setOf("groupExpenseDao"), "insert", "system", false, "MIT-DB-08I")
             ),
             "addExpenseToGroupAtomic" to listOf(
-                Spec(setOf("groupExpenseDao"), "insert", "group")
+                Spec(setOf("groupExpenseDao"), "insert", "group", true, "MIT-003")
             ),
             "deleteGroupAtomic" to listOf(
-                Spec(setOf("groupExpenseDao"), "deleteAllForGroup", "group"),
-                Spec(setOf("groupMemberDao"), "deleteAllForGroup", "member"),
-                Spec(setOf("expenseGroupDao"), "delete", "parent"),
-                Spec(setOf("expenseDao"), "clearSharedExpenseFlags", "shared")
+                Spec(setOf("groupExpenseDao"), "deleteAllForGroup", "group", false, "MIT-DB-08I"),
+                Spec(setOf("memberDao"), "deleteAllForGroup", "member", false, "MIT-DB-08I"),
+                Spec(setOf("groupDao"), "delete", "parent", false, "MIT-DB-08I"),
+                Spec(setOf("expenseDao"), "clearSharedExpenseFlags", "shared", false, "MIT-DB-08I")
             )
         )
 
@@ -1258,7 +1271,31 @@ class DbGuardPolicyFixtureTest {
                     "GroupTransactionCoordinator.$methodName entry for DAOs ${spec.daos} not found in ownership policy",
                     entry
                 )
-                assertEntryMetadata(entry!!, spec.operation, spec.daos, true, null, spec.hint)
+                assertEquals(
+                    "GroupTransactionCoordinator.$methodName (${spec.daos}) operation",
+                    spec.operation, entry!!.operation
+                )
+                assertEquals(
+                    "GroupTransactionCoordinator.$methodName (${spec.daos}) DAOs",
+                    spec.daos, entry.daos.toSet()
+                )
+                assertEquals(
+                    "GroupTransactionCoordinator.$methodName (${spec.daos}) barrier_required",
+                    spec.barrierRequired, entry.barrierRequired
+                )
+                assertEquals(
+                    "GroupTransactionCoordinator.$methodName (${spec.daos}) barrier_via",
+                    null, entry.barrierVia
+                )
+                assertEquals("owner", "@panospao7", entry.owner)
+                assertEquals(
+                    "GroupTransactionCoordinator.$methodName (${spec.daos}) linked_issue",
+                    spec.linkedIssue, entry.linkedIssue
+                )
+                assertTrue(
+                    "GroupTransactionCoordinator.$methodName (${spec.daos}) reason must mention '${spec.hint}'",
+                    entry.reason.contains(spec.hint, ignoreCase = true)
+                )
             }
         }
 
@@ -1280,7 +1317,7 @@ class DbGuardPolicyFixtureTest {
         val entry = findEntry(entries, "DataRetentionWorker", methodName = "doWork")
         assertNotNull("DataRetentionWorker entry not found in ownership policy", entry)
 
-        val expectedDaos = setOf("privacyAuditDao")
+        val expectedDaos = setOf("auditDao")
         assertEquals("DataRetentionWorker DAOs", expectedDaos, entry!!.daos.toSet())
         assertEquals("DataRetentionWorker operation", "insert", entry.operation)
         // Truthful mediated-barrier contract: write protection is provided by
@@ -1288,7 +1325,7 @@ class DbGuardPolicyFixtureTest {
         assertEquals("DataRetentionWorker barrier_required", false, entry.barrierRequired)
         assertEquals("DataRetentionWorker barrier_via", "WorkerExecutionGuard", entry.barrierVia)
         assertEquals("owner", "@panospao7", entry.owner)
-        assertEquals("linked_issue", "MIT-003", entry.linkedIssue)
+        assertEquals("linked_issue", "MIT-DB-08P1", entry.linkedIssue)
         assertTrue("Reason must mention audit or privacy",
             entry.reason.contains("audit", ignoreCase = true) || entry.reason.contains("privacy", ignoreCase = true))
     }
@@ -1297,26 +1334,28 @@ class DbGuardPolicyFixtureTest {
     fun `ownership — AiChatRepositoryImpl entries are exactly enumerated with exact DAOs and operations`() {
         val entries = parseEntries(ownershipPolicyFile)
         // Every approved (method, DAO, operation) triple — no wildcard entry.
-        // DAO accessor identities: AiChatSessionDao -> aiChatSessionDao,
-        // AiChatMessageDao -> aiChatMessageDao.
+        // DAO accessor identities (v2 source spellings):
+        // AiChatSessionDao -> sessionDao, AiChatMessageDao -> messageDao.
+        // GR-08m1 truth: every row is helper-barriered (transaction-scoped) and
+        // MIT-DB-08M.
         data class Spec(val daos: Set<String>, val operation: String, val hint: String)
 
         val expected = mapOf(
             "createSession" to listOf(
-                Spec(setOf("aiChatSessionDao"), "insert", "session")
+                Spec(setOf("sessionDao"), "insert", "session")
             ),
             "appendMessage" to listOf(
-                Spec(setOf("aiChatMessageDao"), "insert", "message"),
-                Spec(setOf("aiChatSessionDao"), "updateLastTouched", "session")
+                Spec(setOf("messageDao"), "insert", "message"),
+                Spec(setOf("sessionDao"), "updateLastTouched", "session")
             ),
             "clearSession" to listOf(
-                Spec(setOf("aiChatSessionDao"), "deleteById", "session")
+                Spec(setOf("sessionDao"), "deleteById", "session")
             ),
             "clearAllHistory" to listOf(
-                Spec(setOf("aiChatSessionDao"), "deleteAll", "session")
+                Spec(setOf("sessionDao"), "deleteAll", "history")
             ),
             "purgeOldMessages" to listOf(
-                Spec(setOf("aiChatMessageDao"), "deleteOlderThan", "message")
+                Spec(setOf("messageDao"), "deleteOlderThan", "message")
             )
         )
 
@@ -1336,7 +1375,24 @@ class DbGuardPolicyFixtureTest {
                     "AiChatRepositoryImpl.$methodName entry for DAOs ${spec.daos} not found in ownership policy",
                     entry
                 )
-                assertEntryMetadata(entry!!, spec.operation, spec.daos, true, null, spec.hint)
+                assertEquals(
+                    "AiChatRepositoryImpl.$methodName (${spec.daos}) operation",
+                    spec.operation, entry!!.operation
+                )
+                assertEquals(
+                    "AiChatRepositoryImpl.$methodName (${spec.daos}) DAOs",
+                    spec.daos, entry.daos.toSet()
+                )
+                // Helper barrier mode: the transaction-scoped write barrier is the
+                // protection, so no direct barrier_required row is asserted.
+                assertEquals("AiChatRepositoryImpl barrier_required", false, entry.barrierRequired)
+                assertEquals("AiChatRepositoryImpl barrier_via", null, entry.barrierVia)
+                assertEquals("owner", "@panospao7", entry.owner)
+                assertEquals("linked_issue", "MIT-DB-08M", entry.linkedIssue)
+                assertTrue(
+                    "AiChatRepositoryImpl.$methodName (${spec.daos}) reason must mention '${spec.hint}'",
+                    entry.reason.contains(spec.hint, ignoreCase = true)
+                )
             }
         }
 
@@ -1374,12 +1430,15 @@ class DbGuardPolicyFixtureTest {
         val entry = findEntry(entries, "BusinessExpenseRepository", methodName = "addMileage")
         assertNotNull("BusinessExpenseRepository entry not found in ownership policy", entry)
 
-        val expectedDaos = setOf("mileageTrackingDao")
+        val expectedDaos = setOf("mileageDao")
         assertEquals("BusinessExpenseRepository DAOs", expectedDaos, entry!!.daos.toSet())
         assertEquals("BusinessExpenseRepository operation", "insert", entry.operation)
-        assertEquals("BusinessExpenseRepository barrier_required", true, entry.barrierRequired)
+        // GR-08l1 truth: helper-barriered (transaction-scoped) write, not a
+        // direct barrier_required row.
+        assertEquals("BusinessExpenseRepository barrier_required", false, entry.barrierRequired)
+        assertEquals("BusinessExpenseRepository barrier_via", null, entry.barrierVia)
         assertEquals("owner", "@panospao7", entry.owner)
-        assertEquals("linked_issue", "MIT-003", entry.linkedIssue)
+        assertEquals("linked_issue", "MIT-DB-08L", entry.linkedIssue)
         assertTrue("Reason must mention mileage or business",
             entry.reason.contains("mileage", ignoreCase = true) || entry.reason.contains("business", ignoreCase = true))
     }
@@ -1396,10 +1455,10 @@ class DbGuardPolicyFixtureTest {
         val expected = listOf(
             Spec("doWork", "recoverStaleClaimed", "stale"),
             Spec("doWork", "deleteOlderThan", "prune"),
-            Spec("deliverReminder", "insertOrIgnore", "idempotently"),
+            Spec("deliverReminder", "insertOrIgnore", "idempotent"),
             Spec("deliverReminder", "claim", "claim"),
             Spec("deliverReminder", "markSentFromClaimed", "SENT"),
-            Spec("deliverReminder", "markFailed", "FAILED")
+            Spec("deliverReminder", "markFailed", "failure")
         )
 
         val workerEntries = entries.filter { it.className == "WarrantyExpirationWorker" }
@@ -1413,7 +1472,7 @@ class DbGuardPolicyFixtureTest {
             )
             assertEquals(
                 "WarrantyExpirationWorker.${spec.method} (${spec.operation}) DAOs",
-                setOf("warrantyReminderDeliveryDao"), entry!!.daos.toSet()
+                setOf("deliveryDao"), entry!!.daos.toSet()
             )
             assertEquals(
                 "WarrantyExpirationWorker.${spec.method} (${spec.operation}) operation",
@@ -1424,7 +1483,7 @@ class DbGuardPolicyFixtureTest {
             assertEquals("WarrantyExpirationWorker barrier_required", false, entry.barrierRequired)
             assertEquals("WarrantyExpirationWorker barrier_via", "WorkerExecutionGuard", entry.barrierVia)
             assertEquals("owner", "@panospao7", entry.owner)
-            assertEquals("linked_issue", "MIT-003", entry.linkedIssue)
+            assertEquals("linked_issue", "MIT-DB-08M", entry.linkedIssue)
             assertTrue(
                 "WarrantyExpirationWorker.${spec.method} (${spec.operation}) reason must mention '${spec.hint}'",
                 entry.reason.contains(spec.hint, ignoreCase = true)
@@ -1552,7 +1611,18 @@ class DbGuardPolicyFixtureTest {
         val entry = findEntry(entries, "WorkerRunLoggerImpl", methodName = "start")
         assertNotNull("WorkerRunLoggerImpl.start entry not found in ownership policy", entry)
 
-        assertEntryMetadata(entry!!, "insert", setOf("backgroundJobRunDao"), false, "WorkerExecutionGuard", "RUNNING")
+        assertEquals("WorkerRunLoggerImpl.start operation", "insert", entry!!.operation)
+        assertEquals("WorkerRunLoggerImpl.start DAOs", setOf("dao"), entry.daos.toSet())
+        // Truthful mediated-barrier contract: write protection is provided by
+        // WorkerExecutionGuard, not a direct writeBarrier call inside start.
+        assertEquals("WorkerRunLoggerImpl.start barrier_required", false, entry.barrierRequired)
+        assertEquals("WorkerRunLoggerImpl.start barrier_via", "WorkerExecutionGuard", entry.barrierVia)
+        assertEquals("owner", "@panospao7", entry.owner)
+        assertEquals("linked_issue", "MIT-DB-08P1", entry.linkedIssue)
+        assertTrue(
+            "WorkerRunLoggerImpl.start reason must mention 'RUNNING'",
+            entry.reason.contains("RUNNING", ignoreCase = true)
+        )
     }
 
     @Test
@@ -1561,7 +1631,18 @@ class DbGuardPolicyFixtureTest {
         val entry = findEntry(entries, "Handle", methodName = "terminal")
         assertNotNull("Handle.terminal entry not found in ownership policy", entry)
 
-        assertEntryMetadata(entry!!, "completeTerminal", setOf("backgroundJobRunDao"), false, "WorkerExecutionGuard", "terminal")
+        assertEquals("Handle.terminal operation", "completeTerminal", entry!!.operation)
+        assertEquals("Handle.terminal DAOs", setOf("dao"), entry.daos.toSet())
+        // Truthful mediated-barrier contract: write protection is provided by
+        // WorkerExecutionGuard, not a direct writeBarrier call inside terminal.
+        assertEquals("Handle.terminal barrier_required", false, entry.barrierRequired)
+        assertEquals("Handle.terminal barrier_via", "WorkerExecutionGuard", entry.barrierVia)
+        assertEquals("owner", "@panospao7", entry.owner)
+        assertEquals("linked_issue", "MIT-DB-08P1", entry.linkedIssue)
+        assertTrue(
+            "Handle.terminal reason must mention 'terminal'",
+            entry.reason.contains("terminal", ignoreCase = true)
+        )
     }
 
     @Test
@@ -1600,10 +1681,20 @@ class DbGuardPolicyFixtureTest {
     // ══════════════════════════════════════════════════════════════════
 
     @Test
-    fun `ownership — unrelated class UserCorrectionRepository not present`() {
+    fun `ownership — UserCorrectionRepository insert is the exact single approved row`() {
+        // GR-08p1 adjudication: the notification accept/reject learning surface
+        // is now the sole exact approved UserCorrectionDao writer row.
         val entries = parseEntries(ownershipPolicyFile)
-        val entry = findEntry(entries, "UserCorrectionRepository")
-        assertNull("UserCorrectionRepository should NOT be in ownership policy", entry)
+        val matching = entries.filter { it.className == "UserCorrectionRepository" }
+        assertEquals("UserCorrectionRepository must have exactly 1 entry", 1, matching.size)
+        val entry = matching.single()
+        assertEquals("UserCorrectionRepository method", "insert", entry.method)
+        assertEquals("UserCorrectionRepository operation", "insert", entry.operation)
+        assertEquals("UserCorrectionRepository DAOs", setOf("dao"), entry.daos.toSet())
+        assertEquals("UserCorrectionRepository barrier_required", false, entry.barrierRequired)
+        assertEquals("UserCorrectionRepository barrier_via", null, entry.barrierVia)
+        assertEquals("owner", "@panospao7", entry.owner)
+        assertEquals("UserCorrectionRepository linked_issue", "MIT-DB-08P1", entry.linkedIssue)
     }
 
     @Test
@@ -1643,10 +1734,10 @@ class DbGuardPolicyFixtureTest {
     }
 
     @Test
-    fun `ownership — CategoryRepository is exactly addCategory and deleteCategory`() {
+    fun `ownership — CategoryRepository entries are exactly enumerated incl adjudicated seeding and merge`() {
         val entries = parseEntries(ownershipPolicyFile)
         val matching = entries.filter { it.className == "CategoryRepository" }
-        assertEquals("Should be exactly 2 CategoryRepository entries", 2, matching.size)
+        assertEquals("Should be exactly 7 CategoryRepository entries", 7, matching.size)
 
         val addEntry = findEntry(entries, "CategoryRepository", methodName = "addCategory")
         assertNotNull("CategoryRepository.addCategory entry not found in ownership policy", addEntry)
@@ -1661,40 +1752,156 @@ class DbGuardPolicyFixtureTest {
             "delete", deleteEntry!!.operation)
         assertEquals("CategoryRepository.deleteCategory DAOs", setOf("categoryDao"), deleteEntry.daos.toSet())
         assertEquals("CategoryRepository.deleteCategory barrier_required", true, deleteEntry.barrierRequired)
-    }
 
-    @Test
-    fun `ownership — CategoryRepository merchantCategoryDao writes remain unresolved and unapproved`() {
-        val entries = parseEntries(ownershipPolicyFile)
-        val categoryEntries = entries.filter { it.className == "CategoryRepository" }
-        for (entry in categoryEntries) {
-            assertFalse(
-                "CategoryRepository.${entry.method} must NOT list merchantCategoryDao " +
-                    "(unresolved debt, not authorization)",
-                entry.daos.contains("merchantCategoryDao")
+        // GR-08o adjudicated ensureDefaultCategories rows: exactly 4, all
+        // helper-barriered and MIT-DB-08O.
+        val ensureEntries = matching.filter { it.method == "ensureDefaultCategories" }
+        assertEquals("ensureDefaultCategories must have exactly 4 entries", 4, ensureEntries.size)
+        val expectedEnsureRows = setOf(
+            "categoryDao" to "insert",
+            "categoryDao" to "seedDefaultsIfEmpty",
+            "merchantCategoryDao" to "insertAll",
+            "merchantCategoryDao" to "updateNormalizedCanonicalName"
+        )
+        val actualEnsureRows = ensureEntries.map { it.daos.single() to it.operation }.toSet()
+        assertEquals(
+            "ensureDefaultCategories rows must be the exact enumerated (DAO, operation) set",
+            expectedEnsureRows, actualEnsureRows
+        )
+        for (entry in ensureEntries) {
+            assertEquals(
+                "CategoryRepository.ensureDefaultCategories (${entry.daos.single()}) barrier_required",
+                false, entry.barrierRequired
+            )
+            assertEquals(
+                "CategoryRepository.ensureDefaultCategories (${entry.daos.single()}) barrier_via",
+                null, entry.barrierVia
+            )
+            assertEquals(
+                "CategoryRepository.ensureDefaultCategories (${entry.daos.single()}) linked_issue",
+                "MIT-DB-08O", entry.linkedIssue
             )
         }
-        // No approved entry for the seed/normalization write path at all.
-        assertNull(
-            "No CategoryRepository entry may authorize merchantCategoryDao writes",
-            categoryEntries.firstOrNull { it.daos.contains("merchantCategoryDao") }
-        )
+
+        // GR-14a adjudicated merge row: direct barrier, GR-14a issue.
+        val mergeEntry = findEntry(entries, "CategoryRepository", methodName = "mergeCategories")
+        assertNotNull("CategoryRepository.mergeCategories entry not found in ownership policy", mergeEntry)
+        assertEquals("CategoryRepository.mergeCategories operation",
+            "mergeCategories", mergeEntry!!.operation)
+        assertEquals("CategoryRepository.mergeCategories DAOs", setOf("categoryDao"), mergeEntry.daos.toSet())
+        assertEquals("CategoryRepository.mergeCategories barrier_required", true, mergeEntry.barrierRequired)
+        assertEquals("CategoryRepository.mergeCategories barrier_via", null, mergeEntry.barrierVia)
+        assertEquals("CategoryRepository.mergeCategories linked_issue", "GR-14a", mergeEntry.linkedIssue)
+
+        // No drift: the 7 rows are fully accounted for by the exact blocks above
+        // (2 + 4 + 1 == 7), so any unexpected row would have failed a count pin.
     }
 
     @Test
-    fun `ownership — ExpenseRepository userCorrectionDao remains unresolved debt, not authorized`() {
+    fun `ownership — CategoryRepository merchantCategoryDao writes are exactly the two approved seeding rows`() {
+        // GR-08o adjudication: the previously unresolved seed/normalization
+        // write path is now exactly these two approved helper rows (MIT-DB-08O).
         val entries = parseEntries(ownershipPolicyFile)
+        val matching = entries.filter {
+            it.className == "CategoryRepository" && it.daos.contains("merchantCategoryDao")
+        }
+        assertEquals(
+            "CategoryRepository merchantCategoryDao writes must be exactly the two approved seeding rows",
+            2, matching.size
+        )
+        val insertAll = matching.firstOrNull {
+            it.method == "ensureDefaultCategories" && it.operation == "insertAll"
+        }
+        assertNotNull(
+            "Approved row (ensureDefaultCategories, merchantCategoryDao, insertAll, helper, MIT-DB-08O) not found",
+            insertAll
+        )
+        val updateNormalized = matching.firstOrNull {
+            it.method == "ensureDefaultCategories" && it.operation == "updateNormalizedCanonicalName"
+        }
+        assertNotNull(
+            "Approved row (ensureDefaultCategories, merchantCategoryDao, updateNormalizedCanonicalName, helper, MIT-DB-08O) not found",
+            updateNormalized
+        )
+        for (entry in matching) {
+            assertEquals(
+                "CategoryRepository.${entry.method} merchantCategoryDao barrier_required",
+                false, entry.barrierRequired
+            )
+            assertEquals(
+                "CategoryRepository.${entry.method} merchantCategoryDao barrier_via",
+                null, entry.barrierVia
+            )
+            assertEquals(
+                "CategoryRepository.${entry.method} merchantCategoryDao linked_issue",
+                "MIT-DB-08O", entry.linkedIssue
+            )
+            assertEquals("owner", "@panospao7", entry.owner)
+        }
+    }
+
+    @Test
+    fun `ownership — ExpenseRepository entries are exactly enumerated (incl adjudicated userCorrectionDao write)`() {
+        val entries = parseEntries(ownershipPolicyFile)
+        // GR-08l1 adjudication: every previously unresolved ExpenseRepository
+        // write path is now an exact approved row. All rows are
+        // helper-barriered and MIT-DB-08L.
+        data class Spec(val method: String, val dao: String, val operation: String)
+
+        val expected = listOf(
+            Spec("clearExpenseLocation", "expenseDao", "clearLocation"),
+            Spec("conditionallySetLocation", "expenseDao", "conditionallySetLocation"),
+            Spec("deleteAllExpenses", "expenseDao", "deleteAll"),
+            Spec("incrementBackfillAttempts", "expenseDao", "incrementBackfillAttempts"),
+            Spec("restoreDebugSnapshot", "expenseDao", "deleteAll"),
+            Spec("restoreDebugSnapshot", "expenseDao", "insertAll"),
+            Spec("updateExpenseCategoryBulk", "userCorrectionDao", "insert"),
+            Spec("updateExpenseMerchant", "pendingReviewDao", "bulkRenameMerchant"),
+            Spec("updateMerchantKey", "expenseDao", "updateMerchantKey")
+        )
+
         val matching = entries.filter { it.className == "ExpenseRepository" }
         assertEquals(
-            "ExpenseRepository must NOT appear in the ownership policy " +
-                "(userCorrectionDao writes remain unresolved debt)",
-            0, matching.size
+            "ExpenseRepository must have exactly ${expected.size} entries",
+            expected.size, matching.size
         )
-        // The userCorrectionDao identity must never be approved on any writer.
-        for (entry in entries) {
-            assertFalse(
-                "Entry ${entry.className}.${entry.method} must NOT list userCorrectionDao",
-                entry.daos.contains("userCorrectionDao")
+
+        for (spec in expected) {
+            val entry = matching.firstOrNull {
+                it.method == spec.method &&
+                    it.daos.single() == spec.dao &&
+                    it.operation == spec.operation
+            }
+            assertNotNull(
+                "ExpenseRepository.${spec.method} (${spec.dao}.${spec.operation}) entry not found in ownership policy",
+                entry
+            )
+            assertEquals(
+                "ExpenseRepository.${spec.method} (${spec.dao}) barrier_required",
+                false, entry!!.barrierRequired
+            )
+            assertEquals(
+                "ExpenseRepository.${spec.method} (${spec.dao}) barrier_via",
+                null, entry.barrierVia
+            )
+            assertEquals("owner", "@panospao7", entry.owner)
+            assertEquals(
+                "ExpenseRepository.${spec.method} (${spec.dao}) linked_issue",
+                "MIT-DB-08L", entry.linkedIssue
+            )
+        }
+
+        // No drift: every ExpenseRepository policy entry must be one of the
+        // enumerated (method, DAO, operation) rows above.
+        for (entry in matching) {
+            assertTrue(
+                "ExpenseRepository must use an exact enumerated (method, DAO, operation), got: " +
+                    "${entry.method}/${entry.daos}/${entry.operation}",
+                expected.any {
+                    it.method == entry.method &&
+                        it.dao == entry.daos.single() &&
+                        it.operation == entry.operation
+                }
             )
         }
     }
@@ -2499,6 +2706,15 @@ class DbGuardPolicyFixtureTest {
     fun `all structural exception entries have class field matching file stem`() {
         val entries = parseEntries(structuralExceptionsFile)
         for (entry in entries) {
+            // GR-08j1/j2: `object MIGRATION_X_Y : Migration(...)` declarations in
+            // AppDatabase.kt are attributed by the scanner to the object's OWN
+            // class, so the two documented named-migration-object rows carry
+            // class: MIGRATION_<from>_<to> on the AppDatabase.kt path.
+            if (entry.path.substringAfterLast('/').removeSuffix(".kt") == "AppDatabase" &&
+                Regex("MIGRATION_\\d+_\\d+").matches(entry.className)
+            ) {
+                continue
+            }
             // Paths are canonical repository-relative POSIX paths
             // (e.g. app/src/main/java/.../DatabaseMigrations.kt); the class must
             // match the file stem, not the full path.

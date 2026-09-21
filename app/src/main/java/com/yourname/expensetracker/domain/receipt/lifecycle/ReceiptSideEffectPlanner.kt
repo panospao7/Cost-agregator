@@ -247,10 +247,11 @@ class ReceiptSideEffectPlanner @Inject constructor(
         //   so categorization NEVER runs here — even when the projection is
         //   present — and the controlled skip applies.
         val restrictedMode = input.rawStorageMode != RawStorageMode.STORE_RAW
-        val ephemeralItems = if (input.rawStorageMode == RawStorageMode.STORE_REDACTED) {
-            input.ephemeralParsedItems?.takeIf { it.isNotEmpty() }
-        } else {
-            null
+        val ephemeralItems = when (input.rawStorageMode) {
+            RawStorageMode.STORE_REDACTED -> input.ephemeralParsedItems?.takeIf { it.isNotEmpty() }
+            RawStorageMode.STORE_RAW,
+            RawStorageMode.STORE_METADATA_ONLY,
+            RawStorageMode.DO_NOT_STORE -> null
         }
         return PostCommitAction(
             pipeline = AppPipeline.RECEIPT,

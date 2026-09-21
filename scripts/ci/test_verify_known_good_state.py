@@ -115,7 +115,7 @@ def _write_min_repo(root: Path) -> None:
     (baselines / "db_access_v2.json").write_text(
         json.dumps({"entries": []}), encoding="utf-8"
     )
-    candidate_entries = "".join(f"  - id: e{i}\n" for i in range(475))
+    candidate_entries = "".join(f"  - id: e{i}\n" for i in range(407))
     (guards / "db_ownership_policy.signatures.candidate.yml").write_text(
         "schemaVersion: 2\nentries:\n" + candidate_entries, encoding="utf-8"
     )
@@ -193,8 +193,8 @@ def _inventory_handler(exit_code=None, trusted=None, codes=None, dump=True, repo
     return handler
 
 
-def _migrate_check_handler(exit_code=1, input_count=97, resolved=54,
-                           unresolved=43, duplicates=0, seeds=0):
+def _migrate_check_handler(exit_code=1, input_count=93, resolved=55,
+                           unresolved=38, duplicates=0, seeds=0):
     stdout = (
         f"db-policy migration: input={input_count} resolved={resolved} "
         f"unresolved={unresolved} duplicateMutationKeys={duplicates} "
@@ -331,8 +331,8 @@ class TestAllPass:
 
     def test_expected_strings_pin_documented_contract(self):
         assert "20xDB_SIGNATURE_UNRESOLVED" in vkgs._EXPECTED_GATE
-        assert "input=97 resolved=54 unresolved=43" in vkgs._EXPECTED_MIGRATION
-        assert "entries=475" in vkgs._EXPECTED_CANDIDATE
+        assert "input=93 resolved=55 unresolved=38" in vkgs._EXPECTED_MIGRATION
+        assert "entries=407" in vkgs._EXPECTED_CANDIDATE
         assert "structural_entries=64" in vkgs._EXPECTED_STRUCTURAL
         assert vkgs._EXPECTED_META == "exit=0 silent"
         assert vkgs._EXPECTED_FRESHNESS == (

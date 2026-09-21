@@ -49,6 +49,26 @@ def _write(root: Path, relative: str, content: str) -> Path:
     return path
 
 
+def _write_manifest(root: Path, root_rel: str = "app/src/main/java") -> Path:
+    """Declare the production source roots the CLI resolves (PR-GR-10B).
+
+    Since the manifest-authority change there is no conventional-root
+    fallback at repository level, so synthetic CLI trees must carry the
+    same checked-in manifest shape the real repository does.
+    """
+    manifest = root / "config" / "guards" / "production_source_roots.yml"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(
+        "schemaVersion: 1\n"
+        "roots:\n"
+        "  - module: ':app'\n"
+        "    sourceSet: main\n"
+        f"    path: {root_rel}\n",
+        encoding="utf-8",
+    )
+    return manifest
+
+
 def _run_cli(root: Path) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, str(_SCRIPT), "--root", str(root), "--fail-on-violation"],
@@ -242,6 +262,8 @@ def test_cli_exit_zero_on_clean_tree(tmp_path):
     # <root>/app/src/main/java itself); passing the source root here made
     # the guard look for app/src/main/java below it and exit 2 with
     # E_RAW_MONEY_SOURCE_ROOT_MISSING (R16-3a).
+    # PR-GR-10B: the tree must also declare its production source roots.
+    _write_manifest(tmp_path)
     result = _run_cli(tmp_path)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "PASS" in result.stdout
@@ -250,6 +272,7 @@ def test_cli_exit_zero_on_clean_tree(tmp_path):
 def test_cli_exit_one_on_violation(tmp_path):
     root = _source_root(tmp_path)
     _write(root, "Probe.kt", "val total = items.sumOf { it.amount }\n")
+    _write_manifest(tmp_path)
     result = _run_cli(tmp_path)
     assert result.returncode == 1
     assert "G-MONEY-RAW-01" in result.stdout
@@ -257,9 +280,9 @@ def test_cli_exit_one_on_violation(tmp_path):
 
 
 def test_cli_exit_two_on_missing_source_root(tmp_path):
-    result = _run_cli(tmp_path)  # no app/src/main/java below tmp_path
+    result = _run_cli(tmp_path)  # no manifest below tmp_path (PR-GR-10B: fail closed)
     assert result.returncode == 2
-    assert "E_RAW_MONEY_SOURCE_ROOT_MISSING" in result.stderr
+    assert "E_RAW_MONEY_SOURCE_SCOPE_UNRESOLVED" in result.stderr
     # Bounded diagnostic: no filesystem path in the stderr payload.
     assert str(tmp_path) not in result.stderr
 
@@ -268,6 +291,7 @@ def test_cli_accepts_canonical_fail_on_violation_flag(tmp_path):
     root = _source_root(tmp_path)
     _write(root, "Clean.kt", "package probe\nval ok = 1\n")
     # --root is the repository root (see test_cli_exit_zero_on_clean_tree).
+    _write_manifest(tmp_path)
     result = subprocess.run(
         [sys.executable, str(_SCRIPT), "--root", str(tmp_path), "--fail-on-violation"],
         capture_output=True, text=True, encoding="utf-8", errors="replace",

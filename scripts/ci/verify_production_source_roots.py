@@ -886,7 +886,14 @@ def observed_conventional_roots(repo_root, modules, custom_dirs_by_module=None):
             continue
         rel_candidates = [base + "/" + tail for tail in _CONVENTIONAL_TAILS]
         if custom_dirs_by_module:
-            rel_candidates.extend(custom_dirs_by_module.get(module, ()))
+            # Custom srcDirs are module-relative inputs (see
+            # parse_module_build_sources); join them onto the module base
+            # exactly like the conventional tails so repository-relative
+            # observation actually probes the declared directory.
+            rel_candidates.extend(
+                base + "/" + custom
+                for custom in custom_dirs_by_module.get(module, ())
+            )
         for rel in rel_candidates:
             candidate_abs = os.path.join(repo_abs, *rel.split("/"))
             if os.path.islink(candidate_abs) or not _realpath_contains(

@@ -772,9 +772,12 @@ class ReceiptRepository @Inject constructor(
             return "[EXPORT BLOCKED] Debug export is only available in debug builds."
         }
         val storageMode = privacySettingsRepository.getSettings().rawOcrStorageMode
-        if (storageMode == RawStorageMode.STORE_REDACTED || storageMode == RawStorageMode.DO_NOT_STORE) {
-            return "[EXPORT BLOCKED] Raw OCR export is not available in ${storageMode.name} mode. " +
-                "Switch to STORE_RAW to enable full debug export."
+        when (storageMode) {
+            RawStorageMode.STORE_RAW -> { /* raw export permitted */ }
+            RawStorageMode.STORE_REDACTED, RawStorageMode.STORE_METADATA_ONLY,
+            RawStorageMode.DO_NOT_STORE ->
+                return "[EXPORT BLOCKED] Raw OCR export is not available in ${storageMode.name} mode. " +
+                    "Switch to STORE_RAW to enable full debug export."
         }
 
         val totalCount = scannedReceiptDao.getCount()
@@ -809,8 +812,12 @@ class ReceiptRepository @Inject constructor(
         if (!com.yourname.expensetracker.BuildConfig.DEBUG)
             return "[BLOCKED: debug build only]"
         val storageMode = privacySettingsRepository.getSettings().rawOcrStorageMode
-        if (storageMode == RawStorageMode.STORE_REDACTED || storageMode == RawStorageMode.DO_NOT_STORE)
-            return "[BLOCKED: raw text not available in ${storageMode.name}]"
+        when (storageMode) {
+            RawStorageMode.STORE_RAW -> { /* raw debug permitted */ }
+            RawStorageMode.STORE_REDACTED, RawStorageMode.STORE_METADATA_ONLY,
+            RawStorageMode.DO_NOT_STORE ->
+                return "[BLOCKED: raw text not available in ${storageMode.name}]"
+        }
         val receipt = scannedReceiptDao.getById(receiptId) ?: return "Not found"
         return formatReceiptDebug(receipt, includeRaw = false) // redacted by default
     }

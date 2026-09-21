@@ -292,6 +292,9 @@ def test_missing_manifest_fails_closed(tmp_path, monkeypatch, capsys):
 def test_undeclared_root_file_is_never_scanned(tmp_path, monkeypatch, capsys):
     """Kotlin files outside the declared production roots are invisible."""
     _write_scope_manifest(tmp_path)
+    # The declared root must exist on disk for scope topology verification;
+    # the file under test lives outside it and must never be scanned.
+    (tmp_path / "app" / "src" / "main" / "java").mkdir(parents=True, exist_ok=True)
     undeclared = (
         tmp_path / "other" / "src" / "main" / "java" / "com" / "example"
         / "SampleViewModel.kt"

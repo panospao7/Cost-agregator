@@ -34,9 +34,9 @@ Rows (fixed order, one check each):
                               DB_SOURCE_ROOT_* codes in both branches.
 3. migration_fold          -- scripts/migrate_db_policy_signatures.py
                               --check must exit 1 (documented migration debt)
-                              with the current fold truth input=97
-                              resolved=54 unresolved=43 duplicates=0
-                              (post-GR-14c truth sync, 2026-09-06).
+                              with the current fold truth input=93
+                              resolved=55 unresolved=38 duplicates=0
+                              (post-GR-14h truth sync, 2026-09-20).
 4. meta_guard_source_roots -- scripts/ci/verify_production_source_roots.py
                               must exit 0 silent.
 5. candidate_reproducible  -- the migrate CLI's --verify mode (in-memory
@@ -44,8 +44,8 @@ Rows (fixed order, one check each):
                               never writes the tracked artifacts) must exit 0
                               against the tracked pair, and the tracked
                               candidate must be a v2 document with exactly
-                              475 entries (post-GR-14c truth sync; equal to
-                              the active policy key set).
+                              407 entries (55 fold-resolved + 352 reviewed
+                              GR-08 seeds; post-GR-14u37 truth sync).
 6. structural_manifest     -- the structural expected-methods manifest must
                                pin counts.structural_entries=64
                                (expected=60 + fixtures=4) and
@@ -177,7 +177,7 @@ _ADVISORY_CODE = "DB_SIGNATURE_UNRESOLVED"
 _ADVISORY_COUNT = 20
 _INVENTORY_DURABILITY_CODE = "INVENTORY_DURABILITY_UNCONFIRMED"
 _DB_SOURCE_ROOT_PREFIX = "DB_SOURCE_ROOT_"
-_EXPECTED_INPUT_COUNT = 97
+_EXPECTED_INPUT_COUNT = 93
 # Post-GR-14b reconciliation (2026-09-04): the approved EXACT_IDENTITY_MOVE
 # (writeAssetDeleteFailedEvent) removed one emitting legacy key, so the fold
 # truth moved 57/42 -> 56/43 and the tracked candidate was regenerated
@@ -187,13 +187,20 @@ _EXPECTED_INPUT_COUNT = 97
 # removed from the migration input (fold 56/43/46 -> 54/43/44, input
 # 99 -> 97) and the 6 post-activation rows entered as reviewed GR-14 seeds
 # (candidate 471 -> 475 = the active policy key set).
-_EXPECTED_RESOLVED = 54
-_EXPECTED_UNRESOLVED = 43
+# Post-GR-14h truth sync (2026-09-20): the GR-14h Pattern-E tranche removed
+# 4 dead-writer rows from the generation inputs (input 97 -> 93) without
+# re-pinning this row; the fold truth moved 97/54/43 -> 93/55/38.
+_EXPECTED_RESOLVED = 55
+_EXPECTED_UNRESOLVED = 38
 _EXPECTED_DUPLICATES = 0
 _CANDIDATE_SCHEMA_VERSION = 2
 # GR-14h Pattern E tranche (2026-09-07): the 3 dead callables' 4 rows
 # left the generation inputs; tracked pair regenerated at 471 and the
-# active policy realigned by controlled promotion.
+# active policy realigned by controlled promotion.  Subsequent tranches
+# (GR-14u..GR-14u37, then RP-02 2026-09-20 dropping the stale
+# RecurringOccurrenceMaterializer lifecycleEventDao insert row from the
+# ACTIVE policy only) settled the candidate at 407 entries
+# (55 fold-resolved + 352 reviewed seeds).
 _CANDIDATE_ENTRIES = 407
 _STRUCTURAL_ENTRIES = 64
 _STRUCTURAL_EXPECTED = 60

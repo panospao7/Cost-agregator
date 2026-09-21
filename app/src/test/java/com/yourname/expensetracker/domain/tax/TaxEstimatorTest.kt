@@ -256,7 +256,9 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
         assertApproxEquals(42000.0, summary.totalIncome, 0.01)
         assertApproxEquals(6200.0, summary.totalDeductibleExpenses, 0.01)
         assertApproxEquals(6200.0 * (0.24 / 1.24), summary.totalVatPaid, 0.01)
-        assertApproxEquals(8100.0, summary.estimatedTaxOwed, 0.01)
+        // Cumulative progressive brackets (B.8 Batch 7) on 35,800 taxable:
+        // 10,000x9% + 10,000x22% + 15,800x32% = 8,156.
+        assertApproxEquals(8156.0, summary.estimatedTaxOwed, 0.01)
         assertApproxEquals(120.0, summary.mileageDeduction, 0.01)
 
         val deductions = summary.categorizedDeductions

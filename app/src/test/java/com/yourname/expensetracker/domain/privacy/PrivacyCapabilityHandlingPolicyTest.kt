@@ -23,6 +23,7 @@ class PrivacyCapabilityHandlingPolicyTest {
         PrivacyCapability.NOTIFICATION_CAPTURE to CapabilityPolicy.GATE_HANDLED,
         PrivacyCapability.NOTIFICATION_PACKAGE_ALLOWLIST to CapabilityPolicy.GATE_HANDLED,
         PrivacyCapability.CLOUD_AI_RECEIPT_ASSIST to CapabilityPolicy.GATE_HANDLED,
+        PrivacyCapability.CLOUD_AI_RECEIPT_OCR to CapabilityPolicy.GATE_HANDLED,
         PrivacyCapability.CLOUD_AI_ITEM_CATEGORIZATION to CapabilityPolicy.GATE_HANDLED,
         PrivacyCapability.CLOUD_AI_WARRANTY_EXTRACTION to CapabilityPolicy.GATE_HANDLED,
         PrivacyCapability.CLOUD_AI_BANK_STATEMENT to CapabilityPolicy.GATE_HANDLED,

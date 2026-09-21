@@ -3367,8 +3367,11 @@ def test_verify_report_distribution_matches_accounting_records(
     removed the 2 dead legacy keys from the input (both single-carried
     emitters located AFTER every fold-group index, so the folded-only
     index set is unchanged): 99/56/46 -> 97/54/44 over a 475-entry
-    candidate (post-GR-14h: 97/54/44 -> 93/53/43 over a 471-entry
-    candidate.
+    candidate.  Post-GR-14h the 4 dead-writer rows left the input
+    (97/54/44 -> 93/55/38) and the later tranches settled the tracked
+    pair at a 407-entry candidate with the 55/38/45 distribution
+    (regenerated 2026-09-20 after the GR-14u51b hand-edit had left the
+    accounting digests stale).
     """
     completed = tracked_verify["completed"]
     assert completed.returncode == 0, completed.stderr
@@ -3385,9 +3388,9 @@ def test_verify_report_distribution_matches_accounting_records(
         == records_distribution
     )
     assert records_distribution == {
-        "resolved": 53,
-        "unresolved": 40,
-        "keeper": 43,
+        "resolved": 55,
+        "unresolved": 38,
+        "keeper": 45,
     }
 
 

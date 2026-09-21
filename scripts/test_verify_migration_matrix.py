@@ -228,6 +228,7 @@ def test_fail_on_violation_exit_code(tmp_path, monkeypatch):
         [(145, 146), (147, 148)],  # missing 146→147
         baseline_text="v145 is the baseline"
     )
+    _write_manifest(tmp_path)
 
     # Simulate CLI args
     monkeypatch.setattr(sys, 'argv', [
@@ -249,6 +250,7 @@ def test_pass_without_fail_flag(tmp_path, monkeypatch):
         [(145, 146), (147, 148)],  # missing 146→147
         baseline_text="v145 is the baseline"
     )
+    _write_manifest(tmp_path)
 
     monkeypatch.setattr(sys, 'argv', [
         'verify_migration_matrix.py',
@@ -512,6 +514,9 @@ def test_missing_real_source_fails_controlled_despite_build_strays(
     """
     _write_stray_build_sources(tmp_path, app_db_version=148)
     _write_manifest(tmp_path)
+    # The declared root must exist on disk for scope topology verification;
+    # it stays empty so the guard still cannot find AppDatabase.kt in it.
+    (tmp_path / "app" / "src" / "main" / "java").mkdir(parents=True, exist_ok=True)
 
     monkeypatch.setattr(sys, 'argv', [
         'verify_migration_matrix.py',

@@ -302,7 +302,9 @@ class ComputeMoneyRadarUseCaseTest {
         assertEquals(listOf("Morning Bill"), result.dueBills.map { it.merchant })
         assertApproxEquals(120.0, capturedKnownUpcoming, 0.0001)
         assertNotNull(result.budgetRisk)
-        assertEquals(51, result.urgencyScore)
+        // €120 is below the large-bill threshold (50% of €1,000 income), so
+        // the due-bills large-bill bonus (27d85092a) does not apply.
+        assertEquals(36, result.urgencyScore)
         assertEquals(UrgencyLevel.YELLOW, result.urgencyLevel)
         assertTrue(result.topReasons.any {
             it == UiText.MessageKey(
