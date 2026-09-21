@@ -17,6 +17,7 @@ import com.yourname.expensetracker.domain.workers.BlockedPolicy
 import com.yourname.expensetracker.domain.workers.NotificationPermissionChecker
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
+import com.yourname.expensetracker.domain.workers.WorkerSpec
 import com.yourname.expensetracker.domain.workers.WorkerSpecScheduler
 import com.yourname.expensetracker.domain.workers.toWorkerResult
 import dagger.assisted.Assisted
@@ -45,7 +46,8 @@ class ReceiptMatchingWorker @AssistedInject constructor(
                 allowDuringBackupExport = false,
                 blockedPolicy = BlockedPolicy.RETRY,
                 workId = id.toString(),
-                runAttemptCount = runAttemptCount
+                runAttemptCount = runAttemptCount,
+                specVersion = WorkerSpec.DEFAULTS["receipt_matching"]?.version
             )
         ) { ctx ->
             try {
@@ -100,12 +102,27 @@ class ReceiptMatchingWorker @AssistedInject constructor(
                                 ctx.addRowsUpdated()
                                 if (notificationPermissionChecker.areNotificationsEnabled()) {
                                     try {
-                                        notificationService.sendBudgetAlert(
-                                            notificationId = com.yourname.expensetracker.domain.util.NotificationIdGenerator.forReceipt(receipt.id),
+                                        // RP-16 16-D: only an actual DELIVERED result counts as a
+                                        // sent notification; NOT_DELIVERED is recorded as a
+                                        // controlled suppression and a skipped row.
+                                        val deliveryResult = notificationService.postBudgetAlert(
+                                            notificationId = com.yourname.expensetracker.domain.util.NotificationId.forReceipt(receipt.id),
                                             title = applicationContext.getString(R.string.receipt_matching_auto_matched_title),
                                             message = applicationContext.getString(R.string.receipt_matching_auto_matched_message_format, receipt.parsedMerchant ?: applicationContext.getString(R.string.label_unknown))
                                         )
-                                        ctx.addNotificationsSent()
+                                        if (deliveryResult == com.yourname.expensetracker.domain.service.NotificationService.DeliveryResult.DELIVERED) {
+                                            ctx.addNotificationsSent()
+                                        } else {
+                                            ctx.addRowsSkipped()
+                                            safeRecordMatchEvent("NOTIFICATION_SUPPRESSED for receipt ${receipt.id}") {
+                                                matchService.recordNotificationSuppressed(
+                                                    receiptId = receipt.id,
+                                                    expenseId = matchResult.transaction.id,
+                                                    reasonCode = "RECEIPT_MATCH_NOTIFICATION_SUPPRESSED_NOT_DELIVERED",
+                                                    errorClass = null
+                                                )
+                                            }
+                                        }
                                     } catch (e: CancellationException) {
                                         throw e
                                     } catch (e: SecurityException) {

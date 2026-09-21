@@ -87,12 +87,12 @@ class WorkerBarrierIntegrationTest {
         coEvery { workerRunLogger.start(any(), any(), any(), any(), any(), any()) } returns runHandle
 
         // PR12H-3: explicit stubs for terminal methods returning TerminalWriteOutcome
-        coEvery { runHandle.success(any(), any(), any(), any()) } returns TerminalWriteOutcome.Durable
-        coEvery { runHandle.skipped(any()) } returns TerminalWriteOutcome.Durable
-        coEvery { runHandle.retry(any(), any()) } returns TerminalWriteOutcome.Durable
-        coEvery { runHandle.failure(any(), any()) } returns TerminalWriteOutcome.Durable
-        coEvery { runHandle.cancelled(any()) } returns TerminalWriteOutcome.Durable
-        coEvery { runHandle.staleAborted() } returns TerminalWriteOutcome.Durable
+        coEvery { runHandle.success(any(), any(), any(), any(), any(), any()) } returns TerminalWriteOutcome.Durable
+        coEvery { runHandle.skipped(any(), any()) } returns TerminalWriteOutcome.Durable
+        coEvery { runHandle.retry(any(), any(), any()) } returns TerminalWriteOutcome.Durable
+        coEvery { runHandle.failure(any(), any(), any()) } returns TerminalWriteOutcome.Durable
+        coEvery { runHandle.cancelled(any(), any()) } returns TerminalWriteOutcome.Durable
+        coEvery { runHandle.staleAborted(any()) } returns TerminalWriteOutcome.Durable
 
         val workerTerminalDiagnosticSink = mockk<WorkerTerminalDiagnosticSink>(relaxed = true)
 

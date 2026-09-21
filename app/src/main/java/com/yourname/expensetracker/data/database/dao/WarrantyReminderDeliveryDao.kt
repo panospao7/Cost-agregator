@@ -114,6 +114,24 @@ interface WarrantyReminderDeliveryDao {
     suspend fun markFailed(id: Long, reason: String, now: Long): Int
 
     /**
+     * RP-16 16-D: keyed variant of [markFailed] — returns an unexpectedly absent
+     * claimed delivery (claim succeeded but the row could not be re-read) to a
+     * retryable FAILED state by its unique (warrantyId, windowDays, expiryDate)
+     * key. Only succeeds from CLAIMED, so a SENT row is never regressed.
+     */
+    @Query("""
+        UPDATE warranty_reminder_deliveries
+        SET status = 'FAILED',
+            failureReason = :reason,
+            updatedAt = :now
+        WHERE warrantyId = :warrantyId
+          AND windowDays = :windowDays
+          AND expiryDate = :expiryDate
+          AND status = 'CLAIMED'
+    """)
+    suspend fun markFailedByKey(warrantyId: Long, windowDays: Int, expiryDate: Long, reason: String, now: Long): Int
+
+    /**
      * Reset stale CLAIMED deliveries back to SCHEDULED so a delivery that was claimed
      * but never completed (e.g. the worker crashed after claiming) can be retried.
      *

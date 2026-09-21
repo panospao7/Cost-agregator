@@ -291,7 +291,7 @@ class WorkerRestoreRegressionTest {
         val dao = mockk<BackgroundJobRunDao>(relaxed = true)
         val idSlot = slot<com.yourname.expensetracker.data.database.entity.BackgroundJobRun>()
         coEvery { dao.insert(capture(idSlot)) } returns 1L
-        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
+        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
 
         val sanitizer = mockk<com.yourname.expensetracker.domain.diagnostics.EventMetadataSanitizer>()
         every { sanitizer.sanitizeExceptionMessage(any()) } returns null
@@ -320,7 +320,7 @@ class WorkerRestoreRegressionTest {
     fun `terminal logging CAS prevents double-retry across restore restart`() = runTest {
         val dao = mockk<BackgroundJobRunDao>(relaxed = true)
         coEvery { dao.insert(any()) } returns 42L
-        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
+        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
 
         val sanitizer = mockk<com.yourname.expensetracker.domain.diagnostics.EventMetadataSanitizer>()
         every { sanitizer.sanitizeExceptionMessage(any()) } returns null
@@ -345,7 +345,7 @@ class WorkerRestoreRegressionTest {
     fun `terminal logging CAS prevents double-failure`() = runTest {
         val dao = mockk<BackgroundJobRunDao>(relaxed = true)
         coEvery { dao.insert(any()) } returns 99L
-        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
+        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
 
         val sanitizer = mockk<com.yourname.expensetracker.domain.diagnostics.EventMetadataSanitizer>()
         every { sanitizer.sanitizeExceptionMessage(any()) } returns null
@@ -369,7 +369,7 @@ class WorkerRestoreRegressionTest {
         // Simulate race: one path records RETRY, another tries SKIPPED
         val dao = mockk<BackgroundJobRunDao>(relaxed = true)
         coEvery { dao.insert(any()) } returns 77L
-        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
+        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
 
         val sanitizer = mockk<com.yourname.expensetracker.domain.diagnostics.EventMetadataSanitizer>()
         every { sanitizer.sanitizeExceptionMessage(any()) } returns null
@@ -386,7 +386,7 @@ class WorkerRestoreRegressionTest {
 
         // Only one terminal call
         coVerify(exactly = 1) {
-            dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+            dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         }
         // The sole call should be RETRY (first writer wins)
         coVerify(exactly = 1) {

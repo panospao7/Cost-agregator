@@ -89,6 +89,69 @@ object NotificationIdGenerator {
 }
 
 /**
+ * RP-16 16-A: Typed notification identity — the allocation boundary for
+ * Android notification IDs.
+ *
+ * A [NotificationId] can ONLY be created through the companion factories,
+ * which delegate to [NotificationIdGenerator]. Posting helpers
+ * ([com.yourname.expensetracker.domain.service.NotificationService]) accept
+ * this type, so raw `Int` IDs (e.g. `(dbId % Int.MAX_VALUE)`) cannot reach
+ * `notify()` through the mediated path.
+ */
+class NotificationId private constructor(val value: Int) {
+    companion object {
+        fun forBill(expenseId: Long): NotificationId =
+            NotificationId(NotificationIdGenerator.forBill(expenseId))
+
+        fun forWarranty(warrantyId: Long, daysUntilExpiration: Int): NotificationId =
+            NotificationId(NotificationIdGenerator.forWarranty(warrantyId, daysUntilExpiration))
+
+        fun forReceipt(receiptId: Long): NotificationId =
+            NotificationId(NotificationIdGenerator.forReceipt(receiptId))
+
+        fun forBudget(budgetId: Long): NotificationId =
+            NotificationId(NotificationIdGenerator.forBudget(budgetId))
+
+        fun forGeneral(id: Long): NotificationId =
+            NotificationId(NotificationIdGenerator.forGeneral(id))
+    }
+
+    override fun equals(other: Any?): Boolean = other is NotificationId && other.value == value
+    override fun hashCode(): Int = value
+    override fun toString(): String = "NotificationId($value)"
+}
+
+/**
+ * RP-16 16-A: Typed source key for a notification. Each kind derives its
+ * [notificationId] exclusively from [NotificationIdGenerator], guaranteeing
+ * cross-kind collision separation (disjoint reserved ranges).
+ */
+sealed interface NotificationKey {
+    val notificationId: NotificationId
+
+    data class Bill(val expenseId: Long) : NotificationKey {
+        override val notificationId: NotificationId get() = NotificationId.forBill(expenseId)
+    }
+
+    data class Warranty(val warrantyId: Long, val daysUntilExpiration: Int) : NotificationKey {
+        override val notificationId: NotificationId
+            get() = NotificationId.forWarranty(warrantyId, daysUntilExpiration)
+    }
+
+    data class Receipt(val receiptId: Long) : NotificationKey {
+        override val notificationId: NotificationId get() = NotificationId.forReceipt(receiptId)
+    }
+
+    data class Budget(val budgetId: Long) : NotificationKey {
+        override val notificationId: NotificationId get() = NotificationId.forBudget(budgetId)
+    }
+
+    data class General(val id: Long) : NotificationKey {
+        override val notificationId: NotificationId get() = NotificationId.forGeneral(id)
+    }
+}
+
+/**
  * Extension functions for convenience.
  */
 fun Long.toNotificationId(type: NotificationType): Int {

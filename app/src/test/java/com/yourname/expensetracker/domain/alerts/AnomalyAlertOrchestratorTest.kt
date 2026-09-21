@@ -143,7 +143,7 @@ class AnomalyAlertOrchestratorTest {
         assertEquals("Current expense should be included once", 1, passedIds.count { it == 100L })
 
         coVerify(exactly = 0) { anomalyAlertDao.insert(any()) }
-        verify(exactly = 0) { notificationService.sendAnomalyAlert(any(), any(), any(), any()) }
+        verify(exactly = 0) { notificationService.postAnomalyAlert(any(), any(), any(), any()) }
     }
 
     @Test
@@ -166,7 +166,7 @@ class AnomalyAlertOrchestratorTest {
 
         coVerify(exactly = 1) { anomalyAlertDao.insert(capture(alertSlot)) }
         verify(exactly = 1) {
-            notificationService.sendAnomalyAlert(
+            notificationService.postAnomalyAlert(
                 any(),
                 "Unusual Charge Detected",
                 capture(messageSlot),
@@ -194,7 +194,7 @@ class AnomalyAlertOrchestratorTest {
 
         coVerify(exactly = 0) { anomalyAlertDao.getLastAlertForCategory(any(), any()) }
         coVerify(exactly = 0) { anomalyAlertDao.insert(any()) }
-        verify(exactly = 0) { notificationService.sendAnomalyAlert(any(), any(), any(), any()) }
+        verify(exactly = 0) { notificationService.postAnomalyAlert(any(), any(), any(), any()) }
     }
 
     @Test
@@ -211,7 +211,7 @@ class AnomalyAlertOrchestratorTest {
         orchestrator.checkAndAlert(expense)
 
         coVerify(exactly = 0) { anomalyAlertDao.insert(any()) }
-        verify(exactly = 0) { notificationService.sendAnomalyAlert(any(), any(), any(), any()) }
+        verify(exactly = 0) { notificationService.postAnomalyAlert(any(), any(), any(), any()) }
     }
 
     @Test
@@ -227,7 +227,7 @@ class AnomalyAlertOrchestratorTest {
 
         coVerify(exactly = 0) { anomalyAlertDao.getLastAlertForMerchant(any(), any()) }
         coVerify(exactly = 0) { anomalyAlertDao.insert(any()) }
-        verify(exactly = 0) { notificationService.sendAnomalyAlert(any(), any(), any(), any()) }
+        verify(exactly = 0) { notificationService.postAnomalyAlert(any(), any(), any(), any()) }
     }
 
     @Test
@@ -262,7 +262,7 @@ class AnomalyAlertOrchestratorTest {
         coVerify(exactly = 1) { expenseDao.getExpensesByCategory(eq(8L), any(), any()) }
         coVerify(exactly = 1) { anomalyAlertDao.getLastAlertForExpense(450L) }
         coVerify(exactly = 1) { anomalyAlertDao.insert(any()) }
-        verify(exactly = 1) { notificationService.sendAnomalyAlert(any(), any(), any(), 450L) }
+        verify(exactly = 1) { notificationService.postAnomalyAlert(any(), any(), any(), 450L) }
     }
 
     @Test
@@ -280,7 +280,7 @@ class AnomalyAlertOrchestratorTest {
         orchestrator.checkAndAlert(expense)
 
         coVerify(exactly = 0) { anomalyAlertDao.insert(any()) }
-        verify(exactly = 0) { notificationService.sendAnomalyAlert(any(), any(), any(), any()) }
+        verify(exactly = 0) { notificationService.postAnomalyAlert(any(), any(), any(), any()) }
     }
 
     @Test
@@ -294,7 +294,7 @@ class AnomalyAlertOrchestratorTest {
 
         verify(exactly = 1) { anomalyDetector.detect(any(), any(), any(), any()) }
         coVerify(exactly = 0) { anomalyAlertDao.insert(any()) }
-        verify(exactly = 0) { notificationService.sendAnomalyAlert(any(), any(), any(), any()) }
+        verify(exactly = 0) { notificationService.postAnomalyAlert(any(), any(), any(), any()) }
     }
 
     @Test
@@ -489,6 +489,6 @@ class AnomalyAlertOrchestratorTest {
 
         // Verify no alert was persisted or sent
         coVerify(exactly = 0) { anomalyAlertDao.insert(any()) }
-        verify(exactly = 0) { notificationService.sendAnomalyAlert(any(), any(), any(), any()) }
+        verify(exactly = 0) { notificationService.postAnomalyAlert(any(), any(), any(), any()) }
     }
 }

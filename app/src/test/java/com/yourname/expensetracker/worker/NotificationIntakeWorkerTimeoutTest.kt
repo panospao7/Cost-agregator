@@ -64,12 +64,12 @@ class NotificationIntakeWorkerTimeoutTest {
      * methods, since [mockk] relaxed mode cannot create proxies for sealed interfaces. */
     private fun mockWorkerRunHandle(): WorkerRunHandle {
         val h = mockk<WorkerRunHandle>(relaxed = true)
-        coEvery { h.success() } returns TerminalWriteOutcome.Durable
-        coEvery { h.skipped(any()) } returns TerminalWriteOutcome.Durable
-        coEvery { h.retry(any(), any()) } returns TerminalWriteOutcome.Durable
-        coEvery { h.failure(any(), any()) } returns TerminalWriteOutcome.Durable
-        coEvery { h.cancelled(any()) } returns TerminalWriteOutcome.Durable
-        coEvery { h.staleAborted() } returns TerminalWriteOutcome.Durable
+        coEvery { h.success(any(), any(), any(), any(), any(), any()) } returns TerminalWriteOutcome.Durable
+        coEvery { h.skipped(any(), any()) } returns TerminalWriteOutcome.Durable
+        coEvery { h.retry(any(), any(), any()) } returns TerminalWriteOutcome.Durable
+        coEvery { h.failure(any(), any(), any()) } returns TerminalWriteOutcome.Durable
+        coEvery { h.cancelled(any(), any()) } returns TerminalWriteOutcome.Durable
+        coEvery { h.staleAborted(any()) } returns TerminalWriteOutcome.Durable
         return h
     }
 
@@ -847,7 +847,7 @@ class NotificationIntakeWorkerTimeoutTest {
         // The guard's NO_WORK check uses rowsScanned/rowsUpdated/notificationsSent.
         // With meta read only: rowsScanned=1, rowsUpdated=0 → NOT no-work.
         // So this path should be SUCCESS, not NO_WORK. The "true NO_WORK" is when guard skips before DB access.
-        coVerify(atLeast = 1) { runHandle.success(any(), any(), any(), any(), any()) }
+        coVerify(atLeast = 1) { runHandle.success(any(), any(), any(), any(), any(), any()) }
     }
 
     @Test
@@ -912,7 +912,7 @@ class NotificationIntakeWorkerTimeoutTest {
         assertEquals(WorkResult.success(), result)
         // Real side effects occurred: meta scan + claim update + reload scan + payload scan + terminal mark
         // Guard should NOT classify as NO_WORK
-        coVerify(atLeast = 1) { runHandle.success(any(), any(), any(), any(), any()) }
+        coVerify(atLeast = 1) { runHandle.success(any(), any(), any(), any(), any(), any()) }
     }
 
     private fun payloadForProcessing(

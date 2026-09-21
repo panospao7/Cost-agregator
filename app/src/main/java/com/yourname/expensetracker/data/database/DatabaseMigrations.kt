@@ -70,6 +70,27 @@ object DatabaseMigrations {
         }
     }
 
+    /**
+     * RP-16 16-B (D9): durable worker-run counter columns. Additive only;
+     * pre-existing rows measure as 0 skipped / 0 errors (they never recorded
+     * those counters).
+     */
+    val MIGRATION_148_149 = object : Migration(148, 149) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL(
+                "ALTER TABLE background_job_runs ADD COLUMN `rowsSkipped` INTEGER NOT NULL DEFAULT 0"
+            )
+            database.execSQL(
+                "ALTER TABLE background_job_runs ADD COLUMN `errors` INTEGER NOT NULL DEFAULT 0"
+            )
+        }
+    }
+
     /** All registered migrations, starting from v145 baseline. */
-    val ALL: Array<Migration> = arrayOf(MIGRATION_145_146, MIGRATION_146_147, MIGRATION_147_148)
+    val ALL: Array<Migration> = arrayOf(
+        MIGRATION_145_146,
+        MIGRATION_146_147,
+        MIGRATION_147_148,
+        MIGRATION_148_149
+    )
 }

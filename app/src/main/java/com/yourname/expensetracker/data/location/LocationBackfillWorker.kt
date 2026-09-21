@@ -15,6 +15,7 @@ import com.yourname.expensetracker.domain.workers.RetryableWorkerException
 import com.yourname.expensetracker.domain.workers.BlockedPolicy
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
+import com.yourname.expensetracker.domain.workers.WorkerSpec
 import com.yourname.expensetracker.domain.workers.WorkerSpecScheduler
 import com.yourname.expensetracker.domain.workers.toWorkerResult
 import dagger.assisted.Assisted
@@ -56,7 +57,8 @@ class LocationBackfillWorker @AssistedInject constructor(
                 allowDuringBackupExport = false,
                 blockedPolicy = BlockedPolicy.RETRY,
                 workId = id.toString(),
-                runAttemptCount = runAttemptCount
+                runAttemptCount = runAttemptCount,
+                specVersion = WorkerSpec.DEFAULTS["location_backfill"]?.version
             )
         ) { ctx ->
             // Evict stale merchant-location cache entries before geocoding new ones.

@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.database.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -46,5 +47,11 @@ data class BackgroundJobRun(
     val terminalReasonCode: String? = null,
     val terminalDiagnosticCode: String? = null,
     val partialFailureCount: Int? = null,
-    val failedTargetCount: Int? = null
+    val failedTargetCount: Int? = null,
+    // --- RP-16 16-B (D9) additions (must stay LAST so ALTER TABLE ADD COLUMN
+    // order in MIGRATION_148_149 matches the fresh-install CREATE TABLE order) ---
+    /** Durable measured skip count. 0 = measured zero. */
+    @ColumnInfo(defaultValue = "0") val rowsSkipped: Int = 0,
+    /** Durable measured error count. 0 = measured zero. */
+    @ColumnInfo(defaultValue = "0") val errors: Int = 0
 )

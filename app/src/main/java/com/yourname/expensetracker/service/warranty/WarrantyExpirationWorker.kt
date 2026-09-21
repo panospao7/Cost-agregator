@@ -13,6 +13,7 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.workers.BlockedPolicy
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
+import com.yourname.expensetracker.domain.workers.WorkerSpec
 import com.yourname.expensetracker.domain.workers.WorkerSpecScheduler
 import com.yourname.expensetracker.domain.workers.toWorkerResult
 import dagger.assisted.Assisted
@@ -76,7 +77,8 @@ class WarrantyExpirationWorker @AssistedInject constructor(
                 allowDuringBackupExport = false,
                 blockedPolicy = BlockedPolicy.RETRY,
                 workId = id.toString(),
-                runAttemptCount = runAttemptCount
+                runAttemptCount = runAttemptCount,
+                specVersion = WorkerSpec.DEFAULTS["warranty_expiration_check"]?.version
             )
         ) { ctx ->
             try {
@@ -190,7 +192,21 @@ class WarrantyExpirationWorker @AssistedInject constructor(
         )
         if (claimed != 1) return false
 
-        val row = deliveryDao.getByKey(warranty.id, windowDays, expiryDate) ?: return false
+        // RP-16 16-D: the claim succeeded, so the row must exist. If it is
+        // unexpectedly absent on re-read, return the claim to a retryable FAILED
+        // state by key instead of silently leaking a CLAIMED row until stale-claim
+        // recovery (an hour later).
+        val row = deliveryDao.getByKey(warranty.id, windowDays, expiryDate)
+        if (row == null) {
+            deliveryDao.markFailedByKey(
+                warrantyId = warranty.id,
+                windowDays = windowDays,
+                expiryDate = expiryDate,
+                reason = "claimed_row_unexpectedly_absent",
+                now = now
+            )
+            return false
+        }
 
         // 3. Send and record the outcome. Mark SENT only when delivery actually succeeds.
         val notificationId = NotificationIdGenerator.forWarranty(warranty.id, windowDays)

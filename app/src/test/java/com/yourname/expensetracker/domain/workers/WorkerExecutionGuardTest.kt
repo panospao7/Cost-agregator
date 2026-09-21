@@ -17,6 +17,7 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkObject
+import io.mockk.slot
 import io.mockk.unmockkAll
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
@@ -84,12 +85,12 @@ class WorkerExecutionGuardTest {
 
         // PR12H-3: explicit stubs for terminal methods returning TerminalWriteOutcome
         // (mockk(relaxed=true) cannot create mocks of sealed interfaces)
-        coEvery { runHandle.success(any(), any(), any(), any(), any()) } returns TerminalWriteOutcome.Durable
-        coEvery { runHandle.skipped(any()) } returns TerminalWriteOutcome.Durable
-        coEvery { runHandle.retry(any(), any()) } returns TerminalWriteOutcome.Durable
-        coEvery { runHandle.failure(any(), any()) } returns TerminalWriteOutcome.Durable
-        coEvery { runHandle.cancelled(any()) } returns TerminalWriteOutcome.Durable
-        coEvery { runHandle.staleAborted() } returns TerminalWriteOutcome.Durable
+        coEvery { runHandle.success(any(), any(), any(), any(), any(), any()) } returns TerminalWriteOutcome.Durable
+        coEvery { runHandle.skipped(any(), any()) } returns TerminalWriteOutcome.Durable
+        coEvery { runHandle.retry(any(), any(), any()) } returns TerminalWriteOutcome.Durable
+        coEvery { runHandle.failure(any(), any(), any()) } returns TerminalWriteOutcome.Durable
+        coEvery { runHandle.cancelled(any(), any()) } returns TerminalWriteOutcome.Durable
+        coEvery { runHandle.staleAborted(any()) } returns TerminalWriteOutcome.Durable
 
         guard = WorkerExecutionGuard(
             writeBarrier = writeBarrier,
@@ -125,7 +126,7 @@ class WorkerExecutionGuardTest {
         )
         assertFalse("block must not run when permission denied", blockRan)
         coVerify(exactly = 1) {
-            runHandle.skipped(DiagnosticReasonCode.WORKER_NOTIFICATION_PERMISSION_DENIED.name)
+            runHandle.skipped(DiagnosticReasonCode.WORKER_NOTIFICATION_PERMISSION_DENIED.name, any())
         }
     }
 
@@ -143,7 +144,7 @@ class WorkerExecutionGuardTest {
         )
         assertFalse("block must not run when permission denied", blockRan)
         coVerify(exactly = 1) {
-            runHandle.skipped(DiagnosticReasonCode.WORKER_NOTIFICATION_PERMISSION_DENIED.name)
+            runHandle.skipped(DiagnosticReasonCode.WORKER_NOTIFICATION_PERMISSION_DENIED.name, any())
         }
     }
 
@@ -156,8 +157,8 @@ class WorkerExecutionGuardTest {
 
         assertTrue(result is WorkerGuardResult.Success)
         assertTrue("block must run when permission granted", blockRan)
-        coVerify(exactly = 1) { runHandle.success(any(), any(), any(), any(), any()) }
-        coVerify(exactly = 0) { runHandle.skipped(any()) }
+        coVerify(exactly = 1) { runHandle.success(any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { runHandle.skipped(any(), any()) }
     }
 
     @Test
@@ -382,8 +383,8 @@ class WorkerExecutionGuardTest {
         assertEquals(DiagnosticReasonCode.WORKER_RETRYABLE_ERROR.name, (result as WorkerGuardResult.Retry).reason)
         // The run must be finalized as RETRY, never as FAILED — the worker's explicit
         // retry intent must survive even though the message matches no transient keyword.
-        coVerify(exactly = 1) { runHandle.retry(DiagnosticReasonCode.WORKER_RETRYABLE_ERROR.name, ex) }
-        coVerify(exactly = 0) { runHandle.failure(any(), any()) }
+        coVerify(exactly = 1) { runHandle.retry(DiagnosticReasonCode.WORKER_RETRYABLE_ERROR.name, ex, any()) }
+        coVerify(exactly = 0) { runHandle.failure(any(), any(), any()) }
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -403,9 +404,9 @@ class WorkerExecutionGuardTest {
             (result as WorkerGuardResult.Retry).reason
         )
         coVerify(exactly = 1) {
-            runHandle.retry(DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name, ex)
+            runHandle.retry(DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name, ex, any())
         }
-        coVerify(exactly = 0) { runHandle.failure(any(), any()) }
+        coVerify(exactly = 0) { runHandle.failure(any(), any(), any()) }
     }
 
     @Test
@@ -421,7 +422,7 @@ class WorkerExecutionGuardTest {
             (result as WorkerGuardResult.Retry).reason
         )
         coVerify(exactly = 1) {
-            runHandle.retry(DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name, ex)
+            runHandle.retry(DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name, ex, any())
         }
     }
 
@@ -441,9 +442,9 @@ class WorkerExecutionGuardTest {
             (result as WorkerGuardResult.Failed).reason
         )
         coVerify(exactly = 1) {
-            runHandle.failure(DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name, ex)
+            runHandle.failure(DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name, ex, any())
         }
-        coVerify(exactly = 0) { runHandle.retry(any(), any()) }
+        coVerify(exactly = 0) { runHandle.retry(any(), any(), any()) }
     }
 
     @Test
@@ -461,9 +462,9 @@ class WorkerExecutionGuardTest {
             (result as WorkerGuardResult.Retry).reason
         )
         coVerify(exactly = 1) {
-            runHandle.retry(DiagnosticReasonCode.WORKER_TRANSIENT_ERROR.name, ex)
+            runHandle.retry(DiagnosticReasonCode.WORKER_TRANSIENT_ERROR.name, ex, any())
         }
-        coVerify(exactly = 0) { runHandle.failure(any(), any()) }
+        coVerify(exactly = 0) { runHandle.failure(any(), any(), any()) }
     }
 
     @Test
@@ -477,9 +478,9 @@ class WorkerExecutionGuardTest {
         } catch (_: kotlinx.coroutines.CancellationException) {
             // expected — cancellation must never be classified as retry/failure
         }
-        coVerify(exactly = 1) { runHandle.cancelled(DiagnosticReasonCode.WORKER_CANCELLED.name) }
-        coVerify(exactly = 0) { runHandle.retry(any(), any()) }
-        coVerify(exactly = 0) { runHandle.failure(any(), any()) }
+        coVerify(exactly = 1) { runHandle.cancelled(DiagnosticReasonCode.WORKER_CANCELLED.name, any()) }
+        coVerify(exactly = 0) { runHandle.retry(any(), any(), any()) }
+        coVerify(exactly = 0) { runHandle.failure(any(), any(), any()) }
     }
 
     // -------------------------------------------------------------------------
@@ -494,9 +495,18 @@ class WorkerExecutionGuardTest {
         val result = guard.runGuardedWithContext(req) { /* no counter increments */ }
 
         assertTrue(result is WorkerGuardResult.Success)
+        val providerSlot = slot<() -> WorkerRunCounters?>()
         coVerify(exactly = 1) {
-            runHandle.success(rowsScanned = 0, rowsUpdated = 0, notificationsSent = 0, message = "NO_WORK", reasonCode = any())
+            runHandle.success(message = "NO_WORK", reasonCode = any(), snapshotProvider = capture(providerSlot))
         }
+        // RP-16 16-B: the provider is resolved under the terminal mutex; it must
+        // report a measured all-zero snapshot.
+        val counters = providerSlot.captured.invoke()!!
+        assertEquals(0, counters.rowsScanned)
+        assertEquals(0, counters.rowsUpdated)
+        assertEquals(0, counters.notificationsSent)
+        assertEquals(0, counters.rowsSkipped)
+        assertEquals(0, counters.errors)
     }
 
     @Test
@@ -507,9 +517,30 @@ class WorkerExecutionGuardTest {
         val result = guard.runGuardedWithContext(req) { ctx -> ctx.addRowsUpdated(3) }
 
         assertTrue(result is WorkerGuardResult.Success)
+        val providerSlot = slot<() -> WorkerRunCounters?>()
         coVerify(exactly = 1) {
-            runHandle.success(rowsScanned = 0, rowsUpdated = 3, notificationsSent = 0, message = null, reasonCode = any())
+            runHandle.success(message = null, reasonCode = any(), snapshotProvider = capture(providerSlot))
         }
+        // Measured counters are carried by the snapshot, not the scalar defaults.
+        val counters = providerSlot.captured.invoke()!!
+        assertEquals(3, counters.rowsUpdated)
+    }
+
+    @Test
+    fun `runGuardedWithContext skipped-only run is not NO_WORK and snapshot carries rowsSkipped`() = runTest {
+        permissionChecker.enabled = true
+        val req = WorkerGuardRequest(workerName = "test_worker", requiresNotificationPermission = false)
+
+        val result = guard.runGuardedWithContext(req) { ctx -> ctx.addRowsSkipped(2) }
+
+        assertTrue(result is WorkerGuardResult.Success)
+        val providerSlot = slot<() -> WorkerRunCounters?>()
+        coVerify(exactly = 1) {
+            runHandle.success(message = null, reasonCode = any(), snapshotProvider = capture(providerSlot))
+        }
+        // RP-16 16-D: NO_WORK includes skipped/errors — a skipped-only run is SUCCESS.
+        val counters = providerSlot.captured.invoke()!!
+        assertEquals(2, counters.rowsSkipped)
     }
 
     // -------------------------------------------------------------------------
@@ -526,7 +557,7 @@ class WorkerExecutionGuardTest {
         val enteredTerminalWrite = CompletableDeferred<Unit>()
         val proceedWithWrite = CompletableDeferred<Unit>()
 
-        coEvery { runHandle.success(any(), any(), any(), any(), any()) } coAnswers {
+        coEvery { runHandle.success(any(), any(), any(), any(), any(), any()) } coAnswers {
             enteredTerminalWrite.complete(Unit)
             proceedWithWrite.await() // suspend inside the terminal write
             successCalled = true
@@ -757,7 +788,7 @@ class WorkerExecutionGuardTest {
         assertTrue(result is WorkerGuardResult.Skipped)
         assertEquals(DiagnosticReasonCode.WORKER_PRIVACY_DENIED.name, (result as WorkerGuardResult.Skipped).reason)
         assertFalse("block must not run when privacy denied", blockRan)
-        coVerify(exactly = 1) { runHandle.skipped(DiagnosticReasonCode.WORKER_PRIVACY_DENIED.name) }
+        coVerify(exactly = 1) { runHandle.skipped(DiagnosticReasonCode.WORKER_PRIVACY_DENIED.name, any()) }
     }
 
     @Test
@@ -771,7 +802,7 @@ class WorkerExecutionGuardTest {
         assertTrue(result is WorkerGuardResult.Retry)
         assertEquals(DiagnosticReasonCode.WORKER_PRIVACY_DENIED.name, (result as WorkerGuardResult.Retry).reason)
         assertFalse("block must not run when privacy denied", blockRan)
-        coVerify(exactly = 1) { runHandle.retry(DiagnosticReasonCode.WORKER_PRIVACY_DENIED.name, null) }
+        coVerify(exactly = 1) { runHandle.retry(DiagnosticReasonCode.WORKER_PRIVACY_DENIED.name, null, any()) }
     }
 
     @Test
@@ -785,7 +816,7 @@ class WorkerExecutionGuardTest {
         assertTrue(result is WorkerGuardResult.Failed)
         assertEquals(DiagnosticReasonCode.WORKER_PRIVACY_DENIED.name, (result as WorkerGuardResult.Failed).reason)
         assertFalse("block must not run when privacy denied", blockRan)
-        coVerify(exactly = 1) { runHandle.failure(DiagnosticReasonCode.WORKER_PRIVACY_DENIED.name, null) }
+        coVerify(exactly = 1) { runHandle.failure(DiagnosticReasonCode.WORKER_PRIVACY_DENIED.name, null, any()) }
     }
 
     @Test
@@ -799,7 +830,7 @@ class WorkerExecutionGuardTest {
         assertTrue(result is WorkerGuardResult.Retry)
         assertEquals(DiagnosticReasonCode.WORKER_PRIVACY_FAIL_CLOSED.name, (result as WorkerGuardResult.Retry).reason)
         assertFalse("block must not run when privacy fail-closed", blockRan)
-        coVerify(exactly = 1) { runHandle.retry(DiagnosticReasonCode.WORKER_PRIVACY_FAIL_CLOSED.name, null) }
+        coVerify(exactly = 1) { runHandle.retry(DiagnosticReasonCode.WORKER_PRIVACY_FAIL_CLOSED.name, null, any()) }
     }
 
     @Test
@@ -816,7 +847,7 @@ class WorkerExecutionGuardTest {
         )
         assertFalse("block must not run when permission denied", blockRan)
         coVerify(exactly = 1) {
-            runHandle.skipped(DiagnosticReasonCode.WORKER_NOTIFICATION_PERMISSION_DENIED.name)
+            runHandle.skipped(DiagnosticReasonCode.WORKER_NOTIFICATION_PERMISSION_DENIED.name, any())
         }
     }
 
@@ -834,7 +865,7 @@ class WorkerExecutionGuardTest {
         )
         assertFalse("block must not run when permission denied", blockRan)
         coVerify(exactly = 1) {
-            runHandle.retry(DiagnosticReasonCode.WORKER_NOTIFICATION_PERMISSION_DENIED.name, null)
+            runHandle.retry(DiagnosticReasonCode.WORKER_NOTIFICATION_PERMISSION_DENIED.name, null, any())
         }
     }
 
@@ -852,7 +883,7 @@ class WorkerExecutionGuardTest {
         )
         assertFalse("block must not run when permission denied", blockRan)
         coVerify(exactly = 1) {
-            runHandle.failure(DiagnosticReasonCode.WORKER_NOTIFICATION_PERMISSION_DENIED.name, null)
+            runHandle.failure(DiagnosticReasonCode.WORKER_NOTIFICATION_PERMISSION_DENIED.name, null, any())
         }
     }
 
@@ -871,7 +902,7 @@ class WorkerExecutionGuardTest {
         assertTrue(result is WorkerGuardResult.Skipped)
         assertEquals(DiagnosticReasonCode.WORKER_PRIVACY_DENIED.name, (result as WorkerGuardResult.Skipped).reason)
         assertFalse("block must not run when privacy denied", blockRan)
-        coVerify(exactly = 1) { runHandle.skipped(DiagnosticReasonCode.WORKER_PRIVACY_DENIED.name) }
+        coVerify(exactly = 1) { runHandle.skipped(DiagnosticReasonCode.WORKER_PRIVACY_DENIED.name, any()) }
     }
 
     @Test
@@ -885,7 +916,7 @@ class WorkerExecutionGuardTest {
         assertTrue(result is WorkerGuardResult.Retry)
         assertEquals(DiagnosticReasonCode.WORKER_PRIVACY_DENIED.name, (result as WorkerGuardResult.Retry).reason)
         assertFalse("block must not run when privacy denied", blockRan)
-        coVerify(exactly = 1) { runHandle.retry(DiagnosticReasonCode.WORKER_PRIVACY_DENIED.name, null) }
+        coVerify(exactly = 1) { runHandle.retry(DiagnosticReasonCode.WORKER_PRIVACY_DENIED.name, null, any()) }
     }
 
     @Test
@@ -899,7 +930,7 @@ class WorkerExecutionGuardTest {
         assertTrue(result is WorkerGuardResult.Failed)
         assertEquals(DiagnosticReasonCode.WORKER_PRIVACY_DENIED.name, (result as WorkerGuardResult.Failed).reason)
         assertFalse("block must not run when privacy denied", blockRan)
-        coVerify(exactly = 1) { runHandle.failure(DiagnosticReasonCode.WORKER_PRIVACY_DENIED.name, null) }
+        coVerify(exactly = 1) { runHandle.failure(DiagnosticReasonCode.WORKER_PRIVACY_DENIED.name, null, any()) }
     }
 
     @Test
@@ -913,7 +944,7 @@ class WorkerExecutionGuardTest {
         assertTrue(result is WorkerGuardResult.Retry)
         assertEquals(DiagnosticReasonCode.WORKER_PRIVACY_FAIL_CLOSED.name, (result as WorkerGuardResult.Retry).reason)
         assertFalse("block must not run when privacy fail-closed", blockRan)
-        coVerify(exactly = 1) { runHandle.retry(DiagnosticReasonCode.WORKER_PRIVACY_FAIL_CLOSED.name, null) }
+        coVerify(exactly = 1) { runHandle.retry(DiagnosticReasonCode.WORKER_PRIVACY_FAIL_CLOSED.name, null, any()) }
     }
 
     @Test
@@ -930,7 +961,7 @@ class WorkerExecutionGuardTest {
         )
         assertFalse("block must not run when permission denied", blockRan)
         coVerify(exactly = 1) {
-            runHandle.skipped(DiagnosticReasonCode.WORKER_NOTIFICATION_PERMISSION_DENIED.name)
+            runHandle.skipped(DiagnosticReasonCode.WORKER_NOTIFICATION_PERMISSION_DENIED.name, any())
         }
     }
 
@@ -948,7 +979,7 @@ class WorkerExecutionGuardTest {
         )
         assertFalse("block must not run when permission denied", blockRan)
         coVerify(exactly = 1) {
-            runHandle.retry(DiagnosticReasonCode.WORKER_NOTIFICATION_PERMISSION_DENIED.name, null)
+            runHandle.retry(DiagnosticReasonCode.WORKER_NOTIFICATION_PERMISSION_DENIED.name, null, any())
         }
     }
 
@@ -966,7 +997,7 @@ class WorkerExecutionGuardTest {
         )
         assertFalse("block must not run when permission denied", blockRan)
         coVerify(exactly = 1) {
-            runHandle.failure(DiagnosticReasonCode.WORKER_NOTIFICATION_PERMISSION_DENIED.name, null)
+            runHandle.failure(DiagnosticReasonCode.WORKER_NOTIFICATION_PERMISSION_DENIED.name, null, any())
         }
     }
 
@@ -996,7 +1027,7 @@ class WorkerExecutionGuardTest {
         assertTrue("Default RETRY policy should return Retry for TCE", result is WorkerGuardResult.Retry)
         assertEquals(DiagnosticReasonCode.WORKER_TIMEOUT.name, (result as WorkerGuardResult.Retry).reason)
         coVerify(exactly = 1) { runHandle.retry(DiagnosticReasonCode.WORKER_TIMEOUT.name, timeoutEx) }
-        coVerify(exactly = 0) { runHandle.cancelled(any()) }
+        coVerify(exactly = 0) { runHandle.cancelled(any(), any()) }
     }
 
     @Test
@@ -1016,8 +1047,8 @@ class WorkerExecutionGuardTest {
         } catch (e: TimeoutCancellationException) {
             assertEquals(timeoutEx, e)
         }
-        coVerify(exactly = 1) { runHandle.cancelled(DiagnosticReasonCode.WORKER_CANCELLED.name) }
-        coVerify(exactly = 0) { runHandle.retry(any(), any()) }
+        coVerify(exactly = 1) { runHandle.cancelled(DiagnosticReasonCode.WORKER_CANCELLED.name, any()) }
+        coVerify(exactly = 0) { runHandle.retry(any(), any(), any()) }
     }
 
     @Test
@@ -1037,7 +1068,7 @@ class WorkerExecutionGuardTest {
         assertTrue("Stop requested should return BlockedRetry for RETRY policy", result is WorkerGuardResult.BlockedRetry)
         assertEquals(DiagnosticReasonCode.WORKER_STOP_REQUESTED.name, (result as WorkerGuardResult.BlockedRetry).blockedReasonCode)
         // block started running but checkpoint blocked it
-        coVerify(exactly = 1) { runHandle.retry(DiagnosticReasonCode.WORKER_STOP_REQUESTED.name, any<WorkerCheckpointBlockedException>()) }
+        coVerify(exactly = 1) { runHandle.retry(DiagnosticReasonCode.WORKER_STOP_REQUESTED.name, any<WorkerCheckpointBlockedException>(), any()) }
     }
 
     @Test
@@ -1065,7 +1096,7 @@ class WorkerExecutionGuardTest {
 
         assertTrue("Write barrier denied should return BlockedRetry for RETRY policy", result is WorkerGuardResult.BlockedRetry)
         assertEquals(DiagnosticReasonCode.WORKER_WRITE_BARRIER_DENIED.name, (result as WorkerGuardResult.BlockedRetry).blockedReasonCode)
-        coVerify(exactly = 1) { runHandle.retry(DiagnosticReasonCode.WORKER_WRITE_BARRIER_DENIED.name, any<WorkerCheckpointBlockedException>()) }
+        coVerify(exactly = 1) { runHandle.retry(DiagnosticReasonCode.WORKER_WRITE_BARRIER_DENIED.name, any<WorkerCheckpointBlockedException>(), any()) }
     }
 
     @Test
@@ -1092,7 +1123,7 @@ class WorkerExecutionGuardTest {
 
         assertTrue("Write barrier denied should return Skipped for SKIP_SUCCESS policy", result is WorkerGuardResult.Skipped)
         assertEquals(DiagnosticReasonCode.WORKER_WRITE_BARRIER_DENIED.name, (result as WorkerGuardResult.Skipped).reason)
-        coVerify(exactly = 1) { runHandle.skipped(DiagnosticReasonCode.WORKER_WRITE_BARRIER_DENIED.name) }
+        coVerify(exactly = 1) { runHandle.skipped(DiagnosticReasonCode.WORKER_WRITE_BARRIER_DENIED.name, any()) }
     }
 
     @Test
@@ -1119,7 +1150,7 @@ class WorkerExecutionGuardTest {
 
         assertTrue("Write barrier denied should return Failed for FAIL policy", result is WorkerGuardResult.Failed)
         assertEquals(DiagnosticReasonCode.WORKER_WRITE_BARRIER_DENIED.name, (result as WorkerGuardResult.Failed).reason)
-        coVerify(exactly = 1) { runHandle.failure(DiagnosticReasonCode.WORKER_WRITE_BARRIER_DENIED.name, any<WorkerCheckpointBlockedException>()) }
+        coVerify(exactly = 1) { runHandle.failure(DiagnosticReasonCode.WORKER_WRITE_BARRIER_DENIED.name, any<WorkerCheckpointBlockedException>(), any()) }
     }
 
     @Test
@@ -1133,8 +1164,8 @@ class WorkerExecutionGuardTest {
         } catch (e: kotlinx.coroutines.CancellationException) {
             assertEquals(ex, e)
         }
-        coVerify(exactly = 1) { runHandle.cancelled(DiagnosticReasonCode.WORKER_CANCELLED.name) }
-        coVerify(exactly = 0) { runHandle.retry(any(), any()) }
-        coVerify(exactly = 0) { runHandle.failure(any(), any()) }
+        coVerify(exactly = 1) { runHandle.cancelled(DiagnosticReasonCode.WORKER_CANCELLED.name, any()) }
+        coVerify(exactly = 0) { runHandle.retry(any(), any(), any()) }
+        coVerify(exactly = 0) { runHandle.failure(any(), any(), any()) }
     }
 }

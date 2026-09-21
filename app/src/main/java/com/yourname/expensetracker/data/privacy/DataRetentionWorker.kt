@@ -1,5 +1,8 @@
 // P8-P1-06: Retention scope expanded to cover AI artifacts and email receipt sources.
 // Remaining gaps: chat messages (AiChatMessageDao), debug diagnostics (ServiceDiagnostics).
+// RP-16 16-C: boolean `completed_<target>` checkpoint replaced by versioned per-target
+// records (PENDING / COMPLETED(rowsPurged, auditEmitted) / FAILED(controlledErrorCode,
+// transient, attemptMetadata)) with exactly-once audit identity and per-record cleanup.
 
 package com.yourname.expensetracker.data.privacy
 
@@ -51,6 +54,22 @@ import java.util.concurrent.TimeUnit
  * - After purging, the column is set to the current timestamp so the row is not
  *   processed again on subsequent runs.
  * - Audit events are written for the count of purged rows per category.
+ *
+ * ## RP-16 16-C: Checkpoint state machine
+ * Per-target progress is tracked in [RetentionCheckpointStore] (v2 records):
+ * - PENDING → COMPLETED(rowsPurged, auditEmitted) | FAILED(controlledErrorCode, transient, attempts).
+ * - Legacy boolean `completed_<target>` checkpoints are read compatibly (as
+ *   booleans, never as counts) when no v2 record exists.
+ * - Audits for audit-required targets are emitted exactly once per
+ *   (target, cutoff day bucket) via [PrivacyAuditDao.countAuditEventsByKey].
+ * - Cleanup is per record, only after the target's desired durable states
+ *   (COMPLETED + emitted audit) are reached. There is NO blanket
+ *   preferences clear.
+ * - Permanent (non-transient) target failures do not abort the run: the run
+ *   reports them via ctx counters (failedTargetCount / partialFailureCount)
+ *   and the FAILED record persists so the NEXT scheduled run re-attempts the
+ *   target. Transient failures abort the run as RETRY; records persist and a
+ *   retry resumes (completed targets skipped, pending audits emitted).
  */
 @HiltWorker
 class DataRetentionWorker @AssistedInject constructor(
@@ -71,12 +90,8 @@ class DataRetentionWorker @AssistedInject constructor(
         Log.d(TAG, "Data retention worker started")
 
         // P8-PR1 (NEW-P8-002): Initialise checkpoint prefs — if we crashed mid-run
-        // on a previous attempt, resume from the last incomplete target.
+        // on a previous attempt, resume from the last durable per-target record.
         val prefs = checkpointPrefs()
-        val resumeFrom = getLastIncompleteTarget(prefs)
-        if (resumeFrom != null) {
-            Log.w(TAG, "Resuming from last incomplete target: $resumeFrom")
-        }
 
         val guardResult = executionGuard.runGuardedWithContext(
             WorkerGuardRequest(
@@ -98,6 +113,26 @@ class DataRetentionWorker @AssistedInject constructor(
             val aiChatCutoff = now - TimeUnit.DAYS.toMillis(30)
             val diagnosticsCutoff = now - TimeUnit.DAYS.toMillis(30)
 
+            val store = RetentionCheckpointStore(prefs)
+            val auditDao = appDatabase.privacyAuditDao()
+
+            fun cutoffFor(targetName: String): Long = when (targetName) {
+                "raw_notifications" -> notificationCutoff
+                "scanned_receipts.rawOcrText" -> ocrCutoff
+                "email_receipt_sources" -> emailCutoff
+                "ai_chat_messages" -> aiChatCutoff
+                "notification_intake" -> notificationCutoff
+                "pipeline_diagnostic_events" -> diagnosticsCutoff
+                "ai_artifacts" -> now
+                else -> now - TimeUnit.DAYS.toMillis(30)
+            }
+
+            fun retentionDaysFor(targetName: String): Int = when (targetName) {
+                "raw_notifications", "notification_intake" -> settings.rawNotificationRetentionDays
+                "scanned_receipts.rawOcrText" -> settings.rawOcrRetentionDays
+                else -> 30
+            }
+
             // PRIV-441-12: Use injectable RetentionRegistry instead of inline list
             val allTargets = retentionRegistry.allTargets().toList()
             // P8-PR1 (NEW-P8-002): Order targets deterministically so checkpoint works.
@@ -106,32 +141,75 @@ class DataRetentionWorker @AssistedInject constructor(
             val orderedTargets: List<RetentionTarget> = allTargets.sortedBy { it.name }
             val results = mutableListOf<RetentionPurgeResult>()
 
-            // Determine which targets to skip based on checkpoint
-            var skipTargets = resumeFrom != null
+            // RP-16 16-C: v2 records win; legacy boolean checkpoints are consulted
+            // only when no v2 record exists (booleans read as booleans, never counts).
+            val legacyResumeFrom: String? = if (!store.hasAnyRecord()) {
+                store.legacyResumePoint(orderedTargets.map { it.name })
+            } else {
+                null
+            }
+            if (legacyResumeFrom != null) {
+                Log.w(TAG, "Resuming from legacy checkpoint target: $legacyResumeFrom")
+            }
+            var legacySkip = legacyResumeFrom != null
 
             for (target in orderedTargets) {
-                // P8-PR1 (NEW-P8-002): If resuming, skip targets that were already completed
-                if (skipTargets) {
-                    if (target.name == resumeFrom) {
-                        skipTargets = false // This target was incomplete, process it now
+                val record = store.load(target.name)
+                val cutoff = cutoffFor(target.name)
+
+                // v2 skip: durable COMPLETED with durable audit (or no audit required).
+                if (record != null &&
+                    record.state == RetentionCheckpointState.COMPLETED &&
+                    (record.auditEmitted || !AUDIT_REQUIRED_TARGETS.contains(target.name))
+                ) {
+                    Log.d(TAG, "Skipping already-completed target: ${target.name}")
+                    continue
+                }
+
+                // v2 resume audit: purge durable, audit not durable yet → emit exactly-once
+                // audit and finish the record. The purge itself is NOT repeated.
+                if (record != null &&
+                    record.state == RetentionCheckpointState.COMPLETED &&
+                    AUDIT_REQUIRED_TARGETS.contains(target.name) &&
+                    !record.auditEmitted
+                ) {
+                    emitRetentionAudit(store, record, auditDao, ctx)
+                    continue
+                }
+
+                // P8-PR1 (NEW-P8-002): legacy prefix-resume — skip targets before the
+                // first incomplete one (booleans never reinterpreted as counts).
+                if (legacySkip) {
+                    if (target.name == legacyResumeFrom) {
+                        legacySkip = false // This target was incomplete, process it now
                     } else {
-                        Log.d(TAG, "Skipping already-completed target: ${target.name}")
+                        Log.d(TAG, "Skipping already-completed (legacy) target: ${target.name}")
                         continue
                     }
                 }
 
-                val cutoff = when (target.name) {
-                    "raw_notifications" -> notificationCutoff
-                    "scanned_receipts.rawOcrText" -> ocrCutoff
-                    "email_receipt_sources" -> emailCutoff
-                    "ai_chat_messages" -> aiChatCutoff
-                    "notification_intake" -> notificationCutoff
-                    "pipeline_diagnostic_events" -> diagnosticsCutoff
-                    "ai_artifacts" -> now
-                    else -> now - TimeUnit.DAYS.toMillis(30)
-                }
-
                 ctx.checkpoint("retention_${target.name}")
+
+                val attempts = (record?.attempts ?: 0) + 1
+
+                // PENDING before the purge: a crash mid-purge leaves a record that a
+                // resume re-processes (purges are idempotent).
+                val pendingSaved = store.save(
+                    RetentionCheckpointRecord(
+                        targetName = target.name,
+                        state = RetentionCheckpointState.PENDING,
+                        attempts = attempts,
+                        cutoffMs = cutoff,
+                        retentionDays = retentionDaysFor(target.name),
+                        updatedAtMs = timeProvider.now()
+                    )
+                )
+                if (!pendingSaved) {
+                    // Checkpoint write failure is a safe non-durable state: the purge is
+                    // idempotent, so re-processing on a later run never double-reports.
+                    Log.w(TAG, "Checkpoint PENDING save failed for target ${target.name}")
+                    ctx.addErrors()
+                }
 
                 // P8-PR1 (NEW-P8-006): Catch per-target purge failures so a single
                 // failing target does not prevent other targets from being processed.
@@ -156,9 +234,37 @@ class DataRetentionWorker @AssistedInject constructor(
                 results += result
 
                 if (result.success) {
-                    markTargetComplete(prefs, target.name)
+                    val completedRecord = RetentionCheckpointRecord(
+                        targetName = target.name,
+                        state = RetentionCheckpointState.COMPLETED,
+                        rowsPurged = result.rowsPurged,
+                        auditEmitted = false,
+                        attempts = attempts,
+                        cutoffMs = cutoff,
+                        retentionDays = retentionDaysFor(target.name),
+                        updatedAtMs = timeProvider.now()
+                    )
+                    if (!store.save(completedRecord)) {
+                        Log.w(TAG, "Checkpoint COMPLETED save failed for target ${target.name}")
+                        ctx.addErrors()
+                    } else if (AUDIT_REQUIRED_TARGETS.contains(target.name)) {
+                        emitRetentionAudit(store, completedRecord, auditDao, ctx)
+                    }
                 } else {
-                    markTargetFailed(prefs, target.name)
+                    val failedRecord = RetentionCheckpointRecord(
+                        targetName = target.name,
+                        state = RetentionCheckpointState.FAILED,
+                        errorCode = result.errorCode ?: DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name,
+                        isTransient = result.isTransient,
+                        attempts = attempts,
+                        cutoffMs = cutoff,
+                        retentionDays = retentionDaysFor(target.name),
+                        updatedAtMs = timeProvider.now()
+                    )
+                    if (!store.save(failedRecord)) {
+                        Log.w(TAG, "Checkpoint FAILED save failed for target ${target.name}")
+                        ctx.addErrors()
+                    }
                     Log.w(TAG, "RetentionTarget[${target.name}] purge reported failure: ${result.errorCode}/${result.errorClass}")
 
                     // Emit diagnostic for failure
@@ -183,46 +289,11 @@ class DataRetentionWorker @AssistedInject constructor(
                 }
             }
 
-            // P8-PR1 (NEW-P8-002): Clear checkpoint once all targets are done
-            clearCheckpoint(prefs)
-
-            val auditDao = appDatabase.privacyAuditDao()
-
-            // Log per-target counts and audit successes
+            // Log per-target counts
             for (result in results) {
                 if (result.rowsPurged > 0 || !result.success) {
                     Log.d(TAG, "RetentionTarget[${result.targetName}]: purged=${result.rowsPurged} success=${result.success} errorCode=${result.errorCode} errorClass=${result.errorClass}")
                 }
-            }
-
-            val notifCount = results.firstOrNull { it.targetName == "raw_notifications" }?.rowsPurged ?: 0
-            val ocrCount = results.firstOrNull { it.targetName == "scanned_receipts.rawOcrText" }?.rowsPurged ?: 0
-
-            if (notifCount > 0) {
-                // RP-02 U-004: per-insert barrier check — a mode flip after the
-                // purges must still block this audit write. A block propagates to
-                // WorkerExecutionGuard and follows its blockedPolicy contract.
-                writeBarrier.checkWritesAllowed("privacy.retention.audit")
-                auditDao.insert(PrivacyAuditEvent(
-                    capability = PrivacyCapability.RAW_NOTIFICATION_RETENTION.name,
-                    decision = "ALLOWED",
-                    reason = "Purged $notifCount raw notifications older than ${settings.rawNotificationRetentionDays} days",
-                    context = "{\"purgedCount\": $notifCount, \"retentionDays\": ${settings.rawNotificationRetentionDays}}",
-                    timestampMs = now,
-                    caller = "DataRetentionWorker"
-                ))
-            }
-            if (ocrCount > 0) {
-                // RP-02 U-004: per-insert barrier check (independent of the audit insert above).
-                writeBarrier.checkWritesAllowed("privacy.retention.audit")
-                auditDao.insert(PrivacyAuditEvent(
-                    capability = PrivacyCapability.RAW_OCR_RETENTION.name,
-                    decision = "ALLOWED",
-                    reason = "Purged raw OCR text from $ocrCount receipts older than ${settings.rawOcrRetentionDays} days",
-                    context = "{\"purgedCount\": $ocrCount, \"retentionDays\": ${settings.rawOcrRetentionDays}}",
-                    timestampMs = now,
-                    caller = "DataRetentionWorker"
-                ))
             }
 
             val failedTargets = results.filter { !it.success }
@@ -233,13 +304,34 @@ class DataRetentionWorker @AssistedInject constructor(
                 val failedNames = failedTargets.map { it.targetName }
                 Log.w(TAG, "Data retention worker completed with PARTIAL failures: $failedNames")
             } else {
-                Log.d(TAG, "Data retention worker completed: notifications=$notifCount ocr=$ocrCount")
+                Log.d(TAG, "Data retention worker completed")
             }
 
-            // Report partial failure counts to run context
+            // Report partial/failed target counts to the durable run counters (D9).
             ctx.addRowsUpdated(results.sumOf { it.rowsPurged })
+            if (anyFailure) {
+                ctx.setFailedTargetCount(failedTargets.size)
+                ctx.setPartialFailureCount(failedTargets.count { it.isTransient })
+            }
 
-            // If any transient failure occurred, trigger retry
+            // RP-16 16-C: per-record cleanup — only when the run completed without a
+            // transient abort, and only for targets whose desired durable states
+            // (COMPLETED + emitted audit) are reached. FAILED records persist so the
+            // next scheduled run re-attempts those targets; PENDING records persist
+            // so a resume re-processes them. No blanket preferences clear.
+            if (!anyTransient) {
+                for (name in store.allRecordedTargetNames()) {
+                    val rec = store.load(name) ?: continue
+                    if (rec.state == RetentionCheckpointState.COMPLETED &&
+                        (rec.auditEmitted || !AUDIT_REQUIRED_TARGETS.contains(name))
+                    ) {
+                        store.remove(name)
+                    }
+                }
+            }
+
+            // If any transient failure occurred, trigger retry (records persist so a
+            // retry resumes instead of re-purging completed targets).
             if (anyTransient) {
                 val transientNames = failedTargets.filter { it.isTransient }.map { it.targetName }
                 Log.w(TAG, "Transient failures detected in targets: $transientNames — requesting retry")
@@ -248,6 +340,89 @@ class DataRetentionWorker @AssistedInject constructor(
         }
 
         return guardResult.toWorkerResult()
+    }
+
+    /**
+     * RP-16 16-C: Emit the privacy audit for an audit-required COMPLETED record
+     * exactly once, then mark the record's audit as durable.
+     *
+     * Exactly-once identity: "[retention-audit:<target>:<cutoff day bucket>]" is
+     * appended to the audit reason and checked via
+     * [PrivacyAuditDao.countAuditEventsByKey] before insert, so a crash between
+     * the audit insert and the checkpoint update can never duplicate the audit.
+     *
+     * Returns true only when the record's audit state is durable (or the target
+     * needs no audit); a failure leaves the record un-updated (safe non-durable
+     * state + error counter), never a false "audit done".
+     */
+    private suspend fun emitRetentionAudit(
+        store: RetentionCheckpointStore,
+        record: RetentionCheckpointRecord,
+        auditDao: PrivacyAuditDao,
+        ctx: com.yourname.expensetracker.domain.workers.WorkerRunContext
+    ): Boolean {
+        // Zero-row purges carry no audit-worthy information and the legacy worker
+        // never audited them; the audit state is durable by vacuity.
+        if (record.rowsPurged <= 0) {
+            return store.save(record.copy(auditEmitted = true, updatedAtMs = timeProvider.now()))
+        }
+        return try {
+            // RP-02 U-004: per-insert barrier check — a mode flip after the purge
+            // must still block this audit write.
+            writeBarrier.checkWritesAllowed("privacy.retention.audit")
+            val auditKey = auditIdentity(record.targetName, record.cutoffMs)
+            val alreadyEmitted = auditDao.countAuditEventsByKey(AUDIT_CALLER, auditKey) > 0
+            if (!alreadyEmitted) {
+                val (capability, reason, contextJson) = auditContentFor(record)
+                auditDao.insert(PrivacyAuditEvent(
+                    capability = capability,
+                    decision = "ALLOWED",
+                    reason = "$reason [$auditKey]",
+                    context = contextJson,
+                    timestampMs = timeProvider.now(),
+                    caller = AUDIT_CALLER
+                ))
+            }
+            store.save(record.copy(auditEmitted = true, updatedAtMs = timeProvider.now()))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException) {
+            // Barrier denial during maintenance must follow the guard's blockedPolicy
+            // contract (RP-02 U-004) — never swallowed. The record stays
+            // COMPLETED/auditEmitted=false so a later resume re-emits the audit.
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "Retention audit emission failed for target ${record.targetName}", e)
+            ctx.addErrors()
+            false
+        }
+    }
+
+    /** Controlled audit payload (counts + retention days only — never raw data). */
+    private fun auditContentFor(record: RetentionCheckpointRecord): Triple<String, String, String> {
+        return when (record.targetName) {
+            "raw_notifications" -> {
+                val days = record.retentionDays ?: 0
+                Triple(
+                    PrivacyCapability.RAW_NOTIFICATION_RETENTION.name,
+                    "Purged ${record.rowsPurged} raw notifications older than $days days",
+                    "{\"purgedCount\": ${record.rowsPurged}, \"retentionDays\": $days}"
+                )
+            }
+            else -> {
+                val days = record.retentionDays ?: 0
+                Triple(
+                    PrivacyCapability.RAW_OCR_RETENTION.name,
+                    "Purged raw OCR text from ${record.rowsPurged} receipts older than $days days",
+                    "{\"purgedCount\": ${record.rowsPurged}, \"retentionDays\": $days}"
+                )
+            }
+        }
+    }
+
+    private fun auditIdentity(targetName: String, cutoffMs: Long?): String {
+        val dayBucket = (cutoffMs ?: 0L) / DAY_MS
+        return "retention-audit:$targetName:$dayBucket"
     }
 
     /**
@@ -263,59 +438,19 @@ class DataRetentionWorker @AssistedInject constructor(
         else -> false
     }
 
-
-
-    // ── P8-PR1 (NEW-P8-002): Checkpoint helpers ──────────────────────
-
     private fun checkpointPrefs(): SharedPreferences =
         applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-
-    private fun markTargetComplete(prefs: SharedPreferences, targetName: String) {
-        prefs.edit().putBoolean("${CHECKPOINT_PREFIX}$targetName", true).commit()
-    }
-
-    private fun markTargetFailed(prefs: SharedPreferences, targetName: String) {
-        prefs.edit().putBoolean("${CHECKPOINT_PREFIX}${targetName}_failed", true).commit()
-    }
-
-    /**
-     * Returns the name of the first target that is not marked complete,
-     * or `null` if all targets are complete (no checkpoint needed).
-     */
-    private fun getLastIncompleteTarget(prefs: SharedPreferences): String? {
-        val allTargets = retentionRegistry.allTargets().sortedBy { it.name }
-        // A checkpoint is active only if at least one target is marked complete
-        // and the overall run is not cleared (no CLEARED sentinel).
-        if (prefs.getBoolean(PREFS_CLEARED_KEY, false)) return null
-
-        var foundComplete = false
-        for (target in allTargets) {
-            val key = "${CHECKPOINT_PREFIX}${target.name}"
-            val isComplete = prefs.getBoolean(key, false)
-            if (!isComplete) {
-                // If we've seen at least one completed target, this is the resume point
-                if (foundComplete) return target.name
-                // Otherwise no checkpoint is active yet
-                return null
-            }
-            foundComplete = true
-        }
-
-        // All targets complete — no resume needed
-        return null
-    }
-
-    /** Clears the checkpoint once all targets have been processed successfully. */
-    private fun clearCheckpoint(prefs: SharedPreferences) {
-        prefs.edit().clear().commit()
-    }
 
     companion object {
         const val TAG = "DataRetentionWorker"
         const val WORK_NAME = "data_retention"
         private const val PREFS_NAME = "data_retention_checkpoint"
-        private const val CHECKPOINT_PREFIX = "completed_"
-        private const val PREFS_CLEARED_KEY = "_cleared"
+
+        /** Targets whose purge requires a durable privacy audit. */
+        internal val AUDIT_REQUIRED_TARGETS = setOf("raw_notifications", "scanned_receipts.rawOcrText")
+
+        internal const val AUDIT_CALLER = "DataRetentionWorker"
+        private const val DAY_MS = 24L * 60L * 60L * 1000L
 
         /**
          * Enqueue a daily data-retention job.
