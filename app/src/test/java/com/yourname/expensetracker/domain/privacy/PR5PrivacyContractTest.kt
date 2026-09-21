@@ -317,7 +317,8 @@ class PR5PrivacyContractTest {
             policy.requireAllowed(PrivacyCapability.CLOUD_AI_DAILY_BRIEFING)
             fail("Expected SecurityException from requireAllowed()")
         } catch (e: SecurityException) {
-            assertTrue(e.message!!.contains("Cloud AI blocked"))
+            // RP-15 (15-B): requireAllowed messages are bounded controlled codes.
+            assertEquals("CLOUD_AI_DISABLED", e.message)
         }
     }
 }

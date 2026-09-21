@@ -26,10 +26,14 @@ class CompositePrivacyGate(
             val decision = try {
                 gate.check(capability, context)
             } catch (e: Exception) {
-                Timber.e(e, "Privacy gate threw for capability %s — failing closed", capability)
-                finalDecision = PrivacyDecision.FailClosed(
-                    "Privacy check failed (fail-closed): ${e.message}"
+                // RP-15 (15-B): the failure reason is a bounded controlled code.
+                // The exception text is NEVER included; diagnostics use the
+                // exception CLASS NAME only (no stack trace, no message).
+                Timber.e(
+                    "Privacy gate threw %s for capability %s — failing closed",
+                    e::class.java.name, capability.name
                 )
+                finalDecision = PrivacyDecision.FailClosed(PrivacyGateReasonCodes.PRIVACY_GATE_FAILURE)
                 anyGateHandled = true
                 break
             }
@@ -54,7 +58,7 @@ class CompositePrivacyGate(
         if (!anyGateHandled) {
             if (capability in gateHandledCapabilities) {
                 Timber.e("No privacy gate handled GATE_HANDLED capability %s — failing closed", capability)
-                finalDecision = PrivacyDecision.FailClosed("No privacy gate handled $capability")
+                finalDecision = PrivacyDecision.FailClosed(PrivacyGateReasonCodes.NO_GATE_HANDLER)
             } else {
                 Timber.w("No privacy gate handled capability %s — defaulting to Allowed (local-only)", capability)
             }

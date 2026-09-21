@@ -84,6 +84,18 @@ fun BackupRestoreScreen(
             viewModel.clearError()
         }
     }
+    // RP-15 (15-D): a typed privacy denial must never be silent — render the
+    // resource-backed message (never the domain reason string) and clear it.
+    LaunchedEffect(uiState.privacyBlocked) {
+        uiState.privacyBlocked?.let { blocked ->
+            snackbarHostState.showSnackbar(
+                context.getString(blocked.messageResId),
+                actionLabel = "Dismiss",
+                duration = SnackbarDuration.Long
+            )
+            viewModel.clearError()
+        }
+    }
     LaunchedEffect(uiState.successMessage) {
         uiState.successMessage?.let {
             snackbarHostState.showSnackbar(it)

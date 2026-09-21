@@ -29,6 +29,7 @@ import com.yourname.expensetracker.domain.backup.DatabaseImportSummary
 import com.yourname.expensetracker.domain.backup.DatabaseStats
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyDeniedException
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.diagnostics.NoOpOperationRunHandle
@@ -373,7 +374,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         if (rawDbExportDecision.blocksExecution()) {
             Timber.d("exportDatabase: RAW_DATABASE_EXPORT denied by privacy gate: ${rawDbExportDecision.reason()}")
             return@withContext Result.failure(
-                Exception("Raw database export denied by privacy gate: ${rawDbExportDecision.reason()}")
+                PrivacyDeniedException(PrivacyCapability.RAW_DATABASE_EXPORT)
             )
         }
 
@@ -407,7 +408,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 )
                 if (encryptedDecision.blocksExecution()) {
                     return@withContext Result.failure(
-                        Exception("Encrypted backup denied by privacy gate: ${encryptedDecision.reason()}")
+                        PrivacyDeniedException(PrivacyCapability.ENCRYPTED_BACKUP)
                     )
                 }
             } else {
@@ -418,7 +419,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 )
                 if (rawDecision.blocksExecution()) {
                     return@withContext Result.failure(
-                        Exception("Plaintext backup denied by privacy gate: ${rawDecision.reason()}")
+                        PrivacyDeniedException(PrivacyCapability.RAWBACKUP_EXPORT)
                     )
                 }
             }
@@ -610,7 +611,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             if (encryptedDecision is PrivacyDecision.Denied) {
                 run.failedFinal("Privacy gate denied: ${encryptedDecision.reason}")
                 return@withContext Result.failure(
-                    Exception("Encrypted backup denied by privacy gate: ${encryptedDecision.reason}")
+                    PrivacyDeniedException(PrivacyCapability.ENCRYPTED_BACKUP)
                 )
             }
 

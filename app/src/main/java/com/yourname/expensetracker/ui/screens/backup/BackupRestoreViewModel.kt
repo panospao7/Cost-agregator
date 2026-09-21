@@ -24,6 +24,10 @@ import javax.inject.Inject
 
 /**
  * UI state for the Backup & Restore screen.
+ *
+ * RP-15 (15-D): privacy denial / fail-closed / SecurityException outcomes
+ * converge on [privacyBlocked] (typed, resource-backed) instead of message
+ * matching on repository failure strings.
  */
 data class BackupRestoreUiState(
     val isBackingUp: Boolean = false,
@@ -31,7 +35,9 @@ data class BackupRestoreUiState(
     val lastBackupDate: String? = null,
     val errorMessage: String? = null,
     val successMessage: String? = null,
-    val restartRequired: Boolean = false
+    val restartRequired: Boolean = false,
+    /** RP-15 (15-D): typed privacy-denied state — rendered via PrivacyBlockedCard. */
+    val privacyBlocked: com.yourname.expensetracker.ui.components.PrivacyBlockedUiState? = null
 )
 
 @HiltViewModel
@@ -95,7 +101,8 @@ class BackupRestoreViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(
                 isBackingUp = true,
                 errorMessage = null,
-                successMessage = null
+                successMessage = null,
+                privacyBlocked = null
             )
 
             val result = databaseBackupRepository.createCostBackup(destination, password)
@@ -117,19 +124,21 @@ class BackupRestoreViewModel @Inject constructor(
                 },
                 onFailure = { error ->
                     Timber.e(error, "BACKUP_CREATE_FAILED")
+                    // RP-15 (15-D): typed privacy denial — no message matching.
+                    val denial = denialStateOrNull(error)
                     val message = when {
                         error is com.yourname.expensetracker.data.backup.CostbackupBundle.WrongBackupPasswordException ->
                             "Encryption error: Incorrect password or corrupt backup file"
                         // RP-03A: typed SAF destination failure (open/write/close) — bounded text only
                         error is com.yourname.expensetracker.domain.backup.BackupDestinationException ->
                             "Could not save the backup to the selected location. Please try again."
-                        error.message?.contains("denied", ignoreCase = true) == true ->
-                            "Backup denied by privacy settings"
+                        denial != null -> null
                         else -> "Backup failed. Please try again."
                     }
                     _uiState.value = _uiState.value.copy(
                         isBackingUp = false,
-                        errorMessage = message
+                        errorMessage = message,
+                        privacyBlocked = denial
                     )
                 }
             )
@@ -160,7 +169,8 @@ class BackupRestoreViewModel @Inject constructor(
                 isRestoring = true,
                 errorMessage = null,
                 successMessage = null,
-                restartRequired = false
+                restartRequired = false,
+                privacyBlocked = null
             )
 
             // P7-CURRENT-017: cheap size precheck from provider metadata before opening a stream.
@@ -181,6 +191,20 @@ class BackupRestoreViewModel @Inject constructor(
             }
             copyResult.getOrElse { error ->
                 tempFile.delete()
+                // RP-15 (15-D): a SecurityException on the SAF stream is a security
+                // denial — converge on the typed state instead of a raw message.
+                if (error is SecurityException) {
+                    _uiState.value = _uiState.value.copy(
+                        isRestoring = false,
+                        errorMessage = null,
+                        privacyBlocked = com.yourname.expensetracker.ui.components.PrivacyBlockedUiState(
+                            capability = com.yourname.expensetracker.domain.privacy.PrivacyCapability.ENCRYPTED_BACKUP,
+                            messageResId = com.yourname.expensetracker.R.string.privacy_blocked_generic,
+                            reasonCode = com.yourname.expensetracker.domain.privacy.PrivacyGateReasonCodes.PRIVACY_GATE_FAILURE
+                        )
+                    )
+                    return@launch
+                }
                 val message = when (error) {
                     is CostbackupBundle.InvalidBackupFormatException ->
                         "Not a valid .costbackup file"
@@ -219,6 +243,8 @@ class BackupRestoreViewModel @Inject constructor(
                 },
                 onFailure = { error ->
                     Timber.e(error, "RESTORE_FAILED")
+                    // RP-15 (15-D): typed privacy denial — no message matching.
+                    val denial = denialStateOrNull(error)
                     val message = when {
                         error is com.yourname.expensetracker.data.backup.CostbackupBundle.WrongBackupPasswordException ->
                             "Incorrect password or corrupt backup file"
@@ -228,11 +254,14 @@ class BackupRestoreViewModel @Inject constructor(
                             "Backup file is too large or contains too many entries"
                         error.message?.contains("password", ignoreCase = true) == true ->
                             "Incorrect password or corrupt backup file"
-                        error.message?.contains("denied", ignoreCase = true) == true ->
-                            "Restore denied by privacy settings"
+                        denial != null -> null
                         else -> "Restore failed. Please try again."
                     }
-                    _uiState.value = _uiState.value.copy(isRestoring = false, errorMessage = message)
+                    _uiState.value = _uiState.value.copy(
+                        isRestoring = false,
+                        errorMessage = message,
+                        privacyBlocked = denial
+                    )
                 }
             )
         }
@@ -242,7 +271,30 @@ class BackupRestoreViewModel @Inject constructor(
      * Clears the current error message.
      */
     fun clearError() {
-        _uiState.value = _uiState.value.copy(errorMessage = null)
+        _uiState.value = _uiState.value.copy(errorMessage = null, privacyBlocked = null)
+    }
+
+    /**
+     * RP-15 (15-D): maps a typed [com.yourname.expensetracker.domain.privacy.PrivacyDeniedException]
+     * to the resource-backed blocked state. Returns null for any other failure —
+     * those keep their bounded messages. The denial reason code travels in the
+     * exception message (a controlled constant), never free text.
+     */
+    @VisibleForTesting
+    internal fun denialStateOrNull(error: Throwable): com.yourname.expensetracker.ui.components.PrivacyBlockedUiState? {
+        if (error !is com.yourname.expensetracker.domain.privacy.PrivacyDeniedException) return null
+        return com.yourname.expensetracker.ui.components.PrivacyBlockedUiState(
+            capability = error.capability,
+            messageResId = when (error.capability) {
+                com.yourname.expensetracker.domain.privacy.PrivacyCapability.ENCRYPTED_BACKUP ->
+                    com.yourname.expensetracker.R.string.privacy_blocked_encrypted_backup
+                com.yourname.expensetracker.domain.privacy.PrivacyCapability.RAWBACKUP_EXPORT,
+                com.yourname.expensetracker.domain.privacy.PrivacyCapability.RAW_DATABASE_EXPORT ->
+                    com.yourname.expensetracker.R.string.privacy_blocked_raw_export
+                else -> com.yourname.expensetracker.R.string.privacy_blocked_generic
+            },
+            reasonCode = error.message ?: com.yourname.expensetracker.domain.privacy.PrivacyGateReasonCodes.PRIVACY_GATE_FAILURE
+        )
     }
 
     /**

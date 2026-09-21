@@ -59,6 +59,8 @@ data class ExportOptionsUiState(
     val exportPreview: String? = null,
     val exportPreviewTruncated: Boolean = false,
     val error: String? = null,
+    /** RP-15 (15-D): typed privacy-denied state — denial/fail-closed converge here. */
+    val privacyBlocked: com.yourname.expensetracker.ui.components.PrivacyBlockedUiState? = null,
     val exportSuccess: Boolean = false,
     val exportFilePath: String? = null
 )
@@ -205,7 +207,8 @@ class ExportOptionsViewModel @Inject constructor(
                 exportPreview = null,
                 exportPreviewTruncated = false,
                 exportSuccess = false,
-                error = null
+                error = null,
+                privacyBlocked = null
             )
 
             // P12-NEW-01: Fail closed BEFORE doing any work if encryption is
@@ -231,9 +234,16 @@ class ExportOptionsViewModel @Inject constructor(
                 mapOf("operation" to "export", "encrypted" to encryptExport.toString())
             )
             if (privacyDecision.blocksExecution()) {
+                // RP-15 (15-D): converge denial/fail-closed on the typed state.
+                // The raw decision reason is NOT rendered — only a bounded
+                // fallback message plus the resource-backed blocked state.
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
-                    error = "Export denied by privacy settings: ${privacyDecision.reason()}"
+                    error = "Export is blocked by your privacy settings.",
+                    privacyBlocked = com.yourname.expensetracker.ui.components.PrivacyBlockedUiState.fromDecisionOrFallback(
+                        privacyDecision,
+                        exportCapability
+                    )
                 )
                 return@launch
             }

@@ -1,11 +1,12 @@
 package com.yourname.expensetracker.data.privacy
 
 import com.yourname.expensetracker.data.ai.provider.internal.CloudPiiSanitizer
-import com.yourname.expensetracker.data.ai.provider.internal.sha256Prefix
 import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
 import com.yourname.expensetracker.domain.privacy.CloudPayloadRedactor
+import com.yourname.expensetracker.domain.privacy.InstallationSecretHasher
 import com.yourname.expensetracker.domain.privacy.RedactedField
 import com.yourname.expensetracker.domain.privacy.RedactedPayload
+import com.yourname.expensetracker.domain.privacy.versionedPseudonym
 import java.security.MessageDigest
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -13,9 +14,28 @@ import javax.inject.Singleton
 /**
  * Wraps [CloudPiiSanitizer] behind the [CloudPayloadRedactor] interface.
  * (ARCH-04/P8-P1-1 Stage 1 implementation.)
+ *
+ * RP-15 (15-C, D13 remediation): both [redactText] and [redactMerchant] use the
+ * SAME injected [CloudPiiSanitizer] and the SAME [InstallationSecretHasher] —
+ * merchant identity pseudonyms are versioned installation-secret HMACs, never
+ * unsalted public SHA-256. When the installation secret is unavailable, the
+ * identity-free marker is emitted (fail closed; no public-hash fallback).
  */
 @Singleton
-class DefaultCloudPayloadRedactor @Inject constructor() : CloudPayloadRedactor {
+class DefaultCloudPayloadRedactor @Inject constructor(
+    private val cloudPiiSanitizer: CloudPiiSanitizer,
+    private val installationSecretHasher: InstallationSecretHasher
+) : CloudPayloadRedactor {
+
+    /**
+     * Fail-closed wiring for secondary constructors of cloud services (test /
+     * fallback paths that cannot reach Hilt): the hasher never yields a hash,
+     * so every pseudonym degrades to the identity-free marker.
+     */
+    constructor() : this(
+        cloudPiiSanitizer = CloudPiiSanitizer(FailClosedInstallationSecretHasher),
+        installationSecretHasher = FailClosedInstallationSecretHasher
+    )
 
     // P8-P1-08: Purpose-aware redaction — adjusts rules based on cloud AI use case.
     override fun redactText(text: String, purpose: CloudPayloadPurpose): RedactedPayload {
@@ -29,23 +49,25 @@ class DefaultCloudPayloadRedactor @Inject constructor() : CloudPayloadRedactor {
         val sanitized = when (purpose) {
             // Preserve amounts/dates for receipt and warranty extraction
             CloudPayloadPurpose.RECEIPT_ASSIST,
-            CloudPayloadPurpose.WARRANTY_EXTRACTION -> CloudPiiSanitizer.sanitizeText(
+            CloudPayloadPurpose.WARRANTY_EXTRACTION -> cloudPiiSanitizer.sanitizeText(
                 raw = text,
                 maxChars = maxChars,
                 fallbackPrefix = "text"
             )
             // Hash merchant names for dashboard briefings
             CloudPayloadPurpose.DASHBOARD_BRIEFING -> {
-                val base = CloudPiiSanitizer.sanitizeText(
+                val base = cloudPiiSanitizer.sanitizeText(
                     raw = text,
                     maxChars = maxChars,
                     fallbackPrefix = "text"
                 )
                 MERCHANT_LINE_REGEX.replace(base) { match ->
-                    "merchant_${match.value.sha256Prefix()}"
+                    // RP-15 (15-C): same installation-secret HMAC service as
+                    // redactMerchant() — versioned pseudonym, fail-closed marker.
+                    "merchant_${installationSecretHasher.versionedPseudonym(match.value)}"
                 }
             }
-            else -> CloudPiiSanitizer.sanitizeText(
+            else -> cloudPiiSanitizer.sanitizeText(
                 raw = text,
                 maxChars = maxChars,
                 fallbackPrefix = "text"
@@ -61,7 +83,7 @@ class DefaultCloudPayloadRedactor @Inject constructor() : CloudPayloadRedactor {
     }
 
     override fun redactMerchant(merchant: String?): RedactedField {
-        val sanitized = CloudPiiSanitizer.sanitizeMerchant(merchant, shouldRedact = true)
+        val sanitized = cloudPiiSanitizer.sanitizeMerchant(merchant, shouldRedact = true)
         val nonRedacted = merchant?.take(80) ?: "Unknown"
         return RedactedField(
             value = sanitized,
@@ -70,6 +92,8 @@ class DefaultCloudPayloadRedactor @Inject constructor() : CloudPayloadRedactor {
     }
 
     private fun hashPayload(raw: String): String {
+        // Content hash for audit records only — the key is immaterial by design
+        // (see SensitiveHashingService KDoc); this is not an identity pseudonym.
         return MessageDigest.getInstance("SHA-256")
             .digest(raw.toByteArray())
             .joinToString("") { "%02x".format(it) }

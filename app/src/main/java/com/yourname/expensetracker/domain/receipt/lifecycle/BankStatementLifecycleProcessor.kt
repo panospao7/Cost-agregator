@@ -37,8 +37,9 @@ import com.yourname.expensetracker.domain.receipt.ReceiptSourceType
 import com.yourname.expensetracker.domain.util.CancellationSafe
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
-import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.privacy.RawContentSanitizer
+import com.yourname.expensetracker.domain.privacy.RawPersistencePolicyResolver
+import com.yourname.expensetracker.domain.privacy.RawSourceType
 import com.yourname.expensetracker.domain.util.TimeProvider
 import timber.log.Timber
 import kotlinx.coroutines.NonCancellable
@@ -122,7 +123,10 @@ class BankStatementLifecycleProcessor @Inject constructor(
     private val transactionValidator: ValidateBankStatementTransactionsUseCase,
     private val recurringExpenseRepository: RecurringExpenseRepository,
     private val writeBarrier: DatabaseWriteBarrier,
-    private val privacySettingsRepository: PrivacySettingsRepository,
+    // RP-15 (15-A): policy comes ONLY from the resolver — never an inline
+    // `settings.rawBankStatementStorageMode` read. The resolver fails closed to
+    // FAIL_CLOSED_DEFAULTS (DO_NOT_STORE) on corrupt/unavailable settings.
+    private val rawPersistencePolicyResolver: RawPersistencePolicyResolver,
     private val bankStatementImportRunDao: BankStatementImportRunDao,
     private val bankStatementImportItemDao: BankStatementImportItemDao,
     private val receiptRecordWriter: ReceiptRecordWriter
@@ -348,9 +352,13 @@ class BankStatementLifecycleProcessor @Inject constructor(
 
             val statementReceipt = ScannedReceipt(
                 imagePath = ocrResult.savedImagePath,
+                // RP-15 (15-A): consume the complete policy from the resolver.
+                // Fail-closed note: if settings are corrupt/unavailable the resolver
+                // yields DO_NOT_STORE and the raw OCR text is not persisted at all
+                // (previously a settings-read failure aborted the whole import).
                 rawOcrText = RawContentSanitizer.sanitizeRawOcr(
                     ocrResult.fullText,
-                    privacySettingsRepository.getSettings().rawBankStatementStorageMode
+                    rawPersistencePolicyResolver.forSource(RawSourceType.BANK_STATEMENT).mode
                 ),
                 parsedTotal = null, // varies per transaction
                 parsedMerchant = "Bank Statement",

@@ -84,9 +84,10 @@ class UPR5CompletionTest {
             policy.requireAllowed(PrivacyCapability.CLOUD_AI_RECEIPT_OCR)
             fail("Expected SecurityException when cloud AI is disabled")
         } catch (e: SecurityException) {
-            assertTrue(
-                "Error message must reference cloud AI being blocked",
-                e.message!!.contains("Cloud AI blocked")
+            // RP-15 (15-B): requireAllowed messages are bounded controlled codes.
+            assertEquals(
+                "Error must be the controlled CLOUD_AI_DISABLED reason code",
+                "CLOUD_AI_DISABLED", e.message
             )
         }
     }

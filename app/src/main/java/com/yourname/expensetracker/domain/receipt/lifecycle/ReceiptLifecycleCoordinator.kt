@@ -48,7 +48,7 @@ import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifie
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
-import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+import com.yourname.expensetracker.domain.privacy.RawPersistencePolicyResolver
 import com.yourname.expensetracker.domain.privacy.RawContentSanitizer
 import com.yourname.expensetracker.domain.privacy.RawStorageMode
 import com.yourname.expensetracker.domain.util.CancellationSafe
@@ -121,7 +121,10 @@ class ReceiptLifecycleCoordinator @Inject constructor(
     private val assetCleanupCoordinator: AssetCleanupCoordinator,
     private val merchantNormalizer: MerchantNormalizer,
     private val hybridClassifier: HybridExpenseClassifier,
-    private val privacySettingsRepository: PrivacySettingsRepository,
+    // RP-15 (15-A): raw-persistence policy comes ONLY from the resolver — never
+    // an inline `settings.*StorageMode` read. The resolver normalizes corrupt or
+    // unavailable settings to PrivacySettings.FAIL_CLOSED_DEFAULTS first.
+    private val rawPersistencePolicyResolver: com.yourname.expensetracker.domain.privacy.RawPersistencePolicyResolver,
     private val diagnosticEventWriter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter,
     private val sourceLinkWriter: SourceLinkWriter,
     private val receiptSideEffectPlanner: ReceiptSideEffectPlanner,
@@ -566,10 +569,11 @@ class ReceiptLifecycleCoordinator @Inject constructor(
 
             // 5. Save receipt with lifecycle metadata and fingerprints,
             //    and carry the taxInclusive flag for downstream consumers.
-            // RP-12 12a (P3-001): resolve the privacy mode BEFORE opening the DB
-            // transaction so no DataStore I/O happens under the Room write lock
-            // (same pattern as P11-CURRENT-020 on the email path).
-            val rawStorageMode = resolveRawStorageMode()
+            // RP-12 12a (P3-001): resolve the COMPLETE privacy policy (RP-15 15-A)
+            // BEFORE opening the DB transaction so no DataStore I/O happens under
+            // the Room write lock (same pattern as P11-CURRENT-020 on the email path).
+            val rawPersistencePolicy = resolveRawPersistencePolicy()
+            val rawStorageMode = rawPersistencePolicy.mode
             val now = timeProvider.now()
             // RP-12 12b (P3-007): single structured-data transformer before
             // insert. Fingerprints above were computed from the ephemeral values
@@ -731,19 +735,14 @@ class ReceiptLifecycleCoordinator @Inject constructor(
     }
 
     /**
-     * Resolves the raw OCR storage mode for side-effect planning. Fails closed:
-     * on a settings read failure (non-cancellation) the most restrictive
-     * persisted representation is used instead of failing the save.
+     * RP-15 (15-A): resolves the COMPLETE raw persistence policy for the
+     * camera/batch receipt path through the central resolver. The resolver
+     * fails closed: corrupt or unavailable settings normalize to
+     * `PrivacySettings.FAIL_CLOSED_DEFAULTS` (DO_NOT_STORE everywhere)
+     * before policy construction.
      */
-    private suspend fun resolveRawStorageMode(): RawStorageMode {
-        return try {
-            privacySettingsRepository.getSettings().rawOcrStorageMode
-        } catch (e: Exception) {
-            CancellationSafe.rethrowIfCancellation(e)
-            Timber.w("processReceiptInput: rawOcrStorageMode unavailable, using most restrictive mode")
-            RawStorageMode.DO_NOT_STORE
-        }
-    }
+    private suspend fun resolveRawPersistencePolicy(): com.yourname.expensetracker.domain.privacy.RawPersistencePolicy =
+        rawPersistencePolicyResolver.forSource(com.yourname.expensetracker.domain.privacy.RawSourceType.RECEIPT_OCR)
 
     /**
      * Processes an email receipt from structured data.
@@ -797,8 +796,12 @@ class ReceiptLifecycleCoordinator @Inject constructor(
 suspend fun saveEmailReceiptTyped(receipt: ScannedReceipt): SaveEmailReceiptResult {
     writeBarrier.checkWritesAllowed("ReceiptLifecycleCoordinator.saveEmailReceipt")
     val now = timeProvider.now()
-    // P11-P1-04: Email receipts must use emailReceiptStorageMode, not rawOcrStorageMode
-    val emailStorageMode = privacySettingsRepository.getSettings().emailReceiptStorageMode
+    // P11-P1-04: Email receipts must use the EMAIL_RECEIPT policy, not rawOcr.
+    // RP-15 (15-A): policy comes from the resolver; corrupt/unavailable settings
+    // fail closed to DO_NOT_STORE (raw text is dropped, dedupe hash still allowed).
+    val emailStorageMode = rawPersistencePolicyResolver
+        .forSource(com.yourname.expensetracker.domain.privacy.RawSourceType.EMAIL_RECEIPT)
+        .mode
     val sanitizedOcrText = RawContentSanitizer.sanitizeRawOcr(receipt.rawOcrText, emailStorageMode)
     val updated = ReceiptTimestampPolicy.forInsert(receipt.copy(
         sourceType = ReceiptSourceType.EMAIL.name,
@@ -840,8 +843,11 @@ suspend fun saveEmailReceiptTyped(receipt: ScannedReceipt): SaveEmailReceiptResu
 suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
         writeBarrier.checkWritesAllowed("ReceiptLifecycleCoordinator.saveEmailReceipt")
         val now = timeProvider.now()
-        // P11-P1-04: Email receipts must use emailReceiptStorageMode, not rawOcrStorageMode
-        val emailStorageMode = privacySettingsRepository.getSettings().emailReceiptStorageMode
+        // P11-P1-04: Email receipts must use the EMAIL_RECEIPT policy, not rawOcr.
+        // RP-15 (15-A): policy comes from the resolver (fail-closed normalization).
+        val emailStorageMode = rawPersistencePolicyResolver
+            .forSource(com.yourname.expensetracker.domain.privacy.RawSourceType.EMAIL_RECEIPT)
+            .mode
         val sanitizedOcrText = RawContentSanitizer.sanitizeRawOcr(receipt.rawOcrText, emailStorageMode)
         val updated = ReceiptTimestampPolicy.forInsert(receipt.copy(
             sourceType = ReceiptSourceType.EMAIL.name,
@@ -931,15 +937,19 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
         } catch (e: Exception) {
             CancellationSafe.rethrowIfCancellation(e)
             emitEmailReceiptDiagnostic("validate", "ERROR", "writes_blocked", null, null, correlationId)
-            return EmailReceiptProcessResult.Error("Database writes blocked: ${e.message}")
+            // RP-15: bounded reason only — exception text must never reach callers/UI
+            return EmailReceiptProcessResult.Error("Database writes blocked")
         }
 
         // Check messageId dedup
         // PRIV-441-09: Use the hash from emailData.messageId (already hashed by ingestion service)
         // for dedup in all modes — never use raw messageId for persistence lookup
         val messageIdHash = emailData.messageId  // already HMAC hash from EmailReceiptIngestionService
-        val settings = privacySettingsRepository.getSettings()
-        val emailStorageMode = settings.emailReceiptStorageMode
+        // RP-15 (15-A): complete policy from the resolver — fail-closed on
+        // corrupt/unavailable settings (DO_NOT_STORE), dedupe hash preserved.
+        val emailPersistencePolicy = rawPersistencePolicyResolver
+            .forSource(com.yourname.expensetracker.domain.privacy.RawSourceType.EMAIL_RECEIPT)
+        val emailStorageMode = emailPersistencePolicy.mode
         if (messageIdHash.isNotBlank()) {
             // Look up by hash in all modes — hash is always stored
             val existing = scannedReceiptDao.getBySourceFingerprint(messageIdHash)

@@ -112,7 +112,12 @@ fun SpendingMapScreen(
     }
     LaunchedEffect(state.gpsPrivacyBlocked) {
         val blocked = state.gpsPrivacyBlocked ?: return@LaunchedEffect
-        snackbarHostState.showSnackbar(blocked.reason, actionLabel = "Dismiss", duration = SnackbarDuration.Long)
+        // RP-15 (15-D): render the resource-backed message — never a domain reason string.
+        snackbarHostState.showSnackbar(
+            context.getString(blocked.messageResId),
+            actionLabel = "Dismiss",
+            duration = SnackbarDuration.Long
+        )
         viewModel.dismissGpsPrivacyBlocked()
     }
     LaunchedEffect(state.correctionSaveError) {

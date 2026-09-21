@@ -30,16 +30,23 @@ import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 /**
  * Displays a privacy-blocked state card with typed capability info.
  *
+ * RP-15 (15-D): renders RESOURCE-BACKED text only. The domain
+ * [PrivacyBlocked.reason] string (and any exception-derived text) is never
+ * rendered here — the [PrivacyBlockedUiState] adapter owns the mapping from
+ * blocked state to a string resource.
+ *
  * Shows the user why a feature is disabled and optionally provides
  * a button to navigate to privacy settings.
  */
 @Composable
 fun PrivacyBlockedCard(
-    blocked: PrivacyBlocked,
+    state: PrivacyBlockedUiState,
     modifier: Modifier = Modifier,
     onOpenPrivacySettings: (() -> Unit)? = null
 ) {
-    val description = "Feature disabled: ${blocked.capability.displayLabel()}. ${blocked.reason}"
+    // Content description composes only capability labels and resource strings.
+    val description = "Feature disabled: ${state.capability.displayLabel()}. " +
+        stringResource(state.messageResId)
     Card(
         modifier = modifier
             .fillMaxWidth()
@@ -66,7 +73,7 @@ fun PrivacyBlockedCard(
                     color = MaterialTheme.colorScheme.onErrorContainer
                 )
                 Text(
-                    blocked.reason,
+                    stringResource(state.messageResId),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -79,6 +86,23 @@ fun PrivacyBlockedCard(
             }
         }
     }
+}
+
+/**
+ * Bridge overload: adapts the domain blocked state and delegates to the
+ * resource-backed card. Never renders [PrivacyBlocked.reason].
+ */
+@Composable
+fun PrivacyBlockedCard(
+    blocked: PrivacyBlocked,
+    modifier: Modifier = Modifier,
+    onOpenPrivacySettings: (() -> Unit)? = null
+) {
+    PrivacyBlockedCard(
+        state = PrivacyBlockedUiState.fromBlocked(blocked),
+        modifier = modifier,
+        onOpenPrivacySettings = onOpenPrivacySettings
+    )
 }
 
 /**

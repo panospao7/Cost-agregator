@@ -48,7 +48,7 @@ import com.yourname.expensetracker.domain.util.AmountUtils
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
-import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+import com.yourname.expensetracker.domain.privacy.RawPersistencePolicyResolver
 import com.yourname.expensetracker.domain.privacy.RawContentSanitizer
 import com.yourname.expensetracker.domain.provenance.NotificationSourceLinkPayloadFactory
 import com.yourname.expensetracker.domain.provenance.PendingReviewSourceContext
@@ -162,7 +162,10 @@ class NotificationProcessingPipeline @Inject constructor(
     private val transactionRunner: DomainTransactionRunner,
     private val diagnosticEmitter: com.yourname.expensetracker.domain.diagnostics.NotificationDiagnosticEmitter,
     private val writeBarrier: DatabaseWriteBarrier,
-    private val privacySettingsRepository: PrivacySettingsRepository,
+    // RP-15 (15-A): raw-persistence policy comes ONLY from the resolver — never an
+    // inline `settings.rawNotificationStorageMode` read. The resolver normalizes
+    // corrupt/unavailable settings to FAIL_CLOSED_DEFAULTS before policy construction.
+    private val rawPersistencePolicyResolver: com.yourname.expensetracker.domain.privacy.RawPersistencePolicyResolver,
     private val userCurrencyProvider: UserCurrencyProvider,
     private val moneySignalDetector: com.yourname.expensetracker.domain.notification.money.NotificationMoneySignalDetector,
     @ApplicationScope private val applicationScope: CoroutineScope
@@ -835,15 +838,14 @@ class NotificationProcessingPipeline @Inject constructor(
     /**
      * PR3: Sanitize notification text before storing in PendingReview.
      * Uses the provided rawStorageMode (from PersistenceContext when available,
-     * falls back to current PrivacySettings).
-     * Falls back to STORE_REDACTED on read failure (fail-closed).
+     * falls back to the RawPersistencePolicyResolver (RP-15 15-A) — never an
+     * inline settings read. The resolver fails closed to DO_NOT_STORE when
+     * settings are corrupt/unavailable.
      */
     private suspend fun sanitizePendingReviewText(text: String?, mode: com.yourname.expensetracker.domain.privacy.RawStorageMode? = null): String? {
-        val resolvedMode = mode ?: try {
-            privacySettingsRepository.getSettings().rawNotificationStorageMode
-        } catch (_: Exception) {
-            com.yourname.expensetracker.domain.privacy.RawStorageMode.STORE_REDACTED
-        }
+        val resolvedMode = mode ?: rawPersistencePolicyResolver
+            .forSource(com.yourname.expensetracker.domain.privacy.RawSourceType.NOTIFICATION)
+            .mode
         return RawContentSanitizer.sanitizeNotificationText(text, resolvedMode)
     }
 

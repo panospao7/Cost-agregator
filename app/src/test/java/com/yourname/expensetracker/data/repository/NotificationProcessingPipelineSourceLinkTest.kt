@@ -126,7 +126,18 @@ class NotificationProcessingPipelineSourceLinkTest {
             transactionRunner = mockk(relaxed = true),
             diagnosticEmitter = diagnosticEmitter,
             writeBarrier = writeBarrier,
-            privacySettingsRepository = mockk(relaxed = true),
+            rawPersistencePolicyResolver = com.yourname.expensetracker.domain.privacy.RawPersistencePolicyResolver(
+            object : com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository {
+                private val settings = com.yourname.expensetracker.domain.privacy.PrivacySettings()
+                override fun observeSettings() = kotlinx.coroutines.flow.flowOf(settings)
+                override fun observeLoadState() = kotlinx.coroutines.flow.flowOf(
+                    com.yourname.expensetracker.domain.privacy.PrivacySettingsLoadState.Loaded(settings))
+                override suspend fun getSettings() = settings
+                override suspend fun getLoadState() =
+                    com.yourname.expensetracker.domain.privacy.PrivacySettingsLoadState.Loaded(settings)
+                override suspend fun updateSettings(transform: (com.yourname.expensetracker.domain.privacy.PrivacySettings) -> com.yourname.expensetracker.domain.privacy.PrivacySettings) {}
+            }
+        ),
             userCurrencyProvider = mockk(relaxed = true),
             moneySignalDetector = mockk(relaxed = true),
             applicationScope = applicationScope

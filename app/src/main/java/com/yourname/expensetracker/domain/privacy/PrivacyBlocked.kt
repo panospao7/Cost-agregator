@@ -24,9 +24,12 @@ package com.yourname.expensetracker.domain.privacy
  *
  * - [toPrivacyBlocked] is the single entry point for mapping [PrivacyDecision] → [PrivacyBlocked].
  * - No provider constructs [PrivacyBlocked] subclasses directly; they always go through
- *   [toPrivacyBlocked] or receive a typed [AiServiceError.PrivacyDenied] from the gate layer.
- * - The [reason] string is a static default — the [PrivacyDecision.Denied.reason] from
- *   the gate is passed through so the decision reason is preserved end-to-end.
+ *   [toPrivacyBlocked] (or [toPrivacyBlockedOrFallback] when they need a value for
+ *   every outcome) and receive a typed [AiServiceError.PrivacyDenied] from the gate layer.
+ * - RP-15 (15-B): the [reason] string is ALWAYS a static default of the typed subclass
+ *   or a bounded controlled code from [PrivacyGateReasonCodes]. Gate-decision reasons
+ *   are deliberately NOT passed through here — [PrivacyBlocked.Custom] instances
+ *   created by this mapping never carry untrusted text.
  */
 sealed interface PrivacyBlocked {
     val capability: PrivacyCapability
@@ -90,30 +93,43 @@ sealed interface PrivacyBlocked {
  * blocked states. Cloud providers MUST use [AiServiceError.PrivacyDenied] wrapping the
  * result of this function. Direct construction of [PrivacyBlocked] subclasses outside
  * this mapper is not allowed.
+ *
+ * RP-15 (15-B): mapping is CENTRALIZED here. Reasons are static defaults or controlled
+ * codes from [PrivacyGateReasonCodes] — never gate-decision or exception text.
  */
 fun PrivacyDecision.toPrivacyBlocked(capability: PrivacyCapability): PrivacyBlocked? = when (this) {
     is PrivacyDecision.Allowed, is PrivacyDecision.NotApplicable -> null
-    is PrivacyDecision.Denied -> privacyBlockedFromCapability(capability, reason)
-    is PrivacyDecision.FailClosed -> PrivacyBlocked.Custom(capability, "Privacy check failed safely: $reason")
+    is PrivacyDecision.Denied -> privacyBlockedFromCapability(capability)
+    is PrivacyDecision.FailClosed ->
+        PrivacyBlocked.Custom(capability, PrivacyGateReasonCodes.PRIVACY_GATE_FAILURE)
 }
 
-private fun privacyBlockedFromCapability(capability: PrivacyCapability, reason: String): PrivacyBlocked = when (capability) {
+/**
+ * RP-15 (15-B): centralized fallback for providers that need a blocked state for
+ * every outcome (e.g. when a gate decision was unexpectedly permissive). The only
+ * sanctioned place where [PrivacyBlocked.Custom] may be created for a non-blocked
+ * decision, and its reason is a bounded controlled code.
+ */
+fun PrivacyDecision.toPrivacyBlockedOrFallback(capability: PrivacyCapability): PrivacyBlocked =
+    toPrivacyBlocked(capability) ?: PrivacyBlocked.Custom(capability, PrivacyGateReasonCodes.PRIVACY_BLOCKED)
+
+private fun privacyBlockedFromCapability(capability: PrivacyCapability): PrivacyBlocked = when (capability) {
     PrivacyCapability.CLOUD_AI_GENERAL,
     PrivacyCapability.CLOUD_AI_RECEIPT_ASSIST,
     PrivacyCapability.CLOUD_AI_ITEM_CATEGORIZATION,
     PrivacyCapability.CLOUD_AI_WARRANTY_EXTRACTION,
-    PrivacyCapability.CLOUD_AI_DAILY_BRIEFING -> PrivacyBlocked.CloudAiDisabled(reason)
+    PrivacyCapability.CLOUD_AI_DAILY_BRIEFING -> PrivacyBlocked.CloudAiDisabled()
     PrivacyCapability.CLOUD_AI_BANK_STATEMENT,
-    PrivacyCapability.AI_BANK_STATEMENT_PARSING -> PrivacyBlocked.BankStatementAiDisabled(reason)
-    PrivacyCapability.RECEIPT_IMAGE_CLOUD_UPLOAD -> PrivacyBlocked.ReceiptImageUploadDisabled(reason)
-    PrivacyCapability.EXTERNAL_GEOCODING -> PrivacyBlocked.ExternalGeocodingDisabled(reason)
-    PrivacyCapability.OVERPASS_API -> PrivacyBlocked.OverpassDisabled(reason)
+    PrivacyCapability.AI_BANK_STATEMENT_PARSING -> PrivacyBlocked.BankStatementAiDisabled()
+    PrivacyCapability.RECEIPT_IMAGE_CLOUD_UPLOAD -> PrivacyBlocked.ReceiptImageUploadDisabled()
+    PrivacyCapability.EXTERNAL_GEOCODING -> PrivacyBlocked.ExternalGeocodingDisabled()
+    PrivacyCapability.OVERPASS_API -> PrivacyBlocked.OverpassDisabled()
     PrivacyCapability.NOTIFICATION_CAPTURE,
-    PrivacyCapability.NOTIFICATION_PACKAGE_ALLOWLIST -> PrivacyBlocked.NotificationCaptureDisabled(reason)
-    PrivacyCapability.BACKGROUND_LOCATION_BACKFILL -> PrivacyBlocked.BackgroundLocationDisabled(reason)
-    PrivacyCapability.DEVICE_GPS_LOCATION -> PrivacyBlocked.DeviceGpsDisabled(reason)
-    PrivacyCapability.RAWBACKUP_EXPORT -> PrivacyBlocked.RawExportDisabled(reason)
-    PrivacyCapability.ENCRYPTED_BACKUP -> PrivacyBlocked.EncryptedBackupDisabled(reason)
-    PrivacyCapability.DEBUG_DATA_PERSISTENCE -> PrivacyBlocked.DebugDataPersistenceDisabled(reason)
-    else -> PrivacyBlocked.Custom(capability, reason)
+    PrivacyCapability.NOTIFICATION_PACKAGE_ALLOWLIST -> PrivacyBlocked.NotificationCaptureDisabled()
+    PrivacyCapability.BACKGROUND_LOCATION_BACKFILL -> PrivacyBlocked.BackgroundLocationDisabled()
+    PrivacyCapability.DEVICE_GPS_LOCATION -> PrivacyBlocked.DeviceGpsDisabled()
+    PrivacyCapability.RAWBACKUP_EXPORT -> PrivacyBlocked.RawExportDisabled()
+    PrivacyCapability.ENCRYPTED_BACKUP -> PrivacyBlocked.EncryptedBackupDisabled()
+    PrivacyCapability.DEBUG_DATA_PERSISTENCE -> PrivacyBlocked.DebugDataPersistenceDisabled()
+    else -> PrivacyBlocked.Custom(capability, PrivacyGateReasonCodes.PRIVACY_BLOCKED)
 }

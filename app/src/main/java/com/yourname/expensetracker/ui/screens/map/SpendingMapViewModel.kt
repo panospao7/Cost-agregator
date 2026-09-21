@@ -7,7 +7,6 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
-import com.yourname.expensetracker.domain.privacy.toPrivacyBlocked
 import timber.log.Timber
 import com.yourname.expensetracker.data.database.entity.MerchantLocationCorrection
 import com.yourname.expensetracker.data.database.entity.TransactionType
@@ -102,8 +101,9 @@ data class SpendingMapState(
   val mapConversionWarnings: Int = 0,
   /** S10-006: Marker conversion failures (all transaction types, shown in original currency) */
   val markerConversionWarnings: Int = 0,
-  /** S3-004: Typed GPS privacy blocked state — preserves denial reason and type */
-  val gpsPrivacyBlocked: com.yourname.expensetracker.domain.privacy.PrivacyBlocked? = null,
+  /** S3-004 + RP-15 (15-D): typed, resource-backed GPS privacy blocked state —
+   *  set on gate denial, fail-closed, AND permission races (not only a snackbar). */
+  val gpsPrivacyBlocked: com.yourname.expensetracker.ui.components.PrivacyBlockedUiState? = null,
   /** S10-011: true while a correction/pin save is in progress */
   val isSavingCorrection: Boolean = false,
   val correctionSaveError: String? = null
@@ -384,7 +384,7 @@ class SpendingMapViewModel @Inject constructor(
                 ) }
                 refreshStats()
             } catch (e: Exception) {
-                _state.update { it.copy(isSavingCorrection = false, correctionSaveError = e.message ?: "Save failed") }
+                _state.update { it.copy(isSavingCorrection = false, correctionSaveError = "Could not save the correction. Please try again.") }
             }
         }
     }
@@ -810,8 +810,16 @@ class SpendingMapViewModel @Inject constructor(
             val decision = privacyGate.check(PrivacyCapability.DEVICE_GPS_LOCATION)
             if (decision.blocksExecution()) {
                 Timber.d("Device GPS denied by privacy settings")
-                // S3-004: Typed blocked state preserves denial reason
-                _state.update { it.copy(gpsPrivacyBlocked = decision.toPrivacyBlocked(com.yourname.expensetracker.domain.privacy.PrivacyCapability.DEVICE_GPS_LOCATION) ?: com.yourname.expensetracker.domain.privacy.PrivacyBlocked.DeviceGpsDisabled()) }
+                // S3-004 + RP-15 (15-D): typed blocked state — denial AND fail-closed
+                // converge on the resource-backed state, never the raw decision text.
+                _state.update {
+                    it.copy(
+                        gpsPrivacyBlocked = com.yourname.expensetracker.ui.components.PrivacyBlockedUiState.fromDecisionOrFallback(
+                            decision,
+                            com.yourname.expensetracker.domain.privacy.PrivacyCapability.DEVICE_GPS_LOCATION
+                        )
+                    )
+                }
                 return@launch
             }
             try {
@@ -823,9 +831,17 @@ class SpendingMapViewModel @Inject constructor(
                     snackbarMessage = null
                 ) }
             } catch (se: SecurityException) {
+                // RP-15 (15-D): permission race — set the typed state, not only a snackbar.
                 Log.w(TAG, "Location permission changed during fetch", se)
                 _state.update {
-                    it.copy(snackbarMessage = "Location permission changed. Please re-enable to show device position.")
+                    it.copy(
+                        snackbarMessage = "Location permission changed. Please re-enable to show device position.",
+                        gpsPrivacyBlocked = com.yourname.expensetracker.ui.components.PrivacyBlockedUiState(
+                            capability = com.yourname.expensetracker.domain.privacy.PrivacyCapability.DEVICE_GPS_LOCATION,
+                            messageResId = com.yourname.expensetracker.R.string.privacy_blocked_device_gps,
+                            reasonCode = com.yourname.expensetracker.domain.privacy.PrivacyGateReasonCodes.DEVICE_GPS_DISABLED
+                        )
+                    )
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to fetch device location", e)
