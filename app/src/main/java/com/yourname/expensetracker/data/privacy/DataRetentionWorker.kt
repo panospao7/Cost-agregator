@@ -1,5 +1,8 @@
 // P8-P1-06: Retention scope expanded to cover AI artifacts and email receipt sources.
 // Remaining gaps: chat messages (AiChatMessageDao), debug diagnostics (ServiceDiagnostics).
+// RP-14: retention perimeter completion — explicit two-stage transaction-event
+// targets, receipt structured-field purge, operation-run/receipt-event/audit
+// targets, typed failure classification, and strict checkpoint terminal semantics.
 // RP-16 16-C: boolean `completed_<target>` checkpoint replaced by versioned per-target
 // records (PENDING / COMPLETED(rowsPurged, auditEmitted) / FAILED(controlledErrorCode,
 // transient, attemptMetadata)) with exactly-once audit identity and per-record cleanup.
@@ -23,6 +26,7 @@ import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+import com.yourname.expensetracker.domain.privacy.RetentionPurgeFailure
 import com.yourname.expensetracker.domain.privacy.RetentionPurgeResult
 import com.yourname.expensetracker.domain.privacy.RetentionRegistry
 import com.yourname.expensetracker.domain.privacy.RetentionTarget
@@ -65,11 +69,14 @@ import java.util.concurrent.TimeUnit
  * - Cleanup is per record, only after the target's desired durable states
  *   (COMPLETED + emitted audit) are reached. There is NO blanket
  *   preferences clear.
- * - Permanent (non-transient) target failures do not abort the run: the run
- *   reports them via ctx counters (failedTargetCount / partialFailureCount)
- *   and the FAILED record persists so the NEXT scheduled run re-attempts the
- *   target. Transient failures abort the run as RETRY; records persist and a
- *   retry resumes (completed targets skipped, pending audits emitted).
+ * - Permanent (non-transient) target failures do not abort the loop: every
+ *   target is attempted, FAILED records persist so the NEXT scheduled run
+ *   re-attempts them, and the run itself ends in a final worker FAILURE via a
+ *   typed [RetentionPurgeFailure] (RP-14 14b: never success after a permanent
+ *   target failure). Transient failures abort the run as RETRY; records persist
+ *   and a retry resumes (completed targets skipped, pending audits emitted).
+ * - Checkpoints are cleared ONLY when every registered target succeeded
+ *   (RP-14 14b); cancellation always propagates and never clears checkpoints.
  */
 @HiltWorker
 class DataRetentionWorker @AssistedInject constructor(
@@ -112,6 +119,9 @@ class DataRetentionWorker @AssistedInject constructor(
             val emailCutoff = now - TimeUnit.DAYS.toMillis(30)
             val aiChatCutoff = now - TimeUnit.DAYS.toMillis(30)
             val diagnosticsCutoff = now - TimeUnit.DAYS.toMillis(30)
+            // RP-14: column-scoped text-redaction targets keep the historical
+            // 30-day window — now routed EXPLICITLY instead of via `else`.
+            val textRedactionCutoff = now - TimeUnit.DAYS.toMillis(30)
 
             val store = RetentionCheckpointStore(prefs)
             val auditDao = appDatabase.privacyAuditDao()
@@ -124,12 +134,34 @@ class DataRetentionWorker @AssistedInject constructor(
                 "notification_intake" -> notificationCutoff
                 "pipeline_diagnostic_events" -> diagnosticsCutoff
                 "ai_artifacts" -> now
+                // RP-14 (D14): each cutoff is a single named constant; every
+                // registered target has an explicit route — never rely on the
+                // `else` default for a registered target (14c guard enforces).
+                "10_transaction_events.snapshots" ->
+                    now - TimeUnit.DAYS.toMillis(TRANSACTION_EVENT_SNAPSHOT_RETENTION_DAYS)
+                "20_transaction_events.rows" ->
+                    now - TimeUnit.DAYS.toMillis(TRANSACTION_EVENT_ROW_RETENTION_DAYS)
+                "30_operation_runs" ->
+                    now - TimeUnit.DAYS.toMillis(OPERATION_RUN_RETENTION_DAYS)
+                "40_receipt_events" ->
+                    now - TimeUnit.DAYS.toMillis(RECEIPT_EVENT_RETENTION_DAYS)
+                "50_privacy_audit_events" ->
+                    now - TimeUnit.DAYS.toMillis(PRIVACY_AUDIT_RETENTION_DAYS)
+                "pending_reviews.notificationText" -> textRedactionCutoff
+                "background_job_runs.errorMessage" -> textRedactionCutoff
+                "bank_statement_import_items.merchant" -> textRedactionCutoff
                 else -> now - TimeUnit.DAYS.toMillis(30)
             }
 
             fun retentionDaysFor(targetName: String): Int = when (targetName) {
                 "raw_notifications", "notification_intake" -> settings.rawNotificationRetentionDays
                 "scanned_receipts.rawOcrText" -> settings.rawOcrRetentionDays
+                // RP-14 (D14): fixed policy cutoffs for the new targets.
+                "10_transaction_events.snapshots" -> TRANSACTION_EVENT_SNAPSHOT_RETENTION_DAYS.toInt()
+                "20_transaction_events.rows" -> TRANSACTION_EVENT_ROW_RETENTION_DAYS.toInt()
+                "30_operation_runs" -> OPERATION_RUN_RETENTION_DAYS.toInt()
+                "40_receipt_events" -> RECEIPT_EVENT_RETENTION_DAYS.toInt()
+                "50_privacy_audit_events" -> PRIVACY_AUDIT_RETENTION_DAYS.toInt()
                 else -> 30
             }
 
@@ -218,10 +250,15 @@ class DataRetentionWorker @AssistedInject constructor(
                 } catch (e: Exception) {
                     if (e is CancellationException) throw e
                     Log.e(TAG, "RetentionTarget[${target.name}] purge threw — continuing", e)
+                    // RP-14 14b: retry classification uses the typed
+                    // [RetentionPurgeFailure] or controlled DAO/SQLite/IO
+                    // exception CLASSES — never exception message substrings.
                     val isTransient = isTransientFailure(e)
-                    val failureCode = if (isTransient)
-                        DiagnosticReasonCode.WORKER_TRANSIENT_ERROR.name
-                        else DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name
+                    val failureCode = when (e) {
+                        is RetentionPurgeFailure -> e.failureCode
+                        isTransient -> DiagnosticReasonCode.WORKER_TRANSIENT_ERROR.name
+                        else -> DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name
+                    }
                     RetentionPurgeResult(
                         targetName = target.name,
                         rowsPurged = 0,
@@ -314,12 +351,13 @@ class DataRetentionWorker @AssistedInject constructor(
                 ctx.setPartialFailureCount(failedTargets.count { it.isTransient })
             }
 
-            // RP-16 16-C: per-record cleanup — only when the run completed without a
-            // transient abort, and only for targets whose desired durable states
-            // (COMPLETED + emitted audit) are reached. FAILED records persist so the
-            // next scheduled run re-attempts those targets; PENDING records persist
-            // so a resume re-processes them. No blanket preferences clear.
-            if (!anyTransient) {
+            // RP-16 16-C: per-record cleanup — only when the run completed with
+            // EVERY registered target succeeding (RP-14 14b: checkpoints are
+            // cleared ONLY then, never after a partial run). FAILED records
+            // persist so the next scheduled run re-attempts those targets;
+            // PENDING records persist so a resume re-processes them. No blanket
+            // preferences clear.
+            if (!anyFailure) {
                 for (name in store.allRecordedTargetNames()) {
                     val rec = store.load(name) ?: continue
                     if (rec.state == RetentionCheckpointState.COMPLETED &&
@@ -336,6 +374,19 @@ class DataRetentionWorker @AssistedInject constructor(
                 val transientNames = failedTargets.filter { it.isTransient }.map { it.targetName }
                 Log.w(TAG, "Transient failures detected in targets: $transientNames — requesting retry")
                 throw RetryableWorkerException(DiagnosticReasonCode.WORKER_RETRYABLE_ERROR.name, message = "RETENTION_PARTIAL_FAILURE: $transientNames")
+            }
+
+            // RP-14 14b: any PERMANENT target failure is a final worker failure —
+            // never success. Typed failure (controlled constant message only) so
+            // the guard maps it to FAILED; FAILED checkpoint records persist so
+            // the next scheduled run re-attempts the failed targets.
+            if (anyFailure) {
+                val permanentNames = failedTargets.filter { !it.isTransient }.map { it.targetName }
+                Log.w(TAG, "Permanent failures detected in targets: $permanentNames — failing run")
+                throw RetentionPurgeFailure(
+                    failureCode = DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name,
+                    transient = false
+                )
             }
         }
 
@@ -426,15 +477,16 @@ class DataRetentionWorker @AssistedInject constructor(
     }
 
     /**
-     * Classifies whether a given exception represents a transient (retryable) failure
-     * or a permanent one. Transient failures include I/O problems, SQLite locking
-     * issues, and timeouts.
+     * RP-14 14b: classifies whether a purge failure is transient (retryable) or
+     * permanent — from the typed [RetentionPurgeFailure] or controlled
+     * DAO/SQLite/IO exception CLASSES only. Exception message substrings are
+     * NEVER used for classification (raw messages are untrusted free text and
+     * are never persisted).
      */
     private fun isTransientFailure(e: Exception): Boolean = when {
+        e is RetentionPurgeFailure -> e.transient
         e is java.io.IOException -> true
-        e.message?.contains("database is locked", ignoreCase = true) == true -> true
-        e.message?.contains("SQLITE_BUSY", ignoreCase = true) == true -> true
-        e.message?.contains("timeout", ignoreCase = true) == true -> true
+        e is android.database.sqlite.SQLiteException -> true
         else -> false
     }
 
@@ -444,13 +496,37 @@ class DataRetentionWorker @AssistedInject constructor(
     companion object {
         const val TAG = "DataRetentionWorker"
         const val WORK_NAME = "data_retention"
-        private const val PREFS_NAME = "data_retention_checkpoint"
+        // RP-14 14b tests assert cross-run checkpoint resume through the same
+        // prefs file the worker uses, hence internal (not private).
+        internal const val PREFS_NAME = "data_retention_checkpoint"
 
         /** Targets whose purge requires a durable privacy audit. */
         internal val AUDIT_REQUIRED_TARGETS = setOf("raw_notifications", "scanned_receipts.rawOcrText")
 
         internal const val AUDIT_CALLER = "DataRetentionWorker"
         private const val DAY_MS = 24L * 60L * 60L * 1000L
+
+        // ── RP-14 (D14): fixed retention cutoffs — each ONE named constant ────
+
+        /** P8-001 stage 1: transaction-event before/after snapshot nulling window. */
+        internal const val TRANSACTION_EVENT_SNAPSHOT_RETENTION_DAYS = 30L
+
+        /** P8-001 stage 2: transaction-event row deletion window. */
+        internal const val TRANSACTION_EVENT_ROW_RETENTION_DAYS = 365L
+
+        /** P8-003: operation-run + child/orphan event deletion window. */
+        internal const val OPERATION_RUN_RETENTION_DAYS = 90L
+
+        /** P8-003: receipt-event deletion window. */
+        internal const val RECEIPT_EVENT_RETENTION_DAYS = 90L
+
+        /**
+         * P8-007: cutoff for the `50_privacy_audit_events` accountability ledger.
+         * COMPLIANCE-FLAGGED: this table is itself the audit trail of privacy
+         * decisions, so changing this value requires explicit compliance
+         * sign-off. Single named constant — do not inline elsewhere.
+         */
+        internal const val PRIVACY_AUDIT_RETENTION_DAYS = 180L
 
         /**
          * Enqueue a daily data-retention job.

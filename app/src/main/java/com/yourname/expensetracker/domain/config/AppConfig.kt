@@ -129,6 +129,17 @@ object AppConfig {
         /** How long receipt item categorization artifacts stay fresh before regeneration. */
         const val RECEIPT_ITEMS_TTL_MS = 30L * 24 * 60 * 60 * 1000L // 30 days
 
+        /**
+         * RP-14 P8-004: backstop age for `ai_artifacts` rows written with a NULL
+         * expiry. Equals the maximum legitimate TTL above (30 days — the largest
+         * of the TTL constants): every current writer derives `expiresAt` from
+         * one of those constants, so older NULL-expiry rows can only be
+         * legacy/direct writes and are deleted by
+         * [com.yourname.expensetracker.data.database.dao.AiArtifactDao.deleteExpired].
+         * Single named constant; do not inline this value elsewhere.
+         */
+        const val NULL_EXPIRY_BACKSTOP_MS = 30L * 24 * 60 * 60 * 1000L // 30 days
+
         // Input size limits (cloud privacy)
         /** Max characters of raw notification text sent to the cloud for a review explanation. */
         const val MAX_REVIEW_TEXT_CHARS_FOR_CLOUD = 500

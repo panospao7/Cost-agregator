@@ -188,11 +188,33 @@ interface ScannedReceiptDao {
     @Query("SELECT * FROM scanned_receipts WHERE imagePath IS NOT NULL")
     suspend fun getAllWithImagePath(): List<ScannedReceipt>
 
-    // ── Raw data retention (Phase 6, Batch 3) ──────────────────────────────────
+    // ── Raw data retention (Phase 6, Batch 3 / RP-14 P8-002) ───────────────────
 
+    /**
+     * RP-14 P8-002: purge ALL raw/structured-sensitive receipt fields past the
+     * retention window in ONE set-based SQL update — [rawOcrText],
+     * [parsedItems], [parsedMerchant], and [parseFailureReason] — and stamp
+     * rawOcrTextPurgedAt exactly once. parseFailureReason is cleared too: its
+     * writer (ReceiptRepository.safeFailureReason) embeds free-form (albeit
+     * redacted) exception text, which is not a controlled code.
+     *
+     * rawOcrText is set to '' (the established purged sentinel, matching
+     * [updateRawOcrTextPurged]) because that column is declared NOT NULL; the
+     * other three are nullable and are set to NULL, matching the DO_NOT_STORE
+     * / STORE_METADATA_ONLY persistence shape of the RP-12 mode contract.
+     *
+     * Idempotent: only rows whose rawOcrTextPurgedAt IS NULL are touched, so
+     * already-purged rows are never re-processed and re-runs report 0. Never
+     * materializes OCR/item payloads into Kotlin. Consumers must tolerate the
+     * purged ('' / NULL) representation.
+     */
     @Query("""
         UPDATE scanned_receipts
-        SET rawOcrTextPurgedAt = :nowMs
+        SET rawOcrText = '',
+            parsedItems = NULL,
+            parsedMerchant = NULL,
+            parseFailureReason = NULL,
+            rawOcrTextPurgedAt = :nowMs
         WHERE createdAt < :beforeMs
           AND rawOcrTextPurgedAt IS NULL
     """)

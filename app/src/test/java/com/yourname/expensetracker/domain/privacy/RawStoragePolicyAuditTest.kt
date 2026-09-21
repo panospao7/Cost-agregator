@@ -207,23 +207,12 @@ class RawStoragePolicyAuditTest {
 
     // ── Retention registry coverage ───────────────────────────────────────────
 
-    @Test
-    fun retention_registry_covers_all_sensitive_targets() {
-        // These are the 4 named targets registered in DataRetentionWorker.
-        // If a new sensitive surface is added, it must be added here AND in the worker.
-        val requiredTargets = setOf(
-            "raw_notifications",
-            "scanned_receipts.rawOcrText",
-            "ai_artifacts",
-            "email_receipt_sources"
-        )
-        // Verify the constant names match what DataRetentionWorker.TAG documents
-        assertEquals("DataRetentionWorker.TAG", "DataRetentionWorker", com.yourname.expensetracker.data.privacy.DataRetentionWorker.TAG)
-        // All required targets must be a subset of what the worker registers
-        requiredTargets.forEach { target ->
-            assertTrue("Retention target '$target' must be registered", requiredTargets.contains(target))
-        }
-    }
+    // RP-14 14c: the former `retention_registry_covers_all_sensitive_targets`
+    // test was tautological (it asserted a set contained itself) and was
+    // replaced by RetentionRegistryCoverageTest, which instantiates the REAL
+    // RetentionRegistry and asserts it covers the independent policy descriptor
+    // in RetentionPolicyContract exactly, with unique names and explicit cutoff
+    // routes in DataRetentionWorker.
 
     // ── RawPersistencePolicyResolver mode matrix ──────────────────────────────
 

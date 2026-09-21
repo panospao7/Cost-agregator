@@ -32,6 +32,29 @@ interface TransactionEventDao {
     @Query("SELECT COUNT(*) FROM transaction_events WHERE eventType = :type AND occurredAt >= :sinceMs")
     suspend fun countByTypeSince(type: String, sinceMs: Long): Int
 
+    /**
+     * RP-14 P8-001 stage 1: null out beforeSnapshot/afterSnapshot for ALL event
+     * types older than the snapshot cutoff — update/delete/create snapshots can
+     * all carry merchant, notes, or other financial data. Set-based SQL update;
+     * never materializes snapshot payloads into Kotlin. Idempotent: only events
+     * that still hold at least one snapshot are updated, so re-runs report 0.
+     * No schema change: both snapshot columns are already nullable.
+     */
+    @Query("""
+        UPDATE transaction_events
+        SET beforeSnapshot = NULL,
+            afterSnapshot = NULL
+        WHERE occurredAt < :beforeMs
+          AND (beforeSnapshot IS NOT NULL OR afterSnapshot IS NOT NULL)
+    """)
+    suspend fun nullSnapshotsOlderThan(beforeMs: Long): Int
+
+    /**
+     * RP-14 P8-001 stage 2: hard-delete transaction-event rows older than the
+     * row-retention cutoff. Runs AFTER [nullSnapshotsOlderThan] (numeric target
+     * name prefixes `10_`/`20_` guarantee that order); the two operations are
+     * independently idempotent count-only results.
+     */
     @Query("DELETE FROM transaction_events WHERE occurredAt < :beforeMs")
     suspend fun deleteOlderThan(beforeMs: Long): Int
 }

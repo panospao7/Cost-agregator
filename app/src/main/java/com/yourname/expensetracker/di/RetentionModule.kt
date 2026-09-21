@@ -2,6 +2,7 @@ package com.yourname.expensetracker.di
 
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.privacy.RetentionPurgeResult
 import com.yourname.expensetracker.domain.privacy.RetentionRegistry
 import com.yourname.expensetracker.domain.privacy.RetentionTarget
@@ -20,6 +21,11 @@ import javax.inject.Singleton
  *
  * All sensitive data targets must be registered here. [DataRetentionWorker]
  * uses [RetentionRegistry.allTargets] instead of an inline list.
+ *
+ * RP-14 14c: the policy-level list of REQUIRED targets lives independently in
+ * [com.yourname.expensetracker.domain.privacy.RetentionPolicyContract]; the
+ * registry coverage test asserts this module's construction list covers it
+ * exactly (neither side is derived from the other).
  */
 @Module
 @InstallIn(SingletonComponent::class)
@@ -88,6 +94,11 @@ object RetentionModule {
 
         object : RetentionTarget {
             override val name = "scanned_receipts.rawOcrText"
+            // RP-14 P8-002: ONE set-based SQL update clears rawOcrText (→ '',
+            // the established purged sentinel for the NOT NULL column),
+            // parsedItems, parsedMerchant, parseFailureReason (writers are not
+            // limited to controlled codes), and stamps rawOcrTextPurgedAt once.
+            // Never materializes OCR/item payloads into Kotlin.
             override suspend fun purge(cutoffMs: Long): RetentionPurgeResult {
                 // GR-14u51b: canonical write-barrier admission before the
                 // runCatchingCancellable wrapper (see raw_notifications).
@@ -107,15 +118,11 @@ object RetentionModule {
                 return CancellationSafe.runCatchingCancellable {
                     // GR-08k1 accessor normalization: DAO-named local (was `dao`).
                     val scannedReceiptDao = appDatabase.scannedReceiptDao()
-                    var total = 0
-                    val now = timeProvider.now()
-                    while (true) {
-                        val batch = scannedReceiptDao.getUnpurgedScannedReceiptsOlderThan(cutoffMs, 100)
-                        if (batch.isEmpty()) break
-                        for (r in batch) scannedReceiptDao.updateRawOcrTextPurged(r.id, now)
-                        total += batch.size
-                    }
-                    RetentionPurgeResult(name, total, true)
+                    val count = scannedReceiptDao.purgeRawOcrText(
+                        beforeMs = cutoffMs,
+                        nowMs = timeProvider.now()
+                    )
+                    RetentionPurgeResult(name, count, true)
                 }.getOrElse {
                     RetentionPurgeResult(
                         targetName = name,
@@ -129,6 +136,10 @@ object RetentionModule {
 
         object : RetentionTarget {
             override val name = "ai_artifacts"
+            // RP-14 P8-004: the cutoff passed for this target is `now`; the
+            // null-expiry backstop cutoff is derived HERE in Kotlin from the
+            // ONE named AppConfig constant (max legitimate TTL, 30 days) and
+            // passed explicitly to the DAO — no SQL-side timestamp arithmetic.
             override suspend fun purge(cutoffMs: Long): RetentionPurgeResult {
                 // GR-14u51b: canonical write-barrier admission before the
                 // runCatchingCancellable wrapper (see raw_notifications).
@@ -149,7 +160,10 @@ object RetentionModule {
                     // GR-08k1 accessor normalization: DAO-named local replaces the
                     // database-chained receiver (GR-08e precedent).
                     val aiArtifactDao = appDatabase.aiArtifactDao()
-                    val count = aiArtifactDao.deleteExpired(cutoffMs)
+                    val count = aiArtifactDao.deleteExpired(
+                        now = cutoffMs,
+                        nullExpiryCutoff = cutoffMs - AppConfig.Ai.NULL_EXPIRY_BACKSTOP_MS
+                    )
                     RetentionPurgeResult(name, count, true)
                 }.getOrElse {
                     RetentionPurgeResult(
@@ -423,6 +437,213 @@ object RetentionModule {
                         rowsPurged = 0,
                         success = false,
                         errorMessage = "RETENTION_PURGE_FAILED:${it::class.simpleName}"
+                    )
+                }
+            }
+        },
+
+        // ── RP-14 (D14): retention perimeter completion ───────────────────────
+        // Numeric name prefixes (10_..50_) guarantee the lexicographic order the
+        // worker sorts by — most importantly, transaction-event snapshot nulling
+        // (10_) runs before transaction-event row deletion (20_). Each cutoff is
+        // a single named constant in DataRetentionWorker.
+
+        object : RetentionTarget {
+            override val name = "10_transaction_events.snapshots"
+            // P8-001 stage 1 (30d): null beforeSnapshot/afterSnapshot for older
+            // events of ALL event types, set-based. Success commits independently
+            // of stage 2 (`20_transaction_events.rows`).
+            override suspend fun purge(cutoffMs: Long): RetentionPurgeResult {
+                try {
+                    writeBarrier.checkWritesAllowed("RetentionModule.TransactionEventDao.nullSnapshots")
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    return RetentionPurgeResult(
+                        targetName = name,
+                        rowsPurged = 0,
+                        success = false,
+                        errorMessage = "WRITE_BARRIER_BLOCKED",
+                        isTransient = true,
+                        errorCode = "WRITE_BARRIER_BLOCKED"
+                    )
+                }
+                return CancellationSafe.runCatchingCancellable {
+                    val transactionEventDao = appDatabase.transactionEventDao()
+                    val count = transactionEventDao.nullSnapshotsOlderThan(cutoffMs)
+                    RetentionPurgeResult(name, count, true)
+                }.getOrElse {
+                    RetentionPurgeResult(
+                        targetName = name,
+                        rowsPurged = 0,
+                        success = false,
+                        errorMessage = "RETENTION_PURGE_FAILED:${it::class.simpleName}",
+                        errorCode = "RETENTION_PURGE_FAILED",
+                        errorClass = it::class.simpleName,
+                        isTransient = it is android.database.sqlite.SQLiteException ||
+                            it is java.io.IOException
+                    )
+                }
+            }
+        },
+
+        object : RetentionTarget {
+            override val name = "20_transaction_events.rows"
+            // P8-001 stage 2 (365d): hard-delete transaction-event rows. Runs
+            // after stage 1; a failure here never rolls back a committed stage 1.
+            override suspend fun purge(cutoffMs: Long): RetentionPurgeResult {
+                try {
+                    writeBarrier.checkWritesAllowed("RetentionModule.TransactionEventDao.deleteOlderThan")
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    return RetentionPurgeResult(
+                        targetName = name,
+                        rowsPurged = 0,
+                        success = false,
+                        errorMessage = "WRITE_BARRIER_BLOCKED",
+                        isTransient = true,
+                        errorCode = "WRITE_BARRIER_BLOCKED"
+                    )
+                }
+                return CancellationSafe.runCatchingCancellable {
+                    val transactionEventDao = appDatabase.transactionEventDao()
+                    val count = transactionEventDao.deleteOlderThan(cutoffMs)
+                    RetentionPurgeResult(name, count, true)
+                }.getOrElse {
+                    RetentionPurgeResult(
+                        targetName = name,
+                        rowsPurged = 0,
+                        success = false,
+                        errorMessage = "RETENTION_PURGE_FAILED:${it::class.simpleName}",
+                        errorCode = "RETENTION_PURGE_FAILED",
+                        errorClass = it::class.simpleName,
+                        isTransient = it is android.database.sqlite.SQLiteException ||
+                            it is java.io.IOException
+                    )
+                }
+            }
+        },
+
+        object : RetentionTarget {
+            override val name = "30_operation_runs"
+            // P8-003 (90d): one DAO transaction deletes child events then parent
+            // runs for terminal runs past the cutoff (RUNNING rows never purged);
+            // orphan events are deleted separately. Compound target reports the
+            // child/parent/orphan breakdown via detailCounts; rowsPurged stays
+            // the total.
+            override suspend fun purge(cutoffMs: Long): RetentionPurgeResult {
+                try {
+                    writeBarrier.checkWritesAllowed("RetentionModule.OperationRunDao.purge")
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    return RetentionPurgeResult(
+                        targetName = name,
+                        rowsPurged = 0,
+                        success = false,
+                        errorMessage = "WRITE_BARRIER_BLOCKED",
+                        isTransient = true,
+                        errorCode = "WRITE_BARRIER_BLOCKED"
+                    )
+                }
+                return CancellationSafe.runCatchingCancellable {
+                    val operationRunDao = appDatabase.operationRunDao()
+                    val operationRunEventDao = appDatabase.operationRunEventDao()
+                    val counts = operationRunDao.purgeTerminalRunsWithEvents(cutoffMs)
+                    val orphans = operationRunEventDao.deleteOrphanEventsOlderThan(cutoffMs)
+                    RetentionPurgeResult(
+                        targetName = name,
+                        rowsPurged = counts.childEventsDeleted + counts.parentRunsDeleted + orphans,
+                        success = true,
+                        detailCounts = mapOf(
+                            "childEvents" to counts.childEventsDeleted,
+                            "parentRuns" to counts.parentRunsDeleted,
+                            "orphanEvents" to orphans
+                        )
+                    )
+                }.getOrElse {
+                    RetentionPurgeResult(
+                        targetName = name,
+                        rowsPurged = 0,
+                        success = false,
+                        errorMessage = "RETENTION_PURGE_FAILED:${it::class.simpleName}",
+                        errorCode = "RETENTION_PURGE_FAILED",
+                        errorClass = it::class.simpleName,
+                        isTransient = it is android.database.sqlite.SQLiteException ||
+                            it is java.io.IOException
+                    )
+                }
+            }
+        },
+
+        object : RetentionTarget {
+            override val name = "40_receipt_events"
+            // P8-003 (90d): hard-delete receipt events past the cutoff by
+            // occurredAt. Count-only, idempotent.
+            override suspend fun purge(cutoffMs: Long): RetentionPurgeResult {
+                try {
+                    writeBarrier.checkWritesAllowed("RetentionModule.ReceiptEventDao.purge")
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    return RetentionPurgeResult(
+                        targetName = name,
+                        rowsPurged = 0,
+                        success = false,
+                        errorMessage = "WRITE_BARRIER_BLOCKED",
+                        isTransient = true,
+                        errorCode = "WRITE_BARRIER_BLOCKED"
+                    )
+                }
+                return CancellationSafe.runCatchingCancellable {
+                    val receiptEventDao = appDatabase.receiptEventDao()
+                    val count = receiptEventDao.deleteOlderThan(cutoffMs)
+                    RetentionPurgeResult(name, count, true)
+                }.getOrElse {
+                    RetentionPurgeResult(
+                        targetName = name,
+                        rowsPurged = 0,
+                        success = false,
+                        errorMessage = "RETENTION_PURGE_FAILED:${it::class.simpleName}",
+                        errorCode = "RETENTION_PURGE_FAILED",
+                        errorClass = it::class.simpleName,
+                        isTransient = it is android.database.sqlite.SQLiteException ||
+                            it is java.io.IOException
+                    )
+                }
+            }
+        },
+
+        object : RetentionTarget {
+            override val name = "50_privacy_audit_events"
+            // P8-007 (180d, COMPLIANCE-FLAGGED — see DataRetentionWorker's named
+            // constant): bound the privacy-audit accountability ledger. Count-only
+            // and purge-safe; the cutoff requires compliance sign-off to change.
+            override suspend fun purge(cutoffMs: Long): RetentionPurgeResult {
+                try {
+                    writeBarrier.checkWritesAllowed("RetentionModule.PrivacyAuditDao.purge")
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    return RetentionPurgeResult(
+                        targetName = name,
+                        rowsPurged = 0,
+                        success = false,
+                        errorMessage = "WRITE_BARRIER_BLOCKED",
+                        isTransient = true,
+                        errorCode = "WRITE_BARRIER_BLOCKED"
+                    )
+                }
+                return CancellationSafe.runCatchingCancellable {
+                    val privacyAuditDao = appDatabase.privacyAuditDao()
+                    val count = privacyAuditDao.deleteOlderThan(cutoffMs)
+                    RetentionPurgeResult(name, count, true)
+                }.getOrElse {
+                    RetentionPurgeResult(
+                        targetName = name,
+                        rowsPurged = 0,
+                        success = false,
+                        errorMessage = "RETENTION_PURGE_FAILED:${it::class.simpleName}",
+                        errorCode = "RETENTION_PURGE_FAILED",
+                        errorClass = it::class.simpleName,
+                        isTransient = it is android.database.sqlite.SQLiteException ||
+                            it is java.io.IOException
                     )
                 }
             }

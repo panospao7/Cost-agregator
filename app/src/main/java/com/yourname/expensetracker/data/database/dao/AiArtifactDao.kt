@@ -63,12 +63,24 @@ interface AiArtifactDao {
     suspend fun markApplied(id: Long, applied: String = AiArtifactStatus.APPLIED.name, now: Long)
 
     /**
-     * Delete all artifacts whose TTL has expired.
+     * Delete artifacts whose TTL has expired.
      * Called by a cleanup worker; pass [now] as epoch-millis.
      * Returns the number of rows deleted.
+     *
+     * RP-14 P8-004: also removes NULL-expiry rows whose [updatedAt] is older
+     * than [nullExpiryCutoff] — a backstop for legacy/direct rows only, since
+     * every repository gateway writer passes a non-null expiry. The backstop
+     * age is the maximum legitimate TTL
+     * ([com.yourname.expensetracker.domain.config.AppConfig.Ai.NULL_EXPIRY_BACKSTOP_MS],
+     * 30 days). Both timestamps are passed explicitly by the caller; no
+     * timestamp arithmetic happens inside SQL.
      */
-    @Query("DELETE FROM ai_artifacts WHERE expiresAt IS NOT NULL AND expiresAt < :now")
-    suspend fun deleteExpired(now: Long): Int
+    @Query("""
+        DELETE FROM ai_artifacts
+        WHERE (expiresAt IS NOT NULL AND expiresAt < :now)
+           OR (expiresAt IS NULL AND updatedAt < :nullExpiryCutoff)
+    """)
+    suspend fun deleteExpired(now: Long, nullExpiryCutoff: Long): Int
 
     /**
      * Delete all artifacts for a given target (e.g. when a PendingReview is approved/rejected).

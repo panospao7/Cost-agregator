@@ -23,4 +23,16 @@ interface PrivacyAuditDao {
      */
     @Query("SELECT COUNT(*) FROM privacy_audit_events WHERE caller = :caller AND reason LIKE '%' || :auditKey")
     suspend fun countAuditEventsByKey(caller: String, auditKey: String): Int
+
+    /**
+     * RP-14 P8-007 (`50_privacy_audit_events` target): delete audit-ledger rows
+     * older than the cutoff. Count-only and purge-safe.
+     *
+     * COMPLIANCE-FLAGGED (D14): this table is itself the accountability ledger,
+     * so the 180-day cutoff is a single named constant
+     * ([com.yourname.expensetracker.data.privacy.DataRetentionWorker.PRIVACY_AUDIT_RETENTION_DAYS])
+     * and ANY change to it requires explicit compliance sign-off.
+     */
+    @Query("DELETE FROM privacy_audit_events WHERE timestampMs < :timestamp")
+    suspend fun deleteOlderThan(timestamp: Long): Int
 }
