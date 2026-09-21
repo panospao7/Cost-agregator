@@ -21,13 +21,44 @@ class ImportCoordinator @Inject constructor(
     private val csvImporter: CsvExpenseImporter,
     private val jsonImporter: JsonExpenseImporter
 ) {
+    /**
+     * Canonical import facade (RP-19 lane, retained per D4). Detects the
+     * content format and delegates, then normalizes both legs into one
+     * [ImportResult].
+     *
+     * RP-19 (19-D): the CSV leg now surfaces per-row errors (previously they
+     * were dropped, leaving callers with a bare error count). Error strings
+     * use the same `Row <n>: <reason>` convention as the JSON leg, where
+     * `<n>` is the 0-based data-row index (header/comment/blank rows
+     * excluded). Reasons are controlled constants or lifecycle messages —
+     * never file paths or raw user payloads.
+     */
     suspend fun importFromContent(content: String, fileImportRunId: Long? = null): ImportResult {
         val format = detectFormat(content)
         return when (format) {
             ImportFormat.CSV_LEGACY, ImportFormat.CSV_FULL -> {
                 when (val r = csvImporter.importFromContent(content, fileImportRunId)) {
-                    is CsvExpenseImporter.ImportResult.Success -> ImportResult(true, r.imported, r.duplicates, r.errors, emptyList(), emptyList())
-                    is CsvExpenseImporter.ImportResult.Error -> ImportResult(false, 0, 0, 1, listOf(r.message), emptyList())
+                    is CsvExpenseImporter.ImportResult.Success -> {
+                        val errors = r.perRowResults.mapIndexedNotNull { index, row ->
+                            when (row) {
+                                is CsvExpenseImporter.RowResult.Failed -> "Row $index: ${row.error}"
+                                else -> null
+                            }
+                        }
+                        val expenseIds = r.perRowResults.mapNotNull { row ->
+                            (row as? CsvExpenseImporter.RowResult.Imported)?.expenseId
+                        }
+                        ImportResult(
+                            success = r.errors == 0,
+                            importedCount = r.imported,
+                            skippedCount = r.duplicates,
+                            errorCount = r.errors,
+                            errors = errors,
+                            expenseIds = expenseIds
+                        )
+                    }
+                    is CsvExpenseImporter.ImportResult.Error ->
+                        ImportResult(false, 0, 0, 1, listOf(r.message), emptyList())
                 }
             }
             ImportFormat.JSON_V1, ImportFormat.JSON_V2 -> jsonImporter.importFromContent(content, fileImportRunId)

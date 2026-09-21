@@ -9,6 +9,7 @@ import com.yourname.expensetracker.domain.export.AccountingExportPolicy
 import com.yourname.expensetracker.domain.export.CsvCellSanitizer
 import com.yourname.expensetracker.domain.export.ExpenseExportMapper
 import com.yourname.expensetracker.domain.export.FreshBooksExporter
+import com.yourname.expensetracker.domain.export.FxRateFormatter
 import com.yourname.expensetracker.domain.export.QuickBooksIIFExporter
 import com.yourname.expensetracker.domain.export.XeroCSVExporter
 import com.yourname.expensetracker.domain.export.ExportTransaction
@@ -27,6 +28,7 @@ import com.yourname.expensetracker.di.IoDispatcher
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -37,7 +39,9 @@ import timber.log.Timber
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.Locale
 import javax.inject.Inject
+import kotlin.coroutines.coroutineContext
 
 data class ExportOptionsUiState(
     val exportFormats: List<ExportFormat> = listOf(
@@ -75,6 +79,8 @@ class ExportOptionsViewModel @Inject constructor(
     private val freshBooksExporter: FreshBooksExporter,
     private val readBarrier: DatabaseReadBarrier,
     private val privacyGate: PrivacyGate,
+    /** RP-19 (19-C): serializes export starts (cancel-and-join prior jobs). */
+    private val exportJobSerializer: ExportJobSerializer,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) : ViewModel() {
 
@@ -188,9 +194,12 @@ class ExportOptionsViewModel @Inject constructor(
      *   [encryptExport] is true; ignored otherwise.
      */
     fun generateExport(encryptExport: Boolean = false, passphrase: String? = null) {
-        exportJob?.cancel()
-        val generation = ++exportGeneration
-        exportJob = viewModelScope.launch {
+        // RP-19 (19-C): job mechanics (cancel-and-join of any prior run) live
+        // in ExportJobSerializer — the new job waits for the cancelled one to
+        // fully terminate before streaming, so two exports never write
+        // concurrently and cancellation cleanup always completes first.
+        exportJob = exportJobSerializer.launch(viewModelScope) {
+            val generation = ++exportGeneration
             _uiState.value = _uiState.value.copy(
                 isLoading = true,
                 exportPreview = null,
@@ -250,6 +259,19 @@ class ExportOptionsViewModel @Inject constructor(
 
                 val categories = withContext(ioDispatcher) { exportDataRepository.getCategoryNameMap() }
                 val extension = extensionFor(format)
+                // RP-19 (19-C): best-effort conservative sweep of stale
+                // plaintext temp files from previously interrupted runs; a
+                // sweep failure must never block or fail the export.
+                // CancellationException is rethrown, never swallowed.
+                try {
+                    withContext(ioDispatcher) {
+                        exportDataRepository.sweepStaleTempFiles(nowMs = timeProvider.now())
+                    }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    // sweep is best-effort
+                }
                 val exportFile = exportDataRepository.createExportFile(extension, timeProvider.now())
 
                 val previewCollector = PreviewCollector(PREVIEW_MAX_CHARS)
@@ -258,8 +280,21 @@ class ExportOptionsViewModel @Inject constructor(
                 val expenseCount = withContext(ioDispatcher) {
                     exportDataRepository.countExpensesBetween(startDate, endDate)
                 }
-                if (expenseCount == 0 && !format.allowsEmptyDataset()) {
-                    throw IllegalArgumentException("No expenses found for selected date range")
+                // RP-19 (19-C): accounting formats reject empty datasets — a
+                // header-only accounting file is not importable by the target
+                // tool. CSV/JSON may emit header-only files (with a warning).
+                if (expenseCount == 0 && format.requiresAccountingPolicy()) {
+                    throw IllegalArgumentException(
+                        "No expenses found for selected date range — " +
+                            "${format.accountingExportDisplayName()} export requires a non-empty dataset"
+                    )
+                }
+                if (expenseCount == 0) {
+                    // RP-19 (19-C): explicit warning for header-only CSV/JSON output.
+                    Timber.w(
+                        "Export produced a header-only %s file (rowCount=0, reasonCode=EMPTY_DATASET)",
+                        format
+                    )
                 }
 
                 // Accounting format validation: validate a bounded sample before
@@ -294,7 +329,13 @@ class ExportOptionsViewModel @Inject constructor(
                 }
 
                 val finalFile = withContext(ioDispatcher) {
-                    val tempFile = java.io.File(exportFile.parentFile, ".tmp_${exportFile.name}")
+                    // RP-19 (19-C): unique temp name per run — concurrent or
+                    // rapid-fire runs (same-second timestamps) previously shared
+                    // `.tmp_<name>` and could clobber each other's output.
+                    val tempFile = java.io.File(
+                        exportFile.parentFile,
+                        ".tmp_${exportFile.name}.${java.util.UUID.randomUUID()}"
+                    )
                     try {
                         tempFile.writer().use { writer ->
                             writeStreamHeader(
@@ -345,6 +386,14 @@ class ExportOptionsViewModel @Inject constructor(
                             }
                             exportFile
                         }
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        // RP-19 (19-C): cancellation can never leave a successful
+                        // final file behind — remove temp, plaintext final, and
+                        // ciphertext remnants, then propagate.
+                        tempFile.delete()
+                        exportFile.delete()
+                        java.io.File(exportFile.parentFile, "${exportFile.name}.enc").delete()
+                        throw e
                     } finally {
                         // Always remove the plaintext temp (rename consumes it; this is a
                         // no-op then). On encryption or any failure this is what prevents a
@@ -385,7 +434,7 @@ class ExportOptionsViewModel @Inject constructor(
      * Safe to call when no export is in progress.
      */
     fun cancelExport() {
-        exportJob?.cancel()
+        exportJobSerializer.cancelActive()
         exportJob = null
     }
 
@@ -396,7 +445,7 @@ class ExportOptionsViewModel @Inject constructor(
         categories: Map<Long, String>,
         preview: PreviewCollector
     ) {
-        val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+        val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.US)
         val zoneId = ZoneId.systemDefault()
         val header = "Date,Merchant,Amount,Currency,Category,Notes,ID\n"
         writer.append(header)
@@ -429,7 +478,7 @@ class ExportOptionsViewModel @Inject constructor(
         rowCount: Int,
         preview: PreviewCollector
     ) {
-        val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+        val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.US)
         val zoneId = ZoneId.systemDefault()
         val generatedAtIso = DateTimeFormatter.ISO_INSTANT.format(Instant.ofEpochMilli(timeProvider.now()))
         val startDate = Instant.ofEpochMilli(_uiState.value.startDate).atZone(zoneId).toLocalDate().format(dateFormatter)
@@ -506,7 +555,7 @@ class ExportOptionsViewModel @Inject constructor(
         pageSize: Int = 2000,
         sourceLinksByExpense: Map<Long, List<EntitySourceLink>> = emptyMap()
     ) {
-        val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+        val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.US)
         val zoneId = ZoneId.systemDefault()
         when (format) {
             "json" -> {
@@ -577,8 +626,12 @@ class ExportOptionsViewModel @Inject constructor(
                         append(escapeCsv(tx.homeCurrency)).append(',')
                         append(tx.baseAmount).append(',')
                         append(escapeCsv(tx.baseCurrency)).append(',')
-                        append(tx.exchangeRateUsed).append(',')
-                        append(tx.conversionRateUsed?.let { formatCsvNumber(it) } ?: "").append(',')
+                        append(tx.exchangeRateUsed.let { rate ->
+                            // RP-19 (19-C): non-scientific FX-rate serialization
+                            // (≤6 decimals); raw Double.toString could emit 1.0E-7.
+                            try { FxRateFormatter.formatRate(rate) } catch (e: IllegalArgumentException) { "INVALID" }
+                        }).append(',')
+                        append(tx.conversionRateUsed?.let { formatRateOrInvalid(it) } ?: "").append(',')
                         append(if (tx.isBusinessExpense) "true" else "false").append(',')
                         append(escapeCsv(tx.businessPurpose ?: "")).append(',')
                         append(escapeCsv(tx.businessCategory ?: "")).append(',')
@@ -638,8 +691,10 @@ class ExportOptionsViewModel @Inject constructor(
                 append("\"homeCurrency\":\"").append(escapeJson(tx.homeCurrency)).append("\",")
                 append("\"baseAmount\":").append(formatJsonNumber(tx.baseAmount)).append(',')
                 append("\"baseCurrency\":\"").append(escapeJson(tx.baseCurrency)).append("\",")
-                append("\"exchangeRateUsed\":").append(tx.exchangeRateUsed).append(',')
-                append("\"conversionRateUsed\":").append(tx.conversionRateUsed?.let { formatJsonNumber(it) } ?: "null").append(',')
+                // RP-19 (19-C): rates serialize non-scientifically (≤6 decimals);
+                // raw Double.toString could emit `1.0E-7` into the JSON stream.
+                append("\"exchangeRateUsed\":").append(formatRateOrInvalid(tx.exchangeRateUsed)).append(',')
+                append("\"conversionRateUsed\":").append(tx.conversionRateUsed?.let { formatRateOrInvalid(it) } ?: "null").append(',')
                 append("\"isBusinessExpense\":").append(if (tx.isBusinessExpense) "true" else "false").append(',')
                 append("\"businessPurpose\":")
                 if (tx.businessPurpose == null) append("null,")
@@ -709,6 +764,11 @@ class ExportOptionsViewModel @Inject constructor(
         var lastId: Long? = null
         var pageCount = 0
         while (true) {
+            // RP-19 (19-C): cooperative cancellation is checked once per page so
+            // a cancelled export stops between pages instead of streaming the
+            // whole range; the cancellation-safe finalization in generateExport
+            // then guarantees no final file is left behind.
+            coroutineContext.ensureActive()
             val page = exportDataRepository.getExpensesPage(
                 startDate, endDate, pageSize, lastDate, lastId
             )
@@ -746,7 +806,7 @@ class ExportOptionsViewModel @Inject constructor(
     ) {
         when (format) {
             "json" -> {
-                val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+                val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.US)
                 val zoneId = ZoneId.systemDefault()
                 val generatedAtIso = DateTimeFormatter.ISO_INSTANT.format(Instant.ofEpochMilli(timeProvider.now()))
                 val sDate = Instant.ofEpochMilli(startDate).atZone(zoneId).toLocalDate().format(dateFormatter)
@@ -848,6 +908,18 @@ class ExportOptionsViewModel @Inject constructor(
 
     private fun formatCsvNumber(value: Double): String = if (value.isFinite()) value.toString() else ""
 
+    /**
+     * RP-19 (19-C): JSON-safe FX-rate serialization — non-scientific, ≤6
+     * decimals. Invalid (non-finite) rates become null rather than poisoning
+     * the JSON stream.
+     */
+    private fun formatRateOrInvalid(value: Double): String =
+        try {
+            FxRateFormatter.formatRate(value)
+        } catch (e: IllegalArgumentException) {
+            "null"
+        }
+
     fun clearExport() {
         _uiState.value = _uiState.value.copy(
             exportPreview = null,
@@ -891,11 +963,6 @@ private class PreviewCollector(private val maxChars: Int) {
 }
 
 private fun String.requiresAccountingPolicy(): Boolean = this == "xero" || this == "quickbooks" || this == "freshbooks"
-
-private fun String.allowsEmptyDataset(): Boolean = when (this) {
-    "csv", "json", "xero", "quickbooks", "freshbooks" -> true
-    else -> false
-}
 
 private fun String.accountingExportDisplayName(): String = when (this) {
     "xero" -> "Xero"

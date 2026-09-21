@@ -9,8 +9,10 @@ import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.transaction.DeduplicationMode
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.TimeProvider
+import kotlinx.coroutines.CancellationException
 import org.json.JSONException
 import org.json.JSONObject
+import java.util.Locale
 import javax.inject.Inject
 
 class JsonExpenseImporter @Inject constructor(
@@ -63,11 +65,19 @@ class JsonExpenseImporter @Inject constructor(
                         is CreateExpenseResult.ValidationFailed -> { errors++; errorMessages.add("Row $i: ${result.errors.joinToString()}") }
                         else -> { errors++; errorMessages.add("Row $i: import failed") }
                     }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: ImportContractException) {
+                    // RP-19 (19-B): contract violations surface as controlled
+                    // reason codes, never interpolated exception payloads.
+                    errors++; errorMessages.add("Row $i: ${e.code}")
                 } catch (e: Exception) {
                     errors++; errorMessages.add("Row $i: ${e.message}")
                 }
             }
             ImportResult(success = errors == 0, importedCount = imported, skippedCount = skipped, errorCount = errors, errors = errorMessages, expenseIds = expenseIds)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             ImportResult(false, 0, 0, 1, listOf("Parse error: ${e.message}"), emptyList())
         }
@@ -75,7 +85,14 @@ class JsonExpenseImporter @Inject constructor(
 
     private suspend fun parseV2Row(row: JSONObject, i: Int, fileImportRunId: Long? = null): CreateExpenseRequest {
         val merchant = row.getString("merchant")
-        val amount = row.optDouble("amount", row.optDouble("effectiveAmount", 0.0))
+        // RP-19 (19-B) amount precedence (single rule for every type, see the
+        // roundtrip matrix): original `amount` first, `effectiveAmount` only
+        // as a fallback when amount is absent — never the other way round.
+        // When neither parses, the row fails (CSV parity) instead of
+        // silently importing 0.0.
+        val amount = parseAmountField(row.opt("amount"))
+            ?: parseAmountField(row.opt("effectiveAmount"))
+            ?: throw ImportContractException(ImportContractErrorCodes.INVALID_AMOUNT)
         val currency = row.optString("currency", "EUR")
         val date = resolveDate(row)
         val notes = row.optString("notes", null)
@@ -87,7 +104,10 @@ class JsonExpenseImporter @Inject constructor(
             categoryDao.getByName(name)?.id ?: categoryDao.insert(com.yourname.expensetracker.data.database.entity.Category(name = name, icon = "📂", color = "#888888"))
         }
         val source = runCatching { sourceStr?.let { ExpenseSource.valueOf(it) } }.getOrNull() ?: ExpenseSource.CSV_IMPORT
-        val txType = runCatching { TransactionType.valueOf(txTypeStr) }.getOrDefault(TransactionType.PURCHASE)
+        // RP-19 (19-B): transactionType maps to the exact enum; a present but
+        // unknown value fails the row with UNKNOWN_TRANSACTION_TYPE instead of
+        // silently defaulting to PURCHASE. (Absent → default PURCHASE.)
+        val txType = parseTransactionTypeStrict(txTypeStr)
         val paymentMethod = runCatching { paymentMethodStr?.let { com.yourname.expensetracker.data.database.entity.PaymentMethod.valueOf(it) } }.getOrNull()
 
         return CreateExpenseRequest(
@@ -118,6 +138,30 @@ class JsonExpenseImporter @Inject constructor(
             idempotencyKey = row.optLong("id", i.toLong()).let { if (it > 0) "import:json:$it" else null },
             fileImportRunId = fileImportRunId
         )
+    }
+
+    /**
+     * RP-19 (19-B): exact-enum transaction type mapping for JSON. Lenient on
+     * case/whitespace, strict on unknown values — fails with the controlled
+     * [ImportContractErrorCodes.UNKNOWN_TRANSACTION_TYPE] code.
+     */
+    private fun parseTransactionTypeStrict(raw: String): TransactionType {
+        val normalized = raw.trim().uppercase(Locale.US)
+        return TransactionType.entries.firstOrNull { it.name == normalized }
+            ?: throw ImportContractException(ImportContractErrorCodes.UNKNOWN_TRANSACTION_TYPE)
+    }
+
+    /**
+     * RP-19 (19-B): parses a JSON amount field with the same acceptance
+     * `optDouble` had (Number, or numeric string); `null`/`JSONObject.NULL`
+     * and unparseable values yield `null` so the caller can fall back to
+     * `effectiveAmount` and finally fail the row.
+     */
+    private fun parseAmountField(raw: Any?): Double? = when (raw) {
+        null, JSONObject.NULL -> null
+        is Number -> raw.toDouble()
+        is String -> raw.toDoubleOrNull()
+        else -> null
     }
 
     /**

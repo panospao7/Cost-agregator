@@ -110,9 +110,12 @@ class XeroCSVExporter {
         )
         val account = CsvCellSanitizer.sanitize(categories[expense.categoryId] ?: "Uncategorized")
         val reference = expense.id.toString()
+        // RP-19 (19-C): conversion rates use the dedicated non-scientific rate
+        // formatter (up to six decimals) — never the 2-decimal money formatter,
+        // which silently truncated rates like 0.912346 to "0.91".
         val conversionRate = expense.conversionRateUsed?.let {
             try {
-                CurrencyFormatter.formatForExport(it)
+                FxRateFormatter.formatRate(it)
             } catch (e: IllegalArgumentException) {
                 "INVALID"
             }
@@ -162,9 +165,11 @@ class FreshBooksExporter {
         )
         val category = CsvCellSanitizer.sanitize(categories[expense.categoryId] ?: "Uncategorized")
         val vendor = CsvCellSanitizer.sanitize(expense.merchant)
+        // RP-19 (19-C): dedicated non-scientific rate formatter (≤6 decimals);
+        // the money formatter truncated rates to two decimals.
         val conversionRate = expense.conversionRateUsed?.let {
             try {
-                CurrencyFormatter.formatForExport(it)
+                FxRateFormatter.formatRate(it)
             } catch (e: IllegalArgumentException) {
                 "INVALID"
             }

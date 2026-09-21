@@ -556,11 +556,13 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
     }
 
     /**
-     * ISSUE-4 regression: accounting exports must treat an empty dataset the
-     * same way as the UI path and emit a header-only file instead of failing.
+     * RP-19 (19-C): accounting formats reject empty datasets — a header-only
+     * accounting file is not importable by the target tool, so exportExpenses
+     * fails with a controlled message and produces no file. (Reverses the old
+     * ISSUE-4 header-only behavior by policy decision.)
      */
     @Test
-    fun `exportExpenses empty accounting dataset writes header only export`() = runTest {
+    fun `exportExpenses empty accounting dataset is rejected`() = runTest {
         val start = ms("2026-03-01")
         val end = ms("2026-04-01")
 
@@ -573,12 +575,9 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
         val ctx = fakeContext()
         val result = repository.exportExpenses(ctx, start, end, ExportFormat.FRESHBOOKS_CSV)
 
-        assertTrue("Empty accounting export must succeed", result.success)
-        assertEquals(0, result.recordCount)
-        assertNotNull("Header-only export must still produce a file", result.filePath)
-        val exportedFile = File(result.filePath!!)
-        assertTrue("Header-only export file must exist", exportedFile.exists())
-        assertEquals(listOf("date,description,amount,currency,category,vendor,originalCurrency,homeCurrency,conversionRate,originalAmount"), exportedFile.readLines())
+        assertTrue("Empty accounting export must be rejected", !result.success)
+        assertTrue(result.errorMessage.orEmpty().contains("No expenses found"))
+        assertEquals(null, result.filePath)
 
         // Only one paged call — loop terminated immediately
         coVerify(exactly = 1) {

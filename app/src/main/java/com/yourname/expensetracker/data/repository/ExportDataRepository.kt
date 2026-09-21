@@ -25,6 +25,14 @@ class ExportDataRepository @Inject constructor(
     /** PR7: Source link DAO for bulk provenance queries during export. */
     private val sourceLinkDao: EntitySourceLinkDao
 ) {
+    companion object {
+        /** Prefix of streaming-export temp files (hidden, never a final export). */
+        const val TEMP_FILE_PREFIX = ".tmp_"
+
+        /** Sweep only temps idle for at least 24h — deliberately conservative. */
+        const val STALE_TEMP_MIN_AGE_MS: Long = 24L * 60L * 60L * 1000L
+    }
+
     /**
      * ## BAK-13 / P12-CURRENT-003: Export ordering — NOT a true snapshot
      * Uses [DeterministicExpenseExportPager], which performs **keyset (cursor)
@@ -93,6 +101,38 @@ class ExportDataRepository @Inject constructor(
         val safeExtension = extension.replace(Regex("[^a-zA-Z0-9]"), "").take(10).ifEmpty { "txt" }
         val exportDir = File(context.filesDir, "exports").apply { mkdirs() }
         return File(exportDir, "expenses_${timestampMs}.$safeExtension")
+    }
+
+    /**
+     * ## RP-19 (19-C): conservative stale temp-file sweep
+     *
+     * Deletes only files that ALL match:
+     * - live in the app-private `exports/` directory,
+     * - carry the hidden [TEMP_FILE_PREFIX] (`.tmp_`) written by the streaming
+     *   export path, and
+     * - are at least [minAgeMs] old (last-modified based).
+     *
+     * User-facing final exports never carry the prefix and are therefore never
+     * deleted here; deletion of final exports is a separate product decision.
+     * Returns the number of files removed; callers treat this as best-effort.
+     */
+    fun sweepStaleTempFiles(
+        nowMs: Long,
+        minAgeMs: Long = STALE_TEMP_MIN_AGE_MS
+    ): Int {
+        if (nowMs < 0) return 0
+        val exportDir = File(context.filesDir, "exports")
+        val candidates = exportDir.listFiles() ?: return 0
+        var deleted = 0
+        for (file in candidates) {
+            if (!file.isFile) continue
+            if (!file.name.startsWith(TEMP_FILE_PREFIX)) continue
+            val age = nowMs - file.lastModified()
+            if (age >= minAgeMs && file.delete()) {
+                deleted++
+            }
+        }
+        return deleted
     }
 
     /**

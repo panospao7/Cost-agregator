@@ -240,7 +240,7 @@ class CsvExpenseImporterTest {
         val requestSlot = slot<CreateExpenseRequest>()
         coEvery { coordinator.createExpense(capture(requestSlot)) } returns CreateExpenseResult.Created(1L)
 
-        val csv = "date,amount,merchant,category,description\n2024-01-15,25.50,\"Starbucks, Downtown\",Food,\"Morning, coffee\""
+        val csv = "date,amount,merchant,category,notes\n2024-01-15,25.50,\"Starbucks, Downtown\",Food,\"Morning, coffee\""
         val result = importer.importFromContent(csv) as CsvExpenseImporter.ImportResult.Success
 
         assertThat(result.imported).isEqualTo(1)

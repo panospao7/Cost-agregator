@@ -220,9 +220,11 @@ private fun ExportFormat.requiresAccountingPolicy(): Boolean = when (this) {
 }
 
 private fun ExportFormat.allowsEmptyDataset(): Boolean = when (this) {
+    // RP-19 (19-C): accounting formats reject empty datasets — a header-only
+    // accounting file is not importable by the target tool.
     ExportFormat.QUICKBOOKS_IIF,
     ExportFormat.XERO_CSV,
-    ExportFormat.FRESHBOOKS_CSV -> true
+    ExportFormat.FRESHBOOKS_CSV -> false
     ExportFormat.ACCOUNTANT_REPORT_PDF -> false
 }
 

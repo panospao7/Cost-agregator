@@ -86,6 +86,7 @@ class ExportOptionsViewModelTest {
             freshBooksExporter = FreshBooksExporter(),
             readBarrier = readBarrier,
             privacyGate = gate,
+            exportJobSerializer = ExportJobSerializer(),
             ioDispatcher = testDispatcher
         )
 
@@ -253,6 +254,7 @@ class ExportOptionsViewModelTest {
 
     @Test
     fun `generate xero export surfaces mixed currency policy failure`() = runBlocking {
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns 2
         coEvery {
             exportDataRepository.getExpensesBetween(any(), any())
         } returns listOf(
@@ -273,6 +275,7 @@ class ExportOptionsViewModelTest {
 
     @Test
     fun `generate quickbooks export surfaces non purchase policy failure`() = runBlocking {
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns 1
         coEvery {
             exportDataRepository.getExpensesBetween(any(), any())
         } returns listOf(
@@ -291,7 +294,9 @@ class ExportOptionsViewModelTest {
     }
 
     @Test
-    fun `generate freshbooks export succeeds for empty dataset`() = runBlocking {
+    fun `generate freshbooks export rejects empty dataset`() = runBlocking {
+        // RP-19 (19-C): accounting formats reject empty datasets — a
+        // header-only accounting file is not importable by the target tool.
         val out = createTempFile(prefix = "export_empty_freshbooks_", suffix = ".csv")
         every { exportDataRepository.createExportFile(any(), any()) } returns out
         coEvery { exportDataRepository.getExpensesBetween(any(), any()) } returns emptyList()
@@ -300,13 +305,147 @@ class ExportOptionsViewModelTest {
         viewModel.selectFormat("freshbooks")
         viewModel.generateExport()
         val state = viewModel.uiState.value
+        assertTrue(!state.exportSuccess)
+        assertEquals(null, state.exportFilePath)
+        assertTrue(state.error.orEmpty().contains("non-empty dataset"))
+        // No final file and no header-only accounting output may be left behind.
+        assertFalse(out.exists())
+    }
+
+    @Test
+    fun `generate generic csv export succeeds with header-only file for empty dataset`() = runBlocking {
+        // RP-19 (19-C): CSV/JSON may emit header-only files (with a warning).
+        val out = createTempFile(prefix = "export_empty_csv_", suffix = ".csv")
+        every { exportDataRepository.createExportFile(any(), any()) } returns out
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns 0
+        coEvery { exportDataRepository.getExpensesBetween(any(), any()) } returns emptyList()
+        coEvery { exportDataRepository.getExpensesPage(any(), any(), any(), any(), any()) } returns emptyList()
+
+        viewModel.generateExport()
+        val state = viewModel.uiState.value
         assertTrue(state.exportSuccess)
-        assertEquals(null, state.error)
         assertEquals(out.absolutePath, state.exportFilePath)
-        val freshBooksHeader =
-            "date,description,amount,currency,category,vendor,originalCurrency,homeCurrency,conversionRate,originalAmount"
-        assertEquals("$freshBooksHeader\n", state.exportPreview)
-        assertEquals(listOf(freshBooksHeader), out.readLines())
+        assertTrue(out.readText().contains("ID,Date"))
+        assertTrue(out.readLines().size == 2) // metadata line + header line only
+    }
+
+    @Test
+    fun `generate json export succeeds with header-only file for empty dataset`() = runBlocking {
+        val out = createTempFile(prefix = "export_empty_json_", suffix = ".json")
+        every { exportDataRepository.createExportFile(any(), any()) } returns out
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns 0
+        coEvery { exportDataRepository.getExpensesBetween(any(), any()) } returns emptyList()
+        coEvery { exportDataRepository.getExpensesPage(any(), any(), any(), any(), any()) } returns emptyList()
+
+        viewModel.selectFormat("json")
+        viewModel.generateExport()
+        val state = viewModel.uiState.value
+        assertTrue(state.exportSuccess)
+        val text = out.readText()
+        assertTrue(text.contains("\"schemaVersion\":2"))
+        assertTrue(text.contains("\"rows\":[]"))
+        // Structural sanity: org.json can re-parse the header-only document.
+        org.json.JSONObject(text)
+    }
+
+    @Test
+    fun `cancelExport mid-stream removes final and temp files`() = runBlocking {
+        // RP-19 (19-C): cancellation can never leave a successful final file.
+        val dir = createTempDir(prefix = "export_cancel_")
+        val out = File(dir, "expenses_9.csv")
+        every { exportDataRepository.createExportFile(any(), any()) } returns out
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns 3
+        coEvery { exportDataRepository.getCategoryNameMap() } returns emptyMap()
+
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        coEvery {
+            exportDataRepository.getExpensesPage(any(), any(), any(), any(), any())
+        } coAnswers {
+            gate.await()
+            emptyList<Expense>()
+        }
+
+        viewModel.generateExport()
+        // Export is suspended inside the (mocked) page read.
+        viewModel.cancelExport()
+        gate.complete(Unit)
+        // Unconfined dispatcher: cancellation cleanup runs inline on release.
+
+        val state = viewModel.uiState.value
+        assertTrue(state.error.orEmpty().contains("cancelled"))
+        assertFalse(state.exportSuccess)
+        assertFalse("no final export after cancellation", out.exists())
+        val leftoverTemps = dir.listFiles { f -> f.name.startsWith(".tmp_") }.orEmpty()
+        assertTrue("no temp leftovers after cancellation", leftoverTemps.isEmpty())
+    }
+
+    @Test
+    fun `header rowCount may disagree with streamed rows under concurrent writes`() = runBlocking {
+        // RP-19 (19-C): the non-snapshot keyset contract is retained (see the
+        // roundtrip matrix). This pins the documented divergence: the header
+        // rowCount comes from a separate count query and may exceed the number
+        // of actually streamed rows when a concurrent insert lands mid-export.
+        val streamed = listOf(
+            createExpense(id = 1L, merchant = "A"),
+            createExpense(id = 2L, merchant = "B"),
+            createExpense(id = 3L, merchant = "C")
+        )
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns 5
+        coEvery { exportDataRepository.getExpensesBetween(any(), any()) } returns streamed
+        var firstCall = true
+        coEvery {
+            exportDataRepository.getExpensesPage(any(), any(), any(), any(), any())
+        } coAnswers {
+            if (firstCall) {
+                firstCall = false
+                streamed
+            } else {
+                emptyList()
+            }
+        }
+        val out = createTempFile(prefix = "export_concurrent_writes_", suffix = ".csv")
+        every { exportDataRepository.createExportFile(any(), any()) } returns out
+
+        viewModel.generateExport()
+        val state = viewModel.uiState.value
+        assertTrue(state.exportSuccess)
+        val text = out.readText()
+        val dataRows = text.lines().count { line ->
+            line.isNotEmpty() && !line.startsWith("#") && !line.startsWith("ID,Date")
+        }
+        assertEquals("header claims rowCount=5 (count query, not snapshot)", 5, text.lines().first { it.startsWith("#") }.substringAfter("rowCount=").substringBefore(",").toInt())
+        assertEquals("only 3 rows were actually streamed", 3, dataRows)
+    }
+
+    @Test
+    fun `fx rate columns serialize without scientific notation or truncation`() = runBlocking {
+        // RP-19 (19-C): rates use the dedicated formatter in both CSV and JSON.
+        val expense = createExpense(merchant = "Cafe").copy(
+            baseAmount = 11.23,
+            exchangeRateUsed = 0.9123456
+        )
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns 1
+        coEvery { exportDataRepository.getExpensesBetween(any(), any()) } returns listOf(expense)
+        coEvery { exportDataRepository.getExpensesPage(any(), any(), any(), any(), any()) } returns listOf(expense)
+        val csvOut = createTempFile(prefix = "export_rate_csv_", suffix = ".csv")
+        every { exportDataRepository.createExportFile(any(), any()) } returns csvOut
+
+        viewModel.generateExport()
+        val csvText = csvOut.readText()
+        assertTrue(csvText.contains("0.912346"))
+        assertFalse("money-math serialization of rates must not be 2-decimal", csvText.contains(",0.91,"))
+        assertFalse(csvText.contains("E-7"))
+
+        val tinyRate = expense.copy(exchangeRateUsed = 0.0000001)
+        coEvery { exportDataRepository.getExpensesPage(any(), any(), any(), any(), any()) } returns listOf(tinyRate)
+        val jsonOut = createTempFile(prefix = "export_rate_json_", suffix = ".json")
+        every { exportDataRepository.createExportFile(any(), any()) } returns jsonOut
+
+        viewModel.selectFormat("json")
+        viewModel.generateExport()
+        val jsonText = jsonOut.readText()
+        assertTrue(jsonText.contains("\"exchangeRateUsed\":0"))
+        assertFalse("no scientific notation in JSON rates", jsonText.contains("1.0E-7"))
     }
 
     @Test
