@@ -7,6 +7,7 @@ import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
+import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.dto.AiArtifactRecord
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
@@ -22,6 +23,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
+import java.io.File
 
 class AiArtifactRepositoryImplTest {
 
@@ -66,7 +68,8 @@ private fun fakeEntity(
 
 private fun fakeRecord(
         targetKey: String = "pending_review:1",
-        capability: AiCapability = AiCapability.REVIEW_EXPLANATION
+        capability: AiCapability = AiCapability.REVIEW_EXPLANATION,
+        expiresAt: Long? = null
     ) = AiArtifactRecord(
         id = 1L,
         targetType = AiTargetType.PENDING_REVIEW,
@@ -86,7 +89,7 @@ private fun fakeRecord(
         errorMessage = null,
         createdAt = 1_000L,
         updatedAt = 1_000L,
-        expiresAt = null
+        expiresAt = expiresAt
     )
 
     // ── observeLatest ─────────────────────────────────────────────────────────
@@ -150,18 +153,28 @@ private fun fakeRecord(
         assertNull(result)
     }
 
-    // ── upsert ────────────────────────────────────────────────────────────────
+    // ── upsert (RP-14 P8-004: durable artifacts require a non-null expiry) ────
 
     // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `upsert delegates to dao and returns row id`() = runTest(testDispatcher) {
-        val record = fakeRecord()
+        val record = fakeRecord(expiresAt = 5_000L)
         coEvery { dao.upsert(any()) } returns 42L
 
         val id = repository.upsert(record)
 
         assertEquals(42L, id)
         coVerify { dao.upsert(any()) }
+    }
+
+    @Test
+    fun `upsert rejects null-expiry artifacts and never touches the dao`() = runTest(testDispatcher) {
+        val record = fakeRecord(expiresAt = null)
+
+        val thrown = runCatching { repository.upsert(record) }.exceptionOrNull()
+
+        assertTrue("null expiry must fail closed", thrown is IllegalArgumentException)
+        coVerify(exactly = 0) { dao.upsert(any()) }
     }
 
     // ── markDismissed ─────────────────────────────────────────────────────────
@@ -180,14 +193,16 @@ private fun fakeRecord(
         coVerify { dao.markApplied(id = 8L, applied = any(), now = any()) }
     }
 
-    // ── deleteExpired ─────────────────────────────────────────────────────────
+    // ── deleteExpired (RP-14 P8-004: explicit null-expiry backstop cutoff) ────
 
     // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
-    fun `deleteExpired delegates to dao with given timestamp`() = runTest(testDispatcher) {
+    fun `deleteExpired delegates to dao with now and backstop cutoff`() = runTest(testDispatcher) {
         val now = 999_999L
         repository.deleteExpired(now)
-        coVerify { dao.deleteExpired(now) }
+        coVerify {
+            dao.deleteExpired(now, now - AppConfig.Ai.NULL_EXPIRY_BACKSTOP_MS)
+        }
     }
 
     // ── deleteByTargetKey ─────────────────────────────────────────────────────
@@ -197,5 +212,35 @@ private fun fakeRecord(
     fun `deleteByTargetKey delegates to dao`() = runTest(testDispatcher) {
         repository.deleteByTargetKey("pending_review:55")
         coVerify { dao.deleteByTargetKey("pending_review:55") }
+    }
+
+    // ── RP-14 P8-004: gateway writer coverage (static source assertion) ──────
+
+    /**
+     * Every production writer of [AiArtifactRecord] must derive a non-null
+     * `expiresAt` from an AppConfig.Ai TTL — the gateway now fails closed on
+     * null (upsert rejection test above), so this guards the writers against
+     * regression. Source-scan mechanism mirrors DataRetentionWorkerTest's
+     * no-legacy-helpers assertion.
+     */
+    @Test
+    fun `every production AiArtifactRecord writer passes a non-null expiresAt`() {
+        val useCaseDir = "src/main/java/com/yourname/expensetracker/domain/ai/usecase/"
+        val writerFiles = listOf(
+            "GenerateDashboardBriefingUseCase.kt",
+            "CategorizeReceiptItemsUseCase.kt",
+            "SuggestReceiptExtractionUseCase.kt",
+            "SuggestCategoryFallbackUseCase.kt",
+            "JudgePendingReviewDuplicateUseCase.kt",
+            "ExplainPendingReviewUseCase.kt",
+            "GenerateTransactionInsightUseCase.kt"
+        )
+        for (file in writerFiles) {
+            val source = File(useCaseDir + file).readText()
+            assertTrue(
+                "$file must construct AiArtifactRecord with an explicit non-null expiresAt",
+                source.contains(Regex("expiresAt\\s*=\\s*now\\s*\\+"))
+            )
+        }
     }
 }

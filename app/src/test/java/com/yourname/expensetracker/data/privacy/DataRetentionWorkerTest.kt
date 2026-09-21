@@ -15,6 +15,7 @@ import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.diagnostics.EventOutcome
 import com.yourname.expensetracker.domain.privacy.PrivacySettings
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+import com.yourname.expensetracker.domain.privacy.RetentionPurgeFailure
 import com.yourname.expensetracker.domain.privacy.RetentionPurgeResult
 import com.yourname.expensetracker.domain.privacy.RetentionRegistry
 import com.yourname.expensetracker.domain.privacy.RetentionTarget
@@ -34,6 +35,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import java.io.File
@@ -86,6 +89,11 @@ class DataRetentionWorkerTest {
         writeBarrier = mockk(relaxed = true)
         ctx = mockk(relaxed = true)
 
+        // Isolate checkpoint prefs per test (RP-14 14b resume tests read them).
+        context.getSharedPreferences(DataRetentionWorker.PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().clear().commit()
+        purgeCalls.clear()
+
         coEvery { privacySettingsRepository.getSettings() } returns PrivacySettings()
         coEvery {
             executionGuard.runGuardedWithContext(any(), any<suspend (WorkerRunContext) -> Any>())
@@ -95,6 +103,10 @@ class DataRetentionWorkerTest {
                 WorkerGuardResult.Success(block.invoke(ctx))
             } catch (e: RetryableWorkerException) {
                 WorkerGuardResult.Retry(e.message ?: "Retry", e)
+            } catch (e: RetentionPurgeFailure) {
+                // Mirror the real guard: the worker's typed permanent failure
+                // maps to a final failure (RP-14 14b).
+                WorkerGuardResult.Failed(e.failureCode, e)
             } catch (e: CancellationException) {
                 throw e
             }
@@ -122,12 +134,16 @@ class DataRetentionWorkerTest {
             })
             .build()
 
-    /** Builds a [RetentionTarget] that always purges [rows] rows. */
+    /** Builds a [RetentionTarget] that always purges [rows] rows (records cutoffs). */
+    private val purgeCalls = mutableListOf<Pair<String, Long>>()
+
     private fun target(targetName: String, rows: Int, success: Boolean = true): RetentionTarget =
         object : RetentionTarget {
             override val name = targetName
-            override suspend fun purge(cutoffMs: Long): RetentionPurgeResult =
-                RetentionPurgeResult(targetName, rows, success)
+            override suspend fun purge(cutoffMs: Long): RetentionPurgeResult {
+                purgeCalls += targetName to cutoffMs
+                return RetentionPurgeResult(targetName, rows, success)
+            }
         }
 
     /** Builds a [RetentionTarget] that throws the given exception when purged. */
@@ -136,6 +152,22 @@ class DataRetentionWorkerTest {
             override val name = targetName
             override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = throw exception
         }
+
+    /** Mutable target for multi-run resume tests. */
+    private class FlakyTarget(override val name: String) : RetentionTarget {
+        var failWith: Exception? = null
+        var purgeCount = 0
+        override suspend fun purge(cutoffMs: Long): RetentionPurgeResult {
+            purgeCount++
+            failWith?.let { throw it }
+            return RetentionPurgeResult(name, 1, true)
+        }
+    }
+
+    private fun checkpointStore(): RetentionCheckpointStore =
+        RetentionCheckpointStore(
+            context.getSharedPreferences(DataRetentionWorker.PREFS_NAME, Context.MODE_PRIVATE)
+        )
 
     // ── existing P9-S4 tests ────────────────────────────────────────────────
 
@@ -209,8 +241,9 @@ class DataRetentionWorkerTest {
     }
 
     @Test
-    fun `one_target_permanent_failure_records_partial_failure_not_success`() = runTest {
-        // target_b throws IllegalArgumentException (permanent); no transient → no retry
+    fun `one_target_permanent_failure_returns_final_failure_never_success`() = runTest {
+        // RP-14 14b: a permanent target failure is a final worker failure —
+        // never success. All targets are still attempted and counters reported.
         every { retentionRegistry.allTargets() } returns setOf(
             target("target_a", 5),
             throwingTarget("target_b", IllegalArgumentException("invalid argument")),
@@ -219,10 +252,168 @@ class DataRetentionWorkerTest {
 
         val result = buildWorker().doWork()
 
-        // No transient failures → should return success (partial failure logged but no retry)
-        assertEquals(Result.success(), result)
-        // Both succeeding targets should have been processed
+        assertEquals(Result.failure(), result)
         coVerify(exactly = 1) { ctx.addRowsUpdated(8) }
+        coVerify(exactly = 1) { ctx.setFailedTargetCount(1) }
+    }
+
+    // ── RP-14 14b: typed / class-based retry classification ──────────────────
+
+    @Test
+    fun `exception message substrings are never used for retry classification`() = runTest {
+        // Previously "database is locked" in the message meant transient.
+        // RP-14 14b: classification uses exception CLASSES only, so a plain
+        // RuntimeException with that message is PERMANENT → failure, not retry.
+        every { retentionRegistry.allTargets() } returns setOf(
+            throwingTarget("target_a", RuntimeException("database is locked (SQLITE_BUSY)"))
+        )
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.failure(), result)
+    }
+
+    @Test
+    fun `sqlite exception is transient and retries`() = runTest {
+        every { retentionRegistry.allTargets() } returns setOf(
+            throwingTarget("target_a", android.database.sqlite.SQLiteException("interrupted"))
+        )
+
+        assertEquals(Result.retry(), buildWorker().doWork())
+    }
+
+    @Test
+    fun `typed transient purge failure retries and typed permanent fails`() = runTest {
+        every { retentionRegistry.allTargets() } returns setOf(
+            throwingTarget("target_a", RetentionPurgeFailure("CODE_A", transient = true))
+        )
+        assertEquals(Result.retry(), buildWorker().doWork())
+
+        purgeCalls.clear()
+        every { retentionRegistry.allTargets() } returns setOf(
+            throwingTarget("target_b", RetentionPurgeFailure("CODE_B", transient = false))
+        )
+        assertEquals(Result.failure(), buildWorker().doWork())
+    }
+
+    @Test
+    fun `permanent_failure_keeps_completed_checkpoints_and_failed_record_persists`() = runTest {
+        every { retentionRegistry.allTargets() } returns setOf(
+            target("target_ok", 2),
+            throwingTarget("target_bad", IllegalStateException("permanent"))
+        )
+
+        assertEquals(Result.failure(), buildWorker().doWork())
+
+        val store = checkpointStore()
+        // Checkpoints are NOT cleared after a partial run: completed record kept...
+        val completed = store.load("target_ok")
+        assertNotNull(completed)
+        assertEquals(RetentionCheckpointState.COMPLETED, completed!!.state)
+        // ...and the failed record persists so the next run re-attempts it.
+        val failed = store.load("target_bad")
+        assertNotNull(failed)
+        assertEquals(RetentionCheckpointState.FAILED, failed!!.state)
+        assertFalse(failed.isTransient)
+    }
+
+    // ── RP-14 14b: stage-1/stage-2 partial case + resume ─────────────────────
+
+    @Test
+    fun `stage2 transient failure after stage1 success retries and resume skips stage1`() = runTest {
+        val snapshots = FlakyTarget("10_transaction_events.snapshots")
+        val rows = FlakyTarget("20_transaction_events.rows").apply {
+            failWith = java.io.IOException("transient stage-2 failure")
+        }
+        every { retentionRegistry.allTargets() } returns setOf(snapshots, rows)
+
+        // Run 1: stage 1 succeeds, stage 2 fails transiently → retry.
+        assertEquals(Result.retry(), buildWorker().doWork())
+
+        val store = checkpointStore()
+        assertEquals(RetentionCheckpointState.COMPLETED, store.load("10_transaction_events.snapshots")?.state)
+        val failedRecord = store.load("20_transaction_events.rows")
+        assertEquals(RetentionCheckpointState.FAILED, failedRecord?.state)
+        assertTrue(failedRecord?.isTransient == true)
+
+        // Run 2 (same durable prefs): stage-1 target is skipped, stage 2 resumes.
+        rows.failWith = null
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        assertEquals("completed stage-1 target must not be re-purged", 1, snapshots.purgeCount)
+        assertEquals("failed stage-2 target must be re-attempted", 2, rows.purgeCount)
+        // All targets succeeded → checkpoints cleared.
+        assertNull(checkpointStore().load("10_transaction_events.snapshots"))
+        assertNull(checkpointStore().load("20_transaction_events.rows"))
+    }
+
+    @Test
+    fun `cancellation propagates and does not clear checkpoints`() = runTest {
+        // Names sort so the successful target completes BEFORE the cancelling one.
+        every { retentionRegistry.allTargets() } returns setOf(
+            target("aaa_completed_target", 2),
+            throwingTarget("zzz_cancelling_target", CancellationException("worker stopped"))
+        )
+
+        try {
+            buildWorker().doWork()
+            fail("Expected CancellationException to be thrown")
+        } catch (e: CancellationException) {
+            assertEquals("worker stopped", e.message)
+        }
+
+        // Cancellation never clears checkpoints: the completed record survives.
+        val completed = checkpointStore().load("aaa_completed_target")
+        assertNotNull(completed)
+        assertEquals(RetentionCheckpointState.COMPLETED, completed!!.state)
+    }
+
+    // ── RP-14 14b: audit-write failure is best-effort, never rolls back ──────
+
+    @Test
+    fun `audit_write_failure_does_not_rollback_purge_and_defers_audit`() = runTest {
+        val auditDao = mockk<PrivacyAuditDao>(relaxed = true)
+        every { appDatabase.privacyAuditDao() } returns auditDao
+        coEvery { auditDao.insert(any()) } throws RuntimeException("boom")
+
+        every { retentionRegistry.allTargets() } returns setOf(
+            target("raw_notifications", 5)
+        )
+
+        // The purge itself succeeded; the audit failure only adds ctx errors.
+        assertEquals(Result.success(), buildWorker().doWork())
+        coVerify(exactly = 1) { auditDao.insert(any()) }
+
+        // Record stays COMPLETED with auditEmitted=false → NOT cleared, so the
+        // next run re-emits the audit exactly once (never re-purges).
+        val record = checkpointStore().load("raw_notifications")
+        assertNotNull(record)
+        assertEquals(RetentionCheckpointState.COMPLETED, record!!.state)
+        assertFalse(record.auditEmitted)
+    }
+
+    // ── RP-14: D14 cutoff routing for the new targets ─────────────────────────
+
+    @Test
+    fun `new targets receive their D14 named-constant cutoffs`() = runTest {
+        val dayMs = 24L * 60 * 60 * 1000
+        every { retentionRegistry.allTargets() } returns setOf(
+            target("10_transaction_events.snapshots", 0),
+            target("20_transaction_events.rows", 0),
+            target("30_operation_runs", 0),
+            target("40_receipt_events", 0),
+            target("50_privacy_audit_events", 0)
+        )
+
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        val now = timeProvider.now()
+        val cutoffs = purgeCalls.toMap()
+        assertEquals(now - 30 * dayMs, cutoffs["10_transaction_events.snapshots"])
+        assertEquals(now - 365 * dayMs, cutoffs["20_transaction_events.rows"])
+        assertEquals(now - 90 * dayMs, cutoffs["30_operation_runs"])
+        assertEquals(now - 90 * dayMs, cutoffs["40_receipt_events"])
+        assertEquals(now - 180 * dayMs, cutoffs["50_privacy_audit_events"])
     }
 
     @Test

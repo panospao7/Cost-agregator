@@ -10,7 +10,14 @@ data class RetentionPurgeResult(
     val errorMessage: String? = null,
     val isTransient: Boolean = false,
     val errorCode: String? = null,
-    val errorClass: String? = null
+    val errorClass: String? = null,
+    /**
+     * RP-14 P8-003: typed breakdown for compound targets (e.g. the
+     * `30_operation_runs` target reports child-event / parent-run / orphan-event
+     * counts). Keys are controlled names; values are counts. Empty for simple
+     * targets. [rowsPurged] always remains the total.
+     */
+    val detailCounts: Map<String, Int> = emptyMap()
 )
 
 /**

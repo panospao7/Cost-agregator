@@ -3562,6 +3562,44 @@ entries:
   - com.yourname.expensetracker.data.database.AppDatabase
   - com.yourname.expensetracker.domain.util.TimeProvider
   - com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+  daoAccessor: operationRunDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.OperationRunDao
+  operation: purgeTerminalRunsWithEvents
+  barrierMode: helper
+  reason: 'RP-14 P8-003 EXACT_POLICY: 30_operation_runs retention target deletes child
+    operation_run_events then parent runs for TERMINAL runs past the cutoff inside
+    one @Transaction (RUNNING rows never purged); the body-carrying @Transaction
+    DAO wrapper covers the sibling child/parent delete queries (GR-08n1
+    scanner-blind-spot pattern)'
+  owner: '@panospao7'
+  linkedIssue: RP-14
+- path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
+  ownerFqcn: com.yourname.expensetracker.di.RetentionModule
+  kind: function
+  method: provideRetentionTargets
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.AppDatabase
+  - com.yourname.expensetracker.domain.util.TimeProvider
+  - com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+  daoAccessor: operationRunEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.OperationRunEventDao
+  operation: deleteOrphanEventsOlderThan
+  barrierMode: helper
+  reason: 'RP-14 P8-003 EXACT_POLICY: 30_operation_runs retention target deletes orphan
+    operation_run_events (null parent or no matching parent) older than the cutoff
+    by occurredAt, separately from the atomic child+parent purge'
+  owner: '@panospao7'
+  linkedIssue: RP-14
+- path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
+  ownerFqcn: com.yourname.expensetracker.di.RetentionModule
+  kind: function
+  method: provideRetentionTargets
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.AppDatabase
+  - com.yourname.expensetracker.domain.util.TimeProvider
+  - com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
   daoAccessor: pendingReviewDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.PendingReviewDao
   operation: redactNotificationTextOlderThan
@@ -3598,6 +3636,24 @@ entries:
   - com.yourname.expensetracker.data.database.AppDatabase
   - com.yourname.expensetracker.domain.util.TimeProvider
   - com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+  daoAccessor: privacyAuditDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PrivacyAuditDao
+  operation: deleteOlderThan
+  barrierMode: helper
+  reason: 'RP-14 P8-007 EXACT_POLICY: 50_privacy_audit_events retention target bounds the
+    privacy-audit accountability ledger (COMPLIANCE-FLAGGED 180-day cutoff, single
+    named constant in DataRetentionWorker; count-only and purge-safe)'
+  owner: '@panospao7'
+  linkedIssue: RP-14
+- path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
+  ownerFqcn: com.yourname.expensetracker.di.RetentionModule
+  kind: function
+  method: provideRetentionTargets
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.AppDatabase
+  - com.yourname.expensetracker.domain.util.TimeProvider
+  - com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
   daoAccessor: rawNotificationDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.RawNotificationDao
   operation: updateRawContentPurged
@@ -3616,15 +3672,70 @@ entries:
   - com.yourname.expensetracker.data.database.AppDatabase
   - com.yourname.expensetracker.domain.util.TimeProvider
   - com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+  daoAccessor: receiptEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptEventDao
+  operation: deleteOlderThan
+  barrierMode: helper
+  reason: 'RP-14 P8-003 EXACT_POLICY: 40_receipt_events retention target hard-deletes receipt
+    lifecycle events older than the 90-day cutoff by occurredAt (count-only)'
+  owner: '@panospao7'
+  linkedIssue: RP-14
+- path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
+  ownerFqcn: com.yourname.expensetracker.di.RetentionModule
+  kind: function
+  method: provideRetentionTargets
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.AppDatabase
+  - com.yourname.expensetracker.domain.util.TimeProvider
+  - com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
   daoAccessor: scannedReceiptDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
-  operation: updateRawOcrTextPurged
+  operation: purgeRawOcrText
   barrierMode: helper
-  reason: 'GR-08k1 EXACT_POLICY: scanned_receipts.rawOcrText retention target nulls
-    rawOcrText (stamps rawOcrTextPurgedAt) on unpurged scanned receipts past the cutoff
-    -- the canonical OCR-text privacy purge'
+  reason: 'RP-14 P8-002 EXACT_POLICY: scanned_receipts.rawOcrText retention target
+    clears rawOcrText (empty-string sentinel for the NOT NULL column), parsedItems,
+    parsedMerchant and parseFailureReason (writers are not limited to controlled
+    codes) in ONE set-based SQL update and stamps rawOcrTextPurgedAt once -- the
+    canonical OCR/structured privacy purge'
   owner: '@panospao7'
-  linkedIssue: MIT-DB-08K
+  linkedIssue: RP-14
+- path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
+  ownerFqcn: com.yourname.expensetracker.di.RetentionModule
+  kind: function
+  method: provideRetentionTargets
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.AppDatabase
+  - com.yourname.expensetracker.domain.util.TimeProvider
+  - com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+  daoAccessor: transactionEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
+  operation: nullSnapshotsOlderThan
+  barrierMode: helper
+  reason: 'RP-14 P8-001 EXACT_POLICY: 10_transaction_events.snapshots retention target nulls
+    beforeSnapshot/afterSnapshot for ALL event types past the 30-day cutoff (stage 1,
+    set-based SQL; runs before stage-2 row deletion)'
+  owner: '@panospao7'
+  linkedIssue: RP-14
+- path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
+  ownerFqcn: com.yourname.expensetracker.di.RetentionModule
+  kind: function
+  method: provideRetentionTargets
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.AppDatabase
+  - com.yourname.expensetracker.domain.util.TimeProvider
+  - com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+  daoAccessor: transactionEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
+  operation: deleteOlderThan
+  barrierMode: helper
+  reason: 'RP-14 P8-001 EXACT_POLICY: 20_transaction_events.rows retention target hard-deletes
+    transaction-event rows past the 365-day cutoff (stage 2; independent of stage-1
+    snapshot nulling)'
+  owner: '@panospao7'
+  linkedIssue: RP-14
 - path: app/src/main/java/com/yourname/expensetracker/domain/bank/BankApiIntegration.kt
   ownerFqcn: com.yourname.expensetracker.domain.bank.BankApiIntegration
   kind: function

@@ -141,4 +141,30 @@ class ReceiptEventDaoTest {
         assertEquals(2, dao.getEventsForReceipt(1L).size)
         assertEquals(1, dao.getEventsForReceipt(2L).size)
     }
+
+    // -------------------------------------------------------------------------
+    // RP-14 P8-003: receipt-event retention (90d)
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `deleteOlderThan removes rows strictly older than the cutoff`() = runTest {
+        val cutoff = FIXED_NOW - 90L * 24 * 60 * 60 * 1000
+        dao.insert(createEvent(occurredAt = cutoff - 1))
+        dao.insert(createEvent(occurredAt = cutoff)) // exactly at cutoff — kept
+        dao.insert(createEvent(occurredAt = FIXED_NOW))
+
+        val deleted = dao.deleteOlderThan(cutoff)
+
+        assertEquals(1, deleted)
+        assertEquals(2, dao.getEventsForReceipt(100L).size)
+    }
+
+    @Test
+    fun `deleteOlderThan is idempotent`() = runTest {
+        val cutoff = FIXED_NOW - 90L * 24 * 60 * 60 * 1000
+        dao.insert(createEvent(occurredAt = cutoff - 1))
+
+        assertEquals(1, dao.deleteOlderThan(cutoff))
+        assertEquals(0, dao.deleteOlderThan(cutoff))
+    }
 }

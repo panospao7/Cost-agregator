@@ -12,6 +12,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 
 private const val FIXED_NOW = 1_710_000_000_000L
 
@@ -158,5 +159,69 @@ class TransactionEventDaoTest {
         assertNotNull(id)
         val results = dao.getEventsForExpense(0L) // no expense should match
         assertEquals(0, results.size)
+    }
+
+    // -------------------------------------------------------------------------
+    // RP-14 P8-001: snapshot nulling (stage 1)
+    // -------------------------------------------------------------------------
+
+    private val dayMs = 24L * 60 * 60 * 1000
+
+    @Test
+    fun `nullSnapshotsOlderThan clears only snapshot columns of older events`() = runTest {
+        val oldId = dao.insert(
+            createEvent(
+                occurredAt = FIXED_NOW - 31 * dayMs,
+                beforeSnapshot = """{"a":1}""",
+                afterSnapshot = """{"a":2}"""
+            )
+        )
+        val recentId = dao.insert(
+            createEvent(
+                occurredAt = FIXED_NOW,
+                beforeSnapshot = """{"a":1}""",
+                afterSnapshot = """{"a":2}"""
+            )
+        )
+
+        val nulled = dao.nullSnapshotsOlderThan(FIXED_NOW - 30 * dayMs)
+
+        assertEquals(1, nulled)
+        val all = dao.getEventsForExpense(100L)
+        val oldRow = all.first { it.id == oldId }
+        assertNull(oldRow.beforeSnapshot)
+        assertNull(oldRow.afterSnapshot)
+        // Other columns are untouched.
+        assertEquals("UPDATED", oldRow.eventType)
+        assertNotNull(all.first { it.id == recentId }.beforeSnapshot)
+    }
+
+    @Test
+    fun `nullSnapshotsOlderThan keeps rows exactly at cutoff and skips snapshot-less rows`() = runTest {
+        val atCutoffId = dao.insert(
+            createEvent(occurredAt = FIXED_NOW - 30 * dayMs, beforeSnapshot = """{"a":1}""")
+        )
+        dao.insert(
+            createEvent(
+                occurredAt = FIXED_NOW - 40 * dayMs,
+                beforeSnapshot = null,
+                afterSnapshot = null
+            )
+        )
+
+        // Strict `<`: at-cutoff row kept; the snapshot-less old row is not counted.
+        val nulled = dao.nullSnapshotsOlderThan(FIXED_NOW - 30 * dayMs)
+
+        assertEquals(0, nulled)
+        assertNotNull(dao.getEventsForExpense(100L).first { it.id == atCutoffId }.beforeSnapshot)
+    }
+
+    @Test
+    fun `nullSnapshotsOlderThan is idempotent`() = runTest {
+        dao.insert(createEvent(occurredAt = FIXED_NOW - 31 * dayMs, afterSnapshot = """{"a":1}"""))
+        val cutoff = FIXED_NOW - 30 * dayMs
+
+        assertEquals(1, dao.nullSnapshotsOlderThan(cutoff))
+        assertEquals(0, dao.nullSnapshotsOlderThan(cutoff))
     }
 }

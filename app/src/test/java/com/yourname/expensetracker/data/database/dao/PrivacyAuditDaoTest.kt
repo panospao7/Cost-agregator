@@ -126,4 +126,30 @@ class PrivacyAuditDaoTest {
 
         assertTrue(results.isEmpty())
     }
+
+    // -------------------------------------------------------------------------
+    // RP-14 P8-007: accountability-ledger retention (compliance-flagged cutoff)
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `deleteOlderThan removes rows strictly older than the cutoff`() = runTest {
+        val cutoff = FIXED_NOW - 180L * 24 * 60 * 60 * 1000
+        dao.insert(createEvent(timestampMs = cutoff - 1))
+        dao.insert(createEvent(timestampMs = cutoff)) // exactly at cutoff — kept
+        dao.insert(createEvent(timestampMs = FIXED_NOW))
+
+        val deleted = dao.deleteOlderThan(cutoff)
+
+        assertEquals(1, deleted)
+        assertEquals(2, dao.getRecent(10).size)
+    }
+
+    @Test
+    fun `deleteOlderThan is idempotent and returns zero on rerun`() = runTest {
+        val cutoff = FIXED_NOW - 180L * 24 * 60 * 60 * 1000
+        dao.insert(createEvent(timestampMs = cutoff - 1))
+
+        assertEquals(1, dao.deleteOlderThan(cutoff))
+        assertEquals(0, dao.deleteOlderThan(cutoff))
+    }
 }

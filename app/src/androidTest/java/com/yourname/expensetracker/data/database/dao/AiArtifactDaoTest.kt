@@ -151,7 +151,7 @@ class AiArtifactDaoTest {
         assertEquals("pending_review:5", result!!.targetKey)
     }
 
-    // ── deleteExpired ─────────────────────────────────────────────────────────
+    // ── deleteExpired (RP-14 P8-004: now + null-expiry backstop) ─────────────
 
     @Test
     fun deleteExpired_removesOnlyExpiredArtifacts() = runBlocking {
@@ -169,7 +169,9 @@ class AiArtifactDaoTest {
         dao.upsert(expired)
         dao.upsert(fresh)
 
-        dao.deleteExpired(now)
+        // nullExpiryCutoff in the far future would sweep ALL null-expiry rows;
+        // these rows have an expiry, so passing a backstop of `now` is safe here.
+        dao.deleteExpired(now, nullExpiryCutoff = now)
 
         val remaining = dao.getAll()
         assertEquals(1, remaining.size)
@@ -177,13 +179,25 @@ class AiArtifactDaoTest {
     }
 
     @Test
-    fun deleteExpired_doesNotDeleteArtifactsWithNullExpiresAt() = runBlocking {
-        val noExpiry = makeArtifact(expiresAt = null)
-        dao.upsert(noExpiry)
+    fun deleteExpired_keepsRecentNullExpiryArtifacts_andDeletesOldNullExpiryOnes() = runBlocking {
+        val now = System.currentTimeMillis()
+        // Recent null-expiry row: inside the backstop window — kept.
+        val recentNoExpiry = makeArtifact(sourceHash = "recent_null", expiresAt = null, now = now)
+        // Old null-expiry row: updatedAt past the backstop cutoff — deleted.
+        val oldNoExpiry = makeArtifact(
+            sourceHash = "old_null",
+            expiresAt = null,
+            now = now - 40L * 24 * 60 * 60 * 1000L
+        )
+        dao.upsert(recentNoExpiry)
+        dao.upsert(oldNoExpiry)
 
-        dao.deleteExpired(Long.MAX_VALUE)
+        // RP-14 P8-004: pass now and the null-expiry backstop cutoff explicitly.
+        dao.deleteExpired(now, nullExpiryCutoff = now - 30L * 24 * 60 * 60 * 1000L)
 
-        assertEquals(1, dao.getAll().size)
+        val remaining = dao.getAll()
+        assertEquals(1, remaining.size)
+        assertEquals("recent_null", remaining[0].sourceHash)
     }
 
     // ── deleteByTargetKey ─────────────────────────────────────────────────────
