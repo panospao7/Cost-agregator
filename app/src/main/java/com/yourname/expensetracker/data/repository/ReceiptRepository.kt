@@ -601,8 +601,8 @@ class ReceiptRepository @Inject constructor(
             val isDuplicate: Boolean = false
         )
 
-        val results = coroutineScope {
-            uniqueUris.map { uri ->
+        val results = supervisorScope {
+            val deferreds = uniqueUris.map { uri ->
                 async {
                     val result = withContext(ioDispatcher) {
                         semaphore.withPermit {
@@ -645,7 +645,24 @@ class ReceiptRepository @Inject constructor(
 
                     result
                 }
-            }.awaitAll()
+            }
+            // RP-13 13a (P3-003): per-item result collection. supervisorScope keeps
+            // sibling items alive when one item fails; each await is recovered into
+            // a per-item failure (typed OCR failures included) instead of letting
+            // awaitAll() fail the entire scope. Caller cancellation still
+            // propagates — cancelled parents cancel all children.
+            deferreds.map { deferred ->
+                try {
+                    deferred.await()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    BatchItemResult(
+                        success = false,
+                        error = "Failed to process receipt input: ${safeFailureReason(e)}"
+                    )
+                }
+            }
         }
 
         val successCount = results.count { it.success && !it.isDuplicate }

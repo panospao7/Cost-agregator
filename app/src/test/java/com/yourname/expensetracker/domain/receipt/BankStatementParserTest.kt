@@ -534,4 +534,69 @@ class BankStatementParserTest {
             results[0].date!!
         )
     }
+
+    // -----------------------------------------------------------------------
+    //  RP-13 Gate B (P3-010) — explicit vs assumed currency provenance
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun `revolut euro symbol is explicit source currency even when home differs`() {
+        // Home currency is USD here; the row explicitly shows € amounts, so the
+        // parser must mark EUR as PARSED_FROM_SOURCE — never the home fallback.
+        val blocks = revolutRow(
+            dateStr = "Apr 12, 2023",
+            description = "Coffee Shop",
+            moneyOutStr = "€4,50",
+            moneyInStr = null,
+            balanceStr = "€5.000,00"
+        )
+
+        val results = parser.parse(blocks, "USD")
+
+        assertEquals("Expected 1 transaction", 1, results.size)
+        assertEquals("EUR", results[0].currency)
+        assertEquals(
+            com.yourname.expensetracker.domain.core.money.CurrencyAssumption.PARSED_FROM_SOURCE,
+            results[0].currencyAssumption
+        )
+    }
+
+    @Test
+    fun `explicit currency token row marks PARSED_FROM_SOURCE`() {
+        val blocks = listOf(
+            TextBlock("10/05", null, 10, 100, 50, 120),
+            TextBlock("SKLAVENITIS", null, 60, 100, 200, 120),
+            TextBlock("-12,50", null, 250, 100, 300, 120),
+            TextBlock("USD", null, 310, 100, 350, 120)
+        )
+
+        val results = parser.parse(blocks, "EUR")
+
+        assertEquals("Expected 1 transaction", 1, results.size)
+        assertEquals("USD", results[0].currency)
+        assertEquals(
+            com.yourname.expensetracker.domain.core.money.CurrencyAssumption.PARSED_FROM_SOURCE,
+            results[0].currencyAssumption
+        )
+    }
+
+    @Test
+    fun `row without currency token keeps home currency but marks it ASSUMED`() {
+        // No currency symbol/token anywhere in the row — the home currency is
+        // only an assumption and must be visible as such downstream.
+        val blocks = listOf(
+            TextBlock("10/05", null, 10, 100, 50, 120),
+            TextBlock("SKLAVENITIS", null, 60, 100, 200, 120),
+            TextBlock("-12,50", null, 250, 100, 300, 120)
+        )
+
+        val results = parser.parse(blocks, "USD")
+
+        assertEquals("Expected 1 transaction", 1, results.size)
+        assertEquals("USD", results[0].currency)
+        assertEquals(
+            com.yourname.expensetracker.domain.core.money.CurrencyAssumption.ASSUMED_HOME_CURRENCY,
+            results[0].currencyAssumption
+        )
+    }
 }
