@@ -4,6 +4,7 @@ import androidx.room.testing.MigrationTestHelper
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import androidx.test.platform.app.InstrumentationRegistry
 import com.google.common.truth.Truth.assertThat
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -55,33 +56,20 @@ class MigrationRegistrationTest {
     }
 
     @Test
-    fun `ALL_MIGRATIONS includes migration 117 to 119`() {
+    fun `ALL_MIGRATIONS covers exactly the supported post-baseline chain`() {
+        // The supported upgrade path is the v145-baseline chain only
+        // (DatabaseMigrations.ALL): 145→146→147→148→149 (RP-16 counters +
+        // RP-17 bank identity, combined migration).  Pre-baseline Migration
+        // objects still exist as dead code in AppDatabase.kt but are
+        // deliberately NOT registered; upgrades from retired versions
+        // (< 145) are not supported.
         val migrations = AppDatabase.ALL_MIGRATIONS
-        assertTrue(
-            "Migration 117→118 must be registered in ALL_MIGRATIONS",
-            migrations.any { it.startVersion == 117 && it.endVersion == 118 }
-        )
-        assertTrue(
-            "Migration 118→119 must be registered in ALL_MIGRATIONS",
-            migrations.any { it.startVersion == 118 && it.endVersion == 119 }
-        )
-    }
-
-    @Test
-    fun `ALL_MIGRATIONS includes migration 141 to 142`() {
-        val migrations = AppDatabase.ALL_MIGRATIONS
-        assertTrue(
-            "Migration 141→142 must be registered in ALL_MIGRATIONS",
-            migrations.any { it.startVersion == 141 && it.endVersion == 142 }
-        )
-    }
-
-    @Test
-    fun `ALL_MIGRATIONS includes migration 142 to 143`() {
-        val migrations = AppDatabase.ALL_MIGRATIONS
-        assertTrue(
-            "Migration 142→143 must be registered in ALL_MIGRATIONS",
-            migrations.any { it.startVersion == 142 && it.endVersion == 143 }
+        val expected = listOf(145 to 146, 146 to 147, 147 to 148, 148 to 149)
+        val actual = migrations.map { it.startVersion to it.endVersion }
+        assertEquals(
+            "ALL_MIGRATIONS must be exactly the post-baseline chain",
+            expected,
+            actual
         )
     }
 
