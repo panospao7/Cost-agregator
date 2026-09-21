@@ -1,8 +1,10 @@
 package com.yourname.expensetracker.di
 
+import com.yourname.expensetracker.data.privacy.AndroidKeystoreInstallationSecretKeyProvider
 import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy
 import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
 import com.yourname.expensetracker.data.privacy.DefaultSensitiveHashingService
+import com.yourname.expensetracker.data.privacy.KeystoreInstallationSecretHasher
 import com.yourname.expensetracker.data.privacy.PrivacyAuditLoggerImpl
 import com.yourname.expensetracker.data.privacy.PrivacySettingsRepositoryImpl
 import com.yourname.expensetracker.domain.privacy.BackupPrivacyGate
@@ -10,6 +12,8 @@ import com.yourname.expensetracker.domain.privacy.CloudAiPrivacyGate
 import com.yourname.expensetracker.domain.privacy.CloudPayloadPolicy
 import com.yourname.expensetracker.domain.privacy.CloudPayloadRedactor
 import com.yourname.expensetracker.domain.privacy.CompositePrivacyGate
+import com.yourname.expensetracker.domain.privacy.InstallationSecretHasher
+import com.yourname.expensetracker.domain.privacy.InstallationSecretKeyProvider
 import com.yourname.expensetracker.domain.privacy.LocationPrivacyGate
 import com.yourname.expensetracker.domain.privacy.NotificationPrivacyGate
 import com.yourname.expensetracker.domain.privacy.PrivacyAuditLogger
@@ -52,6 +56,19 @@ abstract class PrivacyModule {
     abstract fun bindCloudPayloadPolicy(
         impl: DefaultCloudPayloadPolicy
     ): CloudPayloadPolicy
+
+    /** RP-15 (15-C, D13): the ONE Keystore-backed installation-secret HMAC service. */
+    @Binds
+    @Singleton
+    abstract fun bindInstallationSecretHasher(
+        impl: KeystoreInstallationSecretHasher
+    ): InstallationSecretHasher
+
+    @Binds
+    @Singleton
+    abstract fun bindInstallationSecretKeyProvider(
+        impl: AndroidKeystoreInstallationSecretKeyProvider
+    ): InstallationSecretKeyProvider
 
     companion object {
 

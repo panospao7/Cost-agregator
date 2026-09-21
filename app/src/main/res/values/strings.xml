@@ -811,6 +811,21 @@
     <!-- Privacy Settings -->
     <string name="privacy_feature_disabled">Feature disabled</string>
     <string name="privacy_section_disabled_features">Disabled Features</string>
+    <!-- RP-15 (15-D): resource-backed privacy-denied messages. The UI must render
+         these instead of arbitrary domain/exception reason strings. -->
+    <string name="privacy_blocked_generic">This feature is blocked by your privacy settings.</string>
+    <string name="privacy_blocked_cloud_ai">Cloud AI is disabled in Privacy or AI settings.</string>
+    <string name="privacy_blocked_receipt_image_upload">Uploading receipt images to the cloud is disabled.</string>
+    <string name="privacy_blocked_external_geocoding">External geocoding (address lookup) is disabled.</string>
+    <string name="privacy_blocked_notification_capture">Capturing notifications is disabled.</string>
+    <string name="privacy_blocked_raw_export">Raw (unredacted) export is disabled.</string>
+    <string name="privacy_blocked_device_gps">Device location is disabled by privacy settings.</string>
+    <string name="privacy_blocked_background_location">Background location backfill is disabled.</string>
+    <string name="privacy_blocked_bank_statement_ai">Bank statement AI parsing is disabled.</string>
+    <string name="privacy_blocked_encrypted_backup">Encrypted backup is disabled.</string>
+    <string name="privacy_blocked_overpass">Map data (Overpass API) is disabled.</string>
+    <string name="privacy_blocked_debug_persistence">Debug data persistence is disabled.</string>
+    <string name="privacy_blocked_debug_export">Debug export is not permitted with your current privacy settings.</string>
     <string name="privacy_settings_cta">Settings</string>
     <string name="privacy_section_notification">Notification Capture</string>
     <string name="privacy_section_cloud_ai">Cloud AI</string>

@@ -221,15 +221,37 @@ class PrivacySettingsRepositoryImpl @Inject constructor(
         rawNotificationRetentionDays = this[Keys.RAW_NOTIFICATION_RETENTION_DAYS] ?: 30,
         rawOcrRetentionDays = this[Keys.RAW_OCR_RETENTION_DAYS] ?: 30,
         debugDataPersistenceEnabled = this[Keys.DEBUG_DATA_PERSISTENCE_ENABLED] ?: false,
-        rawNotificationStorageMode = this[Keys.RAW_NOTIFICATION_STORAGE_MODE]
-            ?.let { runCatching { RawStorageMode.valueOf(it) }.getOrNull() } ?: RawStorageMode.STORE_RAW,
-        rawOcrStorageMode = this[Keys.RAW_OCR_STORAGE_MODE]
-            ?.let { runCatching { RawStorageMode.valueOf(it) }.getOrNull() } ?: RawStorageMode.STORE_RAW,
-        emailReceiptStorageMode = this[Keys.EMAIL_RECEIPT_STORAGE_MODE]
-            ?.let { runCatching { RawStorageMode.valueOf(it) }.getOrNull() } ?: RawStorageMode.STORE_REDACTED,
-        rawBankStatementStorageMode = this[Keys.RAW_BANK_STATEMENT_STORAGE_MODE]
-            ?.let { runCatching { RawStorageMode.valueOf(it) }.getOrNull() } ?: RawStorageMode.STORE_REDACTED
+        // RP-15 (15-A): an INVALID persisted mode value fails closed (DO_NOT_STORE);
+        // an ABSENT key keeps the existing first-run product default.
+        rawNotificationStorageMode = parseStorageMode(
+            stored = this[Keys.RAW_NOTIFICATION_STORAGE_MODE],
+            defaultWhenAbsent = RawStorageMode.STORE_RAW
+        ),
+        rawOcrStorageMode = parseStorageMode(
+            stored = this[Keys.RAW_OCR_STORAGE_MODE],
+            defaultWhenAbsent = RawStorageMode.STORE_RAW
+        ),
+        emailReceiptStorageMode = parseStorageMode(
+            stored = this[Keys.EMAIL_RECEIPT_STORAGE_MODE],
+            defaultWhenAbsent = RawStorageMode.STORE_REDACTED
+        ),
+        rawBankStatementStorageMode = parseStorageMode(
+            stored = this[Keys.RAW_BANK_STATEMENT_STORAGE_MODE],
+            defaultWhenAbsent = RawStorageMode.STORE_REDACTED
+        )
     )
+
+    /**
+     * RP-15 (15-A): storage-mode coercion that cannot fail open.
+     * [RawStorageMode.valueOf] failure on a corrupt/unknown stored value yields
+     * [RawStorageMode.DO_NOT_STORE] — never the permissive first-run default.
+     */
+    private fun parseStorageMode(stored: String?, defaultWhenAbsent: RawStorageMode): RawStorageMode =
+        if (stored == null) {
+            defaultWhenAbsent
+        } else {
+            runCatching { RawStorageMode.valueOf(stored) }.getOrDefault(RawStorageMode.DO_NOT_STORE)
+        }
 }
 
 private fun PrivacySettingsLoadState.settings(): PrivacySettings = when (this) {

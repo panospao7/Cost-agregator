@@ -18,13 +18,35 @@ import javax.inject.Singleton
  * | BANK_API       | rawBankStatementStorageMode      | STORE_REDACTED  |
  * | AI_ARTIFACT    | debugDataPersistenceEnabled      | DO_NOT_STORE    |
  * | EXPORT_DEBUG   | debugDataPersistenceEnabled      | DO_NOT_STORE    |
+ *
+ * ## RP-15 (15-A) fail-closed normalization
+ *
+ * This resolver is the ONLY component allowed to select a raw storage mode from
+ * [PrivacySettings] (production code calls [forSource] / [forSourceSync] and
+ * consumes the complete [RawPersistencePolicy]; `modeFor` is private).
+ *
+ * [forSource] normalizes unavailable/corrupt settings to
+ * [PrivacySettings.FAIL_CLOSED_DEFAULTS] BEFORE policy construction:
+ * - a `CorruptedFailClosed` load state yields the fail-closed defaults, and
+ * - any repository failure (non-cancellation) yields the fail-closed defaults.
  */
 @Singleton
 class RawPersistencePolicyResolver @Inject constructor(
     private val privacySettingsRepository: PrivacySettingsRepository
 ) {
     suspend fun forSource(sourceType: RawSourceType): RawPersistencePolicy {
-        val settings = privacySettingsRepository.getSettings()
+        val settings = try {
+            when (val state = privacySettingsRepository.getLoadState()) {
+                // RP-15 15-A: corrupt settings normalize to fail-closed defaults before
+                // policy construction, regardless of what the state object carries.
+                is PrivacySettingsLoadState.CorruptedFailClosed -> PrivacySettings.FAIL_CLOSED_DEFAULTS
+                is PrivacySettingsLoadState.Loaded -> state.settings
+                is PrivacySettingsLoadState.FirstRunDefault -> state.settings
+            }
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            PrivacySettings.FAIL_CLOSED_DEFAULTS
+        }
         return buildPolicy(sourceType, settings)
     }
 

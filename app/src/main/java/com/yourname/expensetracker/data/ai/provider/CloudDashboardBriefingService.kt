@@ -24,7 +24,7 @@ import com.yourname.expensetracker.domain.privacy.PrivacyBlocked
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
-import com.yourname.expensetracker.domain.privacy.toPrivacyBlocked
+import com.yourname.expensetracker.domain.privacy.toPrivacyBlockedOrFallback
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -136,7 +136,8 @@ class CloudDashboardBriefingService @Inject constructor(
             Timber.d("CloudDashboardBriefingService: blocked by effective cloud AI policy: ${effectivePolicy.reason}")
             return AiServiceResult.Failure(
                 AiServiceError.PrivacyDenied(
-                    PrivacyBlocked.Custom(PrivacyCapability.CLOUD_AI_DAILY_BRIEFING, effectivePolicy.reason ?: "Cloud AI disabled")
+                    // RP-15 (15-B): typed blocked state with a static reason — no ad-hoc Custom text.
+                    PrivacyBlocked.CloudAiDisabled()
                 )
             )
         }
@@ -147,8 +148,7 @@ class CloudDashboardBriefingService @Inject constructor(
             Timber.w("CloudDashboardBriefingService: blocked by privacy gate: ${gateCheck.reason()}")
             return AiServiceResult.Failure(
                 AiServiceError.PrivacyDenied(
-                    gateCheck.toPrivacyBlocked(PrivacyCapability.CLOUD_AI_DAILY_BRIEFING)
-                        ?: PrivacyBlocked.Custom(PrivacyCapability.CLOUD_AI_DAILY_BRIEFING, gateCheck.reason())
+                    gateCheck.toPrivacyBlockedOrFallback(PrivacyCapability.CLOUD_AI_DAILY_BRIEFING)
                 )
             )
         }

@@ -23,7 +23,7 @@ import com.yourname.expensetracker.domain.privacy.PrivacyBlocked
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
-import com.yourname.expensetracker.domain.privacy.toPrivacyBlocked
+import com.yourname.expensetracker.domain.privacy.toPrivacyBlockedOrFallback
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -97,7 +97,8 @@ class CloudReviewExplanationService @Inject constructor(
             Timber.d("CloudReviewExplanationService: blocked by effective cloud AI policy: ${effectivePolicy.reason}")
             return AiServiceResult.Failure(
                 AiServiceError.PrivacyDenied(
-                    PrivacyBlocked.Custom(PrivacyCapability.CLOUD_AI_GENERAL, effectivePolicy.reason ?: "Cloud AI disabled")
+                    // RP-15 (15-B): typed blocked state with a static reason — no ad-hoc Custom text.
+                    PrivacyBlocked.CloudAiDisabled()
                 )
             )
         }
@@ -108,8 +109,7 @@ class CloudReviewExplanationService @Inject constructor(
             Timber.w("CloudReviewExplanationService: blocked by privacy gate: ${gateCheck.reason()}")
             return AiServiceResult.Failure(
                 AiServiceError.PrivacyDenied(
-                    gateCheck.toPrivacyBlocked(PrivacyCapability.CLOUD_AI_GENERAL)
-                        ?: PrivacyBlocked.Custom(PrivacyCapability.CLOUD_AI_GENERAL, gateCheck.reason())
+                    gateCheck.toPrivacyBlockedOrFallback(PrivacyCapability.CLOUD_AI_GENERAL)
                 )
             )
         }

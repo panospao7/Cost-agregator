@@ -1,8 +1,31 @@
 package com.yourname.expensetracker.data.ai.provider.internal
 
-import java.security.MessageDigest
+import com.yourname.expensetracker.domain.privacy.InstallationSecretHasher
+import com.yourname.expensetracker.domain.privacy.versionedPseudonym
+import javax.inject.Inject
+import javax.inject.Singleton
 
-object CloudPiiSanitizer {
+/**
+ * RP-15 (15-C, D13 remediation): PII sanitizer for cloud payloads.
+ *
+ * Converted from a static object to an injected class so that merchant
+ * identity pseudonyms and blank-text fallbacks are keyed by the SAME
+ * Keystore-backed installation secret that
+ * [com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor] uses.
+ * The legacy implementation hashed these values with an unsalted public
+ * SHA-256 (trivially reversible via dictionary attack); the replacement is a
+ * versioned installation-secret HMAC with NO public-hash fallback — when the
+ * installation secret is unavailable, an identity-free marker is emitted.
+ *
+ * Output formats:
+ * - merchant pseudonym: `merchant_v<version>_<hmac>` (or `merchant_redacted`)
+ * - blank-text fallback: `<prefix>_v<version>_<hmac>` (or `<prefix>_redacted`)
+ * Legacy `merchant_<unsalted-sha>` artifacts are never regenerated or matched.
+ */
+@Singleton
+class CloudPiiSanitizer @Inject constructor(
+    private val installationSecretHasher: InstallationSecretHasher
+) {
     private val EMAIL_REGEX = Regex("""\b[\w._%+-]+@[\w.-]+\.[A-Za-z]{2,}\b""")
     private val IBAN_REGEX = Regex("""\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b""")
     private val CARD_REGEX = Regex("""\b(?:\d[ -]?){13,19}\b""")
@@ -44,7 +67,7 @@ object CloudPiiSanitizer {
             .take(maxChars)
 
         return if (redacted.isBlank()) {
-            "${fallbackPrefix}_${trimmed.sha256Prefix()}"
+            "${fallbackPrefix}_${installationSecretHasher.versionedPseudonym(trimmed)}"
         } else {
             redacted
         }
@@ -53,11 +76,6 @@ object CloudPiiSanitizer {
     fun sanitizeMerchant(raw: String?, shouldRedact: Boolean): String {
         val trimmed = raw?.trim().takeUnless { it.isNullOrBlank() } ?: "Unknown"
         if (!shouldRedact) return trimmed.take(80)
-        return "merchant_${trimmed.sha256Prefix()}"
+        return "merchant_${installationSecretHasher.versionedPseudonym(trimmed)}"
     }
-}
-
-fun String.sha256Prefix(length: Int = 12): String {
-    val digest = MessageDigest.getInstance("SHA-256").digest(toByteArray())
-    return digest.joinToString(separator = "") { "%02x".format(it) }.take(length)
 }

@@ -172,6 +172,26 @@ class ReviewViewModel @Inject constructor(
     private val _debugData = MutableStateFlow<com.yourname.expensetracker.ui.screens.debug.DebugData?>(null)
     val debugData = _debugData.asStateFlow()
 
+    // RP-15 (15-D): typed debug-export denial state — denial, fail-closed, and
+    // SecurityException outcomes converge here instead of reason-string rendering.
+    private val _debugExportBlocked =
+        MutableStateFlow<com.yourname.expensetracker.ui.components.PrivacyBlockedUiState?>(null)
+    val debugExportBlocked: StateFlow<com.yourname.expensetracker.ui.components.PrivacyBlockedUiState?> =
+        _debugExportBlocked.asStateFlow()
+
+    /**
+     * RP-15 (15-D): records a typed debug-export denial and returns the bounded
+     * user-facing text. The exporter's internal reason string is never rendered.
+     */
+    private fun debugExportDenied(): String {
+        _debugExportBlocked.value = com.yourname.expensetracker.ui.components.PrivacyBlockedUiState(
+            capability = com.yourname.expensetracker.domain.privacy.PrivacyCapability.DEBUG_RAW_EXPORT,
+            messageResId = com.yourname.expensetracker.R.string.privacy_blocked_debug_export,
+            reasonCode = com.yourname.expensetracker.domain.privacy.PrivacyGateReasonCodes.PRIVACY_GATE_FAILURE
+        )
+        return "Debug export is blocked by privacy settings"
+    }
+
     // ── AI explanation state ──────────────────────────────────────────────────
     // Map of reviewId → AiLoadState<ReviewExplanationUi>; updated atomically.
     private val _aiExplanationStates =
@@ -355,7 +375,7 @@ class ReviewViewModel @Inject constructor(
             } catch (e: Exception) {
                 Timber.e(e, "loadAiExplanation: unexpected error for review $reviewId")
                 _aiExplanationStates.update {
-                    it + (reviewId to AiLoadState.Error(e.message ?: "Unexpected error"))
+                    it + (reviewId to AiLoadState.Error("AI explanation unavailable. Please try again."))
                 }
             } finally {
                 _inFlightExplanations.remove(reviewId)
@@ -399,7 +419,7 @@ class ReviewViewModel @Inject constructor(
         when (result) {
             is Result.Success -> { /* Handled by UI observing DB change */ }
             is Result.Duplicate -> _errorMessage.value = "Duplicate transaction detected"
-            is Result.Error -> _errorMessage.value = "$prefix: ${result.message}"
+            is Result.Error -> _errorMessage.value = prefix
             Result.Loading -> { /* No-op or show loading */ }
         }
     }
@@ -412,7 +432,7 @@ class ReviewViewModel @Inject constructor(
                 reviewQueueRepository.rejectReview(reviewId)
             } catch (e: Exception) {
                 Timber.e(e, "Failed to reject review $reviewId")
-                _errorMessage.value = "Failed to reject review: ${e.message ?: "Unknown error"}"
+                _errorMessage.value = "Failed to reject review"
             } finally {
                 endMutation(reviewId)
             }
@@ -581,7 +601,8 @@ class ReviewViewModel @Inject constructor(
                 }
             } catch (e: Exception) {
                 Timber.e(e, "Category assist failed for review $reviewId")
-                updateCategoryAssistState(reviewId, AiLoadState.Error(e.message ?: "AI assist failed"))
+                // RP-15: bounded message only — exception text is never rendered.
+                updateCategoryAssistState(reviewId, AiLoadState.Error("AI assist failed"))
             } finally {
                 _inFlightAssist.remove(key)
             }
@@ -662,7 +683,8 @@ class ReviewViewModel @Inject constructor(
             }
             } catch (e: Exception) {
                 Timber.e(e, "Receipt assist failed for review $reviewId")
-                updateReceiptAssistState(reviewId, AiLoadState.Error(e.message ?: "AI assist failed"), diagnostics = null, message = null)
+                // RP-15: bounded message only — exception text is never rendered.
+                updateReceiptAssistState(reviewId, AiLoadState.Error("AI assist failed"), diagnostics = null, message = null)
             } finally {
                 _inFlightAssist.remove(key)
             }
@@ -711,7 +733,8 @@ class ReviewViewModel @Inject constructor(
             }
             } catch (e: Exception) {
                 Timber.e(e, "Dedupe assist failed for review $reviewId")
-                updateDedupeAssistState(reviewId, AiLoadState.Error(e.message ?: "AI assist failed"), diagnostics = null)
+                // RP-15: bounded message only — exception text is never rendered.
+                updateDedupeAssistState(reviewId, AiLoadState.Error("AI assist failed"), diagnostics = null)
             } finally {
                 _inFlightAssist.remove(key)
             }
@@ -832,7 +855,7 @@ class ReviewViewModel @Inject constructor(
                 )
             } catch (e: Exception) {
                 Timber.e(e, "Quick approve failed for ${preview.reviewId}")
-                _errorMessage.value = "Quick approve failed: ${e.message}"
+                _errorMessage.value = "Quick approve failed"
             } finally {
                 endMutation(preview.reviewId)
             }
@@ -945,7 +968,7 @@ class ReviewViewModel @Inject constructor(
                     else -> "Approved all $successCount pending reviews."
                 }
             } catch (e: Exception) {
-                _errorMessage.value = "Failed to approve all: ${e.message}"
+                _errorMessage.value = "Failed to approve all. Please try again."
             } finally {
                 _operationState.value = null
             }
@@ -964,7 +987,7 @@ class ReviewViewModel @Inject constructor(
                 reviewQueueRepository.rejectAllReviews()
                 _errorMessage.value = "All pending reviews cleared."
             } catch (e: Exception) {
-                _errorMessage.value = "Failed to clear all: ${e.message}"
+                _errorMessage.value = "Failed to clear all. Please try again."
             } finally {
                 _operationState.value = null
             }
@@ -1012,7 +1035,7 @@ class ReviewViewModel @Inject constructor(
                     _errorMessage.value = "Successfully processed all ${result.successCount} receipts!"
                 }
             } catch (e: Exception) {
-                _errorMessage.value = "Batch failed: ${e.message}"
+                _errorMessage.value = "Batch processing failed. Please try again."
             } finally {
                 _operationState.value = null
             }
@@ -1044,7 +1067,8 @@ class ReviewViewModel @Inject constructor(
                         }
                     }
                     is Result.Error -> {
-                        _errorMessage.value = "Failed to parse statement: ${result.message ?: result.exception?.message ?: "Unknown error"}"
+                        // RP-15: bounded message only — decision/exception text is never rendered.
+                        _errorMessage.value = "Failed to parse statement"
                     }
                     is Result.Duplicate -> {
                         _errorMessage.value = "Statement already processed (duplicate)"
@@ -1052,7 +1076,8 @@ class ReviewViewModel @Inject constructor(
                     Result.Loading -> { /* no-op */ }
                 }
             } catch (e: Exception) {
-                _errorMessage.value = "Import failed: ${e.message}"
+                // RP-15: bounded message only — exception text is never rendered.
+                _errorMessage.value = "Import failed"
             } finally {
                 _operationState.value = null
             }
@@ -1066,8 +1091,12 @@ class ReviewViewModel @Inject constructor(
             requestedBy = "ReviewViewModel"
         )
         return when (result) {
-            is com.yourname.expensetracker.domain.debug.DebugExportResult.Allowed -> result.content
-            is com.yourname.expensetracker.domain.debug.DebugExportResult.Denied -> "[BLOCKED] ${result.reason}"
+            is com.yourname.expensetracker.domain.debug.DebugExportResult.Allowed -> {
+                _debugExportBlocked.value = null
+                result.content
+            }
+            is com.yourname.expensetracker.domain.debug.DebugExportResult.Denied ->
+                debugExportDenied()  // RP-15 (15-D): typed state + bounded text, no reason rendering
         }
     }
 
@@ -1079,8 +1108,12 @@ class ReviewViewModel @Inject constructor(
             requestedBy = "ReviewViewModel"
         )
         return when (result) {
-            is com.yourname.expensetracker.domain.debug.DebugExportResult.Allowed -> result.content
-            is com.yourname.expensetracker.domain.debug.DebugExportResult.Denied -> "[BLOCKED] ${result.reason}"
+            is com.yourname.expensetracker.domain.debug.DebugExportResult.Allowed -> {
+                _debugExportBlocked.value = null
+                result.content
+            }
+            is com.yourname.expensetracker.domain.debug.DebugExportResult.Denied ->
+                debugExportDenied()  // RP-15 (15-D): typed state + bounded text, no reason rendering
         }
     }
 

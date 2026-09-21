@@ -27,7 +27,7 @@ import com.yourname.expensetracker.domain.privacy.PrivacyBlocked
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
-import com.yourname.expensetracker.domain.privacy.toPrivacyBlocked
+import com.yourname.expensetracker.domain.privacy.toPrivacyBlockedOrFallback
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -127,8 +127,7 @@ class CloudReceiptAssistService @Inject constructor(
             Timber.d("CloudReceiptAssistService: privacy gate denied: ${gateDecision.reason()}")
             return AiServiceResult.Failure(
                 AiServiceError.PrivacyDenied(
-                    gateDecision.toPrivacyBlocked(capability)
-                        ?: PrivacyBlocked.Custom(capability, gateDecision.reason())
+                    gateDecision.toPrivacyBlockedOrFallback(capability)
                 )
             )
         }
@@ -286,8 +285,7 @@ class CloudReceiptAssistService @Inject constructor(
             Timber.d("CloudReceiptAssistService: privacy gate denied suggestFromText: ${gateDecision.reason()}")
             return AiServiceResult.Failure(
                 AiServiceError.PrivacyDenied(
-                    gateDecision.toPrivacyBlocked(PrivacyCapability.CLOUD_AI_BANK_STATEMENT)
-                        ?: PrivacyBlocked.Custom(PrivacyCapability.CLOUD_AI_BANK_STATEMENT, gateDecision.reason())
+                    gateDecision.toPrivacyBlockedOrFallback(PrivacyCapability.CLOUD_AI_BANK_STATEMENT)
                 )
             )
         }

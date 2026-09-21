@@ -2,6 +2,7 @@ package com.yourname.expensetracker.data.ai.provider
 
 import android.content.Context
 import com.yourname.expensetracker.data.ai.provider.internal.CloudPiiSanitizer
+import com.yourname.expensetracker.data.privacy.FailClosedInstallationSecretHasher
 import com.yourname.expensetracker.domain.ai.model.DashboardBriefingInput
 import com.yourname.expensetracker.domain.ai.model.DashboardBudgetWarningInput
 import com.yourname.expensetracker.domain.ai.model.DashboardUpcomingItemInput
@@ -36,13 +37,27 @@ import javax.inject.Singleton
  */
 @Singleton
 class DashboardBriefingPromptFormatter private constructor(
-    private val textResolver: (UiText) -> String
+    private val textResolver: (UiText) -> String,
+    // RP-15 (15-C): same installation-secret HMAC instance as the cloud redactor.
+    private val cloudPiiSanitizer: CloudPiiSanitizer
 ) {
 
     @Inject
-    constructor(@ApplicationContext context: Context) : this(textResolver = { text -> text.asString(context) })
+    constructor(
+        @ApplicationContext context: Context,
+        cloudPiiSanitizer: CloudPiiSanitizer
+    ) : this(textResolver = { text -> text.asString(context) }, cloudPiiSanitizer = cloudPiiSanitizer)
 
-    constructor() : this(textResolver = ::fallbackResolve)
+    /**
+     * Fallback wiring for secondary constructors of cloud services (test /
+     * fail-closed paths): the injected sanitizer is unavailable, so a fail-closed
+     * one is used — pseudonyms degrade to identity-free markers, never a
+     * public hash.
+     */
+    constructor() : this(
+        textResolver = ::fallbackResolve,
+        cloudPiiSanitizer = CloudPiiSanitizer(FailClosedInstallationSecretHasher)
+    )
 
     private val dateKeyFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
 
@@ -64,7 +79,7 @@ class DashboardBriefingPromptFormatter private constructor(
             appendLine("Current month spent: ${input.currentMonthSpent}")
             // PRIVACY FIX: Redact top categories names when redaction is enabled
             val safeTopCategories = if (shouldRedact) {
-                input.topCategories.take(3).map { CloudPiiSanitizer.sanitizeMerchant(it, shouldRedact = true) }
+                input.topCategories.take(3).map { cloudPiiSanitizer.sanitizeMerchant(it, shouldRedact = true) }
                     .joinToString(", ").ifBlank { "none" }
             } else {
                 input.topCategories.joinToString(", ").ifBlank { "none" }
@@ -80,7 +95,7 @@ class DashboardBriefingPromptFormatter private constructor(
                     val amountLabel = item.currencyCode?.takeIf { it.isNotBlank() }?.let { currencyCode ->
                         CurrencyFormatter.format(item.amount, currencyCode = currencyCode, showCents = false)
                     } ?: String.format(Locale.getDefault(), "%.0f", item.amount)
-                    "${CloudPiiSanitizer.sanitizeMerchant(item.description, shouldRedact = true)} $amountLabel on $dateLabel"
+                    "${cloudPiiSanitizer.sanitizeMerchant(item.description, shouldRedact = true)} $amountLabel on $dateLabel"
                 }.joinToString(", ").ifBlank { "none" }
             } else {
                 input.upcomingItems.joinToString(", ") { formatUpcomingItem(it) }.ifBlank { "none" }
@@ -100,7 +115,7 @@ class DashboardBriefingPromptFormatter private constructor(
     ): String {
         // Redact if either the per-call flag or the global settings say so
         val shouldRedact = insight.redactForPrompt || shouldRedactFromSettings
-        val merchantLabel = CloudPiiSanitizer.sanitizeMerchant(
+        val merchantLabel = cloudPiiSanitizer.sanitizeMerchant(
             raw = insight.merchantName,
             shouldRedact = insight.redactForPrompt
         )

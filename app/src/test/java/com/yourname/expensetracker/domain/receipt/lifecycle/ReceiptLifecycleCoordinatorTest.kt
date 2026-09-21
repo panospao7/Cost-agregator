@@ -22,7 +22,9 @@ import com.yourname.expensetracker.domain.diagnostics.AppPipeline
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
 import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
 import com.yourname.expensetracker.domain.privacy.PrivacySettings
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsLoadState
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+import com.yourname.expensetracker.domain.privacy.RawPersistencePolicyResolver
 import com.yourname.expensetracker.domain.privacy.RawStorageMode
 import com.yourname.expensetracker.domain.receipt.EmailReceiptData
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
@@ -94,6 +96,9 @@ class ReceiptLifecycleCoordinatorTest {
     private lateinit var writeBarrier: DatabaseWriteBarrier
     private lateinit var diagnosticEventWriter: DiagnosticEventWriter
     private lateinit var privacySettingsRepository: PrivacySettingsRepository
+    // RP-15 (15-A): the coordinator consumes the REAL resolver over the stubbed
+    // repository — policy tests exercise actual resolver logic, not a mock.
+    private lateinit var rawPersistencePolicyResolver: RawPersistencePolicyResolver
     private lateinit var transactionLifecycleCoordinator: TransactionLifecycleCoordinator
     private lateinit var transactionRunner: DomainTransactionRunner
     private lateinit var receiptLifecycleEventWriter: ReceiptLifecycleEventWriter
@@ -124,6 +129,11 @@ class ReceiptLifecycleCoordinatorTest {
         writeBarrier = mockk(relaxed = true)
         diagnosticEventWriter = mockk(relaxed = true)
         privacySettingsRepository = mockk(relaxed = true)
+        rawPersistencePolicyResolver = RawPersistencePolicyResolver(privacySettingsRepository)
+        // Relaxed PrivacySettingsLoadState (sealed) cannot be synthesized — the
+        // resolver reads getLoadState(), so pin an explicit Loaded default here.
+        coEvery { privacySettingsRepository.getLoadState() } returns
+            PrivacySettingsLoadState.Loaded(PrivacySettings())
         transactionLifecycleCoordinator = mockk(relaxed = true)
         transactionRunner = mockk(relaxed = true)
         assetCleanupCoordinator = AssetCleanupCoordinator(
@@ -190,6 +200,7 @@ class ReceiptLifecycleCoordinatorTest {
             merchantNormalizer = mockk(relaxed = true),
             hybridClassifier = mockk(relaxed = true),
             privacySettingsRepository = privacySettingsRepository,
+            rawPersistencePolicyResolver = rawPersistencePolicyResolver,
             diagnosticEventWriter = diagnosticEventWriter,
             sourceLinkWriter = mockk(relaxed = true),
             receiptSideEffectPlanner = receiptSideEffectPlanner,
@@ -581,8 +592,10 @@ class ReceiptLifecycleCoordinatorTest {
         coEvery { duplicateDetector.checkDuplicate(any(), any(), any(), any()) } returns ReceiptDuplicateDetector.DuplicateResult(
             isDuplicate = false, confidence = 0.0f, existingReceiptId = null, reason = null, matchType = "NONE"
         )
-        coEvery { privacySettingsRepository.getSettings() } returns
-            PrivacySettings(rawOcrStorageMode = RawStorageMode.STORE_REDACTED)
+        coEvery { privacySettingsRepository.getLoadState() } returns
+            PrivacySettingsLoadState.Loaded(
+                PrivacySettings(rawOcrStorageMode = RawStorageMode.STORE_REDACTED)
+            )
         val inputSlot = slot<ReceiptSideEffectInput>()
         coEvery { receiptSideEffectPlanner.planAfterReceiptSaved(capture(inputSlot), any(), any()) } returns nonEmptyBatch()
         coEvery { postCommitActionRunner.run(any()) } returns mockk(relaxed = true)
@@ -610,8 +623,10 @@ class ReceiptLifecycleCoordinatorTest {
         coEvery { duplicateDetector.checkDuplicate(any(), any(), any(), any()) } returns ReceiptDuplicateDetector.DuplicateResult(
             isDuplicate = false, confidence = 0.0f, existingReceiptId = null, reason = null, matchType = "NONE"
         )
-        coEvery { privacySettingsRepository.getSettings() } returns
-            PrivacySettings(rawOcrStorageMode = RawStorageMode.STORE_RAW)
+        coEvery { privacySettingsRepository.getLoadState() } returns
+            PrivacySettingsLoadState.Loaded(
+                PrivacySettings(rawOcrStorageMode = RawStorageMode.STORE_RAW)
+            )
         val inputSlot = slot<ReceiptSideEffectInput>()
         coEvery { receiptSideEffectPlanner.planAfterReceiptSaved(capture(inputSlot), any(), any()) } returns nonEmptyBatch()
         coEvery { postCommitActionRunner.run(any()) } returns mockk(relaxed = true)
@@ -628,8 +643,10 @@ class ReceiptLifecycleCoordinatorTest {
     // fresh insert under a restricted storage mode.
     @Test
     fun `processEmailReceipt fresh insert carries ephemeral parsed items into planning under restricted mode`() = runTest {
-        coEvery { privacySettingsRepository.getSettings() } returns
-            PrivacySettings(emailReceiptStorageMode = RawStorageMode.STORE_REDACTED)
+        coEvery { privacySettingsRepository.getLoadState() } returns
+            PrivacySettingsLoadState.Loaded(
+                PrivacySettings(emailReceiptStorageMode = RawStorageMode.STORE_REDACTED)
+            )
         val emailItemsJson = "[{\"description\":\"Email Item\",\"totalPrice\":4.5,\"quantity\":1,\"unitPrice\":4.5}]"
         val expectedEphemeral = listOf(
             ReceiptParser.LineItem(description = "Email Item", quantity = 1.0, unitPrice = 4.5, totalPrice = 4.5)
@@ -893,7 +910,8 @@ class ReceiptLifecycleCoordinatorTest {
             rawOcrStorageMode = RawStorageMode.STORE_RAW,
             emailReceiptStorageMode = RawStorageMode.DO_NOT_STORE
         )
-        coEvery { privacySettingsRepository.getSettings() } returns settings
+        coEvery { privacySettingsRepository.getLoadState() } returns
+            PrivacySettingsLoadState.Loaded(settings)
 
         val emailData = EmailReceiptData(
             messageId = "", from = "sender@example.com", subject = "Receipt",
@@ -911,8 +929,8 @@ class ReceiptLifecycleCoordinatorTest {
             provider = "unknown"
         )
 
-        // Verify privacySettingsRepository.getSettings() was called (emailReceiptStorageMode was read)
-        coVerify(atLeast = 1) { privacySettingsRepository.getSettings() }
+        // Verify privacySettingsRepository.getLoadState() was called (email policy was read)
+        coVerify(atLeast = 1) { privacySettingsRepository.getLoadState() }
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
