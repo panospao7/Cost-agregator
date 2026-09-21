@@ -13,7 +13,7 @@ import com.yourname.expensetracker.domain.privacy.CloudPayloadPolicy
 import com.yourname.expensetracker.domain.privacy.CloudPayloadRedactor
 import com.yourname.expensetracker.domain.privacy.CompositePrivacyGate
 import com.yourname.expensetracker.domain.privacy.InstallationSecretHasher
-import com.yourname.expensetracker.domain.privacy.InstallationSecretKeyProvider
+import com.yourname.expensetracker.data.privacy.InstallationSecretKeyProvider
 import com.yourname.expensetracker.domain.privacy.LocationPrivacyGate
 import com.yourname.expensetracker.domain.privacy.NotificationPrivacyGate
 import com.yourname.expensetracker.domain.privacy.PrivacyAuditLogger

@@ -254,8 +254,8 @@ class DataRetentionWorker @AssistedInject constructor(
                     // [RetentionPurgeFailure] or controlled DAO/SQLite/IO
                     // exception CLASSES — never exception message substrings.
                     val isTransient = isTransientFailure(e)
-                    val failureCode = when (e) {
-                        is RetentionPurgeFailure -> e.failureCode
+                    val failureCode = when {
+                        e is RetentionPurgeFailure -> e.failureCode
                         isTransient -> DiagnosticReasonCode.WORKER_TRANSIENT_ERROR.name
                         else -> DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name
                     }

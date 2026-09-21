@@ -45,7 +45,7 @@ class AndroidKeystoreInstallationSecretKeyProvider @Inject constructor() : Insta
         (keyStore.getEntry(alias, null) as? KeyStore.SecretKeyEntry)?.secretKey
             ?: run {
                 val keyGenerator = KeyGenerator.getInstance(
-                    KeyProperties.KEY_ALGORITHM_HMAC,
+                    KeyProperties.KEY_ALGORITHM_HMAC_SHA256,
                     ANDROID_KEYSTORE
                 )
                 val spec = KeyGenParameterSpec.Builder(
