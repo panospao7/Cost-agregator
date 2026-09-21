@@ -6,6 +6,7 @@ import androidx.work.testing.WorkManagerTestInitHelper
 import com.yourname.expensetracker.data.backup.RestoreDatabaseOpener
 import com.yourname.expensetracker.data.backup.RestoreJournal
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.domain.bank.BankSyncStartupRecovery
 import io.mockk.mockk
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -80,6 +81,7 @@ class AppStartupCoordinatorRecoveryTest {
             workerExecutionGuard = mockk(relaxed = true),
             restoreJournalImporter = mockk(relaxed = true),
             intakeRecoveryScheduler = mockk(relaxed = true),
+            bankSyncStartupRecovery = mockk<BankSyncStartupRecovery>(relaxed = true),
             timeProvider = timeProvider,
             applicationScope = resumeScope
         )

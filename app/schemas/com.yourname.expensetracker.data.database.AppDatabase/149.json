@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 149,
-    "identityHash": "b74241510f53f02f7ff23d1cd045b475",
+    "identityHash": "564b21ad6edf7043c5fda0cb47177d9a",
     "entities": [
       {
         "tableName": "raw_notifications",
@@ -715,7 +715,7 @@
       },
       {
         "tableName": "pending_reviews",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `rawNotificationId` INTEGER, `scannedReceiptId` INTEGER, `suggestedAmount` REAL, `suggestedCurrency` TEXT NOT NULL, `suggestedMerchant` TEXT NOT NULL, `suggestedMerchantKey` TEXT, `suggestedType` TEXT NOT NULL, `suggestedCategoryId` INTEGER, `suggestedDate` INTEGER, `confidence` REAL NOT NULL, `matchType` TEXT, `explanation` TEXT, `packageName` TEXT NOT NULL, `notificationTitle` TEXT, `notificationText` TEXT, `createdAt` INTEGER NOT NULL, `status` TEXT NOT NULL DEFAULT 'PENDING', `suggestedDirection` TEXT, `suggestedAccountName` TEXT, `suggestedLatitude` REAL, `suggestedLongitude` REAL, `extractionState` TEXT NOT NULL DEFAULT 'REAL_EXTRACTION', FOREIGN KEY(`rawNotificationId`) REFERENCES `raw_notifications`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL , FOREIGN KEY(`scannedReceiptId`) REFERENCES `scanned_receipts`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL )",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `rawNotificationId` INTEGER, `scannedReceiptId` INTEGER, `suggestedAmount` REAL, `suggestedCurrency` TEXT NOT NULL, `suggestedMerchant` TEXT NOT NULL, `suggestedMerchantKey` TEXT, `suggestedType` TEXT NOT NULL, `suggestedCategoryId` INTEGER, `suggestedDate` INTEGER, `confidence` REAL NOT NULL, `matchType` TEXT, `explanation` TEXT, `packageName` TEXT NOT NULL, `notificationTitle` TEXT, `notificationText` TEXT, `createdAt` INTEGER NOT NULL, `status` TEXT NOT NULL DEFAULT 'PENDING', `suggestedDirection` TEXT, `suggestedAccountName` TEXT, `suggestedLatitude` REAL, `suggestedLongitude` REAL, `extractionState` TEXT NOT NULL DEFAULT 'REAL_EXTRACTION', `bankReviewIdentity` TEXT, `bankConnectionScopeHash` TEXT, FOREIGN KEY(`rawNotificationId`) REFERENCES `raw_notifications`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL , FOREIGN KEY(`scannedReceiptId`) REFERENCES `scanned_receipts`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL )",
         "fields": [
           {
             "fieldPath": "id",
@@ -842,6 +842,16 @@
             "affinity": "TEXT",
             "notNull": true,
             "defaultValue": "'REAL_EXTRACTION'"
+          },
+          {
+            "fieldPath": "bankReviewIdentity",
+            "columnName": "bankReviewIdentity",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "bankConnectionScopeHash",
+            "columnName": "bankConnectionScopeHash",
+            "affinity": "TEXT"
           }
         ],
         "primaryKey": {
@@ -907,6 +917,24 @@
             ],
             "orders": [],
             "createSql": "CREATE INDEX IF NOT EXISTS `index_pending_reviews_status_suggestedMerchantKey_suggestedDate` ON `${TABLE_NAME}` (`status`, `suggestedMerchantKey`, `suggestedDate`)"
+          },
+          {
+            "name": "index_pending_reviews_bankReviewIdentity",
+            "unique": true,
+            "columnNames": [
+              "bankReviewIdentity"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_pending_reviews_bankReviewIdentity` ON `${TABLE_NAME}` (`bankReviewIdentity`)"
+          },
+          {
+            "name": "index_pending_reviews_bankConnectionScopeHash",
+            "unique": false,
+            "columnNames": [
+              "bankConnectionScopeHash"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_pending_reviews_bankConnectionScopeHash` ON `${TABLE_NAME}` (`bankConnectionScopeHash`)"
           }
         ],
         "foreignKeys": [
@@ -9494,7 +9522,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'b74241510f53f02f7ff23d1cd045b475')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '564b21ad6edf7043c5fda0cb47177d9a')"
     ]
   }
 }

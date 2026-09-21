@@ -244,6 +244,16 @@ data class FeatureConfig(
         )
         
         /**
+         * RP-17 17-A / D1: features actually offered in the menu. The bank-sync
+         * entry is withheld entirely when the central availability policy says
+         * the surface is unavailable (release builds) — it is never rendered as
+         * a dead/empty destination.
+         */
+        fun availableFeatures(bankSyncAvailable: Boolean): List<FeatureConfig> =
+            if (bankSyncAvailable) allFeatures
+            else allFeatures.filterNot { it.id == BANK_CONNECTIONS_FEATURE_ID }
+
+        /**
          * Get a feature by its ID.
          */
         fun getById(id: String): FeatureConfig? {
@@ -263,6 +273,9 @@ data class FeatureConfig(
         fun getBetaFeatures(): List<FeatureConfig> {
             return allFeatures.filter { it.isBeta }
         }
+
+        /** RP-17 17-A: stable id of the bank-connections feature entry. */
+        const val BANK_CONNECTIONS_FEATURE_ID = "bank-connections"
     }
 }
 

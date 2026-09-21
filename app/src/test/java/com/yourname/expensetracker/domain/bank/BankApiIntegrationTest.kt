@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.bank
 
+import androidx.room.withTransaction
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.BankConnectionDao
@@ -8,19 +9,26 @@ import com.yourname.expensetracker.data.database.entity.BankConnection
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.data.privacy.DefaultSensitiveHashingService
+import com.yourname.expensetracker.data.security.BankTokenCipher
 import com.yourname.expensetracker.domain.diagnostics.NoOpOperationRunHandle
 import com.yourname.expensetracker.domain.diagnostics.OperationRunHandle
 import com.yourname.expensetracker.domain.diagnostics.OperationRunRecorder
 import com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
 import com.yourname.expensetracker.domain.privacy.PrivacySettings
+import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.DeduplicationMode
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.every
 import io.mockk.mockk
+import io.mockk.mockkObject
+import io.mockk.unmockkAll
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -81,6 +89,12 @@ class BankApiIntegrationTest {
         val bankConnectionDao = mockk<BankConnectionDao>(relaxed = true)
         val pendingReviewDao = mockk<PendingReviewDao>(relaxed = true)
         val database = mockk<AppDatabase>(relaxed = true)
+        // The low-confidence review path runs inside database.withTransaction —
+        // execute the block directly against the relaxed mock (repo-standard pattern).
+        io.mockk.mockkStatic("androidx.room.RoomDatabaseKt")
+        coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
+            secondArg<suspend () -> Any>().invoke()
+        }
         integration = BankApiIntegration(
             timeProvider = FakeTimeProvider(),
             coordinator = coordinator,
@@ -94,6 +108,30 @@ class BankApiIntegrationTest {
             pendingReviewDao = pendingReviewDao,
             database = database
         )
+        stubBankTokenCipherForJvm()
+    }
+
+    @After
+    fun tearDown() {
+        unmockkAll()
+    }
+
+    /**
+     * [BankTokenCipher] is Android Keystore-backed; any real call on the plain
+     * JVM fails with `java.security.KeyStoreException: AndroidKeyStore not found`
+     * (it has no constructor seam — it is a Kotlin object used statically by
+     * [BankApiIntegration]). Stub the object (repo-standard mockkObject seam,
+     * cf. WorkerExecutionGuardTest) with a value-preserving round-trip —
+     * "encrypt" returns the plaintext, "decrypt" reports Success with it — so
+     * the production connection/refresh/persist flows run end-to-end without a
+     * keystore. Assertions on outcomes and DAO writes are unchanged.
+     */
+    private fun stubBankTokenCipherForJvm() {
+        mockkObject(BankTokenCipher)
+        every { BankTokenCipher.encryptIfNeeded(any()) } answers { firstArg<String>() }
+        every { BankTokenCipher.decryptWithResult(any()) } answers {
+            BankTokenCipher.DecryptResult.Success(firstArg())
+        }
     }
 
     @Test
@@ -224,10 +262,13 @@ class BankApiIntegrationTest {
         assertEquals(first.bankProviderTransactionIdHash, second.bankProviderTransactionIdHash)
         assertEquals(DeduplicationMode.STRICT_EXTERNAL_ID, first.deduplicationMode)
         assertEquals(DeduplicationMode.STRICT_EXTERNAL_ID, second.deduplicationMode)
-        // P10-P1-05: bank metadata stable across sync runs
+        // P10-P1-05: identity-bearing bank metadata is stable across sync runs;
+        // bankSyncRunId is per-run provenance BY DESIGN — each request carries its
+        // own run id (the STRICT_EXTERNAL_ID test above pins the passthrough).
         assertEquals(first.accountId, second.accountId)
         assertEquals(first.bankConnectionId, second.bankConnectionId)
-        assertEquals(first.bankSyncRunId, second.bankSyncRunId)
+        assertEquals(1L, first.bankSyncRunId)
+        assertEquals(2L, second.bankSyncRunId)
     }
 
     // ── P10-P1-04: Low-confidence review route ─────────────────────────────────
@@ -259,7 +300,14 @@ class BankApiIntegrationTest {
         )
         val request = integration.mapTransactionToExpense(tx, connection, syncRunId = 1L)
         assertEquals(ExpenseSource.BANK_API_SYNC, request.source)
-        assertEquals("low-conf-1", request.idempotencyKey)
+        // P10-CURRENT-006 (RP-17 17-C): idempotencyKey carries the HASHED provider
+        // transaction identity, never the raw provider id — low-confidence requests
+        // keep exactly the same strict-identity shape as high-confidence ones.
+        assertEquals(request.bankProviderTransactionIdHash, request.idempotencyKey)
+        assertTrue(
+            "raw provider id must never be the idempotency key",
+            request.idempotencyKey != "low-conf-1"
+        )
     }
 
     @Test
@@ -326,25 +374,39 @@ class BankApiIntegrationTest {
         assertTrue(result.isConnected)
     }
 
-    // ── P10-P1-06: Token refresh persistence ──────────────────────────────────
+    // ── P10-P1-06 / RP-17 17-E: Token refresh persistence ────────────────────
 
     @Test
     fun `refreshToken persists new tokens on success`() = runTest {
-        // P10-P1-06: refreshToken must call bankConnectionDao.updateToken on success.
+        // P10-P1-06: refreshToken must call bankConnectionDao.updateTokenIfConnected on success.
         // The connection carries encrypted tokens.
         val bankConnectionDao = mockk<BankConnectionDao>(relaxed = true)
         val pendingReviewDao = mockk<PendingReviewDao>(relaxed = true)
         val database = mockk<AppDatabase>(relaxed = true)
-        // refreshToken() decrypts the existing refresh token; we need a populated
-        // connection with an encrypted token for the flow to reach Success.
+        // The low-confidence review path runs inside database.withTransaction —
+        // execute the block directly against this test's relaxed mock (same
+        // repo-standard pattern as setUp).
+        io.mockk.mockkStatic("androidx.room.RoomDatabaseKt")
+        coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
+            secondArg<suspend () -> Any>().invoke()
+        }
+        // High-confidence imports must resolve to a real Created result — a bare
+        // relaxed coordinator mock would fabricate a base sealed instance that
+        // matches no outcome branch and be recorded as per-transaction failures.
+        coEvery { coordinator.createExpenseStandaloneV2(any()) } returns
+            CreateExpenseResult.Created(expenseId = 1L)
+        // refreshToken() decrypts the existing refresh token; the cipher stub keeps
+        // this a value-preserving round-trip on the JVM (no Android Keystore).
+        // tokenExpiry must be strictly older than the fake clock for the refresh
+        // branch (`tokenExpiry < now`) to trigger, so the clock is set to 1_000.
         val conn = connection.copy(
             id = 5L,
-            refreshToken = com.yourname.expensetracker.data.security.BankTokenCipher.encryptIfNeeded("demo_refresh_revolut"),
+            refreshToken = BankTokenCipher.encryptIfNeeded("demo_refresh_revolut"),
             tokenExpiry = 1L // expired — triggers refresh
         )
         val testIntegration = BankApiIntegration(
-            timeProvider = FakeTimeProvider(),
-            coordinator = mockk(relaxed = true),
+            timeProvider = FakeTimeProvider(fixedTime = 1_000L),
+            coordinator = coordinator,
             writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
             operationRunRecorder = BlockInvokingRecorder(),
             hashingService = DefaultSensitiveHashingService(),
@@ -355,13 +417,60 @@ class BankApiIntegrationTest {
             pendingReviewDao = pendingReviewDao,
             database = database
         )
-        // refreshToken is private; we test via the public syncTransactions which calls it
-        // when tokenExpiry < now.  The mock DAO will capture the updateToken call.
-        coEvery { bankConnectionDao.updateToken(any(), any(), any(), any(), any()) } returns Unit
-        // syncTransactions will trigger refresh because tokenExpiry=1 < now
-        val syncResult = testIntegration.syncTransactions(conn, since = 0L)
-        // Should have completed (mock DAO + stub flow)
-        assertNotNull(syncResult)
+        // RP-17 17-E: the token write is conditional on isConnected = 1.
+        // 1 affected row = write succeeded; the sync then completes normally.
+        coEvery {
+            bankConnectionDao.updateTokenIfConnected(any(), any(), any(), any(), any())
+        } returns 1
+        val syncOutcome = testIntegration.syncTransactions(conn, since = 0L)
+        assertTrue(
+            "expected a terminal success/partial outcome, got $syncOutcome",
+            syncOutcome is BankSyncOutcome.Success || syncOutcome is BankSyncOutcome.Partial
+        )
+        coVerify {
+            bankConnectionDao.updateTokenIfConnected(5L, any(), any(), any(), any())
+        }
+    }
+
+    @Test
+    fun `token write to disconnected connection yields typed Blocked outcome`() = runTest {
+        // RP-17 17-E: refresh/disconnect race — the conditional update affected
+        // zero rows, so the sync must stop with a typed disconnected/blocked
+        // outcome and never resurrect tokens on a disconnected connection.
+        val bankConnectionDao = mockk<BankConnectionDao>(relaxed = true)
+        // tokenExpiry must be strictly older than the fake clock for the refresh
+        // branch (`tokenExpiry < now`) to trigger; otherwise the sync would skip
+        // refresh entirely and the Blocked outcome would never be reachable.
+        val conn = connection.copy(
+            id = 5L,
+            isConnected = false,
+            refreshToken = BankTokenCipher.encryptIfNeeded("demo_refresh_revolut"),
+            tokenExpiry = 1L // expired — triggers refresh
+        )
+        val testIntegration = BankApiIntegration(
+            timeProvider = FakeTimeProvider(fixedTime = 1_000L),
+            coordinator = mockk(relaxed = true),
+            writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
+            operationRunRecorder = BlockInvokingRecorder(),
+            hashingService = DefaultSensitiveHashingService(),
+            privacySettingsRepository = mockk(relaxed = true) {
+                coEvery { getSettings() } returns PrivacySettings()
+            },
+            bankConnectionDao = bankConnectionDao,
+            pendingReviewDao = mockk<PendingReviewDao>(relaxed = true),
+            database = mockk<AppDatabase>(relaxed = true)
+        )
+        coEvery {
+            bankConnectionDao.updateTokenIfConnected(any(), any(), any(), any(), any())
+        } returns 0
+
+        val syncOutcome = testIntegration.syncTransactions(conn, since = 0L)
+
+        assertTrue("expected Blocked, got $syncOutcome", syncOutcome is BankSyncOutcome.Blocked)
+        assertEquals(
+            com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.CONNECTION_DISCONNECTED,
+            (syncOutcome as BankSyncOutcome.Blocked).reasonCode
+        )
     }
 
     @Test

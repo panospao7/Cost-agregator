@@ -41,15 +41,29 @@ interface BankConnectionDao {
     
     @Query("UPDATE bank_connections SET lastSync = :timestamp, lastSyncStatus = :status WHERE id = :id")
     suspend fun updateSyncStatus(id: Long, timestamp: Long, status: SyncStatus)
-    
-    @Query("UPDATE bank_connections SET accessToken = :accessToken, refreshToken = :refreshToken, tokenEncryptionVersion = :encryptionVersion, tokenExpiry = :expiry WHERE id = :id")
-    suspend fun updateToken(
+
+    /**
+     * RP-17 17-B: terminal status update that never advances `lastSync`
+     * (FAILED-family outcomes). Register D12: terminal-only statuses in DB.
+     */
+    @Query("UPDATE bank_connections SET lastSyncStatus = :status WHERE id = :id")
+    suspend fun updateSyncStatusOnly(id: Long, status: SyncStatus)
+
+    /**
+     * RP-17 17-E: conditional token write — refresh/disconnect race guard.
+     * Only updates while the connection row is still connected; returns the
+     * number of affected rows (0 = connection was disconnected concurrently;
+     * the caller maps that to a typed disconnected/blocked outcome and never
+     * resurrects tokens on a disconnected connection).
+     */
+    @Query("UPDATE bank_connections SET accessToken = :accessToken, refreshToken = :refreshToken, tokenEncryptionVersion = :encryptionVersion, tokenExpiry = :expiry WHERE id = :id AND isConnected = 1")
+    suspend fun updateTokenIfConnected(
         id: Long,
         accessToken: String,
         refreshToken: String?,
         encryptionVersion: Int,
         expiry: Long
-    )
+    ): Int
     
     @Query("SELECT COUNT(*) FROM bank_connections WHERE isActive = 1 AND isConnected = 1")
     suspend fun getConnectedCount(): Int

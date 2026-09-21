@@ -71,9 +71,19 @@ object DatabaseMigrations {
     }
 
     /**
-     * RP-16 16-B (D9): durable worker-run counter columns. Additive only;
-     * pre-existing rows measure as 0 skipped / 0 errors (they never recorded
-     * those counters).
+     * RP-16 16-B (D9): durable worker-run counter columns on background_job_runs.
+     * Additive only; pre-existing rows measure as 0 skipped / 0 errors (they never
+     * recorded those counters).
+     *
+     * RP-17 17-D (register D12): stable privacy-safe bank-review identity on
+     * pending_reviews. Adds bankReviewIdentity (unique index — atomic
+     * insert-if-absent for bank reviews under concurrent syncs) and
+     * bankConnectionScopeHash (indexed — disconnect deletes only the reviews
+     * scoped to one connection identity). Both nullable; existing (non-bank)
+     * rows keep NULL, which never conflicts on a unique index.
+     *
+     * MERGE NOTE: RP-16 and RP-17 ran as parallel lanes, each defining a
+     * 148→149 migration over disjoint tables; combined here into one body.
      */
     val MIGRATION_148_149 = object : Migration(148, 149) {
         override fun migrate(database: SupportSQLiteDatabase) {
@@ -82,6 +92,16 @@ object DatabaseMigrations {
             )
             database.execSQL(
                 "ALTER TABLE background_job_runs ADD COLUMN `errors` INTEGER NOT NULL DEFAULT 0"
+            )
+            database.execSQL("ALTER TABLE pending_reviews ADD COLUMN `bankReviewIdentity` TEXT")
+            database.execSQL("ALTER TABLE pending_reviews ADD COLUMN `bankConnectionScopeHash` TEXT")
+            database.execSQL(
+                "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                    "`index_pending_reviews_bankReviewIdentity` ON `pending_reviews` (`bankReviewIdentity`)"
+            )
+            database.execSQL(
+                "CREATE INDEX IF NOT EXISTS " +
+                    "`index_pending_reviews_bankConnectionScopeHash` ON `pending_reviews` (`bankConnectionScopeHash`)"
             )
         }
     }

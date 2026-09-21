@@ -15,6 +15,7 @@ import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.data.security.BankTokenCipher
 import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
 import com.yourname.expensetracker.domain.common.sha256Prefix
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.DeduplicationMode
@@ -26,6 +27,7 @@ import com.yourname.expensetracker.domain.privacy.RawContentSanitizer
 import com.yourname.expensetracker.domain.privacy.RawStorageMode
 import com.yourname.expensetracker.domain.privacy.SensitiveHashingService
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.util.Locale
@@ -42,6 +44,13 @@ data class BankTransaction(
     val reference: String?,
     val movementType: BankMovementType? = null,
     val transferDirection: TransferDirection? = null,
+    /**
+     * RP-17 17-C: provider-supplied, privacy-safe account reference for
+     * transfers (e.g. a provider-masked IBAN like "****1234"). This is an
+     * approved reference supplied independently by the provider — the raw
+     * transaction description must never be used as the transfer account name.
+     */
+    val transferAccountRef: String? = null,
     /** P10-P1-04: Confidence score (0.0–1.0). Below-threshold transactions route to PendingReview. */
     val confidence: Float = 1.0f
 )
@@ -50,26 +59,51 @@ enum class BankMovementType {
     PURCHASE,
     WITHDRAWAL,
     TRANSFER,
-    DEPOSIT
+    DEPOSIT,
+    /**
+     * RP-17 17-C: typed provider refund/reversal/cashback semantics. Refund-like
+     * movement is only honored when the provider supplies these explicitly;
+     * description text alone never triggers refund handling (that skips with
+     * REFUND_UNSUPPORTED).
+     */
+    REFUND,
+    REVERSAL,
+    CASHBACK
 }
+
+/** RP-17 17-C: refund-like movement types (typed provider semantics). */
+private val REFUND_LIKE_MOVEMENT_TYPES: Set<BankMovementType> =
+    setOf(BankMovementType.REFUND, BankMovementType.REVERSAL, BankMovementType.CASHBACK)
+
+/** RP-17 17-C: refund-like words never mint a refund without typed provider semantics. */
+private val REFUND_DESCRIPTION_WORDS = listOf("refund", "reversal", "cashback")
 
 private fun BankMovementType.toTransactionType(): TransactionType = when (this) {
     BankMovementType.PURCHASE -> TransactionType.PURCHASE
     BankMovementType.WITHDRAWAL -> TransactionType.WITHDRAWAL
     BankMovementType.TRANSFER -> TransactionType.TRANSFER
     BankMovementType.DEPOSIT -> TransactionType.DEPOSIT
+    // RP-17 17-C: typed refund semantics map to a credit-type transaction.
+    BankMovementType.REFUND -> TransactionType.DEPOSIT
+    BankMovementType.REVERSAL -> TransactionType.DEPOSIT
+    BankMovementType.CASHBACK -> TransactionType.DEPOSIT
 }
 
-data class SyncResult(
-    val success: Boolean,
-    val importedCount: Int,
-    val skippedCount: Int,
-    val errorCount: Int,
-    val errors: List<String>
-)
+// RP-17 17-B: the flat `SyncResult(success/errors:List<String>)` was replaced by
+// the sealed [BankSyncOutcome] (see BankSyncOutcome.kt). Outcomes carry counts
+// and typed controlled codes; no string parsing anywhere in the chain.
+
 
 // TODO (P2-1): Demo bank sync is intentionally non-deterministic.
 // When real bank providers are added, ensure sync is idempotent and repeatable.
+//
+// RP-17 (register D12, deferred-gate note): provider cursor persistence and
+// outer-batch atomicity remain DEFERRED pending a real provider cursor/identity
+// contract. Current idempotency: per-transaction STRICT_EXTERNAL_ID dedupe on
+// the hashed provider transaction identity (idem:BANK_API_SYNC:<hash>) plus the
+// atomic bank-review unique identity index (17-D). A crash mid-batch can
+// re-process already-committed items; they resolve to duplicates/skips, never
+// duplicates rows.
 
 @Singleton
 class BankApiIntegration @Inject constructor(
@@ -83,10 +117,27 @@ class BankApiIntegration @Inject constructor(
     private val pendingReviewDao: PendingReviewDao,
     private val database: AppDatabase
 ) {
-    
+    /**
+     * RP-17 17-D: optimizes away same-process review-creation races. The unique
+     * bankReviewIdentity index is the actual atomicity guarantee.
+     */
+    private val reviewInsertMutex = kotlinx.coroutines.sync.Mutex()
+
     companion object {
         /** P10-P1-04: Confidence below this threshold routes bank transactions to PendingReview. */
         const val BANK_REVIEW_CONFIDENCE_THRESHOLD = 0.75f
+
+        /**
+         * RP-17 17-D: HMAC purpose for the stable bank-review identity.
+         * Identity input = "<bankId>|<connectionId>|<providerTransactionId>" —
+         * provider transaction identity scoped to the approved connection/account.
+         * Stable across sync runs; unique index on pending_reviews.bankReviewIdentity
+         * makes duplicate review creation impossible under concurrent syncs.
+         */
+        const val BANK_REVIEW_IDENTITY_PURPOSE = "bankReviewIdentity"
+
+        /** Existing HMAC purpose reused for the connection account scope hash. */
+        const val BANK_ACCOUNT_SCOPE_PURPOSE = "bankAccountId"
 
         // Supported bank APIs (placeholders for actual implementations)
         val SUPPORTED_BANKS = listOf(
@@ -159,11 +210,13 @@ class BankApiIntegration @Inject constructor(
     suspend fun syncTransactions(
         connection: BankConnection,
         since: Long? = null
-    ): SyncResult = withContext(Dispatchers.IO) {
+    ): BankSyncOutcome = withContext(Dispatchers.IO) {
         requireStubMode()
         // DDL-016-14: operation run must start BEFORE barrier check so blocked sync has a durable record
 
-        var syncResult = SyncResult(success = false, importedCount = 0, skippedCount = 0, errorCount = 0, errors = emptyList())
+        // RP-17 17-B: every barrier/token/reauth branch assigns its outcome; the
+        // final block assigns the aggregate. Cancellation propagates (never an outcome).
+        var syncOutcome: BankSyncOutcome = BankSyncOutcome.RetryableFailure()
         operationRunRecorder.runOperation("BANK_SYNC", actor = "system") { run ->
             run.event("SYNC_STARTED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.ATTEMPTED)
 
@@ -177,6 +230,10 @@ class BankApiIntegration @Inject constructor(
                     reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.RESTORE_BLOCKED,
                     exception = e, isTerminal = false)
                 run.cancelled(com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.RESTORE_BLOCKED.name)
+                // RP-17 17-B: barrier block is a typed Blocked outcome (17-E barrier semantics).
+                syncOutcome = BankSyncOutcome.Blocked(
+                    com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.RESTORE_BLOCKED
+                )
                 return@runOperation
             }
 
@@ -200,8 +257,24 @@ class BankApiIntegration @Inject constructor(
                             metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
                                 .put("refreshOutcome", "REAUTH_REQUIRED").build())
                         run.failedFinal("REAUTH_REQUIRED: bank token key invalidated, user must re-authenticate")
-                        syncResult = SyncResult(success = false, importedCount = 0, skippedCount = 0, errorCount = 1,
-                            errors = listOf("REAUTH_REQUIRED: bank token key invalidated, user must re-authenticate"))
+                        // RP-17 17-B: keystore invalidation is the typed ReauthRequired outcome.
+                        syncOutcome = BankSyncOutcome.ReauthRequired(
+                            com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.TOKEN_INVALID
+                        )
+                        return@runOperation
+                    }
+                    RefreshOutcome.Disconnected -> {
+                        // RP-17 17-E: conditional token write affected zero rows — the
+                        // connection was disconnected concurrently. Typed blocked outcome;
+                        // never retries into a disconnected connection.
+                        run.event("TOKEN_WRITE_DISCONNECTED",
+                            com.yourname.expensetracker.domain.diagnostics.EventOutcome.BLOCKED,
+                            reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.CONNECTION_DISCONNECTED,
+                            severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.WARNING)
+                        run.failedFinal(com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.CONNECTION_DISCONNECTED.name)
+                        syncOutcome = BankSyncOutcome.Blocked(
+                            com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.CONNECTION_DISCONNECTED
+                        )
                         return@runOperation
                     }
                     RefreshOutcome.Failed -> {
@@ -209,8 +282,10 @@ class BankApiIntegration @Inject constructor(
                             com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
                             reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.TOKEN_INVALID)
                         run.failedFinal("Token expired and refresh failed")
-                        syncResult = SyncResult(success = false, importedCount = 0, skippedCount = 0, errorCount = 1,
-                            errors = listOf("Token expired and refresh failed"))
+                        // RP-17 17-B: generic refresh failure is terminal for this run.
+                        syncOutcome = BankSyncOutcome.PermanentFailure(
+                            com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.TOKEN_INVALID
+                        )
                         return@runOperation
                     }
                 }
@@ -224,10 +299,30 @@ class BankApiIntegration @Inject constructor(
             var importedCount = 0
             var skippedCount = 0
             val errors = mutableListOf<String>()
+            // RP-17 17-C: raw-storage mode resolved once per sync for contract gating.
+            val mode = privacySettingsRepository.getSettings().rawBankStatementStorageMode
 
             val syncRunId = run.runId  // PR6: capture sync run ID for provenance linking
             for (transaction in mockTransactions) {
                 try {
+                    // RP-17 17-C: contract gating BEFORE any routing (lifecycle or review).
+                    // Zero amounts, refund-like text without typed provider semantics, and
+                    // transfers without provider-supplied direction + privacy-safe account
+                    // reference never enter the lifecycle or the review queue.
+                    val contractSkip = evaluateBankTransactionContract(transaction, mode)
+                    if (contractSkip != null) {
+                        skippedCount++
+                        run.event("TRANSACTION_SKIPPED",
+                            com.yourname.expensetracker.domain.diagnostics.EventOutcome.SKIPPED,
+                            reasonCode = contractSkip,
+                            metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                                .putHashed("providerTransactionId", transaction.id)
+                                .put("currency", transaction.currency)
+                                .build())
+                        run.increment(processed = 1, skipped = 1)
+                        continue
+                    }
+
                     // P10-P1-04: Route low-confidence transactions to PendingReview
                     if (transaction.confidence < BANK_REVIEW_CONFIDENCE_THRESHOLD) {
                         val transactionType = transaction.movementType?.toTransactionType()
@@ -261,40 +356,51 @@ class BankApiIntegration @Inject constructor(
                                     .put("reason", "PendingReview already exists").build())
                             run.increment(processed = 1, skipped = 1)
                         } else {
-                            // Create PendingReview for low-confidence bank transaction
-                            database.withTransaction {
-                                writeBarrier.checkWritesAllowed("BankApiIntegration.syncTransactions.pendingReview")
-                                val review = PendingReview(
-                                    rawNotificationId = null,
-                                    scannedReceiptId = null,
-                                    suggestedAmount = kotlin.math.abs(transaction.amount),
-                                    suggestedCurrency = transaction.currency,
-                                    suggestedMerchant = transaction.merchant,
-                                    suggestedMerchantKey = normalizedMerchant,
-                                    suggestedType = transactionType.name,
-                                    suggestedCategoryId = connection.defaultCategoryId,
-                                    suggestedDate = transaction.date,
-                                    confidence = transaction.confidence,
-                                    matchType = null,
-                                    explanation = "Low-confidence bank transaction from ${connection.bankId}",
-                                    packageName = "bank.sync.${connection.bankId}",
-                                    notificationTitle = "Bank Transaction: ${transaction.merchant}",
-                                    notificationText = "Imported from ${connection.bankName}: ${transaction.description}",
-                                    createdAt = timeProvider.now()
-                                )
-                                val reviewId = pendingReviewDao.insert(review)
-                                require(reviewId > 0) { "PendingReview insert failed" }
+                            // RP-17 17-D: create the PendingReview through the atomic
+                            // insert-if-absent path. The unique index on
+                            // pending_reviews.bankReviewIdentity makes duplicate review
+                            // creation impossible even under concurrent syncs for the same
+                            // connection; the in-process mutex only serializes creation so
+                            // the common case never pays for a conflict. The mutex is an
+                            // optimization — the constraint is the guarantee.
+                            var createdReview = false
+                            reviewInsertMutex.withLock {
+                                database.withTransaction {
+                                    writeBarrier.checkWritesAllowed("BankApiIntegration.syncTransactions.pendingReview")
+                                    val review = buildBankPendingReview(
+                                        transaction = transaction,
+                                        connection = connection,
+                                        transactionType = transactionType,
+                                        normalizedMerchant = normalizedMerchant,
+                                        mode = mode
+                                    )
+                                    val reviewId = pendingReviewDao.insert(review)
+                                    // IGNORE conflict strategy: -1L means the unique identity
+                                    // index already holds a review for this provider transaction.
+                                    createdReview = reviewId > 0
+                                }
                             }
-                            importedCount++
-                            run.event("TRANSACTION_SENT_FOR_REVIEW",
-                                com.yourname.expensetracker.domain.diagnostics.EventOutcome.CREATED,
-                                entityType = "pending_review",
-                                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                                    .putHashed("providerTransactionId", transaction.id)
-                                    .put("confidence", transaction.confidence.toString())
-                                    .put("currency", transaction.currency)
-                                    .build())
-                            run.increment(processed = 1, succeeded = 1)
+                            if (createdReview) {
+                                importedCount++
+                                run.event("TRANSACTION_SENT_FOR_REVIEW",
+                                    com.yourname.expensetracker.domain.diagnostics.EventOutcome.CREATED,
+                                    entityType = "pending_review",
+                                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                                        .putHashed("providerTransactionId", transaction.id)
+                                        .put("confidence", transaction.confidence.toString())
+                                        .put("currency", transaction.currency)
+                                        .build())
+                                run.increment(processed = 1, succeeded = 1)
+                            } else {
+                                skippedCount++
+                                run.event("TRANSACTION_DUPLICATE_SKIPPED",
+                                    com.yourname.expensetracker.domain.diagnostics.EventOutcome.DUPLICATE,
+                                    reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.DUPLICATE,
+                                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                                        .putHashed("providerTransactionId", transaction.id)
+                                        .put("reason", "bank review identity conflict").build())
+                                run.increment(processed = 1, skipped = 1)
+                            }
                         }
                     } else {
                         // High-confidence transactions go through the standard coordinator pipeline
@@ -380,17 +486,30 @@ class BankApiIntegration @Inject constructor(
                 }
             }
 
-            syncResult = SyncResult(
-                success = errors.isEmpty(),
-                importedCount = importedCount,
-                skippedCount = skippedCount,
-                errorCount = errors.size,
-                errors = errors
-            )
-            if (errors.isNotEmpty()) run.partialSuccess("${errors.size} errors")
-            // success() called automatically by runOperation if still RUNNING
+            // RP-17 17-B: aggregate outcome, mapped one-to-one to the operation-run
+            // finalizer. Skips alone never fail a sync; failures with at least one
+            // import are Partial; failures without any import are retryable.
+            syncOutcome = when {
+                errors.isEmpty() -> BankSyncOutcome.Success(
+                    importedCount = importedCount,
+                    skippedCount = skippedCount
+                )
+                importedCount > 0 -> BankSyncOutcome.Partial(
+                    importedCount = importedCount,
+                    skippedCount = skippedCount,
+                    failedCount = errors.size
+                )
+                else -> BankSyncOutcome.RetryableFailure(failedCount = errors.size)
+            }
+            when (syncOutcome) {
+                is BankSyncOutcome.Success -> {
+                    // success() called automatically by runOperation if still RUNNING
+                }
+                is BankSyncOutcome.Partial -> run.partialSuccess("${errors.size} errors")
+                else -> run.failedRetryable("${errors.size} errors, no imports")
+            }
         }
-        syncResult
+        syncOutcome
     }
     
     /**
@@ -400,39 +519,58 @@ class BankApiIntegration @Inject constructor(
      * is surfaced distinctly from a generic decryption failure ([RefreshOutcome.Failed]) so the
      * caller can record a durable re-authentication-required signal instead of collapsing key
      * invalidation into an indistinguishable generic failure (the old `decryptIfNeeded` -> null).
+     *
+     * RP-17 17-E: [RefreshOutcome.Disconnected] is returned when the conditional token
+     * write affected zero rows — the connection was disconnected concurrently
+     * (refresh/disconnect race) and the sync must stop with a typed blocked outcome.
      */
     private sealed interface RefreshOutcome {
         object Success : RefreshOutcome
         object ReauthRequired : RefreshOutcome
         object Failed : RefreshOutcome
+        object Disconnected : RefreshOutcome
     }
 
     /**
      * Refresh access token (stub with persistence).
      *
      * P10-P1-06: When decryption succeeds, generates new stub tokens, encrypts them,
-     * and persists via [BankConnectionDao.updateToken].  In a real implementation,
+     * and persists via [BankConnectionDao.updateTokenIfConnected]. In a real implementation,
      * this would call the provider's OAuth refresh endpoint.
+     *
+     * RP-17 17-E: the write barrier is checked IMMEDIATELY before the token write,
+     * and the write is conditional on `isConnected = 1` (SQL-level refresh/disconnect
+     * race guard). Zero affected rows map to [RefreshOutcome.Disconnected].
      */
     @StubForDemo
     private suspend fun refreshToken(connection: BankConnection): RefreshOutcome {
         requireStubMode()
-        writeBarrier.checkWritesAllowed("BankApiIntegration.refreshToken")
 
         // NEW-P10-002: use decryptWithResult so key invalidation is not collapsed to null.
         return when (BankTokenCipher.decryptWithResult(connection.refreshToken)) {
             is BankTokenCipher.DecryptResult.Success -> {
-                // P10-P1-06: Generate fresh stub tokens and persist
+                // P10-P1-06: Generate fresh stub tokens and encrypt
                 val newAccessToken = BankTokenCipher.encryptIfNeeded("demo_token_${connection.bankId}_refreshed")
                 val newRefreshToken = BankTokenCipher.encryptIfNeeded("demo_refresh_${connection.bankId}_refreshed")
                 val newExpiry = timeProvider.now() + (30 * 24 * 60 * 60 * 1000L)
-                bankConnectionDao.updateToken(
+                // RP-17 17-E: barrier re-checked immediately before the write.
+                writeBarrier.checkWritesAllowed("BankApiIntegration.refreshToken")
+                val updatedRows = bankConnectionDao.updateTokenIfConnected(
                     id = connection.id,
                     accessToken = newAccessToken ?: "",
                     refreshToken = newRefreshToken,
                     encryptionVersion = 1,
                     expiry = newExpiry
                 )
+                if (updatedRows == 0) {
+                    // Refresh/disconnect race: the connection row was disconnected between
+                    // read and write. Never resurrect a disconnected connection's tokens.
+                    Timber.w(
+                        "Token write skipped: connection %s no longer connected",
+                        connection.bankId
+                    )
+                    return RefreshOutcome.Disconnected
+                }
                 Timber.i("Token refreshed and persisted for bank %s", connection.bankId)
                 RefreshOutcome.Success
             }
@@ -478,27 +616,41 @@ class BankApiIntegration @Inject constructor(
      * Map bank transaction to a [CreateExpenseRequest], which is then passed
      * through [TransactionLifecycleCoordinator.createExpense] for full lifecycle
      * handling (validate → normalize → dedupe → insert atomic → event).
+     *
+     * RP-17 17-C: transfers require provider-supplied [BankTransaction.transferDirection]
+     * and a privacy-safe provider-supplied [BankTransaction.transferAccountRef];
+     * transactions missing that metadata are skipped with TRANSFER_METADATA_MISSING
+     * by [evaluateBankTransactionContract] before this mapping. The raw transaction
+     * description is NEVER used as the transfer account name, and no REDACTED
+     * placeholder is fabricated (the validator stays strict).
+     *
+     * @param rawModeOverride optional pre-resolved raw-storage mode (the sync loop
+     *   resolves it once per sync); defaults to resolving from settings.
      */
     @VisibleForTesting
     internal suspend fun mapTransactionToExpense(
         transaction: BankTransaction,
         connection: BankConnection,
-        syncRunId: Long
+        syncRunId: Long,
+        rawModeOverride: RawStorageMode? = null
     ): CreateExpenseRequest {
         val transactionType = transaction.movementType?.toTransactionType() ?: inferTransactionType(transaction)
 
         // PR5: Redact/hash sensitive bank fields based on privacy policy
-        val settings = privacySettingsRepository.getSettings()
-        val mode = settings.rawBankStatementStorageMode  // PR5-FIX: use dedicated bank statement mode
+        val mode = rawModeOverride
+            ?: privacySettingsRepository.getSettings().rawBankStatementStorageMode  // PR5-FIX: use dedicated bank statement mode
 
         val safeDescription: String? = RawContentSanitizer.sanitizeBankDescription(transaction.description, mode)
         val safeReference: String? = RawContentSanitizer.sanitizeBankDescription(transaction.reference, mode)
-        // transferAccountName must never be raw description unless STORE_RAW
-        val safeTransferAccountName: String? = when {
-            transactionType == TransactionType.TRANSFER && mode == RawStorageMode.STORE_RAW ->
-                transaction.description.takeIf { it.isNotBlank() }
-            else -> null
-        }
+        // RP-17 17-C: transfer account name comes ONLY from the provider's
+        // privacy-safe account reference (masked by contract). DO_NOT_STORE never
+        // persists it; other modes store the already-masked reference as-is.
+        val safeTransferAccountName: String? =
+            if (transactionType == TransactionType.TRANSFER) {
+                resolveTransferAccountRef(transaction.transferAccountRef, mode)
+            } else {
+                null
+            }
         val notes = buildString {
             if (safeDescription != null) append(safeDescription)
             if (safeReference != null) append(" (Ref: $safeReference)")
@@ -536,21 +688,140 @@ class BankApiIntegration @Inject constructor(
         )
     }
 
+    /**
+     * RP-17 17-C: inference is a last-resort fallback when the provider supplies
+     * NO typed movement semantics. Direction is never inferred (from amount sign
+     * or description), and refund-like text never manufactures a DEPOSIT —
+     * refund-like movement without typed provider semantics is skipped upstream
+     * with REFUND_UNSUPPORTED.
+     */
     private fun inferTransactionType(transaction: BankTransaction): TransactionType {
         val normalized = transaction.description.lowercase(Locale.ROOT)
 
         return when {
-            transaction.transferDirection != null -> TransactionType.TRANSFER
-            normalized.contains("refund") || normalized.contains("reversal") || normalized.contains("cashback") -> TransactionType.DEPOSIT
             normalized.contains("transfer") || normalized.contains("sent to") || normalized.contains("received from") -> TransactionType.TRANSFER
             normalized.contains("withdraw") || normalized.contains("atm") || normalized.contains("cash withdrawal") -> TransactionType.WITHDRAWAL
             transaction.amount > 0 -> TransactionType.DEPOSIT
             transaction.amount < 0 -> TransactionType.PURCHASE
-            transaction.amount == 0.0 -> TransactionType.UNKNOWN
-            else -> TransactionType.PURCHASE
+            else -> TransactionType.UNKNOWN
         }
     }
-    
+
+    /**
+     * RP-17 17-C: pre-lifecycle contract evaluation. Returns the typed skip code
+     * when the transaction must not enter the lifecycle or the review queue, or
+     * null when the contract is satisfied. Ordering: amount validity first, then
+     * refund semantics, then transfer metadata.
+     *
+     * Contract rules:
+     *  - Zero/NaN amounts skip with INVALID_AMOUNT before any mapping.
+     *  - Refund/reversal/cashback REQUIRES typed provider semantics
+     *    ([BankMovementType.REFUND]/[BankMovementType.REVERSAL]/[BankMovementType.CASHBACK]);
+     *    refund-like description text without typed semantics skips with
+     *    REFUND_UNSUPPORTED (description is never trusted for refunds).
+     *  - Transfers require provider-supplied [BankTransaction.transferDirection]
+     *    AND a privacy-safe [BankTransaction.transferAccountRef] that the active
+     *    raw-storage mode may persist; otherwise TRANSFER_METADATA_MISSING.
+     */
+    @VisibleForTesting
+    internal fun evaluateBankTransactionContract(
+        transaction: BankTransaction,
+        mode: RawStorageMode
+    ): DiagnosticReasonCode? {
+        // 1. Zero amounts are never meaningful imports.
+        if (transaction.amount == 0.0 || transaction.amount.isNaN()) {
+            return DiagnosticReasonCode.INVALID_AMOUNT
+        }
+
+        // 2. Refund-like semantics require typed provider movement, never text.
+        val refundLikeText = REFUND_DESCRIPTION_WORDS.any { transaction.description.lowercase(Locale.ROOT).contains(it) }
+        val typedRefund = transaction.movementType in REFUND_LIKE_MOVEMENT_TYPES
+        if (refundLikeText && !typedRefund) {
+            return DiagnosticReasonCode.REFUND_UNSUPPORTED
+        }
+
+        // 3. Transfers need provider-supplied direction + persistable account ref.
+        val resolvedType = transaction.movementType?.toTransactionType()
+            ?: inferTransactionType(transaction)
+        if (resolvedType == TransactionType.TRANSFER) {
+            // The validator is strict: a TRANSFER without an explicit direction or
+            // account name fails. Both must be provider-supplied before lifecycle.
+            val accountRefPersistable = resolveTransferAccountRef(transaction.transferAccountRef, mode) != null
+            if (transaction.transferDirection == null || !accountRefPersistable) {
+                return DiagnosticReasonCode.TRANSFER_METADATA_MISSING
+            }
+        }
+        return null
+    }
+
+    /**
+     * RP-17 17-C: the transfer account name is only ever the provider's
+     * privacy-safe (masked-by-contract) account reference. DO_NOT_STORE never
+     * persists it. No REDACTED placeholder is fabricated in its place.
+     */
+    private fun resolveTransferAccountRef(ref: String?, mode: RawStorageMode): String? =
+        if (mode == RawStorageMode.DO_NOT_STORE) null else ref?.takeIf { it.isNotBlank() }
+
+    /**
+     * RP-17 17-D: builds the bank PendingReview with the stable cross-run
+     * identity and full raw-persistence policy applied.
+     *
+     * Identity (register D12, cross-run source-fingerprint contract):
+     * `bankReviewIdentity = HMAC("<bankId>|<connectionId>|<providerTransactionId>")`.
+     * Same provider transaction re-synced in a later run yields the SAME identity,
+     * so the unique index turns a duplicate review creation into a typed skip.
+     * Scope is the connection/account (bankId namespace + connection row id);
+     * two same-bank connections are unrepresentable today because bankId is
+     * unique on bank_connections — the scope is documented, not asserted, per plan.
+     *
+     * Privacy: title/text pass through the bank raw-persistence policy; nothing
+     * raw is stored in notificationTitle/notificationText regardless of mode.
+     */
+    @VisibleForTesting
+    internal suspend fun buildBankPendingReview(
+        transaction: BankTransaction,
+        connection: BankConnection,
+        transactionType: TransactionType,
+        normalizedMerchant: String,
+        mode: RawStorageMode
+    ): PendingReview {
+        val identityInput = "${connection.bankId}|${connection.id}|${transaction.id}"
+        val bankReviewIdentity = hashingService.hmacSha256Prefix(
+            identityInput,
+            BANK_REVIEW_IDENTITY_PURPOSE
+        )
+        val scopeHash = hashingService.hmacSha256Prefix(
+            connection.id.toString(),
+            BANK_ACCOUNT_SCOPE_PURPOSE
+        )
+        // RP-17 17-D: complete bank RawPersistencePolicy on review payload fields.
+        // The description is the only provider free-text candidate; the title was
+        // previously raw merchant text and is no longer populated at all.
+        val sanitizedText = RawContentSanitizer.sanitizeBankDescription(transaction.description, mode)
+
+        return PendingReview(
+            rawNotificationId = null,
+            scannedReceiptId = null,
+            suggestedAmount = kotlin.math.abs(transaction.amount),
+            suggestedCurrency = transaction.currency,
+            suggestedMerchant = transaction.merchant,
+            suggestedMerchantKey = normalizedMerchant,
+            suggestedType = transactionType.name,
+            suggestedCategoryId = connection.defaultCategoryId,
+            suggestedDate = transaction.date,
+            confidence = transaction.confidence,
+            matchType = null,
+            explanation = "Low-confidence bank transaction from ${connection.bankId}",
+            packageName = "bank.sync.${connection.bankId}",
+            // RP-17 17-D: no raw bank payload in title/text fields.
+            notificationTitle = null,
+            notificationText = sanitizedText,
+            createdAt = timeProvider.now(),
+            bankReviewIdentity = bankReviewIdentity,
+            bankConnectionScopeHash = scopeHash
+        )
+    }
+
     /**
      * Generate mock transactions for demonstration.
      */

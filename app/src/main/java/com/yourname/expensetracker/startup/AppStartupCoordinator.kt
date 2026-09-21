@@ -36,6 +36,7 @@ class AppStartupCoordinator @Inject constructor(
     private val workerExecutionGuard: com.yourname.expensetracker.domain.workers.WorkerExecutionGuard,
     private val restoreJournalImporter: com.yourname.expensetracker.data.backup.RestoreJournalImporter,
     private val intakeRecoveryScheduler: com.yourname.expensetracker.domain.notification.capture.NotificationIntakeRecoveryScheduler,
+    private val bankSyncStartupRecovery: com.yourname.expensetracker.domain.bank.BankSyncStartupRecovery,
     private val timeProvider: TimeProvider,
     @ApplicationScope private val applicationScope: CoroutineScope
 ) {
@@ -52,8 +53,31 @@ class AppStartupCoordinator @Inject constructor(
             scheduleStartupWork(application)
             syncProactiveBriefingWork()
             recoverStaleWorkerRuns()
+            recoverStaleBankRuns()
             importRestoreJournals()
             recoverPendingIntakeRows()
+        }
+    }
+
+    /**
+     * RP-17 17-E: independent startup recovery for stale bank sync bookkeeping —
+     * operation_runs rows of bank operations and bank_statement_import_runs rows
+     * left RUNNING by process death. Mirrors the stale worker-run recovery
+     * pattern; each family is finalized separately with controlled reason codes
+     * inside [com.yourname.expensetracker.domain.bank.BankSyncStartupRecovery]
+     * (which additionally guards every write with the restore write barrier).
+     */
+    private fun recoverStaleBankRuns() {
+        ProcessLifecycleOwner.get().lifecycleScope.launch {
+            try {
+                bankSyncStartupRecovery.recoverStaleRuns(
+                    staleThresholdMs = startupStaleThresholdMs()
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.w(e, "Startup: stale bank-run recovery failed")
+            }
         }
     }
 

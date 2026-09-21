@@ -1247,6 +1247,16 @@
     <string name="bank_remove_confirm_message">This will remove %1$s from your saved connections list.</string>
     <string name="bank_disconnect_snackbar_disconnected">Bank disconnected</string>
     <string name="bank_disconnect_snackbar_removed">Connection removed</string>
+    <!-- RP-17 17-B: typed bank sync outcome messages -->
+    <string name="bank_sync_result_success">Sync completed</string>
+    <string name="bank_sync_result_partial">Sync finished — some items were skipped or failed</string>
+    <string name="bank_sync_result_reauth_required">Re-authentication required — please reconnect this bank</string>
+    <string name="bank_sync_result_blocked">Sync blocked (backup/restore in progress or connection inactive)</string>
+    <string name="bank_sync_result_retryable">Sync failed — please try again</string>
+    <string name="bank_sync_result_permanent">Sync failed</string>
+    <string name="bank_sync_result_connection_missing">This connection no longer exists</string>
+    <!-- RP-17 17-A / D1: bank-sync surface unavailable (release builds) -->
+    <string name="bank_feature_unavailable">Bank connections are unavailable in this build</string>
     <string name="label_connect_bank">Connect Bank</string>
     <string name="label_quick_conversion">Quick Conversion</string>
     <string name="label_unknown">Unknown</string>

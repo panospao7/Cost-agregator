@@ -144,6 +144,9 @@ class LegacyDataConsistencyCheckerTest {
         override suspend fun getByScannedReceiptId(receiptId: Long) = throw NotImplementedError()
         override suspend fun countByScannedReceiptId(receiptId: Long): Int = 0
         override suspend fun redactNotificationTextOlderThan(cutoffMs: Long): Int = 0
+        // RP-17 17-D/17-E bank review identity members — not exercised by this fake.
+        override suspend fun getByBankIdentity(identity: String): PendingReview? = null
+        override suspend fun deleteByBankConnectionScope(scopeHash: String): Int = 0
     }
 
     private class FakeRecurringOccurrenceDao : RecurringOccurrenceDao {
