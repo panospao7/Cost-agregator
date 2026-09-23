@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.repository
 
 import android.content.Context
+import android.content.ContentResolver
 import android.database.MatrixCursor
 import android.database.sqlite.SQLiteDatabase
 import androidx.sqlite.db.SupportSQLiteDatabase
@@ -31,10 +32,16 @@ import com.yourname.expensetracker.data.backup.RestoreJournal
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
+import com.yourname.expensetracker.domain.diagnostics.OperationRunHandle
+import com.yourname.expensetracker.domain.diagnostics.OperationRunRecorder
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDeniedException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
+import java.io.ByteArrayOutputStream
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -120,6 +127,132 @@ class DatabaseBackupRepositoryImplTest {
     @After
     fun tearDown() {
         tempDir.deleteRecursively()
+    }
+
+    @Test
+    fun `allowed file export reaches the file destination writer`() = runTest(testDispatcher) {
+        createFullSchemaDatabase(file = dbFile)
+        every { context.cacheDir } returns File(tempDir, "cache").apply { mkdirs() }
+
+        val repo = createRepository(encryptionService = BackupEncryptionService())
+        val result = repo.createCostBackup(
+            password = "allowed_file_password",
+            includeReceiptImages = false,
+            redacted = true,
+            privacyMode = null
+        )
+
+        assertTrue(result.isSuccess)
+        assertTrue(result.getOrNull()?.exists() == true)
+        verify { mockRestoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.BACKUP_EXPORTING) }
+    }
+
+    @Test
+    fun `allowed SAF export reaches the SAF destination writer`() = runTest(testDispatcher) {
+        createFullSchemaDatabase(file = dbFile)
+        every { context.cacheDir } returns File(tempDir, "cache").apply { mkdirs() }
+        val resolver = mockk<ContentResolver>()
+        val output = ByteArrayOutputStream()
+        val destination = android.net.Uri.parse("content://backup/export")
+        every { context.contentResolver } returns resolver
+        every { resolver.openOutputStream(destination, "wt") } returns output
+
+        val repo = createRepository(
+            encryptionService = BackupEncryptionService()
+        )
+        val result = repo.createCostBackup(
+            destination = destination,
+            password = "allowed_saf_password",
+            includeReceiptImages = false,
+            redacted = true,
+            privacyMode = null
+        )
+
+        assertTrue(result.isSuccess)
+        assertTrue(output.size() > 0)
+        verify { resolver.openOutputStream(destination, "wt") }
+    }
+
+    @Test
+    fun `denied blocks both export overloads before maintenance and destination`() = runTest(testDispatcher) {
+        assertBlockingPrivacyDecisionStopsExport(PrivacyDecision.Denied("ignored"))
+    }
+
+    @Test
+    fun `fail closed blocks both export overloads before maintenance and destination`() = runTest(testDispatcher) {
+        assertBlockingPrivacyDecisionStopsExport(PrivacyDecision.FailClosed("ignored"))
+    }
+
+    @Test
+    fun `privacy denial operation failure uses only the controlled reason code`() = runTest(testDispatcher) {
+        val operationRun = mockk<OperationRunHandle>(relaxed = true)
+        val operationRecorder = mockk<OperationRunRecorder>(relaxed = true)
+        coEvery { operationRecorder.start(any(), any(), any()) } returns operationRun
+        coEvery { privacyGate.check(PrivacyCapability.ENCRYPTED_BACKUP, any()) } returns PrivacyDecision.Denied("secret reason")
+        val repo = createRepository(operationRunRecorder = operationRecorder)
+
+        val result = repo.createCostBackup(
+            password = "password",
+            includeReceiptImages = false,
+            redacted = true,
+            privacyMode = null
+        )
+
+        assertTrue(result.isFailure)
+        val reason = slot<String>()
+        coVerify(exactly = 1) { operationRun.failedFinal(capture(reason)) }
+        assertEquals(DiagnosticReasonCode.PRIVACY_DENIED.name, reason.captured)
+    }
+
+    @Test
+    fun `privacy fail closed operation failure uses only the controlled reason code`() = runTest(testDispatcher) {
+        val operationRun = mockk<OperationRunHandle>(relaxed = true)
+        val operationRecorder = mockk<OperationRunRecorder>(relaxed = true)
+        coEvery { operationRecorder.start(any(), any(), any()) } returns operationRun
+        coEvery { privacyGate.check(PrivacyCapability.ENCRYPTED_BACKUP, any()) } returns PrivacyDecision.FailClosed("secret reason")
+        val repo = createRepository(operationRunRecorder = operationRecorder)
+
+        val result = repo.createCostBackup(
+            password = "password",
+            includeReceiptImages = false,
+            redacted = true,
+            privacyMode = null
+        )
+
+        assertTrue(result.isFailure)
+        val reason = slot<String>()
+        coVerify(exactly = 1) { operationRun.failedFinal(capture(reason)) }
+        assertEquals(DiagnosticReasonCode.PRIVACY_FAIL_CLOSED.name, reason.captured)
+    }
+
+    private suspend fun assertBlockingPrivacyDecisionStopsExport(decision: PrivacyDecision) {
+        coEvery { privacyGate.check(PrivacyCapability.ENCRYPTED_BACKUP, any()) } returns decision
+        val resolver = mockk<ContentResolver>()
+        every { context.contentResolver } returns resolver
+        val destination = android.net.Uri.parse("content://backup/blocked")
+
+        val fileResult = repository.createCostBackup(
+            password = "password",
+            includeReceiptImages = false,
+            redacted = true,
+            privacyMode = null
+        )
+        val safResult = repository.createCostBackup(
+            destination = destination,
+            password = "password",
+            includeReceiptImages = false,
+            redacted = true,
+            privacyMode = null
+        )
+
+        assertTrue(fileResult.isFailure)
+        assertTrue(safResult.isFailure)
+        assertTrue(fileResult.exceptionOrNull() is PrivacyDeniedException)
+        assertTrue(safResult.exceptionOrNull() is PrivacyDeniedException)
+        verify(exactly = 0) { mockRestoreMaintenanceMode.enter(any()) }
+        verify(exactly = 0) { supportDb.query("PRAGMA wal_checkpoint(TRUNCATE)") }
+        verify(exactly = 0) { resolver.openOutputStream(any(), any()) }
+        assertFalse(File(tempDir, "costbackups").exists())
     }
 
     @Test
@@ -928,7 +1061,8 @@ class DatabaseBackupRepositoryImplTest {
         liveVerifier: suspend (AppDatabase, File, Int, DatabaseImportSummary) -> DatabaseImportSummary = { _, _, _, summary -> summary },
         encryptionService: BackupEncryptionService = backupEncryptionService,
         timeProvider: TimeProvider = FakeTimeProvider(fixedTime),
-        journal: RestoreJournal = mockRestoreJournal
+        journal: RestoreJournal = mockRestoreJournal,
+        operationRunRecorder: OperationRunRecorder = mockk(relaxed = true)
     ): DatabaseBackupRepositoryImpl {
         return DatabaseBackupRepositoryImpl(
             context = context,
@@ -944,7 +1078,8 @@ class DatabaseBackupRepositoryImplTest {
             restoreJournal = journal,
             stagedImportVerifier = stagedVerifier,
             liveImportVerifier = liveVerifier,
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            operationRunRecorder = operationRunRecorder
         )
     }
 

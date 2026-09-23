@@ -32,6 +32,7 @@ import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyDeniedException
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.diagnostics.NoOpOperationRunHandle
 import com.yourname.expensetracker.domain.diagnostics.OperationRunHandle
 import com.yourname.expensetracker.domain.diagnostics.OperationRunRecorder
@@ -113,7 +114,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         restoreJournal: RestoreJournal,
         stagedImportVerifier: suspend (Context, String, File, Int, DatabaseImportSummary) -> DatabaseImportSummary,
         liveImportVerifier: suspend (AppDatabase, File, Int, DatabaseImportSummary) -> DatabaseImportSummary,
-        timeProvider: TimeProvider
+        timeProvider: TimeProvider,
+        operationRunRecorder: OperationRunRecorder = NoOpOperationRunRecorder
     ) : this(
         context, database, ioDispatcher, privacyGate, privacySettingsRepository,
         backupEncryptionService, exportAnonymizer, secureKeyStorage,
@@ -126,7 +128,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         ),
         com.yourname.expensetracker.data.backup.SqliteSnapshotCreator(),
         com.yourname.expensetracker.data.backup.RestoreInternalWriteScope(restoreMaintenanceMode),
-        NoOpOperationRunRecorder,
+        operationRunRecorder,
         com.yourname.expensetracker.data.backup.TimberMaintenanceSafeDiagnosticSink(),
         timeProvider
     ) {
@@ -608,8 +610,13 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 PrivacyCapability.ENCRYPTED_BACKUP,
                 mapOf("operation" to "create_costbackup")
             )
-            if (encryptedDecision is PrivacyDecision.Denied) {
-                run.failedFinal("Privacy gate denied: ${encryptedDecision.reason}")
+            if (encryptedDecision.blocksExecution()) {
+                val reasonCode = when (encryptedDecision) {
+                    is PrivacyDecision.Denied -> DiagnosticReasonCode.PRIVACY_DENIED
+                    is PrivacyDecision.FailClosed -> DiagnosticReasonCode.PRIVACY_FAIL_CLOSED
+                    else -> error("Blocking privacy decision must be Denied or FailClosed")
+                }
+                run.failedFinal(reasonCode.name)
                 return@withContext Result.failure(
                     PrivacyDeniedException(PrivacyCapability.ENCRYPTED_BACKUP)
                 )
