@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.privacy
 
+import kotlinx.coroutines.CancellationException
 import timber.log.Timber
 
 /**
@@ -25,6 +26,8 @@ class CompositePrivacyGate(
         for (gate in gates) {
             val decision = try {
                 gate.check(capability, context)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 // RP-15 (15-B): the failure reason is a bounded controlled code.
                 // The exception text is NEVER included; diagnostics use the
