@@ -9,13 +9,18 @@ import com.yourname.expensetracker.domain.model.TransactionSummary
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.model.*
 import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.CancellationException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.util.Calendar
+import timber.log.Timber
+import kotlin.test.assertFailsWith
 
 /**
  * Tests for [SynthesisEngine].
@@ -42,6 +47,53 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
         // Fix time to Jan 15, 2024 (Leap year, 31 days)
         every { timeProvider.now() } returns 1705320000000L
         engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
+    }
+
+    @Test
+    fun `synthesis fallback logs code and class without throwable details`() = runTest {
+        val converter = mockk<CurrencyConverter>()
+        coEvery { converter.convertOutcome(any(), any(), any(), any(), any(), any()) } throws
+            IllegalStateException("SQL private receipt 1234.56")
+        val failingEngine = SynthesisEngine(timeProvider, currencyConverter = converter)
+        val messages = mutableListOf<String>()
+        val tree = object : Timber.Tree() {
+            override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+                assertEquals(null, t)
+                messages += message
+            }
+        }
+        Timber.plant(tree)
+        try {
+            val result = failingEngine.synthesize(
+                pastSumDaily = emptyList(), recurringPatterns = emptyList(),
+                plannedExpenses = listOf(createPlannedExpense(42.0, PlannedExpensePriority.MUST, 1705478400000L).copy(currency = "USD")),
+                savingsGoals = emptyList(), budgetStatuses = emptyList(),
+                spendingPace = SpendingPace(0.0, 15, 31, 0.0, null, null, 0.0f, PaceStatus.ON_PACE, "EUR"),
+                displayCurrency = "EUR"
+            )
+
+            assertEquals(0.0, result.confidence, 0.0)
+            assertTrue(messages.any { it.contains("UNKNOWN_ERROR class=IllegalStateException") })
+            assertTrue(messages.none { it.contains("SQL") || it.contains("1234.56") })
+        } finally {
+            Timber.uproot(tree)
+        }
+    }
+
+    @Test
+    fun `synthesis conversion cancellation propagates`() = runTest {
+        val converter = mockk<CurrencyConverter>()
+        coEvery { converter.convertOutcome(any(), any(), any(), any(), any(), any()) } throws CancellationException("cancelled")
+        val failingEngine = SynthesisEngine(timeProvider, currencyConverter = converter)
+        assertFailsWith<CancellationException> {
+            failingEngine.synthesize(
+                pastSumDaily = emptyList(), recurringPatterns = emptyList(),
+                plannedExpenses = listOf(createPlannedExpense(42.0, PlannedExpensePriority.MUST, 1705478400000L).copy(currency = "USD")),
+                savingsGoals = emptyList(), budgetStatuses = emptyList(),
+                spendingPace = SpendingPace(0.0, 15, 31, 0.0, null, null, 0.0f, PaceStatus.ON_PACE, "EUR"),
+                displayCurrency = "EUR"
+            )
+        }
     }
 
     @Test

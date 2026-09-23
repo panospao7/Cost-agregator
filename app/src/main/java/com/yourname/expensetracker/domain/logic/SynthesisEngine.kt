@@ -184,7 +184,7 @@ class SynthesisEngine @Inject constructor(
             // broad fallback below — rethrow it before any other handling.
             if (e is kotlinx.coroutines.CancellationException) throw e
             val fallbackNow = timeProvider.now()
-            Timber.e(e, "Error in synthesize")
+            Timber.e("SynthesisEngine: UNKNOWN_ERROR class=%s", e::class.java.simpleName)
             FinancialForecast(
                 horizon = ForecastHorizon.REST_OF_MONTH,
                 generatedAt = Instant.ofEpochMilli(fallbackNow),
