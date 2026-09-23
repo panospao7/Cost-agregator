@@ -24,6 +24,7 @@ import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.data.repository.GroupsRepositoryImpl
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionSideEffectDispatcher
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionSideEffectPlanner
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
@@ -43,6 +44,7 @@ import io.mockk.every
 import io.mockk.verify
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -90,6 +92,8 @@ class GroupTransactionCoordinatorTest {
     private lateinit var groupExpenseDao: GroupExpenseDao
     private lateinit var expenseDao: ExpenseDao
     private lateinit var coordinator: GroupTransactionCoordinator
+    private lateinit var groupsRepository: GroupsRepositoryImpl
+    private lateinit var currencySettingsRepository: CurrencySettingsRepository
     private lateinit var transactionLifecycleCoordinator: TransactionLifecycleCoordinator
     private val timeProvider = mockk<com.yourname.expensetracker.domain.util.TimeProvider>(relaxed = true)
     private val writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
@@ -120,7 +124,8 @@ class GroupTransactionCoordinatorTest {
         // NEW-P2-016 (11c): relaxed mocks cannot fabricate a sealed
         // HomeCurrencyResolution return value — stub the typed resolver
         // contract explicitly with the test currency.
-        val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
+        currencySettingsRepository = mockk(relaxed = true)
+        every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
         coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
             com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Resolved(
                 com.yourname.expensetracker.domain.core.money.CurrencyCode("EUR")
@@ -144,6 +149,17 @@ class GroupTransactionCoordinatorTest {
             transactionSideEffectPlanner, postCommitActionRunner,
             writeBarrier, timeProvider, Dispatchers.Unconfined,
             transactionRunner = mockk(relaxed = true)
+        )
+        groupsRepository = GroupsRepositoryImpl(
+            writeBarrier = writeBarrier,
+            database = database,
+            groupDao = groupDao,
+            memberDao = memberDao,
+            groupExpenseDao = groupExpenseDao,
+            coordinator = coordinator,
+            currencySettingsRepository = currencySettingsRepository,
+            timeProvider = timeProvider,
+            ioDispatcher = Dispatchers.Unconfined
         )
     }
 
@@ -907,6 +923,113 @@ class GroupTransactionCoordinatorTest {
         assertThat(thrown).isNotNull()
         assertThat(thrown).isInstanceOf(android.database.sqlite.SQLiteConstraintException::class.java)
         assertThat(groupExpenseDao.getExpensesForGroup(groupId).first()).hasSize(1)
+    }
+
+    @Test
+    fun `repository rejects departed member split before system or group rows appear`() = runTest {
+        val groupId = coordinator.createGroupWithMembersAtomic(
+            group = ExpenseGroup(name = "Split Group", defaultCurrency = "EUR"),
+            members = listOf(
+                GroupMember(groupId = 0, name = "Alice", isCurrentUser = true, joinedAt = TEST_DATE - 10_000L),
+                GroupMember(groupId = 0, name = "Bob", joinedAt = TEST_DATE - 10_000L),
+                GroupMember(groupId = 0, name = "Carol", joinedAt = TEST_DATE - 10_000L)
+            )
+        )
+        val members = memberDao.getMembersForGroup(groupId).first()
+        val aliceId = members.first { it.name == "Alice" }.id
+        val bobId = members.first { it.name == "Bob" }.id
+        val carol = members.first { it.name == "Carol" }
+        memberDao.update(carol.copy(leftAt = TEST_DATE - 1_000L))
+        val date = TEST_DATE + 1_000L
+        val invalidJson = CustomSplitJsonCodec.toCanonicalJson(mapOf(aliceId to 10.0, bobId to 80.0, carol.id to 0.0))
+
+        val result = groupsRepository.createSystemExpenseAndLinkToGroup(
+            groupId = groupId, description = "Dinner", amount = 90.0,
+            paidById = aliceId, currency = "EUR", splitType = SplitType.UNEQUAL,
+            customSplitsJson = invalidJson, date = date, transactionType = TransactionType.PURCHASE
+        )
+
+        assertThat(result).isInstanceOf(GroupExpenseCreationResult.Error::class.java)
+        assertThat((result as GroupExpenseCreationResult.Error).message).isEqualTo("Invalid custom split for active members")
+        assertThat(expenseDao.getAllUncapped()).isEmpty()
+        assertThat(groupExpenseDao.getExpensesForGroup(groupId).first()).isEmpty()
+    }
+
+    @Test
+    fun `repository persists valid active unequal split and current user share`() = runTest {
+        val groupId = coordinator.createGroupWithMembersAtomic(
+            group = ExpenseGroup(name = "Split Group", defaultCurrency = "EUR"),
+            members = listOf(
+                GroupMember(groupId = 0, name = "Alice", isCurrentUser = true, joinedAt = TEST_DATE - 10_000L),
+                GroupMember(groupId = 0, name = "Bob", joinedAt = TEST_DATE - 10_000L),
+                GroupMember(groupId = 0, name = "Carol", joinedAt = TEST_DATE - 10_000L)
+            )
+        )
+        val members = memberDao.getMembersForGroup(groupId).first()
+        val alice = members.first { it.name == "Alice" }
+        val bob = members.first { it.name == "Bob" }
+        val carol = members.first { it.name == "Carol" }
+        memberDao.update(carol.copy(leftAt = TEST_DATE - 1_000L))
+        val date = TEST_DATE + 1_000L
+        val requestedJson = CustomSplitJsonCodec.toCanonicalJson(mapOf(alice.id to 10.0, bob.id to 80.0))
+
+        val result = groupsRepository.createSystemExpenseAndLinkToGroup(
+            groupId = groupId, description = "Dinner", amount = 90.0,
+            paidById = alice.id, currency = "EUR", splitType = SplitType.UNEQUAL,
+            customSplitsJson = requestedJson, date = date, transactionType = TransactionType.PURCHASE
+        )
+
+        val success = result as GroupExpenseCreationResult.Success
+        val storedGroupExpense = groupExpenseDao.getById(success.groupExpenseId)
+        val storedSystemExpense = expenseDao.getById(success.expenseId)
+        assertThat(storedGroupExpense).isNotNull()
+        assertThat(storedGroupExpense!!.customSplitsJson).isEqualTo(requestedJson)
+        assertThat(storedGroupExpense.splitType).isEqualTo(SplitType.UNEQUAL)
+        assertThat(storedSystemExpense).isNotNull()
+        assertThat(storedSystemExpense!!.myShareAmount).isEqualTo(10.0)
+        assertThat(memberDao.getAllForGroup(groupId).first { it.id == carol.id }.leftAt).isNotNull()
+    }
+
+    @Test
+    fun `valid custom amount and percent link atomically and rejected link leaves ownership unchanged`() = runTest {
+        val groupId = coordinator.createGroupWithMembersAtomic(
+            group = ExpenseGroup(name = "Link Split Group", defaultCurrency = "EUR"),
+            members = listOf(
+                GroupMember(groupId = 0, name = "Alice", isCurrentUser = true, joinedAt = TEST_DATE - 10_000L),
+                GroupMember(groupId = 0, name = "Bob", joinedAt = TEST_DATE - 10_000L)
+            )
+        )
+        val members = memberDao.getMembersForGroup(groupId).first()
+        val alice = members.first { it.name == "Alice" }
+        val bob = members.first { it.name == "Bob" }
+        val date = TEST_DATE + 1_000L
+        val percentJson = CustomSplitJsonCodec.toCanonicalJson(mapOf(alice.id to 25.0, bob.id to 75.0))
+        val percentResult = groupsRepository.createSystemExpenseAndLinkToGroup(
+            groupId, "Percent", 100.0, alice.id, "EUR", SplitType.CUSTOM_PERCENT,
+            percentJson, date, TransactionType.PURCHASE
+        )
+        assertThat(percentResult).isInstanceOf(GroupExpenseCreationResult.Success::class.java)
+
+        val existingId = expenseDao.insert(
+            Expense(amount = 90.0, merchant = "Existing", transactionType = TransactionType.PURCHASE, date = date)
+        )
+        val amountJson = CustomSplitJsonCodec.toCanonicalJson(mapOf(alice.id to 10.0, bob.id to 80.0))
+        val linkedResult = groupsRepository.addExpenseWithLink(
+            groupId, existingId, "Existing", 90.0, alice.id, SplitType.CUSTOM_AMOUNT, amountJson, date
+        )
+        assertThat(linkedResult).isInstanceOf(GroupExpenseCreationResult.Success::class.java)
+
+        val untouchedId = expenseDao.insert(
+            Expense(amount = 90.0, merchant = "Untouched", transactionType = TransactionType.PURCHASE, date = date)
+        )
+        val beforeRejectedLink = expenseDao.getById(untouchedId)
+        val rejectedResult = groupsRepository.addExpenseWithLink(
+            groupId, untouchedId, "Untouched", 90.0, alice.id, SplitType.UNEQUAL,
+            CustomSplitJsonCodec.toCanonicalJson(mapOf(alice.id to 10.0, bob.id to 80.0, 999L to 0.0)), date
+        )
+        assertThat(rejectedResult).isInstanceOf(GroupExpenseCreationResult.Error::class.java)
+        assertThat(expenseDao.getById(untouchedId)).isEqualTo(beforeRejectedLink)
+        assertThat(groupExpenseDao.getExpensesForGroup(groupId).first().count { it.expenseId == untouchedId }).isEqualTo(0)
     }
 
     private fun nonEmptyBatch(): PostCommitActionBatch {

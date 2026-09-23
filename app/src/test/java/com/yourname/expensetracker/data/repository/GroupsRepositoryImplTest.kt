@@ -14,10 +14,12 @@ import com.yourname.expensetracker.domain.groups.GroupCreationResult
 import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.groups.GroupTransactionCoordinator
+import com.yourname.expensetracker.domain.logic.CustomSplitJsonCodec
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.slot
@@ -40,6 +42,7 @@ class GroupsRepositoryImplTest {
     private val memberDao = mockk<GroupMemberDao>(relaxed = true)
     private val groupExpenseDao = mockk<GroupExpenseDao>(relaxed = true)
     private val coordinator = mockk<GroupTransactionCoordinator>(relaxed = true)
+    private val writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
 
     private val testDispatcher = StandardTestDispatcher()
     private lateinit var repository: GroupsRepositoryImpl
@@ -52,7 +55,7 @@ class GroupsRepositoryImplTest {
         }
 
         repository = GroupsRepositoryImpl(
-            writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
+            writeBarrier = writeBarrier,
             database = database,
             groupDao = groupDao,
             memberDao = memberDao,
@@ -216,6 +219,9 @@ class GroupsRepositoryImplTest {
             name = "Flatmates",
             defaultCurrency = "USD"
         )
+        coEvery { memberDao.getActiveMembersForGroup(groupId) } returns listOf(
+            GroupMember(id = 12L, groupId = groupId, name = "Alice", isCurrentUser = true)
+        )
         coEvery {
             coordinator.addExpenseWithLink(
                 groupId = groupId,
@@ -308,5 +314,179 @@ class GroupsRepositoryImplTest {
         assertEquals(1, home.members.size)
         assertEquals(1, home.expenses.size)
         assertApproxEquals(80.5, home.expenses.first().totalAmount, 0.0)
+    }
+
+    @Test
+    fun `both expense entry points reject mismatched active member payloads`() = runTest(testDispatcher) {
+        val groupId = 7L
+        val alice = GroupMember(id = 10L, groupId = groupId, name = "Alice", isCurrentUser = true)
+        val bob = GroupMember(id = 20L, groupId = groupId, name = "Bob")
+        val carol = GroupMember(id = 30L, groupId = groupId, name = "Carol", leftAt = 1_700_000_000_000L)
+        coEvery { groupDao.getById(groupId) } returns ExpenseGroup(id = groupId, name = "Trip", defaultCurrency = "EUR")
+        coEvery { memberDao.getActiveMembersForGroup(groupId) } returns listOf(alice, bob)
+
+        listOf(SplitType.UNEQUAL, SplitType.CUSTOM_AMOUNT, SplitType.CUSTOM_PERCENT).forEach { splitType ->
+            val fullShare = if (splitType == SplitType.CUSTOM_PERCENT) 100.0 else 90.0
+            val aliceShare = if (splitType == SplitType.CUSTOM_PERCENT) 25.0 else 10.0
+            val bobShare = fullShare - aliceShare
+            val invalidPayloads = listOf(
+                mapOf(alice.id to aliceShare, bob.id to bobShare, carol.id to 0.0),
+                mapOf(alice.id to fullShare),
+                mapOf(alice.id to aliceShare, 999L to bobShare)
+            ).map(CustomSplitJsonCodec::toCanonicalJson)
+            invalidPayloads.forEach { payload ->
+                val createResult = repository.createSystemExpenseAndLinkToGroup(
+                    groupId = groupId, description = "Dinner", amount = 90.0,
+                    paidById = alice.id, currency = "EUR", splitType = splitType,
+                    customSplitsJson = payload, date = 1_700_000_100_000L,
+                    transactionType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE,
+                    notes = null
+                )
+                val addResult = repository.addExpenseWithLink(
+                    groupId = groupId, systemExpenseId = 500L, description = "Dinner", amount = 90.0,
+                    paidById = alice.id, splitType = splitType,
+                    customSplitsJson = payload, date = 1_700_000_100_000L
+                )
+                assertTrue(createResult is GroupExpenseCreationResult.Error)
+                assertTrue(addResult is GroupExpenseCreationResult.Error)
+                assertEquals("Invalid custom split for active members", (createResult as GroupExpenseCreationResult.Error).message)
+                assertEquals("Invalid custom split for active members", (addResult as GroupExpenseCreationResult.Error).message)
+            }
+        }
+
+        coVerify(exactly = 0) {
+            coordinator.createSystemExpenseAndLinkToGroup(
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+            )
+        }
+        coVerify(exactly = 0) {
+            coordinator.addExpenseWithLink(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        }
+    }
+
+    @Test
+    fun `malformed null and invalid payer inputs return bounded errors`() = runTest(testDispatcher) {
+        val groupId = 8L
+        val alice = GroupMember(id = 10L, groupId = groupId, name = "Alice", isCurrentUser = true)
+        coEvery { groupDao.getById(groupId) } returns ExpenseGroup(id = groupId, name = "Trip", defaultCurrency = "EUR")
+        coEvery { memberDao.getActiveMembersForGroup(groupId) } returns listOf(alice)
+
+        listOf<String?>(null, "", "not-json", "10:1", "{\"10\":1.001}",
+            "{\"10\":-1}", "{\"10\":2}", "{\"10\":1e100}").forEach { payload ->
+            val result = repository.createSystemExpenseAndLinkToGroup(
+                groupId = groupId, description = "Dinner", amount = 1.0, paidById = alice.id,
+                currency = "EUR", splitType = SplitType.CUSTOM_AMOUNT, customSplitsJson = payload,
+                date = 1_700_000_100_000L
+            )
+            assertTrue(result is GroupExpenseCreationResult.Error)
+            assertEquals("Invalid custom split for active members", (result as GroupExpenseCreationResult.Error).message)
+        }
+        val validJson = CustomSplitJsonCodec.toCanonicalJson(mapOf(alice.id to 1.0))
+        listOf(Double.NaN, Double.POSITIVE_INFINITY, 1.001, 1e100).forEach { invalidAmount ->
+            val result = repository.addExpenseWithLink(
+                groupId, 501L, "Dinner", invalidAmount, alice.id, SplitType.UNEQUAL,
+                validJson, 1_700_000_100_000L
+            )
+            assertEquals("Invalid custom split for active members", (result as GroupExpenseCreationResult.Error).message)
+        }
+        val invalidPercent = repository.addExpenseWithLink(
+            groupId, 501L, "Dinner", 1.0, alice.id, SplitType.CUSTOM_PERCENT,
+            CustomSplitJsonCodec.toCanonicalJson(mapOf(alice.id to 99.99)), 1_700_000_100_000L
+        )
+        assertEquals("Invalid custom split for active members", (invalidPercent as GroupExpenseCreationResult.Error).message)
+
+        val invalidPayer = repository.addExpenseWithLink(
+            groupId = groupId, systemExpenseId = 501L, description = "Dinner", amount = 1.0,
+            paidById = 999L, splitType = SplitType.EQUAL, date = 1_700_000_100_000L
+        )
+        assertTrue(invalidPayer is GroupExpenseCreationResult.Error)
+        assertEquals("Payer is not an active member of this group", (invalidPayer as GroupExpenseCreationResult.Error).message)
+
+        coEvery { memberDao.getActiveMembersForGroup(groupId) } returns emptyList()
+        val emptyMembers = repository.createSystemExpenseAndLinkToGroup(
+            groupId, "Dinner", 1.0, alice.id, "EUR", SplitType.EQUAL, null, 1_700_000_100_000L
+        )
+        assertTrue(emptyMembers is GroupExpenseCreationResult.Error)
+        coVerify(exactly = 0) {
+            coordinator.createSystemExpenseAndLinkToGroup(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        }
+        coVerify(exactly = 0) {
+            coordinator.addExpenseWithLink(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        }
+    }
+
+    @Test
+    fun `valid split payloads preserve arguments and result propagation`() = runTest(testDispatcher) {
+        val groupId = 9L
+        val alice = GroupMember(id = 10L, groupId = groupId, name = "Alice", isCurrentUser = true)
+        val bob = GroupMember(id = 20L, groupId = groupId, name = "Bob")
+        coEvery { groupDao.getById(groupId) } returns ExpenseGroup(id = groupId, name = "Trip", defaultCurrency = "EUR")
+        coEvery { memberDao.getActiveMembersForGroup(groupId) } returns listOf(alice, bob)
+        val unequalJson = CustomSplitJsonCodec.toCanonicalJson(mapOf(alice.id to 10.0, bob.id to 80.0))
+        val amountJson = unequalJson
+        val percentJson = CustomSplitJsonCodec.toCanonicalJson(mapOf(alice.id to 25.0, bob.id to 75.0))
+        coEvery { coordinator.createSystemExpenseAndLinkToGroup(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), null) } returns
+            GroupExpenseCreationResult.Success(700L, 701L)
+        coEvery { coordinator.addExpenseWithLink(any(), any(), any(), any(), any(), any(), any(), any(), any(), null) } returns
+            GroupExpenseCreationResult.Success(702L, 701L)
+
+        val createResult = repository.createSystemExpenseAndLinkToGroup(
+            groupId, "Dinner", 90.0, alice.id, "EUR", SplitType.UNEQUAL, unequalJson,
+            1_700_000_100_000L, com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE, "note"
+        )
+        val addResult = repository.addExpenseWithLink(
+            groupId, 701L, "Dinner", 90.0, alice.id, SplitType.CUSTOM_AMOUNT, amountJson, 1_700_000_100_000L
+        )
+        val percentResult = repository.createSystemExpenseAndLinkToGroup(
+            groupId, "Dinner", 100.0, alice.id, "EUR", SplitType.CUSTOM_PERCENT, percentJson,
+            1_700_000_100_000L, com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE, null
+        )
+
+        assertEquals(GroupExpenseCreationResult.Success(700L, 701L), createResult)
+        assertEquals(GroupExpenseCreationResult.Success(702L, 701L), addResult)
+        assertEquals(GroupExpenseCreationResult.Success(700L, 701L), percentResult)
+        val equalResult = repository.addExpenseWithLink(
+            groupId, 701L, "Dinner", 90.0, alice.id, SplitType.EQUAL, null, 1_700_000_100_000L
+        )
+        assertEquals(GroupExpenseCreationResult.Success(702L, 701L), equalResult)
+        coVerify(exactly = 1) {
+            coordinator.createSystemExpenseAndLinkToGroup(
+                groupId, "Dinner", 90.0, alice.id, "EUR", SplitType.UNEQUAL, unequalJson,
+                1_700_000_100_000L, com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE, "note", null
+            )
+        }
+        coVerify(exactly = 1) {
+            coordinator.addExpenseWithLink(
+                groupId, 701L, "Dinner", 90.0, alice.id, "EUR", SplitType.CUSTOM_AMOUNT,
+                amountJson, 1_700_000_100_000L, null
+            )
+        }
+    }
+
+    @Test
+    fun `history includes departed members and barrier blocks delegation`() = runTest(testDispatcher) {
+        val groupId = 10L
+        val alice = GroupMember(id = 10L, groupId = groupId, name = "Alice")
+        val carol = GroupMember(id = 30L, groupId = groupId, name = "Carol", leftAt = 1_700_000_000_000L)
+        val group = ExpenseGroup(id = groupId, name = "Trip", defaultCurrency = "EUR")
+        coEvery { groupDao.getActive() } returns listOf(group)
+        coEvery { memberDao.getAllForGroups(listOf(groupId)) } returns listOf(alice, carol)
+        coEvery { groupExpenseDao.getExpensesForGroups(listOf(groupId)) } returns emptyList()
+        assertEquals(listOf(alice, carol), repository.getActiveGroupsWithDetails().single().members)
+
+        every { writeBarrier.checkWritesAllowed("GroupsRepositoryImpl.createSystemExpenseAndLinkToGroup") } throws
+            IllegalStateException("blocked")
+        try {
+            repository.createSystemExpenseAndLinkToGroup(
+                groupId, "Dinner", 90.0, alice.id, "EUR", SplitType.EQUAL, null, 1_700_000_100_000L
+            )
+            throw AssertionError("write barrier should reject")
+        } catch (expected: IllegalStateException) {
+            assertEquals("blocked", expected.message)
+        }
+        coVerify(exactly = 0) { memberDao.getActiveMembersForGroup(groupId) }
+        coVerify(exactly = 0) {
+            coordinator.createSystemExpenseAndLinkToGroup(any(), any(), any(), any(), any(), any(), any(), any(), any())
+        }
     }
 }

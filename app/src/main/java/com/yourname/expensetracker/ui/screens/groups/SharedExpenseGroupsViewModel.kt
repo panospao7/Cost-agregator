@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -56,6 +57,7 @@ data class GroupWithDetails(
     val currency: String = group.defaultCurrency,
 ) {
     val moneyTotalSpent: MoneyAmount get() = MoneyAmount(totalSpent, CurrencyCode(currency))
+    val activeMembers: List<GroupMember> get() = members.filter { it.leftAt == null }
 }
 
 data class GroupExpenseWithDetails(
@@ -226,10 +228,20 @@ class SharedExpenseGroupsViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val group = groupsRepository.getGroupById(groupId)
-                val homeCurrency = try { currencySettingsRepository.homeCurrency().first() } catch (_: Exception) { "EUR" }
+                val homeCurrency = try {
+                    currencySettingsRepository.homeCurrency().first()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    "EUR"
+                }
                 val currency = group?.defaultCurrency ?: homeCurrency
-                val payer = groupsRepository.getMemberById(paidById)
                 val groupMembers = resolveGroupMembers(groupId)
+                val payer = groupMembers.firstOrNull { it.id == paidById }
+                if (payer == null) {
+                    _uiState.value = _uiState.value.copy(error = "Payer is not an active member of this group")
+                    return@launch
+                }
 
                 val customSplitPayload = serializeAndValidateCustomSplits(
                     splitType = splitType,
@@ -256,7 +268,7 @@ class SharedExpenseGroupsViewModel @Inject constructor(
                     splitType = splitType,
                     customSplitsJson = validatedCustomSplits,
                     transactionType = TransactionType.PURCHASE,
-                    notes = "Group expense via ${payer?.name ?: "Unknown"}"
+                    notes = "Group expense via ${payer.name}"
                 )) {
                     is GroupExpenseCreationResult.Success -> {
                         loadGroups()
@@ -266,9 +278,11 @@ class SharedExpenseGroupsViewModel @Inject constructor(
                         _uiState.value = _uiState.value.copy(error = result.message)
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
                 _uiState.value = _uiState.value.copy(
-                    error = "Failed to add expense: ${e.message}"
+                    error = "Failed to add expense"
                 )
             }
         }
@@ -347,16 +361,10 @@ class SharedExpenseGroupsViewModel @Inject constructor(
     }
 
     private suspend fun resolveGroupMembers(groupId: Long): List<GroupMember> {
-        _uiState.value.selectedGroup
-            ?.takeIf { it.group.id == groupId }
-            ?.members
-            ?.let { return it }
-
-        _uiState.value.groups.firstOrNull { it.group.id == groupId }?.members?.let { return it }
-
         return groupsRepository.getActiveGroupsWithDetails()
             .firstOrNull { it.group.id == groupId }
             ?.members
+            ?.filter { it.leftAt == null }
             .orEmpty()
     }
 
@@ -384,8 +392,8 @@ class SharedExpenseGroupsViewModel @Inject constructor(
 
         val serialized = try {
             CustomSplitJsonCodec.toCanonicalJson(customSplits)
-        } catch (e: IllegalArgumentException) {
-            return CustomSplitPayload.Invalid(e.message ?: "Invalid custom split payload")
+        } catch (_: IllegalArgumentException) {
+            return CustomSplitPayload.Invalid("Invalid custom split payload")
         }
 
         return when (val parseResult = CustomSplitParser.parseAndValidate(
@@ -395,7 +403,7 @@ class SharedExpenseGroupsViewModel @Inject constructor(
             groupMemberIds = members.map { it.id }.toSet()
         )) {
             is CustomSplitParseResult.Valid -> CustomSplitPayload.Valid(serialized)
-            is CustomSplitParseResult.Invalid -> CustomSplitPayload.Invalid(parseResult.reason)
+            is CustomSplitParseResult.Invalid -> CustomSplitPayload.Invalid("Invalid custom split for active members")
         }
     }
 

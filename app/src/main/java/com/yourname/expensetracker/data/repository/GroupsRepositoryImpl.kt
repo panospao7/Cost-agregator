@@ -13,13 +13,16 @@ import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import kotlinx.coroutines.flow.first
 import com.yourname.expensetracker.domain.logic.CustomSplitMode
+import com.yourname.expensetracker.domain.logic.CustomSplitParseResult
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.logic.CustomSplitParser
+import com.yourname.expensetracker.domain.logic.CustomSplitJsonCodec
 import com.yourname.expensetracker.domain.groups.GroupValidationError
 import com.yourname.expensetracker.domain.groups.GroupCreationResult
 import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
 import com.yourname.expensetracker.domain.groups.GroupTransactionCoordinator
 import com.yourname.expensetracker.domain.groups.Result
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
@@ -41,6 +44,8 @@ class GroupsRepositoryImpl @Inject constructor(
 
     private companion object {
         private const val GROUP_IDS_QUERY_CHUNK_SIZE = 500
+        private const val INVALID_ACTIVE_MEMBER_MESSAGE = "Payer is not an active member of this group"
+        private const val INVALID_CUSTOM_SPLIT_MESSAGE = "Invalid custom split for active members"
     }
 
     override suspend fun getActiveGroupsWithDetails(): List<GroupDetailsAggregate> = withContext(ioDispatcher) {
@@ -128,8 +133,22 @@ class GroupsRepositoryImpl @Inject constructor(
     ): GroupExpenseCreationResult {
         writeBarrier.checkWritesAllowed("GroupsRepositoryImpl.addExpenseWithLink")
         return withContext(ioDispatcher) {
-        val homeCurrency = try { currencySettingsRepository.homeCurrency().first() } catch (_: Exception) { "EUR" }
+        val homeCurrency = try {
+            currencySettingsRepository.homeCurrency().first()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            "EUR"
+        }
         val groupCurrency = groupDao.getById(groupId)?.defaultCurrency ?: homeCurrency
+        val activeMembers = memberDao.getActiveMembersForGroup(groupId)
+        validateActiveMembersAndCustomSplit(
+            paidById = paidById,
+            splitType = splitType,
+            customSplitsJson = customSplitsJson,
+            amount = amount,
+            activeMembers = activeMembers
+        )?.let { return@withContext it }
 
         coordinator.addExpenseWithLink(
             groupId = groupId,
@@ -163,6 +182,15 @@ class GroupsRepositoryImpl @Inject constructor(
     ): GroupExpenseCreationResult {
         writeBarrier.checkWritesAllowed("GroupsRepositoryImpl.createSystemExpenseAndLinkToGroup")
         return withContext(ioDispatcher) {
+        val activeMembers = memberDao.getActiveMembersForGroup(groupId)
+        validateActiveMembersAndCustomSplit(
+            paidById = paidById,
+            splitType = splitType,
+            customSplitsJson = customSplitsJson,
+            amount = amount,
+            activeMembers = activeMembers
+        )?.let { return@withContext it }
+
         coordinator.createSystemExpenseAndLinkToGroup(
             groupId = groupId,
             description = description,
@@ -285,6 +313,40 @@ class GroupsRepositoryImpl @Inject constructor(
             SplitType.CUSTOM_AMOUNT -> CustomSplitMode.CUSTOM_AMOUNT
             SplitType.CUSTOM_PERCENT -> CustomSplitMode.CUSTOM_PERCENT
             SplitType.UNEQUAL -> CustomSplitMode.UNEQUAL
+        }
+    }
+
+    private fun validateActiveMembersAndCustomSplit(
+        paidById: Long,
+        splitType: SplitType,
+        customSplitsJson: String?,
+        amount: Double,
+        activeMembers: List<GroupMember>
+    ): GroupExpenseCreationResult.Error? {
+        if (activeMembers.none { it.id == paidById }) {
+            return GroupExpenseCreationResult.Error(INVALID_ACTIVE_MEMBER_MESSAGE)
+        }
+
+        if (splitType == SplitType.EQUAL) {
+            return null
+        }
+
+        if (!CustomSplitJsonCodec.isCanonicalJsonPayload(customSplitsJson)) {
+            return GroupExpenseCreationResult.Error(INVALID_CUSTOM_SPLIT_MESSAGE)
+        }
+
+        return try {
+            when (CustomSplitParser.parseAndValidate(
+                splitsString = customSplitsJson,
+                splitType = splitType.toCustomSplitMode(),
+                totalAmount = amount,
+                groupMemberIds = activeMembers.map { it.id }.toSet()
+            )) {
+                is CustomSplitParseResult.Valid -> null
+                is CustomSplitParseResult.Invalid -> GroupExpenseCreationResult.Error(INVALID_CUSTOM_SPLIT_MESSAGE)
+            }
+        } catch (_: ArithmeticException) {
+            GroupExpenseCreationResult.Error(INVALID_CUSTOM_SPLIT_MESSAGE)
         }
     }
 }

@@ -184,7 +184,7 @@ fun SharedExpenseGroupsScreen(
         
         if (uiState.addingExpense && uiState.selectedGroup != null) {
             AddExpenseDialog(
-                members = uiState.selectedGroup!!.members,
+                members = uiState.selectedGroup!!.activeMembers,
                 onDismiss = { viewModel.toggleAddExpense(false) },
                 onAdd = { description, amount, paidById, splitType, customSplits ->
                     viewModel.addExpense(
@@ -796,9 +796,13 @@ private fun AddExpenseDialog(
 ) {
     var description by remember { mutableStateOf("") }
     var amount by remember { mutableStateOf("") }
+    val activeMemberIds = remember(members) { members.map { it.id }.toSet() }
     var paidById by remember { mutableStateOf(members.firstOrNull()?.id ?: 0L) }
+    LaunchedEffect(activeMemberIds) {
+        if (paidById !in activeMemberIds) paidById = 0L
+    }
     var splitType by remember { mutableStateOf(SplitType.EQUAL) }
-    var memberSplitInputs by remember {
+    var memberSplitInputs by remember(activeMemberIds) {
         mutableStateOf(members.associate { it.id to "" })
     }
 
@@ -1046,6 +1050,7 @@ private fun AddExpenseDialog(
                     }
                 },
                 enabled = description.isNotBlank() && totalAmount != null && totalAmount >= 0.0 && isSplitValid
+                    && members.isNotEmpty() && members.any { it.id == paidById }
             ) {
                 Text(stringResource(R.string.groups_add_expense_button))
             }
