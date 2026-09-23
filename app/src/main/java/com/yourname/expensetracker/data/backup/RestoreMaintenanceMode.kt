@@ -29,6 +29,8 @@ class RestoreMaintenanceMode @Inject constructor(
     private val workerLeaseRegistry: dagger.Lazy<WorkerLeaseRegistry>,
     private val timeProvider: TimeProvider
 ) {
+    class PersistenceException : IllegalStateException("RESTORE_MAINTENANCE_MODE_PERSISTENCE_FAILED")
+
     /** Test-only constructor — uses a no-op WorkerLeaseRegistry. */
     constructor(context: Context, timeProvider: TimeProvider) : this(
         context,
@@ -69,12 +71,14 @@ class RestoreMaintenanceMode @Inject constructor(
 
     // ── Observable mode flow ──────────────────────────────────────
 
-    private val _modeFlow = MutableStateFlow(readMode())
+    private var persistenceHealthy = true
+    private val initialMode = readMode()
+    private val _modeFlow = MutableStateFlow(initialMode)
     val modeFlow: StateFlow<Mode> = _modeFlow.asStateFlow()
 
     /** Derived operational state for the app shell to observe. */
     val operationalStateFlow: StateFlow<AppOperationalState> get() = _operationalStateFlow
-    private val _operationalStateFlow = kotlinx.coroutines.flow.MutableStateFlow(toOperationalState(readMode()))
+    private val _operationalStateFlow = kotlinx.coroutines.flow.MutableStateFlow(toOperationalState(initialMode))
 
     // ── State tracking ────────────────────────────────────────────
 
@@ -86,13 +90,23 @@ class RestoreMaintenanceMode @Inject constructor(
      * stages) block writes to guarantee data consistency.
      */
     fun isWritesAllowed(): Boolean {
-        return readMode() == Mode.NORMAL
+        return persistenceHealthy && currentMode() == Mode.NORMAL
     }
 
     /**
      * Returns the current maintenance mode.
      */
-    fun currentMode(): Mode = readMode()
+    fun currentMode(): Mode {
+        if (!persistenceHealthy) return Mode.CRITICAL_RECOVERY_REQUIRED
+        val persisted = readMode()
+        return if (persisted == _modeFlow.value) persisted else if (persisted == Mode.NORMAL) {
+            // A normal commit may be durable before worker rescheduling and
+            // before the in-memory barrier is published.
+            _modeFlow.value
+        } else {
+            Mode.CRITICAL_RECOVERY_REQUIRED
+        }
+    }
 
     // ── Enter / Exit ──────────────────────────────────────────────
 
@@ -102,8 +116,13 @@ class RestoreMaintenanceMode @Inject constructor(
      */
     fun enter(mode: Mode) {
         Timber.w("Maintenance mode: entering %s", mode.label)
-        writeMode(mode)
-        pauseAllWorkers()
+        try {
+            writeMode(mode)
+            pauseAllWorkers()
+        } catch (e: PersistenceException) {
+            enterCriticalRecoveryRequired(MODE_PERSISTENCE_FAILURE)
+            throw e
+        }
         Timber.d("Maintenance mode: entered %s", mode.label)
     }
 
@@ -116,11 +135,24 @@ class RestoreMaintenanceMode @Inject constructor(
         Timber.e("Maintenance mode: entering CRITICAL_RECOVERY_REQUIRED — %s", reason)
         // P7-PR4 (NEW-P7-003): Single atomic commit for mode + reason + timestamp.
         // Previously two separate commits; crash between them left inconsistent state.
-        prefs.edit()
-            .putString(KEY_CRITICAL_REASON, reason)
-            .putLong(KEY_CRITICAL_TIMESTAMP, timeProvider.now())
-            .putString(KEY_MAINTENANCE_MODE, Mode.CRITICAL_RECOVERY_REQUIRED.name)
-            .commit()
+        val committed = try {
+            prefs.edit()
+                .putString(KEY_CRITICAL_REASON, reason)
+                .putLong(KEY_CRITICAL_TIMESTAMP, timeProvider.now())
+                .putString(KEY_MAINTENANCE_MODE, Mode.CRITICAL_RECOVERY_REQUIRED.name)
+                .commit()
+        } catch (e: Exception) {
+            persistenceHealthy = false
+            publishCriticalInMemory(reason)
+            pauseAllWorkers()
+            throw PersistenceException()
+        }
+        if (!committed) {
+            persistenceHealthy = false
+            publishCriticalInMemory(reason)
+            pauseAllWorkers()
+            throw PersistenceException()
+        }
         _modeFlow.value = Mode.CRITICAL_RECOVERY_REQUIRED
         _operationalStateFlow.value = toOperationalState(Mode.CRITICAL_RECOVERY_REQUIRED)
         pauseAllWorkers()
@@ -140,16 +172,37 @@ class RestoreMaintenanceMode @Inject constructor(
             Mode.NORMAL
         }
         Timber.w("Maintenance mode: exiting to %s", targetMode.label)
-        writeMode(targetMode)
         if (targetMode == Mode.NORMAL) {
+            // Persist NORMAL first, but keep the published in-memory lock until
+            // every worker has been scheduled. A scheduling failure must never
+            // expose a writable process with an empty worker set.
+            try {
+                writeMode(targetMode, publish = false)
+            } catch (e: PersistenceException) {
+                enterCriticalRecoveryRequired(MODE_PERSISTENCE_FAILURE)
+                throw e
+            }
             // BAK-NE: Reschedule background workers immediately instead of
             // waiting for next app start, so that critical jobs (data retention,
             // receipt matching, etc.) resume without delay after restore.
-            scheduleAllWorkers()
-            // Reset the worker stop flag so future workers can run normally
-            workerLeaseRegistry.get().resetStopFlag()
+            try {
+                scheduleAllWorkers()
+                // Reset the worker stop flag so future workers can run normally
+                workerLeaseRegistry.get().resetStopFlag()
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                enterCriticalRecoveryRequired("RESTORE_WORKER_RESCHEDULE_FAILED")
+                throw e
+            }
+            publishMode(targetMode)
             Timber.d("Maintenance mode: workers rescheduled")
         } else {
+            try {
+                writeMode(targetMode)
+            } catch (e: PersistenceException) {
+                enterCriticalRecoveryRequired(MODE_PERSISTENCE_FAILURE)
+                throw e
+            }
             Timber.d("Maintenance mode: writes remain blocked until app restart")
         }
     }
@@ -159,7 +212,12 @@ class RestoreMaintenanceMode @Inject constructor(
      */
     fun reset() {
         Timber.w("Maintenance mode: resetting to NORMAL")
-        writeMode(Mode.NORMAL)
+        try {
+            writeMode(Mode.NORMAL)
+        } catch (e: PersistenceException) {
+            enterCriticalRecoveryRequired(MODE_PERSISTENCE_FAILURE)
+            throw e
+        }
     }
 
     // ── Worker control ────────────────────────────────────────────
@@ -194,22 +252,49 @@ class RestoreMaintenanceMode @Inject constructor(
     // ── Persistence ───────────────────────────────────────────────
 
     private fun readMode(): Mode {
-        val name = prefs.getString(KEY_MAINTENANCE_MODE, Mode.NORMAL.name)
-            ?: Mode.NORMAL.name
+        val name = try {
+            prefs.getString(KEY_MAINTENANCE_MODE, Mode.NORMAL.name)
+                ?: Mode.NORMAL.name
+        } catch (_: Exception) {
+            return Mode.CRITICAL_RECOVERY_REQUIRED
+        }
         return try {
             Mode.valueOf(name)
-        } catch (e: IllegalArgumentException) {
-            Mode.NORMAL
+        } catch (_: IllegalArgumentException) {
+            Mode.CRITICAL_RECOVERY_REQUIRED
         }
     }
 
-    private fun writeMode(mode: Mode) {
+    private fun writeMode(mode: Mode, publish: Boolean = true) {
+        if (currentMode() == Mode.CRITICAL_RECOVERY_REQUIRED && mode != Mode.CRITICAL_RECOVERY_REQUIRED) {
+            throw PersistenceException()
+        }
         // Use commit() (synchronous) instead of apply() (async) to ensure
         // mode persists to disk before any subsequent restore operations.
         // This prevents the mode from reverting on process death.
-        prefs.edit().putString(KEY_MAINTENANCE_MODE, mode.name).commit()
+        val committed = try {
+            prefs.edit().putString(KEY_MAINTENANCE_MODE, mode.name).commit()
+        } catch (e: Exception) {
+            persistenceHealthy = false
+            publishCriticalInMemory(MODE_PERSISTENCE_FAILURE)
+            throw PersistenceException()
+        }
+        if (!committed) {
+            persistenceHealthy = false
+            publishCriticalInMemory(MODE_PERSISTENCE_FAILURE)
+            throw PersistenceException()
+        }
+        if (publish) publishMode(mode)
+    }
+
+    private fun publishMode(mode: Mode) {
         _modeFlow.value = mode
         _operationalStateFlow.value = toOperationalState(mode)
+    }
+
+    private fun publishCriticalInMemory(reason: String) {
+        _modeFlow.value = Mode.CRITICAL_RECOVERY_REQUIRED
+        _operationalStateFlow.value = AppOperationalState.CriticalRecoveryRequired(reason, null)
     }
 
     private fun toOperationalState(mode: Mode): AppOperationalState = when (mode) {
@@ -217,8 +302,8 @@ class RestoreMaintenanceMode @Inject constructor(
         Mode.BACKUP_EXPORTING -> AppOperationalState.BackupExporting
         Mode.RESTORE_COMPLETE_RESTART_REQUIRED -> AppOperationalState.RestartRequiredAfterRestore
         Mode.CRITICAL_RECOVERY_REQUIRED -> AppOperationalState.CriticalRecoveryRequired(
-            reason = prefs.getString(KEY_CRITICAL_REASON, null),
-            timestamp = prefs.getLong(KEY_CRITICAL_TIMESTAMP, 0L).takeIf { it > 0L }
+            reason = runCatching { prefs.getString(KEY_CRITICAL_REASON, null) }.getOrNull(),
+            timestamp = runCatching { prefs.getLong(KEY_CRITICAL_TIMESTAMP, 0L) }.getOrNull()?.takeIf { it > 0L }
         )
         else -> AppOperationalState.RestoreInProgress(mode)
     }
@@ -228,5 +313,6 @@ class RestoreMaintenanceMode @Inject constructor(
         private const val KEY_MAINTENANCE_MODE = "current_mode"
         private const val KEY_CRITICAL_REASON = "critical_recovery_reason"
         private const val KEY_CRITICAL_TIMESTAMP = "critical_recovery_timestamp"
+        private const val MODE_PERSISTENCE_FAILURE = "RESTORE_MAINTENANCE_MODE_PERSISTENCE_FAILED"
     }
 }

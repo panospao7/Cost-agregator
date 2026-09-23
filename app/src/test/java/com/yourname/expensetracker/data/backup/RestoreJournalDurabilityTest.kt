@@ -163,4 +163,93 @@ class RestoreJournalDurabilityTest {
         assertNull(RestoreJournal.deriveAssetTargetName(5L, ""))
         assertNull(RestoreJournal.deriveAssetTargetName(5L, "jpg.exe"))
     }
+
+    @Test
+    fun `fsync failure is surfaced and does not advance the journal`() {
+        journal.testWriteTextSynced = { _, _ -> throw java.io.SyncFailedException("injected") }
+        org.junit.Assert.assertThrows(RestoreJournal.JournalDurabilityException::class.java) {
+            journal.beginJournal("/cache/src.costbackup", "/data/staged.db", "/data/live.db")
+        }
+        assertTrue("failed write must not publish an active journal", !journal.hasJournal())
+    }
+
+    @Test
+    fun `rename false uses a checked durable fallback`() {
+        journal.testRenameTo = { _, _ -> false }
+        val entry = journal.beginJournal("/cache/src.costbackup", "/data/staged.db", "/data/live.db")
+        assertEquals(entry, journal.readJournal())
+    }
+
+    @Test
+    fun `fallback copy or fsync failure is surfaced and active journal is retained`() {
+        journal.testRenameTo = { _, _ -> false }
+        journal.testWriteTextSynced = { file, _ ->
+            if (file.name == "restore_journal.json") throw java.io.SyncFailedException("injected")
+        }
+        org.junit.Assert.assertThrows(RestoreJournal.JournalDurabilityException::class.java) {
+            journal.beginJournal("/cache/src.costbackup", "/data/staged.db", "/data/live.db")
+        }
+        assertTrue("fallback failure must leave recovery evidence", journal.hasJournal())
+    }
+
+    @Test
+    fun `success journal preservation failure retains active journal`() {
+        var preserve = false
+        journal.testWriteTextSynced = { file, _ ->
+            if (preserve && file.name == RestoreJournal.SUCCESS_JOURNAL_FILENAME + ".tmp") {
+                throw java.io.SyncFailedException("injected")
+            }
+        }
+        val entry = journal.beginJournal("/cache/src.costbackup", "/data/staged.db", "/data/live.db")
+        preserve = true
+        org.junit.Assert.assertThrows(RestoreJournal.JournalDurabilityException::class.java) {
+            journal.commitJournal(entry)
+        }
+        assertTrue(journal.hasJournal())
+    }
+
+    @Test
+    fun `absent journal is no action but corrupt bytes are critical`() {
+        assertTrue(journal.checkAndRecover() is RestoreJournal.RecoveryResult.NoAction)
+        val active = File(
+            androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>().filesDir,
+            "restore_journal.json"
+        )
+        active.writeText("   ")
+        assertTrue(journal.checkAndRecover() is RestoreJournal.RecoveryResult.CriticalRecoveryRequired)
+        assertTrue("corrupt bytes must remain for recovery", active.exists())
+    }
+
+    @Test
+    fun `unknown state and malformed asset task are critical`() {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        val active = File(context.filesDir, "restore_journal.json")
+        val base = """{"operationId":"op","operationCorrelationId":"corr","state":"BOGUS","liveDbName":"live","_liveDbPath":"/data/live.db"}"""
+        active.writeText(base)
+        assertTrue(journal.checkAndRecover() is RestoreJournal.RecoveryResult.CriticalRecoveryRequired)
+        active.writeText("""{"operationId":"op","operationCorrelationId":"corr","state":"PREPARING","_liveDbPath":"/data/live.db","assetTasks":[{"receiptId":1}]}""")
+        assertTrue(journal.checkAndRecover() is RestoreJournal.RecoveryResult.CriticalRecoveryRequired)
+    }
+
+    @Test
+    fun `valid recovery states remain classified by state`() {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        val active = File(context.filesDir, "restore_journal.json")
+        val states = listOf(
+            RestoreJournal.JournalState.PREPARING to RestoreJournal.RecoveryResult.CleanedNonDestructive::class,
+            RestoreJournal.JournalState.STAGED to RestoreJournal.RecoveryResult.CleanedNonDestructive::class,
+            RestoreJournal.JournalState.SWAPPING to RestoreJournal.RecoveryResult.RecoveredFromSwap::class,
+            RestoreJournal.JournalState.VERIFYING to RestoreJournal.RecoveryResult.RecoveredFromSwap::class,
+            RestoreJournal.JournalState.ROLLING_BACK to RestoreJournal.RecoveryResult.RecoveredFromSwap::class
+        )
+        states.forEach { (state, expected) ->
+            val entry = journal.beginJournal("/src", "/staged", "/live")
+            journal.writeJournal(entry.copy(state = state))
+            assertTrue("$state should classify as ${expected.simpleName}", expected.isInstance(journal.checkAndRecover()))
+            if (state == RestoreJournal.JournalState.SWAPPING ||
+                state == RestoreJournal.JournalState.VERIFYING ||
+                state == RestoreJournal.JournalState.ROLLING_BACK
+            ) active.delete()
+        }
+    }
 }

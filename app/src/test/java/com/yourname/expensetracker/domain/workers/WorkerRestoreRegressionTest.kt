@@ -93,6 +93,14 @@ class WorkerRestoreRegressionTest {
     }
 
     @Test
+    fun `rollback rescheduling contract covers every default worker exactly once`() {
+        val defaults = WorkerSpec.DEFAULTS.keys
+        val scheduled = WorkerRegistry.entries.map { it.specName }
+        assertEquals("Worker registry must not omit or duplicate rollback schedules", defaults, scheduled.toSet())
+        assertEquals("Each registry worker must have one unique schedule", scheduled.size, scheduled.toSet().size)
+    }
+
+    @Test
     fun `all default workers have valid spec and are enabled post-restore`() = runTest {
         // After restore resetStopFlag(), the lease registry allows new workers.
         // Verify every worker spec is valid and enabled so WorkerRegistry can schedule.

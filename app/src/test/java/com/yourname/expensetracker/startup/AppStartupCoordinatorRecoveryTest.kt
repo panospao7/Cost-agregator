@@ -3,6 +3,8 @@ package com.yourname.expensetracker.startup
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import androidx.work.testing.WorkManagerTestInitHelper
+import androidx.work.WorkManager
+import com.yourname.expensetracker.domain.workers.WorkerSpec
 import com.yourname.expensetracker.data.backup.RestoreDatabaseOpener
 import com.yourname.expensetracker.data.backup.RestoreJournal
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
@@ -54,6 +56,7 @@ class AppStartupCoordinatorRecoveryTest {
         // pauseAllWorkers() → WorkManager.getInstance(); initialise the test instance.
         WorkManagerTestInitHelper.initializeTestWorkManager(context)
         // Deterministic clean slate: clear any persisted mode + journal files.
+        context.getSharedPreferences("restore_maintenance_mode", Context.MODE_PRIVATE).edit().clear().commit()
         RestoreMaintenanceMode(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L)).reset()
         listOf(
             "restore_journal.json",
@@ -515,6 +518,12 @@ class AppStartupCoordinatorRecoveryTest {
         assertTrue(mode.isWritesAllowed())
         assertFalse(journal.hasJournal())
         assertTrue("Live DB must be a valid SQLite file after rollback", liveDbFile.exists() && liveDbFile.length() > 0)
+        WorkerSpec.DEFAULTS.keys.forEach { workerName ->
+            assertTrue(
+                "Rollback must reschedule worker $workerName",
+                WorkManager.getInstance(context).getWorkInfosForUniqueWork(workerName).get().isNotEmpty()
+            )
+        }
     }
 
     @Test

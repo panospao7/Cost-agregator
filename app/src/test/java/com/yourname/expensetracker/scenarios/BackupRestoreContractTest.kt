@@ -55,6 +55,7 @@ class BackupRestoreContractTest {
         // Initialise WorkManager so that RestoreMaintenanceMode.enter() can
         // call pauseAllWorkers() without throwing.
         WorkManagerTestInitHelper.initializeTestWorkManager(context)
+        context.getSharedPreferences("restore_maintenance_mode", Context.MODE_PRIVATE).edit().clear().commit()
     }
 
     @After
@@ -98,7 +99,7 @@ class BackupRestoreContractTest {
     }
 
     @Test
-    fun `restoreMaintenanceMode allows writes in normal and backup modes`() {
+    fun `restoreMaintenanceMode blocks writes in backup mode`() {
         // GIVEN: a fresh RestoreMaintenanceMode
         val modeManager = RestoreMaintenanceMode(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
 
@@ -111,11 +112,8 @@ class BackupRestoreContractTest {
         // WHEN: entering BACKUP_EXPORTING mode
         modeManager.enter(RestoreMaintenanceMode.Mode.BACKUP_EXPORTING)
 
-        // THEN: writes are still allowed during backup export
-        assertTrue(
-            "Writes should be allowed in BACKUP_EXPORTING mode",
-            modeManager.isWritesAllowed()
-        )
+        // THEN: all non-NORMAL modes deny ordinary writes.
+        assertFalse("Writes should be blocked in BACKUP_EXPORTING mode", modeManager.isWritesAllowed())
         assertEquals(
             "Current mode should be BACKUP_EXPORTING",
             RestoreMaintenanceMode.Mode.BACKUP_EXPORTING,

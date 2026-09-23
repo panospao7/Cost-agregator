@@ -7,6 +7,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertThrows
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -52,6 +53,7 @@ class P7BugFixesTest {
     @Before
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
+        context.getSharedPreferences("restore_maintenance_mode", Context.MODE_PRIVATE).edit().clear().commit()
         // Clean up any left-over journal files from prior tests
         listOf(
             "restore_journal.json",
@@ -105,6 +107,40 @@ class P7BugFixesTest {
             RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED,
             mode.currentMode()
         )
+    }
+
+    @Test
+    fun `unknown and blank persisted modes fail closed across fresh instances`() {
+        val prefs = context.getSharedPreferences("restore_maintenance_mode", Context.MODE_PRIVATE)
+        val timeProvider = com.yourname.expensetracker.domain.util.FakeTimeProvider(fixedTime)
+        try {
+            prefs.edit().putString("current_mode", "NOT_A_MODE").commit()
+            val unknown = RestoreMaintenanceMode(context, timeProvider)
+            assertEquals(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED, unknown.currentMode())
+            assertThrows(DatabaseAccessBlockedException::class.java) {
+                DatabaseWriteBarrier(unknown).checkWritesAllowed("unknown_mode")
+            }
+
+            prefs.edit().putString("current_mode", "").commit()
+            val blank = RestoreMaintenanceMode(context, timeProvider)
+            assertEquals(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED, blank.currentMode())
+            assertTrue(blank.operationalStateFlow.value is AppOperationalState.CriticalRecoveryRequired)
+        } finally {
+            prefs.edit().putString("current_mode", RestoreMaintenanceMode.Mode.NORMAL.name).commit()
+        }
+    }
+
+    @Test
+    fun `critical state remains visible after fresh construction`() {
+        val timeProvider = com.yourname.expensetracker.domain.util.FakeTimeProvider(fixedTime)
+        val first = RestoreMaintenanceMode(context, timeProvider)
+        first.enterCriticalRecoveryRequired("TEST_CRITICAL")
+        val second = RestoreMaintenanceMode(context, timeProvider)
+        assertEquals(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED, second.currentMode())
+        assertTrue(second.operationalStateFlow.value is AppOperationalState.CriticalRecoveryRequired)
+        assertFalse(second.isWritesAllowed())
+        context.getSharedPreferences("restore_maintenance_mode", Context.MODE_PRIVATE)
+            .edit().putString("current_mode", RestoreMaintenanceMode.Mode.NORMAL.name).commit()
     }
 
     // ── NEW-P7-004: Thread-safe appendEvent ────────────────────────

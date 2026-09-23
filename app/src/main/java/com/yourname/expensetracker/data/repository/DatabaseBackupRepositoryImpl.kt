@@ -1208,6 +1208,11 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 // Verification failed — rollback from safety backup
+                if (e is RestoreJournal.JournalDurabilityException) {
+                    restoreMaintenanceMode.enterCriticalRecoveryRequired("RESTORE_JOURNAL_DURABILITY_FAILED")
+                    cleanupRestoreStaging(stagedDbPath, tempDir)
+                    return@withContext Result.failure(e)
+                }
                 Timber.e(e, "Live verification failed, rolling back")
                 restoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.RESTORE_ROLLING_BACK)
                 runCatching { database.close() }
@@ -1269,6 +1274,11 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             throw e
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
+            if (e is RestoreJournal.JournalDurabilityException) {
+                restoreMaintenanceMode.enterCriticalRecoveryRequired("RESTORE_JOURNAL_DURABILITY_FAILED")
+                cleanupRestoreStaging(stagedDbPath, tempDir)
+                return@withContext Result.failure(e)
+            }
             Timber.e(e, "Failed to restore .costbackup bundle")
             // P7-008: exiting to NORMAL here used to let session writes run against a
             // DB the next startup crash recovery could roll back (journal said
@@ -1935,6 +1945,10 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 Result.success(finalSummary)
             } catch (importError: Exception) {
                 if (importError is kotlinx.coroutines.CancellationException) throw importError
+                if (importError is RestoreJournal.JournalDurabilityException) {
+                    restoreMaintenanceMode.enterCriticalRecoveryRequired("RESTORE_JOURNAL_DURABILITY_FAILED")
+                    return@withContext Result.failure(importError)
+                }
                 if (destinationFilesMutated && !importSucceeded) {
                     // DDL-C67-05: emit terminal event BEFORE failJournal so it's preserved
                     importEvents?.event("LEGACY_IMPORT_FAILED_AFTER_SWAP",
@@ -2761,9 +2775,22 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     )
                 )
             }
+            val safetyBackupFile = safetyBackupResult.getOrNull() ?: run {
+                resetEvents.event("SAFETY_BACKUP_CREATED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
+                    reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.UNKNOWN_ERROR,
+                    isTerminal = true)
+                restoreMaintenanceMode.enterCriticalRecoveryRequired("RESET_SAFETY_BACKUP_PATH_UNAVAILABLE")
+                return@withContext Result.failure(Exception("RESET_SAFETY_BACKUP_PATH_UNAVAILABLE"))
+            }
+            journalEntry = restoreJournal.transitionTo(
+                journalEntry,
+                RestoreJournal.JournalState.SAFETY_BACKUP_CREATED,
+                safetyBackupPath = safetyBackupFile.absolutePath
+            )
             resetEvents.event("SAFETY_BACKUP_CREATED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED)
 
             try {
+                journalEntry = restoreJournal.transitionTo(journalEntry, RestoreJournal.JournalState.SWAPPING)
                 closeLiveDatabaseForFileSwap()
                 // DDL-F876-01: destructive point — Room DB is closed; no run.* after this
                 resetEvents.markLiveDbSwapStarted()
@@ -2796,6 +2823,10 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 Result.success(Unit)
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
+                if (e is RestoreJournal.JournalDurabilityException) {
+                    restoreMaintenanceMode.enterCriticalRecoveryRequired("RESTORE_JOURNAL_DURABILITY_FAILED")
+                    return@withContext Result.failure(e)
+                }
                 // DDL-F876-01: after destructive point, use journal not run.*
                 restoreJournal.failJournal(journalEntry, e.message ?: "Reset failed")
                 resetEvents.event("RESET_FAILED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
@@ -2808,6 +2839,10 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
+            if (e is RestoreJournal.JournalDurabilityException) {
+                restoreMaintenanceMode.enterCriticalRecoveryRequired("RESTORE_JOURNAL_DURABILITY_FAILED")
+                return@withContext Result.failure(e)
+            }
             Timber.e(e, "Failed to reset database")
             runCatching { resetEvents.finalizeRunFailed(e.message ?: "Exception", e) }
             restoreMaintenanceMode.exit(forceRestartRequired = false)

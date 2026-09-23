@@ -38,6 +38,8 @@ class RestoreJournal @Inject constructor(
     private val timeProvider: TimeProvider
 ) {
 
+    class JournalDurabilityException : IllegalStateException("RESTORE_JOURNAL_DURABILITY_FAILED")
+
     data class AssetRestoreTask(
         val receiptId: Long,
         val sourceRelativePath: String,
@@ -105,14 +107,20 @@ class RestoreJournal @Inject constructor(
              * Parses a journal entry. Legacy journals without a `startedAt` field fall
              * back to the caller-supplied [nowEpochMs] — no hidden wall-clock read.
              */
-            fun fromJson(json: JSONObject, nowEpochMs: Long): JournalEntry = JournalEntry(
-                operationId = json.optString("operationId", UUID.randomUUID().toString()),
-                operationCorrelationId = json.optString("operationCorrelationId", UUID.randomUUID().toString()),
-                state = json.optString("state", "PREPARING").let { stateName ->
+            fun fromJson(
+                json: JSONObject,
+                nowEpochMs: Long,
+                validateRecoveryIdentity: Boolean = false
+            ): JournalEntry = JournalEntry(
+                operationId = json.getString("operationId").takeIf { it.isNotBlank() }
+                    ?: throw IllegalArgumentException("missing operationId"),
+                operationCorrelationId = json.getString("operationCorrelationId")
+                    .takeIf { it.isNotBlank() } ?: throw IllegalArgumentException("missing operationCorrelationId"),
+                state = json.getString("state").let { stateName ->
                     try {
                         JournalState.valueOf(stateName)
                     } catch (e: IllegalArgumentException) {
-                        JournalState.PREPARING
+                        throw IllegalArgumentException("unknown journal state", e)
                     }
                 },
                 // M10-LEGACY: Fallback for old JSON without startedAt; uses the explicit
@@ -132,23 +140,33 @@ class RestoreJournal @Inject constructor(
                     ?.takeIf { it != "null" },
                 extractTempDirPath = json.optString("_extractTempDirPath")
                     .takeIf { it.isNotEmpty() && it != "null" },
-                assetTasks = json.optJSONArray("assetTasks")?.let { arr ->
-                    (0 until arr.length()).mapNotNull { i ->
-                        runCatching {
-                            val o = arr.getJSONObject(i)
-                            AssetRestoreTask(
-                                receiptId = o.getLong("receiptId"),
-                                sourceRelativePath = o.getString("src"),
-                                status = AssetRestoreStatus.valueOf(o.getString("status")),
-                                // DDL-016-05: read both "target" (old) and "targetName" (new basenames-only)
-                                targetPath = (o.optString("target").takeIf { it.isNotEmpty() && it != "null" }
-                                    ?: o.optString("targetName").takeIf { it.isNotEmpty() && it != "null" }),
-                                error = o.optString("error").takeIf { it.isNotEmpty() && it != "null" }
-                            )
-                        }.getOrNull()
-                    }
-                } ?: emptyList()
-            )
+                assetTasks = if (!json.has("assetTasks")) {
+                    emptyList()
+                } else {
+                    json.optJSONArray("assetTasks")?.let { arr ->
+                        (0 until arr.length()).map { i ->
+                            try {
+                                val o = arr.getJSONObject(i)
+                                AssetRestoreTask(
+                                    receiptId = o.getLong("receiptId"),
+                                    sourceRelativePath = o.getString("src"),
+                                    status = AssetRestoreStatus.valueOf(o.getString("status")),
+                                    // DDL-016-05: read both "target" (old) and "targetName" (new basenames-only)
+                                    targetPath = (o.optString("target").takeIf { it.isNotEmpty() && it != "null" }
+                                        ?: o.optString("targetName").takeIf { it.isNotEmpty() && it != "null" }),
+                                    error = o.optString("error").takeIf { it.isNotEmpty() && it != "null" }
+                                )
+                            } catch (e: Exception) {
+                                throw IllegalArgumentException("malformed asset task", e)
+                            }
+                        }
+                    } ?: throw IllegalArgumentException("malformed asset task list")
+                }
+            ).also {
+                if (validateRecoveryIdentity && (it.liveDbPath.isNullOrBlank() || it.operationId.isBlank() || it.operationCorrelationId.isBlank())) {
+                    throw IllegalArgumentException("missing live database identity")
+                }
+            }
         }
     }
 
@@ -167,6 +185,10 @@ class RestoreJournal @Inject constructor(
 
     private val journalFile: File
         get() = File(context.filesDir, JOURNAL_FILENAME)
+
+    /** Narrow deterministic seam for fsync/rename failure tests; production uses the real APIs. */
+    internal var testWriteTextSynced: ((File, String) -> Unit)? = null
+    internal var testRenameTo: ((File, File) -> Boolean)? = null
 
     // ── RestoreJournalEvent (append-only stage trail) ─────────────
 
@@ -479,16 +501,33 @@ class RestoreJournal @Inject constructor(
     /**
      * Reads the current journal entry, or null if no journal exists.
      */
-    fun readJournal(): JournalEntry? {
+    sealed class JournalReadResult {
+        data object Absent : JournalReadResult()
+        data class Valid(val entry: JournalEntry) : JournalReadResult()
+        data object Corrupt : JournalReadResult()
+    }
+
+    /** Distinguishes an absent active journal from bytes that cannot be trusted. */
+    fun readJournalResult(): JournalReadResult {
+        if (!journalFile.exists()) return JournalReadResult.Absent
         return try {
-            if (!journalFile.exists()) return null
             val text = journalFile.readText()
-            if (text.isBlank()) return null
-            JournalEntry.fromJson(JSONObject(text), timeProvider.now())
+            if (text.isBlank()) return JournalReadResult.Corrupt
+            val json = JSONObject(text)
+            if (!json.has("operationId") || !json.has("operationCorrelationId") || !json.has("state")) {
+                return JournalReadResult.Corrupt
+            }
+            JournalReadResult.Valid(JournalEntry.fromJson(json, timeProvider.now(), validateRecoveryIdentity = true))
         } catch (e: Exception) {
             Timber.e(e, "Failed to read restore journal")
-            null
+            JournalReadResult.Corrupt
         }
+    }
+
+    /** Compatibility reader; corruption is never treated as an actionable entry. */
+    fun readJournal(): JournalEntry? = when (val result = readJournalResult()) {
+        JournalReadResult.Absent, JournalReadResult.Corrupt -> null
+        is JournalReadResult.Valid -> result.entry
     }
 
     /**
@@ -498,25 +537,27 @@ class RestoreJournal @Inject constructor(
         synchronized(journalLock) {
             try {
                 journalFile.parentFile?.mkdirs()
-                // DDL-A8-02: preserve existing events when overwriting journal state
-                val oldJson = readJournalJson()
+                // DDL-A8-02: preserve existing events when overwriting journal state.
+                val oldJson = when (readJournalResult()) {
+                    JournalReadResult.Absent -> null
+                    is JournalReadResult.Valid -> readJournalJson()
+                    JournalReadResult.Corrupt -> throw JournalDurabilityException()
+                }
                 val newJson = entry.toJson()
                 val existingEvents = oldJson?.optJSONArray("events")
-                if (existingEvents != null && existingEvents.length() > 0) {
-                    newJson.put("events", existingEvents)
-                }
+                if (existingEvents != null && existingEvents.length() > 0) newJson.put("events", existingEvents)
                 val tmpFile = File(journalFile.parentFile, "${journalFile.name}.tmp")
-                // P7-CURRENT-022: fsync temp file before rename so the journal state
-                // (incl. safety backup path needed for crash recovery) is crash-durable.
                 writeTextSynced(tmpFile, newJson.toString(2))
-                // DDL-C67-07: check rename result
-                if (!tmpFile.renameTo(journalFile)) {
+                if (!renameTo(tmpFile, journalFile)) {
                     writeTextSynced(journalFile, tmpFile.readText())
-                    tmpFile.delete()
+                    if (!journalFile.exists() || !tmpFile.delete()) throw JournalDurabilityException()
                 }
+                if (!journalFile.exists()) throw JournalDurabilityException()
                 Timber.d("Restore journal: state=%s operationId=%s", entry.state, entry.operationId)
+            } catch (e: JournalDurabilityException) {
+                throw e
             } catch (e: Exception) {
-                Timber.e(e, "Failed to write restore journal")
+                throw JournalDurabilityException()
             }
         }
     }
@@ -532,10 +573,7 @@ class RestoreJournal @Inject constructor(
         java.io.FileOutputStream(file).use { fos ->
             fos.write(text.toByteArray(Charsets.UTF_8))
             fos.flush()
-            // fd.sync() flushes OS buffers to disk; guard against the rare device
-            // that throws SyncFailedException so a sync limitation never aborts the
-            // operation (the bytes are still written + flushed above).
-            runCatching { fos.fd.sync() }
+            testWriteTextSynced?.invoke(file, text) ?: fos.fd.sync()
         }
     }
 
@@ -598,19 +636,7 @@ class RestoreJournal @Inject constructor(
     fun commitJournal(entry: JournalEntry): JournalEntry {
         val updated = entry.copy(state = JournalState.COMPLETE)
         writeJournal(updated)
-        try {
-            val successFile = File(context.filesDir, SUCCESS_JOURNAL_FILENAME)
-            successFile.delete()
-            // DDL-C67-07: check rename; fallback to copy+delete
-            if (!journalFile.renameTo(successFile)) {
-                journalFile.copyTo(successFile, overwrite = true)
-                journalFile.delete()
-            }
-            Timber.d("Restore journal preserved as %s", SUCCESS_JOURNAL_FILENAME)
-        } catch (e: Exception) {
-            Timber.w(e, "Failed to preserve success journal; deleting instead")
-            deleteJournal()
-        }
+        preserveJournalAs(SUCCESS_JOURNAL_FILENAME)
         return updated
     }
 
@@ -633,19 +659,31 @@ class RestoreJournal @Inject constructor(
      * failure record is not lost and can be inspected for diagnostics.
      */
     private fun preserveJournal() {
-        if (!journalFile.exists()) return
-        val failureFile = File(context.filesDir, FAILURE_JOURNAL_FILENAME)
+        preserveJournalAs(FAILURE_JOURNAL_FILENAME)
+    }
+
+    private fun preserveJournalAs(fileName: String) {
+        if (!journalFile.exists()) throw JournalDurabilityException()
+        val target = File(context.filesDir, fileName)
         try {
-            // DDL-C67-07: check rename; fallback to copy+delete
-            if (!journalFile.renameTo(failureFile)) {
-                journalFile.copyTo(failureFile, overwrite = true)
-                journalFile.delete()
+            val tmp = File(context.filesDir, "$fileName.tmp")
+            writeTextSynced(tmp, journalFile.readText())
+            if (!renameTo(tmp, target)) {
+                writeTextSynced(target, tmp.readText())
+                if (!tmp.delete()) throw JournalDurabilityException()
             }
-            Timber.d("Restore journal preserved as %s", FAILURE_JOURNAL_FILENAME)
+            if (!target.exists()) throw JournalDurabilityException()
+            if (!journalFile.delete() && journalFile.exists()) throw JournalDurabilityException()
+            Timber.d("Restore journal preserved as %s", fileName)
+        } catch (e: JournalDurabilityException) {
+            throw e
         } catch (e: Exception) {
-            Timber.e(e, "Failed to preserve restore journal as %s", FAILURE_JOURNAL_FILENAME)
+            throw JournalDurabilityException()
         }
     }
+
+    private fun renameTo(source: File, target: File): Boolean =
+        testRenameTo?.invoke(source, target) ?: source.renameTo(target)
 
     /**
      * Deletes the journal file.
@@ -693,7 +731,11 @@ class RestoreJournal @Inject constructor(
      * for executing the appropriate recovery steps.
      */
     fun checkAndRecover(): RecoveryResult {
-        val entry = readJournal() ?: return RecoveryResult.NoAction
+        val entry = when (val read = readJournalResult()) {
+            JournalReadResult.Absent -> return RecoveryResult.NoAction
+            JournalReadResult.Corrupt -> return RecoveryResult.CriticalRecoveryRequired
+            is JournalReadResult.Valid -> read.entry
+        }
 
         return when (entry.state) {
             JournalState.COMPLETE -> {

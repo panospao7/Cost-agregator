@@ -156,13 +156,16 @@ class AppStartupCoordinator @Inject constructor(
                     // checkAndRecover() returns NoAction. Only CRITICAL_RECOVERY_REQUIRED is
                     // exempt from the startup auto-reset below, so it is the only mode that
                     // keeps writes blocked across repeated restarts until manual recovery.
-                    restoreJournal.failJournal(
-                        entry,
-                        "Startup crash recovery failed: safety backup copy did not complete"
-                    )
-                    restoreMaintenanceMode.enterCriticalRecoveryRequired(
-                        "Startup crash recovery failed: safety backup copy did not complete"
-                    )
+                    try {
+                        restoreJournal.failJournal(
+                            entry,
+                            "STARTUP_CRASH_RECOVERY_FAILED"
+                        )
+                    } finally {
+                        restoreMaintenanceMode.enterCriticalRecoveryRequired(
+                            "STARTUP_CRASH_RECOVERY_FAILED"
+                        )
+                    }
                     Timber.e(
                         "Startup: CRITICAL — crash recovery failed; " +
                             "maintenance mode blocks all writes across restarts until manual intervention"
@@ -388,7 +391,7 @@ class AppStartupCoordinator @Inject constructor(
                 // recovery path above).
                 restoreJournal.cleanStagingFiles(entry)
                 restoreJournal.deleteJournal()
-                restoreMaintenanceMode.reset()
+                restoreMaintenanceMode.exit(forceRestartRequired = false)
                 Timber.w("Startup: rolled back to a verified pre-restore DB; restore marked failed")
                 return
             }
@@ -416,13 +419,26 @@ class AppStartupCoordinator @Inject constructor(
             // Base the finalization on the latest journaled ledger so tasks already
             // completed before the failure are not clobbered.
             val latest = restoreJournal.readJournal() ?: finalEntry
-            CancellationSafe.runCatchingCancellable { finalEntry = markUnfinishedAssetTasksFailed(latest, "ASSET_RESUME_FAILED") }
+            try {
+                finalEntry = markUnfinishedAssetTasksFailed(latest, "ASSET_RESUME_FAILED")
+            } catch (durability: RestoreJournal.JournalDurabilityException) {
+                restoreMaintenanceMode.enterCriticalRecoveryRequired("STARTUP_ASSET_JOURNAL_DURABILITY_FAILED")
+                return
+            }
         }
 
         // 3. Finalize the journal forward — per-task failures are recorded in the
         //    ledger; a verified DB is never rolled back for best-effort image loss.
-        restoreJournal.commitJournal(finalEntry)
-        restoreMaintenanceMode.exit(forceRestartRequired = true)
+        try {
+            restoreJournal.commitJournal(finalEntry)
+            restoreMaintenanceMode.exit(forceRestartRequired = true)
+        } catch (e: RestoreJournal.JournalDurabilityException) {
+            restoreMaintenanceMode.enterCriticalRecoveryRequired("STARTUP_ASSET_JOURNAL_FINALIZATION_FAILED")
+            return
+        } catch (e: RestoreMaintenanceMode.PersistenceException) {
+            restoreMaintenanceMode.enterCriticalRecoveryRequired("STARTUP_ASSET_MODE_PERSISTENCE_FAILED")
+            return
+        }
         Timber.w("Startup: ASSETS_RESTORING recovery finished — restart required (journal consumed)")
     }
 
@@ -597,7 +613,7 @@ class AppStartupCoordinator @Inject constructor(
             }
         }
         val updated = entry.copy(assetTasks = updatedTasks)
-        runCatching { restoreJournal.writeJournal(updated) }
+        restoreJournal.writeJournal(updated)
         return updated
     }
 
@@ -616,7 +632,7 @@ class AppStartupCoordinator @Inject constructor(
                 }
             }
         )
-        runCatching { restoreJournal.writeJournal(updated) }
+        restoreJournal.writeJournal(updated)
         return updated
     }
 

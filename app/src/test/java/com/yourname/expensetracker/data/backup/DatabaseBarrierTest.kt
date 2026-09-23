@@ -77,6 +77,16 @@ class DatabaseBarrierTest {
     }
 
     @Test
+    fun every_known_non_normal_mode_blocks_writes() {
+        for (mode in RestoreMaintenanceMode.Mode.entries.filter { it != RestoreMaintenanceMode.Mode.NORMAL }) {
+            setMode(mode)
+            assertThrows("Expected block in mode $mode", DatabaseAccessBlockedException::class.java) {
+                writeBarrier.checkWritesAllowed("test_op")
+            }
+        }
+    }
+
+    @Test
     fun runWrite_executes_block_in_NORMAL() = runTest {
         setMode(RestoreMaintenanceMode.Mode.NORMAL)
         val result = writeBarrier.runWrite(DatabaseAccessOperation("op")) { 42 }
