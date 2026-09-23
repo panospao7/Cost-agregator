@@ -125,7 +125,7 @@ class CloudDashboardBriefingService @Inject constructor(
         
         if (apiKey.isBlank()) {
             Timber.w("CloudDashboardBriefingService: FAILED - Gemini API key missing/blank")
-            return AiServiceResult.Failure(AiServiceError.Disabled("Gemini API key missing"))
+            return AiServiceResult.Failure(AiServiceError.Disabled("PROVIDER_DISABLED"))
         }
 
         // PRIVACY GUARD: Cloud must not be used if user has disabled it.
@@ -202,14 +202,14 @@ class CloudDashboardBriefingService @Inject constructor(
                                 AiServiceResult.Failure(
                                     AiServiceError.HttpError(
                                         response.code,
-                                        "errorClass=$errorClass correlationId=$correlationId"
+                                        "UNKNOWN_ERROR"
                                     )
                                 )
                             }
                         } else {
                             val body = response.body?.string() ?: run {
                                 Timber.w("CloudDashboardBriefingService: Response body was null/empty")
-                                return@use AiServiceResult.Failure(AiServiceError.ParseError("Empty response body"))
+                                return@use AiServiceResult.Failure(AiServiceError.ParseError("PARSER_FAILED"))
                             }
 
                             Timber.d("CloudDashboardBriefingService: Response body length: ${body.length}")
@@ -220,7 +220,7 @@ class CloudDashboardBriefingService @Inject constructor(
                                 AiServiceResult.Success(briefing)
                             } else {
                                 Timber.w("CloudDashboardBriefingService: FAILED - parseResponse returned null")
-                                AiServiceResult.Failure(AiServiceError.ParseError("No usable briefing in response"))
+                                AiServiceResult.Failure(AiServiceError.ParseError("PARSER_FAILED"))
                             }
                         }
                     }
@@ -229,36 +229,38 @@ class CloudDashboardBriefingService @Inject constructor(
                 } catch (e: SocketTimeoutException) {
                     if (attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
                         Timber.w(
-                            e,
-                            "CloudDashboardBriefingService: timeout, retrying (%d/%d)",
+                            "CloudDashboardBriefingService: TIMEOUT class=%s retrying (%d/%d)",
+                            e::class.java.simpleName,
                             attempt,
                             CloudRetryPolicy.MAX_RETRY_ATTEMPTS
                         )
                     } else {
-                        Timber.w(e, "CloudDashboardBriefingService: FAILED - timeout")
+                        Timber.w("CloudDashboardBriefingService: TIMEOUT class=%s attempt=%d", e::class.java.simpleName, attempt)
                         return@withContext AiServiceResult.Failure(AiServiceError.Timeout)
                     }
                 } catch (e: SSLException) {
-                    Timber.w(e, "CloudDashboardBriefingService: FAILED - SSL error")
+                    Timber.w("CloudDashboardBriefingService: UNKNOWN_ERROR stage=ssl class=%s attempt=%d", e::class.java.simpleName, attempt)
                     return@withContext AiServiceResult.Failure(AiServiceError.SslError)
                 } catch (e: IOException) {
                     if (CloudRetryPolicy.isRetryableIoException(e) && attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
                         Timber.w(
-                            e,
-                            "CloudDashboardBriefingService: network failure, retrying (%d/%d)",
+                            "CloudDashboardBriefingService: NETWORK_UNAVAILABLE class=%s retrying (%d/%d)",
+                            e::class.java.simpleName,
                             attempt,
                             CloudRetryPolicy.MAX_RETRY_ATTEMPTS
                         )
                     } else {
-                        Timber.w(e, "CloudDashboardBriefingService: FAILED - network failure")
+                        Timber.w("CloudDashboardBriefingService: NETWORK_UNAVAILABLE class=%s attempt=%d", e::class.java.simpleName, attempt)
                         return@withContext AiServiceResult.Failure(AiServiceError.Offline)
                     }
                 } catch (e: JSONException) {
-                    Timber.w(e, "CloudDashboardBriefingService: FAILED - json parse failure")
-                    return@withContext AiServiceResult.Failure(AiServiceError.ParseError(e.message))
+                    Timber.w("CloudDashboardBriefingService: PARSER_FAILED class=%s attempt=%d", e::class.java.simpleName, attempt)
+                    return@withContext AiServiceResult.Failure(AiServiceError.ParseError("PARSER_FAILED"))
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
                 } catch (e: Exception) {
-                    Timber.w(e, "CloudDashboardBriefingService: FAILED - parse failure")
-                    return@withContext AiServiceResult.Failure(AiServiceError.Unknown(e.message))
+                    Timber.w("CloudDashboardBriefingService: UNKNOWN_ERROR class=%s attempt=%d", e::class.java.simpleName, attempt)
+                    return@withContext AiServiceResult.Failure(AiServiceError.Unknown("UNKNOWN_ERROR"))
                 }
 
                 if (attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
@@ -266,7 +268,7 @@ class CloudDashboardBriefingService @Inject constructor(
                 }
             }
 
-            AiServiceResult.Failure(AiServiceError.Unknown("Retry attempts exhausted"))
+            AiServiceResult.Failure(AiServiceError.Unknown("UNKNOWN_ERROR"))
         }
     }
 

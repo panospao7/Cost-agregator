@@ -64,6 +64,7 @@ class CloudDashboardBriefingServiceTest {
         assertTrue(result is AiServiceResult.Failure)
         val failure = result as AiServiceResult.Failure
         assertTrue(failure.error is AiServiceError.Disabled)
+        assertEquals("PROVIDER_DISABLED", (failure.error as AiServiceError.Disabled).reason)
     }
 
     // TODO: Tautological mock test — consider adding real behavior assertion
@@ -231,6 +232,7 @@ class CloudDashboardBriefingServiceTest {
         assertTrue(failure.error is AiServiceError.HttpError)
         val httpError = failure.error as AiServiceError.HttpError
         assertEquals(429, httpError.code)
+        assertEquals("UNKNOWN_ERROR", httpError.message)
     }
 
     private fun defaultInput(): DashboardBriefingInput {

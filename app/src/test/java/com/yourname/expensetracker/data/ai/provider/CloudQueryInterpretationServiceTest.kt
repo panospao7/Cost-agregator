@@ -27,6 +27,7 @@ import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
+import javax.net.ssl.SSLException
 
 class CloudQueryInterpretationServiceTest {
 
@@ -279,6 +280,24 @@ class CloudQueryInterpretationServiceTest {
         }
 
         assertTrue(result is FinancialQueryInterpretationResult.Unsupported)
+        assertEquals("NETWORK_UNAVAILABLE", (result as FinancialQueryInterpretationResult.Unsupported).reason)
+    }
+
+    @Test
+    fun `interpret SSL failure returns bounded unsupported reason`() {
+        val keyStorage = mockk<SecureKeyStorage>(relaxed = true)
+        every { keyStorage.getKey(SecureKeyStorage.KEY_GEMINI) } returns "test-key"
+        val client = mockk<OkHttpClient>()
+        val call = mockk<Call>()
+        every { client.newCall(any()) } returns call
+        every { call.execute() } throws SSLException("/private/receipts/sql secret")
+
+        val result = runBlocking {
+            CloudQueryInterpretationService(keyStorage, client, mockk<PrivacyGate>(relaxed = true))
+                .interpret(FinancialQueryInterpretationInput("top merchants", 1_000L, "en-US"))
+        }
+
+        assertEquals("UNKNOWN_ERROR", (result as FinancialQueryInterpretationResult.Unsupported).reason)
     }
 
     @Test
@@ -313,6 +332,7 @@ class CloudQueryInterpretationServiceTest {
         }
 
         assertTrue(result is FinancialQueryInterpretationResult.Unsupported)
+        assertEquals("PARSER_FAILED", (result as FinancialQueryInterpretationResult.Unsupported).reason)
     }
 
     @Test

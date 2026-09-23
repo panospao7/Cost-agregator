@@ -78,6 +78,7 @@ class CloudReceiptAssistServiceTest {
         assertTrue(result is AiServiceResult.Failure)
         val failure = result as AiServiceResult.Failure
         assertTrue(failure.error is AiServiceError.Disabled)
+        assertEquals("PROVIDER_DISABLED", (failure.error as AiServiceError.Disabled).reason)
     }
 
     // TODO: Tautological mock test — consider adding real behavior assertion
