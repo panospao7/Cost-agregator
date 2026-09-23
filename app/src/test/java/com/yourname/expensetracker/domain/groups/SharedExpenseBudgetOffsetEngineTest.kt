@@ -18,6 +18,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import kotlin.test.assertFailsWith
 
 class SharedExpenseBudgetOffsetEngineTest {
@@ -26,10 +28,12 @@ class SharedExpenseBudgetOffsetEngineTest {
     private val expenseRepository = mockk<ExpenseRepository>()
 
     private lateinit var engine: SharedExpenseBudgetOffsetEngine
+    private lateinit var converter: CurrencyConverter
 
     @Before
     fun setup() {
         val localCurrencyConverter = mockk<CurrencyConverter>(relaxed = true)
+        converter = localCurrencyConverter
         coEvery { localCurrencyConverter.convertAsOf(any<Double>(), any<String>(), any<String>(), any<Long>()) } answers {
             val amount = firstArg<Double>()
             val from = secondArg<String>()
@@ -64,6 +68,40 @@ class SharedExpenseBudgetOffsetEngineTest {
             currencySettingsRepository = mockk(),
             currencyConverter = localCurrencyConverter,
         )
+    }
+
+    @Test
+    fun `failed personal shared and reimbursement conversions expose codes and counts only`() = runTest {
+        val start = FIXED_NOW - 7L * DAY_MS
+        coEvery { expenseRepository.getExpensesBetween(start, FIXED_NOW) } returns listOf(
+            expense(id = 1L, amount = 1234.56, categoryId = 1L, isShared = false)
+        )
+        coEvery { groupsRepository.getActiveGroupsWithDetails() } returns listOf(
+            groupAggregate(
+                groupId = 10L,
+                members = listOf(
+                    GroupMember(id = 100L, groupId = 10L, name = "Me", isCurrentUser = true),
+                    GroupMember(id = 101L, groupId = 10L, name = "Friend")
+                ),
+                expenses = listOf(
+                    GroupExpense(
+                        id = 700L, groupId = 10L, expenseId = null, paidById = 100L,
+                        date = start + DAY_MS, description = "Sensitive merchant",
+                        totalAmount = 5432.10, splitType = SplitType.EQUAL,
+                        isReimbursable = true, reimbursedAmount = 100.0
+                    )
+                )
+            )
+        )
+        coEvery { converter.convertAsOf(any<Double>(), any<String>(), any<String>(), any<Long>()) } returns null
+
+        val result = engine.calculateEffectiveBudgetSpend(start, FIXED_NOW)
+
+        assertTrue(result.isPartial)
+        assertEquals(3, result.failedConversionCount)
+        assertEquals(listOf("MISSING_RATE", "MISSING_RATE", "MISSING_RATE"), result.conversionWarnings)
+        assertApproxEquals(0.0, result.effectiveBudgetSpend, 0.0)
+        assertApproxEquals(0.0, result.totalReimbursed, 0.0)
     }
 
     @Test

@@ -76,7 +76,6 @@ class SharedExpenseBudgetOffsetEngine @Inject constructor(
     ): BudgetSpendBreakdown = withContext(ioDispatcher) {
         val homeCurrency = try { currencySettingsRepository.homeCurrency().first() } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-            android.util.Log.w("BudgetOffset", "Failed to read home currency, defaulting to EUR", e)
             "EUR"
         }
         val allPeriodExpenses = expenseRepository.getExpensesBetween(periodStart, periodEnd)
@@ -126,9 +125,7 @@ class SharedExpenseBudgetOffsetEngine @Inject constructor(
                 totalPersonalSpend += conversion.convertedAmount
             } else {
                 failedConversionCount++
-                val msg = "Personal spend conversion failed for ${expense.merchant}: ${expense.effectiveAmount} ${expense.currency} -> $homeCurrency at ${expense.date}"
-                conversionWarnings.add(msg)
-                android.util.Log.w("BudgetOffset", msg)
+                conversionWarnings.add("MISSING_RATE")
             }
         }
         // G07: Use convertAsOf per expense for historical accuracy instead of latest rate.
@@ -159,9 +156,7 @@ class SharedExpenseBudgetOffsetEngine @Inject constructor(
                         totalSharedSpend += conversion.convertedAmount
                     } else {
                         failedConversionCount++
-                        val msg = "Shared spend conversion failed: $share ${groupExpense.currency} -> $homeCurrency at ${groupExpense.date}"
-                        conversionWarnings.add(msg)
-                        android.util.Log.w("BudgetOffset", msg)
+                        conversionWarnings.add("MISSING_RATE")
                     }
                 }
 
@@ -177,9 +172,7 @@ class SharedExpenseBudgetOffsetEngine @Inject constructor(
                         totalReimbursed += conversion.convertedAmount
                     } else {
                         failedConversionCount++
-                        val msg = "Reimbursed conversion failed: $reimb ${groupExpense.currency} -> $homeCurrency at ${groupExpense.date}"
-                        conversionWarnings.add(msg)
-                        android.util.Log.w("BudgetOffset", msg)
+                        conversionWarnings.add("MISSING_RATE")
                     }
                 }
             }
