@@ -2,6 +2,10 @@ package com.yourname.expensetracker.domain.bank
 
 import androidx.room.withTransaction
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
+import com.yourname.expensetracker.data.backup.DatabaseAccessType
+import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.BankConnectionDao
 import com.yourname.expensetracker.data.database.dao.PendingReviewDao
@@ -195,6 +199,57 @@ class BankConnectionLifecycleCoordinatorOutcomeTest {
             coVerify(exactly = 0) { bankConnectionDao.updateSyncStatus(any(), any(), any()) }
             clearTokenStubs()
         }
+    }
+
+    @Test
+    fun `restore blocked outcome skips both terminal status writes`() = runTest {
+        coEvery { bankConnectionDao.getById(7L) } returns connection
+        val blocked = BankSyncOutcome.Blocked(DiagnosticReasonCode.RESTORE_BLOCKED)
+        coEvery { bankApiIntegration.syncTransactions(connection, null) } returns blocked
+        denyTerminalStatusWrite()
+
+        assertEquals(blocked, coordinator.syncConnection(7L))
+        coVerify(exactly = 1) { bankApiIntegration.syncTransactions(connection, null) }
+        coVerify(exactly = 0) { bankConnectionDao.updateSyncStatus(any(), any(), any()) }
+        coVerify(exactly = 0) { bankConnectionDao.updateSyncStatusOnly(any(), any()) }
+    }
+
+    @Test
+    fun `barrier denial after integration success leaves outcome unchanged and skips status`() = runTest {
+        coEvery { bankConnectionDao.getById(7L) } returns connection
+        val success = BankSyncOutcome.Success(importedCount = 2)
+        coEvery { bankApiIntegration.syncTransactions(connection, null) } returns success
+        denyTerminalStatusWrite()
+
+        assertEquals(success, coordinator.syncConnection(7L))
+        coVerify(exactly = 0) { bankConnectionDao.updateSyncStatus(any(), any(), any()) }
+        coVerify(exactly = 0) { bankConnectionDao.updateSyncStatusOnly(any(), any()) }
+    }
+
+    @Test
+    fun `cancellation during terminal barrier check propagates without status write`() = runTest {
+        coEvery { bankConnectionDao.getById(7L) } returns connection
+        coEvery { bankApiIntegration.syncTransactions(connection, null) } returns BankSyncOutcome.Success()
+        io.mockk.every { writeBarrier.checkWritesAllowed("BankConnectionLifecycleCoordinator.persistOutcome") } throws
+            CancellationException("status cancelled")
+
+        try {
+            coordinator.syncConnection(7L)
+            org.junit.Assert.fail("Expected cancellation")
+        } catch (expected: CancellationException) {
+            assertEquals("status cancelled", expected.message)
+        }
+        coVerify(exactly = 0) { bankConnectionDao.updateSyncStatus(any(), any(), any()) }
+        coVerify(exactly = 0) { bankConnectionDao.updateSyncStatusOnly(any(), any()) }
+    }
+
+    private fun denyTerminalStatusWrite() {
+        val operation = "BankConnectionLifecycleCoordinator.persistOutcome"
+        io.mockk.every { writeBarrier.checkWritesAllowed(operation) } throws DatabaseAccessBlockedException(
+            accessType = DatabaseAccessType.WRITE,
+            operation = DatabaseAccessOperation(operation),
+            mode = RestoreMaintenanceMode.Mode.RESTORE_STAGING
+        )
     }
 
     @Test

@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.bank
 
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.BankConnectionDao
 import com.yourname.expensetracker.data.database.dao.PendingReviewDao
@@ -169,6 +170,7 @@ class BankConnectionLifecycleCoordinator @Inject constructor(
     private suspend fun persistOutcome(connectionId: Long, outcome: BankSyncOutcome) {
         val status = outcome.toTerminalSyncStatus() ?: return
         try {
+            writeBarrier.checkWritesAllowed("BankConnectionLifecycleCoordinator.persistOutcome")
             if (outcome.advancesLastSync()) {
                 bankConnectionDao.updateSyncStatus(connectionId, timeProvider.now(), status)
             } else {
@@ -176,6 +178,8 @@ class BankConnectionLifecycleCoordinator @Inject constructor(
             }
         } catch (e: CancellationException) {
             throw e
+        } catch (_: DatabaseAccessBlockedException) {
+            // Status persistence is secondary; never write through a denied restore barrier.
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             // Status persistence is secondary UI state; the outcome itself is the
