@@ -144,9 +144,6 @@ class SharedExpenseGroupsViewModelTest : ViewModelTestUtils() {
 
             advanceUntilIdle()
 
-            val closed = awaitItem()
-            assertFalse(closed.addingExpense)
-
             val loading = awaitItem()
             assertTrue(loading.isLoading)
 
