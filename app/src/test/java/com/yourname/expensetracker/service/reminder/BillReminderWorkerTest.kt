@@ -25,6 +25,7 @@ import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.slot
 import io.mockk.unmockkStatic
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -34,6 +35,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowLog
+import kotlin.test.assertFailsWith
 
 /**
  * PR6D — BillReminder notification permission fix tests.
@@ -253,6 +256,33 @@ class BillReminderWorkerTest {
         // Should mark the delivery as failed (not unclaimed)
         coVerify(exactly = 1) { coordinator.markReminderFailed(3L, any()) }
         coVerify(exactly = 0) { coordinator.cancelClaimedReminderDelivery(any(), any()) }
+    }
+
+    @Test
+    fun `diagnostic writer failure logs code and class without exception text`() = runTest {
+        val reminder = testReminder()
+        setupNotificationDispatchPath(reminder)
+        coEvery { coordinator.markReminderSent(reminder.id, any()) } returns true
+        coEvery { diagnosticEventWriter.emit(any()) } throws IllegalStateException("/private/receipt/1234.56")
+        mockkStatic(NotificationManagerCompat::class)
+        val manager = mockk<NotificationManagerCompat>(relaxed = true)
+        every { NotificationManagerCompat.from(any<Context>()) } returns manager
+        every { manager.notify(any(), any()) } returns Unit
+
+        val before = ShadowLog.getLogs().size
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        val logs = ShadowLog.getLogs().drop(before).map { it.msg }
+        assertTrue(logs.any { it.contains("SIDE_EFFECT_EXCEPTION class=IllegalStateException") })
+        assertTrue(logs.none { it.contains("/private/receipt") || it.contains("1234.56") })
+    }
+
+    @Test
+    fun `coordinator cancellation propagates without diagnostic`() = runTest {
+        coEvery { coordinator.recoverAndGetDueReminders() } throws CancellationException("cancelled")
+
+        assertFailsWith<CancellationException> { buildWorker().doWork() }
+        coVerify(exactly = 0) { diagnosticEventWriter.emit(any()) }
     }
 
     // ─── Test 5: RP-04 P4-006 — permission denial cancels delivery without
