@@ -451,49 +451,65 @@ class NotificationCaptureService : NotificationListenerService() {
                             .build(),
                         isTerminal = false
                     ))
-                    // Gate not ready — persist deferred intake row for retry.
-                    // RP-10 10a (P1-002): resolve ONE bounded privacy snapshot (a
-                    // single settings read through the same policy resolver the
-                    // capture gate uses) so the deferred row carries the user's
-                    // actual RawStorageMode instead of a hardcoded metadata mode.
-                    // If the policy cannot be resolved, fail closed: no extraction,
-                    // no row, no payload.
-                    val settings = try {
-                        privacySettingsRepository.getSettings()
+                    // A temporarily unavailable gate requires fresh authorization
+                    // before extras extraction or deferred intake handoff.
+                    val deferredPrivacyDecision = try {
+                        withTimeoutOrNull(300L) {
+                            privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE)
+                        }
                     } catch (e: Exception) {
                         if (e is kotlinx.coroutines.CancellationException) {
-                            // RP-10 10b (P1-004): deferred-path cancellation accounting.
-                            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
-                                notificationDiagnosticEmitter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
-                                    pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
-                                    stage = "capture_gate",
-                                    outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.CANCELLED,
-                                    reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.CAPTURE_CANCELLED,
-                                    correlationId = correlationId,
-                                    sourceType = "notification",
-                                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                                        .putHashed("packageName", packageName).build(),
-                                    isTerminal = true
-                                ))
-                            }
+                            emitDeferredCaptureCancellation(correlationId, packageName)
                             throw e
                         }
-                        Timber.w("Deferred capture skipped: storage policy unavailable")
-                        notificationDiagnosticEmitter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
-                            pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
-                            stage = "capture_gate",
-                            outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
-                            reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.DEFERRED_STORAGE_POLICY_UNAVAILABLE,
-                            correlationId = correlationId,
-                            sourceType = "notification",
-                            metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                                .putHashed("packageName", packageName).build(),
-                            isTerminal = true
-                        ))
-                        null
+                        emitDeferredCaptureDrop(correlationId, packageName,
+                            com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.PRIVACY_DENIED)
+                        return@launch
                     }
-                    if (settings != null) {
-                        // Extract basic text fields before deferring so the worker
+                    if (deferredPrivacyDecision !is PrivacyDecision.Allowed) {
+                        emitDeferredCaptureDrop(correlationId, packageName,
+                            com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.PRIVACY_DENIED)
+                        return@launch
+                    }
+
+                    val settings = try {
+                        withTimeoutOrNull(300L) { privacySettingsRepository.getSettings() }
+                    } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) {
+                            emitDeferredCaptureCancellation(correlationId, packageName)
+                            throw e
+                        }
+                        emitDeferredCaptureDrop(correlationId, packageName,
+                            com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.DEFERRED_STORAGE_POLICY_UNAVAILABLE)
+                        return@launch
+                    }
+                    if (settings == null) {
+                        emitDeferredCaptureDrop(correlationId, packageName,
+                            com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.DEFERRED_STORAGE_POLICY_UNAVAILABLE)
+                        return@launch
+                    }
+                    if (!settings.notificationCaptureEnabled) {
+                        emitDeferredCaptureDrop(correlationId, packageName,
+                            com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.PRIVACY_DENIED)
+                        return@launch
+                    }
+                    val isBlocked = try {
+                        withTimeoutOrNull(300L) { blockedPackageDao.isBlocked(packageName) }
+                    } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) {
+                            emitDeferredCaptureCancellation(correlationId, packageName)
+                            throw e
+                        }
+                        emitDeferredCaptureDrop(correlationId, packageName,
+                            com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.BLOCKED_PACKAGE)
+                        return@launch
+                    }
+                    if (isBlocked != false) {
+                        emitDeferredCaptureDrop(correlationId, packageName,
+                            com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.BLOCKED_PACKAGE)
+                        return@launch
+                    }
+                    // Extract basic text fields before deferring so the worker
                         // has content to process when the gate becomes available.
                         val deferredParts = NotificationTextParts.extract(sbn.notification.extras)
                         // Same per-mode extras contract as the live path below: the
@@ -523,7 +539,6 @@ class NotificationCaptureService : NotificationListenerService() {
                                 )
                             )
                         }
-                    }
                     return@launch
                 }
             }
@@ -553,7 +568,7 @@ class NotificationCaptureService : NotificationListenerService() {
             }
 
             // Step 4: Filter with structured decision
-            val filterDecision = NotificationFilter.decide(packageName, parts.title, parts.text, parts.bigText)
+            val filterDecision = NotificationFilter.decide(packageName, parts.title, parts.text, parts.combinedBody)
             if (!filterDecision.capture) {
                 notificationDiagnosticEmitter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
                     pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
@@ -728,6 +743,43 @@ class NotificationCaptureService : NotificationListenerService() {
                     deduper.remove(dedupeKey)
                 }
             }
+        }
+    }
+
+    private suspend fun emitDeferredCaptureDrop(
+        correlationId: String,
+        packageName: String,
+        reasonCode: com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
+    ) {
+        notificationDiagnosticEmitter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+            pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+            stage = "capture_gate",
+            outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
+            reasonCode = reasonCode,
+            correlationId = correlationId,
+            sourceType = "notification",
+            metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                .putHashed("packageName", packageName).build(),
+            isTerminal = true
+        ))
+    }
+
+    private suspend fun emitDeferredCaptureCancellation(
+        correlationId: String,
+        packageName: String
+    ) {
+        withContext(NonCancellable) {
+            notificationDiagnosticEmitter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                stage = "capture_gate",
+                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.CANCELLED,
+                reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.CAPTURE_CANCELLED,
+                correlationId = correlationId,
+                sourceType = "notification",
+                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                    .putHashed("packageName", packageName).build(),
+                isTerminal = true
+            ))
         }
     }
 
