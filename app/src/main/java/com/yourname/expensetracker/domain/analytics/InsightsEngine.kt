@@ -297,33 +297,33 @@ class InsightsEngine @Inject constructor(
         val monthlyComparisonDeferred = async {
             try {
                 monthlyComparisonCalculator.calculate(currentMonth, previousMonth, allExpenses, displayCurrency)
-            } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e(e, "InsightsEngine: monthlyComparison branch failed"); null }
+            } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e("InsightsEngine: UNKNOWN_ERROR stage=monthlyComparison class=%s", e::class.java.simpleName); null }
         }
         val categoryInsightsDeferred = async {
             try {
                 categoryInsightEngine.calculate(currentMonth, previousMonth, categoryMap, allExpenses, displayCurrency)
-            } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e(e, "InsightsEngine: categoryInsights branch failed"); null }
+            } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e("InsightsEngine: UNKNOWN_ERROR stage=categoryInsights class=%s", e::class.java.simpleName); null }
         }
         val topMerchantsDeferred = async {
             try {
                 merchantInsightEngine.calculate(allExpenses, displayCurrency)
-            } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e(e, "InsightsEngine: topMerchants branch failed"); null }
+            } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e("InsightsEngine: UNKNOWN_ERROR stage=topMerchants class=%s", e::class.java.simpleName); null }
         }
         val spendingPaceDeferred = async { 
-            try { buildSpendingPace(currentMonth, previousMonth, allExpenses, displayCurrency) } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e(e, "InsightsEngine: spendingPace branch failed"); null }
+            try { buildSpendingPace(currentMonth, previousMonth, allExpenses, displayCurrency) } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e("InsightsEngine: UNKNOWN_ERROR stage=spendingPace class=%s", e::class.java.simpleName); null }
         }
         val anomaliesDeferred = async { 
-            try { findAnomalies(currentMonth, categoryMap, allExpenses, displayCurrency) } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e(e, "InsightsEngine: anomalies branch failed"); null }
+            try { findAnomalies(currentMonth, categoryMap, allExpenses, displayCurrency) } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e("InsightsEngine: UNKNOWN_ERROR stage=anomalies class=%s", e::class.java.simpleName); null }
         }
         val recurringExpensesDeferred = async { 
-            try { findRecurringExpenses(allExpenses, displayCurrency) } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e(e, "InsightsEngine: recurringExpenses branch failed"); emptyList() }
+            try { findRecurringExpenses(allExpenses, displayCurrency) } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e("InsightsEngine: UNKNOWN_ERROR stage=recurringExpenses class=%s", e::class.java.simpleName); emptyList() }
         }
         
         val threeMonthsAgo = getMonthPeriod(now, -2)
         val dayOfWeekPatternDeferred = async {
             try {
                 dayOfWeekAnalyzer.analyze(threeMonthsAgo.startMs, currentMonth.endMs, allExpenses, displayCurrency)
-            } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e(e, "InsightsEngine: dayOfWeekPattern branch failed"); null }
+            } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e("InsightsEngine: UNKNOWN_ERROR stage=dayOfWeekPattern class=%s", e::class.java.simpleName); null }
         }
         // Await all results with error resilience
         val monthlyComparison = monthlyComparisonDeferred.await()
