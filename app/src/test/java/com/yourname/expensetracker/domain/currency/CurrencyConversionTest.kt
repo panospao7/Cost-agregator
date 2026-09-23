@@ -8,6 +8,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
+import timber.log.Timber
 
 /**
  * PHASE 6 TEST: Currency Conversion
@@ -173,6 +174,29 @@ class CurrencyConversionTest {
         
         assertThat(total.total).isEqualTo(0.0)
         assertThat(total.failedConversions).hasSize(1)
+    }
+
+    @Test
+    fun `convertMultiple logs only aggregate count and code for mixed conversions`() = runTest {
+        coEvery { exchangeRateStore.getRate(any(), any()) } returns null
+        val messages = mutableListOf<String>()
+        val tree = object : Timber.Tree() {
+            override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+                assertThat(t).isNull()
+                messages += message
+            }
+        }
+        Timber.plant(tree)
+        try {
+            val aggregate = converter.convertMultiple(listOf(100.0 to "EUR", 1234.56 to "XYZ"), "EUR")
+
+            assertThat(aggregate.total).isEqualTo(100.0)
+            assertThat(aggregate.failedConversions).hasSize(1)
+            assertThat(aggregate.failedConversions.single().originalAmount).isEqualTo(1234.56)
+            assertThat(messages).containsExactly("CurrencyConverter: MISSING_RATE count=1")
+        } finally {
+            Timber.uproot(tree)
+        }
     }
 
     @Test
