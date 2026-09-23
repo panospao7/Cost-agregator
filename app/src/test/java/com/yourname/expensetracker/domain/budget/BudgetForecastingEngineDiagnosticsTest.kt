@@ -161,11 +161,11 @@ class BudgetForecastingEngineDiagnosticsTest : AnalyticsEngineTestBase() {
     @Test
     fun `generateForecastResult emits FORECAST_UNAVAILABLE when home currency unavailable`() = runTest {
         coEvery { mockCurrencySettingsRepo.resolveHomeCurrency() } returns
-            HomeCurrencyResolution.Failed("no home currency")
+            HomeCurrencyResolution.Failed("SQL /data/user/0/private.db merchant 42.00")
 
         val result = engine.generateForecastResult(budget)
 
-        assertNotNull(result as? BudgetForecastResult.Unavailable)
+        assertEquals("Home currency unavailable", (result as BudgetForecastResult.Unavailable).reason)
         val event = emitted.singleOrNull { it.stage == "FORECAST_UNAVAILABLE" }
         assertNotNull("Expected a FORECAST_UNAVAILABLE diagnostic event", event)
         assertEquals(EventOutcome.SKIPPED, event!!.outcome)
@@ -182,12 +182,12 @@ class BudgetForecastingEngineDiagnosticsTest : AnalyticsEngineTestBase() {
             targetCurrency = "EUR",
             rateBasis = RateBasis.PERIOD_END,
             failureType = ConversionFailureType.MISSING_RATE,
-            message = "no rate"
+            message = "SQL /data/user/0/private.db merchant 42.00"
         )
 
         val result = engine.generateForecastResult(budget.copy(currency = "USD"))
 
-        assertNotNull(result as? BudgetForecastResult.Unavailable)
+        assertEquals("Budget limit conversion unavailable", (result as BudgetForecastResult.Unavailable).reason)
         val event = emitted.singleOrNull { it.stage == "FORECAST_UNAVAILABLE" }
         assertNotNull("Expected a FORECAST_UNAVAILABLE diagnostic event", event)
         assertEquals(EventOutcome.SKIPPED, event!!.outcome)

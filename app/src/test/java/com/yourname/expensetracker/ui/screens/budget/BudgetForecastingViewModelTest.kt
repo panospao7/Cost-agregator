@@ -7,6 +7,7 @@ import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.ForecastRiskLevel
 import com.yourname.expensetracker.domain.budget.BudgetForecastingEngine
 import com.yourname.expensetracker.domain.budget.BudgetForecastResult
+import com.yourname.expensetracker.domain.budget.ForecastUnavailableReason
 import com.yourname.expensetracker.domain.budget.BudgetRecommendation
 import com.yourname.expensetracker.domain.budget.BudgetRecommendationEngine
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
@@ -191,7 +192,7 @@ class BudgetForecastingViewModelTest : ViewModelTestUtils() {
 
             val error = awaitItem()
             assertFalse(error.isLoading)
-            assertTrue(error.error?.contains("Failed to generate forecast: engine failure") == true)
+            assertEquals("Forecast unavailable", error.error)
 
             cancelAndIgnoreRemainingEvents()
         }
@@ -207,7 +208,7 @@ class BudgetForecastingViewModelTest : ViewModelTestUtils() {
         advanceUntilIdle()
 
         assertEquals(budget, viewModel.uiState.value.budget)
-        assertTrue(viewModel.uiState.value.error?.contains("engine failure") == true)
+        assertEquals("Forecast unavailable", viewModel.uiState.value.error)
 
         viewModel.refreshForecast()
         advanceUntilIdle()
@@ -249,6 +250,40 @@ class BudgetForecastingViewModelTest : ViewModelTestUtils() {
             assertNull(noData.error)
 
             cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `unavailable forecast exposes only the controlled reason text`() = runTest(testDispatcher) {
+        val budget = createBudget(id = 41L, amount = 120.0)
+        coEvery { forecastingEngine.generateForecastResult(budget, 30) } returns
+            BudgetForecastResult.Unavailable(
+                budgetId = budget.id,
+                reasonCode = ForecastUnavailableReason.HOME_CURRENCY_UNAVAILABLE,
+                reason = "SQL path=/data/user/0/app/db sensitive amount=42.00",
+                createdAt = 1L
+            )
+
+        viewModel.generateForecast(budget)
+        advanceUntilIdle()
+
+        assertEquals("Home currency unavailable", viewModel.uiState.value.error)
+    }
+
+    @Test
+    fun `limit and spend unavailable reasons ignore upstream details`() = runTest(testDispatcher) {
+        val budget = createBudget(id = 42L, amount = 120.0)
+        for ((code, expected) in listOf(
+            ForecastUnavailableReason.LIMIT_CONVERSION_FAILED to "Budget limit conversion unavailable",
+            ForecastUnavailableReason.MISSING_RATE to "Current-period spend unavailable"
+        )) {
+            coEvery { forecastingEngine.generateForecastResult(budget, 30) } returns
+                BudgetForecastResult.Unavailable(budget.id, code, "SQL private amount 42.00", 1L)
+
+            viewModel.generateForecast(budget)
+            advanceUntilIdle()
+
+            assertEquals(expected, viewModel.uiState.value.error)
         }
     }
 

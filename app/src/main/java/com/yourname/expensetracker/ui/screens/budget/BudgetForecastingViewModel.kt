@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import timber.log.Timber
 import javax.inject.Inject
 
 /**
@@ -76,7 +77,13 @@ class BudgetForecastingViewModel @Inject constructor(
 
                 when (result) {
                     is BudgetForecastResult.Unavailable -> {
-                        _uiState.update { it.copy(isLoading = false, error = result.reason) }
+                        val safeReason = when (result.reasonCode) {
+                            com.yourname.expensetracker.domain.budget.ForecastUnavailableReason.HOME_CURRENCY_UNAVAILABLE -> "Home currency unavailable"
+                            com.yourname.expensetracker.domain.budget.ForecastUnavailableReason.LIMIT_CONVERSION_FAILED -> "Budget limit conversion unavailable"
+                            com.yourname.expensetracker.domain.budget.ForecastUnavailableReason.MISSING_RATE -> "Current-period spend unavailable"
+                            else -> "Forecast unavailable"
+                        }
+                        _uiState.update { it.copy(isLoading = false, error = safeReason) }
                         return@launch
                     }
                     is BudgetForecastResult.Available -> Unit
@@ -119,7 +126,8 @@ class BudgetForecastingViewModel @Inject constructor(
                 throw e
             } catch (e: Exception) {
                 if (requestId != forecastRequestId) return@launch
-                _uiState.update { it.copy(isLoading = false, error = "Failed to generate forecast: ${e.message}") }
+                Timber.w("BudgetForecastingViewModel: UNKNOWN_ERROR class=%s", e::class.java.simpleName)
+                _uiState.update { it.copy(isLoading = false, error = "Forecast unavailable") }
             }
         }
     }

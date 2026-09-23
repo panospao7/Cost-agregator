@@ -112,7 +112,7 @@ class BudgetForecastingEngine @Inject constructor(
                 return@withContext BudgetForecastResult.Unavailable(
                     budgetId = budget.id,
                     reasonCode = ForecastUnavailableReason.HOME_CURRENCY_UNAVAILABLE,
-                    reason = "Home currency unavailable: ${resolution.reason}",
+                    reason = "Home currency unavailable",
                     createdAt = now
                 )
             }
@@ -144,7 +144,7 @@ class BudgetForecastingEngine @Inject constructor(
                 return@withContext BudgetForecastResult.Unavailable(
                     budgetId = budget.id,
                     reasonCode = ForecastUnavailableReason.LIMIT_CONVERSION_FAILED,
-                    reason = "Budget limit conversion failed: ${outcome.message}",
+                    reason = "Budget limit conversion unavailable",
                     createdAt = now
                 )
             }
@@ -399,7 +399,11 @@ class BudgetForecastingEngine @Inject constructor(
             if (e is com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException) {
                 diagnosticSink?.recordBlockedOperation("BudgetForecastingEngine.diagnostic", e.mode, "P6")
             } else {
-                Timber.w(e, "BudgetForecastingEngine: skipping diagnostic insert (stage=%s)", stage)
+                Timber.w(
+                    "BudgetForecastingEngine: UNKNOWN_ERROR stage=%s class=%s",
+                    stage,
+                    e::class.java.simpleName
+                )
             }
         }
     }
