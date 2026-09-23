@@ -71,7 +71,7 @@ class RestoreJournalImporter @Inject constructor(
                 Timber.i("RestoreJournalImporter: legacy zero-event journal marked imported for $correlationId")
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
-                Timber.w(e, "RestoreJournalImporter: failed to handle legacy empty journal")
+                Timber.w("RestoreJournalImporter: UNKNOWN_ERROR stage=legacy_empty class=%s", e::class.java.simpleName)
             }
             return
         }
@@ -119,7 +119,7 @@ class RestoreJournalImporter @Inject constructor(
                     )
                 }.onFailure {
                     if (it is CancellationException) throw it
-                    Timber.w(it, "RestoreJournalImporter: failed to insert event ${event.stage}")
+                    Timber.w("RestoreJournalImporter: UNKNOWN_ERROR stage=success_event_insert class=%s", it::class.java.simpleName)
                     allSucceeded = false
                 }
             }
@@ -133,7 +133,7 @@ class RestoreJournalImporter @Inject constructor(
             }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-            Timber.w(e, "RestoreJournalImporter: import failed, keeping journal for next attempt")
+            Timber.w("RestoreJournalImporter: UNKNOWN_ERROR stage=success_import class=%s", e::class.java.simpleName)
         }
     }
 
@@ -226,7 +226,7 @@ class RestoreJournalImporter @Inject constructor(
                     )
                 }.onFailure {
                     if (it is CancellationException) throw it
-                    Timber.w(it, "RestoreJournalImporter: failed to insert failure event ${event.stage}")
+                    Timber.w("RestoreJournalImporter: UNKNOWN_ERROR stage=failure_event_insert class=%s", it::class.java.simpleName)
                     allSucceeded = false
                 }
             }
@@ -239,7 +239,7 @@ class RestoreJournalImporter @Inject constructor(
             }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-            Timber.w(e, "RestoreJournalImporter: failure import failed, keeping journal for next attempt")
+            Timber.w("RestoreJournalImporter: UNKNOWN_ERROR stage=failure_import class=%s", e::class.java.simpleName)
         }
     }
 }

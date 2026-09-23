@@ -270,7 +270,8 @@ class RestoreJournal @Inject constructor(
                 tmpFile.delete()
             }
         } catch (e: Exception) {
-            Timber.w(e, "RestoreJournal: failed to append event to ${targetFile.name} stage=$stage")
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Timber.w("RestoreJournal: UNKNOWN_ERROR stage=%s class=%s", stage, e::class.java.simpleName)
         }
         } // synchronized
     }
@@ -372,7 +373,8 @@ class RestoreJournal @Inject constructor(
             if (text.isBlank()) return null
             JournalEntry.fromJson(JSONObject(text), timeProvider.now())
         } catch (e: Exception) {
-            Timber.w(e, "Failed to read success journal")
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Timber.w("RestoreJournal: PARSER_FAILED stage=success class=%s", e::class.java.simpleName)
             null
         }
     }
@@ -387,7 +389,8 @@ class RestoreJournal @Inject constructor(
             json.put("importedCorrelationId", correlationId)
             file.writeText(json.toString(2))
         } catch (e: Exception) {
-            Timber.w(e, "Failed to mark success journal imported")
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Timber.w("RestoreJournal: UNKNOWN_ERROR stage=mark_success_imported class=%s", e::class.java.simpleName)
         }
     }
 
@@ -416,7 +419,8 @@ class RestoreJournal @Inject constructor(
             if (text.isBlank()) return null
             JournalEntry.fromJson(JSONObject(text), timeProvider.now())
         } catch (e: Exception) {
-            Timber.w(e, "Failed to read failure journal")
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Timber.w("RestoreJournal: PARSER_FAILED stage=failure class=%s", e::class.java.simpleName)
             null
         }
     }
@@ -441,7 +445,8 @@ class RestoreJournal @Inject constructor(
             json.put("importedCorrelationId", correlationId)
             file.writeText(json.toString(2))
         } catch (e: Exception) {
-            Timber.w(e, "Failed to mark failure journal imported")
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Timber.w("RestoreJournal: UNKNOWN_ERROR stage=mark_failure_imported class=%s", e::class.java.simpleName)
         }
     }
 
@@ -486,7 +491,8 @@ class RestoreJournal @Inject constructor(
             if (text.isBlank()) return null
             JournalEntry.fromJson(JSONObject(text), timeProvider.now())
         } catch (e: Exception) {
-            Timber.e(e, "Failed to read restore journal")
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Timber.e("RestoreJournal: PARSER_FAILED stage=read class=%s", e::class.java.simpleName)
             null
         }
     }
@@ -516,7 +522,8 @@ class RestoreJournal @Inject constructor(
                 }
                 Timber.d("Restore journal: state=%s operationId=%s", entry.state, entry.operationId)
             } catch (e: Exception) {
-                Timber.e(e, "Failed to write restore journal")
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                Timber.e("RestoreJournal: UNKNOWN_ERROR stage=write class=%s", e::class.java.simpleName)
             }
         }
     }
@@ -608,7 +615,8 @@ class RestoreJournal @Inject constructor(
             }
             Timber.d("Restore journal preserved as %s", SUCCESS_JOURNAL_FILENAME)
         } catch (e: Exception) {
-            Timber.w(e, "Failed to preserve success journal; deleting instead")
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Timber.w("RestoreJournal: UNKNOWN_ERROR stage=preserve_success class=%s", e::class.java.simpleName)
             deleteJournal()
         }
         return updated
@@ -643,7 +651,8 @@ class RestoreJournal @Inject constructor(
             }
             Timber.d("Restore journal preserved as %s", FAILURE_JOURNAL_FILENAME)
         } catch (e: Exception) {
-            Timber.e(e, "Failed to preserve restore journal as %s", FAILURE_JOURNAL_FILENAME)
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Timber.e("RestoreJournal: UNKNOWN_ERROR stage=preserve_failure class=%s", e::class.java.simpleName)
         }
     }
 

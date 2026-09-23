@@ -9,6 +9,8 @@ import android.provider.DocumentsContract
 import com.yourname.expensetracker.BuildConfig
 import com.yourname.expensetracker.data.backup.BackupVerifier
 import com.yourname.expensetracker.data.backup.CostbackupBundle
+import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
+import com.yourname.expensetracker.data.backup.DatabaseAccessType
 import com.yourname.expensetracker.data.backup.MaintenanceSafeDiagnosticSink
 import com.yourname.expensetracker.data.backup.RestoreJournal
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
@@ -36,12 +38,14 @@ import com.yourname.expensetracker.domain.diagnostics.NoOpOperationRunHandle
 import com.yourname.expensetracker.domain.diagnostics.OperationRunHandle
 import com.yourname.expensetracker.domain.diagnostics.OperationRunRecorder
 import com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptAssetStore
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.TimeoutCancellationException
 import timber.log.Timber
 import java.io.File
 import java.io.FileOutputStream
@@ -985,7 +989,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     }
 
                     postMigrationCheck.getOrElse { error ->
-                        Timber.e(error, "Post-migration staged DB verification failed — aborting restore")
+                        Timber.e("Post-migration staged DB verification failed code=UNKNOWN_ERROR class=%s", error::class.java.simpleName)
                         // DDL-512-01: emit terminal event BEFORE failJournal
                         restoreEvents.event("STAGED_DB_POST_MIGRATION_VERIFIED",
                             com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
@@ -1089,7 +1093,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 // Swap failed — attempt rollback
-                Timber.e(e, "Swap failed, attempting rollback")
+                Timber.e("Swap failed code=UNKNOWN_ERROR class=%s", e::class.java.simpleName)
                 val rollbackOk = restoreFromSafetyBackup(
                     safetyBackupFile, liveDbFile, liveDbWalFile, liveDbShmFile
                 ).isSuccess
@@ -1208,7 +1212,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 // Verification failed — rollback from safety backup
-                Timber.e(e, "Live verification failed, rolling back")
+                Timber.e("Live verification failed code=UNKNOWN_ERROR class=%s", e::class.java.simpleName)
                 restoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.RESTORE_ROLLING_BACK)
                 runCatching { database.close() }
                 runCatching { database.openHelper.close() }
@@ -1269,7 +1273,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             throw e
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-            Timber.e(e, "Failed to restore .costbackup bundle")
+            Timber.e("Failed to restore .costbackup bundle code=UNKNOWN_ERROR class=%s", e::class.java.simpleName)
             // P7-008: exiting to NORMAL here used to let session writes run against a
             // DB the next startup crash recovery could roll back (journal said
             // SWAPPING/VERIFYING). Honor the journal state: post-swap failures keep
@@ -1621,7 +1625,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 val msg = "Failed to restore receipt asset: RECEIPT_ASSET_RESTORE_FAILED"
                 warnings.add(msg)
-                Timber.e(e, "Failed to restore receipt asset: %s", assetFile.name)
+                Timber.e("Failed to restore receipt asset code=UNKNOWN_ERROR class=%s", e::class.java.simpleName)
                 // DDL-512-09: emit ASSET_FAILED event
                 val receiptId = assetFile.nameWithoutExtension.substringBefore("_").toLongOrNull()
                 restoreEvents?.run {
@@ -2001,7 +2005,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-            Timber.e(e, "Failed to import database")
+            Timber.e("Failed to import database code=UNKNOWN_ERROR class=%s", e::class.java.simpleName)
             // Ensure maintenance mode is exited even for unexpected failures.
             // Calling exit() when already NORMAL is harmless (idempotent write).
             runCatching { run.failedFinal("IMPORT_FAILED", e) }
@@ -2155,7 +2159,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 db.close()
             }
         } catch (e: Exception) {
-            Timber.e(e, "Failed to validate source database")
+            Timber.e("Failed to validate source database code=PARSER_FAILED class=%s", e::class.java.simpleName)
             Result.failure(Exception("SOURCE_DATABASE_UNREADABLE"))
         }
     }
@@ -2640,7 +2644,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             )
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-            Timber.e(e, "Failed to get database stats")
+            Timber.e("Failed to get database stats code=UNKNOWN_ERROR class=%s", e::class.java.simpleName)
             DatabaseStats(0, 0, 0, 0)
         }
     }
@@ -2710,7 +2714,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             Result.success(safetyBackupFile)
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-            Timber.e(e, "Failed to create safety backup")
+            Timber.e("Failed to create safety backup code=UNKNOWN_ERROR class=%s", e::class.java.simpleName)
             Result.failure(e)
         }
     }
@@ -2747,17 +2751,18 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             // Create safety backup before touching anything
             val safetyBackupResult = createSafetyBackupInternalAssumingMaintenance("restore")
             if (safetyBackupResult.isFailure) {
-                val reason = safetyBackupResult.exceptionOrNull()?.message ?: "Unknown backup error"
-                Timber.e("Database reset aborted: safety backup failed: $reason")
+                val safetyBackupError = safetyBackupResult.exceptionOrNull()
+                val reason = DiagnosticReasonCode.UNKNOWN_ERROR.name
+                Timber.e("Database reset aborted: safety backup failed code=%s class=%s", reason, safetyBackupError?.javaClass?.simpleName ?: "Unknown")
                 resetEvents.event("SAFETY_BACKUP_CREATED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
                     reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.UNKNOWN_ERROR,
                     isTerminal = true)
-                resetEvents.finalizeRunFailed("Safety backup failed: $reason", safetyBackupResult.exceptionOrNull())
+                resetEvents.finalizeRunFailed(reason, null)
                 restoreMaintenanceMode.exit(forceRestartRequired = false)
                 return@withContext Result.failure(
                     Exception(
                         "Reset cancelled because safety backup failed. " +
-                            "Please free storage/permissions and retry. Details: $reason"
+                            "Please free storage/permissions and retry."
                     )
                 )
             }
@@ -2797,19 +2802,28 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 // DDL-F876-01: after destructive point, use journal not run.*
-                restoreJournal.failJournal(journalEntry, e.message ?: "Reset failed")
+                val failureCode = when (e) {
+                    is TimeoutCancellationException,
+                    is WorkerDrainTimeoutException -> DiagnosticReasonCode.TIMEOUT.name
+                    is DatabaseAccessBlockedException -> when (e.accessType) {
+                        DatabaseAccessType.WRITE -> DiagnosticReasonCode.WRITE_BARRIER_DENIED.name
+                        DatabaseAccessType.READ -> DiagnosticReasonCode.READ_BARRIER_DENIED.name
+                    }
+                    else -> DiagnosticReasonCode.UNKNOWN_ERROR.name
+                }
+                restoreJournal.failJournal(journalEntry, failureCode)
                 resetEvents.event("RESET_FAILED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
                     severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.CRITICAL,
-                    reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.UNKNOWN_ERROR,
-                    exception = e, isTerminal = true)
+                    reasonCode = DiagnosticReasonCode.valueOf(failureCode),
+                    isTerminal = true)
                 restoreMaintenanceMode.exit(forceRestartRequired = true)
-                Timber.e(e, "Database reset failed")
+                Timber.e("Database reset failed code=%s class=%s", failureCode, e::class.java.simpleName)
                 Result.failure(e)
             }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-            Timber.e(e, "Failed to reset database")
-            runCatching { resetEvents.finalizeRunFailed(e.message ?: "Exception", e) }
+            Timber.e("Failed to reset database code=UNKNOWN_ERROR class=%s", e::class.java.simpleName)
+            runCatching { resetEvents.finalizeRunFailed(DiagnosticReasonCode.UNKNOWN_ERROR.name, null) }
             restoreMaintenanceMode.exit(forceRestartRequired = false)
             Result.failure(e)
         }
