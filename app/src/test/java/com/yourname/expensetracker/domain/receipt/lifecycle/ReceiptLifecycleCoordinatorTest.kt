@@ -199,7 +199,6 @@ class ReceiptLifecycleCoordinatorTest {
             assetCleanupCoordinator = assetCleanupCoordinator,
             merchantNormalizer = mockk(relaxed = true),
             hybridClassifier = mockk(relaxed = true),
-            privacySettingsRepository = privacySettingsRepository,
             rawPersistencePolicyResolver = rawPersistencePolicyResolver,
             diagnosticEventWriter = diagnosticEventWriter,
             sourceLinkWriter = mockk(relaxed = true),

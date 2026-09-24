@@ -192,7 +192,7 @@ class KeystoreInstallationSecretHashingTest {
             CloudPayloadPurpose.DASHBOARD_BRIEFING
         )
 
-        val merchantPseudonym = merchantField.value // "merchant_v1_<hex>"
+        val merchantPseudonym = requireNotNull(merchantField.value) { "redacted merchant field must carry a pseudonym" } // "merchant_v1_<hex>"
         assertTrue("merchant pseudonym must be versioned", merchantPseudonym.startsWith("merchant_v1_"))
         assertTrue(
             "briefing text must contain the SAME pseudonym (parity)",
@@ -205,8 +205,9 @@ class KeystoreInstallationSecretHashingTest {
     fun `redactMerchant never emits an unsalted sha pseudonym`() {
         val redactor = newRedactor(newHasher(FakeInstallationSecretKeyProvider()))
         val field = redactor.redactMerchant("amazon")
-        assertFalse(field.value.contains("amazon".sha256Prefix()))
-        assertTrue(field.value.startsWith("merchant_v"))
+        val pseudonym = requireNotNull(field.value) { "redacted merchant field must carry a pseudonym" }
+        assertFalse(pseudonym.contains("amazon".sha256Prefix()))
+        assertTrue(pseudonym.startsWith("merchant_v"))
     }
 
     @Test

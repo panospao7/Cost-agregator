@@ -72,6 +72,7 @@ class ExportOptionsViewModelPrivacyDenialTest {
             freshBooksExporter = FreshBooksExporter(),
             readBarrier = readBarrier,
             privacyGate = privacyGate,
+            exportJobSerializer = ExportJobSerializer(),
             ioDispatcher = testDispatcher
         )
     }
