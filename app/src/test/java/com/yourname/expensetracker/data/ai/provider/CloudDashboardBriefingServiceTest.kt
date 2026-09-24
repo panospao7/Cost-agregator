@@ -26,10 +26,68 @@ import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.Assert.assertThrows
+import timber.log.Timber
+import java.io.IOException
+import java.net.SocketTimeoutException
+import javax.net.ssl.SSLException
 import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 
 class CloudDashboardBriefingServiceTest {
+
+    @Test
+    fun `provider failures return bounded errors without logging throwables`() {
+        val key = mockk<SecureKeyStorage>(relaxed = true)
+        every { key.getKey(SecureKeyStorage.KEY_GEMINI) } returns "test-key"
+        val logs = mutableListOf<Pair<Throwable?, String>>()
+        val tree = object : Timber.Tree() {
+            override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+                logs += t to message
+            }
+        }
+        Timber.plant(tree)
+        try {
+            val failures = listOf(
+                SocketTimeoutException("SQL /private/merchant 12.34") to AiServiceError.Timeout,
+                SSLException("SQL /private/merchant 12.34") to AiServiceError.SslError,
+                IOException("SQL /private/merchant 12.34") to AiServiceError.Offline,
+                IllegalStateException("SQL /private/merchant 12.34") to AiServiceError.Unknown("UNKNOWN_ERROR")
+            )
+            failures.forEach { (failure, expected) ->
+                val attempts = AtomicInteger()
+                val client = OkHttpClient.Builder().addInterceptor {
+                    attempts.incrementAndGet()
+                    throw failure
+                }.build()
+                val result = runBlocking { allowedService(key, client).generate(defaultInput()) }
+                assertEquals(expected, (result as AiServiceResult.Failure).error)
+                assertEquals(if (failure is SocketTimeoutException) 3 else 1, attempts.get())
+            }
+            val malformed = OkHttpClient.Builder().addInterceptor { chain ->
+                Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1)
+                    .code(200).message("OK")
+                    .body("{ SQL /private/merchant 12.34".toResponseBody("application/json".toMediaType()))
+                    .build()
+            }.build()
+            val parsed = runBlocking { allowedService(key, malformed).generate(defaultInput()) }
+            assertEquals(AiServiceError.ParseError("PARSER_FAILED"), (parsed as AiServiceResult.Failure).error)
+            assertTrue(logs.all { it.first == null && !it.second.contains("/private/merchant") })
+        } finally {
+            Timber.uproot(tree)
+        }
+    }
+
+    @Test
+    fun `provider cancellation propagates without terminal diagnostic`() {
+        val key = mockk<SecureKeyStorage>(relaxed = true)
+        every { key.getKey(SecureKeyStorage.KEY_GEMINI) } returns "test-key"
+        val client = OkHttpClient.Builder().addInterceptor { throw CancellationException("SQL /private/merchant") }.build()
+        assertThrows(CancellationException::class.java) {
+            runBlocking { allowedService(key, client).generate(defaultInput()) }
+        }
+    }
 
     // TODO: Tautological mock test — consider adding real behavior assertion
     @Test

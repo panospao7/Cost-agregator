@@ -87,6 +87,12 @@ class BillReminderWorkerTest {
         unmockkStatic(NotificationManagerCompat::class)
     }
 
+    private fun assertSafeWorkerLogs(before: Int, expectedCode: String) {
+        val logs = ShadowLog.getLogs().drop(before).filter { it.tag == "BillReminderWorker" }
+        assertTrue(logs.any { it.msg.contains(expectedCode) })
+        assertTrue(logs.all { it.throwable == null && !it.msg.contains("/private/receipt") && !it.msg.contains("1234.56") })
+    }
+
     private fun buildWorker(): BillReminderWorker {
         return TestListenableWorkerBuilder<BillReminderWorker>(context)
             .setWorkerFactory(object : WorkerFactory() {
@@ -272,9 +278,32 @@ class BillReminderWorkerTest {
         val before = ShadowLog.getLogs().size
         assertEquals(Result.success(), buildWorker().doWork())
 
-        val logs = ShadowLog.getLogs().drop(before).map { it.msg }
-        assertTrue(logs.any { it.contains("SIDE_EFFECT_EXCEPTION class=IllegalStateException") })
-        assertTrue(logs.none { it.contains("/private/receipt") || it.contains("1234.56") })
+        assertSafeWorkerLogs(before, "SIDE_EFFECT_EXCEPTION class=IllegalStateException")
+    }
+
+    @Test
+    fun `permission diagnostic failure is code only and does not block unclaim`() = runTest {
+        val reminder = testReminder(id = 9L)
+        setupNotificationDispatchPath(reminder)
+        mockkStatic(NotificationManagerCompat::class)
+        val manager = mockk<NotificationManagerCompat>(relaxed = true)
+        every { NotificationManagerCompat.from(any<Context>()) } returns manager
+        every { manager.notify(any(), any()) } throws SecurityException("/private/receipt/1234.56")
+        coEvery { coordinator.cancelClaimedReminderDelivery(any(), any()) } returns true
+        coEvery { diagnosticEventWriter.emit(any()) } throws IllegalStateException("/private/receipt/1234.56")
+
+        val before = ShadowLog.getLogs().size
+        assertEquals(Result.success(), buildWorker().doWork())
+        coVerify(exactly = 1) { coordinator.cancelClaimedReminderDelivery(9L, "notification_permission_revoked") }
+        assertSafeWorkerLogs(before, "SIDE_EFFECT_EXCEPTION class=IllegalStateException")
+    }
+
+    @Test
+    fun `outer coordinator failure logs class only and preserves worker failure`() = runTest {
+        coEvery { coordinator.recoverAndGetDueReminders() } throws IllegalStateException("/private/receipt/1234.56")
+        val before = ShadowLog.getLogs().size
+        assertFailsWith<IllegalStateException> { buildWorker().doWork() }
+        assertSafeWorkerLogs(before, "WORKER_UNHANDLED_EXCEPTION class=IllegalStateException")
     }
 
     @Test

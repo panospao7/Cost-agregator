@@ -331,7 +331,7 @@ class ReceiptScanViewModel @Inject constructor(
                 if (isOcrFailure) {
                     val now = timeProvider.now()
                     val debugData = DebugData(
-                        rawText = receipt.rawOcrText,
+                        rawText = "",
                         parsedTransactions = emptyList(),
                         parsingLogs = parsingLogs.also { it.add("OCR processing failed, manual entry available") },
                         processingTimeMs = timeProvider.now() - startTime,
@@ -349,7 +349,7 @@ class ReceiptScanViewModel @Inject constructor(
                                 date = now, currency = homeCurrency.orEmpty(), lineItems = emptyList(), confidence = 0f
                             ),
                             receiptId = receipt.id,
-                            rawOcrText = receipt.rawOcrText,
+                            rawOcrText = "",
                             showRawText = false,
                             editMerchant = "",
                             editAmount = "",
@@ -382,7 +382,9 @@ class ReceiptScanViewModel @Inject constructor(
                         emptyList()
                     } else {
                         receipt.parsedItems?.let {
-                            try { receiptParser.lineItemsFromJson(it) } catch (_: Exception) { emptyList() }
+                            try { receiptParser.lineItemsFromJson(it) }
+                            catch (e: CancellationException) { throw e }
+                            catch (_: Exception) { emptyList() }
                         } ?: emptyList()
                     }
 
@@ -474,7 +476,8 @@ class ReceiptScanViewModel @Inject constructor(
             } catch (e: Exception) {
                 // S7-003: Discard error if a newer scan has started
                 if (requestId != scanRequestSeq) return@launch
-                parsingLogs.add("Processing Error: ${e.message}")
+                parsingLogs.clear()
+                parsingLogs.add("Processing Error: UNKNOWN_ERROR")
                 val now = timeProvider.now()
                 _state.update {
                     it.copy(
@@ -492,7 +495,7 @@ class ReceiptScanViewModel @Inject constructor(
                         paymentMethod = PaymentMethod.CARD,
                         notes = "",
                         ocrConfidence = 0f,
-                        errorMessage = "Total failure: ${e.message}",
+                        errorMessage = "Receipt processing failed (UNKNOWN_ERROR)",
                         isSaving = false,
                         saveResult = null,
                         receiptAssistState = AiLoadState.Idle,
@@ -660,10 +663,10 @@ class ReceiptScanViewModel @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Timber.e(e, "Receipt assist failed for receipt $receiptId")
+                Timber.e("ReceiptScan: receipt_assist UNKNOWN_ERROR class=%s", e::class.java.simpleName)
                 _state.update { current ->
                     if (current.receiptId != receiptId) current
-                    else current.copy(receiptAssistState = AiLoadState.Error(e.message ?: "AI assist failed"))
+                    else current.copy(receiptAssistState = AiLoadState.Error("Receipt assist failed (UNKNOWN_ERROR)"))
                 }
             } finally {
                 inFlightAssist.remove(key)
@@ -757,11 +760,11 @@ class ReceiptScanViewModel @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Timber.e(e, "Category assist failed for receipt $receiptId")
+                Timber.e("ReceiptScan: category_assist UNKNOWN_ERROR class=%s", e::class.java.simpleName)
                 // S7-66F-010: Guard catch path by receiptId
                 _state.update { current ->
                     if (current.receiptId != receiptId) current
-                    else current.copy(categoryAssistState = AiLoadState.Error(e.message ?: "AI assist failed"))
+                    else current.copy(categoryAssistState = AiLoadState.Error("Category assist failed (UNKNOWN_ERROR)"))
                 }
             } finally {
                 inFlightAssist.remove(key)
@@ -1249,7 +1252,10 @@ class ReceiptScanViewModel @Inject constructor(
                                     correctCategoryId = finalCategoryId,
                                     amount = effectiveAmount
                                 )
-                            }.onFailure { e -> Timber.w(e, "Classifier learning failed after receipt save") }
+                            }.onFailure { e ->
+                                if (e is CancellationException) throw e
+                                Timber.w("ReceiptScan: classifier_learning UNKNOWN_ERROR class=%s", e::class.java.simpleName)
+                            }
                         }
                         // S7-007/S7-66F-011: Mark AI artifacts applied using request receipt ID — not live state
                         request.appliedAiCapabilities.forEach { capability ->
@@ -1266,13 +1272,12 @@ class ReceiptScanViewModel @Inject constructor(
                         }
                     },
                     onFailure = { e ->
-                        Timber.e(e, "Atomic receipt save failed for receipt ${request.receiptId}")
-                        val isDuplicate = e.message?.contains("Duplicate", ignoreCase = true) == true
+                        if (e is CancellationException) throw e
+                        Timber.e("ReceiptScan: atomic_save UNKNOWN_ERROR class=%s", e::class.java.simpleName)
                         _state.update {
                             it.copy(
                                 isSaving = false,
-                                saveResult = if (isDuplicate) SaveReceiptResult.DuplicateTransaction
-                                             else SaveReceiptResult.Error(e.message ?: "Save failed")
+                                saveResult = SaveReceiptResult.Error("Receipt save failed (UNKNOWN_ERROR)")
                             )
                         }
                     }
@@ -1281,7 +1286,7 @@ class ReceiptScanViewModel @Inject constructor(
                 throw e
             } catch (e: Exception) {
                 _state.update {
-                    it.copy(isSaving = false, saveResult = SaveReceiptResult.Error(e.message ?: "Unknown error"))
+                    it.copy(isSaving = false, saveResult = SaveReceiptResult.Error("Receipt save failed (UNKNOWN_ERROR)"))
                 }
             }
         }
@@ -1366,7 +1371,7 @@ class ReceiptScanViewModel @Inject constructor(
                 if (!current.matchesReceiptForAnalysis(receiptId)) current
                 else current.copy(
                     isAnalyzingItems = false,
-                    itemAnalysisError = e.message ?: "Item analysis failed."
+                    itemAnalysisError = "Item analysis failed (UNKNOWN_ERROR)"
                 )
             }
         }
@@ -1398,7 +1403,7 @@ class ReceiptScanViewModel @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _state.update { it.copy(itemCorrectionError = "Failed to save category: ${e.message}") }
+                _state.update { it.copy(itemCorrectionError = "Failed to save category (UNKNOWN_ERROR)") }
             } finally {
                 // S7-017: Always clear updating state
                 _state.update { it.copy(itemCorrectionUpdatingIds = it.itemCorrectionUpdatingIds - item.id) }

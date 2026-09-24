@@ -18,11 +18,13 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.After
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.File
+import timber.log.Timber
 
 /**
  * Fail-closed crash-recovery contract tests for [AppStartupCoordinator.checkRestoreJournal].
@@ -46,6 +48,12 @@ import java.io.File
 class AppStartupCoordinatorRecoveryTest {
 
     private lateinit var context: Context
+    private val logs = mutableListOf<Pair<Throwable?, String>>()
+    private val logTree = object : Timber.Tree() {
+        override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+            logs += t to message
+        }
+    }
 
     @Before
     fun setUp() {
@@ -60,6 +68,13 @@ class AppStartupCoordinatorRecoveryTest {
             "restore_journal_last_failure.json",
             RestoreJournal.SUCCESS_JOURNAL_FILENAME
         ).forEach { File(context.filesDir, it).delete() }
+        logs.clear()
+        Timber.plant(logTree)
+    }
+
+    @After
+    fun tearDown() {
+        Timber.uproot(logTree)
     }
 
     private fun newCoordinator(
@@ -639,6 +654,20 @@ class AppStartupCoordinatorRecoveryTest {
         assertFalse("Writes must be blocked after failed recovery", mode.isWritesAllowed())
         // failJournal() renames the active journal away — no active journal remains.
         assertFalse("Active journal must be renamed to the failure record", journal.hasJournal())
+    }
+
+    @Test
+    fun `startup recovery failure retains only bounded journal error and logs no throwable`() {
+        val mode = RestoreMaintenanceMode(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
+        val journal = RestoreJournal(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
+        writeUnrecoverableSwapJournal(journal)
+
+        newCoordinator(mode, journal).checkRestoreJournal()
+
+        assertEquals("UNKNOWN_ERROR", journal.readFailureJournal()?.error)
+        assertEquals(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED, mode.currentMode())
+        assertTrue(logs.isNotEmpty())
+        assertTrue(logs.all { it.first == null && !it.second.contains("missing_safety_backup.db") })
     }
 
     @Test

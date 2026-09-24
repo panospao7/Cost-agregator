@@ -342,21 +342,10 @@ class BudgetForecastingEngine @Inject constructor(
             // mislabeled as a duplicate and silently dropped — rethrow so the genuine
             // referential-integrity error is observable.
             if (e.message?.contains("UNIQUE", ignoreCase = true) == true) {
-                Timber.w(
-                    e,
-                    "BudgetForecastingEngine: forecast insert hit unique-index conflict " +
-                        "(same-instant duplicate for budgetId=%d, forecastDate=%d)",
-                    forecast.budgetId,
-                    forecast.forecastDate
-                )
+                Timber.w("BudgetForecastingEngine: UNKNOWN_ERROR stage=unique_insert class=%s", e::class.java.simpleName)
                 ForecastInsertResult.DuplicateInSameInstant
             } else {
-                Timber.e(
-                    e,
-                    "BudgetForecastingEngine: forecast insert hit a non-UNIQUE constraint " +
-                        "(e.g. FOREIGN KEY) for budgetId=%d — rethrowing instead of mapping to duplicate",
-                    forecast.budgetId
-                )
+                Timber.e("BudgetForecastingEngine: UNKNOWN_ERROR stage=constraint_insert class=%s", e::class.java.simpleName)
                 throw e
             }
         }

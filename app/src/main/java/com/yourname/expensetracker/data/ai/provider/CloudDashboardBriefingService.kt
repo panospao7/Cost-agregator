@@ -133,7 +133,7 @@ class CloudDashboardBriefingService @Inject constructor(
         // PrivacySettings.cloudAiEnabled AND AiSettings.allowCloudAi in one call.
         val effectivePolicy = effectiveCloudAiPolicyResolver.resolve()
         if (!effectivePolicy.cloudAllowed) {
-            Timber.d("CloudDashboardBriefingService: blocked by effective cloud AI policy: ${effectivePolicy.reason}")
+            Timber.d("CloudDashboardBriefingService: PROVIDER_DISABLED stage=effective_policy")
             return AiServiceResult.Failure(
                 AiServiceError.PrivacyDenied(
                     // RP-15 (15-B): typed blocked state with a static reason — no ad-hoc Custom text.
@@ -145,7 +145,7 @@ class CloudDashboardBriefingService @Inject constructor(
         // PRIVACY GATE: Check privacy gate before cloud AI call
         val gateCheck = privacyGate.check(PrivacyCapability.CLOUD_AI_DAILY_BRIEFING)
         if (gateCheck.blocksExecution()) {
-            Timber.w("CloudDashboardBriefingService: blocked by privacy gate: ${gateCheck.reason()}")
+            Timber.w("CloudDashboardBriefingService: PROVIDER_DISABLED stage=privacy_gate")
             return AiServiceResult.Failure(
                 AiServiceError.PrivacyDenied(
                     gateCheck.toPrivacyBlockedOrFallback(PrivacyCapability.CLOUD_AI_DAILY_BRIEFING)

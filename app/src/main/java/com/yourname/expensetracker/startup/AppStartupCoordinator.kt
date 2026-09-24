@@ -76,7 +76,7 @@ class AppStartupCoordinator @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Timber.w(e, "Startup: stale bank-run recovery failed")
+                Timber.w("Startup: UNKNOWN_ERROR stage=bank_recovery class=%s", e::class.java.simpleName)
             }
         }
     }
@@ -94,7 +94,7 @@ class AppStartupCoordinator @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Timber.w(e, "Startup: pending intake recovery failed")
+                Timber.w("Startup: UNKNOWN_ERROR stage=intake_recovery class=%s", e::class.java.simpleName)
             }
         }
     }
@@ -709,7 +709,7 @@ class AppStartupCoordinator @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Timber.w(e, "Startup: stale worker-run recovery failed")
+                Timber.w("Startup: UNKNOWN_ERROR stage=worker_recovery class=%s", e::class.java.simpleName)
             }
         }
     }

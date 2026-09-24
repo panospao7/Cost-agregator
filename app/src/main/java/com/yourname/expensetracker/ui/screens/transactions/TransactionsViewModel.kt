@@ -177,8 +177,9 @@ class TransactionsViewModel @Inject constructor(
                 _provenanceLinks.value = sourceLinkQueryService.getLinksForExpense(expenseId)
                 _provenanceSummary.value = sourceLinkQueryService.getExpenseSourceSummary(expenseId)
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 _provenanceLinks.value = emptyList()
-                _provenanceSummary.value = "Error loading provenance: ${e.message}"
+                _provenanceSummary.value = "Unable to load provenance (UNKNOWN_ERROR)"
             } finally {
                 _isProvenanceLoading.value = false
             }
@@ -254,7 +255,7 @@ class TransactionsViewModel @Inject constructor(
         .catch { e ->
             if (e is CancellationException) throw e
             _isRefreshing.value = false // S5-017: Always clear refresh spinner on error
-            _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to load transactions: ${e.message}"))
+            _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to load transactions (UNKNOWN_ERROR)"))
             // Do NOT emit emptyList() — preserve whatever the StateFlow currently holds
         }
         .flowOn(Dispatchers.Default)
@@ -458,7 +459,7 @@ class TransactionsViewModel @Inject constructor(
                 _hasReachedEnd.value = nextItems.size < PAGE_SIZE
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to load more transactions: ${e.message}"))
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to load more transactions (UNKNOWN_ERROR)"))
             } finally {
                 _isLoadingMoreState.value = false
                 if (loadMoreMutex.isLocked) loadMoreMutex.unlock()
@@ -474,7 +475,8 @@ class TransactionsViewModel @Inject constructor(
                 _successMessage.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Transaction deleted"))
                 refresh()
             } catch (e: Exception) {
-                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to delete transaction: ${e.message}"))
+                if (e is CancellationException) throw e
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to delete transaction (UNKNOWN_ERROR)"))
             } finally {
                 _isLoading.value = false
             }
@@ -496,7 +498,8 @@ class TransactionsViewModel @Inject constructor(
                 _categoryUpdateSuccess.tryEmit(expense.id)
                 refreshPagedExpensesAfterMutation()
             } catch (e: Exception) {
-                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to update category: ${e.message}"))
+                if (e is CancellationException) throw e
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to update category (UNKNOWN_ERROR)"))
             } finally {
                 endRowMutation(expense.id) // S5-015
             }
@@ -519,7 +522,8 @@ class TransactionsViewModel @Inject constructor(
             _renameSuccess.tryEmit(expense.id) // S5-014R
             refreshPagedExpensesAfterMutation()
         } catch (e: Exception) {
-            _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to update merchant: ${e.message}"))
+            if (e is CancellationException) throw e
+            _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to update merchant (UNKNOWN_ERROR)"))
         } finally {
             endRowMutation(expense.id) // S5-015
         }
@@ -557,7 +561,8 @@ class TransactionsViewModel @Inject constructor(
                 _typeChangeSuccess.tryEmit(expense.id) // S5-014R
                 refreshPagedExpensesAfterMutation()
             } catch (e: Exception) {
-                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to update type: ${e.message}"))
+                if (e is CancellationException) throw e
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to update type (UNKNOWN_ERROR)"))
             } finally {
                 endRowMutation(expense.id) // S5-015
             }
@@ -584,7 +589,8 @@ class TransactionsViewModel @Inject constructor(
                 _successMessage.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Transfer details updated"))
                 refreshPagedExpensesAfterMutation()
             } catch (e: Exception) {
-                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to update: ${e.message}"))
+                if (e is CancellationException) throw e
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to update (UNKNOWN_ERROR)"))
             }
         }
     }
@@ -654,7 +660,8 @@ class TransactionsViewModel @Inject constructor(
                 _ownershipSuccess.tryEmit(expense.id) // S5-014R
                 refreshPagedExpensesAfterMutation()
             } catch (e: Exception) {
-                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to update: ${e.message}"))
+                if (e is CancellationException) throw e
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to update (UNKNOWN_ERROR)"))
             } finally {
                 endRowMutation(expense.id) // S5-034
             }
@@ -702,7 +709,8 @@ class TransactionsViewModel @Inject constructor(
                 _locationSaveSuccess.tryEmit(expense.id) // S5-035
                 refresh()
             } catch (e: Exception) {
-                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to save location: ${e.message}"))
+                if (e is CancellationException) throw e
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to save location (UNKNOWN_ERROR)"))
             }
         }
     }
@@ -714,7 +722,8 @@ class TransactionsViewModel @Inject constructor(
                 _successMessage.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Location cleared"))
                 refresh()
             } catch (e: Exception) {
-                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to clear location: ${e.message}"))
+                if (e is CancellationException) throw e
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to clear location (UNKNOWN_ERROR)"))
             }
         }
     }
@@ -736,7 +745,8 @@ class TransactionsViewModel @Inject constructor(
                 _successMessage.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Marked as recurring (${frequency.name.lowercase().replace("_", " ")})"))
                 _recurringSuccess.tryEmit(expense.id) // S5-036
             } catch (e: Exception) {
-                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to mark as recurring: ${e.message}"))
+                if (e is CancellationException) throw e
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to mark as recurring (UNKNOWN_ERROR)"))
             } finally {
                 _isLoading.value = false
             }
@@ -762,7 +772,7 @@ class TransactionsViewModel @Inject constructor(
                 _hasReachedEnd.value = initial.size < PAGE_SIZE
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to load transactions: ${e.message}"))
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to load transactions (UNKNOWN_ERROR)"))
             } finally {
                 if (requestId == loadInitialAllRequestId) {
                     _isLoading.value = false

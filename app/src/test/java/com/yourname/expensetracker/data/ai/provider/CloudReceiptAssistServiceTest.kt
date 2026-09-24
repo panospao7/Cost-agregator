@@ -16,13 +16,103 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy
+import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
+import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CancellationException
+import org.junit.Assert.assertThrows
+import timber.log.Timber
+import java.io.IOException
+import java.net.SocketTimeoutException
+import javax.net.ssl.SSLException
 import java.util.Base64
 import java.util.concurrent.atomic.AtomicInteger
 
 class CloudReceiptAssistServiceTest {
+
+    private fun allowedService(client: OkHttpClient): CloudReceiptAssistService {
+        val settings = mockk<AiSettingsRepository>()
+        every { settings.settings() } returns flowOf(AiSettings())
+        val gate = mockk<PrivacyGate>()
+        coEvery { gate.check(any<PrivacyCapability>(), any()) } returns PrivacyDecision.Allowed
+        return CloudReceiptAssistService(
+            aiSettingsRepository = settings,
+            secureKeyStorage = createMockKeyStorage("test-key"),
+            client = client,
+            privacyGate = gate,
+            cloudPayloadPolicy = DefaultCloudPayloadPolicy(
+                EffectiveCloudAiPolicyResolver.failClosedForTest(settings),
+                DefaultCloudPayloadRedactor()
+            )
+        )
+    }
+
+    @Test
+    fun `suggest and text provider errors are bounded and do not log throwables`() {
+        val logs = mutableListOf<Pair<Throwable?, String>>()
+        val tree = object : Timber.Tree() {
+            override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+                logs += t to message
+            }
+        }
+        Timber.plant(tree)
+        try {
+            val cases = listOf(
+                SocketTimeoutException("SQL /private/receipt 12.34") to AiServiceError.Timeout,
+                SSLException("SQL /private/receipt 12.34") to AiServiceError.SslError,
+                IOException("SQL /private/receipt 12.34") to AiServiceError.Offline,
+                IllegalStateException("SQL /private/receipt 12.34") to AiServiceError.Unknown("UNKNOWN_ERROR")
+            )
+            for ((failure, expected) in cases) {
+                val attempts = AtomicInteger()
+                val client = OkHttpClient.Builder().addInterceptor {
+                    attempts.incrementAndGet()
+                    throw failure
+                }.build()
+                val service = allowedService(client)
+                assertEquals(expected, (runBlocking { service.suggest(sampleInput()) } as AiServiceResult.Failure).error)
+                assertEquals(if (failure is SocketTimeoutException) 3 else 1, attempts.get())
+                attempts.set(0)
+                assertEquals(expected, (runBlocking { service.suggestFromText("bank rows") } as AiServiceResult.Failure).error)
+                assertEquals(if (failure is SocketTimeoutException) 3 else 1, attempts.get())
+            }
+            val malformed = OkHttpClient.Builder().addInterceptor { chain ->
+                Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1)
+                    .code(200).message("OK")
+                    .body("{ SQL /private/receipt 12.34".toResponseBody("application/json".toMediaType()))
+                    .build()
+            }.build()
+            val service = allowedService(malformed)
+            assertEquals(AiServiceError.ParseError("PARSER_FAILED"),
+                (runBlocking { service.suggest(sampleInput()) } as AiServiceResult.Failure).error)
+            assertEquals(AiServiceError.ParseError("PARSER_FAILED"),
+                (runBlocking { service.suggestFromText("bank rows") } as AiServiceResult.Failure).error)
+            assertTrue(logs.all { it.first == null && !it.second.contains("/private/receipt") })
+        } finally {
+            Timber.uproot(tree)
+        }
+    }
+
+    @Test
+    fun `suggest and text cancellation propagate`() {
+        val client = OkHttpClient.Builder().addInterceptor {
+            throw CancellationException("SQL /private/receipt")
+        }.build()
+        val service = allowedService(client)
+        assertThrows(CancellationException::class.java) {
+            runBlocking { service.suggest(sampleInput()) }
+        }
+        assertThrows(CancellationException::class.java) {
+            runBlocking { service.suggestFromText("bank rows") }
+        }
+    }
 
     private fun createMockKeyStorage(apiKey: String = ""): SecureKeyStorage {
         val mockKeyStorage = mockk<SecureKeyStorage>(relaxed = true)

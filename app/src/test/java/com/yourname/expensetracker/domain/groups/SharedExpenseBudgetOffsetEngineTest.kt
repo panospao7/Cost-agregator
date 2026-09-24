@@ -11,6 +11,7 @@ import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.GroupDetailsAggregate
 import com.yourname.expensetracker.data.repository.GroupsRepository
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.ExchangeRateStore
 import com.yourname.expensetracker.domain.currency.MultiConversionAggregate
 import dagger.Lazy
 import io.mockk.*
@@ -20,8 +21,16 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertFalse
+import timber.log.Timber
+import org.robolectric.shadows.ShadowLog
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import org.junit.runner.RunWith
 import kotlin.test.assertFailsWith
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [28])
 class SharedExpenseBudgetOffsetEngineTest {
 
     private val groupsRepository = mockk<GroupsRepository>()
@@ -102,6 +111,60 @@ class SharedExpenseBudgetOffsetEngineTest {
         assertEquals(listOf("MISSING_RATE", "MISSING_RATE", "MISSING_RATE"), result.conversionWarnings)
         assertApproxEquals(0.0, result.effectiveBudgetSpend, 0.0)
         assertApproxEquals(0.0, result.totalReimbursed, 0.0)
+    }
+
+    @Test
+    fun `real historical converter missing rates logs no currency amount merchant or time`() = runTest {
+        val start = FIXED_NOW - 7L * DAY_MS
+        val store = mockk<ExchangeRateStore>()
+        coEvery { store.getRateAsOf(any(), any(), any()) } returns null
+        val realConverter = CurrencyConverter(store, mockk(relaxed = true))
+        val realEngine = SharedExpenseBudgetOffsetEngine(
+            groupsRepository = object : Lazy<GroupsRepository> { override fun get() = groupsRepository },
+            expenseRepository = expenseRepository,
+            currencyConverter = realConverter,
+            currencySettingsRepository = mockk(),
+            ioDispatcher = Dispatchers.Unconfined
+        )
+        val personal = expense(id = 1L, amount = 1234.56, categoryId = 1L, isShared = false)
+            .copy(currency = "USD", merchant = "Sensitive merchant")
+        coEvery { expenseRepository.getExpensesBetween(start, FIXED_NOW) } returns listOf(personal)
+        coEvery { groupsRepository.getActiveGroupsWithDetails() } returns listOf(groupAggregate(
+            groupId = 10L,
+            members = listOf(
+                GroupMember(id = 100L, groupId = 10L, name = "Me", isCurrentUser = true),
+                GroupMember(id = 101L, groupId = 10L, name = "Friend")
+            ),
+            expenses = listOf(GroupExpense(
+                id = 700L, groupId = 10L, expenseId = null, paidById = 100L,
+                date = start + DAY_MS, description = "Sensitive merchant",
+                totalAmount = 5432.10, currency = "USD", splitType = SplitType.EQUAL,
+                isReimbursable = true, reimbursedAmount = 100.0
+            ))
+        ))
+        val logs = mutableListOf<Pair<Throwable?, String>>()
+        val tree = object : Timber.Tree() {
+            override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+                logs += t to message
+            }
+        }
+        Timber.plant(tree)
+        ShadowLog.clear()
+        try {
+            val result = realEngine.calculateEffectiveBudgetSpend(start, FIXED_NOW)
+            assertTrue(result.isPartial)
+            assertEquals(3, result.failedConversionCount)
+            assertEquals(listOf("MISSING_RATE", "MISSING_RATE", "MISSING_RATE"), result.conversionWarnings)
+            assertApproxEquals(0.0, result.effectiveBudgetSpend, 0.0)
+            assertApproxEquals(0.0, result.totalReimbursed, 0.0)
+            coVerify(atLeast = 3) { store.getRateAsOf("USD", "EUR", any()) }
+            assertEquals(3, logs.count { it.second == "CurrencyConverter: MISSING_RATE stage=historical_conversion" })
+            val forbidden = listOf("Sensitive merchant", "1234.56", "5432.10", "USD", "EUR", start.toString())
+            assertTrue(logs.all { (throwable, message) -> throwable == null && forbidden.none { message.contains(it) } })
+            assertFalse(ShadowLog.getLogs().any { entry -> forbidden.any { entry.msg.contains(it) } })
+        } finally {
+            Timber.uproot(tree)
+        }
     }
 
     @Test

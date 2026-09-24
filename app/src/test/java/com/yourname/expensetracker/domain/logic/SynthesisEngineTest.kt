@@ -83,16 +83,29 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
     @Test
     fun `synthesis conversion cancellation propagates`() = runTest {
         val converter = mockk<CurrencyConverter>()
-        coEvery { converter.convertOutcome(any(), any(), any(), any(), any(), any()) } throws CancellationException("cancelled")
+        val cancellation = CancellationException("SQL private receipt 1234.56")
+        coEvery { converter.convertOutcome(any(), any(), any(), any(), any(), any()) } throws cancellation
         val failingEngine = SynthesisEngine(timeProvider, currencyConverter = converter)
-        assertFailsWith<CancellationException> {
-            failingEngine.synthesize(
+        val messages = mutableListOf<String>()
+        val tree = object : Timber.Tree() {
+            override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+                assertEquals(null, t)
+                messages += message
+            }
+        }
+        Timber.plant(tree)
+        try {
+            val thrown = assertFailsWith<CancellationException> { failingEngine.synthesize(
                 pastSumDaily = emptyList(), recurringPatterns = emptyList(),
                 plannedExpenses = listOf(createPlannedExpense(42.0, PlannedExpensePriority.MUST, 1705478400000L).copy(currency = "USD")),
                 savingsGoals = emptyList(), budgetStatuses = emptyList(),
                 spendingPace = SpendingPace(0.0, 15, 31, 0.0, null, null, 0.0f, PaceStatus.ON_PACE, "EUR"),
                 displayCurrency = "EUR"
-            )
+            ) }
+            assertTrue(thrown === cancellation)
+            assertTrue(messages.none { it.contains("UNKNOWN_ERROR") || it.contains("1234.56") })
+        } finally {
+            Timber.uproot(tree)
         }
     }
 

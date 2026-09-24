@@ -124,7 +124,7 @@ class CloudReceiptAssistService @Inject constructor(
         }
         val gateDecision = privacyGate.check(capability, mapOf("receiptId" to input.receiptId.toString()))
         if (gateDecision.blocksExecution()) {
-            Timber.d("CloudReceiptAssistService: privacy gate denied: ${gateDecision.reason()}")
+            Timber.d("CloudReceiptAssistService: PROVIDER_DISABLED stage=privacy_gate")
             return AiServiceResult.Failure(
                 AiServiceError.PrivacyDenied(
                     gateDecision.toPrivacyBlockedOrFallback(capability)
@@ -282,7 +282,7 @@ class CloudReceiptAssistService @Inject constructor(
             mapOf("caller" to "suggestFromText")
         )
         if (gateDecision.blocksExecution()) {
-            Timber.d("CloudReceiptAssistService: privacy gate denied suggestFromText: ${gateDecision.reason()}")
+            Timber.d("CloudReceiptAssistService: PROVIDER_DISABLED stage=text_privacy_gate")
             return AiServiceResult.Failure(
                 AiServiceError.PrivacyDenied(
                     gateDecision.toPrivacyBlockedOrFallback(PrivacyCapability.CLOUD_AI_BANK_STATEMENT)
@@ -389,6 +389,9 @@ class CloudReceiptAssistService @Inject constructor(
                     } else {
                         return@withContext AiServiceResult.Failure(AiServiceError.Offline)
                     }
+                } catch (e: JSONException) {
+                    Timber.w("CloudReceiptAssistService: PARSER_FAILED stage=text class=%s attempt=%d", e::class.java.simpleName, attempt)
+                    return@withContext AiServiceResult.Failure(AiServiceError.ParseError("PARSER_FAILED"))
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
                     Timber.w("CloudReceiptAssistService: UNKNOWN_ERROR class=%s attempt=%d", e::class.java.simpleName, attempt)

@@ -194,6 +194,23 @@ class BudgetForecastingEngineDiagnosticsTest : AnalyticsEngineTestBase() {
     }
 
     @Test
+    fun `unavailable period spend uses fixed reason and does not insert forecast`() = runTest {
+        val unavailable = com.yourname.expensetracker.domain.core.money.MoneyAggregate.empty(
+            CurrencyCode("EUR"), RateBasis.PERIOD_END
+        ).copy(conversionQuality = com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE)
+        coEvery { budgetRepository.getCurrentPeriodPurchaseSpendAtPeriodEnd(any(), any(), any(), any()) } returns
+            BudgetRepository.CurrentPeriodSpendAtPeriodEnd(unavailable, fixedNow)
+        coEvery { mockConverter.convertOutcome(any(), any(), any(), any(), any(), any()) } returns converted(1_000.0)
+
+        val result = engine.generateForecastResult(budget)
+
+        assertEquals(ForecastUnavailableReason.MISSING_RATE, (result as BudgetForecastResult.Unavailable).reasonCode)
+        assertEquals("Current-period spend unavailable: exchange rates missing for the budget period", result.reason)
+        assertEquals(EventOutcome.SKIPPED, emitted.single { it.stage == "FORECAST_UNAVAILABLE" }.outcome)
+        io.mockk.coVerify(exactly = 0) { budgetForecastDao.insertWithDeactivation(any()) }
+    }
+
+    @Test
     fun `event writer failure does not fail forecast generation`() = runTest {
         coEvery {
             mockConverter.convertOutcome(any(), any(), any(), any(), any(), any())

@@ -22,6 +22,11 @@ import io.mockk.verify
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -285,6 +290,49 @@ class BudgetForecastingViewModelTest : ViewModelTestUtils() {
 
             assertEquals(expected, viewModel.uiState.value.error)
         }
+    }
+
+    @Test
+    fun `cancelled suspended forecast does not expose a failure`() = runTest(testDispatcher) {
+        val oldBudget = createBudget(id = 91L)
+        val newBudget = createBudget(id = 92L)
+        val waiting = CompletableDeferred<BudgetForecastResult>()
+        coEvery { forecastingEngine.generateForecastResult(oldBudget, 30) } coAnswers { waiting.await() }
+        coEvery { forecastingEngine.generateForecastResult(newBudget, 30) } returns
+            BudgetForecastResult.Available(createForecast(budgetId = newBudget.id))
+
+        viewModel.generateForecast(oldBudget)
+        runCurrent()
+        viewModel.generateForecast(newBudget)
+        advanceUntilIdle()
+
+        assertEquals(newBudget, viewModel.uiState.value.budget)
+        assertEquals(newBudget.id, viewModel.uiState.value.forecast?.budgetId)
+        assertNull(viewModel.uiState.value.error)
+        assertTrue(waiting.isCancelled.not())
+    }
+
+    @Test
+    fun `late failure from cancelled old forecast cannot overwrite newer success`() = runTest(testDispatcher) {
+        val oldBudget = createBudget(id = 93L)
+        val newBudget = createBudget(id = 94L)
+        val waiting = CompletableDeferred<Unit>()
+        coEvery { forecastingEngine.generateForecastResult(oldBudget, 30) } coAnswers {
+            withContext(NonCancellable) { waiting.await() }
+            throw IllegalStateException("SQL /private/receipt 1234.56")
+        }
+        coEvery { forecastingEngine.generateForecastResult(newBudget, 30) } returns
+            BudgetForecastResult.Available(createForecast(budgetId = newBudget.id))
+
+        viewModel.generateForecast(oldBudget)
+        runCurrent()
+        viewModel.generateForecast(newBudget)
+        runCurrent()
+        waiting.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(newBudget.id, viewModel.uiState.value.forecast?.budgetId)
+        assertNull(viewModel.uiState.value.error)
     }
 
     private fun createBudget(

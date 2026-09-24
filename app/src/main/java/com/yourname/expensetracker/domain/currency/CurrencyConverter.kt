@@ -288,7 +288,7 @@ class CurrencyConverter @Inject constructor(
             )
         }
 
-        Timber.w("No exchange rate available for $fromCurrency to $toCurrency as of $atMillis")
+        Timber.w("CurrencyConverter: MISSING_RATE stage=historical_conversion")
         null
     }
 

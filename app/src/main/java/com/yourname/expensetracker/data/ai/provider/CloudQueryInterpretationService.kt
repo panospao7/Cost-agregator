@@ -25,6 +25,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import org.json.JSONException
 import timber.log.Timber
 import kotlinx.coroutines.CancellationException
 import java.io.IOException
@@ -87,7 +88,7 @@ class CloudQueryInterpretationService @Inject constructor(
         // PRIVACY GATE: Check cloud AI privacy gate before proceeding
         val gateDecision = privacyGate.check(PrivacyCapability.CLOUD_AI_GENERAL)
         if (gateDecision.blocksExecution()) {
-            Timber.d("CloudQueryInterpretationService: privacy gate denied: ${gateDecision.reason()}")
+            Timber.d("CloudQueryInterpretationService: PROVIDER_DISABLED stage=privacy_gate")
             return unsupported("PROVIDER_DISABLED")
         }
 
@@ -160,7 +161,9 @@ class CloudQueryInterpretationService @Inject constructor(
                     }
                 } catch (e: SSLException) {
                     Timber.w("CloudQueryInterpretationService: UNKNOWN_ERROR stage=ssl class=%s attempt=%d", e::class.java.simpleName, attempt)
-                    return@withContext unsupported("UNKNOWN_ERROR")
+                    if (!CloudRetryPolicy.isRetryableIoException(e) || attempt >= CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
+                        return@withContext unsupported("UNKNOWN_ERROR")
+                    }
                 } catch (e: IOException) {
                     Timber.w(
                         "CloudQueryInterpretationService: NETWORK_UNAVAILABLE class=%s attempt=%d/%d",
@@ -173,9 +176,12 @@ class CloudQueryInterpretationService @Inject constructor(
                     }
                 } catch (e: CancellationException) {
                     throw e
-                } catch (e: Exception) {
+                } catch (e: JSONException) {
                     Timber.w("CloudQueryInterpretationService: PARSER_FAILED class=%s attempt=%d", e::class.java.simpleName, attempt)
                     return@withContext unsupported("PARSER_FAILED")
+                } catch (e: Exception) {
+                    Timber.w("CloudQueryInterpretationService: UNKNOWN_ERROR class=%s attempt=%d", e::class.java.simpleName, attempt)
+                    return@withContext unsupported("UNKNOWN_ERROR")
                 }
 
                 if (attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {

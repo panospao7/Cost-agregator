@@ -14,39 +14,75 @@ import io.mockk.every
 import io.mockk.coEvery
 import kotlinx.coroutines.test.runTest
 import kotlin.coroutines.cancellation.CancellationException
+import timber.log.Timber
+import org.junit.After
 
 class InsightsEngineTest {
     private lateinit var engine: InsightsEngine
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
+    private val recurringEngine = mockk<com.yourname.expensetracker.domain.logic.RecurringExpenseEngine>(relaxed = true)
+    private val monthlyCalculator = mockk<MonthlyComparisonCalculator>(relaxed = true)
+    private val categoryCalculator = mockk<CategoryInsightEngine>(relaxed = true)
+    private val merchantCalculator = mockk<MerchantInsightEngine>(relaxed = true)
+    private val paceCalculator = mockk<SpendingPaceCalculator>(relaxed = true)
+    private val anomalyCalculator = mockk<AnomalyDetector>(relaxed = true)
+    private val weekdayCalculator = mockk<DayOfWeekAnalyzer>(relaxed = true)
+    private val logs = mutableListOf<Pair<Throwable?, String>>()
+    private val logTree = object : Timber.Tree() {
+        override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+            logs += t to message
+        }
+    }
+
+    @After fun tearDown() { Timber.uproot(logTree) }
 
     @Before
     fun setup() {
         val expenseRepository = mockk<ExpenseRepository>(relaxed = true)
-        val recurringEngine = mockk<com.yourname.expensetracker.domain.logic.RecurringExpenseEngine>(relaxed = true)
-        val spendingPaceCalculator = mockk<SpendingPaceCalculator>(relaxed = true)
-        val anomalyDetector = mockk<AnomalyDetector>(relaxed = true)
-        val monthlyComparisonCalculator = mockk<MonthlyComparisonCalculator>(relaxed = true)
-        val categoryInsightEngine = mockk<CategoryInsightEngine>(relaxed = true)
-        val merchantInsightEngine = mockk<MerchantInsightEngine>(relaxed = true)
-        val dayOfWeekAnalyzer = mockk<DayOfWeekAnalyzer>(relaxed = true)
-        
+        Timber.plant(logTree)
         coEvery { recurringEngine.getPatterns(any()) } returns emptyList()
+        coEvery { recurringEngine.getPatternsFromSnapshots(any()) } returns emptyList()
         every { timeProvider.now() } returns System.currentTimeMillis()
         
         engine = InsightsEngine(
             expenseRepository = expenseRepository,
             recurringExpenseEngine = recurringEngine,
             timeProvider = timeProvider,
-            spendingPaceCalculator = spendingPaceCalculator,
-            anomalyDetector = anomalyDetector,
-            monthlyComparisonCalculator = monthlyComparisonCalculator,
-            categoryInsightEngine = categoryInsightEngine,
-            merchantInsightEngine = merchantInsightEngine,
-            dayOfWeekAnalyzer = dayOfWeekAnalyzer
+            spendingPaceCalculator = paceCalculator,
+            anomalyDetector = anomalyCalculator,
+            monthlyComparisonCalculator = monthlyCalculator,
+            categoryInsightEngine = categoryCalculator,
+            merchantInsightEngine = merchantCalculator,
+            dayOfWeekAnalyzer = weekdayCalculator
         )
     }
 
     private val dayMs = 86_400_000L
+
+    @Test
+    fun `all seven insight boundaries degrade without leaking exception text`() = runTest {
+        val hostile = IllegalStateException("merchant=private /storage/secret.db amount=918")
+        every { monthlyCalculator.calculate(any(), any(), any(), any()) } throws hostile
+        every { categoryCalculator.calculate(any(), any(), any(), any(), any()) } throws hostile
+        every { merchantCalculator.calculate(any(), any()) } throws hostile
+        every { paceCalculator.calculate(any(), any(), any(), any(), any(), any()) } throws hostile
+        every { anomalyCalculator.detect(any(), any(), any(), any(), any()) } throws hostile
+        coEvery { recurringEngine.getPatternsFromSnapshots(any()) } throws hostile
+        every { weekdayCalculator.analyze(any(), any(), any(), any()) } throws hostile
+
+        val snapshot = engine.generateInsights(emptyList(), emptyList(), "EUR")
+        assertEquals(0.0, snapshot.monthlyComparison.currentTotal, 0.0)
+        assertTrue(snapshot.categoryInsights.isEmpty())
+        assertTrue(snapshot.topMerchants.isEmpty())
+        assertEquals(PaceStatus.NO_BASELINE, snapshot.spendingPace.paceStatus)
+        assertTrue(snapshot.anomalies.isEmpty())
+        assertTrue(snapshot.recurringExpenses.isEmpty())
+        assertTrue(snapshot.dayOfWeekPattern.isEmpty())
+        for (stage in listOf("monthlyComparison", "categoryInsights", "topMerchants", "spendingPace", "anomalies", "recurringExpenses", "dayOfWeekPattern")) {
+            assertTrue("missing $stage: $logs", logs.any { it.second == "InsightsEngine: UNKNOWN_ERROR stage=$stage class=IllegalStateException" })
+        }
+        assertTrue(logs.all { it.first == null && !it.second.contains("private") && !it.second.contains("918") })
+    }
 
     private fun makeExpense(merchant: String, amount: Double, daysAgo: Int) = Expense(
         id = 0,
@@ -95,11 +131,12 @@ class InsightsEngineTest {
     fun `generateInsights propagates CancellationException instead of returning degraded snapshot`() = runTest {
         // Arrange: make a repository call throw CancellationException
         val expenseRepository = mockk<ExpenseRepository>(relaxed = true)
-        coEvery { expenseRepository.getTotalForPeriod(any(), any()) } throws CancellationException("test cancellation")
+        val cancellation = CancellationException("private receipt cancellation")
+        coEvery { recurringEngine.getPatternsFromSnapshots(any()) } throws cancellation
 
         val cancelEngine = InsightsEngine(
             expenseRepository = expenseRepository,
-            recurringExpenseEngine = mockk(relaxed = true),
+            recurringExpenseEngine = recurringEngine,
             timeProvider = timeProvider,
             spendingPaceCalculator = mockk(relaxed = true),
             anomalyDetector = mockk(relaxed = true),
@@ -114,7 +151,8 @@ class InsightsEngineTest {
             cancelEngine.generateInsights(emptyList(), emptyList(), "EUR")
             fail("Expected CancellationException to propagate")
         } catch (e: CancellationException) {
-            // expected — cancellation was correctly rethrown
+            assertEquals(CancellationException::class.java, e::class.java)
         }
+        assertTrue(logs.none { it.second.contains("private") || it.first != null })
     }
 }

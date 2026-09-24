@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.backup
 
 import android.content.Context
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
 import org.json.JSONObject
@@ -78,7 +79,7 @@ class RestoreJournal @Inject constructor(
             put("_safetyBackupPath", safetyBackupPath ?: JSONObject.NULL)
             put("_liveDbPath", liveDbPath ?: JSONObject.NULL)
             put("_extractTempDirPath", extractTempDirPath ?: JSONObject.NULL)
-            put("error", error ?: JSONObject.NULL)
+            put("error", error?.let(RestoreJournal::failureReasonCode) ?: JSONObject.NULL)
             put("assetTasks", org.json.JSONArray().also { arr ->
                 assetTasks.forEach { t ->
                     arr.put(JSONObject().apply {
@@ -129,7 +130,8 @@ class RestoreJournal @Inject constructor(
                 liveDbPath = (json.optString("_liveDbPath").takeIf { it.isNotEmpty() && it != "null" }
                     ?: json.optString("liveDbPath", null)?.takeIf { it != "null" }),
                 error = json.optString("error", null)
-                    ?.takeIf { it != "null" },
+                    ?.takeIf { it != "null" }
+                    ?.let(RestoreJournal::failureReasonCode),
                 extractTempDirPath = json.optString("_extractTempDirPath")
                     .takeIf { it.isNotEmpty() && it != "null" },
                 assetTasks = json.optJSONArray("assetTasks")?.let { arr ->
@@ -630,7 +632,7 @@ class RestoreJournal @Inject constructor(
      * diagnostics / crash-recovery analysis can inspect the cause.
      */
     fun failJournal(entry: JournalEntry, errorMessage: String): JournalEntry {
-        val updated = entry.copy(state = JournalState.FAILED, error = errorMessage)
+        val updated = entry.copy(state = JournalState.FAILED, error = failureReasonCode(errorMessage))
         writeJournal(updated)
         preserveJournal()
         return updated
@@ -755,7 +757,7 @@ class RestoreJournal @Inject constructor(
             val stagedFile = File(entry.stagedDbPath)
             if (stagedFile.exists()) {
                 stagedFile.delete()
-                Timber.d("Cleaned staging DB: %s", entry.stagedDbPath)
+                Timber.d("RestoreJournal: staging DB cleaned")
             }
             // Also clean WAL/SHM
             File(entry.stagedDbPath + "-wal").delete()
@@ -767,6 +769,19 @@ class RestoreJournal @Inject constructor(
         private const val JOURNAL_FILENAME = "restore_journal.json"
         const val FAILURE_JOURNAL_FILENAME = "restore_journal_last_failure.json"
         const val SUCCESS_JOURNAL_FILENAME = "restore_journal_last_success.json"
+
+        private val FAILURE_REASON_CODES = setOf(
+            DiagnosticReasonCode.UNKNOWN_ERROR.name,
+            DiagnosticReasonCode.VALIDATION_FAILED.name,
+            DiagnosticReasonCode.PARSER_FAILED.name,
+            DiagnosticReasonCode.RESTORE_BLOCKED.name,
+            DiagnosticReasonCode.WRITE_BARRIER_DENIED.name,
+            DiagnosticReasonCode.READ_BARRIER_DENIED.name,
+            DiagnosticReasonCode.TIMEOUT.name
+        )
+
+        internal fun failureReasonCode(value: String?): String =
+            value?.takeIf { it in FAILURE_REASON_CODES } ?: DiagnosticReasonCode.UNKNOWN_ERROR.name
 
         // -- RP-03B asset-restore controlled reason codes ------------
         // Controlled constants only - never payload-, path-, or exception-derived.

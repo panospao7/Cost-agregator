@@ -170,7 +170,7 @@ class RestoreJournalImporter @Inject constructor(
         if (restoreJournal.isFailureJournalImported(correlationId)) return
 
         val events = restoreJournal.getFailureJournalEvents()
-        val errorSummary = entry.error
+        val errorSummary = RestoreJournal.failureReasonCode(entry.error)
         // The failure journal is shared by the .costbackup restore and reset paths; the
         // specific origin lives in the per-event stage names, so a single ledger
         // operationType is sufficient here.
