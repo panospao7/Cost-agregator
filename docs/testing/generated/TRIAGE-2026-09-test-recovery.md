@@ -5,6 +5,13 @@ Rows follow the pack format: `testClass.method | observed | suspected mechanism 
 resolution happens through the campaign pipeline (verification + wave planning) or an
 explicit human decision. No assertion was changed to achieve any pass in this lane.
 
+## From trusted-tests baseline (vr-20260924-195149: 116 pass / 1 fail)
+
+| Test | Observed | Suspected mechanism | Class |
+|---|---|---|---|
+| CancellationSafetyArchitectureGuardTest.`every broad catch in suspend functions rethrows CancellationException` | CANCEL-01 violations at `DataRetentionWorker.kt:445`, `TransactionLifecycleCoordinator.kt:2323`, `AppStartupCoordinator.kt:414` — broad catch blocks in suspend functions without CancellationException rethrow | production violation of the repo's own cancellation-safety guard (AGENTS.md worker rule). All three exist at checkpoint ad412aec (pre-lane). Note: `AppStartupCoordinator.kt:414` sits inside the surface rp-22's CL-19 work touches — reviewer must check whether the lane fixes or worsens it | REAL-BUG-CANDIDATE (3 sites; → CL-17/CL-23 sweeps + rp-22 review R3) |
+
+
 ## From Phase A compile-repair execution (2026-09-24)
 
 | Test | Observed | Suspected mechanism | Class |
@@ -16,6 +23,23 @@ explicit human decision. No assertion was changed to achieve any pass in this la
 | BackupRestoreViewModelPrivacyDenialTest.`restore privacy denial converges on typed blocked state` | same shape as row above on the restore path (`privacyBlocked` null where typed state expected) | same denial-contract mismatch family | REAL-BUG-CANDIDATE (CL-18 surface) |
 | SpendingMapViewModelPrivacyDenialTest — 4 tests (`gate denial…`, `permission race…`, `permitted fetch…`, `fail-closed…`) | `IllegalStateException: gpsPrivacyBlocked was never set` from the test's await helper | location privacy-denial paths never set the typed blocked state the tests (and presumably UI) expect — privacy UX state gap | REAL-BUG-CANDIDATE (privacy/I-05 surface) |
 | ReviewViewModelPrivacyDenialTest — 3 tests | `NoSuchElementException: Expected at least one element` at `ReviewViewModel.kt:249` (`flow.first()` on an empty flow) | flow under denial never emits — needs reading whether producer or consumer is wrong; could be harness (missing stub) or production gap | REAL-BUG-CANDIDATE (unclassified) |
+
+## Phase B baseline (vr-20260924-200526, full `unit-tests` profile — PARTIAL: OOM at ~90min)
+
+Result: 5,230 PASSED / 214 FAILED before `java.lang.OutOfMemoryError: Java heap space` killed the
+test JVM (the single-JVM full run cannot complete — the tail of the suite never executed; a sharded
+re-run gives the true total). Failure decomposition at the OOM point:
+
+| Family | Count | Classification |
+|---|---|---|
+| AssertionError | 128 | behavioral — wave-coupled (fix after their cluster's wave changes behavior) or stale (needs per-row triage) |
+| OutOfMemoryError | 33 | CASUALTIES of the dying JVM — not real failures; expect most to pass on fresh JVMs via `unit-test-shard` runs |
+| IllegalStateException / MockKException / NoSuchElementException / NPE | 26 | mixed harness-fixable (relaxed-mock gaps, Phase A pattern) vs real — per-class inspection |
+| Misc (InvocationTarget/UnsupportedOp/Security) | 3 | per-case |
+
+Top failing classes: BankStatementParserTest (17), MoneyBoundaryGuardTest (9),
+ExpenseCategoryClassifierTest (7), Keystore (5), FinancialStressForecastEngine (5),
+BudgetMonitorStress (5), plus ~100 more classes with ≤4 each (106 distinct classes total).
 
 ## Harness repairs applied in this lane (test-side only, intent preserved)
 
