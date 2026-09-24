@@ -5,6 +5,7 @@ import android.net.Uri
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.domain.backup.DatabaseBackupRepository
 import com.yourname.expensetracker.domain.backup.DatabaseImportResult
+import com.yourname.expensetracker.domain.backup.DatabaseImportSummary
 import com.yourname.expensetracker.domain.backup.DatabaseStats
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDeniedException
@@ -194,7 +195,17 @@ class BackupRestoreViewModelPrivacyDenialTest : ViewModelTestUtils() {
     fun `permitted restore leaves blocked state null`() = runTest(testDispatcher) {
         coEvery {
             databaseBackupRepository.restoreCostBackup(any(), any())
-        } returns Result.success(DatabaseImportResult.Success(summary = com.yourname.expensetracker.domain.backup.DatabaseImportSummary(transactionCount = 0, categoryCount = 0, merchantCount = 0, pendingReviewCount = 0, budgetCount = 0)))
+        } returns Result.success(
+            DatabaseImportResult.Success(
+                DatabaseImportSummary(
+                    transactionCount = 0,
+                    categoryCount = 0,
+                    merchantCount = 0,
+                    pendingReviewCount = 0,
+                    budgetCount = 0
+                )
+            )
+        )
 
         val vm = createViewModel()
         advanceUntilIdle()

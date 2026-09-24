@@ -600,28 +600,28 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         writeBundle: (CostBackupSnapshot) -> Result<T>
     ): Result<T> = withContext(ioDispatcher) {
         val run = operationRunRecorder.start("BACKUP_EXPORT", actor = "user")
-        try {
-            // If privacyMode is provided, derive booleans from it
-            val resolvedIncludeReceiptImages = privacyMode?.includesReceiptImages ?: includeReceiptImages
-            val resolvedRedacted = privacyMode?.redactsRawText ?: redacted
 
-            // Privacy gate check
-            val encryptedDecision = privacyGate.check(
-                PrivacyCapability.ENCRYPTED_BACKUP,
-                mapOf("operation" to "create_costbackup")
-            )
-            if (encryptedDecision.blocksExecution()) {
-                val reasonCode = when (encryptedDecision) {
-                    is PrivacyDecision.Denied -> DiagnosticReasonCode.PRIVACY_DENIED
-                    is PrivacyDecision.FailClosed -> DiagnosticReasonCode.PRIVACY_FAIL_CLOSED
-                    else -> error("Blocking privacy decision must be Denied or FailClosed")
-                }
-                run.failedFinal(reasonCode.name)
-                return@withContext Result.failure(
-                    PrivacyDeniedException(PrivacyCapability.ENCRYPTED_BACKUP)
-                )
+        // Privacy is a non-blocking preflight. Rejected exports must not enter
+        // the maintenance cleanup scope because they never acquired it.
+        val resolvedIncludeReceiptImages = privacyMode?.includesReceiptImages ?: includeReceiptImages
+        val resolvedRedacted = privacyMode?.redactsRawText ?: redacted
+        val encryptedDecision = privacyGate.check(
+            PrivacyCapability.ENCRYPTED_BACKUP,
+            mapOf("operation" to "create_costbackup")
+        )
+        if (encryptedDecision.blocksExecution()) {
+            val reasonCode = when (encryptedDecision) {
+                is PrivacyDecision.Denied -> DiagnosticReasonCode.PRIVACY_DENIED
+                is PrivacyDecision.FailClosed -> DiagnosticReasonCode.PRIVACY_FAIL_CLOSED
+                else -> error("Blocking privacy decision must be Denied or FailClosed")
             }
+            run.failedFinal(reasonCode.name)
+            return@withContext Result.failure(
+                PrivacyDeniedException(PrivacyCapability.ENCRYPTED_BACKUP)
+            )
+        }
 
+        try {
             // P1-05: Enter backup maintenance mode + drain workers for point-in-time consistency
             maintenanceOperationRunner.enterAndDrain(RestoreMaintenanceMode.Mode.BACKUP_EXPORTING,
             "createCostBackup",

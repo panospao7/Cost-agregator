@@ -250,6 +250,7 @@ class DatabaseBackupRepositoryImplTest {
         assertTrue(fileResult.exceptionOrNull() is PrivacyDeniedException)
         assertTrue(safResult.exceptionOrNull() is PrivacyDeniedException)
         verify(exactly = 0) { mockRestoreMaintenanceMode.enter(any()) }
+        verify(exactly = 0) { mockRestoreMaintenanceMode.exit(any()) }
         verify(exactly = 0) { supportDb.query("PRAGMA wal_checkpoint(TRUNCATE)") }
         verify(exactly = 0) { resolver.openOutputStream(any(), any()) }
         assertFalse(File(tempDir, "costbackups").exists())
