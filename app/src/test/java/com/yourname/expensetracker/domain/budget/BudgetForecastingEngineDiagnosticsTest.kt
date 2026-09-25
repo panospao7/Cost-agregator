@@ -40,7 +40,6 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import timber.log.Timber
-import kotlin.test.assertFailsWith
 
 /**
  * P6-CURRENT-026: Verifies [BudgetForecastingEngine] emits a durable "forecast generated" event on
@@ -154,21 +153,21 @@ class BudgetForecastingEngineDiagnosticsTest : AnalyticsEngineTestBase() {
     @Test
     fun `unique insert stays duplicate with bounded log`() = runTest {
         coEvery { budgetForecastDao.insertWithDeactivation(any()) } throws
-            SQLiteConstraintException("UNIQUE constraint failed: SQL /private/receipt merchant 1234.56")
+            DiagnosticsSQLiteConstraintException("UNIQUE constraint failed: SQL /private/receipt merchant 1234.56")
 
         assertEquals(ForecastInsertResult.DuplicateInSameInstant, engine.insertForecast(mockk<BudgetForecast>()))
 
-        assertEquals(listOf(null to "BudgetForecastingEngine: UNKNOWN_ERROR stage=unique_insert class=SQLiteConstraintException"), logs)
+        assertEquals(listOf(null to "BudgetForecastingEngine: UNKNOWN_ERROR stage=unique_insert class=DiagnosticsSQLiteConstraintException"), logs)
     }
 
     @Test
-    fun `foreign key insert failure is not mislabeled as duplicate or leaked`() = runTest {
+    fun `foreign key insert failure returns typed constraint result without leaked payload`() = runTest {
         coEvery { budgetForecastDao.insertWithDeactivation(any()) } throws
-            SQLiteConstraintException("FOREIGN KEY constraint failed: SQL /private/receipt merchant 1234.56")
+            DiagnosticsSQLiteConstraintException("FOREIGN KEY constraint failed: SQL /private/receipt merchant 1234.56")
 
-        assertFailsWith<SQLiteConstraintException> { engine.insertForecast(mockk<BudgetForecast>()) }
+        assertEquals(ForecastInsertResult.ConstraintViolation, engine.insertForecast(mockk<BudgetForecast>()))
 
-        assertEquals(listOf(null to "BudgetForecastingEngine: UNKNOWN_ERROR stage=constraint_insert class=SQLiteConstraintException"), logs)
+        assertEquals(listOf(null to "BudgetForecastingEngine: UNKNOWN_ERROR stage=constraint_insert class=DiagnosticsSQLiteConstraintException"), logs)
         assertTrue(logs.all { it.first == null })
     }
 
@@ -267,3 +266,7 @@ class BudgetForecastingEngineDiagnosticsTest : AnalyticsEngineTestBase() {
             result as? BudgetForecastResult.Available)
     }
 }
+
+private class DiagnosticsSQLiteConstraintException(
+    override val message: String
+) : SQLiteConstraintException(message)

@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.budget
 
+import android.database.sqlite.SQLiteConstraintException
 import com.yourname.expensetracker.AnalyticsEngineTestBase
 import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.data.database.dao.BudgetForecastDao
@@ -259,8 +260,9 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
 
         // RP-08 P6-004: window [Sep 15, Dec 15) trimmed to [Oct 1, Dec 1) —
         // only Oct=100, Nov=100 survive (Jun–Sep pre-window snapshots trimmed).
-        // avg=100, stable trend. No December-specific seasonal multiplier.
-        assertApproxEquals(100.0, forecast.predictedSpending, 0.01)
+        // avg=100, stable trend. The 31-day remaining period scales to 100 * 31/30;
+        // no December-specific seasonal multiplier is applied.
+        assertApproxEquals(103.33333333333333, forecast.predictedSpending, 0.01)
     }
 
     @Test
@@ -378,9 +380,10 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
         // Feb=50, Mar=200 (the Apr 10 snapshot falls outside the trimmed
         // window's month keys). observedMonthCount=2 → confidence
         // 2/3*0.8 = 0.5333; CV([50,200])≈0.85 → -0.1 → 0.4333.
-        // Trend: [50] vs [200] → INCREASING → prediction = 125 * 1.1 = 137.5.
+        // Trend: [50] vs [200] → INCREASING → monthly prediction = 125 * 1.1 = 137.5.
+        // The active monthly period has 16 days remaining, so 137.5 * 16/30 = 73.3333.
         assertApproxEquals(0.4333333333333333, forecast.confidenceScore, 0.01)
-        assertApproxEquals(137.5, forecast.predictedSpending, 0.01)
+        assertApproxEquals(73.33333333333333, forecast.predictedSpending, 0.01)
         assertTrue(forecast.predictedSpending + 50.0 > budget.amount)
         assertApproxEquals(1.0, forecast.overspendProbability, 0.01)
     }
@@ -685,7 +688,7 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
         // index rejects the row under OnConflictStrategy.ABORT, surfaced as a constraint
         // violation from the transactional insert.
         coEvery { budgetForecastDao.insertWithDeactivation(any()) } throws
-            android.database.sqlite.SQLiteConstraintException(
+            MessagePreservingSQLiteConstraintException(
                 "UNIQUE constraint failed: budget_forecasts.budgetId, " +
                     "budget_forecasts.targetPeriodStart, budget_forecasts.forecastDate"
             )
@@ -734,13 +737,10 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
 
     @Test
     fun `forecast_insert_foreign_key_violation_is_not_mapped_to_duplicate`() = runTest {
-        // DBG-02: budget_forecasts has BOTH a UNIQUE index and a FOREIGN KEY
-        // (budgetId -> budgets.id). A FK failure (budget deleted mid-flight) ALSO throws
-        // SQLiteConstraintException but is a genuine referential-integrity error — it must
-        // NOT be silently mislabeled as a same-instant duplicate. The wrapper disambiguates
-        // on the message and rethrows non-UNIQUE constraint failures.
+        // DBG-02: budget_forecasts has BOTH a UNIQUE index and a FOREIGN KEY. A FK failure
+        // must not be mislabeled as a same-instant duplicate or leak raw SQLite text.
         coEvery { budgetForecastDao.insertWithDeactivation(any()) } throws
-            android.database.sqlite.SQLiteConstraintException("FOREIGN KEY constraint failed (code 787)")
+            MessagePreservingSQLiteConstraintException("FOREIGN KEY constraint failed (code 787)")
 
         val attempt = BudgetForecast(
             budgetId = 42L,
@@ -754,23 +754,9 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
             overspendProbability = 0.1
         )
 
-        var thrown: Throwable? = null
-        try {
-            engine.insertForecast(attempt)
-        } catch (e: android.database.sqlite.SQLiteConstraintException) {
-            thrown = e
-        }
+        val result = engine.insertForecast(attempt)
 
-        // The FK violation must surface as the original constraint exception, NOT be
-        // swallowed as a duplicate.
-        assertTrue(
-            "FK constraint violation must rethrow, not map to DuplicateInSameInstant",
-            thrown is android.database.sqlite.SQLiteConstraintException
-        )
-        assertTrue(
-            "rethrown exception must carry the FOREIGN KEY message",
-            thrown?.message?.contains("FOREIGN KEY") == true
-        )
+        assertEquals(ForecastInsertResult.ConstraintViolation, result)
         coVerify(exactly = 0) { budgetForecastDao.update(any()) }
         coVerify(exactly = 0) { budgetForecastDao.insert(any()) }
     }
@@ -1068,3 +1054,7 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
             capturedElapsed.single() <= capturedEnds.single())
     }
 }
+
+private class MessagePreservingSQLiteConstraintException(
+    override val message: String
+) : SQLiteConstraintException(message)
