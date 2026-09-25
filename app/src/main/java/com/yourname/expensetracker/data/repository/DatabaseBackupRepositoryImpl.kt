@@ -605,10 +605,17 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         // the maintenance cleanup scope because they never acquired it.
         val resolvedIncludeReceiptImages = privacyMode?.includesReceiptImages ?: includeReceiptImages
         val resolvedRedacted = privacyMode?.redactsRawText ?: redacted
-        val encryptedDecision = privacyGate.check(
-            PrivacyCapability.ENCRYPTED_BACKUP,
-            mapOf("operation" to "create_costbackup")
-        )
+        val encryptedDecision = try {
+            privacyGate.check(
+                PrivacyCapability.ENCRYPTED_BACKUP,
+                mapOf("operation" to "create_costbackup")
+            )
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            run.failedFinal(DiagnosticReasonCode.PRIVACY_FAIL_CLOSED.name)
+            return@withContext Result.failure(e)
+        }
         if (encryptedDecision.blocksExecution()) {
             val reasonCode = when (encryptedDecision) {
                 is PrivacyDecision.Denied -> DiagnosticReasonCode.PRIVACY_DENIED

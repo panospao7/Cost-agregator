@@ -13,6 +13,8 @@ import com.yourname.expensetracker.data.privacy.BackupEncryptionService
 import com.yourname.expensetracker.data.privacy.ExportAnonymizer
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.domain.backup.DatabaseImportSummary
+import com.yourname.expensetracker.domain.privacy.CompositePrivacyGate
+import com.yourname.expensetracker.domain.privacy.PrivacyAuditLogger
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.privacy.PrivacySettings
@@ -47,6 +49,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -223,6 +226,64 @@ class DatabaseBackupRepositoryImplTest {
         val reason = slot<String>()
         coVerify(exactly = 1) { operationRun.failedFinal(capture(reason)) }
         assertEquals(DiagnosticReasonCode.PRIVACY_FAIL_CLOSED.name, reason.captured)
+    }
+
+    @Test
+    fun `audit failure returns failure for both export overloads without touching recovery`() = runTest(testDispatcher) {
+        val failure = IllegalStateException("private audit failure")
+        val auditLogger = object : PrivacyAuditLogger {
+            override suspend fun logDecision(
+                capability: PrivacyCapability,
+                decision: PrivacyDecision,
+                context: Map<String, String>
+            ) {
+                throw failure
+            }
+        }
+        val operationRun = mockk<OperationRunHandle>(relaxed = true)
+        val operationRecorder = mockk<OperationRunRecorder>()
+        coEvery { operationRecorder.start(any(), any(), any()) } returns operationRun
+        val repo = createRepository(
+            operationRunRecorder = operationRecorder,
+            gate = CompositePrivacyGate(listOf(privacyGate), auditLogger)
+        )
+        val recoveryMode = RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED
+        every { mockRestoreMaintenanceMode.currentMode() } returns recoveryMode
+        val cacheDir = File(tempDir, "preflight-cache").apply { mkdirs() }
+        every { context.cacheDir } returns cacheDir
+        val resolver = mockk<ContentResolver>()
+        every { context.contentResolver } returns resolver
+
+        val fileResult = repo.createCostBackup(
+            password = "password", includeReceiptImages = false, redacted = true, privacyMode = null
+        )
+        val safResult = repo.createCostBackup(
+            destination = android.net.Uri.parse("content://backup/audit-failure"),
+            password = "password", includeReceiptImages = false, redacted = true, privacyMode = null
+        )
+
+        assertSame(failure, fileResult.exceptionOrNull())
+        assertSame(failure, safResult.exceptionOrNull())
+        coVerify(exactly = 2) { operationRun.failedFinal(DiagnosticReasonCode.PRIVACY_FAIL_CLOSED.name, null) }
+        coVerify(exactly = 2) { operationRun.failedFinal(any(), any()) }
+        coVerify(exactly = 0) { operationRun.success() }
+        assertEquals(recoveryMode, mockRestoreMaintenanceMode.currentMode())
+        assertNoExportSideEffects(resolver, cacheDir)
+    }
+
+    private fun assertNoExportSideEffects(resolver: ContentResolver, cacheDir: File) {
+        verify(exactly = 0) { mockRestoreMaintenanceMode.enter(any()) }
+        verify(exactly = 0) { mockRestoreMaintenanceMode.exit(any()) }
+        verify(exactly = 0) { supportDb.query("PRAGMA wal_checkpoint(TRUNCATE)") }
+        verify(exactly = 0) { context.getDatabasePath(any()) }
+        verify(exactly = 0) { context.cacheDir }
+        verify(exactly = 0) { exportAnonymizer.sanitizeExport(any()) }
+        verify(exactly = 0) { backupEncryptionService.encrypt(any<ByteArray>(), any()) }
+        verify(exactly = 0) { backupEncryptionService.encrypt(any<File>(), any(), any()) }
+        verify(exactly = 0) { resolver.openOutputStream(any(), any()) }
+        assertTrue(cacheDir.isDirectory)
+        assertTrue(cacheDir.listFiles()!!.isEmpty())
+        assertFalse(File(tempDir, "costbackups").exists())
     }
 
     private suspend fun assertBlockingPrivacyDecisionStopsExport(decision: PrivacyDecision) {
@@ -1063,13 +1124,14 @@ class DatabaseBackupRepositoryImplTest {
         encryptionService: BackupEncryptionService = backupEncryptionService,
         timeProvider: TimeProvider = FakeTimeProvider(fixedTime),
         journal: RestoreJournal = mockRestoreJournal,
-        operationRunRecorder: OperationRunRecorder = mockk(relaxed = true)
+        operationRunRecorder: OperationRunRecorder = mockk(relaxed = true),
+        gate: PrivacyGate = privacyGate
     ): DatabaseBackupRepositoryImpl {
         return DatabaseBackupRepositoryImpl(
             context = context,
             database = database,
             ioDispatcher = testDispatcher,
-            privacyGate = privacyGate,
+            privacyGate = gate,
             privacySettingsRepository = privacySettingsRepository,
             backupEncryptionService = encryptionService,
             exportAnonymizer = exportAnonymizer,
