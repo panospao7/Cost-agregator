@@ -102,6 +102,27 @@ class ReceiptScanViewModelTest : ViewModelTestUtils() {
         assertEquals(listOf("Processing Error: UNKNOWN_ERROR"), state.debugData?.parsingLogs)
     }
 
+    @Test fun `typed duplicate save shows duplicate card without raw data or failure log`() = runTest(testDispatcher) {
+        coEvery { links.checkCanLinkReceipt(17L) } returns true
+        coEvery { coordinator.createExpenseAndLinkReceipt(any()) } returns
+            Result.failure(ReceiptLifecycleCoordinator.DuplicateTransactionException())
+        readyToSave()
+        model.saveExpense()
+        advanceUntilIdle()
+        val state = model.state.value
+        assertEquals(SaveReceiptResult.DuplicateTransaction, state.saveResult)
+        assertEquals(ScanStep.REVIEW, state.step)
+        assertFalse(state.isSaving)
+        assertNull(state.errorMessage)
+        assertEquals("", state.rawOcrText)
+        assertFalse(state.showRawText)
+        assertEquals("", state.debugData?.rawText)
+        assertTrue(state.debugData!!.parsedTransactions.isEmpty())
+        assertTrue(state.debugData!!.parsingLogs.isEmpty())
+        assertTrue(failureLogs.isEmpty())
+        coVerify(exactly = 1) { coordinator.createExpenseAndLinkReceipt(any()) }
+    }
+
     @Test fun `misleading duplicate text in failed save is not a duplicate card`() = runTest(testDispatcher) {
         coEvery { links.checkCanLinkReceipt(17L) } returns true
         coEvery { coordinator.createExpenseAndLinkReceipt(any()) } returns

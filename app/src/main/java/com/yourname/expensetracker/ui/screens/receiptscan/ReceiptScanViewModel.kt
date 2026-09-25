@@ -1280,14 +1280,22 @@ class ReceiptScanViewModel @Inject constructor(
                     },
                     onFailure = { e ->
                         if (e is CancellationException) throw e
-                        Timber.e("ReceiptScan: atomic_save UNKNOWN_ERROR class=%s", e::class.java.simpleName)
+                        val isDuplicate = e is ReceiptLifecycleCoordinator.DuplicateTransactionException
+                        if (!isDuplicate) {
+                            Timber.e("ReceiptScan: atomic_save UNKNOWN_ERROR class=%s", e::class.java.simpleName)
+                        }
                         _state.update {
                             it.copy(
                                 isSaving = false,
                                 rawOcrText = "",
                                 showRawText = false,
-                                debugData = it.debugData?.copy(rawText = "", parsedTransactions = emptyList(), parsingLogs = mutableListOf("Save Error: UNKNOWN_ERROR")),
-                                saveResult = SaveReceiptResult.Error("Receipt save failed (UNKNOWN_ERROR)")
+                                debugData = it.debugData?.copy(
+                                    rawText = "",
+                                    parsedTransactions = emptyList(),
+                                    parsingLogs = if (isDuplicate) emptyList() else listOf("Save Error: UNKNOWN_ERROR")
+                                ),
+                                saveResult = if (isDuplicate) SaveReceiptResult.DuplicateTransaction
+                                    else SaveReceiptResult.Error("Receipt save failed (UNKNOWN_ERROR)")
                             )
                         }
                     }

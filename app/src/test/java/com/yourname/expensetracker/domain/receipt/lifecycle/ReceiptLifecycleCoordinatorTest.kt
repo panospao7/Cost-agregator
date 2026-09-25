@@ -37,6 +37,9 @@ import com.yourname.expensetracker.domain.sideeffect.SideEffectCategory
 import com.yourname.expensetracker.domain.sideeffect.SideEffectOutcome
 import com.yourname.expensetracker.domain.sideeffect.SideEffectTriggerType
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
+import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
+import com.yourname.expensetracker.domain.transaction.ExpenseSource
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
 import com.yourname.expensetracker.domain.transaction.TransactionContext
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
@@ -56,6 +59,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -212,6 +216,133 @@ class ReceiptLifecycleCoordinatorTest {
             receiptLifecycleEventWriter = receiptLifecycleEventWriter,
             effectiveCloudAiPolicyResolver = mockk(relaxed = true)
         )
+    }
+
+    private fun atomicSaveRequest() = CreateExpenseRequest(
+        merchant = "Merchant", amount = 10.0, currency = "EUR", date = now,
+        transactionType = TransactionType.PURCHASE, source = ExpenseSource.RECEIPT_SCAN,
+        scannedReceiptId = 17L
+    )
+
+    private fun assertNoAtomicSaveSideEffects() {
+        verify(exactly = 0) { receiptSideEffectPlanner.planAfterReceiptLinked(any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { postCommitActionRunner.run(any()) }
+    }
+
+    @Test
+    fun `atomic save returns typed duplicate without source payload or side effects`() = runTest {
+        coEvery { transactionLifecycleCoordinator.createExpenseDbOnlyV2(any()) } returns
+            MutationResult(CreateExpenseResult.DuplicateSkipped(500L, "SQL /private/receipt merchant 918"), nonEmptyBatch())
+
+        val failure = coordinator.createExpenseAndLinkReceipt(atomicSaveRequest()).exceptionOrNull()
+
+        assertTrue(failure is ReceiptLifecycleCoordinator.DuplicateTransactionException)
+        assertEquals("DUPLICATE_TRANSACTION", failure!!.message)
+        assertNull(failure.cause)
+        coVerify(exactly = 1) { transactionLifecycleCoordinator.createExpenseDbOnlyV2(atomicSaveRequest()) }
+        coVerify(exactly = 0) { receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+        assertNoAtomicSaveSideEffects()
+    }
+
+    @Test
+    fun `atomic save does not classify arbitrary duplicate exception text`() = runTest {
+        val failure = IllegalStateException("Duplicate SQL /private/receipt merchant 918")
+        coEvery { transactionLifecycleCoordinator.createExpenseDbOnlyV2(any()) } throws failure
+
+        assertSame(failure, coordinator.createExpenseAndLinkReceipt(atomicSaveRequest()).exceptionOrNull())
+        coVerify(exactly = 0) { receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+        assertNoAtomicSaveSideEffects()
+    }
+
+    @Test
+    fun `atomic save propagates creation cancellation without side effects`() = runTest {
+        val cancellation = CancellationException("private receipt")
+        coEvery { transactionLifecycleCoordinator.createExpenseDbOnlyV2(any()) } throws cancellation
+
+        assertSame(cancellation, assertFailsWith<CancellationException> {
+            coordinator.createExpenseAndLinkReceipt(atomicSaveRequest())
+        })
+        coVerify(exactly = 0) { receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+        assertNoAtomicSaveSideEffects()
+    }
+
+    @Test
+    fun `atomic save propagates barrier cancellation before mutation`() = runTest {
+        val cancellation = CancellationException("private receipt")
+        every { writeBarrier.checkWritesAllowed(any<String>()) } throws cancellation
+
+        assertSame(cancellation, assertFailsWith<CancellationException> {
+            coordinator.createExpenseAndLinkReceipt(atomicSaveRequest())
+        })
+        coVerify(exactly = 0) { transactionLifecycleCoordinator.createExpenseDbOnlyV2(any()) }
+        assertNoAtomicSaveSideEffects()
+    }
+
+    @Test
+    fun `atomic save propagates result wrapped link cancellation without side effects`() = runTest {
+        val cancellation = CancellationException("private receipt")
+        coEvery { receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns
+            Result.failure(cancellation)
+
+        assertSame(cancellation, assertFailsWith<CancellationException> {
+            coordinator.createExpenseAndLinkReceipt(atomicSaveRequest())
+        })
+        assertNoAtomicSaveSideEffects()
+    }
+
+    @Test
+    fun `atomic save link failure leaves transaction exceptionally without side effects`() = runTest {
+        val linkFailure = IllegalStateException("SQL /private/receipt merchant 918")
+        coEvery { receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns
+            Result.failure(linkFailure)
+        var transactionFailure: Throwable? = null
+        coEvery { transactionRunner.runInTransaction<Any>(any(), any(), any(), any(), any(), any()) } coAnswers {
+            try {
+                arg<suspend (TransactionContext) -> Any>(5)(TransactionContext(
+                    correlationId = "test", operationId = "receipt.create_expense_link",
+                    source = "ReceiptLifecycleCoordinator", occurredAt = now
+                ))
+            } catch (e: Exception) {
+                transactionFailure = e
+                throw e
+            }
+        }
+
+        val failure = coordinator.createExpenseAndLinkReceipt(atomicSaveRequest()).exceptionOrNull()
+
+        assertNotNull(transactionFailure)
+        assertSame(transactionFailure, failure)
+        assertEquals("SOURCE_LINK_FAILED", failure!!.message)
+        assertSame(linkFailure, failure.cause)
+        assertNoAtomicSaveSideEffects()
+    }
+
+    @Test
+    fun `atomic save links inside transaction and dispatches only after return`() = runTest {
+        var transactionReturned = false
+        coEvery { transactionRunner.runInTransaction<Any>(any(), any(), any(), any(), any(), any()) } coAnswers {
+            val result = arg<suspend (TransactionContext) -> Any>(5)(TransactionContext(
+                correlationId = "test", operationId = "receipt.create_expense_link",
+                source = "ReceiptLifecycleCoordinator", occurredAt = now
+            ))
+            transactionReturned = true
+            result
+        }
+        coEvery { receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } coAnswers {
+            assertFalse(transactionReturned)
+            Result.success(mockk<com.yourname.expensetracker.data.database.entity.ReceiptExpenseLink>(relaxed = true))
+        }
+        every { receiptSideEffectPlanner.planAfterReceiptLinked(17L, 500L, "DIRECT_SAVE", null, null) } answers {
+            assertTrue(transactionReturned)
+            nonEmptyBatch()
+        }
+
+        assertEquals(500L, coordinator.createExpenseAndLinkReceipt(atomicSaveRequest()).getOrThrow())
+        coVerify(exactly = 1) { receiptLinkService.linkReceiptToExpense(
+            receiptId = 17L, expenseId = 500L, linkType = "DIRECT_SAVE",
+            source = ExpenseSource.RECEIPT_SCAN.name, writeSourceLink = false
+        ) }
+        coVerify(exactly = 1) { postCommitActionRunner.run(any()) }
     }
 
     @Test
