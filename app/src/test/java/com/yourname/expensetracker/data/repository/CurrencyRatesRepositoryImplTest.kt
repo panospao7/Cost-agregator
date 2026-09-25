@@ -227,6 +227,8 @@ class CurrencyRatesRepositoryImplTest {
             null -> ""
             else -> " time='$timeAttribute'"
         }
+        val indentedRates = rates.lineSequence()
+            .joinToString("\n") { "                        $it" }
         return """
             <?xml version='1.0' encoding='UTF-8'?>
             <gesmes:Envelope
@@ -234,7 +236,7 @@ class CurrencyRatesRepositoryImplTest {
                 xmlns='http://www.ecb.int/vocabulary/2002-08-01/eurofxref'>
                 <Cube>
                     <Cube$time>
-                        $rates
+                        $indentedRates
                     </Cube>
                 </Cube>
             </gesmes:Envelope>
