@@ -162,6 +162,9 @@ class GroupBalanceCalculatorTest {
         val partialBob = calculator.calculateMemberBalance(groupId, bob.id)
         assertThat(partialAlice.netBalance).isWithin(0.01).of(-30.0)
         assertThat(partialBob.netBalance).isWithin(0.01).of(30.0)
+        assertThat(partialAlice.netBalance + partialBob.netBalance).isEqualTo(0.0)
+        assertThat(partialAlice.isSettled).isFalse()
+        assertThat(partialBob.isSettled).isFalse()
 
         coEvery { settlementDao.getSettlementsForGroup(groupId) } returns listOf(
             GroupSettlementEntity(id = 1L, groupId = groupId, fromMemberId = alice.id, toMemberId = bob.id, amount = 50.0, currency = "EUR", createdAt = 2_000L, status = "COMPLETED")
@@ -173,6 +176,7 @@ class GroupBalanceCalculatorTest {
         assertThat(bobBalance.netBalance).isWithin(0.01).of(0.0)
         assertThat(aliceBalance.isSettled).isTrue()
         assertThat(bobBalance.isSettled).isTrue()
+        assertThat(aliceBalance.netBalance + bobBalance.netBalance).isEqualTo(0.0)
     }
 
     @Test
@@ -229,11 +233,24 @@ class GroupBalanceCalculatorTest {
         assertThat(calculator.calculateMemberBalance(groupId, bob.id).netBalance).isWithin(0.01).of(50.0)
 
         coEvery { settlementDao.getSettlementsForGroup(groupId) } returns listOf(
+            GroupSettlementEntity(id = 10L, groupId = groupId, fromMemberId = alice.id, toMemberId = bob.id, amount = 0.0, currency = "EUR", createdAt = 2_000L, status = "RECORDED")
+        )
+        val zeroAlice = calculator.calculateMemberBalance(groupId, alice.id)
+        val zeroBob = calculator.calculateMemberBalance(groupId, bob.id)
+        assertThat(zeroAlice.netBalance).isEqualTo(-50.0)
+        assertThat(zeroBob.netBalance).isEqualTo(50.0)
+        assertThat(zeroAlice.netBalance + zeroBob.netBalance).isEqualTo(0.0)
+
+        coEvery { settlementDao.getSettlementsForGroup(groupId) } returns listOf(
             GroupSettlementEntity(id = 7L, groupId = groupId, fromMemberId = alice.id, toMemberId = bob.id, amount = 51.0, currency = "EUR", createdAt = 2_000L, status = "RECORDED")
         )
         val overpaid = calculator.calculateMemberBalance(groupId, alice.id)
         assertThat(overpaid.netBalance).isWithin(0.01).of(1.0)
         assertThat(overpaid.isSettled).isFalse()
+        val overpaidRecipient = calculator.calculateMemberBalance(groupId, bob.id)
+        assertThat(overpaidRecipient.netBalance).isEqualTo(-1.0)
+        assertThat(overpaidRecipient.isSettled).isFalse()
+        assertThat(overpaid.netBalance + overpaidRecipient.netBalance).isEqualTo(0.0)
 
         coEvery { expenseDao.getExpensesForGroupOnce(groupId) } returns emptyList()
         coEvery { settlementDao.getSettlementsForGroup(groupId) } returns listOf(
