@@ -772,7 +772,6 @@ class RestoreJournal @Inject constructor(
 
         private val FAILURE_REASON_CODES = setOf(
             DiagnosticReasonCode.UNKNOWN_ERROR.name,
-            DiagnosticReasonCode.VALIDATION_FAILED.name,
             DiagnosticReasonCode.PARSER_FAILED.name,
             DiagnosticReasonCode.RESTORE_BLOCKED.name,
             DiagnosticReasonCode.WRITE_BARRIER_DENIED.name,

@@ -124,7 +124,6 @@ class RestoreJournalDurabilityTest {
     fun `failure journal writes only allowlisted reasons to its error field`() {
         val allowed = listOf(
             DiagnosticReasonCode.UNKNOWN_ERROR,
-            DiagnosticReasonCode.VALIDATION_FAILED,
             DiagnosticReasonCode.PARSER_FAILED,
             DiagnosticReasonCode.RESTORE_BLOCKED,
             DiagnosticReasonCode.WRITE_BARRIER_DENIED,
@@ -132,7 +131,7 @@ class RestoreJournalDurabilityTest {
             DiagnosticReasonCode.TIMEOUT
         )
         val hostile = "SELECT * FROM receipts /data/private/ledger.db content://receipts/4 Merchant 123.45"
-        val rejected = listOf(hostile, "", "TIMEOUT $hostile", "RESTORE_FAILED", "unknown")
+        val rejected = listOf(hostile, "", "TIMEOUT $hostile", "RESTORE_FAILED", "VALIDATION_FAILED", "unknown")
 
         (allowed.map { it.name to it.name } + rejected.map { it to "UNKNOWN_ERROR" }).forEach { (input, expected) ->
             val entry = journal.beginJournal("/cache/src.costbackup", "/data/staged.db", "/data/live.db")
