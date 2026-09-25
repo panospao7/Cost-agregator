@@ -39,6 +39,7 @@ import com.yourname.expensetracker.domain.diagnostics.OperationRunHandle
 import com.yourname.expensetracker.domain.diagnostics.OperationRunRecorder
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDeniedException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -147,7 +148,8 @@ class DatabaseBackupRepositoryImplTest {
 
         assertTrue(result.isSuccess)
         assertTrue(result.getOrNull()?.exists() == true)
-        verify { mockRestoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.BACKUP_EXPORTING) }
+        verify(exactly = 1) { mockRestoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.BACKUP_EXPORTING) }
+        verify(exactly = 1) { mockRestoreMaintenanceMode.exit(forceRestartRequired = false) }
     }
 
     @Test
@@ -174,6 +176,8 @@ class DatabaseBackupRepositoryImplTest {
         assertTrue(result.isSuccess)
         assertTrue(output.size() > 0)
         verify { resolver.openOutputStream(destination, "wt") }
+        verify(exactly = 1) { mockRestoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.BACKUP_EXPORTING) }
+        verify(exactly = 1) { mockRestoreMaintenanceMode.exit(forceRestartRequired = false) }
     }
 
     @Test
@@ -184,6 +188,57 @@ class DatabaseBackupRepositoryImplTest {
     @Test
     fun `fail closed blocks both export overloads before maintenance and destination`() = runTest(testDispatcher) {
         assertBlockingPrivacyDecisionStopsExport(PrivacyDecision.FailClosed("ignored"))
+    }
+
+    @Test
+    fun `denied exports preserve an existing recovery barrier`() = runTest(testDispatcher) {
+        assertBlockingPrivacyDecisionStopsExport(
+            PrivacyDecision.Denied("ignored"),
+            RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED
+        )
+    }
+
+    @Test
+    fun `fail closed exports preserve an existing recovery barrier`() = runTest(testDispatcher) {
+        assertBlockingPrivacyDecisionStopsExport(
+            PrivacyDecision.FailClosed("ignored"),
+            RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED
+        )
+    }
+
+    @Test
+    fun `gate cancellation propagates from both export overloads without side effects`() = runTest(testDispatcher) {
+        assertGateCancellationStopsExport(RestoreMaintenanceMode.Mode.NORMAL)
+    }
+
+    @Test
+    fun `gate cancellation preserves an existing recovery barrier`() = runTest(testDispatcher) {
+        assertGateCancellationStopsExport(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED)
+    }
+
+    @Test
+    fun `cancellation after maintenance entry still releases the export barrier`() = runTest(testDispatcher) {
+        val cancellation = CancellationException("maintenance entry cancelled")
+        var mode = RestoreMaintenanceMode.Mode.NORMAL
+        every { mockRestoreMaintenanceMode.currentMode() } answers { mode }
+        every { mockRestoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.BACKUP_EXPORTING) } answers {
+            mode = RestoreMaintenanceMode.Mode.BACKUP_EXPORTING
+            throw cancellation
+        }
+        every { mockRestoreMaintenanceMode.exit(forceRestartRequired = false) } answers {
+            mode = RestoreMaintenanceMode.Mode.NORMAL
+        }
+        val cacheDir = File(tempDir, "preflight-cache").apply { mkdirs() }
+        every { context.cacheDir } returns cacheDir
+        val resolver = mockk<ContentResolver>()
+        every { context.contentResolver } returns resolver
+
+        assertCancellationFromBothExports(repository, cancellation)
+
+        verify(exactly = 2) { mockRestoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.BACKUP_EXPORTING) }
+        verify(exactly = 2) { mockRestoreMaintenanceMode.exit(forceRestartRequired = false) }
+        assertEquals(RestoreMaintenanceMode.Mode.NORMAL, mockRestoreMaintenanceMode.currentMode())
+        assertNoSnapshotOrDestinationWork(resolver, cacheDir)
     }
 
     @Test
@@ -274,6 +329,10 @@ class DatabaseBackupRepositoryImplTest {
     private fun assertNoExportSideEffects(resolver: ContentResolver, cacheDir: File) {
         verify(exactly = 0) { mockRestoreMaintenanceMode.enter(any()) }
         verify(exactly = 0) { mockRestoreMaintenanceMode.exit(any()) }
+        assertNoSnapshotOrDestinationWork(resolver, cacheDir)
+    }
+
+    private fun assertNoSnapshotOrDestinationWork(resolver: ContentResolver, cacheDir: File) {
         verify(exactly = 0) { supportDb.query("PRAGMA wal_checkpoint(TRUNCATE)") }
         verify(exactly = 0) { context.getDatabasePath(any()) }
         verify(exactly = 0) { context.cacheDir }
@@ -286,8 +345,65 @@ class DatabaseBackupRepositoryImplTest {
         assertFalse(File(tempDir, "costbackups").exists())
     }
 
-    private suspend fun assertBlockingPrivacyDecisionStopsExport(decision: PrivacyDecision) {
+    private suspend fun assertGateCancellationStopsExport(initialMode: RestoreMaintenanceMode.Mode) {
+        val cancellation = CancellationException("caller cancelled")
+        coEvery { privacyGate.check(PrivacyCapability.ENCRYPTED_BACKUP, any()) } throws cancellation
+        val auditLogger = mockk<PrivacyAuditLogger>(relaxed = true)
+        val operationRun = mockk<OperationRunHandle>(relaxed = true)
+        val operationRecorder = mockk<OperationRunRecorder>()
+        coEvery { operationRecorder.start(any(), any(), any()) } returns operationRun
+        val repo = createRepository(
+            operationRunRecorder = operationRecorder,
+            gate = CompositePrivacyGate(listOf(privacyGate), auditLogger)
+        )
+        every { mockRestoreMaintenanceMode.currentMode() } returns initialMode
+        val cacheDir = File(tempDir, "preflight-cache").apply { mkdirs() }
+        every { context.cacheDir } returns cacheDir
+        val resolver = mockk<ContentResolver>()
+        every { context.contentResolver } returns resolver
+
+        assertCancellationFromBothExports(repo, cancellation)
+
+        assertEquals(initialMode, mockRestoreMaintenanceMode.currentMode())
+        coVerify(exactly = 0) {
+            auditLogger.logDecision(any(), any(), any<Map<String, String>>())
+        }
+        coVerify(exactly = 0) { operationRun.failedFinal(any(), any()) }
+        coVerify(exactly = 0) { operationRun.success() }
+        assertNoExportSideEffects(resolver, cacheDir)
+    }
+
+    private suspend fun assertCancellationFromBothExports(
+        repo: DatabaseBackupRepositoryImpl,
+        cancellation: CancellationException
+    ) {
+        for (useSaf in listOf(false, true)) {
+            try {
+                if (useSaf) {
+                    repo.createCostBackup(
+                        destination = android.net.Uri.parse("content://backup/cancelled"),
+                        password = "password", includeReceiptImages = false, redacted = true, privacyMode = null
+                    )
+                } else {
+                    repo.createCostBackup(
+                        password = "password", includeReceiptImages = false, redacted = true, privacyMode = null
+                    )
+                }
+                throw AssertionError("cancellation must propagate")
+            } catch (thrown: CancellationException) {
+                assertSame(cancellation, thrown)
+            }
+        }
+    }
+
+    private suspend fun assertBlockingPrivacyDecisionStopsExport(
+        decision: PrivacyDecision,
+        initialMode: RestoreMaintenanceMode.Mode = RestoreMaintenanceMode.Mode.NORMAL
+    ) {
         coEvery { privacyGate.check(PrivacyCapability.ENCRYPTED_BACKUP, any()) } returns decision
+        every { mockRestoreMaintenanceMode.currentMode() } returns initialMode
+        val cacheDir = File(tempDir, "preflight-cache").apply { mkdirs() }
+        every { context.cacheDir } returns cacheDir
         val resolver = mockk<ContentResolver>()
         every { context.contentResolver } returns resolver
         val destination = android.net.Uri.parse("content://backup/blocked")
@@ -310,11 +426,10 @@ class DatabaseBackupRepositoryImplTest {
         assertTrue(safResult.isFailure)
         assertTrue(fileResult.exceptionOrNull() is PrivacyDeniedException)
         assertTrue(safResult.exceptionOrNull() is PrivacyDeniedException)
-        verify(exactly = 0) { mockRestoreMaintenanceMode.enter(any()) }
-        verify(exactly = 0) { mockRestoreMaintenanceMode.exit(any()) }
-        verify(exactly = 0) { supportDb.query("PRAGMA wal_checkpoint(TRUNCATE)") }
-        verify(exactly = 0) { resolver.openOutputStream(any(), any()) }
-        assertFalse(File(tempDir, "costbackups").exists())
+        assertEquals(PrivacyCapability.ENCRYPTED_BACKUP, (fileResult.exceptionOrNull() as PrivacyDeniedException).capability)
+        assertEquals(PrivacyCapability.ENCRYPTED_BACKUP, (safResult.exceptionOrNull() as PrivacyDeniedException).capability)
+        assertEquals(initialMode, mockRestoreMaintenanceMode.currentMode())
+        assertNoExportSideEffects(resolver, cacheDir)
     }
 
     @Test
