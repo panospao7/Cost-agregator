@@ -223,6 +223,10 @@ android {
                 it.forkEvery = requestedForkEvery
             }
 
+            // Full-suite runs OOM'd on the JVM default (~512m) with 5,400+ tests;
+            // 2g is a floor, overridable per environment via -PtestMaxHeapSize.
+            it.maxHeapSize = (project.findProperty("testMaxHeapSize") ?: "2g").toString()
+
             it.systemProperty("updateGoldens", project.findProperty("updateGoldens") ?: "false")
 
             it.testLogging {

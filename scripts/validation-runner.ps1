@@ -36,6 +36,11 @@ param(
     [switch]$AllowOverlap,
     [ValidateSet("REQUIRED_FINAL_GATE", "INVESTIGATE_INCONSISTENT_RESULT", "HUMAN_REQUEST", "RUNNER_SELF_TEST")]
     [string]$OverlapReasonCode,
+    # Opt-in warm-daemon mode: drops --no-daemon for faster repeat runs on a single
+    # worktree experiment. Default (absent) keeps the historical single-use JVM.
+    # NOTE: on a timeout kill the daemon may survive holding locks; if subsequent
+    # runs report lock errors, stop it with: gradlew.bat --stop
+    [switch]$GradleDaemon,
     [ValidateRange(1, 30)]
     [int]$PollSeconds = 3,
     [ValidateRange(1, 300)]
@@ -342,9 +347,10 @@ function Get-ProfileSpec {
 
     $gradle = Join-Path $script:RepoRoot "gradlew.bat"
     $gradleTail = @(
-        "--console=plain", "--no-parallel", "--max-workers=1", "--no-daemon",
+        "--console=plain", "--no-parallel", "--max-workers=1",
         "-PvalidationMaxParallelForks=1", "-PvalidationForkEvery=50"
     )
+    if (-not $GradleDaemon) { $gradleTail += "--no-daemon" }
     switch ($Name) {
         "runner-smoke" {
             return @{ executable = "$env:SystemRoot\System32\cmd.exe"; arguments = @("/d", "/c", "exit", "0"); timeout = 60; no_output_timeout = 30 }
