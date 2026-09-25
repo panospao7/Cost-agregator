@@ -837,7 +837,8 @@ class AppStartupCoordinatorRecoveryTest {
         val liveDbFile = File(context.filesDir, "expense_tracker_db")
         liveDbFile.parentFile?.mkdirs()
         liveDbFile.writeBytes("corrupt swapped db".toByteArray())
-        val safetyBackupFile = File(context.filesDir, "safety_backup_resume_failure.db")
+        // Keep the real SQLite seed on the short TemporaryFolder path.
+        val safetyBackupFile = tmp.newFile("safety.db")
         createValidSqliteFile(safetyBackupFile)
         writeAssetsRestoringJournal(
             journal = journal,
