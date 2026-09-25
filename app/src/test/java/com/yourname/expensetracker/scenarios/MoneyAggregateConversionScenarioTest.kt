@@ -237,7 +237,8 @@ class MoneyAggregateConversionScenarioTest {
             "Should have failed transactions",
             aggregate.failedTransactionCount > 0
         )
-        assertEquals("Should have 2 conversion failures", 2, aggregate.failedTransactionCount)
+        assertEquals("Should have 2 failed transactions", 2, aggregate.failedTransactionCount)
+        assertEquals("Should have 2 failed currency buckets", 2, aggregate.failedBucketCount)
 
         // AND: sourceBuckets has 3 entries (EUR, USD, GBP)
         assertEquals(
@@ -355,6 +356,7 @@ class MoneyAggregateConversionScenarioTest {
             "Failed transaction count should be 2",
             2, aggregate.failedTransactionCount
         )
+        assertEquals("Failed currency bucket count should be 2", 2, aggregate.failedBucketCount)
 
         // AND: warning message reflects the failures
         assertNotNull(aggregate.warningMessage)
@@ -442,14 +444,16 @@ class MoneyAggregateConversionScenarioTest {
             eurTotal, eurBucket.amount, 0.001)
         assertEquals("EUR bucket should have 1 transaction", 1, eurBucket.transactionCount)
 
-        // AND: total value is sum of (price * quantity) per bucket
-        val totalValue = aggregate.sourceBuckets.sumOf { it.amount }
-        assertEquals("Total value should be sum of all buckets",
-            usdTotal + eurTotal, totalValue, 0.001)
+        // AND: display value contains only successfully normalized EUR value.
+        // Source buckets are provenance in unlike currencies and must not be summed.
+        assertEquals("Display value should include only the EUR bucket",
+            eurTotal, aggregate.displayAmount, 0.001)
 
         // AND: isPartial is true due to missing USD→EUR rate
         assertTrue("Aggregate should be partial", aggregate.isPartial)
-        assertEquals("Should have 1 conversion failure", 1, aggregate.failedTransactionCount)
+        assertEquals("Should have 1 failed currency bucket", 1, aggregate.failedBucketCount)
+        assertEquals("Should have 2 failed transactions", 2, aggregate.failedTransactionCount)
+        assertEquals("Should retain all 3 input transactions", 3, aggregate.totalTransactionCount)
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -512,9 +516,8 @@ class MoneyAggregateConversionScenarioTest {
         assertTrue("Aggregate with failures should be partial", aggregate.isPartial)
 
         // AND: failedTransactionCount > 0
-        assertEquals("Should have 2 conversion failures", 2, aggregate.failedTransactionCount)
-        assertEquals("failedTransactionCount should equal failures size",
-            failures.size, aggregate.failedTransactionCount)
+        assertEquals("Should have 2 failed transactions", 2, aggregate.failedTransactionCount)
+        assertEquals("Should have 2 failed currency buckets", 2, aggregate.failedBucketCount)
 
         // AND: totalTransactionCount is correct
         assertEquals(

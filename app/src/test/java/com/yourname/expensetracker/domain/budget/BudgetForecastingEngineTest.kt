@@ -1004,7 +1004,10 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
             MoneyAggregate(
                 displayAmount = 200.0,
                 displayCurrency = CurrencyCode("EUR"),
-                sourceBuckets = listOf(MoneyBucket(CurrencyCode("EUR"), 200.0, 2)),
+                sourceBuckets = listOf(
+                    MoneyBucket(CurrencyCode("EUR"), 200.0, 2),
+                    MoneyBucket(CurrencyCode("USD"), 50.0, 3)
+                ),
                 conversionFailures = listOf(
                     ConversionFailure(
                         originalAmount = MoneyAmount(50.0, CurrencyCode("USD")),
@@ -1020,8 +1023,8 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
 
         assertTrue("confidence must drop when period spend rows are excluded",
             partial.confidenceScore < baseline.confidenceScore)
-        // spendRetention = 1 - (3/2 * 0.5) = 0.25 → base 0.7333 * 0.25 ≈ 0.18333.
-        assertApproxEquals(0.18333333333333332, partial.confidenceScore, 0.001)
+        // spendRetention = 1 - (3/5 * 0.5) = 0.7 → base 0.7333 * 0.7 ≈ 0.51333.
+        assertApproxEquals(0.5133333333333333, partial.confidenceScore, 0.001)
         assertTrue(partial.isPartial)
         assertEquals(3, partial.excludedExpenseCount)
         val json = partial.qualityWarningsJson
