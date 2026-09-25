@@ -25,6 +25,10 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.File
 import timber.log.Timber
+import io.mockk.every
+import kotlinx.coroutines.CancellationException
+import kotlin.test.assertFailsWith
+import org.junit.Assert.assertNull
 
 /**
  * Fail-closed crash-recovery contract tests for [AppStartupCoordinator.checkRestoreJournal].
@@ -83,7 +87,8 @@ class AppStartupCoordinatorRecoveryTest {
         timeProvider: com.yourname.expensetracker.domain.util.TimeProvider =
             com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L),
         resumeScope: CoroutineScope =
-            CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+            CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
+        opener: RestoreDatabaseOpener = mockk(relaxed = true)
     ): AppStartupCoordinator =
         AppStartupCoordinator(
             appContext = context,
@@ -91,7 +96,7 @@ class AppStartupCoordinatorRecoveryTest {
             syncProactiveBriefingWorkUseCase = mockk(relaxed = true),
             restoreJournal = journal,
             restoreMaintenanceMode = mode,
-            restoreDatabaseOpener = mockk<RestoreDatabaseOpener>(relaxed = true),
+            restoreDatabaseOpener = opener,
             restoreInternalWriteScope = com.yourname.expensetracker.data.backup.RestoreInternalWriteScope(mode),
             workerExecutionGuard = mockk(relaxed = true),
             restoreJournalImporter = mockk(relaxed = true),
@@ -100,6 +105,50 @@ class AppStartupCoordinatorRecoveryTest {
             timeProvider = timeProvider,
             applicationScope = resumeScope
         )
+
+    private fun writeRecoverableSwapJournal(journal: RestoreJournal) {
+        val safety = File(context.filesDir, "cl17_safety.db")
+        createValidSqliteFile(safety)
+        val entry = journal.beginJournal(
+            File(context.cacheDir, "src.costbackup").absolutePath,
+            context.getDatabasePath("staged_restore.db").absolutePath,
+            context.getDatabasePath("expense_tracker.db").absolutePath
+        )
+        journal.transitionTo(entry, RestoreJournal.JournalState.SWAPPING, safetyBackupPath = safety.absolutePath)
+    }
+
+    @Test
+    fun `recovered Room open failure logs only code and class and stays fail closed`() {
+        val clock = com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L)
+        val mode = RestoreMaintenanceMode(context, clock)
+        val journal = RestoreJournal(context, clock)
+        writeRecoverableSwapJournal(journal)
+        val opener = mockk<RestoreDatabaseOpener>()
+        every { opener.openFreshDatabase() } throws IllegalStateException("SQL /private/receipt merchant 1234.56")
+
+        newCoordinator(mode, journal, opener = opener).checkRestoreJournal()
+
+        assertTrue(logs.contains(null to "Startup: UNKNOWN_ERROR stage=room_open_recovered_db class=IllegalStateException"))
+        assertTrue(logs.all { it.first == null && !it.second.contains("/private/receipt") && !it.second.contains("1234.56") })
+        assertEquals(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED, mode.currentMode())
+        assertFalse(mode.isWritesAllowed())
+    }
+
+    @Test
+    fun `recovered Room open cancellation propagates without terminal failure journal`() {
+        val clock = com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L)
+        val mode = RestoreMaintenanceMode(context, clock)
+        val journal = RestoreJournal(context, clock)
+        writeRecoverableSwapJournal(journal)
+        val opener = mockk<RestoreDatabaseOpener>()
+        every { opener.openFreshDatabase() } throws CancellationException("SQL /private/receipt merchant 1234.56")
+
+        assertFailsWith<CancellationException> { newCoordinator(mode, journal, opener = opener).checkRestoreJournal() }
+
+        assertTrue(journal.hasJournal())
+        assertNull(journal.readFailureJournal())
+        assertTrue(logs.none { it.first != null || it.second.contains("class=CancellationException") || it.second.contains("/private/receipt") })
+    }
 
     /**
      * Writes a journal in a destructive (SWAPPING) state whose safety backup is unreachable,
