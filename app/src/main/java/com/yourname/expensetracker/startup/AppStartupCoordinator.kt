@@ -43,10 +43,39 @@ class AppStartupCoordinator @Inject constructor(
 
     fun initialize(application: Application) {
         configureDebugTools()
-
-        checkRestoreJournal()
+        val recoveryState = checkRestoreJournalState()
         registerLifecycleObserver()
 
+        when (recoveryState) {
+            StartupRecoveryState.READY -> scheduleStartupIfAllowed(application)
+            StartupRecoveryState.RESUME_REQUIRED -> {
+                // Checked worker rescheduling can wait on WorkManager confirmation.
+                // Keep that ordered stage off Application.onCreate's main thread.
+                applicationScope.launch {
+                    resumeMaintenanceAndScheduleStartup(application)
+                }
+            }
+            StartupRecoveryState.BLOCKED -> {
+                Timber.w("Startup: recovery remains blocked; skipping worker scheduling")
+            }
+        }
+    }
+
+    private suspend fun resumeMaintenanceAndScheduleStartup(application: Application) {
+        try {
+            restoreMaintenanceMode.resetCancellable()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: RestoreMaintenanceMode.PersistenceException) {
+            Timber.e("Startup: maintenance persistence recovery failed; writes remain blocked")
+        } catch (_: RestoreMaintenanceMode.WorkerRescheduleException) {
+            Timber.e("Startup: worker reschedule confirmation failed; writes remain blocked")
+        }
+
+        scheduleStartupIfAllowed(application)
+    }
+
+    private fun scheduleStartupIfAllowed(application: Application) {
         if (!restoreMaintenanceMode.isWritesAllowed()) {
             Timber.w("Startup: maintenance mode active, skipping worker scheduling")
         } else {
@@ -112,6 +141,46 @@ class AppStartupCoordinator @Inject constructor(
      */
     @androidx.annotation.VisibleForTesting
     internal fun checkRestoreJournal() {
+        try {
+            if (checkRestoreJournalState() == StartupRecoveryState.RESUME_REQUIRED) {
+                restoreMaintenanceMode.reset()
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: RestoreMaintenanceMode.PersistenceException) {
+            markStartupCritical("STARTUP_MODE_PERSISTENCE_FAILED")
+        } catch (_: RestoreMaintenanceMode.WorkerRescheduleException) {
+            markStartupCritical("STARTUP_WORKER_RESUME_FAILED")
+        }
+    }
+
+    private fun markStartupCritical(reason: String) {
+        try {
+            restoreMaintenanceMode.enterCriticalRecoveryRequired(reason)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: RestoreMaintenanceMode.PersistenceException) {
+            // The mode owner already latched the in-memory lock; recovery UI must remain available.
+        }
+    }
+
+    private fun checkRestoreJournalState(): StartupRecoveryState = try {
+        if (restoreMaintenanceMode.currentMode() == RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED) {
+            StartupRecoveryState.BLOCKED
+        } else {
+            recoverRestoreJournalState()
+        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: RestoreJournal.JournalDurabilityException) {
+        markStartupCritical("STARTUP_JOURNAL_DURABILITY_FAILED")
+        StartupRecoveryState.BLOCKED
+    } catch (_: Exception) {
+        markStartupCritical("STARTUP_RECOVERY_FAILED")
+        StartupRecoveryState.BLOCKED
+    }
+
+    private fun recoverRestoreJournalState(): StartupRecoveryState {
         Timber.i("Startup: checking restore journal")
         when (val recovery = restoreJournal.checkAndRecover()) {
             is RestoreJournal.RecoveryResult.NoAction -> {
@@ -130,7 +199,7 @@ class AppStartupCoordinator @Inject constructor(
                 // genuinely unsafe state (swapped DB unhealthy AND safety recovery
                 // failed) keeps the fail-closed CRITICAL lock.
                 handleAssetsIncompleteRecovery(recovery.entry)
-                return
+                return StartupRecoveryState.BLOCKED
             }
 
             is RestoreJournal.RecoveryResult.CleanedNonDestructive -> {
@@ -139,7 +208,8 @@ class AppStartupCoordinator @Inject constructor(
             }
 
             is RestoreJournal.RecoveryResult.RecoveredFromSwap -> {
-                val entry = recovery.entry
+                val entry = restoreJournal.transitionTo(recovery.entry, RestoreJournal.JournalState.ROLLING_BACK)
+                restoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.RESTORE_ROLLING_BACK)
                 Timber.e("Startup: detected incomplete restore from state: %s", entry.state)
 
                 // P7-P0-02 / P7-CURRENT-003: fail-closed crash recovery.
@@ -156,33 +226,26 @@ class AppStartupCoordinator @Inject constructor(
                     // checkAndRecover() returns NoAction. Only CRITICAL_RECOVERY_REQUIRED is
                     // exempt from the startup auto-reset below, so it is the only mode that
                     // keeps writes blocked across repeated restarts until manual recovery.
-                    try {
-                        restoreJournal.failJournal(
-                            entry,
-                            "STARTUP_CRASH_RECOVERY_FAILED"
-                        )
-                    } finally {
-                        restoreMaintenanceMode.enterCriticalRecoveryRequired(
-                            "STARTUP_CRASH_RECOVERY_FAILED"
-                        )
-                    }
+                    markStartupCritical("STARTUP_CRASH_RECOVERY_FAILED")
+                    restoreJournal.failJournal(entry, "STARTUP_CRASH_RECOVERY_FAILED")
                     Timber.e(
                         "Startup: CRITICAL — crash recovery failed; " +
                             "maintenance mode blocks all writes across restarts until manual intervention"
                     )
-                    return
+                    return StartupRecoveryState.BLOCKED
                 }
 
-                // Recovery succeeded — clean up staging files and journal.
+                // Recovery evidence is disposable only after checked terminal preservation.
+                restoreJournal.failJournal(entry, "STARTUP_SWAP_ROLLED_BACK")
                 restoreJournal.cleanStagingFiles(entry)
-                restoreJournal.deleteJournal()
+                entry.liveDbPath?.let { File("$it.pre_restore").delete() }
             }
 
             is RestoreJournal.RecoveryResult.CriticalRecoveryRequired -> {
                 Timber.e("Startup: CRITICAL — safety backup and live DB are both corrupt")
-                restoreMaintenanceMode.enterCriticalRecoveryRequired("startup crash recovery failed")
+                markStartupCritical("STARTUP_JOURNAL_CORRUPT")
                 Timber.e("Startup: maintenance mode blocks writes until manual recovery and app restart")
-                return
+                return StartupRecoveryState.BLOCKED
             }
         }
 
@@ -196,13 +259,16 @@ class AppStartupCoordinator @Inject constructor(
         // restarts; if we reset here, writes would silently resume against an unknown DB. It
         // stays blocked across restarts until manual intervention clears it.
         val mode = restoreMaintenanceMode.currentMode()
-        if (mode != RestoreMaintenanceMode.Mode.NORMAL &&
-            mode != RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED
-        ) {
-            Timber.w("Startup: resetting maintenance mode from %s to NORMAL", mode)
-            restoreMaintenanceMode.reset()
-        } else if (mode == RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED) {
-            Timber.e("Startup: CRITICAL_RECOVERY_REQUIRED persists across restart; writes remain blocked")
+        return when (mode) {
+            RestoreMaintenanceMode.Mode.NORMAL -> StartupRecoveryState.READY
+            RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED -> {
+                Timber.e("Startup: CRITICAL_RECOVERY_REQUIRED persists across restart; writes remain blocked")
+                StartupRecoveryState.BLOCKED
+            }
+            else -> {
+                Timber.w("Startup: checked maintenance resume required from %s", mode)
+                StartupRecoveryState.RESUME_REQUIRED
+            }
         }
     }
 
@@ -222,6 +288,7 @@ class AppStartupCoordinator @Inject constructor(
                 android.database.sqlite.SQLiteDatabase.OPEN_READONLY
             )
         } catch (e: Exception) {
+            CancellationSafe.rethrowIfCancellation(e)
             Timber.e(e, "Startup: safety-restored DB could not be opened")
             return false
         }
@@ -240,6 +307,7 @@ class AppStartupCoordinator @Inject constructor(
             }
             Timber.d("Startup: safety-restored DB integrity + FK checks passed")
         } catch (e: Exception) {
+            CancellationSafe.rethrowIfCancellation(e)
             Timber.e(e, "Startup: safety-restored DB PRAGMA check threw exception")
             return false
         } finally {
@@ -249,9 +317,10 @@ class AppStartupCoordinator @Inject constructor(
         try {
             val freshDb = restoreDatabaseOpener.openFreshDatabase()
             freshDb.openHelper.writableDatabase
-            runCatching { freshDb.close() }
+            CancellationSafe.runCatchingCancellable { freshDb.close() }
             Timber.d("Startup: safety-restored DB Room open passed")
         } catch (e: Exception) {
+            CancellationSafe.rethrowIfCancellation(e)
             Timber.e(e, "Startup: safety-restored DB Room open failed")
             return false
         }
@@ -285,7 +354,7 @@ class AppStartupCoordinator @Inject constructor(
         for ((sourcePath, sourceKind) in candidates) {
             val sourceFile = File(sourcePath)
             if (!sourceFile.exists() || !sourceFile.canRead()) continue
-            val restored = runCatching {
+            val restored = CancellationSafe.runCatchingCancellable {
                 restoreDbFilesFrom(sourceFile, liveDbFile)
                 verifySafetyRestoredDb(liveDbFile)
             }.getOrElse { e ->
@@ -294,17 +363,7 @@ class AppStartupCoordinator @Inject constructor(
             }
             if (restored) {
                 Timber.w("Startup: live DB recovered from %s after incomplete restore", sourceKind.name)
-                if (sourceKind == RecoverySourceKind.PRE_RESTORE_SNAPSHOT) {
-                    // P7-004: the .pre_restore snapshot has been successfully consumed.
-                    runCatching { sourceFile.delete() }
-                } else {
-                    // RP-03 fix: recovery consumed the SAFETY BACKUP, so a stale
-                    // .pre_restore snapshot (left over from this restore's pre-swap
-                    // step) is residue - remove it now instead of letting it linger
-                    // in filesDir forever. It is only kept on CRITICAL/unsafe
-                    // outcomes below, where it remains the last recovery source.
-                    runCatching { File("$liveDbPath.pre_restore").delete() }
-                }
+                // The caller retains every recovery source until terminal preservation succeeds.
                 return true
             }
         }
@@ -342,7 +401,7 @@ class AppStartupCoordinator @Inject constructor(
                 input.copyTo(output)
             }
             output.flush()
-            runCatching { output.fd.sync() }
+            output.fd.sync()
         }
     }
 
@@ -376,7 +435,17 @@ class AppStartupCoordinator @Inject constructor(
         // leaves the journal in ASSETS_RESTORING (writes stay blocked) and the next
         // launch simply retries.
         applicationScope.launch {
-            resumeAssetsIncompleteRecovery(entry)
+            try {
+                resumeAssetsIncompleteRecovery(entry)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: RestoreJournal.JournalDurabilityException) {
+                markStartupCritical("STARTUP_ASSET_JOURNAL_DURABILITY_FAILED")
+            } catch (_: RestoreMaintenanceMode.PersistenceException) {
+                Timber.e("Startup: asset rollback maintenance persistence failed; writes remain blocked")
+            } catch (_: RestoreMaintenanceMode.WorkerRescheduleException) {
+                Timber.e("Startup: asset rollback worker confirmation failed; writes remain blocked")
+            }
         }
     }
 
@@ -385,21 +454,21 @@ class AppStartupCoordinator @Inject constructor(
         val dbHealthy = entry.liveDbPath?.let { verifySafetyRestoredDb(File(it)) } ?: false
         if (!dbHealthy) {
             Timber.e("Startup: swapped DB failed verification during ASSETS_RESTORING recovery — attempting safety rollback")
-            if (recoverLiveDbFromSafetySources(entry)) {
+            val rollingBack = restoreJournal.transitionTo(entry, RestoreJournal.JournalState.ROLLING_BACK)
+            restoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.RESTORE_ROLLING_BACK)
+            if (recoverLiveDbFromSafetySources(rollingBack)) {
                 // Rolled back to a verified pre-restore DB inside a fresh process;
                 // safe to resume normal operation (same contract as the swap-crash
                 // recovery path above).
-                restoreJournal.cleanStagingFiles(entry)
-                restoreJournal.deleteJournal()
-                restoreMaintenanceMode.exit(forceRestartRequired = false)
+                restoreJournal.failJournal(rollingBack, "STARTUP_ASSET_ROLLED_BACK")
+                restoreJournal.cleanStagingFiles(rollingBack)
+                rollingBack.liveDbPath?.let { File("$it.pre_restore").delete() }
+                restoreMaintenanceMode.exitCancellable(forceRestartRequired = false)
                 Timber.w("Startup: rolled back to a verified pre-restore DB; restore marked failed")
                 return
             }
-            restoreJournal.failJournal(
-                entry,
-                "Startup asset recovery: swapped DB failed verification and safety recovery failed"
-            )
-            restoreMaintenanceMode.enterCriticalRecoveryRequired("startup crash recovery failed")
+            markStartupCritical("STARTUP_ASSET_ROLLBACK_FAILED")
+            restoreJournal.failJournal(rollingBack, "STARTUP_ASSET_ROLLBACK_FAILED")
             Timber.e("Startup: CRITICAL — ASSETS_RESTORING recovery failed; writes stay blocked across restarts")
             return
         }
@@ -414,6 +483,9 @@ class AppStartupCoordinator @Inject constructor(
             // launch simply retries the idempotent resume instead of marking
             // unfinished tasks FAILED.
             throw e
+        } catch (_: RestoreJournal.JournalDurabilityException) {
+            markStartupCritical("STARTUP_ASSET_JOURNAL_DURABILITY_FAILED")
+            return
         } catch (e: Exception) {
             Timber.e("Startup: asset resume failed (%s) — marking remaining tasks FAILED", e.javaClass.simpleName)
             // Base the finalization on the latest journaled ledger so tasks already
@@ -730,6 +802,12 @@ class AppStartupCoordinator @Inject constructor(
     companion object {
         /** 15-minute threshold for startup stale-run recovery (U-WORKER-02). */
         private const val STARTUP_STALE_THRESHOLD_MS = 15 * 60 * 1000L
+    }
+
+    private enum class StartupRecoveryState {
+        READY,
+        RESUME_REQUIRED,
+        BLOCKED
     }
 
     /**
