@@ -33,6 +33,7 @@ import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.domain.diagnostics.AppPipeline
 import com.yourname.expensetracker.domain.sideeffect.PostCommitAction
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionBatch
+import com.yourname.expensetracker.domain.logic.SplitCalculator
 import com.yourname.expensetracker.domain.logic.CustomSplitJsonCodec
 import com.yourname.expensetracker.domain.sideeffect.SideEffectCategory
 import com.yourname.expensetracker.domain.sideeffect.SideEffectOutcome
@@ -987,7 +988,18 @@ class GroupTransactionCoordinatorTest {
         assertThat(storedGroupExpense.splitType).isEqualTo(SplitType.UNEQUAL)
         assertThat(storedSystemExpense).isNotNull()
         assertThat(storedSystemExpense!!.myShareAmount).isEqualTo(10.0)
-        assertThat(memberDao.getAllForGroup(groupId).first { it.id == carol.id }.leftAt).isNotNull()
+        val historicalMembers = memberDao.getAllForGroup(groupId)
+        assertThat(historicalMembers.first { it.id == carol.id }.leftAt).isNotNull()
+        assertThat(SplitCalculator.calculateMemberShare(storedGroupExpense, historicalMembers, alice.id))
+            .isEqualTo(storedSystemExpense.myShareAmount)
+
+        // A later join must not retroactively equalize an already valid unequal split.
+        memberDao.insert(GroupMember(groupId = groupId, name = "Dave", joinedAt = date + 1_000L))
+        val afterJoin = memberDao.getAllForGroup(groupId)
+        assertThat(afterJoin).hasSize(4)
+        assertThat(SplitCalculator.calculateSplitAmounts(storedGroupExpense, afterJoin))
+            .containsExactly(alice.id, 10.0, bob.id, 80.0)
+        assertThat(expenseDao.getById(success.expenseId)!!.myShareAmount).isEqualTo(10.0)
     }
 
     @Test
@@ -1009,6 +1021,12 @@ class GroupTransactionCoordinatorTest {
             percentJson, date, TransactionType.PURCHASE
         )
         assertThat(percentResult).isInstanceOf(GroupExpenseCreationResult.Success::class.java)
+        val percentSuccess = percentResult as GroupExpenseCreationResult.Success
+        val storedPercent = groupExpenseDao.getById(percentSuccess.groupExpenseId)!!
+        assertThat(storedPercent.expenseId).isEqualTo(percentSuccess.expenseId)
+        assertThat(storedPercent.customSplitsJson).isEqualTo(percentJson)
+        assertThat(storedPercent.splitType).isEqualTo(SplitType.CUSTOM_PERCENT)
+        assertThat(expenseDao.getById(percentSuccess.expenseId)!!.myShareAmount).isEqualTo(25.0)
 
         val existingId = expenseDao.insert(
             Expense(amount = 90.0, merchant = "Existing", transactionType = TransactionType.PURCHASE, date = date)
@@ -1018,6 +1036,12 @@ class GroupTransactionCoordinatorTest {
             groupId, existingId, "Existing", 90.0, alice.id, SplitType.CUSTOM_AMOUNT, amountJson, date
         )
         assertThat(linkedResult).isInstanceOf(GroupExpenseCreationResult.Success::class.java)
+        val linkedSuccess = linkedResult as GroupExpenseCreationResult.Success
+        val storedAmount = groupExpenseDao.getById(linkedSuccess.groupExpenseId)!!
+        assertThat(storedAmount.expenseId).isEqualTo(existingId)
+        assertThat(storedAmount.customSplitsJson).isEqualTo(amountJson)
+        assertThat(storedAmount.splitType).isEqualTo(SplitType.CUSTOM_AMOUNT)
+        assertThat(expenseDao.getById(existingId)!!.myShareAmount).isEqualTo(10.0)
 
         val untouchedId = expenseDao.insert(
             Expense(amount = 90.0, merchant = "Untouched", transactionType = TransactionType.PURCHASE, date = date)

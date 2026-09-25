@@ -37,6 +37,8 @@ class SharedExpenseGroupsScreenStateTest {
         )
         val empty = allDeparted.copy(members = emptyList())
 
+        assertEquals(listOf(departed), allDeparted.members)
+        assertTrue(empty.members.isEmpty())
         assertTrue(allDeparted.activeMembers.isEmpty())
         assertTrue(empty.activeMembers.isEmpty())
     }

@@ -89,6 +89,7 @@ class SharedExpenseGroupsViewModelTest : ViewModelTestUtils() {
 
     @Test
     fun `add expense triggers state update`() = runTest(testDispatcher) {
+        advanceUntilIdle()
         val initialAggregate = createAggregate(groupId = 1L, name = "Trip", memberId = 11L)
         val updatedExpense = createGroupExpense(
             id = 301L,
@@ -105,7 +106,7 @@ class SharedExpenseGroupsViewModelTest : ViewModelTestUtils() {
 
         coEvery {
             groupsRepository.getActiveGroupsWithDetails()
-        } returnsMany listOf(listOf(initialAggregate), listOf(updatedAggregate))
+        } returns listOf(initialAggregate)
 
         coEvery { groupsRepository.getGroupById(1L) } returns initialAggregate.group
         coEvery { groupsRepository.getMemberById(11L) } returns initialAggregate.members.first()
@@ -124,7 +125,10 @@ class SharedExpenseGroupsViewModelTest : ViewModelTestUtils() {
                 transactionType = any(),
                 notes = any()
             )
-        } returns GroupExpenseCreationResult.Success(groupExpenseId = 301L, expenseId = 900L)
+        } coAnswers {
+            coEvery { groupsRepository.getActiveGroupsWithDetails() } returns listOf(updatedAggregate)
+            GroupExpenseCreationResult.Success(groupExpenseId = 301L, expenseId = 900L)
+        }
 
         viewModel = createViewModel()
         advanceUntilIdle()
@@ -143,6 +147,12 @@ class SharedExpenseGroupsViewModelTest : ViewModelTestUtils() {
             )
 
             advanceUntilIdle()
+
+            // Success closes the dialog before the queued refresh starts.
+            val dialogClosed = awaitItem()
+            assertFalse(dialogClosed.addingExpense)
+            assertFalse(dialogClosed.isLoading)
+            assertEquals(0, dialogClosed.groups.first().expenses.size)
 
             val loading = awaitItem()
             assertTrue(loading.isLoading)
@@ -485,13 +495,20 @@ class SharedExpenseGroupsViewModelTest : ViewModelTestUtils() {
         viewModel = createViewModel()
         advanceUntilIdle()
 
-        listOf(
-            mapOf(alice.id to 10.0, bob.id to 80.0, carol.id to 0.0),
-            mapOf(alice.id to 90.0),
-            mapOf(alice.id to 10.0, 99L to 80.0)
-        ).forEach { splits ->
-            viewModel.addExpense(1L, "Dinner", 90.0, alice.id, SplitType.UNEQUAL, splits)
-            advanceUntilIdle()
+        viewModel.toggleAddExpense(true)
+        listOf(SplitType.UNEQUAL, SplitType.CUSTOM_AMOUNT, SplitType.CUSTOM_PERCENT).forEach { type ->
+            val total = if (type == SplitType.CUSTOM_PERCENT) 100.0 else 90.0
+            listOf(
+                mapOf(alice.id to 10.0, bob.id to total - 10.0, carol.id to 0.0),
+                mapOf(alice.id to total),
+                mapOf(alice.id to 10.0, 99L to total - 10.0)
+            ).forEach { splits ->
+                viewModel.clearError()
+                viewModel.addExpense(1L, "Dinner", 90.0, alice.id, type, splits)
+                advanceUntilIdle()
+                assertEquals("Invalid custom split for active members", viewModel.uiState.value.error)
+                assertTrue(viewModel.uiState.value.addingExpense)
+            }
         }
 
         coVerify(exactly = 0) { addGroupExpenseUseCase.invokeAtomic(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
@@ -526,11 +543,14 @@ class SharedExpenseGroupsViewModelTest : ViewModelTestUtils() {
         val carol = GroupMember(id = 13L, groupId = 1L, name = "Carol")
         val cached = createAggregate(1L, "Trip", members = listOf(alice, carol))
         val refreshed = createAggregate(1L, "Trip", members = listOf(alice, carol.copy(leftAt = 1_700_000_000_000L)))
-        coEvery { groupsRepository.getActiveGroupsWithDetails() } returnsMany listOf(listOf(cached), listOf(refreshed))
+        coEvery { groupsRepository.getActiveGroupsWithDetails() } returns listOf(cached)
         coEvery { groupsRepository.getGroupById(1L) } returns cached.group
         viewModel = createViewModel()
         advanceUntilIdle()
         viewModel.selectGroup(viewModel.uiState.value.groups.first())
+        assertEquals(listOf(alice, carol), viewModel.uiState.value.selectedGroup!!.activeMembers)
+        coEvery { groupsRepository.getActiveGroupsWithDetails() } returns listOf(refreshed)
+        viewModel.toggleAddExpense(true)
         viewModel.addExpense(1L, "Dinner", 10.0, carol.id, SplitType.EQUAL)
         advanceUntilIdle()
         coVerify(exactly = 0) { addGroupExpenseUseCase.invokeAtomic(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
@@ -551,17 +571,23 @@ class SharedExpenseGroupsViewModelTest : ViewModelTestUtils() {
         viewModel = createViewModel()
         advanceUntilIdle()
 
-        listOf<Map<Long, Double>?>(
-            null,
-            emptyMap(),
-            mapOf(alice.id to -1.0, bob.id to 91.0),
-            mapOf(alice.id to Double.NaN, bob.id to 90.0),
-            mapOf(alice.id to Double.POSITIVE_INFINITY, bob.id to 90.0),
-            mapOf(alice.id to 10.001, bob.id to 79.999),
-            mapOf(alice.id to 10.0, bob.id to 70.0)
-        ).forEach { splits ->
-            viewModel.addExpense(1L, "Dinner", 90.0, alice.id, SplitType.UNEQUAL, splits)
-            advanceUntilIdle()
+        viewModel.toggleAddExpense(true)
+        listOf(SplitType.UNEQUAL, SplitType.CUSTOM_AMOUNT, SplitType.CUSTOM_PERCENT).forEach { type ->
+            listOf<Map<Long, Double>?>(
+                null,
+                emptyMap(),
+                mapOf(alice.id to -1.0, bob.id to 91.0),
+                mapOf(alice.id to Double.NaN, bob.id to 90.0),
+                mapOf(alice.id to Double.POSITIVE_INFINITY, bob.id to 90.0),
+                mapOf(alice.id to 10.001, bob.id to 79.999),
+                mapOf(alice.id to 10.0, bob.id to 70.0)
+            ).forEach { splits ->
+                viewModel.clearError()
+                viewModel.addExpense(1L, "Dinner", 90.0, alice.id, type, splits)
+                advanceUntilIdle()
+                assertTrue(viewModel.uiState.value.error != null)
+                assertTrue(viewModel.uiState.value.addingExpense)
+            }
         }
         viewModel.addExpense(1L, "Dinner", 90.0, alice.id, SplitType.CUSTOM_PERCENT, mapOf(alice.id to 50.0, bob.id to 40.0))
         advanceUntilIdle()
@@ -617,6 +643,34 @@ class SharedExpenseGroupsViewModelTest : ViewModelTestUtils() {
                 notes = any()
             )
         }
+    }
+
+    @Test
+    fun `member joining while dialog is open invalidates stale custom maps`() = runTest(testDispatcher) {
+        advanceUntilIdle()
+        val alice = GroupMember(id = 11L, groupId = 1L, name = "Alice", isCurrentUser = true)
+        val bob = GroupMember(id = 12L, groupId = 1L, name = "Bob")
+        val joined = GroupMember(id = 13L, groupId = 1L, name = "Carol")
+        val cached = createAggregate(1L, "Trip", members = listOf(alice, bob))
+        coEvery { groupsRepository.getActiveGroupsWithDetails() } returns listOf(cached)
+        coEvery { groupsRepository.getGroupById(1L) } returns cached.group
+        viewModel = createViewModel()
+        advanceUntilIdle()
+        viewModel.selectGroup(viewModel.uiState.value.groups.single())
+        viewModel.toggleAddExpense(true)
+        assertEquals(listOf(alice, bob), viewModel.uiState.value.selectedGroup!!.activeMembers)
+
+        coEvery { groupsRepository.getActiveGroupsWithDetails() } returns
+            listOf(cached.copy(members = listOf(alice, bob, joined)))
+        listOf(SplitType.UNEQUAL, SplitType.CUSTOM_AMOUNT, SplitType.CUSTOM_PERCENT).forEach { type ->
+            val total = if (type == SplitType.CUSTOM_PERCENT) 100.0 else 90.0
+            viewModel.clearError()
+            viewModel.addExpense(1L, "Dinner", 90.0, alice.id, type, mapOf(alice.id to 10.0, bob.id to total - 10.0))
+            advanceUntilIdle()
+            assertEquals("Invalid custom split for active members", viewModel.uiState.value.error)
+            assertTrue(viewModel.uiState.value.addingExpense)
+        }
+        coVerify(exactly = 0) { addGroupExpenseUseCase.invokeAtomic(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
     }
 
     private fun createViewModel(): SharedExpenseGroupsViewModel {
