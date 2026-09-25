@@ -2,6 +2,7 @@ package com.yourname.expensetracker.scenarios
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import androidx.work.Configuration
 import androidx.work.testing.WorkManagerTestInitHelper
 import com.yourname.expensetracker.data.backup.BackupVerifier
 import com.yourname.expensetracker.data.backup.BackupVerifier.VerificationTier
@@ -11,6 +12,7 @@ import com.yourname.expensetracker.data.backup.CostbackupBundle.UnsupportedBacku
 import com.yourname.expensetracker.data.backup.RestoreJournal
 import com.yourname.expensetracker.data.backup.RestoreJournal.RecoveryResult
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.domain.workers.PendingWorkerTestFactory
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -54,7 +56,12 @@ class BackupRestoreContractTest {
         context = ApplicationProvider.getApplicationContext()
         // Initialise WorkManager so that RestoreMaintenanceMode.enter() can
         // call pauseAllWorkers() without throwing.
-        WorkManagerTestInitHelper.initializeTestWorkManager(context)
+        WorkManagerTestInitHelper.initializeTestWorkManager(
+            context,
+            Configuration.Builder()
+                .setWorkerFactory(PendingWorkerTestFactory())
+                .build()
+        )
         context.getSharedPreferences("restore_maintenance_mode", Context.MODE_PRIVATE).edit().clear().commit()
     }
 
@@ -315,6 +322,9 @@ class BackupRestoreContractTest {
 
         // THEN: the journal file is deleted and no journal exists
         assertFalse("Journal file should be deleted after commit", journal.hasJournal())
+        val success = org.json.JSONObject(java.io.File(context.filesDir, RestoreJournal.SUCCESS_JOURNAL_FILENAME).readText())
+        assertEquals(readEntry.operationId, success.getString("operationId"))
+        assertEquals("COMPLETE", success.getString("state"))
     }
 
     @Test
@@ -334,6 +344,9 @@ class BackupRestoreContractTest {
 
         // THEN: the journal file is deleted and no journal exists
         assertFalse("Journal file should be deleted after fail", journal.hasJournal())
+        val failure = org.json.JSONObject(java.io.File(context.filesDir, RestoreJournal.FAILURE_JOURNAL_FILENAME).readText())
+        assertEquals(readEntry.operationId, failure.getString("operationId"))
+        assertEquals("FAILED", failure.getString("state"))
         assertEquals(
             "Failed journal should report FAILED state",
             RestoreJournal.JournalState.FAILED,
