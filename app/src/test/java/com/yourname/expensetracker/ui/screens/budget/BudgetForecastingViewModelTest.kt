@@ -7,6 +7,7 @@ import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.ForecastRiskLevel
 import com.yourname.expensetracker.domain.budget.BudgetForecastingEngine
 import com.yourname.expensetracker.domain.budget.BudgetForecastResult
+import com.yourname.expensetracker.domain.budget.ForecastUnavailableReason
 import com.yourname.expensetracker.domain.budget.BudgetRecommendation
 import com.yourname.expensetracker.domain.budget.BudgetRecommendationEngine
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
@@ -21,13 +22,20 @@ import io.mockk.verify
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.After
 import org.junit.Test
+import timber.log.Timber
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class BudgetForecastingViewModelTest : ViewModelTestUtils() {
@@ -36,10 +44,24 @@ class BudgetForecastingViewModelTest : ViewModelTestUtils() {
     private val recommendationEngine = mockk<BudgetRecommendationEngine>(relaxed = true)
 
     private lateinit var viewModel: BudgetForecastingViewModel
+    private val logs = mutableListOf<Pair<Throwable?, String>>()
+    private val logTree = object : Timber.Tree() {
+        override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+            logs += t to message
+        }
+    }
+
+    @After
+    override fun tearDown() {
+        Timber.uproot(logTree)
+        super.tearDown()
+    }
 
     @Before
     override fun setup() {
         super.setup()
+        logs.clear()
+        Timber.plant(logTree)
         coEvery { forecastingEngine.generateForecastResult(any(), any()) } returns BudgetForecastResult.Available(createForecast())
         every { recommendationEngine.generateRecommendations(any(), any(), any()) } returns emptyList()
 
@@ -178,7 +200,7 @@ class BudgetForecastingViewModelTest : ViewModelTestUtils() {
     @Test
     fun `error in engine sets error state`() = runTest(testDispatcher) {
         val budget = createBudget(id = 30L, amount = 120.0)
-        coEvery { forecastingEngine.generateForecastResult(budget, 30) } throws IllegalStateException("engine failure")
+        coEvery { forecastingEngine.generateForecastResult(budget, 30) } throws IllegalStateException("SQL /private/receipt merchant 1234.56")
 
         viewModel.uiState.test {
             awaitItem() // initial
@@ -191,7 +213,8 @@ class BudgetForecastingViewModelTest : ViewModelTestUtils() {
 
             val error = awaitItem()
             assertFalse(error.isLoading)
-            assertTrue(error.error?.contains("Failed to generate forecast: engine failure") == true)
+            assertEquals("Forecast unavailable", error.error)
+            assertEquals(listOf(null to "BudgetForecastingViewModel: UNKNOWN_ERROR class=IllegalStateException"), logs)
 
             cancelAndIgnoreRemainingEvents()
         }
@@ -207,7 +230,7 @@ class BudgetForecastingViewModelTest : ViewModelTestUtils() {
         advanceUntilIdle()
 
         assertEquals(budget, viewModel.uiState.value.budget)
-        assertTrue(viewModel.uiState.value.error?.contains("engine failure") == true)
+        assertEquals("Forecast unavailable", viewModel.uiState.value.error)
 
         viewModel.refreshForecast()
         advanceUntilIdle()
@@ -250,6 +273,85 @@ class BudgetForecastingViewModelTest : ViewModelTestUtils() {
 
             cancelAndIgnoreRemainingEvents()
         }
+    }
+
+    @Test
+    fun `unavailable forecast exposes only the controlled reason text`() = runTest(testDispatcher) {
+        val budget = createBudget(id = 41L, amount = 120.0)
+        coEvery { forecastingEngine.generateForecastResult(budget, 30) } returns
+            BudgetForecastResult.Unavailable(
+                budgetId = budget.id,
+                reasonCode = ForecastUnavailableReason.HOME_CURRENCY_UNAVAILABLE,
+                reason = "SQL path=/data/user/0/app/db sensitive amount=42.00",
+                createdAt = 1L
+            )
+
+        viewModel.generateForecast(budget)
+        advanceUntilIdle()
+
+        assertEquals("Home currency unavailable", viewModel.uiState.value.error)
+    }
+
+    @Test
+    fun `limit and spend unavailable reasons ignore upstream details`() = runTest(testDispatcher) {
+        val budget = createBudget(id = 42L, amount = 120.0)
+        for ((code, expected) in listOf(
+            ForecastUnavailableReason.LIMIT_CONVERSION_FAILED to "Budget limit conversion unavailable",
+            ForecastUnavailableReason.MISSING_RATE to "Current-period spend unavailable"
+        )) {
+            coEvery { forecastingEngine.generateForecastResult(budget, 30) } returns
+                BudgetForecastResult.Unavailable(budget.id, code, "SQL private amount 42.00", 1L)
+
+            viewModel.generateForecast(budget)
+            advanceUntilIdle()
+
+            assertEquals(expected, viewModel.uiState.value.error)
+        }
+    }
+
+    @Test
+    fun `cancelled suspended forecast does not expose a failure`() = runTest(testDispatcher) {
+        val oldBudget = createBudget(id = 91L)
+        val newBudget = createBudget(id = 92L)
+        val waiting = CompletableDeferred<BudgetForecastResult>()
+        coEvery { forecastingEngine.generateForecastResult(oldBudget, 30) } coAnswers { waiting.await() }
+        coEvery { forecastingEngine.generateForecastResult(newBudget, 30) } returns
+            BudgetForecastResult.Available(createForecast(budgetId = newBudget.id))
+
+        viewModel.generateForecast(oldBudget)
+        runCurrent()
+        viewModel.generateForecast(newBudget)
+        advanceUntilIdle()
+
+        assertEquals(newBudget, viewModel.uiState.value.budget)
+        assertEquals(newBudget.id, viewModel.uiState.value.forecast?.budgetId)
+        assertNull(viewModel.uiState.value.error)
+        assertTrue(waiting.isCancelled.not())
+        assertTrue(logs.isEmpty())
+    }
+
+    @Test
+    fun `late failure from cancelled old forecast cannot overwrite newer success`() = runTest(testDispatcher) {
+        val oldBudget = createBudget(id = 93L)
+        val newBudget = createBudget(id = 94L)
+        val waiting = CompletableDeferred<Unit>()
+        coEvery { forecastingEngine.generateForecastResult(oldBudget, 30) } coAnswers {
+            withContext(NonCancellable) { waiting.await() }
+            throw IllegalStateException("SQL /private/receipt 1234.56")
+        }
+        coEvery { forecastingEngine.generateForecastResult(newBudget, 30) } returns
+            BudgetForecastResult.Available(createForecast(budgetId = newBudget.id))
+
+        viewModel.generateForecast(oldBudget)
+        runCurrent()
+        viewModel.generateForecast(newBudget)
+        runCurrent()
+        waiting.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(newBudget.id, viewModel.uiState.value.forecast?.budgetId)
+        assertNull(viewModel.uiState.value.error)
+        assertTrue(logs.isEmpty())
     }
 
     private fun createBudget(

@@ -288,7 +288,7 @@ class CurrencyConverter @Inject constructor(
             )
         }
 
-        Timber.w("No exchange rate available for $fromCurrency to $toCurrency as of $atMillis")
+        Timber.w("CurrencyConverter: MISSING_RATE stage=historical_conversion")
         null
     }
 
@@ -497,9 +497,17 @@ class CurrencyConverter @Inject constructor(
                         reason = outcome.message,
                         failureType = failureType
                     )
-                    Timber.w("Could not convert $amount $currency to $targetCurrency ($failureType): ${outcome.message}")
                 }
             }
+        }
+
+        if (failures.isNotEmpty()) {
+            val code = if (failures.any { it.failureType == FailedConversion.STALE_RATE }) {
+                FailedConversion.STALE_RATE
+            } else {
+                FailedConversion.MISSING_RATE
+            }
+            Timber.w("CurrencyConverter: %s count=%d", code, failures.size)
         }
 
         MultiConversionAggregate(

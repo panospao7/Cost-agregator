@@ -8,6 +8,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
+import timber.log.Timber
 
 /**
  * PHASE 6 TEST: Currency Conversion
@@ -140,14 +141,18 @@ class CurrencyConversionTest {
 
     @Test
     fun `convertMultiple sums converted amounts`() = runTest {
-        coEvery { exchangeRateStore.getRate("USD", "EUR") } returns DomainExchangeRate(
+        val now = System.currentTimeMillis()
+        val clock = mockk<com.yourname.expensetracker.domain.util.TimeProvider>()
+        every { clock.now() } returns now
+        val aggregateConverter = CurrencyConverter(exchangeRateStore, clock)
+        coEvery { exchangeRateStore.getLatestRateForPair("USD", "EUR") } returns DomainExchangeRate(
             fromCurrency = "USD", toCurrency = "EUR", rate = 0.85,
-            lastUpdated = System.currentTimeMillis(),
+            lastUpdated = now,
             source = "test"
         )
-        coEvery { exchangeRateStore.getRate("GBP", "EUR") } returns DomainExchangeRate(
+        coEvery { exchangeRateStore.getLatestRateForPair("GBP", "EUR") } returns DomainExchangeRate(
             fromCurrency = "GBP", toCurrency = "EUR", rate = 1.14,
-            lastUpdated = System.currentTimeMillis(),
+            lastUpdated = now,
             source = "test"
         )
         
@@ -156,7 +161,7 @@ class CurrencyConversionTest {
             50.0 to "GBP"
         )
         
-        val total = converter.convertMultiple(amounts, "EUR")
+        val total = aggregateConverter.convertMultiple(amounts, "EUR")
         
         // 100 USD = 85 EUR, 50 GBP = 57 EUR, Total = 142 EUR
         assertThat(total.total).isEqualTo(142.0)
@@ -173,6 +178,76 @@ class CurrencyConversionTest {
         
         assertThat(total.total).isEqualTo(0.0)
         assertThat(total.failedConversions).hasSize(1)
+    }
+
+    @Test
+    fun `convertMultiple logs only aggregate count and code for mixed conversions`() = runTest {
+        coEvery { exchangeRateStore.getRate(any(), any()) } returns null
+        val messages = mutableListOf<String>()
+        val tree = object : Timber.Tree() {
+            override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+                assertThat(t).isNull()
+                messages += message
+            }
+        }
+        Timber.plant(tree)
+        try {
+            val aggregate = converter.convertMultiple(listOf(100.0 to "EUR", 1234.56 to "XYZ"), "EUR")
+
+            assertThat(aggregate.total).isEqualTo(100.0)
+            assertThat(aggregate.failedConversions).hasSize(1)
+            assertThat(aggregate.failedConversions.single().originalAmount).isEqualTo(1234.56)
+            assertThat(messages).containsExactly("CurrencyConverter: MISSING_RATE count=1")
+        } finally {
+            Timber.uproot(tree)
+        }
+    }
+
+    @Test
+    fun `convertMultiple distinguishes supported missing rate and stale rate without changing failure details`() = runTest {
+        val now = 1_730_000_000_000L
+        val clock = mockk<com.yourname.expensetracker.domain.util.TimeProvider>()
+        every { clock.now() } returns now
+        val aggregateConverter = CurrencyConverter(exchangeRateStore, clock)
+        coEvery { exchangeRateStore.getLatestRateForPair("USD", "EUR") } returns null
+        coEvery { exchangeRateStore.getLatestRateForPair("GBP", "EUR") } returns DomainExchangeRate(
+            fromCurrency = "GBP", toCurrency = "EUR", rate = 1.14,
+            lastUpdated = now - 8L * 24L * 60L * 60L * 1000L,
+            source = "test"
+        )
+        val messages = mutableListOf<String>()
+        val tree = object : Timber.Tree() {
+            override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+                assertThat(t).isNull()
+                messages += message
+            }
+        }
+        Timber.plant(tree)
+        try {
+            val missing = aggregateConverter.convertMultiple(listOf(1234.56 to "USD"), "EUR")
+            assertThat(missing.total).isEqualTo(0.0)
+            assertThat(missing.failedConversions.single().originalCurrency).isEqualTo("USD")
+            assertThat(missing.failedConversions.single().failureType).isEqualTo(FailedConversion.MISSING_RATE)
+            assertThat(missing.failedConversions.single().reason).contains("USD to EUR")
+
+            val stale = aggregateConverter.convertMultiple(listOf(50.0 to "GBP"), "EUR")
+            assertThat(stale.failedConversions.single().originalAmount).isEqualTo(50.0)
+            assertThat(stale.failedConversions.single().failureType).isEqualTo(FailedConversion.STALE_RATE)
+            assertThat(stale.failedConversions.single().reason).contains("stale")
+
+            val mixed = aggregateConverter.convertMultiple(listOf(100.0 to "EUR", 1234.56 to "USD", 50.0 to "GBP"), "EUR")
+            assertThat(mixed.total).isEqualTo(100.0)
+            assertThat(mixed.failedConversions.map { it.failureType }).containsExactly(
+                FailedConversion.MISSING_RATE, FailedConversion.STALE_RATE
+            ).inOrder()
+            assertThat(messages).containsExactly(
+                "CurrencyConverter: MISSING_RATE count=1",
+                "CurrencyConverter: STALE_RATE count=1",
+                "CurrencyConverter: STALE_RATE count=2"
+            ).inOrder()
+        } finally {
+            Timber.uproot(tree)
+        }
     }
 
     @Test

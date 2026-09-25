@@ -27,8 +27,110 @@ import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
+import java.net.SocketTimeoutException
+import javax.net.ssl.SSLException
+import timber.log.Timber
+import org.junit.Before
+import org.junit.After
 
 class CloudQueryInterpretationServiceTest {
+
+    private val failureLogs = mutableListOf<Pair<Throwable?, String>>()
+    private val logTree = object : Timber.Tree() {
+        override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+            if (priority >= 5) failureLogs += t to message
+        }
+    }
+
+    @Before fun captureLogs() { Timber.plant(logTree) }
+    @After fun releaseLogs() {
+        Timber.uproot(logTree)
+        assertTrue(failureLogs.all { it.first == null && !it.second.contains("/private") && !it.second.contains("financial_data") })
+    }
+
+    private fun allowedGate(): PrivacyGate = mockk<PrivacyGate>().also { gate ->
+        coEvery { gate.check(PrivacyCapability.CLOUD_AI_GENERAL) } returns PrivacyDecision.Allowed
+    }
+
+    private fun service(client: OkHttpClient): CloudQueryInterpretationService {
+        val key = mockk<SecureKeyStorage>()
+        every { key.getKey(SecureKeyStorage.KEY_GEMINI) } returns "test-key"
+        return CloudQueryInterpretationService(key, client, allowedGate())
+    }
+
+    private fun input() = FinancialQueryInterpretationInput("top merchants", 1_000L, "en-US")
+
+    private fun response(bodyText: String?, status: Int = 200): Response {
+        if (bodyText == null) return mockk<Response>(relaxed = true).also { response ->
+            every { response.isSuccessful } returns true
+            every { response.body } returns null
+            every { response.close() } returns Unit
+        }
+        return Response.Builder().request(Request.Builder().url("https://example.com").build())
+            .protocol(Protocol.HTTP_1_1).code(status).message("Test")
+            .body(bodyText.toResponseBody("application/json".toMediaType())).build()
+    }
+
+    private fun successBody(): String = JSONObject().put("candidates", JSONArray().put(
+        JSONObject().put("content", JSONObject().put("parts", JSONArray().put(JSONObject().put(
+            "text", "{\"kind\":\"clarification\",\"clarification\":{\"prompt\":\"Need period?\",\"options\":[\"This month\"]}}"
+        ))))
+    )).toString()
+
+    @Test
+    fun `timeout and retryable IO preserve success and exhaustion attempt limits`() = runBlocking {
+        for ((failure, code) in listOf(
+            SocketTimeoutException("/private/receipt") to "TIMEOUT",
+            IOException("connection reset /private/receipt") to "NETWORK_UNAVAILABLE"
+        )) {
+            for (recover in listOf(true, false)) {
+                val client = mockk<OkHttpClient>()
+                val call = mockk<Call>()
+                every { client.newCall(any()) } returns call
+                var attempts = 0
+                every { call.execute() } answers {
+                    if (++attempts == 1 || !recover) throw failure
+                    response(successBody())
+                }
+                val result = service(client).interpret(input())
+                if (recover) assertFalse(result is FinancialQueryInterpretationResult.Unsupported)
+                else assertEquals(code, (result as FinancialQueryInterpretationResult.Unsupported).reason)
+                verify(exactly = if (recover) 2 else 3) { call.execute() }
+            }
+        }
+    }
+
+    @Test
+    fun `HTTP retry success exhaustion and terminal failure preserve attempt limits`() = runBlocking {
+        for (status in listOf(408, 429, 500, 400)) {
+            for (recover in listOf(true, false)) {
+                val client = mockk<OkHttpClient>()
+                val call = mockk<Call>()
+                every { client.newCall(any()) } returns call
+                var attempts = 0
+                every { call.execute() } answers {
+                    if (++attempts == 1 || !recover) response("/private/receipt", status)
+                    else response(successBody())
+                }
+                val result = service(client).interpret(input())
+                if (recover && status != 400) assertFalse(result is FinancialQueryInterpretationResult.Unsupported)
+                else assertEquals("UNKNOWN_ERROR", (result as FinancialQueryInterpretationResult.Unsupported).reason)
+                verify(exactly = if (status == 400) 1 else if (recover) 2 else 3) { call.execute() }
+            }
+        }
+    }
+
+    @Test
+    fun `null and empty bodies return only parser reason`() = runBlocking {
+        for (body in listOf(null, "")) {
+            val client = mockk<OkHttpClient>()
+            val call = mockk<Call>()
+            every { client.newCall(any()) } returns call
+            every { call.execute() } answers { response(body) }
+            assertEquals("PARSER_FAILED", (service(client).interpret(input()) as FinancialQueryInterpretationResult.Unsupported).reason)
+            verify(exactly = 1) { call.execute() }
+        }
+    }
 
     // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
@@ -37,7 +139,7 @@ class CloudQueryInterpretationServiceTest {
         every { mockKeyStorage.getKey(SecureKeyStorage.KEY_GEMINI) } returns ""
         
         val mockClient = mockk<OkHttpClient>()
-        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, mockk<PrivacyGate>(relaxed = true))
+        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, allowedGate())
 
         val result = kotlinx.coroutines.runBlocking {
             service.interpret(
@@ -89,7 +191,7 @@ class CloudQueryInterpretationServiceTest {
         every { mockClient.newCall(any()) } returns mockCall
         every { mockCall.execute() } returns response
 
-        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, mockk<PrivacyGate>(relaxed = true))
+        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, allowedGate())
 
         val result = kotlinx.coroutines.runBlocking {
             service.interpret(
@@ -141,7 +243,7 @@ class CloudQueryInterpretationServiceTest {
         every { mockClient.newCall(any()) } returns mockCall
         every { mockCall.execute() } returns response
 
-        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, mockk<PrivacyGate>(relaxed = true))
+        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, allowedGate())
 
         val result = kotlinx.coroutines.runBlocking {
             service.interpret(
@@ -194,7 +296,7 @@ class CloudQueryInterpretationServiceTest {
         every { mockClient.newCall(capture(capturedRequests)) } returns mockCall
         every { mockCall.execute() } returns response
 
-        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, mockk<PrivacyGate>(relaxed = true))
+        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, allowedGate())
 
         kotlinx.coroutines.runBlocking {
             service.interpret(
@@ -241,7 +343,7 @@ class CloudQueryInterpretationServiceTest {
         every { mockClient.newCall(any()) } returns mockCall
         every { mockCall.execute() } throws CancellationException()
 
-        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, mockk<PrivacyGate>(relaxed = true))
+        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, allowedGate())
 
         assertThrows(CancellationException::class.java) {
             runBlocking {
@@ -254,6 +356,8 @@ class CloudQueryInterpretationServiceTest {
                 )
             }
         }
+        verify(exactly = 1) { mockCall.execute() }
+        assertTrue(failureLogs.isEmpty())
     }
 
     @Test
@@ -266,7 +370,7 @@ class CloudQueryInterpretationServiceTest {
         every { mockClient.newCall(any()) } returns mockCall
         every { mockCall.execute() } throws IOException("Network error")
 
-        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, mockk<PrivacyGate>(relaxed = true))
+        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, allowedGate())
 
         val result = runBlocking {
             service.interpret(
@@ -279,6 +383,109 @@ class CloudQueryInterpretationServiceTest {
         }
 
         assertTrue(result is FinancialQueryInterpretationResult.Unsupported)
+        assertEquals("NETWORK_UNAVAILABLE", (result as FinancialQueryInterpretationResult.Unsupported).reason)
+    }
+
+    @Test
+    fun `interpret SSL failure returns bounded unsupported reason`() {
+        val keyStorage = mockk<SecureKeyStorage>(relaxed = true)
+        every { keyStorage.getKey(SecureKeyStorage.KEY_GEMINI) } returns "test-key"
+        val client = mockk<OkHttpClient>()
+        val call = mockk<Call>()
+        every { client.newCall(any()) } returns call
+        every { call.execute() } throws SSLException("/private/receipts/sql secret")
+
+        val result = runBlocking {
+            CloudQueryInterpretationService(keyStorage, client, allowedGate())
+                .interpret(FinancialQueryInterpretationInput("top merchants", 1_000L, "en-US"))
+        }
+
+        assertEquals("UNKNOWN_ERROR", (result as FinancialQueryInterpretationResult.Unsupported).reason)
+        verify(exactly = 1) { call.execute() }
+    }
+
+    @Test
+    fun `retryable SSL timeout retries and can return a successful result`() {
+        val keyStorage = mockk<SecureKeyStorage>(relaxed = true)
+        every { keyStorage.getKey(SecureKeyStorage.KEY_GEMINI) } returns "test-key"
+        val gate = mockk<PrivacyGate>()
+        coEvery { gate.check(PrivacyCapability.CLOUD_AI_GENERAL) } returns PrivacyDecision.Allowed
+        val client = mockk<OkHttpClient>()
+        val call = mockk<Call>()
+        every { client.newCall(any()) } returns call
+        val ssl = SSLException("/private/receipts/sql secret")
+        ssl.initCause(SocketTimeoutException("transport timeout"))
+        val modelText = """{"kind":"clarification","clarification":{"prompt":"Need period?","options":["This month"]}}"""
+        val responseBody = JSONObject().put("candidates", JSONArray().put(
+            JSONObject().put("content", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", modelText))))
+        )).toString()
+        var attempts = 0
+        every { call.execute() } answers {
+            if (++attempts == 1) throw ssl
+            Response.Builder()
+                .request(Request.Builder().url("https://example.com").build())
+                .protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                .body(responseBody.toResponseBody("application/json".toMediaType())).build()
+        }
+        val logs = mutableListOf<Pair<Throwable?, String>>()
+        val tree = object : Timber.Tree() {
+            override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+                logs += t to message
+            }
+        }
+        Timber.plant(tree)
+        try {
+            val result = runBlocking {
+                CloudQueryInterpretationService(keyStorage, client, gate)
+                    .interpret(FinancialQueryInterpretationInput("top merchants", 1_000L, "en-US"))
+            }
+            assertFalse(result is FinancialQueryInterpretationResult.Unsupported)
+            assertEquals(2, attempts)
+            assertTrue(logs.any { it.second.contains("stage=ssl") })
+            assertTrue(logs.all { it.first == null && !it.second.contains("/private/receipts/sql secret") })
+        } finally {
+            Timber.uproot(tree)
+        }
+    }
+
+    @Test
+    fun `retryable SSL failure exhausts three attempts with a bounded reason`() {
+        val keyStorage = mockk<SecureKeyStorage>(relaxed = true)
+        every { keyStorage.getKey(SecureKeyStorage.KEY_GEMINI) } returns "test-key"
+        val gate = mockk<PrivacyGate>()
+        coEvery { gate.check(PrivacyCapability.CLOUD_AI_GENERAL) } returns PrivacyDecision.Allowed
+        val client = mockk<OkHttpClient>()
+        val call = mockk<Call>()
+        every { client.newCall(any()) } returns call
+        every { call.execute() } throws SSLException("connection reset /private/receipt")
+
+        val result = runBlocking {
+            CloudQueryInterpretationService(keyStorage, client, gate)
+                .interpret(FinancialQueryInterpretationInput("top merchants", 1_000L, "en-US"))
+        }
+
+        assertEquals("UNKNOWN_ERROR", (result as FinancialQueryInterpretationResult.Unsupported).reason)
+        verify(exactly = 3) { call.execute() }
+    }
+
+    @Test
+    fun `generic provider failure is not classified as parsing`() {
+        val keyStorage = mockk<SecureKeyStorage>(relaxed = true)
+        every { keyStorage.getKey(SecureKeyStorage.KEY_GEMINI) } returns "test-key"
+        val gate = mockk<PrivacyGate>()
+        coEvery { gate.check(PrivacyCapability.CLOUD_AI_GENERAL) } returns PrivacyDecision.Allowed
+        val client = mockk<OkHttpClient>()
+        val call = mockk<Call>()
+        every { client.newCall(any()) } returns call
+        every { call.execute() } throws IllegalStateException("SELECT * FROM financial_data /private/receipt")
+
+        val result = runBlocking {
+            CloudQueryInterpretationService(keyStorage, client, gate)
+                .interpret(FinancialQueryInterpretationInput("top merchants", 1_000L, "en-US"))
+        }
+
+        assertEquals("UNKNOWN_ERROR", (result as FinancialQueryInterpretationResult.Unsupported).reason)
+        verify(exactly = 1) { call.execute() }
     }
 
     @Test
@@ -300,7 +507,7 @@ class CloudQueryInterpretationServiceTest {
         every { mockClient.newCall(any()) } returns mockCall
         every { mockCall.execute() } returns response
 
-        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, mockk<PrivacyGate>(relaxed = true))
+        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, allowedGate())
 
         val result = runBlocking {
             service.interpret(
@@ -313,6 +520,7 @@ class CloudQueryInterpretationServiceTest {
         }
 
         assertTrue(result is FinancialQueryInterpretationResult.Unsupported)
+        assertEquals("PARSER_FAILED", (result as FinancialQueryInterpretationResult.Unsupported).reason)
     }
 
     @Test

@@ -20,10 +20,18 @@ import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Before
+import org.junit.After
 import org.junit.Test
+import timber.log.Timber
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
+import kotlin.test.assertFailsWith
 import java.util.Calendar
 
 class TotalsAggregationEngineTest {
@@ -32,9 +40,18 @@ class TotalsAggregationEngineTest {
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
     private val multiCurrencyRepo = mockk<MultiCurrencyRepository>()
     private val categoryRepository = mockk<CategoryRepository>(relaxed = true)
+    private val logs = mutableListOf<Pair<Throwable?, String>>()
+    private val logTree = object : Timber.Tree() {
+        override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+            if (tag == "TotalsAggregationEngine") logs += t to message
+        }
+    }
+
+    @After fun tearDown() { Timber.uproot(logTree) }
 
     @Before
     fun setup() {
+        Timber.plant(logTree)
         coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseTotalHistoricalResult(any(), any()) } returns
             com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Available(MoneyAggregate.empty(CurrencyCode("EUR")))
         coEvery { multiCurrencyRepo.getMonthlyAggregatesHistorical(any(), any()) } returns emptyList()
@@ -47,6 +64,105 @@ class TotalsAggregationEngineTest {
 
         engine = TotalsAggregationEngine(expenseRepository, timeProvider, multiCurrencyRepo, categoryRepository, Dispatchers.Unconfined)
         every { timeProvider.now() } returns System.currentTimeMillis()
+    }
+
+    private fun assertSafeLog(operation: String) {
+        assertTrue("missing $operation: $logs", logs.any { it.second == "UNKNOWN_ERROR operation=$operation class=IllegalStateException" })
+        assertTrue(logs.all { it.first == null && !it.second.contains("secret") && !it.second.contains("918") })
+    }
+
+    @Test
+    fun `average cancellation propagates without zero fallback or failure log`() = runTest {
+        coEvery { multiCurrencyRepo.getMonthlyAggregatesHistorical(any(), any()) } throws
+            CancellationException("secret SQL /data/918")
+
+        assertFailsWith<CancellationException> { engine.getAverageForPeriodType(PeriodType.MONTH, false) }
+        assertTrue(logs.isEmpty())
+    }
+
+    @Test
+    fun `reactive totals cancellation emits no fallback and cancels suspended collection`() = runTest {
+        coEvery { multiCurrencyRepo.getMonthlyAggregatesHistorical(any(), any()) } throws
+            CancellationException("secret SQL /data/918")
+
+        // An inner flatMapLatest cancellation must not become an empty-list emission.
+        assertTrue(engine.getMonthlyTotals(2026).toList().isEmpty())
+        assertTrue(logs.isEmpty())
+
+        val entered = CompletableDeferred<Unit>()
+        val exited = CompletableDeferred<Unit>()
+        coEvery { multiCurrencyRepo.getMonthlyAggregatesHistorical(any(), any()) } coAnswers {
+            entered.complete(Unit)
+            try { awaitCancellation() } finally { exited.complete(Unit) }
+        }
+        val collection = async { engine.getMonthlyTotals(2026).toList() }
+        entered.await()
+        val cancellation = CancellationException("secret SQL /data/918")
+        collection.cancel(cancellation)
+        val thrown = assertFailsWith<CancellationException> { collection.await() }
+        assertTrue(generateSequence<Throwable>(thrown) { it.cause }.any { it === cancellation })
+        exited.await()
+        assertTrue(logs.isEmpty())
+    }
+
+    @Test
+    fun `category cancellation emits no fallback and cancels suspended collection`() = runTest {
+        coEvery { categoryRepository.getAll() } throws CancellationException("secret SQL /data/918")
+
+        assertTrue(engine.getCategoryBreakdown(0, 100, "range").toList().isEmpty())
+        assertTrue(logs.isEmpty())
+
+        val entered = CompletableDeferred<Unit>()
+        val exited = CompletableDeferred<Unit>()
+        coEvery { categoryRepository.getAll() } coAnswers {
+            entered.complete(Unit)
+            try { awaitCancellation() } finally { exited.complete(Unit) }
+        }
+        val collection = async { engine.getCategoryBreakdown(0, 100, "range").toList() }
+        entered.await()
+        val cancellation = CancellationException("secret SQL /data/918")
+        collection.cancel(cancellation)
+        val thrown = assertFailsWith<CancellationException> { collection.await() }
+        assertTrue(generateSequence<Throwable>(thrown) { it.cause }.any { it === cancellation })
+        exited.await()
+        assertTrue(logs.isEmpty())
+    }
+
+    @Test
+    fun `average catch returns zero and emits bounded log`() = runTest {
+        coEvery { multiCurrencyRepo.getMonthlyAggregatesHistorical(any(), any()) } throws
+            IllegalStateException("secret SQL /data/918")
+        assertEquals(0.0, engine.getAverageForPeriodType(PeriodType.MONTH, false), 0.0)
+        assertSafeLog("average")
+    }
+
+    @Test
+    fun `reactive totals catch recovers on subsequent emission`() = runTest {
+        every { expenseRepository.getTotalSpent() } returns flowOf(null, null)
+        var calls = 0
+        coEvery { multiCurrencyRepo.getMonthlyAggregatesHistorical(any(), any()) } answers {
+            if (++calls == 1) throw IllegalStateException("secret SQL /data/918")
+            emptyList()
+        }
+        val emissions = engine.getMonthlyTotals(2026).toList()
+        assertEquals(2, emissions.size)
+        assertTrue(emissions[0].isEmpty())
+        assertEquals(12, emissions[1].size)
+        assertSafeLog("reactive_flow")
+    }
+
+    @Test
+    fun `reactive category catch recovers on subsequent emission`() = runTest {
+        every { expenseRepository.getTotalSpent() } returns flowOf(null, null)
+        var calls = 0
+        coEvery { categoryRepository.getAll() } answers {
+            if (++calls == 1) throw IllegalStateException("secret SQL /data/918")
+            emptyList()
+        }
+        val emissions = engine.getCategoryBreakdown(0, 100, "range").toList()
+        assertEquals(2, emissions.size)
+        assertTrue(emissions.all { it.isEmpty() })
+        assertSafeLog("reactive_category_breakdown")
     }
 
     @Test
@@ -339,10 +455,11 @@ class TotalsAggregationEngineTest {
 
         val result = engine.getWeeklyTotals(2026, 1).first()
 
-        assertEquals(5, result.size)
-        assertEquals("W2", result.first { it.periodKey == "2026-W2" }.periodLabel)
-        assertEquals("W3", result.first { it.periodKey == "2026-W3" }.periodLabel)
-        assertEquals("W4", result.first { it.periodKey == "2026-W4" }.periodLabel)
+        // The repository returns only these three weeks; unlike months, weeks are not zero-filled.
+        assertEquals(3, result.size)
+        assertEquals("W1", result.first { it.periodKey == "2026-W2" }.periodLabel)
+        assertEquals("W2", result.first { it.periodKey == "2026-W3" }.periodLabel)
+        assertEquals("W3", result.first { it.periodKey == "2026-W4" }.periodLabel)
     }
 
     // ========== A.10 Batch 7 — Purchase-only contract lock-in tests ==========

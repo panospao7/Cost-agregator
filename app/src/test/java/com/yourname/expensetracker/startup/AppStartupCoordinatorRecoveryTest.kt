@@ -6,6 +6,7 @@ import androidx.work.testing.WorkManagerTestInitHelper
 import com.yourname.expensetracker.data.backup.RestoreDatabaseOpener
 import com.yourname.expensetracker.data.backup.RestoreJournal
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.domain.bank.BankSyncStartupRecovery
 import io.mockk.mockk
 import kotlinx.coroutines.CoroutineScope
@@ -18,11 +19,19 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.After
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.File
+import timber.log.Timber
+import io.mockk.every
+import io.mockk.verify
+import kotlinx.coroutines.CancellationException
+import kotlin.test.assertFailsWith
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 
 /**
  * Fail-closed crash-recovery contract tests for [AppStartupCoordinator.checkRestoreJournal].
@@ -46,6 +55,12 @@ import java.io.File
 class AppStartupCoordinatorRecoveryTest {
 
     private lateinit var context: Context
+    private val logs = mutableListOf<Pair<Throwable?, String>>()
+    private val logTree = object : Timber.Tree() {
+        override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+            logs += t to message
+        }
+    }
 
     @Before
     fun setUp() {
@@ -60,6 +75,13 @@ class AppStartupCoordinatorRecoveryTest {
             "restore_journal_last_failure.json",
             RestoreJournal.SUCCESS_JOURNAL_FILENAME
         ).forEach { File(context.filesDir, it).delete() }
+        logs.clear()
+        Timber.plant(logTree)
+    }
+
+    @After
+    fun tearDown() {
+        Timber.uproot(logTree)
     }
 
     private fun newCoordinator(
@@ -68,7 +90,8 @@ class AppStartupCoordinatorRecoveryTest {
         timeProvider: com.yourname.expensetracker.domain.util.TimeProvider =
             com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L),
         resumeScope: CoroutineScope =
-            CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+            CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
+        opener: RestoreDatabaseOpener = mockk(relaxed = true)
     ): AppStartupCoordinator =
         AppStartupCoordinator(
             appContext = context,
@@ -76,7 +99,7 @@ class AppStartupCoordinatorRecoveryTest {
             syncProactiveBriefingWorkUseCase = mockk(relaxed = true),
             restoreJournal = journal,
             restoreMaintenanceMode = mode,
-            restoreDatabaseOpener = mockk<RestoreDatabaseOpener>(relaxed = true),
+            restoreDatabaseOpener = opener,
             restoreInternalWriteScope = com.yourname.expensetracker.data.backup.RestoreInternalWriteScope(mode),
             workerExecutionGuard = mockk(relaxed = true),
             restoreJournalImporter = mockk(relaxed = true),
@@ -85,6 +108,102 @@ class AppStartupCoordinatorRecoveryTest {
             timeProvider = timeProvider,
             applicationScope = resumeScope
         )
+
+    private fun writeRecoverableSwapJournal(journal: RestoreJournal) {
+        val safety = File(context.filesDir, "cl17_safety.db")
+        createValidSqliteFile(safety)
+        val entry = journal.beginJournal(
+            File(context.cacheDir, "src.costbackup").absolutePath,
+            context.getDatabasePath("staged_restore.db").absolutePath,
+            context.getDatabasePath("expense_tracker.db").absolutePath
+        )
+        journal.transitionTo(entry, RestoreJournal.JournalState.SWAPPING, safetyBackupPath = safety.absolutePath)
+    }
+
+    @Test
+    fun `recovered Room open failure logs only code and class and stays fail closed`() {
+        val clock = com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L)
+        val mode = RestoreMaintenanceMode(context, clock)
+        val journal = RestoreJournal(context, clock)
+        writeRecoverableSwapJournal(journal)
+        val opener = mockk<RestoreDatabaseOpener>()
+        every { opener.openFreshDatabase() } throws IllegalStateException("SQL /private/receipt merchant 1234.56")
+
+        newCoordinator(mode, journal, opener = opener).checkRestoreJournal()
+
+        assertTrue(logs.contains(null to "Startup: UNKNOWN_ERROR stage=room_open_recovered_db class=IllegalStateException"))
+        assertTrue(logs.all { it.first == null && !it.second.contains("/private/receipt") && !it.second.contains("1234.56") })
+        assertEquals(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED, mode.currentMode())
+        assertFalse(mode.isWritesAllowed())
+    }
+
+    @Test
+    fun `recovered Room open cancellation propagates without terminal failure journal`() {
+        val clock = com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L)
+        val mode = RestoreMaintenanceMode(context, clock)
+        mode.enter(RestoreMaintenanceMode.Mode.RESTORE_SWAPPING)
+        val journal = RestoreJournal(context, clock)
+        writeRecoverableSwapJournal(journal)
+        val opener = mockk<RestoreDatabaseOpener>()
+        val cancellation = CancellationException("SQL /private/receipt merchant 1234.56")
+        every { opener.openFreshDatabase() } throws cancellation
+
+        assertSame(cancellation, assertFailsWith<CancellationException> {
+            newCoordinator(mode, journal, opener = opener).checkRestoreJournal()
+        })
+
+        assertTrue(journal.hasJournal())
+        assertNull(journal.readFailureJournal())
+        assertTrue(logs.none { it.first != null || it.second.contains("class=CancellationException") || it.second.contains("/private/receipt") })
+        val restartedMode = RestoreMaintenanceMode(context, clock)
+        assertEquals(RestoreMaintenanceMode.Mode.RESTORE_SWAPPING, restartedMode.currentMode())
+        assertFalse(restartedMode.isWritesAllowed())
+
+        val freshDb = mockk<AppDatabase>(relaxed = true)
+        every { opener.openFreshDatabase() } returns freshDb
+        newCoordinator(restartedMode, journal, opener = opener).checkRestoreJournal()
+        assertFalse(journal.hasJournal())
+        assertEquals(RestoreMaintenanceMode.Mode.NORMAL, restartedMode.currentMode())
+        verify(exactly = 1) { freshDb.close() }
+    }
+
+    @Test
+    fun `recovered Room validation cancellation closes database and keeps recovery pending`() {
+        assertRoomStageCancellation(closeFails = false)
+    }
+
+    @Test
+    fun `recovered Room close cancellation keeps recovery pending without failure logs`() {
+        assertRoomStageCancellation(closeFails = true)
+    }
+
+    private fun assertRoomStageCancellation(closeFails: Boolean) {
+        val clock = com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L)
+        val mode = RestoreMaintenanceMode(context, clock)
+        mode.enter(RestoreMaintenanceMode.Mode.RESTORE_SWAPPING)
+        val journal = RestoreJournal(context, clock)
+        writeRecoverableSwapJournal(journal)
+        val opener = mockk<RestoreDatabaseOpener>()
+        val freshDb = mockk<AppDatabase>(relaxed = true)
+        every { opener.openFreshDatabase() } returns freshDb
+        val cancellation = CancellationException("SQL /private/receipt merchant 1234.56")
+        if (closeFails) {
+            every { freshDb.close() } throws cancellation
+        } else {
+            every { freshDb.openHelper.writableDatabase } throws cancellation
+        }
+
+        assertSame(cancellation, assertFailsWith<CancellationException> {
+            newCoordinator(mode, journal, opener = opener).checkRestoreJournal()
+        })
+
+        verify(exactly = 1) { freshDb.close() }
+        assertTrue(journal.hasJournal())
+        assertNull(journal.readFailureJournal())
+        assertEquals(RestoreMaintenanceMode.Mode.RESTORE_SWAPPING, mode.currentMode())
+        assertFalse(mode.isWritesAllowed())
+        assertTrue(logs.none { it.first != null || it.second.contains("class=CancellationException") || it.second.contains("/private/receipt") })
+    }
 
     /**
      * Writes a journal in a destructive (SWAPPING) state whose safety backup is unreachable,
@@ -639,6 +758,20 @@ class AppStartupCoordinatorRecoveryTest {
         assertFalse("Writes must be blocked after failed recovery", mode.isWritesAllowed())
         // failJournal() renames the active journal away — no active journal remains.
         assertFalse("Active journal must be renamed to the failure record", journal.hasJournal())
+    }
+
+    @Test
+    fun `startup recovery failure retains only bounded journal error and logs no throwable`() {
+        val mode = RestoreMaintenanceMode(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
+        val journal = RestoreJournal(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
+        writeUnrecoverableSwapJournal(journal)
+
+        newCoordinator(mode, journal).checkRestoreJournal()
+
+        assertEquals("UNKNOWN_ERROR", journal.readFailureJournal()?.error)
+        assertEquals(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED, mode.currentMode())
+        assertTrue(logs.isNotEmpty())
+        assertTrue(logs.all { it.first == null && !it.second.contains("missing_safety_backup.db") })
     }
 
     @Test

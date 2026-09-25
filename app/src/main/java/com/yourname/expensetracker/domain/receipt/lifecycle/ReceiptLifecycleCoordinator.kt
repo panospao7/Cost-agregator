@@ -1547,7 +1547,8 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
      * expenses can be created.
      *
      * @return [Result.success] with the created expense ID, or [Result.failure] with
-     *         a descriptive exception. Callers should NOT fall back to a two-step path.
+     *         [DuplicateTransactionException] for a duplicate, or another failure.
+     *         Callers should NOT fall back to a two-step path.
      */
     suspend fun createExpenseAndLinkReceipt(
         request: com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
@@ -1580,15 +1581,17 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
                             writeSourceLink = false
                         )
                         if (linkResult.isFailure) {
+                            val failure = linkResult.exceptionOrNull()!!
+                            CancellationSafe.rethrowIfCancellation(failure)
                             throw IllegalStateException(
-                                "Receipt link failed — rolling back expense: ${linkResult.exceptionOrNull()?.message}",
-                                linkResult.exceptionOrNull()
+                                "SOURCE_LINK_FAILED",
+                                failure
                             )
                         }
                         Pair(Result.success(result.expenseId), mutation.postCommitActions)
                     }
                     is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.DuplicateSkipped ->
-                        Pair(Result.failure(IllegalStateException("Duplicate transaction detected")), PostCommitActionBatch.empty("receipt_link_dup"))
+                        Pair(Result.failure(DuplicateTransactionException()), PostCommitActionBatch.empty("receipt_link_dup"))
                     is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.ValidationFailed ->
                         Pair(Result.failure(IllegalArgumentException("Validation failed: ${result.errors.joinToString()}")), PostCommitActionBatch.empty("receipt_link_vf"))
                     else ->
@@ -1620,6 +1623,9 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
 
         return expenseIdResult
     }
+
+    /** Typed duplicate outcome for atomic receipt saving; contains no source payload. */
+    class DuplicateTransactionException : IllegalStateException("DUPLICATE_TRANSACTION")
 
     /**
      * P3-REG-02: Thrown inside [processEmailReceipt]'s transaction to force

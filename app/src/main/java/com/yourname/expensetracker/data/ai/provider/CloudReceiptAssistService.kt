@@ -113,7 +113,7 @@ class CloudReceiptAssistService @Inject constructor(
         // PRIVACY GUARD: Check API key before any network call
         if (apiKey.isBlank()) {
             Timber.d("CloudReceiptAssistService: Gemini API key missing, skipping.")
-            return AiServiceResult.Failure(AiServiceError.Disabled("Gemini API key missing"))
+            return AiServiceResult.Failure(AiServiceError.Disabled("PROVIDER_DISABLED"))
         }
 
         // PRIVACY GATE: Check cloud AI privacy gate before proceeding
@@ -124,7 +124,7 @@ class CloudReceiptAssistService @Inject constructor(
         }
         val gateDecision = privacyGate.check(capability, mapOf("receiptId" to input.receiptId.toString()))
         if (gateDecision.blocksExecution()) {
-            Timber.d("CloudReceiptAssistService: privacy gate denied: ${gateDecision.reason()}")
+            Timber.d("CloudReceiptAssistService: PROVIDER_DISABLED stage=privacy_gate")
             return AiServiceResult.Failure(
                 AiServiceError.PrivacyDenied(
                     gateDecision.toPrivacyBlockedOrFallback(capability)
@@ -193,15 +193,15 @@ class CloudReceiptAssistService @Inject constructor(
                                 AiServiceResult.Failure(
                                     AiServiceError.HttpError(
                                         response.code,
-                                        "errorClass=$errorClass correlationId=$correlationId"
+                                        "UNKNOWN_ERROR"
                                     )
                                 )
                             }
                         } else {
                             val body = response.body?.string()
-                                ?: return@use AiServiceResult.Failure(AiServiceError.ParseError("Empty response body"))
+                                ?: return@use AiServiceResult.Failure(AiServiceError.ParseError("PARSER_FAILED"))
                             val parsed = parseResponse(body)
-                                ?: return@use AiServiceResult.Failure(AiServiceError.ParseError("No usable suggestion in response"))
+                                ?: return@use AiServiceResult.Failure(AiServiceError.ParseError("PARSER_FAILED"))
                             AiServiceResult.Success(
                                 parsed.copy(usedImageInput = requestPayload.actuallyUsedImageInput)
                             )
@@ -212,37 +212,37 @@ class CloudReceiptAssistService @Inject constructor(
                 } catch (e: SocketTimeoutException) {
                     if (attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
                         Timber.w(
-                            e,
-                            "CloudReceiptAssistService: timeout, retrying (%d/%d)",
+                            "CloudReceiptAssistService: TIMEOUT class=%s retrying (%d/%d)",
+                            e::class.java.simpleName,
                             attempt,
                             CloudRetryPolicy.MAX_RETRY_ATTEMPTS
                         )
                     } else {
-                        Timber.w(e, "CloudReceiptAssistService: timeout")
+                        Timber.w("CloudReceiptAssistService: TIMEOUT class=%s attempt=%d", e::class.java.simpleName, attempt)
                         return@withContext AiServiceResult.Failure(AiServiceError.Timeout)
                     }
                 } catch (e: SSLException) {
-                    Timber.w(e, "CloudReceiptAssistService: SSL failure")
+                    Timber.w("CloudReceiptAssistService: UNKNOWN_ERROR stage=ssl class=%s attempt=%d", e::class.java.simpleName, attempt)
                     return@withContext AiServiceResult.Failure(AiServiceError.SslError)
                 } catch (e: IOException) {
                     if (CloudRetryPolicy.isRetryableIoException(e) && attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
                         Timber.w(
-                            e,
-                            "CloudReceiptAssistService: network failure, retrying (%d/%d)",
+                            "CloudReceiptAssistService: NETWORK_UNAVAILABLE class=%s retrying (%d/%d)",
+                            e::class.java.simpleName,
                             attempt,
                             CloudRetryPolicy.MAX_RETRY_ATTEMPTS
                         )
                     } else {
-                        Timber.w(e, "CloudReceiptAssistService: network failure")
+                        Timber.w("CloudReceiptAssistService: NETWORK_UNAVAILABLE class=%s attempt=%d", e::class.java.simpleName, attempt)
                         return@withContext AiServiceResult.Failure(AiServiceError.Offline)
                     }
                 } catch (e: JSONException) {
-                    Timber.w(e, "CloudReceiptAssistService: JSON parse failure")
-                    return@withContext AiServiceResult.Failure(AiServiceError.ParseError(e.message))
+                    Timber.w("CloudReceiptAssistService: PARSER_FAILED class=%s attempt=%d", e::class.java.simpleName, attempt)
+                    return@withContext AiServiceResult.Failure(AiServiceError.ParseError("PARSER_FAILED"))
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
-                    Timber.w(e, "CloudReceiptAssistService: parse failure")
-                    return@withContext AiServiceResult.Failure(AiServiceError.Unknown(e.message))
+                    Timber.w("CloudReceiptAssistService: UNKNOWN_ERROR class=%s attempt=%d", e::class.java.simpleName, attempt)
+                    return@withContext AiServiceResult.Failure(AiServiceError.Unknown("UNKNOWN_ERROR"))
                 }
 
                 if (attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
@@ -250,7 +250,7 @@ class CloudReceiptAssistService @Inject constructor(
                 }
             }
 
-            AiServiceResult.Failure(AiServiceError.Unknown("Retry attempts exhausted"))
+            AiServiceResult.Failure(AiServiceError.Unknown("UNKNOWN_ERROR"))
         }
     }
 
@@ -271,7 +271,7 @@ class CloudReceiptAssistService @Inject constructor(
      */
     suspend fun suggestFromText(prompt: String): AiServiceResult<String> {
         if (apiKey.isBlank()) {
-            return AiServiceResult.Failure(AiServiceError.Disabled("Gemini API key missing"))
+            return AiServiceResult.Failure(AiServiceError.Disabled("PROVIDER_DISABLED"))
         }
 
         // PRIVACY GATE: Check cloud AI privacy gate before proceeding.
@@ -282,7 +282,7 @@ class CloudReceiptAssistService @Inject constructor(
             mapOf("caller" to "suggestFromText")
         )
         if (gateDecision.blocksExecution()) {
-            Timber.d("CloudReceiptAssistService: privacy gate denied suggestFromText: ${gateDecision.reason()}")
+            Timber.d("CloudReceiptAssistService: PROVIDER_DISABLED stage=text_privacy_gate")
             return AiServiceResult.Failure(
                 AiServiceError.PrivacyDenied(
                     gateDecision.toPrivacyBlockedOrFallback(PrivacyCapability.CLOUD_AI_BANK_STATEMENT)
@@ -354,12 +354,12 @@ class CloudReceiptAssistService @Inject constructor(
                                 null // fall through to delay + retry
                             } else {
                                 AiServiceResult.Failure(
-                                    AiServiceError.HttpError(response.code, "suggestFromText HTTP ${response.code} errorClass=$errorClass correlationId=$correlationId")
+                                    AiServiceError.HttpError(response.code, "UNKNOWN_ERROR")
                                 )
                             }
                         } else {
                             val body = response.body?.string()
-                                ?: return@use AiServiceResult.Failure(AiServiceError.ParseError("Empty response body"))
+                                ?: return@use AiServiceResult.Failure(AiServiceError.ParseError("PARSER_FAILED"))
                             val root = JSONObject(body)
                             val text = root.optJSONArray("candidates")
                                 ?.optJSONObject(0)
@@ -368,7 +368,7 @@ class CloudReceiptAssistService @Inject constructor(
                                 ?.optJSONObject(0)
                                 ?.optString("text")
                                 ?.trim()
-                                ?: return@use AiServiceResult.Failure(AiServiceError.ParseError("No text in Gemini response"))
+                                ?: return@use AiServiceResult.Failure(AiServiceError.ParseError("PARSER_FAILED"))
                             AiServiceResult.Success(text)
                         }
                     }
@@ -376,23 +376,26 @@ class CloudReceiptAssistService @Inject constructor(
                     if (outcome != null) return@withContext outcome
                 } catch (e: SocketTimeoutException) {
                     if (attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
-                        Timber.w(e, "CloudReceiptAssistService: suggestFromText timeout, retrying (%d/%d)", attempt, CloudRetryPolicy.MAX_RETRY_ATTEMPTS)
+                        Timber.w("CloudReceiptAssistService: TIMEOUT class=%s retrying (%d/%d)", e::class.java.simpleName, attempt, CloudRetryPolicy.MAX_RETRY_ATTEMPTS)
                     } else {
                         return@withContext AiServiceResult.Failure(AiServiceError.Timeout)
                     }
                 } catch (e: SSLException) {
-                    Timber.w(e, "CloudReceiptAssistService: suggestFromText SSL failure")
+                    Timber.w("CloudReceiptAssistService: UNKNOWN_ERROR stage=ssl class=%s attempt=%d", e::class.java.simpleName, attempt)
                     return@withContext AiServiceResult.Failure(AiServiceError.SslError)
                 } catch (e: IOException) {
                     if (CloudRetryPolicy.isRetryableIoException(e) && attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
-                        Timber.w(e, "CloudReceiptAssistService: suggestFromText network failure, retrying (%d/%d)", attempt, CloudRetryPolicy.MAX_RETRY_ATTEMPTS)
+                        Timber.w("CloudReceiptAssistService: NETWORK_UNAVAILABLE class=%s retrying (%d/%d)", e::class.java.simpleName, attempt, CloudRetryPolicy.MAX_RETRY_ATTEMPTS)
                     } else {
                         return@withContext AiServiceResult.Failure(AiServiceError.Offline)
                     }
+                } catch (e: JSONException) {
+                    Timber.w("CloudReceiptAssistService: PARSER_FAILED stage=text class=%s attempt=%d", e::class.java.simpleName, attempt)
+                    return@withContext AiServiceResult.Failure(AiServiceError.ParseError("PARSER_FAILED"))
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
-                    Timber.w(e, "CloudReceiptAssistService: suggestFromText error")
-                    return@withContext AiServiceResult.Failure(AiServiceError.Unknown(e.message))
+                    Timber.w("CloudReceiptAssistService: UNKNOWN_ERROR class=%s attempt=%d", e::class.java.simpleName, attempt)
+                    return@withContext AiServiceResult.Failure(AiServiceError.Unknown("UNKNOWN_ERROR"))
                 }
 
                 if (attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
@@ -400,7 +403,7 @@ class CloudReceiptAssistService @Inject constructor(
                 }
             }
 
-            AiServiceResult.Failure(AiServiceError.Unknown("suggestFromText retry attempts exhausted"))
+            AiServiceResult.Failure(AiServiceError.Unknown("UNKNOWN_ERROR"))
         }
     }
 

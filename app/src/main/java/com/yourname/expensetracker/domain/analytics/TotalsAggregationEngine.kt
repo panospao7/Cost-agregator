@@ -442,7 +442,10 @@ class TotalsAggregationEngine @Inject constructor(
             }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-            Timber.tag("TotalsAggregationEngine").e(e, "Error calculating average for $periodType")
+            Timber.tag("TotalsAggregationEngine").e(
+                "UNKNOWN_ERROR operation=average class=%s",
+                e::class.java.simpleName
+            )
             0.0
         }
     }
@@ -669,7 +672,10 @@ class TotalsAggregationEngine @Inject constructor(
                         block()
                     } catch (e: Exception) {
                         if (e is kotlinx.coroutines.CancellationException) throw e
-                        Timber.tag("TotalsAggregationEngine").e(e, "Reactive flow computation failed")
+                        Timber.tag("TotalsAggregationEngine").e(
+                            "UNKNOWN_ERROR operation=reactive_flow class=%s",
+                            e::class.java.simpleName
+                        )
                         emptyList()
                     }
                 })
@@ -690,7 +696,10 @@ class TotalsAggregationEngine @Inject constructor(
                         block()
                     } catch (e: Exception) {
                         if (e is kotlinx.coroutines.CancellationException) throw e
-                        Timber.tag("TotalsAggregationEngine").e(e, "Reactive category breakdown flow failed")
+                        Timber.tag("TotalsAggregationEngine").e(
+                            "UNKNOWN_ERROR operation=reactive_category_breakdown class=%s",
+                            e::class.java.simpleName
+                        )
                         emptyList()
                     }
                 })

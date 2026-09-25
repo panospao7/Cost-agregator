@@ -25,9 +25,12 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import org.json.JSONException
 import timber.log.Timber
 import kotlinx.coroutines.CancellationException
 import java.io.IOException
+import java.net.SocketTimeoutException
+import javax.net.ssl.SSLException
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
@@ -85,8 +88,8 @@ class CloudQueryInterpretationService @Inject constructor(
         // PRIVACY GATE: Check cloud AI privacy gate before proceeding
         val gateDecision = privacyGate.check(PrivacyCapability.CLOUD_AI_GENERAL)
         if (gateDecision.blocksExecution()) {
-            Timber.d("CloudQueryInterpretationService: privacy gate denied: ${gateDecision.reason()}")
-            return unsupported("Cloud AI disabled by privacy gate")
+            Timber.d("CloudQueryInterpretationService: PROVIDER_DISABLED stage=privacy_gate")
+            return unsupported("PROVIDER_DISABLED")
         }
 
         val prompt = promptHelper.buildPrompt(input.toCloudPromptInput())
@@ -141,7 +144,7 @@ class CloudQueryInterpretationService @Inject constructor(
                             return@use unsupported()
                         }
 
-                        val body = response.body?.string() ?: return@use unsupported()
+                        val body = response.body?.string() ?: return@use unsupported("PARSER_FAILED")
                         return@use parseResponse(input, body)
                     }
 
@@ -151,21 +154,34 @@ class CloudQueryInterpretationService @Inject constructor(
                     if (!retryableHttpFailure) {
                         return@withContext unsupported()
                     }
+                } catch (e: SocketTimeoutException) {
+                    Timber.w("CloudQueryInterpretationService: TIMEOUT class=%s attempt=%d/%d", e::class.java.simpleName, attempt, CloudRetryPolicy.MAX_RETRY_ATTEMPTS)
+                    if (attempt >= CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
+                        return@withContext unsupported("TIMEOUT")
+                    }
+                } catch (e: SSLException) {
+                    Timber.w("CloudQueryInterpretationService: UNKNOWN_ERROR stage=ssl class=%s attempt=%d", e::class.java.simpleName, attempt)
+                    if (!CloudRetryPolicy.isRetryableIoException(e) || attempt >= CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
+                        return@withContext unsupported("UNKNOWN_ERROR")
+                    }
                 } catch (e: IOException) {
                     Timber.w(
-                        e,
-                        "CloudQueryInterpretationService: network failure (attempt %d/%d)",
+                        "CloudQueryInterpretationService: NETWORK_UNAVAILABLE class=%s attempt=%d/%d",
+                        e::class.java.simpleName,
                         attempt,
                         CloudRetryPolicy.MAX_RETRY_ATTEMPTS
                     )
                     if (!CloudRetryPolicy.isRetryableIoException(e) || attempt >= CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
-                        return@withContext unsupported("Network error: ${e.message}")
+                        return@withContext unsupported("NETWORK_UNAVAILABLE")
                     }
                 } catch (e: CancellationException) {
                     throw e
+                } catch (e: JSONException) {
+                    Timber.w("CloudQueryInterpretationService: PARSER_FAILED class=%s attempt=%d", e::class.java.simpleName, attempt)
+                    return@withContext unsupported("PARSER_FAILED")
                 } catch (e: Exception) {
-                    Timber.w(e, "CloudQueryInterpretationService: parse failure")
-                    return@withContext unsupported("Failed to parse response: ${e.message}")
+                    Timber.w("CloudQueryInterpretationService: UNKNOWN_ERROR class=%s attempt=%d", e::class.java.simpleName, attempt)
+                    return@withContext unsupported("UNKNOWN_ERROR")
                 }
 
                 if (attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
@@ -241,7 +257,7 @@ class CloudQueryInterpretationService @Inject constructor(
     }
 
     private fun unsupported(
-        reason: String = "Query interpretation provider unavailable"
+        reason: String = "UNKNOWN_ERROR"
     ): FinancialQueryInterpretationResult = FinancialQueryInterpretationResult.Unsupported(reason)
 
     private companion object {

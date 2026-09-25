@@ -1,6 +1,9 @@
 package com.yourname.expensetracker.data.backup
 
 import androidx.test.core.app.ApplicationProvider
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
+import org.json.JSONObject
+import timber.log.Timber
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
@@ -8,6 +11,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import org.junit.After
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
@@ -28,10 +32,17 @@ import java.io.File
 class RestoreJournalDurabilityTest {
 
     private lateinit var journal: RestoreJournal
+    private lateinit var context: android.content.Context
+    private val logs = mutableListOf<Pair<Throwable?, String>>()
+    private val logTree = object : Timber.Tree() {
+        override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+            logs += t to message
+        }
+    }
 
     @Before
     fun setUp() {
-        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        context = ApplicationProvider.getApplicationContext()
         // Clean slate.
         listOf(
             "restore_journal.json",
@@ -39,6 +50,35 @@ class RestoreJournalDurabilityTest {
             RestoreJournal.SUCCESS_JOURNAL_FILENAME
         ).forEach { File(context.filesDir, it).delete() }
         journal = RestoreJournal(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
+        logs.clear()
+        Timber.plant(logTree)
+    }
+
+    @After
+    fun tearDown() {
+        Timber.uproot(logTree)
+    }
+
+    @Test
+    fun `malformed journal logs parser code and class without raw content`() {
+        val hostile = "SELECT receipt FROM /data/private/ledger.db content://receipts/4 Merchant 123.45"
+        File(context.filesDir, "restore_journal.json").writeText("{ $hostile")
+
+        assertNull(journal.readJournal())
+        assertTrue(logs.any { it.second.contains("PARSER_FAILED stage=read class=") })
+        assertTrue(logs.all { it.first == null && !it.second.contains(hostile) })
+    }
+
+    @Test
+    fun `staging cleanup never logs a database path`() {
+        val entry = journal.beginJournal("/cache/src.costbackup", "/data/staged.db", "/data/live.db")
+        val staged = File(context.filesDir, "merchant_123.45_staging.db")
+        staged.writeText("temporary")
+
+        journal.cleanStagingFiles(entry.copy(stagedDbPath = staged.absolutePath))
+
+        assertTrue(logs.any { it.second == "RestoreJournal: staging DB cleaned" })
+        assertTrue(logs.all { it.first == null && !it.second.contains(staged.absolutePath) })
     }
 
     @Test
@@ -78,6 +118,51 @@ class RestoreJournalDurabilityTest {
 
         val events = journal.getEventsByCorrelationId(entry.operationCorrelationId)
         assertTrue("appended event must persist across transitions", events.any { it.stage == "MAINTENANCE_ENTERED" })
+    }
+
+    @Test
+    fun `failure journal writes only allowlisted reasons to its error field`() {
+        val allowed = listOf(
+            DiagnosticReasonCode.UNKNOWN_ERROR,
+            DiagnosticReasonCode.PARSER_FAILED,
+            DiagnosticReasonCode.RESTORE_BLOCKED,
+            DiagnosticReasonCode.WRITE_BARRIER_DENIED,
+            DiagnosticReasonCode.READ_BARRIER_DENIED,
+            DiagnosticReasonCode.TIMEOUT
+        )
+        val hostile = "SELECT * FROM receipts /data/private/ledger.db content://receipts/4 Merchant 123.45"
+        val rejected = listOf(hostile, "", "TIMEOUT $hostile", "RESTORE_FAILED", "VALIDATION_FAILED", "unknown")
+
+        (allowed.map { it.name to it.name } + rejected.map { it to "UNKNOWN_ERROR" }).forEach { (input, expected) ->
+            val entry = journal.beginJournal("/cache/src.costbackup", "/data/staged.db", "/data/live.db")
+            val failed = journal.failJournal(entry, input)
+            val failureFile = File(context.filesDir, RestoreJournal.FAILURE_JOURNAL_FILENAME)
+            val storedError = JSONObject(failureFile.readText()).getString("error")
+
+            assertEquals(expected, failed.error)
+            assertEquals(expected, storedError)
+            assertEquals(expected, journal.readFailureJournal()?.error)
+            assertEquals(expected, failed.toDiagnosticsJson().getString("error"))
+            // Recovery paths are separate internal fields and must still round-trip.
+            assertEquals("/data/staged.db", journal.readFailureJournal()?.stagedDbPath)
+        }
+    }
+
+    @Test
+    fun `direct journal serialization and legacy reads bound error without removing recovery paths`() {
+        val hostile = "SELECT * FROM receipts /data/private/ledger.db content://receipts/4 Merchant 123.45"
+        val entry = journal.beginJournal("/cache/src.costbackup", "/data/staged.db", "/data/live.db")
+        journal.writeJournal(entry.copy(error = hostile))
+
+        val activeFile = File(context.filesDir, "restore_journal.json")
+        assertEquals("UNKNOWN_ERROR", JSONObject(activeFile.readText()).getString("error"))
+
+        val legacy = JSONObject(activeFile.readText()).put("error", hostile)
+        activeFile.writeText(legacy.toString())
+        val readBack = journal.readJournal()!!
+        assertEquals("UNKNOWN_ERROR", readBack.error)
+        assertEquals("UNKNOWN_ERROR", readBack.toJson().getString("error"))
+        assertEquals("/data/staged.db", readBack.stagedDbPath)
     }
 
     /**

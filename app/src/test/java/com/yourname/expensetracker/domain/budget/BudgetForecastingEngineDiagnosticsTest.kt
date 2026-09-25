@@ -1,9 +1,11 @@
 package com.yourname.expensetracker.domain.budget
 
+import android.database.sqlite.SQLiteConstraintException
 import com.yourname.expensetracker.AnalyticsEngineTestBase
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.BudgetForecastDao
 import com.yourname.expensetracker.data.database.entity.Budget
+import com.yourname.expensetracker.data.database.entity.BudgetForecast
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
@@ -30,15 +32,34 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.flowOf
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
+import org.junit.After
 import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import timber.log.Timber
+import kotlin.test.assertFailsWith
 
 /**
  * P6-CURRENT-026: Verifies [BudgetForecastingEngine] emits a durable "forecast generated" event on
  * success and a "forecast unavailable" event when home currency or the budget-limit conversion is
  * unavailable. All emissions reuse the existing BUDGET pipeline / DiagnosticEvent API.
  */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [28])
 class BudgetForecastingEngineDiagnosticsTest : AnalyticsEngineTestBase() {
+
+    private val logs = mutableListOf<Pair<Throwable?, String>>()
+    private val logTree = object : Timber.Tree() {
+        override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+            logs += t to message
+        }
+    }
+
+    @After
+    fun removeLogTree() { Timber.uproot(logTree) }
 
     private lateinit var budgetRepository: BudgetRepository
     private lateinit var budgetForecastDao: BudgetForecastDao
@@ -65,6 +86,8 @@ class BudgetForecastingEngineDiagnosticsTest : AnalyticsEngineTestBase() {
     @Before
     override fun setUp() {
         super.setUp()
+        logs.clear()
+        Timber.plant(logTree)
         budgetRepository = mockk(relaxed = true)
         budgetForecastDao = mockk(relaxed = true)
         coEvery { budgetForecastDao.insertWithDeactivation(any()) } returns 1L
@@ -128,6 +151,27 @@ class BudgetForecastingEngineDiagnosticsTest : AnalyticsEngineTestBase() {
         )
     }
 
+    @Test
+    fun `unique insert stays duplicate with bounded log`() = runTest {
+        coEvery { budgetForecastDao.insertWithDeactivation(any()) } throws
+            SQLiteConstraintException("UNIQUE constraint failed: SQL /private/receipt merchant 1234.56")
+
+        assertEquals(ForecastInsertResult.DuplicateInSameInstant, engine.insertForecast(mockk<BudgetForecast>()))
+
+        assertEquals(listOf(null to "BudgetForecastingEngine: UNKNOWN_ERROR stage=unique_insert class=SQLiteConstraintException"), logs)
+    }
+
+    @Test
+    fun `foreign key insert failure is not mislabeled as duplicate or leaked`() = runTest {
+        coEvery { budgetForecastDao.insertWithDeactivation(any()) } throws
+            SQLiteConstraintException("FOREIGN KEY constraint failed: SQL /private/receipt merchant 1234.56")
+
+        assertFailsWith<SQLiteConstraintException> { engine.insertForecast(mockk<BudgetForecast>()) }
+
+        assertEquals(listOf(null to "BudgetForecastingEngine: UNKNOWN_ERROR stage=constraint_insert class=SQLiteConstraintException"), logs)
+        assertTrue(logs.all { it.first == null })
+    }
+
     private fun converted(amount: Double): ConversionOutcome.Converted = ConversionOutcome.Converted(
         originalAmount = amount,
         originalCurrency = CurrencyCode("EUR"),
@@ -161,11 +205,11 @@ class BudgetForecastingEngineDiagnosticsTest : AnalyticsEngineTestBase() {
     @Test
     fun `generateForecastResult emits FORECAST_UNAVAILABLE when home currency unavailable`() = runTest {
         coEvery { mockCurrencySettingsRepo.resolveHomeCurrency() } returns
-            HomeCurrencyResolution.Failed("no home currency")
+            HomeCurrencyResolution.Failed("SQL /data/user/0/private.db merchant 42.00")
 
         val result = engine.generateForecastResult(budget)
 
-        assertNotNull(result as? BudgetForecastResult.Unavailable)
+        assertEquals("Home currency unavailable", (result as BudgetForecastResult.Unavailable).reason)
         val event = emitted.singleOrNull { it.stage == "FORECAST_UNAVAILABLE" }
         assertNotNull("Expected a FORECAST_UNAVAILABLE diagnostic event", event)
         assertEquals(EventOutcome.SKIPPED, event!!.outcome)
@@ -182,15 +226,32 @@ class BudgetForecastingEngineDiagnosticsTest : AnalyticsEngineTestBase() {
             targetCurrency = "EUR",
             rateBasis = RateBasis.PERIOD_END,
             failureType = ConversionFailureType.MISSING_RATE,
-            message = "no rate"
+            message = "SQL /data/user/0/private.db merchant 42.00"
         )
 
         val result = engine.generateForecastResult(budget.copy(currency = "USD"))
 
-        assertNotNull(result as? BudgetForecastResult.Unavailable)
+        assertEquals("Budget limit conversion unavailable", (result as BudgetForecastResult.Unavailable).reason)
         val event = emitted.singleOrNull { it.stage == "FORECAST_UNAVAILABLE" }
         assertNotNull("Expected a FORECAST_UNAVAILABLE diagnostic event", event)
         assertEquals(EventOutcome.SKIPPED, event!!.outcome)
+    }
+
+    @Test
+    fun `unavailable period spend uses fixed reason and does not insert forecast`() = runTest {
+        val unavailable = com.yourname.expensetracker.domain.core.money.MoneyAggregate.empty(
+            CurrencyCode("EUR"), RateBasis.PERIOD_END
+        ).copy(conversionQuality = com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE)
+        coEvery { budgetRepository.getCurrentPeriodPurchaseSpendAtPeriodEnd(any(), any(), any(), any()) } returns
+            BudgetRepository.CurrentPeriodSpendAtPeriodEnd(unavailable, fixedNow)
+        coEvery { mockConverter.convertOutcome(any(), any(), any(), any(), any(), any()) } returns converted(1_000.0)
+
+        val result = engine.generateForecastResult(budget)
+
+        assertEquals(ForecastUnavailableReason.MISSING_RATE, (result as BudgetForecastResult.Unavailable).reasonCode)
+        assertEquals("Current-period spend unavailable: exchange rates missing for the budget period", result.reason)
+        assertEquals(EventOutcome.SKIPPED, emitted.single { it.stage == "FORECAST_UNAVAILABLE" }.outcome)
+        io.mockk.coVerify(exactly = 0) { budgetForecastDao.insertWithDeactivation(any()) }
     }
 
     @Test

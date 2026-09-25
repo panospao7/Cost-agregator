@@ -25,6 +25,7 @@ import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.slot
 import io.mockk.unmockkStatic
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -34,6 +35,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowLog
+import kotlin.test.assertFailsWith
 
 /**
  * PR6D — BillReminder notification permission fix tests.
@@ -82,6 +85,12 @@ class BillReminderWorkerTest {
     fun tearDown() {
         // Clean up any lingering static mocks
         unmockkStatic(NotificationManagerCompat::class)
+    }
+
+    private fun assertSafeWorkerLogs(before: Int, expectedCode: String) {
+        val logs = ShadowLog.getLogs().drop(before).filter { it.tag == "BillReminderWorker" }
+        assertTrue(logs.any { it.msg.contains(expectedCode) })
+        assertTrue(logs.all { it.throwable == null && !it.msg.contains("/private/receipt") && !it.msg.contains("1234.56") })
     }
 
     private fun buildWorker(): BillReminderWorker {
@@ -193,13 +202,15 @@ class BillReminderWorkerTest {
         mockkStatic(NotificationManagerCompat::class)
         val mockNm = mockk<NotificationManagerCompat>(relaxed = true)
         every { NotificationManagerCompat.from(any<Context>()) } returns mockNm
-        every { mockNm.notify(any(), any()) } throws SecurityException("Missing notification permission")
+        every { mockNm.notify(any(), any()) } throws SecurityException("/private/receipt/1234.56")
 
         coEvery { coordinator.cancelClaimedReminderDelivery(any(), any()) } returns true
 
+        val before = ShadowLog.getLogs().size
         val result = buildWorker().doWork()
 
         assertEquals(Result.success(), result)
+        assertSafeWorkerLogs(before, "WORKER_NOTIFICATION_PERMISSION_DENIED class=SecurityException")
 
         // Should call cancelClaimedReminderDelivery (unclaim), NOT markReminderFailed
         coVerify(exactly = 1) { coordinator.cancelClaimedReminderDelivery(1L, "notification_permission_revoked") }
@@ -241,10 +252,11 @@ class BillReminderWorkerTest {
         mockkStatic(NotificationManagerCompat::class)
         val mockNm = mockk<NotificationManagerCompat>(relaxed = true)
         every { NotificationManagerCompat.from(any<Context>()) } returns mockNm
-        every { mockNm.notify(any(), any()) } throws RuntimeException("Notification channel no longer exists")
+        every { mockNm.notify(any(), any()) } throws RuntimeException("/private/receipt/1234.56")
 
         coEvery { coordinator.markReminderFailed(any(), any()) } returns true
 
+        val before = ShadowLog.getLogs().size
         val result = buildWorker().doWork()
 
         // Non-permission failure still returns success (periodic retry is handled by WorkManager)
@@ -253,6 +265,94 @@ class BillReminderWorkerTest {
         // Should mark the delivery as failed (not unclaimed)
         coVerify(exactly = 1) { coordinator.markReminderFailed(3L, any()) }
         coVerify(exactly = 0) { coordinator.cancelClaimedReminderDelivery(any(), any()) }
+        assertSafeWorkerLogs(before, "WORKER_UNHANDLED_EXCEPTION class=RuntimeException")
+    }
+
+    @Test
+    fun `diagnostic writer failure logs code and class without exception text`() = runTest {
+        val reminder = testReminder()
+        setupNotificationDispatchPath(reminder)
+        coEvery { coordinator.markReminderSent(reminder.id, any()) } returns true
+        coEvery { diagnosticEventWriter.emit(any()) } throws IllegalStateException("/private/receipt/1234.56")
+        mockkStatic(NotificationManagerCompat::class)
+        val manager = mockk<NotificationManagerCompat>(relaxed = true)
+        every { NotificationManagerCompat.from(any<Context>()) } returns manager
+        every { manager.notify(any(), any()) } returns Unit
+
+        val before = ShadowLog.getLogs().size
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        assertSafeWorkerLogs(before, "SIDE_EFFECT_EXCEPTION class=IllegalStateException")
+    }
+
+    @Test
+    fun `permission diagnostic failure is code only and does not block unclaim`() = runTest {
+        val reminder = testReminder(id = 9L)
+        setupNotificationDispatchPath(reminder)
+        mockkStatic(NotificationManagerCompat::class)
+        val manager = mockk<NotificationManagerCompat>(relaxed = true)
+        every { NotificationManagerCompat.from(any<Context>()) } returns manager
+        every { manager.notify(any(), any()) } throws SecurityException("/private/receipt/1234.56")
+        coEvery { coordinator.cancelClaimedReminderDelivery(any(), any()) } returns true
+        coEvery { diagnosticEventWriter.emit(any()) } throws IllegalStateException("/private/receipt/1234.56")
+
+        val before = ShadowLog.getLogs().size
+        assertEquals(Result.success(), buildWorker().doWork())
+        coVerify(exactly = 1) { coordinator.cancelClaimedReminderDelivery(9L, "notification_permission_revoked") }
+        assertSafeWorkerLogs(before, "WORKER_NOTIFICATION_PERMISSION_DENIED class=SecurityException")
+        assertSafeWorkerLogs(before, "SIDE_EFFECT_EXCEPTION class=IllegalStateException")
+    }
+
+    @Test
+    fun `outer coordinator failure logs class only and preserves worker failure`() = runTest {
+        coEvery { coordinator.recoverAndGetDueReminders() } throws IllegalStateException("/private/receipt/1234.56")
+        val before = ShadowLog.getLogs().size
+        assertFailsWith<IllegalStateException> { buildWorker().doWork() }
+        assertSafeWorkerLogs(before, "WORKER_UNHANDLED_EXCEPTION class=IllegalStateException")
+    }
+
+    @Test
+    fun `coordinator cancellation propagates without diagnostic`() = runTest {
+        coEvery { coordinator.recoverAndGetDueReminders() } throws CancellationException("/private/receipt/1234.56")
+        val before = ShadowLog.getLogs().size
+
+        assertFailsWith<CancellationException> { buildWorker().doWork() }
+        coVerify(exactly = 0) { diagnosticEventWriter.emit(any()) }
+        assertTrue(ShadowLog.getLogs().drop(before).none { it.tag == "BillReminderWorker" && it.type >= android.util.Log.WARN })
+    }
+
+    @Test
+    fun `notification cancellation propagates without failure log or failed delivery`() = runTest {
+        setupNotificationDispatchPath(testReminder())
+        mockkStatic(NotificationManagerCompat::class)
+        val manager = mockk<NotificationManagerCompat>(relaxed = true)
+        every { NotificationManagerCompat.from(any<Context>()) } returns manager
+        every { manager.notify(any(), any()) } throws CancellationException("/private/receipt/1234.56")
+        val before = ShadowLog.getLogs().size
+
+        assertFailsWith<CancellationException> { buildWorker().doWork() }
+
+        coVerify(exactly = 0) { coordinator.markReminderFailed(any(), any()) }
+        coVerify(exactly = 0) { diagnosticEventWriter.emit(any()) }
+        assertTrue(ShadowLog.getLogs().drop(before).none { it.tag == "BillReminderWorker" && it.type >= android.util.Log.WARN })
+    }
+
+    @Test
+    fun `diagnostic cancellation after delivery propagates without failure log`() = runTest {
+        val reminder = testReminder()
+        setupNotificationDispatchPath(reminder)
+        coEvery { coordinator.markReminderSent(reminder.id, any()) } returns true
+        coEvery { diagnosticEventWriter.emit(any()) } throws CancellationException("/private/receipt/1234.56")
+        mockkStatic(NotificationManagerCompat::class)
+        val manager = mockk<NotificationManagerCompat>(relaxed = true)
+        every { NotificationManagerCompat.from(any<Context>()) } returns manager
+        every { manager.notify(any(), any()) } returns Unit
+        val before = ShadowLog.getLogs().size
+
+        assertFailsWith<CancellationException> { buildWorker().doWork() }
+
+        coVerify(exactly = 0) { coordinator.markReminderFailed(any(), any()) }
+        assertTrue(ShadowLog.getLogs().drop(before).none { it.tag == "BillReminderWorker" && it.type >= android.util.Log.WARN })
     }
 
     // ─── Test 5: RP-04 P4-006 — permission denial cancels delivery without

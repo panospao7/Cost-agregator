@@ -125,7 +125,7 @@ class BillReminderWorker @AssistedInject constructor(
                                     ))
                                 } catch (e: Exception) {
                                     if (e is kotlinx.coroutines.CancellationException) throw e
-                                    Log.w(TAG, "Failed to write reminder diagnostic event", e)
+                                    Log.w(TAG, "SIDE_EFFECT_EXCEPTION class=${e::class.java.simpleName}")
                                 }
                             } else {
                                 Log.w(TAG, "Reminder ${reminder.id} was sent but could not be marked SENT (no longer CLAIMED)")
@@ -133,7 +133,12 @@ class BillReminderWorker @AssistedInject constructor(
                             }
                         }
                         is NotificationSendResult.Failed -> {
-                            Log.w(TAG, "Notification delivery failed for reminder ${reminder.id}: ${result.reason}")
+                            val failureCode = if (result.reason == "permission_denied") {
+                                "WORKER_NOTIFICATION_PERMISSION_DENIED"
+                            } else {
+                                "WORKER_UNHANDLED_EXCEPTION"
+                            }
+                            Log.w(TAG, "$failureCode reminderId=${reminder.id}")
                             if (result.reason == "permission_denied") {
                                 coordinator.cancelClaimedReminderDelivery(
                                     deliveryId = reminder.id,
@@ -153,7 +158,7 @@ class BillReminderWorker @AssistedInject constructor(
                                     ))
                                 } catch (e: Exception) {
                                     if (e is kotlinx.coroutines.CancellationException) throw e
-                                    Log.w(TAG, "Failed to write permission-revoked diagnostic", e)
+                                    Log.w(TAG, "SIDE_EFFECT_EXCEPTION class=${e::class.java.simpleName}")
                                 }
                             } else {
                                 coordinator.markReminderFailed(reminder.id, result.reason)
@@ -166,7 +171,7 @@ class BillReminderWorker @AssistedInject constructor(
                 Log.d(TAG, "BillReminderWorker completed — sent ${ctx.notificationsSent} reminders")
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
-                Log.e(TAG, "BillReminderWorker failed", e)
+                Log.e(TAG, "WORKER_UNHANDLED_EXCEPTION class=${e::class.java.simpleName}")
                 throw e
             }
         }
@@ -259,11 +264,11 @@ class BillReminderWorker @AssistedInject constructor(
             NotificationManagerCompat.from(applicationContext).notify(notificationId.value, notification)
             NotificationSendResult.Sent(notificationId)
         } catch (e: SecurityException) {
-            Log.w(TAG, "Missing notification permission — cannot send notification", e)
+            Log.w(TAG, "WORKER_NOTIFICATION_PERMISSION_DENIED class=${e::class.java.simpleName}")
             NotificationSendResult.Failed("permission_denied")
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-            Log.w(TAG, "Notification delivery failed", e)
+            Log.w(TAG, "WORKER_UNHANDLED_EXCEPTION class=${e::class.java.simpleName}")
             NotificationSendResult.Failed("notification_error")
         }
     }

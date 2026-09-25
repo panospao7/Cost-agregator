@@ -26,10 +26,173 @@ import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.Assert.assertThrows
+import timber.log.Timber
+import java.io.IOException
+import java.net.SocketTimeoutException
+import javax.net.ssl.SSLException
 import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.flowOf
+import io.mockk.verify
+import org.junit.Before
+import org.junit.After
+import com.yourname.expensetracker.domain.ai.model.AiSettings
+import com.yourname.expensetracker.domain.ai.model.AiRoute
+import com.yourname.expensetracker.domain.ai.model.AiRouteDecision
+import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
+import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
+import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
+import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
+import com.yourname.expensetracker.domain.ai.usecase.GenerateDashboardBriefingUseCase
+import com.yourname.expensetracker.domain.ai.usecase.DashboardBriefingInputBuilder
+import com.yourname.expensetracker.domain.dto.AiArtifactRecord
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
 
 class CloudDashboardBriefingServiceTest {
+
+    private val failureLogs = mutableListOf<Pair<Throwable?, String>>()
+    private val logTree = object : Timber.Tree() {
+        override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+            if (priority >= 5) failureLogs += t to message
+        }
+    }
+    @Before fun captureLogs() { Timber.plant(logTree) }
+    @After fun releaseLogs() {
+        Timber.uproot(logTree)
+        assertTrue(failureLogs.all { it.first == null && !it.second.contains("/private") })
+    }
+
+    private fun assertArtifactError(error: AiServiceError, readable: String) = runBlocking {
+        val settings = mockk<AiSettingsRepository>()
+        every { settings.settings() } returns flowOf(AiSettings(aiEnabled = true, dashboardBriefingEnabled = true))
+        val artifacts = mockk<AiArtifactRepository>()
+        coEvery { artifacts.getLatest(any(), any()) } returns null
+        val stored = mutableListOf<AiArtifactRecord>()
+        coEvery { artifacts.upsert(capture(stored)) } returns 1L
+        val hybrid = mockk<HybridDashboardBriefingService>()
+        // Forward the actual cloud failure through the real artifact consumer.
+        coEvery { hybrid.generate(any()) } returns AiServiceResult.Failure(error)
+        val router = mockk<AiCapabilityRouter>()
+        coEvery { router.decide(any(), any(), any()) } returns
+            AiRouteDecision(AiRoute.CLOUD, "CL17_TEST", "gemini", "test-model")
+        val builder = mockk<DashboardBriefingInputBuilder>()
+        coEvery { builder.build(any(), any()) } returns defaultInput()
+
+        GenerateDashboardBriefingUseCase(settings, artifacts, hybrid, router, builder, FakeTimeProvider(1L))(mockk())
+
+        assertEquals(listOf(AiArtifactStatus.RUNNING, AiArtifactStatus.FAILED), stored.map { it.status })
+        assertEquals("$readable Route: CLOUD, provider: gemini, model: test-model. Reason: CL17_TEST", stored.last().errorMessage)
+        assertEquals(null, stored.last().payloadJson)
+    }
+
+    private fun response(bodyText: String?, status: Int = 200): Response {
+        if (bodyText == null) return mockk<Response>(relaxed = true).also { response ->
+            every { response.isSuccessful } returns true
+            every { response.body } returns null
+            every { response.close() } returns Unit
+        }
+        return Response.Builder().request(okhttp3.Request.Builder().url("https://example.com").build())
+            .protocol(Protocol.HTTP_1_1).code(status).message("Test")
+            .body(bodyText.toResponseBody("application/json".toMediaType())).build()
+    }
+
+    @Test
+    fun `null and empty bodies are safe through artifact consumer`() {
+        val key = mockk<SecureKeyStorage>()
+        every { key.getKey(SecureKeyStorage.KEY_GEMINI) } returns "test-key"
+        for (body in listOf(null, "")) {
+            val client = mockk<OkHttpClient>()
+            val call = mockk<okhttp3.Call>()
+            every { client.newCall(any()) } returns call
+            every { call.execute() } answers { response(body) }
+            val result = runBlocking { allowedService(key, client).generate(defaultInput()) } as AiServiceResult.Failure
+            assertEquals(AiServiceError.ParseError("PARSER_FAILED"), result.error)
+            verify(exactly = 1) { call.execute() }
+            assertArtifactError(result.error, "PARSER_FAILED")
+        }
+    }
+
+    @Test
+    fun `retryable IO succeeds or exhausts with original attempt limits`() {
+        val key = mockk<SecureKeyStorage>()
+        every { key.getKey(SecureKeyStorage.KEY_GEMINI) } returns "test-key"
+        for (recover in listOf(true, false)) {
+            val client = mockk<OkHttpClient>()
+            val call = mockk<okhttp3.Call>()
+            every { client.newCall(any()) } returns call
+            var attempts = 0
+            every { call.execute() } answers {
+                if (++attempts == 1 || !recover) throw IOException("connection reset /private/receipt")
+                response(successfulResponseBody())
+            }
+            val result = runBlocking { allowedService(key, client).generate(defaultInput()) }
+            if (recover) assertTrue(result is AiServiceResult.Success<*>)
+            else assertEquals(AiServiceError.Offline, (result as AiServiceResult.Failure).error)
+            verify(exactly = if (recover) 2 else 3) { call.execute() }
+        }
+    }
+
+    @Test
+    fun `provider failures return bounded errors without logging throwables`() {
+        val key = mockk<SecureKeyStorage>(relaxed = true)
+        every { key.getKey(SecureKeyStorage.KEY_GEMINI) } returns "test-key"
+        val logs = mutableListOf<Pair<Throwable?, String>>()
+        val tree = object : Timber.Tree() {
+            override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+                logs += t to message
+            }
+        }
+        Timber.plant(tree)
+        try {
+            val failures = listOf(
+                SocketTimeoutException("SQL /private/merchant 12.34") to AiServiceError.Timeout,
+                SSLException("SQL /private/merchant 12.34") to AiServiceError.SslError,
+                IOException("SQL /private/merchant 12.34") to AiServiceError.Offline,
+                IllegalStateException("SQL /private/merchant 12.34") to AiServiceError.Unknown("UNKNOWN_ERROR")
+            )
+            failures.forEach { (failure, expected) ->
+                val attempts = AtomicInteger()
+                val client = OkHttpClient.Builder().addInterceptor {
+                    attempts.incrementAndGet()
+                    throw failure
+                }.build()
+                val result = runBlocking { allowedService(key, client).generate(defaultInput()) }
+                assertEquals(expected, (result as AiServiceResult.Failure).error)
+                assertEquals(if (failure is SocketTimeoutException) 3 else 1, attempts.get())
+                assertArtifactError(result.error, when (expected) {
+                    AiServiceError.Timeout -> "Dashboard briefing timed out"
+                    AiServiceError.SslError -> "Secure connection failed"
+                    AiServiceError.Offline -> "No network connection"
+                    else -> "UNKNOWN_ERROR"
+                })
+            }
+            val malformed = OkHttpClient.Builder().addInterceptor { chain ->
+                Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1)
+                    .code(200).message("OK")
+                    .body("{ SQL /private/merchant 12.34".toResponseBody("application/json".toMediaType()))
+                    .build()
+            }.build()
+            val parsed = runBlocking { allowedService(key, malformed).generate(defaultInput()) }
+            assertEquals(AiServiceError.ParseError("PARSER_FAILED"), (parsed as AiServiceResult.Failure).error)
+            assertArtifactError(parsed.error, "PARSER_FAILED")
+            assertTrue(logs.all { it.first == null && !it.second.contains("/private/merchant") })
+        } finally {
+            Timber.uproot(tree)
+        }
+    }
+
+    @Test
+    fun `provider cancellation propagates without terminal diagnostic`() {
+        val key = mockk<SecureKeyStorage>(relaxed = true)
+        every { key.getKey(SecureKeyStorage.KEY_GEMINI) } returns "test-key"
+        val client = OkHttpClient.Builder().addInterceptor { throw CancellationException("SQL /private/merchant") }.build()
+        assertThrows(CancellationException::class.java) {
+            runBlocking { allowedService(key, client).generate(defaultInput()) }
+        }
+        assertTrue(failureLogs.isEmpty())
+    }
 
     // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
@@ -64,6 +227,7 @@ class CloudDashboardBriefingServiceTest {
         assertTrue(result is AiServiceResult.Failure)
         val failure = result as AiServiceResult.Failure
         assertTrue(failure.error is AiServiceError.Disabled)
+        assertEquals("PROVIDER_DISABLED", (failure.error as AiServiceError.Disabled).reason)
     }
 
     // TODO: Tautological mock test — consider adding real behavior assertion
@@ -231,6 +395,7 @@ class CloudDashboardBriefingServiceTest {
         assertTrue(failure.error is AiServiceError.HttpError)
         val httpError = failure.error as AiServiceError.HttpError
         assertEquals(429, httpError.code)
+        assertEquals("UNKNOWN_ERROR", httpError.message)
     }
 
     private fun defaultInput(): DashboardBriefingInput {

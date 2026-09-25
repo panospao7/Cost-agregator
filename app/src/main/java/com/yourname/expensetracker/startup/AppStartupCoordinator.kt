@@ -76,7 +76,7 @@ class AppStartupCoordinator @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Timber.w(e, "Startup: stale bank-run recovery failed")
+                Timber.w("Startup: UNKNOWN_ERROR stage=bank_recovery class=%s", e::class.java.simpleName)
             }
         }
     }
@@ -94,7 +94,7 @@ class AppStartupCoordinator @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Timber.w(e, "Startup: pending intake recovery failed")
+                Timber.w("Startup: UNKNOWN_ERROR stage=intake_recovery class=%s", e::class.java.simpleName)
             }
         }
     }
@@ -219,7 +219,8 @@ class AppStartupCoordinator @Inject constructor(
                 android.database.sqlite.SQLiteDatabase.OPEN_READONLY
             )
         } catch (e: Exception) {
-            Timber.e(e, "Startup: safety-restored DB could not be opened")
+            if (e is CancellationException) throw e
+            Timber.e("Startup: UNKNOWN_ERROR stage=open_recovered_db class=%s", e::class.java.simpleName)
             return false
         }
         try {
@@ -227,7 +228,7 @@ class AppStartupCoordinator @Inject constructor(
                 if (cursor.moveToFirst()) cursor.getString(0) else "unknown"
             }
             if (!integrity.equals("ok", ignoreCase = true)) {
-                Timber.e("Startup: safety-restored DB integrity_check failed: %s", integrity)
+                Timber.e("Startup: UNKNOWN_ERROR stage=integrity_check")
                 return false
             }
             val fkViolations = db.rawQuery("PRAGMA foreign_key_check", null).use { it.count }
@@ -237,7 +238,8 @@ class AppStartupCoordinator @Inject constructor(
             }
             Timber.d("Startup: safety-restored DB integrity + FK checks passed")
         } catch (e: Exception) {
-            Timber.e(e, "Startup: safety-restored DB PRAGMA check threw exception")
+            if (e is CancellationException) throw e
+            Timber.e("Startup: UNKNOWN_ERROR stage=integrity_check class=%s", e::class.java.simpleName)
             return false
         } finally {
             CancellationSafe.runCatchingCancellable { db.close() }
@@ -245,11 +247,15 @@ class AppStartupCoordinator @Inject constructor(
         // 2. Room open attempt (triggers migration validation)
         try {
             val freshDb = restoreDatabaseOpener.openFreshDatabase()
-            freshDb.openHelper.writableDatabase
-            runCatching { freshDb.close() }
+            try {
+                freshDb.openHelper.writableDatabase
+            } finally {
+                runCatching { freshDb.close() }.onFailure { CancellationSafe.rethrowIfCancellation(it) }
+            }
             Timber.d("Startup: safety-restored DB Room open passed")
         } catch (e: Exception) {
-            Timber.e(e, "Startup: safety-restored DB Room open failed")
+            if (e is CancellationException) throw e
+            Timber.e("Startup: UNKNOWN_ERROR stage=room_open_recovered_db class=%s", e::class.java.simpleName)
             return false
         }
         return true
@@ -286,7 +292,8 @@ class AppStartupCoordinator @Inject constructor(
                 restoreDbFilesFrom(sourceFile, liveDbFile)
                 verifySafetyRestoredDb(liveDbFile)
             }.getOrElse { e ->
-                Timber.e("Startup: recovery from %s failed: %s", sourceKind.name, e.javaClass.simpleName)
+                CancellationSafe.rethrowIfCancellation(e)
+                Timber.e("Startup: UNKNOWN_ERROR stage=recover_live_db source=%s class=%s", sourceKind.name, e.javaClass.simpleName)
                 false
             }
             if (restored) {
@@ -706,7 +713,7 @@ class AppStartupCoordinator @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Timber.w(e, "Startup: stale worker-run recovery failed")
+                Timber.w("Startup: UNKNOWN_ERROR stage=worker_recovery class=%s", e::class.java.simpleName)
             }
         }
     }
@@ -733,14 +740,14 @@ class AppStartupCoordinator @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Timber.w(e, "Startup: restore success-journal import failed")
+                Timber.w("Startup: UNKNOWN_ERROR stage=success_journal_import class=%s", e::class.java.simpleName)
             }
             try {
                 restoreJournalImporter.importLastFailureJournalIfPresent()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Timber.w(e, "Startup: restore failure-journal import failed")
+                Timber.w("Startup: UNKNOWN_ERROR stage=failure_journal_import class=%s", e::class.java.simpleName)
             }
         }
     }

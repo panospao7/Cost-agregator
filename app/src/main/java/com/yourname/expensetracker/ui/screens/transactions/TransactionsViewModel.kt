@@ -26,6 +26,7 @@ import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.provenance.SourceLinkQueryService
 import com.yourname.expensetracker.data.database.entity.EntitySourceLink
 import javax.inject.Inject
+import timber.log.Timber
 
 /**
  * Fixed TransactionsViewModel with:
@@ -177,8 +178,10 @@ class TransactionsViewModel @Inject constructor(
                 _provenanceLinks.value = sourceLinkQueryService.getLinksForExpense(expenseId)
                 _provenanceSummary.value = sourceLinkQueryService.getExpenseSourceSummary(expenseId)
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 _provenanceLinks.value = emptyList()
-                _provenanceSummary.value = "Error loading provenance: ${e.message}"
+                Timber.w("Transactions: TRANSACTION_LOAD_FAILED class=%s", e::class.java.simpleName)
+                _provenanceSummary.value = "Unable to load provenance (TRANSACTION_LOAD_FAILED)"
             } finally {
                 _isProvenanceLoading.value = false
             }
@@ -254,7 +257,8 @@ class TransactionsViewModel @Inject constructor(
         .catch { e ->
             if (e is CancellationException) throw e
             _isRefreshing.value = false // S5-017: Always clear refresh spinner on error
-            _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to load transactions: ${e.message}"))
+            Timber.w("Transactions: TRANSACTION_LOAD_FAILED class=%s", e::class.java.simpleName)
+            _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to load transactions (TRANSACTION_LOAD_FAILED)"))
             // Do NOT emit emptyList() — preserve whatever the StateFlow currently holds
         }
         .flowOn(Dispatchers.Default)
@@ -458,7 +462,8 @@ class TransactionsViewModel @Inject constructor(
                 _hasReachedEnd.value = nextItems.size < PAGE_SIZE
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to load more transactions: ${e.message}"))
+                Timber.w("Transactions: TRANSACTION_LOAD_FAILED class=%s", e::class.java.simpleName)
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to load more transactions (TRANSACTION_LOAD_FAILED)"))
             } finally {
                 _isLoadingMoreState.value = false
                 if (loadMoreMutex.isLocked) loadMoreMutex.unlock()
@@ -474,7 +479,9 @@ class TransactionsViewModel @Inject constructor(
                 _successMessage.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Transaction deleted"))
                 refresh()
             } catch (e: Exception) {
-                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to delete transaction: ${e.message}"))
+                if (e is CancellationException) throw e
+                Timber.w("Transactions: TRANSACTION_DELETE_FAILED class=%s", e::class.java.simpleName)
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to delete transaction (TRANSACTION_DELETE_FAILED)"))
             } finally {
                 _isLoading.value = false
             }
@@ -496,7 +503,9 @@ class TransactionsViewModel @Inject constructor(
                 _categoryUpdateSuccess.tryEmit(expense.id)
                 refreshPagedExpensesAfterMutation()
             } catch (e: Exception) {
-                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to update category: ${e.message}"))
+                if (e is CancellationException) throw e
+                Timber.w("Transactions: TRANSACTION_UPDATE_FAILED class=%s", e::class.java.simpleName)
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to update category (TRANSACTION_UPDATE_FAILED)"))
             } finally {
                 endRowMutation(expense.id) // S5-015
             }
@@ -519,7 +528,9 @@ class TransactionsViewModel @Inject constructor(
             _renameSuccess.tryEmit(expense.id) // S5-014R
             refreshPagedExpensesAfterMutation()
         } catch (e: Exception) {
-            _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to update merchant: ${e.message}"))
+            if (e is CancellationException) throw e
+            Timber.w("Transactions: TRANSACTION_UPDATE_FAILED class=%s", e::class.java.simpleName)
+            _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to update merchant (TRANSACTION_UPDATE_FAILED)"))
         } finally {
             endRowMutation(expense.id) // S5-015
         }
@@ -557,7 +568,9 @@ class TransactionsViewModel @Inject constructor(
                 _typeChangeSuccess.tryEmit(expense.id) // S5-014R
                 refreshPagedExpensesAfterMutation()
             } catch (e: Exception) {
-                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to update type: ${e.message}"))
+                if (e is CancellationException) throw e
+                Timber.w("Transactions: TRANSACTION_UPDATE_FAILED class=%s", e::class.java.simpleName)
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to update type (TRANSACTION_UPDATE_FAILED)"))
             } finally {
                 endRowMutation(expense.id) // S5-015
             }
@@ -584,7 +597,9 @@ class TransactionsViewModel @Inject constructor(
                 _successMessage.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Transfer details updated"))
                 refreshPagedExpensesAfterMutation()
             } catch (e: Exception) {
-                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to update: ${e.message}"))
+                if (e is CancellationException) throw e
+                Timber.w("Transactions: TRANSACTION_UPDATE_FAILED class=%s", e::class.java.simpleName)
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to update (TRANSACTION_UPDATE_FAILED)"))
             }
         }
     }
@@ -654,7 +669,9 @@ class TransactionsViewModel @Inject constructor(
                 _ownershipSuccess.tryEmit(expense.id) // S5-014R
                 refreshPagedExpensesAfterMutation()
             } catch (e: Exception) {
-                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to update: ${e.message}"))
+                if (e is CancellationException) throw e
+                Timber.w("Transactions: TRANSACTION_UPDATE_FAILED class=%s", e::class.java.simpleName)
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to update (TRANSACTION_UPDATE_FAILED)"))
             } finally {
                 endRowMutation(expense.id) // S5-034
             }
@@ -702,7 +719,9 @@ class TransactionsViewModel @Inject constructor(
                 _locationSaveSuccess.tryEmit(expense.id) // S5-035
                 refresh()
             } catch (e: Exception) {
-                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to save location: ${e.message}"))
+                if (e is CancellationException) throw e
+                Timber.w("Transactions: TRANSACTION_UPDATE_FAILED class=%s", e::class.java.simpleName)
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to save location (TRANSACTION_UPDATE_FAILED)"))
             }
         }
     }
@@ -714,7 +733,9 @@ class TransactionsViewModel @Inject constructor(
                 _successMessage.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Location cleared"))
                 refresh()
             } catch (e: Exception) {
-                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to clear location: ${e.message}"))
+                if (e is CancellationException) throw e
+                Timber.w("Transactions: TRANSACTION_UPDATE_FAILED class=%s", e::class.java.simpleName)
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to clear location (TRANSACTION_UPDATE_FAILED)"))
             }
         }
     }
@@ -736,7 +757,9 @@ class TransactionsViewModel @Inject constructor(
                 _successMessage.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Marked as recurring (${frequency.name.lowercase().replace("_", " ")})"))
                 _recurringSuccess.tryEmit(expense.id) // S5-036
             } catch (e: Exception) {
-                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to mark as recurring: ${e.message}"))
+                if (e is CancellationException) throw e
+                Timber.w("Transactions: TRANSACTION_UPDATE_FAILED class=%s", e::class.java.simpleName)
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to mark as recurring (TRANSACTION_UPDATE_FAILED)"))
             } finally {
                 _isLoading.value = false
             }
@@ -762,7 +785,8 @@ class TransactionsViewModel @Inject constructor(
                 _hasReachedEnd.value = initial.size < PAGE_SIZE
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to load transactions: ${e.message}"))
+                Timber.w("Transactions: TRANSACTION_LOAD_FAILED class=%s", e::class.java.simpleName)
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to load transactions (TRANSACTION_LOAD_FAILED)"))
             } finally {
                 if (requestId == loadInitialAllRequestId) {
                     _isLoading.value = false

@@ -13,7 +13,11 @@ import io.mockk.mockk
 import io.mockk.slot
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -36,6 +40,7 @@ import java.io.File
 class RestoreJournalImporterFailureTest {
 
     private lateinit var journal: RestoreJournal
+    private lateinit var context: android.content.Context
     private val operationRunDao = mockk<OperationRunDao>()
     private val operationRunEventDao = mockk<OperationRunEventDao>()
     private val timeProvider = mockk<TimeProvider>().also {
@@ -56,7 +61,7 @@ class RestoreJournalImporterFailureTest {
 
     @Before
     fun setUp() {
-        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        context = ApplicationProvider.getApplicationContext()
         listOf(
             "restore_journal.json",
             RestoreJournal.FAILURE_JOURNAL_FILENAME,
@@ -108,7 +113,7 @@ class RestoreJournalImporterFailureTest {
         coVerify(exactly = 1) { operationRunDao.insert(any()) }
         assertEquals("FAILED_FINAL", runSlot.captured.status)
         assertEquals(cid, runSlot.captured.correlationId)
-        assertEquals("Incorrect password", runSlot.captured.errorSummary)
+        assertEquals("UNKNOWN_ERROR", runSlot.captured.errorSummary)
 
         // The terminal event is persisted.
         coVerify(exactly = 1) { operationRunEventDao.insert(any()) }
@@ -117,7 +122,84 @@ class RestoreJournalImporterFailureTest {
         assertEquals(cid, eventSlot.captured.correlationId)
 
         // Journal is marked imported.
-        org.junit.Assert.assertTrue(journal.isFailureJournalImported(cid))
+        assertTrue(journal.isFailureJournalImported(cid))
+    }
+
+    @Test
+    fun `legacy free text imports as controlled code and remains idempotent`() = runTest {
+        val cid = writeFailureJournal("VALIDATION_FAILED")
+        val failureFile = File(context.filesDir, RestoreJournal.FAILURE_JOURNAL_FILENAME)
+        val hostile = "SELECT * FROM receipts /data/private/ledger.db content://receipts/4 Merchant 123.45"
+        failureFile.writeText(JSONObject(failureFile.readText()).put("error", hostile).toString())
+
+        coEvery { operationRunDao.getByCorrelationId(cid) } returns null
+        val runSlot = slot<OperationRun>()
+        coEvery { operationRunDao.insert(capture(runSlot)) } returns 42L
+        coEvery { operationRunEventDao.getByRunId(42L) } returns emptyList()
+        coEvery { operationRunEventDao.insert(any()) } returns 1L
+
+        importer.importLastFailureJournalIfPresent()
+        importer.importLastFailureJournalIfPresent()
+
+        assertEquals("UNKNOWN_ERROR", runSlot.captured.errorSummary)
+        assertEquals("/data/staged.db", journal.readFailureJournal()?.stagedDbPath)
+        assertTrue(journal.isFailureJournalImported(cid))
+        coVerify(exactly = 1) { operationRunDao.insert(any()) }
+        coVerify(exactly = 1) { operationRunEventDao.insert(any()) }
+    }
+
+    @Test
+    fun `known failure code survives import and absent legacy error becomes unknown`() = runTest {
+        val cid = writeFailureJournal("WRITE_BARRIER_DENIED")
+        coEvery { operationRunDao.getByCorrelationId(cid) } returns null
+        val runSlot = slot<OperationRun>()
+        coEvery { operationRunDao.insert(capture(runSlot)) } returns 42L
+        coEvery { operationRunEventDao.getByRunId(42L) } returns emptyList()
+        coEvery { operationRunEventDao.insert(any()) } returns 1L
+
+        importer.importLastFailureJournalIfPresent()
+        assertEquals("WRITE_BARRIER_DENIED", runSlot.captured.errorSummary)
+
+        val newCid = writeFailureJournal("TIMEOUT")
+        val failureFile = File(context.filesDir, RestoreJournal.FAILURE_JOURNAL_FILENAME)
+        failureFile.writeText(JSONObject(failureFile.readText()).apply { remove("error") }.toString())
+        coEvery { operationRunDao.getByCorrelationId(newCid) } returns null
+
+        importer.importLastFailureJournalIfPresent()
+        assertEquals("UNKNOWN_ERROR", runSlot.captured.errorSummary)
+    }
+
+    @Test
+    fun `partial event import retries only the missing event`() = runTest {
+        val cid = writeFailureJournal("PARSER_FAILED")
+        journal.appendEventToFailureJournal(cid, "ROLLBACK", "FAILED_FINAL", reasonCode = "UNKNOWN_ERROR")
+        var savedRun: OperationRun? = null
+        val savedEvents = mutableListOf<OperationRunEvent>()
+        var attempts = 0
+        coEvery { operationRunDao.getByCorrelationId(cid) } answers { savedRun }
+        coEvery { operationRunDao.insert(any()) } answers {
+            savedRun = firstArg<OperationRun>().copy(id = 42L)
+            42L
+        }
+        coEvery { operationRunEventDao.getByRunId(42L) } answers { savedEvents.toList() }
+        coEvery { operationRunEventDao.insert(any()) } answers {
+            attempts++
+            if (attempts == 2) throw IllegalStateException("SQL /data/private/ledger.db")
+            savedEvents += firstArg<OperationRunEvent>()
+            1L
+        }
+
+        importer.importLastFailureJournalIfPresent()
+        assertFalse(journal.isFailureJournalImported(cid))
+        assertEquals(1, savedEvents.size)
+
+        importer.importLastFailureJournalIfPresent()
+        assertTrue(journal.isFailureJournalImported(cid))
+        assertEquals(2, savedEvents.size)
+        assertEquals(2, savedEvents.map { it.eventId }.distinct().size)
+        assertEquals("PARSER_FAILED", savedRun?.errorSummary)
+        coVerify(exactly = 1) { operationRunDao.insert(any()) }
+        coVerify(exactly = 3) { operationRunEventDao.insert(any()) }
     }
 
     @Test
@@ -204,6 +286,27 @@ class RestoreJournalImporterFailureTest {
 
         assertEquals(true, thrown is CancellationException)
         coVerify(exactly = 0) { operationRunDao.insert(any()) }
+        coVerify(exactly = 0) { operationRunEventDao.insert(any()) }
+    }
+
+    @Test
+    fun `failure import cancellation from barrier or run insert never marks journal`() = runTest {
+        val cid = writeFailureJournal("UNKNOWN_ERROR")
+        val cancellation = CancellationException("sensitive receipt details")
+        val cancellingBarrier = mockk<DatabaseWriteBarrier>()
+        coEvery { cancellingBarrier.checkWritesAllowed(any<String>()) } throws cancellation
+        val cancellingImporter = RestoreJournalImporter(
+            journal, operationRunDao, operationRunEventDao, timeProvider, cancellingBarrier
+        )
+
+        assertSame(cancellation, runCatching { cancellingImporter.importLastFailureJournalIfPresent() }.exceptionOrNull())
+        assertFalse(journal.isFailureJournalImported(cid))
+        coVerify(exactly = 0) { operationRunDao.insert(any()) }
+
+        coEvery { operationRunDao.getByCorrelationId(cid) } returns null
+        coEvery { operationRunDao.insert(any()) } throws cancellation
+        assertSame(cancellation, runCatching { importer.importLastFailureJournalIfPresent() }.exceptionOrNull())
+        assertFalse(journal.isFailureJournalImported(cid))
         coVerify(exactly = 0) { operationRunEventDao.insert(any()) }
     }
 
