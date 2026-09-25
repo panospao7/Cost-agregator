@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.core.money
 
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.DomainExchangeRate
 import com.yourname.expensetracker.domain.currency.ExchangeRateStore
@@ -118,6 +119,11 @@ class CurrencyNormalizationBehavioralTest {
         assertEquals(1, aggregate.conversionFailures.size)
         assertEquals(92.0, aggregate.displayAmount, 0.01) // Only USD converted
         assertEquals(RateBasis.LATEST_AVAILABLE, aggregate.rateBasis)
+        assertEquals(2, aggregate.totalTransactionCount)
+        assertEquals(1, aggregate.failedTransactionCount)
+        assertEquals(setOf(CurrencyCode("USD"), CurrencyCode("GBP")), aggregate.sourceBuckets.map { it.currency }.toSet())
+        assertEquals(1, aggregate.metadata.includedTransactionCount)
+        assertEquals(1, aggregate.metadata.excludedTransactionCount)
     }
 
     @Test
@@ -131,6 +137,103 @@ class CurrencyNormalizationBehavioralTest {
         assertEquals(90.0, aggregate.displayAmount, 0.01)
     }
 
+    @Test
+    fun `aggregate expenses conserves two included and three failed source rows`() = runTest {
+        val engine = MoneyNormalizationEngine(converter)
+        val expenses = listOf(
+            fakeExpense(1, 10.0, "EUR", NOW),
+            fakeExpense(2, 20.0, "EUR", NOW),
+            fakeExpense(3, 30.0, "GBP", NOW),
+            fakeExpense(4, 40.0, "GBP", NOW),
+            fakeExpense(5, 50.0, "GBP", NOW)
+        )
+
+        val aggregate = engine.aggregateExpenses(expenses, CurrencyCode.EUR, RateBasis.LATEST_AVAILABLE)
+
+        assertEquals(30.0, aggregate.displayAmount, 0.0)
+        assertEquals(5, aggregate.totalTransactionCount)
+        assertEquals(3, aggregate.failedTransactionCount)
+        assertEquals(2, aggregate.metadata.includedTransactionCount)
+        assertEquals(3, aggregate.metadata.excludedTransactionCount)
+        assertEquals(30.0, aggregate.sourceBuckets.single { it.currency == CurrencyCode.EUR }.amount, 0.0)
+        assertEquals(120.0, aggregate.sourceBuckets.single { it.currency == CurrencyCode("GBP") }.amount, 0.0)
+    }
+
+    @Test
+    fun `aggregate expenses preserves effective amounts for included and failed sources`() = runTest {
+        val engine = MoneyNormalizationEngine(converter)
+        val expenses = listOf(
+            fakeExpense(
+                id = 1,
+                amount = 100.0,
+                currency = "EUR",
+                date = NOW,
+                isSharedExpense = true,
+                myShareAmount = 40.0
+            ),
+            fakeExpense(
+                id = 2,
+                amount = 100.0,
+                currency = "GBP",
+                date = NOW,
+                isSharedExpense = true,
+                myShareAmount = 30.0
+            )
+        )
+
+        val aggregate = engine.aggregateExpenses(expenses, CurrencyCode.EUR, RateBasis.LATEST_AVAILABLE)
+
+        assertEquals(40.0, aggregate.displayAmount, 0.0)
+        assertEquals(40.0, aggregate.sourceBuckets.single { it.currency == CurrencyCode.EUR }.amount, 0.0)
+        assertEquals(30.0, aggregate.sourceBuckets.single { it.currency == CurrencyCode("GBP") }.amount, 0.0)
+        assertEquals(30.0, aggregate.conversionFailures.single().originalAmount.amount, 0.0)
+    }
+
+    @Test
+    fun `aggregate expenses retains stale failed source`() = runTest {
+        store.rates["USD_EUR"] = DomainExchangeRate(
+            "USD",
+            "EUR",
+            0.92,
+            lastUpdated = NOW,
+            source = "api",
+            validDate = NOW - 8 * DAY_MS
+        )
+        val engine = MoneyNormalizationEngine(converter)
+
+        val aggregate = engine.aggregateExpenses(
+            listOf(fakeExpense(1, 100.0, "USD", NOW)),
+            CurrencyCode.EUR,
+            RateBasis.LATEST_AVAILABLE
+        )
+
+        assertEquals(0.0, aggregate.displayAmount, 0.0)
+        assertEquals(1, aggregate.totalTransactionCount)
+        assertEquals(1, aggregate.sourceBuckets.single().transactionCount)
+        assertEquals(FailureReason.RATE_STALE, aggregate.conversionFailures.single().reason)
+    }
+
+    @Test
+    fun `filtered transaction types are excluded from source denominator`() = runTest {
+        val engine = MoneyNormalizationEngine(converter)
+        val expenses = listOf(
+            fakeExpense(1, 10.0, "EUR", NOW, transactionType = TransactionType.PURCHASE),
+            fakeExpense(2, 20.0, "EUR", NOW, transactionType = TransactionType.DEPOSIT),
+            fakeExpense(3, 30.0, "EUR", NOW, transactionType = TransactionType.TRANSFER)
+        )
+
+        val aggregate = engine.aggregateExpenses(
+            expenses,
+            CurrencyCode.EUR,
+            RateBasis.LATEST_AVAILABLE,
+            TransactionTypeFilter.PURCHASE_ONLY
+        )
+
+        assertEquals(10.0, aggregate.displayAmount, 0.0)
+        assertEquals(1, aggregate.totalTransactionCount)
+        assertEquals(1, aggregate.sourceBuckets.single().transactionCount)
+    }
+
     // --- Invalid currency handling (PR2) ---
 
     @Test
@@ -142,6 +245,8 @@ class CurrencyNormalizationBehavioralTest {
         assertTrue("Expected Excluded for invalid currency", result is NormalizationResult.Excluded)
         val excluded = result as NormalizationResult.Excluded
         assertEquals(FailureReason.INVALID_CURRENCY, excluded.failure.reason)
+        assertEquals(CurrencyCode("XXX"), excluded.failure.originalAmount.currency)
+        assertEquals("123", excluded.failure.rawOriginalCurrency)
     }
 
     @Test
@@ -163,6 +268,9 @@ class CurrencyNormalizationBehavioralTest {
             2,
             aggregate.conversionFailures.count { it.reason == FailureReason.INVALID_CURRENCY }
         )
+        assertEquals(3, aggregate.totalTransactionCount)
+        assertEquals(2, aggregate.sourceBuckets.single { it.currency == CurrencyCode("XXX") }.transactionCount)
+        assertFalse(aggregate.sourceBuckets.any { it.currency == CurrencyCode.EUR })
     }
 
     @Test
@@ -178,6 +286,9 @@ class CurrencyNormalizationBehavioralTest {
         assertEquals(ConversionQuality.UNAVAILABLE, aggregate.conversionQuality)
         assertEquals(0.0, aggregate.displayAmount, 0.0)
         assertEquals(2, aggregate.conversionFailures.size)
+        assertEquals(2, aggregate.totalTransactionCount)
+        assertEquals(2, aggregate.sourceBuckets.single().transactionCount)
+        assertEquals(CurrencyCode("XXX"), aggregate.sourceBuckets.single().currency)
     }
 
     // --- BucketDatePolicy enforcement ---
@@ -194,18 +305,34 @@ class CurrencyNormalizationBehavioralTest {
         assertTrue(aggregate.isPartial)
         assertEquals(0.0, aggregate.displayAmount, 0.0)
         assertEquals(1, aggregate.conversionFailures.size)
+        assertEquals(1, aggregate.sourceBuckets.size)
+        assertEquals(5, aggregate.totalTransactionCount)
+        assertEquals(0, aggregate.metadata.includedTransactionCount)
+        assertEquals(5, aggregate.metadata.excludedTransactionCount)
     }
 
     // --- Helpers ---
 
-    private fun fakeExpense(id: Long, amount: Double, currency: String, date: Long) =
+    private fun fakeExpense(
+        id: Long,
+        amount: Double,
+        currency: String,
+        date: Long,
+        transactionType: TransactionType = TransactionType.PURCHASE,
+        isNotMine: Boolean = false,
+        isSharedExpense: Boolean = false,
+        myShareAmount: Double? = null
+    ) =
         com.yourname.expensetracker.data.database.entity.Expense(
             id = id,
             amount = amount,
             currency = currency,
             merchant = "Test",
-            transactionType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE,
-            date = date
+            transactionType = transactionType,
+            date = date,
+            isNotMine = isNotMine,
+            isSharedExpense = isSharedExpense,
+            myShareAmount = myShareAmount
         )
 }
 

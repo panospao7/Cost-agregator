@@ -9,7 +9,8 @@ package com.yourname.expensetracker.domain.core.money
  *
  * Key design decisions:
  * - [displayAmount] and [displayCurrency] are the converted total in a single currency
- * - [sourceBuckets] preserves the per-currency breakdown for transparency
+ * - [sourceBuckets] preserves every input bucket, including buckets whose conversion failed,
+ *   so provenance and transaction counts are never reduced to successful inputs only
  * - [conversionFailures] lists any currencies that could not be converted
  * - [isPartial] is true when some currencies were excluded due to conversion failures
  *
@@ -44,7 +45,7 @@ data class MoneyAggregate(
     /** Format the display total with currency symbol. */
     fun formatDisplay(): String = MoneyAmount(displayAmount, displayCurrency).formatDisplay()
 
-    /** The total number of transactions across all buckets. */
+    /** The total number of input transactions across all preserved source buckets. */
     val totalTransactionCount: Int
         get() = sourceBuckets.sumOf { it.transactionCount }
 

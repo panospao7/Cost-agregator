@@ -147,11 +147,14 @@ object MoneyAggregateBuilder {
         var total = 0.0
         val sourceBuckets = mutableListOf<MoneyBucket>()
         val failures = mutableListOf<ConversionFailure>()
+        var includedCount = 0
+        var excludedCount = 0
 
         for (bucket in buckets) {
+            sourceBuckets.add(MoneyBucket(bucket.currency, bucket.amount, bucket.transactionCount))
             if (bucket.currency == homeCurrency) {
                 total += bucket.amount
-                sourceBuckets.add(MoneyBucket(bucket.currency, bucket.amount, bucket.transactionCount))
+                includedCount += bucket.transactionCount
                 continue
             }
 
@@ -165,6 +168,7 @@ object MoneyAggregateBuilder {
                             reason = FailureReason.MISSING_RATE,
                             transactionCount = bucket.transactionCount
                         ))
+                        excludedCount += bucket.transactionCount
                         continue
                     }
                     bucket.bucketDate
@@ -186,7 +190,7 @@ object MoneyAggregateBuilder {
             when (outcome) {
                 is ConversionOutcome.Converted -> {
                     total += outcome.convertedAmount
-                    sourceBuckets.add(MoneyBucket(bucket.currency, bucket.amount, bucket.transactionCount))
+                    includedCount += bucket.transactionCount
                 }
                 is ConversionOutcome.Failed -> {
                     failures.add(ConversionFailure(
@@ -200,6 +204,7 @@ object MoneyAggregateBuilder {
                         },
                         transactionCount = bucket.transactionCount
                     ))
+                    excludedCount += bucket.transactionCount
                 }
             }
         }
@@ -216,7 +221,16 @@ object MoneyAggregateBuilder {
             } else null,
             rateBasis = rateBasis,
             requestedRateBasis = rateBasis,
-            actualRateBasis = rateBasis
+            actualRateBasis = rateBasis,
+            metadata = MoneyAggregateMetadata(
+                includedTransactionCount = includedCount,
+                excludedTransactionCount = excludedCount,
+                missingRateCount = failures.count { it.reason == FailureReason.MISSING_RATE },
+                staleRateCount = failures.count { it.reason == FailureReason.RATE_STALE },
+                invalidCurrencyCount = failures.count {
+                    it.reason == FailureReason.INVALID_AMOUNT || it.reason == FailureReason.INVALID_CURRENCY
+                }
+            )
         )
     }
 }

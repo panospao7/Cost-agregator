@@ -117,14 +117,18 @@ class MoneyNormalizationEngine @Inject constructor(
             when (result) {
                 is NormalizationResult.Included -> {
                     total += result.value.normalizedAmount
-                    val ccy = CurrencyCode.parse(expense.currency.uppercase()) ?: CurrencyCode.EUR
+                    val ccy = CurrencyCode.parse(expense.currency.uppercase()) ?: CurrencyCode("XXX")
                     val (amt, cnt) = bucketMap.getOrDefault(ccy, 0.0 to 0)
                     bucketMap[ccy] = (amt + expense.effectiveAmount) to (cnt + 1)
                     includedCount++
                 }
                 is NormalizationResult.Excluded -> {
                     failures.add(result.failure)
-                    excludedCount++
+                    val originalAmount = result.failure.originalAmount
+                    val (amt, cnt) = bucketMap.getOrDefault(originalAmount.currency, 0.0 to 0)
+                    bucketMap[originalAmount.currency] =
+                        (amt + originalAmount.amount) to (cnt + result.failure.transactionCount)
+                    excludedCount += result.failure.transactionCount
                 }
             }
         }
@@ -182,9 +186,9 @@ class MoneyNormalizationEngine @Inject constructor(
         var excludedCount = 0
 
         for (bucket in buckets) {
+            sourceBuckets.add(MoneyBucket(bucket.currency, bucket.amount, bucket.transactionCount))
             if (bucket.currency == homeCurrency) {
                 total += bucket.amount
-                sourceBuckets.add(MoneyBucket(bucket.currency, bucket.amount, bucket.transactionCount))
                 includedCount += bucket.transactionCount
                 continue
             }
@@ -222,7 +226,6 @@ class MoneyNormalizationEngine @Inject constructor(
             when (outcome) {
                 is ConversionOutcome.Converted -> {
                     total += outcome.convertedAmount
-                    sourceBuckets.add(MoneyBucket(bucket.currency, bucket.amount, bucket.transactionCount))
                     includedCount += bucket.transactionCount
                 }
                 is ConversionOutcome.Failed -> {
