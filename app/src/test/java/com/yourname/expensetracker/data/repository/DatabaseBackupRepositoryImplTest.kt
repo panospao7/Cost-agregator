@@ -40,6 +40,7 @@ import com.yourname.expensetracker.domain.diagnostics.OperationRunRecorder
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDeniedException
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CopyableThrowable
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -218,7 +219,7 @@ class DatabaseBackupRepositoryImplTest {
 
     @Test
     fun `cancellation after maintenance entry still releases the export barrier`() = runTest(testDispatcher) {
-        val cancellation = CancellationException("maintenance entry cancelled")
+        val cancellation = IdentityCancellationException("maintenance entry cancelled")
         var mode = RestoreMaintenanceMode.Mode.NORMAL
         every { mockRestoreMaintenanceMode.currentMode() } answers { mode }
         every { mockRestoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.BACKUP_EXPORTING) } answers {
@@ -346,7 +347,7 @@ class DatabaseBackupRepositoryImplTest {
     }
 
     private suspend fun assertGateCancellationStopsExport(initialMode: RestoreMaintenanceMode.Mode) {
-        val cancellation = CancellationException("caller cancelled")
+        val cancellation = IdentityCancellationException("caller cancelled")
         coEvery { privacyGate.check(PrivacyCapability.ENCRYPTED_BACKUP, any()) } throws cancellation
         val auditLogger = mockk<PrivacyAuditLogger>(relaxed = true)
         val operationRun = mockk<OperationRunHandle>(relaxed = true)
@@ -371,6 +372,13 @@ class DatabaseBackupRepositoryImplTest {
         coVerify(exactly = 0) { operationRun.failedFinal(any(), any()) }
         coVerify(exactly = 0) { operationRun.success() }
         assertNoExportSideEffects(resolver, cacheDir)
+    }
+
+    // Coroutine debug stacktrace recovery may copy exceptions at withContext.
+    // Opt this sentinel out so assertSame detects application wrapping, not debug copying.
+    private class IdentityCancellationException(message: String) :
+        CancellationException(message), CopyableThrowable<IdentityCancellationException> {
+        override fun createCopy(): IdentityCancellationException? = null
     }
 
     private suspend fun assertCancellationFromBothExports(
