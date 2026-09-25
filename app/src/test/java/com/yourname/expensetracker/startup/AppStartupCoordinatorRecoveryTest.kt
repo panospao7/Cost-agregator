@@ -228,6 +228,62 @@ class AppStartupCoordinatorRecoveryTest {
     }
 
     @Test
+    fun failed_rollback_retains_active_recovery_when_both_critical_stores_fail() {
+        val time = com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L)
+        for (state in listOf(RestoreJournal.JournalState.SWAPPING, RestoreJournal.JournalState.ASSETS_RESTORING)) {
+            for (throwCommit in listOf(false, true)) {
+                clearRecoveryFixture()
+                var durableMode = RestoreMaintenanceMode.Mode.RESTORE_PREPARING.name
+                var requestedMode = durableMode
+                val preferences = normalPreferences(AtomicBoolean(false)) {
+                    if (requestedMode == RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED.name) {
+                        if (throwCommit) throw IllegalStateException("TEST_CRITICAL_COMMIT_FAILED")
+                        false
+                    } else {
+                        durableMode = requestedMode
+                        true
+                    }
+                }
+                val editor = preferences.edit()
+                every { editor.putString("current_mode", any()) } answers {
+                    requestedMode = secondArg<String>()
+                    editor
+                }
+                every { preferences.all } answers { mapOf("current_mode" to durableMode) }
+                val sentinelDirectory = tmp.newFolder()
+                val ownerContext = maintenanceContext(preferences, sentinelDirectory)
+                val live = tmp.newFile().apply { writeText("TEST_INVALID_SQLITE") }
+                val staged = tmp.newFile().apply { writeText("TEST_STAGED_RECOVERY") }
+                val journal = RestoreJournal(context, time)
+                val entry = journal.beginJournal("", staged.path, live.path)
+                journal.transitionTo(entry, state)
+
+                // Original launch plus two fresh mode/coordinator constructions.
+                repeat(3) {
+                    val mode = RestoreMaintenanceMode(ownerContext, time)
+                    mode.beforeCriticalSentinelIo = { stage ->
+                        if (stage == RestoreMaintenanceMode.CriticalSentinelIoStage.OPEN) {
+                            throw java.io.IOException("TEST_SENTINEL_OPEN_FAILED")
+                        }
+                    }
+                    val freshJournal = RestoreJournal(context, time)
+                    newCoordinator(mode, freshJournal).checkRestoreJournal()
+                    assertEquals(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED, mode.currentMode())
+                    assertTrue(mode.operationalStateFlow.value is com.yourname.expensetracker.data.backup.AppOperationalState.CriticalRecoveryRequired)
+                    assertFalse(mode.isWritesAllowed())
+                    assertEquals(RestoreMaintenanceMode.Mode.RESTORE_ROLLING_BACK.name, durableMode)
+                    assertEquals(RestoreJournal.JournalState.ROLLING_BACK, freshJournal.readJournal()?.state)
+                    assertFalse(File(context.filesDir, RestoreJournal.FAILURE_JOURNAL_FILENAME).exists())
+                    assertFalse(File(sentinelDirectory, "restore_maintenance_critical").exists())
+                    assertEquals("TEST_INVALID_SQLITE", live.readText())
+                    assertEquals("TEST_STAGED_RECOVERY", staged.readText())
+                    assertNoActiveDefaultWork()
+                }
+            }
+        }
+    }
+
+    @Test
     fun absorbing_critical_precedes_any_swap_or_asset_recovery_mutation() {
         val time = com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L)
         for (state in listOf(RestoreJournal.JournalState.SWAPPING, RestoreJournal.JournalState.ASSETS_RESTORING)) {

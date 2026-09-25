@@ -154,15 +154,16 @@ class AppStartupCoordinator @Inject constructor(
         }
     }
 
-    private fun markStartupCritical(reason: String) {
+    private fun markStartupCritical(reason: String): Boolean =
         try {
             restoreMaintenanceMode.enterCriticalRecoveryRequired(reason)
+            true
         } catch (e: CancellationException) {
             throw e
         } catch (_: RestoreMaintenanceMode.PersistenceException) {
             // The mode owner already latched the in-memory lock; recovery UI must remain available.
+            false
         }
-    }
 
     private fun checkRestoreJournalState(): StartupRecoveryState = try {
         if (restoreMaintenanceMode.currentMode() == RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED) {
@@ -226,8 +227,11 @@ class AppStartupCoordinator @Inject constructor(
                     // checkAndRecover() returns NoAction. Only CRITICAL_RECOVERY_REQUIRED is
                     // exempt from the startup auto-reset below, so it is the only mode that
                     // keeps writes blocked across repeated restarts until manual recovery.
-                    markStartupCritical("STARTUP_CRASH_RECOVERY_FAILED")
-                    restoreJournal.failJournal(entry, "STARTUP_CRASH_RECOVERY_FAILED")
+                    if (markStartupCritical("STARTUP_CRASH_RECOVERY_FAILED")) {
+                        restoreJournal.failJournal(entry, "STARTUP_CRASH_RECOVERY_FAILED")
+                    }
+                    // If critical persistence failed, keep ROLLING_BACK active so a
+                    // fresh process cannot mistake the failed recovery for a clean start.
                     Timber.e(
                         "Startup: CRITICAL — crash recovery failed; " +
                             "maintenance mode blocks all writes across restarts until manual intervention"
@@ -467,8 +471,9 @@ class AppStartupCoordinator @Inject constructor(
                 Timber.w("Startup: rolled back to a verified pre-restore DB; restore marked failed")
                 return
             }
-            markStartupCritical("STARTUP_ASSET_ROLLBACK_FAILED")
-            restoreJournal.failJournal(rollingBack, "STARTUP_ASSET_ROLLBACK_FAILED")
+            if (markStartupCritical("STARTUP_ASSET_ROLLBACK_FAILED")) {
+                restoreJournal.failJournal(rollingBack, "STARTUP_ASSET_ROLLBACK_FAILED")
+            }
             Timber.e("Startup: CRITICAL — ASSETS_RESTORING recovery failed; writes stay blocked across restarts")
             return
         }
