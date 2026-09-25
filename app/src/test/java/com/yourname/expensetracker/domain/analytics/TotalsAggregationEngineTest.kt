@@ -27,6 +27,11 @@ import org.junit.Before
 import org.junit.After
 import org.junit.Test
 import timber.log.Timber
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
+import kotlin.test.assertFailsWith
 import java.util.Calendar
 
 class TotalsAggregationEngineTest {
@@ -64,6 +69,63 @@ class TotalsAggregationEngineTest {
     private fun assertSafeLog(operation: String) {
         assertTrue("missing $operation: $logs", logs.any { it.second == "UNKNOWN_ERROR operation=$operation class=IllegalStateException" })
         assertTrue(logs.all { it.first == null && !it.second.contains("secret") && !it.second.contains("918") })
+    }
+
+    @Test
+    fun `average cancellation propagates without zero fallback or failure log`() = runTest {
+        coEvery { multiCurrencyRepo.getMonthlyAggregatesHistorical(any(), any()) } throws
+            CancellationException("secret SQL /data/918")
+
+        assertFailsWith<CancellationException> { engine.getAverageForPeriodType(PeriodType.MONTH, false) }
+        assertTrue(logs.isEmpty())
+    }
+
+    @Test
+    fun `reactive totals cancellation emits no fallback and cancels suspended collection`() = runTest {
+        coEvery { multiCurrencyRepo.getMonthlyAggregatesHistorical(any(), any()) } throws
+            CancellationException("secret SQL /data/918")
+
+        // An inner flatMapLatest cancellation must not become an empty-list emission.
+        assertTrue(engine.getMonthlyTotals(2026).toList().isEmpty())
+        assertTrue(logs.isEmpty())
+
+        val entered = CompletableDeferred<Unit>()
+        val exited = CompletableDeferred<Unit>()
+        coEvery { multiCurrencyRepo.getMonthlyAggregatesHistorical(any(), any()) } coAnswers {
+            entered.complete(Unit)
+            try { awaitCancellation() } finally { exited.complete(Unit) }
+        }
+        val collection = async { engine.getMonthlyTotals(2026).toList() }
+        entered.await()
+        val cancellation = CancellationException("secret SQL /data/918")
+        collection.cancel(cancellation)
+        val thrown = assertFailsWith<CancellationException> { collection.await() }
+        assertTrue(generateSequence<Throwable>(thrown) { it.cause }.any { it === cancellation })
+        exited.await()
+        assertTrue(logs.isEmpty())
+    }
+
+    @Test
+    fun `category cancellation emits no fallback and cancels suspended collection`() = runTest {
+        coEvery { categoryRepository.getAll() } throws CancellationException("secret SQL /data/918")
+
+        assertTrue(engine.getCategoryBreakdown(0, 100, "range").toList().isEmpty())
+        assertTrue(logs.isEmpty())
+
+        val entered = CompletableDeferred<Unit>()
+        val exited = CompletableDeferred<Unit>()
+        coEvery { categoryRepository.getAll() } coAnswers {
+            entered.complete(Unit)
+            try { awaitCancellation() } finally { exited.complete(Unit) }
+        }
+        val collection = async { engine.getCategoryBreakdown(0, 100, "range").toList() }
+        entered.await()
+        val cancellation = CancellationException("secret SQL /data/918")
+        collection.cancel(cancellation)
+        val thrown = assertFailsWith<CancellationException> { collection.await() }
+        assertTrue(generateSequence<Throwable>(thrown) { it.cause }.any { it === cancellation })
+        exited.await()
+        assertTrue(logs.isEmpty())
     }
 
     @Test

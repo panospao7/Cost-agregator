@@ -16,6 +16,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.coroutines.cancellation.CancellationException
 import timber.log.Timber
 import org.junit.After
+import kotlin.test.assertFailsWith
 
 class InsightsEngineTest {
     private lateinit var engine: InsightsEngine
@@ -58,6 +59,47 @@ class InsightsEngineTest {
     }
 
     private val dayMs = 86_400_000L
+
+    private suspend fun assertCancellationWithoutFallbackLog() {
+        assertFailsWith<CancellationException> { engine.generateInsights(emptyList(), emptyList(), "EUR") }
+        assertTrue(logs.none { it.first != null || it.second.contains("UNKNOWN_ERROR") || it.second.contains("private") })
+    }
+
+    @Test
+    fun `monthly comparison cancellation propagates without fallback log`() = runTest {
+        every { monthlyCalculator.calculate(any(), any(), any(), any()) } throws CancellationException("private receipt")
+        assertCancellationWithoutFallbackLog()
+    }
+
+    @Test
+    fun `category insights cancellation propagates without fallback log`() = runTest {
+        every { categoryCalculator.calculate(any(), any(), any(), any(), any()) } throws CancellationException("private receipt")
+        assertCancellationWithoutFallbackLog()
+    }
+
+    @Test
+    fun `top merchants cancellation propagates without fallback log`() = runTest {
+        every { merchantCalculator.calculate(any(), any()) } throws CancellationException("private receipt")
+        assertCancellationWithoutFallbackLog()
+    }
+
+    @Test
+    fun `spending pace cancellation propagates without fallback log`() = runTest {
+        every { paceCalculator.calculate(any(), any(), any(), any(), any(), any()) } throws CancellationException("private receipt")
+        assertCancellationWithoutFallbackLog()
+    }
+
+    @Test
+    fun `anomalies cancellation propagates without fallback log`() = runTest {
+        every { anomalyCalculator.detect(any(), any(), any(), any(), any()) } throws CancellationException("private receipt")
+        assertCancellationWithoutFallbackLog()
+    }
+
+    @Test
+    fun `weekday cancellation propagates without fallback log`() = runTest {
+        every { weekdayCalculator.analyze(any(), any(), any(), any()) } throws CancellationException("private receipt")
+        assertCancellationWithoutFallbackLog()
+    }
 
     @Test
     fun `all seven insight boundaries degrade without leaking exception text`() = runTest {
@@ -153,6 +195,6 @@ class InsightsEngineTest {
         } catch (e: CancellationException) {
             assertEquals(CancellationException::class.java, e::class.java)
         }
-        assertTrue(logs.none { it.second.contains("private") || it.first != null })
+        assertTrue(logs.none { it.second.contains("private") || it.second.contains("UNKNOWN_ERROR") || it.first != null })
     }
 }
