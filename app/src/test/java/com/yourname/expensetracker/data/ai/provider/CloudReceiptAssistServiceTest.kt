@@ -34,8 +34,131 @@ import java.net.SocketTimeoutException
 import javax.net.ssl.SSLException
 import java.util.Base64
 import java.util.concurrent.atomic.AtomicInteger
+import io.mockk.verify
+import org.junit.Before
+import org.junit.After
+import org.json.JSONObject
+import org.json.JSONArray
+import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
+import com.yourname.expensetracker.domain.ai.model.AiRoute
+import com.yourname.expensetracker.domain.ai.model.AiRouteDecision
+import com.yourname.expensetracker.domain.ai.model.ReceiptAssistGenerationResult
+import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
+import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
+import com.yourname.expensetracker.domain.ai.service.ReceiptAssistService
+import com.yourname.expensetracker.domain.ai.usecase.SuggestReceiptExtractionUseCase
+import com.yourname.expensetracker.domain.ai.usecase.ReceiptAssistInputBuilder
+import com.yourname.expensetracker.domain.dto.AiArtifactRecord
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
+import com.yourname.expensetracker.data.repository.ReceiptRepository
+import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 
 class CloudReceiptAssistServiceTest {
+
+    private val failureLogs = mutableListOf<Pair<Throwable?, String>>()
+    private val logTree = object : Timber.Tree() {
+        override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+            if (priority >= 5) failureLogs += t to message
+        }
+    }
+    @Before fun captureLogs() { Timber.plant(logTree) }
+    @After fun releaseLogs() {
+        Timber.uproot(logTree)
+        assertTrue(failureLogs.all { it.first == null && !it.second.contains("/private") })
+    }
+
+    private fun assertArtifactError(error: AiServiceError, readable: String) = runBlocking {
+        val settings = mockk<AiSettingsRepository>()
+        every { settings.settings() } returns flowOf(AiSettings(aiEnabled = true, receiptAssistEnabled = true))
+        val artifacts = mockk<AiArtifactRepository>()
+        coEvery { artifacts.getLatest(any(), any()) } returns null
+        val stored = mutableListOf<AiArtifactRecord>()
+        coEvery { artifacts.upsert(capture(stored)) } returns 1L
+        val forwarder = mockk<ReceiptAssistService>()
+        coEvery { forwarder.suggest(any()) } returns AiServiceResult.Failure(error)
+        val router = mockk<AiCapabilityRouter>()
+        coEvery { router.decide(any(), any(), any()) } returns
+            AiRouteDecision(AiRoute.CLOUD, "CL17_TEST", "gemini", "test-model")
+        val builder = mockk<ReceiptAssistInputBuilder>()
+        coEvery { builder.build(any(), any()) } returns sampleInput()
+        val receipts = mockk<ReceiptRepository>()
+        val receipt = mockk<ScannedReceipt>()
+        every { receipt.rawOcrText } returns "OCR"
+        coEvery { receipts.getReceiptById(1L) } returns receipt
+
+        val result = SuggestReceiptExtractionUseCase(settings, artifacts, forwarder, router, builder, receipts, FakeTimeProvider(1L))(1L)
+
+        assertEquals(ReceiptAssistGenerationResult.Error(readable), result)
+        assertEquals(listOf(AiArtifactStatus.RUNNING, AiArtifactStatus.FAILED), stored.map { it.status })
+        assertEquals("$readable Route: CLOUD, provider: gemini, model: test-model. Reason: CL17_TEST", stored.last().errorMessage)
+        assertEquals(null, stored.last().payloadJson)
+    }
+
+    private fun response(bodyText: String?, status: Int = 200): Response {
+        if (bodyText == null) return mockk<Response>(relaxed = true).also { response ->
+            every { response.isSuccessful } returns true
+            every { response.body } returns null
+            every { response.close() } returns Unit
+        }
+        return Response.Builder().request(okhttp3.Request.Builder().url("https://example.com").build())
+            .protocol(Protocol.HTTP_1_1).code(status).message("Test")
+            .body(bodyText.toResponseBody("application/json".toMediaType())).build()
+    }
+
+    private fun successBody(): String = JSONObject().put("candidates", JSONArray().put(
+        JSONObject().put("content", JSONObject().put("parts", JSONArray().put(JSONObject().put(
+            "text", "{\"merchant\":{\"value\":\"Shop\"},\"notes\":[\"ok\"]}"
+        ))))
+    )).toString()
+
+    @Test
+    fun `both provider paths bound null and empty body errors through artifact consumer`() {
+        for (textMode in listOf(false, true)) {
+            for (body in listOf(null, "")) {
+                val client = mockk<OkHttpClient>()
+                val call = mockk<okhttp3.Call>()
+                every { client.newCall(any()) } returns call
+                every { call.execute() } answers { response(body) }
+                val service = allowedService(client)
+                val result = runBlocking {
+                    if (textMode) service.suggestFromText("bank rows") else service.suggest(sampleInput())
+                } as AiServiceResult.Failure
+                assertEquals(AiServiceError.ParseError("PARSER_FAILED"), result.error)
+                verify(exactly = 1) { call.execute() }
+                assertArtifactError(result.error, "PARSER_FAILED")
+            }
+        }
+    }
+
+    @Test
+    fun `both paths preserve IO and HTTP retry success exhaustion and terminal limits`() {
+        for (textMode in listOf(false, true)) {
+            for (status in listOf<Int?>(null, 408, 429, 500, 400)) {
+                for (recover in listOf(true, false)) {
+                    val client = mockk<OkHttpClient>()
+                    val call = mockk<okhttp3.Call>()
+                    every { client.newCall(any()) } returns call
+                    var attempts = 0
+                    every { call.execute() } answers {
+                        if (++attempts == 1 || !recover) {
+                            if (status == null) throw IOException("connection reset /private/receipt")
+                            response("/private/receipt", status)
+                        } else response(successBody())
+                    }
+                    val service = allowedService(client)
+                    val result = runBlocking {
+                        if (textMode) service.suggestFromText("bank rows") else service.suggest(sampleInput())
+                    }
+                    if (recover && status != 400) assertTrue(result is AiServiceResult.Success<*>)
+                    else {
+                        val expected = if (status == null) AiServiceError.Offline else AiServiceError.HttpError(status, "UNKNOWN_ERROR")
+                        assertEquals(expected, (result as AiServiceResult.Failure).error)
+                    }
+                    verify(exactly = if (status == 400) 1 else if (recover) 2 else 3) { call.execute() }
+                }
+            }
+        }
+    }
 
     private fun allowedService(client: OkHttpClient): CloudReceiptAssistService {
         val settings = mockk<AiSettingsRepository>()
@@ -77,11 +200,21 @@ class CloudReceiptAssistServiceTest {
                     throw failure
                 }.build()
                 val service = allowedService(client)
-                assertEquals(expected, (runBlocking { service.suggest(sampleInput()) } as AiServiceResult.Failure).error)
+                val suggestionFailure = runBlocking { service.suggest(sampleInput()) } as AiServiceResult.Failure
+                assertEquals(expected, suggestionFailure.error)
                 assertEquals(if (failure is SocketTimeoutException) 3 else 1, attempts.get())
                 attempts.set(0)
-                assertEquals(expected, (runBlocking { service.suggestFromText("bank rows") } as AiServiceResult.Failure).error)
+                val textFailure = runBlocking { service.suggestFromText("bank rows") } as AiServiceResult.Failure
+                assertEquals(expected, textFailure.error)
                 assertEquals(if (failure is SocketTimeoutException) 3 else 1, attempts.get())
+                val readable = when (expected) {
+                    AiServiceError.Timeout -> "AI receipt assist timed out. Please retry."
+                    AiServiceError.SslError -> "Secure connection failed. Please retry later."
+                    AiServiceError.Offline -> "Network unavailable. Check connection and retry."
+                    else -> "UNKNOWN_ERROR"
+                }
+                assertArtifactError(suggestionFailure.error, readable)
+                assertArtifactError(textFailure.error, readable)
             }
             val malformed = OkHttpClient.Builder().addInterceptor { chain ->
                 Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1)
@@ -112,6 +245,7 @@ class CloudReceiptAssistServiceTest {
         assertThrows(CancellationException::class.java) {
             runBlocking { service.suggestFromText("bank rows") }
         }
+        assertTrue(failureLogs.isEmpty())
     }
 
     private fun createMockKeyStorage(apiKey: String = ""): SecureKeyStorage {

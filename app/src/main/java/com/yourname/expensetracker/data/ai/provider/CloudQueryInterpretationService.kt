@@ -144,7 +144,7 @@ class CloudQueryInterpretationService @Inject constructor(
                             return@use unsupported()
                         }
 
-                        val body = response.body?.string() ?: return@use unsupported()
+                        val body = response.body?.string() ?: return@use unsupported("PARSER_FAILED")
                         return@use parseResponse(input, body)
                     }
 
