@@ -6,6 +6,7 @@ import androidx.work.testing.WorkManagerTestInitHelper
 import com.yourname.expensetracker.data.backup.RestoreDatabaseOpener
 import com.yourname.expensetracker.data.backup.RestoreJournal
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.domain.bank.BankSyncStartupRecovery
 import io.mockk.mockk
 import kotlinx.coroutines.CoroutineScope
@@ -26,9 +27,11 @@ import org.robolectric.annotation.Config
 import java.io.File
 import timber.log.Timber
 import io.mockk.every
+import io.mockk.verify
 import kotlinx.coroutines.CancellationException
 import kotlin.test.assertFailsWith
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 
 /**
  * Fail-closed crash-recovery contract tests for [AppStartupCoordinator.checkRestoreJournal].
@@ -138,15 +141,67 @@ class AppStartupCoordinatorRecoveryTest {
     fun `recovered Room open cancellation propagates without terminal failure journal`() {
         val clock = com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L)
         val mode = RestoreMaintenanceMode(context, clock)
+        mode.enter(RestoreMaintenanceMode.Mode.RESTORE_SWAPPING)
         val journal = RestoreJournal(context, clock)
         writeRecoverableSwapJournal(journal)
         val opener = mockk<RestoreDatabaseOpener>()
-        every { opener.openFreshDatabase() } throws CancellationException("SQL /private/receipt merchant 1234.56")
+        val cancellation = CancellationException("SQL /private/receipt merchant 1234.56")
+        every { opener.openFreshDatabase() } throws cancellation
 
-        assertFailsWith<CancellationException> { newCoordinator(mode, journal, opener = opener).checkRestoreJournal() }
+        assertSame(cancellation, assertFailsWith<CancellationException> {
+            newCoordinator(mode, journal, opener = opener).checkRestoreJournal()
+        })
 
         assertTrue(journal.hasJournal())
         assertNull(journal.readFailureJournal())
+        assertTrue(logs.none { it.first != null || it.second.contains("class=CancellationException") || it.second.contains("/private/receipt") })
+        val restartedMode = RestoreMaintenanceMode(context, clock)
+        assertEquals(RestoreMaintenanceMode.Mode.RESTORE_SWAPPING, restartedMode.currentMode())
+        assertFalse(restartedMode.isWritesAllowed())
+
+        val freshDb = mockk<AppDatabase>(relaxed = true)
+        every { opener.openFreshDatabase() } returns freshDb
+        newCoordinator(restartedMode, journal, opener = opener).checkRestoreJournal()
+        assertFalse(journal.hasJournal())
+        assertEquals(RestoreMaintenanceMode.Mode.NORMAL, restartedMode.currentMode())
+        verify(exactly = 1) { freshDb.close() }
+    }
+
+    @Test
+    fun `recovered Room validation cancellation closes database and keeps recovery pending`() {
+        assertRoomStageCancellation(closeFails = false)
+    }
+
+    @Test
+    fun `recovered Room close cancellation keeps recovery pending without failure logs`() {
+        assertRoomStageCancellation(closeFails = true)
+    }
+
+    private fun assertRoomStageCancellation(closeFails: Boolean) {
+        val clock = com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L)
+        val mode = RestoreMaintenanceMode(context, clock)
+        mode.enter(RestoreMaintenanceMode.Mode.RESTORE_SWAPPING)
+        val journal = RestoreJournal(context, clock)
+        writeRecoverableSwapJournal(journal)
+        val opener = mockk<RestoreDatabaseOpener>()
+        val freshDb = mockk<AppDatabase>(relaxed = true)
+        every { opener.openFreshDatabase() } returns freshDb
+        val cancellation = CancellationException("SQL /private/receipt merchant 1234.56")
+        if (closeFails) {
+            every { freshDb.close() } throws cancellation
+        } else {
+            every { freshDb.openHelper.writableDatabase } throws cancellation
+        }
+
+        assertSame(cancellation, assertFailsWith<CancellationException> {
+            newCoordinator(mode, journal, opener = opener).checkRestoreJournal()
+        })
+
+        verify(exactly = 1) { freshDb.close() }
+        assertTrue(journal.hasJournal())
+        assertNull(journal.readFailureJournal())
+        assertEquals(RestoreMaintenanceMode.Mode.RESTORE_SWAPPING, mode.currentMode())
+        assertFalse(mode.isWritesAllowed())
         assertTrue(logs.none { it.first != null || it.second.contains("class=CancellationException") || it.second.contains("/private/receipt") })
     }
 

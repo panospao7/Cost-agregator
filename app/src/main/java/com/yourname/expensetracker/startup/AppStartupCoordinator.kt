@@ -247,8 +247,11 @@ class AppStartupCoordinator @Inject constructor(
         // 2. Room open attempt (triggers migration validation)
         try {
             val freshDb = restoreDatabaseOpener.openFreshDatabase()
-            freshDb.openHelper.writableDatabase
-            runCatching { freshDb.close() }
+            try {
+                freshDb.openHelper.writableDatabase
+            } finally {
+                runCatching { freshDb.close() }.onFailure { CancellationSafe.rethrowIfCancellation(it) }
+            }
             Timber.d("Startup: safety-restored DB Room open passed")
         } catch (e: Exception) {
             if (e is CancellationException) throw e
@@ -289,7 +292,8 @@ class AppStartupCoordinator @Inject constructor(
                 restoreDbFilesFrom(sourceFile, liveDbFile)
                 verifySafetyRestoredDb(liveDbFile)
             }.getOrElse { e ->
-                Timber.e("Startup: recovery from %s failed: %s", sourceKind.name, e.javaClass.simpleName)
+                CancellationSafe.rethrowIfCancellation(e)
+                Timber.e("Startup: UNKNOWN_ERROR stage=recover_live_db source=%s class=%s", sourceKind.name, e.javaClass.simpleName)
                 false
             }
             if (restored) {
