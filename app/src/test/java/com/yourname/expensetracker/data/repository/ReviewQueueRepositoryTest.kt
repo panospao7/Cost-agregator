@@ -121,6 +121,39 @@ class ReviewQueueRepositoryTest {
     }
 
     @Test
+    fun `approveReview requires explicit currency when suggestion is null`() = runTest {
+        val reviewId = 21L
+        val pendingReview = PendingReview(
+            id = reviewId,
+            rawNotificationId = 210L,
+            suggestedAmount = 42.0,
+            suggestedCurrency = null,
+            suggestedMerchant = "Test Merchant",
+            suggestedType = "PURCHASE",
+            suggestedCategoryId = null,
+            confidence = 0.45f,
+            packageName = "com.test.unresolved",
+            notificationTitle = "Payment 42 kr",
+            notificationText = "Card purchase at Test Merchant",
+        )
+        coEvery { pendingReviewDao.getById(reviewId) } returns pendingReview
+
+        val result = repository.approveReview(reviewId)
+
+        assertTrue(result is Result.Error)
+        assertEquals(
+            "Currency is required. Please edit the review and select a currency.",
+            (result as Result.Error).message,
+        )
+        coVerify(exactly = 0) {
+            pendingReviewDao.transitionStatus(any(), any(), any())
+        }
+        coVerify(exactly = 0) {
+            transactionLifecycleCoordinator.createExpenseDbOnlyV2(any())
+        }
+    }
+
+    @Test
     fun `approveReview creates expense and records correction on success`() = runTest {
         // Arrange
         val reviewId = 1L

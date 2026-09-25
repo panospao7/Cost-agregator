@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.repository
 
+import com.yourname.expensetracker.domain.currency.CurrencyResolution
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -13,12 +14,14 @@ class NotificationProcessingPipelineOversizedAmountTest {
         val candidate = NotificationProcessingPipeline.detectOversizedAmountCandidate(
             title = "Paid 1,200,000.00 EUR at ACME Stores",
             text = "Card transaction approved",
-            bigText = null
+            bigText = null,
+            resolvedCurrency = knownEurCurrency()
         )
 
         assertNotNull(candidate)
         assertTrue(candidate!!.amount > 1_000_000.0)
         assertEquals("EUR", candidate.currency)
+        assertEquals(CurrencyResolution.EXPLICIT_ISO_CODE, candidate.currencyResolution)
     }
 
     @Test
@@ -26,7 +29,8 @@ class NotificationProcessingPipelineOversizedAmountTest {
         val candidate = NotificationProcessingPipeline.detectOversizedAmountCandidate(
             title = "Order id 1200000 updated",
             text = "System notification",
-            bigText = null
+            bigText = null,
+            resolvedCurrency = knownEurCurrency()
         )
         assertNull(candidate)
     }
@@ -36,7 +40,8 @@ class NotificationProcessingPipelineOversizedAmountTest {
         val candidate = NotificationProcessingPipeline.detectOversizedAmountCandidate(
             title = "Paid EUR 999,999.99 at Store",
             text = "Card transaction",
-            bigText = null
+            bigText = null,
+            resolvedCurrency = knownEurCurrency()
         )
         assertNull(candidate)
     }
@@ -46,12 +51,14 @@ class NotificationProcessingPipelineOversizedAmountTest {
         val candidate = NotificationProcessingPipeline.detectTransactionSignalCandidate(
             title = "Payment €4.08",
             text = "Transaction completed",
-            bigText = null
+            bigText = null,
+            resolvedCurrency = knownEurCurrency()
         )
 
         assertNotNull(candidate)
         assertEquals(4.08, candidate!!.amount, 0.0001)
         assertEquals("EUR", candidate.currency)
+        assertEquals(CurrencyResolution.EXPLICIT_ISO_CODE, candidate.currencyResolution)
     }
 
     @Test
@@ -59,7 +66,8 @@ class NotificationProcessingPipelineOversizedAmountTest {
         val candidate = NotificationProcessingPipeline.detectTransactionSignalCandidate(
             title = "Hello",
             text = "World",
-            bigText = null
+            bigText = null,
+            resolvedCurrency = knownEurCurrency()
         )
 
         assertNull(candidate)
@@ -73,7 +81,8 @@ class NotificationProcessingPipelineOversizedAmountTest {
         val candidate = NotificationProcessingPipeline.detectTransactionSignalCandidate(
             title = "Card *1234",
             text = "Payment €4.08 completed",
-            bigText = null
+            bigText = null,
+            resolvedCurrency = knownEurCurrency()
         )
 
         assertNotNull(candidate)
@@ -87,7 +96,8 @@ class NotificationProcessingPipelineOversizedAmountTest {
         val candidate = NotificationProcessingPipeline.detectTransactionSignalCandidate(
             title = "Balance 12.34€",
             text = "Payment €4.08 at store",
-            bigText = null
+            bigText = null,
+            resolvedCurrency = knownEurCurrency()
         )
 
         assertNotNull(candidate)
@@ -104,11 +114,45 @@ class NotificationProcessingPipelineOversizedAmountTest {
         val candidate = NotificationProcessingPipeline.detectTransactionSignalCandidate(
             title = "Card *1234",
             text = "Payment 4 EUR completed",
-            bigText = null
+            bigText = null,
+            resolvedCurrency = knownEurCurrency()
         )
 
         assertNotNull(candidate)
         assertEquals(4.0, candidate!!.amount, 0.0001)
         assertEquals("EUR", candidate.currency)
     }
+
+    @Test
+    fun `normal and oversized candidates retain unresolved currency provenance`() {
+        val unresolvedCurrency = NotificationProcessingPipeline.ResolvedNotificationCurrency(
+            code = null,
+            resolution = CurrencyResolution.AMBIGUOUS_UNRESOLVED,
+        )
+
+        val normal = NotificationProcessingPipeline.detectTransactionSignalCandidate(
+            title = "Payment 42 kr",
+            text = "Card purchase completed",
+            bigText = null,
+            resolvedCurrency = unresolvedCurrency,
+        )
+        val oversized = NotificationProcessingPipeline.detectOversizedAmountCandidate(
+            title = "Paid 1,200,000.00 kr at ACME Stores",
+            text = "Card transaction approved",
+            bigText = null,
+            resolvedCurrency = unresolvedCurrency,
+        )
+
+        assertNotNull(normal)
+        assertNull(normal!!.currency)
+        assertEquals(CurrencyResolution.AMBIGUOUS_UNRESOLVED, normal.currencyResolution)
+        assertNotNull(oversized)
+        assertNull(oversized!!.currency)
+        assertEquals(CurrencyResolution.AMBIGUOUS_UNRESOLVED, oversized.currencyResolution)
+    }
+
+    private fun knownEurCurrency() = NotificationProcessingPipeline.ResolvedNotificationCurrency(
+        code = "EUR",
+        resolution = CurrencyResolution.EXPLICIT_ISO_CODE
+    )
 }

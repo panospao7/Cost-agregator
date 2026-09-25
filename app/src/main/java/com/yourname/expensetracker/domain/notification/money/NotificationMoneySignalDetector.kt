@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.notification.money
 
 import com.yourname.expensetracker.domain.currency.CurrencyResolution
 import com.yourname.expensetracker.domain.currency.MoneySignal
+import com.yourname.expensetracker.domain.currency.SupportedCurrency
 import com.yourname.expensetracker.domain.currency.UserCurrencyProvider
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -15,29 +16,34 @@ import javax.inject.Singleton
 class NotificationMoneySignalDetector @Inject constructor(
     private val userCurrencyProvider: UserCurrencyProvider
 ) {
-    // Supported currencies with ISO codes and symbols
+    // ISO tokens and aliases are intentionally separate. Shared bare symbols
+    // must never enter the explicit-code pass.
     private val currencies = listOf(
-        CurrencyDef("EUR", "€", "EUR", "EURO"),
-        CurrencyDef("USD", "$", "USD", "US$"),
-        CurrencyDef("GBP", "£", "GBP"),
-        CurrencyDef("CHF", "CHF", "Fr", "SFr"),
-        CurrencyDef("PLN", "PLN", "zł", "zl"),
-        CurrencyDef("RON", "RON", "lei", "leu"),
-        CurrencyDef("TRY", "TRY", "₺", "TL"),
-        CurrencyDef("CAD", "CAD", "C$", "CA$"),
-        CurrencyDef("AUD", "AUD", "A$", "AU$"),
-        CurrencyDef("JPY", "JPY", "¥"),
-        CurrencyDef("SEK", "SEK", "kr"),
-        CurrencyDef("NOK", "NOK", "kr"),
-        CurrencyDef("DKK", "DKK", "kr"),
-        CurrencyDef("HUF", "HUF", "Ft"),
-        CurrencyDef("CZK", "CZK", "Kč", "Kc")
+        CurrencyDef("EUR", aliases = listOf("€", "EURO")),
+        CurrencyDef("USD", aliases = listOf("US$")),
+        CurrencyDef("GBP", aliases = listOf("£")),
+        CurrencyDef("CHF", aliases = listOf("Fr", "SFr")),
+        CurrencyDef("PLN", aliases = listOf("zł", "zl")),
+        CurrencyDef("RON", aliases = listOf("lei", "leu")),
+        CurrencyDef("TRY", aliases = listOf("₺", "TL")),
+        CurrencyDef("CAD", aliases = listOf("C$", "CA$")),
+        CurrencyDef("AUD", aliases = listOf("A$", "AU$")),
+        CurrencyDef("JPY", aliases = listOf("¥")),
+        CurrencyDef("SEK"),
+        CurrencyDef("NOK"),
+        CurrencyDef("DKK"),
+        CurrencyDef("HUF", aliases = listOf("Ft")),
+        CurrencyDef("CZK", aliases = listOf("Kč", "Kc"))
     )
 
     suspend fun bestTransactionAmount(
         text: String,
         homeCurrency: String? = null
     ): MoneySignal? {
+        val normalizedHomeCurrency = homeCurrency
+            ?.let(SupportedCurrency::fromCode)
+            ?.code
+
         // Try explicit ISO codes first (e.g. "12.30 EUR", "EUR 12.30")
         for (currency in currencies) {
             val regex = Regex(
@@ -63,9 +69,12 @@ class NotificationMoneySignalDetector @Inject constructor(
         }
 
         // Try unambiguous symbols (€, £, ¥, ₺)
-        for (currency in currencies.filter { it.unambiguousSymbol }) {
-            val symbols = currency.symbols.map { Regex.escape(it) }.joinToString("|")
-            val regex = Regex("""($symbols)\s*(\d[\d.,\s]*)|\b(\d[\d.,\s]*)\s*($symbols)""")
+        for (currency in currencies.filter { it.aliases.isNotEmpty() }) {
+            val symbols = currency.aliases.map { Regex.escape(it) }.joinToString("|")
+            val regex = Regex(
+                """($symbols)\s*(\d[\d.,\s]*)|\b(\d[\d.,\s]*)\s*($symbols)""",
+                RegexOption.IGNORE_CASE
+            )
             val match = regex.find(text) ?: continue
             val amountStr = (match.groupValues[2].ifEmpty { match.groupValues[3] })
                 .replace(Regex("""\s+"""), "")
@@ -92,7 +101,7 @@ class NotificationMoneySignalDetector @Inject constructor(
             val amount = cleanAmount(amountStr)
             if (amount != null && amount > 0.01) {
                 val candidates = setOf("USD", "CAD", "AUD")
-                val resolved = if (homeCurrency in candidates) homeCurrency!! else null
+                val resolved = normalizedHomeCurrency?.takeIf { it in candidates }
                 return MoneySignal(
                     raw = dollarMatch.value.trim(),
                     amount = amount,
@@ -113,7 +122,7 @@ class NotificationMoneySignalDetector @Inject constructor(
             val amount = cleanAmount(amountStr)
             if (amount != null && amount > 0.01) {
                 val candidates = setOf("SEK", "NOK", "DKK")
-                val resolved = if (homeCurrency in candidates) homeCurrency!! else null
+                val resolved = normalizedHomeCurrency?.takeIf { it in candidates }
                 return MoneySignal(
                     raw = krMatch.value.trim(),
                     amount = amount,
@@ -148,9 +157,8 @@ class NotificationMoneySignalDetector @Inject constructor(
 
     private class CurrencyDef(
         val code: String,
-        vararg val symbols: String
+        val aliases: List<String> = emptyList()
     ) {
-        val isoCodes = symbols.toList()
-        val unambiguousSymbol: Boolean get() = symbols.none { it in setOf("$", "kr") }
+        val isoCodes: List<String> = listOf(code)
     }
 }

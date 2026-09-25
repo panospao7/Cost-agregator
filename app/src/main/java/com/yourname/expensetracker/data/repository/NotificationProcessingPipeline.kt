@@ -294,11 +294,12 @@ class NotificationProcessingPipeline @Inject constructor(
             Timber.d("Pipeline outcome: PARSER_FAILED for package=%s", notification.packageName)
             val fullText = listOfNotNull(notification.title, notification.text, notification.bigText).joinToString(" ").trim()
             val homeCurrency = userCurrencyProvider.getHomeCurrency()
+            val resolvedNotificationCurrency = resolveCurrency(fullText, homeCurrency)
             val oversizedCandidate = detectOversizedAmountCandidate(
                 title = notification.title,
                 text = notification.text,
                 bigText = notification.bigText,
-                defaultCurrency = resolveCurrency(fullText, homeCurrency)
+                resolvedCurrency = resolvedNotificationCurrency
             )
 
             // Phase 2: DB transaction (DB-only mutations)
@@ -329,26 +330,30 @@ class NotificationProcessingPipeline @Inject constructor(
                 if (oversizedCandidate != null) {
                     val oversizedMerchant = oversizedCandidate.merchantHint ?: "Unknown"
                     val oversizedMerchantKey = MerchantKeyGenerator.generate(oversizedMerchant)
-                    val hasExpenseDuplicate = expenseDao.isDuplicateCurrencyAware(
-                        amount = oversizedCandidate.amount,
-                        merchant = oversizedMerchant,
-                        date = notification.timestamp,
-                        currency = oversizedCandidate.currency,
-                        transactionType = TransactionType.UNKNOWN.name,
-                        windowMs = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS,
-                        merchantKey = oversizedMerchantKey,
-                        dedupeKey = null
-                    )
-                    val hasPendingDuplicate = pendingReviewDao.hasPendingDuplicateInRangeTypeAware(
-                        merchantKey = oversizedMerchantKey,
-                        merchantName = oversizedMerchant,
-                        startDate = notification.timestamp - DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS,
-                        endDate = DuplicateDetectionPolicy.windowEndExclusive(notification.timestamp),
-                        minAmount = oversizedCandidate.amount - DuplicateDetectionPolicy.AMOUNT_TOLERANCE,
-                        maxAmount = oversizedCandidate.amount + DuplicateDetectionPolicy.AMOUNT_TOLERANCE,
-                        currency = oversizedCandidate.currency,
-                        transactionType = TransactionType.UNKNOWN.name
-                    )
+                    val hasExpenseDuplicate = oversizedCandidate.currency?.let { currency ->
+                        expenseDao.isDuplicateCurrencyAware(
+                            amount = oversizedCandidate.amount,
+                            merchant = oversizedMerchant,
+                            date = notification.timestamp,
+                            currency = currency,
+                            transactionType = TransactionType.UNKNOWN.name,
+                            windowMs = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS,
+                            merchantKey = oversizedMerchantKey,
+                            dedupeKey = null
+                        )
+                    } ?: false
+                    val hasPendingDuplicate = oversizedCandidate.currency?.let { currency ->
+                        pendingReviewDao.hasPendingDuplicateInRangeTypeAware(
+                            merchantKey = oversizedMerchantKey,
+                            merchantName = oversizedMerchant,
+                            startDate = notification.timestamp - DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS,
+                            endDate = DuplicateDetectionPolicy.windowEndExclusive(notification.timestamp),
+                            minAmount = oversizedCandidate.amount - DuplicateDetectionPolicy.AMOUNT_TOLERANCE,
+                            maxAmount = oversizedCandidate.amount + DuplicateDetectionPolicy.AMOUNT_TOLERANCE,
+                            currency = currency,
+                            transactionType = TransactionType.UNKNOWN.name
+                        )
+                    } ?: false
 
                     if (hasExpenseDuplicate || hasPendingDuplicate) {
                         sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
@@ -425,32 +430,36 @@ class NotificationProcessingPipeline @Inject constructor(
                         title = notification.title,
                         text = notification.text,
                         bigText = notification.bigText,
-                        defaultCurrency = resolveCurrency(fullText, homeCurrency)
+                        resolvedCurrency = resolvedNotificationCurrency
                     )
 
                     if (transactionSignalCandidate != null) {
                         val signalMerchant = transactionSignalCandidate.merchantHint ?: "Unknown"
                         val signalMerchantKey = MerchantKeyGenerator.generate(signalMerchant)
-                        val hasExpenseDuplicate = expenseDao.isDuplicateCurrencyAware(
-                            amount = transactionSignalCandidate.amount,
-                            merchant = signalMerchant,
-                            date = notification.timestamp,
-                            currency = transactionSignalCandidate.currency,
-                            transactionType = TransactionType.UNKNOWN.name,
-                            windowMs = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS,
-                            merchantKey = signalMerchantKey,
-                            dedupeKey = null
-                        )
-                        val hasPendingDuplicate = pendingReviewDao.hasPendingDuplicateInRangeTypeAware(
-                            merchantKey = signalMerchantKey,
-                            merchantName = signalMerchant,
-                            startDate = notification.timestamp - DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS,
-                            endDate = DuplicateDetectionPolicy.windowEndExclusive(notification.timestamp),
-                            minAmount = transactionSignalCandidate.amount - DuplicateDetectionPolicy.AMOUNT_TOLERANCE,
-                            maxAmount = transactionSignalCandidate.amount + DuplicateDetectionPolicy.AMOUNT_TOLERANCE,
-                            currency = transactionSignalCandidate.currency,
-                            transactionType = TransactionType.UNKNOWN.name
-                        )
+                        val hasExpenseDuplicate = transactionSignalCandidate.currency?.let { currency ->
+                            expenseDao.isDuplicateCurrencyAware(
+                                amount = transactionSignalCandidate.amount,
+                                merchant = signalMerchant,
+                                date = notification.timestamp,
+                                currency = currency,
+                                transactionType = TransactionType.UNKNOWN.name,
+                                windowMs = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS,
+                                merchantKey = signalMerchantKey,
+                                dedupeKey = null
+                            )
+                        } ?: false
+                        val hasPendingDuplicate = transactionSignalCandidate.currency?.let { currency ->
+                            pendingReviewDao.hasPendingDuplicateInRangeTypeAware(
+                                merchantKey = signalMerchantKey,
+                                merchantName = signalMerchant,
+                                startDate = notification.timestamp - DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS,
+                                endDate = DuplicateDetectionPolicy.windowEndExclusive(notification.timestamp),
+                                minAmount = transactionSignalCandidate.amount - DuplicateDetectionPolicy.AMOUNT_TOLERANCE,
+                                maxAmount = transactionSignalCandidate.amount + DuplicateDetectionPolicy.AMOUNT_TOLERANCE,
+                                currency = currency,
+                                transactionType = TransactionType.UNKNOWN.name
+                            )
+                        } ?: false
 
                         if (hasExpenseDuplicate || hasPendingDuplicate) {
                             sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
@@ -823,15 +832,22 @@ class NotificationProcessingPipeline @Inject constructor(
         }
     }
 
+    internal data class ResolvedNotificationCurrency(
+        val code: String?,
+        val resolution: com.yourname.expensetracker.domain.currency.CurrencyResolution
+    )
+
     internal data class OversizedAmountCandidate(
         val amount: Double,
-        val currency: String,
+        val currency: String?,
+        val currencyResolution: com.yourname.expensetracker.domain.currency.CurrencyResolution,
         val merchantHint: String?
     )
 
     internal data class TransactionSignalCandidate(
         val amount: Double,
-        val currency: String,
+        val currency: String?,
+        val currencyResolution: com.yourname.expensetracker.domain.currency.CurrencyResolution,
         val merchantHint: String?
     )
 
@@ -871,13 +887,24 @@ class NotificationProcessingPipeline @Inject constructor(
      */
 
     /**
-     * Resolve the best-guess currency from notification text using the money signal detector.
-     * Falls back to home currency or "EUR" only when no signal is detected.
+     * Resolve currency provenance without fabricating a home/default code.
      */
-    private suspend fun resolveCurrency(fullText: String, homeCurrency: String?): String {
-        if (fullText.isBlank()) return homeCurrency ?: "EUR"
+    private suspend fun resolveCurrency(
+        fullText: String,
+        homeCurrency: String?
+    ): ResolvedNotificationCurrency {
+        if (fullText.isBlank()) {
+            return ResolvedNotificationCurrency(
+                code = null,
+                resolution = com.yourname.expensetracker.domain.currency.CurrencyResolution.UNKNOWN
+            )
+        }
         val signal = moneySignalDetector.bestTransactionAmount(fullText, homeCurrency)
-        return signal?.currencyCode ?: homeCurrency ?: "EUR"
+            ?: return ResolvedNotificationCurrency(
+                code = null,
+                resolution = com.yourname.expensetracker.domain.currency.CurrencyResolution.UNKNOWN
+            )
+        return ResolvedNotificationCurrency(signal.currencyCode, signal.resolution)
     }
 
     internal companion object {
@@ -914,7 +941,7 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             title: String?,
             text: String?,
             bigText: String?,
-            defaultCurrency: String = "EUR"
+            resolvedCurrency: ResolvedNotificationCurrency
         ): OversizedAmountCandidate? {
             val fullText = listOfNotNull(title, text, bigText)
                 .joinToString(" ")
@@ -931,22 +958,20 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                 .firstOrNull { it > AppConfig.MAX_TRANSACTION_AMOUNT }
                 ?: return null
 
-            // P2-10 FIXED: Currency resolved by NotificationMoneySignalDetector via resolveCurrency().
-            // The defaultCurrency parameter is the detector-derived currency or home-currency fallback.
-            // No hardcoded $->USD or else->EUR remains.
-            val currency = defaultCurrency
-
+            // Currency and its provenance come from NotificationMoneySignalDetector.
+            // Unknown or ambiguous-unresolved signals deliberately remain null.
             val merchantHint = extractMerchantHint(title ?: text ?: bigText)
             return OversizedAmountCandidate(
                 amount = oversized,
-                currency = currency,
+                currency = resolvedCurrency.code,
+                currencyResolution = resolvedCurrency.resolution,
                 merchantHint = merchantHint
             )
         }
 
     internal fun detectTransactionSignalCandidate(
         title: String?, text: String?, bigText: String?,
-        defaultCurrency: String = "EUR"
+        resolvedCurrency: ResolvedNotificationCurrency
     ): TransactionSignalCandidate? {
         val fullText = listOfNotNull(title, text, bigText)
             .joinToString(" ")
@@ -995,11 +1020,12 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             val amount = best.amount
 
             // P2-10 FIXED: Currency resolved by NotificationMoneySignalDetector via resolveCurrency().
-            val currency = defaultCurrency
-
             val merchantHint = extractMerchantHint(title ?: text ?: bigText)
             return TransactionSignalCandidate(
-                amount = amount, currency = currency, merchantHint = merchantHint
+                amount = amount,
+                currency = resolvedCurrency.code,
+                currencyResolution = resolvedCurrency.resolution,
+                merchantHint = merchantHint
             )
         }
 

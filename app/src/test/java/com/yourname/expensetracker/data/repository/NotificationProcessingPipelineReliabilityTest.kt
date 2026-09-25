@@ -37,6 +37,11 @@ import com.yourname.expensetracker.domain.intelligence.ml.MatchType
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantLookupResult
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.engine.DashboardFollowThroughEngine
+import com.yourname.expensetracker.domain.currency.CurrencyResolution
+import com.yourname.expensetracker.domain.currency.MoneySignal
+import com.yourname.expensetracker.domain.currency.UserCurrencyProvider
+import com.yourname.expensetracker.domain.notification.money.NotificationMoneySignalDetector
+import com.yourname.expensetracker.domain.provenance.PendingReviewSourceLinkService
 
 import com.yourname.expensetracker.domain.parser.AppParserRegistry
 import com.yourname.expensetracker.domain.parser.ParseOutcome
@@ -59,6 +64,7 @@ import io.mockk.mockkStatic
 import io.mockk.slot
 import io.mockk.unmockkStatic
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.TestScope
@@ -96,6 +102,9 @@ class NotificationProcessingPipelineReliabilityTest {
     private val budgetMonitor = mockk<BudgetMonitor>(relaxed = true)
     private val anomalyAlertOrchestrator = mockk<AnomalyAlertOrchestrator>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
+    private val userCurrencyProvider = mockk<UserCurrencyProvider>(relaxed = true)
+    private val moneySignalDetector = mockk<NotificationMoneySignalDetector>(relaxed = true)
+    private val pendingReviewSourceLinkService = mockk<PendingReviewSourceLinkService>(relaxed = true)
     private val directionDetector = mockk<TransferDirectionDetector>(relaxed = true)
     private val analytics = mockk<TransferDirectionAnalytics>(relaxed = true)
     private val aiSettingsRepository = mockk<AiSettingsRepository>(relaxed = true)
@@ -132,7 +141,7 @@ class NotificationProcessingPipelineReliabilityTest {
         subscriptionDetector = subscriptionDetector,
         coordinator = coordinator,
         postCommitActionRunner = mockk(relaxed = true),
-        pendingReviewSourceLinkService = mockk(relaxed = true),
+        pendingReviewSourceLinkService = pendingReviewSourceLinkService,
         sourceLinkWriter = mockk(relaxed = true),
             transactionLifecycleEventWriter = mockk(relaxed = true),
             transactionRunner = mockk(relaxed = true),
@@ -150,8 +159,8 @@ class NotificationProcessingPipelineReliabilityTest {
                 override suspend fun updateSettings(transform: (com.yourname.expensetracker.domain.privacy.PrivacySettings) -> com.yourname.expensetracker.domain.privacy.PrivacySettings) {}
             }
         ),
-        userCurrencyProvider = mockk(relaxed = true),
-        moneySignalDetector = mockk(relaxed = true),
+        userCurrencyProvider = userCurrencyProvider,
+        moneySignalDetector = moneySignalDetector,
         applicationScope = applicationScope
     )
 
@@ -181,6 +190,7 @@ class NotificationProcessingPipelineReliabilityTest {
         }
         coEvery { classifier.initialize() } returns Unit
         every { timeProvider.now() } returns 1_700_000_000_000L
+        coEvery { userCurrencyProvider.getHomeCurrency() } returns "EUR"
         coEvery { merchantNormalizer.normalize(any(), any(), any()) } answers { merchantLookupResult(firstArg()) }
     }
 
@@ -592,6 +602,17 @@ class NotificationProcessingPipelineReliabilityTest {
             text = "Card payment completed"
         )
         val reviewSlot = slot<PendingReview>()
+        coEvery {
+            moneySignalDetector.bestTransactionAmount(any(), "EUR")
+        } returns MoneySignal(
+            raw = "€4.08",
+            amount = 4.08,
+            currencyCode = "EUR",
+            currencyCandidates = setOf("EUR"),
+            resolution = CurrencyResolution.EXPLICIT_UNAMBIGUOUS_SYMBOL,
+            confidence = 0.90f,
+            ambiguous = false
+        )
 
         coEvery {
             parserRegistry.parseWithProvenance(
@@ -642,9 +663,178 @@ class NotificationProcessingPipelineReliabilityTest {
         assertTrue("Expected NeedsReview outcome, got $result", result is NotificationPipelineOutcome.NeedsReview)
         coVerify(exactly = 1) { pendingReviewDao.upsertByRawNotificationId(capture(reviewSlot)) }
         assertEquals(4.08, reviewSlot.captured.suggestedAmount!!, 0.0001)
+        assertEquals("EUR", reviewSlot.captured.suggestedCurrency)
+        coVerify(exactly = 1) {
+            expenseDao.isDuplicateCurrencyAware(
+                amount = 4.08,
+                merchant = "Unknown",
+                date = notification.timestamp,
+                currency = "EUR",
+                transactionType = TransactionType.UNKNOWN.name,
+                windowMs = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS,
+                merchantKey = any(),
+                dedupeKey = any(),
+            )
+        }
+        coVerify(exactly = 1) {
+            pendingReviewDao.hasPendingDuplicateInRangeTypeAware(
+                merchantKey = any(),
+                merchantName = "Unknown",
+                startDate = notification.timestamp - DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS,
+                endDate = DuplicateDetectionPolicy.windowEndExclusive(notification.timestamp),
+                minAmount = 4.08 - DuplicateDetectionPolicy.AMOUNT_TOLERANCE,
+                maxAmount = 4.08 + DuplicateDetectionPolicy.AMOUNT_TOLERANCE,
+                currency = "EUR",
+                transactionType = TransactionType.UNKNOWN.name,
+            )
+        }
         coVerify(exactly = 1) { sourceStatsDao.incrementTotalAndPending(notification.packageName, any()) }
         coVerify(exactly = 1) { rawDao.markRelevance(any(), true) }
         coVerify(exactly = 0) { sourceStatsDao.incrementTotalAndAutoRejected(notification.packageName, any()) }
+    }
+
+    @Test
+    fun `parser-null notification with unresolved currency creates review without currency duplicate queries`() = runBlocking {
+        val notification = testNotification("com.test.unresolved").copy(
+            title = "Payment 42 kr",
+            text = "Card purchase at ACME"
+        )
+        val reviewSlot = slot<PendingReview>()
+        coEvery {
+            moneySignalDetector.bestTransactionAmount(any(), "EUR")
+        } returns unresolvedKrSignal(amount = 42.0)
+        coEvery {
+            parserRegistry.parseWithProvenance(
+                notification.title,
+                notification.text,
+                notification.bigText,
+                notification.subText,
+                notification.packageName,
+            )
+        } returns ParseOutcome.NoParse(mockk(relaxed = true))
+        coEvery {
+            rawDao.exists(
+                packageName = notification.packageName,
+                timestamp = notification.timestamp,
+                title = notification.title,
+                text = notification.text,
+                bigText = notification.bigText,
+            )
+        } returns false
+        coEvery { rawDao.insertOrIgnore(any()) } returns 51L
+        coEvery { pendingReviewDao.upsertByRawNotificationId(any()) } returns 701L
+
+        val result = pipeline.process(notification)
+
+        assertTrue(result is NotificationPipelineOutcome.NeedsReview)
+        coVerify(exactly = 1) { pendingReviewDao.upsertByRawNotificationId(capture(reviewSlot)) }
+        coVerify(exactly = 1) {
+            pendingReviewSourceLinkService.linkSourcesForReview(any(), 701L, any(), any(), any())
+        }
+        assertEquals(42.0, reviewSlot.captured.suggestedAmount!!, 0.0)
+        assertNull(reviewSlot.captured.suggestedCurrency)
+        coVerify(exactly = 0) {
+            expenseDao.isDuplicateCurrencyAware(any(), any(), any(), any(), any(), any(), any(), any())
+        }
+        coVerify(exactly = 0) {
+            pendingReviewDao.hasPendingDuplicateInRangeTypeAware(
+                any(), any(), any(), any(), any(), any(), any(), any(),
+            )
+        }
+    }
+
+    @Test
+    fun `parser-null oversized notification with unresolved currency creates review without currency duplicate queries`() = runBlocking {
+        val notification = testNotification("com.test.unresolved.oversized").copy(
+            title = "Paid 1,200,000.00 kr at ACME",
+            text = "Card purchase completed"
+        )
+        val reviewSlot = slot<PendingReview>()
+        coEvery {
+            moneySignalDetector.bestTransactionAmount(any(), "EUR")
+        } returns unresolvedKrSignal(amount = 1_200_000.0)
+        coEvery {
+            parserRegistry.parseWithProvenance(
+                notification.title,
+                notification.text,
+                notification.bigText,
+                notification.subText,
+                notification.packageName,
+            )
+        } returns ParseOutcome.NoParse(mockk(relaxed = true))
+        coEvery {
+            rawDao.exists(
+                packageName = notification.packageName,
+                timestamp = notification.timestamp,
+                title = notification.title,
+                text = notification.text,
+                bigText = notification.bigText,
+            )
+        } returns false
+        coEvery { rawDao.insertOrIgnore(any()) } returns 52L
+        coEvery { pendingReviewDao.upsertByRawNotificationId(any()) } returns 702L
+
+        val result = pipeline.process(notification)
+
+        assertTrue(result is NotificationPipelineOutcome.NeedsReview)
+        coVerify(exactly = 1) { pendingReviewDao.upsertByRawNotificationId(capture(reviewSlot)) }
+        coVerify(exactly = 1) {
+            pendingReviewSourceLinkService.linkSourcesForReview(any(), 702L, any(), any(), any())
+        }
+        assertEquals(1_200_000.0, reviewSlot.captured.suggestedAmount!!, 0.0)
+        assertNull(reviewSlot.captured.suggestedCurrency)
+        coVerify(exactly = 0) {
+            expenseDao.isDuplicateCurrencyAware(any(), any(), any(), any(), any(), any(), any(), any())
+        }
+        coVerify(exactly = 0) {
+            pendingReviewDao.hasPendingDuplicateInRangeTypeAware(
+                any(), any(), any(), any(), any(), any(), any(), any(),
+            )
+        }
+    }
+
+    @Test
+    fun `parser-null currency resolution propagates cancellation`() = runBlocking {
+        val notification = testNotification("com.test.currency.cancel").copy(
+            title = "Payment 42 kr",
+            text = "Card purchase completed"
+        )
+        coEvery {
+            parserRegistry.parseWithProvenance(
+                notification.title,
+                notification.text,
+                notification.bigText,
+                notification.subText,
+                notification.packageName,
+            )
+        } returns ParseOutcome.NoParse(mockk(relaxed = true))
+        coEvery {
+            rawDao.exists(
+                packageName = notification.packageName,
+                timestamp = notification.timestamp,
+                title = notification.title,
+                text = notification.text,
+                bigText = notification.bigText,
+            )
+        } returns false
+        coEvery { rawDao.insertOrIgnore(any()) } returns 53L
+        coEvery {
+            moneySignalDetector.bestTransactionAmount(any(), "EUR")
+        } throws CancellationException("currency-cancelled")
+
+        val thrown = try {
+            pipeline.process(notification)
+            null
+        } catch (e: CancellationException) {
+            e
+        }
+
+        assertNotNull(thrown)
+        assertEquals("currency-cancelled", thrown!!.message)
+        coVerify(exactly = 0) { pendingReviewDao.upsertByRawNotificationId(any()) }
+        coVerify(exactly = 0) {
+            expenseDao.isDuplicateCurrencyAware(any(), any(), any(), any(), any(), any(), any(), any())
+        }
     }
 
     @Test
@@ -811,7 +1001,8 @@ class NotificationProcessingPipelineReliabilityTest {
         val candidate = NotificationProcessingPipeline.detectTransactionSignalCandidate(
             title = "Payment €4.08",
             text = "Transaction completed",
-            bigText = null
+            bigText = null,
+            resolvedCurrency = knownEurCurrency()
         )
 
         assertNotNull(candidate)
@@ -824,11 +1015,27 @@ class NotificationProcessingPipelineReliabilityTest {
         val candidate = NotificationProcessingPipeline.detectTransactionSignalCandidate(
             title = "Hello",
             text = "World",
-            bigText = null
+            bigText = null,
+            resolvedCurrency = knownEurCurrency()
         )
 
         assertNull(candidate)
     }
+
+    private fun knownEurCurrency() = NotificationProcessingPipeline.ResolvedNotificationCurrency(
+        code = "EUR",
+        resolution = CurrencyResolution.EXPLICIT_UNAMBIGUOUS_SYMBOL
+    )
+
+    private fun unresolvedKrSignal(amount: Double) = MoneySignal(
+        raw = "$amount kr",
+        amount = amount,
+        currencyCode = null,
+        currencyCandidates = setOf("SEK", "NOK", "DKK"),
+        resolution = CurrencyResolution.AMBIGUOUS_UNRESOLVED,
+        confidence = 0.45f,
+        ambiguous = true,
+    )
 
     private fun merchantLookupResult(normalizedName: String): MerchantLookupResult {
         return MerchantLookupResult(
