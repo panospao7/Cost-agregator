@@ -56,7 +56,7 @@ class GroupBalanceCalculator @Inject constructor(
         }
         val settlementsPaid = validSettlements.filter { it.fromMemberId == memberId }.sumOf { it.amount }
         val settlementsReceived = validSettlements.filter { it.toMemberId == memberId }.sumOf { it.amount }
-        val netBalance = paidTotal - owedShareTotal - settlementsPaid + settlementsReceived
+        val netBalance = paidTotal - owedShareTotal + settlementsPaid - settlementsReceived
 
         return GroupMemberBalance(groupId, memberId, currency, paidTotal, owedShareTotal, settlementsPaid, settlementsReceived, netBalance)
     }
