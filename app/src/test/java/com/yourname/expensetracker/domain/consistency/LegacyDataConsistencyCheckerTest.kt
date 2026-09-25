@@ -80,6 +80,12 @@ class LegacyDataConsistencyCheckerTest {
             events.filter { it.receiptId == receiptId }
 
         override suspend fun insert(event: ReceiptEvent): Long = 0
+
+        override suspend fun deleteOlderThan(beforeMs: Long): Int {
+            val before = events.size
+            events.removeAll { it.occurredAt < beforeMs }
+            return before - events.size
+        }
     }
 
     private class FakePendingReviewDao : PendingReviewDao {

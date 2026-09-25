@@ -11,6 +11,8 @@ import com.yourname.expensetracker.domain.privacy.PrivacyDeniedException
 import com.yourname.expensetracker.domain.privacy.PrivacyGateReasonCodes
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.util.ViewModelTestUtils
+import java.io.ByteArrayInputStream
+import java.io.File
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
@@ -49,6 +51,12 @@ class BackupRestoreViewModelPrivacyDenialTest : ViewModelTestUtils() {
     @Before
     override fun setup() {
         super.setup()
+        // Harness stub: the restore flow stages a temp file under cacheDir; the relaxed
+        // Context mock returns a mock File whose path is null, NPE-ing inside createTempFile.
+        every { context.cacheDir } returns File(System.getProperty("java.io.tmpdir"))
+        // Harness stub: the relaxed ContentResolver returns a mock stream whose read() never
+        // yields -1, hanging the staging copy forever; a real empty stream copies instantly.
+        every { context.contentResolver.openInputStream(any()) } returns ByteArrayInputStream(ByteArray(0))
         coEvery { databaseBackupRepository.getDatabaseStats() } returns DatabaseStats(
             transactionCount = 0,
             categoryCount = 0,
@@ -186,7 +194,7 @@ class BackupRestoreViewModelPrivacyDenialTest : ViewModelTestUtils() {
     fun `permitted restore leaves blocked state null`() = runTest(testDispatcher) {
         coEvery {
             databaseBackupRepository.restoreCostBackup(any(), any())
-        } returns Result.success(DatabaseImportResult.Success)
+        } returns Result.success(DatabaseImportResult.Success(summary = com.yourname.expensetracker.domain.backup.DatabaseImportSummary(transactionCount = 0, categoryCount = 0, merchantCount = 0, pendingReviewCount = 0, budgetCount = 0)))
 
         val vm = createViewModel()
         advanceUntilIdle()
