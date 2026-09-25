@@ -285,6 +285,24 @@ class BudgetForecastingEngine @Inject constructor(
                     createdAt = now
                 )
             }
+            ForecastInsertResult.ConstraintViolation -> {
+                emitForecastDiagnostic(
+                    stage = "FORECAST_UNAVAILABLE",
+                    outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.SKIPPED,
+                    budgetId = budget.id,
+                    severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.WARNING,
+                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                        .put("reason", ForecastUnavailableReason.UNKNOWN)
+                        .put("detail", "PERSISTENCE_CONSTRAINT")
+                        .build()
+                )
+                return@withContext BudgetForecastResult.Unavailable(
+                    budgetId = budget.id,
+                    reasonCode = ForecastUnavailableReason.UNKNOWN,
+                    reason = "Forecast skipped: persistence constraint rejected the insert",
+                    createdAt = now
+                )
+            }
         }
         val persisted = forecast.copy(id = persistedId).also { f ->
             f.spentToDate = spentToDate
@@ -320,11 +338,10 @@ class BudgetForecastingEngine @Inject constructor(
      * `budgetId -> budgets(id)`. SQLite surfaces BOTH violations as
      * [SQLiteConstraintException], so the catch must disambiguate on the message:
      * only a UNIQUE-index conflict is a genuine same-instant duplicate to map to
-     * [ForecastInsertResult.DuplicateInSameInstant]. A FOREIGN KEY failure (e.g. the
-     * budget was deleted mid-flight) is a real referential-integrity error — it is
-     * rethrown so it surfaces instead of being silently swallowed as a duplicate.
-     * ALL other exceptions also propagate unchanged so genuine I/O / write-barrier /
-     * corruption errors are never swallowed.
+     * [ForecastInsertResult.DuplicateInSameInstant]. Other database constraints, including
+     * FOREIGN KEY failures, return [ForecastInsertResult.ConstraintViolation] without
+     * exposing raw SQLite text. Non-constraint exceptions still propagate unchanged so
+     * genuine I/O, write-barrier, and corruption errors are never swallowed.
      */
     @VisibleForTesting
     internal suspend fun insertForecast(forecast: BudgetForecast): ForecastInsertResult {
@@ -339,14 +356,14 @@ class BudgetForecastingEngine @Inject constructor(
             // DBG-02: disambiguate the constraint type via the SQLite message. Only a
             // UNIQUE-index conflict is the same-instant duplicate this path expects;
             // a FOREIGN KEY (or any other non-UNIQUE) constraint failure must NOT be
-            // mislabeled as a duplicate and silently dropped — rethrow so the genuine
-            // referential-integrity error is observable.
+            // mislabeled as a duplicate. Return a controlled typed result without
+            // exposing raw SQLite text to callers or diagnostics.
             if (e.message?.contains("UNIQUE", ignoreCase = true) == true) {
                 Timber.w("BudgetForecastingEngine: UNKNOWN_ERROR stage=unique_insert class=%s", e::class.java.simpleName)
                 ForecastInsertResult.DuplicateInSameInstant
             } else {
                 Timber.e("BudgetForecastingEngine: UNKNOWN_ERROR stage=constraint_insert class=%s", e::class.java.simpleName)
-                throw e
+                ForecastInsertResult.ConstraintViolation
             }
         }
     }
@@ -677,6 +694,9 @@ sealed interface ForecastInsertResult {
      * No existing row was overwritten. Callers route this to the skip/unavailable path.
      */
     data object DuplicateInSameInstant : ForecastInsertResult
+
+    /** A non-duplicate database constraint rejected the insert; raw SQLite text is not exposed. */
+    data object ConstraintViolation : ForecastInsertResult
 }
 
 /**

@@ -7,6 +7,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
 import java.time.ZoneId
+import java.util.Locale
+import java.util.TimeZone
 
 /**
  * RP-08 (P6-004) series-builder contract tests.
@@ -173,6 +175,34 @@ class BudgetHistorySeriesBuilderTest {
         assertEquals(0, series.observedMonthCount)
         assertEquals(0, series.filledMonthCount)
         assertEquals(0, series.completeMonthCount)
+    }
+
+    @Test
+    fun `literal ASCII repository keys join localized canonical range without changing counts`() {
+        val originalLocale = Locale.getDefault()
+        val originalTimeZone = TimeZone.getDefault()
+        try {
+            Locale.setDefault(Locale.forLanguageTag("fa-IR-u-nu-arabext"))
+            TimeZone.setDefault(TimeZone.getTimeZone("UTC"))
+
+            val series = BudgetHistorySeriesBuilder.build(
+                monthlyTotals = listOf(
+                    MonthlySpendingTotal("2026-01", 100.0, 1),
+                    MonthlySpendingTotal("2026-03", 300.0, 1)
+                ),
+                windowStartInclusive = ms("2026-01-01"),
+                windowEndExclusive = ms("2026-04-01")
+            )
+
+            assertEquals(listOf("2026-01", "2026-02", "2026-03"), series.monthKeys)
+            assertEquals(listOf(100.0, 0.0, 300.0), series.values)
+            assertEquals(2, series.observedMonthCount)
+            assertEquals(3, series.filledMonthCount)
+            assertEquals(3, series.completeMonthCount)
+        } finally {
+            Locale.setDefault(originalLocale)
+            TimeZone.setDefault(originalTimeZone)
+        }
     }
 
     private fun ms(date: String, hour: Int = 0): Long =

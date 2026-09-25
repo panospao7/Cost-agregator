@@ -31,6 +31,8 @@ import org.junit.Before
 import org.junit.Test
 import java.time.LocalDate
 import java.time.ZoneId
+import java.util.Locale
+import java.util.TimeZone
 
 /**
  * RP-08 (slice C1): contract tests for
@@ -180,6 +182,40 @@ class MultiCurrencyRepositoryHistoricalCategoryMonthlySpendTest {
         // WHERE clause (`date >= :startDate AND date < :endDate`) enforces the
         // exclusion of endDate rows at the database level.
         coVerify(exactly = 1) { expenseDao.getExpensesBetweenUncapped(startDate, endDate) }
+    }
+
+    @Test
+    fun `month keys remain ASCII and purchase scopes survive localized digit locale`() = runTest(testDispatcher) {
+        val originalLocale = Locale.getDefault()
+        val originalTimeZone = TimeZone.getDefault()
+        try {
+            Locale.setDefault(Locale.forLanguageTag("ar-EG-u-nu-arab"))
+            TimeZone.setDefault(TimeZone.getTimeZone("UTC"))
+            val startDate = millis(2026, 4, 1)
+            val endDate = millis(2026, 5, 1)
+            coEvery { expenseDao.getExpensesBetweenUncapped(startDate, endDate) } returns listOf(
+                expense(id = 1, amount = 25.0, currency = "EUR", date = startDate, categoryId = 7L),
+                expense(
+                    id = 2,
+                    amount = 100.0,
+                    currency = "EUR",
+                    date = millis(2026, 4, 2),
+                    categoryId = 7L,
+                    type = TransactionType.DEPOSIT
+                )
+            )
+
+            val result = repository.getHistoricalCategoryMonthlySpend(startDate, endDate)
+
+            assertEquals(setOf("2026-04"), result.map { it.monthKey }.toSet())
+            assertEquals(2, result.size)
+            assertApproxEquals(25.0, result.single { it.scope == SpendScope.Category(7L) }.aggregate.displayAmount, 0.0001)
+            assertApproxEquals(25.0, result.single { it.scope == SpendScope.Overall }.aggregate.displayAmount, 0.0001)
+            coVerify(exactly = 0) { currencyConverter.convertOutcome(any(), any(), any(), any(), any(), any()) }
+        } finally {
+            Locale.setDefault(originalLocale)
+            TimeZone.setDefault(originalTimeZone)
+        }
     }
 
     @Test

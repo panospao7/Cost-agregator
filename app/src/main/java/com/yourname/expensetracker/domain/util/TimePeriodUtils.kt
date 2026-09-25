@@ -9,6 +9,7 @@ import java.time.temporal.ChronoUnit
 import java.time.temporal.TemporalAdjusters
 import java.time.temporal.WeekFields
 import java.util.Calendar
+import java.util.Locale
 import com.yourname.expensetracker.domain.core.time.PeriodKind
 import com.yourname.expensetracker.domain.core.time.PeriodRange
 
@@ -836,7 +837,7 @@ object TimePeriodUtils {
      */
     fun formatMonthKey(year: Int, month: Int): String {
         require(month in 1..12) { "Invalid month: $month" }
-        return String.format("%04d-%02d", year, month)
+        return String.format(Locale.ROOT, "%04d-%02d", year, month)
     }
 
     /**
