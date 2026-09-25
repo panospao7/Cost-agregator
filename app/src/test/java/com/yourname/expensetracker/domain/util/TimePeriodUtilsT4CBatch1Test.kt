@@ -15,6 +15,7 @@ import java.time.ZoneOffset
 import java.time.ZonedDateTime
 import java.time.temporal.WeekFields
 import java.util.Calendar
+import java.util.Locale
 import java.util.TimeZone
 
 /**
@@ -377,10 +378,28 @@ class TimePeriodUtilsT4CBatch1Test {
             withZone(zoneId) {
                 for (ts in samples) {
                     val zoned = Instant.ofEpochMilli(ts).atZone(ZoneId.of(zoneId))
-                    val expected = String.format("%04d-%02d", zoned.year, zoned.monthValue)
+                    val expected = asciiMonthKey(zoned.year, zoned.monthValue)
                     assertEquals("formatMonthKey $zoneId ts=$ts", expected, TimePeriodUtils.formatMonthKey(ts))
                 }
             }
+        }
+    }
+
+    @Test
+    fun `formatMonthKey uses ASCII digits under localized digit locales`() {
+        val originalLocale = Locale.getDefault()
+        try {
+            for (languageTag in listOf("en-US", "ar-EG-u-nu-arab", "fa-IR-u-nu-arabext")) {
+                Locale.setDefault(Locale.forLanguageTag(languageTag))
+                assertEquals("2026-04", TimePeriodUtils.formatMonthKey(2026, 4))
+                assertEquals("2025-12", TimePeriodUtils.formatMonthKey(2025, 12))
+                assertEquals(
+                    listOf("2025-12", "2026-01"),
+                    TimePeriodUtils.buildMonthKeyRange("2025-12", "2026-01")
+                )
+            }
+        } finally {
+            Locale.setDefault(originalLocale)
         }
     }
 
@@ -472,9 +491,12 @@ class TimePeriodUtilsT4CBatch1Test {
         val end = YearMonth.of(2025, 3)
         val expected = generateSequence(start) { it.plusMonths(1) }
             .takeWhile { !it.isAfter(end) }
-            .map { String.format("%04d-%02d", it.year, it.monthValue) }
+            .map { asciiMonthKey(it.year, it.monthValue) }
             .toList()
 
         assertEquals(expected, TimePeriodUtils.buildMonthKeyRange(startKey, endKey))
     }
+
+    private fun asciiMonthKey(year: Int, month: Int): String =
+        year.toString().padStart(4, '0') + "-" + month.toString().padStart(2, '0')
 }
