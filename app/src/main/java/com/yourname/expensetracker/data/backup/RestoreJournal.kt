@@ -4,6 +4,7 @@ import android.content.Context
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import org.json.JSONObject
 import timber.log.Timber
 import java.io.File
@@ -38,6 +39,8 @@ class RestoreJournal @Inject constructor(
     @ApplicationContext private val context: Context,
     private val timeProvider: TimeProvider
 ) {
+
+    class JournalDurabilityException : IllegalStateException("RESTORE_JOURNAL_DURABILITY_FAILED")
 
     data class AssetRestoreTask(
         val receiptId: Long,
@@ -106,51 +109,71 @@ class RestoreJournal @Inject constructor(
              * Parses a journal entry. Legacy journals without a `startedAt` field fall
              * back to the caller-supplied [nowEpochMs] — no hidden wall-clock read.
              */
-            fun fromJson(json: JSONObject, nowEpochMs: Long): JournalEntry = JournalEntry(
-                operationId = json.optString("operationId", UUID.randomUUID().toString()),
-                operationCorrelationId = json.optString("operationCorrelationId", UUID.randomUUID().toString()),
-                state = json.optString("state", "PREPARING").let { stateName ->
-                    try {
-                        JournalState.valueOf(stateName)
-                    } catch (e: IllegalArgumentException) {
-                        JournalState.PREPARING
-                    }
-                },
-                // M10-LEGACY: Fallback for old JSON without startedAt; uses the explicit
-                // nowEpochMs (sourced from the injected TimeProvider by callers) only when
-                // parsing legacy journals.
-                startedAt = json.optLong("startedAt", nowEpochMs),
-                // DDL-016-05: read both old name and new _prefixed name for recovery paths
-                sourceBackupPath = (json.optString("_sourceBackupPath").takeIf { it.isNotEmpty() && it != "null" }
-                    ?: json.optString("sourceBackupPath", null)?.takeIf { it != "null" }),
-                stagedDbPath = (json.optString("_stagedDbPath").takeIf { it.isNotEmpty() && it != "null" }
-                    ?: json.optString("stagedDbPath", null)?.takeIf { it != "null" }),
-                safetyBackupPath = (json.optString("_safetyBackupPath").takeIf { it.isNotEmpty() && it != "null" }
-                    ?: json.optString("safetyBackupPath", null)?.takeIf { it != "null" }),
-                liveDbPath = (json.optString("_liveDbPath").takeIf { it.isNotEmpty() && it != "null" }
-                    ?: json.optString("liveDbPath", null)?.takeIf { it != "null" }),
-                error = json.optString("error", null)
-                    ?.takeIf { it != "null" }
+            private fun requiredString(json: JSONObject, key: String): String =
+                (json.opt(key) as? String)?.takeIf { it.isNotBlank() }
+                    ?: throw IllegalArgumentException("RESTORE_JOURNAL_CORRUPT_INPUT")
+
+            private fun optionalString(json: JSONObject, key: String): String? {
+                if (!json.has(key) || json.isNull(key)) return null
+                return json.opt(key) as? String
+                    ?: throw IllegalArgumentException("RESTORE_JOURNAL_CORRUPT_INPUT")
+            }
+
+            private fun requiredLong(json: JSONObject, key: String): Long = when (val value = json.opt(key)) {
+                is Long -> value
+                is Int -> value.toLong()
+                else -> throw IllegalArgumentException("RESTORE_JOURNAL_CORRUPT_INPUT")
+            }
+
+            private fun recoveryPath(json: JSONObject, current: String, legacy: String): String? {
+                val currentValue = optionalString(json, current)
+                val legacyValue = optionalString(json, legacy)
+                return currentValue?.takeIf { it.isNotEmpty() && it != "null" }
+                    ?: legacyValue?.takeIf { it != "null" }
+            }
+
+            fun fromJson(
+                json: JSONObject,
+                nowEpochMs: Long,
+                validateRecoveryIdentity: Boolean = false
+            ): JournalEntry = JournalEntry(
+                operationId = requiredString(json, "operationId"),
+                operationCorrelationId = requiredString(json, "operationCorrelationId"),
+                state = JournalState.values().firstOrNull { it.name == requiredString(json, "state") }
+                    ?: throw IllegalArgumentException("RESTORE_JOURNAL_CORRUPT_INPUT"),
+                startedAt = if (json.has("startedAt")) requiredLong(json, "startedAt") else nowEpochMs,
+                sourceBackupPath = recoveryPath(json, "_sourceBackupPath", "sourceBackupPath"),
+                stagedDbPath = recoveryPath(json, "_stagedDbPath", "stagedDbPath"),
+                safetyBackupPath = recoveryPath(json, "_safetyBackupPath", "safetyBackupPath"),
+                liveDbPath = recoveryPath(json, "_liveDbPath", "liveDbPath"),
+                error = optionalString(json, "error")?.takeIf { it != "null" }
                     ?.let(RestoreJournal::failureReasonCode),
-                extractTempDirPath = json.optString("_extractTempDirPath")
-                    .takeIf { it.isNotEmpty() && it != "null" },
-                assetTasks = json.optJSONArray("assetTasks")?.let { arr ->
-                    (0 until arr.length()).mapNotNull { i ->
-                        runCatching {
-                            val o = arr.getJSONObject(i)
-                            AssetRestoreTask(
-                                receiptId = o.getLong("receiptId"),
-                                sourceRelativePath = o.getString("src"),
-                                status = AssetRestoreStatus.valueOf(o.getString("status")),
-                                // DDL-016-05: read both "target" (old) and "targetName" (new basenames-only)
-                                targetPath = (o.optString("target").takeIf { it.isNotEmpty() && it != "null" }
-                                    ?: o.optString("targetName").takeIf { it.isNotEmpty() && it != "null" }),
-                                error = o.optString("error").takeIf { it.isNotEmpty() && it != "null" }
-                            )
-                        }.getOrNull()
+                extractTempDirPath = optionalString(json, "_extractTempDirPath")
+                    ?.takeIf { it.isNotEmpty() && it != "null" },
+                assetTasks = if (!json.has("assetTasks")) {
+                    emptyList()
+                } else {
+                    val tasks = json.optJSONArray("assetTasks")
+                        ?: throw IllegalArgumentException("RESTORE_JOURNAL_CORRUPT_INPUT")
+                    (0 until tasks.length()).map { index ->
+                        val task = tasks.optJSONObject(index)
+                            ?: throw IllegalArgumentException("RESTORE_JOURNAL_CORRUPT_INPUT")
+                        AssetRestoreTask(
+                            receiptId = requiredLong(task, "receiptId"),
+                            sourceRelativePath = requiredString(task, "src"),
+                            status = AssetRestoreStatus.values().firstOrNull {
+                                it.name == requiredString(task, "status")
+                            } ?: throw IllegalArgumentException("RESTORE_JOURNAL_CORRUPT_INPUT"),
+                            targetPath = recoveryPath(task, "target", "targetName"),
+                            error = optionalString(task, "error")?.takeIf { it != "null" }
+                        )
                     }
-                } ?: emptyList()
-            )
+                }
+            ).also {
+                if (validateRecoveryIdentity && it.liveDbPath.isNullOrBlank()) {
+                    throw IllegalArgumentException("RESTORE_JOURNAL_CORRUPT_INPUT")
+                }
+            }
         }
     }
 
@@ -169,6 +192,13 @@ class RestoreJournal @Inject constructor(
 
     private val journalFile: File
         get() = File(context.filesDir, JOURNAL_FILENAME)
+
+    /** Narrow deterministic seam for fsync/rename failure tests; production uses the real APIs. */
+    internal var testWriteTextSynced: ((File, String) -> Unit)? = null
+    internal var testRenameTo: ((File, File) -> Boolean)? = null
+    internal enum class IoStage { INSPECT, READ, OPEN, WRITE, SYNC, RENAME, DELETE }
+    internal var beforeIo: ((File, IoStage) -> Unit)? = null
+    internal var testDelete: ((File) -> Boolean)? = null
 
     // ── RestoreJournalEvent (append-only stage trail) ─────────────
 
@@ -486,17 +516,37 @@ class RestoreJournal @Inject constructor(
     /**
      * Reads the current journal entry, or null if no journal exists.
      */
-    fun readJournal(): JournalEntry? {
+    sealed class JournalReadResult {
+        data object Absent : JournalReadResult()
+        data class Valid(val entry: JournalEntry) : JournalReadResult()
+        data object Corrupt : JournalReadResult()
+    }
+
+    /** Distinguishes an absent active journal from bytes that cannot be trusted. */
+    fun readJournalResult(): JournalReadResult {
         return try {
-            if (!journalFile.exists()) return null
+            beforeIo?.invoke(journalFile, IoStage.INSPECT)
+            if (!journalFile.exists()) return JournalReadResult.Absent
+            beforeIo?.invoke(journalFile, IoStage.READ)
             val text = journalFile.readText()
-            if (text.isBlank()) return null
-            JournalEntry.fromJson(JSONObject(text), timeProvider.now())
+            if (text.isBlank()) return JournalReadResult.Corrupt
+            val json = JSONObject(text)
+            if (!json.has("operationId") || !json.has("operationCorrelationId") || !json.has("state")) {
+                return JournalReadResult.Corrupt
+            }
+            JournalReadResult.Valid(JournalEntry.fromJson(json, timeProvider.now(), validateRecoveryIdentity = true))
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e("RestoreJournal: PARSER_FAILED stage=read class=%s", e::class.java.simpleName)
-            null
+            JournalReadResult.Corrupt
         }
+    }
+
+    /** Compatibility reader; corruption is never treated as an actionable entry. */
+    fun readJournal(): JournalEntry? = when (val result = readJournalResult()) {
+        JournalReadResult.Absent, JournalReadResult.Corrupt -> null
+        is JournalReadResult.Valid -> result.entry
     }
 
     /**
@@ -506,26 +556,31 @@ class RestoreJournal @Inject constructor(
         synchronized(journalLock) {
             try {
                 journalFile.parentFile?.mkdirs()
-                // DDL-A8-02: preserve existing events when overwriting journal state
-                val oldJson = readJournalJson()
+                // DDL-A8-02: preserve existing events when overwriting journal state.
+                val oldJson = when (readJournalResult()) {
+                    JournalReadResult.Absent -> null
+                    is JournalReadResult.Valid -> readJournalJson()
+                    JournalReadResult.Corrupt -> throw JournalDurabilityException()
+                }
                 val newJson = entry.toJson()
                 val existingEvents = oldJson?.optJSONArray("events")
-                if (existingEvents != null && existingEvents.length() > 0) {
-                    newJson.put("events", existingEvents)
-                }
+                if (existingEvents != null && existingEvents.length() > 0) newJson.put("events", existingEvents)
                 val tmpFile = File(journalFile.parentFile, "${journalFile.name}.tmp")
-                // P7-CURRENT-022: fsync temp file before rename so the journal state
-                // (incl. safety backup path needed for crash recovery) is crash-durable.
                 writeTextSynced(tmpFile, newJson.toString(2))
-                // DDL-C67-07: check rename result
-                if (!tmpFile.renameTo(journalFile)) {
+                if (!renameTo(tmpFile, journalFile)) {
                     writeTextSynced(journalFile, tmpFile.readText())
-                    tmpFile.delete()
+                    if (!journalFile.exists()) throw JournalDurabilityException()
+                    deleteChecked(tmpFile)
                 }
+                if (!journalFile.exists()) throw JournalDurabilityException()
                 Timber.d("Restore journal: state=%s operationId=%s", entry.state, entry.operationId)
+            } catch (e: JournalDurabilityException) {
+                throw e
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
                 Timber.e("RestoreJournal: UNKNOWN_ERROR stage=write class=%s", e::class.java.simpleName)
+                throw JournalDurabilityException()
             }
         }
     }
@@ -538,13 +593,14 @@ class RestoreJournal @Inject constructor(
      * path at the exact moment it is needed for recovery.
      */
     private fun writeTextSynced(file: File, text: String) {
+        beforeIo?.invoke(file, IoStage.OPEN)
         java.io.FileOutputStream(file).use { fos ->
+            beforeIo?.invoke(file, IoStage.WRITE)
             fos.write(text.toByteArray(Charsets.UTF_8))
             fos.flush()
-            // fd.sync() flushes OS buffers to disk; guard against the rare device
-            // that throws SyncFailedException so a sync limitation never aborts the
-            // operation (the bytes are still written + flushed above).
-            runCatching { fos.fd.sync() }
+            beforeIo?.invoke(file, IoStage.SYNC)
+            testWriteTextSynced?.invoke(file, text)
+            fos.fd.sync()
         }
     }
 
@@ -559,12 +615,6 @@ class RestoreJournal @Inject constructor(
         stagedDbPath: String,
         liveDbPath: String
     ): JournalEntry {
-        // Clean up previous failure journal
-        val failureFile = File(context.filesDir, FAILURE_JOURNAL_FILENAME)
-        if (failureFile.exists()) {
-            failureFile.delete()
-            Timber.d("Cleaned up previous failure journal: %s", FAILURE_JOURNAL_FILENAME)
-        }
         val entry = JournalEntry(
             state = JournalState.PREPARING,
             startedAt = timeProvider.now(),
@@ -573,6 +623,8 @@ class RestoreJournal @Inject constructor(
             liveDbPath = liveDbPath
         )
         writeJournal(entry)
+        // Retain the previous failure record until the new active record is durable.
+        deleteChecked(File(context.filesDir, FAILURE_JOURNAL_FILENAME))
         return entry
     }
 
@@ -607,20 +659,7 @@ class RestoreJournal @Inject constructor(
     fun commitJournal(entry: JournalEntry): JournalEntry {
         val updated = entry.copy(state = JournalState.COMPLETE)
         writeJournal(updated)
-        try {
-            val successFile = File(context.filesDir, SUCCESS_JOURNAL_FILENAME)
-            successFile.delete()
-            // DDL-C67-07: check rename; fallback to copy+delete
-            if (!journalFile.renameTo(successFile)) {
-                journalFile.copyTo(successFile, overwrite = true)
-                journalFile.delete()
-            }
-            Timber.d("Restore journal preserved as %s", SUCCESS_JOURNAL_FILENAME)
-        } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-            Timber.w("RestoreJournal: UNKNOWN_ERROR stage=preserve_success class=%s", e::class.java.simpleName)
-            deleteJournal()
-        }
+        preserveJournalAs(SUCCESS_JOURNAL_FILENAME)
         return updated
     }
 
@@ -643,18 +682,51 @@ class RestoreJournal @Inject constructor(
      * failure record is not lost and can be inspected for diagnostics.
      */
     private fun preserveJournal() {
-        if (!journalFile.exists()) return
-        val failureFile = File(context.filesDir, FAILURE_JOURNAL_FILENAME)
+        preserveJournalAs(FAILURE_JOURNAL_FILENAME)
+    }
+
+    private fun preserveJournalAs(fileName: String) {
         try {
-            // DDL-C67-07: check rename; fallback to copy+delete
-            if (!journalFile.renameTo(failureFile)) {
-                journalFile.copyTo(failureFile, overwrite = true)
-                journalFile.delete()
+            beforeIo?.invoke(journalFile, IoStage.INSPECT)
+            if (!journalFile.exists()) throw JournalDurabilityException()
+            val target = File(context.filesDir, fileName)
+            val tmp = File(context.filesDir, "$fileName.tmp")
+            beforeIo?.invoke(journalFile, IoStage.READ)
+            writeTextSynced(tmp, journalFile.readText())
+            if (!renameTo(tmp, target)) {
+                writeTextSynced(target, tmp.readText())
+                deleteChecked(tmp)
             }
-            Timber.d("Restore journal preserved as %s", FAILURE_JOURNAL_FILENAME)
+            if (!target.exists()) throw JournalDurabilityException()
+            deleteChecked(journalFile)
+            Timber.d("Restore journal preserved as %s", fileName)
+        } catch (e: JournalDurabilityException) {
+            throw e
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-            Timber.e("RestoreJournal: UNKNOWN_ERROR stage=preserve_failure class=%s", e::class.java.simpleName)
+            Timber.e("RestoreJournal: UNKNOWN_ERROR stage=preserve class=%s", e::class.java.simpleName)
+            throw JournalDurabilityException()
+        }
+    }
+
+    private fun renameTo(source: File, target: File): Boolean {
+        beforeIo?.invoke(target, IoStage.RENAME)
+        return testRenameTo?.invoke(source, target) ?: source.renameTo(target)
+    }
+
+    private fun deleteChecked(file: File) {
+        try {
+            beforeIo?.invoke(file, IoStage.INSPECT)
+            if (!file.exists()) return
+            beforeIo?.invoke(file, IoStage.DELETE)
+            if (!(testDelete?.invoke(file) ?: file.delete())) throw JournalDurabilityException()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: JournalDurabilityException) {
+            throw e
+        } catch (_: Exception) {
+            throw JournalDurabilityException()
         }
     }
 
@@ -662,10 +734,7 @@ class RestoreJournal @Inject constructor(
      * Deletes the journal file.
      */
     fun deleteJournal() {
-        if (journalFile.exists()) {
-            journalFile.delete()
-            Timber.d("Restore journal deleted")
-        }
+        deleteChecked(journalFile)
     }
 
     /**
@@ -704,29 +773,30 @@ class RestoreJournal @Inject constructor(
      * for executing the appropriate recovery steps.
      */
     fun checkAndRecover(): RecoveryResult {
-        val entry = readJournal() ?: return RecoveryResult.NoAction
+        val entry = when (val read = readJournalResult()) {
+            JournalReadResult.Absent -> return RecoveryResult.NoAction
+            JournalReadResult.Corrupt -> return RecoveryResult.CriticalRecoveryRequired
+            is JournalReadResult.Valid -> read.entry
+        }
 
         return when (entry.state) {
             JournalState.COMPLETE -> {
-                // Already complete; clean up and proceed.
-                deleteJournal()
+                // A crash may have interrupted archival after the terminal write.
+                preserveJournalAs(SUCCESS_JOURNAL_FILENAME)
                 RecoveryResult.CompleteClean
             }
 
             JournalState.PREPARING,
             JournalState.STAGED,
-            JournalState.FAILED -> {
-                // Non-destructive states. Clean up staging files and journal.
+            JournalState.SAFETY_BACKUP_CREATED -> {
+                failJournal(entry, "RESTORE_ABORTED_BEFORE_SWAP")
                 cleanStagingFiles(entry)
-                deleteJournal()
                 RecoveryResult.CleanedNonDestructive(entry)
             }
 
-            JournalState.SAFETY_BACKUP_CREATED -> {
-                // Safety backup was created but swap didn't start.
-                // Clean up staging, keep safety backup, delete journal.
+            JournalState.FAILED -> {
+                preserveJournalAs(FAILURE_JOURNAL_FILENAME)
                 cleanStagingFiles(entry)
-                deleteJournal()
                 RecoveryResult.CleanedNonDestructive(entry)
             }
 

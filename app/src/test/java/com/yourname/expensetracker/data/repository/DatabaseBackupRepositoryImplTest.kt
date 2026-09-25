@@ -1076,10 +1076,16 @@ class DatabaseBackupRepositoryImplTest {
             // P7-006: staged trio and extraction workspace must not leak.
             assertTrue("staged residue leaked: ${stagedResidueFiles()}", stagedResidueFiles().isEmpty())
             assertTrue("extraction residue leaked: ${extractionResidueFiles()}", extractionResidueFiles().isEmpty())
+            val failureJournal = journal.readFailureJournal()
             assertEquals(
                 "Pre-swap failure must leave a terminal failed journal",
-                "STAGED_VERIFICATION_FAILED",
-                journal.readFailureJournal()?.error
+                RestoreJournal.JournalState.FAILED,
+                failureJournal?.state
+            )
+            assertEquals(
+                "Persisted failure must use a controlled diagnostic reason code",
+                DiagnosticReasonCode.UNKNOWN_ERROR.name,
+                failureJournal?.error
             )
         } finally {
             unmockkObject(CostbackupBundle)
@@ -1239,6 +1245,480 @@ class DatabaseBackupRepositoryImplTest {
         assertEquals(RestoreJournal.ASSET_REASON_INVALID_TARGET, task.error)
         assertFalse("No file may be produced for a rejected extension", File(File(tempDir, "receipts"), "restored_5.exe").exists())
         coVerify(exactly = 0) { dao.update(any()) }
+    }
+
+
+    private enum class RestoreOperation { COSTBACKUP, IMPORT, RESET }
+
+    private data class RestoreFixture(
+        val directory: File,
+        val source: File,
+        val journal: RestoreJournal,
+        val trace: MutableList<String>
+    )
+
+    /** Real file/journal bytes, with only Room opening and existing verification seams substituted. */
+    private fun restoreFixture(): RestoreFixture {
+        io.mockk.clearMocks(database, openHelper, supportDb, mockRestoreMaintenanceMode,
+            answers = false, childMocks = false)
+        val directory = File(tempDir, UUID.randomUUID().toString()).apply { mkdirs() }
+        every { context.filesDir } returns directory
+        every { context.cacheDir } returns File(directory, "cache").apply { mkdirs() }
+        every { context.applicationContext } returns realAppContext
+        every { context.getDatabasePath(any()) } answers { File(directory, firstArg<String>()) }
+        dbFile = File(directory, AppDatabase.DATABASE_NAME)
+        createFullSchemaDatabase(dbFile)
+        val source = File(directory, "source.db")
+        createFullSchemaDatabase(source)
+        SQLiteDatabase.openDatabase(source.path, null, SQLiteDatabase.OPEN_READWRITE).use {
+            it.execSQL("PRAGMA user_version = 37")
+        }
+        val trace = mutableListOf<String>()
+        var mode = RestoreMaintenanceMode.Mode.NORMAL
+        every { mockRestoreMaintenanceMode.currentMode() } answers { mode }
+        every { mockRestoreMaintenanceMode.isWritesAllowed() } answers { mode == RestoreMaintenanceMode.Mode.NORMAL }
+        every { mockRestoreMaintenanceMode.enter(any()) } answers {
+            mode = firstArg()
+            trace += "MODE_" + mode.name
+        }
+        every { mockRestoreMaintenanceMode.enterCriticalRecoveryRequired(any()) } answers {
+            mode = RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED
+            trace += "CRITICAL"
+        }
+        every { mockRestoreMaintenanceMode.exit(any()) } answers {
+            mode = if (firstArg<Boolean>()) RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED
+                else RestoreMaintenanceMode.Mode.NORMAL
+            trace += "EXIT_" + mode.name
+        }
+        every { database.close() } answers { trace += "CLOSE_LIVE" }
+        every { openHelper.close() } returns Unit
+        every { openHelper.writableDatabase } returns supportDb
+        every { supportDb.query(match<String> { it.startsWith("SELECT COUNT(*)") }) } answers {
+            val count = if (firstArg<String>().contains("\"expenses\"")) 1 else 0
+            MatrixCursor(arrayOf("count")).apply { addRow(arrayOf(count)) }
+        }
+        every { supportDb.query("PRAGMA wal_checkpoint(TRUNCATE)") } answers { checkpointCursor(0) }
+        mockkObject(AppDatabase.Companion)
+        val liveBuilder = mockk<androidx.room.RoomDatabase.Builder<AppDatabase>>()
+        val stageBuilder = mockk<androidx.room.RoomDatabase.Builder<AppDatabase>>()
+        val stagedDatabase = mockk<AppDatabase>(relaxed = true)
+        every { stagedDatabase.openHelper } returns openHelper
+        every { liveBuilder.build() } returns database
+        every { stageBuilder.build() } returns stagedDatabase
+        every { AppDatabase.fileBuilder(context, any()) } answers {
+            if (secondArg<String>() == AppDatabase.DATABASE_NAME) liveBuilder else stageBuilder
+        }
+        val counts = BackupVerifier.allTableNames().associateWith { if (it == "expenses") 1 else 0 }
+        stubExtractionResult(tier1Manifest(counts), source, withReceiptAsset = true)
+        val journal = io.mockk.spyk(RestoreJournal(context, FakeTimeProvider(fixedTime)))
+        every { journal.transitionTo(any(), any(), any(), any()) } answers {
+            val result = callOriginal()
+            trace += "JOURNAL_" + secondArg<RestoreJournal.JournalState>().name
+            result
+        }
+        every { journal.failJournal(any(), any()) } answers {
+            val result = callOriginal()
+            trace += "FINALIZED_FAILURE"
+            result
+        }
+        every { journal.commitJournal(any()) } answers {
+            val result = callOriginal()
+            trace += "FINALIZED_SUCCESS"
+            result
+        }
+        return RestoreFixture(directory, source, journal, trace)
+    }
+
+    private fun releaseRestoreFixture() {
+        unmockkObject(CostbackupBundle)
+        unmockkObject(AppDatabase.Companion)
+    }
+
+    private suspend fun invokeRestore(
+        operation: RestoreOperation,
+        repo: DatabaseBackupRepositoryImpl,
+        source: File
+    ): Result<*> = when (operation) {
+        RestoreOperation.COSTBACKUP -> repo.restoreCostBackup(source, "pw")
+        RestoreOperation.IMPORT -> repo.importDatabase(source)
+        RestoreOperation.RESET -> repo.resetDatabase()
+    }
+
+    private fun assertNoDestructiveStep(fixture: RestoreFixture, before: ByteArray) {
+        org.junit.Assert.assertArrayEquals(before, dbFile.readBytes())
+        assertFalse(fixture.trace.contains("CLOSE_LIVE"))
+        verify(exactly = 0) { database.close() }
+        verify(exactly = 0) { mockRestoreMaintenanceMode.exit(any()) }
+        assertEquals(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED, mockRestoreMaintenanceMode.currentMode())
+    }
+
+    @Test
+    fun all_restore_APIs_contain_begin_open_write_sync_and_corrupt_journal_failures() = runTest(testDispatcher) {
+        for (operation in RestoreOperation.values()) {
+            for (fault in listOf("OPEN", "WRITE", "SYNC", "CORRUPT")) {
+                val fixture = restoreFixture()
+                try {
+                    val before = dbFile.readBytes()
+                    val wal = File(dbFile.path + "-wal").apply { writeBytes(byteArrayOf(1, 2)) }
+                    val shm = File(dbFile.path + "-shm").apply { writeBytes(byteArrayOf(3, 4)) }
+                    val active = File(fixture.directory, "restore_journal.json")
+                    if (fault == "CORRUPT") active.writeText("{BROKEN")
+                    else fixture.journal.beforeIo = { file, stage ->
+                        if (file.name == "restore_journal.json.tmp" && stage.name == fault)
+                            throw java.io.IOException("TEST_JOURNAL_IO_FAILED")
+                    }
+                    val result = invokeRestore(operation, createRepository(journal = fixture.journal), fixture.source)
+                    assertTrue(result.exceptionOrNull() is RestoreJournal.JournalDurabilityException)
+                    assertNoDestructiveStep(fixture, before)
+                    org.junit.Assert.assertArrayEquals(byteArrayOf(1, 2), wal.readBytes())
+                    org.junit.Assert.assertArrayEquals(byteArrayOf(3, 4), shm.readBytes())
+                    verify(exactly = 0) { mockRestoreMaintenanceMode.enter(any()) }
+                    if (fault == "CORRUPT") assertEquals("{BROKEN", active.readText())
+                } finally { releaseRestoreFixture() }
+            }
+        }
+    }
+
+    @Test
+    fun all_restore_APIs_contain_entry_and_pre_destructive_transition_failures() = runTest(testDispatcher) {
+        for (operation in RestoreOperation.values()) {
+            for (fault in listOf("ENTRY", "STAGED", "SAFETY_BACKUP_CREATED", "SWAPPING")) {
+                val fixture = restoreFixture()
+                try {
+                    val before = dbFile.readBytes()
+                    if (fault == "ENTRY") {
+                        every { mockRestoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.RESTORE_PREPARING) } throws
+                            RestoreMaintenanceMode.PersistenceException()
+                    } else {
+                        val state = RestoreJournal.JournalState.valueOf(fault)
+                        every { fixture.journal.transitionTo(any(), state, any(), any()) } throws
+                            RestoreJournal.JournalDurabilityException()
+                    }
+                    val result = invokeRestore(operation, createRepository(journal = fixture.journal), fixture.source)
+                    assertTrue(result.isFailure)
+                    assertTrue(result.exceptionOrNull() is RestoreJournal.JournalDurabilityException ||
+                        result.exceptionOrNull() is RestoreMaintenanceMode.PersistenceException)
+                    assertNoDestructiveStep(fixture, before)
+                    assertTrue(fixture.journal.hasJournal())
+                } finally { releaseRestoreFixture() }
+            }
+        }
+    }
+
+    @Test
+    fun all_restore_APIs_contain_abort_finalization_and_critical_persistence_failures() = runTest(testDispatcher) {
+        for (operation in RestoreOperation.values()) for (criticalFails in listOf(false, true)) {
+            val fixture = restoreFixture()
+            try {
+                val before = dbFile.readBytes()
+                every { mockRestoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.RESTORE_STAGING) } throws
+                    IllegalStateException("TEST_PRE_SWAP_FAILED")
+                every { fixture.journal.failJournal(any(), any()) } throws RestoreJournal.JournalDurabilityException()
+                if (criticalFails) every { mockRestoreMaintenanceMode.enterCriticalRecoveryRequired(any()) } answers {
+                    fixture.trace += "CRITICAL"
+                    every { mockRestoreMaintenanceMode.currentMode() } returns RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED
+                    throw RestoreMaintenanceMode.PersistenceException()
+                }
+                val result = invokeRestore(operation, createRepository(journal = fixture.journal), fixture.source)
+                assertTrue(if (criticalFails) result.exceptionOrNull() is RestoreMaintenanceMode.PersistenceException
+                    else result.exceptionOrNull() is RestoreJournal.JournalDurabilityException)
+                assertNoDestructiveStep(fixture, before)
+                assertTrue(fixture.journal.hasJournal())
+            } finally { releaseRestoreFixture() }
+        }
+    }
+
+    @Test
+    fun original_cancellation_survives_journal_and_critical_cleanup_failure_in_all_APIs() = runTest(testDispatcher) {
+        for (operation in RestoreOperation.values()) for (secondaryCancellation in listOf(false, true)) {
+            val fixture = restoreFixture()
+            try {
+                val before = dbFile.readBytes()
+                val original = IdentityCancellationException("TEST_RESTORE_CANCELLED")
+                every { mockRestoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.RESTORE_STAGING) } throws original
+                every { fixture.journal.failJournal(any(), any()) } throws RestoreJournal.JournalDurabilityException()
+                every { mockRestoreMaintenanceMode.enterCriticalRecoveryRequired(any()) } answers {
+                    every { mockRestoreMaintenanceMode.currentMode() } returns RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED
+                    if (secondaryCancellation) throw kotlinx.coroutines.CancellationException("TEST_CLEANUP_CANCELLED")
+                    throw RestoreMaintenanceMode.PersistenceException()
+                }
+                var observed: Throwable? = null
+                try { invokeRestore(operation, createRepository(journal = fixture.journal), fixture.source) }
+                catch (e: kotlinx.coroutines.CancellationException) { observed = e }
+                org.junit.Assert.assertSame(original, observed)
+                assertNoDestructiveStep(fixture, before)
+                assertTrue(fixture.journal.hasJournal())
+            } finally { releaseRestoreFixture() }
+        }
+    }
+
+    @Test
+    fun swap_and_verification_failures_cross_rollback_and_terminal_durability() = runTest(testDispatcher) {
+        for (operation in listOf(RestoreOperation.COSTBACKUP, RestoreOperation.IMPORT))
+            for (swapFailure in listOf(false, true)) for (rollbackFails in listOf(false, true))
+                for (terminalFails in listOf(false, true)) {
+                    val fixture = restoreFixture()
+                    try {
+                        val before = dbFile.readBytes()
+                        var rollingBack = false
+                        every { fixture.journal.transitionTo(any(), RestoreJournal.JournalState.ROLLING_BACK, any(), any()) } answers {
+                            val result = callOriginal()
+                            rollingBack = true
+                            fixture.trace += "JOURNAL_ROLLING_BACK"
+                            result
+                        }
+                        every { openHelper.writableDatabase } answers {
+                            if (rollingBack && rollbackFails) throw IllegalStateException("TEST_ROLLBACK_VERIFY_FAILED")
+                            supportDb
+                        }
+                        if (terminalFails) fixture.journal.beforeIo = { file, stage ->
+                            if (file.name == "restore_journal_last_failure.json.tmp" && stage == RestoreJournal.IoStage.SYNC)
+                                throw java.io.IOException("TEST_FAILURE_ARCHIVE_FAILED")
+                        }
+                        if (swapFailure) {
+                            if (operation == RestoreOperation.COSTBACKUP) {
+                                val failRename = object : File(dbFile.path) { override fun renameTo(dest: File) = false }
+                                every { context.getDatabasePath(AppDatabase.DATABASE_NAME) } returns failRename
+                            } else every { database.close() } answers {
+                                fixture.trace += "CLOSE_LIVE"
+                                if (!rollingBack) fixture.journal.readJournal()?.stagedDbPath?.let { File(it).delete() }
+                            }
+                        } else {
+                            every { supportDb.query(match<String> { it.startsWith("SELECT COUNT(*)") }) } throws
+                                IllegalStateException("TEST_LIVE_VERIFY_FAILED")
+                        }
+                        val repo = createRepository(journal = fixture.journal, liveVerifier = { _, _, _, _ ->
+                            throw IllegalStateException("TEST_LIVE_VERIFY_FAILED")
+                        })
+                        val result = invokeRestore(operation, repo, fixture.source)
+                        assertTrue(result.isFailure)
+                        assertTrue(rollingBack)
+                        verify(exactly = 0) { mockRestoreMaintenanceMode.exit(false) }
+                        if (rollbackFails || terminalFails) {
+                            assertEquals(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED, mockRestoreMaintenanceMode.currentMode())
+                            verify(exactly = 0) { mockRestoreMaintenanceMode.exit(true) }
+                            assertTrue(fixture.journal.hasJournal())
+                            assertTrue(File(fixture.directory, "safety_backups").listFiles().orEmpty().isNotEmpty())
+                            if (operation == RestoreOperation.COSTBACKUP) {
+                                val entry = fixture.journal.readJournal()!!
+                                org.junit.Assert.assertArrayEquals(byteArrayOf(9, 8, 7),
+                                    File(entry.extractTempDirPath!!, "receipts/5_photo.jpg").readBytes())
+                            }
+                        } else {
+                            assertEquals(RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED, mockRestoreMaintenanceMode.currentMode())
+                            assertFalse(fixture.journal.hasJournal())
+                            assertEquals(RestoreJournal.JournalState.FAILED, fixture.journal.readFailureJournal()?.state)
+                            org.junit.Assert.assertArrayEquals(before, dbFile.readBytes())
+                            assertTrue(fixture.trace.indexOf("FINALIZED_FAILURE") < fixture.trace.indexOf("EXIT_RESTORE_COMPLETE_RESTART_REQUIRED"))
+                        }
+                    } finally { releaseRestoreFixture() }
+                }
+    }
+
+    @Test
+    fun assets_transition_failure_retains_extraction_safety_and_pre_restore_bytes() = runTest(testDispatcher) {
+        val fixture = restoreFixture()
+        try {
+            val before = dbFile.readBytes()
+            every { fixture.journal.transitionTo(any(), RestoreJournal.JournalState.ASSETS_RESTORING, any(), any()) } throws
+                RestoreJournal.JournalDurabilityException()
+            val result = createRepository(journal = fixture.journal).restoreCostBackup(fixture.source, "pw")
+            assertTrue(result.exceptionOrNull() is RestoreJournal.JournalDurabilityException)
+            val entry = fixture.journal.readJournal()!!
+            assertEquals(RestoreJournal.JournalState.VERIFYING, entry.state)
+            org.junit.Assert.assertArrayEquals(byteArrayOf(9, 8, 7), File(entry.extractTempDirPath!!, "receipts/5_photo.jpg").readBytes())
+            org.junit.Assert.assertArrayEquals(before, File(entry.safetyBackupPath!!).readBytes())
+            org.junit.Assert.assertArrayEquals(before, File(dbFile.path + ".pre_restore").readBytes())
+            verify(exactly = 0) { mockRestoreMaintenanceMode.exit(any()) }
+            assertEquals(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED, mockRestoreMaintenanceMode.currentMode())
+        } finally { releaseRestoreFixture() }
+    }
+
+    @Test
+    fun reset_delete_false_or_exception_requires_verified_rollback_and_checked_finalization() = runTest(testDispatcher) {
+        for (throws in listOf(false, true)) for (rollbackFails in listOf(false, true))
+            for (terminalFails in listOf(false, true)) {
+                val fixture = restoreFixture()
+                try {
+                    val before = dbFile.readBytes()
+                    var rollingBack = false
+                    val failingFile = object : File(dbFile.path) {
+                        override fun delete(): Boolean {
+                            if (rollingBack) return super.delete()
+                            if (throws) throw SecurityException("TEST_RESET_DELETE_FAILED")
+                            return false
+                        }
+                    }
+                    every { context.getDatabasePath(AppDatabase.DATABASE_NAME) } returns failingFile
+                    every { fixture.journal.transitionTo(any(), RestoreJournal.JournalState.ROLLING_BACK, any(), any()) } answers {
+                        val result = callOriginal()
+                        rollingBack = true
+                        fixture.trace += "JOURNAL_ROLLING_BACK"
+                        result
+                    }
+                    every { openHelper.writableDatabase } answers {
+                        if (rollingBack && rollbackFails) throw IllegalStateException("TEST_ROLLBACK_VERIFY_FAILED")
+                        supportDb
+                    }
+                    if (terminalFails) fixture.journal.beforeIo = { file, stage ->
+                        if (file.name == "restore_journal_last_failure.json.tmp" && stage == RestoreJournal.IoStage.SYNC)
+                            throw java.io.IOException("TEST_RESET_FINALIZE_FAILED")
+                    }
+                    val result = createRepository(journal = fixture.journal).resetDatabase()
+                    assertTrue(result.isFailure)
+                    assertTrue(rollingBack)
+                    verify(exactly = 0) { mockRestoreMaintenanceMode.exit(false) }
+                    if (rollbackFails || terminalFails) {
+                        assertEquals(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED, mockRestoreMaintenanceMode.currentMode())
+                        assertTrue(fixture.journal.hasJournal())
+                        verify(exactly = 0) { mockRestoreMaintenanceMode.exit(true) }
+                    } else {
+                        org.junit.Assert.assertArrayEquals(before, dbFile.readBytes())
+                        assertEquals(RestoreJournal.JournalState.FAILED, fixture.journal.readFailureJournal()?.state)
+                        verify { mockRestoreMaintenanceMode.exit(true) }
+                    }
+                } finally { releaseRestoreFixture() }
+            }
+    }
+
+    @Test
+    fun successful_operations_publish_approved_stages_before_close_and_finalize_before_restart() = runTest(testDispatcher) {
+        for (operation in RestoreOperation.values()) for (terminalFails in listOf(false, true)) {
+            val fixture = restoreFixture()
+            try {
+                if (terminalFails) fixture.journal.beforeIo = { file, stage ->
+                    if (file.name == RestoreJournal.SUCCESS_JOURNAL_FILENAME + ".tmp" && stage == RestoreJournal.IoStage.SYNC)
+                        throw java.io.IOException("TEST_SUCCESS_ARCHIVE_FAILED")
+                }
+                val result = invokeRestore(operation, createRepository(journal = fixture.journal), fixture.source)
+                if (terminalFails) {
+                    assertTrue(result.exceptionOrNull() is RestoreJournal.JournalDurabilityException)
+                    assertEquals(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED, mockRestoreMaintenanceMode.currentMode())
+                    assertEquals(RestoreJournal.JournalState.COMPLETE, fixture.journal.readJournal()?.state)
+                    verify(exactly = 0) { mockRestoreMaintenanceMode.exit(any()) }
+                } else {
+                    assertTrue(result.isSuccess)
+                    assertEquals(RestoreJournal.JournalState.COMPLETE, fixture.journal.readSuccessJournal()?.state)
+                    assertFalse(fixture.journal.hasJournal())
+                    assertTrue(fixture.trace.indexOf("FINALIZED_SUCCESS") < fixture.trace.indexOf("EXIT_RESTORE_COMPLETE_RESTART_REQUIRED"))
+                    if (operation == RestoreOperation.RESET) assertFalse(dbFile.exists())
+                    else assertEquals(1, countRows(dbFile, "expenses"))
+                }
+                val expected = listOf("MODE_RESTORE_PREPARING", "MODE_RESTORE_STAGING", "JOURNAL_STAGED",
+                    "JOURNAL_SAFETY_BACKUP_CREATED", "JOURNAL_SWAPPING",
+                    if (operation == RestoreOperation.RESET) "MODE_RESETTING_DATABASE" else "MODE_RESTORE_SWAPPING", "CLOSE_LIVE")
+                var previous = -1
+                expected.forEach { event ->
+                    val index = fixture.trace.indexOf(event)
+                    assertTrue("TEST_TRANSITION_ORDER_" + event, index > previous)
+                    previous = index
+                }
+                if (operation != RestoreOperation.RESET) assertTrue(fixture.trace.contains("MODE_RESTORE_VERIFYING"))
+                verify(exactly = 0) { mockRestoreMaintenanceMode.exit(false) }
+            } finally { releaseRestoreFixture() }
+        }
+    }
+
+
+    @Test
+    fun drain_timeout_never_releases_writes_before_checked_abort_finalization() = runTest(testDispatcher) {
+        for (operation in RestoreOperation.values()) for (archiveFails in listOf(false, true)) {
+            val fixture = restoreFixture()
+            io.mockk.mockkConstructor(com.yourname.expensetracker.domain.workers.NoOpWorkerDrainController::class)
+            try {
+                val before = dbFile.readBytes()
+                coEvery {
+                    anyConstructed<com.yourname.expensetracker.domain.workers.NoOpWorkerDrainController>()
+                        .requestStopAndAwaitDrain(any(), any())
+                } returns false
+                if (archiveFails) every { fixture.journal.failJournal(any(), any()) } throws RestoreJournal.JournalDurabilityException()
+                val result = invokeRestore(operation, createRepository(journal = fixture.journal), fixture.source)
+                assertTrue(result.isFailure)
+                org.junit.Assert.assertArrayEquals(before, dbFile.readBytes())
+                verify(exactly = 0) { database.close() }
+                if (archiveFails) {
+                    assertNoDestructiveStep(fixture, before)
+                } else {
+                    assertEquals(RestoreJournal.JournalState.FAILED, fixture.journal.readFailureJournal()?.state)
+                    assertEquals(RestoreMaintenanceMode.Mode.NORMAL, mockRestoreMaintenanceMode.currentMode())
+                    assertTrue(fixture.trace.indexOf("FINALIZED_FAILURE") < fixture.trace.indexOf("EXIT_NORMAL"))
+                }
+            } finally {
+                io.mockk.unmockkConstructor(com.yourname.expensetracker.domain.workers.NoOpWorkerDrainController::class)
+                releaseRestoreFixture()
+            }
+        }
+    }
+
+
+    @Test
+    fun post_destructive_cancellation_keeps_evidence_and_original_identity_in_all_APIs() = runTest(testDispatcher) {
+        for (operation in RestoreOperation.values()) {
+            val fixture = restoreFixture()
+            try {
+                val cancellation = IdentityCancellationException("TEST_POST_SWAP_CANCELLED")
+                if (operation == RestoreOperation.RESET) {
+                    val cancelledDelete = object : File(dbFile.path) {
+                        override fun delete(): Boolean = throw cancellation
+                    }
+                    every { context.getDatabasePath(AppDatabase.DATABASE_NAME) } returns cancelledDelete
+                } else {
+                    every { mockRestoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.RESTORE_VERIFYING) } throws cancellation
+                }
+                every { mockRestoreMaintenanceMode.enterCriticalRecoveryRequired(any()) } answers {
+                    every { mockRestoreMaintenanceMode.currentMode() } returns RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED
+                    throw RestoreMaintenanceMode.PersistenceException()
+                }
+                var observed: Throwable? = null
+                try { invokeRestore(operation, createRepository(journal = fixture.journal), fixture.source) }
+                catch (e: kotlinx.coroutines.CancellationException) { observed = e }
+                org.junit.Assert.assertSame(cancellation, observed)
+                assertEquals(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED, mockRestoreMaintenanceMode.currentMode())
+                verify(exactly = 0) { mockRestoreMaintenanceMode.exit(any()) }
+                val retained = fixture.journal.readJournal()!!
+                assertTrue(File(retained.safetyBackupPath!!).exists())
+                if (operation == RestoreOperation.COSTBACKUP) {
+                    org.junit.Assert.assertArrayEquals(byteArrayOf(9, 8, 7),
+                        File(retained.extractTempDirPath!!, "receipts/5_photo.jpg").readBytes())
+                    assertTrue(File(dbFile.path + ".pre_restore").exists())
+                }
+            } finally { releaseRestoreFixture() }
+        }
+    }
+
+    @Test
+    fun reset_sidecar_delete_failures_and_failed_reopen_do_not_claim_success() = runTest(testDispatcher) {
+        for (fault in listOf("WAL", "SHM", "REOPEN")) {
+            val fixture = restoreFixture()
+            try {
+                var rollingBack = false
+                every { fixture.journal.transitionTo(any(), RestoreJournal.JournalState.ROLLING_BACK, any(), any()) } answers {
+                    val result = callOriginal()
+                    rollingBack = true
+                    result
+                }
+                if (fault == "REOPEN") {
+                    every { AppDatabase.fileBuilder(context).build() } throws IllegalStateException("TEST_REOPEN_FAILED")
+                } else every { database.close() } answers {
+                    fixture.trace += "CLOSE_LIVE"
+                    if (!rollingBack) {
+                        val suffix = if (fault == "WAL") "-wal" else "-shm"
+                        File(dbFile.path + suffix).apply { mkdirs(); File(this, "blocker").writeText("TEST_DELETE_BLOCKED") }
+                    }
+                }
+                every { openHelper.writableDatabase } answers {
+                    if (rollingBack) throw IllegalStateException("TEST_RECOVERY_VERIFY_FAILED")
+                    supportDb
+                }
+                val result = createRepository(journal = fixture.journal).resetDatabase()
+                assertTrue(result.isFailure)
+                assertTrue(rollingBack)
+                assertEquals(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED, mockRestoreMaintenanceMode.currentMode())
+                verify(exactly = 0) { mockRestoreMaintenanceMode.exit(any()) }
+                assertTrue(fixture.journal.hasJournal())
+                assertTrue(File(fixture.journal.readJournal()!!.safetyBackupPath!!).exists())
+            } finally { releaseRestoreFixture() }
+        }
     }
 
     private fun createRepository(

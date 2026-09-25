@@ -1,18 +1,33 @@
 package com.yourname.expensetracker.startup
 
+import android.app.Application
 import android.content.Context
+import android.content.ContextWrapper
+import android.content.SharedPreferences
 import androidx.test.core.app.ApplicationProvider
+import androidx.work.Configuration
 import androidx.work.testing.WorkManagerTestInitHelper
+import androidx.work.WorkManager
+import com.yourname.expensetracker.domain.workers.PendingWorkerTestFactory
+import com.yourname.expensetracker.domain.workers.WorkerLeaseRegistry
+import com.yourname.expensetracker.domain.workers.WorkerRegistry
+import com.yourname.expensetracker.domain.workers.WorkerSpec
 import com.yourname.expensetracker.data.backup.RestoreDatabaseOpener
 import com.yourname.expensetracker.data.backup.RestoreJournal
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.domain.bank.BankSyncStartupRecovery
+import io.mockk.every
 import io.mockk.mockk
+import io.mockk.mockkObject
+import io.mockk.unmockkObject
+import io.mockk.verify
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -20,18 +35,19 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.After
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.File
 import timber.log.Timber
-import io.mockk.every
-import io.mockk.verify
 import kotlinx.coroutines.CancellationException
 import kotlin.test.assertFailsWith
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Fail-closed crash-recovery contract tests for [AppStartupCoordinator.checkRestoreJournal].
@@ -62,13 +78,23 @@ class AppStartupCoordinatorRecoveryTest {
         }
     }
 
+    @get:Rule
+    val tmp = TemporaryFolder()
+
     @Before
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
+        File(context.noBackupFilesDir, "restore_maintenance_critical").delete()
         // RestoreMaintenanceMode.enter()/enterCriticalRecoveryRequired() call
         // pauseAllWorkers() → WorkManager.getInstance(); initialise the test instance.
-        WorkManagerTestInitHelper.initializeTestWorkManager(context)
+        WorkManagerTestInitHelper.initializeTestWorkManager(
+            context,
+            Configuration.Builder()
+                .setWorkerFactory(PendingWorkerTestFactory())
+                .build()
+        )
         // Deterministic clean slate: clear any persisted mode + journal files.
+        context.getSharedPreferences("restore_maintenance_mode", Context.MODE_PRIVATE).edit().clear().commit()
         RestoreMaintenanceMode(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L)).reset()
         listOf(
             "restore_journal.json",
@@ -82,6 +108,313 @@ class AppStartupCoordinatorRecoveryTest {
     @After
     fun tearDown() {
         Timber.uproot(logTree)
+    }
+
+
+    private fun clearRecoveryFixture() {
+        context.getSharedPreferences("restore_maintenance_mode", Context.MODE_PRIVATE).edit().clear().commit()
+        File(context.noBackupFilesDir, "restore_maintenance_critical").delete()
+        listOf("restore_journal.json", RestoreJournal.FAILURE_JOURNAL_FILENAME,
+            RestoreJournal.SUCCESS_JOURNAL_FILENAME).forEach { File(context.filesDir, it).delete() }
+    }
+
+    private fun assertNoActiveDefaultWork() {
+        WorkerSpec.DEFAULTS.keys.forEach { name ->
+            assertEquals(0, WorkManager.getInstance(context).getWorkInfosForUniqueWork(name).get()
+                .count { !it.state.isFinished })
+        }
+    }
+
+    @Test
+    fun every_corrupt_journal_family_preserves_exact_bytes_and_blocks_two_fresh_startups() {
+        val time = com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L)
+        mockkObject(WorkerRegistry)
+        try {
+            every { WorkerRegistry.scheduleAll(any(), any(), null) } throws AssertionError("TEST_UNEXPECTED_SCHEDULE")
+            com.yourname.expensetracker.data.backup.RestoreJournalDurabilityTest.corruptJournalInputs().forEach { input ->
+                clearRecoveryFixture()
+                val active = File(context.filesDir, "restore_journal.json").apply { writeText(input) }
+                val original = active.readBytes()
+                repeat(2) {
+                    val mode = RestoreMaintenanceMode(context, time)
+                    val journal = RestoreJournal(context, time)
+                    newCoordinator(mode, journal).checkRestoreJournal()
+                    assertEquals(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED, mode.currentMode())
+                    assertFalse(mode.isWritesAllowed())
+                    assertTrue(mode.operationalStateFlow.value is com.yourname.expensetracker.data.backup.AppOperationalState.CriticalRecoveryRequired)
+                    org.junit.Assert.assertArrayEquals(original, active.readBytes())
+                }
+            }
+            verify(exactly = 0) { WorkerRegistry.scheduleAll(any(), any(), null) }
+            assertNoActiveDefaultWork()
+        } finally { unmockkObject(WorkerRegistry) }
+    }
+
+    @Test
+    fun journal_inspection_and_read_failures_are_contained_and_block_second_startup() {
+        val time = com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L)
+        for (fault in listOf(RestoreJournal.IoStage.INSPECT, RestoreJournal.IoStage.READ)) {
+            clearRecoveryFixture()
+            val journal = RestoreJournal(context, time)
+            journal.beginJournal("", "", File(context.filesDir, "live.db").path)
+            val active = File(context.filesDir, "restore_journal.json")
+            val bytes = active.readBytes()
+            journal.beforeIo = { file, stage ->
+                if (file.name == active.name && stage == fault) throw java.io.IOException("TEST_JOURNAL_READ_FAILED")
+            }
+            val firstMode = RestoreMaintenanceMode(context, time)
+            newCoordinator(firstMode, journal).checkRestoreJournal()
+            repeat(2) {
+                val mode = RestoreMaintenanceMode(context, time)
+                newCoordinator(mode, RestoreJournal(context, time)).checkRestoreJournal()
+                assertEquals(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED, mode.currentMode())
+                assertFalse(mode.isWritesAllowed())
+                org.junit.Assert.assertArrayEquals(bytes, active.readBytes())
+            }
+            assertNoActiveDefaultWork()
+        }
+    }
+
+    @Test
+    fun terminal_archive_and_active_deletion_failures_keep_evidence_across_two_startups() {
+        val time = com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L)
+        for (state in listOf(RestoreJournal.JournalState.COMPLETE, RestoreJournal.JournalState.FAILED)) {
+            for (fault in listOf("OPEN", "WRITE", "SYNC", "FALLBACK_SYNC", "DELETE")) {
+                clearRecoveryFixture()
+                val journal = RestoreJournal(context, time)
+                val entry = journal.beginJournal("", "", File(context.filesDir, "live.db").path)
+                journal.writeJournal(entry.copy(state = state))
+                val active = File(context.filesDir, "restore_journal.json")
+                val bytes = active.readBytes()
+                val archive = if (state == RestoreJournal.JournalState.COMPLETE)
+                    RestoreJournal.SUCCESS_JOURNAL_FILENAME else RestoreJournal.FAILURE_JOURNAL_FILENAME
+                if (fault == "FALLBACK_SYNC") journal.testRenameTo = { _, _ -> false }
+                journal.beforeIo = { file, stage ->
+                    val fail = when (fault) {
+                        "DELETE" -> file == active && stage == RestoreJournal.IoStage.DELETE
+                        "FALLBACK_SYNC" -> file.name == archive && stage == RestoreJournal.IoStage.SYNC
+                        else -> file.name == archive + ".tmp" && stage.name == fault
+                    }
+                    if (fail) throw java.io.IOException("TEST_TERMINAL_PRESERVATION_FAILED")
+                }
+                val firstMode = RestoreMaintenanceMode(context, time)
+                newCoordinator(firstMode, journal).checkRestoreJournal()
+                assertEquals(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED, firstMode.currentMode())
+                repeat(2) {
+                    val mode = RestoreMaintenanceMode(context, time)
+                    newCoordinator(mode, RestoreJournal(context, time)).checkRestoreJournal()
+                    assertEquals(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED, mode.currentMode())
+                    assertFalse(mode.isWritesAllowed())
+                    org.junit.Assert.assertArrayEquals(bytes, active.readBytes())
+                }
+                assertNoActiveDefaultWork()
+            }
+        }
+    }
+
+    @Test
+    fun failed_asset_rollback_and_failed_archive_never_unlock_on_fresh_startup() {
+        val time = com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L)
+        for (verifiedRollback in listOf(false, true)) {
+            clearRecoveryFixture()
+            val mode = RestoreMaintenanceMode(context, time)
+            val journal = RestoreJournal(context, time)
+            val live = tmp.newFile().apply { writeText("TEST_INVALID_SQLITE") }
+            val safety = tmp.newFile()
+            if (verifiedRollback) createValidSqliteFile(safety) else safety.writeText("TEST_INVALID_SAFETY")
+            val workspace = tmp.newFolder()
+            val asset = File(workspace, "asset.jpg").apply { writeBytes(byteArrayOf(4, 5, 6)) }
+            writeAssetsRestoringJournal(journal, emptyList(), workspace.path, live, safety.path)
+            journal.beforeIo = { file, stage ->
+                if (file.name == RestoreJournal.FAILURE_JOURNAL_FILENAME + ".tmp" && stage == RestoreJournal.IoStage.SYNC)
+                    throw java.io.IOException("TEST_FAILURE_ARCHIVE_FAILED")
+            }
+            newCoordinator(mode, journal).checkRestoreJournal()
+            assertEquals(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED, mode.currentMode())
+            val active = File(context.filesDir, "restore_journal.json")
+            val retained = active.readBytes()
+            val liveAfter = live.readBytes()
+            repeat(2) {
+                val freshMode = RestoreMaintenanceMode(context, time)
+                newCoordinator(freshMode, RestoreJournal(context, time)).checkRestoreJournal()
+                assertEquals(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED, freshMode.currentMode())
+                assertFalse(freshMode.isWritesAllowed())
+                org.junit.Assert.assertArrayEquals(retained, active.readBytes())
+                org.junit.Assert.assertArrayEquals(liveAfter, live.readBytes())
+                org.junit.Assert.assertArrayEquals(byteArrayOf(4, 5, 6), asset.readBytes())
+            }
+            assertNoActiveDefaultWork()
+        }
+    }
+
+    @Test
+    fun failed_rollback_retains_active_recovery_when_both_critical_stores_fail() {
+        val time = com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L)
+        for (state in listOf(RestoreJournal.JournalState.SWAPPING, RestoreJournal.JournalState.ASSETS_RESTORING)) {
+            for (throwCommit in listOf(false, true)) {
+                clearRecoveryFixture()
+                var durableMode = RestoreMaintenanceMode.Mode.RESTORE_PREPARING.name
+                var requestedMode = durableMode
+                val preferences = normalPreferences(AtomicBoolean(false)) {
+                    if (requestedMode == RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED.name) {
+                        if (throwCommit) throw IllegalStateException("TEST_CRITICAL_COMMIT_FAILED")
+                        false
+                    } else {
+                        durableMode = requestedMode
+                        true
+                    }
+                }
+                val editor = preferences.edit()
+                every { editor.putString("current_mode", any()) } answers {
+                    requestedMode = secondArg<String>()
+                    editor
+                }
+                every { preferences.all } answers { mapOf("current_mode" to durableMode) }
+                val sentinelDirectory = tmp.newFolder()
+                val ownerContext = maintenanceContext(preferences, sentinelDirectory)
+                val live = tmp.newFile().apply { writeText("TEST_INVALID_SQLITE") }
+                val staged = tmp.newFile().apply { writeText("TEST_STAGED_RECOVERY") }
+                val journal = RestoreJournal(context, time)
+                val entry = journal.beginJournal("", staged.path, live.path)
+                journal.transitionTo(entry, state)
+
+                // Original launch plus two fresh mode/coordinator constructions.
+                repeat(3) {
+                    val mode = RestoreMaintenanceMode(ownerContext, time)
+                    mode.beforeCriticalSentinelIo = { stage ->
+                        if (stage == RestoreMaintenanceMode.CriticalSentinelIoStage.OPEN) {
+                            throw java.io.IOException("TEST_SENTINEL_OPEN_FAILED")
+                        }
+                    }
+                    val freshJournal = RestoreJournal(context, time)
+                    newCoordinator(mode, freshJournal).checkRestoreJournal()
+                    assertEquals(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED, mode.currentMode())
+                    assertTrue(mode.operationalStateFlow.value is com.yourname.expensetracker.data.backup.AppOperationalState.CriticalRecoveryRequired)
+                    assertFalse(mode.isWritesAllowed())
+                    assertEquals(RestoreMaintenanceMode.Mode.RESTORE_ROLLING_BACK.name, durableMode)
+                    assertEquals(RestoreJournal.JournalState.ROLLING_BACK, freshJournal.readJournal()?.state)
+                    assertFalse(File(context.filesDir, RestoreJournal.FAILURE_JOURNAL_FILENAME).exists())
+                    assertFalse(File(sentinelDirectory, "restore_maintenance_critical").exists())
+                    assertEquals("TEST_INVALID_SQLITE", live.readText())
+                    assertEquals("TEST_STAGED_RECOVERY", staged.readText())
+                    assertNoActiveDefaultWork()
+                }
+            }
+        }
+    }
+
+    @Test
+    fun absorbing_critical_precedes_any_swap_or_asset_recovery_mutation() {
+        val time = com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L)
+        for (state in listOf(RestoreJournal.JournalState.SWAPPING, RestoreJournal.JournalState.ASSETS_RESTORING)) {
+            clearRecoveryFixture()
+            val live = tmp.newFile().apply { writeText("TEST_LIVE_BYTES") }
+            val safety = tmp.newFile().apply { writeText("TEST_SAFETY_BYTES") }
+            val journal = RestoreJournal(context, time)
+            val entry = journal.beginJournal("", "", live.path)
+            journal.transitionTo(entry, state, safetyBackupPath = safety.path)
+            val active = File(context.filesDir, "restore_journal.json")
+            val before = active.readBytes()
+            RestoreMaintenanceMode(context, time).enterCriticalRecoveryRequired("TEST_CRITICAL")
+            repeat(2) {
+                val mode = RestoreMaintenanceMode(context, time)
+                newCoordinator(mode, RestoreJournal(context, time)).checkRestoreJournal()
+                assertFalse(mode.isWritesAllowed())
+                org.junit.Assert.assertArrayEquals(before, active.readBytes())
+                assertEquals("TEST_LIVE_BYTES", live.readText())
+                assertEquals("TEST_SAFETY_BYTES", safety.readText())
+            }
+            assertNoActiveDefaultWork()
+        }
+    }
+
+    @Test
+    fun sentinel_open_write_sync_retries_and_failed_preferences_stay_blocked_through_startups() {
+        val time = com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L)
+        for (fault in RestoreMaintenanceMode.CriticalSentinelIoStage.values()) for (throwCommit in listOf(false, true)) {
+            clearRecoveryFixture()
+            val directory = tmp.newFolder()
+            val preferences = normalPreferences(AtomicBoolean(false)) {
+                if (throwCommit) throw IllegalStateException("TEST_COMMIT_FAILED")
+                false
+            }
+            every { preferences.all } returns mapOf("current_mode" to RestoreMaintenanceMode.Mode.RESTORE_PREPARING.name)
+            val ownerContext = maintenanceContext(preferences, directory)
+            val active = File(context.filesDir, "restore_journal.json").apply { writeText("{BROKEN") }
+            repeat(2) {
+                val mode = RestoreMaintenanceMode(ownerContext, time)
+                var attempts = 0
+                mode.beforeCriticalSentinelIo = { stage ->
+                    if (stage == fault) { attempts++; throw java.io.IOException("TEST_SENTINEL_IO_FAILED") }
+                }
+                repeat(2) {
+                    var failure: Throwable? = null
+                    try { mode.enterCriticalRecoveryRequired("TEST_CRITICAL") }
+                    catch (e: RestoreMaintenanceMode.PersistenceException) { failure = e }
+                    assertTrue(failure is RestoreMaintenanceMode.PersistenceException)
+                }
+                assertEquals(2, attempts)
+                newCoordinator(mode, RestoreJournal(context, time)).checkRestoreJournal()
+                assertEquals(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED, mode.currentMode())
+                assertFalse(mode.isWritesAllowed())
+                assertEquals("{BROKEN", active.readText())
+            }
+            assertNoActiveDefaultWork()
+        }
+    }
+
+    private fun maintenanceContext(
+        preferences: SharedPreferences,
+        sentinelDirectory: File
+    ): Context = object : ContextWrapper(context) {
+        override fun getSharedPreferences(name: String, mode: Int): SharedPreferences =
+            if (name == "restore_maintenance_mode") preferences else super.getSharedPreferences(name, mode)
+
+        override fun getNoBackupFilesDir(): File = sentinelDirectory
+    }
+
+    private fun normalPreferences(
+        failReads: AtomicBoolean,
+        commitResult: () -> Boolean
+    ): SharedPreferences {
+        val preferences = mockk<SharedPreferences>()
+        val editor = mockk<SharedPreferences.Editor>()
+
+        fun failIfRequested() {
+            if (failReads.get()) throw IllegalStateException("runtime read failed")
+        }
+
+        every { preferences.all } answers {
+            failIfRequested()
+            mapOf("current_mode" to RestoreMaintenanceMode.Mode.NORMAL.name)
+        }
+        every { preferences.contains(any()) } answers {
+            failIfRequested()
+            firstArg<String>() == "current_mode"
+        }
+        every { preferences.getString(any(), any()) } answers {
+            failIfRequested()
+            if (firstArg<String>() == "current_mode") {
+                RestoreMaintenanceMode.Mode.NORMAL.name
+            } else {
+                secondArg<String?>()
+            }
+        }
+        every { preferences.getBoolean(any(), any()) } answers {
+            failIfRequested()
+            secondArg()
+        }
+        every { preferences.getLong(any(), any()) } answers {
+            failIfRequested()
+            secondArg()
+        }
+        every { preferences.edit() } returns editor
+        every { editor.putString(any(), any()) } returns editor
+        every { editor.putLong(any(), any()) } returns editor
+        every { editor.putBoolean(any(), any()) } returns editor
+        every { editor.remove(any()) } returns editor
+        every { editor.commit() } answers { commitResult() }
+        return preferences
     }
 
     private fun newCoordinator(
@@ -155,8 +488,9 @@ class AppStartupCoordinatorRecoveryTest {
         assertTrue(journal.hasJournal())
         assertNull(journal.readFailureJournal())
         assertTrue(logs.none { it.first != null || it.second.contains("class=CancellationException") || it.second.contains("/private/receipt") })
+        assertEquals(RestoreJournal.JournalState.ROLLING_BACK, journal.readJournal()?.state)
         val restartedMode = RestoreMaintenanceMode(context, clock)
-        assertEquals(RestoreMaintenanceMode.Mode.RESTORE_SWAPPING, restartedMode.currentMode())
+        assertEquals(RestoreMaintenanceMode.Mode.RESTORE_ROLLING_BACK, restartedMode.currentMode())
         assertFalse(restartedMode.isWritesAllowed())
 
         val freshDb = mockk<AppDatabase>(relaxed = true)
@@ -199,8 +533,9 @@ class AppStartupCoordinatorRecoveryTest {
 
         verify(exactly = 1) { freshDb.close() }
         assertTrue(journal.hasJournal())
+        assertEquals(RestoreJournal.JournalState.ROLLING_BACK, journal.readJournal()?.state)
         assertNull(journal.readFailureJournal())
-        assertEquals(RestoreMaintenanceMode.Mode.RESTORE_SWAPPING, mode.currentMode())
+        assertEquals(RestoreMaintenanceMode.Mode.RESTORE_ROLLING_BACK, mode.currentMode())
         assertFalse(mode.isWritesAllowed())
         assertTrue(logs.none { it.first != null || it.second.contains("class=CancellationException") || it.second.contains("/private/receipt") })
     }
@@ -634,6 +969,93 @@ class AppStartupCoordinatorRecoveryTest {
         assertTrue(mode.isWritesAllowed())
         assertFalse(journal.hasJournal())
         assertTrue("Live DB must be a valid SQLite file after rollback", liveDbFile.exists() && liveDbFile.length() > 0)
+        WorkerSpec.DEFAULTS.keys.forEach { workerName ->
+            val activeWork = WorkManager.getInstance(context)
+                .getWorkInfosForUniqueWork(workerName)
+                .get()
+                .filterNot { it.state.isFinished }
+            assertEquals(
+                "Rollback must leave exactly one active schedule for $workerName",
+                1,
+                activeWork.size
+            )
+        }
+
+        val activeIds = WorkerSpec.DEFAULTS.keys.associateWith { name ->
+            WorkManager.getInstance(context).getWorkInfosForUniqueWork(name).get()
+                .filterNot { it.state.isFinished }.map { it.id }.toSet()
+        }
+        // A repeated recovery check after the journal has been consumed must not
+        // create duplicate active schedules.
+        val freshMode = RestoreMaintenanceMode(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
+        newCoordinator(freshMode, RestoreJournal(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))).checkRestoreJournal()
+        WorkerSpec.DEFAULTS.keys.forEach { workerName ->
+            val activeWork = WorkManager.getInstance(context)
+                .getWorkInfosForUniqueWork(workerName)
+                .get()
+                .filterNot { it.state.isFinished }
+            assertEquals("Repeated recovery must stay idempotent for $workerName", 1, activeWork.size)
+            assertEquals(activeIds[workerName], activeWork.map { it.id }.toSet())
+        }
+    }
+
+    @Test
+    fun initialize_contains_asset_rollback_worker_resume_failure_and_keeps_recovery_UI_available() = runTest {
+        val mode = RestoreMaintenanceMode(
+            context,
+            com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L)
+        )
+        val journal = RestoreJournal(
+            context,
+            com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L)
+        )
+        val liveDbFile = File(context.filesDir, "expense_tracker_db")
+        liveDbFile.parentFile?.mkdirs()
+        liveDbFile.writeBytes("corrupt swapped db".toByteArray())
+        // Keep the real SQLite seed on the short TemporaryFolder path.
+        val safetyBackupFile = tmp.newFile("safety.db")
+        createValidSqliteFile(safetyBackupFile)
+        writeAssetsRestoringJournal(
+            journal = journal,
+            tasks = emptyList(),
+            extractTempDirPath = null,
+            liveDbFile = liveDbFile,
+            safetyBackupPath = safetyBackupFile.absolutePath
+        )
+        val startupScope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        val coordinator = newCoordinator(mode, journal, resumeScope = startupScope)
+        val application = ApplicationProvider.getApplicationContext<Application>()
+        val failedResults = WorkerSpec.DEFAULTS.keys.mapIndexed { index, workerName ->
+            com.yourname.expensetracker.domain.workers.ScheduleResult(
+                workerName = workerName,
+                scheduled = index != 0,
+                policyUsed = "TEST",
+                versionChanged = false,
+                error = if (index == 0) "TEST_SCHEDULE_FAILURE" else null
+            )
+        }
+
+        mockkObject(WorkerRegistry)
+        try {
+            every { WorkerRegistry.scheduleAll(any(), any(), null) } returns
+                WorkerRegistry.ScheduleAllResult(failedResults)
+
+            coordinator.initialize(application)
+            advanceUntilIdle()
+        } finally {
+            unmockkObject(WorkerRegistry)
+            startupScope.cancel()
+        }
+
+        assertEquals(
+            RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED,
+            mode.currentMode()
+        )
+        assertTrue(
+            mode.operationalStateFlow.value is
+                com.yourname.expensetracker.data.backup.AppOperationalState.CriticalRecoveryRequired
+        )
+        assertFalse(mode.isWritesAllowed())
     }
 
     @Test
@@ -810,6 +1232,73 @@ class AppStartupCoordinatorRecoveryTest {
     }
 
     @Test
+    fun `failed critical preference commits stay blocked through reconstructed startup`() {
+        val timeProvider = com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L)
+        listOf<() -> Boolean>(
+            { false },
+            { throw IllegalStateException("critical commit failed") }
+        ).forEachIndexed { index, failedCommit ->
+            val sentinelDirectory = tmp.newFolder("failed-critical-startup-$index")
+            val failReads = AtomicBoolean(false)
+            val firstContext = maintenanceContext(
+                normalPreferences(failReads, failedCommit),
+                sentinelDirectory
+            )
+            val leaseRegistry = mockk<WorkerLeaseRegistry>(relaxed = true)
+            val firstMode = RestoreMaintenanceMode(
+                firstContext,
+                dagger.Lazy { leaseRegistry },
+                timeProvider
+            )
+            assertTrue(firstMode.isWritesAllowed())
+
+            failReads.set(true)
+            assertEquals(
+                RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED,
+                firstMode.currentMode()
+            )
+            assertTrue(File(sentinelDirectory, "restore_maintenance_critical").exists())
+
+            val reconstructedContext = maintenanceContext(
+                normalPreferences(AtomicBoolean(false)) { true },
+                sentinelDirectory
+            )
+            val reconstructedMode = RestoreMaintenanceMode(
+                reconstructedContext,
+                dagger.Lazy { leaseRegistry },
+                timeProvider
+            )
+            val journal = RestoreJournal(context, timeProvider)
+
+            mockkObject(WorkerRegistry)
+            try {
+                every { WorkerRegistry.scheduleAll(any(), any(), null) } throws
+                    AssertionError("Critical reconstructed startup must not schedule workers")
+
+                newCoordinator(reconstructedMode, journal).checkRestoreJournal()
+
+                verify(exactly = 0) { WorkerRegistry.scheduleAll(any(), any(), null) }
+            } finally {
+                unmockkObject(WorkerRegistry)
+            }
+
+            assertEquals(
+                RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED,
+                reconstructedMode.currentMode()
+            )
+            assertFalse(reconstructedMode.isWritesAllowed())
+            verify(exactly = 0) { leaseRegistry.resetStopFlag() }
+            WorkerSpec.DEFAULTS.keys.forEach { workerName ->
+                val activeWork = WorkManager.getInstance(context)
+                    .getWorkInfosForUniqueWork(workerName)
+                    .get()
+                    .count { !it.state.isFinished }
+                assertEquals("Critical startup must leave $workerName inactive", 0, activeWork)
+            }
+        }
+    }
+
+    @Test
     fun `successful restart-required mode IS reset to NORMAL on a clean restart`() {
         // Regression guard: the success "please restart" mode (set after a successful restore)
         // must still auto-reset on the next clean startup, unlike CRITICAL_RECOVERY_REQUIRED.
@@ -831,6 +1320,78 @@ class AppStartupCoordinatorRecoveryTest {
             mode.currentMode()
         )
         assertTrue("Writes should resume after a successful restore + restart", mode.isWritesAllowed())
+    }
+
+    @Test
+    fun initialize_returns_before_checked_restart_resume_runs() = runTest {
+        val mode = RestoreMaintenanceMode(
+            context,
+            com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L)
+        )
+        mode.exit(forceRestartRequired = true)
+        val journal = RestoreJournal(
+            context,
+            com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L)
+        )
+        val startupScope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        val coordinator = newCoordinator(mode, journal, resumeScope = startupScope)
+        val application = ApplicationProvider.getApplicationContext<Application>()
+
+        coordinator.initialize(application)
+
+        assertEquals(
+            RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED,
+            mode.currentMode()
+        )
+        assertFalse(mode.isWritesAllowed())
+        startupScope.cancel()
+    }
+
+    @Test
+    fun initialize_contains_checked_resume_failure_and_keeps_recovery_UI_available() = runTest {
+        val mode = RestoreMaintenanceMode(
+            context,
+            com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L)
+        )
+        mode.exit(forceRestartRequired = true)
+        val journal = RestoreJournal(
+            context,
+            com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L)
+        )
+        val startupScope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        val coordinator = newCoordinator(mode, journal, resumeScope = startupScope)
+        val application = ApplicationProvider.getApplicationContext<Application>()
+        val failedResults = WorkerSpec.DEFAULTS.keys.mapIndexed { index, workerName ->
+            com.yourname.expensetracker.domain.workers.ScheduleResult(
+                workerName = workerName,
+                scheduled = index != 0,
+                policyUsed = "TEST",
+                versionChanged = false,
+                error = if (index == 0) "TEST_SCHEDULE_FAILURE" else null
+            )
+        }
+
+        mockkObject(WorkerRegistry)
+        try {
+            every { WorkerRegistry.scheduleAll(any(), any(), null) } returns
+                WorkerRegistry.ScheduleAllResult(failedResults)
+
+            coordinator.initialize(application)
+            advanceUntilIdle()
+        } finally {
+            unmockkObject(WorkerRegistry)
+            startupScope.cancel()
+        }
+
+        assertEquals(
+            RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED,
+            mode.currentMode()
+        )
+        assertTrue(
+            mode.operationalStateFlow.value is
+                com.yourname.expensetracker.data.backup.AppOperationalState.CriticalRecoveryRequired
+        )
+        assertFalse(mode.isWritesAllowed())
     }
 
     /**

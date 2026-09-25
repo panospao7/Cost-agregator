@@ -2,6 +2,7 @@ package com.yourname.expensetracker.scenarios
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import androidx.work.Configuration
 import androidx.work.testing.WorkManagerTestInitHelper
 import com.yourname.expensetracker.data.backup.BackupVerifier
 import com.yourname.expensetracker.data.backup.BackupVerifier.VerificationTier
@@ -11,6 +12,8 @@ import com.yourname.expensetracker.data.backup.CostbackupBundle.UnsupportedBacku
 import com.yourname.expensetracker.data.backup.RestoreJournal
 import com.yourname.expensetracker.data.backup.RestoreJournal.RecoveryResult
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
+import com.yourname.expensetracker.domain.workers.PendingWorkerTestFactory
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -54,7 +57,13 @@ class BackupRestoreContractTest {
         context = ApplicationProvider.getApplicationContext()
         // Initialise WorkManager so that RestoreMaintenanceMode.enter() can
         // call pauseAllWorkers() without throwing.
-        WorkManagerTestInitHelper.initializeTestWorkManager(context)
+        WorkManagerTestInitHelper.initializeTestWorkManager(
+            context,
+            Configuration.Builder()
+                .setWorkerFactory(PendingWorkerTestFactory())
+                .build()
+        )
+        context.getSharedPreferences("restore_maintenance_mode", Context.MODE_PRIVATE).edit().clear().commit()
     }
 
     @After
@@ -98,7 +107,7 @@ class BackupRestoreContractTest {
     }
 
     @Test
-    fun `restoreMaintenanceMode allows writes in normal and backup modes`() {
+    fun `restoreMaintenanceMode blocks writes in backup mode`() {
         // GIVEN: a fresh RestoreMaintenanceMode
         val modeManager = RestoreMaintenanceMode(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
 
@@ -111,11 +120,8 @@ class BackupRestoreContractTest {
         // WHEN: entering BACKUP_EXPORTING mode
         modeManager.enter(RestoreMaintenanceMode.Mode.BACKUP_EXPORTING)
 
-        // THEN: writes are still allowed during backup export
-        assertTrue(
-            "Writes should be allowed in BACKUP_EXPORTING mode",
-            modeManager.isWritesAllowed()
-        )
+        // THEN: all non-NORMAL modes deny ordinary writes.
+        assertFalse("Writes should be blocked in BACKUP_EXPORTING mode", modeManager.isWritesAllowed())
         assertEquals(
             "Current mode should be BACKUP_EXPORTING",
             RestoreMaintenanceMode.Mode.BACKUP_EXPORTING,
@@ -317,6 +323,9 @@ class BackupRestoreContractTest {
 
         // THEN: the journal file is deleted and no journal exists
         assertFalse("Journal file should be deleted after commit", journal.hasJournal())
+        val success = org.json.JSONObject(java.io.File(context.filesDir, RestoreJournal.SUCCESS_JOURNAL_FILENAME).readText())
+        assertEquals(readEntry.operationId, success.getString("operationId"))
+        assertEquals("COMPLETE", success.getString("state"))
     }
 
     @Test
@@ -336,14 +345,18 @@ class BackupRestoreContractTest {
 
         // THEN: the journal file is deleted and no journal exists
         assertFalse("Journal file should be deleted after fail", journal.hasJournal())
+        val failure = org.json.JSONObject(java.io.File(context.filesDir, RestoreJournal.FAILURE_JOURNAL_FILENAME).readText())
+        assertEquals(readEntry.operationId, failure.getString("operationId"))
+        assertEquals("FAILED", failure.getString("state"))
+        assertEquals(DiagnosticReasonCode.UNKNOWN_ERROR.name, failure.getString("error"))
         assertEquals(
             "Failed journal should report FAILED state",
             RestoreJournal.JournalState.FAILED,
             failed.state
         )
         assertEquals(
-            "Failed journal should include the error message",
-            "Test failure",
+            "Failed journal should use a controlled diagnostic reason code",
+            DiagnosticReasonCode.UNKNOWN_ERROR.name,
             failed.error
         )
     }
