@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.backup
 
 import com.yourname.expensetracker.data.privacy.BackupEncryptionService
+import kotlinx.coroutines.CancellationException
 import org.json.JSONObject
 import timber.log.Timber
 import java.io.BufferedOutputStream
@@ -9,6 +10,7 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.InputStream
+import java.io.IOException
 import java.io.SequenceInputStream
 import java.security.MessageDigest
 import java.util.UUID
@@ -37,6 +39,7 @@ object CostbackupBundle {
 
     private const val MAGIC = "COSTBACKUP1"
     private const val FORMAT_VERSION: UShort = 1u
+    private const val AUTHENTICATION_FAILURE_REASON = "BACKUP_AUTHENTICATION_FAILED"
 
     /** Header size: magic (11) + format version (2) = 13 bytes. */
     const val HEADER_SIZE = 11 + 2
@@ -421,7 +424,7 @@ object CostbackupBundle {
         val cipherStream = try {
             encryptionService.decryptStream(fis, password)
         } catch (e: javax.crypto.AEADBadTagException) {
-            throw WrongBackupPasswordException("Incorrect password or corrupted data")
+            throw WrongBackupPasswordException(AUTHENTICATION_FAILURE_REASON)
         }
 
         // 3. Verify ZIP magic + extract ZIP (wrapped for late GCM tag failures)
@@ -450,8 +453,7 @@ object CostbackupBundle {
             outputDir.mkdirs()
             val magicInput = ByteArrayInputStream(magicBytes)
             val fullStream = SequenceInputStream(magicInput, cipherStream)
-            val zis = ZipInputStream(fullStream)
-            try {
+            ZipInputStream(fullStream).use { zis ->
                 var entryCount = 0
                 var totalDecompressedBytes = 0L
                 var entry = zis.nextEntry
@@ -505,11 +507,9 @@ object CostbackupBundle {
                     zis.closeEntry()
                     entry = zis.nextEntry
                 }
-            } finally {
-                zis.close()
             }
         } catch (e: javax.crypto.AEADBadTagException) {
-            throw WrongBackupPasswordException("Incorrect password or corrupted data")
+            throw WrongBackupPasswordException(AUTHENTICATION_FAILURE_REASON)
         }
 
         // 5. Read manifest
@@ -558,10 +558,18 @@ object CostbackupBundle {
             warnings = warnings,
             extractedFiles = extractedFiles
         )
+        } catch (e: IOException) {
+            // CipherInputStream wraps authentication failures from reads and close.
+            if (e.cause is javax.crypto.AEADBadTagException) {
+                throw WrongBackupPasswordException(AUTHENTICATION_FAILURE_REASON)
+            }
+            throw e
         } finally {
             // P7-PR4 (NEW-P7-005): Ensure FileInputStream is always closed
             runCatching { fis.close() }
         }
+    }.onFailure { failure ->
+        if (failure is CancellationException) throw failure
     }
 
     // ── Internal helpers ──────────────────────────────────────────

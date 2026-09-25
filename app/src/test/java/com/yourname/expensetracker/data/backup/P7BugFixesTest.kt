@@ -11,6 +11,7 @@ import androidx.work.WorkManager
 import androidx.work.testing.WorkManagerTestInitHelper
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.SettableFuture
+import com.yourname.expensetracker.data.privacy.BackupEncryptionService
 import com.yourname.expensetracker.domain.workers.PendingWorkerTestFactory
 import com.yourname.expensetracker.domain.workers.ScheduleResult
 import com.yourname.expensetracker.domain.workers.WorkerLeaseRegistry
@@ -41,13 +42,21 @@ import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FileInputStream
+import java.io.IOException
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
+import javax.crypto.AEADBadTagException
+import javax.crypto.CipherInputStream
 
 /**
  * P7-PR4 — Targeted bug-fix regression tests.
@@ -1376,6 +1385,113 @@ class P7BugFixesTest {
         }
     }
 
+    @Test
+    fun `backup_bundle_classifies_authentication_failures_and_preserves_other_failures`() {
+        val bundle = tmp.newFile("exception_mapping.costbackup").apply {
+            writeBytes("COSTBACKUP1".toByteArray(Charsets.US_ASCII) + byteArrayOf(0, 1))
+        }
+        for (duringConstruction in listOf(true, false)) {
+            val failures = listOf(
+                AEADBadTagException("TEST_AUTHENTICATION_FAILED"),
+                IOException(AEADBadTagException("TEST_AUTHENTICATION_FAILED")),
+                IOException("TEST_IO_FAILED"),
+                CancellationException("TEST_CANCELLED")
+            )
+            for ((index, failure) in failures.withIndex()) {
+                val source = io.mockk.slot<java.io.InputStream>()
+                val encryption = mockk<BackupEncryptionService>()
+                val cipher = mockk<CipherInputStream>()
+                every { encryption.decryptStream(capture(source), any()) } answers {
+                    if (duringConstruction) throw failure
+                    cipher
+                }
+                every { cipher.read(any<ByteArray>(), any(), any()) } throws failure
+                val output = tmp.newFolder("mapping_${duringConstruction}_$index")
+                if (failure is CancellationException) {
+                    assertSame(failure, assertThrows(CancellationException::class.java) {
+                        CostbackupBundle.extract(bundle, output, "password", fixedTime, encryption)
+                    })
+                } else {
+                    val result = CostbackupBundle.extract(bundle, output, "password", fixedTime, encryption)
+                    assertTrue(result.isFailure)
+                    if (failure is AEADBadTagException || failure.cause is AEADBadTagException) {
+                        assertTrue(result.exceptionOrNull() is CostbackupBundle.WrongBackupPasswordException)
+                        assertEquals("BACKUP_AUTHENTICATION_FAILED", result.exceptionOrNull()!!.message)
+                        assertEquals(null, result.exceptionOrNull()!!.cause)
+                    } else {
+                        assertSame(failure, result.exceptionOrNull())
+                    }
+                }
+                assertTrue(source.isCaptured)
+                assertFalse((source.captured as FileInputStream).channel.isOpen)
+                assertTrue(output.listFiles()!!.isEmpty())
+            }
+        }
+    }
+
+    @Test
+    fun `backup_bundle_maps_close_time_authentication_failure`() {
+        val bundle = tmp.newFile("close_failure.costbackup").apply {
+            writeBytes("COSTBACKUP1".toByteArray(Charsets.US_ASCII) + byteArrayOf(0, 1))
+        }
+        val zipBytes = ByteArrayOutputStream().apply {
+            ZipOutputStream(this).use { zip ->
+                zip.putNextEntry(ZipEntry("fixture.txt"))
+                zip.write(byteArrayOf(1))
+                zip.closeEntry()
+            }
+        }.toByteArray()
+        for ((index, failure) in listOf(
+            AEADBadTagException("TEST_AUTHENTICATION_FAILED"),
+            IOException(AEADBadTagException("TEST_AUTHENTICATION_FAILED"))
+        ).withIndex()) {
+            val source = io.mockk.slot<java.io.InputStream>()
+            val encryption = mockk<BackupEncryptionService>()
+            val cipher = mockk<CipherInputStream>()
+            val plaintext = ByteArrayInputStream(zipBytes)
+            every { encryption.decryptStream(capture(source), any()) } returns cipher
+            every { cipher.read(any<ByteArray>(), any(), any()) } answers {
+                plaintext.read(firstArg(), secondArg(), thirdArg())
+            }
+            every { cipher.read() } answers { plaintext.read() }
+            every { cipher.close() } throws failure
+            val result = CostbackupBundle.extract(
+                bundle, tmp.newFolder("close_failure_$index"), "password", fixedTime, encryption
+            )
+            assertTrue(result.exceptionOrNull() is CostbackupBundle.WrongBackupPasswordException)
+            assertEquals("BACKUP_AUTHENTICATION_FAILED", result.exceptionOrNull()!!.message)
+            assertFalse((source.captured as FileInputStream).channel.isOpen)
+            verify(atLeast = 1) { cipher.close() }
+        }
+    }
+
+    @Test
+    fun `backup_bundle_preserves_read_cancellation_when_close_fails`() {
+        val bundle = tmp.newFile("cancelled.costbackup").apply {
+            writeBytes("COSTBACKUP1".toByteArray(Charsets.US_ASCII) + byteArrayOf(0, 1))
+        }
+        val source = io.mockk.slot<java.io.InputStream>()
+        val encryption = mockk<BackupEncryptionService>()
+        val cipher = mockk<CipherInputStream>()
+        val cancellation = CancellationException("TEST_CANCELLED")
+        val closeFailure = IOException("TEST_CLOSE_FAILED")
+        var reads = 0
+        every { encryption.decryptStream(capture(source), any()) } returns cipher
+        every { cipher.read(any<ByteArray>(), any(), any()) } answers {
+            if (reads++ > 0) throw cancellation
+            byteArrayOf(0x50, 0x4B, 0x03, 0x04).copyInto(firstArg(), secondArg())
+            4
+        }
+        every { cipher.close() } throws closeFailure
+        val thrown = assertThrows(CancellationException::class.java) {
+            CostbackupBundle.extract(bundle, tmp.newFolder("cancelled_output"), "password", fixedTime, encryption)
+        }
+        assertSame(cancellation, thrown)
+        assertTrue(thrown.suppressed.contains(closeFailure))
+        assertFalse((source.captured as FileInputStream).channel.isOpen)
+        verify(exactly = 1) { cipher.close() }
+    }
+
     // ── NEW-P7-006: Quoted table name in COUNT(*) ─────────────────
 
     @Test
@@ -1491,9 +1607,7 @@ class P7BugFixesTest {
 
     @Test
     fun `count_rows_validates_table_name_escaping`() {
-        // Edge-case verification of the double-quote escaping logic used
-        // in countRowsFromSourceTable. These tests are pure-logic and do
-        // not need a database.
+        // Verify escaping and execute an SQL-like name as a literal identifier.
 
         fun quoteTableName(tableName: String): String {
             return "\"" + tableName.replace("\"", "\"\"") + "\""
@@ -1517,7 +1631,7 @@ class P7BugFixesTest {
         val quoted = quoteTableName(inject)
         assertTrue("Quoted name must start with double-quote", quoted.startsWith("\""))
         assertTrue("Quoted name must end with double-quote", quoted.endsWith("\""))
-        assertFalse(
+        assertTrue(
             "Semicolons inside table name must be treated as literal characters",
             quoted.contains("; ")
         )
@@ -1526,6 +1640,23 @@ class P7BugFixesTest {
             "\"expenses; DROP TABLE categories\"",
             quoted
         )
+        val db = SQLiteDatabase.create(null)
+        try {
+            db.execSQL("CREATE TABLE categories (id INTEGER PRIMARY KEY)")
+            db.execSQL("INSERT INTO categories VALUES (7)")
+            db.execSQL("CREATE TABLE $quoted (id INTEGER PRIMARY KEY)")
+            db.execSQL("INSERT INTO $quoted VALUES (1)")
+            db.rawQuery("SELECT COUNT(*) FROM $quoted", null).use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(1, cursor.getInt(0))
+            }
+            db.rawQuery("SELECT id FROM categories", null).use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(7, cursor.getInt(0))
+            }
+        } finally {
+            db.close()
+        }
 
         // Empty string (edge case — should still produce valid SQL identifier)
         assertEquals("\"\"", quoteTableName(""))
