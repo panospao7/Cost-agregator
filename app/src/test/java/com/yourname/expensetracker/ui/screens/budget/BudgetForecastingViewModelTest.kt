@@ -33,7 +33,9 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.After
 import org.junit.Test
+import timber.log.Timber
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class BudgetForecastingViewModelTest : ViewModelTestUtils() {
@@ -42,10 +44,24 @@ class BudgetForecastingViewModelTest : ViewModelTestUtils() {
     private val recommendationEngine = mockk<BudgetRecommendationEngine>(relaxed = true)
 
     private lateinit var viewModel: BudgetForecastingViewModel
+    private val logs = mutableListOf<Pair<Throwable?, String>>()
+    private val logTree = object : Timber.Tree() {
+        override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+            logs += t to message
+        }
+    }
+
+    @After
+    override fun tearDown() {
+        Timber.uproot(logTree)
+        super.tearDown()
+    }
 
     @Before
     override fun setup() {
         super.setup()
+        logs.clear()
+        Timber.plant(logTree)
         coEvery { forecastingEngine.generateForecastResult(any(), any()) } returns BudgetForecastResult.Available(createForecast())
         every { recommendationEngine.generateRecommendations(any(), any(), any()) } returns emptyList()
 
@@ -184,7 +200,7 @@ class BudgetForecastingViewModelTest : ViewModelTestUtils() {
     @Test
     fun `error in engine sets error state`() = runTest(testDispatcher) {
         val budget = createBudget(id = 30L, amount = 120.0)
-        coEvery { forecastingEngine.generateForecastResult(budget, 30) } throws IllegalStateException("engine failure")
+        coEvery { forecastingEngine.generateForecastResult(budget, 30) } throws IllegalStateException("SQL /private/receipt merchant 1234.56")
 
         viewModel.uiState.test {
             awaitItem() // initial
@@ -198,6 +214,7 @@ class BudgetForecastingViewModelTest : ViewModelTestUtils() {
             val error = awaitItem()
             assertFalse(error.isLoading)
             assertEquals("Forecast unavailable", error.error)
+            assertEquals(listOf(null to "BudgetForecastingViewModel: UNKNOWN_ERROR class=IllegalStateException"), logs)
 
             cancelAndIgnoreRemainingEvents()
         }
@@ -310,6 +327,7 @@ class BudgetForecastingViewModelTest : ViewModelTestUtils() {
         assertEquals(newBudget.id, viewModel.uiState.value.forecast?.budgetId)
         assertNull(viewModel.uiState.value.error)
         assertTrue(waiting.isCancelled.not())
+        assertTrue(logs.isEmpty())
     }
 
     @Test
@@ -333,6 +351,7 @@ class BudgetForecastingViewModelTest : ViewModelTestUtils() {
 
         assertEquals(newBudget.id, viewModel.uiState.value.forecast?.budgetId)
         assertNull(viewModel.uiState.value.error)
+        assertTrue(logs.isEmpty())
     }
 
     private fun createBudget(

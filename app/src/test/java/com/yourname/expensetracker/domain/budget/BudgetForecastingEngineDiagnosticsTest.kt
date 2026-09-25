@@ -1,9 +1,11 @@
 package com.yourname.expensetracker.domain.budget
 
+import android.database.sqlite.SQLiteConstraintException
 import com.yourname.expensetracker.AnalyticsEngineTestBase
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.BudgetForecastDao
 import com.yourname.expensetracker.data.database.entity.Budget
+import com.yourname.expensetracker.data.database.entity.BudgetForecast
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
@@ -30,15 +32,34 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.flowOf
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
+import org.junit.After
 import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import timber.log.Timber
+import kotlin.test.assertFailsWith
 
 /**
  * P6-CURRENT-026: Verifies [BudgetForecastingEngine] emits a durable "forecast generated" event on
  * success and a "forecast unavailable" event when home currency or the budget-limit conversion is
  * unavailable. All emissions reuse the existing BUDGET pipeline / DiagnosticEvent API.
  */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [28])
 class BudgetForecastingEngineDiagnosticsTest : AnalyticsEngineTestBase() {
+
+    private val logs = mutableListOf<Pair<Throwable?, String>>()
+    private val logTree = object : Timber.Tree() {
+        override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+            logs += t to message
+        }
+    }
+
+    @After
+    fun removeLogTree() { Timber.uproot(logTree) }
 
     private lateinit var budgetRepository: BudgetRepository
     private lateinit var budgetForecastDao: BudgetForecastDao
@@ -65,6 +86,8 @@ class BudgetForecastingEngineDiagnosticsTest : AnalyticsEngineTestBase() {
     @Before
     override fun setUp() {
         super.setUp()
+        logs.clear()
+        Timber.plant(logTree)
         budgetRepository = mockk(relaxed = true)
         budgetForecastDao = mockk(relaxed = true)
         coEvery { budgetForecastDao.insertWithDeactivation(any()) } returns 1L
@@ -126,6 +149,27 @@ class BudgetForecastingEngineDiagnosticsTest : AnalyticsEngineTestBase() {
             diagnosticEventWriter = diagnosticEventWriter,
             diagnosticSink = diagnosticSink
         )
+    }
+
+    @Test
+    fun `unique insert stays duplicate with bounded log`() = runTest {
+        coEvery { budgetForecastDao.insertWithDeactivation(any()) } throws
+            SQLiteConstraintException("UNIQUE constraint failed: SQL /private/receipt merchant 1234.56")
+
+        assertEquals(ForecastInsertResult.DuplicateInSameInstant, engine.insertForecast(mockk<BudgetForecast>()))
+
+        assertEquals(listOf(null to "BudgetForecastingEngine: UNKNOWN_ERROR stage=unique_insert class=SQLiteConstraintException"), logs)
+    }
+
+    @Test
+    fun `foreign key insert failure is not mislabeled as duplicate or leaked`() = runTest {
+        coEvery { budgetForecastDao.insertWithDeactivation(any()) } throws
+            SQLiteConstraintException("FOREIGN KEY constraint failed: SQL /private/receipt merchant 1234.56")
+
+        assertFailsWith<SQLiteConstraintException> { engine.insertForecast(mockk<BudgetForecast>()) }
+
+        assertEquals(listOf(null to "BudgetForecastingEngine: UNKNOWN_ERROR stage=constraint_insert class=SQLiteConstraintException"), logs)
+        assertTrue(logs.all { it.first == null })
     }
 
     private fun converted(amount: Double): ConversionOutcome.Converted = ConversionOutcome.Converted(
