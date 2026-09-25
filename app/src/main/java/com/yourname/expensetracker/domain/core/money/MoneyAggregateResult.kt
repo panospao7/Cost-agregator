@@ -19,6 +19,19 @@ sealed interface MoneyAggregateResult {
     ) : MoneyAggregateResult
 }
 
+enum class MoneyDisplayUnavailableReasonCode {
+    INVALID_TARGET_CURRENCY,
+    INVALID_SOURCE_CURRENCY,
+    INVALID_AMOUNT,
+    INVALID_TRANSACTION_COUNTS,
+    DISPLAY_CONVERSION_UNAVAILABLE,
+    HOME_CURRENCY_UNAVAILABLE
+}
+
+class MoneyDisplayUnavailableException(
+    val reasonCode: MoneyDisplayUnavailableReasonCode
+) : IllegalStateException(reasonCode.name)
+
 val MoneyAggregateResult.isAvailable: Boolean
     get() = this is MoneyAggregateResult.Available
 

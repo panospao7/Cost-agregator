@@ -7,15 +7,18 @@ import com.yourname.expensetracker.domain.currency.ConversionResult
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencyRatesRepository
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.SupportedCurrency
+import com.yourname.expensetracker.domain.core.money.ConversionOutcome
+import com.yourname.expensetracker.domain.core.money.RateBasis
+import com.yourname.expensetracker.domain.core.money.StaleRatePolicy
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
-import timber.log.Timber
-import java.util.Currency
 import javax.inject.Inject
 
 /**
@@ -60,12 +63,6 @@ class CurrencyManagementViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(CurrencyManagementUiState())
     val uiState: StateFlow<CurrencyManagementUiState> = _uiState.asStateFlow()
     
-    // Top 20 most used currencies
-    private val priorityCurrencies = listOf(
-        "USD", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "CNY", "SEK", "NZD",
-        "MXN", "SGD", "HKD", "NOK", "KRW", "TRY", "RUB", "INR", "BRL", "ZAR"
-    )
-    
     init {
         viewModelScope.launch {
             // Load home currency from preferences
@@ -82,18 +79,13 @@ class CurrencyManagementViewModel @Inject constructor(
             
             try {
                 // Load supported currencies
-                val currencies = priorityCurrencies.mapNotNull { code ->
-                    try {
-                        val currency = Currency.getInstance(code)
-                        CurrencyInfo(
-                            code = code,
-                            name = currency.displayName,
-                            symbol = currency.symbol,
-                            flag = getCurrencyFlag(code)
-                        )
-                    } catch (e: Exception) {
-                        null
-                    }
+                val currencies = SupportedCurrency.activeCatalog.map { currency ->
+                    CurrencyInfo(
+                        code = currency.code,
+                        name = currency.displayName,
+                        symbol = currency.symbol,
+                        flag = getCurrencyFlag(currency.code)
+                    )
                 }
                 
                 // Load exchange rates
@@ -129,13 +121,20 @@ class CurrencyManagementViewModel @Inject constructor(
                     isLoading = false,
                     error = null
                 )
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 val currentRates = _uiState.value.exchangeRates
-                val isRatesStale = runCatching { settingsRepository.areRatesStale() }
-                    .getOrElse { _uiState.value.isRatesStale }
+                val isRatesStale = try {
+                    settingsRepository.areRatesStale()
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (ignored: Exception) {
+                    _uiState.value.isRatesStale
+                }
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
-                    error = "Failed to load currency data: ${e.message}",
+                    error = "CURRENCY_DATA_UNAVAILABLE",
                     isRatesStale = isRatesStale,
                     isOffline = !hasUsableRates(currentRates)
                 )
@@ -165,8 +164,17 @@ class CurrencyManagementViewModel @Inject constructor(
      */
     fun setHomeCurrency(currencyCode: String) {
         viewModelScope.launch {
+            val selectedCurrency = SupportedCurrency.fromActiveCode(currencyCode)
+            if (selectedCurrency == null) {
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    error = "UNSUPPORTED_HOME_CURRENCY"
+                )
+                return@launch
+            }
+
             // Persist to settings
-            settingsRepository.setHomeCurrency(currencyCode)
+            settingsRepository.setHomeCurrency(selectedCurrency.code)
 
             // CURR-6: Invalidate caches so re-classification uses fresh data
             hybridClassifier.invalidateCategorySnapshot()
@@ -186,24 +194,39 @@ class CurrencyManagementViewModel @Inject constructor(
     fun convert(amount: Double, fromCurrency: String, toCurrency: String) {
         viewModelScope.launch {
             try {
-                val result = currencyConverter.convert(
+                when (val outcome = currencyConverter.convertOutcome(
                     amount = amount,
                     fromCurrency = fromCurrency,
-                    toCurrency = toCurrency
-                )
-                
-                if (result != null) {
-                    _uiState.value = _uiState.value.copy(
-                        conversionResult = result
-                    )
-                } else {
-                    _uiState.value = _uiState.value.copy(
-                        error = "No exchange rate available for $fromCurrency to $toCurrency"
-                    )
+                    toCurrency = toCurrency,
+                    rateBasis = RateBasis.LATEST_AVAILABLE,
+                    stalePolicy = StaleRatePolicy.forBasis(RateBasis.LATEST_AVAILABLE)
+                )) {
+                    is ConversionOutcome.Converted -> {
+                        _uiState.value = _uiState.value.copy(
+                            conversionResult = ConversionResult(
+                                originalAmount = outcome.originalAmount,
+                                originalCurrency = outcome.originalCurrency.code,
+                                convertedAmount = outcome.convertedAmount,
+                                targetCurrency = outcome.targetCurrency.code,
+                                rateUsed = outcome.rateUsed,
+                                timestamp = outcome.rateLastUpdated ?: outcome.rateValidDate ?: 0L
+                            ),
+                            error = null
+                        )
+                    }
+                    is ConversionOutcome.Failed -> {
+                        _uiState.value = _uiState.value.copy(
+                            conversionResult = null,
+                            error = "CURRENCY_CONVERSION_UNAVAILABLE"
+                        )
+                    }
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
-                    error = "Conversion failed: ${e.message}"
+                    conversionResult = null,
+                    error = "CURRENCY_CONVERSION_UNAVAILABLE"
                 )
             }
         }
@@ -222,13 +245,20 @@ class CurrencyManagementViewModel @Inject constructor(
                     throw IllegalStateException("No rates returned from provider")
                 }
                 loadCurrencyData()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 val currentRates = _uiState.value.exchangeRates
-                val isRatesStale = runCatching { settingsRepository.areRatesStale() }
-                    .getOrElse { _uiState.value.isRatesStale }
+                val isRatesStale = try {
+                    settingsRepository.areRatesStale()
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (ignored: Exception) {
+                    _uiState.value.isRatesStale
+                }
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
-                    error = "Failed to refresh rates: ${e.message}",
+                    error = "CURRENCY_RATE_REFRESH_UNAVAILABLE",
                     isRatesStale = isRatesStale,
                     isOffline = !hasUsableRates(currentRates)
                 )

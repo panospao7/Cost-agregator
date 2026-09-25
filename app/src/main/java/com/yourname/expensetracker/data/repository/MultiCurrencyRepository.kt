@@ -14,13 +14,16 @@ import com.yourname.expensetracker.domain.core.money.SpendScope
 import com.yourname.expensetracker.domain.core.money.BucketDatePolicy
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateResult
 import com.yourname.expensetracker.domain.core.money.MoneyBucketInput
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode
 import com.yourname.expensetracker.domain.core.money.RateBasis
 import com.yourname.expensetracker.domain.core.money.TransactionTypeFilter
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.FailedConversion
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import com.yourname.expensetracker.domain.currency.SupportedCurrency
 import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -414,18 +417,26 @@ class MultiCurrencyRepository @Inject constructor(
      */
     private suspend fun resolveHomeCurrencyForMoneyMath(): com.yourname.expensetracker.domain.core.money.HomeCurrencyForMoneyMath {
         return when (val resolution = currencySettingsRepository.resolveHomeCurrency()) {
-            is HomeCurrencyResolution.Resolved -> com.yourname.expensetracker.domain.core.money.HomeCurrencyForMoneyMath.Available(
-                currency = resolution.currency,
-                firstRunDefault = false
-            )
-            is HomeCurrencyResolution.FirstRunDefault -> com.yourname.expensetracker.domain.core.money.HomeCurrencyForMoneyMath.Available(
-                currency = resolution.currency,
-                firstRunDefault = true
-            )
+            is HomeCurrencyResolution.Resolved -> validatedHomeCurrency(resolution.currency, firstRunDefault = false)
+            is HomeCurrencyResolution.FirstRunDefault -> validatedHomeCurrency(resolution.currency, firstRunDefault = true)
             is HomeCurrencyResolution.Failed -> com.yourname.expensetracker.domain.core.money.HomeCurrencyForMoneyMath.Unavailable(
-                reason = resolution.reason
+                reason = MoneyDisplayUnavailableReasonCode.HOME_CURRENCY_UNAVAILABLE.name
             )
         }
+    }
+
+    private fun validatedHomeCurrency(
+        currency: CurrencyCode,
+        firstRunDefault: Boolean
+    ): com.yourname.expensetracker.domain.core.money.HomeCurrencyForMoneyMath {
+        val supported = SupportedCurrency.fromCode(currency.code)
+            ?: return com.yourname.expensetracker.domain.core.money.HomeCurrencyForMoneyMath.Unavailable(
+                reason = MoneyDisplayUnavailableReasonCode.HOME_CURRENCY_UNAVAILABLE.name
+            )
+        return com.yourname.expensetracker.domain.core.money.HomeCurrencyForMoneyMath.Available(
+            currency = CurrencyCode(supported.code),
+            firstRunDefault = firstRunDefault
+        )
     }
 
     /**
@@ -439,7 +450,10 @@ class MultiCurrencyRepository @Inject constructor(
      * emits a new value (see init block).
      */
     private suspend fun requireHomeCurrencyForMoneyMath(): CurrencyCode {
-        cachedHomeCurrency?.let { return it }
+        cachedHomeCurrency?.let { cached ->
+            if (SupportedCurrency.fromCode(cached.code) != null) return cached
+            cachedHomeCurrency = null
+        }
         return when (val result = resolveHomeCurrencyForMoneyMath()) {
             is com.yourname.expensetracker.domain.core.money.HomeCurrencyForMoneyMath.Available -> {
                 result.currency.also { cachedHomeCurrency = it }
@@ -448,6 +462,65 @@ class MultiCurrencyRepository @Inject constructor(
                 throw HomeCurrencyUnavailableException(result.reason)
         }
     }
+
+    suspend fun aggregateDisplayAmounts(
+        amounts: List<Pair<Double, String>>,
+        transactionCounts: List<Int>,
+        targetCurrency: String
+    ): MoneyAggregateResult {
+        val target = SupportedCurrency.fromCode(targetCurrency)
+            ?: return unavailableDisplayResult(MoneyDisplayUnavailableReasonCode.INVALID_TARGET_CURRENCY)
+        if (amounts.size != transactionCounts.size || transactionCounts.any { it < 0 }) {
+            return unavailableDisplayResult(MoneyDisplayUnavailableReasonCode.INVALID_TRANSACTION_COUNTS)
+        }
+        if (amounts.any { !it.first.isFinite() }) {
+            return unavailableDisplayResult(MoneyDisplayUnavailableReasonCode.INVALID_AMOUNT)
+        }
+
+        val inputs = ArrayList<MoneyBucketInput>(amounts.size)
+        amounts.forEachIndexed { index, (amount, rawCurrency) ->
+            val source = SupportedCurrency.fromCode(rawCurrency)
+                ?: return unavailableDisplayResult(MoneyDisplayUnavailableReasonCode.INVALID_SOURCE_CURRENCY)
+            inputs += MoneyBucketInput(
+                amount = amount,
+                currency = CurrencyCode(source.code),
+                transactionCount = transactionCounts[index]
+            )
+        }
+
+        val targetCode = CurrencyCode(target.code)
+        if (inputs.isEmpty()) {
+            return MoneyAggregateResult.Available(
+                MoneyAggregate.empty(targetCode, RateBasis.LATEST_AVAILABLE)
+            )
+        }
+
+        val aggregate = MoneyAggregateBuilder.fromBuckets(
+            buckets = inputs,
+            homeCurrency = targetCode,
+            converter = currencyConverter,
+            rateBasis = RateBasis.LATEST_AVAILABLE,
+            bucketDatePolicy = BucketDatePolicy.Latest
+        )
+        return if (aggregate.conversionFailures.size == inputs.size) {
+            MoneyAggregateResult.Unavailable(
+                reason = MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE.name,
+                requestedRateBasis = RateBasis.LATEST_AVAILABLE,
+                metadata = aggregate.metadata,
+                warningMessage = MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE.name
+            )
+        } else {
+            MoneyAggregateResult.Available(aggregate)
+        }
+    }
+
+    private fun unavailableDisplayResult(
+        reasonCode: MoneyDisplayUnavailableReasonCode
+    ): MoneyAggregateResult.Unavailable = MoneyAggregateResult.Unavailable(
+        reason = reasonCode.name,
+        requestedRateBasis = RateBasis.LATEST_AVAILABLE,
+        warningMessage = reasonCode.name
+    )
 
     /**
      * **LATEST-RATE:** Get total expenses in home currency.
@@ -615,7 +688,7 @@ class MultiCurrencyRepository @Inject constructor(
             is com.yourname.expensetracker.domain.core.money.HomeCurrencyForMoneyMath.Available -> home.currency
             is com.yourname.expensetracker.domain.core.money.HomeCurrencyForMoneyMath.Unavailable -> {
                 return com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Unavailable(
-                    reason = "Home currency unavailable: ${home.reason}",
+                    reason = home.reason,
                     requestedRateBasis = RateBasis.TRANSACTION_DATE
                 )
             }

@@ -3,6 +3,7 @@ package com.yourname.expensetracker.data.repository
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencyRatesRepository
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.SupportedCurrency
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
@@ -40,10 +41,6 @@ class CurrencyRatesRepositoryImpl @Inject constructor(
         private const val ACCESS_EXTERNAL_DTD_PROPERTY = "http://javax.xml.XMLConstants/property/accessExternalDTD"
         private const val ACCESS_EXTERNAL_SCHEMA_PROPERTY = "http://javax.xml.XMLConstants/property/accessExternalSchema"
         private const val ECB_NAMESPACE = "http://www.ecb.int/vocabulary/2002-08-01/eurofxref"
-        private val PRIORITY_CURRENCIES = listOf(
-            "USD", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "CNY", "SEK", "NZD",
-            "MXN", "SGD", "HKD", "NOK", "KRW", "TRY", "RUB", "INR", "BRL", "ZAR"
-        )
     }
 
     override suspend fun refresh(homeCurrency: String): Int = withContext(ioDispatcher) {
@@ -78,14 +75,14 @@ class CurrencyRatesRepositoryImpl @Inject constructor(
         val parsedRates = parseEcbDailyRates(stream)
         val eurToCurrency = parsedRates.eurToCurrency
 
-        val base = homeCurrency.uppercase(Locale.US)
+        val base = SupportedCurrency.fromCode(homeCurrency)?.code
+            ?: throw IllegalArgumentException("INVALID_HOME_CURRENCY")
         if (!eurToCurrency.containsKey(base)) {
-            throw IllegalStateException("Provider did not include home currency $base")
+            throw IllegalStateException("HOME_CURRENCY_QUOTE_UNAVAILABLE")
         }
 
-        val supported = (PRIORITY_CURRENCIES + base + "EUR")
-            .map { it.uppercase(Locale.US) }
-            .distinct()
+        val supported = SupportedCurrency.catalog
+            .map { it.code }
             .filter { eurToCurrency.containsKey(it) }
         val rates = mutableListOf<Triple<String, String, Double>>()
         for (from in supported) {
