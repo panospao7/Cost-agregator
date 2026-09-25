@@ -171,6 +171,23 @@ class BudgetForecastingEngineDiagnosticsTest : AnalyticsEngineTestBase() {
         assertTrue(logs.all { it.first == null })
     }
 
+    @Test
+    fun `constraint insert with null message stays typed and bounded`() = runTest {
+        coEvery { budgetForecastDao.insertWithDeactivation(any()) } throws
+            DiagnosticsSQLiteConstraintException(null)
+
+        assertEquals(ForecastInsertResult.ConstraintViolation, engine.insertForecast(mockk<BudgetForecast>()))
+
+        assertEquals(
+            listOf(
+                null to
+                    "BudgetForecastingEngine: UNKNOWN_ERROR stage=constraint_insert class=DiagnosticsSQLiteConstraintException"
+            ),
+            logs
+        )
+        assertTrue(logs.all { it.first == null })
+    }
+
     private fun converted(amount: Double): ConversionOutcome.Converted = ConversionOutcome.Converted(
         originalAmount = amount,
         originalCurrency = CurrencyCode("EUR"),
@@ -199,6 +216,38 @@ class BudgetForecastingEngineDiagnosticsTest : AnalyticsEngineTestBase() {
         assertEquals(EventOutcome.COMPLETED, event.outcome)
         assertEquals("Budget", event.entityType)
         assertEquals(12L, event.entityId)
+    }
+
+    @Test
+    fun `generateForecastResult maps persistence constraint to bounded unavailable event`() = runTest {
+        val rawPayload = "CHECK constraint failed: SQL /private/receipt merchant 1234.56"
+        coEvery {
+            mockConverter.convertOutcome(any(), any(), any(), any(), any(), any())
+        } returns converted(1_000.0)
+        coEvery { budgetForecastDao.insertWithDeactivation(any()) } throws
+            DiagnosticsSQLiteConstraintException(rawPayload)
+
+        val result = engine.generateForecastResult(budget)
+
+        val unavailable = result as BudgetForecastResult.Unavailable
+        assertEquals(ForecastUnavailableReason.UNKNOWN, unavailable.reasonCode)
+        assertEquals("Forecast skipped: persistence constraint rejected the insert", unavailable.reason)
+        assertTrue(!unavailable.reason.contains(rawPayload))
+
+        val event = emitted.single { it.stage == "FORECAST_UNAVAILABLE" }
+        assertEquals(EventOutcome.SKIPPED, event.outcome)
+        assertEquals(12L, event.entityId)
+        assertTrue(event.metadata.toJson().contains("PERSISTENCE_CONSTRAINT"))
+        assertTrue(!event.metadata.toJson().contains(rawPayload))
+        assertTrue(emitted.none { it.stage == "FORECAST_GENERATED" })
+        assertEquals(
+            listOf(
+                null to
+                    "BudgetForecastingEngine: UNKNOWN_ERROR stage=constraint_insert class=DiagnosticsSQLiteConstraintException"
+            ),
+            logs
+        )
+        assertTrue(logs.all { it.first == null })
     }
 
     @Test
@@ -268,5 +317,5 @@ class BudgetForecastingEngineDiagnosticsTest : AnalyticsEngineTestBase() {
 }
 
 private class DiagnosticsSQLiteConstraintException(
-    override val message: String
+    override val message: String?
 ) : SQLiteConstraintException(message)
