@@ -400,6 +400,38 @@ class ConversionSemanticsHardeningTest {
         assertEquals(1, dao.inserted.size)
     }
 
+    @Test
+    fun `storeRates explicit publication date is used for historical lookup`() = runTest {
+        val publicationDate = NOW - DAY
+
+        converter.storeRates(
+            rates = listOf(Triple("USD", "EUR", 0.90)),
+            source = "ecb",
+            validDate = publicationDate
+        )
+
+        val stored = store.datedRates["USD_EUR_$publicationDate"]
+        assertNotNull(stored)
+        assertEquals(publicationDate, stored!!.validDate)
+        assertEquals(NOW, stored.lastUpdated)
+        assertEquals("ecb", stored.source)
+        assertNotNull(converter.convertAsOf(100.0, "USD", "EUR", publicationDate))
+        assertNull(converter.convertAsOf(100.0, "USD", "EUR", publicationDate - 1L))
+    }
+
+    @Test
+    fun `storeRates repeat publication upserts the same pair date`() = runTest {
+        val publicationDate = NOW - DAY
+        val rates = listOf(Triple("USD", "EUR", 0.90))
+        converter.storeRates(rates, source = "ecb", validDate = publicationDate)
+
+        time.current = NOW + DAY
+        converter.storeRates(rates, source = "ecb", validDate = publicationDate)
+
+        assertEquals(1, store.datedRates.size)
+        assertEquals(NOW + DAY, store.datedRates.getValue("USD_EUR_$publicationDate").lastUpdated)
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────
 
     private fun rate(
@@ -410,13 +442,14 @@ class ConversionSemanticsHardeningTest {
 
 // ── Test doubles ───────────────────────────────────────────────────────
 
-private class FakeTime(private val now: Long) : TimeProvider {
-    override fun now(): Long = now
+private class FakeTime(var current: Long) : TimeProvider {
+    override fun now(): Long = current
 }
 
 private class FakeStore : ExchangeRateStore {
     val latestRates = mutableMapOf<String, DomainExchangeRate>()
     val asOfRates = mutableMapOf<String, DomainExchangeRate>()
+    val datedRates = mutableMapOf<String, DomainExchangeRate>()
 
     override suspend fun getRate(fromCurrency: String, toCurrency: String): DomainExchangeRate? =
         latestRates["${fromCurrency}_${toCurrency}"]
@@ -426,10 +459,20 @@ private class FakeStore : ExchangeRateStore {
 
     override suspend fun getRateAsOf(fromCurrency: String, toCurrency: String, atMillis: Long): DomainExchangeRate? =
         asOfRates["${fromCurrency}_${toCurrency}_$atMillis"]
+            ?: datedRates.values
+                .filter {
+                    it.fromCurrency == fromCurrency &&
+                        it.toCurrency == toCurrency &&
+                        (it.validDate ?: Long.MAX_VALUE) <= atMillis
+                }
+                .maxByOrNull { it.validDate ?: Long.MIN_VALUE }
             ?: latestRates["${fromCurrency}_${toCurrency}"]?.takeIf { (it.validDate ?: 0L) <= atMillis }
 
     override suspend fun insertOrUpdate(rate: DomainExchangeRate) {
         latestRates["${rate.fromCurrency}_${rate.toCurrency}"] = rate
+        rate.validDate?.let { validDate ->
+            datedRates["${rate.fromCurrency}_${rate.toCurrency}_$validDate"] = rate
+        }
     }
 
     override suspend fun insertOrUpdateAll(rates: List<DomainExchangeRate>) {
