@@ -6,6 +6,7 @@ import androidx.work.WorkManager
 import com.yourname.expensetracker.domain.privacy.PrivacySettings
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.workers.ScheduleResult
 import com.yourname.expensetracker.domain.workers.WorkerRegistry
 import io.mockk.every
 import io.mockk.mockk
@@ -102,6 +103,12 @@ class PrivacySettingsRepositoryImplWorkerGatingTest {
             WorkerRegistry.Entry("ai_daily_briefing") { context, timeProvider ->
                 scheduled.add("ai_daily_briefing")
                 forwardedTimeProvider = timeProvider
+                ScheduleResult(
+                    workerName = "ai_daily_briefing",
+                    scheduled = true,
+                    policyUsed = "TEST",
+                    versionChanged = false
+                )
             }
         )
 

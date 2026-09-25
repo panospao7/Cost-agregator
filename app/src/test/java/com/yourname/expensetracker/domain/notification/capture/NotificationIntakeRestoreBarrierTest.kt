@@ -19,8 +19,10 @@ import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.nio.file.Files
 
 /**
  * GR-14u6: the notification-capture writers must be blocked by
@@ -44,10 +46,16 @@ class NotificationIntakeRestoreBarrierTest {
 
     private fun maintenanceMode(modeValue: String): RestoreMaintenanceMode {
         val prefs = mockk<android.content.SharedPreferences>(relaxed = true)
-        every { prefs.getString(any(), any()) } returns modeValue
+        every { prefs.all } returns mapOf("current_mode" to modeValue)
         val context = mockk<Context>(relaxed = true)
         every { context.getSharedPreferences(any(), any()) } returns prefs
-        return RestoreMaintenanceMode(context, timeProvider)
+        every { context.noBackupFilesDir } returns
+            Files.createTempDirectory("notification-intake-maintenance-").toFile().apply {
+                deleteOnExit()
+            }
+        val mode = RestoreMaintenanceMode(context, timeProvider)
+        assertEquals(RestoreMaintenanceMode.Mode.valueOf(modeValue), mode.currentMode())
+        return mode
     }
 
     private fun coordinator(modeValue: String): NotificationIntakeCoordinator {

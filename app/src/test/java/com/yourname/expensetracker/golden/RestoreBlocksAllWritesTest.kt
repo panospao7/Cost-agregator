@@ -9,6 +9,7 @@ import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Test
+import java.nio.file.Files
 
 /**
  * Golden Scenario Test 9: Restore Blocks All Writes
@@ -19,13 +20,23 @@ import org.junit.Test
  */
 class RestoreBlocksAllWritesTest {
 
-    @Test
-    fun `write barrier allows writes in NORMAL mode`() {
+    private fun maintenanceMode(modeValue: String): RestoreMaintenanceMode {
         val prefs = mockk<android.content.SharedPreferences>(relaxed = true)
-        every { prefs.getString(any(), any()) } returns "NORMAL"
+        every { prefs.all } returns mapOf("current_mode" to modeValue)
         val context = mockk<Context>(relaxed = true)
         every { context.getSharedPreferences(any(), any()) } returns prefs
+        every { context.noBackupFilesDir } returns
+            Files.createTempDirectory("golden-maintenance-").toFile().apply {
+                deleteOnExit()
+            }
         val mode = RestoreMaintenanceMode(context, FakeTimeProvider(1716163200000L))
+        assertEquals(RestoreMaintenanceMode.Mode.valueOf(modeValue), mode.currentMode())
+        return mode
+    }
+
+    @Test
+    fun `write barrier allows writes in NORMAL mode`() {
+        val mode = maintenanceMode("NORMAL")
         val barrier = DatabaseWriteBarrier(mode)
 
         // Should not throw
@@ -34,11 +45,7 @@ class RestoreBlocksAllWritesTest {
 
     @Test
     fun `write barrier blocks writes in RESTORE_PREPARING mode`() {
-        val prefs = mockk<android.content.SharedPreferences>(relaxed = true)
-        every { prefs.getString(any(), any()) } returns "RESTORE_PREPARING"
-        val context = mockk<Context>(relaxed = true)
-        every { context.getSharedPreferences(any(), any()) } returns prefs
-        val mode = RestoreMaintenanceMode(context, FakeTimeProvider(1716163200000L))
+        val mode = maintenanceMode("RESTORE_PREPARING")
         val barrier = DatabaseWriteBarrier(mode)
 
         assertThrows(IllegalStateException::class.java) {
@@ -48,11 +55,7 @@ class RestoreBlocksAllWritesTest {
 
     @Test
     fun `write barrier blocks writes in BACKUP_EXPORTING mode`() {
-        val prefs = mockk<android.content.SharedPreferences>(relaxed = true)
-        every { prefs.getString(any(), any()) } returns "BACKUP_EXPORTING"
-        val context = mockk<Context>(relaxed = true)
-        every { context.getSharedPreferences(any(), any()) } returns prefs
-        val mode = RestoreMaintenanceMode(context, FakeTimeProvider(1716163200000L))
+        val mode = maintenanceMode("BACKUP_EXPORTING")
         val barrier = DatabaseWriteBarrier(mode)
 
         assertThrows(IllegalStateException::class.java) {
@@ -62,11 +65,7 @@ class RestoreBlocksAllWritesTest {
 
     @Test
     fun `write barrier blocks writes in RESTORE_COMPLETE_RESTART_REQUIRED mode`() {
-        val prefs = mockk<android.content.SharedPreferences>(relaxed = true)
-        every { prefs.getString(any(), any()) } returns "RESTORE_COMPLETE_RESTART_REQUIRED"
-        val context = mockk<Context>(relaxed = true)
-        every { context.getSharedPreferences(any(), any()) } returns prefs
-        val mode = RestoreMaintenanceMode(context, FakeTimeProvider(1716163200000L))
+        val mode = maintenanceMode("RESTORE_COMPLETE_RESTART_REQUIRED")
         val barrier = DatabaseWriteBarrier(mode)
 
         assertThrows(IllegalStateException::class.java) {
@@ -76,11 +75,7 @@ class RestoreBlocksAllWritesTest {
 
     @Test
     fun `write barrier blocks writes in RESTORE_SWAPPING mode`() {
-        val prefs = mockk<android.content.SharedPreferences>(relaxed = true)
-        every { prefs.getString(any(), any()) } returns "RESTORE_SWAPPING"
-        val context = mockk<Context>(relaxed = true)
-        every { context.getSharedPreferences(any(), any()) } returns prefs
-        val mode = RestoreMaintenanceMode(context, FakeTimeProvider(1716163200000L))
+        val mode = maintenanceMode("RESTORE_SWAPPING")
         val barrier = DatabaseWriteBarrier(mode)
 
         assertThrows(IllegalStateException::class.java) {
@@ -96,11 +91,7 @@ class RestoreBlocksAllWritesTest {
         )
 
         nonNormalModes.forEach { modeName ->
-            val prefs = mockk<android.content.SharedPreferences>(relaxed = true)
-            every { prefs.getString(any(), any()) } returns modeName
-            val context = mockk<Context>(relaxed = true)
-            every { context.getSharedPreferences(any(), any()) } returns prefs
-            val mode = RestoreMaintenanceMode(context, FakeTimeProvider(1716163200000L))
+            val mode = maintenanceMode(modeName)
             val barrier = DatabaseWriteBarrier(mode)
 
             try {

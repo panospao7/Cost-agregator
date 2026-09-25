@@ -14,6 +14,7 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.service.receiptmatching.ReceiptMatchingWorker
 import com.yourname.expensetracker.service.reminder.BillReminderWorker
 import com.yourname.expensetracker.service.warranty.WarrantyExpirationWorker
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -55,8 +56,23 @@ object WorkerRegistry {
          *   entries that need it (e.g. midnight-aligned scheduling). Entries that
          *   don't need time ignore it.
          */
-        val schedule: (Context, TimeProvider) -> Unit
+        val schedule: (Context, TimeProvider) -> ScheduleResult
     )
+
+    data class ScheduleAllResult(
+        val results: List<ScheduleResult>
+    ) {
+        val failedWorkerNames: List<String>
+            get() = results.filterNot { it.scheduled }.map { it.workerName }
+
+        fun confirms(expectedWorkerNames: Set<String>): Boolean {
+            val resultNames = results.map { it.workerName }
+            return results.size == expectedWorkerNames.size &&
+                resultNames.size == resultNames.toSet().size &&
+                resultNames.toSet() == expectedWorkerNames &&
+                results.all { it.scheduled }
+        }
+    }
 
     /**
      * Fire-and-forget scope for summary diagnostic emission. Diagnostics are best-effort
@@ -73,12 +89,24 @@ object WorkerRegistry {
      * `schedule()` method because it is midnight-aligned, not periodic.
      */
     val entries: List<Entry> = listOf(
-        Entry("location_backfill") { context, _ -> LocationBackfillWorker.schedule(context) },
-        Entry("merchant_key_backfill") { context, _ -> MerchantKeyBackfillWorker.schedule(context) },
-        Entry("warranty_expiration_check") { context, _ -> WarrantyExpirationWorker.schedule(context) },
-        Entry("data_retention") { context, _ -> DataRetentionWorker.schedule(context) },
-        Entry("bill_reminder_periodic") { context, _ -> BillReminderWorker.schedule(context) },
-        Entry("receipt_matching") { context, _ -> ReceiptMatchingWorker.schedule(context) },
+        Entry("location_backfill") { context, _ ->
+            WorkerSpecScheduler.scheduleFromSpec(context, "location_backfill", LocationBackfillWorker::class.java)
+        },
+        Entry("merchant_key_backfill") { context, _ ->
+            WorkerSpecScheduler.scheduleFromSpec(context, "merchant_key_backfill", MerchantKeyBackfillWorker::class.java)
+        },
+        Entry("warranty_expiration_check") { context, _ ->
+            WorkerSpecScheduler.scheduleFromSpec(context, "warranty_expiration_check", WarrantyExpirationWorker::class.java)
+        },
+        Entry("data_retention") { context, _ ->
+            WorkerSpecScheduler.scheduleFromSpec(context, "data_retention", DataRetentionWorker::class.java)
+        },
+        Entry("bill_reminder_periodic") { context, _ ->
+            WorkerSpecScheduler.scheduleFromSpec(context, "bill_reminder_periodic", BillReminderWorker::class.java)
+        },
+        Entry("receipt_matching") { context, _ ->
+            WorkerSpecScheduler.scheduleFromSpec(context, "receipt_matching", ReceiptMatchingWorker::class.java)
+        },
         Entry("ai_daily_briefing") { context, timeProvider ->
             WorkerSpecScheduler.scheduleAtMidnight(context, "ai_daily_briefing", DailyBriefingWorker::class.java, timeProvider)
         }
@@ -87,8 +115,8 @@ object WorkerRegistry {
     /**
      * Schedules all registered workers.
      *
-     * Each [Entry.schedule] call is wrapped in a [runCatching] so one failure
-     * does not prevent other workers from being scheduled.
+     * Ordinary failures are recorded so one worker does not prevent later workers
+     * from being scheduled. Cancellation is always propagated to the caller.
      *
      * If [diagnosticEventWriter] is provided, a summary diagnostic event is
      * emitted after all entries have been scheduled, recording how many
@@ -100,26 +128,56 @@ object WorkerRegistry {
      *   same injected clock as the rest of the app.
      * @param diagnosticEventWriter Optional writer for emitting summary diagnostic events.
      */
-    fun scheduleAll(context: Context, timeProvider: TimeProvider, diagnosticEventWriter: DiagnosticEventWriter? = null) {
-        val failedWorkers = mutableListOf<String>()
-        var successCount = 0
+    fun scheduleAll(
+        context: Context,
+        timeProvider: TimeProvider,
+        diagnosticEventWriter: DiagnosticEventWriter? = null
+    ): ScheduleAllResult = scheduleEntries(
+        context = context,
+        timeProvider = timeProvider,
+        entriesToSchedule = entries,
+        diagnosticEventWriter = diagnosticEventWriter
+    )
 
-        for (entry in entries) {
-            val caught = runCatching { entry.schedule(context, timeProvider) }
-            if (caught.isSuccess) {
-                successCount++
-            } else {
-                failedWorkers.add(entry.specName)
-                Timber.w(caught.exceptionOrNull(), "WorkerRegistry: failed to schedule ${entry.specName}")
+    internal fun scheduleEntries(
+        context: Context,
+        timeProvider: TimeProvider,
+        entriesToSchedule: List<Entry>,
+        diagnosticEventWriter: DiagnosticEventWriter? = null
+    ): ScheduleAllResult {
+        val results = mutableListOf<ScheduleResult>()
+
+        for (entry in entriesToSchedule) {
+            val result = try {
+                entry.schedule(context, timeProvider)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val failureCode = "WORKER_SCHEDULE_EXCEPTION"
+                Timber.w(
+                    "WorkerRegistry: failed to schedule %s (%s)",
+                    entry.specName,
+                    e::class.java.simpleName
+                )
+                ScheduleResult(
+                    workerName = entry.specName,
+                    scheduled = false,
+                    policyUsed = "",
+                    versionChanged = false,
+                    error = failureCode
+                )
             }
+            results += result
         }
 
-        val writer = diagnosticEventWriter ?: return
-        if (failedWorkers.isEmpty()) return
+        val aggregate = ScheduleAllResult(results.toList())
+        val failedWorkers = aggregate.failedWorkerNames
+        val writer = diagnosticEventWriter
+        if (writer == null || failedWorkers.isEmpty()) return aggregate
 
         val metadata = SafeEventMetadata.builder()
-            .put("totalWorkers", entries.size)
-            .put("successCount", successCount)
+            .put("totalWorkers", entriesToSchedule.size)
+            .put("successCount", results.count { it.scheduled })
             .put("failedCount", failedWorkers.size)
             .put("failedWorkers", failedWorkers.joinToString(","))
             .build()
@@ -136,9 +194,12 @@ object WorkerRegistry {
                         metadata = metadata
                     )
                 )
+            } catch (e: CancellationException) {
+                throw e
             } catch (_: Exception) {
                 // Diagnostics are best-effort; suppress emit failures.
             }
         }
+        return aggregate
     }
 }

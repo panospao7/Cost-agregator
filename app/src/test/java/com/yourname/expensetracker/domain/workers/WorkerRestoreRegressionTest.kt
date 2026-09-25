@@ -1,5 +1,10 @@
 package com.yourname.expensetracker.domain.workers
 
+import android.content.Context
+import android.content.SharedPreferences
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
+import com.google.common.util.concurrent.SettableFuture
 import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
 import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseAccessType
@@ -8,12 +13,15 @@ import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.dao.BackgroundJobRunDao
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.*
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -27,6 +35,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class WorkerRestoreRegressionTest {
+    @get:Rule
+    val temporaryFolder = TemporaryFolder()
 
     private val writeBarrier = mockk<DatabaseWriteBarrier>()
     private val timeProvider = object : TimeProvider {
@@ -98,6 +108,157 @@ class WorkerRestoreRegressionTest {
         val scheduled = WorkerRegistry.entries.map { it.specName }
         assertEquals("Worker registry must not omit or duplicate rollback schedules", defaults, scheduled.toSet())
         assertEquals("Each registry worker must have one unique schedule", scheduled.size, scheduled.toSet().size)
+    }
+
+    @Test
+    fun `checked resumption releases real guarded workers only after NORMAL and stop reset`() = runTest {
+        val context = mockk<Context>()
+        val preferences = mockk<SharedPreferences>()
+        val editor = mockk<SharedPreferences.Editor>()
+        val values = mutableMapOf<String, Any?>()
+        every { context.applicationContext } returns context
+        every { context.noBackupFilesDir } returns temporaryFolder.root
+        every { context.getSharedPreferences(any(), any()) } returns preferences
+        every { preferences.all } answers { values.toMap() }
+        every { preferences.edit() } returns editor
+        every { editor.putString(any(), any()) } answers { values[firstArg()] = secondArg<String?>(); editor }
+        every { editor.putBoolean(any(), any()) } answers { values[firstArg()] = secondArg<Boolean>(); editor }
+        every { editor.remove(any()) } answers { values.remove(firstArg<String>()); editor }
+        every { editor.commit() } returns true
+        lateinit var actualLeases: WorkerLeaseRegistryImpl
+        val mode = RestoreMaintenanceMode(context, dagger.Lazy { actualLeases }, timeProvider)
+        val barrier = DatabaseWriteBarrier(mode)
+        actualLeases = WorkerLeaseRegistryImpl(barrier, timeProvider)
+        val logger = mockk<WorkerRunLogger>()
+        val handle = mockk<WorkerRunHandle>(relaxed = true)
+        coEvery { logger.start(any(), any(), any(), any(), any(), any()) } returns handle
+        coEvery { handle.success(reasonCode = any()) } returns TerminalWriteOutcome.Durable
+        val guard = WorkerExecutionGuard(
+            writeBarrier = barrier,
+            readBarrier = mockk(relaxed = true),
+            restoreMaintenanceMode = mode,
+            workerRunLogger = logger,
+            privacyGate = mockk(relaxed = true),
+            leaseRegistry = actualLeases,
+            diagnosticSink = mockk(relaxed = true),
+            workerTerminalDiagnosticSink = mockk(relaxed = true),
+            backgroundJobRunDao = mockk(relaxed = true),
+            notificationPermissionChecker = mockk(relaxed = true),
+            timeProvider = timeProvider
+        )
+        val manager = mockk<WorkManager>(relaxed = true)
+        val active = mockk<WorkInfo>()
+        every { active.state } returns WorkInfo.State.ENQUEUED
+        val confirmed = SettableFuture.create<List<WorkInfo>>().apply { set(listOf(active)) }
+        every { manager.getWorkInfosForUniqueWork(any()) } returns confirmed
+        mockkStatic(WorkManager::class)
+        mockkObject(WorkerRegistry)
+        try {
+            every { WorkManager.getInstance(any<Context>()) } returns manager
+            mode.enter(RestoreMaintenanceMode.Mode.RESTORE_PREPARING)
+            actualLeases.requestStopAll("TEST_RESTORE")
+            every { WorkerRegistry.scheduleAll(any(), any(), null) } answers {
+                assertEquals(RestoreMaintenanceMode.Mode.NORMAL.name, values["current_mode"])
+                assertEquals(true, values["worker_resume_pending"])
+                assertTrue(actualLeases.isStopRequested())
+                for (name in WorkerSpec.DEFAULTS.keys) {
+                    val blocked = kotlinx.coroutines.runBlocking {
+                        guard.runGuarded(WorkerGuardRequest(name)) {
+                            fail("Worker body must not run before confirmed resumption")
+                        }
+                    }
+                    assertTrue(blocked is WorkerGuardResult.BlockedRetry)
+                }
+                WorkerRegistry.ScheduleAllResult(WorkerSpec.DEFAULTS.keys.map {
+                    ScheduleResult(it, true, "TEST", false)
+                })
+            }
+            mode.exitCancellable(false)
+            val executed = mutableListOf<String>()
+            for (name in WorkerSpec.DEFAULTS.keys) {
+                val result = guard.runGuarded(WorkerGuardRequest(name)) {
+                    assertEquals(RestoreMaintenanceMode.Mode.NORMAL, mode.currentMode())
+                    assertFalse(actualLeases.isStopRequested())
+                    barrier.checkWritesAllowed("TEST_GUARDED_RESUME")
+                    executed += name
+                }
+                assertTrue(result is WorkerGuardResult.Success)
+            }
+            assertEquals(WorkerSpec.DEFAULTS.keys, executed.toSet())
+            assertEquals(WorkerSpec.DEFAULTS.size, executed.size)
+            assertEquals(0, actualLeases.activeLeaseCount())
+        } finally {
+            unmockkObject(WorkerRegistry)
+            unmockkStatic(WorkManager::class)
+        }
+    }
+
+    @Test
+    fun scheduleEntries_returns_one_successful_result_for_every_requested_worker() {
+        val context = mockk<Context>()
+        val calls = mutableListOf<String>()
+        val entries = listOf(
+            WorkerRegistry.Entry("worker_one") { _, _ ->
+                calls += "worker_one"
+                ScheduleResult("worker_one", true, "TEST", false)
+            },
+            WorkerRegistry.Entry("worker_two") { _, _ ->
+                calls += "worker_two"
+                ScheduleResult("worker_two", true, "TEST", false)
+            }
+        )
+
+        val result = WorkerRegistry.scheduleEntries(context, timeProvider, entries)
+
+        assertEquals(listOf("worker_one", "worker_two"), calls)
+        assertTrue(result.confirms(setOf("worker_one", "worker_two")))
+        assertTrue(result.failedWorkerNames.isEmpty())
+    }
+
+    @Test
+    fun scheduleEntries_records_ordinary_failures_and_continues_later_workers() {
+        val context = mockk<Context>()
+        val laterWorkerRan = AtomicBoolean(false)
+        val entries = listOf(
+            WorkerRegistry.Entry("returned_failure") { _, _ ->
+                ScheduleResult("returned_failure", false, "TEST", false, "TEST_FAILURE")
+            },
+            WorkerRegistry.Entry("thrown_failure") { _, _ ->
+                throw IllegalStateException("must not escape")
+            },
+            WorkerRegistry.Entry("later_worker") { _, _ ->
+                laterWorkerRan.set(true)
+                ScheduleResult("later_worker", true, "TEST", false)
+            }
+        )
+
+        val result = WorkerRegistry.scheduleEntries(context, timeProvider, entries)
+
+        assertTrue("A later worker must still be attempted", laterWorkerRan.get())
+        assertEquals(listOf("returned_failure", "thrown_failure"), result.failedWorkerNames)
+        assertEquals("WORKER_SCHEDULE_EXCEPTION", result.results[1].error)
+        assertFalse(result.confirms(entries.map { it.specName }.toSet()))
+    }
+
+    @Test
+    fun scheduleEntries_rethrows_the_same_cancellation_and_stops_scheduling() {
+        val context = mockk<Context>()
+        val cancellation = CancellationException("test cancellation")
+        val laterWorkerRan = AtomicBoolean(false)
+        val entries = listOf(
+            WorkerRegistry.Entry("cancelled_worker") { _, _ -> throw cancellation },
+            WorkerRegistry.Entry("later_worker") { _, _ ->
+                laterWorkerRan.set(true)
+                ScheduleResult("later_worker", true, "TEST", false)
+            }
+        )
+
+        val thrown = assertThrows(CancellationException::class.java) {
+            WorkerRegistry.scheduleEntries(context, timeProvider, entries)
+        }
+
+        assertSame(cancellation, thrown)
+        assertFalse("Cancellation must stop subsequent scheduling", laterWorkerRan.get())
     }
 
     @Test
