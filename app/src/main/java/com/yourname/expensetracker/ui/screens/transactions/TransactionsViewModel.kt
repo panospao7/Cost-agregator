@@ -26,6 +26,7 @@ import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.provenance.SourceLinkQueryService
 import com.yourname.expensetracker.data.database.entity.EntitySourceLink
 import javax.inject.Inject
+import timber.log.Timber
 
 /**
  * Fixed TransactionsViewModel with:
@@ -179,7 +180,8 @@ class TransactionsViewModel @Inject constructor(
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 _provenanceLinks.value = emptyList()
-                _provenanceSummary.value = "Unable to load provenance (UNKNOWN_ERROR)"
+                Timber.w("Transactions: TRANSACTION_LOAD_FAILED class=%s", e::class.java.simpleName)
+                _provenanceSummary.value = "Unable to load provenance (TRANSACTION_LOAD_FAILED)"
             } finally {
                 _isProvenanceLoading.value = false
             }
@@ -255,7 +257,8 @@ class TransactionsViewModel @Inject constructor(
         .catch { e ->
             if (e is CancellationException) throw e
             _isRefreshing.value = false // S5-017: Always clear refresh spinner on error
-            _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to load transactions (UNKNOWN_ERROR)"))
+            Timber.w("Transactions: TRANSACTION_LOAD_FAILED class=%s", e::class.java.simpleName)
+            _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to load transactions (TRANSACTION_LOAD_FAILED)"))
             // Do NOT emit emptyList() — preserve whatever the StateFlow currently holds
         }
         .flowOn(Dispatchers.Default)
@@ -459,7 +462,8 @@ class TransactionsViewModel @Inject constructor(
                 _hasReachedEnd.value = nextItems.size < PAGE_SIZE
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to load more transactions (UNKNOWN_ERROR)"))
+                Timber.w("Transactions: TRANSACTION_LOAD_FAILED class=%s", e::class.java.simpleName)
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to load more transactions (TRANSACTION_LOAD_FAILED)"))
             } finally {
                 _isLoadingMoreState.value = false
                 if (loadMoreMutex.isLocked) loadMoreMutex.unlock()
@@ -476,7 +480,8 @@ class TransactionsViewModel @Inject constructor(
                 refresh()
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to delete transaction (UNKNOWN_ERROR)"))
+                Timber.w("Transactions: TRANSACTION_DELETE_FAILED class=%s", e::class.java.simpleName)
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to delete transaction (TRANSACTION_DELETE_FAILED)"))
             } finally {
                 _isLoading.value = false
             }
@@ -499,7 +504,8 @@ class TransactionsViewModel @Inject constructor(
                 refreshPagedExpensesAfterMutation()
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to update category (UNKNOWN_ERROR)"))
+                Timber.w("Transactions: TRANSACTION_UPDATE_FAILED class=%s", e::class.java.simpleName)
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to update category (TRANSACTION_UPDATE_FAILED)"))
             } finally {
                 endRowMutation(expense.id) // S5-015
             }
@@ -523,7 +529,8 @@ class TransactionsViewModel @Inject constructor(
             refreshPagedExpensesAfterMutation()
         } catch (e: Exception) {
             if (e is CancellationException) throw e
-            _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to update merchant (UNKNOWN_ERROR)"))
+            Timber.w("Transactions: TRANSACTION_UPDATE_FAILED class=%s", e::class.java.simpleName)
+            _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to update merchant (TRANSACTION_UPDATE_FAILED)"))
         } finally {
             endRowMutation(expense.id) // S5-015
         }
@@ -562,7 +569,8 @@ class TransactionsViewModel @Inject constructor(
                 refreshPagedExpensesAfterMutation()
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to update type (UNKNOWN_ERROR)"))
+                Timber.w("Transactions: TRANSACTION_UPDATE_FAILED class=%s", e::class.java.simpleName)
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to update type (TRANSACTION_UPDATE_FAILED)"))
             } finally {
                 endRowMutation(expense.id) // S5-015
             }
@@ -590,7 +598,8 @@ class TransactionsViewModel @Inject constructor(
                 refreshPagedExpensesAfterMutation()
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to update (UNKNOWN_ERROR)"))
+                Timber.w("Transactions: TRANSACTION_UPDATE_FAILED class=%s", e::class.java.simpleName)
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to update (TRANSACTION_UPDATE_FAILED)"))
             }
         }
     }
@@ -661,7 +670,8 @@ class TransactionsViewModel @Inject constructor(
                 refreshPagedExpensesAfterMutation()
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to update (UNKNOWN_ERROR)"))
+                Timber.w("Transactions: TRANSACTION_UPDATE_FAILED class=%s", e::class.java.simpleName)
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to update (TRANSACTION_UPDATE_FAILED)"))
             } finally {
                 endRowMutation(expense.id) // S5-034
             }
@@ -710,7 +720,8 @@ class TransactionsViewModel @Inject constructor(
                 refresh()
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to save location (UNKNOWN_ERROR)"))
+                Timber.w("Transactions: TRANSACTION_UPDATE_FAILED class=%s", e::class.java.simpleName)
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to save location (TRANSACTION_UPDATE_FAILED)"))
             }
         }
     }
@@ -723,7 +734,8 @@ class TransactionsViewModel @Inject constructor(
                 refresh()
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to clear location (UNKNOWN_ERROR)"))
+                Timber.w("Transactions: TRANSACTION_UPDATE_FAILED class=%s", e::class.java.simpleName)
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to clear location (TRANSACTION_UPDATE_FAILED)"))
             }
         }
     }
@@ -746,7 +758,8 @@ class TransactionsViewModel @Inject constructor(
                 _recurringSuccess.tryEmit(expense.id) // S5-036
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to mark as recurring (UNKNOWN_ERROR)"))
+                Timber.w("Transactions: TRANSACTION_UPDATE_FAILED class=%s", e::class.java.simpleName)
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to mark as recurring (TRANSACTION_UPDATE_FAILED)"))
             } finally {
                 _isLoading.value = false
             }
@@ -772,7 +785,8 @@ class TransactionsViewModel @Inject constructor(
                 _hasReachedEnd.value = initial.size < PAGE_SIZE
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to load transactions (UNKNOWN_ERROR)"))
+                Timber.w("Transactions: TRANSACTION_LOAD_FAILED class=%s", e::class.java.simpleName)
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to load transactions (TRANSACTION_LOAD_FAILED)"))
             } finally {
                 if (requestId == loadInitialAllRequestId) {
                     _isLoading.value = false

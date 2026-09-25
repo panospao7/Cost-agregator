@@ -284,6 +284,7 @@ class ReceiptScanViewModel @Inject constructor(
         scanJob = viewModelScope.launch {
             val startTime = timeProvider.now()
             val parsingLogs = mutableListOf<String>()
+            var failureCode = "UNKNOWN_ERROR"
 
             try {
                 // S7-015: Disable auto-match for interactive scan — user must confirm save first
@@ -305,8 +306,10 @@ class ReceiptScanViewModel @Inject constructor(
                 // S7-F583-002/S7-66F-003: If the receipt is already linked or is a known duplicate,
                 // show DUPLICATE state instead of normal review — block direct save.
                 val linkedExpenseId = receipt.expenseId
+                failureCode = "SOURCE_LINK_FAILED"
                 val isAlreadyLinked = linkedExpenseId != null ||
                     !receiptLinkService.checkCanLinkReceipt(receipt.id)
+                failureCode = "UNKNOWN_ERROR"
                 if (isAlreadyLinked) {
                     _state.update {
                         it.copy(
@@ -333,7 +336,7 @@ class ReceiptScanViewModel @Inject constructor(
                     val debugData = DebugData(
                         rawText = "",
                         parsedTransactions = emptyList(),
-                        parsingLogs = parsingLogs.also { it.add("OCR processing failed, manual entry available") },
+                        parsingLogs = parsingLogs.also { it.add("Processing Error: OCR_FAILED") },
                         processingTimeMs = timeProvider.now() - startTime,
                         parserUsed = "Manual (OCR Failed)"
                     )
@@ -359,7 +362,7 @@ class ReceiptScanViewModel @Inject constructor(
                             paymentMethod = PaymentMethod.CARD,
                             notes = "",
                             ocrConfidence = 0f,
-                            errorMessage = "OCR could not be processed. You can enter details manually.",
+                            errorMessage = "OCR could not be processed (OCR_FAILED). You can enter details manually.",
                             isSaving = false,
                             saveResult = null,
                             receiptAssistState = AiLoadState.Idle,
@@ -476,8 +479,10 @@ class ReceiptScanViewModel @Inject constructor(
             } catch (e: Exception) {
                 // S7-003: Discard error if a newer scan has started
                 if (requestId != scanRequestSeq) return@launch
+                if (failureCode == "UNKNOWN_ERROR" && e is org.json.JSONException) failureCode = "PARSER_FAILED"
+                Timber.w("ReceiptScan: %s stage=scan class=%s", failureCode, e::class.java.simpleName)
                 parsingLogs.clear()
-                parsingLogs.add("Processing Error: UNKNOWN_ERROR")
+                parsingLogs.add("Processing Error: $failureCode")
                 val now = timeProvider.now()
                 _state.update {
                     it.copy(
@@ -495,7 +500,7 @@ class ReceiptScanViewModel @Inject constructor(
                         paymentMethod = PaymentMethod.CARD,
                         notes = "",
                         ocrConfidence = 0f,
-                        errorMessage = "Receipt processing failed (UNKNOWN_ERROR)",
+                        errorMessage = "Receipt processing failed ($failureCode)",
                         isSaving = false,
                         saveResult = null,
                         receiptAssistState = AiLoadState.Idle,
@@ -1181,9 +1186,11 @@ class ReceiptScanViewModel @Inject constructor(
         _state.update { it.copy(isSaving = true, errorMessage = null) }
 
         viewModelScope.launch {
+            var failureCode = "SOURCE_LINK_FAILED"
             try {
                 // S7-66F-002: Real linkability check — no sentinel expense ID
                 val canLink = receiptLinkService.checkCanLinkReceipt(request.receiptId)
+                failureCode = "UNKNOWN_ERROR"
                 if (!canLink) {
                     _state.update {
                         it.copy(
@@ -1277,6 +1284,9 @@ class ReceiptScanViewModel @Inject constructor(
                         _state.update {
                             it.copy(
                                 isSaving = false,
+                                rawOcrText = "",
+                                showRawText = false,
+                                debugData = it.debugData?.copy(rawText = "", parsedTransactions = emptyList(), parsingLogs = mutableListOf("Save Error: UNKNOWN_ERROR")),
                                 saveResult = SaveReceiptResult.Error("Receipt save failed (UNKNOWN_ERROR)")
                             )
                         }
@@ -1285,8 +1295,15 @@ class ReceiptScanViewModel @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                Timber.w("ReceiptScan: %s stage=save class=%s", failureCode, e::class.java.simpleName)
                 _state.update {
-                    it.copy(isSaving = false, saveResult = SaveReceiptResult.Error("Receipt save failed (UNKNOWN_ERROR)"))
+                    it.copy(
+                        isSaving = false,
+                        rawOcrText = "",
+                        showRawText = false,
+                        debugData = it.debugData?.copy(rawText = "", parsedTransactions = emptyList(), parsingLogs = mutableListOf("Save Error: $failureCode")),
+                        saveResult = SaveReceiptResult.Error("Receipt save failed ($failureCode)")
+                    )
                 }
             }
         }
