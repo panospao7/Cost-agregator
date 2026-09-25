@@ -243,6 +243,50 @@ class BankConnectionLifecycleCoordinatorOutcomeTest {
         coVerify(exactly = 0) { bankConnectionDao.updateSyncStatusOnly(any(), any()) }
     }
 
+
+    @Test
+    fun terminal_outcomes_preserve_integration_barrier_DAO_order_and_original_identity() = runTest {
+        val outcomes = listOf(
+            BankSyncOutcome.Success(importedCount = 3), BankSyncOutcome.Partial(2, 1, 1),
+            BankSyncOutcome.ReauthRequired(), BankSyncOutcome.Blocked(DiagnosticReasonCode.RESTORE_BLOCKED),
+            BankSyncOutcome.RetryableFailure(failedCount = 2),
+            BankSyncOutcome.PermanentFailure(DiagnosticReasonCode.TOKEN_INVALID)
+        )
+        for (outcome in outcomes) {
+            io.mockk.clearMocks(bankConnectionDao, bankApiIntegration, writeBarrier, answers = false)
+            coEvery { bankConnectionDao.getById(7L) } returns connection
+            coEvery { bankApiIntegration.syncTransactions(connection, null) } returns outcome
+            org.junit.Assert.assertSame(outcome, coordinator.syncConnection(7L))
+            val status = outcome.toTerminalSyncStatus()!!
+            io.mockk.coVerifyOrder {
+                bankApiIntegration.syncTransactions(connection, null)
+                writeBarrier.checkWritesAllowed("BankConnectionLifecycleCoordinator.persistOutcome")
+                if (outcome.advancesLastSync()) bankConnectionDao.updateSyncStatus(7L, FIXED_NOW, status)
+                else bankConnectionDao.updateSyncStatusOnly(7L, status)
+            }
+            if (outcome.advancesLastSync()) coVerify(exactly = 0) { bankConnectionDao.updateSyncStatusOnly(any(), any()) }
+            else coVerify(exactly = 0) { bankConnectionDao.updateSyncStatus(any(), any(), any()) }
+        }
+    }
+
+    @Test
+    fun denied_terminal_outcomes_preserve_order_without_either_DAO_write() = runTest {
+        for (outcome in listOf(BankSyncOutcome.Success(importedCount = 2),
+            BankSyncOutcome.Blocked(DiagnosticReasonCode.RESTORE_BLOCKED))) {
+            io.mockk.clearMocks(bankConnectionDao, bankApiIntegration, writeBarrier, answers = false)
+            coEvery { bankConnectionDao.getById(7L) } returns connection
+            coEvery { bankApiIntegration.syncTransactions(connection, null) } returns outcome
+            denyTerminalStatusWrite()
+            org.junit.Assert.assertSame(outcome, coordinator.syncConnection(7L))
+            io.mockk.coVerifyOrder {
+                bankApiIntegration.syncTransactions(connection, null)
+                writeBarrier.checkWritesAllowed("BankConnectionLifecycleCoordinator.persistOutcome")
+            }
+            coVerify(exactly = 0) { bankConnectionDao.updateSyncStatus(any(), any(), any()) }
+            coVerify(exactly = 0) { bankConnectionDao.updateSyncStatusOnly(any(), any()) }
+        }
+    }
+
     private fun denyTerminalStatusWrite() {
         val operation = "BankConnectionLifecycleCoordinator.persistOutcome"
         io.mockk.every { writeBarrier.checkWritesAllowed(operation) } throws DatabaseAccessBlockedException(
