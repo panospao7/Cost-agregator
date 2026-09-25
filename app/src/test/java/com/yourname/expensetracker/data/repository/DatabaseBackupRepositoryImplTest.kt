@@ -926,6 +926,13 @@ class DatabaseBackupRepositoryImplTest {
 
     private enum class RestoreOperation { COSTBACKUP, IMPORT, RESET }
 
+    // Keep identity assertions about repository propagation, not coroutine stack-trace copying.
+    private class IdentityCancellationException(message: String) :
+        kotlinx.coroutines.CancellationException(message),
+        kotlinx.coroutines.CopyableThrowable<IdentityCancellationException> {
+        override fun createCopy(): IdentityCancellationException? = null
+    }
+
     private data class RestoreFixture(
         val directory: File,
         val source: File,
@@ -1110,7 +1117,7 @@ class DatabaseBackupRepositoryImplTest {
             val fixture = restoreFixture()
             try {
                 val before = dbFile.readBytes()
-                val original = kotlinx.coroutines.CancellationException("TEST_RESTORE_CANCELLED")
+                val original = IdentityCancellationException("TEST_RESTORE_CANCELLED")
                 every { mockRestoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.RESTORE_STAGING) } throws original
                 every { fixture.journal.failJournal(any(), any()) } throws RestoreJournal.JournalDurabilityException()
                 every { mockRestoreMaintenanceMode.enterCriticalRecoveryRequired(any()) } answers {
@@ -1332,7 +1339,7 @@ class DatabaseBackupRepositoryImplTest {
         for (operation in RestoreOperation.values()) {
             val fixture = restoreFixture()
             try {
-                val cancellation = kotlinx.coroutines.CancellationException("TEST_POST_SWAP_CANCELLED")
+                val cancellation = IdentityCancellationException("TEST_POST_SWAP_CANCELLED")
                 if (operation == RestoreOperation.RESET) {
                     val cancelledDelete = object : File(dbFile.path) {
                         override fun delete(): Boolean = throw cancellation
