@@ -377,7 +377,9 @@ class NotificationProcessingPipeline @Inject constructor(
                     val review = PendingReview(
                         rawNotificationId = rawId,
                         suggestedAmount = oversizedCandidate.amount,
-                        suggestedCurrency = oversizedCandidate.currency,
+                        // PendingReview persists a non-null String; blank is its existing
+                        // controlled "currency required" sentinel at the review boundary.
+                        suggestedCurrency = oversizedCandidate.currency.orEmpty(),
                         suggestedMerchant = oversizedMerchant,
                         suggestedMerchantKey = oversizedMerchantKey,
                         suggestedType = TransactionType.UNKNOWN.name,
@@ -483,7 +485,9 @@ class NotificationProcessingPipeline @Inject constructor(
                         val review = PendingReview(
                             rawNotificationId = rawId,
                             suggestedAmount = transactionSignalCandidate.amount,
-                            suggestedCurrency = transactionSignalCandidate.currency,
+                            // Preserve unresolved currency as the existing controlled blank
+                            // sentinel rather than guessing home currency or EUR.
+                            suggestedCurrency = transactionSignalCandidate.currency.orEmpty(),
                             suggestedMerchant = signalMerchant,
                             suggestedMerchantKey = signalMerchantKey,
                             suggestedType = TransactionType.UNKNOWN.name,

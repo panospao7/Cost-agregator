@@ -732,7 +732,7 @@ class NotificationProcessingPipelineReliabilityTest {
             pendingReviewSourceLinkService.linkSourcesForReview(any(), 701L, any(), any(), any())
         }
         assertEquals(42.0, reviewSlot.captured.suggestedAmount!!, 0.0)
-        assertNull(reviewSlot.captured.suggestedCurrency)
+        assertEquals("", reviewSlot.captured.suggestedCurrency)
         coVerify(exactly = 0) {
             expenseDao.isDuplicateCurrencyAware(any(), any(), any(), any(), any(), any(), any(), any())
         }
@@ -782,7 +782,7 @@ class NotificationProcessingPipelineReliabilityTest {
             pendingReviewSourceLinkService.linkSourcesForReview(any(), 702L, any(), any(), any())
         }
         assertEquals(1_200_000.0, reviewSlot.captured.suggestedAmount!!, 0.0)
-        assertNull(reviewSlot.captured.suggestedCurrency)
+        assertEquals("", reviewSlot.captured.suggestedCurrency)
         coVerify(exactly = 0) {
             expenseDao.isDuplicateCurrencyAware(any(), any(), any(), any(), any(), any(), any(), any())
         }

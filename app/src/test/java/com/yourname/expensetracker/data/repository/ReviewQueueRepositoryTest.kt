@@ -121,13 +121,13 @@ class ReviewQueueRepositoryTest {
     }
 
     @Test
-    fun `approveReview requires explicit currency when suggestion is null`() = runTest {
+    fun `approveReview requires explicit currency when suggestion is blank`() = runTest {
         val reviewId = 21L
         val pendingReview = PendingReview(
             id = reviewId,
             rawNotificationId = 210L,
             suggestedAmount = 42.0,
-            suggestedCurrency = null,
+            suggestedCurrency = "",
             suggestedMerchant = "Test Merchant",
             suggestedType = "PURCHASE",
             suggestedCategoryId = null,
