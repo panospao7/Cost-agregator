@@ -491,3 +491,28 @@ none
 
 
 
+
+## STAGE-2 ADDENDUM — Wave-1 execution follow-ups (2026-09-25; human-ratified fold-in)
+
+Source: `docs/testing/generated/TRIAGE-2026-09-test-recovery.md` (merged via rp-25) + re-review
+artifacts. These items surfaced during Wave-1 execution and are findings-in-waiting: each Wave-2
+spec session that owns a targeted file MUST place its items as explicit work items, or fence them
+to a named owner/wave. Coders may not resolve them silently.
+
+| # | Item | Evidence | Assignment |
+|---|---|---|---|
+| A1 | CANCEL-01 cancellation-safety violations, 3 production sites (broad catch, no rethrow): DataRetentionWorker.kt:445, TransactionLifecycleCoordinator.kt:2323, AppStartupCoordinator.kt:414 — anchors from checkpoint ad412aec, re-locate at spec time | trusted-tests CancellationSafetyArchitectureGuardTest, vr-20260924-195149 | DataRetentionWorker → CL-23 spec (W2). TransactionLifecycleCoordinator → **CL-09 spec (W2)** — amended 2026-09-25: CL-09's sweep already touches this file; a known violation must not wait for CL-08 (Wave 3). AppStartupCoordinator → CL-15 spec session MUST resolve at spec time (verify against merged CL-19 state; place or fence) — deferral not allowed twice. |
+| A2 | Backup/restore denial reason-code contract mismatch: tests expect ENCRYPTED_BACKUP_DISABLED, VM emits PRIVACY_GATE_FAILURE (2 failing tests, BackupRestoreViewModelPrivacyDenialTest) | Phase A execution + triage | DECISION REGISTER (privacy-security-guardian): contract decision, then CL-18 follow-up patch or test re-point. Never a silent coder resolution. |
+| A3 | SpendingMapViewModel privacy-blocked state never set on denials (4 failing tests, "gpsPrivacyBlocked was never set") | Phase B-adjacent run vr-184837... actually first captured in vr-20260924-184837 | Candidate finding CA-W1-001 (I-05/privacy surface). Requires Phase-2 verification → likely Wave-3 or CL-18-adjacent patch. |
+| A4 | ReviewViewModel denial flow never emits (3 failing tests, empty flow.first at ReviewViewModel.kt:249) | Phase A execution | Candidate finding CA-W1-002 (harness-vs-production unresolved). Requires verification. |
+| A5 | Privacy redactor phone heuristic over-redacts amounts ("12345.67" → [REDACTED_PHONE]; 2 failing tests, KeystoreInstallationSecretHashingTest) | Phase A execution | Candidate finding CA-W1-003 (redaction quality; CL-17-adjacent). Fold into CL-05 consumer sweep or verify standalone. |
+| A6 | conversionWarnings carry unredacted merchant/amount/currency/date to callers (wider surface of CA-E-04-001) | Wave-1 verification (2026-09-22) | CL-05 consumer-sweep spec MUST include conversionWarnings content redaction. |
+| A7 | Displayed group balances ignore settlements entirely (SplitCalculator.calculateBalances has no settlement term) — adjacent to CA-E-04-003 | CL-29 re-review collector note | Post-merge check on merged CL-29; if still open → decision register (small CL-29 follow-up or Wave-3 item). |
+| A8 | May-2026 money-batch assertion landmine: tests may have been re-pointed at CA-E-01-005 behavior | TEST_FAILURE_TRACKER batch-2 vs finding CA-E-01-005 | CL-27 spec MUST re-examine those assertions against fixed behavior before any test update. |
+
+Addendum ratified by human 2026-09-25; entries A1/A6/A8 are binding on the named Wave-2 spec
+sessions (W2-S1 CL-09+CL-23, W2-S2 CL-27+CL-05); A2 is a decision-register entry. AMENDED
+2026-09-25 (self-review): A1/TransactionLifecycleCoordinator moved CL-08→CL-09. VERIFICATION
+OWNER: A3/A4/A5/A7 are adjudicated by the adversarial-verifier (ZCode, different model+session)
+INSIDE the W2 gate-verification pass, BEFORE the affected spec sessions freeze their work items
+(A5 feeds CL-05; A7 is a post-merge check on merged CL-29 and may close outright).
