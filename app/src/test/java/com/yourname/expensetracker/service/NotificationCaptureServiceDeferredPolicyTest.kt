@@ -16,6 +16,7 @@ import com.yourname.expensetracker.domain.notification.capture.NotificationCaptu
 import com.yourname.expensetracker.domain.notification.capture.NotificationCaptureGate
 import com.yourname.expensetracker.domain.notification.capture.NotificationIntakeCaptureResult
 import com.yourname.expensetracker.domain.notification.capture.NotificationIntakeCoordinator
+import com.yourname.expensetracker.domain.notification.capture.NotificationTextParts
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
@@ -28,6 +29,19 @@ import io.mockk.coVerifyOrder
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
+import io.mockk.mockkObject
+import io.mockk.spyk
+import io.mockk.unmockkObject
+import io.mockk.verify
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.job
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.CancellationException
 import org.json.JSONObject
@@ -36,6 +50,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.After
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
@@ -44,31 +59,14 @@ import org.robolectric.annotation.Config
 import org.robolectric.util.ReflectionHelpers
 
 /**
- * RP-10 10a (P1-002): the TemporarilyUnavailable deferred branch of
- * [NotificationCaptureService] must resolve ONE bounded privacy snapshot
- * (a single settings read) before deferring a notification:
- *
- *  - If the settings read fails, fail closed: a terminal
- *    DEFERRED_STORAGE_POLICY_UNAVAILABLE diagnostic is emitted (stage
- *    "capture_gate", outcome DROPPED, hashed packageName) and NOTHING is
- *    deferred — no extraction, no row, no payload.
- *  - If it succeeds, the deferred [DeferredCaptureStorageSnapshot] carries the
- *    user's actual [RawStorageMode] with the same per-mode extras contract as
- *    the live path: STORE_RAW → sanitized extras JSON (sensitive keys
- *    excluded), STORE_REDACTED → literal redacted JSON,
- *    STORE_METADATA_ONLY / DO_NOT_STORE → null.
- *  - A [CancellationException] from the settings read must propagate (never be
- *    converted into a terminal diagnostic) and must not defer anything.
- *
- * The service is instantiated with Robolectric WITHOUT running onCreate so
- * Hilt field injection cannot overwrite the test mocks; all collaborators
- * needed by the branch are @Inject lateinit var fields injected via
- * [ReflectionHelpers.setField]. The service's own coroutine scope runs on the
- * real Dispatchers.IO, so async side effects are settled with
- * coVerify(timeout = ...) instead of a test dispatcher.
+ * Deferred capture authorizes consent, the fresh toggle and the package before
+ * real extraction. The test scheduler observes completion, not an earlier event.
+ * Cancellation requires terminal accounting AND a cancelled capture job.
+ * All four storage modes preserve the authorized coordinator handoff contract.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
+@OptIn(ExperimentalCoroutinesApi::class)
 class NotificationCaptureServiceDeferredPolicyTest {
 
     private val emittedEvents = mutableListOf<DiagnosticEvent>()
@@ -81,11 +79,19 @@ class NotificationCaptureServiceDeferredPolicyTest {
     private val intakeCoordinator = mockk<NotificationIntakeCoordinator>()
 
     private lateinit var service: NotificationCaptureService
+    private lateinit var serviceJob: Job
+    private lateinit var captureJob: Job
+    private var completionCause: Throwable? = null
+    private val scheduler = TestCoroutineScheduler()
 
     @Before
     fun setUp() {
         // Attach only — skip onCreate so Hilt cannot overwrite injected mocks.
-        service = Robolectric.buildService(NotificationCaptureService::class.java).get()
+        service = spyk(Robolectric.buildService(NotificationCaptureService::class.java).get(), recordPrivateCalls = true)
+        serviceJob = ReflectionHelpers.getField(service, "serviceJob")
+        ReflectionHelpers.setField(service, "serviceScope", CoroutineScope(serviceJob + StandardTestDispatcher(scheduler)))
+        mockkObject(NotificationTextParts.Companion)
+        every { NotificationTextParts.extract(any()) } answers { callOriginal() }
         ReflectionHelpers.setField(service, "restoreMaintenanceMode", restoreMaintenanceMode)
         ReflectionHelpers.setField(service, "captureGate", captureGate)
         ReflectionHelpers.setField(service, "notificationDiagnosticEmitter", diagnosticEmitter)
@@ -97,13 +103,16 @@ class NotificationCaptureServiceDeferredPolicyTest {
         // Fast pre-checks pass; the gate defers every notification into the
         // TemporarilyUnavailable branch under test.
         every { restoreMaintenanceMode.isWritesAllowed() } returns true
-        coEvery { captureGate.decide(any(), any()) } returns
+        coEvery { captureGate.decide(any(), any()) } coAnswers {
+            captureJob = currentCoroutineContext().job
+            captureJob.invokeOnCompletion { completionCause = it }
             NotificationCaptureDecision.TemporarilyUnavailable(
                 reason = NotificationCaptureBlockReason.GATE_NOT_READY,
                 retryable = true
             )
+        }
         coEvery { privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE) } returns PrivacyDecision.Allowed
-        coEvery { privacySettingsRepository.getSettings() } returns PrivacySettings()
+        coEvery { privacySettingsRepository.getSettings() } returns PrivacySettings(notificationCaptureEnabled = true)
         coEvery { blockedPackageDao.isBlocked(any()) } returns false
         coEvery { diagnosticEmitter.emit(capture(emittedEvents)) } returns Unit
         coEvery {
@@ -112,6 +121,19 @@ class NotificationCaptureServiceDeferredPolicyTest {
         coEvery {
             intakeCoordinator.captureForRetry(any(), any(), any(), any(), any(), any(), any(), any(), any())
         } returns NotificationIntakeCaptureResult.Enqueued(1L, "test-correlation-id")
+    }
+
+    @After
+    fun tearDown() {
+        serviceJob.cancel()
+        scheduler.advanceUntilIdle()
+        unmockkObject(NotificationTextParts.Companion)
+    }
+
+    private fun postNotification(notification: StatusBarNotification) {
+        service.onNotificationPosted(notification)
+        scheduler.advanceUntilIdle()
+        assertTrue("capture must finish before assertions", captureJob.isCompleted)
     }
 
     /** Builds a minimal StatusBarNotification whose extras are configured by [extrasConfig]. */
@@ -133,15 +155,32 @@ class NotificationCaptureServiceDeferredPolicyTest {
     }
 
     private fun awaitTerminalDiagnostic(reasonCode: DiagnosticReasonCode): DiagnosticEvent {
-        coVerify(timeout = 5_000) {
+        coVerify(exactly = 1) {
             diagnosticEmitter.emit(match { event ->
                 event.reasonCode == reasonCode && event.isTerminal
             })
         }
-        return emittedEvents.last { it.reasonCode == reasonCode && it.isTerminal }
+        val event = emittedEvents.single { it.isTerminal }
+        assertEquals(reasonCode, event.reasonCode)
+        assertEquals("capture_gate", event.stage)
+        if (reasonCode == DiagnosticReasonCode.CAPTURE_CANCELLED) {
+            assertEquals(EventOutcome.CANCELLED, event.outcome)
+            assertTrue("cancellation must propagate out of the capture coroutine", captureJob.isCancelled)
+            assertTrue(completionCause is CancellationException)
+        } else {
+            assertEquals(EventOutcome.DROPPED, event.outcome)
+            assertNull(completionCause)
+        }
+        return event
     }
 
     private fun assertNoDeferredHandoff() {
+        assertTrue(captureJob.isCompleted)
+        verify(exactly = 0) { NotificationTextParts.extract(any()) }
+        verify(exactly = 0) { service["resolveAppName"](any<String>()) }
+        coVerify(exactly = 0) {
+            intakeCoordinator.capture(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        }
         coVerify(exactly = 0) {
             intakeCoordinator.captureForRetry(any(), any(), any(), any(), any(), any(), any(), any(), any())
         }
@@ -152,7 +191,7 @@ class NotificationCaptureServiceDeferredPolicyTest {
         coEvery { privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE) } returns
             PrivacyDecision.Denied("denied")
 
-        service.onNotificationPosted(buildStatusBarNotification())
+        postNotification(buildStatusBarNotification())
 
         val event = awaitTerminalDiagnostic(DiagnosticReasonCode.PRIVACY_DENIED)
         assertEquals(EventOutcome.DROPPED, event.outcome)
@@ -166,7 +205,7 @@ class NotificationCaptureServiceDeferredPolicyTest {
         coEvery { privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE) } returns
             PrivacyDecision.FailClosed("failed closed")
 
-        service.onNotificationPosted(buildStatusBarNotification())
+        postNotification(buildStatusBarNotification())
 
         awaitTerminalDiagnostic(DiagnosticReasonCode.PRIVACY_DENIED)
         coVerify(exactly = 0) { privacySettingsRepository.getSettings() }
@@ -179,7 +218,7 @@ class NotificationCaptureServiceDeferredPolicyTest {
         coEvery { privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE) } returns
             PrivacyDecision.NotApplicable
 
-        service.onNotificationPosted(buildStatusBarNotification())
+        postNotification(buildStatusBarNotification())
 
         awaitTerminalDiagnostic(DiagnosticReasonCode.PRIVACY_DENIED)
         coVerify(exactly = 0) { privacySettingsRepository.getSettings() }
@@ -192,7 +231,7 @@ class NotificationCaptureServiceDeferredPolicyTest {
         coEvery { privacySettingsRepository.getSettings() } returns
             PrivacySettings(notificationCaptureEnabled = false, rawNotificationStorageMode = RawStorageMode.STORE_RAW)
 
-        service.onNotificationPosted(buildStatusBarNotification {
+        postNotification(buildStatusBarNotification {
             putCharSequence(Notification.EXTRA_TEXT, "Paid EUR 12.00")
         })
 
@@ -206,7 +245,7 @@ class NotificationCaptureServiceDeferredPolicyTest {
     fun `Allowed enabled and blocked package stops before extraction and handoff`() {
         coEvery { blockedPackageDao.isBlocked(any()) } returns true
 
-        service.onNotificationPosted(buildStatusBarNotification {
+        postNotification(buildStatusBarNotification {
             putCharSequence(Notification.EXTRA_TEXT, "Paid EUR 12.00")
         })
 
@@ -221,27 +260,44 @@ class NotificationCaptureServiceDeferredPolicyTest {
     fun `successful deferred authorization is ordered and uses fresh blocked DAO lookup`() {
         val storageSlot = slot<DeferredCaptureStorageSnapshot>()
         coEvery { privacySettingsRepository.getSettings() } returns
-            PrivacySettings(rawNotificationStorageMode = RawStorageMode.STORE_REDACTED)
-
-        service.onNotificationPosted(buildStatusBarNotification {
+            PrivacySettings(notificationCaptureEnabled = true, rawNotificationStorageMode = RawStorageMode.STORE_REDACTED)
+        val notification = buildStatusBarNotification {
             putCharSequence(Notification.EXTRA_TITLE, "Bank")
             putCharSequence(Notification.EXTRA_TEXT, "Paid EUR 12.00")
-        })
+            putCharSequence(Notification.EXTRA_SUB_TEXT, "Card")
+        }
 
-        coVerify(timeout = 5_000) {
+        postNotification(notification)
+
+        coVerify(exactly = 1) {
             intakeCoordinator.captureForRetry(
-                any(), any(), any(), any(), any(), any(), any(), any(), capture(storageSlot)
+                packageName = "com.bank.app",
+                notificationKey = notification.key,
+                postTime = notification.postTime,
+                correlationId = any(),
+                title = "Bank",
+                text = "Paid EUR 12.00",
+                combinedBody = "Bank Paid EUR 12.00 Card",
+                subText = "Card",
+                storage = capture(storageSlot)
             )
         }
         coVerifyOrder {
+            captureGate.decide("com.bank.app", false)
             privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE)
             privacySettingsRepository.getSettings()
             blockedPackageDao.isBlocked("com.bank.app")
+            NotificationTextParts.extract(notification.notification.extras)
             intakeCoordinator.captureForRetry(any(), any(), any(), any(), any(), any(), any(), any(), any())
         }
+        coVerify(exactly = 1) { privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE) }
         coVerify(exactly = 1) { privacySettingsRepository.getSettings() }
         coVerify(exactly = 1) { blockedPackageDao.isBlocked("com.bank.app") }
+        verify(exactly = 1) { NotificationTextParts.extract(notification.notification.extras) }
+        verify(exactly = 1) { service["resolveAppName"]("com.bank.app") }
         assertEquals(RawStorageMode.STORE_REDACTED, storageSlot.captured.storageMode)
+        assertEquals("""{"redacted":true}""", storageSlot.captured.extrasJson)
+        assertNull(completionCause)
     }
 
     @Test
@@ -249,7 +305,7 @@ class NotificationCaptureServiceDeferredPolicyTest {
         coEvery { privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE) } throws
             RuntimeException("gate unavailable")
 
-        service.onNotificationPosted(buildStatusBarNotification())
+        postNotification(buildStatusBarNotification())
 
         awaitTerminalDiagnostic(DiagnosticReasonCode.PRIVACY_DENIED)
         coVerify(exactly = 0) { privacySettingsRepository.getSettings() }
@@ -261,7 +317,7 @@ class NotificationCaptureServiceDeferredPolicyTest {
     fun `settings exception fails closed without handoff`() {
         coEvery { privacySettingsRepository.getSettings() } throws RuntimeException("settings unavailable")
 
-        service.onNotificationPosted(buildStatusBarNotification())
+        postNotification(buildStatusBarNotification())
 
         awaitTerminalDiagnostic(DiagnosticReasonCode.DEFERRED_STORAGE_POLICY_UNAVAILABLE)
         coVerify(exactly = 0) { blockedPackageDao.isBlocked(any()) }
@@ -272,7 +328,7 @@ class NotificationCaptureServiceDeferredPolicyTest {
     fun `blocked package exception fails closed without handoff`() {
         coEvery { blockedPackageDao.isBlocked(any()) } throws RuntimeException("blocked package lookup unavailable")
 
-        service.onNotificationPosted(buildStatusBarNotification())
+        postNotification(buildStatusBarNotification())
 
         awaitTerminalDiagnostic(DiagnosticReasonCode.BLOCKED_PACKAGE)
         assertNoDeferredHandoff()
@@ -285,10 +341,11 @@ class NotificationCaptureServiceDeferredPolicyTest {
             PrivacyDecision.Allowed
         }
 
-        service.onNotificationPosted(buildStatusBarNotification())
+        postNotification(buildStatusBarNotification())
 
         awaitTerminalDiagnostic(DiagnosticReasonCode.PRIVACY_DENIED)
         coVerify(exactly = 0) { privacySettingsRepository.getSettings() }
+        assertEquals(300L, scheduler.currentTime)
         assertNoDeferredHandoff()
     }
 
@@ -299,10 +356,11 @@ class NotificationCaptureServiceDeferredPolicyTest {
             PrivacySettings()
         }
 
-        service.onNotificationPosted(buildStatusBarNotification())
+        postNotification(buildStatusBarNotification())
 
         awaitTerminalDiagnostic(DiagnosticReasonCode.DEFERRED_STORAGE_POLICY_UNAVAILABLE)
         coVerify(exactly = 0) { blockedPackageDao.isBlocked(any()) }
+        assertEquals(300L, scheduler.currentTime)
         assertNoDeferredHandoff()
     }
 
@@ -313,9 +371,10 @@ class NotificationCaptureServiceDeferredPolicyTest {
             false
         }
 
-        service.onNotificationPosted(buildStatusBarNotification())
+        postNotification(buildStatusBarNotification())
 
         awaitTerminalDiagnostic(DiagnosticReasonCode.BLOCKED_PACKAGE)
+        assertEquals(300L, scheduler.currentTime)
         assertNoDeferredHandoff()
     }
 
@@ -324,7 +383,7 @@ class NotificationCaptureServiceDeferredPolicyTest {
         coEvery { privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE) } throws
             CancellationException("cancelled")
 
-        service.onNotificationPosted(buildStatusBarNotification())
+        postNotification(buildStatusBarNotification())
 
         val event = awaitTerminalDiagnostic(DiagnosticReasonCode.CAPTURE_CANCELLED)
         assertEquals(EventOutcome.CANCELLED, event.outcome)
@@ -336,7 +395,7 @@ class NotificationCaptureServiceDeferredPolicyTest {
     fun `settings cancellation is accounted for and rethrown`() {
         coEvery { privacySettingsRepository.getSettings() } throws CancellationException("cancelled")
 
-        service.onNotificationPosted(buildStatusBarNotification())
+        postNotification(buildStatusBarNotification())
 
         val event = awaitTerminalDiagnostic(DiagnosticReasonCode.CAPTURE_CANCELLED)
         assertEquals(EventOutcome.CANCELLED, event.outcome)
@@ -348,7 +407,7 @@ class NotificationCaptureServiceDeferredPolicyTest {
     fun `blocked package cancellation is accounted for and rethrown`() {
         coEvery { blockedPackageDao.isBlocked(any()) } throws CancellationException("cancelled")
 
-        service.onNotificationPosted(buildStatusBarNotification())
+        postNotification(buildStatusBarNotification())
 
         val event = awaitTerminalDiagnostic(DiagnosticReasonCode.CAPTURE_CANCELLED)
         assertEquals(EventOutcome.CANCELLED, event.outcome)
@@ -359,12 +418,12 @@ class NotificationCaptureServiceDeferredPolicyTest {
     fun `settings read failure emits DEFERRED_STORAGE_POLICY_UNAVAILABLE and defers nothing`() {
         coEvery { privacySettingsRepository.getSettings() } throws RuntimeException("datastore down")
 
-        service.onNotificationPosted(buildStatusBarNotification())
+        postNotification(buildStatusBarNotification())
 
         // Settle: the fail-closed diagnostic is the LAST side effect of the
         // deferred branch when settings resolution fails (settings = null →
         // the branch returns without any captureForRetry call).
-        coVerify(timeout = 5_000) {
+        coVerify(exactly = 1) {
             diagnosticEmitter.emit(match { event ->
                 event.reasonCode == DiagnosticReasonCode.DEFERRED_STORAGE_POLICY_UNAVAILABLE
             })
@@ -382,24 +441,22 @@ class NotificationCaptureServiceDeferredPolicyTest {
         assertTrue(JSONObject(metadataJson).has("packageName"))
         assertFalse("raw packageName must not appear in diagnostics", metadataJson.contains("com.bank.app"))
 
-        // Fail closed: no deferred row, no payload.
-        coVerify(exactly = 0) {
-            intakeCoordinator.captureForRetry(any(), any(), any(), any(), any(), any(), any(), any(), any())
-        }
+        // No extraction, app-name resolution or coordinator calls after rejection.
+        assertNoDeferredHandoff()
     }
 
     @Test
     fun `DO_NOT_STORE defers snapshot with null extrasJson`() {
         coEvery { privacySettingsRepository.getSettings() } returns
-            PrivacySettings(rawNotificationStorageMode = RawStorageMode.DO_NOT_STORE)
+            PrivacySettings(notificationCaptureEnabled = true, rawNotificationStorageMode = RawStorageMode.DO_NOT_STORE)
         coEvery {
             intakeCoordinator.captureForRetry(any(), any(), any(), any(), any(), any(), any(), any(), any())
         } returns NotificationIntakeCaptureResult.NotStored("test-correlation-id")
 
-        service.onNotificationPosted(buildStatusBarNotification())
+        postNotification(buildStatusBarNotification())
 
         val storageSlot = slot<DeferredCaptureStorageSnapshot>()
-        coVerify(timeout = 5_000) {
+        coVerify(exactly = 1) {
             intakeCoordinator.captureForRetry(
                 any(), any(), any(), any(), any(), any(), any(), any(), capture(storageSlot)
             )
@@ -411,15 +468,15 @@ class NotificationCaptureServiceDeferredPolicyTest {
     @Test
     fun `STORE_METADATA_ONLY defers snapshot with null extrasJson`() {
         coEvery { privacySettingsRepository.getSettings() } returns
-            PrivacySettings(rawNotificationStorageMode = RawStorageMode.STORE_METADATA_ONLY)
+            PrivacySettings(notificationCaptureEnabled = true, rawNotificationStorageMode = RawStorageMode.STORE_METADATA_ONLY)
 
-        service.onNotificationPosted(buildStatusBarNotification {
+        postNotification(buildStatusBarNotification {
             putCharSequence(Notification.EXTRA_TITLE, "Payment received")
             putCharSequence(Notification.EXTRA_TEXT, "You received EUR 10.00")
         })
 
         val storageSlot = slot<DeferredCaptureStorageSnapshot>()
-        coVerify(timeout = 5_000) {
+        coVerify(exactly = 1) {
             intakeCoordinator.captureForRetry(
                 any(), any(), any(), any(), any(), any(), any(), any(), capture(storageSlot)
             )
@@ -431,9 +488,9 @@ class NotificationCaptureServiceDeferredPolicyTest {
     @Test
     fun `STORE_RAW defers sanitized extras JSON`() {
         coEvery { privacySettingsRepository.getSettings() } returns
-            PrivacySettings(rawNotificationStorageMode = RawStorageMode.STORE_RAW)
+            PrivacySettings(notificationCaptureEnabled = true, rawNotificationStorageMode = RawStorageMode.STORE_RAW)
 
-        service.onNotificationPosted(
+        postNotification(
             buildStatusBarNotification {
                 putCharSequence(Notification.EXTRA_TITLE, "Payment received")
                 putCharSequence(Notification.EXTRA_TEXT, "You received EUR 10.00")
@@ -443,7 +500,7 @@ class NotificationCaptureServiceDeferredPolicyTest {
         )
 
         val storageSlot = slot<DeferredCaptureStorageSnapshot>()
-        coVerify(timeout = 5_000) {
+        coVerify(exactly = 1) {
             intakeCoordinator.captureForRetry(
                 any(), any(), any(), any(), any(), any(), any(), any(), capture(storageSlot)
             )
@@ -464,9 +521,9 @@ class NotificationCaptureServiceDeferredPolicyTest {
     @Test
     fun `STORE_REDACTED defers literal redacted JSON`() {
         coEvery { privacySettingsRepository.getSettings() } returns
-            PrivacySettings(rawNotificationStorageMode = RawStorageMode.STORE_REDACTED)
+            PrivacySettings(notificationCaptureEnabled = true, rawNotificationStorageMode = RawStorageMode.STORE_REDACTED)
 
-        service.onNotificationPosted(
+        postNotification(
             buildStatusBarNotification {
                 putCharSequence(Notification.EXTRA_TITLE, "Payment received")
                 putCharSequence(Notification.EXTRA_TEXT, "You received EUR 10.00")
@@ -474,7 +531,7 @@ class NotificationCaptureServiceDeferredPolicyTest {
         )
 
         val storageSlot = slot<DeferredCaptureStorageSnapshot>()
-        coVerify(timeout = 5_000) {
+        coVerify(exactly = 1) {
             intakeCoordinator.captureForRetry(
                 any(), any(), any(), any(), any(), any(), any(), any(), capture(storageSlot)
             )
@@ -487,7 +544,7 @@ class NotificationCaptureServiceDeferredPolicyTest {
     fun `settings read CancellationException is accounted for and does not defer`() {
         coEvery { privacySettingsRepository.getSettings() } throws CancellationException("cancelled")
 
-        service.onNotificationPosted(buildStatusBarNotification())
+        postNotification(buildStatusBarNotification())
 
         val event = awaitTerminalDiagnostic(DiagnosticReasonCode.CAPTURE_CANCELLED)
         assertEquals(EventOutcome.CANCELLED, event.outcome)
@@ -495,5 +552,56 @@ class NotificationCaptureServiceDeferredPolicyTest {
         assertNoDeferredHandoff()
         assertFalse("cancellation must not be converted into a storage-policy diagnostic",
             emittedEvents.any { it.reasonCode == DiagnosticReasonCode.DEFERRED_STORAGE_POLICY_UNAVAILABLE })
+    }
+
+    @Test
+    fun `parent cancellation during capability read is accounted for and propagated`() {
+        assertParentCancellationAt("capability")
+    }
+
+    @Test
+    fun `parent cancellation during settings read is accounted for and propagated`() {
+        assertParentCancellationAt("settings")
+    }
+
+    @Test
+    fun `parent cancellation during package read is accounted for and propagated`() {
+        assertParentCancellationAt("package")
+    }
+
+    private fun assertParentCancellationAt(read: String) {
+        val entered = CompletableDeferred<Unit>()
+        when (read) {
+            "capability" -> coEvery { privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE) } coAnswers {
+                entered.complete(Unit)
+                awaitCancellation()
+            }
+            "settings" -> coEvery { privacySettingsRepository.getSettings() } coAnswers {
+                entered.complete(Unit)
+                awaitCancellation()
+            }
+            "package" -> coEvery { blockedPackageDao.isBlocked(any()) } coAnswers {
+                entered.complete(Unit)
+                awaitCancellation()
+            }
+            else -> error("Unknown authorization read")
+        }
+        service.onNotificationPosted(buildStatusBarNotification())
+        scheduler.runCurrent()
+        assertTrue("the selected read must suspend before cancellation", entered.isCompleted)
+        assertFalse(captureJob.isCompleted)
+        assertTrue(emittedEvents.none { it.isTerminal })
+
+        serviceJob.cancel(CancellationException("parent cancelled"))
+        scheduler.advanceUntilIdle()
+
+        awaitTerminalDiagnostic(DiagnosticReasonCode.CAPTURE_CANCELLED)
+        assertNoDeferredHandoff()
+        if (read == "capability") {
+            coVerify(exactly = 0) { privacySettingsRepository.getSettings() }
+        }
+        if (read != "package") {
+            coVerify(exactly = 0) { blockedPackageDao.isBlocked(any()) }
+        }
     }
 }
