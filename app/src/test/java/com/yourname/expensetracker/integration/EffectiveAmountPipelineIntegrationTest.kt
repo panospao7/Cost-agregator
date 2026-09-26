@@ -13,6 +13,7 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
 import com.yourname.expensetracker.domain.analytics.AdvancedAnalyticsEngine
 import com.yourname.expensetracker.domain.analytics.AnalyticsPeriod
 import com.yourname.expensetracker.domain.analytics.AnalyticsPeriodRange
@@ -24,8 +25,12 @@ import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import org.junit.Test
+import org.junit.After
 import java.time.LocalDate
 import java.time.ZoneId
 
@@ -33,6 +38,12 @@ import java.time.ZoneId
 class EffectiveAmountPipelineIntegrationTest : AnalyticsEngineTestBase() {
 
     private val database = mockk<AppDatabase>(relaxed = true)
+    private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+
+    @After
+    fun cancelRepositoryScope() {
+        repositoryScope.cancel()
+    }
 
     @Test
     fun `end_to_end_pipeline_preserves_effective_amount_and_filters`() = runTest {
@@ -59,7 +70,7 @@ class EffectiveAmountPipelineIntegrationTest : AnalyticsEngineTestBase() {
             expense(4, 1000.0, TransactionType.DEPOSIT, ms(2026, 3, 15), categoryId = null)
         )
 
-        coEvery { expenseDao.getExpensesBetween(any(), any()) } answers {
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } answers {
             val start = firstArg<Long>()
             val end = secondArg<Long>()
             expenses.filter { it.date in start until end && !it.isNotMine }
@@ -124,9 +135,18 @@ class EffectiveAmountPipelineIntegrationTest : AnalyticsEngineTestBase() {
             transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true),
             debugExpenseAuditWriter = mockk(relaxed = true)
         )
-        val totalsEngine = TotalsAggregationEngine(repository, timeProvider, mockk(relaxed = true), mockk(relaxed = true), Dispatchers.Unconfined)
         val currencySettingsRepository = TestCurrencySettingsRepository()
         val currencyConverter = testCurrencyConverter()
+        val multiCurrencyRepository = MultiCurrencyRepository(
+            expenseDao = expenseDao,
+            currencyConverter = currencyConverter,
+            timeProvider = timeProvider,
+            currencySettingsRepository = currencySettingsRepository,
+            applicationScope = repositoryScope
+        )
+        val totalsEngine = TotalsAggregationEngine(
+            repository, timeProvider, multiCurrencyRepository, categoryRepository, Dispatchers.Unconfined
+        )
         val advancedEngine = AdvancedAnalyticsEngine(
             repository,
             categoryRepository,

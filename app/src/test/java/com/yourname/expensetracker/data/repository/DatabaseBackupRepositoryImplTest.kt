@@ -1430,25 +1430,44 @@ class DatabaseBackupRepositoryImplTest {
 
     @Test
     fun original_cancellation_survives_journal_and_critical_cleanup_failure_in_all_APIs() = runTest(testDispatcher) {
-        for (operation in RestoreOperation.values()) for (secondaryCancellation in listOf(false, true)) {
-            val fixture = restoreFixture()
-            try {
-                val before = dbFile.readBytes()
-                val original = IdentityCancellationException("TEST_RESTORE_CANCELLED")
-                every { mockRestoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.RESTORE_STAGING) } throws original
-                every { fixture.journal.failJournal(any(), any()) } throws RestoreJournal.JournalDurabilityException()
-                every { mockRestoreMaintenanceMode.enterCriticalRecoveryRequired(any()) } answers {
-                    every { mockRestoreMaintenanceMode.currentMode() } returns RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED
-                    if (secondaryCancellation) throw kotlinx.coroutines.CancellationException("TEST_CLEANUP_CANCELLED")
-                    throw RestoreMaintenanceMode.PersistenceException()
-                }
-                var observed: Throwable? = null
-                try { invokeRestore(operation, createRepository(journal = fixture.journal), fixture.source) }
-                catch (e: kotlinx.coroutines.CancellationException) { observed = e }
-                org.junit.Assert.assertSame(original, observed)
-                assertNoDestructiveStep(fixture, before)
-                assertTrue(fixture.journal.hasJournal())
-            } finally { releaseRestoreFixture() }
+        val criticalFailures = listOf<Exception?>(
+            null,
+            RestoreMaintenanceMode.PersistenceException(),
+            kotlinx.coroutines.CancellationException("TEST_CRITICAL_PERSISTENCE_CANCELLED")
+        )
+        for (operation in RestoreOperation.values()) for (journalCancellation in listOf(false, true)) {
+            for (criticalFailure in criticalFailures) {
+                val fixture = restoreFixture()
+                try {
+                    val before = dbFile.readBytes()
+                    val original = IdentityCancellationException("TEST_RESTORE_CANCELLED")
+                    var criticalAttempts = 0
+                    every { mockRestoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.RESTORE_STAGING) } throws original
+                    every { fixture.journal.failJournal(any(), any()) } throws (
+                        if (journalCancellation) kotlinx.coroutines.CancellationException(
+                            "TEST_JOURNAL_CLEANUP_CANCELLED"
+                        ) else RestoreJournal.JournalDurabilityException()
+                    )
+                    every { mockRestoreMaintenanceMode.enterCriticalRecoveryRequired(any()) } answers {
+                        criticalAttempts++
+                        every { mockRestoreMaintenanceMode.currentMode() } returns
+                            RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED
+                        if (criticalFailure != null) throw criticalFailure
+                        Unit
+                    }
+                    var observed: Throwable? = null
+                    try { invokeRestore(operation, createRepository(journal = fixture.journal), fixture.source) }
+                    catch (e: kotlinx.coroutines.CancellationException) { observed = e }
+                    org.junit.Assert.assertSame(original, observed)
+                    assertEquals(1, criticalAttempts)
+                    assertEquals(
+                        RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED,
+                        mockRestoreMaintenanceMode.currentMode()
+                    )
+                    assertNoDestructiveStep(fixture, before)
+                    assertTrue(fixture.journal.hasJournal())
+                } finally { releaseRestoreFixture() }
+            }
         }
     }
 

@@ -1,13 +1,11 @@
 package com.yourname.expensetracker.domain.budget
 
-import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.domain.analytics.SpendingPaceCalculator
 import com.yourname.expensetracker.domain.cashflow.CashFlowCalculator
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.core.money.MoneyAmount
 import com.yourname.expensetracker.domain.core.money.MoneyNormalizationEngine
-import com.yourname.expensetracker.domain.forecasting.FinancialStressForecastEngine
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
@@ -18,8 +16,6 @@ import com.yourname.expensetracker.assertApproxEquals
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -28,6 +24,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.io.File
 import java.time.Instant
 import java.time.ZoneId
 import java.time.temporal.ChronoUnit
@@ -49,29 +46,42 @@ import java.util.Locale
  */
 class P6BudgetCleanupTest : AnalyticsEngineTestBase() {
 
+    private fun readMainSource(relativePath: String): String {
+        val candidates = listOf(
+            File("src/main/java", relativePath),
+            File("app/src/main/java", relativePath),
+            File(System.getProperty("user.dir") ?: ".", "src/main/java/$relativePath"),
+            File(System.getProperty("user.dir") ?: ".", "app/src/main/java/$relativePath")
+        )
+        val sourceFile = candidates.firstOrNull { it.isFile }
+        assertNotNull("Unable to locate main source: $relativePath", sourceFile)
+        return sourceFile!!.readText()
+    }
+
     // ────────────────────────────────────────────────────────────────────────
     // NEW-P6-006: computeAdjustedSpend rethrows CancellationException
     // ────────────────────────────────────────────────────────────────────────
 
     @Test
     fun `compute_adjusted_spend_rethrows_cancellation`() {
-        // computeAdjustedSpend in BudgetRepository already has:
-        //   catch (e: Exception) { if (e is CancellationException) throw e }
-        // This test verifies that the catch block is present by checking
-        // the method's source text for the guard pattern.
-        val methodSource = BudgetRepository::class.java
-            .declaredMethods
-            .firstOrNull { it.name.startsWith("computeAdjustedSpend") }
-        val methods = BudgetRepository::class.java.declaredMethods
-            .filter { it.name == "computeAdjustedSpend" }
-        // computeAdjustedSpend is private, so we verify via the enclosing
-        // class that the guard exists by reading the source file marker.
-        assertNotNull("computeAdjustedSpend should exist", methods)
-        // The source-level guard was verified by static analysis — the method
-        // catches Exception and rethrows CancellationException.
-        assertTrue("computeAdjustedSpend method not found", methods.isNotEmpty())
-        assertTrue("computeAdjustedSpend is a private suspend method in BudgetRepository",
-            methods.any { it.returnType == com.yourname.expensetracker.domain.budget.AdjustedSpendBreakdown::class.java })
+        // A suspend function is compiled to an Object-returning JVM method with a
+        // Continuation parameter, so Java return-type reflection cannot validate
+        // this contract. Inspect the owning method body directly.
+        val source = readMainSource(
+            "com/yourname/expensetracker/data/repository/BudgetRepository.kt"
+        )
+        val methodStart = source.indexOf("private suspend fun computeAdjustedSpend(")
+        val methodEnd = source.indexOf("private suspend fun getAggregateSpent(", methodStart)
+        assertTrue("computeAdjustedSpend method must exist", methodStart >= 0)
+        assertTrue("computeAdjustedSpend method boundary must be found", methodEnd > methodStart)
+        val methodBody = source.substring(methodStart, methodEnd)
+        val cancellationRethrow = Regex(
+            """if\s*\(e\s+is\s+kotlinx\.coroutines\.CancellationException\)\s*throw\s+e"""
+        )
+        assertTrue(
+            "computeAdjustedSpend must rethrow CancellationException",
+            cancellationRethrow.containsMatchIn(methodBody)
+        )
     }
 
     // ────────────────────────────────────────────────────────────────────────
@@ -254,9 +264,18 @@ class P6BudgetCleanupTest : AnalyticsEngineTestBase() {
         // effectiveAmounts for whatever expense list is passed, so the test
         // can verify balance calculations without real currency conversion.
         val mockNormalizationEngine = mockk<MoneyNormalizationEngine>(relaxed = true)
-        coEvery { mockNormalizationEngine.aggregateExpenses(any(), any(), any(), any()) } answers {
+        coEvery {
+            mockNormalizationEngine.aggregateExpenses(
+                any(),
+                CurrencyCode("EUR"),
+                any(),
+                any()
+            )
+        } answers {
             val expenses = firstArg<List<com.yourname.expensetracker.data.database.entity.Expense>>()
-            val homeCurrency = secondArg<com.yourname.expensetracker.domain.core.money.CurrencyCode>()
+            // The matcher above constrains the target to EUR. MockK records the
+            // inline CurrencyCode argument as its JVM String representation.
+            val homeCurrency = CurrencyCode.EUR
             val total = expenses.sumOf { it.effectiveAmount }
             com.yourname.expensetracker.domain.core.money.MoneyAggregate(
                 displayAmount = total,
@@ -274,7 +293,7 @@ class P6BudgetCleanupTest : AnalyticsEngineTestBase() {
             recurringOccurrenceDao = mockk(relaxed = true),
             analyticsCurrencyNormalizer = mockk(relaxed = true),
             currencySettingsRepository = currencyRepo,
-            currencyConverter = mockk(relaxed = true),
+            currencyConverter = com.yourname.expensetracker.testCurrencyConverter(),
             databaseReadBarrier = mockk(relaxed = true),
             normalizationEngine = mockNormalizationEngine
         )
@@ -411,25 +430,34 @@ class P6BudgetCleanupTest : AnalyticsEngineTestBase() {
 
     @Test
     fun `stress_excludes_paid_occurrences_from_active_set`() {
-        // Verify that FinancialStressForecastEngine's ACTIVE_OCCURRENCE_STATUSES
-        // includes PLANNED, OVERDUE, DUE but explicitly excludes PAID.
-        val field = FinancialStressForecastEngine::class.java
-            .getDeclaredField("ACTIVE_OCCURRENCE_STATUSES")
-        field.isAccessible = true
-        @Suppress("UNCHECKED_CAST")
-        val statuses = field.get(null) as Set<String>
+        // These are instance properties, not static fields. Source inspection
+        // validates the private structural contract without a null receiver.
+        val source = readMainSource(
+            "com/yourname/expensetracker/domain/forecasting/FinancialStressForecastEngine.kt"
+        )
+        val activeMatch = Regex(
+            """private\s+val\s+ACTIVE_OCCURRENCE_STATUSES\s*=\s*setOf\(([^)]*)\)"""
+        ).find(source)
+        assertNotNull("ACTIVE_OCCURRENCE_STATUSES declaration must exist", activeMatch)
+        val statuses = Regex("\"([^\"]+)\"")
+            .findAll(activeMatch!!.groupValues[1])
+            .map { it.groupValues[1] }
+            .toSet()
 
         assertTrue("ACTIVE_OCCURRENCE_STATUSES must contain PLANNED", "PLANNED" in statuses)
         assertTrue("ACTIVE_OCCURRENCE_STATUSES must contain OVERDUE", "OVERDUE" in statuses)
         assertTrue("ACTIVE_OCCURRENCE_STATUSES must contain DUE", "DUE" in statuses)
         assertFalse("ACTIVE_OCCURRENCE_STATUSES must NOT contain PAID (P6-P1-14)", "PAID" in statuses)
 
-        // Also verify EXCLUDED_OCCURRENCE_STATUSES still excludes skipped/cancelled statuses
-        val excludedField = FinancialStressForecastEngine::class.java
-            .getDeclaredField("EXCLUDED_OCCURRENCE_STATUSES")
-        excludedField.isAccessible = true
-        @Suppress("UNCHECKED_CAST")
-        val excluded = excludedField.get(null) as Set<String>
+        // Also verify EXCLUDED_OCCURRENCE_STATUSES still excludes skipped/cancelled statuses.
+        val excludedMatch = Regex(
+            """private\s+val\s+EXCLUDED_OCCURRENCE_STATUSES\s*=\s*setOf\(([^)]*)\)"""
+        ).find(source)
+        assertNotNull("EXCLUDED_OCCURRENCE_STATUSES declaration must exist", excludedMatch)
+        val excluded = Regex("\"([^\"]+)\"")
+            .findAll(excludedMatch!!.groupValues[1])
+            .map { it.groupValues[1] }
+            .toSet()
         assertTrue("EXCLUDED must contain SKIPPED", "SKIPPED" in excluded)
         assertTrue("EXCLUDED must contain CANCELLED", "CANCELLED" in excluded)
         assertTrue("EXCLUDED must contain IGNORED", "IGNORED" in excluded)
@@ -441,16 +469,26 @@ class P6BudgetCleanupTest : AnalyticsEngineTestBase() {
 
     @Test
     fun `rollover_loop_has_bound`() {
-        // Verify that BudgetRepository defines MAX_ROLLOVER_PERIODS with a
-        // reasonable positive bound so the rollover history loop stays O(bound).
-        val field = BudgetRepository::class.java
-            .getDeclaredField("MAX_ROLLOVER_PERIODS")
-        field.isAccessible = true
-        val maxRolloverPeriods = field.get(null) as Int
+        // MAX_ROLLOVER_PERIODS is an instance property, so field.get(null) is
+        // invalid. Pin both the configured bound and its sliding-window use.
+        val source = readMainSource(
+            "com/yourname/expensetracker/data/repository/BudgetRepository.kt"
+        )
+        val boundMatch = Regex(
+            """private\s+val\s+MAX_ROLLOVER_PERIODS\s*=\s*(\d+)"""
+        ).find(source)
+        assertNotNull("MAX_ROLLOVER_PERIODS declaration must exist", boundMatch)
+        val maxRolloverPeriods = boundMatch!!.groupValues[1].toInt()
 
         assertTrue("MAX_ROLLOVER_PERIODS must be positive", maxRolloverPeriods > 0)
         assertTrue("MAX_ROLLOVER_PERIODS must be at least 365 for daily budgets",
             maxRolloverPeriods >= 365)
+        assertTrue(
+            "Rollover history must trim periods beyond the configured bound",
+            Regex(
+                """if\s*\(periods\.size\s*>\s*MAX_ROLLOVER_PERIODS\)\s*\{\s*periods\.removeFirst\(\)"""
+            ).containsMatchIn(source)
+        )
     }
 
     // ────────────────────────────────────────────────────────────────────────

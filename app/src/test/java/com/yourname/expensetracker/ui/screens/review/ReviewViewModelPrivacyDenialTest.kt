@@ -1,13 +1,20 @@
 package com.yourname.expensetracker.ui.screens.review
 
+import androidx.lifecycle.viewModelScope
+import com.yourname.expensetracker.domain.ai.model.AiSettings
+import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.debug.DebugExportResult
 import com.yourname.expensetracker.domain.debug.ReceiptDebugExporter
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyGateReasonCodes
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
+import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -16,6 +23,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.After
 import org.junit.Test
 
 /**
@@ -28,13 +36,15 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class ReviewViewModelPrivacyDenialTest : ViewModelTestUtils() {
 
-    private val receiptDebugExporter = mockk<ReceiptDebugExporter>(relaxed = true)
+    private val receiptDebugExporter = mockk<ReceiptDebugExporter>()
+    private val aiSettingsRepository = mockk<AiSettingsRepository>()
 
     private lateinit var viewModel: ReviewViewModel
 
     @Before
     override fun setup() {
         super.setup()
+        every { aiSettingsRepository.settings() } returns flowOf(AiSettings())
         viewModel = ReviewViewModel(
             mockk(relaxed = true), // notificationRepository
             mockk(relaxed = true), // reviewQueueRepository
@@ -43,17 +53,30 @@ class ReviewViewModelPrivacyDenialTest : ViewModelTestUtils() {
             mockk(relaxed = true), // expenseRepository
             mockk(relaxed = true), // debugDataStorage
             mockk(relaxed = true), // geocodingService
-            mockk(relaxed = true), // ai runtime diagnostics / other dependency
+            mockk(relaxed = true), // privacyGate
             mockk(relaxed = true), // explainPendingReviewUseCase
             mockk(relaxed = true), // suggestCategoryFallbackUseCase
             mockk(relaxed = true), // suggestReceiptExtractionUseCase
             mockk(relaxed = true), // judgePendingReviewDuplicateUseCase
             mockk(relaxed = true), // aiArtifactRepository
-            mockk(relaxed = true), // aiSettingsRepository
+            aiSettingsRepository,
             mockk(relaxed = true), // aiRuntimeDiagnostics
             mockk(relaxed = true), // receiptLifecycleCoordinator
             receiptDebugExporter = receiptDebugExporter
         )
+    }
+
+    @After
+    override fun tearDown() {
+        try {
+            runTest(testDispatcher) {
+                if (::viewModel.isInitialized) {
+                    viewModel.viewModelScope.coroutineContext[Job]?.cancelAndJoin()
+                }
+            }
+        } finally {
+            super.tearDown()
+        }
     }
 
     // ── Denial: exporter refuses the debug export ─────────────────────────────

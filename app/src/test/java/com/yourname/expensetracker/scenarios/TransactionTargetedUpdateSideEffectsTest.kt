@@ -11,18 +11,26 @@ import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringExpenseReconcileResult
+import com.yourname.expensetracker.domain.budget.BudgetMonitor
+import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunnerImpl
+import com.yourname.expensetracker.domain.sideeffect.SideEffectEventWriter
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionSideEffectPlanner
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionSideEffectDispatcher
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.testfixtures.database.AppDatabaseTestFactory
 import com.yourname.expensetracker.testfixtures.scenario.*
 import io.mockk.coVerify
+import io.mockk.coEvery
+import io.mockk.verify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -34,8 +42,8 @@ import org.robolectric.annotation.Config
 /**
  * Tests verifying that targeted lifecycle updates (C1 migration) dispatch side effects.
  *
- * These tests use a real in-memory Room database with mocked
- * [TransactionSideEffectDispatcher] and [RecurringLifecycleCoordinator] to verify
+ * These tests use a real in-memory Room database, side-effect planner and runner,
+ * with mocked budget and [RecurringLifecycleCoordinator] dependencies to verify
  * that [TransactionLifecycleCoordinator] dispatches post-update side effects
  * correctly for [updateCategory], [updateMerchant], and [updateType].
  */
@@ -49,6 +57,8 @@ class TransactionTargetedUpdateSideEffectsTest {
     private lateinit var sideEffectDispatcher: TransactionSideEffectDispatcher
     private lateinit var recurringLifecycleCoordinator: RecurringLifecycleCoordinator
     private lateinit var coordinator: TransactionLifecycleCoordinator
+    private lateinit var budgetMonitor: BudgetMonitor
+    private lateinit var sideEffectEvents: SideEffectEventWriter
     private var foodCategoryId: Long = 0L
     private var shoppingCategoryId: Long = 0L
 
@@ -69,6 +79,28 @@ class TransactionTargetedUpdateSideEffectsTest {
         // ── Mocked side-effect dependencies ────────────────────────────
         sideEffectDispatcher = mockk(relaxed = true)
         recurringLifecycleCoordinator = mockk(relaxed = true)
+        coEvery { recurringLifecycleCoordinator.reconcileExpenseLinkAfterUpdate(any(), any()) } answers {
+            RecurringExpenseReconcileResult.NoMatch(firstArg(), "TEST_NO_MATCH")
+        }
+        budgetMonitor = mockk(relaxed = true)
+        every { budgetMonitor.checkBudgets() } answers {
+            assertFalse("Budget checks must run after the Room transaction commits", db.inTransaction())
+        }
+        sideEffectEvents = mockk(relaxed = true)
+        val planner = TransactionSideEffectPlanner(
+            budgetMonitor = dagger.Lazy { budgetMonitor },
+            anomalyAlertOrchestrator = mockk(relaxed = true),
+            merchantCategoryRepository = mockk(relaxed = true),
+            merchantNormalizationRepository = mockk(relaxed = true),
+            recurringLifecycleCoordinator = dagger.Lazy { recurringLifecycleCoordinator },
+            expenseDao = db.expenseDao(),
+            categoryDao = db.categoryDao(),
+            timeProvider = timeProvider
+        )
+        val maintenanceMode = mockk<RestoreMaintenanceMode> {
+            every { currentMode() } returns RestoreMaintenanceMode.Mode.NORMAL
+            every { isWritesAllowed() } returns true
+        }
 
         // ── Build coordinator with real DB + mocked side effects ───────
         coordinator = TransactionLifecycleCoordinator(
@@ -78,10 +110,10 @@ class TransactionTargetedUpdateSideEffectsTest {
             timeProvider = timeProvider,
             currencyConverter = mockk(relaxed = true),
             sideEffectDispatcher = sideEffectDispatcher,
-            planner = mockk(relaxed = true),
-            runner = mockk(relaxed = true),
+            planner = planner,
+            runner = PostCommitActionRunnerImpl(sideEffectEvents),
             recurringLifecycleCoordinator = recurringLifecycleCoordinator,
-            writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
+            writeBarrier = DatabaseWriteBarrier(maintenanceMode),
             currencySettingsRepository = mockk(relaxed = true),
             sourceLinkWriter = mockk(relaxed = true),
             transactionValidator = mockk(relaxed = true),
@@ -92,6 +124,14 @@ class TransactionTargetedUpdateSideEffectsTest {
     @After
     fun tearDown() {
         if (::db.isInitialized) db.close()
+    }
+
+    private fun assertBudgetCheckedAfterUpdate(expenseId: Long) {
+        verify(exactly = 1) { budgetMonitor.checkBudgets() }
+        coVerify(exactly = 1) {
+            sideEffectEvents.completed(match { it.name == "budget_check" && it.targetEntityId == expenseId })
+        }
+        coVerify(exactly = 0) { sideEffectEvents.failed(any(), any(), any(), any()) }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -133,9 +173,8 @@ class TransactionTargetedUpdateSideEffectsTest {
         // WHEN: calling coordinator.updateCategory(expenseId, shoppingCategoryId)
         coordinator.updateCategory(expenseId, shoppingCategoryId)
 
-        // THEN: DB state reflects the category change (the side-effect dispatch is implicit)
-        // (coVerify: sideEffectDispatcher.dispatchOnUpdated should be called,
-        // but mock verification can be flaky with suspend functions — DB state proves the path worked)
+        // The real planner/runner must perform the budget check after commit.
+        assertBudgetCheckedAfterUpdate(expenseId)
 
         // AND: expense categoryId changed to Shopping in DB
         val updatedExpense = db.expenseDao().getById(expenseId)
@@ -179,8 +218,8 @@ class TransactionTargetedUpdateSideEffectsTest {
         // WHEN: calling coordinator.updateMerchant(expenseId, "NewName")
         coordinator.updateMerchant(expenseId, "NewName")
 
-        // THEN: sideEffectDispatcher.dispatchOnUpdated was called
-        coVerify { sideEffectDispatcher.dispatchOnUpdated(expenseId, any()) }
+        // THEN: the planner's budget action completed after the DB transaction
+        assertBudgetCheckedAfterUpdate(expenseId)
 
         // AND: merchant changed to "NewName" in DB
         val updatedExpense = db.expenseDao().getById(expenseId)
@@ -200,8 +239,9 @@ class TransactionTargetedUpdateSideEffectsTest {
         )
 
         // AND: recurring reconciliation was triggered
-        coVerify { recurringLifecycleCoordinator.unlinkExpenseFromOccurrence(expenseId) }
-        coVerify { recurringLifecycleCoordinator.linkExpenseToOccurrence(expenseId) }
+        coVerify(exactly = 1) {
+            recurringLifecycleCoordinator.reconcileExpenseLinkAfterUpdate(expenseId, "transaction_update:USER_EDIT")
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -228,8 +268,8 @@ class TransactionTargetedUpdateSideEffectsTest {
         // WHEN: calling coordinator.updateType(expenseId, DEPOSIT)
         coordinator.updateType(expenseId, TransactionType.DEPOSIT)
 
-        // THEN: sideEffectDispatcher.dispatchOnUpdated was called
-        coVerify { sideEffectDispatcher.dispatchOnUpdated(expenseId, any()) }
+        // THEN: the planner's budget action completed after the DB transaction
+        assertBudgetCheckedAfterUpdate(expenseId)
 
         // AND: transactionType changed to DEPOSIT in DB
         val updatedExpense = db.expenseDao().getById(expenseId)
@@ -241,8 +281,9 @@ class TransactionTargetedUpdateSideEffectsTest {
         )
 
         // AND: recurring reconciliation is triggered for type changes
-        coVerify { recurringLifecycleCoordinator.unlinkExpenseFromOccurrence(expenseId) }
-        coVerify { recurringLifecycleCoordinator.linkExpenseToOccurrence(expenseId) }
+        coVerify(exactly = 1) {
+            recurringLifecycleCoordinator.reconcileExpenseLinkAfterUpdate(expenseId, "transaction_update:USER_EDIT")
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -288,6 +329,7 @@ class TransactionTargetedUpdateSideEffectsTest {
 
         // WHEN: calling updateCategory to change to Shopping
         coordinator.updateCategory(expenseId, shoppingId)
+        assertBudgetCheckedAfterUpdate(expenseId)
 
         // THEN: DB query shows categoryId = Shopping ID
         val expenseAfter = db.expenseDao().getById(expenseId)

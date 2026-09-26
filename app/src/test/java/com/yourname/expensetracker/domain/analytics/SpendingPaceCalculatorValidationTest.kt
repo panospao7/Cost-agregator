@@ -337,8 +337,8 @@ class SpendingPaceCalculatorValidationTest {
             allExpenses = currentExpenses
         )
         
-        // Then: With no previous data, no baseline exists
-        assertEquals(0.0f, result.pacePercentage, 0.01f)
+        // Then: -1 is the explicit sentinel for an unavailable baseline.
+        assertEquals(-1.0f, result.pacePercentage, 0.01f)
     }
 
     // ========== SCENARIO 4: Edge Cases ==========

@@ -1,7 +1,16 @@
 package com.yourname.expensetracker.domain.reminder
 
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
+import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.ConversionQuality
+import com.yourname.expensetracker.domain.core.money.MoneyAggregate
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateResult
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode
+import com.yourname.expensetracker.domain.core.money.RateBasis
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.logic.RecurrenceCalculator
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -9,72 +18,62 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
-import io.mockk.slot
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import kotlin.test.assertFailsWith
 
 @Suppress("DEPRECATION_ERROR") // Tests for legacy markBillPaid until migration complete
 class BillReminderManagerTest {
 
     private val recurringExpenseRepository = mockk<RecurringExpenseRepository>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>()
+    private val multiCurrencyRepository = mockk<MultiCurrencyRepository>()
+    private val currencySettingsRepository = mockk<CurrencySettingsRepository>()
 
     private lateinit var manager: BillReminderManager
 
     @Before
     fun setUp() {
-        manager = BillReminderManager(recurringExpenseRepository, timeProvider)
+        manager = BillReminderManager(
+            recurringExpenseRepository,
+            timeProvider,
+            multiCurrencyRepository,
+            currencySettingsRepository
+        )
         every { timeProvider.now() } returns 0L
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
+            HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
+        coEvery {
+            multiCurrencyRepository.aggregateDisplayAmounts(any(), any(), any())
+        } returns MoneyAggregateResult.Available(MoneyAggregate.empty(CurrencyCode("EUR")))
     }
 
     @Test
-    fun `markBillPaid advances annually by one year`() = runTest {
-        val expense = recurringExpense(id = 1L, frequency = RecurrenceFrequency.ANNUALLY, nextDate = date(2026, 1, 15))
-        val updatedSlot = slot<ManualRecurringExpense>()
-        coEvery { recurringExpenseRepository.getById(1L) } returns expense
-        coEvery { recurringExpenseRepository.update(capture(updatedSlot)) } returns Unit
+    fun `markBillPaid remains prohibited for annual rules`() = runTest {
+        val failure = runCatching { manager.markBillPaid(1L) }.exceptionOrNull()
 
-        manager.markBillPaid(1L)
-
-        assertEquals(
-            RecurrenceCalculator.calculateNextDate(expense.nextDate, expense.frequency),
-            updatedSlot.captured.nextDate
-        )
-        assertEquals(RecurrenceFrequency.ANNUALLY, updatedSlot.captured.frequency)
+        assertTrue(failure is IllegalStateException)
+        coVerify(exactly = 0) { recurringExpenseRepository.update(any()) }
     }
 
     @Test
-    fun `markBillPaid advances semi annually by six months`() = runTest {
-        val expense = recurringExpense(id = 2L, frequency = RecurrenceFrequency.SEMI_ANNUALLY, nextDate = date(2026, 2, 10))
-        val updatedSlot = slot<ManualRecurringExpense>()
-        coEvery { recurringExpenseRepository.getById(2L) } returns expense
-        coEvery { recurringExpenseRepository.update(capture(updatedSlot)) } returns Unit
+    fun `markBillPaid remains prohibited for semi annual rules`() = runTest {
+        val failure = runCatching { manager.markBillPaid(2L) }.exceptionOrNull()
 
-        manager.markBillPaid(2L)
-
-        assertEquals(
-            RecurrenceCalculator.calculateNextDate(expense.nextDate, expense.frequency),
-            updatedSlot.captured.nextDate
-        )
-        assertEquals(RecurrenceFrequency.SEMI_ANNUALLY, updatedSlot.captured.frequency)
+        assertTrue(failure is IllegalStateException)
+        coVerify(exactly = 0) { recurringExpenseRepository.update(any()) }
     }
 
     @Test
-    fun `markBillPaid advances irregular by one month fallback`() = runTest {
-        val expense = recurringExpense(id = 3L, frequency = RecurrenceFrequency.IRREGULAR, nextDate = date(2026, 3, 5))
-        val updatedSlot = slot<ManualRecurringExpense>()
-        coEvery { recurringExpenseRepository.getById(3L) } returns expense
-        coEvery { recurringExpenseRepository.update(capture(updatedSlot)) } returns Unit
+    fun `markBillPaid remains prohibited for irregular rules`() = runTest {
+        val failure = runCatching { manager.markBillPaid(3L) }.exceptionOrNull()
 
-        manager.markBillPaid(3L)
-
-        assertEquals(
-            RecurrenceCalculator.calculateNextDate(expense.nextDate, expense.frequency),
-            updatedSlot.captured.nextDate
-        )
-        assertEquals(RecurrenceFrequency.IRREGULAR, updatedSlot.captured.frequency)
+        assertTrue(failure is IllegalStateException)
+        coVerify(exactly = 0) { recurringExpenseRepository.update(any()) }
     }
 
     @Test
@@ -85,8 +84,6 @@ class BillReminderManagerTest {
             recurringExpense(id = 12L, amount = 45.0, frequency = RecurrenceFrequency.IRREGULAR)
         )
 
-        val total = manager.getMonthlyBillsTotal()
-
         val expected = listOf(
             1200.0 to RecurrenceFrequency.ANNUALLY,
             600.0 to RecurrenceFrequency.SEMI_ANNUALLY,
@@ -95,8 +92,135 @@ class BillReminderManagerTest {
             RecurrenceCalculator.toMonthlyAmount(amount, frequency)
         }
 
-        assertEquals(expected, total, 0.0001)
+        val expectedResult = MoneyAggregateResult.Available(
+            MoneyAggregate.singleCurrency(expected, CurrencyCode("EUR"), transactionCount = 3)
+        )
+        coEvery {
+            multiCurrencyRepository.aggregateDisplayAmounts(any(), any(), "EUR")
+        } returns expectedResult
+
+        val total = manager.getMonthlyBillsTotal()
+
+        assertEquals(expectedResult, total)
         coVerify(exactly = 1) { recurringExpenseRepository.getAll() }
+        coVerify(exactly = 1) {
+            multiCurrencyRepository.aggregateDisplayAmounts(
+                listOf(
+                    RecurrenceCalculator.toMonthlyAmount(1200.0, RecurrenceFrequency.ANNUALLY) to "EUR",
+                    RecurrenceCalculator.toMonthlyAmount(600.0, RecurrenceFrequency.SEMI_ANNUALLY) to "EUR",
+                    RecurrenceCalculator.toMonthlyAmount(45.0, RecurrenceFrequency.IRREGULAR) to "EUR"
+                ),
+                listOf(1, 1, 1),
+                "EUR"
+            )
+        }
+    }
+
+    @Test
+    fun `getMonthlyBillsTotal converts source currencies before presenting the summary`() = runTest {
+        coEvery { recurringExpenseRepository.getAll() } returns listOf(
+            recurringExpense(id = 20L, amount = 100.0, frequency = RecurrenceFrequency.MONTHLY, currency = "EUR"),
+            recurringExpense(id = 21L, amount = 100.0, frequency = RecurrenceFrequency.MONTHLY, currency = "USD")
+        )
+        val expected = MoneyAggregateResult.Available(
+            MoneyAggregate.singleCurrency(190.0, CurrencyCode("EUR"), transactionCount = 2)
+        )
+        coEvery {
+            multiCurrencyRepository.aggregateDisplayAmounts(
+                listOf(100.0 to "EUR", 100.0 to "USD"),
+                listOf(1, 1),
+                "EUR"
+            )
+        } returns expected
+
+        assertEquals(expected, manager.getMonthlyBillsTotal())
+    }
+
+    @Test
+    fun `getMonthlyBillsTotal preserves partial conversion state`() = runTest {
+        coEvery { recurringExpenseRepository.getAll() } returns listOf(
+            recurringExpense(id = 22L, amount = 100.0, frequency = RecurrenceFrequency.MONTHLY, currency = "EUR"),
+            recurringExpense(id = 23L, amount = 100.0, frequency = RecurrenceFrequency.MONTHLY, currency = "USD")
+        )
+        val expected = MoneyAggregateResult.Available(
+            MoneyAggregate.singleCurrency(100.0, CurrencyCode("EUR"), transactionCount = 1).copy(
+                conversionQuality = ConversionQuality.PARTIAL,
+                warningMessage = "MISSING_RATE"
+            )
+        )
+        coEvery {
+            multiCurrencyRepository.aggregateDisplayAmounts(
+                listOf(100.0 to "EUR", 100.0 to "USD"),
+                listOf(1, 1),
+                "EUR"
+            )
+        } returns expected
+
+        assertEquals(expected, manager.getMonthlyBillsTotal())
+    }
+
+    @Test
+    fun `getMonthlyBillsTotal preserves total conversion unavailability`() = runTest {
+        coEvery { recurringExpenseRepository.getAll() } returns listOf(
+            recurringExpense(id = 24L, amount = 100.0, frequency = RecurrenceFrequency.MONTHLY, currency = "USD")
+        )
+        val expected = MoneyAggregateResult.Unavailable(
+            reason = MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE.name,
+            requestedRateBasis = RateBasis.LATEST_AVAILABLE
+        )
+        coEvery {
+            multiCurrencyRepository.aggregateDisplayAmounts(
+                listOf(100.0 to "USD"),
+                listOf(1),
+                "EUR"
+            )
+        } returns expected
+
+        assertEquals(expected, manager.getMonthlyBillsTotal())
+    }
+
+    @Test
+    fun `getMonthlyBillsTotal propagates cancellation`() = runTest {
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } throws
+            CancellationException("cancelled")
+
+        assertFailsWith<CancellationException> { manager.getMonthlyBillsTotal() }
+        coVerify(exactly = 0) { recurringExpenseRepository.getAll() }
+    }
+
+    @Test
+    fun `getMonthlyBillsTotal returns unavailable when home currency resolution fails`() = runTest {
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
+            HomeCurrencyResolution.Failed("SETTINGS_READ_FAILED")
+
+        val result = manager.getMonthlyBillsTotal()
+
+        assertTrue(result is MoneyAggregateResult.Unavailable)
+        assertEquals(
+            MoneyDisplayUnavailableReasonCode.HOME_CURRENCY_UNAVAILABLE.name,
+            (result as MoneyAggregateResult.Unavailable).reason
+        )
+        coVerify(exactly = 0) { recurringExpenseRepository.getAll() }
+        coVerify(exactly = 0) {
+            multiCurrencyRepository.aggregateDisplayAmounts(any(), any(), any())
+        }
+    }
+
+    @Test
+    fun `getMonthlyBillsTotal preserves known currency zero for no active rules`() = runTest {
+        coEvery { recurringExpenseRepository.getAll() } returns listOf(
+            recurringExpense(
+                id = 30L,
+                frequency = RecurrenceFrequency.MONTHLY,
+                isActive = false
+            )
+        )
+        val expected = MoneyAggregateResult.Available(MoneyAggregate.empty(CurrencyCode("EUR")))
+        coEvery {
+            multiCurrencyRepository.aggregateDisplayAmounts(emptyList(), emptyList(), "EUR")
+        } returns expected
+
+        assertEquals(expected, manager.getMonthlyBillsTotal())
     }
 
     @Test
@@ -122,15 +246,17 @@ class BillReminderManagerTest {
         id: Long,
         amount: Double = 50.0,
         frequency: RecurrenceFrequency,
-        nextDate: Long = date(2026, 1, 1)
+        nextDate: Long = date(2026, 1, 1),
+        currency: String = "EUR",
+        isActive: Boolean = true
     ): ManualRecurringExpense = ManualRecurringExpense(
         id = id,
         merchant = "Merchant $id",
         amount = amount,
-        currency = "EUR",
+        currency = currency,
         frequency = frequency,
         nextDate = nextDate,
-        isActive = true
+        isActive = isActive
     )
 
     private fun date(year: Int, month: Int, day: Int): Long {

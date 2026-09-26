@@ -92,6 +92,33 @@ class NotificationMoneySignalDetectorTest {
     }
 
     @Test
+    fun `qualified and alphabetic aliases allow adjacent prefix and suffix amounts`() = runTest {
+        listOf(
+            "Fr" to "CHF", "SFr" to "CHF", "lei" to "RON", "Ft" to "HUF",
+            "US$" to "USD", "C$" to "CAD", "A$" to "AUD", "EURO" to "EUR",
+            "zl" to "PLN", "TL" to "TRY", "Kc" to "CZK"
+        ).forEach { (alias, expectedCurrency) ->
+            listOf("${alias}42", "42$alias", "$alias 42", "42 $alias").forEach { notation ->
+                val signal = detector.bestTransactionAmount("Paid $notation", homeCurrency = null)
+
+                assertEquals(notation, expectedCurrency, signal!!.currencyCode)
+                assertEquals(42.0, signal.amount, 0.0)
+                assertEquals(setOf(expectedCurrency), signal.currencyCandidates)
+                assertEquals(CurrencyResolution.EXPLICIT_UNAMBIGUOUS_SYMBOL, signal.resolution)
+                assertEquals(0.90f, signal.confidence, 0.0f)
+                assertFalse(signal.ambiguous)
+            }
+        }
+    }
+
+    @Test
+    fun `alphabetic aliases reject word fragments at the outer edge`() = runTest {
+        listOf("42 from", "42 francs", "from42", "αFr42", "42Frα", "42Fr42").forEach { text ->
+            assertNull(text, detector.bestTransactionAmount("Paid $text", homeCurrency = "EUR"))
+        }
+    }
+
+    @Test
     fun `bare dollar resolves only from a dollar candidate home`() = runTest {
         val resolved = detector.bestTransactionAmount("Paid $42", "cad")
         val unresolved = detector.bestTransactionAmount("Paid $42", "EUR")
@@ -100,5 +127,21 @@ class NotificationMoneySignalDetectorTest {
         assertEquals(CurrencyResolution.AMBIGUOUS_SYMBOL_RESOLVED_BY_HOME, resolved.resolution)
         assertNull(unresolved!!.currencyCode)
         assertEquals(CurrencyResolution.AMBIGUOUS_UNRESOLVED, unresolved.resolution)
+    }
+
+    @Test
+    fun `alphabetic aliases do not match word fragments before ambiguous currency resolution`() = runTest {
+        val resolved = detector.bestTransactionAmount(
+            "Payment $42 from account at ACME",
+            "CAD"
+        )
+        val noCurrency = detector.bestTransactionAmount(
+            "Payment 42 from account at ACME",
+            "EUR"
+        )
+
+        assertEquals("CAD", resolved!!.currencyCode)
+        assertEquals(CurrencyResolution.AMBIGUOUS_SYMBOL_RESOLVED_BY_HOME, resolved.resolution)
+        assertNull(noCurrency)
     }
 }

@@ -290,6 +290,7 @@ class RecurringExpenseEngineTest {
         // Simple parser for test dates
         val parts = dateStr.split("-")
         val calendar = Calendar.getInstance()
+        calendar.clear()
         calendar.set(parts[0].toInt(), parts[1].toInt() - 1, parts[2].toInt(), 12, 0)
         
         return Expense(

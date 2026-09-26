@@ -20,7 +20,7 @@ class UberReceiptParserTest {
                 Uber trip receipt
                 Total ${'$'}23.45
                 Your driver: Alex
-                9:15 PM Â· March 07
+                9:15 PM · March 07
                 Trip ID: ride-123
             """.trimIndent(),
             receivedAt = receivedAt
@@ -74,14 +74,14 @@ class UberReceiptParserTest {
             emailBody = """
                 Uber trip receipt
                 Total ${'$'}11.00
-                9:15 PM Â· March 07
+                9:15 PM · March 07
                 Trip ID: ride-anchored
             """.trimIndent(),
             receivedAt = receivedAt
         )
 
         assertNotNull(receipt)
-        assertEquals(receivedAt, receipt!!.date)
+        assertEquals(systemZoneMillis(2025, Calendar.MARCH, 7), receipt!!.date)
     }
 
     @Test
@@ -91,7 +91,7 @@ class UberReceiptParserTest {
             emailBody = """
                 Uber trip receipt
                 Total ${'$'}19.50
-                7:40 PM Â· December 31
+                7:40 PM · December 31
                 Trip ID: ride-new-year
             """.trimIndent(),
             receivedAt = receivedAt
@@ -210,7 +210,67 @@ class UberReceiptParserTest {
         )
     }
 
-    /** Use system default timezone to match UberReceiptParser.parseUberDate behavior. */
+    @Test
+    fun `delayed yearless receipt retains its ride date rather than the email date`() {
+        val receipt = parser.parse(
+            emailBody = """
+                Uber trip receipt
+                Total EUR 11.00
+                March 07 at 9:15 PM
+                Trip ID: delayed-ride
+            """.trimIndent(),
+            receivedAt = systemZoneMillis(2025, Calendar.JULY, 10)
+        )
+
+        assertNotNull(receipt)
+        assertEquals(systemZoneMillis(2025, Calendar.MARCH, 7), receipt!!.date)
+    }
+
+    @Test
+    fun `delayed new year receipt retains the previous year date`() {
+        val receipt = parser.parse(
+            emailBody = """
+                Uber trip receipt
+                Total EUR 11.00
+                December 31 at 7:40 PM
+                Trip ID: delayed-new-year
+            """.trimIndent(),
+            receivedAt = systemZoneMillis(2026, Calendar.FEBRUARY, 28)
+        )
+
+        assertNotNull(receipt)
+        assertEquals(systemZoneMillis(2025, Calendar.DECEMBER, 31), receipt!!.date)
+    }
+
+    @Test
+    fun `explicit ride year is preserved independently of delivery date`() {
+        val receipt = parser.parse(
+            emailBody = """
+                Uber trip receipt
+                Total EUR 11.00
+                Trip date: March 07, 2024
+                Trip ID: explicit-old-year
+            """.trimIndent(),
+            receivedAt = systemZoneMillis(2026, Calendar.JULY, 10)
+        )
+
+        assertNotNull(receipt)
+        assertEquals(systemZoneMillis(2024, Calendar.MARCH, 7), receipt!!.date)
+    }
+
+    @Test
+    fun `missing ride date still falls back to the received timestamp`() {
+        val receivedAt = systemZoneMillis(2026, Calendar.JULY, 10)
+        val receipt = parser.parse(
+            emailBody = "Uber trip receipt\nTotal EUR 11.00\nTrip ID: undated-ride",
+            receivedAt = receivedAt
+        )
+
+        assertNotNull(receipt)
+        assertEquals(receivedAt, receipt!!.date)
+    }
+
+    /** UTC delivery-timestamp fixture; parsed ride dates use the system zone. */
     private fun utcMillis(year: Int, month: Int, dayOfMonth: Int): Long {
         return java.util.Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
             set(Calendar.YEAR, year)

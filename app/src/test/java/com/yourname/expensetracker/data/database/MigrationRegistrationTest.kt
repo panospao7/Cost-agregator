@@ -30,29 +30,31 @@ class MigrationRegistrationTest {
     @Test
     fun `migration 120 to 121 creates group_lifecycle_events table`() {
         val db = helper.createDatabase(TEST_DB_NAME, 120)
-        db.execSQL("INSERT INTO expenses (id, amount, currency, merchant, date, effectiveAmount, transactionType, isNotMine) VALUES (1, 100.0, 'EUR', 'Test', 1000, 100.0, 'PURCHASE', 0)")
-        db.close()
-
-        val migrated = helper.runMigrationsAndValidate(TEST_DB_NAME, 121, true, AppDatabase.MIGRATION_120_121)
-        val cursor = migrated.query("SELECT * FROM group_lifecycle_events")
+        // Versions below the supported v145 baseline are deliberately not part of
+        // ALL_MIGRATIONS. Exercise the retained legacy migration object directly;
+        // do not validate the full retired v121 snapshot against today's entity set.
+        AppDatabase.MIGRATION_120_121.migrate(db)
+        val cursor = db.query("SELECT * FROM group_lifecycle_events")
         assertThat(cursor.count).isEqualTo(0) // table exists but is empty
         cursor.close()
-        migrated.close()
+        db.close()
     }
 
     @Test
     fun `migration 119 to 121 creates both settlement and lifecycle tables`() {
         val db = helper.createDatabase(TEST_DB_NAME, 119)
-        db.close()
-
-        val migrated = helper.runMigrationsAndValidate(TEST_DB_NAME, 121, true, AppDatabase.MIGRATION_119_120, AppDatabase.MIGRATION_120_121)
-        val cursor = migrated.query("SELECT name FROM sqlite_master WHERE type='table' AND name='group_settlements'")
+        // These pre-baseline migration objects are retained only as historical DDL
+        // helpers and are intentionally unregistered. Invoke them directly so this
+        // test verifies their tables without asserting a supported 119→121 upgrade.
+        AppDatabase.MIGRATION_119_120.migrate(db)
+        AppDatabase.MIGRATION_120_121.migrate(db)
+        val cursor = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='group_settlements'")
         assertThat(cursor.count).isEqualTo(1)
         cursor.close()
-        val cursor2 = migrated.query("SELECT name FROM sqlite_master WHERE type='table' AND name='group_lifecycle_events'")
+        val cursor2 = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='group_lifecycle_events'")
         assertThat(cursor2.count).isEqualTo(1)
         cursor2.close()
-        migrated.close()
+        db.close()
     }
 
     @Test

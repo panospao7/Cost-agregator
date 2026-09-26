@@ -78,7 +78,7 @@ class SpendingPaceBoundaryTest {
     }
 
     @Test
-    fun `day 1 projection applies conservative bias and projects 5600`() {
+    fun `day 1 projection blends baseline with linear projection`() {
         val previousMonthStart = ms(2026, 2, 1)
         val currentMonthStart = ms(2026, 3, 1)
         val previousMonthEnd = currentMonthStart
@@ -97,7 +97,9 @@ class SpendingPaceBoundaryTest {
 
         assertApproxEquals(800.0, result.currentMonthSpent, 0.01)
         assertEquals(1, result.daysElapsed)
-        assertApproxEquals(5600.0, result.projectedTotal, 0.1)
+        // February baseline = 100 / 28 per day; March baseline projection
+        // is blended at 80% with the day-one linear projection at 20%.
+        assertApproxEquals(5048.571, result.projectedTotal, 0.1)
     }
 
     @Test
@@ -118,7 +120,7 @@ class SpendingPaceBoundaryTest {
             displayCurrency = "EUR"
         )
 
-        assertApproxEquals(0f, result.pacePercentage, 0.001f)
+        assertApproxEquals(-1f, result.pacePercentage, 0.001f)
         assertEquals(PaceStatus.NO_BASELINE, result.paceStatus)
         assertNull(result.previousMonthTotal)
     }

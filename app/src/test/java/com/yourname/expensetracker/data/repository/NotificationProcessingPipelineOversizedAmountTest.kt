@@ -1,6 +1,10 @@
 package com.yourname.expensetracker.data.repository
 
 import com.yourname.expensetracker.domain.currency.CurrencyResolution
+import com.yourname.expensetracker.domain.currency.UserCurrencyProvider
+import com.yourname.expensetracker.domain.notification.money.NotificationMoneySignalDetector
+import io.mockk.mockk
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -149,6 +153,33 @@ class NotificationProcessingPipelineOversizedAmountTest {
         assertNotNull(oversized)
         assertNull(oversized!!.currency)
         assertEquals(CurrencyResolution.AMBIGUOUS_UNRESOLVED, oversized.currencyResolution)
+    }
+
+    @Test
+    fun `real detector word fragments do not override pipeline dollar home resolution`() = runTest {
+        val detector = NotificationMoneySignalDetector(
+            userCurrencyProvider = mockk<UserCurrencyProvider>(relaxed = true)
+        )
+        val text = "Payment $42 from account at ACME"
+        val signal = detector.bestTransactionAmount(text, "CAD")!!
+
+        val candidate = NotificationProcessingPipeline.detectTransactionSignalCandidate(
+            title = text,
+            text = null,
+            bigText = null,
+            resolvedCurrency = NotificationProcessingPipeline.ResolvedNotificationCurrency(
+                code = signal.currencyCode,
+                resolution = signal.resolution,
+            ),
+        )
+
+        assertNotNull(candidate)
+        assertEquals(42.0, candidate!!.amount, 0.0)
+        assertEquals("CAD", candidate.currency)
+        assertEquals(
+            CurrencyResolution.AMBIGUOUS_SYMBOL_RESOLVED_BY_HOME,
+            candidate.currencyResolution,
+        )
     }
 
     private fun knownEurCurrency() = NotificationProcessingPipeline.ResolvedNotificationCurrency(

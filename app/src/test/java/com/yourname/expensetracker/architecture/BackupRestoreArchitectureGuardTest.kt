@@ -60,12 +60,17 @@ class BackupRestoreArchitectureGuardTest {
         )
         // Bounded window over the function body. `enterAndDrain(...RESETTING_DATABASE` is
         // unique to resetDatabase, so a marker found here genuinely belongs to it.
-        val body = source.substring(declIdx, minOf(declIdx + 4000, source.length))
+        val body = source.substring(declIdx, minOf(declIdx + 12_000, source.length))
 
         assertTrue(
-            "P7-CURRENT-020 regression: resetDatabase() must enter RESETTING_DATABASE maintenance " +
-                "mode (enterAndDrain) so workers are drained and writes are blocked during the reset.",
-            body.contains("enterAndDrain(RestoreMaintenanceMode.Mode.RESETTING_DATABASE")
+            "P7-CURRENT-020 regression: resetDatabase() must enter restore maintenance and drain " +
+                "workers before the destructive reset step.",
+            body.contains("""enterRestoreAndDrain("resetDatabase")""")
+        )
+        assertTrue(
+            "P7-CURRENT-020 regression: resetDatabase() must transition to RESETTING_DATABASE " +
+                "before deleting the live database files.",
+            body.contains("restoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.RESETTING_DATABASE)")
         )
         assertTrue(
             "P7-CURRENT-020 regression: resetDatabase() must create a RestoreJournal (beginJournal) " +
@@ -142,9 +147,10 @@ class BackupRestoreArchitectureGuardTest {
         val source = readSource(
             "com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt"
         )
-        val marker = source.indexOf("Failed to restore .costbackup bundle")
+        val marker = source.indexOf("stage=bundle_restore")
         assertTrue(
-            "Outer generic catch marker not found - guard cannot verify post-swap cleanup behavior",
+            "Outer restoreCostBackup generic-catch marker not found - guard cannot verify " +
+                "post-swap cleanup behavior",
             marker >= 0
         )
         val window = source.substring(marker, minOf(marker + 2500, source.length))

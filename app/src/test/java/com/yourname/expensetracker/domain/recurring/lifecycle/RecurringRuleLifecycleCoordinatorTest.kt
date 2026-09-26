@@ -125,7 +125,8 @@ class RecurringRuleLifecycleCoordinatorTest {
 
         val projectionService = com.yourname.expensetracker.domain.recurring.RecurringPlanProjectionService(
             plannedExpenseDao = plannedDao,
-            occurrenceDao = occurrenceDao
+            occurrenceDao = occurrenceDao,
+            writeBarrier = writeBarrier
         )
 
         coordinator = RecurringRuleLifecycleCoordinator(

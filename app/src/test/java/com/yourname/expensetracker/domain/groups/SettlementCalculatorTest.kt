@@ -92,11 +92,11 @@ class SettlementCalculatorTest {
             )
         )
 
-        val summary = calculator.getSettlementSummary(settlements, "€")
+        val summary = calculator.getSettlementSummary(settlements, "EUR")
 
-        assertTrue(summary.contains("B pays A: €30.00"))
-        assertTrue(summary.contains("C pays A: €20.00"))
-        assertTrue(summary.contains("Total to settle: €50.00"))
+        assertTrue(summary.contains("B pays A: ${com.yourname.expensetracker.domain.util.CurrencyFormatter.formatMoney(30.0, "EUR")}"))
+        assertTrue(summary.contains("C pays A: ${com.yourname.expensetracker.domain.util.CurrencyFormatter.formatMoney(20.0, "EUR")}"))
+        assertTrue(summary.contains("Total to settle: ${com.yourname.expensetracker.domain.util.CurrencyFormatter.formatMoney(50.0, "EUR")}"))
         assertTrue(summary.contains("2 transactions needed"))
     }
 

@@ -99,13 +99,13 @@ class InsightsEngineDeepTest {
     fun `category breakdown groups by category and computes percentage`() = runTest {
         every { timeProvider.now() } returns dateMs(2026, 4, 15)
         val expenses = listOf(
-            createExpense(date = "2026-04-01", amount = 100.0, category = "Food"),
-            createExpense(date = "2026-04-02", amount = 100.0, category = "Food"),
-            createExpense(date = "2026-04-03", amount = 100.0, category = "Food"),
-            createExpense(date = "2026-04-04", amount = 100.0, category = "Transport")
+            createExpense(date = "2026-04-01", amount = 100.0, category = "Food").toSnapshot(),
+            createExpense(date = "2026-04-02", amount = 100.0, category = "Food").toSnapshot(),
+            createExpense(date = "2026-04-03", amount = 100.0, category = "Food").toSnapshot(),
+            createExpense(date = "2026-04-04", amount = 100.0).toSnapshot().copy(categoryId = 2L)
         )
 
-        val snapshot = engine.generateInsights(categories, expenses.map { it.toSnapshot() }, "EUR")
+        val snapshot = engine.generateInsights(categories, expenses, "EUR")
         val food = snapshot.categoryInsights.first { it.category.id == 1L }
         val transport = snapshot.categoryInsights.first { it.category.id == 2L }
 
@@ -173,7 +173,8 @@ class InsightsEngineDeepTest {
         assertApproxEquals(0.0, snapshot.monthlyComparison.currentTotal)
         assertTrue(snapshot.categoryInsights.isEmpty())
         assertTrue(snapshot.topMerchants.isEmpty())
-        assertTrue(snapshot.dayOfWeekPattern.isEmpty())
+        assertEquals(7, snapshot.dayOfWeekPattern.size)
+        assertTrue(snapshot.dayOfWeekPattern.all { it.totalSpent == 0.0 && it.transactionCount == 0 })
     }
 
     private fun dateMs(year: Int, month: Int, day: Int): Long =

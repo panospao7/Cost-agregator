@@ -11,6 +11,8 @@ import com.yourname.expensetracker.domain.budget.BudgetAutopilotEngine
 import com.yourname.expensetracker.domain.budget.BudgetAutopilotRecommendations
 import com.yourname.expensetracker.domain.budget.BudgetRecommendationQuality
 import com.yourname.expensetracker.domain.budget.CategoryBudgetRecommendation
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.groups.SharedExpenseBudgetOffsetEngine
 import com.yourname.expensetracker.domain.model.Result
@@ -189,6 +191,78 @@ class BudgetViewModelAutopilotQualityTest : ViewModelTestUtils() {
         }
 
     @Test
+    fun `single apply writes captured source amount rather than display amount`() =
+        runTest(testDispatcher) {
+            val rec = recommendation(
+                quality = BudgetRecommendationQuality.COMPLETE,
+                isActionable = true
+            ).copy(
+                recommendedBudget = 90.0,
+                displayCurrency = "EUR",
+                sourceAmountToApply = MoneyAmount(100.0, CurrencyCode("USD"))
+            )
+            stubGeneratedRecommendations(rec)
+            coEvery { budgetRepository.getActiveBudgets() } returns listOf(activeBudget(currency = "USD"))
+            coEvery { budgetRepository.updateBudget(any()) } returns Result.Success(Unit)
+
+            viewModel.generateAutopilotRecommendations()
+            advanceUntilIdle()
+            viewModel.applyAutopilotRecommendation(rec)
+            advanceUntilIdle()
+
+            val updated = slot<Budget>()
+            coVerify(exactly = 1) { budgetRepository.updateBudget(capture(updated)) }
+            assertEquals(100.0, updated.captured.amount, 0.0001)
+            assertEquals("USD", updated.captured.currency)
+            assertNull(currentUiState().autopilotError)
+        }
+
+    @Test
+    fun `single apply rejects a changed source currency without writing`() =
+        runTest(testDispatcher) {
+            val rec = recommendation(
+                quality = BudgetRecommendationQuality.COMPLETE,
+                isActionable = true
+            ).copy(sourceAmountToApply = MoneyAmount(100.0, CurrencyCode("USD")))
+            stubGeneratedRecommendations(rec)
+            coEvery { budgetRepository.getActiveBudgets() } returns listOf(activeBudget(currency = "EUR"))
+
+            viewModel.generateAutopilotRecommendations()
+            advanceUntilIdle()
+            viewModel.applyAutopilotRecommendation(rec)
+            advanceUntilIdle()
+
+            assertEquals(
+                BudgetViewModel.ERROR_AUTOPILOT_REGENERATE_REQUIRED,
+                currentUiState().autopilotError
+            )
+            coVerify(exactly = 0) { budgetRepository.updateBudget(any()) }
+        }
+
+    @Test
+    fun `apply all rejects a changed source currency before transaction writes`() =
+        runTest(testDispatcher) {
+            val rec = recommendation(
+                quality = BudgetRecommendationQuality.COMPLETE,
+                isActionable = true
+            ).copy(sourceAmountToApply = MoneyAmount(100.0, CurrencyCode("USD")))
+            stubGeneratedRecommendations(rec)
+            coEvery { budgetRepository.getActiveBudgets() } returns listOf(activeBudget(currency = "EUR"))
+
+            viewModel.generateAutopilotRecommendations()
+            advanceUntilIdle()
+            viewModel.applyAllAutopilotRecommendations()
+            advanceUntilIdle()
+
+            assertEquals(
+                BudgetViewModel.ERROR_AUTOPILOT_REGENERATE_REQUIRED,
+                currentUiState().autopilotError
+            )
+            coVerify(exactly = 0) { budgetRepository.updateBudgetOrThrow(any()) }
+            coVerify(exactly = 0) { budgetRepository.updateBudget(any()) }
+        }
+
+    @Test
     fun `apply all with mixed actionable and LOW_HISTORY writes only actionable budgets`() =
         runTest(testDispatcher) {
             // RP-08 (P6-004): Apply All must never write non-actionable
@@ -212,7 +286,11 @@ class BudgetViewModelAutopilotQualityTest : ViewModelTestUtils() {
             val actionableRec = recommendation(
                 quality = BudgetRecommendationQuality.COMPLETE,
                 isActionable = true
-            ).copy(budgetId = 1L, recommendedBudget = 110.0)
+            ).copy(
+                budgetId = 1L,
+                recommendedBudget = 110.0,
+                sourceAmountToApply = MoneyAmount(110.0, CurrencyCode("EUR"))
+            )
             val lowHistoryRec = recommendation(
                 quality = BudgetRecommendationQuality.LOW_HISTORY,
                 isActionable = false
@@ -254,7 +332,8 @@ class BudgetViewModelAutopilotQualityTest : ViewModelTestUtils() {
             totalRecommendedBudget = recs.sumOf { it.recommendedBudget },
             overallDelta = 0.0,
             confidence = recs.first().confidence,
-            generatedAt = 0L
+            generatedAt = 0L,
+            displayCurrency = "EUR"
         )
     }
 
@@ -271,10 +350,11 @@ class BudgetViewModelAutopilotQualityTest : ViewModelTestUtils() {
     private suspend fun currentUiState() =
         viewModel.uiState.first { !it.isLoading }
 
-    private fun activeBudget(): Budget = Budget(
+    private fun activeBudget(currency: String = "EUR"): Budget = Budget(
         id = 1L,
         categoryId = 1L,
         amount = 100.0,
+        currency = currency,
         period = BudgetPeriod.MONTHLY,
         startDate = 1_700_000_000_000L,
         notifyAtWarning = 0.75f,
@@ -295,6 +375,8 @@ class BudgetViewModelAutopilotQualityTest : ViewModelTestUtils() {
         reason = "test reason",
         confidence = 0.8,
         trend = BudgetTrend.STABLE,
+        displayCurrency = "EUR",
+        sourceAmountToApply = MoneyAmount(120.0, CurrencyCode("EUR")),
         quality = quality,
         isActionable = isActionable
     )

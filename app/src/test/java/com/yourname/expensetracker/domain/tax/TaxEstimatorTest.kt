@@ -2,13 +2,18 @@ package com.yourname.expensetracker.domain.tax
 
 import com.yourname.expensetracker.AnalyticsEngineTestBase
 import com.yourname.expensetracker.assertApproxEquals
-import com.yourname.expensetracker.data.database.dao.BusinessCategoryTotal
+import com.yourname.expensetracker.data.database.dao.BusinessCategoryCurrencyTotal
 import com.yourname.expensetracker.data.database.dao.CurrencyTotal
 import com.yourname.expensetracker.data.repository.BusinessExpenseRepository
+import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
 import com.yourname.expensetracker.data.repository.TaxSettingsRepository
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAggregate
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateResult
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode
 import com.google.common.truth.Truth.assertThat
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -40,6 +45,7 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
     private lateinit var businessExpenseRepository: BusinessExpenseRepository
     private lateinit var currencySettingsRepo: CurrencySettingsRepository
     private lateinit var taxSettingsRepo: TaxSettingsRepository
+    private lateinit var multiCurrencyRepository: MultiCurrencyRepository
     private lateinit var taxEstimator: TaxEstimator
 
     @Before
@@ -49,6 +55,7 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
 
         currencySettingsRepo = mockk(relaxed = true)
         taxSettingsRepo = mockk(relaxed = true)
+        multiCurrencyRepository = mockk()
         every { taxSettingsRepo.getFilingCurrency() } returns "EUR"
         every { taxSettingsRepo.getTaxCountry() } returns "GR"
         every { taxSettingsRepo.getFiscalYearStartMonth() } returns 1
@@ -57,6 +64,20 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
         coEvery { currencySettingsRepo.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
         coEvery { expenseDao.getBusinessExpensesBetweenByCurrency(any(), any()) } returns emptyList()
         coEvery { expenseDao.getDepositTotalsBetweenByCurrency(any(), any()) } returns emptyList()
+        coEvery {
+            multiCurrencyRepository.aggregateDisplayAmounts(any(), any(), any())
+        } answers {
+            val amounts = firstArg<List<Pair<Double, String>>>()
+            val counts = secondArg<List<Int>>()
+            val target = thirdArg<String>()
+            MoneyAggregateResult.Available(
+                MoneyAggregate.singleCurrency(
+                    amount = amounts.sumOf { it.first },
+                    currency = CurrencyCode(target),
+                    transactionCount = counts.sum()
+                )
+            )
+        }
 
         taxEstimator = TaxEstimator(
             expenseDao = expenseDao,
@@ -66,7 +87,8 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
             currencySettingsRepository = currencySettingsRepo,
             taxSettings = taxSettingsRepo,
             ioDispatcher = Dispatchers.Unconfined,
-            taxRateProvider = mockk(relaxed = true)
+            taxRateProvider = mockk(relaxed = true),
+            multiCurrencyRepository = multiCurrencyRepository
         )
     }
 
@@ -235,8 +257,9 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
     @Test
     fun `getTaxYearSummary uses real yearly income and categorizes business deductions`() = runTest {
         val categoryTotals = listOf(
-            BusinessCategoryTotal(businessCategory = "Office Supplies", total = 100.0, count = 1),
-            BusinessCategoryTotal(businessCategory = "Software", total = 250.0, count = 1)
+            BusinessCategoryCurrencyTotal("Office Supplies", "EUR", 100.0, 1),
+            BusinessCategoryCurrencyTotal("Software", "EUR", 250.0, 1),
+            BusinessCategoryCurrencyTotal("Uncategorized", "EUR", 5850.0, 1)
         )
         // R13: income oracle stub moved to the currency-aware deposit
         // aggregate (the replacement DAO variant TaxEstimator now sources
@@ -247,7 +270,9 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
             CurrencyTotal(currency = "EUR", total = 42000.0, txCount = 1)
         )
         coEvery { businessExpenseRepository.getTotalBusinessExpenses(any(), any()) } returns 6200.0
-        coEvery { businessExpenseRepository.getExpensesByCategory(any(), any()) } returns categoryTotals
+        coEvery {
+            businessExpenseRepository.getBusinessCategoryCurrencyTotals(any(), any())
+        } returns categoryTotals
         coEvery { businessExpenseRepository.getTotalMileageDeduction(any(), any()) } returns 120.0
 
         val summary = taxEstimator.getTaxYearSummary(2026)
@@ -267,7 +292,10 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
         assertApproxEquals(5850.0, deductions["Uncategorized"] ?: 0.0, 0.01)
 
         coVerify(exactly = 0) { businessExpenseRepository.getBusinessExpenses(any(), any()) }
-        coVerify(atLeast = 1) { businessExpenseRepository.getExpensesByCategory(any(), any()) }
+        coVerify(atLeast = 1) {
+            businessExpenseRepository.getBusinessCategoryCurrencyTotals(any(), any())
+        }
+        coVerify(exactly = 0) { businessExpenseRepository.getExpensesByCategory(any(), any()) }
     }
 
     @Test
@@ -275,8 +303,8 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
         // Regression: explicit businessCategory="Uncategorized" must not be
         // overwritten by the computed null-category remainder.
         val categoryTotals = listOf(
-            BusinessCategoryTotal(businessCategory = "Office Supplies", total = 200.0, count = 2),
-            BusinessCategoryTotal(businessCategory = "Uncategorized", total = 75.0, count = 3)
+            BusinessCategoryCurrencyTotal("Office Supplies", "EUR", 200.0, 2),
+            BusinessCategoryCurrencyTotal("Uncategorized", "EUR", 225.0, 4)
         )
         // Total 425 = Office(200) + explicit-Uncategorized(75) + null-category(150)
         // R13: same income-oracle stub migration as above (currency-aware
@@ -285,7 +313,9 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
             CurrencyTotal(currency = "EUR", total = 30000.0, txCount = 1)
         )
         coEvery { businessExpenseRepository.getTotalBusinessExpenses(any(), any()) } returns 425.0
-        coEvery { businessExpenseRepository.getExpensesByCategory(any(), any()) } returns categoryTotals
+        coEvery {
+            businessExpenseRepository.getBusinessCategoryCurrencyTotals(any(), any())
+        } returns categoryTotals
         coEvery { businessExpenseRepository.getTotalMileageDeduction(any(), any()) } returns 0.0
 
         val summary = taxEstimator.getTaxYearSummary(2026)
@@ -294,6 +324,120 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
         assertApproxEquals(200.0, deductions["Office Supplies"] ?: 0.0, 0.01)
         // Uncategorized must be explicit(75) + null-remainder(150) = 225, NOT just 150
         assertApproxEquals(225.0, deductions["Uncategorized"] ?: 0.0, 0.01)
+    }
+
+    @Test
+    fun `getTaxYearSummary rejects invalid filing currency even for an empty fiscal window`() = runTest {
+        coEvery {
+            businessExpenseRepository.getBusinessCategoryCurrencyTotals(any(), any())
+        } returns emptyList()
+
+        listOf("ZZZ", "", " ", "EU", "EURO", "EUR1").forEach { filingCurrency ->
+            every { taxSettingsRepo.getFilingCurrency() } returns filingCurrency
+
+            val failure = runCatching { taxEstimator.getTaxYearSummary(2026) }.exceptionOrNull()
+
+            assertTrue(failure is MoneyDisplayUnavailableException)
+            assertEquals(
+                MoneyDisplayUnavailableReasonCode.INVALID_TARGET_CURRENCY,
+                (failure as MoneyDisplayUnavailableException).reasonCode
+            )
+        }
+
+        coVerify(exactly = 0) { expenseDao.getDepositTotalsBetweenByCurrency(any(), any()) }
+        coVerify(exactly = 0) { expenseDao.getBusinessExpensesBetweenByCurrency(any(), any()) }
+        coVerify(exactly = 0) { businessExpenseRepository.getTotalBusinessExpenses(any(), any()) }
+        coVerify(exactly = 0) { businessExpenseRepository.getBusinessCategoryCurrencyTotals(any(), any()) }
+        coVerify(exactly = 0) { multiCurrencyRepository.aggregateDisplayAmounts(any(), any(), any()) }
+    }
+
+    @Test
+    fun `getTaxYearSummary preserves a genuine empty zero in a supported filing currency`() = runTest {
+        coEvery { businessExpenseRepository.getTotalBusinessExpenses(any(), any()) } returns 0.0
+        coEvery { businessExpenseRepository.getTotalMileageDeduction(any(), any()) } returns 0.0
+        coEvery {
+            businessExpenseRepository.getBusinessCategoryCurrencyTotals(any(), any())
+        } returns emptyList()
+
+        val summary = taxEstimator.getTaxYearSummary(2026)
+
+        assertEquals(0.0, summary.totalIncome, 0.0)
+        assertEquals(0.0, summary.totalDeductibleExpenses, 0.0)
+        assertEquals(0.0, summary.totalVatPaid, 0.0)
+        assertEquals(0.0, summary.estimatedTaxOwed, 0.0)
+        assertEquals(0.0, summary.mileageDeduction, 0.0)
+        assertThat(summary.categorizedDeductions).isEmpty()
+        assertThat(summary.categorizedDeductionsAggregate).isEmpty()
+        assertThat(summary.isPartial).isFalse()
+        assertThat(summary.conversionWarnings).isEmpty()
+        listOf(summary.incomeAggregate, summary.deductibleAggregate, summary.estimatedTaxAggregate)
+            .forEach { aggregate ->
+                assertEquals(0.0, aggregate.displayAmount, 0.0)
+                assertEquals(CurrencyCode("EUR"), aggregate.displayCurrency)
+                assertThat(aggregate.isPartial).isFalse()
+            }
+    }
+
+    @Test
+    fun `getTaxYearSummary converts category buckets to filing currency`() = runTest {
+        coEvery { expenseDao.getDepositTotalsBetweenByCurrency(any(), any()) } returns listOf(
+            CurrencyTotal(currency = "EUR", total = 30_000.0, txCount = 1)
+        )
+        coEvery { businessExpenseRepository.getTotalBusinessExpenses(any(), any()) } returns 190.0
+        coEvery { businessExpenseRepository.getTotalMileageDeduction(any(), any()) } returns 0.0
+        val rows = listOf(
+            BusinessCategoryCurrencyTotal("Office", "EUR", 100.0, 1),
+            BusinessCategoryCurrencyTotal("Office", "USD", 100.0, 1)
+        )
+        coEvery {
+            businessExpenseRepository.getBusinessCategoryCurrencyTotals(any(), any())
+        } returns rows
+        val converted = MoneyAggregateResult.Available(
+            MoneyAggregate.singleCurrency(190.0, CurrencyCode("EUR"), transactionCount = 2)
+        )
+        coEvery {
+            multiCurrencyRepository.aggregateDisplayAmounts(
+                listOf(100.0 to "EUR", 100.0 to "USD"),
+                listOf(1, 1),
+                "EUR"
+            )
+        } returns converted
+
+        val summary = taxEstimator.getTaxYearSummary(2026)
+
+        assertApproxEquals(190.0, summary.categorizedDeductions.getValue("Office"), 0.0001)
+        assertApproxEquals(
+            190.0,
+            summary.categorizedDeductionsAggregate.getValue("Office").displayAmount,
+            0.0001
+        )
+        assertEquals(CurrencyCode("EUR"), summary.categorizedDeductionsAggregate.getValue("Office").displayCurrency)
+    }
+
+    @Test
+    fun `getTaxYearSummary fails closed when a required category is unavailable`() = runTest {
+        coEvery { expenseDao.getDepositTotalsBetweenByCurrency(any(), any()) } returns listOf(
+            CurrencyTotal(currency = "EUR", total = 30_000.0, txCount = 1)
+        )
+        coEvery { businessExpenseRepository.getTotalBusinessExpenses(any(), any()) } returns 100.0
+        coEvery { businessExpenseRepository.getTotalMileageDeduction(any(), any()) } returns 0.0
+        coEvery {
+            businessExpenseRepository.getBusinessCategoryCurrencyTotals(any(), any())
+        } returns listOf(BusinessCategoryCurrencyTotal("Office", "UNKNOWN", 100.0, 1))
+        coEvery {
+            multiCurrencyRepository.aggregateDisplayAmounts(any(), any(), "EUR")
+        } returns MoneyAggregateResult.Unavailable(
+            reason = MoneyDisplayUnavailableReasonCode.INVALID_SOURCE_CURRENCY.name,
+            requestedRateBasis = com.yourname.expensetracker.domain.core.money.RateBasis.LATEST_AVAILABLE
+        )
+
+        val failure = runCatching { taxEstimator.getTaxYearSummary(2026) }.exceptionOrNull()
+
+        assertTrue(failure is MoneyDisplayUnavailableException)
+        assertEquals(
+            MoneyDisplayUnavailableReasonCode.INVALID_SOURCE_CURRENCY,
+            (failure as MoneyDisplayUnavailableException).reasonCode
+        )
     }
 
     // =========================================================================

@@ -254,14 +254,21 @@ class TransactionLifecycleCoordinatorConflictResolutionTest {
     @Test
     fun `insert conflict with no source id in STANDARD mode may resolve via fuzzy window`() = runTest(timeout = 60.seconds) {
         stubInsertConflict()
+        coEvery { expenseDao.findIdByDedupeKey(canonicalKey()) } returns null
         coEvery {
             expenseDao.findDuplicateIdCurrencyAware(any(), any(), any(), any(), any(), any(), any(), any())
         } returns 31L
 
-        val result = coordinator.createExpenseStandaloneV2(request(rawNotificationId = null))
+        // A manual create legitimately has no notification identity. Notification
+        // auto-accept requires provenance and must fail before conflict resolution.
+        val result = coordinator.createExpenseStandaloneV2(
+            request(rawNotificationId = null).copy(source = ExpenseSource.MANUAL_ENTRY)
+        )
 
         assertTrue("Expected DuplicateSkipped, got $result", result is CreateExpenseResult.DuplicateSkipped)
         assertEquals(31L, (result as CreateExpenseResult.DuplicateSkipped).existingExpenseId)
+        coVerify(exactly = 0) { expenseDao.findIdByRawNotificationId(any()) }
+        coVerify(exactly = 1) { expenseDao.findIdByDedupeKey(canonicalKey()) }
         coVerify(exactly = 1) { expenseDao.findDuplicateIdCurrencyAware(any(), any(), any(), any(), any(), any(), any(), any()) }
     }
 
@@ -297,12 +304,16 @@ class TransactionLifecycleCoordinatorConflictResolutionTest {
             expenseDao.findDuplicateIdCurrencyAware(any(), any(), any(), any(), any(), any(), any(), any())
         } returns null
 
-        val result = coordinator.createExpenseStandaloneV2(request(rawNotificationId = null))
+        val result = coordinator.createExpenseStandaloneV2(
+            request(rawNotificationId = null).copy(source = ExpenseSource.MANUAL_ENTRY)
+        )
 
         assertTrue(result is CreateExpenseResult.InsertConflict)
         assertEquals(InsertConflictCodes.UNRESOLVED, (result as CreateExpenseResult.InsertConflict).reasonCode)
         // No source id → the raw-notification lookup must not run at all.
         coVerify(exactly = 0) { expenseDao.findIdByRawNotificationId(any()) }
+        coVerify(exactly = 1) { expenseDao.findIdByDedupeKey(canonicalKey()) }
+        coVerify(exactly = 1) { expenseDao.findDuplicateIdCurrencyAware(any(), any(), any(), any(), any(), any(), any(), any()) }
     }
 
     // ── P2-008 (11c): blocking vs resolution policy distinct ────────────────

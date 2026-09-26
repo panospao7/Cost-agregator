@@ -10,6 +10,7 @@ import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
+import java.util.Locale
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -149,6 +150,57 @@ class AdvancedAnalyticsEngineNormalizedTest {
 
         assertTrue(analysis.dayOfWeekStats.isEmpty(), "dayOfWeekStats should be empty for empty input")
         assertTrue(analysis.detectedPatterns.isEmpty(), "detectedPatterns should be empty for empty input")
+    }
+
+    @Test
+    fun `empty normalized results preserve requested display currency across locales`() = runTest {
+        every { timeProvider.now() } returns fixedTimestamp
+
+        engine = AdvancedAnalyticsEngine(
+            expenseRepository,
+            categoryRepository,
+            budgetRepository,
+            currencySettingsRepository,
+            analyticsCurrencyNormalizer,
+            timeProvider,
+            Dispatchers.Unconfined,
+            Dispatchers.Unconfined
+        )
+
+        val warnings = listOf(
+            AnalyticsConversionWarning(
+                type = AnalyticsConversionWarningType.MISSING_EXCHANGE_RATE,
+                message = "Controlled warning",
+                affectedTransactionCount = 1
+            )
+        )
+        val input = NormalizedAnalyticsInput(
+            period = null,
+            homeCurrency = "JPY",
+            includedExpenses = emptyList(),
+            dataQuality = AnalyticsDataQuality(warnings = warnings)
+        )
+        val originalLocale = Locale.getDefault()
+
+        try {
+            listOf(Locale.US, Locale.ENGLISH, Locale.ROOT).forEach { locale ->
+                Locale.setDefault(locale)
+
+                val (patterns, patternWarnings) = engine.getSpendingPatterns(input)
+                val (statistics, statisticWarnings) = engine.getStatisticalInsights(input)
+
+                assertEquals("JPY", patterns.weekendVsWeekday.displayCurrency)
+                assertEquals("JPY", statistics.displayCurrency)
+                assertEquals("JPY", statistics.percentiles.displayCurrency)
+                assertEquals(0, patterns.weekendVsWeekday.weekdayCount)
+                assertEquals(0, patterns.weekendVsWeekday.weekendCount)
+                assertEquals(0, statistics.daysWithSpending)
+                assertEquals(warnings, patternWarnings)
+                assertEquals(warnings, statisticWarnings)
+            }
+        } finally {
+            Locale.setDefault(originalLocale)
+        }
     }
 
     // ---------------------------------------------------------------

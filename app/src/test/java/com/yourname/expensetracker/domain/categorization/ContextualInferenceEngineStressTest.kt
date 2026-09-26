@@ -3,7 +3,9 @@ package com.yourname.expensetracker.domain.categorization
 import io.mockk.mockk
 import org.junit.Assert.*
 import org.junit.Test
-import java.util.Calendar
+import java.time.DayOfWeek
+import java.time.LocalDate
+import java.time.ZoneId
 
 /**
  * Stress tests for ContextualInferenceEngine
@@ -27,7 +29,7 @@ class ContextualInferenceEngineStressTest {
             val prediction = engine.inferFromContext(
                 amount = amount,
                 timestamp = createTimestamp(hour = 12),
-                dayOfWeek = Calendar.MONDAY
+                dayOfWeek = DayOfWeek.MONDAY.value
             )
             
             assertNotNull("Should predict for €$amount", prediction)
@@ -44,7 +46,7 @@ class ContextualInferenceEngineStressTest {
             val prediction = engine.inferFromContext(
                 amount = amount,
                 timestamp = createTimestamp(hour = 12),
-                dayOfWeek = Calendar.MONDAY
+                dayOfWeek = DayOfWeek.MONDAY.value
             )
             
             assertNotNull("Should predict for €$amount", prediction)
@@ -61,7 +63,7 @@ class ContextualInferenceEngineStressTest {
             val prediction = engine.inferFromContext(
                 amount = amount,
                 timestamp = createTimestamp(hour = 12),
-                dayOfWeek = Calendar.MONDAY
+                dayOfWeek = DayOfWeek.MONDAY.value
             )
             
             assertNotNull("Should predict for €$amount", prediction)
@@ -79,7 +81,7 @@ class ContextualInferenceEngineStressTest {
             val prediction = engine.inferFromContext(
                 amount = amount,
                 timestamp = createTimestamp(hour = 12),
-                dayOfWeek = Calendar.MONDAY
+                dayOfWeek = DayOfWeek.MONDAY.value
             )
             
             assertNotNull("Should predict for €$amount", prediction)
@@ -96,7 +98,7 @@ class ContextualInferenceEngineStressTest {
             val prediction = engine.inferFromContext(
                 amount = amount,
                 timestamp = createTimestamp(hour = 12),
-                dayOfWeek = Calendar.MONDAY
+                dayOfWeek = DayOfWeek.MONDAY.value
             )
             
             assertNotNull("Should predict for €$amount", prediction)
@@ -113,7 +115,7 @@ class ContextualInferenceEngineStressTest {
             val prediction = engine.inferFromContext(
                 amount = amount,
                 timestamp = createTimestamp(hour = 12),
-                dayOfWeek = Calendar.MONDAY
+                dayOfWeek = DayOfWeek.MONDAY.value
             )
             
             assertNotNull("Should predict for €$amount", prediction)
@@ -130,7 +132,7 @@ class ContextualInferenceEngineStressTest {
             val prediction = engine.inferFromContext(
                 amount = amount,
                 timestamp = createTimestamp(hour = 12),
-                dayOfWeek = Calendar.MONDAY
+                dayOfWeek = DayOfWeek.MONDAY.value
             )
             
             // Grocery bracket boosts Groceries score
@@ -152,7 +154,7 @@ class ContextualInferenceEngineStressTest {
             val prediction = engine.inferFromContext(
                 amount = amount,
                 timestamp = createTimestamp(hour = 12),
-                dayOfWeek = Calendar.MONDAY
+                dayOfWeek = DayOfWeek.MONDAY.value
             )
             
             assertNotNull("Should handle boundary amount €$amount", prediction)
@@ -171,7 +173,7 @@ class ContextualInferenceEngineStressTest {
             val prediction = engine.inferFromContext(
                 amount = 5.0,
                 timestamp = createTimestamp(hour = hour),
-                dayOfWeek = Calendar.MONDAY
+                dayOfWeek = DayOfWeek.MONDAY.value
             )
             
             assertNotNull("Should predict for $hour:00", prediction)
@@ -190,7 +192,7 @@ class ContextualInferenceEngineStressTest {
             val prediction = engine.inferFromContext(
                 amount = 10.0,
                 timestamp = createTimestamp(hour = hour),
-                dayOfWeek = Calendar.MONDAY
+                dayOfWeek = DayOfWeek.MONDAY.value
             )
             
             assertNotNull("Should predict for $hour:00", prediction)
@@ -207,7 +209,7 @@ class ContextualInferenceEngineStressTest {
             val prediction = engine.inferFromContext(
                 amount = 15.0,
                 timestamp = createTimestamp(hour = hour),
-                dayOfWeek = Calendar.MONDAY
+                dayOfWeek = DayOfWeek.MONDAY.value
             )
             
             assertNotNull("Should predict for $hour:00", prediction)
@@ -224,7 +226,7 @@ class ContextualInferenceEngineStressTest {
             val prediction = engine.inferFromContext(
                 amount = 20.0,
                 timestamp = createTimestamp(hour = hour),
-                dayOfWeek = Calendar.MONDAY
+                dayOfWeek = DayOfWeek.MONDAY.value
             )
             
             assertNotNull("Should predict for $hour:00", prediction)
@@ -239,7 +241,7 @@ class ContextualInferenceEngineStressTest {
             val prediction = engine.inferFromContext(
                 amount = 10.0,
                 timestamp = createTimestamp(hour = hour),
-                dayOfWeek = Calendar.MONDAY
+                dayOfWeek = DayOfWeek.MONDAY.value
             )
             
             if (prediction != null) {
@@ -254,9 +256,9 @@ class ContextualInferenceEngineStressTest {
 
     @Test
     fun `stress - weekday vs weekend`() {
-        val weekdays = listOf(Calendar.MONDAY, Calendar.TUESDAY, Calendar.WEDNESDAY, 
-                              Calendar.THURSDAY, Calendar.FRIDAY)
-        val weekends = listOf(Calendar.SATURDAY, Calendar.SUNDAY)
+        val weekdays = listOf(DayOfWeek.MONDAY.value, DayOfWeek.TUESDAY.value, DayOfWeek.WEDNESDAY.value, 
+                              DayOfWeek.THURSDAY.value, DayOfWeek.FRIDAY.value)
+        val weekends = listOf(DayOfWeek.SATURDAY.value, DayOfWeek.SUNDAY.value)
         
         weekdays.forEach { day ->
             val prediction = engine.inferFromContext(
@@ -289,7 +291,7 @@ class ContextualInferenceEngineStressTest {
             val prediction = engine.inferFromContext(
                 amount = amount,
                 timestamp = createTimestamp(hour = 12),
-                dayOfWeek = Calendar.SATURDAY
+                dayOfWeek = DayOfWeek.SATURDAY.value
             )
             
             assertNotNull("Should predict for weekend amount €$amount", prediction)
@@ -305,7 +307,7 @@ class ContextualInferenceEngineStressTest {
         val prediction = engine.inferFromContext(
             amount = 10.0,
             timestamp = createTimestamp(hour = 12),
-            dayOfWeek = Calendar.MONDAY,
+            dayOfWeek = DayOfWeek.MONDAY.value,
             notificationSource = "com.revolut.revolut"
         )
         
@@ -326,7 +328,7 @@ class ContextualInferenceEngineStressTest {
             val prediction = engine.inferFromContext(
                 amount = 10.0,
                 timestamp = createTimestamp(hour = 12),
-                dayOfWeek = Calendar.MONDAY,
+                dayOfWeek = DayOfWeek.MONDAY.value,
                 notificationSource = source
             )
             
@@ -341,7 +343,7 @@ class ContextualInferenceEngineStressTest {
         val prediction = engine.inferFromContext(
             amount = 25.0,
             timestamp = createTimestamp(hour = 12),
-            dayOfWeek = Calendar.MONDAY,
+            dayOfWeek = DayOfWeek.MONDAY.value,
             notificationSource = "com.google.android.apps.walletnfcrel"
         )
         
@@ -442,7 +444,7 @@ class ContextualInferenceEngineStressTest {
         val prediction = engine.inferFromContext(
             amount = 0.10,  // Very tiny
             timestamp = createTimestamp(hour = 3),  // Night with no boost
-            dayOfWeek = Calendar.WEDNESDAY  // Weekday
+            dayOfWeek = DayOfWeek.WEDNESDAY.value  // Weekday
         )
         
         // May or may not return null depending on threshold
@@ -466,7 +468,7 @@ class ContextualInferenceEngineStressTest {
                 val prediction = engine.inferFromContext(
                     amount = amount,
                     timestamp = createTimestamp(hour = hour),
-                    dayOfWeek = Calendar.MONDAY
+                    dayOfWeek = DayOfWeek.MONDAY.value
                 )
                 
                 assertNotNull("Should handle €$amount at $hour:00", prediction)
@@ -478,7 +480,7 @@ class ContextualInferenceEngineStressTest {
     fun `stress - all factor combinations`() {
         val amounts = listOf(5.0, 25.0, 75.0)
         val hours = listOf(8, 13, 20)
-        val days = listOf(Calendar.MONDAY, Calendar.SATURDAY)
+        val days = listOf(DayOfWeek.MONDAY.value, DayOfWeek.SATURDAY.value)
         val sources = listOf(null, "com.revolut.revolut", "gr.nbg.mobilebanking")
         
         var combinationCount = 0
@@ -512,7 +514,7 @@ class ContextualInferenceEngineStressTest {
         val prediction = engine.inferFromContext(
             amount = 0.0,
             timestamp = createTimestamp(hour = 12),
-            dayOfWeek = Calendar.MONDAY
+            dayOfWeek = DayOfWeek.MONDAY.value
         )
         
         // Zero amount may or may not return prediction depending on other factors
@@ -526,7 +528,7 @@ class ContextualInferenceEngineStressTest {
         val prediction = engine.inferFromContext(
             amount = -10.0,
             timestamp = createTimestamp(hour = 12),
-            dayOfWeek = Calendar.MONDAY
+            dayOfWeek = DayOfWeek.MONDAY.value
         )
         
         // Negative amounts should be handled gracefully
@@ -540,7 +542,7 @@ class ContextualInferenceEngineStressTest {
         val prediction = engine.inferFromContext(
             amount = 1000000.0,
             timestamp = createTimestamp(hour = 12),
-            dayOfWeek = Calendar.MONDAY
+            dayOfWeek = DayOfWeek.MONDAY.value
         )
         
         assertNotNull("Should handle very large amount", prediction)
@@ -552,7 +554,7 @@ class ContextualInferenceEngineStressTest {
     fun `stress - null day of week`() {
         val prediction = engine.inferFromContext(
             amount = 10.0,
-            timestamp = createTimestamp(hour = 12, dayOfWeek = Calendar.FRIDAY),
+            timestamp = createTimestamp(hour = 12, dayOfWeek = DayOfWeek.FRIDAY.value),
             dayOfWeek = null  // Should use timestamp
         )
         
@@ -564,7 +566,7 @@ class ContextualInferenceEngineStressTest {
         val prediction = engine.inferFromContext(
             amount = 10.0,
             timestamp = createTimestamp(hour = 12),
-            dayOfWeek = Calendar.MONDAY,
+            dayOfWeek = DayOfWeek.MONDAY.value,
             notificationSource = null
         )
         
@@ -575,7 +577,7 @@ class ContextualInferenceEngineStressTest {
     fun `stress - all null optional parameters`() {
         val prediction = engine.inferFromContext(
             amount = 25.0,
-            timestamp = createTimestamp(hour = 12, dayOfWeek = Calendar.SATURDAY),
+            timestamp = createTimestamp(hour = 12, dayOfWeek = DayOfWeek.SATURDAY.value),
             dayOfWeek = null,
             notificationSource = null
         )
@@ -588,7 +590,7 @@ class ContextualInferenceEngineStressTest {
         val prediction = engine.inferFromContext(
             amount = 10.0,
             timestamp = createTimestamp(hour = 12),
-            dayOfWeek = Calendar.MONDAY,
+            dayOfWeek = DayOfWeek.MONDAY.value,
             notificationSource = "com.unknown.app"
         )
         
@@ -600,7 +602,7 @@ class ContextualInferenceEngineStressTest {
         val prediction = engine.inferFromContext(
             amount = 7.0,  // Small amount
             timestamp = createTimestamp(hour = 8),  // Morning
-            dayOfWeek = Calendar.SATURDAY,  // Weekend
+            dayOfWeek = DayOfWeek.SATURDAY.value,  // Weekend
             notificationSource = "com.revolut.revolut"
         )
         
@@ -642,19 +644,30 @@ class ContextualInferenceEngineStressTest {
         assertTrue("Should process 1000 surnames quickly", duration < 500_000_000)
     }
 
-    // Helper function
-    private fun createTimestamp(hour: Int, dayOfWeek: Int = Calendar.MONDAY): Long {
-        val cal = Calendar.getInstance()
-        cal.set(Calendar.HOUR_OF_DAY, hour)
-        cal.set(Calendar.MINUTE, 0)
-        cal.set(Calendar.SECOND, 0)
-        cal.set(Calendar.MILLISECOND, 0)
-        
-        // Set to specified day of week
-        val currentDay = cal.get(Calendar.DAY_OF_WEEK)
-        val daysDiff = dayOfWeek - currentDay
-        cal.add(Calendar.DAY_OF_YEAR, daysDiff)
-        
-        return cal.timeInMillis
+    @Test
+    fun `timestamp weekday fallback agrees with explicit ISO weekdays`() {
+        DayOfWeek.values().forEach { day ->
+            val timestamp = createTimestamp(hour = 12, dayOfWeek = day.value)
+            val explicit = engine.inferFromContext(20.0, timestamp, day.value)
+            val inferred = engine.inferFromContext(20.0, timestamp)
+            assertNotNull("Expected a prediction for $day", explicit)
+            assertNotNull("Expected a timestamp-derived prediction for $day", inferred)
+            assertEquals(explicit!!.categoryName, inferred!!.categoryName)
+            assertEquals(explicit.confidence, inferred.confidence, 0.0)
+            assertEquals(explicit.reason, inferred.reason)
+            assertEquals(
+                day == DayOfWeek.SATURDAY || day == DayOfWeek.SUNDAY,
+                inferred.reason.contains("weekend")
+            )
+        }
     }
+
+    // Helper function
+    private fun createTimestamp(hour: Int, dayOfWeek: Int = DayOfWeek.MONDAY.value): Long =
+        LocalDate.of(2026, 4, 13) // A fixed Monday; the engine uses ISO weekdays.
+            .with(DayOfWeek.of(dayOfWeek))
+            .atTime(hour, 0)
+            .atZone(ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli()
 }

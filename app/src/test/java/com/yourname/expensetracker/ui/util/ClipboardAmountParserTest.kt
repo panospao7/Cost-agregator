@@ -38,7 +38,10 @@ class ClipboardAmountParserTest {
     }
 
     private fun clipboardWithText(text: String): ClipboardManager {
-        val clipData = ClipData.newPlainText("label", text)
+        val item = mockk<ClipData.Item>()
+        every { item.text } returns text
+        val clipData = mockk<ClipData>()
+        every { clipData.getItemAt(0) } returns item
         return mockk {
             every { hasPrimaryClip() } returns true
             every { primaryClip } returns clipData

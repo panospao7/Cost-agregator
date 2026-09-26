@@ -147,7 +147,7 @@ class RecurringOccurrenceExpanderTest {
         // Anchor Aug 31, 2026 -> Feb 2027 (28 days) -> Aug 2027 (31 days).
         val anchor = dayOf(2026, 8, 31)
         val start = dayOf(2026, 8, 1)
-        val end = dayOf(2027, 8, 1)
+        val end = dayOf(2027, 9, 1)
 
         val result = expander.expand(request(RecurrenceFrequency.SEMI_ANNUALLY, anchor, start, end))
 
@@ -308,7 +308,8 @@ class RecurringOccurrenceExpanderTest {
                 LocalDate.of(2025, 2, 28),
                 LocalDate.of(2026, 2, 28),
                 LocalDate.of(2027, 2, 28),
-                LocalDate.of(2028, 2, 29)
+                LocalDate.of(2028, 2, 29),
+                LocalDate.of(2029, 2, 28)
             ),
             dueDays
         )

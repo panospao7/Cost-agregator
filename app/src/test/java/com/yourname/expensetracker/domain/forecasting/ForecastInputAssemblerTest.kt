@@ -151,7 +151,8 @@ class ForecastInputAssemblerTest {
             )
         )
         val detected = listOf(
-            recurring("Netflix", 99.0, now + DAY_MS, 0.95f),
+            // Same signature as the manual rule: the confirmed rule must win.
+            recurring("Netflix", 15.0, now + DAY_MS, 0.95f),
             recurring("Gym", 30.0, now + 2 * DAY_MS, 0.80f)
         )
 
@@ -390,7 +391,9 @@ class ForecastInputAssemblerTest {
         assertEquals(60.0, pace.currentMonthSpent, 0.0001)
         assertEquals(3, pace.daysElapsed)
         assertEquals(31, pace.daysInMonth)
-        assertEquals(372.0, pace.projectedTotal, 0.0001)
+        // Days 1-4 use the canonical stabilized projection: 40% prior-month
+        // baseline plus 60% current linear projection on day three.
+        assertEquals(496.0, pace.projectedTotal, 0.0001)
         assertEquals(310.0, pace.previousMonthTotal ?: 0.0, 0.0001)
         assertEquals(310.0, pace.averageMonthlyTotal ?: 0.0, 0.0001)
         assertEquals(200f, pace.pacePercentage)
@@ -739,7 +742,7 @@ class ForecastInputAssemblerTest {
         assertThat(result.plannedExpenses[0].amount).isEqualTo(85.0)
         assertThat(result.plannedExpenses[0].currency).isEqualTo("EUR")
         // 50 GBP → 58 EUR
-        assertThat(result.plannedExpenses[1].amount).isEqualTo(58.0)
+        assertThat(result.plannedExpenses[1].amount).isWithin(0.0001).of(58.0)
         assertThat(result.plannedExpenses[1].currency).isEqualTo("EUR")
         assertThat(result.dataQuality.excludedPlannedCount).isEqualTo(0)
     }

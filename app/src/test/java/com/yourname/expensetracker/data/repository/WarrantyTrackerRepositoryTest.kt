@@ -196,10 +196,21 @@ class WarrantyTrackerRepositoryTest {
 
         val result = repository.extractWarrantyFromReceipt(receipt)
 
-        val endDate = Instant.ofEpochMilli(result!!.warrantyEndDate).atZone(ZoneId.systemDefault()).toLocalDate()
-        assertEquals(2024, endDate.year)
-        assertEquals(2, endDate.monthValue)
-        assertEquals(29, endDate.dayOfMonth)
+        // Stored warranty ends are exclusive: Jan 31 plus one calendar month is
+        // covered through Feb 29, so the stored boundary is Mar 1 at 00:00.
+        val exclusiveEndDate = Instant.ofEpochMilli(result!!.warrantyEndDate)
+            .atZone(ZoneId.systemDefault())
+            .toLocalDate()
+        assertEquals(2024, exclusiveEndDate.year)
+        assertEquals(3, exclusiveEndDate.monthValue)
+        assertEquals(1, exclusiveEndDate.dayOfMonth)
+
+        val lastCoveredDate = Instant.ofEpochMilli(result.warrantyEndDate - 1L)
+            .atZone(ZoneId.systemDefault())
+            .toLocalDate()
+        assertEquals(2024, lastCoveredDate.year)
+        assertEquals(2, lastCoveredDate.monthValue)
+        assertEquals(29, lastCoveredDate.dayOfMonth)
     }
 
     @Test

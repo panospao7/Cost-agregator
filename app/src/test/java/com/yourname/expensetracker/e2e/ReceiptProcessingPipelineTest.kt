@@ -20,10 +20,12 @@ import com.yourname.expensetracker.domain.receipt.OcrResult
 import com.yourname.expensetracker.domain.receipt.ReceiptOcrService
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.mockk
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -39,7 +41,9 @@ class ReceiptProcessingPipelineTest : AnalyticsEngineTestBase() {
     private lateinit var merchantCategoryRepository: MerchantCategoryRepository
     private lateinit var categoryRepositoryProvider: Provider<CategoryRepository>
 
-    private val ocrService = mockk<ReceiptOcrService>(relaxed = true)
+    private val ocrService = mockk<ReceiptOcrService>()
+    // OCR is the mocked boundary; this JVM test never dereferences the Android URI.
+    private val imageUri = mockk<Uri>()
 
     @Before
     override fun setUp() {
@@ -83,13 +87,13 @@ class ReceiptProcessingPipelineTest : AnalyticsEngineTestBase() {
     fun `ocr text parsed and categorized correctly`() = runTest {
         // Arrange
         val ocrText = "Lidl\nTotal: €45.30\n05.03.2026"
-        coEvery { ocrService.processImage(any()) } returns createOcrResult(ocrText)
+        coEvery { ocrService.processImage(imageUri) } returns createOcrResult(ocrText)
         coEvery { merchantCategoryRepository.getAll() } returns listOf(
             MerchantCategory(merchantPattern = "lidl", categoryId = 2L)
         )
 
         // Act
-        val ocrResult = ocrService.processImage(Uri.parse("file:///test.jpg"))
+        val ocrResult = ocrService.processImage(imageUri)
         val parsed = receiptParser.parse(ocrResult.fullText)
         val categorization = categorizationEngine.categorizeWithContext(
             merchant = parsed.merchantName ?: "",
@@ -110,29 +114,32 @@ class ReceiptProcessingPipelineTest : AnalyticsEngineTestBase() {
     @Test
     fun `ocr failure handled gracefully`() = runTest {
         // Arrange
-        coEvery { ocrService.processImage(any()) } throws IllegalStateException("OCR failed")
+        val expectedFailure = IllegalStateException("OCR failed")
+        coEvery { ocrService.processImage(imageUri) } throws expectedFailure
 
         // Act
-        val parsed = runCatching {
-            val ocrResult = ocrService.processImage(Uri.parse("file:///test.jpg"))
+        val outcome = runCatching {
+            val ocrResult = ocrService.processImage(imageUri)
             receiptParser.parse(ocrResult.fullText)
-        }.getOrNull()
+        }
 
         // Assert
-        assertNull(parsed)
+        assertSame(expectedFailure, outcome.exceptionOrNull())
+        assertNull(outcome.getOrNull())
+        coVerify(exactly = 1) { ocrService.processImage(imageUri) }
     }
 
     @Test
     fun `greek text normalization parses and categorizes correctly`() = runTest {
         // Arrange
         val ocrText = "Σκλαβενίτης\nΣΥΝΟΛΟ 12,40\n05.03.2026"
-        coEvery { ocrService.processImage(any()) } returns createOcrResult(ocrText)
+        coEvery { ocrService.processImage(imageUri) } returns createOcrResult(ocrText)
         coEvery { merchantCategoryRepository.getAll() } returns listOf(
             MerchantCategory(merchantPattern = "sklavenitis", categoryId = 2L)
         )
 
         // Act
-        val ocrResult = ocrService.processImage(Uri.parse("file:///test.jpg"))
+        val ocrResult = ocrService.processImage(imageUri)
         val parsed = receiptParser.parse(ocrResult.fullText)
         val categorization = categorizationEngine.categorize(parsed.merchantName ?: "")
 
@@ -151,11 +158,11 @@ class ReceiptProcessingPipelineTest : AnalyticsEngineTestBase() {
     fun `unknown merchant categorized as Uncategorized`() = runTest {
         // Arrange
         val ocrText = "QWERTYZX\nTOTAL 19.99\n05.03.2026"
-        coEvery { ocrService.processImage(any()) } returns createOcrResult(ocrText)
+        coEvery { ocrService.processImage(imageUri) } returns createOcrResult(ocrText)
         coEvery { merchantCategoryRepository.getAll() } returns emptyList()
 
         // Act
-        val ocrResult = ocrService.processImage(Uri.parse("file:///test.jpg"))
+        val ocrResult = ocrService.processImage(imageUri)
         val parsed = receiptParser.parse(ocrResult.fullText)
         val categorization = categorizationEngine.categorize(parsed.merchantName ?: "")
         val finalCategoryName = categorization.categoryName ?: "Uncategorized"

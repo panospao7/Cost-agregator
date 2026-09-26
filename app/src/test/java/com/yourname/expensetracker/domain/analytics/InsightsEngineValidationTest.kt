@@ -2,13 +2,19 @@ package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
+import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
+import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
+import com.yourname.expensetracker.domain.model.RecurrenceFrequency
+import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -17,6 +23,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.util.Calendar
+import kotlin.test.assertFailsWith
 
 /**
  * Validation tests for InsightsEngine to ensure monthly comparisons,
@@ -33,7 +40,8 @@ class InsightsEngineValidationTest {
 
     private lateinit var engine: InsightsEngine
     private lateinit var expenseRepository: ExpenseRepository
-    private lateinit var recurringExpenseEngine: com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
+    private lateinit var recurringExpenseEngine: RecurringExpenseEngine
+    private lateinit var recurringExpenseRepository: RecurringExpenseRepository
     private lateinit var timeProvider: TimeProvider
     private lateinit var spendingPaceCalculator: SpendingPaceCalculator
     private lateinit var anomalyDetector: AnomalyDetector
@@ -80,6 +88,7 @@ class InsightsEngineValidationTest {
     fun setup() {
         expenseRepository = mockk(relaxed = true)
         recurringExpenseEngine = mockk(relaxed = true)
+        recurringExpenseRepository = mockk(relaxed = true)
         timeProvider = mockk(relaxed = true)
         spendingPaceCalculator = mockk(relaxed = true)
         anomalyDetector = mockk(relaxed = true)
@@ -479,6 +488,98 @@ class InsightsEngineValidationTest {
     // ========== SCENARIO 6: Empty Period Handling ==========
 
     @Test
+    fun `recurring insights preserve each pattern source currency`() = runTest {
+        every { timeProvider.now() } returns createDate(2024, 4, 15, 12, 0)
+        installRealRecurringEngine(
+            listOf(manualRecurringExpense(currency = "USD", amount = 100.0))
+        )
+
+        val snapshot = engine.generateInsights(
+            categories = emptyList(),
+            allExpenses = emptyList(),
+            displayCurrency = "EUR"
+        )
+
+        assertEquals(1, snapshot.recurringExpenses.size)
+        assertEquals(100.0, snapshot.recurringExpenses.single().avgAmount, 0.0)
+        assertEquals("USD", snapshot.recurringExpenses.single().displayCurrency)
+        assertTrue(snapshot.conversionWarnings.isEmpty())
+
+        val legacy = engine.getLegacyInsights(snapshot, homeCurrency = "EUR")
+            .single { it.type == InsightType.RECURRING_DETECTED }
+        val rendered = (legacy.description as UiText.DynamicString).value
+        assertTrue(rendered.contains("100"))
+        assertTrue(rendered.contains("monthly"))
+        assertTrue(!rendered.contains("€"))
+    }
+
+    @Test
+    fun `invalid recurring source currency is excluded with a typed warning`() = runTest {
+        every { timeProvider.now() } returns createDate(2024, 4, 15, 12, 0)
+        installRealRecurringEngine(
+            listOf(
+                manualRecurringExpense(currency = "USD", amount = 100.0),
+                manualRecurringExpense(
+                    currency = "UNKNOWN",
+                    amount = 75.0,
+                    merchant = "Invalid rule",
+                    id = 2L
+                )
+            )
+        )
+        val existingWarning = AnalyticsConversionWarning(
+            type = AnalyticsConversionWarningType.MISSING_EXCHANGE_RATE,
+            message = AnalyticsConversionWarningType.MISSING_EXCHANGE_RATE.name,
+            affectedTransactionCount = 2
+        )
+
+        val snapshot = engine.generateInsights(
+            categories = emptyList(),
+            allExpenses = emptyList(),
+            displayCurrency = "EUR",
+            conversionWarnings = listOf(existingWarning)
+        )
+
+        assertEquals(1, snapshot.recurringExpenses.size)
+        assertEquals("USD", snapshot.recurringExpenses.single().displayCurrency)
+        assertEquals(2, snapshot.conversionWarnings.size)
+        assertEquals(existingWarning, snapshot.conversionWarnings.first())
+        val invalidWarning = snapshot.conversionWarnings.last()
+        assertEquals(AnalyticsConversionWarningType.INVALID_TRANSACTION_CURRENCY, invalidWarning.type)
+        assertEquals(AnalyticsConversionWarningType.INVALID_TRANSACTION_CURRENCY.name, invalidWarning.message)
+        assertEquals(1, invalidWarning.affectedTransactionCount)
+    }
+
+    @Test
+    fun `detected recurring pattern already in display currency is not relabeled or converted`() = runTest {
+        every { timeProvider.now() } returns createDate(2024, 4, 15, 12, 0)
+        installRealRecurringEngine(emptyList())
+        val expenses = listOf(
+            createExpense(id = 101L, amount = 100.0, date = createDate(2024, 1, 15), merchant = "Detected subscription"),
+            createExpense(id = 102L, amount = 100.0, date = createDate(2024, 2, 15), merchant = "Detected subscription"),
+            createExpense(id = 103L, amount = 100.0, date = createDate(2024, 3, 15), merchant = "Detected subscription")
+        )
+
+        val snapshot = engine.generateInsights(emptyList(), expenses, "EUR")
+
+        val recurring = snapshot.recurringExpenses.single()
+        assertEquals(100.0, recurring.avgAmount, 0.0)
+        assertEquals("EUR", recurring.displayCurrency)
+        assertTrue(snapshot.conversionWarnings.isEmpty())
+    }
+
+    @Test
+    fun `recurring repository cancellation propagates through insights`() = runTest {
+        every { timeProvider.now() } returns createDate(2024, 4, 15, 12, 0)
+        installRealRecurringEngine(emptyList())
+        coEvery { recurringExpenseRepository.getAll() } throws CancellationException("cancelled")
+
+        assertFailsWith<CancellationException> {
+            engine.generateInsights(emptyList(), emptyList(), "EUR")
+        }
+    }
+
+    @Test
     fun `empty expenses list returns valid snapshot with zeros`() = runTest {
         // Given: No expenses
         every { timeProvider.now() } returns createDate(2024, 4, 15, 12, 0)
@@ -519,6 +620,41 @@ class InsightsEngineValidationTest {
     ): AnalyticsCategoryRef {
         return AnalyticsCategoryRef(id = id, name = name, icon = icon, color = color)
     }
+
+    private fun installRealRecurringEngine(manualRules: List<ManualRecurringExpense>) {
+        coEvery { recurringExpenseRepository.getAll() } returns manualRules
+        recurringExpenseEngine = RecurringExpenseEngine(
+            expenseRepository = expenseRepository,
+            recurringExpenseRepository = recurringExpenseRepository,
+            timeProvider = timeProvider
+        )
+        engine = InsightsEngine(
+            expenseRepository = expenseRepository,
+            recurringExpenseEngine = recurringExpenseEngine,
+            timeProvider = timeProvider,
+            spendingPaceCalculator = spendingPaceCalculator,
+            anomalyDetector = anomalyDetector,
+            monthlyComparisonCalculator = monthlyComparisonCalculator,
+            categoryInsightEngine = categoryInsightEngine,
+            merchantInsightEngine = merchantInsightEngine,
+            dayOfWeekAnalyzer = dayOfWeekAnalyzer
+        )
+    }
+
+    private fun manualRecurringExpense(
+        currency: String,
+        amount: Double,
+        merchant: String = "Manual subscription",
+        id: Long = 1L
+    ): ManualRecurringExpense = ManualRecurringExpense(
+        id = id,
+        merchant = merchant,
+        amount = amount,
+        currency = currency,
+        frequency = RecurrenceFrequency.MONTHLY,
+        nextDate = createDate(2024, 5, 1),
+        isActive = true
+    )
 
     private fun TransactionType.toDomainTransactionType(): DomainTransactionType {
         return when (this) {

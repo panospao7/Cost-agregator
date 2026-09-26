@@ -215,12 +215,12 @@ class KeystoreInstallationSecretHashingTest {
         val hasher = newHasher(FakeInstallationSecretKeyProvider())
         val sanitizer = newSanitizer(hasher)
         val sanitized = sanitizer.sanitizeText(
-            raw = "john.doe@example.com", // fully redacted → blank → fallback path
+            raw = "   ",
             maxChars = 2000,
             fallbackPrefix = "text"
         )
         assertTrue(sanitized.startsWith("text_v1_"))
-        assertFalse(sanitized.contains("john.doe@example.com".sha256Prefix()))
+        assertFalse(sanitized.contains("".sha256Prefix()))
     }
 
     // ── Legacy artifact treatment ─────────────────────────────────────────────
@@ -236,7 +236,7 @@ class KeystoreInstallationSecretHashingTest {
         assertTrue("modern artifacts carry a version marker", modern.startsWith("merchant_v"))
     }
 
-    // ── Phone floor: currency/amount corpus must not falsely redact ───────────
+    // ── Phone/amount separation: preserve amounts without leaking contacts ───
 
     @Test
     fun `corpus_amount_and_currency_strings_are_not_falsely_redacted_as_phone`() {
@@ -245,7 +245,8 @@ class KeystoreInstallationSecretHashingTest {
             "4.99", "12,50", "12.50", "1.234,56", "1,234.56",
             "1234.56", "12 345,67", "12345.67", "€19,99", "19.99€",
             "\$1,299.00", "EUR 45.90", "45.90 EUR", "GBP 129", "129 GBP",
-            "3 x 9,99", "total 89,90", "(-12.34)", "0.01", "999,999.99"
+            "3 x 9,99", "total 89,90", "(-12.34)", "0.01", "999,999.99",
+            "123 456.78", "123.456,78"
         )
         for (amount in amounts) {
             val sanitized = sanitizer.sanitizeText(
@@ -257,6 +258,7 @@ class KeystoreInstallationSecretHashingTest {
                 "amount '$amount' must not be falsely redacted as a phone: $sanitized",
                 sanitized.contains("[REDACTED_PHONE]")
             )
+            assertEquals("Payment of $amount at a shop", sanitized)
         }
     }
 
@@ -282,6 +284,57 @@ class KeystoreInstallationSecretHashingTest {
         }
     }
 
+    @Test
+    fun `short local phone numbers and long formatted runs remain redacted`() {
+        val sanitizer = newSanitizer(newHasher(FakeInstallationSecretKeyProvider()))
+        for (phone in listOf(
+            "555-0123", "22 12 34 56", "021-234-567", "22123456",
+            "22.12.34.56 33.12.34.56", "12345.67"
+        )) {
+            assertEquals(
+                "labelled phone must be redacted: $phone",
+                "Phone: [REDACTED_PHONE]",
+                sanitizer.sanitizeText("Phone: $phone", 2000, "text")
+            )
+        }
+        assertEquals(
+            "Phone: #[REDACTED_PHONE]",
+            sanitizer.sanitizeText("Phone: #22 12 34 56", 2000, "text")
+        )
+        assertEquals(
+            "Contact [REDACTED_PHONE] now",
+            sanitizer.sanitizeText("Contact 22 12 34 56 now", 2000, "text")
+        )
+        assertEquals(
+            "Phone: [REDACTED_PHONE]",
+            sanitizer.sanitizeText("Phone:" + " ".repeat(64) + "12345.67", 2000, "text")
+        )
+    }
+
+    @Test
+    fun `cloud redactor masks local phones without consuming adjacent amounts or dates`() {
+        val redactor = newRedactor(newHasher(FakeInstallationSecretKeyProvider()))
+        val raw = "Email: example@example.com\nPhone: 22 12 34 56\nTotal: 12345.67\nDate: 2026-09-26"
+        for (purpose in listOf(CloudPayloadPurpose.RECEIPT_ASSIST, CloudPayloadPurpose.WARRANTY_EXTRACTION)) {
+            val result = redactor.redactText(raw, purpose)
+            assertEquals(
+                "Email: [REDACTED_EMAIL] Phone: [REDACTED_PHONE] Total: 12345.67 Date: 2026-09-26",
+                result.text
+            )
+            assertTrue(result.fieldsRedacted.contains("phone"))
+        }
+    }
+
+    @Test
+    fun `numeric classification preserves date and identifier text and dedicated pii markers`() {
+        val sanitizer = newSanitizer(newHasher(FakeInstallationSecretKeyProvider()))
+        for (value in listOf("Date: 2026-09-26", "Date: 26.09.2026", "Invoice #2024-001")) {
+            assertEquals(value, sanitizer.sanitizeText(value, 2000, "text"))
+        }
+        assertEquals("SSN: [REDACTED_SSN]", sanitizer.sanitizeText("SSN: 123-45-6789", 2000, "text"))
+        assertEquals("Card: [REDACTED_CARD]", sanitizer.sanitizeText("Card: 4111 1111 1111 1111", 2000, "text"))
+    }
+
     // ── Keystore key-provider wiring sanity (JVM-safe assertions) ──────────────
 
     @Test
@@ -301,7 +354,7 @@ class KeystoreInstallationSecretHashingTest {
         // The production provider is Keystore-backed and cannot run on the JVM;
         // assert the wiring type contract instead of instantiating it.
         assertEquals(
-            InstallationSecretKeyProvider::class,
+            InstallationSecretKeyProvider::class.java,
             AndroidKeystoreInstallationSecretKeyProvider().javaClass.interfaces.single()
         )
         assertNotNull(KeyStore.getDefaultType())

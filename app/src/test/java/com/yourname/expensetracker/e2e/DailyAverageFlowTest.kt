@@ -10,6 +10,9 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class DailyAverageFlowTest : ViewModelTestUtils() {
@@ -23,16 +26,21 @@ class DailyAverageFlowTest : ViewModelTestUtils() {
 
         val pipeline = buildPipeline(expenses = expenses, nowMs = now)
         val period = pipeline.advancedAnalyticsEngine.getPeriodRange(AnalyticsPeriod.MONTH, now)
+        val zone = ZoneId.systemDefault()
+        assertEquals(LocalDate.of(2026, 3, 1), Instant.ofEpochMilli(period.startMs).atZone(zone).toLocalDate())
+        assertEquals(LocalDate.of(2026, 4, 1), Instant.ofEpochMilli(period.endMs).atZone(zone).toLocalDate())
 
         val daoExpenses = pipeline.expenseDao.getExpensesBetween(period.startMs, period.endMs)
         assertEquals(30, daoExpenses.size)
 
         val stats = pipeline.advancedAnalyticsEngine.getStatisticalInsights(period, displayCurrency = "EUR").first
         val engineAverage = stats.averageDailySpend
+        assertEquals(30, stats.daysWithSpending)
+        assertEquals(1, stats.daysWithoutSpending)
 
         val vmState = pipeline.awaitViewModelState(testDispatcher)
-        val vmRange = vmState.currentDateRange
-        val vmAverage = if (vmRange != null) {
+        val vmRange = requireNotNull(vmState.currentDateRange) { "Loaded analytics must expose its date range" }
+        val vmAverage = run {
             val vmPeriod = AnalyticsPeriodRange(
                 period = AnalyticsPeriod.CUSTOM,
                 startMs = vmRange.first,
@@ -43,12 +51,14 @@ class DailyAverageFlowTest : ViewModelTestUtils() {
             pipeline.advancedAnalyticsEngine
                 .getStatisticalInsights(vmPeriod, displayCurrency = "EUR")
                 .first.averageDailySpend
-        } else {
-            -1.0
         }
-        val viewModelAverage = vmState.statisticalInsights?.averageDailySpend ?: -1.0
+        val viewModelAverage = requireNotNull(vmState.statisticalInsights) {
+            "Loaded analytics must expose statistical insights"
+        }.averageDailySpend
 
-        assertApproxEquals(30.0, engineAverage)
+        // March has 31 calendar days, including the zero-spend March 31.
+        // Dividing by the 30 spending days would incorrectly produce 30.0.
+        assertApproxEquals(900.0 / 31.0, engineAverage)
         assertApproxEquals(vmAverage, viewModelAverage)
     }
 }

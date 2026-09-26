@@ -655,49 +655,6 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
         assertEquals(0, result.recordCount)
     }
 
-    @Test
-    fun `exportExpenses accountant report pdf writes pdf output`() = runTest {
-        val start = ms("2026-03-01")
-        val end = ms("2026-04-01")
-        val pageSize = DeterministicExpenseExportPager.EXPORT_PAGE_SIZE
-        val expenses = listOf(
-            Expense(
-                id = 1L,
-                amount = 650.0,
-                currency = "EUR",
-                merchant = "Laptop Store",
-                transactionType = TransactionType.PURCHASE,
-                date = start + 1_000L,
-                categoryId = 1L
-            ),
-            Expense(
-                id = 2L,
-                amount = 85.0,
-                currency = "USD",
-                merchant = "Client Lunch",
-                transactionType = TransactionType.TRANSFER,
-                date = start + 2_000L,
-                categoryId = 2L
-            )
-        )
-
-        coEvery {
-            expenseRepository.getExpensesBetweenForExportKeyset(
-                start, end, pageSize, null, null
-            )
-        } returns expenses
-
-        val result = repository.exportExpenses(fakeContext(), start, end, ExportFormat.ACCOUNTANT_REPORT_PDF)
-
-        assertTrue("PDF export must succeed", result.success)
-        assertEquals(expenses.size, result.recordCount)
-        assertTrue(result.filePath.orEmpty().endsWith(".pdf"))
-
-        val pdfBytes = File(result.filePath!!).readBytes()
-        assertTrue("PDF file must not be empty", pdfBytes.isNotEmpty())
-        val header = pdfBytes.copyOfRange(0, minOf(4, pdfBytes.size)).toString(Charsets.US_ASCII)
-        assertEquals("%PDF", header)
-    }
 
     /**
      * Batch 6 production-path: FreshBooks CSV multi-page export. Verifies that

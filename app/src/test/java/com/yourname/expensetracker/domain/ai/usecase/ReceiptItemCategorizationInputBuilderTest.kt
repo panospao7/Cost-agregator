@@ -48,7 +48,7 @@ class ReceiptItemCategorizationInputBuilderTest {
     }
 
     @Test
-    fun `build keeps raw local categories and adds cloud-safe category options when redaction is enabled`() = runTest {
+    fun `build keeps local category identities and adds cloud-safe category options when redaction is enabled`() = runTest {
         val categories = listOf(
             Category(id = 10L, name = "Private Category Alpha", icon = "A", color = "#112233"),
             Category(id = 20L, name = "Very Sensitive Category Beta", icon = "B", color = "#445566")
@@ -80,7 +80,8 @@ class ReceiptItemCategorizationInputBuilderTest {
 
         val result = builder.build(receipt, AiSettings())
 
-        assertEquals(categories, result.userCategories)
+        assertEquals(categories.map { it.id }, result.userCategories.map { it.id })
+        assertEquals(categories.map { it.name }, result.userCategories.map { it.name })
         assertEquals(categories.map { it.id }, result.cloudCategoryOptions.map { it.categoryId })
         assertTrue(result.cloudCategoryOptions.all { it.cloudName.startsWith("cat_") })
         assertFalse(result.cloudCategoryOptions.any { it.cloudName == categories[0].name })

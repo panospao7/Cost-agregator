@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.e2e
 
+import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.TEST_CATEGORIES
 import com.yourname.expensetracker.TestCurrencySettingsRepository
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
@@ -46,7 +47,9 @@ import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.coroutineScope
@@ -64,14 +67,22 @@ internal data class FlowPipeline(
 )
 
 internal suspend fun FlowPipeline.awaitViewModelState(testDispatcher: TestDispatcher) : com.yourname.expensetracker.ui.screens.analytics.AnalyticsState {
-    return coroutineScope {
-        val awaited = async {
-            viewModel.state.first { !it.isLoading }
-        }
+    return try {
+        coroutineScope {
+            val awaited = async(start = CoroutineStart.UNDISPATCHED) {
+                viewModel.state.first { !it.isLoading }
+            }
 
-        testDispatcher.scheduler.advanceTimeBy(1_500)
-        testDispatcher.scheduler.advanceUntilIdle()
-        awaited.await()
+            testDispatcher.scheduler.runCurrent()
+            testDispatcher.scheduler.advanceTimeBy(1_500)
+            testDispatcher.scheduler.runCurrent()
+            awaited.await().also { loaded ->
+                check(loaded.error == null) { "Analytics load failed: " + loaded.error }
+            }
+        }
+    } finally {
+        // The harness owns this ViewModel; cancel its sharing job on success or failure.
+        viewModel.viewModelScope.cancel()
     }
 }
 
@@ -108,6 +119,7 @@ internal fun buildPipeline(
     coEvery { categoryRepository.getAll() } returns categories
 
     every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+    every { budgetRepository.allBudgets } returns flowOf(emptyList())
     coEvery { budgetRepository.getActiveBudgets() } returns emptyList()
 
     coEvery { recurringExpenseEngine.getPatterns(any<List<Expense>>()) } returns emptyList()
@@ -143,7 +155,7 @@ internal fun buildPipeline(
         recurringExpenseEngine = recurringExpenseEngine,
         timeProvider = timeProvider,
         spendingPaceCalculator = SpendingPaceCalculator(timeProvider),
-        anomalyDetector = AnomalyDetector(timeProvider = mockk()),
+        anomalyDetector = AnomalyDetector(timeProvider = timeProvider),
         monthlyComparisonCalculator = MonthlyComparisonCalculator(),
         categoryInsightEngine = CategoryInsightEngine(),
         merchantInsightEngine = MerchantInsightEngine(),
@@ -175,7 +187,13 @@ internal fun buildPipeline(
         travelDetectionEngine = travelDetectionEngine,
         spendingPersonalityClassifier = spendingPersonalityClassifier,
         timeProvider = timeProvider,
-        analyticsInputAssembler = mockk<AnalyticsInputAssembler>(relaxed = true),
+        analyticsInputAssembler = AnalyticsInputAssembler(
+            expenseRepository = expenseRepository,
+            normalizer = analyticsCurrencyNormalizer,
+            currencySettingsRepository = currencySettingsRepository,
+            timeProvider = timeProvider,
+            categoryRepository = categoryRepository
+        ),
         currencyConverter = currencyConverter,
         currencySettingsRepository = currencySettingsRepository,
         budgetVsActualEngine = BudgetVsActualEngine(),
@@ -204,10 +222,14 @@ private fun stubDao(expenseDao: ExpenseDao, allExpenses: List<Expense>) {
     }
 
     every { expenseDao.getAllFlow(any()) } returns flowOf(allExpenses)
+    every { expenseDao.getAllFlowUncapped() } returns flowOf(allExpenses)
     coEvery { expenseDao.getAll() } returns allExpenses
 
     coEvery { expenseDao.getExpensesBetween(any(), any()) } answers {
         purchasesInRange(firstArg(), secondArg())
+    }
+    coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } answers {
+        inRange(firstArg(), secondArg())
     }
     every { expenseDao.getExpensesBetweenFlow(any(), any()) } answers {
         flowOf(purchasesInRange(firstArg(), secondArg()))

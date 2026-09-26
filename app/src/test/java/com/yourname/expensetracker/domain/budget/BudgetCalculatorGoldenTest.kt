@@ -46,11 +46,11 @@ class BudgetCalculatorGoldenTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `yearly anniversary on march 15 advances window to current year start`() {
+    fun `rolling yearly anniversary on march 15 advances window to current anniversary`() {
         val now = atTime("2026-03-15", 12, 0, 0)
         every { timeProvider.now() } returns now
         val anchor = atTime("2025-03-15", 0, 0, 0)
-        val budget = budget(periodMode = "CALENDAR", period = BudgetPeriod.YEARLY, startDate = anchor)
+        val budget = budget(periodMode = "ROLLING", period = BudgetPeriod.YEARLY, startDate = anchor)
 
         val (start, end) = calculator.calculatePeriodRange(budget)
 

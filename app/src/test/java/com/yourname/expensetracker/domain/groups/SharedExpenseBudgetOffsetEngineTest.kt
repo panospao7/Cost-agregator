@@ -10,12 +10,15 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.GroupDetailsAggregate
 import com.yourname.expensetracker.data.repository.GroupsRepository
+import com.yourname.expensetracker.domain.currency.ConversionResult
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.ExchangeRateStore
-import com.yourname.expensetracker.domain.currency.MultiConversionAggregate
 import dagger.Lazy
 import io.mockk.*
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
@@ -38,11 +41,14 @@ class SharedExpenseBudgetOffsetEngineTest {
 
     private lateinit var engine: SharedExpenseBudgetOffsetEngine
     private lateinit var converter: CurrencyConverter
+    private lateinit var currencySettingsRepository: CurrencySettingsRepository
 
     @Before
     fun setup() {
         val localCurrencyConverter = mockk<CurrencyConverter>(relaxed = true)
         converter = localCurrencyConverter
+        currencySettingsRepository = mockk()
+        every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
         coEvery { localCurrencyConverter.convertAsOf(any<Double>(), any<String>(), any<String>(), any<Long>()) } answers {
             val amount = firstArg<Double>()
             val from = secondArg<String>()
@@ -74,7 +80,7 @@ class SharedExpenseBudgetOffsetEngineTest {
             groupsRepository = object : Lazy<GroupsRepository> { override fun get() = groupsRepository },
             expenseRepository = expenseRepository,
             ioDispatcher = Dispatchers.Unconfined,
-            currencySettingsRepository = mockk(),
+            currencySettingsRepository = currencySettingsRepository,
             currencyConverter = localCurrencyConverter,
         )
     }
@@ -114,6 +120,131 @@ class SharedExpenseBudgetOffsetEngineTest {
     }
 
     @Test
+    fun `personal conversion failure contributes one controlled warning`() = runTest {
+        val start = FIXED_NOW - 7L * DAY_MS
+        coEvery { expenseRepository.getExpensesBetween(start, FIXED_NOW) } returns listOf(
+            expense(id = 1L, amount = 25.0, categoryId = 1L, isShared = false)
+        )
+        coEvery { groupsRepository.getActiveGroupsWithDetails() } returns emptyList()
+        coEvery { converter.convertAsOf(any<Double>(), any<String>(), any<String>(), any<Long>()) } returns null
+
+        val result = engine.calculateEffectiveBudgetSpend(start, FIXED_NOW)
+
+        assertTrue(result.isPartial)
+        assertEquals(1, result.failedConversionCount)
+        assertEquals(listOf("MISSING_RATE"), result.conversionWarnings)
+        assertApproxEquals(0.0, result.totalPersonalSpend, 0.0)
+    }
+
+    @Test
+    fun `shared conversion failure contributes one controlled warning`() = runTest {
+        val start = FIXED_NOW - 7L * DAY_MS
+        coEvery { expenseRepository.getExpensesBetween(start, FIXED_NOW) } returns emptyList()
+        coEvery { groupsRepository.getActiveGroupsWithDetails() } returns listOf(
+            groupAggregate(
+                groupId = 10L,
+                members = listOf(
+                    GroupMember(id = 100L, groupId = 10L, name = "Me", isCurrentUser = true),
+                    GroupMember(id = 101L, groupId = 10L, name = "Friend")
+                ),
+                expenses = listOf(
+                    GroupExpense(
+                        id = 700L,
+                        groupId = 10L,
+                        expenseId = null,
+                        paidById = 101L,
+                        date = start + DAY_MS,
+                        description = "Shared purchase",
+                        totalAmount = 100.0,
+                        splitType = SplitType.EQUAL
+                    )
+                )
+            )
+        )
+        coEvery { converter.convertAsOf(any<Double>(), any<String>(), any<String>(), any<Long>()) } returns null
+
+        val result = engine.calculateEffectiveBudgetSpend(start, FIXED_NOW)
+
+        assertTrue(result.isPartial)
+        assertEquals(1, result.failedConversionCount)
+        assertEquals(listOf("MISSING_RATE"), result.conversionWarnings)
+        assertApproxEquals(0.0, result.totalSharedSpend, 0.0)
+    }
+
+    @Test
+    fun `reimbursement conversion failure is counted independently`() = runTest {
+        val start = FIXED_NOW - 7L * DAY_MS
+        coEvery { expenseRepository.getExpensesBetween(start, FIXED_NOW) } returns emptyList()
+        coEvery { groupsRepository.getActiveGroupsWithDetails() } returns listOf(
+            groupAggregate(
+                groupId = 10L,
+                members = listOf(
+                    GroupMember(id = 100L, groupId = 10L, name = "Me", isCurrentUser = true),
+                    GroupMember(id = 101L, groupId = 10L, name = "Friend")
+                ),
+                expenses = listOf(
+                    GroupExpense(
+                        id = 700L,
+                        groupId = 10L,
+                        expenseId = null,
+                        paidById = 100L,
+                        date = start + DAY_MS,
+                        description = "Shared purchase",
+                        totalAmount = 100.0,
+                        splitType = SplitType.EQUAL,
+                        isReimbursable = true,
+                        reimbursedAmount = 20.0
+                    )
+                )
+            )
+        )
+        coEvery { converter.convertAsOf(any<Double>(), any<String>(), any<String>(), any<Long>()) } answers {
+            val amount = firstArg<Double>()
+            if (amount == 20.0) null else successfulConversion(amount)
+        }
+
+        val result = engine.calculateEffectiveBudgetSpend(start, FIXED_NOW)
+
+        assertTrue(result.isPartial)
+        assertEquals(1, result.failedConversionCount)
+        assertEquals(listOf("MISSING_RATE"), result.conversionWarnings)
+        assertApproxEquals(50.0, result.totalSharedSpend, 0.0001)
+        assertApproxEquals(0.0, result.totalReimbursed, 0.0)
+    }
+
+    @Test
+    fun `successful conversions expose no warnings and are not partial`() = runTest {
+        val start = FIXED_NOW - 7L * DAY_MS
+        coEvery { expenseRepository.getExpensesBetween(start, FIXED_NOW) } returns listOf(
+            expense(id = 1L, amount = 25.0, categoryId = 1L, isShared = false)
+        )
+        coEvery { groupsRepository.getActiveGroupsWithDetails() } returns emptyList()
+
+        val result = engine.calculateEffectiveBudgetSpend(start, FIXED_NOW)
+
+        assertFalse(result.isPartial)
+        assertEquals(0, result.failedConversionCount)
+        assertTrue(result.conversionWarnings.isEmpty())
+        assertApproxEquals(25.0, result.totalPersonalSpend, 0.0001)
+    }
+
+    @Test
+    fun `conversion cancellation propagates`() = runTest {
+        val start = FIXED_NOW - 7L * DAY_MS
+        coEvery { expenseRepository.getExpensesBetween(start, FIXED_NOW) } returns listOf(
+            expense(id = 1L, amount = 25.0, categoryId = 1L, isShared = false)
+        )
+        coEvery { groupsRepository.getActiveGroupsWithDetails() } returns emptyList()
+        coEvery {
+            converter.convertAsOf(any<Double>(), any<String>(), any<String>(), any<Long>())
+        } throws CancellationException("cancelled")
+
+        assertFailsWith<CancellationException> {
+            engine.calculateEffectiveBudgetSpend(start, FIXED_NOW)
+        }
+    }
+
+    @Test
     fun `real historical converter missing rates logs no currency amount merchant or time`() = runTest {
         val start = FIXED_NOW - 7L * DAY_MS
         val store = mockk<ExchangeRateStore>()
@@ -123,7 +254,7 @@ class SharedExpenseBudgetOffsetEngineTest {
             groupsRepository = object : Lazy<GroupsRepository> { override fun get() = groupsRepository },
             expenseRepository = expenseRepository,
             currencyConverter = realConverter,
-            currencySettingsRepository = mockk(),
+            currencySettingsRepository = currencySettingsRepository,
             ioDispatcher = Dispatchers.Unconfined
         )
         val personal = expense(id = 1L, amount = 1234.56, categoryId = 1L, isShared = false)
@@ -454,6 +585,15 @@ class SharedExpenseBudgetOffsetEngineTest {
         createdAt = System.currentTimeMillis(),
         isSharedExpense = isShared,
         isNotMine = false
+    )
+
+    private fun successfulConversion(amount: Double): ConversionResult = ConversionResult(
+        originalAmount = amount,
+        originalCurrency = "EUR",
+        convertedAmount = amount,
+        targetCurrency = "EUR",
+        rateUsed = 1.0,
+        timestamp = FIXED_NOW
     )
 
     companion object {

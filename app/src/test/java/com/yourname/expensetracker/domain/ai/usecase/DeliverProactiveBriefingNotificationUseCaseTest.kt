@@ -13,6 +13,7 @@ import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.domain.service.NotificationService
 import com.yourname.expensetracker.domain.service.NotificationService.DeliveryResult
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -20,6 +21,8 @@ import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -40,7 +43,9 @@ class DeliverProactiveBriefingNotificationUseCaseTest {
         aiArtifactRepository = mockk(relaxed = true)
         aiEngagementRepository = mockk(relaxed = true)
         notificationService = mockk(relaxed = true)
-        aiRuntimeDiagnostics = mockk(relaxed = true)
+        // Use the concrete diagnostics object. A class mock cannot safely
+        // evaluate the concrete method's default time-provider argument.
+        aiRuntimeDiagnostics = AiRuntimeDiagnostics(FakeTimeProvider(1_234L))
         every { notificationService.sendAiBriefingReadyWithResult(any(), any(), any(), any()) } returns DeliveryResult.DELIVERED
         useCase = DeliverProactiveBriefingNotificationUseCase(
             context,
@@ -78,7 +83,9 @@ class DeliverProactiveBriefingNotificationUseCaseTest {
             )
         }
         coVerify { aiEngagementRepository.setLastDeliveredDashboardBriefingKey("dashboard_home:2026-03-17") }
-        verify { aiRuntimeDiagnostics.recordInteraction(type = "phase4_delivery", message = any(), now = any()) }
+        val event = aiRuntimeDiagnostics.getRecentEvents().single()
+        assertEquals("phase4_delivery", event.type)
+        assertEquals(1_234L, event.timestamp)
     }
 
     @Test
@@ -112,9 +119,7 @@ class DeliverProactiveBriefingNotificationUseCaseTest {
         coVerify(exactly = 0) {
             aiEngagementRepository.setLastDeliveredDashboardBriefingKey(any())
         }
-        verify(exactly = 0) {
-            aiRuntimeDiagnostics.recordInteraction(type = "phase4_delivery", message = any(), now = any())
-        }
+        assertTrue(aiRuntimeDiagnostics.getRecentEvents().isEmpty())
     }
 
     @Test

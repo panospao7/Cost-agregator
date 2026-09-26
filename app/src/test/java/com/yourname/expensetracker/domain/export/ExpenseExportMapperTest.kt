@@ -9,7 +9,7 @@ import org.junit.Test
 class ExpenseExportMapperTest {
 
     @Test
-    fun `toExportTransaction preserves accounting fields and uses effective amount`() {
+    fun `toExportTransaction preserves full and effective accounting amounts`() {
         val expense = Expense(
             id = 42L,
             amount = 100.0,
@@ -27,7 +27,8 @@ class ExpenseExportMapperTest {
         val result = expense.toExportTransaction()
 
         assertThat(result.id).isEqualTo(42L)
-        assertThat(result.amount).isEqualTo(25.0)
+        assertThat(result.amount).isEqualTo(100.0)
+        assertThat(result.effectiveAmount).isEqualTo(25.0)
         assertThat(result.currency).isEqualTo("USD")
         assertThat(result.transactionType).isEqualTo(TransactionType.TRANSFER)
         assertThat(result.sourceAccountName).isEqualTo("Bank Account")

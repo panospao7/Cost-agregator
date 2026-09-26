@@ -50,21 +50,30 @@ class PeriodKindContractTest {
         val ld = LocalDate.of(2026, 6, 15)
         val now = ld.atTime(10, 30, 0).toInstant(ZoneOffset.UTC).toEpochMilli()
 
-        val calendarKinds = listOf(
+        val currentCalendarKinds = listOf(
             PeriodKind.TODAY,
             PeriodKind.THIS_WEEK,
-            PeriodKind.LAST_WEEK,
             PeriodKind.THIS_MONTH,
-            PeriodKind.LAST_MONTH,
             PeriodKind.THIS_QUARTER,
-            PeriodKind.LAST_QUARTER,
-            PeriodKind.THIS_YEAR,
-            PeriodKind.LAST_YEAR
+            PeriodKind.THIS_YEAR
         )
-        for (kind in calendarKinds) {
+        for (kind in currentCalendarKinds) {
             val range = kind.toPeriodRange(now, zoneId = utc)
             assertTrue("$kind end must be > start", range.endExclusiveMillis > range.startInclusiveMillis)
             assertTrue("$kind must contain now", range.contains(now))
+        }
+
+        val previousCalendarKinds = listOf(
+            PeriodKind.LAST_WEEK,
+            PeriodKind.LAST_MONTH,
+            PeriodKind.LAST_QUARTER,
+            PeriodKind.LAST_YEAR
+        )
+        for (kind in previousCalendarKinds) {
+            val range = kind.toPeriodRange(now, zoneId = utc)
+            assertTrue("$kind end must be > start", range.endExclusiveMillis > range.startInclusiveMillis)
+            assertTrue("$kind must not contain now", !range.contains(now))
+            assertTrue("$kind must end no later than now", range.endExclusiveMillis <= now)
         }
     }
 }

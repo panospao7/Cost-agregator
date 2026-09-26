@@ -15,17 +15,24 @@ import com.yourname.expensetracker.domain.analytics.InsightsEngine
 import com.yourname.expensetracker.domain.analytics.SpendingPaceCalculator
 import com.yourname.expensetracker.domain.core.money.CategoryMonthlySpend
 import com.yourname.expensetracker.domain.core.money.ConversionFailure
+import com.yourname.expensetracker.domain.core.money.ConversionFailureType
+import com.yourname.expensetracker.domain.core.money.ConversionOutcome
+import com.yourname.expensetracker.domain.core.money.ConversionPath
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.FailureReason
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.core.money.MoneyBucket
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode
 import com.yourname.expensetracker.domain.core.money.RateBasis
 import com.yourname.expensetracker.domain.core.money.SpendScope
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
@@ -58,6 +65,8 @@ class BudgetAutopilotEngineTest {
     private lateinit var monteCarloSimulator: MonteCarloSpendingSimulator
     private lateinit var timeProvider: TimeProvider
     private lateinit var multiCurrencyRepository: MultiCurrencyRepository
+    private lateinit var currencySettingsRepository: CurrencySettingsRepository
+    private lateinit var currencyConverter: CurrencyConverter
 
     private lateinit var engine: BudgetAutopilotEngine
 
@@ -95,8 +104,46 @@ class BudgetAutopilotEngineTest {
             rateAsOfMillis = now
         )
 
-        val sharedCurrencySettingsRepo = mockk<CurrencySettingsRepository>(relaxed = true).also {
+        currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true).also {
             coEvery { it.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
+        }
+        currencyConverter = mockk()
+        coEvery {
+            currencyConverter.convertOutcome(
+                any(), any(), any(), RateBasis.LATEST_AVAILABLE, null, any()
+            )
+        } answers {
+            val amount = firstArg<Double>()
+            val source = secondArg<String>().uppercase()
+            val target = thirdArg<String>().uppercase()
+            ConversionOutcome.Converted(
+                originalAmount = amount,
+                originalCurrency = CurrencyCode(source),
+                convertedAmount = amount,
+                targetCurrency = CurrencyCode(target),
+                rateUsed = 1.0,
+                rateBasis = if (source == target) RateBasis.IDENTITY else RateBasis.LATEST_AVAILABLE,
+                rateValidDate = null,
+                rateLastUpdated = now,
+                rateSource = null,
+                conversionPath = if (source == target) ConversionPath.IDENTITY else ConversionPath.DIRECT
+            )
+        }
+        every { currencyConverter.reverseDisplayQuote(any(), any()) } answers {
+            val displayAmount = firstArg<Double>()
+            val forward = secondArg<ConversionOutcome.Converted>()
+            ConversionOutcome.Converted(
+                originalAmount = displayAmount,
+                originalCurrency = forward.targetCurrency,
+                convertedAmount = displayAmount / forward.rateUsed,
+                targetCurrency = forward.originalCurrency,
+                rateUsed = 1.0 / forward.rateUsed,
+                rateBasis = forward.rateBasis,
+                rateValidDate = forward.rateValidDate,
+                rateLastUpdated = forward.rateLastUpdated,
+                rateSource = forward.rateSource,
+                conversionPath = forward.conversionPath
+            )
         }
 
         // The engine consumes the typed repository API directly — stub it as a
@@ -107,7 +154,8 @@ class BudgetAutopilotEngineTest {
         engine = BudgetAutopilotEngine(
             budgetRepository = budgetRepository,
             multiCurrencyRepository = multiCurrencyRepository,
-            currencySettingsRepository = sharedCurrencySettingsRepo,
+            currencySettingsRepository = currencySettingsRepository,
+            currencyConverter = currencyConverter,
             categoryRepository = categoryRepository,
             insightsEngine = insightsEngine,
             spendingPaceCalculator = spendingPaceCalculator,
@@ -214,6 +262,123 @@ class BudgetAutopilotEngineTest {
         assertApproxEquals(115.0, rec.recommendedBudget, 0.01)
         assertEquals(BudgetRecommendationQuality.COMPLETE, rec.quality)
         assertTrue(rec.isActionable)
+    }
+
+    @Test
+    fun `display recommendations reverse through the captured quote into source budget units`() = runTest {
+        coEvery { budgetRepository.getActiveBudgets() } returns listOf(
+            budget(id = 1L, categoryId = 1L, amount = 100.0, currency = "USD")
+        )
+        coEvery {
+            currencyConverter.convertOutcome(
+                100.0,
+                "USD",
+                "EUR",
+                RateBasis.LATEST_AVAILABLE,
+                null,
+                any()
+            )
+        } returns ConversionOutcome.Converted(
+            originalAmount = 100.0,
+            originalCurrency = CurrencyCode("USD"),
+            convertedAmount = 90.0,
+            targetCurrency = CurrencyCode("EUR"),
+            rateUsed = 0.9,
+            rateBasis = RateBasis.LATEST_AVAILABLE,
+            rateValidDate = null,
+            rateLastUpdated = now,
+            rateSource = "test",
+            conversionPath = ConversionPath.DIRECT
+        )
+        val febKey = TimePeriodUtils.formatMonthKey(TimePeriodUtils.addMonths(now, -2))
+        val marKey = TimePeriodUtils.formatMonthKey(TimePeriodUtils.addMonths(now, -1))
+        stubHistory(
+            SpendScope.Category(1L),
+            listOf(febKey to completeAggregate(90.0), marKey to completeAggregate(90.0))
+        )
+
+        val result = engine.generateRecommendations()
+        val recommendation = result.categoryRecommendations.single()
+
+        assertEquals("EUR", result.displayCurrency)
+        assertEquals("EUR", recommendation.displayCurrency)
+        assertApproxEquals(90.0, recommendation.currentBudget, 0.0001)
+        assertApproxEquals(90.0, recommendation.recommendedBudget, 0.0001)
+        assertApproxEquals(100.0, recommendation.sourceAmountToApply.amount, 0.0001)
+        assertEquals(CurrencyCode("USD"), recommendation.sourceAmountToApply.currency)
+        coVerify(exactly = 1) {
+            currencyConverter.convertOutcome(
+                100.0,
+                "USD",
+                "EUR",
+                RateBasis.LATEST_AVAILABLE,
+                null,
+                any()
+            )
+        }
+    }
+
+    @Test
+    fun `missing display quote fails closed before exposing recommendations`() = runTest {
+        coEvery { budgetRepository.getActiveBudgets() } returns listOf(
+            budget(id = 1L, categoryId = 1L, amount = 100.0, currency = "USD")
+        )
+        coEvery {
+            currencyConverter.convertOutcome(
+                100.0,
+                "USD",
+                "EUR",
+                RateBasis.LATEST_AVAILABLE,
+                null,
+                any()
+            )
+        } returns ConversionOutcome.Failed(
+            originalAmount = 100.0,
+            originalCurrency = "USD",
+            targetCurrency = "EUR",
+            rateBasis = RateBasis.LATEST_AVAILABLE,
+            failureType = ConversionFailureType.MISSING_RATE,
+            message = "MISSING_RATE"
+        )
+
+        val failure = runCatching { engine.generateRecommendations() }.exceptionOrNull()
+
+        assertTrue(failure is MoneyDisplayUnavailableException)
+        assertEquals(
+            MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE,
+            (failure as MoneyDisplayUnavailableException).reasonCode
+        )
+    }
+
+    @Test
+    fun `history in a stale display currency fails closed`() = runTest {
+        coEvery { budgetRepository.getActiveBudgets() } returns listOf(
+            budget(id = 1L, categoryId = 1L, amount = 100.0)
+        )
+        coEvery {
+            multiCurrencyRepository.getHistoricalCategoryMonthlySpend(any(), any())
+        } returns listOf(
+            CategoryMonthlySpend(
+                scope = SpendScope.Category(1L),
+                monthKey = "2026-03",
+                aggregate = MoneyAggregate.singleCurrency(
+                    amount = 100.0,
+                    currency = CurrencyCode("USD"),
+                    transactionCount = 1
+                )
+            )
+        )
+
+        val failure = runCatching { engine.generateRecommendations() }.exceptionOrNull()
+
+        assertTrue(failure is MoneyDisplayUnavailableException)
+        assertEquals(
+            MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE,
+            (failure as MoneyDisplayUnavailableException).reasonCode
+        )
+        coVerify(exactly = 0) {
+            currencyConverter.convertOutcome(any(), any(), any(), any(), any(), any())
+        }
     }
 
     // ── P6-003 partial-data contract ────────────────────────────────────────
@@ -479,13 +644,19 @@ class BudgetAutopilotEngineTest {
         )
     }
 
-    private fun budget(id: Long, categoryId: Long?, amount: Double): Budget {
+    private fun budget(
+        id: Long,
+        categoryId: Long?,
+        amount: Double,
+        currency: String = "EUR"
+    ): Budget {
         return Budget(
             id = id,
             categoryId = categoryId,
             amount = amount,
             period = BudgetPeriod.MONTHLY,
-            startDate = now - 60 * dayMs
+            startDate = now - 60 * dayMs,
+            currency = currency
         )
     }
 

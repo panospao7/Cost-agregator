@@ -3,6 +3,7 @@ package com.yourname.expensetracker.data.ai.provider
 import android.graphics.Bitmap
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistInput
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -57,14 +58,9 @@ class OnDeviceReceiptAssistServiceTest {
     }
 
     @Test
-    fun `buildRequestForTest attaches image when valid image input exists`() {
-        // KNOWN ENVIRONMENT LIMITATION (fails off-device): ImagePart's
-        // ByteArray constructor decodes via android-graphics internals that
-        // do not work on the JVM (plain stub jar returns null; Robolectric
-        // still fails; mockkConstructor cannot instrument the obfuscated
-        // class — VerifyError). Needs on-device verification of the attach
-        // path or a genai-prompt library upgrade; the text-only variant of
-        // this test covers the negative branch.
+    fun `imageBytesForTest reads valid image input`() {
+        // Request attachment is asserted with the real Android graphics/ML Kit
+        // runtime in OnDeviceReceiptAssistServiceImageInstrumentedTest.
         val imageFile = kotlin.io.path.createTempFile(suffix = ".png").toFile().apply {
             // Encode a real 1x1 PNG with the platform encoder (Robolectric-backed).
             val bitmap = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
@@ -78,7 +74,7 @@ class OnDeviceReceiptAssistServiceTest {
         }
 
         try {
-            val request = service.buildRequestForTest(
+            val bytes = service.imageBytesForTest(
                 sampleInput.copy(
                     imagePath = imageFile.absolutePath,
                     imageMimeType = "image/png",
@@ -86,7 +82,9 @@ class OnDeviceReceiptAssistServiceTest {
                 )
             )
 
-            assertNotNull(request.image)
+            assertNotNull(bytes)
+            assertTrue(bytes!!.isNotEmpty())
+            assertArrayEquals(imageFile.readBytes(), bytes)
         } finally {
             imageFile.delete()
         }

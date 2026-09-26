@@ -139,7 +139,7 @@ class RecommendationStateManagerTest {
         advanceUntilIdle()
 
         assertEquals("reloaded", manager.recommendations.value.single().id)
-        coVerify(exactly = 2) { repository.expireOld("user1") }
+        coVerify(exactly = 2) { repository.expireOld("user1", nowMillis) }
         coVerify(exactly = 2) { repository.getActiveForUser("user1") }
     }
 
@@ -151,7 +151,7 @@ class RecommendationStateManagerTest {
         advanceUntilIdle()
 
         assertTrue(manager.recommendations.value.isEmpty())
-        coVerify(exactly = 1) { repository.expireOld("user1") }
+        coVerify(exactly = 1) { repository.expireOld("user1", nowMillis) }
         coVerify(exactly = 1) { repository.getActiveForUser("user1") }
     }
 

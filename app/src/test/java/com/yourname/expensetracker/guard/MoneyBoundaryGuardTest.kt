@@ -1,10 +1,11 @@
 package com.yourname.expensetracker.guard
 
-import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 import java.io.File
-import java.nio.file.Files
 
 /**
  * CURR-587-07: Guard fixture tests.
@@ -13,6 +14,9 @@ import java.nio.file.Files
  * and passes the current source.
  */
 class MoneyBoundaryGuardTest {
+
+    @get:Rule
+    val fixtureRoots = TemporaryFolder()
 
     private val projectRoot: File = run {
         val cwd = File(System.getProperty("user.dir"))
@@ -60,7 +64,30 @@ class MoneyBoundaryGuardTest {
     }
 
     private fun createTempRoot(prefix: String = "guard-fixture"): File {
-        return Files.createTempDirectory(prefix).toFile()
+        val root = fixtureRoots.newFolder(prefix)
+        // Repository-level guards require an explicit production source manifest.
+        // Declare only this synthetic repository's source root, not an exemption.
+        writeFixture(root, "config/guards/production_source_roots.yml", """
+            schemaVersion: 1
+            roots:
+              - module: ":app"
+                sourceSet: main
+                path: app/src/main/java
+        """.trimIndent())
+        return root
+    }
+
+    @Test
+    fun `guard fails closed when production manifest is missing`() {
+        val root = fixtureRoots.newFolder("undeclared-root")
+        writeFixture(root, "app/src/main/java/com/yourname/expensetracker/domain/forecasting/Bad.kt",
+            "val bad = CurrencyCode(\"XXX\")")
+
+        val (exit, output) = runGuard(root)
+
+        assertEquals("Missing scope must be an infrastructure failure\n$output", 2, exit)
+        assertTrue("Missing scope must remain fail-closed\n$output",
+            output.contains("DB_SOURCE_ROOT_UNDECLARED"))
     }
 
     // ── Failing fixtures ──────────────────────────────────────────────────────
@@ -74,7 +101,7 @@ class MoneyBoundaryGuardTest {
             val bad = CurrencyCode("XXX")
         """.trimIndent())
         val (exit, output) = runGuard(root)
-        assertFalse("Guard should fail on CurrencyCode(XXX)\n$output", exit == 0)
+        assertEquals("Guard should report a violation for CurrencyCode(XXX)\n$output", 1, exit)
         assertTrue("Output should mention G-MONEY-11\n$output", output.contains("G-MONEY-11"))
         root.deleteRecursively()
     }
@@ -88,7 +115,7 @@ class MoneyBoundaryGuardTest {
             val bad = CurrencyCode("")
         """.trimIndent())
         val (exit, output) = runGuard(root)
-        assertFalse("Guard should fail on CurrencyCode('')\n$output", exit == 0)
+        assertEquals("Guard should report a violation for CurrencyCode('')\n$output", 1, exit)
         assertTrue("Output should mention G-MONEY-11\n$output", output.contains("G-MONEY-11"))
         root.deleteRecursively()
     }
@@ -101,7 +128,7 @@ class MoneyBoundaryGuardTest {
             val displayCurrency = "N/A"
         """.trimIndent())
         val (exit, output) = runGuard(root)
-        assertFalse("Guard should fail on displayCurrency = N/A\n$output", exit == 0)
+        assertEquals("Guard should report a violation for displayCurrency = N/A\n$output", 1, exit)
         assertTrue("Output should mention G-MONEY-11\n$output", output.contains("G-MONEY-11"))
         root.deleteRecursively()
     }
@@ -117,7 +144,7 @@ class MoneyBoundaryGuardTest {
             }
         """.trimIndent())
         val (exit, output) = runGuard(root)
-        assertFalse("Guard should fail on raw ExpenseSnapshot\n$output", exit == 0)
+        assertEquals("Guard should report a violation for raw ExpenseSnapshot\n$output", 1, exit)
         assertTrue("Output should mention G-MONEY-10\n$output", output.contains("G-MONEY-10"))
         root.deleteRecursively()
     }
@@ -134,7 +161,7 @@ class MoneyBoundaryGuardTest {
             }
         """.trimIndent())
         val (exit, output) = runGuard(root)
-        assertFalse("Guard should fail on Unavailable -> emptyList()\n$output", exit == 0)
+        assertEquals("Guard should report a violation for Unavailable -> emptyList()\n$output", 1, exit)
         assertTrue("Output should mention G-MONEY-21\n$output", output.contains("G-MONEY-21"))
         root.deleteRecursively()
     }
@@ -149,7 +176,7 @@ class MoneyBoundaryGuardTest {
             }
         """.trimIndent())
         val (exit, output) = runGuard(root)
-        assertFalse("Guard should fail on convertMultiple\n$output", exit == 0)
+        assertEquals("Guard should report a violation for convertMultiple\n$output", 1, exit)
         assertTrue("Output should mention G-MONEY-17\n$output", output.contains("G-MONEY-17"))
         root.deleteRecursively()
     }

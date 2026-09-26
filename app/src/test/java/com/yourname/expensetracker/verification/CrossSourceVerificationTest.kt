@@ -16,8 +16,6 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
-import com.yourname.expensetracker.domain.core.money.CurrencyCode
-import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.analytics.AdvancedAnalyticsDashboard
 import com.yourname.expensetracker.domain.analytics.AdvancedAnalyticsEngine
 import com.yourname.expensetracker.domain.analytics.AnalyticsPeriod
@@ -37,17 +35,29 @@ import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import io.mockk.coEvery
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import org.junit.After
+import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+import java.time.temporal.ChronoUnit
 
 @Suppress("DEPRECATION_ERROR")
 class CrossSourceVerificationTest : AnalyticsEngineTestBase() {
 
     private val database = mockk<AppDatabase>(relaxed = true)
+    private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+
+    @After
+    fun cancelRepositoryScope() {
+        repositoryScope.cancel()
+    }
     private lateinit var repository: ExpenseRepository
     private lateinit var insightsEngine: InsightsEngine
     private lateinit var advancedAnalyticsEngine: AdvancedAnalyticsEngine
@@ -87,7 +97,7 @@ class CrossSourceVerificationTest : AnalyticsEngineTestBase() {
             recurringExpenseEngine = recurringExpenseEngine,
             timeProvider = timeProvider,
             spendingPaceCalculator = spendingPaceCalculator,
-            anomalyDetector = AnomalyDetector(timeProvider = mockk()),
+            anomalyDetector = AnomalyDetector(timeProvider = timeProvider),
             monthlyComparisonCalculator = MonthlyComparisonCalculator(),
             categoryInsightEngine = CategoryInsightEngine(),
             merchantInsightEngine = MerchantInsightEngine(),
@@ -114,14 +124,18 @@ class CrossSourceVerificationTest : AnalyticsEngineTestBase() {
             timeProvider = timeProvider
         )
 
-        val multiCurrencyRepository = mockk<MultiCurrencyRepository>(relaxed = true).also {
-            coEvery { it.getHomeCurrencyPurchaseTotal(any(), any()) } returns MoneyAggregate.empty(CurrencyCode("EUR"))
-        }
+        val multiCurrencyRepository = MultiCurrencyRepository(
+            expenseDao = expenseDao,
+            currencyConverter = currencyConverter,
+            timeProvider = timeProvider,
+            currencySettingsRepository = currencySettingsRepository,
+            applicationScope = repositoryScope
+        )
         totalsAggregationEngine = TotalsAggregationEngine(
             expenseRepository = repository,
             timeProvider = timeProvider,
             multiCurrencyRepository = multiCurrencyRepository,
-            categoryRepository = mockk(),
+            categoryRepository = categoryRepository,
             ioDispatcher = Dispatchers.Unconfined
         )
 
@@ -151,6 +165,7 @@ class CrossSourceVerificationTest : AnalyticsEngineTestBase() {
         val advancedTotal = advancedCategoryAnalytics.sumOf { it.totalSpent }
         val dashboardTotal = dashboardEngine.generateDashboardData(marchStart, aprilStart).totalSpent
 
+        assertApproxEquals(60.0, repoTotal, 0.01, "Independent fixture total: ")
         assertApproxEquals(repoTotal, insightsTotal, 0.01, "Repository vs Insights: ")
         assertApproxEquals(repoTotal, advancedTotal, 0.01, "Repository vs Advanced Engine: ")
         assertApproxEquals(repoTotal, dashboardTotal, 0.01, "Repository vs Dashboard: ")
@@ -168,11 +183,17 @@ class CrossSourceVerificationTest : AnalyticsEngineTestBase() {
         val (statisticalInsights, _) = advancedAnalyticsEngine.getStatisticalInsights(period, "EUR")
         val advancedAvg = statisticalInsights.averageDailySpend
         val repoTotal = repository.getTotalForPeriod(start, end)
-        val periodDays = ((end - start) / TimePeriodUtils.DAY_IN_MILLIS).toInt()
+        val zone = ZoneId.systemDefault()
+        val periodDays = ChronoUnit.DAYS.between(
+            Instant.ofEpochMilli(start).atZone(zone).toLocalDate(),
+            Instant.ofEpochMilli(end).atZone(zone).toLocalDate()
+        ).toInt()
+        assertEquals(7, periodDays)
         val manualAvg = repoTotal / periodDays
         val totalsEngineAvg = totalsAggregationEngine.getDailyTotalsForRange(start, end)
             .first().sumOf { it.totalAmount } / periodDays
 
+        assertApproxEquals(40.0, manualAvg, 0.01, "Independent seven-day fixture average: ")
         assertApproxEquals(manualAvg, advancedAvg, 0.01, "Manual vs Advanced: ")
         assertApproxEquals(manualAvg, totalsEngineAvg, 0.01, "Manual vs TotalsAggregationEngine: ")
     }
@@ -210,32 +231,39 @@ class CrossSourceVerificationTest : AnalyticsEngineTestBase() {
     @Test
     fun `spending pace percentage is consistent between insights and calculator`() = runTest {
         val dataset = goldenTwoMonthComparison()
-        val march15 = toMillis(2026, 3, 15)
+        val march15 = LocalDate.of(2026, 3, 15).atTime(12, 0)
+            .atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
         val marchStart = toMillis(2026, 3, 1)
         val februaryStart = toMillis(2026, 2, 1)
 
         mockExpensesByRange(dataset)
         io.mockk.every { timeProvider.now() } returns march15
 
-        val insightsPace = insightsEngine.generateInsights(testCategories.toAnalyticsCategoryRefs(), dataset.toExpenseSnapshots(), "EUR").spendingPace.pacePercentage
+        val insightsPace = insightsEngine.generateInsights(testCategories.toAnalyticsCategoryRefs(), dataset.toExpenseSnapshots(), "EUR").spendingPace
         val calculatorPace = spendingPaceCalculator.calculate(
             currentMonthStart = marchStart,
             previousMonthStart = februaryStart,
             previousMonthEnd = marchStart,
             allExpenses = dataset.toExpenseSnapshots(),
             displayCurrency = "EUR"
-        ).pacePercentage
+        )
 
         // Canonical definition:
         // pace% = (currentDailyRate / baselineDailyRate) * 100
-        // currentDailyRate = currentSpent / daysElapsed = 60 / 15 = 4.0
+        // Only March 5 and March 15 have occurred; the March 25 purchase is future-dated.
+        // currentDailyRate = currentSpent / daysElapsed = 30 / 15 = 2.0
         // baselineDailyRate = previousMonthTotal / daysInPreviousMonth = 40 / 28 = 1.42857...
-        // expected pace = 280%
-        val expectedCanonicalPace = ((60.0 / 15.0) / (40.0 / 28.0) * 100.0).toFloat()
+        // expected pace = 140%, not a full-month total divided by elapsed days.
+        val expectedCanonicalPace = ((30.0 / 15.0) / (40.0 / 28.0) * 100.0).toFloat()
+        for (pace in listOf(insightsPace, calculatorPace)) {
+            assertApproxEquals(30.0, pace.currentMonthSpent, 0.01)
+            assertEquals(15, pace.daysElapsed)
+            assertApproxEquals(40.0, requireNotNull(pace.previousMonthTotal), 0.01)
+        }
 
-        assertApproxEquals(insightsPace, calculatorPace, 0.01f, "Insights vs SpendingPaceCalculator: ")
-        assertApproxEquals(expectedCanonicalPace, insightsPace, 0.01f, "Canonical formula vs Insights: ")
-        assertApproxEquals(expectedCanonicalPace, calculatorPace, 0.01f, "Canonical formula vs Calculator: ")
+        assertApproxEquals(insightsPace.pacePercentage, calculatorPace.pacePercentage, 0.01f, "Insights vs SpendingPaceCalculator: ")
+        assertApproxEquals(expectedCanonicalPace, insightsPace.pacePercentage, 0.01f, "Canonical formula vs Insights: ")
+        assertApproxEquals(expectedCanonicalPace, calculatorPace.pacePercentage, 0.01f, "Canonical formula vs Calculator: ")
     }
 
     @Test
@@ -283,12 +311,24 @@ class CrossSourceVerificationTest : AnalyticsEngineTestBase() {
             .getDailyTotalsForRange(marchStart, aprilStart)
             .first().sumOf { it.transactionCount }
 
+        assertEquals(3, repoCount)
         assertEquals(repoCount, advancedCount)
         assertEquals(repoCount, totalsEngineCount)
     }
 
     private fun mockExpensesByRange(expenses: List<Expense>) {
         val purchases = expenses.filter { it.transactionType == TransactionType.PURCHASE && !it.isNotMine }
+        fun ownedInRange(start: Long, end: Long): List<Expense> = expenses
+            .filter { it.date in start until end && !it.isNotMine }
+            .sortedWith(compareByDescending<Expense> { it.date }.thenByDescending { it.id })
+
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } answers {
+            ownedInRange(firstArg(), secondArg())
+        }
+        io.mockk.every { expenseDao.getExpensesBetweenFlowUncapped(any(), any()) } answers {
+            flowOf(ownedInRange(firstArg(), secondArg()))
+        }
+        io.mockk.every { expenseDao.getAllFlowUncapped() } returns flowOf(expenses)
 
         fun inRange(start: Long, end: Long): List<Expense> =
             purchases.filter { it.date in start until end }

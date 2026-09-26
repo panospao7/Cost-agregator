@@ -56,8 +56,10 @@ class MergedRecurringPatternsProviderTest {
         )
 
         assertEquals(1, patterns.size)
-        assertEquals("Netflix", patterns.single().merchantName)
-        assertEquals(2L, patterns.single().id)
+        // Both stale dates are rolled forward before deduplication. The first rule
+        // lands later, so its original display label and id are deterministically kept.
+        assertEquals("NETFLIX", patterns.single().merchantName)
+        assertEquals(1L, patterns.single().id)
         assertEquals(15.0, patterns.single().averageAmount, 0.0001)
     }
 

@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.ui.screens.map
 
+import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.MerchantLocationRepository
@@ -17,15 +18,23 @@ import com.yourname.expensetracker.domain.privacy.PrivacyGateReasonCodes
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.After
 import org.junit.Test
 
 /**
@@ -35,9 +44,9 @@ import org.junit.Test
  * (SecurityException) — not only a snackbar — with a resource-backed message
  * and a controlled reason code. Permitted fetches leave the state null.
  *
- * Note: fetchDeviceLocation runs on Dispatchers.IO (real time), so these tests
- * poll with real time via runBlocking — the virtual-time test scheduler cannot
- * drive the IO dispatcher (same reason the map stress tests are @Ignore'd).
+ * The public action crosses Dispatchers.IO and then launches on Main. Tests
+ * suspend while awaiting state so the Main test scheduler can run; only the
+ * timeout uses real time because IO is not controlled by that scheduler.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class SpendingMapViewModelPrivacyDenialTest : ViewModelTestUtils() {
@@ -53,7 +62,7 @@ class SpendingMapViewModelPrivacyDenialTest : ViewModelTestUtils() {
     private val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true).also {
         every { it.homeCurrency() } returns kotlinx.coroutines.flow.flowOf("EUR")
     }
-    private val privacyGate = mockk<PrivacyGate>(relaxed = true)
+    private val privacyGate = mockk<PrivacyGate>()
 
     private lateinit var viewModel: SpendingMapViewModel
 
@@ -80,27 +89,39 @@ class SpendingMapViewModelPrivacyDenialTest : ViewModelTestUtils() {
         )
     }
 
-    /** fetchDeviceLocation runs on Dispatchers.IO — poll with REAL time. */
-    private fun awaitBlocked(): SpendingMapState {
-        val deadline = System.currentTimeMillis() + 5_000
-        while (viewModel.state.value.gpsPrivacyBlocked == null) {
-            if (System.currentTimeMillis() > deadline) {
-                error("gpsPrivacyBlocked was never set")
+    @After
+    override fun tearDown() {
+        try {
+            runTest(testDispatcher) {
+                if (::viewModel.isInitialized) {
+                    viewModel.viewModelScope.coroutineContext[Job]?.cancelAndJoin()
+                }
             }
-            Thread.sleep(10)
+        } finally {
+            super.tearDown()
         }
-        return viewModel.state.value
     }
+
+    // Production crosses IO -> Main. Suspend so runTest can drive Main, and keep
+    // the timeout on a real dispatcher rather than racing IO with virtual time.
+    private suspend fun awaitState(predicate: (SpendingMapState) -> Boolean): SpendingMapState =
+        withContext(Dispatchers.Default) {
+            withTimeout(5_000L) { viewModel.state.first { predicate(it) } }
+        }
+
+    private suspend fun awaitBlocked(): SpendingMapState =
+        awaitState { it.gpsPrivacyBlocked != null }
 
     // ── Denial class 1: privacy-gate denial ───────────────────────────────────
 
     @Test
-    fun `gate denial sets typed blocked state`() = runBlocking {
-        coEvery { privacyGate.check(any(), any()) } returns
+    fun `gate denial sets typed blocked state`() = runTest(testDispatcher) {
+        coEvery { privacyGate.check(PrivacyCapability.DEVICE_GPS_LOCATION, any()) } returns
             PrivacyDecision.Denied("Device GPS location is disabled by user setting")
 
         viewModel.onCenterOnMeRequested()
         val state = awaitBlocked()
+        coVerify(exactly = 0) { locationProvider.getLastKnownLocation() }
 
         val blocked = state.gpsPrivacyBlocked!!
         assertEquals(PrivacyCapability.DEVICE_GPS_LOCATION, blocked.capability)
@@ -114,12 +135,13 @@ class SpendingMapViewModelPrivacyDenialTest : ViewModelTestUtils() {
     // ── Denial class 2: fail-closed gate outcome ──────────────────────────────
 
     @Test
-    fun `fail-closed gate decision also sets typed blocked state`() = runBlocking {
-        coEvery { privacyGate.check(any(), any()) } returns
+    fun `fail-closed gate decision also sets typed blocked state`() = runTest(testDispatcher) {
+        coEvery { privacyGate.check(PrivacyCapability.DEVICE_GPS_LOCATION, any()) } returns
             PrivacyDecision.FailClosed("Privacy check failed: INTERNAL_DETAIL")
 
         viewModel.onCenterOnMeRequested()
         val state = awaitBlocked()
+        coVerify(exactly = 0) { locationProvider.getLastKnownLocation() }
 
         val blocked = state.gpsPrivacyBlocked!!
         assertEquals(PrivacyGateReasonCodes.PRIVACY_GATE_FAILURE, blocked.reasonCode)
@@ -130,12 +152,13 @@ class SpendingMapViewModelPrivacyDenialTest : ViewModelTestUtils() {
     // ── Denial class 3: permission race (SecurityException) ───────────────────
 
     @Test
-    fun `permission race sets typed blocked state in addition to the snackbar`() = runBlocking {
-        coEvery { privacyGate.check(any(), any()) } returns PrivacyDecision.Allowed
+    fun `permission race sets typed blocked state in addition to the snackbar`() = runTest(testDispatcher) {
+        coEvery { privacyGate.check(PrivacyCapability.DEVICE_GPS_LOCATION, any()) } returns PrivacyDecision.Allowed
         coEvery { locationProvider.getLastKnownLocation() } throws SecurityException("permission revoked mid-fetch")
 
         viewModel.onCenterOnMeRequested()
         val state = awaitBlocked()
+        coVerify(exactly = 1) { locationProvider.getLastKnownLocation() }
 
         val blocked = state.gpsPrivacyBlocked!!
         assertEquals(PrivacyCapability.DEVICE_GPS_LOCATION, blocked.capability)
@@ -146,19 +169,16 @@ class SpendingMapViewModelPrivacyDenialTest : ViewModelTestUtils() {
     // ── Permitted path unchanged ───────────────────────────────────────────────
 
     @Test
-    fun `permitted fetch leaves blocked state null`() = runBlocking {
-        coEvery { privacyGate.check(any(), any()) } returns PrivacyDecision.Allowed
+    fun `permitted fetch leaves blocked state null`() = runTest(testDispatcher) {
+        coEvery { privacyGate.check(PrivacyCapability.DEVICE_GPS_LOCATION, any()) } returns PrivacyDecision.Allowed
         coEvery { locationProvider.getLastKnownLocation() } returns Pair(48.20, 16.37)
 
         viewModel.onCenterOnMeRequested()
-        val deadline = System.currentTimeMillis() + 5_000
-        while (viewModel.state.value.deviceLatitude == null) {
-            if (System.currentTimeMillis() > deadline) error("device location was never set")
-            Thread.sleep(10)
-        }
+        val state = awaitState { it.deviceLatitude != null }
+        coVerify(exactly = 1) { locationProvider.getLastKnownLocation() }
 
-        assertNull(viewModel.state.value.gpsPrivacyBlocked)
-        assertEquals(48.20, viewModel.state.value.deviceLatitude!!, 0.0001)
-        assertEquals(16.37, viewModel.state.value.deviceLongitude!!, 0.0001)
+        assertNull(state.gpsPrivacyBlocked)
+        assertEquals(48.20, state.deviceLatitude!!, 0.0001)
+        assertEquals(16.37, state.deviceLongitude!!, 0.0001)
     }
 }

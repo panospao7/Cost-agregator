@@ -694,6 +694,72 @@ class NotificationProcessingPipelineReliabilityTest {
     }
 
     @Test
+    fun `parser-null real detector keeps dollar home resolution when text contains from`() = runBlocking {
+        val notification = testNotification("com.test.signal.boundary").copy(
+            title = "Payment $42 from account at ACME",
+            text = "Card purchase completed"
+        )
+        val reviewSlot = slot<PendingReview>()
+        val realDetector = NotificationMoneySignalDetector(userCurrencyProvider)
+        coEvery { userCurrencyProvider.getHomeCurrency() } returns "CAD"
+        coEvery {
+            moneySignalDetector.bestTransactionAmount(any(), "CAD")
+        } coAnswers {
+            realDetector.bestTransactionAmount(firstArg(), "CAD")
+        }
+        coEvery {
+            parserRegistry.parseWithProvenance(
+                notification.title,
+                notification.text,
+                notification.bigText,
+                notification.subText,
+                notification.packageName
+            )
+        } returns ParseOutcome.NoParse(mockk(relaxed = true))
+        coEvery {
+            rawDao.exists(
+                packageName = notification.packageName,
+                timestamp = notification.timestamp,
+                title = notification.title,
+                text = notification.text,
+                bigText = notification.bigText
+            )
+        } returns false
+        coEvery { rawDao.insertOrIgnore(any()) } returns 54L
+        coEvery { pendingReviewDao.upsertByRawNotificationId(any()) } returns 703L
+        coEvery {
+            expenseDao.isDuplicateCurrencyAware(
+                any(), any(), any(), "CAD", any(), any(), any(), any()
+            )
+        } returns false
+        coEvery {
+            pendingReviewDao.hasPendingDuplicateInRangeTypeAware(
+                any(), any(), any(), any(), any(), any(), "CAD", any()
+            )
+        } returns false
+
+        val result = pipeline.process(notification)
+
+        assertTrue(result is NotificationPipelineOutcome.NeedsReview)
+        coVerify(exactly = 1) { pendingReviewDao.upsertByRawNotificationId(capture(reviewSlot)) }
+        assertEquals(42.0, reviewSlot.captured.suggestedAmount!!, 0.0)
+        assertEquals("CAD", reviewSlot.captured.suggestedCurrency)
+        coVerify(exactly = 1) {
+            expenseDao.isDuplicateCurrencyAware(
+                any(), any(), any(), "CAD", any(), any(), any(), any()
+            )
+        }
+        coVerify(exactly = 1) {
+            pendingReviewDao.hasPendingDuplicateInRangeTypeAware(
+                any(), any(), any(), any(), any(), any(), "CAD", any()
+            )
+        }
+        coVerify(exactly = 1) {
+            pendingReviewSourceLinkService.linkSourcesForReview(any(), 703L, any(), any(), any())
+        }
+    }
+
+    @Test
     fun `parser-null notification with unresolved currency creates review without currency duplicate queries`() = runBlocking {
         val notification = testNotification("com.test.unresolved").copy(
             title = "Payment 42 kr",

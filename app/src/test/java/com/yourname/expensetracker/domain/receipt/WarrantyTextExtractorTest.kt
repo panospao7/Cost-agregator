@@ -76,6 +76,32 @@ class WarrantyTextExtractorTest {
     }
 
     @Test
+    fun `explicit product fields preserve words also used in metadata labels`() {
+        for (name in listOf("TV Support Stand", "Warranty Coverage Bracket", "Return Policy Guide", "iPhone 15 Pro Max")) {
+            val result = extractor.extract(
+                "Support: +1-800-123-4567\nManufacturer Warranty\nProduct: $name"
+            )
+            assertEquals(name.uppercase(Locale.getDefault()), result.productName)
+        }
+    }
+
+    @Test
+    fun `metadata labels do not displace an unlabelled product containing support`() {
+        val result = extractor.extract(
+            "Support: +1-800-123-4567\nWarranty: 24 months\nTV Support Stand"
+        )
+        assertEquals("TV SUPPORT STAND", result.productName)
+    }
+
+    @Test
+    fun `warranty and contact metadata alone are not product names`() {
+        val result = extractor.extract(
+            "Manufacturer Warranty\nGuarantee: 24 months\nCoverage: parts\nReturn Policy: 30 days\nSupport: help"
+        )
+        assertNull(result.productName)
+    }
+
+    @Test
     fun `extract returns empty extraction data for non-warranty text`() {
         val ocrText = """
             RECEIPT

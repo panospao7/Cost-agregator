@@ -1,6 +1,5 @@
 package com.yourname.expensetracker.diagnostics
 
-import com.yourname.expensetracker.data.database.entity.OperationRunEvent
 import com.yourname.expensetracker.domain.diagnostics.AppPipeline
 import com.yourname.expensetracker.domain.diagnostics.CorrelationIds
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent
@@ -38,6 +37,18 @@ class DDL512RegressionTest {
     val tmpFolder = TemporaryFolder()
 
     private val sanitizer = EventMetadataSanitizer()
+
+    private fun readMainSource(relativePath: String): String {
+        val candidates = listOf(
+            File("src/main/java", relativePath),
+            File("app/src/main/java", relativePath),
+            File(System.getProperty("user.dir") ?: ".", "src/main/java/$relativePath"),
+            File(System.getProperty("user.dir") ?: ".", "app/src/main/java/$relativePath")
+        )
+        val sourceFile = candidates.firstOrNull { it.isFile }
+        assertNotNull("Unable to locate main source: $relativePath", sourceFile)
+        return sourceFile!!.readText()
+    }
 
     // ── DDL-512-01: Terminal event must be appended BEFORE failJournal ─────────
 
@@ -119,14 +130,18 @@ class DDL512RegressionTest {
 
     @Test
     fun `DDL-512-04 OperationRunEvent entity declares eventId index`() {
-        val indices = OperationRunEvent::class.java
-            .getAnnotation(androidx.room.Entity::class.java)
-            ?.indices
-            ?.map { it.value.toList() }
-            ?: emptyList()
-
-        assertTrue("OperationRunEvent must declare Index on eventId column",
-            indices.any { it == listOf("eventId") })
+        // Room annotations use binary retention and are unavailable through
+        // reliable JVM reflection here. Verify the source consumed by Room.
+        val source = readMainSource(
+            "com/yourname/expensetracker/data/database/entity/OperationRunEvent.kt"
+        )
+        val eventIdIndex = Regex(
+            """Index\s*\(\s*value\s*=\s*\[\s*"eventId"\s*]"""
+        )
+        assertTrue(
+            "OperationRunEvent must declare Index on eventId column",
+            eventIdIndex.containsMatchIn(source)
+        )
     }
 
     // ── DDL-512-05: CreateExpenseRequest carries correlationId ────────────────
@@ -364,9 +379,16 @@ class DDL512RegressionTest {
 
     @Test
     fun `DDL-512-11 getRecentFailures query includes BLOCKED outcome`() {
-        val sql = com.yourname.expensetracker.data.database.dao.OperationRunEventDao::class.java
-            .declaredMethods.firstOrNull { it.name == "getRecentFailures" }
-            ?.getAnnotation(androidx.room.Query::class.java)?.value ?: ""
+        // Query also has binary retention. Inspect the annotation attached to
+        // this exact DAO method instead of expecting runtime reflection.
+        val source = readMainSource(
+            "com/yourname/expensetracker/data/database/dao/OperationRunEventDao.kt"
+        )
+        val methodIndex = source.indexOf("suspend fun getRecentFailures")
+        assertTrue("getRecentFailures method must exist", methodIndex >= 0)
+        val queryStart = source.lastIndexOf("@Query", methodIndex)
+        assertTrue("getRecentFailures must have a Query annotation", queryStart >= 0)
+        val sql = source.substring(queryStart, methodIndex)
         assertTrue("Query must include BLOCKED", sql.contains("BLOCKED"))
         assertTrue("Query must include DROPPED", sql.contains("DROPPED"))
         assertTrue("Query must include SIDE_EFFECT_FAILED", sql.contains("SIDE_EFFECT_FAILED"))

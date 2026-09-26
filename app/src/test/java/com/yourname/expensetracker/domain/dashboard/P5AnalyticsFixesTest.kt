@@ -1,8 +1,5 @@
 package com.yourname.expensetracker.domain.dashboard
 
-import androidx.room.Query
-import com.yourname.expensetracker.data.database.dao.CategoryCurrencyTotal
-import com.yourname.expensetracker.data.database.dao.CurrencyTotal
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
@@ -10,16 +7,13 @@ import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
-import com.yourname.expensetracker.domain.core.money.MoneyNormalizationEngine
 import com.yourname.expensetracker.domain.core.money.RateBasis
-import com.yourname.expensetracker.domain.core.money.TransactionTypeFilter
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.DomainExchangeRate
 import com.yourname.expensetracker.domain.currency.ExchangeRateStore
 import com.yourname.expensetracker.domain.usecase.dashboard.ComputeDashboardWidgetsUseCase
 import com.yourname.expensetracker.domain.util.TimeProvider
-import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import io.mockk.*
 import io.mockk.impl.annotations.MockK
 import kotlinx.coroutines.flow.Flow
@@ -30,9 +24,9 @@ import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
+import java.io.File
 import java.time.Instant
 import java.time.ZoneId
-import java.time.ZonedDateTime
 
 /**
  * P5-PR2 / P5-PR3 — Analytics Correctness & Performance/Robustness fixes.
@@ -62,20 +56,33 @@ class P5AnalyticsFixesTest {
         override fun now(): Long = now
     }
 
+    private fun readMainSource(relativePath: String): String {
+        val candidates = listOf(
+            File("src/main/java", relativePath),
+            File("app/src/main/java", relativePath),
+            File(System.getProperty("user.dir") ?: ".", "src/main/java/$relativePath"),
+            File(System.getProperty("user.dir") ?: ".", "app/src/main/java/$relativePath")
+        )
+        val sourceFile = candidates.firstOrNull { it.isFile }
+        assertNotNull("Unable to locate main source: $relativePath", sourceFile)
+        return sourceFile!!.readText()
+    }
+
     // ── NEW-P5-003: Deposit filter excludes not-mine and shared-expense items ──
 
     @Test
     fun `deposit_filter_excludes_not_mine_items`() = runTest {
-        // Use reflection to read the actual @Query annotation from
-        // ExpenseDao.getDepositTotalsBetweenByCurrency and verify it contains
-        // both isNotMine = 0 AND isSharedExpense = 0.
-        // This is a structural test — the annotation is checked at runtime via
-        // reflection instead of duplicating a hardcoded SQL string.
-        val method = ExpenseDao::class.java.declaredMethods
-            .first { it.name == "getDepositTotalsBetweenByCurrency" }
-        val queryAnnotation = method.getAnnotation(Query::class.java)
-        assertNotNull("@Query annotation must be present on getDepositTotalsBetweenByCurrency", queryAnnotation)
-        val queryValue = queryAnnotation.value
+        // Room annotations use binary retention, so Java reflection cannot read
+        // @Query reliably. Inspect the owning DAO declaration directly instead.
+        val source = readMainSource(
+            "com/yourname/expensetracker/data/database/dao/ExpenseDao.kt"
+        )
+        val declaration = "suspend fun getDepositTotalsBetweenByCurrency"
+        val declarationIndex = source.indexOf(declaration)
+        assertTrue("DAO method declaration must exist", declarationIndex >= 0)
+        val queryStart = source.lastIndexOf("@Query(", declarationIndex)
+        assertTrue("DAO method must have a preceding @Query", queryStart >= 0)
+        val queryValue = source.substring(queryStart, declarationIndex)
         assertTrue(
             "DAO query must filter isSharedExpense = 0; got: $queryValue",
             queryValue.contains("isSharedExpense = 0")
@@ -135,14 +142,22 @@ class P5AnalyticsFixesTest {
         )
         assertEquals(50.0, purchaseExpense.effectiveAmount, 0.001) // computed property
 
-        // Structural check: MoneyNormalizationEngine.aggregateExpenses defaults to
-        // TransactionTypeFilter.PURCHASE_ONLY, matching the filter used in
-        // produceDashboardNormalizedInput for category breakdown (line 397).
-        val aggregateMethod = MoneyNormalizationEngine::class.java.declaredMethods
-            .first { it.name == "aggregateExpenses" }
-        assertEquals(
-            "4th parameter must be TransactionTypeFilter",
-            TransactionTypeFilter::class.java, aggregateMethod.parameterTypes[3]
+        // Value-class JVM name mangling makes reflection on aggregateExpenses
+        // brittle. Pin the actual category-aggregation call site instead.
+        val source = readMainSource(
+            "com/yourname/expensetracker/domain/usecase/dashboard/ComputeDashboardWidgetsUseCase.kt"
+        )
+        val blockStart = source.indexOf("val categoryAggregates = purchases")
+        val blockEnd = source.indexOf("val normalizedExpenses", blockStart)
+        assertTrue("Category aggregate block must exist", blockStart >= 0 && blockEnd > blockStart)
+        val categoryBlock = source.substring(blockStart, blockEnd)
+        assertTrue(
+            "Category aggregates must use PURCHASE_ONLY",
+            categoryBlock.contains("TransactionTypeFilter.PURCHASE_ONLY")
+        )
+        assertFalse(
+            "Category aggregates must not use ALL_TYPES",
+            categoryBlock.contains("TransactionTypeFilter.ALL_TYPES")
         )
 
         // Verify that produceDashboardNormalizedInput exists (compile-time check)
@@ -164,6 +179,7 @@ class P5AnalyticsFixesTest {
 
         // Create a repository that counts how many times resolveHomeCurrency is called
         val settingsRepo = mockk<CurrencySettingsRepository>()
+        every { settingsRepo.homeCurrency() } returns flowOf("EUR")
 
         // On first call, resolve successfully; on subsequent calls, verify cache is used
         coEvery { settingsRepo.resolveHomeCurrency() } returns
@@ -222,12 +238,14 @@ class P5AnalyticsFixesTest {
 
         // The aggregate should still be computed correctly
         assertEquals(270.0, result.displayAmount, 0.001) // (100 + 200) * 0.9
-        assertEquals(2, result.sourceBuckets.size)
+        // Buckets are canonically grouped by currency before conversion.
+        assertEquals(1, result.sourceBuckets.size)
 
         // The missing bucket should have 0 transaction count
         val usdBuckets = result.sourceBuckets.filter { it.currency.code == "USD" }
-        assertEquals(2, usdBuckets.size)
-        // The second bucket (index 1) had no matching count, so it should be 0
+        assertEquals(1, usdBuckets.size)
+        assertEquals(300.0, usdBuckets.single().amount, 0.001)
+        // Counts are grouped too: the supplied 1 plus the missing count default of 0.
         assertEquals(1, usdBuckets.sumOf { it.transactionCount }) // 1 + 0
 
         // D3 pin: the mismatch is surfaced, not silent.

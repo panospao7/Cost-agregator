@@ -221,7 +221,8 @@ class AutoCreateWarrantyFromReceiptUseCaseTest {
 
     private fun recentDate(): String {
         val cal = Calendar.getInstance().apply {
-            timeInMillis = System.currentTimeMillis()
+            // Keep the relative-date fixture aligned with the use case's injected clock.
+            timeInMillis = FIXED_NOW
             add(Calendar.DAY_OF_MONTH, -1)
         }
         val day = cal.get(Calendar.DAY_OF_MONTH).toString().padStart(2, '0')

@@ -96,7 +96,7 @@ class SpendingChallengeManagerTest {
     @Test
     fun `reduce spending challenge uses stored baseline and completes only at end`() = runTest {
         val now = 1_710_000_000_000L
-        every { timeProvider.now() } returnsMany listOf(now, now, now + DAY_MS * 7)
+        every { timeProvider.now() } returnsMany listOf(now, now + DAY_MS * 7)
         coEvery { expenseDao.getTotalSpentBetween(any(), any()) } returnsMany listOf(40.0, 40.0)
         coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returnsMany listOf(
             listOf(CurrencyTotal("EUR", 40.0, 1)),
@@ -145,7 +145,7 @@ class SpendingChallengeManagerTest {
         )
 
         assertEquals(120.0, created.baselineAmount ?: 0.0, 0.0001)
-        assertEquals(now - DAY_MS * 7, created.baselineStartDate)
+        assertEquals(managerTestStartOfDay(now) - DAY_MS * 7, created.baselineStartDate)
         assertEquals(managerTestStartOfDay(now), created.baselineEndDate)
         coVerify(exactly = 1) { repository.saveChallenge(any()) }
     }

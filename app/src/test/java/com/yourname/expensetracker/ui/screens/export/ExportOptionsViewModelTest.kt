@@ -330,7 +330,7 @@ class ExportOptionsViewModelTest {
     }
 
     @Test
-    fun `generate json export succeeds with header-only file for empty dataset`() = runBlocking {
+    fun `generate json export succeeds with header-only file for empty dataset`(): Unit = runBlocking {
         val out = createTempFile(prefix = "export_empty_json_", suffix = ".json")
         every { exportDataRepository.createExportFile(any(), any()) } returns out
         coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns 0
