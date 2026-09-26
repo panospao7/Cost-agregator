@@ -11,6 +11,7 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import timber.log.Timber
+import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -25,6 +26,17 @@ enum class SupportedCurrency(val code: String, val symbol: String, val displayNa
     CHF("CHF", "Fr", "Swiss Franc"),
     CAD("CAD", "C$", "Canadian Dollar"),
     AUD("AUD", "A$", "Australian Dollar"),
+    CNY("CNY", "¥", "Chinese Yuan"),
+    NZD("NZD", "NZ$", "New Zealand Dollar"),
+    MXN("MXN", "MX$", "Mexican Peso"),
+    SGD("SGD", "S$", "Singapore Dollar"),
+    HKD("HKD", "HK$", "Hong Kong Dollar"),
+    KRW("KRW", "₩", "South Korean Won"),
+    TRY("TRY", "₺", "Turkish Lira"),
+    RUB("RUB", "₽", "Russian Ruble"),
+    INR("INR", "₹", "Indian Rupee"),
+    BRL("BRL", "R$", "Brazilian Real"),
+    ZAR("ZAR", "R", "South African Rand"),
     SEK("SEK", "kr", "Swedish Krona"),
     NOK("NOK", "kr", "Norwegian Krone"),
     DKK("DKK", "kr", "Danish Krone"),
@@ -37,9 +49,18 @@ enum class SupportedCurrency(val code: String, val symbol: String, val displayNa
     ISK("ISK", "kr", "Icelandic Krona");
 
     companion object {
+        val catalog: List<SupportedCurrency> = values().toList()
+        val activeCatalog: List<SupportedCurrency> = catalog.filter { it.isActive }
+
+        fun normalizeCode(code: String): String = code.trim().uppercase(Locale.ROOT)
+
         fun fromCode(code: String): SupportedCurrency? {
-            return values().find { it.code == code.uppercase() }
+            val normalized = normalizeCode(code)
+            return catalog.find { it.code == normalized }
         }
+
+        fun fromActiveCode(code: String): SupportedCurrency? =
+            fromCode(code)?.takeIf { it.isActive }
     }
 }
 
@@ -133,12 +154,15 @@ class CurrencyConverter @Inject constructor(
         fromCurrency: String,
         toCurrency: String
     ): ConversionResult? = withContext(Dispatchers.IO) {
-        if (fromCurrency.uppercase() == toCurrency.uppercase()) {
+        val from = SupportedCurrency.fromCode(fromCurrency)?.code ?: return@withContext null
+        val to = SupportedCurrency.fromCode(toCurrency)?.code ?: return@withContext null
+
+        if (from == to) {
             return@withContext ConversionResult(
                 originalAmount = amount,
-                originalCurrency = fromCurrency,
+                originalCurrency = from,
                 convertedAmount = amount,
-                targetCurrency = toCurrency,
+                targetCurrency = to,
                 rateUsed = 1.0,
                 timestamp = timeProvider.now()
             )
@@ -146,8 +170,8 @@ class CurrencyConverter @Inject constructor(
 
         // Try direct rate first
         val directRate = exchangeRateStore.getRate(
-            fromCurrency.uppercase(),
-            toCurrency.uppercase()
+            from,
+            to
         )
 
         if (directRate != null) {
@@ -163,9 +187,9 @@ class CurrencyConverter @Inject constructor(
             } else {
                 return@withContext ConversionResult(
                     originalAmount = amount,
-                    originalCurrency = fromCurrency,
+                    originalCurrency = from,
                     convertedAmount = amount * directRate.rate,
-                    targetCurrency = toCurrency,
+                    targetCurrency = to,
                     rateUsed = directRate.rate,
                     timestamp = directRate.lastUpdated
                 )
@@ -174,12 +198,12 @@ class CurrencyConverter @Inject constructor(
 
         // Try via EUR as intermediate
         val toEurRate = exchangeRateStore.getRate(
-            fromCurrency.uppercase(),
+            from,
             DEFAULT_BASE_CURRENCY
         )
         val fromEurRate = exchangeRateStore.getRate(
             DEFAULT_BASE_CURRENCY,
-            toCurrency.uppercase()
+            to
         )
 
         if (toEurRate != null && fromEurRate != null) {
@@ -195,9 +219,9 @@ class CurrencyConverter @Inject constructor(
                 val combinedRate = toEurRate.rate * fromEurRate.rate
                 return@withContext ConversionResult(
                     originalAmount = amount,
-                    originalCurrency = fromCurrency,
+                    originalCurrency = from,
                     convertedAmount = amount * combinedRate,
-                    targetCurrency = toCurrency,
+                    targetCurrency = to,
                     rateUsed = combinedRate,
                     timestamp = maxOf(toEurRate.lastUpdated, fromEurRate.lastUpdated)
                 )
@@ -235,12 +259,15 @@ class CurrencyConverter @Inject constructor(
         toCurrency: String,
         atMillis: Long
     ): ConversionResult? = withContext(Dispatchers.IO) {
-        if (fromCurrency.uppercase() == toCurrency.uppercase()) {
+        val from = SupportedCurrency.fromCode(fromCurrency)?.code ?: return@withContext null
+        val to = SupportedCurrency.fromCode(toCurrency)?.code ?: return@withContext null
+
+        if (from == to) {
             return@withContext ConversionResult(
                 originalAmount = amount,
-                originalCurrency = fromCurrency,
+                originalCurrency = from,
                 convertedAmount = amount,
-                targetCurrency = toCurrency,
+                targetCurrency = to,
                 rateUsed = 1.0,
                 timestamp = atMillis
             )
@@ -248,17 +275,17 @@ class CurrencyConverter @Inject constructor(
 
         // Try direct rate first
         val directRate = exchangeRateStore.getRateAsOf(
-            fromCurrency.uppercase(),
-            toCurrency.uppercase(),
+            from,
+            to,
             atMillis
         )
 
         if (directRate != null) {
             return@withContext ConversionResult(
                 originalAmount = amount,
-                originalCurrency = fromCurrency,
+                originalCurrency = from,
                 convertedAmount = amount * directRate.rate,
-                targetCurrency = toCurrency,
+                targetCurrency = to,
                 rateUsed = directRate.rate,
                 timestamp = directRate.lastUpdated
             )
@@ -266,13 +293,13 @@ class CurrencyConverter @Inject constructor(
 
         // Try via EUR as intermediate
         val toEurRate = exchangeRateStore.getRateAsOf(
-            fromCurrency.uppercase(),
+            from,
             DEFAULT_BASE_CURRENCY,
             atMillis
         )
         val fromEurRate = exchangeRateStore.getRateAsOf(
             DEFAULT_BASE_CURRENCY,
-            toCurrency.uppercase(),
+            to,
             atMillis
         )
 
@@ -280,9 +307,9 @@ class CurrencyConverter @Inject constructor(
             val combinedRate = toEurRate.rate * fromEurRate.rate
             return@withContext ConversionResult(
                 originalAmount = amount,
-                originalCurrency = fromCurrency,
+                originalCurrency = from,
                 convertedAmount = amount * combinedRate,
-                targetCurrency = toCurrency,
+                targetCurrency = to,
                 rateUsed = combinedRate,
                 timestamp = maxOf(toEurRate.lastUpdated, fromEurRate.lastUpdated)
             )
@@ -311,8 +338,28 @@ class CurrencyConverter @Inject constructor(
         atMillis: Long? = null,
         stalePolicy: StaleRatePolicy = StaleRatePolicy.Default
     ): ConversionOutcome = withContext(Dispatchers.IO) {
-        val from = fromCurrency.uppercase()
-        val to = toCurrency.uppercase()
+        val normalizedFrom = SupportedCurrency.normalizeCode(fromCurrency)
+        val normalizedTo = SupportedCurrency.normalizeCode(toCurrency)
+        val sourceCurrency = SupportedCurrency.fromCode(normalizedFrom)
+            ?: return@withContext ConversionOutcome.Failed(
+                originalAmount = amount,
+                originalCurrency = normalizedFrom,
+                targetCurrency = normalizedTo,
+                rateBasis = rateBasis,
+                failureType = ConversionFailureType.INVALID_SOURCE_CURRENCY,
+                message = ConversionFailureType.INVALID_SOURCE_CURRENCY.name
+            )
+        val targetCurrency = SupportedCurrency.fromCode(normalizedTo)
+            ?: return@withContext ConversionOutcome.Failed(
+                originalAmount = amount,
+                originalCurrency = sourceCurrency.code,
+                targetCurrency = normalizedTo,
+                rateBasis = rateBasis,
+                failureType = ConversionFailureType.INVALID_TARGET_CURRENCY,
+                message = ConversionFailureType.INVALID_TARGET_CURRENCY.name
+            )
+        val from = sourceCurrency.code
+        val to = targetCurrency.code
 
         // Identity
         if (from == to) {
@@ -336,23 +383,7 @@ class CurrencyConverter @Inject constructor(
             return@withContext ConversionOutcome.Failed(
                 originalAmount = amount, originalCurrency = from, targetCurrency = to,
                 rateBasis = rateBasis, failureType = ConversionFailureType.MISSING_HISTORICAL_RATE,
-                message = "Historical rate basis $rateBasis requires atMillis but none provided"
-            )
-        }
-
-        // Validate currencies
-        if (SupportedCurrency.fromCode(from) == null) {
-            return@withContext ConversionOutcome.Failed(
-                originalAmount = amount, originalCurrency = from, targetCurrency = to,
-                rateBasis = rateBasis, failureType = ConversionFailureType.INVALID_SOURCE_CURRENCY,
-                message = "Unsupported source currency: $from"
-            )
-        }
-        if (SupportedCurrency.fromCode(to) == null) {
-            return@withContext ConversionOutcome.Failed(
-                originalAmount = amount, originalCurrency = from, targetCurrency = to,
-                rateBasis = rateBasis, failureType = ConversionFailureType.INVALID_TARGET_CURRENCY,
-                message = "Unsupported target currency: $to"
+                message = ConversionFailureType.MISSING_HISTORICAL_RATE.name
             )
         }
 
@@ -404,7 +435,7 @@ class CurrencyConverter @Inject constructor(
             return@withContext ConversionOutcome.Failed(
                 originalAmount = amount, originalCurrency = from, targetCurrency = to,
                 rateBasis = rateBasis, failureType = failureType,
-                message = "No exchange rate available for $from to $to"
+                message = failureType.name
             )
         }
 
@@ -436,11 +467,7 @@ class CurrencyConverter @Inject constructor(
                 return@withContext ConversionOutcome.Failed(
                     originalAmount = amount, originalCurrency = from, targetCurrency = to,
                     rateBasis = rateBasis, failureType = ConversionFailureType.STALE_RATE,
-                    message = if (ageMs == null) {
-                        "Rate from $from to $to: staleness cannot be determined (missing reference)"
-                    } else {
-                        "Rate from $from to $to is stale (age: ${ageMs}ms, max: ${stalePolicy.maxAgeMs}ms)"
-                    }
+                    message = ConversionFailureType.STALE_RATE.name
                 )
             }
         }
@@ -456,6 +483,58 @@ class CurrencyConverter @Inject constructor(
             rateLastUpdated = rateResult.lastUpdated,
             rateSource = rateResult.source,
             conversionPath = rateResult.path
+        )
+    }
+
+    fun reverseDisplayQuote(
+        amountInTarget: Double,
+        forward: ConversionOutcome.Converted
+    ): ConversionOutcome {
+        if (!amountInTarget.isFinite()) {
+            return ConversionOutcome.Failed(
+                originalAmount = amountInTarget,
+                originalCurrency = forward.targetCurrency.code,
+                targetCurrency = forward.originalCurrency.code,
+                rateBasis = forward.rateBasis,
+                failureType = ConversionFailureType.UNKNOWN,
+                message = "INVALID_REVERSE_AMOUNT"
+            )
+        }
+        if (!forward.rateUsed.isFinite() || forward.rateUsed <= 0.0) {
+            return ConversionOutcome.Failed(
+                originalAmount = amountInTarget,
+                originalCurrency = forward.targetCurrency.code,
+                targetCurrency = forward.originalCurrency.code,
+                rateBasis = forward.rateBasis,
+                failureType = ConversionFailureType.UNKNOWN,
+                message = "INVALID_REVERSE_QUOTE"
+            )
+        }
+
+        val reversedAmount = amountInTarget / forward.rateUsed
+        val inverseRate = 1.0 / forward.rateUsed
+        if (!reversedAmount.isFinite() || !inverseRate.isFinite()) {
+            return ConversionOutcome.Failed(
+                originalAmount = amountInTarget,
+                originalCurrency = forward.targetCurrency.code,
+                targetCurrency = forward.originalCurrency.code,
+                rateBasis = forward.rateBasis,
+                failureType = ConversionFailureType.UNKNOWN,
+                message = "INVALID_REVERSE_OUTPUT"
+            )
+        }
+
+        return ConversionOutcome.Converted(
+            originalAmount = amountInTarget,
+            originalCurrency = forward.targetCurrency,
+            convertedAmount = reversedAmount,
+            targetCurrency = forward.originalCurrency,
+            rateUsed = inverseRate,
+            rateBasis = forward.rateBasis,
+            rateValidDate = forward.rateValidDate,
+            rateLastUpdated = forward.rateLastUpdated,
+            rateSource = forward.rateSource,
+            conversionPath = forward.conversionPath
         )
     }
 

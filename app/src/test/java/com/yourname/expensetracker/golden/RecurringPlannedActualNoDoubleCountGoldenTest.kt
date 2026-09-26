@@ -321,7 +321,8 @@ class RecurringPlannedActualNoDoubleCountGoldenTest : GoldenTestBase() {
 
         val projectionService = com.yourname.expensetracker.domain.recurring.RecurringPlanProjectionService(
             plannedExpenseDao = plannedDao,
-            occurrenceDao = occurrenceDao
+            occurrenceDao = occurrenceDao,
+            writeBarrier = writeBarrier
         )
 
         return com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator(

@@ -149,7 +149,7 @@ class ReceiptLinkServiceColumnScopeTest {
         // Purged fields STAY purged — no privacy resurrection.
         assertEquals("", after.rawOcrText)
         assertEquals(now + 1, after.rawOcrTextPurgedAt)
-        assertEquals("MERCHANT NAME", after.parsedMerchant)
+        assertNull(after.parsedMerchant)
         // Unrelated concurrent field retained.
         assertEquals(com.yourname.expensetracker.data.database.entity.CategorizationStatus.ANALYZING, after.itemCategorizationStatus)
         // Link fields applied.
@@ -205,7 +205,7 @@ class ReceiptLinkServiceColumnScopeTest {
         val after = dao.getById(receiptId)!!
         assertEquals("", after.rawOcrText)
         assertEquals(now + 1, after.rawOcrTextPurgedAt)
-        assertEquals("MERCHANT NAME", after.parsedMerchant)
+        assertNull(after.parsedMerchant)
         assertEquals(expenseId, after.suggestedExpenseId)
         assertEquals(MatchStatus.SUGGESTED, after.matchStatus)
         assertEquals(0.75f, after.matchConfidence!!, 0.0001f)

@@ -443,6 +443,7 @@ class DataRetentionWorker @AssistedInject constructor(
             // COMPLETED/auditEmitted=false so a later resume re-emits the audit.
             throw e
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             Log.w(TAG, "Retention audit emission failed for target ${record.targetName}", e)
             ctx.addErrors()
             false

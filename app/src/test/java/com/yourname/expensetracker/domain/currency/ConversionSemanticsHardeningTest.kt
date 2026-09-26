@@ -8,6 +8,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
+import java.util.Locale
 
 /**
  * PR 1 — Conversion semantics hardening tests.
@@ -433,6 +434,146 @@ class ConversionSemanticsHardeningTest {
     }
 
     // ── Helpers ────────────────────────────────────────────────────────
+
+    @Test
+    fun `priority offered currencies are accepted by typed and legacy conversion`() = runTest {
+        listOf("CNY", "NZD", "INR").forEachIndexed { index, code ->
+            store.latestRates["${code}_EUR"] = rate(
+                code,
+                "EUR",
+                rate = 0.5 + index * 0.1,
+                validDate = NOW,
+                lastUpdated = NOW
+            )
+
+            val typed = converter.convertOutcome(
+                100.0,
+                code,
+                "EUR",
+                RateBasis.LATEST_AVAILABLE,
+                stalePolicy = StaleRatePolicy.None
+            )
+
+            assertTrue("Expected typed conversion for $code", typed is ConversionOutcome.Converted)
+            assertNotNull("Expected legacy conversion for $code", converter.convert(100.0, code, "EUR"))
+        }
+    }
+
+    @Test
+    fun `unknown blank and malformed codes fail before identity`() = runTest {
+        val cases = listOf(
+            Triple("", "EUR", ConversionFailureType.INVALID_SOURCE_CURRENCY),
+            Triple("US D", "EUR", ConversionFailureType.INVALID_SOURCE_CURRENCY),
+            Triple("ZZZ", "ZZZ", ConversionFailureType.INVALID_SOURCE_CURRENCY),
+            Triple("USD", "", ConversionFailureType.INVALID_TARGET_CURRENCY),
+            Triple("USD", "EU R", ConversionFailureType.INVALID_TARGET_CURRENCY),
+            Triple("USD", "ZZZ", ConversionFailureType.INVALID_TARGET_CURRENCY)
+        )
+
+        cases.forEach { (from, to, expectedFailure) ->
+            val typed = converter.convertOutcome(
+                10.0,
+                from,
+                to,
+                RateBasis.LATEST_AVAILABLE,
+                stalePolicy = StaleRatePolicy.None
+            )
+            assertTrue(typed is ConversionOutcome.Failed)
+            assertEquals(expectedFailure, (typed as ConversionOutcome.Failed).failureType)
+            assertEquals(expectedFailure.name, typed.message)
+            assertNull(converter.convert(10.0, from, to))
+        }
+    }
+
+    @Test
+    fun `lowercase normalization is locale independent`() = runTest {
+        val previousLocale = Locale.getDefault()
+        Locale.setDefault(Locale("tr", "TR"))
+        try {
+            store.latestRates["INR_EUR"] = rate("INR", "EUR", 0.011, validDate = NOW, lastUpdated = NOW)
+
+            val typed = converter.convertOutcome(
+                100.0,
+                "inr",
+                "eur",
+                RateBasis.LATEST_AVAILABLE,
+                stalePolicy = StaleRatePolicy.None
+            )
+
+            assertTrue(typed is ConversionOutcome.Converted)
+            assertNotNull(converter.convert(100.0, "inr", "eur"))
+        } finally {
+            Locale.setDefault(previousLocale)
+        }
+    }
+
+    @Test
+    fun `inactive HRK remains recognized for historical identity values`() = runTest {
+        val typed = converter.convertOutcome(
+            25.0,
+            "hrk",
+            "HRK",
+            RateBasis.LATEST_AVAILABLE,
+            stalePolicy = StaleRatePolicy.None
+        )
+        val legacy = converter.convert(25.0, "hrk", "HRK")
+
+        assertTrue(typed is ConversionOutcome.Converted)
+        assertEquals(25.0, (typed as ConversionOutcome.Converted).convertedAmount, 0.0)
+        assertNotNull(legacy)
+        assertEquals("HRK", legacy!!.originalCurrency)
+        assertEquals("HRK", legacy.targetCurrency)
+    }
+
+    @Test
+    fun `reverse display quote uses captured forward quote without lookup`() {
+        val forward = ConversionOutcome.Converted(
+            originalAmount = 100.0,
+            originalCurrency = CurrencyCode("EUR"),
+            convertedAmount = 110.0,
+            targetCurrency = CurrencyCode("USD"),
+            rateUsed = 1.1,
+            rateBasis = RateBasis.LATEST_AVAILABLE,
+            rateValidDate = NOW,
+            rateLastUpdated = NOW,
+            rateSource = "ecb",
+            conversionPath = ConversionPath.DIRECT
+        )
+
+        val reversed = converter.reverseDisplayQuote(55.0, forward)
+
+        assertTrue(reversed is ConversionOutcome.Converted)
+        reversed as ConversionOutcome.Converted
+        assertEquals(50.0, reversed.convertedAmount, 0.000001)
+        assertEquals(1.0 / 1.1, reversed.rateUsed, 0.000001)
+        assertEquals(CurrencyCode("USD"), reversed.originalCurrency)
+        assertEquals(CurrencyCode("EUR"), reversed.targetCurrency)
+        assertTrue(store.latestRates.isEmpty())
+    }
+
+    @Test
+    fun `reverse display quote rejects invalid quote amount and output`() {
+        val forward = ConversionOutcome.Converted(
+            originalAmount = 1.0,
+            originalCurrency = CurrencyCode("EUR"),
+            convertedAmount = 1.0,
+            targetCurrency = CurrencyCode("USD"),
+            rateUsed = 1.0,
+            rateBasis = RateBasis.LATEST_AVAILABLE,
+            rateValidDate = NOW,
+            rateLastUpdated = NOW,
+            rateSource = "ecb",
+            conversionPath = ConversionPath.DIRECT
+        )
+
+        val invalidAmount = converter.reverseDisplayQuote(Double.NaN, forward)
+        val invalidQuote = converter.reverseDisplayQuote(1.0, forward.copy(rateUsed = 0.0))
+        val invalidOutput = converter.reverseDisplayQuote(Double.MAX_VALUE, forward.copy(rateUsed = Double.MIN_VALUE))
+
+        assertEquals("INVALID_REVERSE_AMOUNT", (invalidAmount as ConversionOutcome.Failed).message)
+        assertEquals("INVALID_REVERSE_QUOTE", (invalidQuote as ConversionOutcome.Failed).message)
+        assertEquals("INVALID_REVERSE_OUTPUT", (invalidOutput as ConversionOutcome.Failed).message)
+    }
 
     private fun rate(
         from: String, to: String, rate: Double,

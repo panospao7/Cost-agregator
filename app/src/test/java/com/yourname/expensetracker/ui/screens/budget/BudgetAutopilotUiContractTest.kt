@@ -11,6 +11,8 @@ import com.yourname.expensetracker.domain.budget.BudgetAutopilotEngine
 import com.yourname.expensetracker.domain.budget.BudgetAutopilotRecommendations
 import com.yourname.expensetracker.domain.budget.BudgetRecommendationQuality
 import com.yourname.expensetracker.domain.budget.CategoryBudgetRecommendation
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.groups.SharedExpenseBudgetOffsetEngine
 import com.yourname.expensetracker.domain.model.Result
@@ -125,6 +127,11 @@ class BudgetAutopilotUiContractTest {
         reason = "test",
         confidence = 0.9,
         trend = BudgetTrend.STABLE,
+        displayCurrency = "EUR",
+        sourceAmountToApply = MoneyAmount(
+            if (quality == BudgetRecommendationQuality.LOW_HISTORY) 100.0 else 110.0,
+            CurrencyCode("EUR")
+        ),
         quality = quality,
         isActionable = isActionable
     )
@@ -136,7 +143,8 @@ class BudgetAutopilotUiContractTest {
             totalRecommendedBudget = recs.sumOf { it.recommendedBudget },
             overallDelta = 0.0,
             confidence = 0.9,
-            generatedAt = 1_700_000_000_000L
+            generatedAt = 1_700_000_000_000L,
+            displayCurrency = "EUR"
         )
 
     @Test

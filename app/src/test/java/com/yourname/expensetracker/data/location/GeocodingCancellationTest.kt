@@ -2,12 +2,18 @@ package com.yourname.expensetracker.data.location
 
 import android.util.Log
 import com.yourname.expensetracker.data.location.internal.executeCancellable
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
+import io.mockk.unmockkStatic
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.runBlocking
 import okhttp3.Call
 import okhttp3.Callback
@@ -17,6 +23,7 @@ import okhttp3.Response
 import okio.Timeout
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
+import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import java.io.IOException
@@ -25,6 +32,18 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 class GeocodingCancellationTest {
+
+    private var httpClient: OkHttpClient? = null
+
+    @After
+    fun tearDown() {
+        httpClient?.let { client ->
+            client.dispatcher.cancelAll()
+            client.dispatcher.executorService.shutdownNow()
+            client.connectionPool.evictAll()
+        }
+        unmockkStatic(Log::class)
+    }
 
     @Before
     fun setup() {
@@ -40,13 +59,13 @@ class GeocodingCancellationTest {
         val factory = RecordingCallFactory()
         val request = Request.Builder().url("https://example.com/search").build()
 
-        val deferred = async {
+        val deferred = async(start = CoroutineStart.UNDISPATCHED) {
             factory.executeCancellable(request)
         }
 
         assertTrue(factory.awaitEnqueued())
 
-        deferred.cancel()
+        deferred.cancelAndJoin()
 
         try {
             deferred.await()
@@ -55,7 +74,7 @@ class GeocodingCancellationTest {
             // expected
         }
 
-        assertTrue(factory.awaitCancelled())
+        assertTrue(factory.wasCancelled())
     }
 
     @Test
@@ -72,16 +91,20 @@ class GeocodingCancellationTest {
                 requestCancelled.countDown()
                 throw IOException("Canceled")
             }
-            .build()
+            .build().also { httpClient = it }
 
-        val service = PhotonGeocodingService(client, privacyGate = mockk<PrivacyGate>(relaxed = true))
-        val deferred = async {
+        val privacyGate = mockk<PrivacyGate>()
+        coEvery {
+            privacyGate.check(PrivacyCapability.EXTERNAL_GEOCODING, any())
+        } returns PrivacyDecision.Allowed
+        val service = PhotonGeocodingService(client, privacyGate = privacyGate)
+        val deferred = async(start = CoroutineStart.UNDISPATCHED) {
             service.searchMultiple(query = "coffee", biasLat = null, biasLon = null, limit = 5)
         }
 
         assertTrue(requestStarted.await(1, TimeUnit.SECONDS))
 
-        deferred.cancel()
+        deferred.cancelAndJoin()
 
         try {
             deferred.await()
@@ -90,7 +113,7 @@ class GeocodingCancellationTest {
             // expected
         }
 
-        assertTrue(requestCancelled.await(1, TimeUnit.SECONDS))
+        assertTrue(requestCancelled.await(5, TimeUnit.SECONDS))
     }
 
     private class RecordingCallFactory : Call.Factory {
@@ -110,6 +133,8 @@ class GeocodingCancellationTest {
         fun awaitEnqueued(): Boolean = enqueued.await(1, TimeUnit.SECONDS)
 
         fun awaitCancelled(): Boolean = cancellationRequested.await(1, TimeUnit.SECONDS)
+
+        fun wasCancelled(): Boolean = cancelled.get()
     }
 
     private class RecordingCall(

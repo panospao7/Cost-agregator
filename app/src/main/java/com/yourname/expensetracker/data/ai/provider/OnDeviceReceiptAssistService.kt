@@ -99,6 +99,8 @@ class OnDeviceReceiptAssistService @Inject constructor() : ReceiptAssistService 
 
     internal fun buildRequestForTest(input: ReceiptAssistInput): GenerateContentRequest = buildRequest(input)
 
+    internal fun imageBytesForTest(input: ReceiptAssistInput): ByteArray? = readImageBytes(input)
+
     internal fun buildPrompt(input: ReceiptAssistInput): String {
         return buildString {
             // Check if we're in image analysis mode
@@ -147,6 +149,13 @@ class OnDeviceReceiptAssistService @Inject constructor() : ReceiptAssistService 
     }
 
     private fun buildImagePart(input: ReceiptAssistInput): ImagePart? {
+        val bytes = readImageBytes(input) ?: return null
+        return runCatching { ImagePart(bytes) }
+            .onFailure { Timber.w(it, "OnDeviceReceiptAssistService: unable to attach receipt image") }
+            .getOrNull()
+    }
+
+    private fun readImageBytes(input: ReceiptAssistInput): ByteArray? {
         if (!input.isImageAnalysisMode) return null
         val imagePath = input.imagePath ?: return null
         val file = File(imagePath)
@@ -158,9 +167,7 @@ class OnDeviceReceiptAssistService @Inject constructor() : ReceiptAssistService 
         }
         val bytes = runCatching { file.readBytes() }.getOrNull() ?: return null
         if (bytes.isEmpty()) return null
-        return runCatching { ImagePart(bytes) }
-            .onFailure { Timber.w(it, "OnDeviceReceiptAssistService: unable to attach receipt image") }
-            .getOrNull()
+        return bytes
     }
 
     internal fun parseResponse(text: String): ReceiptAssistSuggestion? {

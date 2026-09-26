@@ -593,6 +593,10 @@ class BusinessExpenseReportGeneratorTest {
     @Test
     fun `formatted report does not hardcode euro for non EUR filing currency`() = runTest {
         every { taxSettingsRepository.getFilingCurrency() } returns "USD"
+        coEvery { repo.getBusinessExpenses(startDate, endDate) } returns listOf(
+            purchaseExpense.copy(currency = "USD"),
+            purchaseExpense2.copy(currency = "USD")
+        )
 
         val report = generator.generateReport(startDate, endDate, includeMileage = false)
         val text = report.formattedReport

@@ -145,13 +145,14 @@ class BankStatementParser @Inject constructor(
             rowBlocks.sortedBy { it.left }.joinToString(" ") { it.text }
         }
 
+        // Header rows own the date-column ordering contract, so inspect them
+        // before preFilterRows removes statement headers from transaction input.
+        val columnInfo = detectDateColumns(rowStrings)
+
         // 1b. Pre-filter rows: strip headers, footers, page numbers, duplicates
         val preFiltered = preFilterRows(rows, rowStrings)
         val filteredRows = preFiltered.first
         rowStrings = preFiltered.second
-
-        // 2. Detect header columns to identify which date is which
-        val columnInfo = detectDateColumns(rowStrings)
 
         val transactions = mutableListOf<ParsedTransaction>()
 

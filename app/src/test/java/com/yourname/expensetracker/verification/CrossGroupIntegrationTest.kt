@@ -26,6 +26,7 @@ import com.yourname.expensetracker.data.repository.AnalyticsRepository
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.FinancialWeatherRepository
+import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
 import com.yourname.expensetracker.data.repository.PlannedExpenseRepository
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.domain.model.dashboard.SpendingSummary
@@ -81,6 +82,10 @@ import io.mockk.mockk
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -97,6 +102,13 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
     private lateinit var insightsEngine: InsightsEngine
     private lateinit var totalsEngine: TotalsAggregationEngine
     private lateinit var advancedEngine: AdvancedAnalyticsEngine
+    private lateinit var multiCurrencyRepository: MultiCurrencyRepository
+    private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+
+    @After
+    fun cancelRepositoryScope() {
+        repositoryScope.cancel()
+    }
 
     private val categories = listOf(
         Category(id = 1L, name = "Food", icon = "🍽️", color = "#FF5733"),
@@ -135,22 +147,22 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
             recurringExpenseEngine = recurringExpenseEngine,
             timeProvider = timeProvider,
             spendingPaceCalculator = spendingPaceCalculator,
-            anomalyDetector = AnomalyDetector(timeProvider = mockk()),
+            anomalyDetector = AnomalyDetector(timeProvider = timeProvider),
             monthlyComparisonCalculator = MonthlyComparisonCalculator(),
             categoryInsightEngine = CategoryInsightEngine(),
             merchantInsightEngine = MerchantInsightEngine(),
             dayOfWeekAnalyzer = DayOfWeekAnalyzer()
         )
 
-        val mcRepository = com.yourname.expensetracker.data.repository.MultiCurrencyRepository(
+        multiCurrencyRepository = MultiCurrencyRepository(
             expenseDao = expenseDao,
             currencyConverter = testCurrencyConverter(),
             timeProvider = timeProvider,
             currencySettingsRepository = TestCurrencySettingsRepository(),
-            applicationScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined),
+            applicationScope = repositoryScope,
             normalizationEngine = com.yourname.expensetracker.domain.core.money.MoneyNormalizationEngine(testCurrencyConverter())
         )
-        totalsEngine = TotalsAggregationEngine(expenseRepository, timeProvider, mcRepository, mockk(relaxed = true), Dispatchers.Unconfined)
+        totalsEngine = TotalsAggregationEngine(expenseRepository, timeProvider, multiCurrencyRepository, categoryRepository, Dispatchers.Unconfined)
         val currencySettingsRepository = TestCurrencySettingsRepository()
         val analyticsCurrencyNormalizer = testAnalyticsCurrencyNormalizer(testCurrencyConverter())
         advancedEngine = AdvancedAnalyticsEngine(
@@ -494,6 +506,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
         )
         val ids = expenses.map { it.id }.toSet()
 
+        assertApproxEquals(474.0, insights.monthlyComparison.currentTotal, 0.01)
         assertApproxEquals(insights.monthlyComparison.currentTotal, advancedTotal, 0.01)
         assertApproxEquals(insights.monthlyComparison.currentTotal, totalsTotal, 0.01)
         assertApproxEquals(totalsTotal, categorySum, 0.01)
@@ -511,43 +524,38 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
             purchase(2, "2026-02-10", 1, 350.0),
             purchase(3, "2026-03-10", 1, 400.0)
         )
-        coEvery { expenseDao.getExpensesBetween(any(), any()) } returns history
-        coEvery { expenseDao.getTotalSpentBetween(any(), any()) } returns 200.0
-
-        // A.9 Batch 3: BudgetForecastingEngine now uses aggregate SQL for
-        // historical spending data instead of fetching raw expense rows.
-        // Mock the monthly spending totals that the engine now queries.
-        coEvery { expenseDao.getMonthlySpendingTotalsBetween(any(), any()) } returns listOf(
-            MonthlySpendingTotal(monthKey = "2026-01", total = 300.0, txCount = 1),
-            MonthlySpendingTotal(monthKey = "2026-02", total = 350.0, txCount = 1),
-            MonthlySpendingTotal(monthKey = "2026-03", total = 400.0, txCount = 1)
-        )
+        mockAnalyticsDaoByRange(history)
+        val converter = testCurrencyConverter()
+        val budgetRepository = mockk<BudgetRepository>()
+        coEvery {
+            budgetRepository.getCurrentPeriodPurchaseSpendAtPeriodEnd(null, any(), any(), any())
+        } coAnswers {
+            BudgetRepository.CurrentPeriodSpendAtPeriodEnd(
+                aggregate = multiCurrencyRepository.getHomeCurrencyPurchaseTotalAsOf(
+                    secondArg(), arg<Long>(3), thirdArg()
+                ),
+                rateAsOfMillis = thirdArg()
+            )
+        }
 
         val engine = BudgetForecastingEngine(
             expenseDao = expenseDao,
-            budgetRepository = mockk(relaxed = true),
+            budgetRepository = budgetRepository,
             budgetForecastDao = mockk {
                 coEvery { insert(any()) } returns 1L
                 coEvery { insertWithDeactivation(any()) } returns 1L
             },
             timeProvider = timeProvider,
             ioDispatcher = Dispatchers.Unconfined,
-            analyticsCurrencyNormalizer = testAnalyticsCurrencyNormalizer(testCurrencyConverter()),
-            expenseRepository = mockk(relaxed = true),
-            currencySettingsRepository = mockk {
-                every { homeCurrency() } returns flowOf("EUR")
-                coEvery {
-                    resolveHomeCurrency()
-                } returns com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Resolved(
-                    com.yourname.expensetracker.domain.core.money.CurrencyCode("EUR")
-                )
-            },
-            currencyConverter = mockk(relaxed = true),
+            analyticsCurrencyNormalizer = testAnalyticsCurrencyNormalizer(converter),
+            expenseRepository = expenseRepository,
+            currencySettingsRepository = TestCurrencySettingsRepository(),
+            currencyConverter = converter,
             writeBarrier = mockk(relaxed = true)
         )
 
         val forecast = engine.generateForecast(
-            budget = Budget(categoryId = null, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = ms(2026, 3, 1), createdAt = System.currentTimeMillis()),
+            budget = Budget(categoryId = null, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = ms(2026, 3, 1), createdAt = now),
             forecastPeriodDays = 30
         )
 
@@ -840,11 +848,13 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
             expenses.filter { it.transactionType == TransactionType.PURCHASE }.sumOf { it.effectiveAmount }
         )
         every { expenseDao.observeExpenseMutationClock() } returns flowOf(0)
-        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(
-            CurrencyTotal("EUR", 
-                expenses.filter { it.transactionType == TransactionType.PURCHASE && !it.isNotMine }
-                    .sumOf { it.effectiveAmount }, 1)
-        )
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } answers {
+            purchasesMine(firstArg(), secondArg())
+                .groupBy { it.currency }
+                .map { (currency, rows) ->
+                    CurrencyTotal(currency, rows.sumOf { it.effectiveAmount }, rows.size)
+                }
+        }
         coEvery { expenseDao.getCategoryTotalsBetweenByCurrency(any(), any()) } answers {
             val start = firstArg<Long>()
             val end = secondArg<Long>()

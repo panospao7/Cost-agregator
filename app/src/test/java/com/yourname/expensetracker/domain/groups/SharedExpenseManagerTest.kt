@@ -357,6 +357,10 @@ class SharedExpenseManagerTest {
 
     @Test
     fun `addExpense rejects non finite custom split values`() = runTest(testDispatcher) {
+        coEvery { sharedExpenseDataPort.getGroupMembersOnce(1L) } returns listOf(
+            SharedExpenseMember(id = 1L, groupId = 1L, name = "Me", isCurrentUser = true),
+            SharedExpenseMember(id = 2L, groupId = 1L, name = "Alex")
+        )
         try {
             manager.addExpense(
                 groupId = 1L,

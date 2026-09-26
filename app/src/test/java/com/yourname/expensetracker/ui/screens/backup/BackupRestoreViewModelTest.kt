@@ -2,6 +2,8 @@ package com.yourname.expensetracker.ui.screens.backup
 
 import android.content.Context
 import android.net.Uri
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.cancelAndJoin
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.domain.backup.DatabaseBackupRepository
 import com.yourname.expensetracker.domain.backup.DatabaseImportResult
@@ -26,6 +28,10 @@ import java.io.File
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class BackupRestoreViewModelTest : ViewModelTestUtils() {
+
+    @get:org.junit.Rule
+    val temporaryFolder = org.junit.rules.TemporaryFolder()
+    private val viewModels = mutableListOf<BackupRestoreViewModel>()
 
     private val context = mockk<Context>(relaxed = true)
     private val databaseBackupRepository = mockk<DatabaseBackupRepository>(relaxed = true)
@@ -53,6 +59,8 @@ class BackupRestoreViewModelTest : ViewModelTestUtils() {
     @Before
     override fun setup() {
         super.setup()
+        every { context.cacheDir } returns temporaryFolder.root
+        every { context.contentResolver.query(any(), any(), any(), any(), any()) } returns null
         coEvery { databaseBackupRepository.getDatabaseStats() } returns DatabaseStats(
             transactionCount = 0,
             categoryCount = 0,
@@ -62,13 +70,24 @@ class BackupRestoreViewModelTest : ViewModelTestUtils() {
         )
     }
 
+    @org.junit.After
+    override fun tearDown() {
+        try {
+            runTest(testDispatcher) {
+                viewModels.forEach { it.viewModelScope.coroutineContext[kotlinx.coroutines.Job]?.cancelAndJoin() }
+            }
+        } finally {
+            super.tearDown()
+        }
+    }
+
     private fun createViewModel(): BackupRestoreViewModel {
         return BackupRestoreViewModel(
             context,
             databaseBackupRepository,
             restoreMaintenanceMode,
             FakeTimeProvider(1_700_000_000_000L)
-        )
+        ).also { viewModels += it }
     }
 
     @Test
@@ -136,7 +155,7 @@ class BackupRestoreViewModelTest : ViewModelTestUtils() {
 
     @Test
     fun `restoreBackup succeeds and sets restartRequired`() = runTest(testDispatcher) {
-        val uri = Uri.parse("content://backups/test.costbackup")
+        val uri = destinationUri()
         coEvery { databaseBackupRepository.restoreCostBackup(any(), any()) } returns
             Result.success(DatabaseImportResult.SuccessNeedsRestart(
                 com.yourname.expensetracker.domain.backup.DatabaseImportSummary(
@@ -187,7 +206,7 @@ class BackupRestoreViewModelTest : ViewModelTestUtils() {
     fun `dismissRestartRequired clears the restart-required flag and unblocks writes`() = runTest(testDispatcher) {
         // P7-P1-08: dismissRestartRequired must clear the screen-local banner AND exit
         // maintenance mode so writes are unblocked.
-        val uri = Uri.parse("content://backups/test.costbackup")
+        val uri = destinationUri()
         coEvery { databaseBackupRepository.restoreCostBackup(any(), any()) } returns
             Result.success(DatabaseImportResult.SuccessNeedsRestart(
                 com.yourname.expensetracker.domain.backup.DatabaseImportSummary(
@@ -305,7 +324,7 @@ class BackupRestoreViewModelTest : ViewModelTestUtils() {
         // P7-CURRENT-023: a zip-bomb / oversized bundle rejected inside restoreCostBackup()
         // (the extract phase, after preflight) must surface a clear size message, not the
         // generic "Restore failed".
-        val uri = Uri.parse("content://backups/huge.costbackup")
+        val uri = destinationUri()
         every { context.contentResolver.openInputStream(uri) } returns bundleInputStream()
         coEvery { databaseBackupRepository.restoreCostBackup(any(), any()) } returns
             Result.failure(

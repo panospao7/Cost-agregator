@@ -2,13 +2,18 @@ package com.yourname.expensetracker.domain.tax
 
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.repository.BusinessExpenseRepository
+import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateResult
 import com.yourname.expensetracker.domain.core.money.MoneyBucket
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode
 import com.yourname.expensetracker.data.repository.TaxSettingsRepository
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.SupportedCurrency
 import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.CoroutineDispatcher
@@ -56,7 +61,8 @@ class TaxEstimator @Inject constructor(
     private val taxSettings: TaxSettingsRepository,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher,
     // T08-FIXED: TaxRateProvider available for future use in rate lookups.
-    private val taxRateProvider: TaxRateProvider
+    private val taxRateProvider: TaxRateProvider,
+    private val multiCurrencyRepository: MultiCurrencyRepository? = null
 ) {
     /**
      * Estimate taxes for a period using configured tax rates.
@@ -320,11 +326,18 @@ class TaxEstimator @Inject constructor(
         year: Int,
         taxConfig: TaxConfiguration = TaxConfigurationFactory.getConfiguration(taxSettings.getTaxCountry())
     ): TaxYearSummary = withContext(ioDispatcher) {
+        val filingCurrency = taxSettings.getFilingCurrency()
+        // Validate even an empty fiscal window, before constructing any money aggregate.
+        if (SupportedCurrency.fromCode(filingCurrency) == null) {
+            throw MoneyDisplayUnavailableException(
+                MoneyDisplayUnavailableReasonCode.INVALID_TARGET_CURRENCY
+            )
+        }
+
         // T03/T09-FIXED: Fiscal year start uses taxSettings.fiscalYearStartMonth/Day
         // instead of hardcoded January 1st.
         val yearStart = startOfYear(year)
         val yearEnd = startOfYear(year + 1)
-        val filingCurrency = taxSettings.getFilingCurrency()
 
         // T4C oracle: yearly income comes from the deposit total for the fiscal
         // window; the deductible total and its category breakdown come from the
@@ -350,29 +363,32 @@ class TaxEstimator @Inject constructor(
             warningMessage = null
         )
 
-        val categoryTotals = businessExpenseRepository.getExpensesByCategory(yearStart, yearEnd)
-        val categorizedDeductions = mutableMapOf<String, Double>()
-        var categorizedSum = 0.0
-        for (row in categoryTotals) {
-            categorizedDeductions[row.businessCategory] =
-                (categorizedDeductions[row.businessCategory] ?: 0.0) + row.total
-            categorizedSum += row.total
-        }
-        // The null-category remainder (total deductible minus the explicitly
-        // categorized rows) merges INTO the explicit "Uncategorized" total
-        // instead of overwriting it.
-        val uncategorizedRemainder = estimate.deductibleExpenses - categorizedSum
-        if (uncategorizedRemainder != 0.0) {
-            categorizedDeductions["Uncategorized"] =
-                (categorizedDeductions["Uncategorized"] ?: 0.0) + uncategorizedRemainder
-        }
-        val categorizedDeductionsAggregate = categoryTotals.groupBy { it.businessCategory }.mapValues { (_, rows) ->
-            MoneyAggregate.singleCurrency(
-                rows.sumOf { it.total },
-                CurrencyCode(filingCurrency),
-                rows.sumOf { it.count }
+        val displayRepository = multiCurrencyRepository
+            ?: throw MoneyDisplayUnavailableException(
+                MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE
             )
+        val categoryTotals = businessExpenseRepository
+            .getBusinessCategoryCurrencyTotals(yearStart, yearEnd)
+        val categorizedDeductionsAggregate = linkedMapOf<String, MoneyAggregate>()
+        for ((category, rows) in categoryTotals.groupBy { it.businessCategory }) {
+            val result = displayRepository.aggregateDisplayAmounts(
+                amounts = rows.map { it.total to it.currency },
+                transactionCounts = rows.map { it.txCount },
+                targetCurrency = filingCurrency
+            )
+            categorizedDeductionsAggregate[category] = when (result) {
+                is MoneyAggregateResult.Available -> result.aggregate
+                is MoneyAggregateResult.Unavailable -> throw MoneyDisplayUnavailableException(
+                    result.reason.toUnavailableReasonCode()
+                )
+            }
         }
+        val categorizedDeductions = categorizedDeductionsAggregate
+            .mapValues { (_, aggregate) -> aggregate.displayAmount }
+        val categoryWarnings = categorizedDeductionsAggregate.values.flatMap { aggregate ->
+            aggregate.conversionFailures.map { it.reason.name }
+        }
+        val categoriesArePartial = categorizedDeductionsAggregate.values.any { it.isPartial }
 
         TaxYearSummary(
             year = year,
@@ -386,13 +402,18 @@ class TaxEstimator @Inject constructor(
             deductibleAggregate = estimate.deductibleAggregate,
             estimatedTaxAggregate = estimatedTaxAgg,
             categorizedDeductionsAggregate = categorizedDeductionsAggregate,
-            isPartial = incomeAggregate.isPartial || estimate.isPartial,
+            isPartial = incomeAggregate.isPartial || estimate.isPartial || categoriesArePartial,
             conversionWarnings = (
                 incomeAggregate.conversionFailures.map { it.description } +
-                    estimate.conversionWarnings
+                    estimate.conversionWarnings +
+                    categoryWarnings
                 )
         )
     }
+
+    private fun String.toUnavailableReasonCode(): MoneyDisplayUnavailableReasonCode =
+        MoneyDisplayUnavailableReasonCode.values().firstOrNull { it.name == this }
+            ?: MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE
 }
 
 data class TaxEstimate(

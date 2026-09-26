@@ -273,7 +273,8 @@ class FakeExchangeRateStore(
     private val rates: Map<Pair<String, String>, Double> = mapOf<Pair<String, String>, Double>(
         (CanonicalMultiCurrencyFixture.FOREIGN_CURRENCY to CanonicalMultiCurrencyFixture.HOME_CURRENCY) to CanonicalMultiCurrencyFixture.USD_TO_EUR_RATE,
         (CanonicalMultiCurrencyFixture.HOME_CURRENCY to CanonicalMultiCurrencyFixture.FOREIGN_CURRENCY) to (1.0 / CanonicalMultiCurrencyFixture.USD_TO_EUR_RATE)
-    )
+    ),
+    rateTimestamp: Long = CanonicalMultiCurrencyFixture.START_DATE
 ) : ExchangeRateStore {
 
     private val storedRates = rates.map { (pair, rate) ->
@@ -281,7 +282,8 @@ class FakeExchangeRateStore(
             fromCurrency = pair.first,
             toCurrency = pair.second,
             rate = rate,
-            lastUpdated = System.currentTimeMillis(),
+            // Keep fake rates within the 7-day LatestDefault window relative to FakeTimeProvider.
+            lastUpdated = rateTimestamp,
             source = "test-fixture"
         )
     }.associateBy { it.fromCurrency.uppercase() to it.toCurrency.uppercase() }
@@ -418,7 +420,8 @@ fun createCanonicalRepository(
         rates = mapOf(
             (CanonicalMultiCurrencyFixture.FOREIGN_CURRENCY to homeCurrency) to usdToEurRate,
             (homeCurrency to CanonicalMultiCurrencyFixture.FOREIGN_CURRENCY) to (1.0 / usdToEurRate)
-        )
+        ),
+        rateTimestamp = fixedTime
     )
     val currencyConverter = CurrencyConverter(exchangeRateStore, FakeTimeProvider(fixedTime = fixedTime))
 
@@ -500,6 +503,24 @@ class CanonicalMultiCurrencyFixtureTest {
     }
 
     @Test
+    fun `canonical conversion keeps rates fresh for a custom fixture clock`() = runTest {
+        // More than seven days from the default clock catches a hardcoded rate timestamp.
+        val fixedTime = CanonicalMultiCurrencyFixture.START_DATE + 30L * 24 * 60 * 60 * 1000
+        val repository = createCanonicalRepository(fixedTime = fixedTime)
+
+        val aggregate = repository.getHomeCurrencyPurchaseTotal(
+            startDate = fixedTime,
+            endDate = fixedTime + (CanonicalMultiCurrencyFixture.END_DATE - CanonicalMultiCurrencyFixture.START_DATE)
+        )
+
+        CanonicalMultiCurrencyFixture.verifyMoneyAggregate(
+            aggregate = aggregate,
+            expectedDisplayAmount = CanonicalMultiCurrencyFixture.EXPECTED_EUR_TOTAL,
+            expectedDisplayCurrency = CanonicalMultiCurrencyFixture.HOME_CURRENCY_CODE
+        )
+    }
+
+    @Test
     fun `getHomeCurrencyTotal also returns correct converted total`() = runTest {
         // The type-agnostic variant should give the same result
         // when all expenses are PURCHASE
@@ -547,12 +568,14 @@ class CanonicalMultiCurrencyFixtureTest {
         assertEquals(CanonicalMultiCurrencyFixture.USD_TO_EUR_RATE, usdToEur!!.rate, 0.0001)
         assertEquals("USD", usdToEur.fromCurrency)
         assertEquals("EUR", usdToEur.toCurrency)
+        assertEquals(CanonicalMultiCurrencyFixture.START_DATE, usdToEur.lastUpdated)
 
         val eurToUsd = store.getRate("EUR", "USD")
         val expectedInverse = 1.0 / CanonicalMultiCurrencyFixture.USD_TO_EUR_RATE
         assertEquals(expectedInverse, eurToUsd!!.rate, 0.0001)
         assertEquals("EUR", eurToUsd.fromCurrency)
         assertEquals("USD", eurToUsd.toCurrency)
+        assertEquals(CanonicalMultiCurrencyFixture.START_DATE, eurToUsd.lastUpdated)
 
         val unknown = store.getRate("GBP", "EUR")
         assertEquals(null, unknown)

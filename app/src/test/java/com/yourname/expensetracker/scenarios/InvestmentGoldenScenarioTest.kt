@@ -60,6 +60,7 @@ class InvestmentGoldenScenarioTest {
             ApplicationProvider.getApplicationContext()
         )
         every { timeProvider.now() } returns TEST_DATE
+        every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
 
         investmentDao = database.investmentDao()
         investmentValueDao = database.investmentValueDao()

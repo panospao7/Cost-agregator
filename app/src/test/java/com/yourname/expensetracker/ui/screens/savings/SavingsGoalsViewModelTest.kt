@@ -1,5 +1,9 @@
 package com.yourname.expensetracker.ui.screens.savings
 
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.cancelAndJoin
+import io.mockk.spyk
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
@@ -35,7 +39,12 @@ import org.junit.Test
 class SavingsGoalsViewModelTest : ViewModelTestUtils() {
 
     private val savingsGoalRepository = mockk<SavingsGoalRepository>(relaxed = true)
-    private val savingsContributionHistoryRepository = mockk<SavingsContributionHistoryRepository>(relaxed = true)
+    private val timeProvider = FakeTimeProvider(1_710_000_000_000L)
+    // Constructed spy preserves the clock evaluated by Kotlin default arguments.
+    private val savingsContributionHistoryRepository = spyk(
+        SavingsContributionHistoryRepository(dataStore = mockk(), timeProvider = timeProvider)
+    )
+    private val viewModels = mutableListOf<SavingsGoalsViewModel>()
     private val smartSavingsEngine = mockk<SmartSavingsEngine>(relaxed = true)
     private val gamificationEngine = mockk<SavingsGamificationEngine>(relaxed = true)
     private val lifestyleSavingsPromptUseCase = mockk<LifestyleSavingsPromptUseCase>(relaxed = true)
@@ -47,6 +56,7 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
     @Before
     override fun setup() {
         super.setup()
+        coEvery { savingsContributionHistoryRepository.recordContribution(any(), any(), any(), any()) } returns true
 
         every { monthlySavingsSweepUseCase.shouldShowSweepPrompt() } returns false
         every { gamificationEngine.calculateLevel(any()) } answers {
@@ -73,7 +83,6 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
         )
 
         configureRepositoryWithGoals(emptyList())
-        viewModel = createViewModel()
     }
 
     @Test
@@ -135,6 +144,7 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
 
         assertEquals(250.0, updatedGoal.currentAmount, 0.0001)
         assertEquals(250.0, state.totalSaved, 0.0001)
+        coVerify(exactly = 1) { savingsContributionHistoryRepository.recordContribution(1L, 150.0, timeProvider.now(), "manual") }
     }
 
     @Test
@@ -157,6 +167,8 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
 
         // 100.0 + 50.0 + 75.0 = 225.0
         assertEquals(225.0, updatedGoal.currentAmount, 0.0001)
+        coVerify(exactly = 1) { savingsGoalRepository.incrementSavingsGoalAmount(1L, 50.0) }
+        coVerify(exactly = 1) { savingsGoalRepository.incrementSavingsGoalAmount(1L, 75.0) }
     }
 
     @Test
@@ -235,12 +247,23 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
         }
     }
 
+    @org.junit.After
+    override fun tearDown() {
+        try {
+            runTest(testDispatcher) {
+                viewModels.forEach { it.viewModelScope.coroutineContext[kotlinx.coroutines.Job]?.cancelAndJoin() }
+            }
+        } finally {
+            super.tearDown()
+        }
+    }
+
     private fun configureRepositoryWithGoals(initialGoals: List<SavingsGoal>) {
         goalsFlow = MutableStateFlow(initialGoals)
 
         every { savingsGoalRepository.observeSavingsGoals() } returns goalsFlow
 
-        coEvery { savingsGoalRepository.addGoal(any()) } coAnswers {
+        coEvery { savingsGoalRepository.createSavingsGoal(any()) } coAnswers {
             val incoming = invocation.args[0] as SavingsGoal
             val nextId = (goalsFlow.value.maxOfOrNull { it.id } ?: 0L) + 1L
             goalsFlow.value = goalsFlow.value + incoming.copy(id = nextId)
@@ -271,9 +294,9 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
             gamificationEngine = gamificationEngine,
             lifestyleSavingsPromptUseCase = lifestyleSavingsPromptUseCase,
             monthlySavingsSweepUseCase = monthlySavingsSweepUseCase,
-            timeProvider = mockk(),
+            timeProvider = timeProvider,
             currencySettingsRepository = currencyRepo,
-        )
+        ).also { viewModels += it }
     }
 
     private fun createGoal(
@@ -289,7 +312,7 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
             currentAmount = currentAmount,
             targetDate = null,
             protectionLevel = GoalProtectionLevel.WARNING,
-            createdAt = System.currentTimeMillis(),
+            createdAt = timeProvider.now(),
         )
     }
 }

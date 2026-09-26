@@ -60,6 +60,25 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
         monteCarloSimulator = mockk(relaxed = true)
         savingsGoalRepository = mockk(relaxed = true)
         analyticsCurrencyNormalizer = mockk(relaxed = true)
+        coEvery { analyticsCurrencyNormalizer.normalizeSnapshots(any(), any()) } answers {
+            val expenses = firstArg<List<com.yourname.expensetracker.domain.model.ExpenseSnapshot>>()
+            val homeCurrency = secondArg<String>()
+            com.yourname.expensetracker.domain.analytics.AnalyticsNormalizationResult(
+                homeCurrency = homeCurrency,
+                normalizedExpenses = expenses.map {
+                    com.yourname.expensetracker.domain.analytics.NormalizedExpenseSnapshot(
+                        snapshot = it,
+                        originalCurrency = it.currency,
+                        originalEffectiveAmount = it.effectiveAmount,
+                        normalizedEffectiveAmount = it.effectiveAmount
+                    )
+                },
+                includedExpenses = expenses,
+                warnings = emptyList(),
+                latestRateTimestamp = null,
+                totalInputCount = expenses.size
+            )
+        }
 
         io.mockk.every { timeProvider.now() } returns now
 
@@ -236,8 +255,9 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
 
         assertEquals(2, recommendations.size)
         assertApproxEquals(60.0, recommendations.sumOf { it.recommendation.safeAmount }, 0.01)
-        assertApproxEquals(10.0, recommendations.first { it.goal.id == 1L }.recommendation.safeAmount, 0.01)
-        assertApproxEquals(50.0, recommendations.first { it.goal.id == 2L }.recommendation.safeAmount, 0.01)
+        // Allocation is proportional to each goal's remaining gap: 100 : 800.
+        assertApproxEquals(6.666, recommendations.first { it.goal.id == 1L }.recommendation.safeAmount, 0.01)
+        assertApproxEquals(53.333, recommendations.first { it.goal.id == 2L }.recommendation.safeAmount, 0.01)
     }
 
     @Test

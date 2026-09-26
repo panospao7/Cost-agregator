@@ -58,11 +58,15 @@ import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.After
 import org.junit.Test
 import java.time.LocalDate
 import java.time.ZoneId
@@ -70,6 +74,13 @@ import kotlin.math.abs
 
 @Suppress("DEPRECATION_ERROR")
 class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
+
+    private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+
+    @After
+    fun cancelRepositoryScope() {
+        repositoryScope.cancel()
+    }
 
     companion object {
         // Deterministic clock baseline - use direct calculation to avoid GoldenDataSets init issues
@@ -82,9 +93,9 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
         val NOW_MARCH_30_2026: Long = ms(2026, 3, 30)
 
         val MARCH_START: Long = ms(2026, 3, 1)
-        // Use fixed 24h durations to avoid DST-dependent day-count drift in millis arithmetic.
-        val MARCH_30_END_EXCLUSIVE: Long = MARCH_START + (30L * TimePeriodUtils.DAY_IN_MILLIS) // Mar 1..Mar 30 => 30 days
-        val APRIL_START: Long = MARCH_START + (31L * TimePeriodUtils.DAY_IN_MILLIS)
+        // Use local calendar boundaries: March crosses DST in several supported zones.
+        val MARCH_30_END_EXCLUSIVE: Long = ms(2026, 3, 31)
+        val APRIL_START: Long = ms(2026, 4, 1)
         val FEB_START: Long = ms(2026, 2, 1)
 
         const val MARCH_TOTAL_EFFECTIVE = 738.49
@@ -182,7 +193,7 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
             recurringExpenseEngine = recurringExpenseEngine,
             timeProvider = timeProvider,
             spendingPaceCalculator = spendingPaceCalculator,
-            anomalyDetector = AnomalyDetector(timeProvider = mockk()),
+            anomalyDetector = AnomalyDetector(timeProvider = timeProvider),
             monthlyComparisonCalculator = MonthlyComparisonCalculator(),
             categoryInsightEngine = CategoryInsightEngine(),
             merchantInsightEngine = MerchantInsightEngine(),
@@ -200,17 +211,27 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
             ioDispatcher = Dispatchers.Unconfined
         )
 
+        val multiCurrencyRepository = MultiCurrencyRepository(
+            expenseDao = expenseDao,
+            currencyConverter = currencyConverter,
+            timeProvider = timeProvider,
+            currencySettingsRepository = currencySettingsRepository,
+            applicationScope = repositoryScope
+        )
+        coEvery {
+            budgetRepository.getCurrentPeriodPurchaseSpendAtPeriodEnd(null, any(), any(), any())
+        } coAnswers {
+            BudgetRepository.CurrentPeriodSpendAtPeriodEnd(
+                aggregate = multiCurrencyRepository.getHomeCurrencyPurchaseTotalAsOf(
+                    secondArg(), arg<Long>(3), thirdArg()
+                ),
+                rateAsOfMillis = thirdArg()
+            )
+        }
         totalsEngine = TotalsAggregationEngine(
             expenseRepository = repository,
             timeProvider = timeProvider,
-            multiCurrencyRepository = MultiCurrencyRepository(
-                expenseDao = expenseDao,
-                currencyConverter = currencyConverter,
-                timeProvider = timeProvider,
-                currencySettingsRepository = currencySettingsRepository,
-                applicationScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined),
-                normalizationEngine = com.yourname.expensetracker.domain.core.money.MoneyNormalizationEngine(currencyConverter)
-            ),
+            multiCurrencyRepository = multiCurrencyRepository,
             categoryRepository = categoryRepository,
             ioDispatcher = Dispatchers.Unconfined
         )
@@ -226,27 +247,16 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
 
         val budgetForecastDao = mockk<com.yourname.expensetracker.data.database.dao.BudgetForecastDao>(relaxed = true)
         coEvery { budgetForecastDao.insert(any()) } returns 1L
-        val budgetForecastExpenseRepo = mockk<ExpenseRepository>(relaxed = true)
-        coEvery { budgetForecastExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns emptyList()
-        val budgetForecastCurrencyNormalizer = mockk<AnalyticsCurrencyNormalizer>(relaxed = true)
-        coEvery { budgetForecastCurrencyNormalizer.normalizeSnapshots(any(), any()) } returns
-            com.yourname.expensetracker.domain.analytics.AnalyticsNormalizationResult(
-                homeCurrency = "EUR",
-                normalizedExpenses = emptyList(),
-                includedExpenses = emptyList(),
-                warnings = emptyList(),
-                latestRateTimestamp = null
-            )
         budgetForecastingEngine = BudgetForecastingEngine(
             expenseDao = expenseDao,
             budgetRepository = budgetRepository,
             budgetForecastDao = budgetForecastDao,
             timeProvider = timeProvider,
             ioDispatcher = Dispatchers.Unconfined,
-            analyticsCurrencyNormalizer = budgetForecastCurrencyNormalizer,
-            expenseRepository = budgetForecastExpenseRepo,
-            currencySettingsRepository = mockk(),
-            currencyConverter = mockk(),
+            analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
+            expenseRepository = repository,
+            currencySettingsRepository = currencySettingsRepository,
+            currencyConverter = currencyConverter,
             writeBarrier = mockk(relaxed = true)
         )
 
@@ -280,11 +290,10 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
             .first()
             .sumOf { it.totalAmount } / 30.0
 
-        // Advanced engine filters by PURCHASE type, totals engine includes ALL transactions (incl. deposits)
+        // Both engines use purchase-only effective spend; the salary deposit remains in the fixture.
         assertApproxEquals(DAILY_AVERAGE_30_DAY, advancedAvg, 0.01)
-        val totalsAllTxAvg = 3738.49 / 30.0  // effective purchases (738.49) + salary deposit (3000.0)
-        assertApproxEquals(totalsAllTxAvg, totalsAvg, 0.01)
-        assertTrue(totalsAvg > advancedAvg)
+        assertApproxEquals(DAILY_AVERAGE_30_DAY, totalsAvg, 0.01)
+        assertApproxEquals(advancedAvg, totalsAvg, 0.01)
     }
 
     @Test
@@ -309,8 +318,10 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
 
         assertApproxEquals(MARCH_TOTAL_EFFECTIVE, insightsTotal, 0.01)
         assertApproxEquals(MARCH_TOTAL_EFFECTIVE, advancedTotal, 0.01)
-        // Totals engine uses MultiCurrencyRepository which includes ALL transactions (incl. deposits)
-        assertApproxEquals(3738.49, totalsTotal, 0.01)
+        assertApproxEquals(3000.0, allTransactions.filter {
+            it.transactionType == TransactionType.DEPOSIT && it.date in MARCH_START until APRIL_START
+        }.sumOf { it.amount }, 0.01, "Deposit negative control must remain present: ")
+        assertApproxEquals(MARCH_TOTAL_EFFECTIVE, totalsTotal, 0.01)
     }
 
     @Test
@@ -326,6 +337,7 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
         ).predictedSpending
 
         assertApproxEquals(LINEAR_PROJECTION, linearProjection, 0.02)
+        assertTrue("Trend forecast must use non-empty spending history, not a zero mock default", trendProjection > 0.0)
         assertTrue(
             "Trend forecast should diverge from linear projection (different contract). " +
                 "linear=$linearProjection trend=$trendProjection",
@@ -617,7 +629,8 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
 
         // Trend uses historical average * trendFactor * seasonalFactor
         // Linear uses currentSpent * (daysInMonth / daysElapsed)
-        // These should differ because formulas are fundamentally different
+        // These should differ because formulas are fundamentally different, not because a fixture returned zero.
+        assertTrue("Trend forecast must use non-empty spending history", trendProjection > 0.0)
         assertTrue(
             "Trend forecast should diverge from linear projection. linear=$linearProjection trend=$trendProjection",
             abs(trendProjection - linearProjection) > 0.01

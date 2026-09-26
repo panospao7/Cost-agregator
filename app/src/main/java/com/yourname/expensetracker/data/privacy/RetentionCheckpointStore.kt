@@ -124,6 +124,7 @@ class RetentionCheckpointStore(private val prefs: SharedPreferences) {
      * active. Boolean keys are never reinterpreted as counts.
      */
     fun legacyResumePoint(orderedTargetNames: List<String>): String? {
+        if (hasAnyRecord()) return null
         if (isLegacyCleared()) return null
         var foundComplete = false
         for (name in orderedTargetNames) {

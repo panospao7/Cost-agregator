@@ -2,6 +2,7 @@ package com.yourname.expensetracker.ui.screens.backup
 
 import android.content.Context
 import android.net.Uri
+import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.domain.backup.DatabaseBackupRepository
 import com.yourname.expensetracker.domain.backup.DatabaseImportResult
@@ -12,11 +13,13 @@ import com.yourname.expensetracker.domain.privacy.PrivacyGateReasonCodes
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import java.io.ByteArrayInputStream
-import java.io.File
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -25,7 +28,10 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.After
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 
 /**
  * RP-15 (15-D) — BackupRestoreViewModel denial convergence.
@@ -38,6 +44,10 @@ import org.junit.Test
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class BackupRestoreViewModelPrivacyDenialTest : ViewModelTestUtils() {
+
+    @get:Rule
+    val temporaryFolder = TemporaryFolder()
+    private val viewModels = mutableListOf<BackupRestoreViewModel>()
 
     private val context = mockk<Context>(relaxed = true)
     private val databaseBackupRepository = mockk<DatabaseBackupRepository>(relaxed = true)
@@ -53,10 +63,15 @@ class BackupRestoreViewModelPrivacyDenialTest : ViewModelTestUtils() {
         super.setup()
         // Harness stub: the restore flow stages a temp file under cacheDir; the relaxed
         // Context mock returns a mock File whose path is null, NPE-ing inside createTempFile.
-        every { context.cacheDir } returns File(System.getProperty("java.io.tmpdir"))
-        // Harness stub: the relaxed ContentResolver returns a mock stream whose read() never
-        // yields -1, hanging the staging copy forever; a real empty stream copies instantly.
-        every { context.contentResolver.openInputStream(any()) } returns ByteArrayInputStream(ByteArray(0))
+        every { context.cacheDir } returns temporaryFolder.root
+        // Provider size metadata is unavailable; stream preflight still runs below.
+        every { context.contentResolver.query(any(), any(), any(), any(), any()) } returns null
+        // Only the ViewModel preflight is real here; the repository owns decryption
+        // and is mocked below. Supply the valid v1 header so denial/success tests
+        // actually reach that boundary instead of stopping on an empty stream.
+        every { context.contentResolver.openInputStream(any()) } answers {
+            ByteArrayInputStream("COSTBACKUP1".toByteArray(Charsets.US_ASCII) + byteArrayOf(0, 1))
+        }
         coEvery { databaseBackupRepository.getDatabaseStats() } returns DatabaseStats(
             transactionCount = 0,
             categoryCount = 0,
@@ -71,7 +86,18 @@ class BackupRestoreViewModelPrivacyDenialTest : ViewModelTestUtils() {
         databaseBackupRepository,
         restoreMaintenanceMode,
         FakeTimeProvider(1_700_000_000_000L)
-    )
+    ).also { viewModels += it }
+
+    @After
+    override fun tearDown() {
+        try {
+            runTest(testDispatcher) {
+                viewModels.forEach { it.viewModelScope.coroutineContext[Job]?.cancelAndJoin() }
+            }
+        } finally {
+            super.tearDown()
+        }
+    }
 
     // ── 1. Privacy-gate denial (typed exception from the repository) ──────────
 
@@ -81,7 +107,10 @@ class BackupRestoreViewModelPrivacyDenialTest : ViewModelTestUtils() {
             val destination = destinationUri()
             coEvery {
                 databaseBackupRepository.createCostBackup(any(), any(), any(), any(), any())
-            } returns Result.failure(PrivacyDeniedException(PrivacyCapability.ENCRYPTED_BACKUP))
+            } returns Result.failure(PrivacyDeniedException(
+                PrivacyCapability.ENCRYPTED_BACKUP,
+                reasonCode = PrivacyGateReasonCodes.ENCRYPTED_BACKUP_DISABLED
+            ))
 
             val vm = createViewModel()
             advanceUntilIdle()
@@ -101,7 +130,10 @@ class BackupRestoreViewModelPrivacyDenialTest : ViewModelTestUtils() {
     fun `restore privacy denial converges on typed blocked state`() = runTest(testDispatcher) {
         coEvery {
             databaseBackupRepository.restoreCostBackup(any(), any())
-        } returns Result.failure(PrivacyDeniedException(PrivacyCapability.ENCRYPTED_BACKUP))
+        } returns Result.failure(PrivacyDeniedException(
+            PrivacyCapability.ENCRYPTED_BACKUP,
+            reasonCode = PrivacyGateReasonCodes.ENCRYPTED_BACKUP_DISABLED
+        ))
 
         val vm = createViewModel()
         advanceUntilIdle()
@@ -109,8 +141,11 @@ class BackupRestoreViewModelPrivacyDenialTest : ViewModelTestUtils() {
         advanceUntilIdle()
 
         val blocked = vm.uiState.value.privacyBlocked
+        coVerify(exactly = 1) { databaseBackupRepository.restoreCostBackup(any(), "secret") }
         assertNotNull(blocked)
         assertEquals(PrivacyCapability.ENCRYPTED_BACKUP, blocked!!.capability)
+        assertEquals(PrivacyGateReasonCodes.ENCRYPTED_BACKUP_DISABLED, blocked.reasonCode)
+        assertNull(vm.uiState.value.errorMessage)
         assertFalse(vm.uiState.value.isRestoring)
     }
 
@@ -128,6 +163,7 @@ class BackupRestoreViewModelPrivacyDenialTest : ViewModelTestUtils() {
 
             val blocked = vm.uiState.value.privacyBlocked!!
             assertTrue(blocked.reasonCode in PrivacyGateReasonCodes.ALL)
+            assertEquals(PrivacyGateReasonCodes.PRIVACY_GATE_FAILURE, blocked.reasonCode)
         }
 
     // ── 2. Fail-closed generic failure (no blocked state, bounded message) ────
@@ -164,6 +200,7 @@ class BackupRestoreViewModelPrivacyDenialTest : ViewModelTestUtils() {
         val state = vm.uiState.value
         val blocked = state.privacyBlocked
         assertNotNull("SecurityException must set the typed state", blocked)
+        coVerify(exactly = 0) { databaseBackupRepository.restoreCostBackup(any(), any()) }
         assertEquals(PrivacyGateReasonCodes.PRIVACY_GATE_FAILURE, blocked!!.reasonCode)
         assertFalse(
             "raw exception text must not be rendered",
@@ -201,6 +238,11 @@ class BackupRestoreViewModelPrivacyDenialTest : ViewModelTestUtils() {
         vm.restoreBackup(uri = destinationUri(), password = "secret")
         advanceUntilIdle()
 
-        assertNull(vm.uiState.value.privacyBlocked)
+        coVerify(exactly = 1) { databaseBackupRepository.restoreCostBackup(any(), "secret") }
+        val state = vm.uiState.value
+        assertNull(state.privacyBlocked)
+        assertNull(state.errorMessage)
+        assertEquals("Restore completed successfully!", state.successMessage)
+        assertFalse(state.isRestoring)
     }
 }

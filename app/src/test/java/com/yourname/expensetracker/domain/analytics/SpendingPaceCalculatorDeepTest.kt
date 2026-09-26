@@ -52,7 +52,7 @@ class SpendingPaceCalculatorDeepTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `projected total uses blended smoothing in first week`() {
+    fun `projected total uses five day stabilization without baseline`() {
         runTest {
             every { timeProvider.now() } returns createDate(2026, 4, 2)
 
@@ -64,16 +64,16 @@ class SpendingPaceCalculatorDeepTest : AnalyticsEngineTestBase() {
                 displayCurrency = "EUR"
             )
 
-            // day=2, weight=2/7, linear=3000, conservative=600
-            // projection=(2/7*3000)+(5/7*600)=1285.714...
-            assertApproxEquals(1285.714, result.projectedTotal)
+            // With no historical baseline, the first five days use a stable
+            // five-day denominator: 200 * 30 / 5 = 1200.
+            assertApproxEquals(1200.0, result.projectedTotal)
             assertEquals(2, result.daysElapsed)
             assertEquals(30, result.daysInMonth)
         }
     }
 
     @Test
-    fun `projected total transitions smoothly on day four`() {
+    fun `projected total keeps five day stabilization through day four`() {
         runTest {
             every { timeProvider.now() } returns createDate(2026, 4, 4)
 
@@ -85,9 +85,9 @@ class SpendingPaceCalculatorDeepTest : AnalyticsEngineTestBase() {
                 displayCurrency = "EUR"
             )
 
-            // day=4, weight=4/7, linear=3000, conservative=1200
-            // projection=(4/7*3000)+(3/7*1200)=2228.571...
-            assertApproxEquals(2228.571, result.projectedTotal)
+            // Day four is still inside the five-day stabilization window:
+            // 400 * 30 / 5 = 2400.
+            assertApproxEquals(2400.0, result.projectedTotal)
         }
     }
 
@@ -172,7 +172,7 @@ class SpendingPaceCalculatorDeepTest : AnalyticsEngineTestBase() {
             )
 
             assertEquals(PaceStatus.NO_BASELINE, result.paceStatus)
-            assertEquals(0f, result.pacePercentage)
+            assertEquals(-1f, result.pacePercentage)
             assertNull(result.previousMonthTotal)
             // Formula list says historical avg should be populated; current implementation returns null
             assertNull(result.averageMonthlyTotal)

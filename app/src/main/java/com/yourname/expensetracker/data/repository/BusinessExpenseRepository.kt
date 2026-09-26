@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.repository
 
 import com.yourname.expensetracker.data.database.dao.BusinessCategoryTotal
+import com.yourname.expensetracker.data.database.dao.BusinessCategoryCurrencyTotal
 import com.yourname.expensetracker.data.database.dao.BusinessProjectTotal
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.MileageTrackingDao
@@ -58,6 +59,16 @@ class BusinessExpenseRepository @Inject constructor(
         @Suppress("DEPRECATION_ERROR") // TODO: migrate to MultiCurrencyRepository
         return expenseDao.getBusinessExpensesByCategory(startDate, endDate)
     }
+
+    /**
+     * Get business expense totals grouped by coalesced category and source currency.
+     * Reuses the existing PURCHASE-only DAO projection; no schema or query change.
+     */
+    suspend fun getBusinessCategoryCurrencyTotals(
+        startDate: Long,
+        endDate: Long
+    ): List<BusinessCategoryCurrencyTotal> =
+        expenseDao.getBusinessCategoryCurrencyTotals(startDate, endDate)
     
     /**
      * Get business expenses grouped by project.

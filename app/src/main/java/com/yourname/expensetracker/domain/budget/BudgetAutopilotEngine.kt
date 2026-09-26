@@ -3,7 +3,17 @@ package com.yourname.expensetracker.domain.budget
 import com.yourname.expensetracker.data.database.dao.MonthlySpendingTotal
 import com.yourname.expensetracker.data.database.entity.BudgetTrend
 import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
+import com.yourname.expensetracker.domain.core.money.ConversionOutcome
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode
+import com.yourname.expensetracker.domain.core.money.RateBasis
+import com.yourname.expensetracker.domain.core.money.StaleRatePolicy
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import com.yourname.expensetracker.domain.currency.SupportedCurrency
 import com.yourname.expensetracker.domain.core.money.CategoryMonthlySpend
 import com.yourname.expensetracker.domain.core.money.SpendScope
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -44,6 +54,7 @@ class BudgetAutopilotEngine @Inject constructor(
     private val budgetRepository: com.yourname.expensetracker.data.repository.BudgetRepository,
     private val multiCurrencyRepository: MultiCurrencyRepository,
     private val currencySettingsRepository: CurrencySettingsRepository,
+    private val currencyConverter: CurrencyConverter,
     private val categoryRepository: com.yourname.expensetracker.data.repository.CategoryRepository,
     private val insightsEngine: com.yourname.expensetracker.domain.analytics.InsightsEngine,
     private val spendingPaceCalculator: com.yourname.expensetracker.domain.analytics.SpendingPaceCalculator,
@@ -78,6 +89,7 @@ class BudgetAutopilotEngine @Inject constructor(
      */
     suspend fun generateRecommendations(): BudgetAutopilotRecommendations {
         val now = timeProvider.now()
+        val displayCurrency = resolveDisplayCurrency()
         val budgets = budgetRepository.getActiveBudgets()
         val categories = categoryRepository.allCategories.first()
         
@@ -88,7 +100,8 @@ class BudgetAutopilotEngine @Inject constructor(
                 totalRecommendedBudget = 0.0,
                 overallDelta = 0.0,
                 confidence = 0.0,
-                generatedAt = now
+                generatedAt = now,
+                displayCurrency = displayCurrency.code
             )
         }
         
@@ -96,14 +109,26 @@ class BudgetAutopilotEngine @Inject constructor(
         // reflection, no deprecated DAO calls. Typed exceptions propagate
         // unchanged (including CancellationException).
         val threeMonthsAgo = com.yourname.expensetracker.domain.util.TimePeriodUtils.addMonths(now, -3)
-        val scopedHistory = indexScopedHistory(
-            multiCurrencyRepository.getHistoricalCategoryMonthlySpend(threeMonthsAgo, now)
-        )
+        val historyRows = multiCurrencyRepository.getHistoricalCategoryMonthlySpend(threeMonthsAgo, now)
+        if (historyRows.any { it.aggregate.displayCurrency != displayCurrency }) {
+            throw MoneyDisplayUnavailableException(
+                MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE
+            )
+        }
+        val scopedHistory = indexScopedHistory(historyRows)
         
         val categoryRecommendations = mutableListOf<CategoryBudgetRecommendation>()
+        val displayQuotesByBudgetId = mutableMapOf<Long, ConversionOutcome.Converted>()
         val hasOverallBudget = budgets.any { it.categoryId == null }
         
         for (budget in budgets) {
+            val displayQuote = requireDisplayQuote(
+                amount = budget.amount,
+                sourceCurrency = budget.currency,
+                displayCurrency = displayCurrency
+            )
+            displayQuotesByBudgetId[budget.id] = displayQuote
+            val currentBudgetInDisplayCurrency = displayQuote.convertedAmount
             val category = budget.categoryId?.let { catId -> 
                 categories.find { it.id == catId } 
             }
@@ -120,8 +145,8 @@ class BudgetAutopilotEngine @Inject constructor(
                         budgetId = budget.id,
                         categoryId = budget.categoryId,
                         categoryName = category?.name ?: "Overall Budget",
-                        currentBudget = budget.amount,
-                        recommendedBudget = budget.amount,
+                        currentBudget = currentBudgetInDisplayCurrency,
+                        recommendedBudget = currentBudgetInDisplayCurrency,
                         delta = 0.0,
                         deltaPercentage = 0.0,
                         reason = "Insufficient complete history (${historicalSpend.completeMonthCount} complete month(s)); keeping current budget.",
@@ -132,7 +157,12 @@ class BudgetAutopilotEngine @Inject constructor(
                         ),
                         trend = BudgetTrend.STABLE,
                         quality = BudgetRecommendationQuality.LOW_HISTORY,
-                        isActionable = false
+                        isActionable = false,
+                        displayCurrency = displayCurrency.code,
+                        sourceAmountToApply = MoneyAmount(
+                            budget.amount,
+                            displayQuote.originalCurrency
+                        )
                     )
                 )
                 continue
@@ -178,18 +208,28 @@ class BudgetAutopilotEngine @Inject constructor(
             recommendedBudget *= periodNormalizer
             
             // 7. Apply delta caps (±15% per cycle)
-            val maxDelta = budget.amount * DELTA_CAP_PERCENTAGE
+            val maxDelta = currentBudgetInDisplayCurrency * DELTA_CAP_PERCENTAGE
             recommendedBudget = recommendedBudget.coerceIn(
-                budget.amount - maxDelta,
-                budget.amount + maxDelta
+                currentBudgetInDisplayCurrency - maxDelta,
+                currentBudgetInDisplayCurrency + maxDelta
             )
             
             // 8. Calculate delta and percentage
-            val delta = recommendedBudget - budget.amount
-            val deltaPercentage = if (budget.amount > 0) (delta / budget.amount) * 100 else 0.0
+            val delta = recommendedBudget - currentBudgetInDisplayCurrency
+            val deltaPercentage = if (currentBudgetInDisplayCurrency > 0) {
+                (delta / currentBudgetInDisplayCurrency) * 100
+            } else {
+                0.0
+            }
             
             // 9. Generate reason
-            val reason = generateReason(trend, volatility, safetyFactor, budget.amount, recommendedBudget)
+            val reason = generateReason(
+                trend,
+                volatility,
+                safetyFactor,
+                currentBudgetInDisplayCurrency,
+                recommendedBudget
+            )
             
             // 10. Calculate confidence based on data quality
             val confidence = calculateRecommendationConfidence(
@@ -210,7 +250,7 @@ class BudgetAutopilotEngine @Inject constructor(
                     budgetId = budget.id,
                     categoryId = budget.categoryId,
                     categoryName = category?.name ?: "Overall Budget",
-                    currentBudget = budget.amount,
+                    currentBudget = currentBudgetInDisplayCurrency,
                     recommendedBudget = recommendedBudget,
                     delta = delta,
                     deltaPercentage = deltaPercentage,
@@ -218,7 +258,12 @@ class BudgetAutopilotEngine @Inject constructor(
                     confidence = confidence,
                     trend = trendDirection,
                     quality = quality,
-                    isActionable = true
+                    isActionable = true,
+                    displayCurrency = displayCurrency.code,
+                    sourceAmountToApply = MoneyAmount(
+                        budget.amount,
+                        displayQuote.originalCurrency
+                    )
                 )
             )
             
@@ -248,7 +293,26 @@ class BudgetAutopilotEngine @Inject constructor(
             categoryRecommendations
         }
 
-        val categoryRecommendationsFinal = adjustedRecommendations
+        val categoryRecommendationsFinal = adjustedRecommendations.map { recommendation ->
+            val displayQuote = displayQuotesByBudgetId[recommendation.budgetId]
+                ?: throw MoneyDisplayUnavailableException(
+                    MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE
+                )
+            val reverse = currencyConverter.reverseDisplayQuote(
+                amountInTarget = recommendation.recommendedBudget,
+                forward = displayQuote
+            )
+            val sourceAmount = when (reverse) {
+                is ConversionOutcome.Converted -> MoneyAmount(
+                    amount = reverse.convertedAmount,
+                    currency = reverse.targetCurrency
+                )
+                is ConversionOutcome.Failed -> throw MoneyDisplayUnavailableException(
+                    MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE
+                )
+            }
+            recommendation.copy(sourceAmountToApply = sourceAmount)
+        }
 
         val summaryRecommendations = categoryRecommendationsFinal.filter { recommendation ->
             if (hasOverallBudget) {
@@ -271,8 +335,45 @@ class BudgetAutopilotEngine @Inject constructor(
             totalRecommendedBudget = totalRecommendedBudget,
             overallDelta = totalRecommendedBudget - totalCurrentBudget,
             confidence = overallConfidence.coerceIn(0.0, 1.0),
-            generatedAt = now
+            generatedAt = now,
+            displayCurrency = displayCurrency.code
         )
+    }
+
+    private suspend fun resolveDisplayCurrency(): CurrencyCode {
+        val rawCode = when (val resolution = currencySettingsRepository.resolveHomeCurrency()) {
+            is HomeCurrencyResolution.Resolved -> resolution.currency.code
+            is HomeCurrencyResolution.FirstRunDefault -> resolution.currency.code
+            is HomeCurrencyResolution.Failed -> throw MoneyDisplayUnavailableException(
+                MoneyDisplayUnavailableReasonCode.HOME_CURRENCY_UNAVAILABLE
+            )
+        }
+        val supported = SupportedCurrency.fromActiveCode(rawCode)
+            ?: throw MoneyDisplayUnavailableException(
+                MoneyDisplayUnavailableReasonCode.HOME_CURRENCY_UNAVAILABLE
+            )
+        return CurrencyCode(supported.code)
+    }
+
+    private suspend fun requireDisplayQuote(
+        amount: Double,
+        sourceCurrency: String,
+        displayCurrency: CurrencyCode
+    ): ConversionOutcome.Converted {
+        return when (
+            val outcome = currencyConverter.convertOutcome(
+                amount = amount,
+                fromCurrency = sourceCurrency,
+                toCurrency = displayCurrency.code,
+                rateBasis = RateBasis.LATEST_AVAILABLE,
+                stalePolicy = StaleRatePolicy.forBasis(RateBasis.LATEST_AVAILABLE)
+            )
+        ) {
+            is ConversionOutcome.Converted -> outcome
+            is ConversionOutcome.Failed -> throw MoneyDisplayUnavailableException(
+                MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE
+            )
+        }
     }
     
     /**
@@ -476,7 +577,8 @@ data class BudgetAutopilotRecommendations(
     val totalRecommendedBudget: Double,
     val overallDelta: Double,
     val confidence: Double,
-    val generatedAt: Long
+    val generatedAt: Long,
+    val displayCurrency: String
 )
 
 /**
@@ -511,6 +613,10 @@ data class CategoryBudgetRecommendation(
     val reason: String,
     val confidence: Double,
     val trend: BudgetTrend,
+    /** Currency shared by current/recommended/delta display amounts. */
+    val displayCurrency: String,
+    /** Captured reverse projection in the budget's original persisted currency. */
+    val sourceAmountToApply: MoneyAmount,
     /** RP-08 (P6-004): recommendation data quality (in-memory only, never persisted). */
     val quality: BudgetRecommendationQuality = BudgetRecommendationQuality.COMPLETE,
     /**

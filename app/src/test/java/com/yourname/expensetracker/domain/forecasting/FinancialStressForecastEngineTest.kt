@@ -126,6 +126,27 @@ class FinancialStressForecastEngineTest {
         recurringOccurrenceDao = mockk(relaxed = true)
         databaseReadBarrier = mockk(relaxed = true)
         currencyConverter = mockk(relaxed = true)
+        // Identity conversion is explicit so confirmed EUR obligations are not
+        // silently discarded by a relaxed mock returning null.
+        coEvery {
+            currencyConverter.convert(any<Double>(), any<String>(), any<String>())
+        } answers {
+            val amount = firstArg<Double>()
+            val source = secondArg<String>()
+            val target = thirdArg<String>()
+            if (!source.equals(target, ignoreCase = true)) {
+                null
+            } else {
+                com.yourname.expensetracker.domain.currency.ConversionResult(
+                    originalAmount = amount,
+                    originalCurrency = source,
+                    convertedAmount = amount,
+                    targetCurrency = target,
+                    rateUsed = 1.0,
+                    timestamp = now
+                )
+            }
+        }
 
         engine = FinancialStressForecastEngine(
             synthesisEngine = synthesisEngine,
@@ -190,17 +211,19 @@ class FinancialStressForecastEngineTest {
 
     @Test
     fun `computeStressForecast when calculation fails returns degraded non-low fallback`() = runTest {
-        every { budgetRepository.getBudgetStatuses() } throws IllegalStateException("boom")
+        // Fail a dependency the forecast actually reads, not the obsolete budget path.
+        coEvery { expenseRepository.getDepositsBetween(any(), any()) } throws IllegalStateException("boom")
 
         val result = engine.computeStressForecast()
 
-        assertEquals(StressRiskLevel.CRITICAL, result.overallRiskLevel)
+        assertEquals(StressRiskLevel.MODERATE, result.overallRiskLevel)
         assertNull(result.earliestCrunchDate)
         assertEquals(listOf(30, 60, 90), result.horizons.map { it.daysAhead })
-        assertTrue(result.horizons.all { it.riskLevel == StressRiskLevel.CRITICAL })
+        assertTrue(result.horizons.all { it.riskLevel == StressRiskLevel.MODERATE })
         assertTrue(result.horizons.all { it.probabilityOfCrunch == 0.20 })
         assertTrue(result.recommendations.any { it.contains("temporarily unavailable", ignoreCase = true) })
         assertTrue(result.recommendations.any { it.contains("degraded", ignoreCase = true) })
+        coVerify(exactly = 1) { expenseRepository.getDepositsBetween(any(), any()) }
     }
 
     @Test
@@ -289,14 +312,19 @@ class FinancialStressForecastEngineTest {
     fun `computeStressForecast uses merged recurring obligations so duplicate stale manual rows do not double count`() = runTest {
         allExpenses = emptyList()
         allDeposits = emptyList()
+        val due = now + dayMs
         coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
             recurringPattern(
                 merchant = "Netflix",
                 amount = 15.0,
-                nextDate = now + dayMs,
+                nextDate = due,
                 frequency = RecurrenceFrequency.MONTHLY,
-                confidence = 1.0f
+                confidence = 1.0f,
+                id = 1L
             )
+        )
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any()) } returns listOf(
+            occurrenceRow(ruleId = 1L, dueDate = due, amount = 15.0, merchant = "Netflix")
         )
 
         val result = engine.computeStressForecast()
@@ -319,14 +347,19 @@ class FinancialStressForecastEngineTest {
     fun `computeStressForecast includes confirmed recurring obligations`() = runTest {
         allExpenses = emptyList()
         allDeposits = emptyList()
+        val due = now + dayMs
         coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
             recurringPattern(
                 merchant = "Confirmed Rent",
                 amount = 800.0,
-                nextDate = now + dayMs,
+                nextDate = due,
                 frequency = RecurrenceFrequency.MONTHLY,
-                confidence = 1.0f
+                confidence = 1.0f,
+                id = 2L
             )
+        )
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(2L, any(), any()) } returns listOf(
+            occurrenceRow(ruleId = 2L, dueDate = due, amount = 800.0, merchant = "Confirmed Rent")
         )
 
         val result = engine.computeStressForecast()
@@ -420,6 +453,7 @@ class FinancialStressForecastEngineTest {
     fun `computeStressForecast includes recurring obligation due earlier today`() = runTest {
         val noonToday = millis(2026, Calendar.APRIL, 20, 12)
         val earlierToday = millis(2026, Calendar.APRIL, 20, 8)
+        val nextMonth = millis(2026, Calendar.MAY, 20, 8)
         every { timeProvider.now() } returns noonToday
         allExpenses = emptyList()
         allDeposits = emptyList()
@@ -429,8 +463,13 @@ class FinancialStressForecastEngineTest {
                 amount = 25.0,
                 nextDate = earlierToday,
                 frequency = RecurrenceFrequency.MONTHLY,
-                confidence = 1.0f
+                confidence = 1.0f,
+                id = 3L
             )
+        )
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(3L, any(), any()) } returns listOf(
+            occurrenceRow(ruleId = 3L, dueDate = earlierToday, amount = 25.0, merchant = "Morning Bill"),
+            occurrenceRow(ruleId = 3L, dueDate = nextMonth, amount = 25.0, merchant = "Morning Bill")
         )
 
         val result = engine.computeStressForecast()
@@ -461,8 +500,12 @@ class FinancialStressForecastEngineTest {
         val horizon30 = result.horizons.first { it.daysAhead == 30 }
 
         assertApproxEquals(0.0, horizon30.expectedIncome, 0.0001)
-        assertApproxEquals(0.0, horizon30.projectedBalance, 0.0001)
-        assertTrue(horizon30.minProjectedBalance >= -200.0)
+        // One spend day plus ten zero-spend days should produce a sparse,
+        // non-zero bootstrap estimate rather than the old exact-zero assumption.
+        assertTrue(horizon30.projectedBalance < 0.0)
+        assertTrue(horizon30.projectedBalance > -1_000.0)
+        assertTrue(horizon30.minProjectedBalance <= horizon30.projectedBalance)
+        assertTrue(horizon30.minProjectedBalance > -1_500.0)
     }
 
     @Test
@@ -652,9 +695,11 @@ class FinancialStressForecastEngineTest {
         amount: Double,
         nextDate: Long,
         frequency: RecurrenceFrequency,
-        confidence: Float
+        confidence: Float,
+        id: Long? = null
     ): RecurringPattern {
         return RecurringPattern(
+            id = id,
             merchantName = merchant,
             averageAmount = amount,
             currency = "EUR",

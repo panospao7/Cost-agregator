@@ -15,6 +15,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateResult
+import com.yourname.expensetracker.domain.currency.SupportedCurrency
 import com.yourname.expensetracker.domain.reminder.BillReminder
 import com.yourname.expensetracker.domain.reminder.ReminderUrgency
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
@@ -44,7 +46,6 @@ fun BillRemindersScreen(
 ) {
     val reminders by viewModel.reminders.collectAsState()
     val monthlyTotal by viewModel.monthlyTotal.collectAsState()
-    val homeCurrency by viewModel.homeCurrency.collectAsState(initial = "")
     
     Scaffold(
         topBar = {
@@ -66,7 +67,7 @@ fun BillRemindersScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             item {
-                MonthlyBillsCard(monthlyTotal, homeCurrency)
+                MonthlyBillsCard(monthlyTotal)
             }
             
             item {
@@ -78,18 +79,27 @@ fun BillRemindersScreen(
             }
             
             items(reminders) { reminder ->
-                BillReminderCard(
-                    reminder = reminder,
-                    homeCurrency = homeCurrency
-                )
+                BillReminderCard(reminder = reminder)
             }
         }
     }
 }
 
 @Composable
-private fun MonthlyBillsCard(total: Double, homeCurrency: String) {
-    
+private fun MonthlyBillsCard(total: MoneyAggregateResult) {
+    val displayText = when (total) {
+        is MoneyAggregateResult.Available -> CurrencyFormatter.formatMoney(
+            total.aggregate.displayAmount,
+            total.aggregate.displayCurrency.code
+        )
+        is MoneyAggregateResult.Unavailable -> "—"
+    }
+    val warningText = when (total) {
+        is MoneyAggregateResult.Available -> total.aggregate.warningMessage
+            ?.takeIf { total.aggregate.isPartial }
+        is MoneyAggregateResult.Unavailable -> total.warningMessage
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -109,10 +119,17 @@ private fun MonthlyBillsCard(total: Double, homeCurrency: String) {
                 style = MaterialTheme.typography.labelLarge
             )
             Text(
-                text = CurrencyFormatter.formatMoney(total, homeCurrency),
+                text = displayText,
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold
             )
+            if (warningText != null) {
+                Text(
+                    text = warningText,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+            }
         }
             
             Icon(
@@ -125,10 +142,15 @@ private fun MonthlyBillsCard(total: Double, homeCurrency: String) {
     }
 }
 
+internal fun formatBillReminderAmount(reminder: BillReminder): String =
+    // Saved obligations retain recognized historical currencies, even if no longer selectable.
+    SupportedCurrency.fromCode(reminder.currency)?.let {
+        CurrencyFormatter.formatMoney(reminder.amount, it.code)
+    } ?: "—"
+
 @Composable
 private fun BillReminderCard(
-    reminder: BillReminder,
-    homeCurrency: String
+    reminder: BillReminder
 ) {
     val dateFormat = DateTimeFormatter.ofPattern("MMM dd", Locale.getDefault())
     
@@ -188,7 +210,7 @@ private fun BillReminderCard(
                 }
                 
                 Text(
-                    text = CurrencyFormatter.formatMoney(reminder.amount, homeCurrency),
+                    text = formatBillReminderAmount(reminder),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )

@@ -171,6 +171,7 @@ class TransactionEventDaoTest {
     fun `nullSnapshotsOlderThan clears only snapshot columns of older events`() = runTest {
         val oldId = dao.insert(
             createEvent(
+                eventType = "UPDATED",
                 occurredAt = FIXED_NOW - 31 * dayMs,
                 beforeSnapshot = """{"a":1}""",
                 afterSnapshot = """{"a":2}"""

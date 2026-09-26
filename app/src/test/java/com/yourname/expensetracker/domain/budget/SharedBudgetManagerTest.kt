@@ -391,21 +391,13 @@ class SharedBudgetManagerTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `get member contributions returns zero placeholders for all members`() = runTest {
-        val contributions = manager.getMemberContributions(1L, listOf("alice", "bob"))
-
-        assertEquals(2, contributions.size)
-        assertEquals("alice", contributions[0].memberId)
-        assertEquals("Member alice", contributions[0].memberName)
-        assertApproxEquals(0.0, contributions[0].amountSpent, 0.0)
-        assertApproxEquals(0.0, contributions[0].percentOfTotal, 0.0)
-        assertApproxEquals(0.0, contributions[0].remainingAllowance, 0.0)
-
-        assertEquals("bob", contributions[1].memberId)
-        assertEquals("Member bob", contributions[1].memberName)
-        assertApproxEquals(0.0, contributions[1].amountSpent, 0.0)
-        assertApproxEquals(0.0, contributions[1].percentOfTotal, 0.0)
-        assertApproxEquals(0.0, contributions[1].remainingAllowance, 0.0)
+    fun `get member contributions fails closed without a real group mapping`() = runTest {
+        try {
+            manager.getMemberContributions(1L, listOf("alice", "bob"))
+            org.junit.Assert.fail("Expected unsupported member-contribution mapping to fail closed")
+        } catch (error: UnsupportedOperationException) {
+            assertTrue(error.message.orEmpty().contains("real budget-to-group/member mapping"))
+        }
     }
 
     private fun startOfMonth(timestamp: Long): Long {

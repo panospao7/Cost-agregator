@@ -141,8 +141,7 @@ class InvalidCurrencyBehavioralTest {
         store.rates["USD_EUR"] = DomainExchangeRate("USD", "EUR", 0.92, lastUpdated = NOW, source = "api", validDate = NOW)
         val buckets = listOf(
             100.0 to "USD",
-            50.0 to "XYZ",   // invalid — would previously crash
-            25.0 to "AB"     // invalid — too short
+            50.0 to "XYZ" // well-formed but unsupported/unknown currency code
         )
         val aggregate = MoneyAggregateBuilder.fromBuckets(
             buckets = buckets,
@@ -150,9 +149,13 @@ class InvalidCurrencyBehavioralTest {
             converter = converter
         )
 
-        // Should not crash; USD should convert, invalid currencies handled gracefully
+        // Should not crash; USD converts and the unknown bucket is preserved as
+        // an explicit conversion failure rather than silently relabeled as EUR.
         assertTrue(aggregate.isPartial)
-        assertEquals(1, aggregate.sourceBuckets.size)
+        assertEquals(2, aggregate.sourceBuckets.size)
+        assertEquals(setOf("USD", "XYZ"), aggregate.sourceBuckets.map { it.currency.code }.toSet())
+        assertEquals(1, aggregate.conversionFailures.size)
+        assertEquals("XYZ", aggregate.conversionFailures.single().originalAmount.currency.code)
     }
 
     @Test
@@ -194,13 +197,13 @@ class InvalidCurrencyBehavioralTest {
         val oldFailure = com.yourname.expensetracker.domain.currency.FailedConversion(
             originalAmount = 100.0,
             originalCurrency = "USD",
-            targetCurrency = "XYZ",
+            targetCurrency = "AB",
             reason = "missing rate",
             failureType = "MISSING_RATE"
         )
         // Should not crash
         val failure = oldFailure.toConversionFailure()
-        // targetCurrency should fall back to EUR
+        // A structurally malformed code should fall back to the legacy EUR value.
         assertEquals("EUR", failure.targetCurrency.code)
     }
 

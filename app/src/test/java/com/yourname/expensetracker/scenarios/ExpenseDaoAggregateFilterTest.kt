@@ -3,8 +3,6 @@ package com.yourname.expensetracker.scenarios
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import com.yourname.expensetracker.data.database.AppDatabase
-import com.yourname.expensetracker.data.database.dao.CurrencyTotal
-import com.yourname.expensetracker.data.database.dao.MerchantCurrencyTotal
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.testfixtures.database.AppDatabaseTestFactory
@@ -138,6 +136,83 @@ class ExpenseDaoAggregateFilterTest {
     }
 
     // ── getLocatedMerchantTotalsByCurrency ───────────────────────────────
+
+    @Test
+    fun `getBusinessCategoryCurrencyTotals preserves source buckets categories and half-open window`() = runTest {
+        val startDate = dateMs(2026, 4, 1)
+        val endDate = dateMs(2026, 6, 1)
+        db.expenseDao().insert(
+            Expense(
+                amount = 40.0,
+                currency = "EUR",
+                merchant = "OfficeStart",
+                transactionType = TransactionType.PURCHASE,
+                date = startDate,
+                isBusinessExpense = true,
+                businessCategory = "Office"
+            )
+        )
+        db.expenseDao().insert(
+            Expense(
+                amount = 50.0,
+                currency = "USD",
+                merchant = "OfficeUsd",
+                transactionType = TransactionType.PURCHASE,
+                date = now,
+                isBusinessExpense = true,
+                businessCategory = "Office"
+            )
+        )
+        db.expenseDao().insert(
+            Expense(
+                amount = 25.0,
+                currency = "EUR",
+                merchant = "NoCategory",
+                transactionType = TransactionType.PURCHASE,
+                date = now,
+                isBusinessExpense = true,
+                businessCategory = null
+            )
+        )
+        db.expenseDao().insert(
+            Expense(
+                amount = 75.0,
+                currency = "EUR",
+                merchant = "ExplicitUncategorized",
+                transactionType = TransactionType.PURCHASE,
+                date = now,
+                isBusinessExpense = true,
+                businessCategory = "Uncategorized"
+            )
+        )
+        db.expenseDao().insert(
+            Expense(
+                amount = 999.0,
+                currency = "EUR",
+                merchant = "ExcludedEnd",
+                transactionType = TransactionType.PURCHASE,
+                date = endDate,
+                isBusinessExpense = true,
+                businessCategory = "Office"
+            )
+        )
+
+        val result = db.expenseDao().getBusinessCategoryCurrencyTotals(startDate, endDate)
+
+        val officeEur = result.single { it.businessCategory == "Office" && it.currency == "EUR" }
+        assertEquals(40.0, officeEur.total, 0.001)
+        assertEquals(1, officeEur.txCount)
+        val officeUsd = result.single { it.businessCategory == "Office" && it.currency == "USD" }
+        assertEquals(50.0, officeUsd.total, 0.001)
+        assertEquals(1, officeUsd.txCount)
+        val uncategorized = result.single {
+            it.businessCategory == "Uncategorized" && it.currency == "EUR"
+        }
+        assertEquals(200.0, uncategorized.total, 0.001)
+        assertEquals(3, uncategorized.txCount)
+        assertEquals(3, result.size)
+        assertTrue(result.none { it.total == 999.0 })
+    }
 
     @Test
     fun `getLocatedMerchantTotalsByCurrency excludes not-mine rows`() = runTest {

@@ -5,6 +5,11 @@ import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.DomainExchangeRate
 import com.yourname.expensetracker.domain.currency.ExchangeRateStore
+import com.yourname.expensetracker.domain.currency.SupportedCurrency
+import com.yourname.expensetracker.domain.core.money.ConversionFailureType
+import com.yourname.expensetracker.domain.core.money.ConversionOutcome
+import com.yourname.expensetracker.domain.core.money.RateBasis
+import com.yourname.expensetracker.domain.core.money.StaleRatePolicy
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
@@ -95,6 +100,54 @@ class CurrencyRatesRepositoryImplTest {
         val beforePublication = fixture.converter.convertAsOf(10.0, "USD", "GBP", publicationMillis - 1L)
         assertTrue(onPublication is ConversionResult)
         assertNull(beforePublication)
+    }
+
+    @Test
+    fun `provider catalog currencies are persisted and convertible`() = runTest {
+        val providerCurrencies = SupportedCurrency.catalog.filter { it.code != "EUR" }
+        val rates = providerCurrencies.mapIndexed { index, currency ->
+            "<Cube currency='" + currency.code + "' rate='" + (1.01 + index * 0.01) + "'/>"
+        }.joinToString("\n")
+        val fixture = fixture()
+
+        fixture.repository.refreshFromStream("EUR", stream(ecbXml(rates = rates)))
+
+        providerCurrencies.forEach { currency ->
+            assertNotNull(
+                "Expected provider quote for ${currency.code}",
+                fixture.store.rate(currency.code, "EUR", publicationMillis)
+            )
+            val typed = fixture.converter.convertOutcome(
+                amount = 10.0,
+                fromCurrency = currency.code,
+                toCurrency = "EUR",
+                rateBasis = RateBasis.LATEST_AVAILABLE,
+                stalePolicy = StaleRatePolicy.None
+            )
+            assertTrue("Expected typed conversion for ${currency.code}", typed is ConversionOutcome.Converted)
+            assertNotNull(fixture.converter.convert(10.0, currency.code, "EUR"))
+        }
+    }
+
+    @Test
+    fun `catalog currency omitted by provider is missing rate not unsupported`() = runTest {
+        val fixture = fixture()
+        fixture.repository.refreshFromStream(
+            "EUR",
+            stream(ecbXml(rates = "<Cube currency='USD' rate='1.1403'/>"))
+        )
+
+        val typed = fixture.converter.convertOutcome(
+            amount = 10.0,
+            fromCurrency = "CNY",
+            toCurrency = "EUR",
+            rateBasis = RateBasis.LATEST_AVAILABLE,
+            stalePolicy = StaleRatePolicy.None
+        )
+
+        assertTrue(typed is ConversionOutcome.Failed)
+        assertEquals(ConversionFailureType.MISSING_RATE, (typed as ConversionOutcome.Failed).failureType)
+        assertNull(fixture.converter.convert(10.0, "CNY", "EUR"))
     }
 
     @Test

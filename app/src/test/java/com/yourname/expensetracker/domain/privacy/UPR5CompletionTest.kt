@@ -134,7 +134,8 @@ class UPR5CompletionTest {
         val privacyRepo = object : PrivacySettingsRepository {
             private val s = PrivacySettings(
                 cloudAiEnabled = true,
-                redactBeforeCloud = true
+                redactBeforeCloud = true,
+                receiptImageCloudEnabled = true
             )
             override fun observeSettings() = flowOf(s)
             override fun observeLoadState() = flowOf(PrivacySettingsLoadState.Loaded(s))
@@ -147,7 +148,8 @@ class UPR5CompletionTest {
         val aiRepo = object : AiSettingsRepository {
             override fun settings() = flowOf(AiSettings(
                 allowCloudAi = true,
-                redactBeforeCloud = false
+                redactBeforeCloud = false,
+                receiptImageCloudEnabled = true
             ))
             override suspend fun update(
                 transform: (AiSettings) -> AiSettings
@@ -180,7 +182,7 @@ class UPR5CompletionTest {
             policy.requireAllowed(PrivacyCapability.CLOUD_AI_RECEIPT_OCR)
             fail("Expected SecurityException from fail-closed resolver")
         } catch (e: SecurityException) {
-            assertTrue(e.message!!.contains("Cloud AI blocked"))
+            assertEquals(PrivacyGateReasonCodes.CLOUD_AI_DISABLED, e.message)
         }
     }
 

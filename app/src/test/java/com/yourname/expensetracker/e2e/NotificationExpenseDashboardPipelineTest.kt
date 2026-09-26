@@ -2,8 +2,13 @@ package com.yourname.expensetracker.e2e
 
 import android.content.Context
 import com.yourname.expensetracker.AnalyticsEngineTestBase
+import com.yourname.expensetracker.TestCurrencySettingsRepository
 import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.createExpense
+import com.yourname.expensetracker.dateToMillis
+import com.yourname.expensetracker.testAnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.testCurrencyConverter
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.AnomalyAlertDao
 import com.yourname.expensetracker.data.database.dao.BudgetDao
@@ -22,10 +27,6 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
-import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
-import com.yourname.expensetracker.domain.currency.CurrencyConverter
-import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
-import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.data.repository.DeleteGroupMemberResult
@@ -102,6 +103,7 @@ import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -133,10 +135,19 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
     private lateinit var classifier: HybridExpenseClassifier
     private lateinit var dashboardUseCase: ComputeDashboardWidgetsUseCase
     private lateinit var insightsEngine: InsightsEngine
+    private val expenseMutationClock = MutableStateFlow(0)
 
     @Before
     override fun setUp() {
         super.setUp()
+
+        // These fixtures describe March spending. The dashboard's canonical
+        // current-month window must therefore be anchored inside March.
+        timeProvider = FakeTimeProvider(dateToMillis("2026-03-31") + 12L * 60 * 60 * 1000)
+        // BudgetRepository combines this invalidation signal with budget/category
+        // flows. A relaxed, non-emitting Flow leaves its first result suspended
+        // while the day ticker keeps advancing the virtual scheduler.
+        every { expenseDao.observeExpenseMutationClock() } returns expenseMutationClock
 
         val currencyNormalizer = CurrencyNormalizer()
         val merchantCleaner = MerchantCleaner()
@@ -147,7 +158,7 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
             revolutParser = RevolutParser(currencyNormalizer, merchantCleaner),
             smsParser = SmsParser(currencyNormalizer, merchantCleaner),
             googleWalletParser = GoogleWalletParser(currencyNormalizer, merchantCleaner),
-            genericParser = GenericTransactionParser(currencyNormalizer, merchantCleaner, directionDetector, timeProvider = mockk()),
+            genericParser = GenericTransactionParser(currencyNormalizer, merchantCleaner, directionDetector, timeProvider = timeProvider),
             aiFallbackParser = object : NotificationFallbackParser {
                 override suspend fun parse(
                     title: String?,
@@ -156,7 +167,7 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
                     packageName: String
                 ) = null
             },
-            timeProvider = mockk()
+            timeProvider = timeProvider
         )
 
         val context = mockk<Context>(relaxed = true)
@@ -250,7 +261,7 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
             recurringExpenseEngine = recurringExpenseEngine,
             timeProvider = timeProvider,
             spendingPaceCalculator = SpendingPaceCalculator(timeProvider),
-            anomalyDetector = AnomalyDetector(timeProvider = mockk()),
+            anomalyDetector = AnomalyDetector(timeProvider = timeProvider),
             monthlyComparisonCalculator = MonthlyComparisonCalculator(),
             categoryInsightEngine = CategoryInsightEngine(),
             merchantInsightEngine = MerchantInsightEngine(),
@@ -351,11 +362,9 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
 
         val sharedExpenseManager = SharedExpenseManager(sharedExpenseDataPort, timeProvider, mockk(), ioDispatcher = testDispatcher)
 
-        val currencyConverter = mockk<CurrencyConverter>(relaxed = true)
-        val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
-        every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
-        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
-        val analyticsCurrencyNormalizer = mockk<AnalyticsCurrencyNormalizer>(relaxed = true)
+        val currencyConverter = testCurrencyConverter()
+        val currencySettingsRepository = TestCurrencySettingsRepository()
+        val analyticsCurrencyNormalizer = testAnalyticsCurrencyNormalizer(currencyConverter)
         val multiCurrencyRepository = mockk<MultiCurrencyRepository>(relaxed = true)
         coEvery { multiCurrencyRepository.getHomeCurrencyPurchaseTotal(any(), any()) } returns MoneyAggregate.empty(CurrencyCode("EUR"))
 
@@ -509,6 +518,7 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
 
         val compiled = dashboardUseCase.compute(createProcessedData(allExpenses))
         assertApproxEquals(1283.59, compiled.totalSpent, 0.01)
+        assertEquals("Budget invalidation collectors must be released", 0, expenseMutationClock.subscriptionCount.value)
     }
 
     @Test
@@ -529,6 +539,7 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
 
         val compiled = dashboardUseCase.compute(createProcessedData(baseline))
         assertApproxEquals(1238.29, compiled.totalSpent, 0.01)
+        assertEquals("Budget invalidation collectors must be released", 0, expenseMutationClock.subscriptionCount.value)
     }
 
     @Test
@@ -547,6 +558,7 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
 
         val compiled = dashboardUseCase.compute(createProcessedData(golden))
         assertApproxEquals(1283.59, compiled.totalSpent, 0.01)
+        assertEquals("Budget invalidation collectors must be released", 0, expenseMutationClock.subscriptionCount.value)
     }
 
     private fun createProcessedData(expenses: List<Expense>): ProcessedDashboardData {
@@ -596,6 +608,7 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
             id = id,
             amount = amount,
             effectiveAmount = effectiveAmount,
+            currency = currency,
             merchant = merchant,
             transactionType = when (transactionType) {
                 TransactionType.PURCHASE -> DashboardTransactionType.PURCHASE
@@ -607,7 +620,8 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
             date = date,
             categoryId = categoryId,
             isNotMine = isNotMine,
-            isManualEntry = isManualEntry
+            isManualEntry = isManualEntry,
+            isSharedExpense = isSharedExpense
         )
     }
 

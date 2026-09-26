@@ -27,6 +27,8 @@ class BudgetAlertPipelineTest : AnalyticsEngineTestBase() {
         super.setUp()
         budgetRepo = mockk(relaxed = true)
         notificationService = mockk(relaxed = true)
+        every { notificationService.sendBudgetAlert(any(), any(), any()) } returns
+            NotificationService.DeliveryResult.DELIVERED
         budgetCalculator = BudgetCalculator(timeProvider)
         budgetMonitor = BudgetMonitor(budgetRepo, timeProvider, notificationService, testDispatcher, diagnosticEventWriter = mockk(relaxed = true), writeBarrier = mockk(relaxed = true), diagnosticSink = mockk(relaxed = true))
     }
@@ -54,7 +56,7 @@ class BudgetAlertPipelineTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `budget at 100 percent triggers critical notification`() = runTest {
+    fun `budget at 100 percent triggers exceeded notification`() = runTest {
         val status = createBudgetStatus(
             budgetId = 2L,
             amount = 500.0,
@@ -70,9 +72,9 @@ class BudgetAlertPipelineTest : AnalyticsEngineTestBase() {
         testDispatcher.scheduler.advanceUntilIdle()
 
         verify(exactly = 1) {
-            notificationService.sendBudgetAlert(2, "Critical Budget Warning", any())
+            notificationService.sendBudgetAlert(2, "Budget Exceeded!", any())
         }
-        coVerify(exactly = 1) { budgetRepo.updateCriticalNotification(2L, fixedNow) }
+        coVerify(exactly = 1) { budgetRepo.updateExceededNotification(2L, fixedNow) }
     }
 
     @Test

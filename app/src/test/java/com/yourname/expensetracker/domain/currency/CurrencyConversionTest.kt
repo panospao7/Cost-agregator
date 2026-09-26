@@ -204,7 +204,7 @@ class CurrencyConversionTest {
     }
 
     @Test
-    fun `convertMultiple distinguishes supported missing rate and stale rate without changing failure details`() = runTest {
+    fun `convertMultiple distinguishes supported missing rate and stale rate with controlled failure reasons`() = runTest {
         val now = 1_730_000_000_000L
         val clock = mockk<com.yourname.expensetracker.domain.util.TimeProvider>()
         every { clock.now() } returns now
@@ -228,17 +228,20 @@ class CurrencyConversionTest {
             assertThat(missing.total).isEqualTo(0.0)
             assertThat(missing.failedConversions.single().originalCurrency).isEqualTo("USD")
             assertThat(missing.failedConversions.single().failureType).isEqualTo(FailedConversion.MISSING_RATE)
-            assertThat(missing.failedConversions.single().reason).contains("USD to EUR")
+            assertThat(missing.failedConversions.single().reason).isEqualTo("MISSING_RATE")
 
             val stale = aggregateConverter.convertMultiple(listOf(50.0 to "GBP"), "EUR")
             assertThat(stale.failedConversions.single().originalAmount).isEqualTo(50.0)
             assertThat(stale.failedConversions.single().failureType).isEqualTo(FailedConversion.STALE_RATE)
-            assertThat(stale.failedConversions.single().reason).contains("stale")
+            assertThat(stale.failedConversions.single().reason).isEqualTo("STALE_RATE")
 
             val mixed = aggregateConverter.convertMultiple(listOf(100.0 to "EUR", 1234.56 to "USD", 50.0 to "GBP"), "EUR")
             assertThat(mixed.total).isEqualTo(100.0)
             assertThat(mixed.failedConversions.map { it.failureType }).containsExactly(
                 FailedConversion.MISSING_RATE, FailedConversion.STALE_RATE
+            ).inOrder()
+            assertThat(mixed.failedConversions.map { it.reason }).containsExactly(
+                "MISSING_RATE", "STALE_RATE"
             ).inOrder()
             assertThat(messages).containsExactly(
                 "CurrencyConverter: MISSING_RATE count=1",

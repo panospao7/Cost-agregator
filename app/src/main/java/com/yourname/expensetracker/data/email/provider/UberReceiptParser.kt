@@ -55,7 +55,7 @@ class UberReceiptParser : BaseEmailParser() {
             ),
             DatePattern(
                 Pattern.compile(
-                    """\d{1,2}:\d{2}\s+(?:AM|PM)?[^\d]*([\p{L}]+\s+\d{1,2}|\d{1,2}\s+[\p{L}]+)""",
+                    """\d{1,2}:\d{2}\s*(?:AM|PM)?(?:\s|[\p{P}\p{S}])*([\p{L}]+\s+\d{1,2}|\d{1,2}\s+[\p{L}]+)""",
                     Pattern.CASE_INSENSITIVE
                 )
             ),
@@ -179,7 +179,11 @@ class UberReceiptParser : BaseEmailParser() {
     }
 
     private fun parseUberDate(dateStr: String, receivedAt: Long): Long? {
-        parseDate(dateStr)?.let { return it }
+        // BaseEmailParser is useful for localized dates with an explicit year,
+        // but a year-less date must be anchored to the email's received year.
+        if (Regex("""\b\d{4}\b""").containsMatchIn(dateStr)) {
+            parseDate(dateStr)?.let { return it }
+        }
 
         val receivedInstant = Instant.ofEpochMilli(receivedAt)
         val receivedZone = ZoneId.systemDefault()
@@ -203,9 +207,11 @@ class UberReceiptParser : BaseEmailParser() {
                     val monthDay = MonthDay.from(accessor)
                     monthDay.atYear(receivedYear).atStartOfDay(receivedZone)
                 }
-                val millis = zdt.toInstant().toEpochMilli()
-                if (!hasYear && millis > receivedAt + futureClampThresholdMs) {
-                    return zdt.minusYears(1).toInstant().toEpochMilli()
+                var millis = zdt.toInstant().toEpochMilli()
+                if (!hasYear) {
+                    if (millis > receivedAt + futureClampThresholdMs) {
+                        millis = zdt.minusYears(1).toInstant().toEpochMilli()
+                    }
                 }
                 return millis
             } catch (_: Exception) {

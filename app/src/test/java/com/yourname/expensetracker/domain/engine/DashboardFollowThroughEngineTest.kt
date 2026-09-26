@@ -260,17 +260,13 @@ class DashboardFollowThroughEngineTest {
     fun `generateRecommendations expiration is 7 days from creation`() = runTest {
         val userId = "user123"
         val transaction = createExpense(amount = 150.0)
-        val beforeTest = System.currentTimeMillis()
 
         val recommendations = engine.generateRecommendations(transaction, null, userId)
 
-        val afterTest = System.currentTimeMillis()
         val sevenDaysMillis = 7L * 24 * 60 * 60 * 1000
 
         recommendations.forEach { rec ->
-            val expectedMin = beforeTest + sevenDaysMillis
-            val expectedMax = afterTest + sevenDaysMillis
-            assertTrue(rec.expiresAt in expectedMin..expectedMax)
+            assertEquals(sevenDaysMillis, rec.expiresAt - rec.createdAt)
         }
     }
 

@@ -15,20 +15,35 @@ import com.yourname.expensetracker.domain.currency.ConversionResult
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.FailedConversion
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.currency.MultiConversionAggregate
+import com.yourname.expensetracker.domain.core.money.ConversionFailureType
+import com.yourname.expensetracker.domain.core.money.ConversionOutcome
+import com.yourname.expensetracker.domain.core.money.ConversionPath
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateResult
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode
+import com.yourname.expensetracker.domain.core.money.RateBasis
 import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import java.time.LocalDate
@@ -834,6 +849,252 @@ class MultiCurrencyRepositoryTest {
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────
+
+    @Test
+    fun `display aggregation returns available zero for empty known target and converts mixed inputs`() = runTest {
+        val empty = repository.aggregateDisplayAmounts(emptyList(), emptyList(), "EUR")
+
+        assertTrue(empty is MoneyAggregateResult.Available)
+        empty as MoneyAggregateResult.Available
+        assertEquals(0.0, empty.aggregate.displayAmount, 0.0)
+        assertEquals(CurrencyCode("EUR"), empty.aggregate.displayCurrency)
+        assertTrue(empty.aggregate.sourceBuckets.isEmpty())
+
+        coEvery {
+            currencyConverter.convertOutcome(
+                100.0,
+                "USD",
+                "EUR",
+                RateBasis.LATEST_AVAILABLE,
+                null,
+                any()
+            )
+        } returns converted(100.0, "USD", 90.0, "EUR", 0.9)
+
+        val mixed = repository.aggregateDisplayAmounts(
+            amounts = listOf(100.0 to "EUR", 100.0 to "USD"),
+            transactionCounts = listOf(1, 2),
+            targetCurrency = "EUR"
+        )
+
+        assertTrue(mixed is MoneyAggregateResult.Available)
+        mixed as MoneyAggregateResult.Available
+        assertEquals(190.0, mixed.aggregate.displayAmount, 0.000001)
+        assertEquals(CurrencyCode("EUR"), mixed.aggregate.displayCurrency)
+        assertEquals(2, mixed.aggregate.sourceBuckets.size)
+        assertEquals(3, mixed.aggregate.totalTransactionCount)
+        assertFalse(mixed.aggregate.isPartial)
+    }
+
+    @Test
+    fun `display aggregation preserves partial sources and returns unavailable when all conversions fail`() = runTest {
+        coEvery {
+            currencyConverter.convertOutcome(50.0, "USD", "EUR", RateBasis.LATEST_AVAILABLE, null, any())
+        } returns failed(50.0, "USD", "EUR")
+
+        val partial = repository.aggregateDisplayAmounts(
+            amounts = listOf(100.0 to "EUR", 50.0 to "USD"),
+            transactionCounts = listOf(1, 2),
+            targetCurrency = "EUR"
+        )
+
+        assertTrue(partial is MoneyAggregateResult.Available)
+        partial as MoneyAggregateResult.Available
+        assertEquals(100.0, partial.aggregate.displayAmount, 0.0)
+        assertEquals(2, partial.aggregate.sourceBuckets.size)
+        assertEquals(3, partial.aggregate.totalTransactionCount)
+        assertEquals(2, partial.aggregate.failedTransactionCount)
+        assertTrue(partial.aggregate.isPartial)
+
+        coEvery {
+            currencyConverter.convertOutcome(10.0, "USD", "EUR", RateBasis.LATEST_AVAILABLE, null, any())
+        } returns failed(10.0, "USD", "EUR")
+        coEvery {
+            currencyConverter.convertOutcome(20.0, "GBP", "EUR", RateBasis.LATEST_AVAILABLE, null, any())
+        } returns failed(20.0, "GBP", "EUR")
+
+        val allFailed = repository.aggregateDisplayAmounts(
+            amounts = listOf(10.0 to "USD", 20.0 to "GBP"),
+            transactionCounts = listOf(1, 1),
+            targetCurrency = "EUR"
+        )
+
+        assertUnavailable(allFailed, MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE)
+    }
+
+    @Test
+    fun `display aggregation keeps valid zero net zero and zero counts available`() = runTest {
+        val result = repository.aggregateDisplayAmounts(
+            amounts = listOf(0.0 to "EUR", 10.0 to "EUR", -10.0 to "EUR"),
+            transactionCounts = listOf(0, 0, 0),
+            targetCurrency = "EUR"
+        )
+
+        assertTrue(result is MoneyAggregateResult.Available)
+        result as MoneyAggregateResult.Available
+        assertEquals(0.0, result.aggregate.displayAmount, 0.0)
+        assertEquals(0, result.aggregate.totalTransactionCount)
+        assertEquals(3, result.aggregate.sourceBuckets.size)
+        assertFalse(result.aggregate.isPartial)
+    }
+
+    @Test
+    fun `display aggregation rejects unknown currencies invalid amounts and invalid counts`() = runTest {
+        assertUnavailable(
+            repository.aggregateDisplayAmounts(listOf(1.0 to "EUR"), listOf(1), "XXX"),
+            MoneyDisplayUnavailableReasonCode.INVALID_TARGET_CURRENCY
+        )
+        assertUnavailable(
+            repository.aggregateDisplayAmounts(listOf(1.0 to "XXX"), listOf(1), "EUR"),
+            MoneyDisplayUnavailableReasonCode.INVALID_SOURCE_CURRENCY
+        )
+        assertUnavailable(
+            repository.aggregateDisplayAmounts(listOf(Double.NaN to "EUR"), listOf(1), "EUR"),
+            MoneyDisplayUnavailableReasonCode.INVALID_AMOUNT
+        )
+        assertUnavailable(
+            repository.aggregateDisplayAmounts(listOf(1.0 to "EUR"), emptyList(), "EUR"),
+            MoneyDisplayUnavailableReasonCode.INVALID_TRANSACTION_COUNTS
+        )
+        assertUnavailable(
+            repository.aggregateDisplayAmounts(listOf(1.0 to "EUR"), listOf(-1), "EUR"),
+            MoneyDisplayUnavailableReasonCode.INVALID_TRANSACTION_COUNTS
+        )
+    }
+
+    @Test
+    fun `display aggregation honors filing target independently of home currency`() = runTest {
+        coEvery {
+            currencyConverter.convertOutcome(100.0, "EUR", "GBP", RateBasis.LATEST_AVAILABLE, null, any())
+        } returns converted(100.0, "EUR", 80.0, "GBP", 0.8)
+
+        val result = repository.aggregateDisplayAmounts(
+            amounts = listOf(100.0 to "EUR"),
+            transactionCounts = listOf(1),
+            targetCurrency = "GBP"
+        )
+
+        assertTrue(result is MoneyAggregateResult.Available)
+        result as MoneyAggregateResult.Available
+        assertEquals(80.0, result.aggregate.displayAmount, 0.0)
+        assertEquals(CurrencyCode("GBP"), result.aggregate.displayCurrency)
+    }
+
+    @Test
+    fun `historical result distinguishes resolved first run failed and invalid home currency`() = runTest {
+        coEvery { expenseDao.getExpensesBetweenUncapped(0L, 1L) } returns emptyList()
+
+        val resolvedSettings = settingsWith(HomeCurrencyResolution.Resolved(CurrencyCode("USD")))
+        val resolved = repositoryWith(resolvedSettings)
+            .getHomeCurrencyPurchaseTotalHistoricalResult(0L, 1L)
+        assertTrue(resolved is MoneyAggregateResult.Available)
+        assertEquals(CurrencyCode("USD"), (resolved as MoneyAggregateResult.Available).aggregate.displayCurrency)
+
+        val firstRunSettings = settingsWith(HomeCurrencyResolution.FirstRunDefault(CurrencyCode("EUR")))
+        val firstRun = repositoryWith(firstRunSettings)
+            .getHomeCurrencyPurchaseTotalHistoricalResult(0L, 1L)
+        assertTrue(firstRun is MoneyAggregateResult.Available)
+        assertEquals(CurrencyCode("EUR"), (firstRun as MoneyAggregateResult.Available).aggregate.displayCurrency)
+
+        val failedSettings = settingsWith(HomeCurrencyResolution.Failed("SETTINGS_READ_FAILED"))
+        val failedResult = repositoryWith(failedSettings)
+            .getHomeCurrencyPurchaseTotalHistoricalResult(0L, 1L)
+        assertUnavailable(failedResult, MoneyDisplayUnavailableReasonCode.HOME_CURRENCY_UNAVAILABLE)
+
+        val invalidSettings = settingsWith(HomeCurrencyResolution.Resolved(CurrencyCode("XXX")))
+        val invalid = repositoryWith(invalidSettings)
+            .getHomeCurrencyPurchaseTotalHistoricalResult(0L, 1L)
+        assertUnavailable(invalid, MoneyDisplayUnavailableReasonCode.HOME_CURRENCY_UNAVAILABLE)
+    }
+
+    @Test
+    fun `home currency cache invalidates after settings emission`() = runTest {
+        val homeFlow = MutableStateFlow("EUR")
+        val settings = mockk<CurrencySettingsRepository>(relaxed = true)
+        every { settings.homeCurrency() } returns homeFlow
+        coEvery { settings.resolveHomeCurrency() } returnsMany listOf(
+            HomeCurrencyResolution.Resolved(CurrencyCode("EUR")),
+            HomeCurrencyResolution.Resolved(CurrencyCode("USD"))
+        )
+        coEvery { expenseDao.getExpensesBetweenUncapped(0L, 1L) } returns emptyList()
+        val localRepository = repositoryWith(settings)
+
+        assertTrue(localRepository.getCategoryAggregatesHistorical(0L, 1L).isEmpty())
+        homeFlow.value = "USD"
+        assertTrue(localRepository.getCategoryAggregatesHistorical(0L, 1L).isEmpty())
+
+        coVerify(exactly = 2) { settings.resolveHomeCurrency() }
+    }
+
+    @Test
+    fun `home currency resolution cancellation propagates`() = runTest {
+        val cancellation = CancellationException("cancelled")
+        val settings = mockk<CurrencySettingsRepository>(relaxed = true)
+        every { settings.homeCurrency() } returns flowOf("EUR")
+        coEvery { settings.resolveHomeCurrency() } throws cancellation
+
+        try {
+            repositoryWith(settings).getHomeCurrencyPurchaseTotalHistoricalResult(0L, 1L)
+            fail("Expected cancellation")
+        } catch (error: CancellationException) {
+            assertTrue(error === cancellation)
+        }
+    }
+
+    private fun repositoryWith(settings: CurrencySettingsRepository): MultiCurrencyRepository =
+        MultiCurrencyRepository(
+            expenseDao,
+            currencyConverter,
+            timeProvider,
+            currencySettingsRepository = settings,
+            applicationScope = CoroutineScope(Dispatchers.Unconfined)
+        )
+
+    private fun settingsWith(resolution: HomeCurrencyResolution): CurrencySettingsRepository =
+        mockk<CurrencySettingsRepository>(relaxed = true) {
+            every { homeCurrency() } returns flowOf(resolution.currencyOrNull?.code ?: "")
+            coEvery { resolveHomeCurrency() } returns resolution
+        }
+
+    private fun converted(
+        originalAmount: Double,
+        sourceCurrency: String,
+        convertedAmount: Double,
+        targetCurrency: String,
+        rate: Double
+    ) = ConversionOutcome.Converted(
+        originalAmount = originalAmount,
+        originalCurrency = CurrencyCode(sourceCurrency),
+        convertedAmount = convertedAmount,
+        targetCurrency = CurrencyCode(targetCurrency),
+        rateUsed = rate,
+        rateBasis = RateBasis.LATEST_AVAILABLE,
+        rateValidDate = null,
+        rateLastUpdated = millis(2026, 4, 15),
+        rateSource = "test",
+        conversionPath = ConversionPath.DIRECT
+    )
+
+    private fun failed(
+        originalAmount: Double,
+        sourceCurrency: String,
+        targetCurrency: String
+    ) = ConversionOutcome.Failed(
+        originalAmount = originalAmount,
+        originalCurrency = sourceCurrency,
+        targetCurrency = targetCurrency,
+        rateBasis = RateBasis.LATEST_AVAILABLE,
+        failureType = ConversionFailureType.MISSING_RATE,
+        message = ConversionFailureType.MISSING_RATE.name
+    )
+
+    private fun assertUnavailable(
+        result: MoneyAggregateResult,
+        reasonCode: MoneyDisplayUnavailableReasonCode
+    ) {
+        assertTrue(result is MoneyAggregateResult.Unavailable)
+        assertEquals(reasonCode.name, (result as MoneyAggregateResult.Unavailable).reason)
+    }
 
     private fun expense(
         id: Long,

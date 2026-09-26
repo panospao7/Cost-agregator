@@ -8,7 +8,13 @@ import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencyRatesRepository
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import com.yourname.expensetracker.domain.currency.SupportedCurrency
+import com.yourname.expensetracker.domain.core.money.ConversionFailureType
+import com.yourname.expensetracker.domain.core.money.ConversionOutcome
+import com.yourname.expensetracker.domain.core.money.ConversionPath
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.RateBasis
+import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -32,6 +38,7 @@ class CurrencyManagementViewModelTest : ViewModelTestUtils() {
     private val currencyRatesRepository = mockk<CurrencyRatesRepository>(relaxed = true)
     private val settingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
 
+    private lateinit var hybridClassifier: HybridExpenseClassifier
     private lateinit var viewModel: CurrencyManagementViewModel
 
     @Before
@@ -43,6 +50,7 @@ class CurrencyManagementViewModelTest : ViewModelTestUtils() {
         every { settingsRepository.lastRateUpdate() } returns flowOf(1_700_000_000_000L)
         coEvery { settingsRepository.areRatesStale(any()) } returns false
         every { currencyDataRepository.getRatesToCurrency("EUR") } returns flowOf(emptyList())
+        hybridClassifier = mockk(relaxed = true)
 
         viewModel = createViewModel()
     }
@@ -87,12 +95,15 @@ class CurrencyManagementViewModelTest : ViewModelTestUtils() {
             timestamp = 1_700_000_300_000L
         )
         coEvery {
-            currencyConverter.convert(
-                amount = 100.0,
-                fromCurrency = "EUR",
-                toCurrency = "USD"
+            currencyConverter.convertOutcome(
+                100.0,
+                "EUR",
+                "USD",
+                RateBasis.LATEST_AVAILABLE,
+                null,
+                any()
             )
-        } returns result
+        } returns convertedOutcome()
 
         advanceUntilIdle()
 
@@ -108,6 +119,71 @@ class CurrencyManagementViewModelTest : ViewModelTestUtils() {
 
             cancelAndIgnoreRemainingEvents()
         }
+    }
+
+    @Test
+    fun `selector exposes exactly the active currency catalog`() = runTest(testDispatcher) {
+        advanceUntilIdle()
+
+        assertEquals(
+            SupportedCurrency.activeCatalog.map { it.code },
+            viewModel.uiState.value.supportedCurrencies.map { it.code }
+        )
+        assertTrue(viewModel.uiState.value.supportedCurrencies.any { it.code == "CNY" })
+        assertTrue(viewModel.uiState.value.supportedCurrencies.any { it.code == "INR" })
+        assertFalse(viewModel.uiState.value.supportedCurrencies.any { it.code == "HRK" })
+    }
+
+    @Test
+    fun `invalid and inactive home currencies do not write or invalidate`() = runTest(testDispatcher) {
+        advanceUntilIdle()
+
+        viewModel.setHomeCurrency("XXX")
+        viewModel.setHomeCurrency("HRK")
+        advanceUntilIdle()
+
+        coVerify(exactly = 0) { settingsRepository.setHomeCurrency(any()) }
+        coVerify(exactly = 0) { hybridClassifier.invalidateCategorySnapshot() }
+        assertEquals("UNSUPPORTED_HOME_CURRENCY", viewModel.uiState.value.error)
+    }
+
+    @Test
+    fun `valid lowercase home currency writes canonical code and invalidates`() = runTest(testDispatcher) {
+        advanceUntilIdle()
+
+        viewModel.setHomeCurrency("usd")
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { settingsRepository.setHomeCurrency("USD") }
+        coVerify(exactly = 1) { hybridClassifier.invalidateCategorySnapshot() }
+    }
+
+    @Test
+    fun `failed conversion clears stale result with controlled error`() = runTest(testDispatcher) {
+        coEvery {
+            currencyConverter.convertOutcome(any(), any(), any(), any(), any(), any())
+        } returnsMany listOf(
+            convertedOutcome(),
+            ConversionOutcome.Failed(
+                originalAmount = 100.0,
+                originalCurrency = "EUR",
+                targetCurrency = "USD",
+                rateBasis = RateBasis.LATEST_AVAILABLE,
+                failureType = ConversionFailureType.MISSING_RATE,
+                message = ConversionFailureType.MISSING_RATE.name
+            )
+        )
+        advanceUntilIdle()
+
+        viewModel.convert(100.0, "EUR", "USD")
+        advanceUntilIdle()
+        assertTrue(viewModel.uiState.value.conversionResult != null)
+
+        viewModel.convert(100.0, "EUR", "USD")
+        advanceUntilIdle()
+
+        assertEquals(null, viewModel.uiState.value.conversionResult)
+        assertEquals("CURRENCY_CONVERSION_UNAVAILABLE", viewModel.uiState.value.error)
     }
 
     @Test
@@ -167,7 +243,7 @@ class CurrencyManagementViewModelTest : ViewModelTestUtils() {
 
             val error = awaitItem()
             assertFalse(error.isLoading)
-            assertTrue(error.error?.contains("Failed to refresh rates: network down") == true)
+            assertEquals("CURRENCY_RATE_REFRESH_UNAVAILABLE", error.error)
 
             cancelAndIgnoreRemainingEvents()
         }
@@ -179,7 +255,20 @@ class CurrencyManagementViewModelTest : ViewModelTestUtils() {
             currencyConverter = currencyConverter,
             currencyRatesRepository = currencyRatesRepository,
             settingsRepository = settingsRepository,
-            hybridClassifier = mockk(relaxed = true)
+            hybridClassifier = hybridClassifier
         )
     }
+
+    private fun convertedOutcome() = ConversionOutcome.Converted(
+        originalAmount = 100.0,
+        originalCurrency = CurrencyCode("EUR"),
+        convertedAmount = 110.0,
+        targetCurrency = CurrencyCode("USD"),
+        rateUsed = 1.1,
+        rateBasis = RateBasis.LATEST_AVAILABLE,
+        rateValidDate = 1_700_000_300_000L,
+        rateLastUpdated = 1_700_000_300_000L,
+        rateSource = "ecb",
+        conversionPath = ConversionPath.DIRECT
+    )
 }

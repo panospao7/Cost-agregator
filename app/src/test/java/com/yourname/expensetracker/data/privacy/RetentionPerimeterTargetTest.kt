@@ -22,6 +22,7 @@ import com.yourname.expensetracker.domain.privacy.RetentionTarget
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -268,24 +269,37 @@ class RetentionPerimeterTargetTest {
     /**
      * P8-001: stage-1 success + stage-2 failure commits stage 1 and reports ONLY
      * the rows target as failed. With two independent targets, stage 1's SQL
-     * update is committed before stage 2 runs — simulated here by closing the
-     * database after stage 1 succeeded.
+     * update is committed before stage 2 runs. An aborting delete trigger injects
+     * a real SQLite failure without cancelling Room's coroutine scope.
      */
     @Test
-    fun `stage-2 failure leaves committed stage-1 result and reports only rows failure`() = runTest {
-        val dao = database.transactionEventDao()
-        dao.insert(transactionEvent(justBeforeCutoff(30)))
-
-        val stage1 = targetNamed("10_transaction_events.snapshots").purge(cutoffDaysAgo(30))
+    fun `stage-2 failure leaves committed stage-1 result and reports only rows failure`() {
+        val stage1 = runBlocking {
+            val dao = database.transactionEventDao()
+            // Old enough for both stages, so the failing DELETE really executes.
+            dao.insert(transactionEvent(justBeforeCutoff(365)))
+            targetNamed("10_transaction_events.snapshots").purge(cutoffDaysAgo(30))
+        }
         assertTrue(stage1.success)
         assertEquals(1, stage1.rowsPurged)
 
-        database.close()
+        database.openHelper.writableDatabase.execSQL(
+            """CREATE TRIGGER fail_retention_event_delete BEFORE DELETE ON transaction_events
+               BEGIN SELECT RAISE(ABORT, 'TEST_RETENTION_DELETE_FAILURE'); END"""
+        )
 
-        val stage2 = targetNamed("20_transaction_events.rows").purge(cutoffDaysAgo(365))
+        val stage2 = runBlocking {
+            targetNamed("20_transaction_events.rows").purge(cutoffDaysAgo(365))
+        }
         assertFalse("stage-2 failure must be reported as failure", stage2.success)
         assertEquals(0, stage2.rowsPurged)
         assertNotNull(stage2.errorClass)
+        assertEquals("RETENTION_PURGE_FAILED", stage2.errorCode)
+        runBlocking {
+            val retained = database.transactionEventDao().getEventsForExpense(100L).single()
+            assertNull("stage 1 must remain committed after stage 2 fails", retained.beforeSnapshot)
+            assertNull(retained.afterSnapshot)
+        }
     }
 
     // ══ P8-002 — scanned_receipts.rawOcrText structured purge ═════════════════
@@ -373,14 +387,33 @@ class RetentionPerimeterTargetTest {
     }
 
     @Test
-    fun `operation-run purge reports failure and never success when the database fails`() = runTest {
-        database.close()
+    fun `operation-run purge reports failure and never success when the database fails`() {
+        val runId = runBlocking {
+            val id = database.operationRunDao().insert(
+                operationRun("delete-failure", "SUCCESS", cutoffDaysAgo(91), justBeforeCutoff(90))
+            )
+            database.operationRunEventDao().insert(operationRunEvent(id, justBeforeCutoff(90)))
+            id
+        }
+        // Fail the parent DELETE after the child DELETE has run in the same
+        // transaction. Both rows must survive the rollback; Room stays open.
+        database.openHelper.writableDatabase.execSQL(
+            """CREATE TRIGGER fail_retention_run_delete BEFORE DELETE ON operation_runs
+               BEGIN SELECT RAISE(ABORT, 'TEST_RETENTION_DELETE_FAILURE'); END"""
+        )
 
-        val result = targetNamed("30_operation_runs").purge(cutoffDaysAgo(90))
+        val result = runBlocking {
+            targetNamed("30_operation_runs").purge(cutoffDaysAgo(90))
+        }
 
         assertFalse(result.success)
         assertEquals(0, result.rowsPurged)
         assertNotNull(result.errorClass)
+        assertEquals("RETENTION_PURGE_FAILED", result.errorCode)
+        runBlocking {
+            assertNotNull(database.operationRunDao().getById(runId))
+            assertEquals(1, database.operationRunEventDao().getByRunId(runId).size)
+        }
     }
 
     // ══ P8-003 — 40_receipt_events (90d) ══════════════════════════════════════

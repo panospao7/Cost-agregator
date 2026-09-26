@@ -12,7 +12,7 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkObject
-import io.mockk.unmockkAll
+import io.mockk.unmockkObject
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -39,14 +39,15 @@ class DefaultAiEnvironmentMonitorTest {
 
     @Before
     fun setUp() {
-        mockkObject(Generation::class)
+        // Generation is a Kotlin singleton; getClient is an instance method.
+        mockkObject(Generation)
         every { Generation.getClient() } returns model
         monitor = DefaultAiEnvironmentMonitor(context, timeProvider)
     }
 
     @After
     fun tearDown() {
-        unmockkAll()
+        unmockkObject(Generation)
     }
 
     @Test

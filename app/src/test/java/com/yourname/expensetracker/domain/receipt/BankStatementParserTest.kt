@@ -20,9 +20,7 @@ class BankStatementParserTest {
 
     @Before
     fun setup() {
-        currencyNormalizer = io.mockk.mockk {
-            io.mockk.every { normalize(any()) } returns "EUR"
-        }
+        currencyNormalizer = com.yourname.expensetracker.domain.util.CurrencyNormalizer()
         merchantCleaner = io.mockk.mockk {
             io.mockk.every { clean(any()) } answers { firstArg() }
         }
@@ -120,6 +118,7 @@ class BankStatementParserTest {
         // Format: DATE TIME VALUE_DATE STORE_CODE TX_CODE MERCHANT Χ/Π AMOUNT
         //   Χ = ΧΡΕΩΣΗ (debit/purchase), Π = ΠΙΣΤΩΣΗ (credit/deposit)
         val blocks = listOf(
+            TextBlock("Εθνική Τράπεζα statement", null, 10, 50, 300, 70),
             TextBlock(
                 "15/03/2025 10:30:00 17/03/2025 705 040 SKLAVENITIS ΜΑΡΚΟΠΟΥΛΟ Χ 12,50",
                 null, 10, 100, 600, 120
@@ -139,6 +138,7 @@ class BankStatementParserTest {
     fun `nbg transaction row with credit marker is parsed as DEPOSIT`() {
         // Π = ΠΙΣΤΩΣΗ (credit/transfer)
         val blocks = listOf(
+            TextBlock("Εθνική Τράπεζα statement", null, 10, 50, 300, 70),
             TextBlock(
                 "20/03/2025 08:15:00 22/03/2025 710 042 ΜΙΣΘΟΔΟΣΙΑ ΕΤΑΙΡΕΙΑ Π 1.500,00",
                 null, 10, 100, 600, 120
@@ -271,6 +271,7 @@ class BankStatementParserTest {
         yBottom: Int = 120
     ): List<TextBlock> {
         val blocks = mutableListOf<TextBlock>()
+        blocks.add(TextBlock("Revolut statement", null, 0, yTop - 40, 220, yTop - 20))
         blocks.add(TextBlock(dateStr, null, 0, yTop, 120, yBottom))
         blocks.add(TextBlock(description, null, 130, yTop, 400, yBottom))
         if (moneyOutStr != null) {

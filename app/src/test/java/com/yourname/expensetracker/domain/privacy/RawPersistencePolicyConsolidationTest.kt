@@ -338,7 +338,7 @@ class RawPersistencePolicyConsolidationTest {
             "rawBankStatementStorageMode"
         )
         for (path in ownedFiles) {
-            val text = readProductionSource(path)
+            val text = maskKotlinComments(readProductionSource(path))
             for (selector in forbiddenSelectors) {
                 assertFalse(
                     "$path must not read settings.$selector inline — use RawPersistencePolicyResolver",
@@ -360,7 +360,7 @@ class RawPersistencePolicyConsolidationTest {
         val detected = listOf(
             "rawNotificationStorageMode", "rawOcrStorageMode",
             "emailReceiptStorageMode", "rawBankStatementStorageMode"
-        ).any { violatingSource.contains(it) }
+        ).any { maskKotlinComments(violatingSource).contains(it) }
         assertTrue("Negative fixture: inline selector must be detected", detected)
     }
 
@@ -378,4 +378,135 @@ class RawPersistencePolicyConsolidationTest {
             assertTrue("RawPersistencePolicy must declare $field", policyText.contains(field))
         }
     }
+
+    @Test
+    fun `selector guard excludes nested comments but retains executable reads`() {
+        val source = """
+            // settings.rawOcrStorageMode
+            /* settings.rawBankStatementStorageMode
+               /* nested settings.emailReceiptStorageMode */
+            */
+            val mode = settings.rawNotificationStorageMode
+        """.trimIndent()
+        val masked = maskKotlinComments(source)
+        assertFalse(masked.contains("rawOcrStorageMode"))
+        assertFalse(masked.contains("rawBankStatementStorageMode"))
+        assertFalse(masked.contains("emailReceiptStorageMode"))
+        assertTrue(masked.contains("settings.rawNotificationStorageMode"))
+        assertEquals(source.length, masked.length)
+        assertEquals(source.count { it == '\n' }, masked.count { it == '\n' })
+    }
+
+    @Test
+    fun `selector guard does not treat literal comment delimiters as comments`() {
+        val quoted = "val marker = \"/*\"; val mode = settings.rawOcrStorageMode"
+        val raw = "val marker = \"\"\"// /*\"\"\"; val mode = settings.rawBankStatementStorageMode"
+        assertEquals(quoted, maskKotlinComments(quoted))
+        assertEquals(raw, maskKotlinComments(raw))
+    }
+
+    @Test
+    fun `selector guard retains executable templates including nested quoted literals`() {
+        val dollar = '$'
+        val normal = "val text = \"value " + dollar + "{listOf(\"/*\", settings.rawOcrStorageMode)}\""
+        val raw = "val text = \"\"\"value " + dollar + "{/* comment */ settings.rawBankStatementStorageMode}\"\"\""
+        assertEquals(normal, maskKotlinComments(normal))
+        assertTrue(maskKotlinComments(raw).contains("settings.rawBankStatementStorageMode"))
+        assertFalse(maskKotlinComments(raw).contains("/* comment */"))
+    }
+
+    @Test
+    fun `selector guard fails closed on unterminated comments or literals`() {
+        for (source in listOf("/* unfinished", "val text = \"unfinished", "val text = \"\"\"unfinished")) {
+            assertThrows(IllegalArgumentException::class.java) { maskKotlinComments(source) }
+        }
+    }
+
+    private fun maskKotlinComments(source: String): String = KotlinCommentMasker(source).mask()
+
+    /**
+     * Mask comments only. Keep literals conservatively, and scan executable template
+     * expressions recursively so a nested quote cannot hide a settings read.
+     * Do not use the general sanitizer that erases template expressions with strings.
+     */
+    private class KotlinCommentMasker(private val source: String) {
+        private val output = source.toCharArray()
+        private var index = 0
+
+        fun mask(): String {
+            scanCode(templateExpression = false)
+            return output.concatToString()
+        }
+
+        private fun scanCode(templateExpression: Boolean) {
+            var braces = 0
+            while (index < source.length) {
+                when {
+                    source.startsWith("//", index) -> {
+                        while (index < source.length && source[index] != '\n') maskCharacter()
+                    }
+                    source.startsWith("/*", index) -> scanBlockComment()
+                    source.startsWith("\"\"\"", index) -> scanString(raw = true)
+                    source[index] == '"' -> scanString(raw = false)
+                    source[index] == '\'' -> scanQuotedToken('\'', escaped = true)
+                    source[index] == '`' -> scanQuotedToken('`', escaped = false)
+                    source[index] == '{' -> { braces++; index++ }
+                    source[index] == '}' && templateExpression && braces == 0 -> { index++; return }
+                    source[index] == '}' -> { braces--; index++ }
+                    else -> index++
+                }
+            }
+            require(!templateExpression) { "Unterminated Kotlin template expression" }
+        }
+
+        private fun scanString(raw: Boolean) {
+            val delimiter = if (raw) "\"\"\"" else "\""
+            index += delimiter.length
+            while (index < source.length) {
+                when {
+                    source.startsWith(delimiter, index) -> { index += delimiter.length; return }
+                    !raw && source[index] == '\\' -> index += 2
+                    source[index] == '$' && source.getOrNull(index + 1) == '{' -> {
+                        index += 2
+                        scanCode(templateExpression = true)
+                    }
+                    else -> index++
+                }
+            }
+            throw IllegalArgumentException("Unterminated Kotlin string literal")
+        }
+
+        private fun scanQuotedToken(delimiter: Char, escaped: Boolean) {
+            index++
+            while (index < source.length) {
+                when {
+                    escaped && source[index] == '\\' -> index += 2
+                    source[index] == delimiter -> { index++; return }
+                    else -> index++
+                }
+            }
+            throw IllegalArgumentException("Unterminated Kotlin quoted token")
+        }
+
+        private fun scanBlockComment() {
+            var depth = 0
+            while (index < source.length) {
+                when {
+                    source.startsWith("/*", index) -> { depth++; maskCharacter(); maskCharacter() }
+                    source.startsWith("*/", index) -> {
+                        depth--; maskCharacter(); maskCharacter()
+                        if (depth == 0) return
+                    }
+                    else -> maskCharacter()
+                }
+            }
+            throw IllegalArgumentException("Unterminated Kotlin block comment")
+        }
+
+        private fun maskCharacter() {
+            if (source[index] != '\n' && source[index] != '\r') output[index] = ' '
+            index++
+        }
+    }
+
 }

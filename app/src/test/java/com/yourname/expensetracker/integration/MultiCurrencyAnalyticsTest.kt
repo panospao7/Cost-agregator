@@ -11,12 +11,18 @@ import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.DomainExchangeRate
 import com.yourname.expensetracker.domain.currency.ExchangeRateStore
+import com.yourname.expensetracker.domain.currency.FailedConversion
 import com.yourname.expensetracker.domain.currency.MultiConversionAggregate
 import com.yourname.expensetracker.domain.model.Result
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import org.junit.After
 import org.junit.Test
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertEquals
@@ -25,29 +31,50 @@ import java.time.ZoneId
 
 class MultiCurrencyAnalyticsTest : AnalyticsEngineTestBase() {
 
+    private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+
+    @After
+    fun cancelRepositoryScope() {
+        repositoryScope.cancel()
+    }
+
     @Test
     fun `multi_currency_analytics_contract`() = runTest {
-        val exchangeRateStore = mockk<ExchangeRateStore>(relaxed = true)
+        val exchangeRateStore = mockk<ExchangeRateStore>()
         every { timeProvider.now() } returns ms(2026, 4, 15)
 
-        val converter = CurrencyConverter(exchangeRateStore, timeProvider = mockk())
-        val repository = MultiCurrencyRepository(expenseDao, converter, timeProvider, TestCurrencySettingsRepository(), kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined), com.yourname.expensetracker.domain.core.money.MoneyNormalizationEngine(converter))
+        val converter = CurrencyConverter(exchangeRateStore, timeProvider = timeProvider)
+        val repository = MultiCurrencyRepository(expenseDao, converter, timeProvider, TestCurrencySettingsRepository(), repositoryScope, com.yourname.expensetracker.domain.core.money.MoneyNormalizationEngine(converter))
 
-        coEvery { exchangeRateStore.getRate("USD", "EUR") } returns DomainExchangeRate(
+        coEvery { exchangeRateStore.getLatestRateForPair("USD", "EUR") } returns DomainExchangeRate(
             fromCurrency = "USD",
             toCurrency = "EUR",
             rate = 0.8,
-            lastUpdated = ms(2026, 4, 1),
+            lastUpdated = ms(2026, 4, 15),
             source = "test"
         )
-        coEvery { exchangeRateStore.getRate("EUR", "EUR") } returns DomainExchangeRate(
+        coEvery { exchangeRateStore.getLatestRateForPair("EUR", "EUR") } returns DomainExchangeRate(
             fromCurrency = "EUR",
             toCurrency = "EUR",
             rate = 1.0,
-            lastUpdated = ms(2026, 4, 1),
+            lastUpdated = ms(2026, 4, 15),
             source = "test"
         )
-        coEvery { exchangeRateStore.getRate("JPY", "EUR") } returns null
+        coEvery { exchangeRateStore.getLatestRateForPair("JPY", "EUR") } returns null
+
+        // Latest-basis conversion must consume the fresh USD rate, not a relaxed
+        // answer from an unstubbed lookup. JPY alone is genuinely unavailable.
+        val conversion = converter.convertMultiple(
+            listOf(100.0 to "EUR", 50.0 to "USD", 1000.0 to "JPY"), "EUR"
+        )
+        assertEquals(140.0, conversion.total, 0.0001) // EUR 100 + USD 50 * 0.8
+        assertEquals("EUR", conversion.targetCurrency)
+        assertEquals(1, conversion.failedConversions.size)
+        val missing = conversion.failedConversions.single()
+        assertEquals("JPY", missing.originalCurrency)
+        assertEquals("EUR", missing.targetCurrency)
+        assertEquals(1000.0, missing.originalAmount, 0.0001)
+        assertEquals(FailedConversion.MISSING_RATE, missing.failureType)
 
         val start = ms(2026, 4, 1)
         val end = ms(2026, 5, 1)
@@ -64,11 +91,13 @@ class MultiCurrencyAnalyticsTest : AnalyticsEngineTestBase() {
         // Missing JPY->EUR rate should fail instead of mixing currencies in total.
         assertTrue(totalInEur is Result.Error)
         val message = (totalInEur as Result.Error).message.orEmpty()
-        assertTrue(message.contains("Missing exchange rates"))
+        assertEquals("Missing exchange rates: JPY→EUR", message)
 
         // Verify aggregate helper was called, NOT the uncapped row scan.
         coVerify(exactly = 1) { expenseDao.getAllSpentBetweenByCurrency(start, end) }
         coVerify(exactly = 0) { expenseDao.getExpensesBetweenUncapped(any(), any()) }
+        coVerify(exactly = 0) { exchangeRateStore.getRate(any(), any()) }
+        coVerify(exactly = 0) { exchangeRateStore.getRateAsOf(any(), any(), any()) }
     }
 
     /**
@@ -79,7 +108,7 @@ class MultiCurrencyAnalyticsTest : AnalyticsEngineTestBase() {
     fun `getExpensesByCurrency uses aggregate path`() = runTest {
         every { timeProvider.now() } returns ms(2026, 4, 15)
 
-        val repository = MultiCurrencyRepository(expenseDao, mockk(relaxed = true), timeProvider, TestCurrencySettingsRepository(), kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined), com.yourname.expensetracker.domain.core.money.MoneyNormalizationEngine(mockk(relaxed = true)))
+        val repository = MultiCurrencyRepository(expenseDao, mockk(relaxed = true), timeProvider, TestCurrencySettingsRepository(), repositoryScope, com.yourname.expensetracker.domain.core.money.MoneyNormalizationEngine(mockk(relaxed = true)))
 
         val start = ms(2026, 4, 1)
         val end = ms(2026, 5, 1)
@@ -108,7 +137,7 @@ class MultiCurrencyAnalyticsTest : AnalyticsEngineTestBase() {
     fun `aggregate path handles over 2000 expenses without truncation`() = runTest {
         every { timeProvider.now() } returns ms(2026, 4, 15)
 
-        val repository = MultiCurrencyRepository(expenseDao, mockk(relaxed = true), timeProvider, TestCurrencySettingsRepository(), kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined), com.yourname.expensetracker.domain.core.money.MoneyNormalizationEngine(mockk(relaxed = true)))
+        val repository = MultiCurrencyRepository(expenseDao, mockk(relaxed = true), timeProvider, TestCurrencySettingsRepository(), repositoryScope, com.yourname.expensetracker.domain.core.money.MoneyNormalizationEngine(mockk(relaxed = true)))
 
         val start = ms(2026, 1, 1)
         val end = ms(2026, 5, 1)
@@ -145,7 +174,7 @@ class MultiCurrencyAnalyticsTest : AnalyticsEngineTestBase() {
             )
         }
 
-        val repository = MultiCurrencyRepository(expenseDao, converter, timeProvider, TestCurrencySettingsRepository(), kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined), com.yourname.expensetracker.domain.core.money.MoneyNormalizationEngine(converter))
+        val repository = MultiCurrencyRepository(expenseDao, converter, timeProvider, TestCurrencySettingsRepository(), repositoryScope, com.yourname.expensetracker.domain.core.money.MoneyNormalizationEngine(converter))
 
         val start = ms(2026, 4, 1)
         val end = ms(2026, 5, 1)

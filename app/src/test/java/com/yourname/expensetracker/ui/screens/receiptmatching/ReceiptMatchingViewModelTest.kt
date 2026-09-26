@@ -1,5 +1,12 @@
 package com.yourname.expensetracker.ui.screens.receiptmatching
 
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.test.runCurrent
+import com.yourname.expensetracker.data.database.entity.ReceiptExpenseLink
+import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
+import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService
 import app.cash.turbine.test
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.MatchStatus
@@ -16,6 +23,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -28,6 +36,9 @@ class ReceiptMatchingViewModelTest : ViewModelTestUtils() {
     private val receiptRepository = mockk<ReceiptRepository>(relaxed = true)
     private val matcher = mockk<ReceiptTransactionMatcher>(relaxed = true)
 
+    private val receiptLinkService = mockk<ReceiptLinkService>()
+    private val matchService = mockk<ReceiptMatchLifecycleService>()
+    private val viewModels = mutableListOf<ReceiptMatchingViewModel>()
     private lateinit var viewModel: ReceiptMatchingViewModel
 
     @Before
@@ -35,7 +46,6 @@ class ReceiptMatchingViewModelTest : ViewModelTestUtils() {
         super.setup()
         coEvery { receiptRepository.getUnmatchedReceipts() } returns emptyList()
         coEvery { receiptRepository.getReceiptsWithSuggestions() } returns emptyList()
-        viewModel = ReceiptMatchingViewModel(receiptRepository, matcher, receiptLinkService = mockk(), matchService = mockk())
     }
 
     @Test
@@ -56,7 +66,7 @@ class ReceiptMatchingViewModelTest : ViewModelTestUtils() {
         coEvery { receiptRepository.getReceiptsWithSuggestions() } returns listOf(suggested)
         coEvery { receiptRepository.getExpenseById(100L) } returns expense
 
-        viewModel = ReceiptMatchingViewModel(receiptRepository, matcher, receiptLinkService = mockk(), matchService = mockk())
+        viewModel = createViewModel()
         advanceUntilIdle()
 
         viewModel.state.test {
@@ -71,115 +81,127 @@ class ReceiptMatchingViewModelTest : ViewModelTestUtils() {
 
     @Test
     fun `match receipt to expense`() = runTest(testDispatcher) {
-        val receipt = scannedReceipt(id = 10L, merchant = "My Store", total = 20.0)
-        val expense = expense(id = 200L, merchant = "My Store", amount = 20.0)
+        val receipt = scannedReceipt(10L, "My Store", 20.0)
+        val releaseLink = CompletableDeferred<Unit>()
+        coEvery { receiptRepository.getUnmatchedReceipts() } returnsMany listOf(listOf(receipt), emptyList())
+        coEvery {
+            receiptLinkService.linkReceiptToExpense(10L, 200L, "MANUAL_MATCH", "ReceiptMatchingViewModel", confidence = 1.0f)
+        } coAnswers {
+            releaseLink.await()
+            Result.success(link(10L, 200L, "MANUAL_MATCH", 1.0f))
+        }
+        viewModel = createViewModel()
+        advanceUntilIdle()
+        assertEquals(1, viewModel.state.value.unmatchedReceipts.size)
 
-        coEvery { receiptRepository.getUnmatchedReceipts() } returnsMany listOf(
-            listOf(receipt),
-            emptyList()
-        )
-        coEvery { receiptRepository.getReceiptsWithSuggestions() } returns emptyList()
-
-        viewModel = ReceiptMatchingViewModel(receiptRepository, matcher, receiptLinkService = mockk(), matchService = mockk())
+        viewModel.manualMatch(10L, 200L)
+        runCurrent()
+        assertTrue(viewModel.state.value.mutatingReceiptIds.contains(10L))
+        releaseLink.complete(Unit)
         advanceUntilIdle()
 
-        viewModel.state.test {
-            val initial = awaitItem()
-            assertEquals(1, initial.unmatchedReceipts.size)
-
-            viewModel.manualMatch(receiptId = receipt.id, expenseId = expense.id)
-            advanceUntilIdle()
-
-            val loading = awaitItem()
-            assertTrue(loading.isLoading)
-
-            val updated = awaitItem()
-            assertFalse(updated.isLoading)
-            assertTrue(updated.unmatchedReceipts.isEmpty())
-            cancelAndIgnoreRemainingEvents()
+        val updated = viewModel.state.value
+        assertFalse(updated.isLoading)
+        assertTrue(updated.mutatingReceiptIds.isEmpty())
+        assertTrue(updated.unmatchedReceipts.isEmpty())
+        assertNull(updated.error)
+        coVerify(exactly = 1) {
+            receiptLinkService.linkReceiptToExpense(10L, 200L, "MANUAL_MATCH", "ReceiptMatchingViewModel", confidence = 1.0f)
         }
-
-        coVerify(exactly = 1) { receiptRepository.linkReceiptToExpense(10L, 200L, 1.0) }
+        coVerify(exactly = 0) { receiptRepository.linkReceiptToExpense(any(), any(), any()) }
     }
 
     @Test
     fun `skip receipt`() = runTest(testDispatcher) {
-        val receipt = scannedReceipt(id = 15L, merchant = "Unknown", total = 5.0)
+        val receipt = scannedReceipt(15L, "Unknown", 5.0)
+        val releaseSkip = CompletableDeferred<Unit>()
+        coEvery { receiptRepository.getUnmatchedReceipts() } returnsMany listOf(listOf(receipt), emptyList())
+        coEvery { matchService.rejectAllSuggestions(15L) } coAnswers { releaseSkip.await() }
+        viewModel = createViewModel()
+        advanceUntilIdle()
+        assertEquals(1, viewModel.state.value.unmatchedReceipts.size)
 
-        coEvery { receiptRepository.getUnmatchedReceipts() } returnsMany listOf(
-            listOf(receipt),
-            emptyList()
-        )
-        coEvery { receiptRepository.getReceiptsWithSuggestions() } returns emptyList()
-
-        viewModel = ReceiptMatchingViewModel(receiptRepository, matcher, receiptLinkService = mockk(), matchService = mockk())
+        viewModel.skipReceipt(15L)
+        runCurrent()
+        assertTrue(viewModel.state.value.mutatingReceiptIds.contains(15L))
+        releaseSkip.complete(Unit)
         advanceUntilIdle()
 
-        viewModel.state.test {
-            val initial = awaitItem()
-            assertEquals(1, initial.unmatchedReceipts.size)
-
-            viewModel.skipReceipt(receipt.id)
-            advanceUntilIdle()
-
-            val loading = awaitItem()
-            assertTrue(loading.isLoading)
-
-            val updated = awaitItem()
-            assertFalse(updated.isLoading)
-            assertTrue(updated.unmatchedReceipts.isEmpty())
-            cancelAndIgnoreRemainingEvents()
-        }
-
-        coVerify(exactly = 1) { receiptRepository.rejectAllSuggestions(15L) }
+        val updated = viewModel.state.value
+        assertFalse(updated.isLoading)
+        assertTrue(updated.unmatchedReceipts.isEmpty())
+        assertTrue(updated.mutatingReceiptIds.isEmpty())
+        assertNull(updated.error)
+        coVerify(exactly = 1) { matchService.rejectAllSuggestions(15L) }
+        coVerify(exactly = 0) { receiptRepository.rejectAllSuggestions(any()) }
     }
 
     @Test
     fun `batch match all`() = runTest(testDispatcher) {
-        val receiptA = scannedReceipt(id = 31L, merchant = "Shell", total = 45.0)
-        val receiptB = scannedReceipt(id = 32L, merchant = "Gym", total = 25.0)
-        val txA = expense(id = 901L, merchant = "SHELL", amount = 45.0)
-        val txB = expense(id = 902L, merchant = "Gym", amount = 25.0)
-
+        val receiptA = scannedReceipt(31L, "Shell", 45.0)
+        val receiptB = scannedReceipt(32L, "Gym", 25.0)
+        val txA = expense(901L, "SHELL", 45.0)
+        val txB = expense(902L, "Gym", 25.0)
+        val releaseMatch = CompletableDeferred<Unit>()
         coEvery { receiptRepository.getUnmatchedReceipts() } returnsMany listOf(
-            listOf(receiptA, receiptB),
-            listOf(receiptA, receiptB),
-            emptyList()
+            listOf(receiptA, receiptB), listOf(receiptA, receiptB), emptyList()
         )
-        coEvery { receiptRepository.getReceiptsWithSuggestions() } returns emptyList()
-        coEvery { matcher.findBestMatch(receiptA) } returns MatchResult.AutoMatch(txA, 0.98)
+        coEvery { receiptRepository.getReceiptsWithSuggestions() } returnsMany listOf(
+            emptyList(), listOf(receiptB.copy(suggestedExpenseId = 902L, matchConfidence = 0.86f, matchStatus = MatchStatus.SUGGESTED))
+        )
+        coEvery { receiptRepository.getExpenseById(902L) } returns txB
+        coEvery { matcher.findBestMatch(receiptA) } coAnswers {
+            releaseMatch.await()
+            MatchResult.AutoMatch(txA, 0.98)
+        }
         coEvery { matcher.findBestMatch(receiptB) } returns MatchResult.Suggested(txB, 0.86)
+        coEvery {
+            receiptLinkService.linkReceiptToExpense(31L, 901L, "AUTO_MATCH", "ReceiptMatchingViewModel", confidence = 0.98f)
+        } returns Result.success(link(31L, 901L, "AUTO_MATCH", 0.98f))
+        coEvery { matchService.saveMatchSuggestion(32L, 902L, 0.86) } returns Unit
+        viewModel = createViewModel()
+        advanceUntilIdle()
+        assertEquals(2, viewModel.state.value.unmatchedReceipts.size)
 
-        viewModel = ReceiptMatchingViewModel(receiptRepository, matcher, receiptLinkService = mockk(), matchService = mockk())
+        viewModel.runAutoMatching()
+        runCurrent()
+        assertTrue(viewModel.state.value.isAutoMatching)
+        releaseMatch.complete(Unit)
         advanceUntilIdle()
 
-        viewModel.state.test {
-            val initial = awaitItem()
-            assertEquals(2, initial.unmatchedReceipts.size)
-
-            viewModel.runAutoMatching()
-            advanceUntilIdle()
-
-            val loading = awaitItem()
-            assertTrue(loading.isLoading)
-
-            val intermediate = awaitItem()
-            assertFalse(intermediate.isLoading)
-            assertEquals(1, intermediate.autoMatchedCount)
-
-            // loadReceipts() inside runAutoMatching launches a new coroutine
-            // that first sets isLoading=true, then fetches and sets final state
-            val reloading = awaitItem()
-            assertTrue(reloading.isLoading)
-
-            val refreshed = awaitItem()
-            assertTrue(refreshed.unmatchedReceipts.isEmpty())
-            cancelAndIgnoreRemainingEvents()
+        val updated = viewModel.state.value
+        assertFalse(updated.isAutoMatching)
+        assertFalse(updated.isLoading)
+        assertNull(updated.error)
+        assertEquals(1, updated.autoMatchedCount)
+        assertTrue(updated.unmatchedReceipts.isEmpty())
+        assertEquals(1, updated.pendingSuggestionCount)
+        assertEquals(902L, updated.suggestedMatches.single().suggestedExpenseId)
+        coVerify(exactly = 1) {
+            receiptLinkService.linkReceiptToExpense(31L, 901L, "AUTO_MATCH", "ReceiptMatchingViewModel", confidence = 0.98f)
         }
-
-        coVerify(exactly = 1) { receiptRepository.linkReceiptToExpense(31L, 901L, 0.98) }
-        coVerify(exactly = 1) { receiptRepository.saveMatchSuggestion(32L, 902L, 0.86) }
+        coVerify(exactly = 1) { matchService.saveMatchSuggestion(32L, 902L, 0.86) }
+        coVerify(exactly = 0) { receiptRepository.linkReceiptToExpense(any(), any(), any()) }
+        coVerify(exactly = 0) { receiptRepository.saveMatchSuggestion(any(), any(), any()) }
     }
+
+    @org.junit.After
+    override fun tearDown() {
+        try {
+            runTest(testDispatcher) {
+                viewModels.forEach { it.viewModelScope.coroutineContext[kotlinx.coroutines.Job]?.cancelAndJoin() }
+            }
+        } finally { super.tearDown() }
+    }
+
+    private fun createViewModel() = ReceiptMatchingViewModel(
+        receiptRepository, matcher, receiptLinkService, matchService
+    ).also { viewModels += it }
+
+    private fun link(receiptId: Long, expenseId: Long, type: String, confidence: Float) = ReceiptExpenseLink(
+        receiptId = receiptId, expenseId = expenseId, linkType = type, confidence = confidence,
+        source = "ReceiptMatchingViewModel", createdAt = 1_700_000_000_000L, createdBy = null
+    )
 
     private fun scannedReceipt(
         id: Long,

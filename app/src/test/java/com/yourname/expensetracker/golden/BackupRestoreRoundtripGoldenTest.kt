@@ -1,6 +1,10 @@
 package com.yourname.expensetracker.golden
 
 import com.yourname.expensetracker.data.currency.ExchangeRateStoreAdapter
+import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
+import com.yourname.expensetracker.data.backup.DatabaseAccessType
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.entity.ExchangeRate
 import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
@@ -11,11 +15,18 @@ import com.yourname.expensetracker.testfixtures.golden.GoldenScenarioVerifier
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Before
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.fail
 import org.junit.Test
 
 /**
@@ -24,15 +35,16 @@ import org.junit.Test
  * Proves that:
  * 1. Write barrier blocks ALL writes in non-NORMAL modes
  * 2. Dashboard totals are consistent before and after mode transitions
- * 3. All 7 non-NORMAL modes correctly block writes
+ * 3. The seven golden transitions block writes; a companion test covers every non-NORMAL mode
  * 4. NORMAL mode allows writes
  * 5. Data seeded before restore mode is preserved after returning to NORMAL
  *
- * Uses REAL RestoreMaintenanceMode + REAL DatabaseWriteBarrier + REAL Room DB.
+ * Uses a real write barrier and Room DB; transition cases use a strict maintenance-mode mock.
  */
 class BackupRestoreRoundtripGoldenTest : GoldenTestBase() {
 
     private lateinit var multiCurrencyRepository: MultiCurrencyRepository
+    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
 
     private val verifier = GoldenScenarioVerifier(
         scenarioName = "backup_restore_roundtrip",
@@ -54,8 +66,32 @@ class BackupRestoreRoundtripGoldenTest : GoldenTestBase() {
             currencyConverter = currencyConverter,
             timeProvider = timeProvider,
             currencySettingsRepository = currencySettings,
-            applicationScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined)
+            applicationScope = applicationScope
         )
+    }
+
+    @After
+    override fun tearDown() {
+        applicationScope.cancel()
+        super.tearDown()
+    }
+
+    @Test
+    fun `every non-normal maintenance mode rejects writes with typed context`() {
+        val maintenanceMode = mockk<RestoreMaintenanceMode>()
+        val barrier = DatabaseWriteBarrier(maintenanceMode)
+        for (mode in RestoreMaintenanceMode.Mode.values().filter { it != RestoreMaintenanceMode.Mode.NORMAL }) {
+            every { maintenanceMode.currentMode() } returns mode
+            every { maintenanceMode.isWritesAllowed() } returns false
+            try {
+                barrier.checkWritesAllowed("all_modes_write")
+                fail("Expected writes to be blocked in $mode")
+            } catch (e: DatabaseAccessBlockedException) {
+                assertEquals(DatabaseAccessType.WRITE, e.accessType)
+                assertEquals(mode, e.mode)
+                assertEquals("all_modes_write", e.operation.name)
+            }
+        }
     }
 
     @Test
@@ -90,11 +126,16 @@ class BackupRestoreRoundtripGoldenTest : GoldenTestBase() {
 
         for (modeName in nonNormalModes) {
             every { mockMaintenanceMode.isWritesAllowed() } returns false
+            val mode = RestoreMaintenanceMode.Mode.valueOf(modeName)
+            every { mockMaintenanceMode.currentMode() } returns mode
 
             val blocked = try {
                 testWriteBarrier.checkWritesAllowed("test_write_$modeName")
                 false
-            } catch (e: IllegalStateException) {
+            } catch (e: DatabaseAccessBlockedException) {
+                assertEquals(DatabaseAccessType.WRITE, e.accessType)
+                assertEquals(mode, e.mode)
+                assertEquals("test_write_$modeName", e.operation.name)
                 true
             }
             if (blocked) blockedModes.add(modeName)
@@ -102,10 +143,11 @@ class BackupRestoreRoundtripGoldenTest : GoldenTestBase() {
 
         // ── ACT: Verify NORMAL mode allows writes ──
         every { mockMaintenanceMode.isWritesAllowed() } returns true
+        every { mockMaintenanceMode.currentMode() } returns RestoreMaintenanceMode.Mode.NORMAL
         val normalAllowed = try {
             testWriteBarrier.checkWritesAllowed("test_write_NORMAL")
             true
-        } catch (e: IllegalStateException) {
+        } catch (e: DatabaseAccessBlockedException) {
             false
         }
 

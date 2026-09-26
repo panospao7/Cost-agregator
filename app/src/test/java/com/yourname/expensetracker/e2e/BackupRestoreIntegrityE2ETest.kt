@@ -1,6 +1,8 @@
 package com.yourname.expensetracker.e2e
 
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
+import com.yourname.expensetracker.data.backup.DatabaseAccessType
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.currency.ExchangeRateStoreAdapter
 import com.yourname.expensetracker.data.database.entity.ExchangeRate
@@ -19,12 +21,17 @@ import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import kotlinx.coroutines.test.runTest
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Before
+import org.junit.After
 import org.junit.Test
 
 /**
@@ -44,6 +51,7 @@ import org.junit.Test
 class BackupRestoreIntegrityE2ETest : GoldenTestBase() {
 
     private lateinit var multiCurrencyRepository: MultiCurrencyRepository
+    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
 
     private val verifier = GoldenScenarioVerifier(
         scenarioName = "e2e_backup_restore_integrity",
@@ -65,8 +73,14 @@ class BackupRestoreIntegrityE2ETest : GoldenTestBase() {
             currencyConverter = currencyConverter,
             timeProvider = timeProvider,
             currencySettingsRepository = currencySettings,
-            applicationScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined)
+            applicationScope = applicationScope
         )
+    }
+
+    @After
+    override fun tearDown() {
+        applicationScope.cancel()
+        super.tearDown()
     }
 
     @Test
@@ -131,17 +145,24 @@ class BackupRestoreIntegrityE2ETest : GoldenTestBase() {
 
         // During restore: writes blocked
         every { mockMode.isWritesAllowed() } returns false
+        every { mockMode.currentMode() } returns RestoreMaintenanceMode.Mode.RESTORE_PREPARING
         val blockedDuringRestore = try {
             testBarrier.checkWritesAllowed("expense_insert")
             false
-        } catch (e: IllegalStateException) { true }
+        } catch (e: DatabaseAccessBlockedException) {
+            assertEquals(DatabaseAccessType.WRITE, e.accessType)
+            assertEquals(RestoreMaintenanceMode.Mode.RESTORE_PREPARING, e.mode)
+            assertEquals("expense_insert", e.operation.name)
+            true
+        }
 
         // After restore: writes allowed
         every { mockMode.isWritesAllowed() } returns true
+        every { mockMode.currentMode() } returns RestoreMaintenanceMode.Mode.NORMAL
         val allowedAfterRestore = try {
             testBarrier.checkWritesAllowed("expense_insert")
             true
-        } catch (e: IllegalStateException) { false }
+        } catch (e: DatabaseAccessBlockedException) { false }
 
         // ── VERIFY: Post-restore state (data unchanged since we didn't actually swap DB) ──
         val totalAfter = multiCurrencyRepository.getHomeCurrencyPurchaseTotal(periodStart, periodEnd)

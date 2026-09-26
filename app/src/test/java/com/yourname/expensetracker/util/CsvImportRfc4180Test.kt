@@ -84,9 +84,8 @@ class CsvImportRfc4180Test {
     fun `quoted field with embedded CRLF is preserved verbatim`() = runTest {
         // Two records are imported; capture them in call order — a single
         // slot would expose only the last request.
-        val firstRequest = slot<CreateExpenseRequest>()
-        val secondRequest = slot<CreateExpenseRequest>()
-        coEvery { coordinator.createExpense(any()) } returns CreateExpenseResult.Created(1L)
+        val requests = mutableListOf<CreateExpenseRequest>()
+        coEvery { coordinator.createExpense(capture(requests)) } returns CreateExpenseResult.Created(1L)
 
         val csv = "date,amount,merchant,category,notes\r\n" +
             "2024-01-15,25.50,Starbucks,Coffee,\"Morning\r\nlatte\"\r\n" +
@@ -96,12 +95,11 @@ class CsvImportRfc4180Test {
 
         assertThat(result.imported).isEqualTo(2)
         assertThat(result.errors).isEqualTo(0)
-        coVerify {
-            coordinator.createExpense(capture(firstRequest))
-            coordinator.createExpense(capture(secondRequest))
-        }
-        assertThat(firstRequest.captured.notes).isEqualTo("Morning\r\nlatte")
-        assertThat(secondRequest.captured.notes).isEqualTo("plain")
+        coVerify(exactly = 2) { coordinator.createExpense(any()) }
+        assertThat(requests).hasSize(2)
+        assertThat(requests.map { it.merchant }).containsExactly("Starbucks", "Kiosk").inOrder()
+        assertThat(requests[0].notes).isEqualTo("Morning\r\nlatte")
+        assertThat(requests[1].notes).isEqualTo("plain")
     }
 
     @Test

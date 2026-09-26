@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.contracts
 
+import com.yourname.expensetracker.architecture.SourceTextSanitizer
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.File
@@ -42,7 +43,8 @@ class CancellationPropagationContractTest {
         CriticalCatch("com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLinkService.kt",
             "unlinkReceiptFromExpense", "Result.failure"),
         CriticalCatch("com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt",
-            "reconcileAllLinkedExpensesAfterBulkUpdate", "failed++"),
+            "reconcileAllLinkedExpensesAfterBulkUpdate", "failed++",
+            scopeMethod = "reconcileAllLinkedExpensesAfterBulkUpdate"),
         CriticalCatch("com/yourname/expensetracker/domain/forecasting/FinancialStressForecastEngine.kt",
             "computeStressForecast outer", "FCST-17"),
         CriticalCatch("com/yourname/expensetracker/domain/forecasting/FinancialStressForecastEngine.kt",
@@ -64,7 +66,12 @@ class CancellationPropagationContractTest {
             "updateExpense currency conversion", "// 3. Persist inside a single transaction"),
     )
 
-    private data class CriticalCatch(val filePath: String, val methodLabel: String, val catchMarker: String)
+    private data class CriticalCatch(
+        val filePath: String,
+        val methodLabel: String,
+        val catchMarker: String,
+        val scopeMethod: String? = null
+    )
 
     @Test
     fun `critical pipeline entry points propagate CancellationException`() {
@@ -77,6 +84,16 @@ class CancellationPropagationContractTest {
                 continue
             }
             val content = file.readText()
+
+            // Repeated counters are not unique catch anchors. Inspect the named
+            // method and require the caught exception to be checked before recovery.
+            if (entry.scopeMethod != null) {
+                val caught = findScopedCatch(content, entry.scopeMethod, entry.catchMarker)
+                if (caught == null || !hasLeadingCancellationGuard(caught)) {
+                    violations.add("${entry.filePath}:${entry.methodLabel} - missing, ambiguous, or unguarded catch")
+                }
+                continue
+            }
 
             // Find the catch block containing the marker text
             val markerIndex = content.indexOf(entry.catchMarker)
@@ -114,6 +131,86 @@ class CancellationPropagationContractTest {
             "Expected at least 10 critical entry points; have ${criticalEntryPoints.size}",
             criticalEntryPoints.size >= 10
         )
+    }
+
+    private data class ScopedCatch(val variable: String, val body: String)
+
+    private fun findScopedCatch(source: String, method: String, marker: String): ScopedCatch? {
+        val code = SourceTextSanitizer.stripCommentsAndStringBodies(source)
+        val declaration = Regex("""\bfun\s+${Regex.escape(method)}\s*\(""")
+            .findAll(code).toList().singleOrNull() ?: return null
+        val opening = code.indexOf('{', declaration.range.last + 1)
+        val closing = closingBrace(code, opening) ?: return null
+        val methodCode = code.substring(opening + 1, closing)
+        val methodSource = source.substring(opening + 1, closing)
+        return Regex("""\bcatch\s*\(\s*(\w+)\s*:\s*(?:[\w]+\.)*(?:Exception|Throwable)\s*\)\s*\{""")
+            .findAll(methodCode).mapNotNull { match ->
+                val bodyStart = match.range.last
+                val bodyEnd = closingBrace(methodCode, bodyStart) ?: return@mapNotNull null
+                if (!methodCode.substring(bodyStart + 1, bodyEnd).contains(marker)) {
+                    return@mapNotNull null
+                }
+                ScopedCatch(match.groupValues[1], methodSource.substring(bodyStart + 1, bodyEnd))
+            }.toList().singleOrNull()
+    }
+
+    private fun closingBrace(code: String, opening: Int): Int? {
+        if (opening < 0 || opening >= code.length || code[opening] != '{') return null
+        var depth = 0
+        for (index in opening until code.length) {
+            when (code[index]) {
+                '{' -> depth++
+                '}' -> if (--depth == 0) return index
+            }
+        }
+        return null
+    }
+
+    private fun hasLeadingCancellationGuard(caught: ScopedCatch): Boolean {
+        val code = SourceTextSanitizer.stripCommentsAndStringBodies(caught.body).trimStart()
+        val variable = Regex.escape(caught.variable)
+        val helper = Regex("""^CancellationSafe\s*\.\s*rethrowIfCancellation\s*\(\s*$variable\s*\)(?=\s|;|$)""")
+        val inline = Regex("""^if\s*\(\s*$variable\s+is\s+(?:[\w]+\.)*CancellationException\s*\)\s*(?:\{\s*)?throw\s+$variable\b""")
+        return helper.containsMatchIn(code) || inline.containsMatchIn(code)
+    }
+
+    @Test
+    fun `scoped catch ignores counters outside catch and guards in other methods`() {
+        val source = """
+            fun earlier() { try { work() } catch (e: Exception) { failed++ } }
+            fun target() {
+                try { if (failed) { failed++ } } catch (failure: Exception) {
+                    CancellationSafe.rethrowIfCancellation(failure)
+                    failed++
+                }
+            }
+            fun later() { try { work() } catch (e: Exception) { failed++ } }
+        """.trimIndent()
+        val caught = findScopedCatch(source, "target", "failed++")
+        assertNotNull(caught)
+        assertEquals("failure", caught!!.variable)
+        assertTrue(hasLeadingCancellationGuard(caught))
+        assertFalse(hasLeadingCancellationGuard(findScopedCatch(source, "earlier", "failed++")!!))
+        assertNull(findScopedCatch(source, "missing", "failed++"))
+        assertNull(findScopedCatch(source + source, "target", "failed++"))
+        assertNull(findScopedCatch("fun target() { failed++ }", "target", "failed++"))
+    }
+
+    @Test
+    fun `scoped cancellation evidence checks the caught exception before recovery`() {
+        listOf(
+            "CancellationSafe.rethrowIfCancellation(e); failed++",
+            "if (e is kotlinx.coroutines.CancellationException) throw e; failed++",
+            "if (e is CancellationException) { throw e }; failed++"
+        ).forEach { assertTrue(it, hasLeadingCancellationGuard(ScopedCatch("e", it))) }
+        listOf(
+            "// CancellationSafe.rethrowIfCancellation(e)\nfailed++",
+            "val note = \"CancellationException\"; failed++",
+            "CancellationSafe.rethrowIfCancellation(other); failed++",
+            "failed++; CancellationSafe.rethrowIfCancellation(e)",
+            "if (false) CancellationSafe.rethrowIfCancellation(e); failed++",
+            "if (e is CancellationException) throw other; failed++"
+        ).forEach { assertFalse(it, hasLeadingCancellationGuard(ScopedCatch("e", it))) }
     }
 
     private fun findEnclosingCatchStart(source: String, position: Int): Int {

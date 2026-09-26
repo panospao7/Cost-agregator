@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.naturallanguage
 
+import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -106,12 +107,18 @@ class NaturalLanguageSearchEngineVoiceInputTest {
 
     @Test
     fun `non-location query still proceeds normally`() = runTest {
+        val timeProvider = mockk<com.yourname.expensetracker.domain.util.TimeProvider>()
+        every { timeProvider.now() } returns 1_700_000_000_000L
+        val currencySettingsRepository =
+            mockk<com.yourname.expensetracker.domain.currency.CurrencySettingsRepository>()
+        every { currencySettingsRepository.homeCurrency() } returns
+            kotlinx.coroutines.flow.flowOf("EUR")
         val engine = NaturalLanguageSearchEngine(
             expenseQueryRepository = FakeNaturalLanguageExpenseQueryRepository(),
             speechInputGateway = FakeSpeechInputGateway(),
-            timeProvider = mockk(),
+            timeProvider = timeProvider,
             currencyConverter = mockk(),
-            currencySettingsRepository = mockk(),
+            currencySettingsRepository = currencySettingsRepository,
             categoryRepository = mockk(),
             merchantNormalizationRepository = mockk(relaxed = true),
         )

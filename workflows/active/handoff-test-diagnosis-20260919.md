@@ -53,3 +53,21 @@ Review/guardian gates:
 - These conclusions are source/history/log diagnoses, not independently validated runtime results.
 - No production fix or test update was applied in this report.
 - Pre-existing worktree changes were intentionally left untouched.
+
+## rp-27 test-repair checkpoint - 2026-09-26
+
+The decision menu above is historical source-analysis context, not the current failure inventory. Resume the test-repair lane from `docs/testing/generated/UNIT-TESTS-FAILURES-2026-09-26.md`, especially `Final remaining-inventory repairs - 2026-09-26` and the following consolidated commands; `docs/testing/generated/TRIAGE-2026-09-test-recovery.md` mirrors the checkpoint.
+
+- Inspected HEAD: `2544298d`. Completed-suite baseline: `vr-20260926-181440-25aa269d`, 7,130 completed / 75 failed / 295 skipped; terminal FAIL, no timeout. No newer validation was run by this repair work.
+- Three follow-ups have candidate repairs for 71 of those 75 cases in 32 classes, all NOT RUN. Latest pass: 15 test files / 27 baseline cases, plus non-vacuity and scanner/dedup controls. This is not a forecast of four runtime failures.
+- Four cases remain: AM/AMAZON parser row loss; currency-prefix grouped amount rejection; duplicate lifecycle event double-write; ownership policy count 406-to-412 requiring explicit FG-06/FG-07 reconciliation (six RP-14 entries identified in `fea8cdfe`).
+- Production Kotlin was unchanged during the latest pass. Earlier production/worktree edits remain; no commit was made. No tests were deleted/ignored and no baselines/allowlists were expanded.
+- User owns validation; no subagents, builds/tests/guards or commits. Use the documented serialized runner commands, no -Raw, no overlapping validation. Independent strict/privacy/guardian review and all fresh validation remain pending.
+
+## rp-27 sweep checkpoint and latest-rate fixture repair - 2026-09-26
+
+Supersedes the earlier all-NOT-RUN status: durable results show compile plus seven classes PASS (17 original failing cases covered), then MultiCurrencyAnalyticsTest FAIL (3 passed / 1 failed) in `vr-20260926-200442-9dbc1093`. Remaining 29 filters were not executed in that sweep; privacy-denial-specific classes are still queued.
+
+The failed test stubbed getRate while real latest-basis conversion called getLatestRateForPair. That single test now uses strict current-port stubs plus an independent EUR 140 and single JPY MISSING_RATE control. Its exact JPY-only repository message was not weakened. This new correction is NOT RUN; no production edit, coder validation, subagent or commit.
+
+Resume from `docs/testing/generated/UNIT-TESTS-FAILURES-2026-09-26.md`, section `MultiCurrency latest-lookup correction and sweep resume - 2026-09-26` and the consolidated commands immediately after it. The block retries filter 8, then original filters 9-37 (30 serial class invocations total). Preserve stop-on-fail, no -Raw, no overlapping validation and the separate four production/policy blockers. Full-suite baseline remains the 75 failed events from `vr-20260926-181440-25aa269d` until a newer completed suite is inspected.

@@ -11,7 +11,7 @@ import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.receiptmatching.MatchResult
 import com.yourname.expensetracker.domain.receiptmatching.ReceiptTransactionMatcher
-import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
+import com.yourname.expensetracker.data.database.RoomDomainTransactionRunner
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.util.StringDistanceUtils
@@ -22,9 +22,16 @@ import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.runTest
 import org.json.JSONObject
 import org.junit.Before
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -43,6 +50,7 @@ class ReceiptMatchingE2ETest : GoldenTestBase() {
     private lateinit var matcher: ReceiptTransactionMatcher
     private lateinit var linkService: ReceiptLinkService
     private lateinit var multiCurrencyRepository: MultiCurrencyRepository
+    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
 
     private val verifier = GoldenScenarioVerifier(
         scenarioName = "e2e_receipt_matching",
@@ -64,7 +72,7 @@ class ReceiptMatchingE2ETest : GoldenTestBase() {
             currencyConverter = currencyConverter,
             timeProvider = timeProvider,
             currencySettingsRepository = currencySettings,
-            applicationScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined)
+            applicationScope = applicationScope
         )
 
         // Mock ExpenseRepository to return real DB expenses
@@ -75,8 +83,8 @@ class ReceiptMatchingE2ETest : GoldenTestBase() {
             database.expenseDao().getExpensesByTypeBetween(start, end, "PURCHASE")
         }
 
-        // Mock MerchantNormalizer (just passes through)
-        val merchantNormalizer = mockk<MerchantNormalizer>(relaxed = true)
+        // This matcher owns its string normalization; the collaborator is unused.
+        val merchantNormalizer = mockk<MerchantNormalizer>()
 
         // Real ReceiptLinkService
         linkService = ReceiptLinkService(
@@ -90,9 +98,9 @@ class ReceiptMatchingE2ETest : GoldenTestBase() {
             expenseDao = database.expenseDao(),
             timeProvider = timeProvider,
             sourceLinkWriter = mockk(relaxed = true),
-            writeBarrier = mockk(relaxed = true),
+            writeBarrier = writeBarrier,
             categoryAssignmentPort = mockk(relaxed = true),
-            transactionRunner = mockk(relaxed = true)
+            transactionRunner = RoomDomainTransactionRunner(database, timeProvider)
         )
 
         // Real matcher
@@ -102,8 +110,14 @@ class ReceiptMatchingE2ETest : GoldenTestBase() {
             stringDistance = StringDistanceUtils,
             timeProvider = timeProvider,
             receiptLinkService = linkService,
-            currencyConverter = mockk(relaxed = true)
+            currencyConverter = currencyConverter
         )
+    }
+
+    @After
+    override fun tearDown() {
+        applicationScope.cancel()
+        super.tearDown()
     }
 
     @Test
@@ -189,5 +203,15 @@ class ReceiptMatchingE2ETest : GoldenTestBase() {
         }
 
         verifier.verify(actual).assertPassed()
+
+        // Exercise the duplicate-link contract rather than merely documenting it.
+        val duplicate = linkService.linkReceiptToExpense(
+            receiptId = receiptId,
+            expenseId = expenseId,
+            linkType = "AUTO_MATCHED",
+            source = "ReceiptTransactionMatcher"
+        )
+        assertTrue("An already-linked receipt must reject a duplicate link", duplicate.isFailure)
+        assertEquals(1, database.receiptExpenseLinkDao().getLinksForReceipt(receiptId).size)
     }
 }

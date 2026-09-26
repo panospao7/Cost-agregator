@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.forecasting
 
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.analytics.AnalyticsNormalizationResult
@@ -9,7 +10,9 @@ import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.toExpenseSnapshot
 import io.mockk.coEvery
+import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -35,6 +38,7 @@ class HistoricalSpendingDistributionBoundaryTest {
     private lateinit var expenseRepository: ExpenseRepository
     private lateinit var timeProvider: FakeTimeProvider
     private lateinit var analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer
+    private lateinit var currencySettingsRepository: CurrencySettingsRepository
 
     // ========================================================================
     // Helpers
@@ -47,19 +51,40 @@ class HistoricalSpendingDistributionBoundaryTest {
             .toEpochMilli()
     }
 
-    private fun expense(id: Long, date: Long, amount: Double, type: TransactionType = TransactionType.PURCHASE): Expense = Expense(
+    private fun expense(
+        id: Long,
+        date: Long,
+        amount: Double,
+        type: TransactionType = TransactionType.PURCHASE,
+        isNotMine: Boolean = false
+    ): Expense = Expense(
         id = id,
         amount = amount,
         merchant = "TestMerchant",
         transactionType = type,
-        date = date
+        date = date,
+        isNotMine = isNotMine
     )
+
+    private fun completedLookbackWeekStarts(now: Long): List<Long> {
+        val lookbackStart = TimePeriodUtils.getStartOfWeek(TimePeriodUtils.addMonths(now, -18))
+        val currentWeekStart = TimePeriodUtils.getStartOfWeek(now)
+        val weekStarts = mutableListOf<Long>()
+        var cursor = lookbackStart
+        while (cursor < currentWeekStart) {
+            weekStarts.add(cursor)
+            cursor = TimePeriodUtils.addDays(cursor, 7)
+        }
+        return weekStarts
+    }
 
     @Before
     fun setUp() {
         expenseRepository = mockk(relaxed = true)
         timeProvider = FakeTimeProvider(toEpochMs(2026, 4, 15, 12, 0)) // Wednesday
         analyticsCurrencyNormalizer = mockk(relaxed = true)
+        currencySettingsRepository = mockk()
+        every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
         coEvery { analyticsCurrencyNormalizer.normalizeExpenses(any(), any()) } answers {
             val expenses = firstArg<List<Expense>>()
             AnalyticsNormalizationResult(
@@ -235,7 +260,7 @@ class HistoricalSpendingDistributionBoundaryTest {
 
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns expenses
 
-        val distribution = HistoricalSpendingDistribution(expenseRepository, timeProvider, analyticsCurrencyNormalizer = analyticsCurrencyNormalizer, currencySettingsRepository = mockk(relaxed = true))
+        val distribution = HistoricalSpendingDistribution(expenseRepository, timeProvider, analyticsCurrencyNormalizer = analyticsCurrencyNormalizer, currencySettingsRepository = currencySettingsRepository)
         val result = distribution.computeDistribution()
 
         assertNotNull("Distribution should be computed", result)
@@ -251,23 +276,23 @@ class HistoricalSpendingDistributionBoundaryTest {
         val now = toEpochMs(2026, 4, 15, 12, 0)
         timeProvider.setTime(now)
 
-        val currentWeekStart = TimePeriodUtils.getStartOfWeek(now)
         val expenses = mutableListOf<Expense>()
         var id = 1L
 
-        // 5 full weeks with 4 distinct transaction-days each
-        // Add slight variation per week so sigma > 0 (isUsable requires non-zero sigma)
-        for (weekOffset in 1..5) {
-            val weekStart = TimePeriodUtils.addDays(currentWeekStart, -(weekOffset * 7))
+        // Populate the complete production lookback so FCST-16's intentional
+        // quiet-week observations do not dominate this weekly-total contract test.
+        // Add slight variation per week so sigma > 0 (isUsable requires non-zero sigma).
+        for ((weekIndex, weekStart) in completedLookbackWeekStarts(now).withIndex()) {
+            val amountPerTransaction = 100.0 + (weekIndex % 5) * 5.0
             for (dayOffset in 0..3) {
                 val date = TimePeriodUtils.addDays(weekStart, dayOffset) + 36_000_000L
-                expenses.add(expense(id++, date, 100.0 + weekOffset * 5.0))
+                expenses.add(expense(id++, date, amountPerTransaction))
             }
         }
 
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns expenses
 
-        val distribution = HistoricalSpendingDistribution(expenseRepository, timeProvider, currencySettingsRepository = mockk(relaxed = true), analyticsCurrencyNormalizer = analyticsCurrencyNormalizer)
+        val distribution = HistoricalSpendingDistribution(expenseRepository, timeProvider, currencySettingsRepository = currencySettingsRepository, analyticsCurrencyNormalizer = analyticsCurrencyNormalizer)
         val result = distribution.computeDistribution()
 
         assertNotNull("Distribution should be computed", result)
@@ -290,25 +315,26 @@ class HistoricalSpendingDistributionBoundaryTest {
         val now = toEpochMs(2026, 4, 15, 12, 0)
         timeProvider.setTime(now)
 
-        val currentWeekStart = TimePeriodUtils.getStartOfWeek(now)
         val expenses = mutableListOf<Expense>()
         var id = 1L
 
-        // 5 weeks with mixed types
-        for (weekOffset in 1..5) {
-            val weekStart = TimePeriodUtils.addDays(currentWeekStart, -(weekOffset * 7))
+        // Populate every completed lookback week so the assertion isolates
+        // transaction filtering rather than FCST-16 quiet-week expansion.
+        for (weekStart in completedLookbackWeekStarts(now)) {
             for (dayOffset in 0..3) {
                 val date = TimePeriodUtils.addDays(weekStart, dayOffset) + 36_000_000L
                 // PURCHASE — should count
                 expenses.add(expense(id++, date, 100.0, TransactionType.PURCHASE))
                 // DEPOSIT — should NOT count
                 expenses.add(expense(id++, date, 500.0, TransactionType.DEPOSIT))
+                // Someone else's PURCHASE — should NOT count
+                expenses.add(expense(id++, date, 700.0, TransactionType.PURCHASE, isNotMine = true))
             }
         }
 
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns expenses
 
-        val distribution = HistoricalSpendingDistribution(expenseRepository, timeProvider, analyticsCurrencyNormalizer = analyticsCurrencyNormalizer, currencySettingsRepository = mockk(relaxed = true))
+        val distribution = HistoricalSpendingDistribution(expenseRepository, timeProvider, analyticsCurrencyNormalizer = analyticsCurrencyNormalizer, currencySettingsRepository = currencySettingsRepository)
         val result = distribution.computeDistribution()
 
         assertNotNull("Distribution should be computed", result)

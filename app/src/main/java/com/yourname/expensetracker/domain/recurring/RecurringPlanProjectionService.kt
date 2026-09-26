@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.recurring
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.PlannedExpenseDao
 import com.yourname.expensetracker.data.database.entity.PlannedExpense
 import com.yourname.expensetracker.data.database.entity.PlannedExpensePriority
@@ -23,9 +24,9 @@ import javax.inject.Singleton
  * RP-04 P4-006 dead-code disposition (2026-09-19): the non-atomic
  * `projectFromRule()` entry point (separate coordinator-plus-insert path) was
  * deleted after a worktree-wide caller audit found zero production or test
- * callers; the now-unused constructor dependencies
- * (RecurringLifecycleCoordinator, TimeProvider, write barrier) were
- * removed with it.
+ * callers; the now-unused RecurringLifecycleCoordinator and TimeProvider
+ * constructor dependencies were removed with it. DatabaseWriteBarrier remains
+ * at this DAO write boundary even though the caller owns the transaction.
  *
  * ## REC-25: `isRecurring` determination
  * A planned expense is considered recurring when its [PlannedExpense.sourceRecurringRuleId]
@@ -38,7 +39,8 @@ import javax.inject.Singleton
 @Singleton
 class RecurringPlanProjectionService @Inject constructor(
     private val plannedExpenseDao: PlannedExpenseDao,
-    private val occurrenceDao: com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
+    private val occurrenceDao: com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao,
+    private val writeBarrier: DatabaseWriteBarrier
 ) {
 
     // RP-04 P4-006 dead-code disposition: `projectFromRule()` was deleted here.
@@ -60,6 +62,9 @@ class RecurringPlanProjectionService @Inject constructor(
         endDate: Long,
         now: Long
     ): Int {
+        writeBarrier.checkWritesAllowed(
+            "RecurringPlanProjectionService.projectFromOccurrencesInCurrentTransaction"
+        )
         val occurrences = occurrenceDao.getByDateRange(startDate, endDate)
             .filter { it.sourceType == RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE
                       && it.sourceId == ruleId

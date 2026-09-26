@@ -102,12 +102,14 @@ class MixedCurrencyCoreFinancialScenarioTest {
                 ConversionFailure(
                     originalAmount = MoneyAmount(50.0, CurrencyCode.USD),
                     targetCurrency = CurrencyCode.EUR,
-                    reason = FailureReason.MISSING_RATE
+                    reason = FailureReason.MISSING_RATE,
+                    transactionCount = 1
                 ),
                 ConversionFailure(
                     originalAmount = MoneyAmount(30.0, CurrencyCode.GBP),
                     targetCurrency = CurrencyCode.EUR,
-                    reason = FailureReason.MISSING_RATE
+                    reason = FailureReason.MISSING_RATE,
+                    transactionCount = 1
                 )
             )
         )

@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.repository.RecommendationRepository
 import com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation
 import com.yourname.expensetracker.domain.model.recommendation.RecommendationPriority
 import com.yourname.expensetracker.domain.model.recommendation.RecommendationStatus
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -11,8 +12,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import org.junit.Before
+import org.junit.After
 import org.junit.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -28,12 +31,19 @@ class RecommendationCacheServiceTest {
     private lateinit var repository: RecommendationRepository
     private lateinit var cacheService: RecommendationCacheService
     private val testDispatcher = StandardTestDispatcher()
+    private val timeProvider = FakeTimeProvider(1_775_001_600_000L)
+    private var nextRecommendationId = 0
 
     @Before
     fun setup() {
         Dispatchers.setMain(testDispatcher)
         repository = mockk()
-        cacheService = RecommendationCacheService(repository, mockk(relaxed = true), ioDispatcher = testDispatcher)
+        cacheService = RecommendationCacheService(repository, timeProvider, ioDispatcher = testDispatcher)
+    }
+
+    @After
+    fun tearDown() {
+        Dispatchers.resetMain()
     }
 
     @Test
@@ -83,7 +93,7 @@ class RecommendationCacheServiceTest {
 
     @Test
     fun `getById removes expired entry from cache and fetches fresh`() = runTest {
-        val nowMillis = System.currentTimeMillis()
+        val nowMillis = timeProvider.now()
         val expiredTime = nowMillis - (8L * 24 * 60 * 60 * 1000) // 8 days ago
         val expiredRec = createRecommendation(
             id = "rec1",
@@ -106,19 +116,25 @@ class RecommendationCacheServiceTest {
 
     @Test
     fun `getById checks TTL expiration (7 days)`() = runTest {
-        // This test verifies the 7-day TTL on cache entries
-        val recommendation = createRecommendation(id = "rec1")
-
-        // Put in cache
+        val ttlMillis = 7L * 24 * 60 * 60 * 1000
+        // Keep the recommendation itself active beyond the cache TTL so that
+        // cache age, rather than recommendation expiry, is the reason for eviction.
+        val recommendation = createRecommendation(
+            id = "rec1",
+            expiresAt = timeProvider.now() + 2 * ttlMillis
+        )
         cacheService.put(recommendation)
+        val refreshed = recommendation.copy(recommendationText = "Refreshed after cache TTL")
+        coEvery { repository.getById("rec1") } returns refreshed
 
-        // Simulate waiting 8 days (beyond TTL)
-        // We can't actually wait, but the CacheEntry stores cachedAt
-        // For now, test that fresh items work correctly
-        val result = cacheService.getById("rec1")
-        
-        assertNotNull(result)
-        assertEquals("rec1", result.id)
+        timeProvider.advanceTime(ttlMillis - 1L)
+        assertEquals(recommendation, cacheService.getById("rec1"))
+        coVerify(exactly = 0) { repository.getById("rec1") }
+
+        timeProvider.advanceTime(2L)
+        assertEquals(refreshed, cacheService.getById("rec1"))
+        assertEquals(refreshed, cacheService.getById("rec1"))
+        coVerify(exactly = 1) { repository.getById("rec1") }
     }
 
     @Test
@@ -219,7 +235,7 @@ class RecommendationCacheServiceTest {
 
     @Test
     fun `evictExpired removes only expired recommendations`() = runTest {
-        val nowMillis = System.currentTimeMillis()
+        val nowMillis = timeProvider.now()
         val expiredTime = nowMillis - (8L * 24 * 60 * 60 * 1000)
         val futureTime = nowMillis + (24 * 60 * 60 * 1000)
 
@@ -303,7 +319,6 @@ class RecommendationCacheServiceTest {
 
     @Test
     fun `getById does not cache inactive recommendations`() = runTest {
-        val nowMillis = System.currentTimeMillis()
         val expiredRec = createRecommendation(
             id = "rec1",
             status = RecommendationStatus.EXPIRED
@@ -359,11 +374,11 @@ class RecommendationCacheServiceTest {
 
     // Helper function
     private fun createRecommendation(
-        id: String = "rec_${System.nanoTime()}",
+        id: String = "rec_${++nextRecommendationId}",
         userId: String = "user123",
         recommendationText: String = "Test recommendation",
         status: RecommendationStatus = RecommendationStatus.ACTIVE,
-        expiresAt: Long = System.currentTimeMillis() + (7L * 24 * 60 * 60 * 1000)
+        expiresAt: Long = timeProvider.now() + (7L * 24 * 60 * 60 * 1000)
     ): DashboardFollowThroughRecommendation {
         return DashboardFollowThroughRecommendation(
             id = id,

@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.intelligence.ml
 
 import android.content.Context
+import com.yourname.expensetracker.data.privacy.AtRestEncryptionService
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -22,6 +23,17 @@ class ExpenseCategoryClassifierTest {
 
     private val context = mockk<Context>(relaxed = true)
     private val testDispatcher = UnconfinedTestDispatcher()
+    private val encryptionPrefix = "test-encrypted:".toByteArray(Charsets.UTF_8)
+    private val atRestEncryptionService = mockk<AtRestEncryptionService> {
+        every { encrypt(any()) } answers { encryptionPrefix + firstArg<ByteArray>() }
+        every { decrypt(any()) } answers {
+            val encrypted = firstArg<ByteArray>()
+            val hasPrefix = encrypted.size >= encryptionPrefix.size &&
+                encrypted.copyOfRange(0, encryptionPrefix.size).contentEquals(encryptionPrefix)
+            if (!hasPrefix) throw IllegalArgumentException("Not test-encrypted data")
+            encrypted.copyOfRange(encryptionPrefix.size, encrypted.size)
+        }
+    }
 
     private lateinit var filesDir: File
 
@@ -32,7 +44,18 @@ class ExpenseCategoryClassifierTest {
     }
 
     private fun createClassifier(): ExpenseCategoryClassifier =
-        ExpenseCategoryClassifier(context, ioDispatcher = testDispatcher, atRestEncryptionService = mockk(relaxed = true))
+        ExpenseCategoryClassifier(
+            context,
+            ioDispatcher = testDispatcher,
+            atRestEncryptionService = atRestEncryptionService
+        )
+
+    private fun modelFile(): File = File(filesDir, "expense_category_model.json")
+
+    private fun readPersistedModelJson(): JSONObject {
+        val plaintext = atRestEncryptionService.decrypt(modelFile().readBytes())
+        return JSONObject(String(plaintext, Charsets.UTF_8))
+    }
 
     private fun makeFeatures(merchant: String, tokens: List<String> = merchant.lowercase().split(" ")): ExpenseFeatures =
         ExpenseFeatures(
@@ -54,7 +77,7 @@ class ExpenseCategoryClassifierTest {
     // ---------------------------------------------------------------
 
     @Test
-    fun `saveModel awaits disk write and file exists after return`() = runTest(testDispatcher) {
+    fun `saveModel awaits encrypted disk write and file exists after return`() = runTest(testDispatcher) {
         val classifier = createClassifier()
 
         // Train a single sample
@@ -64,11 +87,12 @@ class ExpenseCategoryClassifierTest {
         classifier.saveModel()
 
         // After saveModel returns the file must already exist on disk
-        val modelFile = File(filesDir, "expense_category_model.json")
+        val modelFile = modelFile()
         assertTrue("Model file must exist after awaited save", modelFile.exists())
 
-        // Verify the file contains valid JSON with the trained data
-        val json = JSONObject(modelFile.readText())
+        // The persisted bytes must use the encryption boundary, then decrypt to valid model JSON.
+        assertFalse("Model file must not contain plaintext JSON", modelFile.readText().startsWith("{"))
+        val json = readPersistedModelJson()
         assertEquals(1, json.getInt("totalSamples"))
         assertTrue(json.has("categoryCounts"))
         assertTrue(json.has("wordCounts"))
@@ -85,7 +109,7 @@ class ExpenseCategoryClassifierTest {
 
         classifier.saveModel()
 
-        val json = JSONObject(File(filesDir, "expense_category_model.json").readText())
+        val json = readPersistedModelJson()
         assertEquals(3, json.getInt("totalSamples"))
 
         val counts = json.getJSONObject("categoryCounts")
@@ -109,13 +133,13 @@ class ExpenseCategoryClassifierTest {
         }
 
         // The bounded save should have triggered automatically
-        val modelFile = File(filesDir, "expense_category_model.json")
+        val modelFile = modelFile()
         assertTrue(
             "Model file must be auto-saved after $trainCount samples (well below old 100 threshold)",
             modelFile.exists()
         )
 
-        val json = JSONObject(modelFile.readText())
+        val json = readPersistedModelJson()
         assertEquals(trainCount, json.getInt("totalSamples"))
     }
 
@@ -129,9 +153,9 @@ class ExpenseCategoryClassifierTest {
         // No auto-save expected yet — explicitly save
         classifier.saveModel()
 
-        val modelFile = File(filesDir, "expense_category_model.json")
+        val modelFile = modelFile()
         assertTrue("Explicit save must persist even 1 sample", modelFile.exists())
-        val json = JSONObject(modelFile.readText())
+        val json = readPersistedModelJson()
         assertEquals(1, json.getInt("totalSamples"))
     }
 
@@ -202,7 +226,7 @@ class ExpenseCategoryClassifierTest {
         repeat(interval - 1) { i ->
             classifier.train(makeFeatures("merchant_$i"), categoryId = 1L)
         }
-        val modelFile = File(filesDir, "expense_category_model.json")
+        val modelFile = modelFile()
         assertFalse(
             "Model should NOT be auto-saved before reaching $interval samples",
             modelFile.exists()
@@ -255,12 +279,12 @@ class ExpenseCategoryClassifierTest {
                 put("2", JSONObject(mapOf("coffee" to 3, "tea" to 7)))
             })
         }
-        File(filesDir, "expense_category_model.json").writeText(json.toString())
+        val modelFile = modelFile()
+        modelFile.writeText(json.toString())
 
         // A fresh classifier should load this file successfully
         val classifier = createClassifier()
-        val stats = classifier.getStats() // triggers loadModel
-        // loadModel is lazy, so we need to call classify or train to trigger it
+        // loadModel is lazy, so classify triggers the legacy plaintext fallback.
         classifier.classify(makeFeatures("coffee", listOf("coffee")))
 
         val statsAfterLoad = classifier.getStats()
@@ -268,5 +292,14 @@ class ExpenseCategoryClassifierTest {
         assertEquals(2, statsAfterLoad.categoryCount)
         assertEquals(2, statsAfterLoad.vocabularySize)
         assertTrue(statsAfterLoad.isReady)
+
+        // Loading a legacy plaintext model should migrate it through encryption.
+        val migratedBytes = modelFile.readBytes()
+        assertTrue(
+            "Legacy model should be rewritten through the encryption service",
+            migratedBytes.size >= encryptionPrefix.size &&
+                migratedBytes.copyOfRange(0, encryptionPrefix.size).contentEquals(encryptionPrefix)
+        )
+        assertEquals(25, readPersistedModelJson().getInt("totalSamples"))
     }
 }

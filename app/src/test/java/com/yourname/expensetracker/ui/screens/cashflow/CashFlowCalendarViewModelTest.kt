@@ -1,5 +1,8 @@
 package com.yourname.expensetracker.ui.screens.cashflow
 
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import app.cash.turbine.ReceiveTurbine
 import app.cash.turbine.test
 import com.google.common.truth.Truth.assertThat
@@ -38,6 +41,7 @@ class CashFlowCalendarViewModelTest : ViewModelTestUtils() {
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
 
     private lateinit var viewModel: CashFlowCalendarViewModel
+    private val viewModels = mutableListOf<CashFlowCalendarViewModel>()
 
     private val fixedNow = Date(1_710_000_000_000L)
 
@@ -49,7 +53,7 @@ class CashFlowCalendarViewModelTest : ViewModelTestUtils() {
         coEvery { cashFlowCalculator.calculateDailyCashFlow(any(), any(), any()) } returns createMockCashFlows()
         coEvery { cashFlowCalculator.getUpcomingBills(30) } returns emptyList()
 
-        viewModel = CashFlowCalendarViewModel(cashFlowCalculator, timeProvider, currencySettingsRepository = mockCurrencyRepo())
+        viewModel = createViewModel()
     }
 
     @Test
@@ -166,10 +170,14 @@ class CashFlowCalendarViewModelTest : ViewModelTestUtils() {
         advanceUntilIdle() // init work
 
         viewModel.navigateToPreviousMonth()
+        advanceUntilIdle()
+        val previousRange = TimePeriodUtils.getMonthRange(fixedNow.time, -1)
+        assertThat(viewModel.state.value.currentMonth.time).isEqualTo(previousRange.first)
         viewModel.navigateToNextMonth()
         advanceUntilIdle()
 
-        coVerify(atLeast = 3) {
+        assertThat(viewModel.state.value.currentMonth.time).isEqualTo(TimePeriodUtils.getMonthRange(fixedNow.time).first)
+        coVerify(exactly = 3) {
             cashFlowCalculator.calculateDailyCashFlow(any(), any(), any())
         }
     }
@@ -181,13 +189,13 @@ class CashFlowCalendarViewModelTest : ViewModelTestUtils() {
             recurringPattern("utilities", fixedNow.time + 2 * TimePeriodUtils.DAY_IN_MILLIS)
         )
 
-        viewModel = CashFlowCalendarViewModel(cashFlowCalculator, timeProvider, currencySettingsRepository = mockCurrencyRepo())
+        viewModel = createViewModel()
         advanceUntilIdle()
 
         viewModel.state.test {
-            awaitItem() // initial or loaded
-            advanceUntilIdle()
-            val loaded = awaitState { !it.isLoading && it.dailyCashFlows.isNotEmpty() }
+            val loaded = awaitItem() // load has already completed above
+            assertThat(loaded.isLoading).isFalse()
+            assertThat(loaded.dailyCashFlows).isNotEmpty()
             assertThat(loaded.upcomingBillsCount).isEqualTo(2)
             cancelAndIgnoreRemainingEvents()
         }
@@ -207,13 +215,13 @@ class CashFlowCalendarViewModelTest : ViewModelTestUtils() {
             )
         )
 
-        viewModel = CashFlowCalendarViewModel(cashFlowCalculator, timeProvider, currencySettingsRepository = mockCurrencyRepo())
+        viewModel = createViewModel()
         advanceUntilIdle()
 
         viewModel.state.test {
-            awaitItem()
-            advanceUntilIdle()
-            val loaded = awaitState { !it.isLoading && it.dailyCashFlows.isNotEmpty() }
+            val loaded = awaitItem() // do not discard the completed snapshot
+            assertThat(loaded.isLoading).isFalse()
+            assertThat(loaded.dailyCashFlows).isNotEmpty()
             val day = loaded.dailyCashFlows.first()
             assertThat(day.occurrenceGenerationFailed).isTrue()
             assertThat(day.failedOccurrenceRuleCount).isEqualTo(1)
@@ -280,7 +288,7 @@ class CashFlowCalendarViewModelTest : ViewModelTestUtils() {
         every { repo.homeCurrency() } returns currencyFlow
         coEvery { repo.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
 
-        val vm = CashFlowCalendarViewModel(freshCalculator, timeProvider, currencySettingsRepository = repo)
+        val vm = createViewModel(freshCalculator, repo)
 
         // Init runs: loadCurrentMonth() is triggered while the currency flow has NOT emitted.
         advanceUntilIdle()
@@ -324,7 +332,7 @@ class CashFlowCalendarViewModelTest : ViewModelTestUtils() {
             cashFlowCalculator.calculateDailyCashFlow(any(), any(), capture(balances))
         } returns createMockCashFlows()
 
-        val vm = CashFlowCalendarViewModel(cashFlowCalculator, timeProvider, currencySettingsRepository = repo)
+        val vm = createViewModel(cashFlowCalculator, repo)
 
         // Initial currency resolves to EUR and loads cleanly.
         currencyFlow.emit("EUR")
@@ -342,6 +350,26 @@ class CashFlowCalendarViewModelTest : ViewModelTestUtils() {
         assertThat(afterChange.isLoading).isFalse()
         // The reload used the resolved (new) currency — no stale EUR balance into a USD calculator.
         assertThat(balances.map { it.currency }).contains(CurrencyCode("USD"))
+    }
+
+    @org.junit.After
+    override fun tearDown() {
+        try {
+            runTest(testDispatcher) {
+                viewModels.forEach { it.viewModelScope.coroutineContext[kotlinx.coroutines.Job]?.cancelAndJoin() }
+            }
+        } finally {
+            super.tearDown()
+        }
+    }
+
+    private fun createViewModel(
+        calculator: CashFlowCalculator = cashFlowCalculator,
+        currencyRepository: CurrencySettingsRepository = mockCurrencyRepo()
+    ): CashFlowCalendarViewModel {
+        viewModels.forEach { it.viewModelScope.cancel() }
+        return CashFlowCalendarViewModel(calculator, timeProvider, currencySettingsRepository = currencyRepository)
+            .also { viewModels += it }
     }
 
     private fun mockCurrencyRepo(): CurrencySettingsRepository {

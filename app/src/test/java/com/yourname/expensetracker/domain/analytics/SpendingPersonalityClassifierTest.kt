@@ -334,8 +334,11 @@ class SpendingPersonalityClassifierTest {
         try {
             TimeZone.setDefault(TimeZone.getTimeZone("America/New_York"))
             // US DST spring forward: Sunday 2026-03-08 at 02:00 -> 03:00 local.
-            val before = millisAt(2026, Calendar.MARCH, 8, 1, 30) // EST (UTC-5)
-            val after = millisAt(2026, Calendar.MARCH, 8, 3, 30)  // EDT (UTC-4)
+            val zone = java.time.ZoneId.of("America/New_York")
+            val before = java.time.ZonedDateTime.of(2026, 3, 8, 1, 30, 0, 0, zone)
+                .toInstant().toEpochMilli() // EST (UTC-5)
+            val after = java.time.ZonedDateTime.of(2026, 3, 8, 3, 30, 0, 0, zone)
+                .toInstant().toEpochMilli() // EDT (UTC-4)
 
             // Only one real hour elapsed even though the wall clock jumped two hours.
             assertEquals(3_600_000L, after - before)

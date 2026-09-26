@@ -19,9 +19,12 @@ import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -42,6 +45,7 @@ class AutomatedSavingsRuleEngineTest {
     private lateinit var currencySettingsRepository: CurrencySettingsRepository
     private lateinit var timeProvider: FakeTimeProvider
     private lateinit var stateFile: File
+    private lateinit var ruleStateRepository: AutomatedSavingsRuleStateRepository
     private var stateScope: CoroutineScope? = null
 
     @Before
@@ -63,7 +67,7 @@ class AutomatedSavingsRuleEngineTest {
 
     @After
     fun tearDown() {
-        stateScope?.cancel()
+        closeStateScope()
     }
 
     @Test
@@ -186,22 +190,19 @@ class AutomatedSavingsRuleEngineTest {
             maximumPerMonth = 10.0,
             isActive = true
         )
-        val incomeRule = AutomatedSavingsRule(
-            id = 89L,
-            name = "Income percentage",
-            ruleType = SavingsRuleType.PERCENTAGE_OF_INCOME,
-            targetGoalId = 42L,
-            percentage = 100.0,
-            maximumPerMonth = 10.0,
-            isActive = true
-        )
         coEvery { expenseRepository.getExpenseSnapshotsBetween(weekStart, weekEnd) } returns emptyList()
 
-        val capConsumingExecutions = engine.evaluateRules(deposit(amount = 10.0), listOf(incomeRule, weeklyRule))
+        val aprilMonth = AutomatedSavingsRuleStateRepository.buildYearMonthKey(now)
+        val consumed = ruleStateRepository.consumeMonthlyAmountWithinCap(
+            ruleStableKey = weeklyRule.id.toString(),
+            yearMonth = aprilMonth,
+            requestedAmount = 10.0,
+            maximumPerMonth = 10.0
+        )
+        assertEquals(10.0, consumed, 0.0001)
 
-        assertEquals(1, capConsumingExecutions.size)
-        assertEquals(SavingsRuleType.PERCENTAGE_OF_INCOME, capConsumingExecutions.first().rule.ruleType)
-        assertEquals(10.0, capConsumingExecutions.first().amount, 0.0001)
+        val capBlockedExecutions = engine.evaluateRules(deposit(amount = 10.0), listOf(weeklyRule))
+        assertTrue(capBlockedExecutions.isEmpty())
 
         timeProvider.setTime(FakeTimeProvider.forDate(2026, 5, 1, 12, 0).now())
         recreateEngine()
@@ -269,21 +270,27 @@ class AutomatedSavingsRuleEngineTest {
     }
 
     private fun recreateEngine() {
-        stateScope?.cancel()
+        closeStateScope()
         val newScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         stateScope = newScope
         val dataStore = PreferenceDataStoreFactory.create(
             scope = newScope,
             produceFile = { stateFile }
         )
-        val stateRepository = AutomatedSavingsRuleStateRepository(dataStore, timeProvider)
+        ruleStateRepository = AutomatedSavingsRuleStateRepository(dataStore, timeProvider)
         engine = AutomatedSavingsRuleEngine(
             expenseRepository = expenseRepository,
             categoryRepository = categoryRepository,
             timeProvider = timeProvider,
-            ruleStateRepository = stateRepository,
+            ruleStateRepository = ruleStateRepository,
             analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
             currencySettingsRepository = currencySettingsRepository
         )
+    }
+
+    private fun closeStateScope() {
+        val job = stateScope?.coroutineContext?.get(Job) ?: return
+        runBlocking { job.cancelAndJoin() }
+        stateScope = null
     }
 }

@@ -10,7 +10,9 @@ internal fun ExpenseSnapshot.canonicalMerchantKey(): String {
         ?.trim()
         ?.takeIf { it.isNotEmpty() }
         ?: MerchantKeyGenerator.generate(merchant).takeIf { it.isNotBlank() }
-        ?: merchant.lowercase().trim().takeIf { it.isNotEmpty() }
+        ?: merchant.lowercase().trim().takeIf { value ->
+            value.isNotEmpty() && value.any(Char::isLetterOrDigit)
+        }
         ?: UNKNOWN_MERCHANT_KEY
 }
 

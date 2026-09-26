@@ -125,92 +125,18 @@ class ReceiptRepositoryStatementDuplicateTest {
     }
 
     @Test
-    fun `processStatement keeps same merchant date and amount when currencies differ`() = runTest {
+    fun `legacy processStatement fails closed and points to lifecycle processor`() = runTest {
         val uri = Uri.parse("content://test/statement.png")
-        val transactionDate = 1_700_000_000_000L
-        val parsedTransactions = listOf(
-            ParsedTransaction(
-                amount = 12.34,
-                currency = "EUR",
-                merchant = "Cafe Nero",
-                type = ParsedTransactionType.PURCHASE,
-                confidence = 0.93f,
-                date = transactionDate
-            ),
-            ParsedTransaction(
-                amount = 12.34,
-                currency = "USD",
-                merchant = "Cafe Nero",
-                type = ParsedTransactionType.PURCHASE,
-                confidence = 0.91f,
-                date = transactionDate
-            )
-        )
-        val duplicateLookupArgs = mutableListOf<Pair<String, String>>()
-        val expenseLookupArgs = mutableListOf<Pair<String, String>>()
-        val insertedReviews = mutableListOf<PendingReview>()
-        var nextPendingReviewId = 1L
-
-        coEvery { ocrService.processUri(uri) } returns OcrResult(
-            fullText = "mock statement",
-            blocks = emptyList(),
-            savedImagePath = "/tmp/statement.png"
-        )
-        every { statementParser.parse(any(), any()) } returns parsedTransactions
-        coEvery {
-            pendingReviewDao.getPendingDuplicateCandidateInRangeTypeAware(
-                any(), any(), any(), any(), any(), any(), any(), any()
-            )
-        } coAnswers {
-            duplicateLookupArgs += (args[6] as String) to (args[7] as String)
-            null
-        }
-        coEvery {
-            expenseDao.existsByMerchantKeyInRangeCurrencyAware(
-                any(), any(), any(), any(), any(), any(), any()
-            )
-        } coAnswers {
-            expenseLookupArgs += (args[5] as String) to (args[6] as String)
-            false
-        }
-        coEvery {
-            expenseDao.existsByMerchantInRangeCurrencyAware(
-                any(), any(), any(), any(), any(), any(), any()
-            )
-        } coAnswers {
-            expenseLookupArgs += (args[5] as String) to (args[6] as String)
-            false
-        }
-        coEvery { pendingReviewDao.insert(any()) } coAnswers {
-            insertedReviews += firstArg<PendingReview>()
-            nextPendingReviewId++
-        }
 
         val result = repository.processStatement(uri)
 
-        assertEquals(2, result.successCount)
-        assertEquals(0, result.failureCount)
-        assertEquals(listOf("EUR", "USD"), insertedReviews.map { it.suggestedCurrency })
-        assertEquals(listOf("PURCHASE", "PURCHASE"), insertedReviews.map { it.suggestedType })
-        assertEquals(
-            listOf(
-                "EUR" to "PURCHASE",
-                "EUR" to "PURCHASE",
-                "USD" to "PURCHASE",
-                "USD" to "PURCHASE"
-            ),
-            duplicateLookupArgs
+        assertEquals(0, result.successCount)
+        assertEquals(1, result.failureCount)
+        assertEquals(1, result.errors.size)
+        org.junit.Assert.assertTrue(
+            result.errors.single().contains("BankStatementLifecycleProcessor.processBankStatement")
         )
-        assertEquals(
-            listOf(
-                "EUR" to "PURCHASE",
-                "EUR" to "PURCHASE",
-                "USD" to "PURCHASE",
-                "USD" to "PURCHASE"
-            ),
-            expenseLookupArgs
-        )
-
-        coVerify(exactly = 2) { pendingReviewDao.insert(any()) }
+        coVerify(exactly = 0) { ocrService.processUri(any<Uri>()) }
+        coVerify(exactly = 0) { pendingReviewDao.insert(any()) }
     }
 }

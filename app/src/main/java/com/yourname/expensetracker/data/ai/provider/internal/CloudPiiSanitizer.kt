@@ -29,8 +29,24 @@ class CloudPiiSanitizer @Inject constructor(
     private val EMAIL_REGEX = Regex("""\b[\w._%+-]+@[\w.-]+\.[A-Za-z]{2,}\b""")
     private val IBAN_REGEX = Regex("""\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b""")
     private val CARD_REGEX = Regex("""\b(?:\d[ -]?){13,19}\b""")
-    private val PHONE_REGEX = Regex("""\+?\d[\d\s().-]{6,}\d""")
+    private val PHONE_CANDIDATE_REGEX = Regex("""(?<![\p{L}\p{N}_])\+?\d[\d \t().,-]{6,}\d(?![\p{L}\p{N}_%])""")
     private val LONG_NUMBER_REGEX = Regex("""\b\d{10,}\b""")
+    private val PHONE_LABEL_REGEX = Regex(
+        """(?:^|[^\p{L}\p{N}_])(?:phone|telephone|tel|mobile|cell|fax|call|support)[ \t:#=(]*$""",
+        RegexOption.IGNORE_CASE
+    )
+    private val IDENTIFIER_LABEL_REGEX = Regex(
+        """(?:^|[^\p{L}\p{N}_])(?:invoice|order|receipt|reference|ref|id)[ \t]*#[ \t]*$""",
+        RegexOption.IGNORE_CASE
+    )
+    // Exempt recognizable decimal amounts, not every short numeric candidate.
+    // Explicit phone labels and international '+' prefixes take precedence.
+    private val DECIMAL_AMOUNT_REGEX = Regex(
+        """(?:(?:\d+|\d{1,3}(?:[ \t,]\d{3})+)\.\d{2}|(?:\d+|\d{1,3}(?:[ \t.]\d{3})+),\d{2})"""
+    )
+    private val DATE_SHAPE_REGEX = Regex(
+        """(?:\d{4}-\d{2}-\d{2}|\d{1,2}([.-])\d{1,2}\1\d{4})"""
+    )
 
     // P8-PR3 (NEW-P8-004): Additional PII patterns
 
@@ -51,11 +67,18 @@ class CloudPiiSanitizer @Inject constructor(
 
     fun sanitizeText(raw: String, maxChars: Int, fallbackPrefix: String): String {
         val trimmed = raw.trim().take(maxChars)
-        val redacted = trimmed
+        val contactText = trimmed
             .replace(EMAIL_REGEX, "[REDACTED_EMAIL]")
             .replace(IBAN_REGEX, "[REDACTED_IBAN]")
+        val redacted = contactText
+            .replace(PHONE_CANDIDATE_REGEX) { match ->
+                val prefix = contactText.substring(
+                    contactText.lastIndexOf('\n', match.range.first - 1) + 1,
+                    match.range.first
+                )
+                if (isLikelyPhoneNumber(match.value, prefix)) "[REDACTED_PHONE]" else match.value
+            }
             .replace(CARD_REGEX, "[REDACTED_CARD]")
-            .replace(PHONE_REGEX, "[REDACTED_PHONE]")
             .replace(SSN_REGEX, "[REDACTED_SSN]")
             .replace(NI_NUMBER_REGEX, "[REDACTED_NI_NUMBER]")
             .replace(SIN_REGEX, "[REDACTED_SIN]")
@@ -77,5 +100,39 @@ class CloudPiiSanitizer @Inject constructor(
         val trimmed = raw?.trim().takeUnless { it.isNullOrBlank() } ?: "Unknown"
         if (!shouldRedact) return trimmed.take(80)
         return "merchant_${installationSecretHasher.versionedPseudonym(trimmed)}"
+    }
+
+    private fun isLikelyPhoneNumber(candidate: String, prefix: String): Boolean {
+        val digits = candidate.filter(Char::isDigit)
+        if (candidate.trimStart().startsWith("+")) return true
+        if (PHONE_LABEL_REGEX.containsMatchIn(prefix)) return true
+        if (IDENTIFIER_LABEL_REGEX.containsMatchIn(prefix)) return false
+        if (DECIMAL_AMOUNT_REGEX.matches(candidate) || DATE_SHAPE_REGEX.matches(candidate)) return false
+        // Leave structured identifiers to their dedicated redactors below.
+        if (SSN_REGEX.matches(candidate) || SIN_REGEX.matches(candidate) || TFN_REGEX.matches(candidate)) {
+            return false
+        }
+
+        val groups = candidate.split(Regex("""[\s().,-]+""")).filter { it.isNotEmpty() }
+        if (groups.size >= 2 && groups.any { it.length != 4 }) return true
+
+        // Do not impose a digit-count floor or ceiling: local numbers and adjacent
+        // phone-like fields must not escape redaction. Valid payment-card shapes
+        // retain their dedicated marker rather than being relabelled as phones.
+        return digits.length !in 13..19 || !CARD_REGEX.matches(candidate) || !passesLuhn(digits)
+    }
+
+    private fun passesLuhn(digits: String): Boolean {
+        var sum = 0
+        val parity = digits.length % 2
+        for (index in digits.indices) {
+            var value = digits[index].digitToInt()
+            if (index % 2 == parity) {
+                value *= 2
+                if (value > 9) value -= 9
+            }
+            sum += value
+        }
+        return sum % 10 == 0
     }
 }

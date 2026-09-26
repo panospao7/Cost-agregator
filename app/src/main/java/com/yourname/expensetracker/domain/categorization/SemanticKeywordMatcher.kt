@@ -66,6 +66,12 @@ class SemanticKeywordMatcher @Inject constructor(
     
     fun match(merchant: String, minConfidence: Double = 0.40): List<SemanticMatch> {
         val normalized = greeklishNormalizer.normalize(merchant).lowercase()
+        val separatorRegex = Regex("""[\p{P}\p{S}]+""")
+        val keywordInputs = listOf(
+            normalized,
+            normalized.replace(separatorRegex, " "),
+            normalized.replace(separatorRegex, "")
+        ).distinct()
         val scores = mutableMapOf<String, MutableList<SemanticMatch>>()
         
         // Check pre-compiled patterns first (faster)
@@ -87,7 +93,9 @@ class SemanticKeywordMatcher @Inject constructor(
         
         compiledKeywords.forEach { compiled ->
             try {
-                val matchResult = compiled.regex.find(normalized)
+                val matchResult = keywordInputs.firstNotNullOfOrNull { input ->
+                    compiled.regex.find(input)
+                }
 
                 if (matchResult != null) {
                     val isAtStart = matchResult.range.first == 0

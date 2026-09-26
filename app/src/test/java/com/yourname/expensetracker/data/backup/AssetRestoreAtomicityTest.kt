@@ -187,12 +187,18 @@ class AssetRestoreAtomicityTest {
             )
         )
 
-        val entry = RestoreJournal.JournalEntry(assetTasks = tasks)
+        // Disk recovery requires an identifiable live database, unlike a pure JSON round-trip.
+        val liveDbPath = tmp.newFile("pending-live.db").absolutePath
+        val entry = RestoreJournal.JournalEntry(
+            liveDbPath = liveDbPath,
+            assetTasks = tasks
+        )
         journal.writeJournal(entry)
 
         // Read back from disk
         val readBack = journal.readJournal()
         assertNotNull("Journal with PENDING tasks must be readable", readBack)
+        assertEquals(liveDbPath, readBack!!.liveDbPath)
         assertEquals(
             "All three PENDING tasks must survive write+read",
             3,

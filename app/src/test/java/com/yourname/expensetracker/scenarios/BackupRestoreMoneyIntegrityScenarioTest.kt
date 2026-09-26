@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.APP_DATABASE_SCHEMA_VERSION
+import com.yourname.expensetracker.data.database.DatabaseSchemaPolicy
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.testfixtures.database.AppDatabaseTestFactory
 import com.yourname.expensetracker.testfixtures.dateMs
@@ -25,8 +26,8 @@ import org.robolectric.annotation.Config
 /**
  * Scenario tests for backup/restore money integrity.
  *
- * Validates that migration definitions from schema 117 to 120 are properly
- * registered, that new DAOs for post-v117 tables are non-null, and that
+ * Validates that supported migration definitions are properly registered,
+ * that DAOs for post-v117 tables are non-null, and that
  * expense data seeded into the database survives a roundtrip — all fields
  * are preserved when read back.
  */
@@ -49,50 +50,31 @@ class BackupRestoreMoneyIntegrityScenarioTest {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Test 1: ALL_MIGRATIONS contains 117→118, 118→119, 119→120
+    // Test 1: ALL_MIGRATIONS covers the supported baseline through the current schema
     // ─────────────────────────────────────────────────────────────────────────
 
     @Test
-    fun `ALL_MIGRATIONS contains 117 to 120 migration steps`() {
-        // GIVEN: the ALL_MIGRATIONS array from AppDatabase companion
-        val migrations = AppDatabase.ALL_MIGRATIONS
+    fun `ALL_MIGRATIONS covers the supported migration chain`() {
+        val baseline = DatabaseSchemaPolicy.MIGRATION_BASELINE
+        val expectedSteps = (baseline until APP_DATABASE_SCHEMA_VERSION)
+            .map { it to it + 1 }
+        val registeredSteps = AppDatabase.ALL_MIGRATIONS
+            .map { it.startVersion to it.endVersion }
 
-        // WHEN: extracting the version ranges covered
-        val versionPairs = migrations.map { it.startVersion to it.endVersion }
-
-        // THEN:
-        //   - 117→118 is present
-        assertTrue(
-            "ALL_MIGRATIONS should contain migration 117→118",
-            versionPairs.contains(117 to 118)
-        )
-
-        //   - 118→119 is present
-        assertTrue(
-            "ALL_MIGRATIONS should contain migration 118→119",
-            versionPairs.contains(118 to 119)
-        )
-
-        //   - 119→120 is present
-        assertTrue(
-            "ALL_MIGRATIONS should contain migration 119→120",
-            versionPairs.contains(119 to 120)
-        )
-
-        // AND: current schema version is at least 120
-        assertTrue(
-            "Schema version should be >= 120",
-            APP_DATABASE_SCHEMA_VERSION >= 120
-        )
+        // Registration contract only: migration execution needs its own DB tests.
+        assertTrue("Supported baseline must not exceed current schema", baseline <= APP_DATABASE_SCHEMA_VERSION)
+        assertEquals("Exactly one registration for each supported step", expectedSteps, registeredSteps)
+        assertTrue("Retired schemas are outside the supported chain",
+            (117..120).all { it in DatabaseSchemaPolicy.UNSUPPORTED_VERSIONS })
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Test 2: Schema v120 contains all new tables via non-null DAOs
+    // Test 2: Current schema exposes the post-v117 table DAOs
     // ─────────────────────────────────────────────────────────────────────────
 
     @Test
-    fun `schema v120 contains all new table DAOs`() {
-        // GIVEN: an in-memory AppDatabase built at version 120
+    fun `current schema contains the post-v117 table DAOs`() {
+        // GIVEN: an in-memory AppDatabase built at the current schema version
 
         // WHEN: accessing the DAOs for tables added after v117
 

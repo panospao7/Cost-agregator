@@ -5,10 +5,12 @@ import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -39,7 +41,7 @@ class AutomatedSavingsRuleStateRepositoryTest {
         assertTrue(firstHandle.repository.reserveWeeklyNoSpendReward("rule-1", weekStart))
         assertFalse(firstHandle.repository.reserveWeeklyNoSpendReward("rule-1", weekStart))
 
-        firstHandle.scope.cancel()
+        firstHandle.scope.coroutineContext[Job]!!.cancelAndJoin()
         scopes.remove(firstHandle.scope)
 
         val recreatedHandle = createRepository(stateFile, timeProvider)

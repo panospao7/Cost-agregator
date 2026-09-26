@@ -151,7 +151,8 @@ class FinancialQueryInterpretationInputBuilderTest {
         assertEquals(1L, result.categoryLookupMap[groceriesAlias])
         assertEquals(2L, result.categoryLookupMap[transportAlias])
         assertTrue(result.categoryLookupMap["Groceries"] == null)
-        assertEquals(1L, result.categoryNameToIdMap["Groceries"])
+        assertEquals(1L, result.categoryNameToIdMap[groceriesAlias])
+        assertTrue(result.categoryNameToIdMap["Groceries"] == null)
 
         assertTrue(result.rawQuery.contains("[REDACTED_CARD]"))
         assertTrue(result.rawQuery.contains(lidlAlias))

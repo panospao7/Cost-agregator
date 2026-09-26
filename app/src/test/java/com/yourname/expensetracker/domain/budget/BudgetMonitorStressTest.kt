@@ -40,6 +40,8 @@ class BudgetMonitorStressTest {
     fun setup() {
         Dispatchers.setMain(testDispatcher)
         every { timeProvider.now() } returns System.currentTimeMillis()
+        every { notificationService.sendBudgetAlert(any(), any(), any()) } returns
+            NotificationService.DeliveryResult.DELIVERED
         monitor = BudgetMonitor(budgetRepository, timeProvider, notificationService, testDispatcher, diagnosticEventWriter = mockk(relaxed = true), writeBarrier = mockk(relaxed = true), diagnosticSink = mockk(relaxed = true))
     }
 

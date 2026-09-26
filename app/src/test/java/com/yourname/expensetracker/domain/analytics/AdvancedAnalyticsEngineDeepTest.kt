@@ -315,7 +315,7 @@ class AdvancedAnalyticsEngineDeepTest {
             merchantKey = null,
             transactionType = DomainTransactionType.PURCHASE,
             date = dateMs,
-            categoryId = null,
+            categoryId = food.id,
             isNotMine = false,
             transferDirection = null,
             notes = null

@@ -1,5 +1,8 @@
 package com.yourname.expensetracker.ui.screens.aisettings
 
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.cancelAndJoin
+import com.yourname.expensetracker.domain.ai.service.CloudProviderConnectionTester
 import com.yourname.expensetracker.domain.ai.model.AiRuntimeStatusSummary
 import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.AiSettings
@@ -36,6 +39,7 @@ class AiSettingsViewModelTest : ViewModelTestUtils() {
     private lateinit var secureKeyStorage: SecureKeyStorage
     private lateinit var settingsFlow: MutableStateFlow<AiSettings>
     private lateinit var viewModel: AiSettingsViewModel
+    private val connectionTester = mockk<CloudProviderConnectionTester>()
 
     @Before
     override fun setup() {
@@ -63,8 +67,19 @@ class AiSettingsViewModelTest : ViewModelTestUtils() {
             syncProactiveBriefingWorkUseCase = syncProactiveBriefingWorkUseCase,
             secureKeyStorage = secureKeyStorage,
             privacyGate = mockk(relaxed = true),
-            connectionTester = mockk(relaxed = true)
+            connectionTester = connectionTester
         )
+    }
+
+    @org.junit.After
+    override fun tearDown() {
+        try {
+            runTest(testDispatcher) {
+                if (::viewModel.isInitialized) viewModel.viewModelScope.coroutineContext[kotlinx.coroutines.Job]?.cancelAndJoin()
+            }
+        } finally {
+            super.tearDown()
+        }
     }
 
     @Test
@@ -179,10 +194,16 @@ class AiSettingsViewModelTest : ViewModelTestUtils() {
             lastRefreshedAt = 9999L
         )
         coEvery { getAiRuntimeStatusUseCase(listOf(AiCapability.QUERY_INTERPRETATION)) } returns summary
+        settingsFlow.value = AiSettings(aiEnabled = true, allowCloudAi = true)
+        coEvery { connectionTester.testGemini("AIza12345678901234567890") } returns null
+        advanceUntilIdle()
 
         viewModel.updateApiKeyInput("AIza12345678901234567890")
         viewModel.testConnection()
         advanceUntilIdle()
+        assertEquals(true, viewModel.uiState.value.isConnectionTestSuccess)
+        coVerify(exactly = 1) { connectionTester.testGemini("AIza12345678901234567890") }
+        io.mockk.verify(exactly = 0) { secureKeyStorage.storeKey(any(), any()) }
         viewModel.saveApiKey()
         advanceUntilIdle()
 

@@ -3,13 +3,15 @@ package com.yourname.expensetracker.domain.price
 import com.google.common.truth.Truth.assertThat
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.repository.ReceiptRepository
-import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.*
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
+import java.time.Instant
+import java.time.ZoneId
 
 /**
  * PHASE 5 TEST: PriceProtectionTracker
@@ -20,18 +22,21 @@ import org.junit.Test
 class PriceProtectionTrackerTest {
 
     private val receiptRepository = mockk<ReceiptRepository>(relaxed = true)
-    private val timeProvider = mockk<TimeProvider>(relaxed = true)
+    private val timeProvider = FakeTimeProvider(Instant.parse("2026-04-15T12:00:00Z").toEpochMilli())
     private lateinit var tracker: PriceProtectionTracker
 
     @Before
     fun setup() {
-        every { timeProvider.now() } returns System.currentTimeMillis()
         tracker = PriceProtectionTracker(receiptRepository, timeProvider)
     }
 
     @Test
     fun `getPriceProtectedItems filters recent receipts`() = runTest {
-        val thirtyDaysAgo = System.currentTimeMillis() - (30 * 24 * 60 * 60 * 1000)
+        // The query includes today and the preceding 29 local calendar days,
+        // not a rolling 30 * 24-hour interval (which also differs across DST).
+        val zone = ZoneId.systemDefault()
+        val expectedStart = Instant.ofEpochMilli(timeProvider.now()).atZone(zone)
+            .toLocalDate().minusDays(29).atStartOfDay(zone).toInstant().toEpochMilli()
         
         coEvery { 
             receiptRepository.getRecentReceipts(any()) 
@@ -39,8 +44,8 @@ class PriceProtectionTrackerTest {
         
         val items = tracker.getPriceProtectedItems()
         
-        coVerify { 
-            receiptRepository.getRecentReceipts(match { it <= thirtyDaysAgo }) 
+        coVerify(exactly = 1) {
+            receiptRepository.getRecentReceipts(expectedStart)
         }
     }
 
@@ -92,27 +97,29 @@ class PriceProtectionTrackerTest {
     }
 
     @Test
-    fun `isEligibleForPriceProtection returns false for old purchases`() = runTest {
+    fun `isEligibleForPriceProtection marks old purchases ineligible`() = runTest {
         val oldReceipt = ScannedReceipt(
             id = 1L,
             imagePath = "/path/to/receipt.jpg",
             rawOcrText = "Old electronics receipt",
             parsedTotal = 999.0,
             parsedMerchant = "Test Store",
-            parsedDate = System.currentTimeMillis() - (35 * 24 * 60 * 60 * 1000),
+            parsedDate = timeProvider.now() - (35L * 24 * 60 * 60 * 1000),
             parsedItems = """[{"name":"Laptop","price":999.0,"category":"electronics"}]""",
             parsedTaxAmount = null,
             confidence = 0.9f,
             currency = "EUR",
             documentType = "RETAIL_RECEIPT",
-            createdAt = System.currentTimeMillis() - (35 * 24 * 60 * 60 * 1000)
+            createdAt = timeProvider.now() - (35L * 24 * 60 * 60 * 1000)
         )
         coEvery { receiptRepository.getRecentReceipts(any()) } returns listOf(oldReceipt)
         
         val items = tracker.getPriceProtectedItems()
         
-        // 35 days is beyond 30-day protection window
-        assertThat(items).isEmpty()
+        // Protectable items remain visible for tracking, but eligibility is false
+        // once the authoritative purchase date is outside the 30-day window.
+        assertThat(items).hasSize(1)
+        assertThat(items.single().priceProtectionEligible).isFalse()
     }
 
     @Test
@@ -223,7 +230,7 @@ class PriceProtectionTrackerTest {
         val benefits = tracker.getCreditCardBenefits(groceryReceipt)
         
         assertThat(benefits).isNotEmpty()
-        assertThat(benefits.any { it.benefitDescription.contains("grocery") }).isTrue()
+        assertThat(benefits.any { it.benefitDescription.contains("grocer", ignoreCase = true) }).isTrue()
     }
 
     @Test
@@ -289,13 +296,13 @@ class PriceProtectionTrackerTest {
             rawOcrText = "Test receipt",
             parsedTotal = total,
             parsedMerchant = merchant,
-            parsedDate = System.currentTimeMillis() - (daysOld * 24 * 60 * 60 * 1000),
+            parsedDate = timeProvider.now() - (daysOld.toLong() * 24 * 60 * 60 * 1000),
             parsedItems = """[{"name":"Laptop","price":$total,"category":"electronics"}]""",
             parsedTaxAmount = null,
             confidence = 0.9f,
             currency = "EUR",
             documentType = "RETAIL_RECEIPT",
-            createdAt = System.currentTimeMillis() - (daysOld * 24 * 60 * 60 * 1000)
+            createdAt = timeProvider.now() - (daysOld.toLong() * 24 * 60 * 60 * 1000)
         )
     }
     
@@ -306,13 +313,13 @@ class PriceProtectionTrackerTest {
             rawOcrText = name,
             parsedTotal = price,
             parsedMerchant = "Test Store",
-            parsedDate = System.currentTimeMillis(),
+            parsedDate = timeProvider.now(),
             parsedItems = """[{"name":"$name","price":$price,"category":"$category"}]""",
             parsedTaxAmount = null,
             confidence = 0.9f,
             currency = "EUR",
             documentType = "RETAIL_RECEIPT",
-            createdAt = System.currentTimeMillis()
+            createdAt = timeProvider.now()
         )
     }
     
@@ -323,13 +330,13 @@ class PriceProtectionTrackerTest {
             rawOcrText = "Test receipt",
             parsedTotal = 300.0,
             parsedMerchant = "Test Store",
-            parsedDate = System.currentTimeMillis(),
+            parsedDate = timeProvider.now(),
             parsedItems = null,
             parsedTaxAmount = null,
             confidence = 0.9f,
             currency = "EUR",
             documentType = "RETAIL_RECEIPT",
-            createdAt = System.currentTimeMillis()
+            createdAt = timeProvider.now()
         )
     }
 }

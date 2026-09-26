@@ -23,11 +23,11 @@ class RecurrenceCalculatorTest {
     }
 
     @Test
-    fun `calculateNextDate advances irregular by one month`() {
+    fun `calculateNextDate leaves irregular unchanged for manual confirmation`() {
         val currentDate = date(2026, 3, 5)
 
         assertEquals(
-            TimePeriodUtils.addMonths(currentDate, 1),
+            currentDate,
             RecurrenceCalculator.calculateNextDate(currentDate, RecurrenceFrequency.IRREGULAR)
         )
     }
@@ -107,6 +107,7 @@ class RecurrenceCalculatorTest {
         )) {
             val anchor = date(2027, 1, 31)
             val anchorDay = 31
+            val endDate = date(2028, 12, 31)
 
             val request = com.yourname.expensetracker.domain.recurring.RecurringOccurrenceExpander.ExpandRequest(
                 merchant = "Test Merchant",
@@ -115,7 +116,7 @@ class RecurrenceCalculatorTest {
                 frequency = frequency,
                 categoryId = null,
                 startDate = date(2027, 1, 1),
-                endDate = date(2028, 12, 31),
+                endDate = endDate,
                 anchorDate = anchor,
                 sourceType = "RECURRING_RULE",
                 sourceId = 7L
@@ -130,7 +131,7 @@ class RecurrenceCalculatorTest {
                 cursor = RecurrenceCalculator.addFrequencyInterval(
                     cursor, frequency, anchorDayOfMonth = anchorDay
                 )
-                calculatorDates.add(cursor)
+                if (cursor < endDate) calculatorDates.add(cursor)
             }
 
             val expanderDates = expanded.map { it.dueDate }

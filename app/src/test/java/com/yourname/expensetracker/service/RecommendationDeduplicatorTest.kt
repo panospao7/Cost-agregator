@@ -80,15 +80,27 @@ class RecommendationDeduplicatorTest {
     }
 
     @Test
-    fun `deduplicate preserves different date ranges`() {
-        val rec1 = createRecommendation("1", "TRANSACTION_LIST", "{\"dateRangeStart\":1000,\"dateRangeEnd\":2000}", "cat:1")
-        val rec2 = createRecommendation("2", "TRANSACTION_LIST", "{\"dateRangeStart\":2000,\"dateRangeEnd\":3000}", "cat:1")
-        val rec3 = createRecommendation("3", "TRANSACTION_LIST", "{\"dateRangeStart\":3000,\"dateRangeEnd\":4000}", "cat:1")
+    fun `deduplicate preserves different semantic date ranges`() {
+        // AIML-21 identifies logical spans, not individual generation timestamps.
+        // One day, seven days and 31 days must remain distinct recommendations.
+        val rec1 = createRecommendation("1", "TRANSACTION_LIST", "{\"dateRangeStart\":0,\"dateRangeEnd\":86400000}", "cat:1")
+        val rec2 = createRecommendation("2", "TRANSACTION_LIST", "{\"dateRangeStart\":0,\"dateRangeEnd\":604800000}", "cat:1")
+        val rec3 = createRecommendation("3", "TRANSACTION_LIST", "{\"dateRangeStart\":0,\"dateRangeEnd\":2678400000}", "cat:1")
 
-        val recommendations = listOf(rec1, rec2, rec3)
-        val deduplicated = deduplicator.deduplicate(recommendations)
+        val deduplicated = deduplicator.deduplicate(listOf(rec1, rec2, rec3))
 
-        assertEquals("Should keep all 3 different date ranges", 3, deduplicated.size)
+        assertEquals("Different semantic spans must all survive", listOf("1", "2", "3"), deduplicated.map { it.id })
+    }
+
+    @Test
+    fun `deduplicate ignores generation timestamp shifts within a semantic span`() {
+        val rec1 = createRecommendation("1", "TRANSACTION_LIST", "{\"dateRangeStart\":0,\"dateRangeEnd\":86400000}", "cat:1")
+        val rec2 = createRecommendation("2", "TRANSACTION_LIST", "{\"dateRangeStart\":1000,\"dateRangeEnd\":86401000}", "cat:1")
+        val rec3 = createRecommendation("3", "TRANSACTION_LIST", "{\"dateRangeStart\":2000,\"dateRangeEnd\":86402000}", "cat:1")
+
+        val deduplicated = deduplicator.deduplicate(listOf(rec1, rec2, rec3))
+
+        assertEquals("Same logical span keeps the first-priority recommendation", listOf("1"), deduplicated.map { it.id })
     }
 
     @Test

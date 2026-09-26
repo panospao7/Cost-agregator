@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.repository
 
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
+import com.yourname.expensetracker.data.database.dao.BusinessCategoryCurrencyTotal
 import com.yourname.expensetracker.data.database.dao.MileageTrackingDao
 import com.yourname.expensetracker.data.database.entity.MileageTracking
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
@@ -47,6 +48,21 @@ class BusinessExpenseRepositoryTest {
             kotlinx.coroutines.runBlocking { repository.addMileage(invalidMileage) }
         }
         coVerify(exactly = 0) { mileageDao.insert(any()) }
+    }
+
+    @Suppress("DEPRECATION_ERROR")
+    @Test
+    fun `business category currency totals use the existing dao projection`() = runTest {
+        val expected = listOf(
+            BusinessCategoryCurrencyTotal("Office", "EUR", 100.0, 1),
+            BusinessCategoryCurrencyTotal("Office", "USD", 50.0, 2),
+            BusinessCategoryCurrencyTotal("Uncategorized", "EUR", 25.0, 1)
+        )
+        coEvery { expenseDao.getBusinessCategoryCurrencyTotals(10L, 20L) } returns expected
+
+        assertEquals(expected, repository.getBusinessCategoryCurrencyTotals(10L, 20L))
+        coVerify(exactly = 1) { expenseDao.getBusinessCategoryCurrencyTotals(10L, 20L) }
+        coVerify(exactly = 0) { expenseDao.getBusinessExpensesByCategory(any(), any()) }
     }
 
     private fun validMileage(

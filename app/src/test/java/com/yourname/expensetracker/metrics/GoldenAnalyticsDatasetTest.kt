@@ -6,6 +6,7 @@ import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.Instant
 import kotlin.math.floor
 
 /**
@@ -24,7 +25,9 @@ import kotlin.math.floor
  */
 class GoldenAnalyticsDatasetTest {
 
-    private val timeProvider = FakeTimeProvider.forDate(2026, 4, 1)
+    private val timeProvider = FakeTimeProvider(
+        fixedTime = Instant.parse("2026-04-01T00:00:00Z").toEpochMilli()
+    )
 
     @Test
     fun `dataset uses deterministic now via TimeProvider`() {

@@ -65,11 +65,11 @@ class AnalyticsStressTest {
             )
         }
 
-        coEvery { expenseDao.getExpensesBetween(start, end) } returns expenses
+        coEvery { expenseDao.getExpensesBetweenUncapped(start, end) } returns expenses
         coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } answers {
             val s = firstArg<Long>()
             val e = secondArg<Long>()
-            val filtered = expenses.filter { it.date in s..e }
+            val filtered = expenses.filter { it.date >= s && it.date < e }
             listOf(CurrencyTotal("EUR", filtered.sumOf { it.amount }, filtered.size))
         }
         coEvery { expenseDao.getCategoryTotalsBetweenByCurrency(any(), any()) } returns emptyList()

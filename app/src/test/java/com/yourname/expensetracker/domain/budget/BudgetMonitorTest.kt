@@ -40,6 +40,8 @@ class BudgetMonitorTest {
     fun setUp() {
         emittedEvents.clear()
         coEvery { diagnosticEventWriter.emit(capture(emittedEvents)) } returns Unit
+        every { notificationService.sendBudgetAlert(any(), any(), any()) } returns
+            NotificationService.DeliveryResult.DELIVERED
         monitor = BudgetMonitor(
             budgetRepository = budgetRepository,
             timeProvider = timeProvider,
