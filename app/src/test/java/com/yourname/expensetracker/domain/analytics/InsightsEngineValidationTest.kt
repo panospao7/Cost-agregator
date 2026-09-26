@@ -495,7 +495,15 @@ class InsightsEngineValidationTest {
         assertEquals(0.0, snapshot.spendingPace.currentMonthSpent, 0.01)
         assertTrue(snapshot.anomalies.isEmpty())
         assertTrue(snapshot.recurringExpenses.isEmpty())
-        assertTrue(snapshot.dayOfWeekPattern.isEmpty())
+        val expectedDayOrder = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+        assertEquals(7, snapshot.dayOfWeekPattern.size)
+        assertEquals(expectedDayOrder, snapshot.dayOfWeekPattern.map { it.dayName })
+        snapshot.dayOfWeekPattern.forEach { day ->
+            assertEquals(0.0, day.totalSpent, 0.0)
+            assertEquals(0, day.transactionCount)
+            assertEquals(0.0, day.avgPerTransaction, 0.0)
+            assertEquals("EUR", day.displayCurrency)
+        }
         assertNull(snapshot.largestTransaction)
         assertEquals(0.0, snapshot.averageTransactionSize, 0.01)
         assertEquals(0.0, snapshot.medianTransactionSize, 0.01)
