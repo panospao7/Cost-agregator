@@ -544,7 +544,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         allWarnings: List<AnalyticsConversionWarning>
     ): Pair<SpendingPatternAnalysis, List<AnalyticsConversionWarning>> {
         if (purchases.isEmpty()) {
-            return Pair(createEmptyPatternAnalysis(period), allWarnings)
+            return Pair(createEmptyPatternAnalysis(period, displayCurrency), allWarnings)
         }
 
         val totalSpent = purchases.sumOf { it.effectiveAmount }
@@ -607,8 +607,10 @@ class AdvancedAnalyticsEngine @Inject constructor(
         ), allWarnings)
     }
 
-    private fun createEmptyPatternAnalysis(period: AnalyticsPeriodRange): SpendingPatternAnalysis {
-        val displayCurrency = defaultDisplayCurrency()
+    private fun createEmptyPatternAnalysis(
+        period: AnalyticsPeriodRange,
+        displayCurrency: String
+    ): SpendingPatternAnalysis {
         return SpendingPatternAnalysis(
             period = period,
             dayOfWeekStats = emptyMap(),
@@ -681,7 +683,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         allWarnings: List<AnalyticsConversionWarning>
     ): Pair<StatisticalInsights, List<AnalyticsConversionWarning>> {
         if (purchases.isEmpty()) {
-            return Pair(createEmptyStatisticalInsights(period), allWarnings)
+            return Pair(createEmptyStatisticalInsights(period, displayCurrency), allWarnings)
         }
 
         val amounts = purchases.map { it.effectiveAmount }
@@ -741,8 +743,10 @@ class AdvancedAnalyticsEngine @Inject constructor(
         ), allWarnings)
     }
 
-    private fun createEmptyStatisticalInsights(period: AnalyticsPeriodRange): StatisticalInsights {
-        val displayCurrency = defaultDisplayCurrency()
+    private fun createEmptyStatisticalInsights(
+        period: AnalyticsPeriodRange,
+        displayCurrency: String
+    ): StatisticalInsights {
         return StatisticalInsights(
             period = period,
             displayCurrency = displayCurrency,

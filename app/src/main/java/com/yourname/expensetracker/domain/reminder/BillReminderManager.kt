@@ -1,13 +1,18 @@
 package com.yourname.expensetracker.domain.reminder
 
+import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateResult
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode
+import com.yourname.expensetracker.domain.core.money.RateBasis
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import com.yourname.expensetracker.domain.currency.SupportedCurrency
 import com.yourname.expensetracker.domain.logic.RecurrenceCalculator
-import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -49,7 +54,9 @@ enum class ReminderUrgency {
 @Singleton
 class BillReminderManager @Inject constructor(
     private val recurringExpenseRepository: RecurringExpenseRepository,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val multiCurrencyRepository: MultiCurrencyRepository,
+    private val currencySettingsRepository: CurrencySettingsRepository
 ) {
     companion object {
         const val DEFAULT_REMINDER_DAYS = 3 // Days before due date
@@ -157,18 +164,38 @@ class BillReminderManager @Inject constructor(
     }
     
     /**
-     * Get total expected bills for current month.
+     * Get the total expected bills for the current month in the resolved home currency.
+     *
+     * Each active rule is normalized to its monthly source amount before conversion. The
+     * repository performs currency validation and aggregation, preserving partial and
+     * unavailable states instead of fabricating a zero or relabeling mixed currencies.
      */
-    suspend fun getMonthlyBillsTotal(): Double = withContext(Dispatchers.IO) {
-        val recurring = recurringExpenseRepository.getAll()
-        var total = 0.0
-        
-        for (expense in recurring) {
-            if (!expense.isActive) continue
+    suspend fun getMonthlyBillsTotal(): MoneyAggregateResult = withContext(Dispatchers.IO) {
+        val targetCurrency = resolveDisplayCurrency()
+            ?: return@withContext MoneyAggregateResult.Unavailable(
+                reason = MoneyDisplayUnavailableReasonCode.HOME_CURRENCY_UNAVAILABLE.name,
+                requestedRateBasis = RateBasis.LATEST_AVAILABLE,
+                warningMessage = MoneyDisplayUnavailableReasonCode.HOME_CURRENCY_UNAVAILABLE.name
+            )
 
-            total += RecurrenceCalculator.toMonthlyAmount(expense.amount, expense.frequency)
+        val activeRules = recurringExpenseRepository.getAll().filter { it.isActive }
+        val monthlyAmounts = activeRules.map { expense ->
+            RecurrenceCalculator.toMonthlyAmount(expense.amount, expense.frequency) to expense.currency
         }
 
-        total
+        multiCurrencyRepository.aggregateDisplayAmounts(
+            amounts = monthlyAmounts,
+            transactionCounts = List(monthlyAmounts.size) { 1 },
+            targetCurrency = targetCurrency
+        )
+    }
+
+    private suspend fun resolveDisplayCurrency(): String? {
+        val resolved = when (val resolution = currencySettingsRepository.resolveHomeCurrency()) {
+            is HomeCurrencyResolution.Resolved -> resolution.currency.code
+            is HomeCurrencyResolution.FirstRunDefault -> resolution.currency.code
+            is HomeCurrencyResolution.Failed -> return null
+        }
+        return SupportedCurrency.fromActiveCode(resolved)?.code
     }
 }

@@ -760,7 +760,12 @@ class BankApiIntegration @Inject constructor(
      * persists it. No REDACTED placeholder is fabricated in its place.
      */
     private fun resolveTransferAccountRef(ref: String?, mode: RawStorageMode): String? =
-        if (mode == RawStorageMode.DO_NOT_STORE) null else ref?.takeIf { it.isNotBlank() }
+        when (mode) {
+            RawStorageMode.DO_NOT_STORE -> null
+            RawStorageMode.STORE_METADATA_ONLY,
+            RawStorageMode.STORE_REDACTED,
+            RawStorageMode.STORE_RAW -> ref?.takeIf { it.isNotBlank() }
+        }
 
     /**
      * RP-17 17-D: builds the bank PendingReview with the stable cross-run

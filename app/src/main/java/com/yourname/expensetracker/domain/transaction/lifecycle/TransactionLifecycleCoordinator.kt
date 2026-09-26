@@ -2321,6 +2321,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
             // Controlled duplicate-reason failure — no partial state, no event.
             Result.failure(e)
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             Result.failure(e)
         }
     }

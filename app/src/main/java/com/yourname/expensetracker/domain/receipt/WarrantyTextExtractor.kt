@@ -38,6 +38,14 @@ class WarrantyTextExtractor(
 
     private companion object {
         private const val MAX_RECEIPT_AGE_YEARS = 50L
+        private val EXPLICIT_PRODUCT_REGEX = Regex(
+            """^[ \t]*(?:ITEM|PRODUCT|DESCRIPTION)[ \t]*:[ \t]*([^\r\n]{5,50})""",
+            setOf(RegexOption.IGNORE_CASE, RegexOption.MULTILINE)
+        )
+        private val WARRANTY_METADATA_LINE_REGEX = Regex(
+            """^(?:(?:MANUFACTURER|EXTENDED|LIMITED|LIFETIME)\s+)*(?:WARRANTY|GUARANTEE)\b|^(?:COVERAGE|RETURN\s+POLICY|SUPPORT)(?:\s*:|\s*$)""",
+            RegexOption.IGNORE_CASE
+        )
     }
 
     /**
@@ -282,6 +290,13 @@ class WarrantyTextExtractor(
      * Extracts product name from receipt text.
      */
     private fun extractProductName(text: String): String? {
+        // An explicit product field is stronger evidence than fallback metadata
+        // heuristics: e.g. 'TV Support Stand' and 'iPhone' are product names.
+        EXPLICIT_PRODUCT_REGEX.find(text)?.let { match ->
+            val product = cleanProductName(match.groupValues[1])
+            if (product.isNotBlank()) return product
+        }
+
         // Try to find product descriptions
         val productPatterns = listOf(
             // "Item: iPhone 15 Pro" or "Product: MacBook Air"
@@ -345,7 +360,8 @@ class WarrantyTextExtractor(
         )
         
         val upperLine = line.uppercase(Locale.getDefault())
-        return nonProductIndicators.any { upperLine.contains(it) }
+        return nonProductIndicators.any { upperLine.contains(it) } ||
+            WARRANTY_METADATA_LINE_REGEX.containsMatchIn(line)
     }
     
     /**

@@ -12,6 +12,7 @@ import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
+import com.yourname.expensetracker.domain.currency.SupportedCurrency
 import javax.inject.Inject
 import javax.inject.Singleton
 import timber.log.Timber
@@ -315,8 +316,15 @@ class InsightsEngine @Inject constructor(
         val anomaliesDeferred = async { 
             try { findAnomalies(currentMonth, categoryMap, allExpenses, displayCurrency) } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e("InsightsEngine: UNKNOWN_ERROR stage=anomalies class=%s", e::class.java.simpleName); null }
         }
-        val recurringExpensesDeferred = async { 
-            try { findRecurringExpenses(allExpenses, displayCurrency) } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e("InsightsEngine: UNKNOWN_ERROR stage=recurringExpenses class=%s", e::class.java.simpleName); emptyList() }
+        val recurringExpensesDeferred = async {
+            try {
+                findRecurringExpenses(allExpenses)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.e("InsightsEngine: UNKNOWN_ERROR stage=recurringExpenses class=%s", e::class.java.simpleName)
+                RecurringExpenseResult(emptyList(), emptyList())
+            }
         }
         
         val threeMonthsAgo = getMonthPeriod(now, -2)
@@ -331,7 +339,7 @@ class InsightsEngine @Inject constructor(
         val topMerchants = topMerchantsDeferred.await()
         val spendingPace = spendingPaceDeferred.await()
         val anomalies = anomaliesDeferred.await()
-        val recurringExpenses = recurringExpensesDeferred.await()
+        val recurringExpenseResult = recurringExpensesDeferred.await()
         val dayOfWeekPattern = dayOfWeekPatternDeferred.await()
 
         // Transaction size stats
@@ -377,14 +385,14 @@ class InsightsEngine @Inject constructor(
                 displayCurrency = displayCurrency
             ),
             anomalies = anomalies ?: emptyList(),
-            recurringExpenses = recurringExpenses,
+            recurringExpenses = recurringExpenseResult.items,
             dayOfWeekPattern = dayOfWeekPattern ?: emptyList(),
             largestTransaction = largestTransaction?.toAnalyticsSummary(),
             averageTransactionSize = avgTxSize,
             medianTransactionSize = medianTxSize,
             totalMonthsOfData = totalMonthsOfData,
             displayCurrency = displayCurrency,
-            conversionWarnings = conversionWarnings
+            conversionWarnings = conversionWarnings + recurringExpenseResult.warnings
         )
     }
 
@@ -504,7 +512,7 @@ class InsightsEngine @Inject constructor(
                                 DomainTextKeys.ANALYTICS_INSIGHT_RECURRING_TITLE_FORMAT,
                                 recurring.merchant
                             ),
-                            UiText.from("${formatCurrency(recurring.avgAmount, homeCurrency)} • $cadenceLabel"),
+                            UiText.from("${formatCurrency(recurring.avgAmount, recurring.displayCurrency)} • $cadenceLabel"),
                             0.5f
                         )
                     )
@@ -749,15 +757,28 @@ class InsightsEngine @Inject constructor(
 
     // === Recurring Expenses ===
 
+    private data class RecurringExpenseResult(
+        val items: List<RecurringExpense>,
+        val warnings: List<AnalyticsConversionWarning>
+    )
+
     private suspend fun findRecurringExpenses(
-        allExpenses: List<ExpenseSnapshot>,
-        displayCurrency: String
-    ): List<RecurringExpense> {
+        allExpenses: List<ExpenseSnapshot>
+    ): RecurringExpenseResult {
         // Use the centralized engine
         val patterns = recurringExpenseEngine.getPatternsFromSnapshots(allExpenses)
-        
-        // Map to Insights Snapshot model
-        return patterns.map { pattern ->
+
+        val items = mutableListOf<RecurringExpense>()
+        var invalidCurrencyCount = 0
+
+        // Source-label contract: manual rules retain their own validated currency,
+        // while detected patterns from normalized input already carry the home currency.
+        for (pattern in patterns) {
+            val sourceCurrency = SupportedCurrency.fromCode(pattern.currency)
+            if (sourceCurrency == null) {
+                invalidCurrencyCount++
+                continue
+            }
             val intervalDays = when (pattern.frequency) {
                 com.yourname.expensetracker.domain.model.RecurrenceFrequency.WEEKLY -> 7
                 com.yourname.expensetracker.domain.model.RecurrenceFrequency.BIWEEKLY -> 14
@@ -768,16 +789,29 @@ class InsightsEngine @Inject constructor(
                 else -> 0
             }
             
-            RecurringExpense(
+            items += RecurringExpense(
                 merchant = pattern.merchantName,
                 avgAmount = pattern.averageAmount,
                 frequency = pattern.previousDates.size.coerceAtLeast(1),
                 intervalDays = intervalDays,
                 amountVariation = 0.0, // Pattern doesn't expose this raw stat easily, but could add to Pattern if needed.
                 isStable = pattern.amountVariancePercent < 0.1,
-                displayCurrency = displayCurrency
+                displayCurrency = sourceCurrency.code
             )
         }
+
+        val warnings = if (invalidCurrencyCount > 0) {
+            listOf(
+                AnalyticsConversionWarning(
+                    type = AnalyticsConversionWarningType.INVALID_TRANSACTION_CURRENCY,
+                    message = AnalyticsConversionWarningType.INVALID_TRANSACTION_CURRENCY.name,
+                    affectedTransactionCount = invalidCurrencyCount
+                )
+            )
+        } else {
+            emptyList()
+        }
+        return RecurringExpenseResult(items = items, warnings = warnings)
     }
 
     // === Utility Functions ===

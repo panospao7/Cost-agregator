@@ -885,13 +885,16 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             withContext(kotlinx.coroutines.NonCancellable) {
                 try {
                     cleanup()
-                } catch (_: Exception) {
+                } catch (cleanupFailure: Exception) {
+                    // Every cleanup failure, including secondary cancellation, must
+                    // attempt the same recovery lock before propagating cancellation.
                     try {
                         restoreMaintenanceMode.enterCriticalRecoveryRequired("RESTORE_CANCELLED_CLEANUP_FAILED")
-                    } catch (_: Exception) {
-                        // A secondary cleanup/persistence cancellation cannot replace the caller's.
+                    } catch (lockFailure: Exception) {
+                        if (lockFailure is kotlinx.coroutines.CancellationException) throw lockFailure
                         // The mode owner retains its in-memory critical lock on persistence failure.
                     }
+                    if (cleanupFailure is kotlinx.coroutines.CancellationException) throw cleanupFailure
                 }
             }
         } finally {

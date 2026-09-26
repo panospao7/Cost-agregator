@@ -496,6 +496,7 @@ class AppStartupCoordinator @Inject constructor(
             markStartupCritical("STARTUP_ASSET_JOURNAL_DURABILITY_FAILED")
             return
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e("Startup: asset resume failed (%s) — marking remaining tasks FAILED", e.javaClass.simpleName)
             // Base the finalization on the latest journaled ledger so tasks already
             // completed before the failure are not clobbered.

@@ -70,9 +70,10 @@ class NotificationMoneySignalDetector @Inject constructor(
 
         // Try unambiguous symbols (€, £, ¥, ₺)
         for (currency in currencies.filter { it.aliases.isNotEmpty() }) {
-            val symbols = currency.aliases.map { Regex.escape(it) }.joinToString("|")
+            val prefixSymbols = currency.aliases.joinToString("|") { aliasPattern(it, isPrefix = true) }
+            val suffixSymbols = currency.aliases.joinToString("|") { aliasPattern(it, isPrefix = false) }
             val regex = Regex(
-                """($symbols)\s*(\d[\d.,\s]*)|\b(\d[\d.,\s]*)\s*($symbols)""",
+                """($prefixSymbols)\s*(\d[\d.,\s]*)|\b(\d[\d.,\s]*)\s*($suffixSymbols)""",
                 RegexOption.IGNORE_CASE
             )
             val match = regex.find(text) ?: continue
@@ -137,6 +138,19 @@ class NotificationMoneySignalDetector @Inject constructor(
         }
 
         return null
+    }
+
+    private fun aliasPattern(alias: String, isPrefix: Boolean): String {
+        val escaped = Regex.escape(alias)
+        // Guard only the outer edge: the amount may touch the inner edge (Fr42 / 42Fr).
+        // The adjacent amount pattern already prevents matching word fragments there.
+        return when {
+            isPrefix && alias.firstOrNull()?.isLetterOrDigit() == true ->
+                """(?<![\p{L}\p{N}])$escaped"""
+            !isPrefix && alias.lastOrNull()?.isLetterOrDigit() == true ->
+                """$escaped(?![\p{L}\p{N}])"""
+            else -> escaped
+        }
     }
 
     private fun cleanAmount(raw: String): Double? {

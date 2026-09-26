@@ -174,23 +174,24 @@ class BudgetCalculator @Inject constructor(
                 val anchorMonth = anchorDateInZone.monthValue
                 val anchorDay = anchorDateInZone.dayOfMonth
 
-                val currentMonth = evalDate.monthValue
-                val currentDay = evalDate.dayOfMonth
-                val adjustedDay = anchorDay.coerceAtMost(evalDate.lengthOfMonth())
-
-                // Check if we passed the anniversary this year.
-                val passed = currentMonth > anchorMonth ||
-                    (currentMonth == anchorMonth && currentDay >= adjustedDay)
-
-                val startYear = if (passed) evalDate.year else evalDate.year - 1
-                val startDate = LocalDate.of(
-                    startYear,
+                // Derive each boundary independently from the original anchor.
+                // Using startDate.plusYears(1) is incorrect for a Feb-29 anchor:
+                // once the start clamps to Feb 28 in a non-leap year, plusYears(1)
+                // cannot recover Feb 29 in the following leap year and leaves a
+                // gap that contains no active yearly window.
+                fun anniversary(year: Int): LocalDate = LocalDate.of(
+                    year,
                     anchorMonth,
-                    anchorDay.coerceAtMost(YearMonth.of(startYear, anchorMonth).lengthOfMonth())
+                    anchorDay.coerceAtMost(YearMonth.of(year, anchorMonth).lengthOfMonth())
                 )
+
+                val currentYearAnniversary = anniversary(evalDate.year)
+                val passed = !evalDate.isBefore(currentYearAnniversary)
+                val startYear = if (passed) evalDate.year else evalDate.year - 1
+                val startDate = anniversary(startYear)
                 val start = startDate.atStartOfDay(zone).toInstant().toEpochMilli()
 
-                val end = startDate.plusYears(1).atStartOfDay(zone).toInstant().toEpochMilli()
+                val end = anniversary(startYear + 1).atStartOfDay(zone).toInstant().toEpochMilli()
                 PeriodRange(kind = PeriodKind.CUSTOM, startInclusiveMillis = start, endExclusiveMillis = end, label = "Budget")
             }
         }

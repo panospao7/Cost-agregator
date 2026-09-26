@@ -83,6 +83,7 @@ class BudgetViewModel @Inject constructor(
         const val ERROR_AUTOPILOT_APPLY_FAILED = "AUTOPILOT_APPLY_FAILED: Could not apply the recommendation."
         const val ERROR_AUTOPILOT_APPLY_ALL_FAILED = "AUTOPILOT_APPLY_ALL_FAILED: Apply all failed and was rolled back."
         const val ERROR_AUTOPILOT_NOT_ACTIONABLE = "AUTOPILOT_NOT_ACTIONABLE: This recommendation cannot be applied."
+        const val ERROR_AUTOPILOT_REGENERATE_REQUIRED = "AUTOPILOT_REGENERATE_REQUIRED: Budget currency changed; regenerate recommendations."
     }
 
     private sealed class ManualState {
@@ -298,6 +299,8 @@ class BudgetViewModel @Inject constructor(
                 _autopilotError.value = when (e) {
                     is com.yourname.expensetracker.data.repository.HomeCurrencyUnavailableException ->
                         ERROR_BUDGET_HISTORY_UNAVAILABLE
+                    is com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException ->
+                        ERROR_BUDGET_HISTORY_UNAVAILABLE
                     else -> ERROR_AUTOPILOT_GENERATE_FAILED
                 }
                 _autopilotRecommendations.value = null
@@ -318,34 +321,41 @@ class BudgetViewModel @Inject constructor(
             _autopilotLoading.value = true
             _autopilotError.value = null
             try {
-                val budget = budgetRepository.getActiveBudgets()
+                val activeBudgets = budgetRepository.getActiveBudgets()
+                val budget = activeBudgets
                     .find { it.id == recommendation.budgetId }
-                    ?: budgetRepository.getActiveBudgets().find {
+                    ?: activeBudgets.find {
                         recommendation.categoryId != null && it.categoryId == recommendation.categoryId
                     }
 
-                if (budget != null) {
-                    val updatedBudget = budget.copy(amount = recommendation.recommendedBudget)
-                    val result = budgetRepository.updateBudget(updatedBudget)
-                    when (result) {
-                        is com.yourname.expensetracker.domain.model.Result.Success -> {
-                            val current = _autopilotRecommendations.value
-                            if (current != null) {
-                                _autopilotRecommendations.value = current.copy(
-                                    categoryRecommendations = current.categoryRecommendations.filter {
-                                        it.budgetId != recommendation.budgetId
-                                    }
-                                )
-                            }
+                if (budget == null ||
+                    com.yourname.expensetracker.domain.currency.SupportedCurrency.fromCode(budget.currency)?.code !=
+                    recommendation.sourceAmountToApply.currency.code
+                ) {
+                    _autopilotError.value = ERROR_AUTOPILOT_REGENERATE_REQUIRED
+                    return@launch
+                }
+
+                val updatedBudget = budget.copy(amount = recommendation.sourceAmountToApply.amount)
+                val result = budgetRepository.updateBudget(updatedBudget)
+                when (result) {
+                    is com.yourname.expensetracker.domain.model.Result.Success -> {
+                        val current = _autopilotRecommendations.value
+                        if (current != null) {
+                            _autopilotRecommendations.value = current.copy(
+                                categoryRecommendations = current.categoryRecommendations.filter {
+                                    it.budgetId != recommendation.budgetId
+                                }
+                            )
                         }
-                        is com.yourname.expensetracker.domain.model.Result.Error -> {
-                            // RP-08 privacy: repository Result messages are not
-                            // guaranteed controlled text — surface the sanitized
-                            // constant only (same policy as the C2 catch blocks).
-                            _autopilotError.value = ERROR_AUTOPILOT_APPLY_FAILED
-                        }
-                        else -> {}
                     }
+                    is com.yourname.expensetracker.domain.model.Result.Error -> {
+                        // RP-08 privacy: repository Result messages are not
+                        // guaranteed controlled text — surface the sanitized
+                        // constant only (same policy as the C2 catch blocks).
+                        _autopilotError.value = ERROR_AUTOPILOT_APPLY_FAILED
+                    }
+                    else -> {}
                 }
             } catch (e: Exception) {
                 // RP-01: never swallow CancellationException.
@@ -374,27 +384,28 @@ class BudgetViewModel @Inject constructor(
                     return@launch
                 }
                 val activeBudgets = budgetRepository.getActiveBudgets()
+                val updates = recommendations.map { recommendation ->
+                    val budget = activeBudgets.find {
+                        it.id == recommendation.budgetId ||
+                            (recommendation.categoryId != null && it.categoryId == recommendation.categoryId)
+                    }
+                    if (budget == null ||
+                        com.yourname.expensetracker.domain.currency.SupportedCurrency.fromCode(budget.currency)?.code !=
+                        recommendation.sourceAmountToApply.currency.code
+                    ) {
+                        _autopilotError.value = ERROR_AUTOPILOT_REGENERATE_REQUIRED
+                        return@launch
+                    }
+                    budget.copy(amount = recommendation.sourceAmountToApply.amount)
+                }
 
                 database.withTransaction {
-                    for (rec in recommendations) {
-                        val budget = activeBudgets.find {
-                            it.id == rec.budgetId ||
-                                (rec.categoryId != null && it.categoryId == rec.categoryId)
-                        }
-                        if (budget != null) {
-                            budgetRepository.updateBudgetOrThrow(budget.copy(amount = rec.recommendedBudget))
-                        }
+                    for (updatedBudget in updates) {
+                        budgetRepository.updateBudgetOrThrow(updatedBudget)
                     }
                 }
 
-                _autopilotRecommendations.value = BudgetAutopilotRecommendations(
-                    categoryRecommendations = emptyList(),
-                    totalCurrentBudget = 0.0,
-                    totalRecommendedBudget = 0.0,
-                    overallDelta = 0.0,
-                    confidence = 0.0,
-                    generatedAt = timeProvider.now()
-                )
+                _autopilotRecommendations.value = null
             } catch (e: Exception) {
                 // RP-01: never swallow CancellationException.
                 if (e is kotlinx.coroutines.CancellationException) throw e
@@ -412,13 +423,6 @@ class BudgetViewModel @Inject constructor(
      * Dismiss all autopilot recommendations.
      */
     fun dismissAllAutopilotRecommendations() {
-        _autopilotRecommendations.value = BudgetAutopilotRecommendations(
-            categoryRecommendations = emptyList(),
-            totalCurrentBudget = 0.0,
-            totalRecommendedBudget = 0.0,
-            overallDelta = 0.0,
-            confidence = 0.0,
-            generatedAt = timeProvider.now()
-        )
+        _autopilotRecommendations.value = null
     }
 }

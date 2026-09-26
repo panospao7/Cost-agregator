@@ -163,7 +163,7 @@ class NotificationProcessingPipeline @Inject constructor(
     private val diagnosticEmitter: com.yourname.expensetracker.domain.diagnostics.NotificationDiagnosticEmitter,
     private val writeBarrier: DatabaseWriteBarrier,
     // RP-15 (15-A): raw-persistence policy comes ONLY from the resolver — never an
-    // inline `settings.rawNotificationStorageMode` read. The resolver normalizes
+    // inline raw-notification storage-setting read. The resolver normalizes
     // corrupt/unavailable settings to FAIL_CLOSED_DEFAULTS before policy construction.
     private val rawPersistencePolicyResolver: com.yourname.expensetracker.domain.privacy.RawPersistencePolicyResolver,
     private val userCurrencyProvider: UserCurrencyProvider,
