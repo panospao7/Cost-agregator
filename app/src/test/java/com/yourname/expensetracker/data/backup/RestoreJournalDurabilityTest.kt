@@ -132,12 +132,14 @@ class RestoreJournalDurabilityTest {
             assertEquals(entry.operationId, archived.getString("operationId"))
             org.junit.Assert.assertFalse(File(directory, "$destination.tmp").exists())
         }
-        for (destination in destinations) for (stage in writeStages) {
+        // S2: the rename-false fallback is a single atomic MOVE onto the destination (no
+        // in-place rewrite), so the only destination fault point is that MOVE.
+        for (destination in destinations) {
             val (owner, directory) = isolatedJournal()
             val entry = owner.beginJournal("", "", "/live")
             owner.testRenameTo = { _, _ -> false }
             owner.beforeIo = { file, current ->
-                if (file.name == destination && current == stage) throw java.io.IOException("TEST_FALLBACK_FAILURE")
+                if (file.name == destination && current == RestoreJournal.IoStage.MOVE) throw java.io.IOException("TEST_FALLBACK_FAILURE")
             }
             org.junit.Assert.assertThrows(RestoreJournal.JournalDurabilityException::class.java) {
                 finalizeDestination(owner, entry, destination)
@@ -156,7 +158,13 @@ class RestoreJournalDurabilityTest {
                 if (failRename && target.name == destination) throw java.io.IOException("TEST_RENAME_FAILURE")
                 false
             }
-            owner.testDelete = { file -> if (file.name == "$destination.tmp") false else file.delete() }
+            // S2: with rename=false the fallback is an atomic MOVE; fail it so durability is
+            // never certified.
+            owner.beforeIo = { file, current ->
+                if (!failRename && file.name == destination && current == RestoreJournal.IoStage.MOVE) {
+                    throw java.io.IOException("TEST_FALLBACK_FAILURE")
+                }
+            }
             org.junit.Assert.assertThrows(RestoreJournal.JournalDurabilityException::class.java) {
                 finalizeDestination(owner, entry, destination)
             }
@@ -200,6 +208,18 @@ class RestoreJournalDurabilityTest {
             owner.beforeIo = { file, current ->
                 val target = if (stage == RestoreJournal.IoStage.RENAME) destination else "$destination.tmp"
                 if (current == stage && file.name == target) throw cancellation
+            }
+            org.junit.Assert.assertSame(cancellation, org.junit.Assert.assertThrows(kotlinx.coroutines.CancellationException::class.java) {
+                finalizeDestination(owner, entry, destination)
+            })
+        }
+        for (destination in destinations) {
+            val (owner, _) = isolatedJournal()
+            val entry = owner.beginJournal("", "", "/live")
+            val cancellation = kotlinx.coroutines.CancellationException("TEST_CANCELLED")
+            owner.testRenameTo = { _, _ -> false }
+            owner.beforeIo = { file, current ->
+                if (current == RestoreJournal.IoStage.MOVE && file.name == destination) throw cancellation
             }
             org.junit.Assert.assertSame(cancellation, org.junit.Assert.assertThrows(kotlinx.coroutines.CancellationException::class.java) {
                 finalizeDestination(owner, entry, destination)
@@ -253,6 +273,17 @@ class RestoreJournalDurabilityTest {
                 for (value in invalid) cases += valid().put("assetTasks", org.json.JSONArray().put(task().put(key, value))).toString()
             }
             cases += valid().put("assetTasks", org.json.JSONArray().put(task().put("status", "UNKNOWN"))).toString()
+            // S2: replay proof is all-or-nothing and strictly typed.
+            val sha = "a".repeat(64)
+            for (proof in listOf(
+                task().put("_sha256", sha),
+                task().put("_size", 3L),
+                task().put("_sha256", "A".repeat(64)).put("_size", 3L),
+                task().put("_sha256", "a".repeat(63)).put("_size", 3L),
+                task().put("_sha256", 17).put("_size", 3L),
+                task().put("_sha256", sha).put("_size", -1L),
+                task().put("_sha256", sha).put("_size", "3")
+            )) cases += valid().put("assetTasks", org.json.JSONArray().put(proof)).toString()
             cases += valid().put("assetTasks", org.json.JSONArray().put(org.json.JSONObject.NULL)).toString()
             return cases
         }
@@ -495,14 +526,25 @@ class RestoreJournalDurabilityTest {
 
     @Test
     fun `fallback copy or fsync failure is surfaced and active journal is retained`() {
+        // S2: the fallback is an atomic MOVE; its failure must surface and leave the
+        // previously durable journal byte-for-byte intact (no torn in-place rewrite).
+        val entry = journal.beginJournal("/cache/src.costbackup", "/data/staged.db", "/data/live.db")
+        val active = File(
+            androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>().filesDir,
+            "restore_journal.json"
+        )
+        val prior = active.readBytes()
         journal.testRenameTo = { _, _ -> false }
-        journal.testWriteTextSynced = { file, _ ->
-            if (file.name == "restore_journal.json") throw java.io.SyncFailedException("injected")
+        journal.beforeIo = { file, stage ->
+            if (file.name == "restore_journal.json" && stage == RestoreJournal.IoStage.MOVE) {
+                throw java.io.IOException("injected")
+            }
         }
         org.junit.Assert.assertThrows(RestoreJournal.JournalDurabilityException::class.java) {
-            journal.beginJournal("/cache/src.costbackup", "/data/staged.db", "/data/live.db")
+            journal.transitionTo(entry, RestoreJournal.JournalState.STAGED)
         }
         assertTrue("fallback failure must leave recovery evidence", journal.hasJournal())
+        org.junit.Assert.assertArrayEquals(prior, active.readBytes())
     }
 
     @Test

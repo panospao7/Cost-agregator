@@ -216,7 +216,7 @@ entries:
 
   - path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
     class: DatabaseBackupRepositoryImpl
-    method_pattern: "createCostBackup"
+    method_pattern: "runCostBackupExport"
     operation: writableDatabase
     reason: "File-level backup/restore — writable DB access for WAL checkpoint before snapshot"
     owner: "@panospao7"
@@ -224,7 +224,7 @@ entries:
 
   - path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
     class: DatabaseBackupRepositoryImpl
-    method_pattern: "createCostBackup"
+    method_pattern: "runCostBackupExport"
     operation: getDatabasePath
     reason: "File-level backup/restore — resolves live DB path for backup source"
     owner: "@panospao7"
@@ -232,7 +232,7 @@ entries:
 
   - path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
     class: DatabaseBackupRepositoryImpl
-    method_pattern: "createCostBackup"
+    method_pattern: "runCostBackupExport"
     operation: openDatabase
     reason: "File-level backup/restore — opens DB snapshot for copy"
     owner: "@panospao7"
@@ -251,6 +251,15 @@ entries:
     method_pattern: "restoreCostBackup"
     operation: deleteRecursively
     reason: "File-level backup/restore — cleans staged temp directory during restore"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # Human-authorized 2026-09-28: exact helper grant; retain the caller grant.
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
+    class: DatabaseBackupRepositoryImpl
+    method_pattern: "cleanupRestoreStaging"
+    operation: deleteRecursively
+    reason: "File-level backup/restore — best-effort cleanup of the restore extraction workspace"
     owner: "@panospao7"
     linked_issue: "MIT-003"
 

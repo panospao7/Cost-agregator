@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [main, master]
   workflow_dispatch:
+    inputs:
+      evidence_base_ref:
+        description: 'Full lowercase commit SHA used as the evidence comparison base'
+        required: true
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -96,7 +101,7 @@ jobs:
   # byte-identical.
   #
   # Runtime / scoping decision: the tool's argparse exposes NO subset or
-  # scoping flags (only --root / --out / --expected-sha / --allow-dirty),
+  # scoping flags (only --root / --out / --expected-sha / --base-ref / --allow-dirty),
   # so the full declared command matrix runs twice per PR: registry
   # validation, focused Python tests, inventory-only scan, DB CLI, DB
   # ratchet, the full static guard suite, and two Gradle invocations
@@ -119,6 +124,7 @@ jobs:
   # Reproduce locally:
   #   python3 scripts/ci/capture_db_guard_evidence.py --root . \
   #     --expected-sha $(git rev-parse HEAD) \
+  #     --base-ref <full-reviewed-base-sha> \
   #     --out build/guard-evidence/<sha>/run-1
   evidence-gate:
     needs: [validate-workflow, compile]
@@ -132,6 +138,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -153,15 +161,24 @@ jobs:
       - name: Grant execute permission for Gradle wrapper
         run: chmod +x gradlew
 
-      - name: Resolve pinned commit SHA (caller-stated run pin)
+      - name: Resolve pinned commit and comparison base
         id: sha
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before || inputs.evidence_base_ref }}
+        run: |
+          if [[ ! "$BASE_REF" =~ ^[0-9a-f]{40}$ || "$BASE_REF" == "0000000000000000000000000000000000000000" ]]; then
+            echo "::error::EVIDENCE_BASE_REF_INVALID: a caller-stated full commit SHA is required"
+            exit 2
+          fi
+          git cat-file -e "${BASE_REF}^{commit}" || exit 2
+          git merge-base HEAD "$BASE_REF" > /dev/null || exit 2
+          printf 'sha=%s\nbase_ref=%s\n' "$(git rev-parse HEAD)" "$BASE_REF" >> "$GITHUB_OUTPUT"
 
       - name: Capture evidence (run 1)
-        run: python3 scripts/ci/capture_db_guard_evidence.py --root . --expected-sha ${{ steps.sha.outputs.sha }} --out build/guard-evidence/${{ steps.sha.outputs.sha }}/run-1
+        run: python3 scripts/ci/capture_db_guard_evidence.py --root . --expected-sha ${{ steps.sha.outputs.sha }} --base-ref ${{ steps.sha.outputs.base_ref }} --out build/guard-evidence/${{ steps.sha.outputs.sha }}/run-1
 
       - name: Capture evidence (run 2)
-        run: python3 scripts/ci/capture_db_guard_evidence.py --root . --expected-sha ${{ steps.sha.outputs.sha }} --out build/guard-evidence/${{ steps.sha.outputs.sha }}/run-2
+        run: python3 scripts/ci/capture_db_guard_evidence.py --root . --expected-sha ${{ steps.sha.outputs.sha }} --base-ref ${{ steps.sha.outputs.base_ref }} --out build/guard-evidence/${{ steps.sha.outputs.sha }}/run-2
 
       - name: Compare semantic summaries (must be byte-identical)
         run: |

@@ -208,6 +208,11 @@ class WarrantyExpirationWorker @AssistedInject constructor(
             return false
         }
 
+        if (!deliveryDao.isClaimedDeliveryEligible(row.id)) {
+            deliveryDao.markFailed(row.id, reason = PARENT_NOT_ELIGIBLE, now = now)
+            return false
+        }
+
         // 3. Send and record the outcome. Mark SENT only when delivery actually succeeds.
         val notificationId = NotificationIdGenerator.forWarranty(warranty.id, windowDays)
         val deliveryResult = notificationService.sendBudgetAlert(
@@ -227,6 +232,7 @@ class WarrantyExpirationWorker @AssistedInject constructor(
 
     companion object {
         private const val WORK_NAME = "warranty_expiration_check"
+        private const val PARENT_NOT_ELIGIBLE = "warranty_parent_not_eligible"
 
         /**
          * A CLAIMED delivery whose claim is older than this is considered stale (the

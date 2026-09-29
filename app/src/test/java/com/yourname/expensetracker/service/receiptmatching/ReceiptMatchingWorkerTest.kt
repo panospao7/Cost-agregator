@@ -62,6 +62,7 @@ class ReceiptMatchingWorkerTest {
         every { notificationPermissionChecker.areNotificationsEnabled() } returns true
         executionGuard = mockk(relaxed = true)
         matchService = mockk(relaxed = true)
+        coEvery { matchService.saveMatchSuggestion(any(), any(), any()) } returns true
         receiptLinkService = mockk(relaxed = true)
         ctx = mockk(relaxed = true)
         coEvery {
@@ -78,6 +79,34 @@ class ReceiptMatchingWorkerTest {
                 else WorkerGuardResult.Failed(msg, e)
             }
         }
+    }
+
+    @Test
+    fun lostSuggestionCasDoesNotCountAnUpdate() = runTest {
+        val receipt = sampleReceipt(id = 501L)
+        val expense = sampleExpense(id = 601L)
+        coEvery { receiptRepository.getProcessableReceipts() } returns listOf(receipt)
+        coEvery { matcher.findBestMatch(receipt, any()) } returns MatchResult.Suggested(expense, 0.7)
+        coEvery { matchService.saveMatchSuggestion(receipt.id, expense.id, 0.7) } returns false
+
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        coVerify(exactly = 1) { matchService.saveMatchSuggestion(receipt.id, expense.id, 0.7) }
+        coVerify(exactly = 1) { ctx.addRowsScanned() }
+        coVerify(exactly = 0) { ctx.addRowsUpdated() }
+    }
+
+    @Test
+    fun successfulSuggestionCasCountsOneUpdate() = runTest {
+        val receipt = sampleReceipt(id = 502L)
+        val expense = sampleExpense(id = 602L)
+        coEvery { receiptRepository.getProcessableReceipts() } returns listOf(receipt)
+        coEvery { matcher.findBestMatch(receipt, any()) } returns MatchResult.Suggested(expense, 0.7)
+        coEvery { matchService.saveMatchSuggestion(receipt.id, expense.id, 0.7) } returns true
+
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        coVerify(exactly = 1) { ctx.addRowsUpdated() }
     }
 
     private fun buildWorker(): ReceiptMatchingWorker {

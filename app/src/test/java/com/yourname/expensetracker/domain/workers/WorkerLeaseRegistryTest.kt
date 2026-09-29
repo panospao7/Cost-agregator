@@ -5,12 +5,18 @@ import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseAccessType
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.domain.util.MonotonicTimeProvider
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -23,8 +29,9 @@ import org.junit.Test
 class WorkerLeaseRegistryTest {
 
     private val writeBarrier = mockk<DatabaseWriteBarrier>()
-    private val timeProvider = object : TimeProvider {
-        override fun now(): Long = System.currentTimeMillis()
+    private val dispatcher = StandardTestDispatcher()
+    private val monotonicTimeProvider = object : MonotonicTimeProvider {
+        override fun nowNanos(): Long = dispatcher.scheduler.currentTime * 1_000_000L
     }
     private lateinit var registry: WorkerLeaseRegistryImpl
 
@@ -32,13 +39,13 @@ class WorkerLeaseRegistryTest {
     fun setup() {
         every { writeBarrier.checkWritesAllowed(any<String>()) } returns Unit
         every { writeBarrier.checkWritesAllowed(any<DatabaseAccessOperation>()) } returns Unit
-        registry = WorkerLeaseRegistryImpl(writeBarrier, timeProvider)
+        registry = WorkerLeaseRegistryImpl(writeBarrier, monotonicTimeProvider)
     }
 
     // ── restore_waits_for_running_worker_to_stop ──────────────────
 
     @Test
-    fun restore_waits_for_running_worker_to_stop() = runTest {
+    fun restore_waits_for_running_worker_to_stop() = runTest(dispatcher) {
         val lease = registry.acquire("data_retention")
 
         // Drain should time out while lease is held
@@ -55,7 +62,7 @@ class WorkerLeaseRegistryTest {
     // ── backup_waits_for_data_retention_worker_to_stop ────────────
 
     @Test
-    fun backup_waits_for_data_retention_worker_to_stop() = runTest {
+    fun backup_waits_for_data_retention_worker_to_stop() = runTest(dispatcher) {
         val lease = registry.acquire("data_retention")
         assertFalse(registry.awaitNoActiveWorkers(100))
         lease.close()
@@ -65,7 +72,7 @@ class WorkerLeaseRegistryTest {
     // ── cancelled_worker_releases_lease ──────────────────────────
 
     @Test
-    fun cancelled_worker_releases_lease() = runTest {
+    fun cancelled_worker_releases_lease() = runTest(dispatcher) {
         val lease = registry.acquire("receipt_matching")
         assertEquals(1, registry.activeLeaseCount())
 
@@ -74,7 +81,7 @@ class WorkerLeaseRegistryTest {
     }
 
     @Test
-    fun lease_close_is_idempotent() = runTest {
+    fun lease_close_is_idempotent() = runTest(dispatcher) {
         val lease = registry.acquire("receipt_matching")
         lease.close()
         lease.close() // second close must not throw or double-decrement
@@ -84,7 +91,7 @@ class WorkerLeaseRegistryTest {
     // ── worker_checkpoint_blocks_mutation_after_restore_starts ────
 
     @Test
-    fun worker_checkpoint_throws_when_stop_requested() = runTest {
+    fun worker_checkpoint_throws_when_stop_requested() = runTest(dispatcher) {
         val lease = registry.acquire("location_backfill")
         registry.requestStopAll("restore started")
 
@@ -96,7 +103,7 @@ class WorkerLeaseRegistryTest {
     }
 
     @Test
-    fun worker_checkpoint_throws_when_write_barrier_blocks() = runTest {
+    fun worker_checkpoint_throws_when_write_barrier_blocks() = runTest(dispatcher) {
         val mode = RestoreMaintenanceMode.Mode.RESTORE_PREPARING
         val op = DatabaseAccessOperation("updateLocation")
         every { writeBarrier.checkWritesAllowed(any<String>()) } throws
@@ -112,7 +119,7 @@ class WorkerLeaseRegistryTest {
     }
 
     @Test
-    fun worker_checkpoint_passes_in_normal_mode() = runTest {
+    fun worker_checkpoint_passes_in_normal_mode() = runTest(dispatcher) {
         val lease = registry.acquire("location_backfill")
         lease.checkpoint("updateLocation") // must not throw
         lease.close()
@@ -121,19 +128,19 @@ class WorkerLeaseRegistryTest {
     // ── requestStopAndAwaitDrain ──────────────────────────────────
 
     @Test
-    fun requestStopAndAwaitDrain_returns_true_when_no_active_workers() = runTest {
+    fun requestStopAndAwaitDrain_returns_true_when_no_active_workers() = runTest(dispatcher) {
         val drained = registry.requestStopAndAwaitDrain("backup", timeoutMs = 200)
         assertTrue(drained)
     }
 
     @Test
-    fun requestStopAndAwaitDrain_sets_stop_flag() = runTest {
+    fun requestStopAndAwaitDrain_sets_stop_flag() = runTest(dispatcher) {
         registry.requestStopAndAwaitDrain("restore", timeoutMs = 50)
         assertTrue(registry.isStopRequested())
     }
 
     @Test
-    fun resetStopFlag_clears_stop_request() = runTest {
+    fun resetStopFlag_clears_stop_request() = runTest(dispatcher) {
         registry.requestStopAll("test")
         assertTrue(registry.isStopRequested())
         registry.resetStopFlag()
@@ -143,7 +150,7 @@ class WorkerLeaseRegistryTest {
     // ── multiple workers ──────────────────────────────────────────
 
     @Test
-    fun multiple_leases_all_must_release_before_drain() = runTest {
+    fun multiple_leases_all_must_release_before_drain() = runTest(dispatcher) {
         val lease1 = registry.acquire("data_retention")
         val lease2 = registry.acquire("receipt_matching")
 
@@ -159,7 +166,7 @@ class WorkerLeaseRegistryTest {
     // ── PR2: same-name acquisitions create distinct leases ─────────
 
     @Test
-    fun same_name_acquire_creates_distinct_leases() = runTest {
+    fun same_name_acquire_creates_distinct_leases() = runTest(dispatcher) {
         // PR2-FIX: concurrent same-name workers must each have their own lease,
         // so that close() of one does not accidentally remove the other's lease.
         val lease1 = registry.acquire("receipt_matching")
@@ -176,7 +183,7 @@ class WorkerLeaseRegistryTest {
     }
 
     @Test
-    fun drain_sees_all_concurrent_same_name_workers() = runTest {
+    fun drain_sees_all_concurrent_same_name_workers() = runTest(dispatcher) {
         val lease1 = registry.acquire("receipt_matching")
         val lease2 = registry.acquire("receipt_matching")
 
@@ -195,7 +202,7 @@ class WorkerLeaseRegistryTest {
     // ── PR6A: New lease registry hardening tests ──────────────────
 
     @Test
-    fun `acquire after stop request is rejected`() = runTest {
+    fun `acquire after stop request is rejected`() = runTest(dispatcher) {
         registry.requestStopAll("backup starting")
 
         assertThrows(LeaseAcquisitionBlockedException::class.java) {
@@ -204,11 +211,11 @@ class WorkerLeaseRegistryTest {
     }
 
     @Test
-    fun `drain does not miss late acquire`() = runTest {
-        // Use a virtual time provider so awaitNoActiveWorkers cooperates with runTest's virtual time
+    fun `drain does not miss late acquire`() = runTest(dispatcher) {
+        // Use a monotonic clock tied to runTest's virtual time.
         val scheduler = testScheduler
-        val virtualTimeProvider = object : TimeProvider {
-            override fun now(): Long = scheduler.currentTime
+        val virtualTimeProvider = object : MonotonicTimeProvider {
+            override fun nowNanos(): Long = scheduler.currentTime * 1_000_000L
         }
         val virtualRegistry = WorkerLeaseRegistryImpl(writeBarrier, virtualTimeProvider)
 
@@ -235,7 +242,7 @@ class WorkerLeaseRegistryTest {
     }
 
     @Test
-    fun `concurrent acquire and request stop is safe`() = runTest {
+    fun `concurrent acquire and request stop is safe`() = runTest(dispatcher) {
         // Acquire on one "thread" and request stop on another should not corrupt state
         var lease1: WorkerLease? = null
         val acquiredSuccessfully = mutableListOf<String>()
@@ -273,7 +280,7 @@ class WorkerLeaseRegistryTest {
     }
 
     @Test
-    fun `release removes primary and secondary indexes`() = runTest {
+    fun `release removes primary and secondary indexes`() = runTest(dispatcher) {
         val lease = registry.acquire("receipt_matching")
 
         // Primary index has the lease
@@ -301,7 +308,7 @@ class WorkerLeaseRegistryTest {
     }
 
     @Test
-    fun `reset stop flag allows future acquire`() = runTest {
+    fun `reset stop flag allows future acquire`() = runTest(dispatcher) {
         // Stop all
         registry.requestStopAll("maintenance")
 
@@ -316,6 +323,105 @@ class WorkerLeaseRegistryTest {
         // Now acquire should succeed
         val lease = registry.acquire("data_retention")
         assertEquals(1, registry.activeLeaseCount())
+        lease.close()
+    }
+
+    @Test
+    fun `drain budget ignores forward and backward wall clock jumps`() = runTest(dispatcher) {
+        for (jumpMs in listOf(-86_400_000L, 86_400_000L)) {
+            val clock = object : TimeProvider, MonotonicTimeProvider {
+                var wallTimeMs = 1_700_000_000_000L
+                override fun now(): Long = wallTimeMs
+                override fun nowNanos(): Long = testScheduler.currentTime * 1_000_000L
+            }
+            val localRegistry = WorkerLeaseRegistryImpl(writeBarrier, clock)
+            val lease = localRegistry.acquire("data_retention")
+            val drain = async { localRegistry.awaitNoActiveWorkers(100) }
+            runCurrent()
+
+            clock.wallTimeMs += jumpMs
+            assertEquals(1_700_000_000_000L + jumpMs, clock.now())
+            advanceTimeBy(99)
+            runCurrent()
+            assertFalse("Wall-clock jump must not end the drain early", drain.isCompleted)
+
+            advanceTimeBy(1)
+            runCurrent()
+            assertFalse("Drain must expire at its elapsed-time budget", drain.await())
+            assertEquals(1, localRegistry.activeLeaseCount())
+            lease.close()
+        }
+    }
+
+    @Test
+    fun `short drain budget is not rounded up to polling interval`() = runTest(dispatcher) {
+        val lease = registry.acquire("data_retention")
+        val startedAt = testScheduler.currentTime
+
+        assertFalse(registry.awaitNoActiveWorkers(7))
+
+        assertEquals(7L, testScheduler.currentTime - startedAt)
+        assertEquals(1, registry.activeLeaseCount())
+        lease.close()
+    }
+
+    @Test
+    fun `release before deadline lets drain complete`() = runTest(dispatcher) {
+        val lease = registry.acquire("data_retention")
+        launch {
+            delay(25)
+            lease.close()
+        }
+
+        assertTrue(registry.awaitNoActiveWorkers(100))
+        assertEquals(50L, testScheduler.currentTime)
+        assertEquals(0, registry.activeLeaseCount())
+    }
+
+    @Test
+    fun `nonpositive budgets only succeed for an empty registry`() = runTest(dispatcher) {
+        assertTrue(registry.awaitNoActiveWorkers(0))
+        assertTrue(registry.awaitNoActiveWorkers(-1))
+        val lease = registry.acquire("data_retention")
+
+        assertFalse(registry.awaitNoActiveWorkers(0))
+        assertFalse(registry.awaitNoActiveWorkers(-1))
+        assertEquals(0L, testScheduler.currentTime)
+        assertEquals(1, registry.activeLeaseCount())
+        lease.close()
+    }
+
+    @Test
+    fun `cancelling drain propagates without releasing worker lease`() = runTest(dispatcher) {
+        val lease = registry.acquire("data_retention")
+        var returnedNormally = false
+        val drain = launch {
+            registry.awaitNoActiveWorkers(1_000)
+            returnedNormally = true
+        }
+        runCurrent()
+
+        drain.cancelAndJoin()
+
+        assertTrue(drain.isCancelled)
+        assertFalse(returnedNormally)
+        assertEquals(1, registry.activeLeaseCount())
+        lease.close()
+    }
+
+    @Test
+    fun `elapsed drain budget tolerates signed monotonic counter wrap`() = runTest(dispatcher) {
+        val origin = Long.MAX_VALUE - 25_000_000L
+        val clock = object : MonotonicTimeProvider {
+            override fun nowNanos(): Long = origin + testScheduler.currentTime * 1_000_000L
+        }
+        val localRegistry = WorkerLeaseRegistryImpl(writeBarrier, clock)
+        val lease = localRegistry.acquire("data_retention")
+
+        assertFalse(localRegistry.awaitNoActiveWorkers(100))
+
+        assertEquals(100L, testScheduler.currentTime)
+        assertEquals(1, localRegistry.activeLeaseCount())
         lease.close()
     }
 }

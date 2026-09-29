@@ -1,0 +1,27 @@
+# CL-22 — static guard fail-closed enforcement specification
+
+Starting HEAD: `a4807632`; audit anchor: `37601232`. This is the last implementation batch, after the authored CL-21 provider changes and other remaining Wave-2 runtime fixes. All eight findings were rechecked against current source. No new validation or independent-review approval is claimed.
+
+## Verified findings and bounded fixes
+
+| Finding | Current evidence | Required change and regression evidence |
+|---|---|---|
+| CA-I-04-001 | `.github/workflows/ci.yml` invokes both evidence captures without the required `--base-ref`; capture argparse still requires a full lowercase SHA. | Supply a caller-stated PR/push/manual base pin, fetch the history needed to resolve it, validate it before either capture, and pass the same pin to both runs. Test workflow wiring and invalid/missing pin rejection; never infer a successful capture. |
+| CA-I-04-002 | Cloud R2 accepts whole-file policy markers; privacy G3 accepts generic names in a nearby function. | Reuse the existing Kotlin lexical masker. Check executable policy preparation and its connection to each posted body, including `toRequestBody`, aliases and actual request-building helpers. Comments, literals, unused policy objects/results, unrelated functions and raw-body substitutions must not establish compliance. Unsupported/unproved paths fail rather than receiving marker-based approval. |
+| CA-I-04-003 | Protocol-v1 extraction collapses occurrences into rule/path sets; event output also discards specific rule identities. | Preserve occurrence counts and event rule identity. Compare multiplicities without relying on unstable line numbers. Keep legacy baseline files unchanged: an entry without reviewed counts cannot authorize arbitrary additional occurrences. Validate count metadata, test growth within an already-covered file, and preserve v2 behavior. |
+| CA-I-04-004 | The suite uses two shallow globs; evidence capture uses eleven literal modules. Dedicated parser, barrier-proof, source-scope and policy-v2 modules are omitted. | Make both execution paths select the complete guard-test surface, including nested modules and new regression tests. Update manifest/command expectations to assert expanded coverage, not merely changed strings. Preserve fail-closed discovery and capture cache suppression. |
+| CA-I-04-005 | Python and Kotlin worker checks inspect raw file text and discover only unqualified CoroutineWorker inheritance. | Discover qualified workers, remove comment/string evidence, and require a guard invocation in the actual doWork execution path rather than an unrelated helper. Read/parsing failures must not silently remove workers. Add comment/literal, qualified-supertype, unused-helper and valid-worker fixtures in both checks. |
+| CA-I-04-006 | All three cancellation rules pass an empty symbol; the matcher compares against G-CANCEL-01 globally. | Match the active rule and an exact enclosing callable symbol, with path-boundary matching. Empty/unknown symbols cannot authorize a file. Keep the allowlist unchanged and report newly exposed debt; test rule and sibling-symbol isolation. |
+| CA-I-04-007 | Missing/unparseable YAML, unsupported shapes and missing configured inputs can produce an empty list and PASS. | Return controlled infrastructure failure (exit 2) for missing parser/input, unreadable or malformed YAML, unsupported top-level/nested shapes and invalid entry containers. Explicit empty lists remain valid. Never print PASS after an input failure; test direct parsing and CLI behavior with and without the violation flag. |
+| CA-P08-005 | CloudProviderPreparedPayloadTest exercises DefaultCloudPayloadPolicy directly, not provider calls. | Preserve useful policy-unit coverage while adding actual provider invocation/HTTP-body assertions using distinguishable prepared payloads. Cover denial/no-send behavior and the real provider paths, including receipt/bank-statement variants; static file-existence checks are not provider acceptance evidence. |
+
+## Implementation boundaries
+
+- Scope: named guard scripts, their shared bounded parsing/proof helpers, CI wiring, and directly associated Python/Kotlin regression tests. Do not refactor application services merely to satisfy a weak marker check.
+- Follow FINAL_CI_GUARD_ACCEPTANCE_GATE.md by reference: FG-03, FG-06, FG-07 and FG-23. No baseline growth, allowlist expansion, exemptions, skipped tests, weakened assertions or self-check bypasses.
+- Protocol-v1 historical multiplicity and newly unmasked cancellation/cloud/worker findings may expose existing debt. Do not silently manufacture reviewed counts, relax allowlists, or fix unrelated production violations in this lane.
+- Author static review is separate from the required independent strict review. The user requested no subagents; that does not create a new review waiver.
+
+## Required pre-merge evidence
+
+New validation remains NOT RUN under the persisted human-run coder policy. After author review, the human must run the full `static-guards` profile serially through the validation runner, preserve durable result/log artifacts, and report every newly failing violation for adjudication. Targeted Kotlin worker/provider tests and compile evidence are also required. A missing, running, timed-out, stale or infrastructure-error result is not PASS. No CL-22 closure or Wave-2 finalization until the required gates have actual evidence.

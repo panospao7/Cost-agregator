@@ -25,14 +25,15 @@ import javax.inject.Singleton
 enum class UrgencyLevel {
     GREEN,  // 0-30
     YELLOW, // 31-60
-    RED     // 61-100
+    RED,    // 61-100
+    UNAVAILABLE // Required signals could not be evaluated; no score exists.
 }
 
 /**
  * Data class representing Money Radar widget data.
  */
 data class MoneyRadarData(
-    val urgencyScore: Int, // 0-100
+    val urgencyScore: Int?, // 0-100 when available; null is not a healthy zero.
     val urgencyLevel: UrgencyLevel,
     val dueBills: List<UpcomingBill>,
     val anomalyAlerts: List<AnomalyAlertSummary>,
@@ -136,7 +137,23 @@ class ComputeMoneyRadarUseCase @Inject constructor(
     /**
      * Compute the Money Radar widget data.
      */
-    suspend fun compute(): MoneyRadarData = coroutineScope {
+    suspend fun compute(): MoneyRadarData = try {
+        computeAvailable()
+    } catch (e: Exception) {
+        if (e is kotlinx.coroutines.CancellationException) throw e
+        Timber.w("RADAR_UNAVAILABLE class=%s", e.javaClass.simpleName)
+        MoneyRadarData(
+            urgencyScore = null,
+            urgencyLevel = UrgencyLevel.UNAVAILABLE,
+            dueBills = emptyList(),
+            anomalyAlerts = emptyList(),
+            budgetRisk = null,
+            topReasons = emptyList(),
+            primaryCta = null
+        )
+    }
+
+    private suspend fun computeAvailable(): MoneyRadarData = coroutineScope {
         val now = timeProvider.now()
         
         // Gather all data in parallel where possible
@@ -171,8 +188,10 @@ class ComputeMoneyRadarUseCase @Inject constructor(
         val topReasons = buildTopReasons(dueBills, anomalyAlerts, budgetRisk, urgencyScore)
         val primaryCta = determinePrimaryAction(dueBills, anomalyAlerts, budgetRisk)
         
-        Timber.d("Money Radar computed: score=$urgencyScore, level=$urgencyLevel, " +
-                "bills=${dueBills.size}, anomalies=${anomalyAlerts.size}, risk=$budgetRisk")
+        Timber.d(
+            "Money Radar computed: bills=%d anomalies=%d hasBudgetRisk=%s",
+            dueBills.size, anomalyAlerts.size, budgetRisk != null
+        )
         
         MoneyRadarData(
             urgencyScore = urgencyScore,
@@ -211,8 +230,7 @@ class ComputeMoneyRadarUseCase @Inject constructor(
                 }
                 .sortedBy { it.daysUntilDue }
         } catch (e: Exception) {
-            Timber.e(e, "Error fetching recurring patterns for Money Radar")
-            emptyList()
+            throw e
         }
     }
     
@@ -238,8 +256,7 @@ class ComputeMoneyRadarUseCase @Inject constructor(
                 }
                 .sortedBy { it.daysAgo }
         } catch (e: Exception) {
-            Timber.e(e, "Error fetching anomaly alerts for Money Radar")
-            emptyList()
+            throw e
         }
     }
     
@@ -286,7 +303,7 @@ class ComputeMoneyRadarUseCase @Inject constructor(
                 budgetAmount = budgetAmount
             )
             
-            mcResult?.let { result ->
+            checkNotNull(mcResult) { "RADAR_BUDGET_UNAVAILABLE" }.let { result ->
                 // Use GetMonteCarloBudgetImpactUseCase to get proper risk assessment
                 when (val impact = getMonteCarloBudgetImpact(budgetAmount, result)) {
                     is com.yourname.expensetracker.domain.model.Result.Success -> {
@@ -297,16 +314,14 @@ class ComputeMoneyRadarUseCase @Inject constructor(
                         )
                     }
                     is com.yourname.expensetracker.domain.model.Result.Error -> {
-                        Timber.w("Could not compute budget impact: ${impact.message}")
-                        null
+                        error("RADAR_BUDGET_UNAVAILABLE")
                     }
-                    com.yourname.expensetracker.domain.model.Result.Duplicate -> null
-                    com.yourname.expensetracker.domain.model.Result.Loading -> null
+                    com.yourname.expensetracker.domain.model.Result.Duplicate -> error("RADAR_BUDGET_UNAVAILABLE")
+                    com.yourname.expensetracker.domain.model.Result.Loading -> error("RADAR_BUDGET_UNAVAILABLE")
                 }
             }
         } catch (e: Exception) {
-            Timber.e(e, "Error computing budget risk for Money Radar")
-            null
+            throw e
         }
     }
     
@@ -392,12 +407,8 @@ class ComputeMoneyRadarUseCase @Inject constructor(
      * ```
      */
     private suspend fun getMonthlyIncome(now: Long): Double {
-        return try {
-            val (monthStart, _) = TimePeriodUtils.getMonthRange(now)
-            expenseRepository.getTotalDepositsForPeriod(monthStart, now)
-        } catch (e: Exception) {
-            0.0
-        }
+        val (monthStart, _) = TimePeriodUtils.getMonthRange(now)
+        return expenseRepository.getTotalDepositsForPeriod(monthStart, now)
     }
     
     /**

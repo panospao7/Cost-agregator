@@ -24,6 +24,7 @@ import pytest
 import yaml
 
 from scripts.ci.guard_findings import GuardRunReport
+from scripts.ci.guard_test_diagnostics import db_guard_failure_summary
 from scripts.db_guard.scanner import _diag_from_text
 from scripts.db_guard import reporting
 from scripts.db_guard import room_inventory
@@ -628,7 +629,7 @@ def test_overloaded_dao_with_argument_matching_no_overload_is_not_authorized(
     assert result.returncode == 2
     data = _report(report, _expected(diagnostics=[{
         "code": "DB_CALL_TARGET_AMBIGUOUS", "path": CANONICAL,
-        "symbol": None, "controlled_context": {},
+        "symbol": None, "controlled_context": {"line": 19},
     }]))
     assert data["findings"] == []
     assert _codes(data, "diagnostics") == ["DB_CALL_TARGET_AMBIGUOUS"]
@@ -668,7 +669,7 @@ def test_qualified_dao_receiver_is_unresolved_in_structured_report(
     assert result.returncode == 2
     data = _report(report, _expected(diagnostics=[{
         "code": "DB_DAO_SCOPE_UNRESOLVED", "path": CANONICAL,
-        "symbol": None, "controlled_context": {},
+        "symbol": None, "controlled_context": {"line": 13},
     }]))
     assert data["findings"] == []
     assert _codes(data, "diagnostics") == ["DB_DAO_SCOPE_UNRESOLVED"]
@@ -1093,7 +1094,7 @@ class ExpressionRepository(private val expenseDao: ExpenseDao) {
                 "code": "DB_CALL_TARGET_AMBIGUOUS",
                 "path": "app/src/main/java/example/Fixture.kt",
                 "symbol": None,
-                "controlled_context": {},
+                "controlled_context": {"line": 18},
             },
         ],
         "statistics": {"trusted": False},
@@ -1204,7 +1205,7 @@ def test_mixed_scanner_debt_blocks_only_the_db_callable_cli(
 ) -> None:
     """One DB-touching callable unresolved + one UI callable unresolved ->
     untrusted exit 2 with findings withheld; ONLY the DB-touching callable's
-    diagnostic is blocking (context-free), the UI one keeps its advisory
+    diagnostic is blocking (with its source line), the UI one keeps its advisory
     marker."""
     root = _fixture(tmp_path)
     _write(root, "app/src/main/java/com/example/multi/UiState.kt",
@@ -1234,7 +1235,7 @@ def test_mixed_scanner_debt_blocks_only_the_db_callable_cli(
                 "code": "DB_SIGNATURE_UNRESOLVED",
                 "path": "app/src/main/java/example/DebtRepository.kt",
                 "symbol": None,
-                "controlled_context": {},
+                "controlled_context": {"line": 10},
             },
             {
                 "code": "DB_SIGNATURE_UNRESOLVED",
@@ -1431,7 +1432,9 @@ def test_default_project_root_uses_canonical_manifest(
     deliberately not pinned.
     """
     result = _real_tree_scan["result"]
-    assert result.returncode == 0
+    assert result.returncode == 0, db_guard_failure_summary(
+        result.returncode, _real_tree_scan["report"],
+    )
     _assert_cli_streams(result, _real_tree_scan["root"], diagnostic=False)
     _assert_strict_trusted_clean_real_tree_report(_real_tree_scan["report"])
 
@@ -2256,7 +2259,9 @@ counts:
     # as a TRUSTED run (advisory-only scanner debt at most — see the GR-09
     # derivation above) — never a policy/manifest failure.
     canonical = _real_tree_scan
-    assert canonical["result"].returncode == 0
+    assert canonical["result"].returncode == 0, db_guard_failure_summary(
+        canonical["result"].returncode, canonical["report"],
+    )
     _assert_cli_streams(canonical["result"], canonical["root"], diagnostic=False)
     _assert_strict_trusted_clean_real_tree_report(canonical["report"])
 
@@ -2545,7 +2550,7 @@ def test_accessor_unknown_constructor_expression_is_not_authorized(
                 "code": "DB_CALL_TARGET_AMBIGUOUS",
                 "path": "app/src/main/java/example/Fixture.kt",
                 "symbol": None,
-                "controlled_context": {},
+                "controlled_context": {"line": 13},
             },
         ],
         "statistics": {"trusted": False},
@@ -2786,7 +2791,7 @@ class UnsafeDao
                 "code": "DB_DAO_SCOPE_UNRESOLVED",
                 "path": "app/src/main/java/example/Fixture.kt",
                 "symbol": None,
-                "controlled_context": {},
+                "controlled_context": {"line": 17},
             }
         ],
         "statistics": {"trusted": False},
@@ -2830,7 +2835,7 @@ class UnsafeDao
                 "code": "DB_DAO_SCOPE_UNRESOLVED",
                 "path": "app/src/main/java/example/Fixture.kt",
                 "symbol": None,
-                "controlled_context": {},
+                "controlled_context": {"line": 19},
             }
         ],
         "statistics": {"trusted": False},

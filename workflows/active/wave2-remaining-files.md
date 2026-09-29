@@ -1,0 +1,137 @@
+# Remaining Wave-2 — working-change file manifest
+
+Initial 128-file authoring inventory, plus the September 27 repair report, mediation collection repair and human-authorized empty allowlist. The six validator-side edits are attributed in wave2-validation-repair-20260927.md; four were already committed in CL-05. Pre-existing unrelated files and human-maintained campaign journal updates are excluded. This is not validation evidence.
+
+Files listed: 131
+
+- .github/workflows/ci.yml
+- app/src/androidTest/java/com/yourname/expensetracker/data/location/MerchantKeyBackfillWorkerTest.kt
+- app/src/main/java/com/yourname/expensetracker/data/ai/provider/CloudQueryInterpretationService.kt
+- app/src/main/java/com/yourname/expensetracker/data/ai/provider/HybridCategorizationAssistService.kt
+- app/src/main/java/com/yourname/expensetracker/data/ai/provider/HybridDashboardBriefingService.kt
+- app/src/main/java/com/yourname/expensetracker/data/ai/provider/HybridQueryInterpretationService.kt
+- app/src/main/java/com/yourname/expensetracker/data/ai/provider/HybridReceiptItemCategorizationService.kt
+- app/src/main/java/com/yourname/expensetracker/data/ai/provider/HybridReviewExplanationService.kt
+- app/src/main/java/com/yourname/expensetracker/data/backup/BackupVerifier.kt
+- app/src/main/java/com/yourname/expensetracker/data/database/dao/ExpenseDao.kt
+- app/src/main/java/com/yourname/expensetracker/data/database/dao/GroupSettlementDao.kt
+- app/src/main/java/com/yourname/expensetracker/data/database/dao/ManualRecurringExpenseDao.kt
+- app/src/main/java/com/yourname/expensetracker/data/database/dao/ScannedReceiptDao.kt
+- app/src/main/java/com/yourname/expensetracker/data/database/dao/WarrantyReminderDeliveryDao.kt
+- app/src/main/java/com/yourname/expensetracker/data/location/MerchantKeyBackfillWorker.kt
+- app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
+- app/src/main/java/com/yourname/expensetracker/data/repository/ExpenseRepository.kt
+- app/src/main/java/com/yourname/expensetracker/data/repository/GroupsRepository.kt
+- app/src/main/java/com/yourname/expensetracker/data/repository/GroupsRepositoryImpl.kt
+- app/src/main/java/com/yourname/expensetracker/data/repository/SharedExpenseDataPortAdapter.kt
+- app/src/main/java/com/yourname/expensetracker/domain/ai/HybridRouter.kt
+- app/src/main/java/com/yourname/expensetracker/domain/backup/DatabaseBackupRepository.kt
+- app/src/main/java/com/yourname/expensetracker/domain/backup/DatabaseStatsUnavailableException.kt
+- app/src/main/java/com/yourname/expensetracker/domain/core/money/MoneyAggregateBuilder.kt
+- app/src/main/java/com/yourname/expensetracker/domain/forecasting/FinancialStressForecastEngine.kt
+- app/src/main/java/com/yourname/expensetracker/domain/groups/GroupBalanceCalculator.kt
+- app/src/main/java/com/yourname/expensetracker/domain/groups/GroupSettlementBalancePolicy.kt
+- app/src/main/java/com/yourname/expensetracker/domain/groups/SharedExpenseManager.kt
+- app/src/main/java/com/yourname/expensetracker/domain/groups/SharedExpensePort.kt
+- app/src/main/java/com/yourname/expensetracker/domain/privacy/PrivacyDeniedException.kt
+- app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt
+- app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt
+- app/src/main/java/com/yourname/expensetracker/domain/receipt/ReceiptOcrService.kt
+- app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt
+- app/src/main/java/com/yourname/expensetracker/domain/usecase/dashboard/ComputeDashboardWidgetsUseCase.kt
+- app/src/main/java/com/yourname/expensetracker/domain/usecase/dashboard/ComputeMoneyRadarUseCase.kt
+- app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerLeaseRegistryImpl.kt
+- app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerRunLogger.kt
+- app/src/main/java/com/yourname/expensetracker/service/receiptmatching/ReceiptMatchingWorker.kt
+- app/src/main/java/com/yourname/expensetracker/service/warranty/WarrantyExpirationWorker.kt
+- app/src/main/java/com/yourname/expensetracker/ui/components/dashboard/MoneyRadarWidget.kt
+- app/src/main/java/com/yourname/expensetracker/ui/components/FinancialStressForecastCard.kt
+- app/src/main/java/com/yourname/expensetracker/ui/screens/backup/BackupRestoreScreen.kt
+- app/src/main/java/com/yourname/expensetracker/ui/screens/backup/BackupRestoreViewModel.kt
+- app/src/main/java/com/yourname/expensetracker/ui/screens/debug/DebugScreen.kt
+- app/src/main/java/com/yourname/expensetracker/ui/screens/debug/DebugViewModel.kt
+- app/src/main/java/com/yourname/expensetracker/ui/screens/groups/SharedExpenseGroupsViewModel.kt
+- app/src/main/java/com/yourname/expensetracker/ui/screens/review/ReviewViewModel.kt
+- app/src/main/java/com/yourname/expensetracker/util/CsvExpenseImporter.kt
+- app/src/main/res/values/strings.xml
+- app/src/test/java/com/yourname/expensetracker/architecture/WorkerEntryPointProof.kt
+- app/src/test/java/com/yourname/expensetracker/architecture/WorkerEntryPointProofTest.kt
+- app/src/test/java/com/yourname/expensetracker/architecture/WorkerGuardArchitectureGuardTest.kt
+- app/src/test/java/com/yourname/expensetracker/architecture/WorkerSourceMask.kt
+- app/src/test/java/com/yourname/expensetracker/data/ai/provider/CloudProviderTransportPayloadTest.kt
+- app/src/test/java/com/yourname/expensetracker/data/ai/provider/CloudQueryInterpretationServiceTest.kt
+- app/src/test/java/com/yourname/expensetracker/data/ai/provider/CloudQueryPreparedPayloadTest.kt
+- app/src/test/java/com/yourname/expensetracker/data/ai/provider/HybridRouterIntegrationTest.kt
+- app/src/test/java/com/yourname/expensetracker/data/backup/BackupVerifierRequiredSemanticQueryTest.kt
+- app/src/test/java/com/yourname/expensetracker/data/database/dao/WarrantyReminderDeliveryDaoTest.kt
+- app/src/test/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinatorTest.kt
+- app/src/test/java/com/yourname/expensetracker/data/location/MerchantKeyBackfillWorkerTest.kt
+- app/src/test/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImplTest.kt
+- app/src/test/java/com/yourname/expensetracker/data/repository/ExpenseRepositoryMerchantKeyBackfillTest.kt
+- app/src/test/java/com/yourname/expensetracker/data/repository/GroupsRepositoryImplTest.kt
+- app/src/test/java/com/yourname/expensetracker/data/repository/SharedExpenseSettlementReadTest.kt
+- app/src/test/java/com/yourname/expensetracker/domain/ai/HybridRouterTest.kt
+- app/src/test/java/com/yourname/expensetracker/domain/core/money/MoneyAggregateBuilderRestrictionTest.kt
+- app/src/test/java/com/yourname/expensetracker/domain/forecasting/FinancialStressForecastEngineTest.kt
+- app/src/test/java/com/yourname/expensetracker/domain/groups/GroupSettlementBalancePolicyTest.kt
+- app/src/test/java/com/yourname/expensetracker/domain/groups/SharedExpenseManagerSettlementTest.kt
+- app/src/test/java/com/yourname/expensetracker/domain/privacy/CloudProviderPreparedPayloadTest.kt
+- app/src/test/java/com/yourname/expensetracker/domain/privacy/PrivacyDeniedExceptionTest.kt
+- app/src/test/java/com/yourname/expensetracker/domain/receipt/lifecycle/BankStatementCompletionStatusTest.kt
+- app/src/test/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleServiceTest.kt
+- app/src/test/java/com/yourname/expensetracker/domain/receipt/OcrResultPartialTest.kt
+- app/src/test/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinatorTest.kt
+- app/src/test/java/com/yourname/expensetracker/domain/usecase/dashboard/ComputeDashboardWidgetsUseCasePaceWiringTest.kt
+- app/src/test/java/com/yourname/expensetracker/domain/usecase/dashboard/ComputeMoneyRadarUseCaseTest.kt
+- app/src/test/java/com/yourname/expensetracker/domain/workers/WorkerLeaseRegistryTest.kt
+- app/src/test/java/com/yourname/expensetracker/domain/workers/WorkerRestoreRegressionTest.kt
+- app/src/test/java/com/yourname/expensetracker/domain/workers/WorkerRunLoggerTest.kt
+- app/src/test/java/com/yourname/expensetracker/e2e/NotificationExpenseDashboardPipelineTest.kt
+- app/src/test/java/com/yourname/expensetracker/service/receiptmatching/ReceiptMatchingWorkerTest.kt
+- app/src/test/java/com/yourname/expensetracker/service/warranty/WarrantyExpirationWorkerTest.kt
+- app/src/test/java/com/yourname/expensetracker/ui/screens/backup/BackupRestoreViewModelPrivacyDenialTest.kt
+- app/src/test/java/com/yourname/expensetracker/ui/screens/debug/DebugViewModelDatabaseStatsTest.kt
+- app/src/test/java/com/yourname/expensetracker/ui/screens/groups/SharedExpenseGroupsViewModelTest.kt
+- app/src/test/java/com/yourname/expensetracker/ui/screens/receiptmatching/ReceiptMatchingViewModelTest.kt
+- app/src/test/java/com/yourname/expensetracker/ui/screens/review/ReviewViewModelPrivacyDenialTest.kt
+- app/src/test/java/com/yourname/expensetracker/util/CsvImportRfc4180Test.kt
+- docs/analyses and debug master/campaign CA-2026-09-21/wave2/A2-denial-contract.md
+- docs/analyses and debug master/campaign CA-2026-09-21/wave2/A7-group-balances-self-review.md
+- docs/analyses and debug master/campaign CA-2026-09-21/wave2/A7-group-balances-spec.md
+- docs/analyses and debug master/campaign CA-2026-09-21/wave2/CL-05-review.md
+- docs/analyses and debug master/campaign CA-2026-09-21/wave2/CL-09-self-review.md
+- docs/analyses and debug master/campaign CA-2026-09-21/wave2/CL-09-spec.md
+- docs/analyses and debug master/campaign CA-2026-09-21/wave2/CL-15-self-review.md
+- docs/analyses and debug master/campaign CA-2026-09-21/wave2/CL-15-spec.md
+- docs/analyses and debug master/campaign CA-2026-09-21/wave2/CL-21-self-review.md
+- docs/analyses and debug master/campaign CA-2026-09-21/wave2/CL-21-spec.md
+- docs/analyses and debug master/campaign CA-2026-09-21/wave2/CL-22-self-review.md
+- docs/analyses and debug master/campaign CA-2026-09-21/wave2/CL-22-spec.md
+- docs/analyses and debug master/campaign CA-2026-09-21/wave2/CL-23-self-review.md
+- docs/analyses and debug master/campaign CA-2026-09-21/wave2/CL-23-spec.md
+- docs/analyses and debug master/campaign CA-2026-09-21/wave2/remaining-wave2-plan.md
+- scripts/allowlists/ui_dao_allowlist.yml
+- scripts/ci/capture_db_guard_evidence.py
+- scripts/ci/guard_ratchet.py
+- scripts/ci/run_static_guard_suite.py
+- scripts/ci/test_capture_db_guard_evidence.py
+- scripts/ci/test_guard_ratchet_occurrences.py
+- scripts/ci/test_run_static_guard_suite.py
+- scripts/ci/test_wave2_guard_wiring.py
+- scripts/db_guard/mediation_analysis/test_models.py
+- scripts/guardrails/cloud_payload_proof.py
+- scripts/guardrails/test_cloud_payload_proof.py
+- scripts/test_cloud_payload_guard_integration.py
+- scripts/test_verify_allowlist_compliance_fail_closed.py
+- scripts/test_verify_cancellation_allowlist_scope.py
+- scripts/test_verify_worker_entrypoint_proof.py
+- scripts/verify_allowlist_compliance.py
+- scripts/verify_cancellation_boundaries.py
+- scripts/verify_cloud_payload_boundaries.py
+- scripts/verify_event_writers.py
+- scripts/verify_privacy_boundaries.py
+- scripts/verify_worker_boundaries.py
+- workflows/active/wave2-remaining-files.md
+- workflows/active/wave2-remaining-handoff.md
+- workflows/active/wave2-remaining-validation.md
+- workflows/active/wave2-validation-repair-20260927.md

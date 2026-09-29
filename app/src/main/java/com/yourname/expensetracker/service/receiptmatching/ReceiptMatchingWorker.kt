@@ -185,13 +185,15 @@ class ReceiptMatchingWorker @AssistedInject constructor(
                         }
                         is MatchResult.Suggested -> {
                             // Save as suggestion for manual review (no link service call for suggestions)
-                            matchService.saveMatchSuggestion(
+                            val saved = matchService.saveMatchSuggestion(
                                 receiptId = receipt.id,
                                 suggestedExpenseId = matchResult.transaction.id,
                                 confidence = matchResult.score
                             )
-                            suggested++
-                            ctx.addRowsUpdated()
+                            if (saved) {
+                                suggested++
+                                ctx.addRowsUpdated()
+                            }
                         }
                         else -> {
                             // P9-P1-08: emit a durable event for the previously-silent no-match path

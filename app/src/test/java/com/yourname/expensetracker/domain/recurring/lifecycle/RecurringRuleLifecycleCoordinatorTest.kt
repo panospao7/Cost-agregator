@@ -22,6 +22,7 @@ import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.recurring.RecurringOccurrenceExpander
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
+import kotlinx.coroutines.CopyableThrowable
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -65,6 +66,7 @@ class RecurringRuleLifecycleCoordinatorTest {
     private lateinit var writeBarrier: DatabaseWriteBarrier
     private lateinit var eventWriter: RecordingEventWriter
     private lateinit var coordinator: RecurringRuleLifecycleCoordinator
+    private lateinit var coordinatorFactory: (ManualRecurringExpenseDao, ExpenseDao) -> RecurringRuleLifecycleCoordinator
 
     private val timeProvider = object : TimeProvider {
         override fun now() = NOW
@@ -129,11 +131,11 @@ class RecurringRuleLifecycleCoordinatorTest {
             writeBarrier = writeBarrier
         )
 
-        coordinator = RecurringRuleLifecycleCoordinator(
+        coordinatorFactory = { rules, expenses -> RecurringRuleLifecycleCoordinator(
             database = database,
             writeBarrier = writeBarrier,
             timeProvider = timeProvider,
-            manualRecurringExpenseDao = ruleDao,
+            manualRecurringExpenseDao = rules,
             occurrenceDao = occurrenceDao,
             reminderDeliveryDao = deliveryDao,
             plannedExpenseDao = plannedDao,
@@ -150,10 +152,11 @@ class RecurringRuleLifecycleCoordinatorTest {
                 eventWriter = eventWriter,
                 plannedExpenseDao = plannedDao
             ),
-            expenseDao = expenseDao,
+            expenseDao = expenses,
             eventWriter = eventWriter,
             planProjectionService = daggerLazyOf(projectionService)
-        )
+        ) }
+        coordinator = coordinatorFactory(ruleDao, expenseDao)
     }
 
     @After
@@ -162,6 +165,97 @@ class RecurringRuleLifecycleCoordinatorTest {
     }
 
     // ── helpers ─────────────────────────────────────────────────────────────
+
+    @Test
+    fun activationReadsRuleInsideItsTransaction() = runTest(timeout = 60.seconds) {
+        seedRule(rule(id = 1L, isActive = false))
+        var observedRead = false
+        val rules = object : ManualRecurringExpenseDao by ruleDao {
+            override suspend fun getById(id: Long): ManualRecurringExpense? {
+                assertTrue("Activation must read its rule inside the transaction", database.inTransaction())
+                observedRead = true
+                return ruleDao.getById(id)
+            }
+        }
+
+        coordinatorFactory(rules, expenseDao).activateRule(1L)
+
+        assertTrue(observedRead)
+        assertTrue(ruleDao.getById(1L)!!.isActive)
+        assertInvariants(1L)
+    }
+
+    @Test
+    fun zeroRowActivationDoesNotGenerateDerivedStateOrAnEvent() = runTest(timeout = 60.seconds) {
+        seedRule(rule(id = 1L, isActive = false))
+        val rules = object : ManualRecurringExpenseDao by ruleDao {
+            override suspend fun setActiveStatus(id: Long, isActive: Boolean): Int = 0
+        }
+
+        coordinatorFactory(rules, expenseDao).activateRule(1L)
+
+        assertFalse(ruleDao.getById(1L)!!.isActive)
+        assertTrue(occurrenceDao.getBySource("RECURRING_RULE", 1L).isEmpty())
+        assertTrue(plannedRowsFor(1L).isEmpty())
+        assertTrue(eventsOfType("RULE_ACTIVATED_REGENERATED").isEmpty())
+    }
+
+    @Test
+    fun repeatedActivationPreservesDerivedRowsAndWritesOnlyOneEvent() = runTest(timeout = 60.seconds) {
+        seedRule(rule(id = 1L, isActive = false))
+        coordinator.activateRule(1L)
+        val occurrences = occurrenceDao.getBySource("RECURRING_RULE", 1L).sortedBy { it.id }
+        val planned = plannedRowsFor(1L).sortedBy { it.id }
+        assertTrue(occurrences.isNotEmpty())
+
+        coordinator.activateRule(1L)
+
+        assertEquals(occurrences, occurrenceDao.getBySource("RECURRING_RULE", 1L).sortedBy { it.id })
+        assertEquals(planned, plannedRowsFor(1L).sortedBy { it.id })
+        assertEquals(1, eventsOfType("RULE_ACTIVATED_REGENERATED").size)
+        assertInvariants(1L)
+    }
+
+    // Non-copying sentinel: the transaction framework may copy cross-boundary
+    // stacktraces; createCopy()=null keeps the original instance so assertSame
+    // detects application wrapping/replacement.
+    private class IdentityDerivedInputFailure(message: String) :
+        IllegalStateException(message), CopyableThrowable<IdentityDerivedInputFailure> {
+        override fun createCopy(): IdentityDerivedInputFailure? = null
+    }
+
+    @Test
+    fun derivedInputFailureRollsBackActivation() = runTest(timeout = 60.seconds) {
+        seedRule(rule(id = 1L, isActive = false))
+        val failure = IdentityDerivedInputFailure("TEST_DERIVED_INPUT_FAILURE")
+        val failingExpenses = io.mockk.mockk<ExpenseDao>()
+        io.mockk.coEvery { failingExpenses.getExpensesBetween(any(), any()) } throws failure
+
+        try {
+            coordinatorFactory(ruleDao, failingExpenses).activateRule(1L)
+            org.junit.Assert.fail("Expected the injected derived-input failure")
+        } catch (e: IllegalStateException) {
+            assertTrue(e === failure)
+        }
+
+        assertFalse(ruleDao.getById(1L)!!.isActive)
+        assertTrue(occurrenceDao.getBySource("RECURRING_RULE", 1L).isEmpty())
+        assertTrue(plannedRowsFor(1L).isEmpty())
+        assertTrue(eventsOfType("RULE_ACTIVATED_REGENERATED").isEmpty())
+    }
+
+    @Test
+    fun deletedRuleCannotRegenerateOrphanedState() = runTest(timeout = 60.seconds) {
+        seedRule(rule(id = 1L, isActive = false))
+        assertNotNull(ruleDao.getById(1L))
+        ruleDao.deleteById(1L)
+
+        coordinator.activateRule(1L)
+
+        assertTrue(occurrenceDao.getBySource("RECURRING_RULE", 1L).isEmpty())
+        assertTrue(plannedRowsFor(1L).isEmpty())
+        assertTrue(eventsOfType("RULE_ACTIVATED_REGENERATED").isEmpty())
+    }
 
     private fun mockMaintenance(normal: Boolean): RestoreMaintenanceMode =
         io.mockk.mockk<RestoreMaintenanceMode>(relaxed = true).apply {

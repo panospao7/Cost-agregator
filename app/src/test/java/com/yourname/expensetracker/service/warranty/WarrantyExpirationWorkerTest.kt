@@ -12,6 +12,7 @@ import com.yourname.expensetracker.data.database.dao.WarrantyDao
 import com.yourname.expensetracker.data.database.dao.WarrantyReminderDeliveryDao
 import com.yourname.expensetracker.data.database.entity.Warranty
 import com.yourname.expensetracker.data.database.entity.WarrantyReminderDelivery
+import com.yourname.expensetracker.data.database.entity.WarrantyStatus
 import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
 import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository.ExpiryReconciliationResult
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
@@ -57,6 +58,7 @@ class WarrantyExpirationWorkerTest {
     private lateinit var notificationService: NotificationService
     private lateinit var executionGuard: WorkerExecutionGuard
     private lateinit var timeProvider: FakeTimeProvider
+    private lateinit var lastRunContext: WorkerRunContext
 
     @Before
     fun setup() {
@@ -82,6 +84,7 @@ class WarrantyExpirationWorkerTest {
         } coAnswers {
             val block = secondArg<suspend (WorkerRunContext) -> Any>()
             val ctx = mockk<WorkerRunContext>(relaxed = true)
+            lastRunContext = ctx
             try {
                 WorkerGuardResult.Success(block.invoke(ctx))
             } catch (e: CancellationException) {
@@ -108,6 +111,71 @@ class WarrantyExpirationWorkerTest {
     @After
     fun teardown() {
         database.close()
+    }
+
+    @Test
+    fun inactiveParentInStaleSnapshotDoesNotNotify() = runTest {
+        val warranty = seedWarranty()
+        coEvery { warrantyRepository.getWarrantiesExpiringSoon(7) } returns listOf(warranty)
+        warrantyDao.updateWarrantyStatus(
+            warranty.id, WarrantyStatus.CLAIMED,
+            claimedAt = timeProvider.now(), updatedAt = timeProvider.now()
+        )
+
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        verify(exactly = 0) { lastRunContext.addNotificationsSent() }
+        val row = requireNotNull(deliveryDao.getByKey(warranty.id, 7, warranty.warrantyEndDate))
+        assertEquals("SCHEDULED", row.status)
+        assertEquals(0, row.attemptCount)
+    }
+
+    @Test
+    fun parentBecomingInactiveAfterClaimIsRevalidatedBeforePosting() = runTest {
+        val warranty = seedWarranty()
+        coEvery { warrantyRepository.getWarrantiesExpiringSoon(7) } returns listOf(warranty)
+        val actualDao = deliveryDao
+        deliveryDao = object : WarrantyReminderDeliveryDao by actualDao {
+            override suspend fun claim(warrantyId: Long, windowDays: Int, expiryDate: Long, now: Long): Int {
+                val claimed = actualDao.claim(warrantyId, windowDays, expiryDate, now)
+                if (claimed == 1) {
+                    warrantyDao.updateWarrantyStatus(
+                        warrantyId, WarrantyStatus.CLAIMED, claimedAt = now, updatedAt = now
+                    )
+                }
+                return claimed
+            }
+        }
+
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        verify(exactly = 0) { lastRunContext.addNotificationsSent() }
+        val row = requireNotNull(actualDao.getByKey(warranty.id, 7, warranty.warrantyEndDate))
+        assertEquals("FAILED", row.status)
+        assertEquals("warranty_parent_not_eligible", row.failureReason)
+        assertEquals(1, row.attemptCount)
+    }
+
+    @Test
+    fun parentDeletedAfterClaimRowReadDoesNotNotify() = runTest {
+        val warranty = seedWarranty()
+        coEvery { warrantyRepository.getWarrantiesExpiringSoon(7) } returns listOf(warranty)
+        val actualDao = deliveryDao
+        deliveryDao = object : WarrantyReminderDeliveryDao by actualDao {
+            override suspend fun getByKey(warrantyId: Long, windowDays: Int, expiryDate: Long): WarrantyReminderDelivery? {
+                val row = actualDao.getByKey(warrantyId, windowDays, expiryDate)
+                if (row?.status == "CLAIMED") warrantyDao.deleteWarrantyById(warrantyId)
+                return row
+            }
+        }
+
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        verify(exactly = 0) { lastRunContext.addNotificationsSent() }
+        assertThat(actualDao.getByKey(warranty.id, 7, warranty.warrantyEndDate)).isNull()
     }
 
     private fun buildWorker(): WarrantyExpirationWorker {

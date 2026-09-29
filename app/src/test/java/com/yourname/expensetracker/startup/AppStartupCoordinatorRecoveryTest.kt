@@ -16,7 +16,11 @@ import com.yourname.expensetracker.data.backup.RestoreDatabaseOpener
 import com.yourname.expensetracker.data.backup.RestoreJournal
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.domain.bank.BankSyncStartupRecovery
+import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkObject
@@ -179,7 +183,7 @@ class AppStartupCoordinatorRecoveryTest {
     fun terminal_archive_and_active_deletion_failures_keep_evidence_across_two_startups() {
         val time = com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L)
         for (state in listOf(RestoreJournal.JournalState.COMPLETE, RestoreJournal.JournalState.FAILED)) {
-            for (fault in listOf("OPEN", "WRITE", "SYNC", "FALLBACK_SYNC", "DELETE")) {
+            for (fault in listOf("OPEN", "WRITE", "SYNC", "FALLBACK_MOVE", "DELETE")) {
                 clearRecoveryFixture()
                 val journal = RestoreJournal(context, time)
                 val entry = journal.beginJournal("", "", File(context.filesDir, "live.db").path)
@@ -188,11 +192,12 @@ class AppStartupCoordinatorRecoveryTest {
                 val bytes = active.readBytes()
                 val archive = if (state == RestoreJournal.JournalState.COMPLETE)
                     RestoreJournal.SUCCESS_JOURNAL_FILENAME else RestoreJournal.FAILURE_JOURNAL_FILENAME
-                if (fault == "FALLBACK_SYNC") journal.testRenameTo = { _, _ -> false }
+                // S2: the rename fallback is an atomic move (no in-place rewrite) - fault the move.
+                if (fault == "FALLBACK_MOVE") journal.testRenameTo = { _, _ -> false }
                 journal.beforeIo = { file, stage ->
                     val fail = when (fault) {
                         "DELETE" -> file == active && stage == RestoreJournal.IoStage.DELETE
-                        "FALLBACK_SYNC" -> file.name == archive && stage == RestoreJournal.IoStage.SYNC
+                        "FALLBACK_MOVE" -> file.name == archive && stage == RestoreJournal.IoStage.MOVE
                         else -> file.name == archive + ".tmp" && stage.name == fault
                     }
                     if (fail) throw java.io.IOException("TEST_TERMINAL_PRESERVATION_FAILED")
@@ -643,7 +648,7 @@ class AppStartupCoordinatorRecoveryTest {
         createValidSqliteFile(liveDbFile)
 
         val extractDir = File(context.cacheDir, "extract_test_resume")
-        val sourceFile = File(extractDir, "receipts/5_photo.jpg")
+        val sourceFile = File(extractDir, "files/receipts/5_photo.jpg")
         sourceFile.parentFile?.mkdirs()
         sourceFile.writeBytes(byteArrayOf(1, 2, 3, 4, 5))
 
@@ -656,23 +661,31 @@ class AppStartupCoordinatorRecoveryTest {
                     status = RestoreJournal.AssetRestoreStatus.PENDING,
                     // RP-03 fix: the journal name must equal the identity-derived name
                     // (restored_{receiptId}.{allowlisted ext}) - it is a cross-check now.
-                    targetPath = File(File(context.filesDir, "receipts"), "restored_5.jpg").absolutePath
+                    targetPath = File(File(context.filesDir, "receipts"), "restored_5.jpg").absolutePath,
+                    expectedImagePath = "/legacy/photo.jpg",
+                    expectedImagePathRecorded = true,
+                    expectedSha256 = sha256(byteArrayOf(1, 2, 3, 4, 5)),
+                    expectedSize = 5L
                 )
             ),
             extractTempDirPath = extractDir.absolutePath,
             liveDbFile = liveDbFile
         )
 
-        newCoordinator(mode, journal).checkRestoreJournal()
+        val dao = assetResumeDao()
+        newCoordinator(mode, journal, opener = assetResumeOpener(dao)).checkRestoreJournal()
 
         assertEquals(
             RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED,
             mode.currentMode()
         )
         val finalFile = File(File(context.filesDir, "receipts"), "restored_5.jpg")
+        coVerify(exactly = 1) { dao.updateImagePathIfUnchanged(5L, "/legacy/photo.jpg", finalFile.absolutePath) }
+        coVerify(exactly = 2) { dao.getById(5L) }
+        coVerify(exactly = 0) { dao.update(any()) }
         assertTrue("Resumed asset must be restored under the identity-derived target name", finalFile.exists())
         assertTrue("Resumed asset must keep its bytes", finalFile.length() == 5L)
-        assertFalse("Temp copy must be gone after the durable rename", File(File(context.filesDir, "receipts"), "restored_5.jpg.tmp").exists())
+        assertTrue("Temp copy must be gone after the durable publish", noAssetTemps(File(context.filesDir, "receipts")))
         assertFalse(journal.hasJournal())
         assertEquals(
             "Resumed task must be recorded COMPLETED in the success journal",
@@ -681,6 +694,202 @@ class AppStartupCoordinatorRecoveryTest {
         )
         // No temp residue in the extraction workspace is required — sources may stay
         // (they are cache files owned by the operation), but the journal is consumed.
+    }
+
+    private fun sha256(bytes: ByteArray): String =
+        java.security.MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+
+    /** S2: no operation-owned temp (any `*.tmp`) may survive in [dir]. */
+    private fun noAssetTemps(dir: File): Boolean = dir.listFiles { f -> f.name.endsWith(".tmp") }.isNullOrEmpty()
+
+    private fun assetResumeDao(imagePath: String? = "/legacy/photo.jpg"): ScannedReceiptDao {
+        val dao = mockk<ScannedReceiptDao>()
+        var receipt = ScannedReceipt(
+            id = 5L, imagePath = imagePath, rawOcrText = "fixture", parsedTotal = null,
+            parsedMerchant = null, parsedDate = null, parsedItems = null,
+            parsedTaxAmount = null, confidence = 0.5f
+        )
+        coEvery { dao.getById(5L) } coAnswers { receipt }
+        coEvery { dao.updateImagePathIfUnchanged(any(), any(), any()) } coAnswers {
+            if (firstArg<Long>() == receipt.id && secondArg<String?>() == receipt.imagePath) {
+                receipt = receipt.copy(imagePath = thirdArg<String>())
+                1
+            } else 0
+        }
+        return dao
+    }
+
+    private fun assetResumeOpener(dao: ScannedReceiptDao): RestoreDatabaseOpener {
+        val database = mockk<AppDatabase>(relaxed = true)
+        every { database.scannedReceiptDao() } returns dao
+        val opener = mockk<RestoreDatabaseOpener>()
+        coEvery { opener.openFreshDatabase() } returns database
+        return opener
+    }
+
+    /** The public startup path reads a real persisted journal; only the fresh Room handle is substituted. */
+    private fun runAssetPointerResume(
+        dao: ScannedReceiptDao,
+        expectedImagePath: String? = "/legacy/photo.jpg",
+        snapshotRecorded: Boolean = true,
+        status: RestoreJournal.AssetRestoreStatus = RestoreJournal.AssetRestoreStatus.PENDING,
+        existingFinalBytes: ByteArray? = null,
+        sourceBytes: ByteArray = byteArrayOf(1, 2, 3),
+        onDirectory: (File) -> Unit = {}
+    ): Pair<RestoreJournal.AssetRestoreTask, File> {
+        val directory = tmp.newFolder()
+        onDirectory(directory)
+        context = object : ContextWrapper(context) {
+            override fun getFilesDir(): File = directory
+            override fun getCacheDir(): File = File(directory, "cache").apply { mkdirs() }
+        }
+        val time = com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L)
+        val mode = RestoreMaintenanceMode(context, time)
+        val journal = RestoreJournal(context, time)
+        val liveDbFile = File(directory, "expense_tracker_db")
+        createValidSqliteFile(liveDbFile)
+        val extractDir = File(context.cacheDir, "snapshot_resume")
+        File(extractDir, "files/receipts/5_photo.jpg").apply {
+            parentFile!!.mkdirs()
+            writeBytes(sourceBytes)
+        }
+        if (existingFinalBytes != null) {
+            File(directory, "receipts/restored_5.jpg").apply { parentFile!!.mkdirs(); writeBytes(existingFinalBytes) }
+        }
+        writeAssetsRestoringJournal(
+            journal, listOf(RestoreJournal.AssetRestoreTask(
+                5L, "5_photo.jpg", status,
+                targetPath = "restored_5.jpg", expectedImagePath = expectedImagePath,
+                expectedImagePathRecorded = snapshotRecorded,
+                expectedSha256 = sha256(byteArrayOf(1, 2, 3)), expectedSize = 3L
+            )), extractDir.absolutePath, liveDbFile
+        )
+        newCoordinator(mode, journal, opener = assetResumeOpener(dao)).checkRestoreJournal()
+        assertEquals(RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED, mode.currentMode())
+        return journal.readSuccessJournal()!!.assetTasks.single() to File(directory, "receipts/restored_5.jpg")
+    }
+
+    @Test
+    fun startup_asset_resume_accepts_a_captured_null_pointer() {
+        val dao = assetResumeDao(null)
+        val (task, finalFile) = runAssetPointerResume(dao, expectedImagePath = null)
+        assertEquals(RestoreJournal.AssetRestoreStatus.COMPLETED, task.status)
+        assertTrue(finalFile.exists())
+        coVerify(exactly = 1) { dao.updateImagePathIfUnchanged(5L, null, finalFile.absolutePath) }
+        coVerify(exactly = 2) { dao.getById(5L) }
+        coVerify(exactly = 0) { dao.update(any()) }
+    }
+
+    @Test
+    fun startup_asset_resume_does_not_authorize_a_legacy_task_from_current_state() {
+        val dao = assetResumeDao()
+        val (task, finalFile) = runAssetPointerResume(dao, snapshotRecorded = false)
+        assertEquals(RestoreJournal.AssetRestoreStatus.FAILED, task.status)
+        assertEquals(RestoreJournal.ASSET_REASON_EXPECTED_PATH_MISSING, task.error)
+        assertFalse(finalFile.exists())
+        coVerify(exactly = 0) { dao.getById(any()) }
+        coVerify(exactly = 0) { dao.updateImagePathIfUnchanged(any(), any(), any()) }
+    }
+
+    @Test
+    fun startup_asset_resume_preserves_a_newer_pointer() {
+        val dao = assetResumeDao("/newer/photo.jpg")
+        val (task, finalFile) = runAssetPointerResume(dao)
+        assertEquals(RestoreJournal.AssetRestoreStatus.FAILED, task.status)
+        assertEquals(RestoreJournal.ASSET_REASON_IMAGE_PATH_CONFLICT, task.error)
+        assertFalse(finalFile.exists())
+        coVerify(exactly = 0) { dao.updateImagePathIfUnchanged(any(), any(), any()) }
+    }
+
+    @Test
+    fun startup_asset_resume_zero_affected_rows_cannot_complete_the_task() {
+        val dao = assetResumeDao()
+        coEvery { dao.updateImagePathIfUnchanged(any(), any(), any()) } returns 0
+        val (task, finalFile) = runAssetPointerResume(dao)
+        assertEquals(RestoreJournal.AssetRestoreStatus.FAILED, task.status)
+        assertEquals(RestoreJournal.ASSET_REASON_IMAGE_PATH_CONFLICT, task.error)
+        coVerify(exactly = 1) { dao.updateImagePathIfUnchanged(5L, "/legacy/photo.jpg", finalFile.absolutePath) }
+        coVerify(exactly = 0) { dao.update(any()) }
+        // S2: readback proves the row never referenced the published file - operation-owned residue is removed.
+        assertFalse(finalFile.exists())
+    }
+
+    @Test
+    fun startup_asset_resume_requires_database_pointer_readback() {
+        val dao = assetResumeDao()
+        coEvery { dao.updateImagePathIfUnchanged(any(), any(), any()) } returns 1
+        val (task, finalFile) = runAssetPointerResume(dao)
+        assertEquals(RestoreJournal.AssetRestoreStatus.FAILED, task.status)
+        assertEquals(RestoreJournal.ASSET_REASON_IMAGE_PATH_CONFLICT, task.error)
+        coVerify(exactly = 2) { dao.getById(5L) }
+        // S2: unconfirmed pointer state keeps the file (the row may reference it).
+        assertTrue(finalFile.exists())
+        coVerify(exactly = 0) { dao.update(any()) }
+    }
+
+    @Test
+    fun startup_asset_resume_missing_receipt_does_not_create_an_asset() {
+        val dao = assetResumeDao()
+        coEvery { dao.getById(5L) } returns null
+        val (task, finalFile) = runAssetPointerResume(dao)
+        assertEquals(RestoreJournal.AssetRestoreStatus.FAILED, task.status)
+        assertEquals("RECEIPT_ROW_MISSING", task.error)
+        assertFalse(finalFile.exists())
+        coVerify(exactly = 0) { dao.updateImagePathIfUnchanged(any(), any(), any()) }
+    }
+
+    // -- S2: startup replay of the intermediate ledger states --------------------
+
+    @Test
+    fun s2_startup_final_durable_after_cas_completes_without_a_second_mutation() {
+        val dao = assetResumeDao()
+        // The row already points at the final (crash after the CAS, before DB_UPDATED).
+        val (task, finalFile) = runAssetPointerResume(
+            dao, status = RestoreJournal.AssetRestoreStatus.FINAL_DURABLE, existingFinalBytes = byteArrayOf(1, 2, 3),
+            onDirectory = { dir ->
+                val moved = File(dir, "receipts/restored_5.jpg").absolutePath
+                coEvery { dao.getById(5L) } returns ScannedReceipt(
+                    id = 5L, imagePath = moved, rawOcrText = "fixture", parsedTotal = null,
+                    parsedMerchant = null, parsedDate = null, parsedItems = null,
+                    parsedTaxAmount = null, confidence = 0.5f
+                )
+            }
+        )
+        assertEquals(RestoreJournal.AssetRestoreStatus.COMPLETED, task.status)
+        assertTrue(finalFile.exists())
+        coVerify(exactly = 0) { dao.updateImagePathIfUnchanged(any(), any(), any()) }
+    }
+
+    @Test
+    fun s2_startup_temp_written_with_published_final_is_adopted() {
+        val dao = assetResumeDao()
+        val (task, finalFile) = runAssetPointerResume(
+            dao, status = RestoreJournal.AssetRestoreStatus.TEMP_WRITTEN, existingFinalBytes = byteArrayOf(1, 2, 3)
+        )
+        assertEquals(RestoreJournal.AssetRestoreStatus.COMPLETED, task.status)
+        coVerify(exactly = 1) { dao.updateImagePathIfUnchanged(5L, "/legacy/photo.jpg", finalFile.absolutePath) }
+    }
+
+    @Test
+    fun s2_startup_completed_replay_rejects_tampered_final_bytes() {
+        val dao = assetResumeDao()
+        val (task, finalFile) = runAssetPointerResume(
+            dao, status = RestoreJournal.AssetRestoreStatus.COMPLETED, existingFinalBytes = byteArrayOf(4, 4, 4)
+        )
+        assertEquals(RestoreJournal.AssetRestoreStatus.FAILED, task.status)
+        assertEquals(RestoreJournal.ASSET_REASON_INTEGRITY_MISMATCH, task.error)
+        assertTrue("Verification never rewrites files", finalFile.readBytes().contentEquals(byteArrayOf(4, 4, 4)))
+        coVerify(exactly = 0) { dao.updateImagePathIfUnchanged(any(), any(), any()) }
+    }
+
+    @Test
+    fun s2_startup_source_checksum_mismatch_never_moves_the_pointer() {
+        val dao = assetResumeDao()
+        val (task, finalFile) = runAssetPointerResume(dao, sourceBytes = byteArrayOf(9, 9, 9))
+        assertEquals(RestoreJournal.ASSET_REASON_INTEGRITY_MISMATCH, task.error)
+        assertFalse(finalFile.exists())
+        assertTrue(noAssetTemps(finalFile.parentFile!!))
+        coVerify(exactly = 0) { dao.updateImagePathIfUnchanged(any(), any(), any()) }
     }
 
     // -- RP-03 fix: startup asset-resume hardening -----------------
@@ -734,7 +943,7 @@ class AppStartupCoordinatorRecoveryTest {
         val liveDbFile = File(context.filesDir, "expense_tracker_db")
         createValidSqliteFile(liveDbFile)
         val extractDir = File(context.cacheDir, "extract_tampered_target")
-        val sourceFile = File(extractDir, "receipts/5_photo.jpg")
+        val sourceFile = File(extractDir, "files/receipts/5_photo.jpg")
         sourceFile.parentFile?.mkdirs()
         sourceFile.writeBytes(byteArrayOf(1, 2, 3))
 
@@ -779,7 +988,7 @@ class AppStartupCoordinatorRecoveryTest {
         val liveDbFile = File(context.filesDir, "expense_tracker_db")
         createValidSqliteFile(liveDbFile)
         val extractDir = File(context.cacheDir, "extract_bad_ext")
-        val sourceFile = File(extractDir, "receipts/5_payload.exe")
+        val sourceFile = File(extractDir, "files/receipts/5_payload.exe")
         sourceFile.parentFile?.mkdirs()
         sourceFile.writeBytes(byteArrayOf(0, 0x4d, 0x5a))
 
@@ -812,7 +1021,7 @@ class AppStartupCoordinatorRecoveryTest {
         val liveDbFile = File(context.filesDir, "expense_tracker_db")
         createValidSqliteFile(liveDbFile)
         val extractDir = File(context.cacheDir, "extract_collision")
-        val sourceFile = File(extractDir, "receipts/5_photo.jpg")
+        val sourceFile = File(extractDir, "files/receipts/5_photo.jpg")
         sourceFile.parentFile?.mkdirs()
         sourceFile.writeBytes(byteArrayOf(1, 1, 1))
 
@@ -847,7 +1056,7 @@ class AppStartupCoordinatorRecoveryTest {
         )
         assertEquals(RestoreJournal.ASSET_REASON_TARGET_COLLISION, successEntry.assetTasks.first().error)
         assertTrue("Foreign file bytes must be untouched", finalFile.readBytes().contentEquals(foreignBytes))
-        assertFalse("Temp copy must not linger after collision rejection", File(finalFile.parentFile, "restored_5.jpg.tmp").exists())
+        assertTrue("Temp copy must not linger after collision rejection", noAssetTemps(finalFile.parentFile!!))
     }
 
     @Test
@@ -858,7 +1067,7 @@ class AppStartupCoordinatorRecoveryTest {
         createValidSqliteFile(liveDbFile)
         val extractDir = File(context.cacheDir, "extract_duplicate_ids")
         listOf("5_a.jpg", "5_b.jpg").forEach { name ->
-            val f = File(extractDir, "receipts/$name")
+            val f = File(extractDir, "files/receipts/$name")
             f.parentFile?.mkdirs()
             f.writeBytes(byteArrayOf(1))
         }

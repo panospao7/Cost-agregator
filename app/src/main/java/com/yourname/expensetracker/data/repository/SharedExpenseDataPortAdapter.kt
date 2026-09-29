@@ -3,6 +3,7 @@ package com.yourname.expensetracker.data.repository
 import com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
 import com.yourname.expensetracker.data.database.dao.GroupExpenseDao
 import com.yourname.expensetracker.data.database.dao.GroupMemberDao
+import com.yourname.expensetracker.data.database.dao.GroupSettlementDao
 import com.yourname.expensetracker.data.database.entity.ExpenseGroup
 import com.yourname.expensetracker.data.database.entity.GroupExpense
 import com.yourname.expensetracker.data.database.entity.GroupMember
@@ -13,6 +14,7 @@ import com.yourname.expensetracker.domain.groups.SharedExpenseDataPort
 import com.yourname.expensetracker.domain.groups.SharedExpenseGroup
 import com.yourname.expensetracker.domain.groups.SharedExpenseMember
 import com.yourname.expensetracker.domain.groups.SharedGroupExpense
+import com.yourname.expensetracker.domain.groups.SharedGroupSettlement
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
@@ -30,7 +32,8 @@ class SharedExpenseDataPortAdapter @Inject constructor(
     private val memberDao: GroupMemberDao,
     private val groupExpenseDao: GroupExpenseDao,
     private val transactionCoordinator: GroupTransactionCoordinator,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val settlementDao: GroupSettlementDao
 ) : SharedExpenseDataPort {
 
     override suspend fun createGroupWithMembers(
@@ -133,6 +136,11 @@ class SharedExpenseDataPortAdapter @Inject constructor(
 
     override suspend fun getGroupExpensesOnce(groupId: Long): List<SharedGroupExpense> =
         groupExpenseDao.getExpensesForGroupOnce(groupId).map { it.toDomain() }
+
+    override suspend fun getGroupSettlementsOnce(groupId: Long): List<SharedGroupSettlement> =
+        settlementDao.getSettlementsForGroup(groupId).map {
+            SharedGroupSettlement(it.groupId, it.fromMemberId, it.toMemberId, it.amount, it.currency, it.status)
+        }
 
     override suspend fun archiveGroup(groupId: Long) {
         writeBarrier.checkWritesAllowed("SharedExpenseDataPortAdapter.archiveGroup")

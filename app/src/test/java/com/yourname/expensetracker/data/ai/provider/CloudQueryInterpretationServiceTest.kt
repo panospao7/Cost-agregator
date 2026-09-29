@@ -1,6 +1,9 @@
 package com.yourname.expensetracker.data.ai.provider
 
 import com.yourname.expensetracker.data.security.SecureKeyStorage
+import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy
+import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
+import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationInput
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationResult
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
@@ -52,10 +55,14 @@ class CloudQueryInterpretationServiceTest {
         coEvery { gate.check(PrivacyCapability.CLOUD_AI_GENERAL) } returns PrivacyDecision.Allowed
     }
 
+    private fun testPayloadPolicy() = DefaultCloudPayloadPolicy(
+        EffectiveCloudAiPolicyResolver.failClosedNoAi(), DefaultCloudPayloadRedactor()
+    )
+
     private fun service(client: OkHttpClient): CloudQueryInterpretationService {
         val key = mockk<SecureKeyStorage>()
         every { key.getKey(SecureKeyStorage.KEY_GEMINI) } returns "test-key"
-        return CloudQueryInterpretationService(key, client, allowedGate())
+        return CloudQueryInterpretationService(key, client, allowedGate(), testPayloadPolicy())
     }
 
     private fun input() = FinancialQueryInterpretationInput("top merchants", 1_000L, "en-US")
@@ -139,7 +146,7 @@ class CloudQueryInterpretationServiceTest {
         every { mockKeyStorage.getKey(SecureKeyStorage.KEY_GEMINI) } returns ""
         
         val mockClient = mockk<OkHttpClient>()
-        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, allowedGate())
+        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, allowedGate(), testPayloadPolicy())
 
         val result = kotlinx.coroutines.runBlocking {
             service.interpret(
@@ -191,7 +198,7 @@ class CloudQueryInterpretationServiceTest {
         every { mockClient.newCall(any()) } returns mockCall
         every { mockCall.execute() } returns response
 
-        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, allowedGate())
+        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, allowedGate(), testPayloadPolicy())
 
         val result = kotlinx.coroutines.runBlocking {
             service.interpret(
@@ -243,7 +250,7 @@ class CloudQueryInterpretationServiceTest {
         every { mockClient.newCall(any()) } returns mockCall
         every { mockCall.execute() } returns response
 
-        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, allowedGate())
+        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, allowedGate(), testPayloadPolicy())
 
         val result = kotlinx.coroutines.runBlocking {
             service.interpret(
@@ -296,7 +303,7 @@ class CloudQueryInterpretationServiceTest {
         every { mockClient.newCall(capture(capturedRequests)) } returns mockCall
         every { mockCall.execute() } returns response
 
-        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, allowedGate())
+        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, allowedGate(), testPayloadPolicy())
 
         kotlinx.coroutines.runBlocking {
             service.interpret(
@@ -343,7 +350,7 @@ class CloudQueryInterpretationServiceTest {
         every { mockClient.newCall(any()) } returns mockCall
         every { mockCall.execute() } throws CancellationException()
 
-        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, allowedGate())
+        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, allowedGate(), testPayloadPolicy())
 
         assertThrows(CancellationException::class.java) {
             runBlocking {
@@ -370,7 +377,7 @@ class CloudQueryInterpretationServiceTest {
         every { mockClient.newCall(any()) } returns mockCall
         every { mockCall.execute() } throws IOException("Network error")
 
-        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, allowedGate())
+        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, allowedGate(), testPayloadPolicy())
 
         val result = runBlocking {
             service.interpret(
@@ -396,7 +403,7 @@ class CloudQueryInterpretationServiceTest {
         every { call.execute() } throws SSLException("/private/receipts/sql secret")
 
         val result = runBlocking {
-            CloudQueryInterpretationService(keyStorage, client, allowedGate())
+            CloudQueryInterpretationService(keyStorage, client, allowedGate(), testPayloadPolicy())
                 .interpret(FinancialQueryInterpretationInput("top merchants", 1_000L, "en-US"))
         }
 
@@ -436,7 +443,7 @@ class CloudQueryInterpretationServiceTest {
         Timber.plant(tree)
         try {
             val result = runBlocking {
-                CloudQueryInterpretationService(keyStorage, client, gate)
+                CloudQueryInterpretationService(keyStorage, client, gate, testPayloadPolicy())
                     .interpret(FinancialQueryInterpretationInput("top merchants", 1_000L, "en-US"))
             }
             assertFalse(result is FinancialQueryInterpretationResult.Unsupported)
@@ -460,7 +467,7 @@ class CloudQueryInterpretationServiceTest {
         every { call.execute() } throws SSLException("connection reset /private/receipt")
 
         val result = runBlocking {
-            CloudQueryInterpretationService(keyStorage, client, gate)
+            CloudQueryInterpretationService(keyStorage, client, gate, testPayloadPolicy())
                 .interpret(FinancialQueryInterpretationInput("top merchants", 1_000L, "en-US"))
         }
 
@@ -480,7 +487,7 @@ class CloudQueryInterpretationServiceTest {
         every { call.execute() } throws IllegalStateException("SELECT * FROM financial_data /private/receipt")
 
         val result = runBlocking {
-            CloudQueryInterpretationService(keyStorage, client, gate)
+            CloudQueryInterpretationService(keyStorage, client, gate, testPayloadPolicy())
                 .interpret(FinancialQueryInterpretationInput("top merchants", 1_000L, "en-US"))
         }
 
@@ -507,7 +514,7 @@ class CloudQueryInterpretationServiceTest {
         every { mockClient.newCall(any()) } returns mockCall
         every { mockCall.execute() } returns response
 
-        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, allowedGate())
+        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, allowedGate(), testPayloadPolicy())
 
         val result = runBlocking {
             service.interpret(
@@ -533,7 +540,7 @@ class CloudQueryInterpretationServiceTest {
         coEvery { mockPrivacyGate.check(PrivacyCapability.CLOUD_AI_GENERAL) } returns
             PrivacyDecision.Denied("blocked by test")
 
-        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, mockPrivacyGate)
+        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, mockPrivacyGate, testPayloadPolicy())
 
         val result = runBlocking {
             service.interpret(

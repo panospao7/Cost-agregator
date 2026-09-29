@@ -304,6 +304,8 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
 
             override suspend fun getGroupExpensesOnce(groupId: Long): List<SharedGroupExpense> = emptyList()
 
+            override suspend fun getGroupSettlementsOnce(groupId: Long): List<com.yourname.expensetracker.domain.groups.SharedGroupSettlement> = emptyList()
+
             override suspend fun archiveGroup(groupId: Long) = Unit
 
             override suspend fun restoreGroup(groupId: Long) = Unit

@@ -48,9 +48,9 @@ interface BankStatementImportRunDao {
         SET status = 'STALE_FAILED',
             completedAt = :now,
             errorSummary = :reason
-        WHERE id = :runId
+        WHERE id = :runId AND status = 'RUNNING' AND startedAt < :cutoffMs
     """)
-    suspend fun markStaleFailed(runId: Long, now: Long, reason: String)
+    suspend fun markStaleFailed(runId: Long, cutoffMs: Long, now: Long, reason: String): Int
 
     @Query("""
         UPDATE bank_statement_import_runs

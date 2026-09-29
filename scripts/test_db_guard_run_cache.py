@@ -378,12 +378,12 @@ def test_callable_cache_never_shares_resolutions_across_indexes(tmp_path):
     )
 
     resolved = find_callable_declarations(
-        repo_text, "Repo", tolerate_unresolved_types=True,
+        repo_text, "com.example.Repo", tolerate_unresolved_types=True,
         project_types=index_with,
     )
     # Warm the cache with the resolved tree's entry first.
     assert find_callable_declarations(
-        repo_text, "Repo", tolerate_unresolved_types=True,
+        repo_text, "com.example.Repo", tolerate_unresolved_types=True,
         project_types=index_with,
     ) == resolved
     assert [d.status for d in resolved] == ["RESOLVED_EXACTLY"]
@@ -392,7 +392,7 @@ def test_callable_cache_never_shares_resolutions_across_indexes(tmp_path):
     ]
 
     unresolved = find_callable_declarations(
-        repo_text, "Repo", tolerate_unresolved_types=True,
+        repo_text, "com.example.Repo", tolerate_unresolved_types=True,
         project_types=index_without,
     )
     assert [d.status for d in unresolved] == ["TYPE_UNRESOLVED"]

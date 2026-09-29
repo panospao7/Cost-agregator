@@ -301,7 +301,11 @@ class SharedExpenseManager @Inject constructor(
             val expenses = sharedExpenseDataPort.getGroupExpensesOnce(groupId)
             val splitMembers = members.map { it.toGroupMember() }
             val splitExpenses = expenses.map { it.toGroupExpense() }
-            val netBalances = SplitCalculator.calculateBalances(splitExpenses, splitMembers)
+            val settlements = sharedExpenseDataPort.getGroupSettlementsOnce(groupId)
+            val netBalances = GroupSettlementBalancePolicy.applyToBalances(
+                SplitCalculator.calculateBalances(splitExpenses, splitMembers),
+                settlements, groupId, groupCurrency
+            )
 
             val paidCentsByMember = members
                 .associate { it.id to 0L }

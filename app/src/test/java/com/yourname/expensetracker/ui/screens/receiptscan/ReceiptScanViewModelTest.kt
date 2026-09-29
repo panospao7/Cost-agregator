@@ -9,6 +9,7 @@ import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
+import com.yourname.expensetracker.domain.receipt.ReceiptOcrCoverage
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
@@ -157,6 +158,181 @@ class ReceiptScanViewModelTest : ViewModelTestUtils() {
         advanceUntilIdle()
         assertNull(model.state.value.saveResult)
         assertTrue(failureLogs.isEmpty())
+    }
+
+    @Test fun persistedPartialScanKeepsRecognizedDataAndShowsWarning() = runTest(testDispatcher) {
+        val uri = Uri.parse("content://test/partial.pdf")
+        stubScan(uri, receipt(status = "OCR_PARTIAL"))
+        model.processGalleryImage(uri)
+        advanceUntilIdle()
+
+        assertEquals(ScanStep.REVIEW, model.state.value.step)
+        assertTrue(model.state.value.hasPartialOcr)
+        assertEquals("10.00", model.state.value.editAmount)
+        assertNull(model.state.value.errorMessage)
+    }
+
+    @Test fun partialCoverageSurvivesParseFailureStatus() = runTest(testDispatcher) {
+        val uri = Uri.parse("content://test/partial-parse-failure.pdf")
+        val saved = receipt(status = "PARSE_FAILED").copy(
+            parsedTotal = null, parsedMerchant = null, confidence = 0f
+        )
+        coEvery { coordinator.processReceiptInput(uri, any()) } returns Result.success(
+            ReceiptLifecycleCoordinator.ReceiptProcessOutcome(
+                saved, true, null, ReceiptOcrCoverage(pagesProcessed = 2, totalPages = 3, failedPages = 1)
+            )
+        )
+        coEvery { links.checkCanLinkReceipt(saved.id) } returns true
+        model.processGalleryImage(uri)
+        advanceUntilIdle()
+
+        assertEquals(ScanStep.REVIEW, model.state.value.step)
+        assertTrue(model.state.value.hasPartialOcr)
+    }
+
+    @Test fun aCompleteNewScanClearsThePreviousPartialWarning() = runTest(testDispatcher) {
+        val partialUri = Uri.parse("content://test/partial.pdf")
+        val completeUri = Uri.parse("content://test/complete.jpg")
+        stubScan(partialUri, receipt(status = "OCR_PARTIAL"))
+        stubScan(completeUri, receipt(id = 18L))
+        model.processGalleryImage(partialUri)
+        advanceUntilIdle()
+        assertTrue(model.state.value.hasPartialOcr)
+
+        model.processGalleryImage(completeUri)
+        advanceUntilIdle()
+        assertEquals(ScanStep.REVIEW, model.state.value.step)
+        assertEquals(18L, model.state.value.receiptId)
+        assertFalse(model.state.value.hasPartialOcr)
+    }
+
+    @Test fun reopenedParseFailureKeepsPartialCoverageInReview() = runTest(testDispatcher) {
+        val uri = Uri.parse("content://test/reopened-partial.pdf")
+        val saved = receipt(status = "PARSE_FAILED").copy(
+            parsedTotal = null, parsedMerchant = null, confidence = 0f
+        )
+        coEvery { coordinator.processReceiptInput(uri, any()) } returns Result.success(
+            ReceiptLifecycleCoordinator.ReceiptProcessOutcome(
+                saved, false, null, ReceiptOcrCoverage(2, 3, 1)
+            )
+        )
+        coEvery { links.checkCanLinkReceipt(saved.id) } returns true
+
+        model.processGalleryImage(uri)
+        advanceUntilIdle()
+
+        val state = model.state.value
+        assertEquals(ScanStep.REVIEW, state.step)
+        assertEquals(saved.id, state.receiptId)
+        assertTrue(state.hasPartialOcr)
+        assertFalse(state.hasUnverifiedOcrCoverage)
+        assertNull(state.errorMessage)
+        coVerify(exactly = 1) { links.checkCanLinkReceipt(saved.id) }
+    }
+
+    @Test fun linkedPartialReceiptKeepsWarningInDuplicateState() = runTest(testDispatcher) {
+        val uri = Uri.parse("content://test/linked-partial.pdf")
+        val saved = receipt(status = "PARSE_FAILED").copy(
+            parsedTotal = null, parsedMerchant = null, confidence = 0f, expenseId = 91L
+        )
+        coEvery { coordinator.processReceiptInput(uri, any()) } returns Result.success(
+            ReceiptLifecycleCoordinator.ReceiptProcessOutcome(
+                saved, false, null, ReceiptOcrCoverage(2, 3, 1)
+            )
+        )
+
+        model.processGalleryImage(uri)
+        advanceUntilIdle()
+
+        val state = model.state.value
+        assertEquals(ScanStep.DUPLICATE, state.step)
+        assertEquals(saved.id, state.receiptId)
+        assertTrue(state.hasPartialOcr)
+        assertFalse(state.hasUnverifiedOcrCoverage)
+        assertNotNull(state.saveResult)
+        assertEquals("This receipt is already linked to an existing transaction.", state.errorMessage)
+        coVerify(exactly = 0) { links.checkCanLinkReceipt(any()) }
+    }
+
+    @Test fun missingCoverageIsUnverifiedRatherThanClaimedPartialOrComplete() = runTest(testDispatcher) {
+        val uri = Uri.parse("content://test/unverified-receipt.pdf")
+        val saved = receipt(status = "PARSE_FAILED").copy(
+            parsedTotal = null, parsedMerchant = null, confidence = 0f
+        )
+        coEvery { coordinator.processReceiptInput(uri, any()) } returns Result.success(
+            ReceiptLifecycleCoordinator.ReceiptProcessOutcome(
+                saved, false, null, ocrCoverageUnavailable = true
+            )
+        )
+        coEvery { links.checkCanLinkReceipt(saved.id) } returns true
+
+        model.processGalleryImage(uri)
+        advanceUntilIdle()
+
+        val state = model.state.value
+        assertEquals(ScanStep.REVIEW, state.step)
+        assertEquals(saved.id, state.receiptId)
+        assertFalse(state.hasPartialOcr)
+        assertTrue(state.hasUnverifiedOcrCoverage)
+        assertNull(state.errorMessage)
+    }
+
+    @Test fun linkedReceiptRetainsUnverifiedCoverageInDuplicateState() = runTest(testDispatcher) {
+        val uri = Uri.parse("content://test/linked-unverified.pdf")
+        val saved = receipt(status = "PARSE_FAILED").copy(
+            parsedTotal = null, parsedMerchant = null, confidence = 0f, expenseId = 91L
+        )
+        coEvery { coordinator.processReceiptInput(uri, any()) } returns Result.success(
+            ReceiptLifecycleCoordinator.ReceiptProcessOutcome(
+                saved, false, null, ocrCoverageUnavailable = true
+            )
+        )
+
+        model.processGalleryImage(uri)
+        advanceUntilIdle()
+
+        val state = model.state.value
+        assertEquals(ScanStep.DUPLICATE, state.step)
+        assertEquals(saved.id, state.receiptId)
+        assertFalse(state.hasPartialOcr)
+        assertTrue(state.hasUnverifiedOcrCoverage)
+        assertNotNull(state.saveResult)
+        coVerify(exactly = 0) { links.checkCanLinkReceipt(any()) }
+    }
+
+    @Test fun aNewScanClearsUnverifiedCoverageBeforeProcessingCompletes() = runTest(testDispatcher) {
+        val oldUri = Uri.parse("content://test/old-unverified.pdf")
+        val newUri = Uri.parse("content://test/new-complete.jpg")
+        val saved = receipt(status = "PARSE_FAILED").copy(
+            parsedTotal = null, parsedMerchant = null, confidence = 0f
+        )
+        coEvery { coordinator.processReceiptInput(oldUri, any()) } returns Result.success(
+            ReceiptLifecycleCoordinator.ReceiptProcessOutcome(
+                saved, false, null, ocrCoverageUnavailable = true
+            )
+        )
+        coEvery { links.checkCanLinkReceipt(saved.id) } returns true
+        model.processGalleryImage(oldUri)
+        advanceUntilIdle()
+        assertTrue(model.state.value.hasUnverifiedOcrCoverage)
+
+        val finishScan = CompletableDeferred<ReceiptLifecycleCoordinator.ReceiptProcessOutcome>()
+        coEvery { coordinator.processReceiptInput(newUri, any()) } coAnswers {
+            Result.success(finishScan.await())
+        }
+        coEvery { links.checkCanLinkReceipt(18L) } returns true
+        model.processGalleryImage(newUri)
+        assertEquals(ScanStep.PROCESSING, model.state.value.step)
+        assertFalse(model.state.value.hasPartialOcr)
+        assertFalse(model.state.value.hasUnverifiedOcrCoverage)
+        runCurrent()
+
+        finishScan.complete(ReceiptLifecycleCoordinator.ReceiptProcessOutcome(receipt(id = 18L), true, null))
+        advanceUntilIdle()
+        assertEquals(ScanStep.REVIEW, model.state.value.step)
+        assertEquals(18L, model.state.value.receiptId)
+        assertFalse(model.state.value.hasPartialOcr)
+        assertFalse(model.state.value.hasUnverifiedOcrCoverage)
     }
 
     private fun receipt(id: Long = 17L, status: String = "PARSED") = ScannedReceipt(

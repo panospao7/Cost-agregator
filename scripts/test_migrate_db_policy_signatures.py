@@ -1510,7 +1510,17 @@ def test_no_fixed_result_totals_enforced(tmp_path):
 
 
 def test_real_run_distribution_pinned_and_reproducible(tmp_path):
-    """Pin the CURRENT post-GR-08 real-repository run truth.
+    """Pin the reviewed September 27 unseeded migration truth.
+
+    Current fixed contract: 93 legacy inputs, 55 unique candidate keys,
+    38 unresolved records, 45 keeper indexes, and 55 RESOLVED accounting
+    records. The ten folded indexes are pinned below. This derivation is
+    backed by the retained real-run report and tracked accounting, not a
+    relaxed range or a new authorization. The seeded artifact adds the
+    unchanged 352 reviewed seed rows, giving 407 candidate entries.
+
+    Historical derivation follows. Its 53/40/43 figures describe the
+    superseded pre-repair pin, not the current assertions above/below.
 
     The checked-in tracked candidate
     (``config/guards/db_ownership_policy.signatures.candidate.yml``) is the
@@ -1640,8 +1650,9 @@ def test_real_run_distribution_pinned_and_reproducible(tmp_path):
     payload = json.loads(report.read_text(encoding="utf-8"))
     counts = payload["counts"]
     assert counts["input"] == 93
-    assert counts["resolved"] == 53
-    assert counts["unresolved"] == 40
+    assert counts["resolved"] == 55
+    assert counts["unresolved"] == 38
+    assert counts["seeds"] == 0
     assert payload["duplicateMutationKeys"] == []
     document, errors = load_policy_v2(candidate)
     assert errors == []
@@ -1651,13 +1662,11 @@ def test_real_run_distribution_pinned_and_reproducible(tmp_path):
     candidate_keys = {
         entry.mutation_key().canonical_key() for entry in document
     }
-    assert len(candidate_keys) == len(document) == 53
+    assert len(candidate_keys) == len(document) == 55
     assert counts["resolved"] == len(document)
-    # Folded same-key indices keep NO resolved report row: only the
-    # lowest-index keeper of each fold group remains (38 single-carried
-    # keys plus one keeper index for group (a)'s 3 keys, one for group
-    # (b)'s 6 keys, two for group (c) — indices 15 and 17 — and two for
-    # group (d) — indices 18 and 21 -> 44 distinct report indexes).
+    # Folded same-key indices keep NO resolved report row. The current
+    # 55 RESOLVED accounting indexes comprise 45 keepers and ten exact
+    # folded indexes, whose identity and crosswalk are pinned below.
     report_resolved_indexes = {
         row["index"] for row in payload["resolved"]
     }
@@ -1665,7 +1674,7 @@ def test_real_run_distribution_pinned_and_reproducible(tmp_path):
         row["index"] for row in payload["unresolved"]
     }
     assert not (report_resolved_indexes & report_unresolved_indexes)
-    assert len(report_resolved_indexes) == 43
+    assert len(report_resolved_indexes) == 45
     # The accounting records tie EVERY legacy index to exactly one outcome.
     records = payload["accounting"]["records"]
     assert len(records) == 93
@@ -1681,8 +1690,12 @@ def test_real_run_distribution_pinned_and_reproducible(tmp_path):
     }
     assert not (resolved_indexes & unresolved_indexes)
     assert resolved_indexes | unresolved_indexes == set(range(93))
-    assert len(resolved_indexes) == 53
+    assert len(resolved_indexes) == 55
+    assert len(unresolved_indexes) == 38
     assert report_resolved_indexes <= resolved_indexes
+    assert resolved_indexes - report_resolved_indexes == {
+        15, 18, 19, 22, 23, 24, 25, 26, 37, 38,
+    }
     # Every folded index's RESOLVED record carries the shared key of its
     # keeper's candidate entry.
     record_keys_by_index = {

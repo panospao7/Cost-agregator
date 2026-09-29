@@ -13,7 +13,7 @@ Rows (fixed order, one check each):
 1. active_db_gate          -- the real four-config-flag gate run
                               (scripts/verify_db_access_boundaries.py) must
                               accept the real tree: exit 0, trusted, 0
-                              findings, exactly 20 x DB_SIGNATURE_UNRESOLVED
+                              findings, exactly 21 x DB_SIGNATURE_UNRESOLVED
                               advisory diagnostics; the active policy must be
                               v2, the v1 bytes archived at
                               config/guards/db_ownership_policy.legacy.yml,
@@ -47,10 +47,10 @@ Rows (fixed order, one check each):
                               407 entries (55 fold-resolved + 352 reviewed
                               GR-08 seeds; post-GR-14u37 truth sync).
 6. structural_manifest     -- the structural expected-methods manifest must
-                               pin counts.structural_entries=64
-                               (expected=60 + fixtures=4) and
+                               pin counts.structural_entries=65
+                               (expected=60 + fixtures=5) and
                                config/guards/db_structural_exceptions.yml must
-                               carry exactly 64 entries.
+                               carry exactly 65 entries.
 7. test_result_freshness   -- OPTIONAL (PR-GR-10f).  The test-result
                                freshness stamp at
                                app/build/test-results/.freshness-stamp.json
@@ -174,7 +174,12 @@ _DEFAULT_SCRATCH_RELPATH = ("build", "guard-debug", "known-good-state")
 # ── Documented pins (checklist section 7, current truth) ────────────────────────
 
 _ADVISORY_CODE = "DB_SIGNATURE_UNRESOLVED"
-_ADVISORY_COUNT = 20
+# Human-authorized repin 20 -> 21 (2026-09-29, Wave-2 closure): observed 21 since
+# vr-20260928-075653. All 21 advisories sit in non-DB UI/AI/parser/location/
+# scheduler files unchanged vs HEAD a4807632 (OnDeviceQueryInterpretationService,
+# StrictAiJsonParsing, EmailReceiptParser, CancellableHttpCall, WorkerSpecScheduler,
+# 16 ui/ files); gate stays trusted with 0 findings and 0 blocking diagnostics.
+_ADVISORY_COUNT = 21
 _INVENTORY_DURABILITY_CODE = "INVENTORY_DURABILITY_UNCONFIRMED"
 _DB_SOURCE_ROOT_PREFIX = "DB_SOURCE_ROOT_"
 _EXPECTED_INPUT_COUNT = 93
@@ -202,9 +207,10 @@ _CANDIDATE_SCHEMA_VERSION = 2
 # ACTIVE policy only) settled the candidate at 407 entries
 # (55 fold-resolved + 352 reviewed seeds).
 _CANDIDATE_ENTRIES = 407
-_STRUCTURAL_ENTRIES = 64
+# Human-authorized 2026-09-28: only the exact cleanup helper adds one fixture.
+_STRUCTURAL_ENTRIES = 65
 _STRUCTURAL_EXPECTED = 60
-_STRUCTURAL_FIXTURES = 4
+_STRUCTURAL_FIXTURES = 5
 
 
 # ── Per-command timeouts (seconds) ──────────────────────────────────────────────

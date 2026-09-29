@@ -127,6 +127,11 @@ object MoneyAggregateBuilder {
             rateBasis = rateBasis,
             requestedRateBasis = rateBasis,
             actualRateBasis = rateBasis,
+            conversionQuality = when {
+                conversionFailures.isEmpty() -> ConversionQuality.COMPLETE
+                conversionFailures.size == byCurrency.size -> ConversionQuality.UNAVAILABLE
+                else -> ConversionQuality.PARTIAL
+            },
             metadata = MoneyAggregateMetadata(countsIncomplete = countsIncomplete)
         )
     }
@@ -149,12 +154,14 @@ object MoneyAggregateBuilder {
         val failures = mutableListOf<ConversionFailure>()
         var includedCount = 0
         var excludedCount = 0
+        var successfulBucketCount = 0
 
         for (bucket in buckets) {
             sourceBuckets.add(MoneyBucket(bucket.currency, bucket.amount, bucket.transactionCount))
             if (bucket.currency == homeCurrency) {
                 total += bucket.amount
                 includedCount += bucket.transactionCount
+                successfulBucketCount++
                 continue
             }
 
@@ -191,6 +198,7 @@ object MoneyAggregateBuilder {
                 is ConversionOutcome.Converted -> {
                     total += outcome.convertedAmount
                     includedCount += bucket.transactionCount
+                    successfulBucketCount++
                 }
                 is ConversionOutcome.Failed -> {
                     failures.add(ConversionFailure(
@@ -222,6 +230,11 @@ object MoneyAggregateBuilder {
             rateBasis = rateBasis,
             requestedRateBasis = rateBasis,
             actualRateBasis = rateBasis,
+            conversionQuality = when {
+                failures.isEmpty() -> ConversionQuality.COMPLETE
+                successfulBucketCount == 0 -> ConversionQuality.UNAVAILABLE
+                else -> ConversionQuality.PARTIAL
+            },
             metadata = MoneyAggregateMetadata(
                 includedTransactionCount = includedCount,
                 excludedTransactionCount = excludedCount,

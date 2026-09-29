@@ -13,6 +13,7 @@ import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoor
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.receipt.ReceiptOcrCoverage
 import dagger.Lazy
 import io.mockk.coEvery
 import io.mockk.every
@@ -164,5 +165,39 @@ class ReceiptRepositoryBatchDuplicateTest {
         assertEquals(uris.size, result.successCount + result.duplicateCount + result.failureCount)
         assertEquals(1, result.errors.size)
         assertEquals("Receipt input validation failed", result.errors.first())
+    }
+
+    @Test
+    fun partialCoverageIsASubsetOfNewSavesNotDuplicateOrFailureCounts() = runTest {
+        val uris = (1..4).map { Uri.parse("content://test/partial-batch-$it.pdf") }
+        val partial = outcome(inserted = true).copy(
+            ocrCoverage = ReceiptOcrCoverage(pagesProcessed = 1, totalPages = 3, failedPages = 2)
+        )
+        coEvery { receiptLifecycleCoordinatorInner.processReceiptInput(uris[0], any()) } returns Result.success(partial)
+        coEvery { receiptLifecycleCoordinatorInner.processReceiptInput(uris[1], any()) } returns Result.success(outcome(true))
+        coEvery { receiptLifecycleCoordinatorInner.processReceiptInput(uris[2], any()) } returns Result.success(partial.copy(inserted = false))
+        coEvery { receiptLifecycleCoordinatorInner.processReceiptInput(uris[3], any()) } returns
+            Result.failure(IllegalArgumentException("CONTROLLED_FAILURE"))
+
+        val result = repository.processBatch(uris) { _, _ -> }
+        assertEquals(2, result.successCount)
+        assertEquals(1, result.partialCount)
+        assertEquals(1, result.duplicateCount)
+        assertEquals(1, result.failureCount)
+        assertEquals(uris.size, result.successCount + result.duplicateCount + result.failureCount)
+    }
+
+    @Test
+    fun anAlreadySavedPartialReceiptIsNotCountedAsANewPartialSave() = runTest {
+        val duplicate = outcome(inserted = false).copy(
+            ocrCoverage = ReceiptOcrCoverage(pagesProcessed = 2, totalPages = 3, failedPages = 1)
+        )
+        coEvery { receiptLifecycleCoordinatorInner.processReceiptInput(any(), any()) } returns Result.success(duplicate)
+
+        val result = repository.processBatch(listOf(Uri.parse("content://test/duplicate.pdf"))) { _, _ -> }
+        assertEquals(0, result.successCount)
+        assertEquals(0, result.partialCount)
+        assertEquals(1, result.duplicateCount)
+        assertEquals(0, result.failureCount)
     }
 }

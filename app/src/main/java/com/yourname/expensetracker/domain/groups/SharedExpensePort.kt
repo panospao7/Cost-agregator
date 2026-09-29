@@ -90,6 +90,8 @@ interface SharedExpenseDataPort {
 
     suspend fun getGroupExpensesOnce(groupId: Long): List<SharedGroupExpense>
 
+    suspend fun getGroupSettlementsOnce(groupId: Long): List<SharedGroupSettlement>
+
     suspend fun archiveGroup(groupId: Long)
 
     suspend fun restoreGroup(groupId: Long)

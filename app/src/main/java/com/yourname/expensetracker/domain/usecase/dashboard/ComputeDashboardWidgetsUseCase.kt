@@ -1119,7 +1119,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
 
     private suspend fun computeSavingsSweepWidget(): DashboardWidget.SavingsSweepPrompt? {
         return try {
-            withTimeout(3000L) {
+            kotlinx.coroutines.withTimeoutOrNull(3000L) {
                 monthlySavingsSweepUseCase.computeSweepRecommendation()
             }?.let { recommendation ->
                 DashboardWidget.SavingsSweepPrompt(
@@ -1143,7 +1143,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Timber.e(e, "Failed to compute savings sweep widget")
+            Timber.w("SAVINGS_SWEEP_UNAVAILABLE class=%s", e.javaClass.simpleName)
             null
         }
     }
@@ -1152,7 +1152,8 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         return try {
             stressForecastEngine.computeStressForecast()
         } catch (e: Exception) {
-            Timber.e(e, "Failed to compute financial stress forecast")
+            if (e is CancellationException) throw e
+            Timber.w("STRESS_FORECAST_UNAVAILABLE class=%s", e.javaClass.simpleName)
             null
         }
     }

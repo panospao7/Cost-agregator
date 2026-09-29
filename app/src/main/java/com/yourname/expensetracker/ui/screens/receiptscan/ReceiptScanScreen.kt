@@ -255,6 +255,7 @@ fun ReceiptScanScreen(
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
+                        ReceiptOcrCoverageWarning(state)
                         androidx.compose.material3.Card(
                             modifier = Modifier.fillMaxWidth(),
                             colors = androidx.compose.material3.CardDefaults.cardColors(
@@ -479,6 +480,39 @@ private fun ProcessingStep() {
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant
     )
+}
+
+@Composable
+private fun ReceiptOcrCoverageWarning(
+    state: ReceiptScanState,
+    modifier: Modifier = Modifier
+) {
+    if (state.hasPartialOcr || state.hasUnverifiedOcrCoverage) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
+            modifier = modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier.padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onTertiaryContainer
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = stringResource(
+                        if (state.hasPartialOcr) R.string.receipt_partial_ocr_warning
+                        else R.string.receipt_ocr_coverage_unverified_warning
+                    ),
+                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1132,6 +1166,8 @@ private fun ReviewStep(
             }
         }
     }
+
+    ReceiptOcrCoverageWarning(state, modifier = Modifier.padding(top = 8.dp))
 
     // Error messages
     state.errorMessage?.let { error ->

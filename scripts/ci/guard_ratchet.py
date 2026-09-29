@@ -87,6 +87,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections import Counter
 from contextlib import suppress
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -253,6 +254,11 @@ def _try_extract_from_line(
         # that indicates an entity name before the path
         dash_sep = re.search(r'\s[—–-]\s', rest)
         if dash_sep:
+            if rule_id in {"DAO", "ENTITY"}:
+                specific_rule = rest[:dash_sep.start()].strip()
+                if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_./]*", specific_rule):
+                    return None
+                rule_id = f"{rule_id}:{specific_rule}"
             rest = rest[dash_sep.end():]
 
         pm = _PATH_LINE_RE.search(rest)
@@ -272,7 +278,7 @@ def _try_extract_from_line(
 
 
 def extract_fingerprints(stdout: str, project_root: Optional[Path] = None) -> List[str]:
-    """Extract sorted, unique fingerprints from guard script stdout.
+    """Extract sorted occurrence fingerprints from guard script stdout.
 
     Handles multiple guard output formats:
 
@@ -286,12 +292,13 @@ def extract_fingerprints(stdout: str, project_root: Optional[Path] = None) -> Li
     * **Money** (two-line):
       ``FAIL path:`` then ``Lnnn [G-MONEY-NN] description``.
 
-    Returns a sorted list of unique fingerprints.
+    Repeated rule/path fingerprints remain repeated: line-number stability
+    must not erase growth inside an already-baselined file.
     """
     if project_root is None:
         project_root = _find_project_root()
 
-    fingerprints: Set[str] = set()
+    fingerprints: List[str] = []
     lines = stdout.splitlines()
     n = len(lines)
 
@@ -316,7 +323,7 @@ def extract_fingerprints(stdout: str, project_root: Optional[Path] = None) -> Li
                 line_num = mm.group(1)
                 rule_id = mm.group(2)
                 path_line = f"{last_money_path}:{line_num}"
-                fingerprints.add(
+                fingerprints.append(
                     _make_fingerprint(rule_id, path_line, project_root)
                 )
                 continue
@@ -330,7 +337,7 @@ def extract_fingerprints(stdout: str, project_root: Optional[Path] = None) -> Li
                 file_path = norm_path.rsplit(":", 1)[0]
             else:
                 file_path = norm_path
-            fingerprints.add(f"{rule_id} {file_path}")
+            fingerprints.append(f"{rule_id} {file_path}")
             continue
 
         # -- Two-line format (db_access): standalone path:line, rule above ---
@@ -342,7 +349,7 @@ def extract_fingerprints(stdout: str, project_root: Optional[Path] = None) -> Li
             if rm:
                 rule_id = rm.group(1).strip()
                 if rule_id:
-                    fingerprints.add(
+                    fingerprints.append(
                         _make_fingerprint(rule_id, path_line, project_root)
                     )
                     continue
@@ -496,15 +503,29 @@ def load_baseline(path: Path, guard_name: Optional[str] = None) -> Optional[Dict
         )
         sys.exit(2)
 
+    # Legacy entries authorize one occurrence, never an unbounded number.
+    # Reviewed multiplicity is explicit; this loader never manufactures it
+    # from the current scan or rewrites an active baseline.
+    if "occurrence_counts" in data:
+        counts = data["occurrence_counts"]
+        if (not isinstance(counts, dict) or set(counts) != set(fingerprints)
+                or any(type(value) is not int or value < 1 or value > MAX_BASELINE_ENTRIES
+                       for value in counts.values())
+                or sum(counts.values()) > MAX_BASELINE_ENTRIES):
+            print("RATCHET_BASELINE_COUNTS_INVALID", file=sys.stderr)
+            sys.exit(2)
+
     return data
 
 
 def save_baseline(path: Path, guard_name: str, fingerprints: List[str]) -> None:
     """Write (or overwrite) a baseline JSON file."""
+    counts = Counter(fingerprints)
     baseline = {
         "guard": guard_name,
         "generated": datetime.now(timezone.utc).isoformat(),
-        "fingerprints": fingerprints,
+        "fingerprints": sorted(counts),
+        "occurrence_counts": dict(sorted(counts.items())),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
@@ -524,12 +545,12 @@ def compare_fingerprints(
     Returns:
         (new, resolved, unchanged) -- each sorted.
     """
-    bset = set(baseline_fps)
-    cset = set(current_fps)
+    baseline = Counter(baseline_fps)
+    current = Counter(current_fps)
 
-    new = sorted(cset - bset)
-    resolved = sorted(bset - cset)
-    unchanged = sorted(bset & cset)
+    new = sorted((current - baseline).elements())
+    resolved = sorted((baseline - current).elements())
+    unchanged = sorted((baseline & current).elements())
     return new, resolved, unchanged
 
 
@@ -2180,7 +2201,12 @@ def main() -> None:
         )
         sys.exit(2)
 
-    baseline_fps = baseline_data.get("fingerprints", [])
+    baseline_counts = baseline_data.get("occurrence_counts", {})
+    baseline_fps = [
+        fingerprint
+        for fingerprint in baseline_data["fingerprints"]
+        for _ in range(baseline_counts.get(fingerprint, 1))
+    ]
 
     # -- 4. Compare --------------------------------------------------------------
     new, resolved, unchanged = compare_fingerprints(baseline_fps, current_fps)

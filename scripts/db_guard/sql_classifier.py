@@ -744,7 +744,10 @@ def _valid_expression(tokens: List[_Token]) -> bool:
         if (tokens[index].kind == "LPAREN" and index + 1 < len(tokens) and
                 tokens[index + 1].kind == "WORD" and tokens[index + 1].text.upper() == "SELECT"):
             end = _matching_group(tokens, index)
-            if end < 0 or not _valid_select_tail(_rebase_tokens(tokens[index + 1:end - 1], 1)):
+            # A subquery may sit inside several predicate/function groups.
+            # Normalize its own statement depth, not just one parenthesis.
+            if end < 0 or not _valid_select_tail(
+                    _rebase_tokens(tokens[index + 1:end - 1], tokens[index].depth + 1)):
                 return False
             normalized.append(_Token("WORD", "__subquery", tokens[index].depth))
             index = end

@@ -261,7 +261,9 @@ class SharedExpenseGroupsViewModelTest : ViewModelTestUtils() {
 
             val errorState = awaitItem()
             assertFalse(errorState.isLoading)
-            assertTrue(errorState.error?.contains("Failed to load groups: db unavailable") == true)
+            assertEquals("Failed to load group balances", errorState.error)
+            assertTrue(errorState.groups.isEmpty())
+            assertNull(errorState.selectedGroup)
             assertTrue(errorState.groups.isEmpty())
 
             cancelAndIgnoreRemainingEvents()
@@ -685,6 +687,47 @@ class SharedExpenseGroupsViewModelTest : ViewModelTestUtils() {
             expenseRepository = expenseRepository,
             currencySettingsRepository = currencyRepo,
         )
+    }
+
+    @Test
+    fun displayedBalancesIncludePaymentsWithoutChangingSpentOrSplitAmounts() = runTest(testDispatcher) {
+        advanceUntilIdle()
+        val members = listOf(
+            GroupMember(id = 11L, groupId = 1L, name = "Creditor"),
+            GroupMember(id = 12L, groupId = 1L, name = "Debtor", leftAt = 1_800_000_000_000L))
+        val aggregate = createAggregate(1L, "Trip", members = members,
+            expenses = listOf(createGroupExpense(100L, 1L, 11L, 100.0)))
+        val payment = com.yourname.expensetracker.domain.groups.SharedGroupSettlement(
+            1L, 12L, 11L, 20.0, "EUR", "RECORDED")
+        coEvery { groupsRepository.getActiveGroupsWithDetails() } returns listOf(aggregate.copy(
+            settlements = listOf(payment, payment.copy(currency = "USD"), payment.copy(status = "CANCELLED"))))
+        viewModel = createViewModel()
+        advanceUntilIdle()
+        val displayed = viewModel.uiState.value.groups.single()
+        assertEquals(30.0, displayed.memberBalances.getValue(11L), 0.0)
+        assertEquals(-30.0, displayed.memberBalances.getValue(12L), 0.0)
+        assertEquals(100.0, displayed.totalSpent, 0.0)
+        assertEquals(mapOf(11L to 50.0, 12L to 50.0), displayed.expenses.single().splitAmounts)
+
+        coEvery { groupsRepository.getActiveGroupsWithDetails() } returns listOf(aggregate.copy(
+            settlements = listOf(payment.copy(amount = 50.0, status = "COMPLETED"))))
+        viewModel = createViewModel()
+        advanceUntilIdle()
+        assertTrue(viewModel.uiState.value.groups.single().memberBalances.values.all { it == 0.0 })
+    }
+
+    @Test
+    fun loadCancellationCancelsTheJobInsteadOfPublishingAnError() = runTest(testDispatcher) {
+        advanceUntilIdle()
+        var loadJob: kotlinx.coroutines.Job? = null
+        coEvery { groupsRepository.getActiveGroupsWithDetails() } coAnswers {
+            loadJob = kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]
+            throw kotlinx.coroutines.CancellationException("cancelled")
+        }
+        viewModel = createViewModel()
+        advanceUntilIdle()
+        assertTrue(requireNotNull(loadJob).isCancelled)
+        assertNull(viewModel.uiState.value.error)
     }
 
     private fun createAggregate(

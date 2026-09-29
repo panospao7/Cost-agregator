@@ -11,6 +11,7 @@ import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.util.TimeProvider
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import timber.log.Timber
@@ -203,6 +204,8 @@ class AccountingExportRepository @Inject constructor(
                 filePath = exportFile.absolutePath,
                 recordCount = expenses.size
             )
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             ExportResult(
                 success = false,

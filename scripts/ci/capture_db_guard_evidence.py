@@ -2145,17 +2145,9 @@ def default_command_matrix(root: str, out_dir: str) -> List[CommandSpec]:
             log_name="01-focused-python-tests.log",
             argv=[
                 _suite_python(), "-m", "pytest",
-                "scripts/ci/test_guard_findings.py",
-                "scripts/ci/test_guard_ratchet.py",
-                "scripts/ci/test_guard_ratchet_v2.py",
-                "scripts/test_kotlin_callable_parser.py",
-                "scripts/test_migrate_db_policy_signatures.py",
-                "scripts/test_db_guard_room_inventory.py",
-                "scripts/test_db_guard_sql_classifier.py",
-                "scripts/test_db_guard_declaration_scanner.py",
-                "scripts/test_db_guard_scanner_d4.py",
-                "scripts/test_verify_db_access_v2.py",
-                "scripts/test_verify_db_access_boundaries.py",
+                # Same recursive guard-test surface as the canonical suite,
+                # including nested barrier, mediation and source-scope tests.
+                "scripts",
                 "-v", "--tb=short",
                 # Zero-side-effect pin (strict-review blocker B-1): pytest's
                 # cacheprovider is disabled because no pytest config file exists
@@ -2920,8 +2912,26 @@ def run_command(
 
 
 # ── Infrastructure warnings (missing referenced test files) ───────────────────
+REQUIRED_RECURSIVE_GUARD_TESTS = (
+    "scripts/ci/test_guard_findings.py",
+    "scripts/ci/test_guard_ratchet.py",
+    "scripts/ci/test_guard_ratchet_v2.py",
+    "scripts/test_kotlin_callable_parser.py",
+    "scripts/test_migrate_db_policy_signatures.py",
+    "scripts/test_db_guard_room_inventory.py",
+    "scripts/test_db_guard_sql_classifier.py",
+    "scripts/test_db_guard_declaration_scanner.py",
+    "scripts/test_db_guard_scanner_d4.py",
+    "scripts/test_verify_db_access_v2.py",
+    "scripts/test_verify_db_access_boundaries.py",
+    "scripts/test_db_guard_policy_v2.py",
+    "scripts/db_guard/structural_analysis/test_barrier_proof.py",
+    "scripts/guardrails/test_production_source_scope.py",
+)
+
+
 def collect_infrastructure_warnings(matrix: Sequence[CommandSpec], root: str) -> List[str]:
-    """Record referenced .py test files that do not exist at the tested SHA."""
+    """Keep required-module checks when pytest selects the recursive directory."""
     warnings: List[str] = []
     for spec in matrix:
         # Skip malformed matrix entries defensively; the validator already fails
@@ -2931,7 +2941,10 @@ def collect_infrastructure_warnings(matrix: Sequence[CommandSpec], root: str) ->
         if spec.id != "focused-python-tests":
             continue
         argv = spec.argv if isinstance(spec.argv, (list, tuple)) else ()
-        for token in argv:
+        required = list(argv)
+        if "scripts" in argv:
+            required.extend(REQUIRED_RECURSIVE_GUARD_TESTS)
+        for token in required:
             if not isinstance(token, str) or token.startswith("-"):
                 continue
             if token.endswith(".py") and not os.path.isfile(os.path.join(root, token)):

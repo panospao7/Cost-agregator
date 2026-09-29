@@ -42,6 +42,7 @@ import com.yourname.expensetracker.domain.receipt.EmailReceiptData
 import com.yourname.expensetracker.domain.receipt.ReceiptDocumentType
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
 import com.yourname.expensetracker.domain.receipt.ReceiptProcessingStatus
+import com.yourname.expensetracker.domain.receipt.ReceiptOcrCoverage
 import com.yourname.expensetracker.domain.receipt.ReceiptSourceType
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
@@ -251,8 +252,36 @@ class ReceiptLifecycleCoordinator @Inject constructor(
     data class ReceiptProcessOutcome(
         val savedReceipt: ScannedReceipt,
         val inserted: Boolean,
-        val postCommitBatch: PostCommitActionBatch?
-    )
+        val postCommitBatch: PostCommitActionBatch?,
+        val ocrCoverage: ReceiptOcrCoverage = ReceiptOcrCoverage(),
+        val ocrCoverageUnavailable: Boolean = false
+    ) {
+        // A duplicate may be loaded from Room without this attempt's page counts.
+        val isPartial: Boolean
+            get() = ocrCoverage.isPartial ||
+                savedReceipt.processingStatus == ReceiptProcessingStatus.OCR_PARTIAL.name
+    }
+
+    private suspend fun duplicateOutcome(existing: ScannedReceipt): ReceiptProcessOutcome {
+        // PARSE_FAILED takes precedence over OCR_PARTIAL; status alone loses page coverage.
+        val needsSavedCoverage = existing.processingStatus == ReceiptProcessingStatus.PARSE_FAILED.name
+        val coverage = if (needsSavedCoverage) {
+            try {
+                ReceiptOcrCoverage.fromSavedMetadata(receiptEventDao.getLatestSavedOcrMetadata(existing.id))
+            } catch (e: Exception) {
+                CancellationSafe.rethrowIfCancellation(e)
+                // Retained/missing evidence or a read failure must not imply complete OCR.
+                null
+            }
+        } else null
+        return ReceiptProcessOutcome(
+            savedReceipt = existing,
+            inserted = false,
+            postCommitBatch = null,
+            ocrCoverage = coverage ?: ReceiptOcrCoverage(),
+            ocrCoverageUnavailable = needsSavedCoverage && coverage == null
+        )
+    }
 
     /**
      * Processes a receipt input URI through the full lifecycle.
@@ -347,11 +376,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             if (processResult.isPreExistingDuplicate) {
                 Timber.d("Pre-OCR duplicate detected: existingId=%d", processResult.receipt.id)
                 return Result.success(
-                    ReceiptProcessOutcome(
-                        savedReceipt = processResult.receipt,
-                        inserted = false,
-                        postCommitBatch = null
-                    )
+                    duplicateOutcome(processResult.receipt)
                 )
             }
 
@@ -436,11 +461,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                         }
                         Timber.i("Duplicate receipt detected by exact hash: existingId=${existing.id}")
                         return Result.success(
-                            ReceiptProcessOutcome(
-                                savedReceipt = existing,
-                                inserted = false,
-                                postCommitBatch = null
-                            )
+                            duplicateOutcome(existing)
                         )
                     }
                 }
@@ -455,6 +476,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             val processingStatus = when {
                 isOcrFailure -> ReceiptProcessingStatus.OCR_FAILED.name
                 receipt.processingStatus == ReceiptProcessingStatus.PARSE_FAILED.name -> ReceiptProcessingStatus.PARSE_FAILED.name
+                processResult.ocrCoverage.isPartial -> ReceiptProcessingStatus.OCR_PARTIAL.name
                 receipt.parsedMerchant != null -> ReceiptProcessingStatus.PARSED.name
                 else -> ReceiptProcessingStatus.OCR_COMPLETED.name
             }
@@ -530,11 +552,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 if (existingDuplicate != null) {
                     existingDuplicate.taxInclusive = taxInclusive
                     return Result.success(
-                        ReceiptProcessOutcome(
-                            savedReceipt = existingDuplicate,
-                            inserted = false,
-                            postCommitBatch = null
-                        )
+                        duplicateOutcome(existingDuplicate)
                     )
                 }
             } else {
@@ -557,11 +575,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                         Timber.d("Post-OCR duplicate draft detected (match=%s, existingId=%d)",
                             postOcrDup.matchType, existing.id)
                         return Result.success(
-                            ReceiptProcessOutcome(
-                                savedReceipt = existing,
-                                inserted = false,
-                                postCommitBatch = null
-                            )
+                            duplicateOutcome(existing)
                         )
                     }
                 }
@@ -620,7 +634,11 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                             actor = "system:coordinator",
                             message = "Receipt saved via lifecycle coordinator",
                             metadata = null, errorDetails = null
-                        )))
+                        )).copy(
+                            // Only this typed coverage is forwarded; legacy event metadata
+                            // remains excluded by toLifecycleEvent's privacy boundary.
+                            metadata = processResult.ocrCoverage.toSavedMetadata()
+                        ))
                         res.receiptId
                     }
                     is ReceiptInsertResult.Duplicate -> throw DuplicateReceiptInsertException(res.existingReceipt, res.reason, attemptedAssetPath = updated.imagePath)
@@ -693,7 +711,8 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 ReceiptProcessOutcome(
                     savedReceipt = updated.copy(id = savedId),
                     inserted = true,
-                    postCommitBatch = receiptPlan
+                    postCommitBatch = receiptPlan,
+                    ocrCoverage = processResult.ocrCoverage
                 )
             )
         } catch (e: DuplicateReceiptInsertException) {
@@ -710,11 +729,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             )
             Timber.d("processReceiptInput: insert-race duplicate resolved, existingId=%d", e.existingReceipt.id)
             Result.success(
-                ReceiptProcessOutcome(
-                    savedReceipt = e.existingReceipt,
-                    inserted = false,
-                    postCommitBatch = null
-                )
+                duplicateOutcome(e.existingReceipt)
             )
         } catch (e: kotlinx.coroutines.CancellationException) {
             // RP-12 12c (P3-008): best-effort cleanup of this attempt's

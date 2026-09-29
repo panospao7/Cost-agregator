@@ -32,6 +32,7 @@ import com.yourname.expensetracker.domain.usecase.savings.LifestyleSavingsPrompt
 import com.yourname.expensetracker.domain.usecase.savings.MonthlySavingsSweepUseCase
 import io.mockk.coEvery
 import io.mockk.mockk
+import kotlinx.coroutines.CopyableThrowable
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -52,6 +53,7 @@ import java.time.ZoneId
  * - No completed baseline produces NO_BASELINE with the canonical -1f sentinel
  *   and NO pace widget (the -1f never reaches the UI because of that gate).
  */
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class ComputeDashboardWidgetsUseCasePaceWiringTest {
 
     private var fixedNowMs: Long = 0L
@@ -59,6 +61,72 @@ class ComputeDashboardWidgetsUseCasePaceWiringTest {
         override fun now(): Long = fixedNowMs
     }
     private lateinit var computeUseCase: ComputeDashboardWidgetsUseCase
+    private lateinit var monthlySavingsSweepUseCase: MonthlySavingsSweepUseCase
+
+    @Test
+    fun savingsWidgetOwnDeadlinePreservesTheOtherDashboardWidgets() = runTest {
+        fixedNowMs = toEpochMs(2026, 6, 15, 12, 0)
+        val data = createProcessedData(emptyList())
+        val baseline = computeUseCase.compute(data)
+        coEvery { monthlySavingsSweepUseCase.computeSweepRecommendation() } coAnswers {
+            kotlinx.coroutines.delay(10_000L)
+            null
+        }
+        val started = testScheduler.currentTime
+        val result = computeUseCase.compute(data)
+        assertEquals(3_000L, testScheduler.currentTime - started)
+        assertTrue(result.allWidgets.none { it is DashboardWidget.SavingsSweepPrompt })
+        assertTrue(result.allWidgets.isNotEmpty())
+        assertEquals(baseline.allWidgets.map { it::class }, result.allWidgets.map { it::class })
+    }
+
+    @Test
+    fun callerDeadlineIsNotSwallowedBySavingsWidgetDeadline() = runTest {
+        fixedNowMs = toEpochMs(2026, 6, 15, 12, 0)
+        coEvery { monthlySavingsSweepUseCase.computeSweepRecommendation() } coAnswers {
+            kotlinx.coroutines.delay(10_000L)
+            null
+        }
+        val started = testScheduler.currentTime
+        val failure = runCatching {
+            kotlinx.coroutines.withTimeout(1_000L) {
+                computeUseCase.compute(createProcessedData(emptyList()))
+            }
+        }.exceptionOrNull()
+        assertTrue(failure is kotlinx.coroutines.TimeoutCancellationException)
+        assertEquals(1_000L, testScheduler.currentTime - started)
+    }
+
+    // Non-copying sentinel: the framework may copy cross-boundary throwables;
+    // createCopy()=null keeps the original instance so assertSame detects
+    // application wrapping/replacement.
+    private class IdentityCancellation(message: String) :
+        kotlinx.coroutines.CancellationException(message), CopyableThrowable<IdentityCancellation> {
+        override fun createCopy(): IdentityCancellation? = null
+    }
+
+    @Test
+    fun savingsWidgetPropagatesDependencyCancellationUnchanged() = runTest {
+        fixedNowMs = toEpochMs(2026, 6, 15, 12, 0)
+        val cancellation = IdentityCancellation("test cancellation")
+        coEvery { monthlySavingsSweepUseCase.computeSweepRecommendation() } throws cancellation
+        val failure = runCatching {
+            computeUseCase.compute(createProcessedData(emptyList()))
+        }.exceptionOrNull()
+        org.junit.Assert.assertSame(cancellation, failure)
+    }
+
+    @Test
+    fun failedSavingsWidgetDoesNotDiscardOtherDashboardWidgets() = runTest {
+        fixedNowMs = toEpochMs(2026, 6, 15, 12, 0)
+        val data = createProcessedData(emptyList())
+        val baseline = computeUseCase.compute(data)
+        coEvery { monthlySavingsSweepUseCase.computeSweepRecommendation() } throws
+            IllegalStateException("SECRET financial payload")
+        val result = computeUseCase.compute(data)
+        assertTrue(result.allWidgets.none { it is DashboardWidget.SavingsSweepPrompt })
+        assertEquals(baseline.allWidgets.map { it::class }, result.allWidgets.map { it::class })
+    }
 
     @Before
     fun setup() {
@@ -80,7 +148,7 @@ class ComputeDashboardWidgetsUseCasePaceWiringTest {
         )
         val lifestyleSavingsPromptUseCase = mockk<LifestyleSavingsPromptUseCase>(relaxed = true)
         coEvery { lifestyleSavingsPromptUseCase.evaluateAndPrompt() } returns null
-        val monthlySavingsSweepUseCase = mockk<MonthlySavingsSweepUseCase>(relaxed = true)
+        monthlySavingsSweepUseCase = mockk(relaxed = true)
         coEvery { monthlySavingsSweepUseCase.computeSweepRecommendation() } returns null
         val computeMoneyRadarUseCase = mockk<ComputeMoneyRadarUseCase>(relaxed = true)
         coEvery { computeMoneyRadarUseCase.compute() } returns MoneyRadarData(

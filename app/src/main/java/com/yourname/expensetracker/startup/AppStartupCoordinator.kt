@@ -8,6 +8,7 @@ import androidx.lifecycle.lifecycleScope
 import com.yourname.expensetracker.BuildConfig
 import com.yourname.expensetracker.data.backup.RestoreDatabaseOpener
 import com.yourname.expensetracker.data.backup.RestoreInternalWriteScope
+import com.yourname.expensetracker.data.backup.ReceiptAssetRecovery
 import com.yourname.expensetracker.domain.util.CancellationSafe
 import com.yourname.expensetracker.data.backup.RestoreJournal
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
@@ -526,14 +527,14 @@ class AppStartupCoordinator @Inject constructor(
 
     /**
      * P7-002: idempotent resume of the receipt-asset ledger recorded in the restore
-     * journal (RP-03B asset recovery). Only tasks that are not COMPLETED are retried.
-     * Each task: copy the bundle asset from the recorded extraction temp dir to a
-     * durable final file (fsync'd, deterministic per-asset name), then move the DB
-     * pointer inside [RestoreInternalWriteScope]. Missing sources mark the task
-     * FAILED(SOURCE_MISSING) and never touch the verified DB.
+     * journal (RP-03B asset recovery). S2: every non-FAILED task runs through the shared
+     * [ReceiptAssetRecovery] state machine (same rules as the primary restore loop);
+     * COMPLETED tasks are re-verified (proof, bytes, pointer) without touching files or
+     * the database. The DB pointer only moves inside [RestoreInternalWriteScope]. Missing
+     * sources mark the task FAILED(SOURCE_MISSING) and never touch the verified DB.
      */
     private suspend fun resumePendingAssetTasks(entry: RestoreJournal.JournalEntry): RestoreJournal.JournalEntry {
-        val pending = entry.assetTasks.filter { it.status != RestoreJournal.AssetRestoreStatus.COMPLETED }
+        val pending = entry.assetTasks.filter { it.status != RestoreJournal.AssetRestoreStatus.FAILED }
         if (pending.isEmpty()) return entry
 
         // RP-03 fix (fail-closed duplicate rejection): the plan contract rejects
@@ -548,7 +549,7 @@ class AppStartupCoordinator @Inject constructor(
             .filterValues { it.size > 1 }
             .keys
 
-        val sourceDir = entry.extractTempDirPath?.let { File(it, "receipts") }
+        val sourceDir = entry.extractTempDirPath?.let { ReceiptAssetRecovery.receiptsSourceDir(File(it)) }
         val receiptsDir = File(appContext.filesDir, "receipts").apply { mkdirs() }
         var current = entry
         val db = restoreDatabaseOpener.openFreshDatabase()
@@ -556,6 +557,7 @@ class AppStartupCoordinator @Inject constructor(
             val dao = db.scannedReceiptDao()
             for (task in pending) {
                 current = if (duplicateIds.contains(task.receiptId)) {
+                    if (task.status == RestoreJournal.AssetRestoreStatus.COMPLETED) continue
                     updateAssetTask(
                         current, task,
                         RestoreJournal.AssetRestoreStatus.FAILED,
@@ -578,104 +580,48 @@ class AppStartupCoordinator @Inject constructor(
         receiptsDir: File,
         dao: ScannedReceiptDao
     ): RestoreJournal.JournalEntry {
+        val recovery = ReceiptAssetRecovery(restoreJournal, receiptsDir, sourceDir)
+        // Resume from the latest merged ledger copy of this task.
+        val current = entry.assetTasks.firstOrNull {
+            it.receiptId == task.receiptId && it.sourceRelativePath == task.sourceRelativePath
+        } ?: task
         return try {
-            val sourceFile = sourceDir?.let { File(it, task.sourceRelativePath) }
-            if (sourceFile == null || !sourceFile.exists() || !sourceFile.isFile) {
-                // RP-03B: missing source → keep the verified DB, record the loss.
-                Timber.w("Startup: asset source missing for receiptId=%d — marking FAILED(SOURCE_MISSING)", task.receiptId)
-                return updateAssetTask(entry, task, RestoreJournal.AssetRestoreStatus.FAILED, "SOURCE_MISSING")
+            var step = recovery.begin(entry, current)
+            if (step is ReceiptAssetRecovery.Step.NeedsPointer) {
+                val receipt = dao.getById(current.receiptId)
+                step = recovery.admit(step, receipt != null, receipt?.imagePath)
             }
-
-            // P7-009 + RP-03 fix: the final file name is DERIVED from the task's own
-            // identity (receiptId + allowlisted source extension) and is deterministic
-            // across retries. The journal-recorded target name is a cross-check only -
-            // never the source of the name - so a tampered or stale journal cannot
-            // steer the write target.
-            val finalName = RestoreJournal.deriveAssetTargetName(task.receiptId, sourceFile.extension)
-                ?: return updateAssetTask(
-                    entry, task,
-                    RestoreJournal.AssetRestoreStatus.FAILED,
-                    RestoreJournal.ASSET_REASON_INVALID_TARGET
-                )
-            val journalName = task.targetPath?.let { File(it).name }
-            if (journalName != null && journalName != finalName) {
-                Timber.w(
-                    "Startup: journal target name mismatch for receiptId=%d - marking FAILED(%s)",
-                    task.receiptId, RestoreJournal.ASSET_REASON_INVALID_TARGET
-                )
-                return updateAssetTask(
-                    entry, task,
-                    RestoreJournal.AssetRestoreStatus.FAILED,
-                    RestoreJournal.ASSET_REASON_INVALID_TARGET
-                )
-            }
-            val finalFile = File(receiptsDir, finalName)
-            val tempFile = File(receiptsDir, "$finalName.tmp")
-
-            // RP-03 fix (fail-closed collision rejection): an existing final file may
-            // belong to a foreign/earlier asset - never overwrite it (a plain rename
-            // would silently replace it). Both checks below guard the rename.
-            if (finalFile.exists()) {
-                Timber.w(
-                    "Startup: asset target collision for receiptId=%d - marking FAILED(%s)",
-                    task.receiptId, RestoreJournal.ASSET_REASON_TARGET_COLLISION
-                )
-                return updateAssetTask(
-                    entry, task,
-                    RestoreJournal.AssetRestoreStatus.FAILED,
-                    RestoreJournal.ASSET_REASON_TARGET_COLLISION
-                )
-            }
-
-            // FINAL_DURABLE: copy + fsync, then atomic rename, BEFORE any DB write.
-            sourceFile.inputStream().use { input ->
-                java.io.FileOutputStream(tempFile).use { output ->
-                    input.copyTo(output)
-                    output.flush()
-                    CancellationSafe.runCatchingCancellable { output.fd.sync() }
+            if (step is ReceiptAssetRecovery.Step.NeedsCas) {
+                val cas = step
+                // DB_UPDATED: path-only CAS against the durable snapshot, followed by read-back.
+                val outcome = restoreInternalWriteScope.run("startupAssetResume.updateImagePath") {
+                    val rows = dao.updateImagePathIfUnchanged(current.receiptId, cas.expected, cas.target)
+                    val now = dao.getById(current.receiptId)?.imagePath
+                    when {
+                        rows == 1 && now == cas.target -> ReceiptAssetRecovery.CasOutcome.CONFIRMED
+                        rows == 0 && now != cas.target -> ReceiptAssetRecovery.CasOutcome.NOT_APPLIED
+                        else -> ReceiptAssetRecovery.CasOutcome.UNCONFIRMED
+                    }
                 }
+                step = recovery.afterCas(cas, outcome)
             }
-            if (!tempFile.renameTo(finalFile)) {
-                if (finalFile.exists()) {
-                    // A foreign file appeared between the pre-check and the rename -
-                    // fail closed instead of overwriting it via the copy fallback.
-                    CancellationSafe.runCatchingCancellable { tempFile.delete() }
-                    return updateAssetTask(
-                        entry, task,
-                        RestoreJournal.AssetRestoreStatus.FAILED,
-                        RestoreJournal.ASSET_REASON_TARGET_COLLISION
-                    )
-                }
-                tempFile.copyTo(finalFile, overwrite = true)
-                tempFile.delete()
+            val done = step as ReceiptAssetRecovery.Step.Done
+            if (done.task.status == RestoreJournal.AssetRestoreStatus.FAILED) {
+                Timber.w(
+                    "Startup: asset task for receiptId=%d marked FAILED(%s)",
+                    current.receiptId, done.task.error
+                )
+            } else if (done.restoredNow) {
+                Timber.d("Startup: resumed receipt asset for receiptId=%d", current.receiptId)
             }
-            if (!finalFile.exists() || !finalFile.isFile) {
-                throw java.io.IOException("ASSET_FINAL_DURABLE_FAILED")
-            }
-
-            // DB_UPDATED: only after the final file is durable; conditional on receipt ID.
-            val receipt = dao.getById(task.receiptId)
-            if (receipt == null) {
-                Timber.w("Startup: receipt row missing for restored asset receiptId=%d", task.receiptId)
-                CancellationSafe.runCatchingCancellable { tempFile.delete() }
-                CancellationSafe.runCatchingCancellable { finalFile.delete() }
-                return updateAssetTask(entry, task, RestoreJournal.AssetRestoreStatus.FAILED, "RECEIPT_ROW_MISSING")
-            }
-            restoreInternalWriteScope.run("startupAssetResume.updateImagePath") {
-                dao.update(receipt.copy(imagePath = finalFile.absolutePath))
-            }
-            Timber.d("Startup: resumed receipt asset for receiptId=%d", task.receiptId)
-            updateAssetTask(
-                entry,
-                task,
-                RestoreJournal.AssetRestoreStatus.COMPLETED,
-                error = null,
-                targetPath = finalFile.absolutePath
-            )
+            done.entry
+        } catch (e: RestoreJournal.JournalDurabilityException) {
+            // Required transition failed: the caller keeps recovery blocked/resumable.
+            throw e
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-            Timber.e("Startup: asset task failed for receiptId=%d (%s)", task.receiptId, e.javaClass.simpleName)
-            updateAssetTask(entry, task, RestoreJournal.AssetRestoreStatus.FAILED, "ASSET_RESTORE_FAILED")
+            Timber.e("Startup: asset task failed for receiptId=%d (%s)", current.receiptId, e.javaClass.simpleName)
+            updateAssetTask(entry, current, RestoreJournal.AssetRestoreStatus.FAILED, RestoreJournal.ASSET_REASON_RESTORE_FAILED)
         }
     }
 

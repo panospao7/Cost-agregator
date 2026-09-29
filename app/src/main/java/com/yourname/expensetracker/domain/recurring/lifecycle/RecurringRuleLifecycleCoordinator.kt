@@ -218,9 +218,10 @@ class RecurringRuleLifecycleCoordinator @Inject constructor(
     suspend fun activateRule(ruleId: Long) {
         writeBarrier.checkWritesAllowed("RecurringRuleLifecycleCoordinator.activateRule")
         val now = timeProvider.now()
-        val existing = manualRecurringExpenseDao.getById(ruleId) ?: return
         database.withTransaction {
-            manualRecurringExpenseDao.setActiveStatus(ruleId, true)
+            val existing = manualRecurringExpenseDao.getById(ruleId) ?: return@withTransaction
+            if (existing.isActive) return@withTransaction
+            if (manualRecurringExpenseDao.setActiveStatus(ruleId, true) != 1) return@withTransaction
 
             val regenerateStart = maxOf(
                 existing.nextDate,

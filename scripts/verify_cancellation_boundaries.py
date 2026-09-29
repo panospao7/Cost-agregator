@@ -28,7 +28,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Tuple
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if _SCRIPT_DIR not in sys.path:
@@ -39,6 +39,13 @@ from guardrails.production_source_scope import (  # noqa: E402
     iter_production_kotlin_files,
     resolve_production_source_scope,
 )
+
+from kotlin_callable_parser import (  # noqa: E402
+    ParserError,
+    find_callable_declarations,
+    find_owner_declarations,
+)
+from guardrails.cloud_payload_proof import CloudProofError, executable_kotlin_source  # noqa: E402
 
 # ── Configuration ──────────────────────────────────────────
 RULE_ID = "G-CANCEL-01"
@@ -94,11 +101,6 @@ SUSPEND_FUN_RE = re.compile(r'\bsuspend\s+fun\b')
 
 # Worker path detection
 WORKER_DIR_MARKERS = {"worker", "workers"}
-
-# Files that are EXEMPT from all scanning (core infrastructure)
-EXCLUDED_FILENAMES: Set[str] = {
-    "CancellationSafe.kt",
-}
 
 # Allowlistable files: files that are known to be safe even without explicit
 # cancellation handling (e.g., UI composables, color helpers)
@@ -246,6 +248,19 @@ def _is_worker_path(filepath: str) -> bool:
 
 # ── Violation Detection ────────────────────────────────────
 
+def _matches_allowlist_path(filepath: str, entry_path: str) -> bool:
+    if not isinstance(entry_path, str) or not entry_path:
+        return False
+    expected = entry_path.replace("\\", "/")
+    if (expected.startswith("/") or re.match(r"^[A-Za-z]:", expected)
+            or any(part in {"", ".", "..", "*"} for part in expected.split("/"))):
+        return False
+    actual = filepath.replace("\\", "/")
+    # scan_file supplies a repository-relative path. A basename or suffix must
+    # never authorize another directory containing the same callable name.
+    return actual == expected
+
+
 def scan_file(
     filepath: Path,
     allowlist: List[dict],
@@ -257,21 +272,60 @@ def scan_file(
     violations: List[str] = []
     try:
         content = filepath.read_text(encoding="utf-8")
-    except Exception as e:
-        print(f"ERROR reading {filepath}: {e}", file=sys.stderr)
+    except Exception:
+        print("CANCELLATION_SOURCE_UNREADABLE", file=sys.stderr)
         return violations, True
 
-    fname = filepath.name
-    if fname in EXCLUDED_FILENAMES:
-        return violations, False
-
-    lines = content.splitlines()
+    try:
+        masked = executable_kotlin_source(content)
+    except (ParserError, CloudProofError):
+        print("CANCELLATION_SOURCE_UNPARSEABLE", file=sys.stderr)
+        return violations, True
+    lines = masked.splitlines()
     path_str = str(filepath).replace("\\", "/")
     rel_for_allowlist = path_str
     # Normalize for allowlist matching
     if "app/src/main/java/" in path_str:
         idx = path_str.index("app/src/main/java/")
         rel_for_allowlist = path_str[idx:]
+
+    # Unknown callable identity never grants an exemption. Class names and
+    # generic labels cannot authorize every method or overload in a file.
+    declarations = []
+    if any(isinstance(entry, dict) and _matches_allowlist_path(
+            rel_for_allowlist, entry.get("path", "")) for entry in allowlist):
+        try:
+            for owner in find_owner_declarations(content):
+                declarations.extend(find_callable_declarations(
+                    content, owner, tolerate_unresolved_types=True))
+        except ParserError:
+            # Detection still runs; an unresolved symbol cannot exempt it.
+            declarations = []
+    line_offsets = []
+    offset = 0
+    for line in masked.splitlines(keepends=True):
+        line_offsets.append(offset)
+        offset += len(line)
+
+    def symbol_at(index: int, pattern) -> str:
+        match = pattern.search(lines[index])
+        if match is None:
+            return ""
+        position = line_offsets[index] + match.start()
+        enclosing = [declaration for declaration in declarations
+                     if declaration.status == "RESOLVED_EXACTLY"
+                     and declaration.start_offset <= position < declaration.end_offset]
+        if not enclosing:
+            return ""
+        declaration = min(enclosing, key=lambda item: item.end_offset - item.start_offset)
+        # The member parser deliberately excludes local/anonymous functions.
+        # Never let an outer-method exemption cover an unresolved inner callable.
+        if len(re.findall(r"\bfun\b", masked[declaration.start_offset:position])) != 1:
+            return ""
+        signature = declaration.signature
+        receiver = (signature.receiver + ".") if signature.receiver else ""
+        parameters = ",".join(signature.parameter_types)
+        return f"{declaration.owner}.{receiver}{signature.function_name}({parameters})"
 
     # Determine context
     is_worker = _is_worker_path(path_str)
@@ -296,7 +350,8 @@ def scan_file(
             continue
 
         # Check allowlist
-        if is_allowlisted(rel_for_allowlist, "", allowlist):
+        symbol = symbol_at(i, CATCH_BROAD_RE)
+        if is_allowlisted(rel_for_allowlist, symbol, allowlist, rule_id="G-CANCEL-01"):
             continue
 
         # Check if cancellation is handled nearby
@@ -315,7 +370,7 @@ def scan_file(
                 # Flag as violation
                 ctx = "suspend function" if in_suspend else "worker path"
                 violations.append(
-                    f"G-CANCEL-01 {filepath}:{line_no} "
+                    f"G-CANCEL-01 {filepath}:{line_no} symbol={symbol or '<unresolved>'} "
                     f"Broad catch (Exception/Throwable/RuntimeException) in {ctx} "
                     f"without CancellationException propagation"
                 )
@@ -341,12 +396,13 @@ def scan_file(
             continue
 
         # Check allowlist
-        if is_allowlisted(rel_for_allowlist, "", allowlist):
+        symbol = symbol_at(i, RUN_CATCHING_RE)
+        if is_allowlisted(rel_for_allowlist, symbol, allowlist, rule_id="G-CANCEL-02"):
             continue
 
         ctx = "suspend function" if in_suspend else "worker path"
         violations.append(
-            f"G-CANCEL-02 {filepath}:{line_no} "
+            f"G-CANCEL-02 {filepath}:{line_no} symbol={symbol or '<unresolved>'} "
             f"runCatching in {ctx} — swallows CancellationException. "
             f"Use CancellationSafe.runCatchingCancellable or allowlist."
         )
@@ -368,7 +424,8 @@ def scan_file(
             continue
 
         # Check allowlist
-        if is_allowlisted(rel_for_allowlist, "", allowlist):
+        symbol = symbol_at(i, ON_FAILURE_RE)
+        if is_allowlisted(rel_for_allowlist, symbol, allowlist, rule_id="G-CANCEL-03"):
             continue
 
         # Check if cancellation handling is nearby
@@ -379,7 +436,7 @@ def scan_file(
 
         ctx = "suspend function" if in_suspend else "worker path"
         violations.append(
-            f"G-CANCEL-03 {filepath}:{line_no} "
+            f"G-CANCEL-03 {filepath}:{line_no} symbol={symbol or '<unresolved>'} "
             f".onFailure in {ctx} without CancellationException check — "
             f"cancellation may be swallowed"
         )
@@ -417,30 +474,21 @@ def load_allowlist(path: Path) -> List[dict]:
     return allowlist
 
 
-def is_allowlisted(filepath: str, symbol: str, allowlist: List[dict]) -> bool:
-    """Check if a filepath is in the allowlist.
+def is_allowlisted(filepath: str, symbol: str, allowlist: List[dict], *, rule_id: str) -> bool:
+    """Match the active rule and exact owner/receiver/method/parameter symbol.
 
-    Supports partial path matching: unrooted relative paths match suffixes.
-    Also supports the `path` field containing a path fragment.
+    Paths must match exactly after separator normalization; callers supply
+    repository-relative paths, never absolute paths or filename suffixes.
+    Empty, class-only and unresolved symbols cannot authorize a file.
     """
-    if not allowlist:
+    if not symbol or "(" not in symbol or not symbol.endswith(")") or not rule_id:
         return False
     for entry in allowlist:
-        entry_path = entry.get("path", "")
-        if not entry_path:
+        if not isinstance(entry, dict):
             continue
-        # entry_path may be relative (e.g., "app/src/main/java/...")
-        # filepath may be absolute or relative
-        # Only match if the allowlisted path is a suffix of the actual file path
-        if filepath.endswith(entry_path):
-            # Also check rule match if present
-            entry_rule = entry.get("rule", "")
-            if entry_rule and entry_rule != RULE_ID:
-                # This allowlist entry is for a different rule — skip match
-                continue
-            entry_symbol = entry.get("symbol", "")
-            if not symbol or not entry_symbol or entry_symbol == symbol:
-                return True
+        if (entry.get("rule") == rule_id and entry.get("symbol") == symbol
+                and _matches_allowlist_path(filepath, entry.get("path", ""))):
+            return True
     return False
 
 

@@ -143,3 +143,16 @@ Every row is **committed**; all hunks were read, including the follow-up sentine
 - All-failed adapter output retains aggregate metadata; partial Available retains full source/failure buckets and counts. Preserve this correspondence when changing result semantics, rather than using displayAmount == 0 or transactionCount == 0 as success/failure classifiers.
 - MoneyDisplayUnavailableException(reasonCode) is the new controlled compatibility bridge; reverseDisplayQuote uses the captured quote and no second lookup. These are available core primitives, but WI-4–WI-8 have not adopted them. CL-15's spec writer must not assume the consumer sweep is complete or this lane mergeable.
 - No CL-15 source, specification, campaign status, or JOURNAL.md was changed by this review.
+
+## Closing addendum — 2026-09-26
+
+The FAIL / NOT MERGEABLE verdict above is retained as the historical mid-lane review, not rewritten as a passing final review. Subsequent consumer-sweep repairs and suite recovery were merged as `03f197d1`. The human explicitly closed the lane and waived its formal final review gate; this decision and its limitations are recorded in `JOURNAL.md` by commit `a4807632`. The waiver applies to CL-05, not to other Wave-2 clusters.
+
+Recorded post-fix evidence (historical records, not re-executed by this addendum):
+
+- Compile PASS: `vr-20260926-195154`; final MultiCurrencyAnalyticsTest PASS: `vr-20260926-202135`.
+- Full-suite run `vr-20260926-181440` reached terminal completion but FAILED with 76 recorded failures; completion is not a passing suite.
+- Static-guards and app-check remained failing on recorded debt. Real PDF/image device-dependent coverage was not established because no device was available.
+- The close record preserves risks concerning validator-side edits, remaining failures, and the unfinished wider sweep. The retained rp-27 worktree is an evidence archive.
+
+The consumer sweep referenced as unfinished in the original review has since landed. Section 8's substantive CL-15 constraints still apply: universal all-failed classification belongs to CL-15; preserve failed-source metadata and legitimate zero-amount, net-zero, and zero-count successful buckets. No new review PASS, validation PASS, or blanket Wave-2 waiver is asserted here.

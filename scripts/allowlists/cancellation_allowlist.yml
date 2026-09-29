@@ -444,3 +444,199 @@
   owner: "@panospao7"
   expires: "2027-01-01"
   linked_issue: "MIT-035"
+
+# Wave-2 (2026-09-29, human-approved): exact-symbol conversions of the
+# file-wide entries above. The stricter scanner only honours exact
+# rule + path + Owner.fn(params) matches; file-wide entries no longer authorize.
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/ai/provider/CloudCategorizationAssistService.kt
+  symbol: "com.yourname.expensetracker.data.ai.provider.CloudCategorizationAssistService.suggest(com.yourname.expensetracker.domain.ai.model.CategorizationAssistInput)"
+  reason: "Cloud AI service — gated by CloudPayloadPolicy, structured error handling [Wave-2 exact-symbol conversion of prior file-wide entry; no CE rethrow at this site - tracked debt]"
+  owner: "@panospao7"
+  expires: "2027-01-01"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/ai/provider/CloudDedupeJudgeService.kt
+  symbol: "com.yourname.expensetracker.data.ai.provider.CloudDedupeJudgeService.judge(com.yourname.expensetracker.domain.ai.model.DedupeJudgeInput)"
+  reason: "Cloud AI service — gated by CloudPayloadPolicy, structured error handling [Wave-2 exact-symbol conversion of prior file-wide entry; no CE rethrow at this site - tracked debt]"
+  owner: "@panospao7"
+  expires: "2027-01-01"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/ai/provider/CloudReceiptItemCategorizationService.kt
+  symbol: "com.yourname.expensetracker.data.ai.provider.CloudReceiptItemCategorizationService.categorizeItems(com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationInput)"
+  reason: "Cloud AI service — gated by CloudPayloadPolicy, structured error handling [Wave-2 exact-symbol conversion of prior file-wide entry; no CE rethrow at this site - tracked debt]"
+  owner: "@panospao7"
+  expires: "2027-01-01"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/ai/provider/CloudReviewExplanationService.kt
+  symbol: "com.yourname.expensetracker.data.ai.provider.CloudReviewExplanationService.generate(com.yourname.expensetracker.domain.ai.model.ReviewExplanationInput)"
+  reason: "Cloud AI service — gated by CloudPayloadPolicy, structured error handling [Wave-2 exact-symbol conversion of prior file-wide entry; no CE rethrow at this site - tracked debt]"
+  owner: "@panospao7"
+  expires: "2027-01-01"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/ai/provider/OnDeviceDashboardBriefingService.kt
+  symbol: "com.yourname.expensetracker.data.ai.provider.OnDeviceDashboardBriefingService.generate(com.yourname.expensetracker.domain.ai.model.DashboardBriefingInput)"
+  reason: "On-device AI service — broad catch for model inference fallback, structured error paths [Wave-2 exact-symbol conversion of prior file-wide entry; no CE rethrow at this site - tracked debt]"
+  owner: "@panospao7"
+  expires: "2027-01-01"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/ai/provider/OnDeviceDedupeJudgeService.kt
+  symbol: "com.yourname.expensetracker.data.ai.provider.OnDeviceDedupeJudgeService.judge(com.yourname.expensetracker.domain.ai.model.DedupeJudgeInput)"
+  reason: "On-device AI service — broad catch for model inference fallback, structured error paths [Wave-2 exact-symbol conversion of prior file-wide entry; no CE rethrow at this site - tracked debt]"
+  owner: "@panospao7"
+  expires: "2027-01-01"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/ai/provider/OnDeviceNotificationParser.kt
+  symbol: "com.yourname.expensetracker.data.ai.provider.OnDeviceNotificationParser.parse(String?,String?,String?,String)"
+  reason: "On-device AI service — broad catch for model inference fallback, structured error paths [Wave-2 exact-symbol conversion of prior file-wide entry; no CE rethrow at this site - tracked debt]"
+  owner: "@panospao7"
+  expires: "2027-01-01"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/ai/provider/OnDeviceReceiptItemCategorizationService.kt
+  symbol: "com.yourname.expensetracker.data.ai.provider.OnDeviceReceiptItemCategorizationService.categorizeItems(com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationInput)"
+  reason: "On-device AI service — broad catch for model inference fallback, structured error paths [Wave-2 exact-symbol conversion of prior file-wide entry; no CE rethrow at this site - tracked debt]"
+  owner: "@panospao7"
+  expires: "2027-01-01"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/ai/provider/OnDeviceReviewExplanationService.kt
+  symbol: "com.yourname.expensetracker.data.ai.provider.OnDeviceReviewExplanationService.generate(com.yourname.expensetracker.domain.ai.model.ReviewExplanationInput)"
+  reason: "On-device AI service — broad catch for model inference fallback, structured error paths [Wave-2 exact-symbol conversion of prior file-wide entry; no CE rethrow at this site - tracked debt]"
+  owner: "@panospao7"
+  expires: "2027-01-01"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-02
+  path: app/src/main/java/com/yourname/expensetracker/data/backup/RestoreDiagnosticsSink.kt
+  symbol: "com.yourname.expensetracker.data.backup.RestoreDiagnosticsSink.event(String,com.yourname.expensetracker.domain.diagnostics.EventOutcome,com.yourname.expensetracker.domain.diagnostics.EventSeverity,com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode?,com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata,Throwable?,Boolean)"
+  reason: "Backup diagnostics infrastructure — runCatching for diagnostic recording, not business logic [Wave-2 exact-symbol conversion of prior file-wide entry; no CE rethrow at this site - tracked debt]"
+  owner: "@panospao7"
+  expires: "2027-01-01"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-02
+  path: app/src/main/java/com/yourname/expensetracker/data/backup/RestoreDiagnosticsSink.kt
+  symbol: "com.yourname.expensetracker.data.backup.RestoreDiagnosticsSink.finalizeRunFailed(String,Throwable?)"
+  reason: "Backup diagnostics infrastructure — runCatching for diagnostic recording, not business logic [Wave-2 exact-symbol conversion of prior file-wide entry; no CE rethrow at this site - tracked debt]"
+  owner: "@panospao7"
+  expires: "2027-01-01"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-03
+  path: app/src/main/java/com/yourname/expensetracker/data/backup/RestoreDiagnosticsSink.kt
+  symbol: "com.yourname.expensetracker.data.backup.RestoreDiagnosticsSink.event(String,com.yourname.expensetracker.domain.diagnostics.EventOutcome,com.yourname.expensetracker.domain.diagnostics.EventSeverity,com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode?,com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata,Throwable?,Boolean)"
+  reason: "Backup diagnostics infrastructure — runCatching for diagnostic recording, not business logic [Wave-2 exact-symbol conversion of prior file-wide entry; no CE rethrow at this site - tracked debt]"
+  owner: "@panospao7"
+  expires: "2027-01-01"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-03
+  path: app/src/main/java/com/yourname/expensetracker/data/backup/RestoreDiagnosticsSink.kt
+  symbol: "com.yourname.expensetracker.data.backup.RestoreDiagnosticsSink.finalizeRunFailed(String,Throwable?)"
+  reason: "Backup diagnostics infrastructure — runCatching for diagnostic recording, not business logic [Wave-2 exact-symbol conversion of prior file-wide entry; no CE rethrow at this site - tracked debt]"
+  owner: "@panospao7"
+  expires: "2027-01-01"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-02
+  path: app/src/main/java/com/yourname/expensetracker/data/backup/RestoreJournalImporter.kt
+  symbol: "com.yourname.expensetracker.data.backup.RestoreJournalImporter.importLastSuccessJournalIfPresent()"
+  reason: "Restore journal importer with explicit CE rethrow in catch blocks [Wave-2 exact-symbol conversion of prior file-wide entry; no CE rethrow at this site - tracked debt]"
+  owner: "@panospao7"
+  expires: "2027-01-01"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-02
+  path: app/src/main/java/com/yourname/expensetracker/data/backup/RestoreJournalImporter.kt
+  symbol: "com.yourname.expensetracker.data.backup.RestoreJournalImporter.importLastFailureJournalIfPresent()"
+  reason: "Restore journal importer with explicit CE rethrow in catch blocks [Wave-2 exact-symbol conversion of prior file-wide entry; no CE rethrow at this site - tracked debt]"
+  owner: "@panospao7"
+  expires: "2027-01-01"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-02
+  path: app/src/main/java/com/yourname/expensetracker/data/privacy/DefaultCloudPayloadPolicy.kt
+  symbol: "com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy.prepareReceiptAssist(String,String?,String?,Boolean,com.yourname.expensetracker.domain.privacy.SafePrivacyMetadata)"
+  reason: "Cloud payload policy — runCatching for policy enforcement, fail-closed design [Wave-2 exact-symbol conversion of prior file-wide entry; no CE rethrow at this site - tracked debt]"
+  owner: "@panospao7"
+  expires: "2027-01-01"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-02
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/AnalyticsRepository.kt
+  symbol: "com.yourname.expensetracker.data.repository.AnalyticsRepository.getDataQualityReport(Long,Long)"
+  reason: "Analytics/export infrastructure — broad catch for aggregation operations [Wave-2 exact-symbol conversion of prior file-wide entry; no CE rethrow at this site - tracked debt]"
+  owner: "@panospao7"
+  expires: "2027-01-01"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-02
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/AnalyticsRepository.kt
+  symbol: "com.yourname.expensetracker.data.repository.AnalyticsRepository.getLocationSpendSummary()"
+  reason: "Analytics/export infrastructure — broad catch for aggregation operations [Wave-2 exact-symbol conversion of prior file-wide entry; no CE rethrow at this site - tracked debt]"
+  owner: "@panospao7"
+  expires: "2027-01-01"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-02
+  path: app/src/main/java/com/yourname/expensetracker/domain/ai/usecase/CategorizationAssistInputBuilder.kt
+  symbol: "com.yourname.expensetracker.domain.ai.usecase.CategorizationAssistInputBuilder.build(com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt,com.yourname.expensetracker.domain.ai.model.AiSettings)"
+  reason: "AI use case — structured fallback with safe reporting [Wave-2 exact-symbol conversion of prior file-wide entry; no CE rethrow at this site - tracked debt]"
+  owner: "@panospao7"
+  expires: "2027-01-01"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/domain/ai/usecase/DedupeJudgeInputBuilder.kt
+  symbol: "com.yourname.expensetracker.domain.ai.usecase.DedupeJudgeInputBuilder.build(com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt,com.yourname.expensetracker.domain.ai.model.AiSettings)"
+  reason: "AI use case — structured fallback with safe reporting [Wave-2 exact-symbol conversion of prior file-wide entry; no CE rethrow at this site - tracked debt]"
+  owner: "@panospao7"
+  expires: "2027-01-01"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/domain/workers/FileWorkerTerminalDiagnosticSink.kt
+  symbol: "com.yourname.expensetracker.domain.workers.FileWorkerTerminalDiagnosticSink.recordWorkerTerminalWriteFailure(String,Long,String?,String?,Int?,String,String?,String,String?,Long)"
+  reason: "Terminal diagnostic sink with explicit timeout cancellation handling [Wave-2 exact-symbol conversion of prior file-wide entry; no CE rethrow at this site - tracked debt]"
+  owner: "@panospao7"
+  expires: "2027-01-01"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/domain/workers/FileWorkerTerminalDiagnosticSink.kt
+  symbol: "com.yourname.expensetracker.domain.workers.CompositeWorkerTerminalDiagnosticSink.recordWorkerTerminalWriteFailure(String,Long,String?,String?,Int?,String,String?,String,String?,Long)"
+  reason: "Terminal diagnostic sink with explicit timeout cancellation handling [Wave-2 exact-symbol conversion of prior file-wide entry; no CE rethrow at this site - tracked debt]"
+  owner: "@panospao7"
+  expires: "2027-01-01"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/domain/workers/FileWorkerTerminalDiagnosticSink.kt
+  symbol: "com.yourname.expensetracker.domain.workers.WorkerTerminalDiagnosticReader.readAll(android.content.Context)"
+  reason: "Terminal diagnostic sink with explicit timeout cancellation handling [Wave-2 exact-symbol conversion of prior file-wide entry; no CE rethrow at this site - tracked debt]"
+  owner: "@panospao7"
+  expires: "2027-01-01"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerSpecScheduler.kt
+  symbol: "com.yourname.expensetracker.domain.workers.WorkerSpecScheduler.emitScheduleDiagnostic(com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter?,String,String,String,Boolean,String)"
+  reason: "Worker scheduling with explicit CE rethrow in catch blocks [Wave-2 exact-symbol conversion of prior file-wide entry; no CE rethrow at this site - tracked debt]"
+  owner: "@panospao7"
+  expires: "2027-01-01"
+  linked_issue: "MIT-035"

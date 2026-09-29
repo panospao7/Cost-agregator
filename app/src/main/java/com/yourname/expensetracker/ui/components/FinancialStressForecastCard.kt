@@ -29,6 +29,20 @@ fun FinancialStressForecastCard(
  currency: String
 ) {
     val overallRisk = result.overallRiskLevel
+    if (overallRisk == null || result.failure != null) {
+        Card(modifier = modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
+            Column(Modifier.padding(16.dp)) {
+                Text("Stress Forecast", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    androidx.compose.ui.res.stringResource(com.yourname.expensetracker.R.string.stress_forecast_unavailable),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = SemanticColors.TextSecondary
+                )
+            }
+        }
+        return
+    }
     val (backgroundColor, accentColor, riskIcon) = getRiskColors(overallRisk)
     
     var selectedHorizon by remember(result.horizons) { mutableIntStateOf(0) }

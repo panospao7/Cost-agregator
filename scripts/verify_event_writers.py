@@ -205,7 +205,7 @@ def scan(source_files, allowlist_filenames: set) -> list:
                 stripped = line.lstrip()
                 if stripped.startswith("//") or stripped.startswith("*"):
                     continue
-                if pattern.search(line):
+                for _match in pattern.finditer(line):
                     violations.append({
                         "rule": rule_name,
                         "file": filepath,

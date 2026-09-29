@@ -57,6 +57,11 @@ from guardrails.production_source_scope import (  # noqa: E402
     iter_production_kotlin_files,
     resolve_production_source_scope,
 )
+from kotlin_callable_parser import (  # noqa: E402
+    ParserError, find_owner_declarations, find_callable_declarations,
+    mask_kotlin_source,
+)
+from guardrails.cloud_payload_proof import CloudProofError, executable_kotlin_source  # noqa: E402
 
 ALLOWLIST_PATH = os.path.join(SCRIPT_DIR, "allowlists", "worker_allowlist.yml")
 
@@ -70,7 +75,7 @@ SKIP_DIRS = {"test", "androidTest", "migration", "generated", "build"}
 # ── Regex patterns ─────────────────────────────────────────────────
 
 # CoroutineWorker supertype: `: CoroutineWorker` at class declaration
-COROUTINE_WORKER_RE = re.compile(r""":\s*CoroutineWorker\b""")
+COROUTINE_WORKER_RE = re.compile(r""":\s*(?:androidx\.work\.)?CoroutineWorker\b""")
 
 # Guard invocation: runGuarded( or runGuardedWithContext(
 GUARD_INVOCATION_RE = re.compile(r"""runGuarded(WithContext)?\s*\(""")
@@ -198,6 +203,143 @@ def matches_allowlist(violation: Violation, allowlist: List[dict]) -> bool:
 # ── Violation detection ────────────────────────────────────────────
 
 
+class WorkerSourceError(RuntimeError):
+    """An unreadable declared source must never disappear from coverage."""
+
+
+def _brace_depth(text: str, offset: int) -> int:
+    prefix = text[:offset]
+    return prefix.count("{") - prefix.count("}")
+
+
+def _closing(text: str, start: int) -> int:
+    pairs = {"(": ")", "{": "}"}
+    opening = text[start:start + 1]
+    if opening not in pairs:
+        return -1
+    depth = 0
+    for i in range(start, len(text)):
+        if text[i] == opening:
+            depth += 1
+        elif text[i] == pairs[opening]:
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
+
+def _direct_guard_expression(expression: str, receivers: set[str]) -> bool:
+    expression = expression.strip().rstrip(";").strip()
+    call = re.match(r"(?:this\.)?(\w+)\.runGuarded(?:WithContext)?\s*\(", expression)
+    if not call or call.group(1) not in receivers:
+        return False
+    end_args = _closing(expression, call.end() - 1)
+    if end_args < 0:
+        return False
+    tail = expression[end_args + 1:].strip()
+    return tail.startswith("{") and _closing(tail, 0) == len(tail) - 1
+
+
+def _returned_guard_bridge(expression: str, result: str, receivers: set[str], methods, source: str) -> bool:
+    """Recognize direct bridges and a returned if with guarded branch values.
+
+    A branch helper is proved from its body, never authorized by its name.
+    This includes the existing privacy-cleanup worker path without exempting it.
+    """
+    expression = expression.strip().rstrip(";").strip()
+    if re.fullmatch(re.escape(result) + r"\s*\.\s*toWorkerResult\s*\(\s*\)", expression):
+        return True
+    helper = re.fullmatch(r"(\w+)\([^{};]*\)\s*\.\s*toWorkerResult\s*\(\s*\)", expression)
+    if helper:
+        candidates = [m for m in methods if m.signature.function_name == helper.group(1)]
+        if len(candidates) != 1 or not candidates[0].body or not candidates[0].body.startswith("{"):
+            return False
+        candidate = candidates[0]
+        body_start = source.find(candidate.body, candidate.start_offset, candidate.end_offset)
+        if body_start < 0:
+            return False
+        header = mask_kotlin_source(source[candidate.start_offset:body_start])
+        if any(re.search(r"\b" + re.escape(receiver) + r"\s*:", header) for receiver in receivers):
+            return False
+        body = mask_kotlin_source(candidates[0].body)[1:-1].strip()
+        return body.startswith("return ") and _direct_guard_expression(body[7:], receivers)
+    condition = re.match(r"if\s*\(", expression)
+    if not condition:
+        return False
+    end_condition = _closing(expression, condition.end() - 1)
+    if end_condition < 0:
+        return False
+    branches = expression[end_condition + 1:].strip()
+    if not branches.startswith("{"):
+        return False
+    end_first = _closing(branches, 0)
+    if end_first < 0:
+        return False
+    rest = branches[end_first + 1:].strip()
+    if not rest.startswith("else"):
+        return False
+    second = rest[4:].strip()
+    if not second.startswith("{") or _closing(second, 0) != len(second) - 1:
+        return False
+    return all(_returned_guard_bridge(branch, result, receivers, methods, source)
+               for branch in (branches[1:end_first], second[1:-1]))
+
+
+def _guarded_entry_points(content: str):
+    """Bounded proof, not a Kotlin CFG: direct typed guard calls in doWork.
+
+    Comments/literals, sibling methods, nested local functions and stored
+    lambdas cannot prove execution. Unsupported entry-point shapes fail closed.
+    Return-bridge checks below are restricted to these same entry-point bodies.
+    """
+    masked = mask_kotlin_source(content)
+    for owner in find_owner_declarations(content):
+        header = masked[owner.start_offset:owner.body_start]
+        if not COROUTINE_WORKER_RE.search(header):
+            continue
+        receivers = set(re.findall(
+            r"\bval\s+(\w+)\s*:\s*(?:[\w]+\.)*WorkerExecutionGuard\b", header
+        ))
+        declarations = find_callable_declarations(
+            content, owner, tolerate_unresolved_types=True
+        )
+        methods = [d for d in declarations if d.signature.function_name == "doWork"]
+        bodies = []
+        guarded = False
+        if len(methods) == 1:
+            method = methods[0]
+            if method.status == "RESOLVED_EXACTLY" and method.body and method.body.startswith("{"):
+                body = mask_kotlin_source(method.body)[1:-1]
+                bodies.append(body)
+                for match in re.finditer(
+                    r"(?m)^\s*val\s+(\w+)\s*=\s*(?:this\.)?(\w+)"
+                    r"\s*\.\s*runGuarded(?:WithContext)?\s*\(", body
+                ):
+                    # Only an actual top-level call counts, never a call inside
+                    # an unused local declaration or conditional branch.
+                    if match.group(2) not in receivers or _brace_depth(body, match.start()) != 0:
+                        continue
+                    prefix = body[:match.start()]
+                    if re.search(r"\b(?:val|var)\s+" + re.escape(match.group(2)) + r"\b", prefix):
+                        continue
+                    if any(_brace_depth(prefix, r.start()) == 0
+                           for r in re.finditer(r"\b(?:return|throw)\b", prefix)):
+                        continue
+                    # Existing input validation may return failure before the
+                    # guard, but an early success/retry cannot bypass it.
+                    if any(not re.match(r"return\s+Result\s*\.\s*failure\s*\(\s*\)", prefix[r.start():])
+                           for r in re.finditer(r"\breturn\b", prefix)):
+                        continue
+                    returns = [r for r in re.finditer(r"\breturn\s+", body)
+                               if r.start() > match.end() and _brace_depth(body, r.start()) == 0]
+                    guarded = len(returns) == 1 and _returned_guard_bridge(
+                        body[returns[0].end():], match.group(1), receivers, declarations, content
+                    )
+                    if guarded:
+                        break
+        yield owner.name, content.count("\n", 0, owner.start_offset) + 1, guarded, "\n".join(bodies)
+
+
 def scan_file(filepath: str, rel_path: str) -> List[Violation]:
     """Scan a single file for G-WORKER-01 violations."""
     violations: List[Violation] = []
@@ -205,9 +347,11 @@ def scan_file(filepath: str, rel_path: str) -> List[Violation]:
     try:
         with open(filepath, encoding="utf-8") as f:
             content = f.read()
-    except OSError:
-        return violations
+    except (OSError, UnicodeError):
+        raise WorkerSourceError("WORKER_SOURCE_UNREADABLE") from None
 
+    raw_content = content
+    content = executable_kotlin_source(content)
     lines = content.splitlines()
     filename = os.path.basename(filepath)
 
@@ -220,17 +364,18 @@ def scan_file(filepath: str, rel_path: str) -> List[Violation]:
     class_name = class_name_match.group(1) if class_name_match else "UnknownWorker"
 
     # ── Check 1: WorkerExecutionGuard usage ────────────────────────
-    uses_guard = bool(GUARD_INVOCATION_RE.search(content))
+    entry_points = list(_guarded_entry_points(raw_content))
+    uses_guard = bool(entry_points) and all(item[2] for item in entry_points)
+    entry_content = "\n".join(item[3] for item in entry_points)
 
     if not uses_guard:
-        violations.append(
-            violation(rel_path, 1,
-                      f"{class_name}.noguard",
-                      f"CoroutineWorker '{class_name}' does not use WorkerExecutionGuard "
-                      f"(no runGuarded/runGuardedWithContext call). Route it through the guard "
-                      f"or add to worker_allowlist.yml with documented rationale.",
-                      "")
-        )
+        for name, lineno, guarded, _body in entry_points or [(class_name, 1, False, "")]:
+            if not guarded:
+                violations.append(violation(
+                    rel_path, lineno, f"{name}.noguard",
+                    f"CoroutineWorker '{name}' has no proved WorkerExecutionGuard doWork path "
+                    "with a direct typed runGuarded/runGuardedWithContext call and returned bridge",
+                ))
         # If no guard at all, remaining checks still apply (must not mutate
         # Daos directly and must return proper Results)
 
@@ -259,9 +404,9 @@ def scan_file(filepath: str, rel_path: str) -> List[Violation]:
         # Workers without the guard must handle return path themselves
         has_do_work = bool(DO_WORK_RE.search(content))
         if has_do_work:
-            has_success = bool(RESULT_SUCCESS_RE.search(content))
-            has_failure = bool(RESULT_FAILURE_RE.search(content))
-            has_to_worker = bool(TO_WORKER_RESULT_RE.search(content))
+            has_success = bool(RESULT_SUCCESS_RE.search(entry_content))
+            has_failure = bool(RESULT_FAILURE_RE.search(entry_content))
+            has_to_worker = bool(TO_WORKER_RESULT_RE.search(entry_content))
 
             if not has_success and not has_failure and not has_to_worker:
                 # Find the doWork line
@@ -278,8 +423,8 @@ def scan_file(filepath: str, rel_path: str) -> List[Violation]:
                         break
     else:
         # Workers WITH the guard should use toWorkerResult()
-        has_to_worker = bool(TO_WORKER_RESULT_RE.search(content))
-        has_guard_result = bool(GUARD_RESULT_TO_RESULT_RE.search(content))
+        has_to_worker = bool(TO_WORKER_RESULT_RE.search(entry_content))
+        has_guard_result = bool(GUARD_RESULT_TO_RESULT_RE.search(entry_content))
 
         if not has_to_worker and not has_guard_result:
             # Find the doWork return path
@@ -412,7 +557,11 @@ def main():
         rel_path = source_file.repository_relative_path
 
         worker_files_scanned += 1
-        file_violations = scan_file(filepath, rel_path)
+        try:
+            file_violations = scan_file(filepath, rel_path)
+        except (WorkerSourceError, ParserError, CloudProofError):
+            print("ERROR: WORKER_SOURCE_UNREADABLE_OR_UNPARSEABLE", file=sys.stderr)
+            sys.exit(2)
         all_violations.extend(file_violations)
 
     # Filter violations through the allowlist (per-symbol, not whole-file)

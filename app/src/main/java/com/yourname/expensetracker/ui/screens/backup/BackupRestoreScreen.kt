@@ -146,8 +146,12 @@ fun BackupRestoreScreen(
                     Spacer(Modifier.width(12.dp))
                     Column {
                         Text(
-                            text = stringResource(R.string.backup_restore_last_backup,
-                                uiState.lastBackupDate ?: stringResource(R.string.backup_restore_no_backup)),
+                            text = if (uiState.backupInfoUnavailable) {
+                                stringResource(R.string.backup_restore_info_unavailable)
+                            } else {
+                                stringResource(R.string.backup_restore_last_backup,
+                                    uiState.lastBackupDate ?: stringResource(R.string.backup_restore_no_backup))
+                            },
                             style = MaterialTheme.typography.bodyMedium
                         )
                         // File path removed from UI state � safe diagnostics only

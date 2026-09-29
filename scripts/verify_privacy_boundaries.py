@@ -53,6 +53,8 @@ from guardrails.production_source_scope import (  # noqa: E402
     iter_production_kotlin_files,
     resolve_production_source_scope,
 )
+from guardrails.cloud_payload_proof import CloudProofError, unproved_post_lines  # noqa: E402
+from kotlin_callable_parser import ParserError  # noqa: E402
 
 MAIN_SRC = "app/src/main/java/com/yourname/expensetracker"
 PRIVACY_PACKAGE_SUBTREE = "com/yourname/expensetracker"
@@ -99,9 +101,9 @@ def _in_privacy_package_subtree(source_file) -> bool:
 def scan_file(filepath: str, rules) -> List[Violation]:
     violations = []
     try:
-        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+        with open(filepath, "r", encoding="utf-8") as f:
             lines = f.readlines()
-    except OSError:
+    except (OSError, UnicodeError):
         # Fail closed (PR-GR-10B): enumeration vouches for readable regular
         # files, so a read failure here must never silently shrink the
         # scanned surface into a false pass.  The controlled error carries
@@ -208,24 +210,20 @@ def rule_g3_raw_request_post_in_provider(filepath: str, lines: List[str]) -> Lis
     # Allow test source
     if "src/test" in norm:
         return violations
-    pattern = re.compile(r'Request\.Builder\(\)')
-    for i, line in enumerate(lines):
-        if pattern.search(line) and not _is_comment(line):
-            # Check the enclosing function (not just a fixed window) for prepared-payload usage.
-            context = _enclosing_function_text(lines, i)
-            prepared_markers = (
-                "PreparedCloudPayload", "prepared", "prepareText", "prepareReceiptAssist",
-                "prepareBankStatementValidation", "buildRequestBody", "cloudPayloadPolicy",
-                "redactor.redactText", "policy.prepare"
-            )
-            if not any(m in context for m in prepared_markers):
-                violations.append(Violation(
-                    rule="G3",
-                    file=filepath,
-                    line_no=i + 1,
-                    line=line.rstrip(),
-                    message="Request.Builder() in cloud provider without PreparedCloudPayload — use CloudPayloadPolicy"
-                ))
+    source = "".join(lines) if any(line.endswith(("\n", "\r")) for line in lines) else "\n".join(lines)
+    try:
+        unproved = unproved_post_lines(source)
+    except (ParserError, CloudProofError):
+        # Existing CLI infrastructure handling must reject an incomplete scan.
+        raise ProductionSourceScopeError(PRODUCTION_SOURCE_SCOPE_UNREADABLE) from None
+    for lineno in unproved:
+        violations.append(Violation(
+            rule="G3",
+            file=filepath,
+            line_no=lineno,
+            line="",
+            message="Cloud provider POST body has unproved CloudPayloadPolicy provenance — use the actual PreparedCloudPayload",
+        ))
     return violations
 
 

@@ -29,6 +29,92 @@ class MoneyAggregateBuilderRestrictionTest {
         converter = CurrencyConverter(store, TestTime(NOW))
     }
 
+    @Test
+    fun legacyAllFailedBucketsAreUnavailableWithoutLosingProvenance() = runTest {
+        val result = MoneyAggregateBuilder.fromBuckets(
+            listOf(50.0 to "GBP", 5000.0 to "JPY"), "EUR", converter, listOf(2, 3)
+        )
+        assertEquals(ConversionQuality.UNAVAILABLE, result.conversionQuality)
+        assertEquals(2, result.sourceBuckets.size)
+        assertEquals(2, result.conversionFailures.size)
+        assertEquals(5, result.totalTransactionCount)
+        assertEquals(5, result.failedTransactionCount)
+        assertTrue(result.isPartial)
+    }
+
+    @Test
+    fun legacySuccessfulZeroWithUnknownCountsIsPartialNotUnavailable() = runTest {
+        val result = MoneyAggregateBuilder.fromBuckets(
+            listOf(0.0 to "EUR", 50.0 to "GBP"), "EUR", converter
+        )
+        assertEquals(ConversionQuality.PARTIAL, result.conversionQuality)
+        assertEquals(0.0, result.displayAmount, 0.0)
+        assertEquals(0, result.totalTransactionCount)
+        assertEquals(2, result.sourceBuckets.size)
+        assertEquals(1, result.conversionFailures.size)
+    }
+
+    @Test
+    fun legacyConvertedZeroStillCountsAsSuccessfulBucket() = runTest {
+        val result = MoneyAggregateBuilder.fromBuckets(
+            listOf(0.0 to "USD", 50.0 to "GBP"), "EUR", converter
+        )
+        assertEquals(ConversionQuality.PARTIAL, result.conversionQuality)
+        assertEquals(0.0, result.displayAmount, 0.0)
+    }
+
+    @Test
+    fun typedAllFailedCountAgnosticBucketsAreUnavailable() = runTest {
+        val result = MoneyAggregateBuilder.fromBuckets(
+            listOf(MoneyBucketInput(50.0, CurrencyCode("GBP"), 0)),
+            CurrencyCode.EUR, converter, RateBasis.LATEST_AVAILABLE, BucketDatePolicy.Latest
+        )
+        assertEquals(ConversionQuality.UNAVAILABLE, result.conversionQuality)
+        assertEquals(1, result.sourceBuckets.size)
+        assertEquals(1, result.conversionFailures.size)
+        assertEquals(0, result.metadata.excludedTransactionCount)
+    }
+
+    @Test
+    fun typedSuccessfulNetZeroWithUnknownCountsIsNotUnavailable() = runTest {
+        val result = MoneyAggregateBuilder.fromBuckets(
+            listOf(
+                MoneyBucketInput(100.0, CurrencyCode.EUR, 0),
+                MoneyBucketInput(-100.0, CurrencyCode.EUR, 0),
+                MoneyBucketInput(50.0, CurrencyCode("GBP"), 3)
+            ),
+            CurrencyCode.EUR, converter, RateBasis.LATEST_AVAILABLE, BucketDatePolicy.Latest
+        )
+        assertEquals(ConversionQuality.PARTIAL, result.conversionQuality)
+        assertEquals(0.0, result.displayAmount, 0.0)
+        assertEquals(0, result.metadata.includedTransactionCount)
+        assertEquals(3, result.metadata.excludedTransactionCount)
+        assertEquals(3, result.sourceBuckets.size)
+    }
+
+    @Test
+    fun typedConvertedZeroWithUnknownCountsIsNotUnavailable() = runTest {
+        val result = MoneyAggregateBuilder.fromBuckets(
+            listOf(
+                MoneyBucketInput(0.0, CurrencyCode("USD"), 0),
+                MoneyBucketInput(50.0, CurrencyCode("GBP"), 1)
+            ),
+            CurrencyCode.EUR, converter, RateBasis.LATEST_AVAILABLE, BucketDatePolicy.Latest
+        )
+        assertEquals(ConversionQuality.PARTIAL, result.conversionQuality)
+        assertEquals(0.0, result.displayAmount, 0.0)
+    }
+
+    @Test
+    fun emptyAndIdentityZeroRemainComplete() = runTest {
+        val empty = MoneyAggregateBuilder.fromBuckets(emptyList(), "EUR", converter)
+        val zero = MoneyAggregateBuilder.fromBuckets(listOf(0.0 to "EUR"), "EUR", converter)
+        assertEquals(ConversionQuality.COMPLETE, empty.conversionQuality)
+        assertEquals(ConversionQuality.COMPLETE, zero.conversionQuality)
+        assertFalse(empty.isPartial)
+        assertFalse(zero.isPartial)
+    }
+
     // ── CURR-70F-06: Legacy fromBuckets rejects non-LATEST basis ───────
 
     @Test(expected = IllegalArgumentException::class)
@@ -84,6 +170,7 @@ class MoneyAggregateBuilderRestrictionTest {
         assertEquals(0, result.metadata.includedTransactionCount)
         assertEquals(5, result.metadata.excludedTransactionCount)
         assertEquals(0, store.lookupCount)
+        assertEquals(ConversionQuality.UNAVAILABLE, result.conversionQuality)
     }
 
     @Test

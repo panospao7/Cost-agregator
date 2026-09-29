@@ -359,6 +359,8 @@ class DebugViewModel @Inject constructor(
     
     private val _databaseStats = MutableStateFlow<com.yourname.expensetracker.domain.backup.DatabaseStats?>(null)
     val databaseStats: StateFlow<com.yourname.expensetracker.domain.backup.DatabaseStats?> = _databaseStats
+    private val _databaseStatsUnavailable = MutableStateFlow(false)
+    val databaseStatsUnavailable: StateFlow<Boolean> = _databaseStatsUnavailable.asStateFlow()
 
     // BAK-10: Operation result messages for debug screen feedback
     private val _databaseOperationResult = MutableStateFlow<String?>(null)
@@ -366,7 +368,15 @@ class DebugViewModel @Inject constructor(
     
     fun loadDatabaseStats() {
         viewModelScope.launch {
-            _databaseStats.value = databaseBackupRepository.getDatabaseStats()
+            try {
+                _databaseStats.value = databaseBackupRepository.getDatabaseStats()
+                _databaseStatsUnavailable.value = false
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                _databaseStats.value = null
+                _databaseStatsUnavailable.value = true
+                timber.log.Timber.w("DATABASE_STATS_UNAVAILABLE class=%s", e.javaClass.simpleName)
+            }
         }
     }
     

@@ -64,6 +64,10 @@ interface WarrantyReminderDeliveryDao {
           AND windowDays = :windowDays
           AND expiryDate = :expiryDate
           AND status IN ('SCHEDULED', 'FAILED')
+          AND EXISTS (
+              SELECT 1 FROM warranties AS w
+              WHERE w.id = warranty_reminder_deliveries.warrantyId AND w.status = 'ACTIVE'
+          )
     """)
     suspend fun claim(warrantyId: Long, windowDays: Int, expiryDate: Long, now: Long): Int
 
@@ -81,8 +85,22 @@ interface WarrantyReminderDeliveryDao {
             updatedAt = :now
         WHERE id = :id
           AND status IN ('SCHEDULED', 'FAILED')
+          AND EXISTS (
+              SELECT 1 FROM warranties AS w
+              WHERE w.id = warranty_reminder_deliveries.warrantyId AND w.status = 'ACTIVE'
+          )
     """)
     suspend fun claimById(id: Long, now: Long): Int
+
+    /** Revalidate the claimed row and its parent immediately before external delivery. */
+    @Query("""
+        SELECT EXISTS(
+            SELECT 1 FROM warranty_reminder_deliveries AS d
+            JOIN warranties AS w ON w.id = d.warrantyId
+            WHERE d.id = :id AND d.status = 'CLAIMED' AND w.status = 'ACTIVE'
+        )
+    """)
+    suspend fun isClaimedDeliveryEligible(id: Long): Boolean
 
     /**
      * Atomically marks a CLAIMED delivery as SENT, persisting the notificationId.

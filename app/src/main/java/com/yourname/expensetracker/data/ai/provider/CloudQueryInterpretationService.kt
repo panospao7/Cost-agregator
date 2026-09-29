@@ -2,6 +2,7 @@ package com.yourname.expensetracker.data.ai.provider
 
 import com.yourname.expensetracker.data.ai.provider.internal.CloudCorrelation
 import com.yourname.expensetracker.data.ai.provider.internal.CloudRetryPolicy
+import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy
 import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.data.security.getGeminiKey
@@ -11,8 +12,8 @@ import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationR
 import com.yourname.expensetracker.domain.ai.service.QueryInterpretationService
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
-import com.yourname.expensetracker.domain.privacy.CloudPayloadRedactor
-import com.yourname.expensetracker.domain.privacy.PreparedCloudPayload
+import com.yourname.expensetracker.domain.privacy.CloudPayloadPolicy
+import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyAuditContext
@@ -43,7 +44,7 @@ class CloudQueryInterpretationService @Inject constructor(
     private val secureKeyStorage: SecureKeyStorage,
     @CloudAiHttpClient private val client: OkHttpClient,
     private val privacyGate: PrivacyGate,
-    private val redactor: CloudPayloadRedactor = DefaultCloudPayloadRedactor(),
+    private val cloudPayloadPolicy: CloudPayloadPolicy,
     // P8F-03: cloud-call provenance audit (Hilt resolves; default keeps test/secondary ctors inert)
     private val auditLogger: PrivacyAuditLogger = PrivacyAuditLogger.NO_OP
 ) : QueryInterpretationService {
@@ -57,7 +58,8 @@ class CloudQueryInterpretationService @Inject constructor(
         object : PrivacyGate {
             override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
                 PrivacyDecision.FailClosed("PrivacyGate not configured in test constructor")
-        }
+        },
+        DefaultCloudPayloadPolicy(EffectiveCloudAiPolicyResolver.failClosedNoAi(), DefaultCloudPayloadRedactor())
     )
 
     @VisibleForTesting
@@ -67,7 +69,8 @@ class CloudQueryInterpretationService @Inject constructor(
         object : PrivacyGate {
             override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
                 PrivacyDecision.FailClosed("PrivacyGate not configured in test constructor")
-        }
+        },
+        DefaultCloudPayloadPolicy(EffectiveCloudAiPolicyResolver.failClosedNoAi(), DefaultCloudPayloadRedactor())
     ) {
         this.apiKeyOverride = apiKeyOverride
     }
@@ -93,9 +96,15 @@ class CloudQueryInterpretationService @Inject constructor(
         }
 
         val prompt = promptHelper.buildPrompt(input.toCloudPromptInput())
-        // ARCH-04: Redact PII from prompt before sending to cloud AI
-        val redacted = redactor.redactText(prompt, CloudPayloadPurpose.QUERY_INTERPRETATION)
-        // P8F-03: record cloud-call provenance (provenance comes from the redacted payload)
+        val prepared = try {
+            cloudPayloadPolicy.prepareText(CloudPayloadPurpose.QUERY_INTERPRETATION, prompt)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.w("CloudQueryInterpretationService: UNKNOWN_ERROR stage=payload_policy class=%s", e::class.java.simpleName)
+            return unsupported("UNKNOWN_ERROR")
+        }
+        // Audit and transport share the policy-owned payload, not separately prepared text.
         auditLogger.logCloudCall(
             PrivacyCapability.CLOUD_AI_GENERAL,
             PrivacyDecision.Allowed,
@@ -103,19 +112,11 @@ class CloudQueryInterpretationService @Inject constructor(
                 provider = "gemini",
                 modelId = AppConfig.Ai.QUERY_INTERPRETATION_CLOUD_MODEL,
                 purpose = CloudPayloadPurpose.QUERY_INTERPRETATION,
-                payload = PreparedCloudPayload(
-                    purpose = CloudPayloadPurpose.QUERY_INTERPRETATION,
-                    text = redacted.text,
-                    redactionApplied = redacted.redactionApplied,
-                    fieldsRedacted = redacted.fieldsRedacted,
-                    payloadHash = redacted.payloadHash,
-                    rawTextIncluded = !redacted.redactionApplied,
-                    rawImageIncluded = false
-                ),
+                payload = prepared,
                 correlationId = CloudCorrelation.newCorrelationId()
             )
         )
-        val requestBody = buildRequestBody(redacted.text)
+        val requestBody = buildRequestBody(prepared.text)
         val url = "${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.QUERY_INTERPRETATION_CLOUD_MODEL}:generateContent"
         val request = Request.Builder()
             .url(url)
@@ -196,7 +197,7 @@ class CloudQueryInterpretationService @Inject constructor(
     }
 
     private fun buildRequestBody(promptText: String): String {
-        // PRIV/ARCH-04: prompt is already redacted by the caller (interpret()).
+        // The caller supplies only text returned by CloudPayloadPolicy.
         return JSONObject().apply {
             put(
                 "contents",

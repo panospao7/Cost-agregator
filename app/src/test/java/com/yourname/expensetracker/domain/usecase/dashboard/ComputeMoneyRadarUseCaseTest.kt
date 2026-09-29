@@ -60,6 +60,80 @@ class ComputeMoneyRadarUseCaseTest {
     private val now = 1_710_000_000_000L
     private val dayMs = 24 * 60 * 60 * 1000L
 
+    @Test
+    fun failedRequiredSignalsNeverProduceHealthyZeroOrAdvice() = runTest {
+        for (source in 0..2) {
+            stubHealthyRadarSignals()
+            val failure = IllegalStateException("SECRET financial payload")
+            when (source) {
+                0 -> coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } throws failure
+                1 -> coEvery { anomalyAlertRepository.getActiveAlerts() } throws failure
+                2 -> every { budgetRepository.getBudgetStatuses() } returns kotlinx.coroutines.flow.flow { throw failure }
+            }
+            assertRadarUnavailable(useCase.compute())
+        }
+    }
+
+    @Test
+    fun requiredSignalCancellationIsNotAnUnavailableResult() = runTest {
+        for (source in 0..2) {
+            stubHealthyRadarSignals()
+            val cancellation = kotlinx.coroutines.CancellationException("test cancellation")
+            when (source) {
+                0 -> coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } throws cancellation
+                1 -> coEvery { anomalyAlertRepository.getActiveAlerts() } throws cancellation
+                2 -> every { budgetRepository.getBudgetStatuses() } returns kotlinx.coroutines.flow.flow { throw cancellation }
+            }
+            val failure = runCatching { useCase.compute() }.exceptionOrNull()
+            assertTrue(failure is kotlinx.coroutines.CancellationException)
+        }
+    }
+
+    @Test
+    fun missingSimulationForExistingBudgetIsUnavailableNotNoRisk() = runTest {
+        stubHealthyRadarSignals()
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1000.0)))
+        coEvery { expenseRepository.getExpensesSince(any()) } returns emptyList()
+        coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns null
+        assertRadarUnavailable(useCase.compute())
+    }
+
+    @Test
+    fun unsuccessfulBudgetImpactIsUnavailableNotNoRisk() = runTest {
+        stubHealthyRadarSignals()
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1000.0)))
+        coEvery { expenseRepository.getExpensesSince(any()) } returns emptyList()
+        val simulation = monteCarloResult(probabilityUnderBudget = 0.5)
+        coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns simulation
+        for (outcome in listOf(Result.Loading, Result.Duplicate, Result.Error(message = "SECRET payload"))) {
+            every { getMonteCarloBudgetImpact(1000.0, simulation) } returns outcome
+            assertRadarUnavailable(useCase.compute())
+        }
+    }
+
+    @Test
+    fun failedIncomeSignalDoesNotBecomeZeroIncome() = runTest {
+        stubHealthyRadarSignals()
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns
+            listOf(recurring("Bill", 10.0, now + dayMs))
+        coEvery { expenseRepository.getTotalDepositsForPeriod(any(), any()) } throws IllegalStateException("private")
+        assertRadarUnavailable(useCase.compute())
+    }
+
+    private fun stubHealthyRadarSignals() {
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns emptyList()
+        coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+    }
+
+    private fun assertRadarUnavailable(result: MoneyRadarData) {
+        assertEquals(UrgencyLevel.UNAVAILABLE, result.urgencyLevel)
+        assertNull(result.urgencyScore)
+        assertTrue(result.topReasons.isEmpty())
+        assertNull(result.primaryCta)
+        assertNull(result.budgetRisk)
+    }
+
     @Before
     fun setup() {
         context = ApplicationProvider.getApplicationContext()
@@ -170,6 +244,7 @@ class ComputeMoneyRadarUseCaseTest {
         )
         coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+        coEvery { expenseRepository.getTotalDepositsForPeriod(any(), any()) } returns 5000.0
 
         val result = useCase.compute()
 
@@ -263,7 +338,7 @@ class ComputeMoneyRadarUseCaseTest {
         val result = useCase.compute()
 
         assertEquals(listOf("Confirmed Rent"), result.dueBills.map { it.merchant })
-        assertTrue(result.urgencyScore > 0)
+        assertTrue(requireNotNull(result.urgencyScore) > 0)
     }
 
     @Test
@@ -401,7 +476,7 @@ class ComputeMoneyRadarUseCaseTest {
         val lowRisk = useCase.compute()
         val highRisk = useCase.compute()
 
-        assertTrue(highRisk.urgencyScore > lowRisk.urgencyScore)
+        assertTrue(requireNotNull(highRisk.urgencyScore) > requireNotNull(lowRisk.urgencyScore))
         assertTrue(highRisk.urgencyLevel >= lowRisk.urgencyLevel)
     }
 
@@ -412,6 +487,7 @@ class ComputeMoneyRadarUseCaseTest {
         )
         coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+        coEvery { expenseRepository.getTotalDepositsForPeriod(any(), any()) } returns 5000.0
 
         val result = useCase.compute()
 
@@ -428,6 +504,7 @@ class ComputeMoneyRadarUseCaseTest {
         )
         coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+        coEvery { expenseRepository.getTotalDepositsForPeriod(any(), any()) } returns 5000.0
 
         val result = useCase.compute()
 

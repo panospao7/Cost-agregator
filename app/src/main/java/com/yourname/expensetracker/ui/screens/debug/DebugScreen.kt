@@ -1126,6 +1126,7 @@ private fun DatabaseManagementSection(viewModel: DebugViewModel) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val databaseStats by viewModel.databaseStats.collectAsState()
+    val databaseStatsUnavailable by viewModel.databaseStatsUnavailable.collectAsState()
     val exportResult by viewModel.databaseExportResult.collectAsState()
     val importResult by viewModel.databaseImportResult.collectAsState()
     
@@ -1243,6 +1244,12 @@ private fun DatabaseManagementSection(viewModel: DebugViewModel) {
             Spacer(modifier = Modifier.height(8.dp))
             
             // Database Stats
+            if (databaseStatsUnavailable) {
+                Text(
+                    stringResource(R.string.debug_database_stats_unavailable),
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
             databaseStats?.let { stats ->
                 Text(
                     stringResource(R.string.debug_current_data),

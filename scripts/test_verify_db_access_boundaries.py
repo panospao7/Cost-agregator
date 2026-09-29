@@ -60,6 +60,7 @@ _REPO_ROOT_STR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT_STR not in sys.path:
     sys.path.insert(0, _REPO_ROOT_STR)
 import verify_db_access_boundaries as _mod  # noqa: E402
+from scripts.ci.guard_test_diagnostics import db_guard_failure_summary  # noqa: E402
 
 scan = _mod.scan
 canonical_policy_path = _mod.canonical_policy_path
@@ -818,6 +819,57 @@ def test_parse_function_declarations_extracts_methods_and_bodies():
     assert "dao.insert(x)" in methods[1]["body"]
 
 
+@pytest.mark.parametrize("parameters", ["<T>", "<T, U>", "<reified T>"])
+@pytest.mark.parametrize("expression_body", [False, True])
+def test_generic_function_declarations_keep_exact_name_and_body(parameters, expression_body):
+    body_open = "= withContext(dispatcher) {" if expression_body else "{"
+    return_value = "value" if expression_body else "return value"
+    content = f'''class GenericFixture {{
+    private suspend inline fun {parameters} export(value: T): T {body_open}
+        db.openHelper.writableDatabase
+        {return_value}
+    }}
+    fun unrelated() {{ db.deleteRecursively() }}
+}}
+'''
+    lines = content.split("\n")
+    methods = parse_function_declarations(lines, 0, len(lines) - 1)
+    assert [method["name"] for method in methods] == ["export", "unrelated"]
+    assert methods[0]["start"] == 1
+    assert "writableDatabase" in methods[0]["body"]
+    assert "deleteRecursively" not in methods[0]["body"]
+    assert not methods[0]["unsupported_expression"]
+    assert not methods[0]["unterminated_braced_body"]
+    assert _mod._find_declaration_name(lines[1]) == "export"
+
+
+@pytest.mark.parametrize("parameters", ["<>", "<T,>", "<T,,U>", "<T"])
+def test_malformed_generic_header_never_supplies_a_declaration_name(parameters):
+    line = "private fun " + parameters + " export(value: T): T {"
+    assert _mod._find_declaration_name(line) is None
+
+
+def test_generic_function_names_in_comments_and_literals_stay_masked():
+    content = '''class GenericFixture {
+    // fun <T> fakeLine() {
+    /* fun <T> fakeBlock() { */
+    val text = "fun <T> fakeString() {"
+    val block = """fun <T> fakeTriple() {
+        db.deleteRecursively()
+    }"""
+    fun <T> real(value: T): T {
+        db.openHelper.writableDatabase
+        return value
+    }
+}
+'''
+    lines = content.split("\n")
+    methods = parse_function_declarations(lines, 0, len(lines) - 1)
+    assert [method["name"] for method in methods] == ["real"]
+    assert "writableDatabase" in methods[0]["body"]
+    assert "deleteRecursively" not in methods[0]["body"]
+
+
 def test_extract_method_body_balances_nested_braces():
     lines = """fun outer() {
     if (x) {
@@ -1214,6 +1266,7 @@ _EXACT_OPERATION_CASES = [
     ("pendingReviewDao", "bulkRenameMerchant"),
     ("backgroundJobRunDao", "staleAbortIfStillRunning"),
     ("categoryDao", "getOrInsertByNameNoCase"),
+    ("transactionEventDao", "nullSnapshotsOlderThan"),
 ]
 
 
@@ -1232,6 +1285,39 @@ def test_extract_mutation_pairs_read_only_calls_never_extracted():
         "val d = expenseDao.existsByDedupeKey(key)"
     )
     assert extract_mutation_pairs(body, {}) == []
+
+
+@pytest.mark.parametrize("extractor_name", ["legacy", "shared"])
+@pytest.mark.parametrize("body", [
+    "transactionEventDao.nullSnapshotsOlderThan(cutoff)",
+    "transactionEventDao\n    .nullSnapshotsOlderThan(cutoff)",
+    "database.transactionEventDao().nullSnapshotsOlderThan(cutoff)",
+    "retentionDao.nullSnapshotsOlderThan(cutoff)",
+], ids=["direct", "multiline", "database-chain", "typed-alias"])
+def test_snapshot_nulling_detection_covers_both_maintained_extractors(extractor_name, body):
+    from scripts.db_guard import policy_parsing
+
+    extractor = (_mod._extract_mutation_matches if extractor_name == "legacy"
+                 else policy_parsing._extract_mutation_matches)
+    matches = extractor(body, var_map={"retentionDao": "transactionEventDao"})
+    assert [(match["dao"], match["op"]) for match in matches] == [
+        ("transactionEventDao", "nullSnapshotsOlderThan"),
+    ]
+
+
+@pytest.mark.parametrize("extractor_name", ["legacy", "shared"])
+@pytest.mark.parametrize("body", [
+    "// transactionEventDao.nullSnapshotsOlderThan(cutoff)",
+    'val note = "transactionEventDao.nullSnapshotsOlderThan(cutoff)"',
+    'val note = """transactionEventDao.nullSnapshotsOlderThan(cutoff)"""',
+    "transactionEventDao.nullableSnapshotCount()",
+], ids=["comment", "string", "raw-string", "unrelated-null-prefix"])
+def test_snapshot_nulling_detection_does_not_broaden_to_text_or_unrelated_calls(extractor_name, body):
+    from scripts.db_guard import policy_parsing
+
+    extractor = (_mod._extract_mutation_matches if extractor_name == "legacy"
+                 else policy_parsing._extract_mutation_matches)
+    assert extractor(body, var_map={}) == []
 
 
 def test_matches_policy_pair_requires_exact_operation():
@@ -4412,8 +4498,8 @@ class FooRepo(private val expenseDao: ExpenseDao) {
 #   * exact tuple-set equivalence between the manifest's `expected` + `fixtures`
 #     tuple set and the current structural-exception tuple set (missing/extra
 #     tuples and duplicates all fail);
-#   * the pinned structural entry count (64 — GR-08j raised it from 62 by
-#     adding two exact named-object Room-migration tuples) via the manifest's
+#   * the pinned structural entry count (65 — the human-authorized
+#     2026-09-28 cleanup helper adds one to the GR-08j 64) via the manifest's
 #     `counts` section — the manifest governs structural exceptions ONLY, so a
 #     legacy `ownership_entries` counts key is unknown-count-key metadata
 #     that fails closed as MANIFEST_INVALID (GR-04 decoupling);
@@ -4556,25 +4642,25 @@ def test_manifest_exact_tuple_equality_against_structural_yaml_passes(tmp_path, 
 def test_manifest_missing_tuple_fails_closed(tmp_path, monkeypatch):
     """A manifest tuple with no EXACT structural exception entry fails with the
     controlled MISSING_TUPLE code — and no other code fires."""
-    # GR-08j aligned the fixture arithmetic to the current canonical contract:
-    # the pinned structural count is 64 (62 -> 64), and the canonical-mode
-    # count stage requires counts.structural_entries == 64 AND exactly 64
-    # current entries.  The fixture therefore carries 65 manifest tuples over
-    # a 64-entry current set, leaving exactly one manifest tuple (m64)
+    # The authorized cleanup helper raises the canonical count from 64 to 65:
+    # the pinned structural count is 65 (64 -> 65), and the canonical-mode
+    # count stage requires counts.structural_entries == 65 AND exactly 65
+    # current entries.  The fixture therefore carries 66 manifest tuples over
+    # a 65-entry current set, leaving exactly one manifest tuple (m65)
     # uncovered.
-    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch, n=65)
+    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch, n=66)
     class_name = "SomeClass"
-    tuples = _manifest_tuples(path, class_name, n=65)
-    # Current structural exceptions omit m64; the manifest keeps it.
+    tuples = _manifest_tuples(path, class_name, n=66)
+    # Current structural exceptions omit m65; the manifest keeps it.
     current = _sexc_entries_for(tuples[:-1])
-    manifest = _manifest_dict(tuples, structural=64)
+    manifest = _manifest_dict(tuples, structural=65)
 
     errors = verify_structural_exceptions_manifest(
         current, manifest, str(src)
     )
     missing = [e for e in errors if e.startswith("MISSING_TUPLE")]
     assert len(missing) == 1, errors
-    assert "m64" in missing[0], missing
+    assert "m65" in missing[0], missing
     assert all(not e.startswith("EXTRA_TUPLE") for e in errors), errors
     assert all(not e.startswith("COUNT_MISMATCH") for e in errors), errors
 
@@ -4583,22 +4669,22 @@ def test_manifest_extra_tuple_fails_closed(tmp_path, monkeypatch):
     """A structural exception tuple with no manifest coverage fails with the
     controlled EXTRA_TUPLE code — an entry added without a manifest update can
     never silently pass."""
-    # GR-08j aligned the fixture arithmetic to the pinned 64-entry contract
-    # (see test_manifest_missing_tuple_fails_closed): 64 current entries over
-    # a 63-tuple manifest leaves exactly one uncovered exception tuple (m63).
-    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch, n=64)
+    # The authorized cleanup helper requires the pinned 65-entry contract
+    # (see test_manifest_missing_tuple_fails_closed): 65 current entries over
+    # a 64-tuple manifest leaves exactly one uncovered exception tuple (m64).
+    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch, n=65)
     class_name = "SomeClass"
-    tuples = _manifest_tuples(path, class_name, n=64)
-    # Current exceptions keep m63; the manifest does not cover it.
+    tuples = _manifest_tuples(path, class_name, n=65)
+    # Current exceptions keep m64; the manifest does not cover it.
     current = _sexc_entries_for(tuples)
-    manifest = _manifest_dict(tuples[:-1], structural=64)
+    manifest = _manifest_dict(tuples[:-1], structural=65)
 
     errors = verify_structural_exceptions_manifest(
         current, manifest, str(src)
     )
     extra = [e for e in errors if e.startswith("EXTRA_TUPLE")]
     assert len(extra) == 1, errors
-    assert "m63" in extra[0], extra
+    assert "m64" in extra[0], extra
     assert all(not e.startswith("MISSING_TUPLE") for e in errors), errors
     assert all(not e.startswith("COUNT_MISMATCH") for e in errors), errors
 
@@ -4606,15 +4692,15 @@ def test_manifest_extra_tuple_fails_closed(tmp_path, monkeypatch):
 def test_manifest_duplicate_tuple_fails_closed(tmp_path, monkeypatch):
     """A duplicated tuple inside the CURRENT structural exceptions fails with
     the controlled DUPLICATE_TUPLE code."""
-    # GR-08j aligned the fixture arithmetic to the pinned 64-entry contract
-    # (see test_manifest_missing_tuple_fails_closed): 63 distinct tuples plus
-    # one duplicate give exactly 64 current entries against the 64-pin.
-    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch, n=63)
+    # The authorized cleanup helper requires the pinned 65-entry contract
+    # (see test_manifest_missing_tuple_fails_closed): 64 distinct tuples plus
+    # one duplicate give exactly 65 current entries against the 65-pin.
+    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch, n=64)
     class_name = "SomeClass"
-    tuples = _manifest_tuples(path, class_name, n=63)
+    tuples = _manifest_tuples(path, class_name, n=64)
     current = _sexc_entries_for(tuples)
     current.append(_sexc(path, class_name, "m0", "execSQL"))  # duplicate m0
-    manifest = _manifest_dict(tuples, structural=64)
+    manifest = _manifest_dict(tuples, structural=65)
 
     errors = verify_structural_exceptions_manifest(
         current, manifest, str(src)
@@ -4682,7 +4768,7 @@ def test_manifest_malformed_entry_fails_closed(tmp_path):
 
 
 def test_manifest_structural_count_mismatch_fails_closed(tmp_path, monkeypatch):
-    """A manifest whose counts.structural_entries drifts from the pinned 64
+    """A manifest whose counts.structural_entries drifts from the pinned 65
     contract fails with the controlled COUNT_MISMATCH code — on both the
     manifest side and the current-structural side.  Ownership cardinality is
     never part of this contract (GR-04 decoupling)."""
@@ -4933,7 +5019,7 @@ class FooRepo(private val expenseDao: ExpenseDao) {
 # ── 21. Immutable manifest classification contract ────────────────────────────
 # The structural expected-methods manifest's ``expected`` and ``fixtures``
 # sections must EXACTLY equal the immutable checked-in tuple contracts
-# (58 expected / 4 fixtures).  Moving a tuple between sections, inventing a
+# (60 expected / 5 fixtures).  Moving a tuple between sections, inventing a
 # new fixture tuple, or dropping a pinned tuple all fail with
 # MANIFEST_CLASSIFICATION_MISMATCH — a reclassified ``expected`` tuple can
 # never escape its mandatory operation evidence through the declaration-only
@@ -4941,7 +5027,7 @@ class FooRepo(private val expenseDao: ExpenseDao) {
 #
 # The checked-in contract tests below load the REAL production files through
 # the production loaders (no synthetic temp fixtures): the pinned structural
-# count (64 — GR-08j raised it from 62; the manifest carries no ownership
+# count (65 — one human-authorized cleanup helper added; no ownership
 # count), the exact tuple classification, and the full structural-manifest
 # gate must all pass on the actual repo state.
 
@@ -4967,12 +5053,12 @@ def _manifest_dict_from_tuples(expected_tuples, fixture_tuples=()):
 
 
 def test_manifest_immutable_contracts_pin_exact_counts():
-    """The immutable contracts pin EXACTLY 60 expected and 4 fixture tuples,
+    """The immutable contracts pin EXACTLY 60 expected and 5 fixture tuples,
     every tuple is canonical, and the two contracts are disjoint."""
     assert MANIFEST_IMMUTABLE_EXPECTED_COUNT == 60
-    assert MANIFEST_IMMUTABLE_FIXTURE_COUNT == 4
+    assert MANIFEST_IMMUTABLE_FIXTURE_COUNT == 5
     assert len(MANIFEST_IMMUTABLE_EXPECTED_TUPLES) == 60
-    assert len(MANIFEST_IMMUTABLE_FIXTURE_TUPLES) == 4
+    assert len(MANIFEST_IMMUTABLE_FIXTURE_TUPLES) == 5
     assert MANIFEST_IMMUTABLE_EXPECTED_TUPLES.isdisjoint(
         MANIFEST_IMMUTABLE_FIXTURE_TUPLES
     )
@@ -5061,7 +5147,7 @@ def test_manifest_classification_checked_in_manifest_accepted():
 def test_manifest_current_structural_yaml_tuple_set_remains_exact():
     """The CURRENT structural exceptions YAML tuple set must EXACTLY equal the
     checked-in manifest's expected+fixtures tuple set — no missing, no extra,
-    no duplicates, and exactly the pinned 64 entries."""
+    no duplicates, and exactly the pinned 65 entries."""
     structural = load_db_structural_exceptions()
     manifest = load_db_structural_expected_methods()
     current_tuples = [
@@ -5075,8 +5161,387 @@ def test_manifest_current_structural_yaml_tuple_set_remains_exact():
     assert len(current_tuples) == len(set(current_tuples)), "duplicates in current YAML"
     assert len(manifest_tuples) == len(set(manifest_tuples)), "duplicates in manifest"
     assert set(current_tuples) == set(manifest_tuples)
-    assert len(current_tuples) == 64
-    assert len(manifest_tuples) == 64
+    assert len(current_tuples) == 65
+    assert len(manifest_tuples) == 65
+
+
+def test_backup_cleanup_structural_approval_is_exact_and_retains_caller():
+    """The approved helper is one new fixture, not a moved caller permission."""
+    path = _canonical(
+        "com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt"
+    )
+    owner = "DatabaseBackupRepositoryImpl"
+    helper = (path, owner, "cleanupRestoreStaging", "deleteRecursively")
+    caller = (path, owner, "restoreCostBackup", "deleteRecursively")
+    manifest = load_db_structural_expected_methods()
+    structural = load_db_structural_exceptions()
+
+    def identity(entry):
+        return tuple(entry[key] for key in ("path", "class", "method_pattern", "operation"))
+
+    helper_rows = [entry for entry in structural if identity(entry) == helper]
+    fixture_rows = [entry for entry in manifest["fixtures"] if identity(entry) == helper]
+    caller_rows = [entry for entry in structural if identity(entry) == caller]
+    assert len(helper_rows) == len(fixture_rows) == len(caller_rows) == 1
+    assert helper_rows == fixture_rows
+    assert helper_rows[0]["owner"] == "@panospao7"
+    assert helper_rows[0]["linked_issue"] == "MIT-003"
+    assert helper in MANIFEST_IMMUTABLE_FIXTURE_TUPLES
+    assert helper not in MANIFEST_IMMUTABLE_EXPECTED_TUPLES
+    assert caller in MANIFEST_IMMUTABLE_EXPECTED_TUPLES
+    assert caller not in MANIFEST_IMMUTABLE_FIXTURE_TUPLES
+    assert sum(identity(entry) == caller for entry in manifest["expected"]) == 1
+    assert not any(identity(entry) == helper for entry in manifest["expected"])
+    assert not any(identity(entry) == caller for entry in manifest["fixtures"])
+    assert {
+        identity(entry) for entry in structural
+        if entry["path"] == path and entry["class"] == owner
+        and entry["method_pattern"] == "cleanupRestoreStaging"
+    } == {helper}
+
+    # Independently require direct operation evidence for BOTH real bodies.
+    # This isolated source check does not reclassify the production manifest.
+    selected = helper_rows + caller_rows
+    evidence_manifest = _manifest_dict(selected, structural=2)
+    errors = verify_structural_exceptions_manifest(
+        selected, evidence_manifest, _mod.SOURCE_DIR,
+        enforce_canonical_contract=False,
+    )
+    assert errors == [], errors
+
+
+@pytest.mark.parametrize("field,value", [
+    ("path", _canonical("com/example/DatabaseBackupRepositoryImpl.kt")),
+    ("class", "OtherDatabaseBackupRepositoryImpl"),
+    ("method_pattern", "cleanupStagedDbTrio"),
+    ("method_pattern", "cleanupRestoreStagingExtra"),
+    ("operation", "openDatabase"),
+    ("operation", "writableDatabase"),
+])
+def test_backup_cleanup_approval_rejects_nearby_identity_or_operation(field, value):
+    manifest = load_db_structural_expected_methods()
+    path = _canonical(
+        "com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt"
+    )
+    rows = [
+        entry for entry in manifest["fixtures"]
+        if entry["path"] == path
+        and entry["class"] == "DatabaseBackupRepositoryImpl"
+        and entry["method_pattern"] == "cleanupRestoreStaging"
+        and entry["operation"] == "deleteRecursively"
+    ]
+    assert len(rows) == 1
+    rows[0][field] = value
+    errors = structural_manifest_classification_errors(manifest)
+    assert len(errors) == 1, errors
+    assert errors[0].startswith("MANIFEST_CLASSIFICATION_MISMATCH"), errors
+    assert "'fixtures'" in errors[0], errors
+
+
+def test_backup_export_structural_identity_move_preserves_exact_operations():
+    path = _canonical(
+        "com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt"
+    )
+    class_name = "DatabaseBackupRepositoryImpl"
+    methods = {"createCostBackup", "runCostBackupExport"}
+    operations = {"writableDatabase", "getDatabasePath", "openDatabase"}
+    expected = {
+        (path, class_name, "runCostBackupExport", operation)
+        for operation in operations
+    }
+    manifest = load_db_structural_expected_methods()
+    structural = load_db_structural_exceptions()
+    metadata = []
+    for entries in (structural, manifest["expected"]):
+        rows = [
+            entry for entry in entries
+            if entry["path"] == path and entry["class"] == class_name
+            and entry["method_pattern"] in methods
+        ]
+        assert len(rows) == 3
+        assert {
+            (entry["path"], entry["class"], entry["method_pattern"], entry["operation"])
+            for entry in rows
+        } == expected
+        assert all(entry["owner"] == "@panospao7" for entry in rows)
+        assert all(entry["linked_issue"] == "MIT-003" for entry in rows)
+        metadata.append(sorted(
+            (entry["operation"], entry["reason"], entry["owner"], entry["linked_issue"])
+            for entry in rows
+        ))
+    assert metadata[0] == metadata[1]
+    assert {
+        entry for entry in MANIFEST_IMMUTABLE_EXPECTED_TUPLES
+        if entry[0] == path and entry[1] == class_name and entry[2] in methods
+    } == expected
+    assert not any(
+        entry["path"] == path and entry["class"] == class_name
+        and entry["method_pattern"] in methods
+        for entry in manifest["fixtures"]
+    )
+
+
+@pytest.mark.parametrize("method_pattern", ["createCostBackup", "runCostBackupExportExtra"])
+def test_backup_export_structural_pin_rejects_stale_and_near_miss_names(method_pattern):
+    path = _canonical(
+        "com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt"
+    )
+    expected = sorted(MANIFEST_IMMUTABLE_EXPECTED_TUPLES)
+    replacements = [
+        entry[:2] + (method_pattern,) + entry[3:]
+        if entry[0] == path and entry[1] == "DatabaseBackupRepositoryImpl"
+        and entry[2] == "runCostBackupExport" else entry
+        for entry in expected
+    ]
+    assert sum(before != after for before, after in zip(expected, replacements)) == 3
+    manifest = _manifest_dict_from_tuples(
+        replacements, sorted(MANIFEST_IMMUTABLE_FIXTURE_TUPLES)
+    )
+    manifest["counts"]["structural_entries"] = 65
+    errors = structural_manifest_classification_errors(manifest)
+    assert len(errors) == 1, errors
+    assert errors[0].startswith("MANIFEST_CLASSIFICATION_MISMATCH"), errors
+    assert "'expected'" in errors[0], errors
+
+
+# RP-12 12b changed five full-row receipt writes into six column-scoped
+# identities. The human authorized this exact reconciliation on 2026-09-27.
+# Include the existing CAS claim to ensure it is preserved, not replaced.
+_RECEIPT_COLUMN_SCOPE_CASES = (
+    (
+        "ReceiptLinkService", "linkReceiptToExpense",
+        (
+            "Long", "Long", "String", "String", "String?", "Float?", "Boolean",
+            "com.yourname.expensetracker.data.database.entity.MatchStatus?",
+            "Boolean", "Boolean",
+        ),
+        ("claimForAutoMatch", "updateLinkTargets"),
+    ),
+    (
+        "ReceiptLinkService", "unlinkReceiptFromExpense", ("Long", "Long"),
+        ("clearMatchFields", "updatePrimaryExpenseId"),
+    ),
+    (
+        "ReceiptMatchLifecycleService", "clearMatchForReceipt", ("Long",),
+        ("clearMatchFields",),
+    ),
+    (
+        "ReceiptMatchLifecycleService", "rejectAllSuggestions", ("Long",),
+        ("updateMatchRejected",),
+    ),
+    (
+        "ReceiptMatchLifecycleService", "saveMatchSuggestion",
+        ("Long", "Long", "Double"), ("updateMatchSuggestion",),
+    ),
+)
+
+
+@pytest.fixture(scope="module")
+def _receipt_column_scope_entries():
+    # Production loader, actual active policy, and immutable typed rows.
+    # No fixture override, inferred operation, or tolerant legacy loader.
+    return tuple(load_db_ownership_policy())
+
+
+def _receipt_policy_candidate(service, method, parameter_types, operation):
+    return {
+        "path": (
+            "app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/"
+            f"{service}.kt"
+        ),
+        "owner_fqcn": (
+            "com.yourname.expensetracker.domain.receipt.lifecycle." + service
+        ),
+        "kind": "function",
+        "method": method,
+        "receiver": None,
+        "parameter_types": parameter_types,
+        "dao_accessor": "scannedReceiptDao",
+        "dao_fqcn": "com.yourname.expensetracker.data.database.dao.ScannedReceiptDao",
+        "operation": operation,
+    }
+
+
+def _receipt_policy_matches(entries, candidate):
+    from scripts.db_guard.policy_model import match_mutation
+
+    return [entry for entry in entries if match_mutation(entry, **candidate)]
+
+
+@pytest.mark.parametrize(
+    "service,method,parameter_types,operations", _RECEIPT_COLUMN_SCOPE_CASES,
+)
+def test_receipt_column_scoped_policy_preserves_exact_contract(
+    _receipt_column_scope_entries, service, method, parameter_types, operations,
+):
+    candidate = _receipt_policy_candidate(service, method, parameter_types, operations[0])
+    rows = [
+        entry for entry in _receipt_column_scope_entries
+        if entry.path == candidate["path"]
+        and entry.owner_fqcn == candidate["owner_fqcn"]
+        and entry.method == method
+        and entry.dao_accessor == "scannedReceiptDao"
+    ]
+    # Exact list equality also rejects duplicate or extra-signature grants.
+    assert sorted(entry.operation for entry in rows) == sorted(operations)
+    for operation in operations:
+        identity = _receipt_policy_candidate(service, method, parameter_types, operation)
+        matches = _receipt_policy_matches(_receipt_column_scope_entries, identity)
+        assert len(matches) == 1, operation
+        entry = matches[0]
+        assert entry.barrier_mode.value == "helper"
+        assert entry.owner == "@panospao7"
+        assert entry.linked_issue == (
+            "MIT-DB-08J" if service == "ReceiptLinkService" else "MIT-DB-08H"
+        )
+        assert entry.reason.strip()
+
+
+@pytest.mark.parametrize(
+    "service,method,parameter_types,operations", _RECEIPT_COLUMN_SCOPE_CASES,
+)
+def test_receipt_column_scoped_policy_does_not_authorize_old_full_row_update(
+    _receipt_column_scope_entries, service, method, parameter_types, operations,
+):
+    candidate = _receipt_policy_candidate(service, method, parameter_types, "update")
+    assert _receipt_policy_matches(_receipt_column_scope_entries, candidate) == []
+
+
+@pytest.mark.parametrize(
+    "service,method,parameter_types,operation",
+    [
+        (service, method, parameter_types, operation)
+        for service, method, parameter_types, operations in _RECEIPT_COLUMN_SCOPE_CASES
+        for operation in operations
+        if operation != "claimForAutoMatch"
+    ],
+)
+def test_receipt_column_scoped_grants_reject_near_miss_identities(
+    _receipt_column_scope_entries, service, method, parameter_types, operation,
+):
+    candidate = _receipt_policy_candidate(service, method, parameter_types, operation)
+    assert len(_receipt_policy_matches(_receipt_column_scope_entries, candidate)) == 1
+    for field, value in (
+        ("path", service + ".kt"),
+        ("owner_fqcn", "example.UnrelatedService"),
+        ("kind", "constructor"),
+        ("method", method + "Unsafe"),
+        ("receiver", "String"),
+        ("parameter_types", parameter_types + ("String",)),
+        ("dao_accessor", "otherDao"),
+        ("dao_fqcn", "com.yourname.expensetracker.data.database.dao.ExpenseDao"),
+        ("operation", "update"),
+    ):
+        altered = dict(candidate)
+        altered[field] = value
+        assert _receipt_policy_matches(_receipt_column_scope_entries, altered) == [], field
+
+
+# Wave-2 recovery reconciliation, human-authorized 2026-09-29: the restore
+# full-row update is replaced 1:1 by the path-only CAS, and three exact
+# recovery identities are added. Each tuple is (candidate, linked issue).
+_SRC = "app/src/main/java/com/yourname/expensetracker/"
+_PKG = "com.yourname.expensetracker."
+_WAVE2_RECOVERY_CASES = (
+    ({
+        "path": _SRC + "data/repository/DatabaseBackupRepositoryImpl.kt",
+        "owner_fqcn": _PKG + "data.repository.DatabaseBackupRepositoryImpl",
+        "kind": "function", "method": "restoreReceiptAssets", "receiver": None,
+        "parameter_types": (
+            "java.io.File",
+            _PKG + "data.backup.CostbackupBundle.BackupManifest",
+            _PKG + "data.database.AppDatabase",
+            _PKG + "data.backup.RestoreJournal.JournalEntry?",
+            _PKG + "data.backup.RestoreDiagnosticsSink?",
+        ),
+        "dao_accessor": "dao",
+        "dao_fqcn": _PKG + "data.database.dao.ScannedReceiptDao",
+        "operation": "updateImagePathIfUnchanged",
+    }, "RP-03"),
+    ({
+        "path": _SRC + "startup/AppStartupCoordinator.kt",
+        "owner_fqcn": _PKG + "startup.AppStartupCoordinator",
+        "kind": "function", "method": "resumeSingleAssetTask", "receiver": None,
+        "parameter_types": (
+            _PKG + "data.backup.RestoreJournal.JournalEntry",
+            _PKG + "data.backup.RestoreJournal.AssetRestoreTask",
+            "java.io.File?", "java.io.File",
+            _PKG + "data.database.dao.ScannedReceiptDao",
+        ),
+        "dao_accessor": "dao",
+        "dao_fqcn": _PKG + "data.database.dao.ScannedReceiptDao",
+        "operation": "updateImagePathIfUnchanged",
+    }, "RP-03"),
+    ({
+        "path": _SRC + "domain/diagnostics/OperationRunRecorder.kt",
+        "owner_fqcn": _PKG + "domain.diagnostics.RoomOperationRunRecorder",
+        "kind": "function", "method": "recoverStaleBankRuns", "receiver": None,
+        "parameter_types": ("Long", _PKG + "domain.workers.WorkerLease"),
+        "dao_accessor": "runDao",
+        "dao_fqcn": _PKG + "data.database.dao.OperationRunDao",
+        "operation": "finalizeIfRunning",
+    }, "RP-17"),
+    ({
+        "path": _SRC + "domain/bank/BankSyncStartupRecovery.kt",
+        "owner_fqcn": _PKG + "domain.bank.BankSyncStartupRecovery",
+        "kind": "function", "method": "recoverStaleRuns", "receiver": None,
+        "parameter_types": ("Long",),
+        "dao_accessor": "bankStatementImportRunDao",
+        "dao_fqcn": _PKG + "data.database.dao.BankStatementImportRunDao",
+        "operation": "markStaleFailed",
+    }, "RP-17"),
+)
+
+
+@pytest.mark.parametrize("candidate,linked_issue", _WAVE2_RECOVERY_CASES)
+def test_wave2_recovery_policy_grants_exact_single_identity(
+    _receipt_column_scope_entries, candidate, linked_issue,
+):
+    matches = _receipt_policy_matches(_receipt_column_scope_entries, candidate)
+    assert len(matches) == 1, candidate["method"]
+    entry = matches[0]
+    assert entry.barrier_mode.value == "helper"
+    assert entry.owner == "@panospao7"
+    assert entry.linked_issue == linked_issue
+    assert entry.reason.strip()
+    # The owner/method holds no other grant on this DAO accessor.
+    rows = [
+        e for e in _receipt_column_scope_entries
+        if e.path == candidate["path"]
+        and e.owner_fqcn == candidate["owner_fqcn"]
+        and e.method == candidate["method"]
+        and e.dao_accessor == candidate["dao_accessor"]
+    ]
+    assert [e.operation for e in rows] == [candidate["operation"]]
+
+
+def test_wave2_restore_no_longer_authorizes_full_row_update(
+    _receipt_column_scope_entries,
+):
+    for candidate, _issue in _WAVE2_RECOVERY_CASES[:2]:
+        old = dict(candidate)
+        old["operation"] = "update"
+        assert _receipt_policy_matches(_receipt_column_scope_entries, old) == []
+
+
+@pytest.mark.parametrize("candidate,linked_issue", _WAVE2_RECOVERY_CASES)
+def test_wave2_recovery_grants_reject_near_miss_identities(
+    _receipt_column_scope_entries, candidate, linked_issue,
+):
+    for field, value in (
+        ("path", candidate["path"].rsplit("/", 1)[-1]),
+        ("owner_fqcn", "example.UnrelatedService"),
+        ("kind", "constructor"),
+        ("method", candidate["method"] + "Unsafe"),
+        ("receiver", "String"),
+        ("parameter_types", candidate["parameter_types"] + ("String",)),
+        ("dao_accessor", "otherDao"),
+        ("dao_fqcn", _PKG + "data.database.dao.ExpenseDao"),
+        ("operation", "update"),
+    ):
+        altered = dict(candidate)
+        altered[field] = value
+        assert _receipt_policy_matches(_receipt_column_scope_entries, altered) == [], field
 
 
 def test_checked_in_structural_only_manifest_contract_via_production_apis():
@@ -5086,16 +5551,16 @@ def test_checked_in_structural_only_manifest_contract_via_production_apis():
     synthetic temp fixtures).
 
     GR-04: the manifest pins the structural count ONLY — its counts block is
-    exactly ``{structural_entries: 64}`` with no ownership cardinality.
+    exactly ``{structural_entries: 65}`` with no ownership cardinality.
 
     Activated truth (PR-GR-07 wave 2): the ACTIVE ownership policy IS the
     promoted schemaVersion-2 document.  It loads cleanly through the
-    production v2 loader into exactly 406 immutable typed entries — a v1
+    production v2 loader into exactly 423 immutable typed entries — a v1
     document can never occupy the active path again, so there is no
     not-v2 rejection left to pin here.
 
-    Derivation of the 406 pin: the checked-in active document
-    ``config/guards/db_ownership_policy.yml`` carries 406 schemaVersion-2
+    Derivation of the 423 pin: the checked-in active document
+    ``config/guards/db_ownership_policy.yml`` carries 423 schemaVersion-2
     entry rows (each with exactly one ``ownerFqcn``/``daoAccessor``/
     ``operation`` mutation identity; the v2 loader performs no dedupe), as
     of the GR-14a exact-policy wave (5 rows for the default-@Transaction
@@ -5112,12 +5577,35 @@ def test_checked_in_structural_only_manifest_contract_via_production_apis():
     RecurringOccurrenceMaterializer|lifecycleEventDao|insert row after its
     8 critical writes were rerouted through
     RoomRecurringLifecycleEventWriter.writeCritical.
+    RP-14 (fea8cdfe, 2026-09-21) then added six exact retention mutations,
+    moving 406 -> 412. On 2026-09-27 the human authorized the exact RP-12
+    reconciliation: remove five obsolete full-row receipt-update identities
+    and add six column-scoped identities, 412 - 5 + 6 = 413. The extra row
+    distinguishes unlink's clearMatchFields and updatePrimaryExpenseId
+    branches. The receipt contract tests pin those six grants and preserve
+    claimForAutoMatch. That approval did not cover unrelated identities.
+    The follow-up source-backed reconciliation moves three identities 1:1,
+    removes eight obsolete grants, and adds fifteen exact live grants:
+    413 - 8 + 15 = 420. Six grants belong to the private recurring reconciler;
+    six cover the missing bank/intake/reminder/warranty operations. The other
+    three cover the approved display-only subscription category and two
+    terminal bank-outcome operations in the same affected owners. Dedicated
+    exact-identity, real-source and negative tests pin this delta; no baseline,
+    allowlist, structural exception or RawQuery classification is changed.
+    On 2026-09-29 the human authorized the Wave-2 recovery reconciliation:
+    the restoreReceiptAssets full-row ``update`` grant is replaced 1:1 by the
+    path-only ``updateImagePathIfUnchanged`` compare-and-set (RP-03), and
+    three exact recovery identities are added (AppStartupCoordinator
+    startup asset resume, RP-03; RoomOperationRunRecorder stale bank-run
+    finalize and BankSyncStartupRecovery stale statement-run transition,
+    RP-17): 420 - 1 + 1 + 3 = 423. The Wave-2 recovery exact-identity tests
+    pin those four grants.
     Re-derive this pin after every policy promotion.
     """
     from scripts.db_guard.source_roots import load_source_root_manifest
 
     entries = load_db_ownership_policy()
-    assert len(entries) == 406
+    assert len(entries) == 423
     # Every loaded row is an immutable typed v2 entry: no legacy dict rows.
     for entry in entries:
         assert hasattr(entry, "owner_fqcn")
@@ -5128,9 +5616,9 @@ def test_checked_in_structural_only_manifest_contract_via_production_apis():
     structural = load_db_structural_exceptions()
     manifest = load_db_structural_expected_methods()
 
-    assert len(structural) == 64
+    assert len(structural) == 65
     assert manifest["counts"] == {
-        "structural_entries": 64,
+        "structural_entries": 65,
     }
     assert structural_manifest_classification_errors(manifest) == []
 
@@ -5417,21 +5905,71 @@ def test_no_executable_ownership_pin_references():
         assert "PINNED_OWNERSHIP_ENTRY_COUNT" in handle.read()
 
 
+def test_transfer_policy_correlation_signatures_preserve_exact_mutation_pairs():
+    owner = "com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator"
+    entity = "com.yourname.expensetracker.data.database.entity."
+    dao = "com.yourname.expensetracker.data.database.dao."
+    parameters = {
+        "updateTransferDetails": (
+            "Long", entity + "TransferDirection?", "String?", "String?", "String", "String?",
+        ),
+        "updateTypeAndTransferDetails": (
+            "Long", entity + "TransactionType", entity + "TransferDirection?", "String?", "String", "String?",
+        ),
+    }
+    mutations = {
+        "updateTransferDetails": {
+            ("expenseDao", "ExpenseDao", "updateTransferAccountName"),
+            ("expenseDao", "ExpenseDao", "updateTransferDirection"),
+            ("transactionEventDao", "TransactionEventDao", "insert"),
+        },
+        "updateTypeAndTransferDetails": {
+            ("expenseDao", "ExpenseDao", "updateTransactionType"),
+            ("expenseDao", "ExpenseDao", "updateTransferAccountName"),
+            ("expenseDao", "ExpenseDao", "updateTransferDirection"),
+            ("transactionEventDao", "TransactionEventDao", "insert"),
+        },
+    }
+    entries = [
+        entry for entry in load_db_ownership_policy()
+        if entry.owner_fqcn == owner and entry.method in parameters
+    ]
+    assert len(entries) == 7
+    assert {
+        (entry.method, tuple(entry.parameter_types), entry.dao_accessor,
+         entry.dao_fqcn, entry.operation)
+        for entry in entries
+    } == {
+        (method, parameters[method], accessor, dao + dao_name, operation)
+        for method, pairs in mutations.items()
+        for accessor, dao_name, operation in pairs
+    }
+    for entry in entries:
+        assert entry.path == (
+            "app/src/main/java/com/yourname/expensetracker/domain/transaction/"
+            "lifecycle/TransactionLifecycleCoordinator.kt"
+        )
+        assert entry.kind.value == "function"
+        assert entry.receiver is None
+        assert entry.barrier_mode.value == "helper"
+        assert entry.owner == "@panospao7"
+        assert entry.linked_issue == "MIT-003"
+
+
 def test_current_db_gate_activated_policy_real_config_pipeline(tmp_path, monkeypatch):
-    """Activated truth (PR-GR-07 wave 2, GR-08m1 end state): invoking the CLI
+    """Activated truth (current retained policy): invoking the CLI
     in-process with the REAL config paths runs the FULL activated pipeline —
-    the active schemaVersion-2 policy loads (477 typed entries), the v2
+    the active schemaVersion-2 policy loads (423 typed entries), the v2
     evidence stage runs over the real tree with NO loader/evidence failure,
     and the structural-manifest gate IS consulted and stays clean.
 
-    Derivation of the 477 pin: the checked-in active document
-    ``config/guards/db_ownership_policy.yml`` carries 477 schemaVersion-2
-    entry rows (one exact mutation identity each; the v2 loader performs no
-    dedupe), as of the GR-14a exact-policy wave (5 rows for the newly indexed
-    default-@Transaction mutators), unchanged in count by the GR-14b
-    EXACT_IDENTITY_MOVE (deleteReceipt|receiptEventDao|insert replaced 1:1
-    by the writeAssetDeleteFailedEvent direct owner row).  Re-derive after
-    every policy promotion.
+    The 423-entry pin is derived by the checked-in-manifest test above
+    (Wave-2 recovery reconciliation 420 - 1 + 1 + 3 = 423);
+    the current exact-identity reconciliation adds seven net rows to:
+    406 post-GR-14u37/RP-02 entries plus six existing RP-14 retention
+    mutations and the authorized RP-12 net increase of one (five obsolete
+    receipt-update identities replaced by six exact column-scoped identities).
+    The v2 loader performs no dedupe. Re-derive after every policy promotion.
 
     The run exits 0 as a TRUSTED scan: the exact policy covers every
     discovered mutation (no finding) and no BLOCKING diagnostic remains.
@@ -5452,6 +5990,18 @@ def test_current_db_gate_activated_policy_real_config_pipeline(tmp_path, monkeyp
 
     monkeypatch.delenv("COST_AGGREGATOR_GUARD_FINDINGS_SCHEMA", raising=False)
     findings_output = tmp_path / "db_guard_findings.json"
+
+    # Observe the actual evidence invocation; do not repeat or bypass it. The
+    # public CLI deliberately collapses these details into one umbrella code.
+    evidence_reports = []
+    real_evidence_check = _mod.verify_v2_policy_source_evidence
+
+    def _evidence_spy(*args, **kwargs):
+        result = real_evidence_check(*args, **kwargs)
+        evidence_reports.append(result.to_dict())
+        return result
+
+    monkeypatch.setattr(_mod, "verify_v2_policy_source_evidence", _evidence_spy)
 
     structural_calls = []
     real_structural_check = _mod.verify_structural_exceptions_manifest
@@ -5477,7 +6027,11 @@ def test_current_db_gate_activated_policy_real_config_pipeline(tmp_path, monkeyp
         "--structural-manifest", _mod.STRUCTURAL_EXPECTED_METHODS_PATH,
         "--findings-output", str(findings_output),
     ])
-    assert exit_code == 0
+    assert exit_code == 0, db_guard_failure_summary(
+        exit_code, findings_output, evidence_reports=evidence_reports,
+        expanded_evidence=True,
+    )
+    assert len(evidence_reports) == 1
 
     # Activated loading truth: the active document IS a schemaVersion-2
     # document whose rows load as typed v2 entries.
@@ -5490,10 +6044,13 @@ def test_current_db_gate_activated_policy_real_config_pipeline(tmp_path, monkeyp
         _mod.OWNERSHIP_POLICY_PATH
     )
     assert loaded
-    # 406 post-GR-14u37/RP-02 (dead-writer tranches and the stale
-    # RecurringOccurrenceMaterializer lifecycleEventDao insert row removed;
-    # re-derived per the checked-in-manifest contract pin above).
-    assert len(entries) == 406
+    # 406 post-GR-14u37/RP-02 + six RP-14 retention entries + one explicitly
+    # authorized RP-12 split (five obsolete identities replaced by six),
+    # plus seven net exact-owner reconciliation entries, plus the Wave-2
+    # recovery reconciliation (restore update -> CAS 1:1, three new exact
+    # recovery rows): 420 - 1 + 1 + 3 = 423.
+    # Re-derived per the checked-in-manifest contract pin above.
+    assert len(entries) == 423
 
     # The structural gate really ran (post-activation it is no longer
     # short-circuited by a loader block) and stayed clean.
@@ -5613,13 +6170,13 @@ def test_changed_operation_on_same_pattern_fails_closed(tmp_path, monkeypatch):
     swapped tuple as MISSING_TUPLE and the original tuple as EXTRA_TUPLE — an
     operation change on the same (path, class, method_pattern) is never
     silently accepted as clean."""
-    # GR-08j aligned the fixture arithmetic to the pinned 64-entry contract
-    # (see test_manifest_missing_tuple_fails_closed): 64 current entries and
-    # counts.structural_entries=64 keep the count stage clean so the
+    # The authorized cleanup helper requires the pinned 65-entry contract
+    # (see test_manifest_missing_tuple_fails_closed): 65 current entries and
+    # counts.structural_entries=65 keep the count stage clean so the
     # tuple-set stage is what rejects the changed operation.
-    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch, n=64)
+    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch, n=65)
     class_name = "SomeClass"
-    tuples = _manifest_tuples(path, class_name, n=64)
+    tuples = _manifest_tuples(path, class_name, n=65)
     current = _sexc_entries_for(tuples)
 
     # Same canonical path / class / method_pattern, DIFFERENT operation
@@ -5627,7 +6184,7 @@ def test_changed_operation_on_same_pattern_fails_closed(tmp_path, monkeypatch):
     # tuple-set stage is what rejects it).
     changed = [dict(t) for t in tuples]
     changed[0]["operation"] = "openDatabase"
-    manifest = _manifest_dict(changed, structural=64)
+    manifest = _manifest_dict(changed, structural=65)
 
     errors = verify_structural_exceptions_manifest(
         current, manifest, str(src)

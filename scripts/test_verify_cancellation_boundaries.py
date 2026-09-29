@@ -331,10 +331,10 @@ class OnFailureBad {
     )
 
 
-# ── Test: CancellationSafe.kt itself is excluded ────────────────────────────
+# ── Test: cancellation-safe helpers pass without filename exemptions ───────
 
-def test_cancellation_safe_excluded(tmp_path):
-    """CancellationSafe.kt is excluded from all scanning."""
+def test_cancellation_safe_helper_passes_without_filename_exemption(tmp_path):
+    """The safe helper needs no blanket filename exemption."""
     kt_file = _write_kt(
         tmp_path,
         "CancellationSafe.kt",
@@ -398,17 +398,17 @@ class SomeWorker : CoroutineWorker {
     )
 
 
-# ── Test: allowlisted file is skipped ────────────────────────────────────────
+# ── Test: copying a trusted helper filename grants no exemption ─────────────
 
-def test_allowlisted_file_skipped(tmp_path):
-    """runCatching in allowlisted file → no violation."""
+def test_helper_filename_cannot_exempt_unrelated_unsafe_code(tmp_path):
+    """An unsafe same-named file must still produce a violation."""
     kt_file = _write_kt(
         tmp_path,
         "CancellationSafe.kt",
         """package com.yourname.expensetracker.domain.util
 
 // NOT the real CancellationSafe — a user file that mimics it for testing.
-// This should still pass because CancellationSafe.kt is excluded by filename.
+// A matching filename must not exempt this unrelated unsafe callable.
 object Other {
     suspend fun go() {
         runCatching { stuff() }
@@ -423,9 +423,15 @@ object Other {
     violations, fatal = scan_file(kt_file, allowlist)
 
     assert not fatal
-    assert violations == [], (
-        f"Expected NO violations for excluded file, got: {violations}"
-    )
+    assert any(v.startswith("G-CANCEL-02 ") for v in violations), violations
+
+
+def test_checked_in_cancellation_helpers_need_no_filename_exemption():
+    root = Path(__file__).resolve().parents[1]
+    helper = root / "app/src/main/java/com/yourname/expensetracker/domain/util/CancellationSafe.kt"
+    violations, fatal = scan_file(helper, [])
+    assert not fatal
+    assert violations == []
 
 
 # ── Test: ensureActive() counts as safe ──────────────────────────────────────

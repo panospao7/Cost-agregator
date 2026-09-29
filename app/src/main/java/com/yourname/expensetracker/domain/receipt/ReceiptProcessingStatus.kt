@@ -9,6 +9,7 @@ enum class ReceiptProcessingStatus {
     OCR_RUNNING,
     OCR_FAILED,
     OCR_COMPLETED,
+    OCR_PARTIAL,
     PARSE_FAILED,
     PARSED,
     REVIEW_CREATED,

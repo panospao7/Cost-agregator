@@ -23,6 +23,18 @@ interface ScannedReceiptDao {
     @Update
     suspend fun update(receipt: ScannedReceipt)
 
+    /** Restore-internal pointer repair; never replaces unrelated receipt columns. */
+    @Query(
+        "UPDATE scanned_receipts SET imagePath = :imagePath " +
+            "WHERE id = :receiptId AND " +
+            "(imagePath = :expectedImagePath OR (imagePath IS NULL AND :expectedImagePath IS NULL))"
+    )
+    suspend fun updateImagePathIfUnchanged(
+        receiptId: Long,
+        expectedImagePath: String?,
+        imagePath: String
+    ): Int
+
     @Delete
     suspend fun delete(receipt: ScannedReceipt)
 
@@ -113,12 +125,15 @@ interface ScannedReceiptDao {
         now: Long
     ): Int
 
-    /** MATCH_SUGGESTED write: suggestion id + status + confidence only. */
+    /** Conditional MATCH_SUGGESTED write; resolved links and identical retries are no-ops. */
     @Query(
         "UPDATE scanned_receipts " +
             "SET suggestedExpenseId = :suggestedExpenseId, matchStatus = 'SUGGESTED', " +
             "matchConfidence = :confidence, updatedAt = :now " +
-            "WHERE id = :receiptId"
+            "WHERE id = :receiptId AND expenseId IS NULL " +
+            "AND matchStatus IN ('UNMATCHED', 'SUGGESTED') " +
+            "AND (matchStatus != 'SUGGESTED' OR suggestedExpenseId IS NOT :suggestedExpenseId " +
+            "OR matchConfidence IS NOT :confidence)"
     )
     suspend fun updateMatchSuggestion(
         receiptId: Long,

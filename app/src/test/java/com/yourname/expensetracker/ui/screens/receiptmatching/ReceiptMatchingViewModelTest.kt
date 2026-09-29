@@ -158,7 +158,7 @@ class ReceiptMatchingViewModelTest : ViewModelTestUtils() {
         coEvery {
             receiptLinkService.linkReceiptToExpense(31L, 901L, "AUTO_MATCH", "ReceiptMatchingViewModel", confidence = 0.98f)
         } returns Result.success(link(31L, 901L, "AUTO_MATCH", 0.98f))
-        coEvery { matchService.saveMatchSuggestion(32L, 902L, 0.86) } returns Unit
+        coEvery { matchService.saveMatchSuggestion(32L, 902L, 0.86) } returns true
         viewModel = createViewModel()
         advanceUntilIdle()
         assertEquals(2, viewModel.state.value.unmatchedReceipts.size)

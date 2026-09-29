@@ -239,6 +239,42 @@ def test_query_read_and_mutating_classification(sql, expected, tmp_path):
         assert not any("UNCLASSIFIABLE" in item for item in inventory.diagnostics)
 
 
+@pytest.mark.parametrize("subquery,expected_mutators", [
+    ("SELECT id FROM operation_runs", 1),
+    ("SELECT FROM operation_runs", 0),
+    ("SELECT id FROM", 0),
+])
+def test_orphan_event_delete_nested_query_inventory_contract(
+        tmp_path, subquery, expected_mutators):
+    source = f'''package example
+@Dao interface OperationRunEventDao {{
+    @Query("""
+        DELETE FROM operation_run_events
+        WHERE occurredAt < :beforeMs
+          AND (
+            operationRunId IS NULL
+            OR operationRunId NOT IN ({subquery})
+          )
+    """)
+    suspend fun deleteOrphanEventsOlderThan(beforeMs: Long): Int
+}}
+'''
+    # This synthetic DAO has no RawQuery methods. Do not borrow the real
+    # repository's ExpenseDao policy and report it stale in the fixture tree.
+    inventory = _inventory(
+        tmp_path, source, policy={"version": 1, "methods": []}
+    )
+    assert len(inventory.mutators) == expected_mutators
+    if expected_mutators:
+        assert inventory.diagnostics == ()
+        assert "#deleteOrphanEventsOlderThan(" in inventory.mutators[0].method
+    else:
+        assert any(
+            item.startswith("DB_ROOM_QUERY_UNCLASSIFIABLE:")
+            for item in inventory.diagnostics
+        )
+
+
 def test_query_uncertain_and_raw_query_without_exact_policy_fail_closed(tmp_path):
     inventory = _inventory(tmp_path, """package example
         @Dao interface D {

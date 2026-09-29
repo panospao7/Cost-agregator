@@ -753,14 +753,22 @@ class TestGuardTestsInterpreterPortable:
             f"guard_tests must run under sys.executable, got: {command[0]!r}"
         )
 
-    def test_pytest_targets_unchanged(self):
+    def test_pytest_targets_include_nested_guard_modules(self):
         command = self._guard_tests_command()
         assert command[1:] == [
             "-m", "pytest",
-            "scripts/test_verify_*.py",
-            "scripts/ci/test_*.py",
+            "scripts",
             "-v", "--tb=short",
         ], f"guard_tests pytest invocation changed: {command[1:]}"
+        root = Path(__file__).resolve().parents[2]
+        selected = {path.relative_to(root).as_posix()
+                    for path in (root / command[3]).rglob("test_*.py")}
+        assert {
+            "scripts/test_kotlin_callable_parser.py",
+            "scripts/test_db_guard_policy_v2.py",
+            "scripts/db_guard/structural_analysis/test_barrier_proof.py",
+            "scripts/guardrails/test_production_source_scope.py",
+        } <= selected
 
 
 # ── F2/D4 integration tests ───────────────────────────────────────────────────
@@ -1703,7 +1711,9 @@ LEGACY_GUARD_MANIFEST_FIXTURE: List[Tuple[str, List[str], str]] = [
         ],
         "blocking",
     ),
-    ("guard_tests", [sys.executable, "-m", "pytest", "scripts/test_verify_*.py", "scripts/ci/test_*.py", "-v", "--tb=short"], "blocking"),
+    # CL-22 deliberately expands this infrastructure leg beyond the historical
+    # migration fixture; registry-derived guard commands stay unchanged.
+    ("guard_tests", [sys.executable, "-m", "pytest", "scripts", "-v", "--tb=short"], "blocking"),
 ]
 
 # Verbatim pre-migration GUARD_TIME_BUDGETS (the named timeout profiles must

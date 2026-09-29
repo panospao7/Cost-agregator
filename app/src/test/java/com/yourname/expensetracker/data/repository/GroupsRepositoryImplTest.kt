@@ -27,6 +27,7 @@ import io.mockk.unmockkStatic
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.CopyableThrowable
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -42,6 +43,7 @@ class GroupsRepositoryImplTest {
     private val groupDao = mockk<ExpenseGroupDao>(relaxed = true)
     private val memberDao = mockk<GroupMemberDao>(relaxed = true)
     private val groupExpenseDao = mockk<GroupExpenseDao>(relaxed = true)
+    private val settlementDao = mockk<com.yourname.expensetracker.data.database.dao.GroupSettlementDao>(relaxed = true)
     private val coordinator = mockk<GroupTransactionCoordinator>(relaxed = true)
     private val writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
 
@@ -67,12 +69,62 @@ class GroupsRepositoryImplTest {
             currencySettingsRepository = currencySettingsRepository,
             timeProvider = mockk<TimeProvider>(relaxed = true),
             ioDispatcher = testDispatcher,
+            settlementDao = settlementDao,
         )
     }
 
     @After
     fun tearDown() {
         unmockkStatic("androidx.room.RoomDatabaseKt")
+    }
+
+    @Test
+    fun settlementHistoryIsBatchedAndMappedToTheCorrectGroup() = runTest(testDispatcher) {
+        val ids = (1L..501L).toList()
+        coEvery { groupDao.getActive() } returns ids.map { ExpenseGroup(id = it, name = "Group", defaultCurrency = "EUR") }
+        coEvery { settlementDao.getSettlementsForGroups(any()) } coAnswers {
+            firstArg<List<Long>>().map { groupId ->
+                com.yourname.expensetracker.data.database.entity.GroupSettlementEntity(
+                    id = groupId, groupId = groupId, fromMemberId = 1L, toMemberId = 2L,
+                    amount = 20.0, currency = "EUR", createdAt = 1L, status = "COMPLETED")
+            }
+        }
+        val result = repository.getActiveGroupsWithDetails()
+        assertEquals(501, result.size)
+        result.forEach { aggregate ->
+            assertEquals(com.yourname.expensetracker.domain.groups.SharedGroupSettlement(
+                aggregate.group.id, 1L, 2L, 20.0, "EUR", "COMPLETED"), aggregate.settlements.single())
+        }
+        coVerify(exactly = 1) { settlementDao.getSettlementsForGroups(ids.take(500)) }
+        coVerify(exactly = 1) { settlementDao.getSettlementsForGroups(listOf(501L)) }
+        coVerify(exactly = 0) { settlementDao.getSettlementsForGroup(any()) }
+    }
+
+    @Test
+    fun emptyGroupsDoNotQuerySettlementHistory() = runTest(testDispatcher) {
+        coEvery { groupDao.getActive() } returns emptyList()
+        assertTrue(repository.getActiveGroupsWithDetails().isEmpty())
+        coVerify(exactly = 0) { settlementDao.getSettlementsForGroups(any()) }
+    }
+
+    @Test
+    fun failedSettlementReadDoesNotReturnAnIncompleteAggregate() = runTest(testDispatcher) {
+        coEvery { groupDao.getActive() } returns listOf(ExpenseGroup(id = 1L, name = "Group", defaultCurrency = "EUR"))
+        val failure = IdentityQueryFailure("query failed")
+        coEvery { settlementDao.getSettlementsForGroups(any()) } throws failure
+        org.junit.Assert.assertSame(failure, kotlin.test.assertFailsWith<IllegalStateException> {
+            repository.getActiveGroupsWithDetails()
+        })
+    }
+
+    @Test
+    fun settlementReadCancellationIsNotSwallowed() = runTest(testDispatcher) {
+        coEvery { groupDao.getActive() } returns listOf(ExpenseGroup(id = 1L, name = "Group", defaultCurrency = "EUR"))
+        val cancellation = IdentityReadCancellation("cancelled")
+        coEvery { settlementDao.getSettlementsForGroups(any()) } throws cancellation
+        org.junit.Assert.assertSame(cancellation, kotlin.test.assertFailsWith<kotlinx.coroutines.CancellationException> {
+            repository.getActiveGroupsWithDetails()
+        })
     }
 
     @Test
@@ -510,5 +562,18 @@ class GroupsRepositoryImplTest {
         coVerify(exactly = 0) {
             coordinator.createSystemExpenseAndLinkToGroup(any(), any(), any(), any(), any(), any(), any(), any(), any())
         }
+    }
+
+    // Non-copying sentinels: the framework may copy cross-boundary throwables;
+    // createCopy()=null keeps the original instance so assertSame detects
+    // application wrapping/replacement.
+    private class IdentityQueryFailure(message: String) :
+        IllegalStateException(message), CopyableThrowable<IdentityQueryFailure> {
+        override fun createCopy(): IdentityQueryFailure? = null
+    }
+
+    private class IdentityReadCancellation(message: String) :
+        kotlinx.coroutines.CancellationException(message), CopyableThrowable<IdentityReadCancellation> {
+        override fun createCopy(): IdentityReadCancellation? = null
     }
 }

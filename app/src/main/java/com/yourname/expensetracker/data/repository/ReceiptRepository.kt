@@ -28,6 +28,7 @@ import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer as 
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.receipt.BankStatementParser
 import com.yourname.expensetracker.domain.receipt.OcrResult
+import com.yourname.expensetracker.domain.receipt.ReceiptOcrCoverage
 import com.yourname.expensetracker.domain.receipt.ReceiptOcrService
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
 import com.yourname.expensetracker.domain.receipt.ReceiptProcessingStatus
@@ -166,8 +167,12 @@ class ReceiptRepository @Inject constructor(
         val totalPages: Int? = null,
         val ephemeralRawOcrText: String? = null,
         val duplicateOfReceiptId: Long? = null,
-        val isPreExistingDuplicate: Boolean = false
-    )
+        val isPreExistingDuplicate: Boolean = false,
+        val failedPages: Int? = null
+    ) {
+        val ocrCoverage: ReceiptOcrCoverage
+            get() = ReceiptOcrCoverage(pagesProcessed, totalPages, failedPages)
+    }
 
     /**
      * Process an image URI: run OCR, parse receipt, save to DB
@@ -267,7 +272,8 @@ class ReceiptRepository @Inject constructor(
                     ReceiptParser.ParsedReceipt(null, null, null, null, now, homeCur, emptyList(), 0f),
                     pagesProcessed = ocrResult.pagesProcessed,
                     totalPages = ocrResult.totalPages,
-                    ephemeralRawOcrText = ocrResult.fullText
+                    ephemeralRawOcrText = ocrResult.fullText,
+                    failedPages = ocrResult.failedPages
                 )
             }
 
@@ -303,7 +309,8 @@ class ReceiptRepository @Inject constructor(
                 parsed,
                 pagesProcessed = ocrResult.pagesProcessed,
                 totalPages = ocrResult.totalPages,
-                ephemeralRawOcrText = ocrResult.fullText
+                ephemeralRawOcrText = ocrResult.fullText,
+                failedPages = ocrResult.failedPages
             )
         }
     }
@@ -561,7 +568,9 @@ class ReceiptRepository @Inject constructor(
          * the UI can distinguish "saved" from "already existed".
          */
         val duplicateCount: Int = 0,
-        val debugData: DebugData? = null
+        val debugData: DebugData? = null,
+        /** Subset of newly saved receipts with incomplete OCR, not additional failures or saves. */
+        val partialCount: Int = 0
     )
 
     /**
@@ -598,7 +607,8 @@ class ReceiptRepository @Inject constructor(
             val success: Boolean,
             val error: String?,
             /** RP-12 12a review follow-up: coordinator reported this item as a duplicate (`inserted = false`). */
-            val isDuplicate: Boolean = false
+            val isDuplicate: Boolean = false,
+            val isPartial: Boolean = false
         )
 
         val results = supervisorScope {
@@ -625,7 +635,8 @@ class ReceiptRepository @Inject constructor(
                                     // RP-12 12a review follow-up: duplicates come back as
                                     // a success outcome with inserted=false — classify
                                     // them separately instead of counting them as saves.
-                                    isDuplicate = savedOutcome != null && !savedOutcome.inserted
+                                    isDuplicate = savedOutcome != null && !savedOutcome.inserted,
+                                    isPartial = savedOutcome?.isPartial == true
                                 )
                             } catch (e: CancellationException) {
                                 throw e
@@ -667,12 +678,14 @@ class ReceiptRepository @Inject constructor(
 
         val successCount = results.count { it.success && !it.isDuplicate }
         val duplicateCount = results.count { it.isDuplicate }
+        val partialCount = results.count { it.success && !it.isDuplicate && it.isPartial }
         val errors = results.mapNotNull { it.error }
         return BatchResult(
             successCount = successCount,
             failureCount = total - successCount - duplicateCount,
             errors = errors,
-            duplicateCount = duplicateCount
+            duplicateCount = duplicateCount,
+            partialCount = partialCount
         )
     }
 

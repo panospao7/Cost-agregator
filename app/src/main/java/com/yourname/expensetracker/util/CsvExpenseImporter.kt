@@ -106,7 +106,8 @@ class CsvExpenseImporter @Inject constructor(
             }
 
             val headerRecordIndex = allRecords.indexOfFirst { record ->
-                if (record.malformed || isSkippable(record)) return@indexOfFirst false
+                if (record.malformed) return@indexOfFirst true
+                if (isSkippable(record)) return@indexOfFirst false
                 val first = record.fields.first().trimStart('\uFEFF').trim()
                 first.isNotEmpty() && !first.startsWith("#")
             }
@@ -115,6 +116,9 @@ class CsvExpenseImporter @Inject constructor(
             }
 
             val headerRecord = allRecords[headerRecordIndex]
+            if (headerRecord.malformed) {
+                return@withContext ImportResult.Error("Invalid CSV header: unclosed quote")
+            }
             val headerParts = headerRecord.fields.mapIndexed { i, col ->
                 if (i == 0) col.trimStart('\uFEFF') else col
             }.map { it.trim().lowercase() }

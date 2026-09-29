@@ -5,6 +5,8 @@ import com.yourname.expensetracker.domain.diagnostics.CompositeDiagnosticEventWr
 import com.yourname.expensetracker.domain.diagnostics.CompositeOperationRunRecorder
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
 import com.yourname.expensetracker.domain.diagnostics.OperationRunRecorder
+import com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder
+import com.yourname.expensetracker.domain.diagnostics.StaleBankOperationRunRecovery
 import com.yourname.expensetracker.domain.debug.DiagnosticsRepository
 import com.yourname.expensetracker.domain.debug.DiagnosticsRepositoryImpl
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleEventWriter
@@ -50,6 +52,9 @@ abstract class DiagnosticsModule {
 
     @Binds @Singleton
     abstract fun bindOperationRunRecorder(impl: CompositeOperationRunRecorder): OperationRunRecorder
+
+    @Binds @Singleton
+    abstract fun bindStaleBankOperationRunRecovery(impl: RoomOperationRunRecorder): StaleBankOperationRunRecovery
 
     @Binds @Singleton
     abstract fun bindWorkerRunLogger(impl: WorkerRunLoggerImpl): WorkerRunLogger

@@ -869,7 +869,7 @@ class MultiRepository(private val multiDao: MultiDao) {
         "code": "DB_SIGNATURE_UNRESOLVED",
         "path": "app/src/main/java/com/example/repo/MultiRepository.kt",
         "symbol": None,
-        "controlled_context": {},
+        "controlled_context": {"line": 6},
     }]
     assert payload["statistics"]["trusted"] is False
 
@@ -1071,7 +1071,12 @@ def test_mixed_debt_blocks_only_the_db_touching_callable(tmp_path):
     assert by_path["app/src/main/java/UiRepository.kt"].controlled_context == {
         "advisory": True,
     }
-    assert by_path["app/src/main/java/DbRepository.kt"].controlled_context == {}
+    assert by_path["app/src/main/java/DbRepository.kt"].code == (
+        "DB_SIGNATURE_UNRESOLVED"
+    )
+    assert by_path["app/src/main/java/DbRepository.kt"].controlled_context == {
+        "line": 10,
+    }
     assert report.findings == ()  # blocking DB debt withholds findings
     assert report.statistics["trusted"] is False
     assert report.statistics["advisoryDiagnosticCount"] == 1

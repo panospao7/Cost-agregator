@@ -50,13 +50,15 @@ class GroupBalanceCalculator @Inject constructor(
             )
         }
 
-        // E4-NOW-005 FIX: Only count settlements with status RECORDED or COMPLETED and matching currency
-        val validSettlements = settlements.filter {
-            it.status in listOf("RECORDED", "COMPLETED") && it.currency == currency
-        }
-        val settlementsPaid = validSettlements.filter { it.fromMemberId == memberId }.sumOf { it.amount }
-        val settlementsReceived = validSettlements.filter { it.toMemberId == memberId }.sumOf { it.amount }
-        val netBalance = paidTotal - owedShareTotal + settlementsPaid - settlementsReceived
+        val totals = GroupSettlementBalancePolicy.totals(
+            settlements.map {
+                SharedGroupSettlement(it.groupId, it.fromMemberId, it.toMemberId, it.amount, it.currency, it.status)
+            },
+            groupId, currency
+        )[memberId] ?: GroupSettlementBalancePolicy.Totals()
+        val settlementsPaid = totals.paid.toDouble()
+        val settlementsReceived = totals.received.toDouble()
+        val netBalance = totals.applyTo(paidTotal - owedShareTotal)
 
         return GroupMemberBalance(groupId, memberId, currency, paidTotal, owedShareTotal, settlementsPaid, settlementsReceived, netBalance)
     }

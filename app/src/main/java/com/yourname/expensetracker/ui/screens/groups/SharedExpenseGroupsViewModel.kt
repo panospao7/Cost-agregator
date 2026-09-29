@@ -18,6 +18,7 @@ import com.yourname.expensetracker.domain.logic.CustomSplitParseResult
 import com.yourname.expensetracker.domain.logic.CustomSplitParser
 import com.yourname.expensetracker.domain.groups.GroupCreationResult
 import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
+import com.yourname.expensetracker.domain.groups.GroupSettlementBalancePolicy
 import com.yourname.expensetracker.domain.groups.toUserMessage
 import com.yourname.expensetracker.domain.groups.usecase.AddGroupMemberUseCase
 import com.yourname.expensetracker.domain.groups.usecase.AddGroupExpenseUseCase
@@ -108,7 +109,10 @@ class SharedExpenseGroupsViewModel @Inject constructor(
                             members = aggregate.members,
                             expenses = expensesWithDetails,
                             totalSpent = aggregate.expenses.sumOf { it.totalAmount },
-                            memberBalances = calculateBalances(aggregate.expenses, aggregate.members),
+                            memberBalances = GroupSettlementBalancePolicy.applyToBalances(
+                                calculateBalances(aggregate.expenses, aggregate.members),
+                                aggregate.settlements, aggregate.group.id, aggregate.group.defaultCurrency
+                            ),
                             currency = aggregate.group.defaultCurrency,
                         )
                     }
@@ -126,9 +130,12 @@ class SharedExpenseGroupsViewModel @Inject constructor(
                     homeCurrency = homeCurrency
                 )
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
-                    error = "Failed to load groups: ${e.message}"
+                    groups = emptyList(),
+                    selectedGroup = null,
+                    error = "Failed to load group balances"
                 )
             }
         }

@@ -4,6 +4,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.entity.Warranty
 import com.yourname.expensetracker.data.database.entity.WarrantyReminderDelivery
+import com.yourname.expensetracker.data.database.entity.WarrantyStatus
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Before
@@ -12,8 +13,10 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 private const val FIXED_NOW = 1_710_000_000_000L
 
@@ -64,6 +67,49 @@ class WarrantyReminderDeliveryDaoTest {
     @After
     fun teardown() {
         database.close()
+    }
+
+    @Test
+    fun inactiveParentBlocksBothClaimEntryPoints() = runTest {
+        val delivery = delivery()
+        val id = dao.insertOrIgnore(delivery)
+        warrantyDao.updateWarrantyStatus(
+            warrantyId, WarrantyStatus.CLAIMED, claimedAt = FIXED_NOW, updatedAt = FIXED_NOW
+        )
+
+        assertEquals(0, dao.claim(warrantyId, delivery.windowDays, delivery.expiryDate, FIXED_NOW))
+        assertEquals(0, dao.claimById(id, FIXED_NOW))
+        val unchanged = requireNotNull(dao.getById(id))
+        assertEquals("SCHEDULED", unchanged.status)
+        assertEquals(0, unchanged.attemptCount)
+        assertFalse(dao.isClaimedDeliveryEligible(id))
+    }
+
+    @Test
+    fun dispatchEligibilityRequiresAClaimAndACurrentlyActiveParent() = runTest {
+        val id = dao.insertOrIgnore(delivery())
+        assertFalse(dao.isClaimedDeliveryEligible(id))
+        assertEquals(1, dao.claimById(id, FIXED_NOW))
+        assertTrue(dao.isClaimedDeliveryEligible(id))
+
+        warrantyDao.updateWarrantyStatus(
+            warrantyId, WarrantyStatus.CLAIMED, claimedAt = FIXED_NOW, updatedAt = FIXED_NOW
+        )
+
+        assertFalse(dao.isClaimedDeliveryEligible(id))
+        assertEquals("CLAIMED", dao.getById(id)!!.status)
+    }
+
+    @Test
+    fun deletedParentCannotBeClaimedOrDispatched() = runTest {
+        val delivery = delivery()
+        val id = dao.insertOrIgnore(delivery)
+        warrantyDao.deleteWarrantyById(warrantyId)
+
+        assertEquals(0, dao.claim(warrantyId, delivery.windowDays, delivery.expiryDate, FIXED_NOW))
+        assertEquals(0, dao.claimById(id, FIXED_NOW))
+        assertFalse(dao.isClaimedDeliveryEligible(id))
+        assertNull(dao.getById(id))
     }
 
     private fun delivery(

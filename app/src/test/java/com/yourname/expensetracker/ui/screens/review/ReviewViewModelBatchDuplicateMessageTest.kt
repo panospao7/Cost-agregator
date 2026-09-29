@@ -151,4 +151,43 @@ class ReviewViewModelBatchDuplicateMessageTest : ViewModelTestUtils() {
         val message = viewModel.errorMessage.value
         assertEquals("Processed 1 ok. 2 failed: Receipt input validation failed", message)
     }
+
+    @Test
+    fun partialBatchReportsIncompletePagesInsteadOfUnqualifiedSuccess() = runTest(testDispatcher) {
+        coEvery { receiptRepository.processBatch(any(), any()) } returns ReceiptRepository.BatchResult(
+            successCount = 2, failureCount = 0, errors = emptyList(), partialCount = 1
+        )
+        viewModel.processBatch(listOf(Uri.parse("content://test/partial.pdf")))
+        advanceUntilIdle()
+
+        assertEquals(
+            "Partial OCR in 1 of 2 saved receipts. Check the originals before approving.",
+            viewModel.errorMessage.value
+        )
+    }
+
+    @Test
+    fun partialBatchStillReportsDuplicateAndFailureCounts() = runTest(testDispatcher) {
+        coEvery { receiptRepository.processBatch(any(), any()) } returns ReceiptRepository.BatchResult(
+            successCount = 2, failureCount = 1, errors = listOf("CONTROLLED_FAILURE"),
+            duplicateCount = 3, partialCount = 1
+        )
+        viewModel.processBatch(listOf(Uri.parse("content://test/partial.pdf")))
+        advanceUntilIdle()
+
+        assertEquals(
+            "Partial OCR in 1 of 2 saved receipts. Check the originals before approving. 3 duplicates. 1 failed.",
+            viewModel.errorMessage.value
+        )
+    }
+
+    @Test
+    fun batchCancellationDoesNotBecomeAFailureMessage() = runTest(testDispatcher) {
+        coEvery { receiptRepository.processBatch(any(), any()) } throws
+            kotlinx.coroutines.CancellationException("CANCELLED")
+        viewModel.processBatch(listOf(Uri.parse("content://test/cancelled.pdf")))
+        advanceUntilIdle()
+
+        org.junit.Assert.assertNull(viewModel.errorMessage.value)
+    }
 }

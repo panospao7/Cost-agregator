@@ -38,6 +38,8 @@ class ReviewViewModelPrivacyDenialTest : ViewModelTestUtils() {
 
     private val receiptDebugExporter = mockk<ReceiptDebugExporter>()
     private val aiSettingsRepository = mockk<AiSettingsRepository>()
+    private val receiptLifecycleCoordinator =
+        mockk<com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator>(relaxed = true)
 
     private lateinit var viewModel: ReviewViewModel
 
@@ -61,7 +63,7 @@ class ReviewViewModelPrivacyDenialTest : ViewModelTestUtils() {
             mockk(relaxed = true), // aiArtifactRepository
             aiSettingsRepository,
             mockk(relaxed = true), // aiRuntimeDiagnostics
-            mockk(relaxed = true), // receiptLifecycleCoordinator
+            receiptLifecycleCoordinator,
             receiptDebugExporter = receiptDebugExporter
         )
     }
@@ -77,6 +79,55 @@ class ReviewViewModelPrivacyDenialTest : ViewModelTestUtils() {
         } finally {
             super.tearDown()
         }
+    }
+
+    @Test
+    fun partialStatementResultIsExplicitlyLabeledPartial() = runTest(testDispatcher) {
+        advanceUntilIdle()
+        coEvery { receiptLifecycleCoordinator.processBankStatement(any()) } returns
+            com.yourname.expensetracker.domain.model.Result.Success(
+                com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementResult(
+                    receiptId = 1L, transactionsFound = 3, reviewsCreated = 2,
+                    duplicatesSkipped = 1, isPartial = true
+                )
+            )
+        viewModel.processStatement(mockk<android.net.Uri>(relaxed = true))
+        advanceUntilIdle()
+        val message = requireNotNull(viewModel.errorMessage.value)
+        assertTrue(message.contains("partially imported"))
+        assertTrue(message.contains("some pages were not processed"))
+        assertTrue(message.contains("3 transactions"))
+        assertTrue(message.contains("2 reviews created"))
+    }
+
+    @Test
+    fun completeStatementKeepsItsNormalCompletionMessage() = runTest(testDispatcher) {
+        advanceUntilIdle()
+        coEvery { receiptLifecycleCoordinator.processBankStatement(any()) } returns
+            com.yourname.expensetracker.domain.model.Result.Success(
+                com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementResult(
+                    receiptId = 1L, transactionsFound = 1, reviewsCreated = 1, duplicatesSkipped = 0
+                )
+            )
+        viewModel.processStatement(mockk<android.net.Uri>(relaxed = true))
+        advanceUntilIdle()
+        val message = requireNotNull(viewModel.errorMessage.value)
+        assertTrue(message.startsWith("Imported 1 transactions"))
+        assertFalse(message.contains("partially"))
+    }
+
+    @Test
+    fun statementCancellationCancelsItsJobWithoutPublishingImportFailure() = runTest(testDispatcher) {
+        advanceUntilIdle()
+        var importJob: Job? = null
+        coEvery { receiptLifecycleCoordinator.processBankStatement(any()) } coAnswers {
+            importJob = kotlinx.coroutines.currentCoroutineContext()[Job]
+            throw kotlinx.coroutines.CancellationException("test cancellation")
+        }
+        viewModel.processStatement(mockk<android.net.Uri>(relaxed = true))
+        advanceUntilIdle()
+        assertTrue(requireNotNull(importJob).isCancelled)
+        assertNull(viewModel.errorMessage.value)
     }
 
     // ── Denial: exporter refuses the debug export ─────────────────────────────

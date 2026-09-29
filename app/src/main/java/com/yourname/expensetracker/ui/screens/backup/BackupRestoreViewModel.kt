@@ -33,6 +33,7 @@ data class BackupRestoreUiState(
     val isBackingUp: Boolean = false,
     val isRestoring: Boolean = false,
     val lastBackupDate: String? = null,
+    val backupInfoUnavailable: Boolean = false,
     val errorMessage: String? = null,
     val successMessage: String? = null,
     val restartRequired: Boolean = false,
@@ -68,6 +69,7 @@ class BackupRestoreViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val stats = databaseBackupRepository.getDatabaseStats()
+                _uiState.value = _uiState.value.copy(backupInfoUnavailable = false)
                 val lastBackup = stats.lastBackupDate
                 if (lastBackup != null && lastBackup > 0L) {
                     val formatted = java.time.format.DateTimeFormatter.ofPattern(
@@ -77,7 +79,9 @@ class BackupRestoreViewModel @Inject constructor(
                     _uiState.value = _uiState.value.copy(lastBackupDate = formatted)
                 }
             } catch (e: Exception) {
-                Timber.w(e, "Failed to load backup info")
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                Timber.w("BACKUP_INFO_UNAVAILABLE class=%s", e.javaClass.simpleName)
+                _uiState.value = _uiState.value.copy(lastBackupDate = null, backupInfoUnavailable = true)
             }
         }
     }
@@ -123,7 +127,7 @@ class BackupRestoreViewModel @Inject constructor(
                     )
                 },
                 onFailure = { error ->
-                    Timber.e(error, "BACKUP_CREATE_FAILED")
+                    Timber.e("BACKUP_CREATE_FAILED class=%s", error.javaClass.simpleName)
                     // RP-15 (15-D): typed privacy denial — no message matching.
                     val denial = denialStateOrNull(error)
                     val message = when {
@@ -242,7 +246,7 @@ class BackupRestoreViewModel @Inject constructor(
                     }
                 },
                 onFailure = { error ->
-                    Timber.e(error, "RESTORE_FAILED")
+                    Timber.e("RESTORE_FAILED class=%s", error.javaClass.simpleName)
                     // RP-15 (15-D): typed privacy denial — no message matching.
                     val denial = denialStateOrNull(error)
                     val message = when {
@@ -277,8 +281,8 @@ class BackupRestoreViewModel @Inject constructor(
     /**
      * RP-15 (15-D): maps a typed [com.yourname.expensetracker.domain.privacy.PrivacyDeniedException]
      * to the resource-backed blocked state. Returns null for any other failure —
-     * those keep their bounded messages. The denial reason code travels in the
-     * exception message (a controlled constant), never free text.
+     * those keep their bounded messages. The denial reason code travels in its
+     * explicit bounded property, not Throwable.message.
      */
     @VisibleForTesting
     internal fun denialStateOrNull(error: Throwable): com.yourname.expensetracker.ui.components.PrivacyBlockedUiState? {
@@ -293,7 +297,7 @@ class BackupRestoreViewModel @Inject constructor(
                     com.yourname.expensetracker.R.string.privacy_blocked_raw_export
                 else -> com.yourname.expensetracker.R.string.privacy_blocked_generic
             },
-            reasonCode = error.message ?: com.yourname.expensetracker.domain.privacy.PrivacyGateReasonCodes.PRIVACY_GATE_FAILURE
+            reasonCode = error.reasonCode
         )
     }
 

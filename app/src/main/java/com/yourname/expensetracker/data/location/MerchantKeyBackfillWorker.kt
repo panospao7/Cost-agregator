@@ -88,6 +88,7 @@ class MerchantKeyBackfillWorker @AssistedInject constructor(
                 }
 
                 var batchUpdated = 0
+                var batchSkipped = 0
 
                 for (expense in pendingBatch) {
                     if (isStopped) break
@@ -96,10 +97,14 @@ class MerchantKeyBackfillWorker @AssistedInject constructor(
                     ctx.addRowsScanned()
                     val key = MerchantKeyGenerator.generate(expense.merchant)
                     try {
-                        expenseRepository.updateMerchantKey(expense.id, key)
-                        totalUpdated++
-                        batchUpdated++
-                        ctx.addRowsUpdated()
+                        if (expenseRepository.updateMerchantKey(expense.id, key)) {
+                            totalUpdated++
+                            batchUpdated++
+                            ctx.addRowsUpdated()
+                        } else {
+                            // A concurrent edit/delete is a benign CAS miss; re-read the next batch.
+                            batchSkipped++
+                        }
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
@@ -110,7 +115,7 @@ class MerchantKeyBackfillWorker @AssistedInject constructor(
                     }
                 }
 
-                if (!isStopped && batchUpdated == 0) {
+                if (!isStopped && batchUpdated == 0 && batchSkipped == 0) {
                     Log.w(TAG, "Merchant-key backfill made no progress for current batch; retrying")
                     throw RetryableWorkerException(DiagnosticReasonCode.WORKER_RETRYABLE_ERROR.name)
                 }

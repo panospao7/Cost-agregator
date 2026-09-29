@@ -102,6 +102,9 @@ FOCUSED_TEST_FILES = [
     "scripts/test_db_guard_scanner_d4.py",
     "scripts/test_verify_db_access_v2.py",
     "scripts/test_verify_db_access_boundaries.py",
+    "scripts/test_db_guard_policy_v2.py",
+    "scripts/db_guard/structural_analysis/test_barrier_proof.py",
+    "scripts/guardrails/test_production_source_scope.py",
 ]
 
 # Cross-platform absolute-path / backslash detector for stored (repo-relative)
@@ -4260,6 +4263,18 @@ def test_default_matrix_pins_no_cacheprovider_on_pytest_invocations(tmp_path):
     with open(cap.__file__, encoding="utf-8") as handle:
         source = handle.read()
     assert '"-p", "no:cacheprovider"' in source
+
+
+def test_recursive_guard_selection_preserves_required_nested_module_checks(tmp_path):
+    root = _make_root(tmp_path)
+    matrix = cap.default_command_matrix(str(root), str(root / "out" / "run-1"))
+    row = next(spec for spec in matrix if spec.id == "focused-python-tests")
+    assert row.argv[1:] == ["-m", "pytest", "scripts", "-v", "--tb=short", "-p", "no:cacheprovider"]
+    assert cap.collect_infrastructure_warnings(matrix, str(root)) == []
+    missing = "scripts/db_guard/structural_analysis/test_barrier_proof.py"
+    (root / missing).unlink()
+    warnings = cap.collect_infrastructure_warnings(matrix, str(root))
+    assert warnings == [cap.make_warning("missing-test-file", missing)]
 
 
 def test_declared_report_absent_is_missing_report_parser_error(tmp_path):

@@ -12,10 +12,9 @@ import kotlinx.coroutines.flow.first
  *
  * ## AID-4: Shared HybridRouter
  *
- * Six hybrid services across the app currently duplicate the same routing
- * pattern — checking [AiSettingsRepository], consulting [AiCapabilityRouter],
- * and dispatching to one of three function implementations. This generic class
- * was created as part of AID-4 to serve as a shared base.
+ * Used by the bound categorization, dashboard, review, query, and receipt-item
+ * hybrid services. Each request reads current settings and dispatches once;
+ * failures and cancellation propagate without implicit cross-route failover.
  *
  * ### Usage
  * ```kotlin
@@ -30,12 +29,11 @@ import kotlinx.coroutines.flow.first
  * val result = router.execute(input)
  * ```
  *
- * ### Migration note
- * Existing hybrid service implementations should be migrated to use this
- * router to eliminate code duplication. Each service should:
- * 1. Inject [HybridRouter] with its capability-specific functions.
- * 2. Delegate its public `execute` method to [HybridRouter.execute].
- * 3. Remove the duplicated routing logic.
+ * ### Specialized routing
+ * HybridDedupeJudgeService retains its cross-route failover contract.
+ * Receipt assistance is bound to SmartReceiptAssistService, whose image/retry
+ * orchestration is not this simple dispatcher; the older HybridReceiptAssistService
+ * is not a production binding. Neither contract is changed by shared routing.
  *
  * @param TInput The input type for all three execution paths.
  * @param TOutput The output type returned by all three execution paths.

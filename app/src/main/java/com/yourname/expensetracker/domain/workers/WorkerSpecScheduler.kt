@@ -63,6 +63,8 @@ object WorkerSpecScheduler {
             Timber.d("Worker '$workerName' is disabled — cancelling any existing scheduled work")
             try {
                 WorkManager.getInstance(context).cancelUniqueWork(workerName)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Timber.w(e, "Failed to cancel disabled worker '$workerName'")
             }
@@ -226,6 +228,8 @@ object WorkerSpecScheduler {
             )
             try {
                 WorkManager.getInstance(context).cancelUniqueWork(workerName)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 android.util.Log.w("WorkerSpecScheduler", "Failed to cancel disabled worker '$workerName'", e)
             }

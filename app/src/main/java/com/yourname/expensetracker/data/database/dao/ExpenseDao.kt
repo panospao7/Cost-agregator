@@ -2316,11 +2316,11 @@ AND LENGTH(:merchantKey) >= 8
     suspend fun getExpensesByMerchantKey(merchantKey: String): List<Expense>
 
     /**
-     * Write the computed canonical key back for a single expense row.
+     * Fill a missing canonical key only while the merchant snapshot is unchanged.
      */
     @RestrictedExpenseDaoMutation
-    @Query("UPDATE expenses SET merchantKey = :merchantKey WHERE id = :expenseId")
-    suspend fun updateMerchantKey(expenseId: Long, merchantKey: String)
+    @Query("UPDATE expenses SET merchantKey = :merchantKey WHERE id = :expenseId AND merchantKey IS NULL AND merchant IS :expectedMerchant")
+    suspend fun updateMerchantKey(expenseId: Long, merchantKey: String, expectedMerchant: String): Int
 
     // === Monthly/Weekly Totals Dashboard Queries ===
 

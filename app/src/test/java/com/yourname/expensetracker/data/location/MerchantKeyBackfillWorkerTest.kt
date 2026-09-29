@@ -9,6 +9,7 @@ import androidx.work.testing.TestListenableWorkerBuilder
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.workers.RetryableWorkerException
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.domain.workers.WorkerGuardResult
@@ -90,7 +91,7 @@ class MerchantKeyBackfillWorkerTest {
 
         coEvery { expenseRepository.getExpensesWithNullMerchantKey(any()) } returnsMany
             listOf(listOf(expense), emptyList())
-        coEvery { expenseRepository.updateMerchantKey(any(), any()) } returns Unit
+        coEvery { expenseRepository.updateMerchantKey(any(), any()) } returns true
 
         val result = buildWorker().doWork()
 
@@ -132,7 +133,7 @@ class MerchantKeyBackfillWorkerTest {
             listOf(successfulExpense, failingExpense),
             listOf(failingExpense)
         )
-        coEvery { expenseRepository.updateMerchantKey(1L, any()) } returns Unit
+        coEvery { expenseRepository.updateMerchantKey(1L, any()) } returns true
         coEvery { expenseRepository.updateMerchantKey(2L, any()) } throws IllegalStateException("db failure")
 
         val result = buildWorker().doWork()
@@ -155,6 +156,41 @@ class MerchantKeyBackfillWorkerTest {
         assertEquals(Result.retry(), result)
         coVerify(exactly = 1) { expenseRepository.updateMerchantKey(3L, "stillbroken") }
         coVerify(exactly = 1) { expenseRepository.getExpensesWithNullMerchantKey(any()) }
+    }
+
+    @Test
+    fun lostMerchantCasSkipsWithoutCountingAnUpdate() = runTest {
+        val expense = makeExpense(id = 1L, merchant = "Original Merchant")
+        coEvery { expenseRepository.getExpensesWithNullMerchantKey(any()) } returnsMany
+            listOf(listOf(expense), emptyList())
+        coEvery { expenseRepository.updateMerchantKey(any(), any()) } returns false
+
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        coVerify(exactly = 2) { expenseRepository.getExpensesWithNullMerchantKey(any()) }
+        coVerify(exactly = 1) { ctx.addRowsScanned() }
+        coVerify(exactly = 0) { ctx.addRowsUpdated() }
+        coVerify(exactly = 0) { ctx.addErrors() }
+    }
+
+    @Test
+    fun lostCasReloadsChangedMerchantBeforeRetryingTheRow() = runTest {
+        val original = makeExpense(id = 1L, merchant = "Original Merchant")
+        val current = original.copy(merchant = "Changed Merchant")
+        val originalKey = MerchantKeyGenerator.generate(original.merchant)
+        val currentKey = MerchantKeyGenerator.generate(current.merchant)
+        coEvery { expenseRepository.getExpensesWithNullMerchantKey(any()) } returnsMany
+            listOf(listOf(original), listOf(current), emptyList())
+        coEvery { expenseRepository.updateMerchantKey(1L, originalKey) } returns false
+        coEvery { expenseRepository.updateMerchantKey(1L, currentKey) } returns true
+
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        coVerify(exactly = 1) { expenseRepository.updateMerchantKey(1L, originalKey) }
+        coVerify(exactly = 1) { expenseRepository.updateMerchantKey(1L, currentKey) }
+        coVerify(exactly = 2) { ctx.addRowsScanned() }
+        coVerify(exactly = 1) { ctx.addRowsUpdated() }
+        coVerify(exactly = 0) { ctx.addErrors() }
     }
 
     private fun makeExpense(id: Long, merchant: String, merchantKey: String? = null) = Expense(

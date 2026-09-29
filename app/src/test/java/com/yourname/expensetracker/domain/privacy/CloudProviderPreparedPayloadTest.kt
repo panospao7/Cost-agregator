@@ -15,10 +15,12 @@ import org.junit.Assert.*
 import org.junit.Test
 
 /**
- * PRIV-441-01 / PRIV-441-14 acceptance tests.
+ * PRIV-441-01 / PRIV-441-14 policy-unit regression tests.
  *
- * Verifies that cloud providers use CloudPayloadPolicy / PreparedCloudPayload
- * and do not access redactBeforeCloud directly.
+ * These tests exercise DefaultCloudPayloadPolicy, not provider transport.
+ * Policy results and script existence alone are not provider-call acceptance
+ * evidence; actual providers must also be invoked with captured HTTP bodies.
+ * That coverage is in data.ai.provider.CloudProviderTransportPayloadTest.
  */
 class CloudProviderPreparedPayloadTest {
 

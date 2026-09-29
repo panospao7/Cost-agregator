@@ -100,7 +100,12 @@ def test_evidence_gate_pin_is_caller_stated_from_rev_parse_head():
     """The run pin must be stated by the caller from an explicit
     ``git rev-parse HEAD`` step — the tool never derives it silently."""
     block = _job_block(_workflow_text(), "evidence-gate")
-    assert 'echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"' in block
+    assert 'git cat-file -e "${BASE_REF}^{commit}" || exit 2' in block
+    assert 'git merge-base HEAD "$BASE_REF" > /dev/null || exit 2' in block
+    assert (
+        r"printf 'sha=%s\nbase_ref=%s\n' "
+        '"$(git rev-parse HEAD)" "$BASE_REF" >> "$GITHUB_OUTPUT"'
+    ) in block
 
 
 def test_evidence_gate_compares_semantic_summaries_byte_identical():

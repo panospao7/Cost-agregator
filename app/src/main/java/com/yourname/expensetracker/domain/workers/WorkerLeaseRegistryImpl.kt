@@ -1,7 +1,7 @@
 package com.yourname.expensetracker.domain.workers
 
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
-import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.util.MonotonicTimeProvider
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.yield
 import timber.log.Timber
@@ -14,7 +14,7 @@ import javax.inject.Singleton
 @Singleton
 class WorkerLeaseRegistryImpl @Inject constructor(
     private val writeBarrier: DatabaseWriteBarrier,
-    private val timeProvider: TimeProvider
+    private val monotonicTimeProvider: MonotonicTimeProvider
 ) : WorkerLeaseRegistry, WorkerDrainController {
 
     internal data class LeaseRecord(
@@ -58,13 +58,16 @@ class WorkerLeaseRegistryImpl @Inject constructor(
     }
 
     override suspend fun awaitNoActiveWorkers(timeoutMs: Long): Boolean {
-        val deadline = timeProvider.now() + timeoutMs
+        val startedAtNanos = monotonicTimeProvider.nowNanos()
+        val budgetMs = timeoutMs.coerceAtLeast(0L)
         while (activeLeases.isNotEmpty()) {
-            if (timeProvider.now() >= deadline) {
+            // Compare elapsed time, not an absolute wall-clock deadline.
+            val elapsedMs = (monotonicTimeProvider.nowNanos() - startedAtNanos) / 1_000_000L
+            if (elapsedMs >= budgetMs) {
                 Timber.w("WorkerLeaseRegistry: drain timed out, ${activeLeases.size} worker(s) still active: ${activeLeases.values.map { it.workerName }}")
                 return false
             }
-            delay(50)
+            delay(minOf(50L, budgetMs - elapsedMs))
         }
         Timber.d("WorkerLeaseRegistry: all workers drained")
         return true

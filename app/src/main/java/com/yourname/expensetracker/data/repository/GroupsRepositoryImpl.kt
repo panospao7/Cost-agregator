@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
 import com.yourname.expensetracker.data.database.dao.GroupExpenseDao
 import com.yourname.expensetracker.data.database.dao.GroupMemberDao
+import com.yourname.expensetracker.data.database.dao.GroupSettlementDao
 import com.yourname.expensetracker.data.database.entity.GroupMember
 import com.yourname.expensetracker.data.database.entity.SplitType
 import com.yourname.expensetracker.data.database.entity.TransactionType
@@ -22,6 +23,7 @@ import com.yourname.expensetracker.domain.groups.GroupCreationResult
 import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
 import com.yourname.expensetracker.domain.groups.GroupTransactionCoordinator
 import com.yourname.expensetracker.domain.groups.Result
+import com.yourname.expensetracker.domain.groups.SharedGroupSettlement
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
@@ -39,7 +41,8 @@ class GroupsRepositoryImpl @Inject constructor(
     private val coordinator: GroupTransactionCoordinator,
     private val currencySettingsRepository: CurrencySettingsRepository,
     private val timeProvider: TimeProvider,
-    @IoDispatcher private val ioDispatcher: CoroutineDispatcher
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher,
+    private val settlementDao: GroupSettlementDao
 ) : GroupsRepository {
 
     private companion object {
@@ -63,12 +66,20 @@ class GroupsRepositoryImpl @Inject constructor(
             .chunked(GROUP_IDS_QUERY_CHUNK_SIZE)
             .flatMap { chunk -> groupExpenseDao.getExpensesForGroups(chunk) }
             .groupBy { it.groupId }
+        val settlementsByGroupId = groupIds
+            .chunked(GROUP_IDS_QUERY_CHUNK_SIZE)
+            .flatMap { chunk -> settlementDao.getSettlementsForGroups(chunk) }
+            .map {
+                SharedGroupSettlement(it.groupId, it.fromMemberId, it.toMemberId, it.amount, it.currency, it.status)
+            }
+            .groupBy { it.groupId }
 
         groups.map { group ->
             GroupDetailsAggregate(
                 group = group,
                 members = membersByGroupId[group.id].orEmpty(),
-                expenses = expensesByGroupId[group.id].orEmpty()
+                expenses = expensesByGroupId[group.id].orEmpty(),
+                settlements = settlementsByGroupId[group.id].orEmpty()
             )
         }
     }

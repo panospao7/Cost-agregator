@@ -104,6 +104,7 @@ import com.yourname.expensetracker.domain.privacy.PreparedCloudPayload
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 
 class CompliantCloudService(
     private val cloudPayloadPolicy: CloudPayloadPolicy

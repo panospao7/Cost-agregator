@@ -390,6 +390,8 @@
     <string name="receipt_notes_label">Notes (optional)</string>
     <string name="receipt_notes_input_cd">Optional notes input field</string>
     <string name="receipt_raw_ocr_label">Raw OCR Text</string>
+    <string name="receipt_partial_ocr_warning">Some pages could not be read or were not processed. This receipt is incomplete; check the original before saving.</string>
+    <string name="receipt_ocr_coverage_unverified_warning">Page coverage could not be verified for this saved receipt. Check the original before relying on the recognized details.</string>
     <string name="receipt_toggle_cd">Toggle</string>
     <string name="receipt_no_text_detected">No text detected</string>
     <string name="receipt_duplicate_transaction">A similar transaction already exists</string>
@@ -2517,6 +2519,10 @@
     <string name="backup_restore_select_file">Select backup file</string>
     <string name="backup_restore_last_backup">Last backup: %1$s</string>
     <string name="backup_restore_no_backup">No backup created yet</string>
+    <string name="backup_restore_info_unavailable">Backup information is temporarily unavailable</string>
+    <string name="debug_database_stats_unavailable">Database statistics are temporarily unavailable</string>
+    <string name="money_radar_unavailable">Money Radar is temporarily unavailable. Some financial signals could not be evaluated.</string>
+    <string name="stress_forecast_unavailable">Stress forecast is temporarily unavailable. No risk estimate is available.</string>
     <string name="backup_restore_success">Backup created successfully</string>
     <string name="backup_restore_restore_success">Restore completed successfully</string>
     <string name="backup_restore_restart_required">Restart required. Please restart the app to use the restored data.</string>

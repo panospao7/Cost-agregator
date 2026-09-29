@@ -6,7 +6,8 @@ import javax.inject.Singleton
 /**
  * Formal scope for DB writes that are intentionally allowed during restore modes.
  *
- * Only [DatabaseBackupRepositoryImpl] should inject and use this.
+ * Used by DatabaseBackupRepositoryImpl and AppStartupCoordinator's approved
+ * asset-resume path, against the freshly opened restored database.
  * Allowed modes: [RestoreMaintenanceMode.Mode.ASSETS_RESTORING] and
  * [RestoreMaintenanceMode.Mode.RESTORE_VERIFYING].
  *

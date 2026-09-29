@@ -120,7 +120,11 @@ data class ReceiptScanState(
     val itemCorrectionError: String? = null,
 
     // Debug data
-    val debugData: DebugData? = null
+    val debugData: DebugData? = null,
+    /** Surviving OCR data is usable, but the original document needs manual verification. */
+    val hasPartialOcr: Boolean = false,
+    /** A saved parse failure has no trustworthy retained page-coverage evidence. */
+    val hasUnverifiedOcrCoverage: Boolean = false
 )
 
 data class ReceiptQuickSavePreview(
@@ -271,6 +275,9 @@ class ReceiptScanViewModel @Inject constructor(
                 step = ScanStep.PROCESSING,
                 imageUri = uri,
                 errorMessage = null,
+                hasPartialOcr = false,
+                hasUnverifiedOcrCoverage = false,
+                pendingAppliedAiCapabilities = emptySet(),
                 receiptAssistState = AiLoadState.Idle,
                 receiptAssistMessage = null,
                 receiptAssistDiagnostics = null,
@@ -298,7 +305,8 @@ class ReceiptScanViewModel @Inject constructor(
                 if (receiptResult.isFailure) throw receiptResult.exceptionOrNull()!!
                 // RP-12 12a (P3-001): coordinator returns a typed outcome; duplicates
                 // arrive as a success outcome with inserted=false and the existing receipt.
-                val receipt = receiptResult.getOrThrow().savedReceipt
+                val outcome = receiptResult.getOrThrow()
+                val receipt = outcome.savedReceipt
 
                 // S7-003: Discard result if a newer scan has started
                 if (requestId != scanRequestSeq) return@launch
@@ -315,6 +323,8 @@ class ReceiptScanViewModel @Inject constructor(
                         it.copy(
                             step = ScanStep.DUPLICATE,
                             receiptId = receipt.id,
+                            hasPartialOcr = outcome.isPartial,
+                            hasUnverifiedOcrCoverage = outcome.ocrCoverageUnavailable,
                             saveResult = SaveReceiptResult.DuplicateReceipt(
                                 existingReceiptId = receipt.id,
                                 linkedExpenseId = linkedExpenseId
@@ -434,6 +444,8 @@ class ReceiptScanViewModel @Inject constructor(
                             imageUri = receipt.imagePath?.let { p -> Uri.fromFile(java.io.File(p)) } ?: uri,
                             parsedReceipt = parsed,
                             receiptId = receipt.id,
+                            hasPartialOcr = outcome.isPartial,
+                            hasUnverifiedOcrCoverage = outcome.ocrCoverageUnavailable,
                             rawOcrText = receipt.rawOcrText,
                             editMerchant = parsed.merchantName ?: "",
                             // S7-011: Locale.US for consistent decimal formatting

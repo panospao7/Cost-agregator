@@ -480,12 +480,19 @@ object BackupVerifier {
         for ((sql, description) in checks) {
             try {
                 val cursor = db.rawQuery(sql, null)
-                val count = cursor.use { if (it.moveToFirst()) it.getInt(0) else 0 }
+                val count = cursor.use {
+                    check(it.moveToFirst() && !it.isNull(0)) { "SEMANTIC_COUNT_UNAVAILABLE" }
+                    it.getInt(0).also { count ->
+                        check(count >= 0) { "SEMANTIC_COUNT_INVALID" }
+                    }
+                }
                 if (count > 0) {
                     errors.add("Semantic integrity: $description ($count orphan rows)")
                 }
             } catch (e: Exception) {
-                Timber.w("Semantic integrity check skipped: $description — %s", e.javaClass.simpleName)
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                errors.add("Required semantic integrity check failed: $description")
+                Timber.w("SEMANTIC_QUERY_FAILED check=%s class=%s", description, e.javaClass.simpleName)
             }
         }
         return errors

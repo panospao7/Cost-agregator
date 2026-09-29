@@ -706,6 +706,112 @@ def test_exact_entry_verifies_trusted_with_zero_diagnostics(tmp_path):
     assert result.policy_mutation_key_count == 1
 
 
+SNAPSHOT_NULLING_CALL = "transactionEventDao.nullSnapshotsOlderThan(cutoff)"
+SNAPSHOT_NULLING_SOURCE = """\
+package com.example
+import com.example.data.TransactionEventDao
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+
+class Repo(
+    private val transactionEventDao: TransactionEventDao,
+    private val writeBarrier: DatabaseWriteBarrier
+) {
+    fun purgeSnapshots(cutoff: Long) {
+        writeBarrier.checkWritesAllowed("retention.snapshot")
+        transactionEventDao.nullSnapshotsOlderThan(cutoff)
+    }
+}
+"""
+
+
+def _snapshot_nulling_entry(**overrides):
+    fields = dict(
+        method="purgeSnapshots", parameter_types=("Long",),
+        dao_accessor="transactionEventDao",
+        dao_fqcn="com.example.data.TransactionEventDao",
+        operation="nullSnapshotsOlderThan",
+    )
+    fields.update(overrides)
+    return _entry(**fields)
+
+
+def test_snapshot_nulling_exact_policy_is_evidenced_with_inventory(tmp_path):
+    _write_repo(tmp_path, SNAPSHOT_NULLING_SOURCE)
+    result = verify_v2_policy_source_evidence(
+        [_snapshot_nulling_entry()], str(tmp_path),
+        room_inventory=_inventory("com.example.data.TransactionEventDao"),
+    )
+    assert result.trusted is True
+    assert _codes(result) == []
+    assert result.groups[0].mutation_keys == (
+        "transactionEventDao|nullSnapshotsOlderThan",
+    )
+    assert result.mutation_key_count == 1
+    assert result.policy_mutation_key_count == 1
+
+
+@pytest.mark.parametrize("replacement", [
+    "", "// " + SNAPSHOT_NULLING_CALL,
+    'val note = "' + SNAPSHOT_NULLING_CALL + '"',
+    'val note = """' + SNAPSHOT_NULLING_CALL + '"""',
+], ids=["missing", "comment", "string", "raw-string"])
+def test_snapshot_nulling_lookalikes_never_supply_source_evidence(tmp_path, replacement):
+    _write_repo(tmp_path, SNAPSHOT_NULLING_SOURCE.replace(SNAPSHOT_NULLING_CALL, replacement))
+    result = verify_v2_policy_source_evidence(
+        [_snapshot_nulling_entry()], str(tmp_path),
+        room_inventory=_inventory("com.example.data.TransactionEventDao"),
+    )
+    assert result.trusted is False
+    assert _codes(result) == [DB_V2_POLICY_MUTATION_NOT_FOUND]
+    assert result.groups[0].mutation_keys == ()
+
+
+def test_unlisted_snapshot_nulling_mutation_remains_fail_closed(tmp_path):
+    source = SNAPSHOT_NULLING_SOURCE.replace(
+        SNAPSHOT_NULLING_CALL,
+        "transactionEventDao.deleteOlderThan(cutoff)\n        " + SNAPSHOT_NULLING_CALL,
+    )
+    _write_repo(tmp_path, source)
+    result = verify_v2_policy_source_evidence(
+        [_snapshot_nulling_entry(operation="deleteOlderThan")], str(tmp_path),
+        room_inventory=_inventory("com.example.data.TransactionEventDao"),
+    )
+    assert result.trusted is False
+    assert _codes(result) == [DB_V2_POLICY_UNLISTED_MUTATION]
+    assert result.groups[0].mutation_keys == (
+        "transactionEventDao|deleteOlderThan",
+        "transactionEventDao|nullSnapshotsOlderThan",
+    )
+
+
+def test_snapshot_nulling_detection_never_authorizes_a_prefix_near_match(tmp_path):
+    _write_repo(tmp_path, SNAPSHOT_NULLING_SOURCE.replace(
+        "nullSnapshotsOlderThan(", "nullSnapshotsOlderThanOther(",
+    ))
+    result = verify_v2_policy_source_evidence(
+        [_snapshot_nulling_entry()], str(tmp_path),
+        room_inventory=_inventory("com.example.data.TransactionEventDao"),
+    )
+    assert result.trusted is False
+    assert _codes(result) == [DB_V2_POLICY_MUTATION_NOT_FOUND]
+    assert result.groups[0].mutation_keys == (
+        "transactionEventDao|nullSnapshotsOlderThanOther",
+    )
+
+
+def test_snapshot_nulling_still_requires_the_declared_direct_barrier(tmp_path):
+    source = SNAPSHOT_NULLING_SOURCE.replace(
+        '        writeBarrier.checkWritesAllowed("retention.snapshot")\n', "",
+    )
+    _write_repo(tmp_path, source)
+    result = verify_v2_policy_source_evidence(
+        [_snapshot_nulling_entry()], str(tmp_path),
+        room_inventory=_inventory("com.example.data.TransactionEventDao"),
+    )
+    assert result.trusted is False
+    assert _codes(result) == [DB_V2_POLICY_BARRIER_METADATA_INCONSISTENT]
+
+
 # ===========================================================================
 # 2-3. Owner resolution
 # ===========================================================================

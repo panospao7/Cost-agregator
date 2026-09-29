@@ -467,6 +467,50 @@ def _constructor_call_type(value: str) -> str | None:
     return head.group("type")
 
 
+def _file_list_iteration_type(expression: str, visible_types: dict[str, str | None]) -> str | None:
+    """One closed listOf shape: nonempty, bare, lexically resolved File values.
+
+    Use RAW expression text: masking a string must not turn a heterogeneous
+    list into an apparent trailing comma. No constructors, spreads, member
+    expressions, implicit lambda parameters or common-supertype inference.
+    The caller must also establish that the factory name is unshadowed.
+    """
+    match = re.fullmatch(r"listOf\s*\(([^()]*)\)", expression.strip(), re.S)
+    if match is None or "listOf" in visible_types:
+        return None
+    arguments = [part.strip() for part in match.group(1).split(",")]
+    if not arguments or any(
+        not _IDENTIFIER.fullmatch(name) or name == "it"
+        or visible_types.get(name) not in {"File", "java.io.File"}
+        for name in arguments
+    ):
+        return None
+    return "List<File>"
+
+
+# Any project declaration named listOf (member, top-level, extension, generic).
+_LIST_OF_DECLARATION = re.compile(
+    r"\bfun\s+(?:<[^>]*>\s*)?(?:[A-Za-z_][\w<>?,. ]*\.)?\x60?listOf\x60?\s*\("
+)
+
+
+def _list_of_imports_supported(masked: str) -> bool:
+    """Reject import/binding ambiguity before using the closed stdlib fact."""
+    if re.search(r"\b(?:val|var)\s+\x60?listOf\x60?\b|\blistOf\s*:", masked):
+        return False
+    for match in re.finditer(r"(?m)^\s*import\s+([^\r\n;]+)", masked):
+        imported = match.group(1).strip().replace(chr(96), "")
+        parts = re.split(r"\s+as\s+", imported)
+        name = parts[-1] if len(parts) > 1 else imported.rsplit(".", 1)[-1]
+        if name == "listOf" and imported != "kotlin.collections.listOf":
+            return False
+        # java.util.* imports types, not a competing Kotlin top-level factory.
+        # Other wildcard imports remain unsupported for this new inference.
+        if imported.endswith(".*") and imported not in {"kotlin.collections.*", "java.util.*"}:
+            return False
+    return True
+
+
 # GR-07 convergence round 6: closed element/value extraction from CONTAINER
 # type spellings.  ``for (x in files)`` over a ``List<File>``-spelled binding
 # and ``map[key]`` over a ``MutableMap<String, File>``-spelled binding carry
@@ -761,6 +805,10 @@ def _member_return_type(
         declared = same_file_property_types.get((head, name))
         if isinstance(declared, str):
             return declared
+    # A declared property wins over this closed platform fact. Do not infer
+    # File properties from arbitrary qualified types sharing its simple name.
+    if name == "parentFile" and base in {"File", "java.io.File"}:
+        return "File"
     return None
 
 
@@ -1244,7 +1292,7 @@ def _dao_method_parameter_defaults(
 
 
 def _binding_type_matches(argument_type: str, parameter_type: str) -> bool:
-    """Normalized (then nullability-insensitive) single-type equality.
+    """Normalized equality, plus exact-element MutableList-to-List binding.
 
     The second pass mirrors the exact-match fallback above: Kotlin forbids
     same-erasure overloads differing only in ``?``, so ``Item?`` at the call
@@ -1258,7 +1306,16 @@ def _binding_type_matches(argument_type: str, parameter_type: str) -> bool:
     if argument == parameter:
         return True
     bare_argument = argument.rstrip("?")
-    return bare_argument != "" and bare_argument == parameter.rstrip("?")
+    bare_parameter = parameter.rstrip("?")
+    if bare_argument and bare_argument == bare_parameter:
+        return True
+    # This direction is a Kotlin collection contract, not arity-based
+    # authorization. Keep the entire normalized element type identical;
+    # reverse conversion, foreign qualified types and multiple accepting
+    # overloads remain unsupported by this narrow widening.
+    mutable = re.fullmatch(r"(?:kotlin\.collections\.)?MutableList(<.+>)", bare_argument)
+    readonly = re.fullmatch(r"(?:kotlin\.collections\.)?List(<.+>)", bare_parameter)
+    return bool(mutable and readonly and mutable.group(1) == readonly.group(1))
 
 
 def _call_matches_with_defaults(
@@ -1507,6 +1564,37 @@ def _with_context_return_type(
     )
 
 
+def _file_constructor_let_type(init: str, lookup) -> str | None:
+    """Type of a File receiver's let whose sole result is a File constructor.
+
+    Do not infer from arbitrary last expressions, statements, returns,
+    factories, unknown receivers, or a constructor followed by other code.
+    The body remains independently visible to the normal mutation scanner.
+    """
+    match = re.match(
+        r"(?P<root>[A-Za-z_]\w*)\s*(?P<safe>\?)?\s*\.\s*let\s*\{", init,
+    )
+    if match is None:
+        return None
+    if lookup(match.group("root")) not in {"File", "File?", "java.io.File", "java.io.File?"}:
+        return None
+    opening = match.end() - 1
+    closing = _balanced_group_end(init, opening)
+    if closing is None or init[closing:].strip():
+        return None
+    body = init[opening + 1:closing - 1].strip()
+    parameter = re.match(r"[A-Za-z_]\w*\s*->\s*", body)
+    if parameter is not None:
+        body = body[parameter.end():].strip()
+    if re.search(r"\b(?:return|throw|break|continue)\b", body):
+        return None
+    if not re.match(r"(?:java\.io\.)?File\s*\(", body):
+        return None
+    if _constructor_call_type(body) != "File":
+        return None
+    return "File?" if match.group("safe") else "File"
+
+
 def _infer_initializer_type(
     init: str,
     *,
@@ -1674,6 +1762,8 @@ def _infer_initializer_type(
                 depth=depth,
                 raw_init=raw_init,
             )
+    if inferred_type is None:
+        inferred_type = _file_constructor_let_type(init, lookup)
     if inferred_type is None and "." in init:
         root_text = init.split(".", 1)[0].strip()
         if re.fullmatch(r"[A-Za-z_]\w*", root_text):
@@ -2079,6 +2169,8 @@ def _structural_access_supported(
     receiver_type: str | None,
     operation: str,
     receiver_types: dict[str, str | None],
+    *,
+    safe_call: bool = False,
 ) -> bool:
     """True when THIS access's receiver is a verified database handle.
 
@@ -2112,7 +2204,13 @@ def _structural_access_supported(
         )
         if operation == "getDatabasePath" and simple_type == "Context":
             return True
-        if operation == "deleteRecursively" and simple_type == "File":
+        if operation == "deleteRecursively" and (
+            simple_type == "File"
+            or (safe_call and receiver_type in {"File?", "java.io.File?"})
+        ):
+            # A safe call retains the declared File identity. Classification
+            # does not grant permission: the exact structural tuple is still
+            # checked below, including calls moved into cleanup helpers.
             return True
         return (
             operation in ("writableDatabase", "readableDatabase")
@@ -2142,7 +2240,7 @@ def _argument_part(value: str) -> tuple[str | None, str]:
 
 
 def _argument_bindings(
-    masked: str, opening: int, receiver_types: dict[str, str],
+    masked: str, opening: int, receiver_types: dict[str, str | None],
 ) -> tuple[tuple[str | None, str], ...] | None:
     """Resolved (name, type) pairs of one argument list, or None.
 
@@ -2170,7 +2268,13 @@ def _argument_bindings(
     result = []
     for name, value in parts:
         if value in receiver_types:
-            result.append((name, receiver_types[value]))
+            value_type = receiver_types[value]
+            # A lexical unknown-shadow marker is not a type spelling. Keep
+            # the same unresolved-list contract as an absent binding; never
+            # feed None into overload normalization as a fabricated type.
+            if not isinstance(value_type, str):
+                return None
+            result.append((name, value_type))
             continue
         if re.fullmatch(r"[0-9]+", value):
             result.append((name, "Int"))
@@ -2197,7 +2301,7 @@ def _argument_bindings(
     return tuple(result)
 
 
-def _argument_types(masked: str, opening: int, receiver_types: dict[str, str]) -> tuple[str, ...] | None:
+def _argument_types(masked: str, opening: int, receiver_types: dict[str, str | None]) -> tuple[str, ...] | None:
     """Resolve the small set of argument forms needed for overload identity."""
     bindings = _argument_bindings(masked, opening, receiver_types)
     if bindings is None:
@@ -2246,6 +2350,7 @@ def _receiver_types(
     function_returns: dict[tuple[str, str], str] | None = None,
     function_returns_by_name: dict[str, str] | None = None,
     same_file_property_types: dict[tuple[str, str], str] | None = None,
+    allow_file_list_iteration: bool = False,
 ) -> dict[str, str | None]:
     """Resolve names in the lexical environment of one callable.
 
@@ -2415,10 +2520,13 @@ def _receiver_types(
                 match.start(), declaration_scope,
             ))
 
-    def finalize(env: list[tuple[str, str, int, tuple[int, int]]]) -> dict[str, str | None]:
-        by_name: dict[str, list[tuple[str, int, tuple[int, int]]]] = {}
+    def finalize(
+        env: list[tuple[str, str | None, int, tuple[int, int]]],
+        at: int = use,
+    ) -> dict[str, str | None]:
+        by_name: dict[str, list[tuple[str | None, int, tuple[int, int]]]] = {}
         for name, typ, declared, scope in env:
-            if declared >= use or not (scope[0] <= use <= scope[1]):
+            if declared >= at or not (scope[0] <= at <= scope[1]):
                 continue
             by_name.setdefault(name, []).append((typ, declared, scope))
         resolved: dict[str, str | None] = {}
@@ -2486,7 +2594,7 @@ def _receiver_types(
     # does not contain the later use site, so ``finalize`` can never surface
     # it -- the name-keyed map is the only sound channel for that dataflow.
     # Deterministic: same text -> same two passes -> same result.
-    inferred: list[tuple[str, str, int, tuple[int, int]]] = []
+    inferred: list[tuple[str, str | None, int, tuple[int, int]]] = []
     # Types inferred EARLIER in this loop are visible to later locals of the
     # same body (``val dbFile = extractedFiles["database.sqlite"]`` needs the
     # ``mutableMapOf<String, File>()`` binding from a few lines above).
@@ -2516,7 +2624,8 @@ def _receiver_types(
     # ``(a, b)`` over a resolved ``Map<K, V>`` binds K/V, a simple variable
     # over an iterable spelling binds its element.  The loop-variable scope is
     # the loop header through its brace body, or through the end of the first
-    # statement for brace-less bodies.  Unresolvable iterables bind nothing.
+    # statement for brace-less bodies. The new listOf shape also binds an
+    # unknown shadow on failure, never borrowing an outer loop variable.
     if body_start >= 0:
         for match in _FOR_LOOP.finditer(masked, body_start, cend):
             # The FOR header's OWN parenthesis is the FIRST one after ``for``
@@ -2527,11 +2636,13 @@ def _receiver_types(
             if close_paren is None or close_paren > cend:
                 continue
             iterable_text = ""
+            raw_iterable_text = ""
             in_match = _IN_KEYWORD.search(masked, match.start(), close_paren)
             if in_match is not None:
                 # ``close_paren`` is the EXCLUSIVE end of the balanced header
                 # group, i.e. one past its ``)`` -- exclude that closer.
                 iterable_text = masked[in_match.end():close_paren - 1].strip()
+                raw_iterable_text = source[in_match.end():close_paren - 1].strip()
             iterable_type: str | None = None
             if _IDENTIFIER.fullmatch(iterable_text):
                 candidate_type = resolved.get(iterable_text)
@@ -2543,25 +2654,85 @@ def _receiver_types(
                 constructed = _constructor_call_type(iterable_text)
                 if constructed is not None:
                     iterable_type = constructed
-            if iterable_type is None:
+            is_file_list = re.match(r"listOf\s*\(", raw_iterable_text) is not None
+            unknown = []
+            if iterable_type is None and is_file_list and allow_file_list_iteration:
+                # Resolve arguments at the header, not at a later body call.
+                # Failed local inference must still shadow an outer File;
+                # sibling/later locals and the name-global fallback are not
+                # evidence for this new shape.
+                known = {(name, declared, scope)
+                         for name, typ, declared, scope in member_inferred + inferred
+                         if isinstance(typ, str)}
+                unknown = [
+                    (name, None, declared, scope)
+                    for name, _, _, declared, scope in member_untyped + untyped_locals
+                    if (name, declared, scope) not in known
+                ]
+                visible = finalize(candidates + member_inferred + inferred + unknown,
+                                   at=match.start())
+                # Named/destructured enclosing lambda parameters are not
+                # resolved yet in this phase. Refuse rather than borrow a
+                # same-named outer value. Implicit 'it' is refused by the
+                # closed expression helper as well.
+                named_lambda = any(
+                    scope[0] < match.start() < scope[1]
+                    and re.match(
+                        r"\s*(?:\([^{}]*\)|[A-Za-z_]\w*)\s*(?::[^{}=;]+)?(?:\s*,[^{}=;]+)?\s*->",
+                        masked[scope[0] + 1:match.start()],
+                    ) is not None
+                    for scope in scopes
+                )
+                if not named_lambda:
+                    iterable_type = _file_list_iteration_type(raw_iterable_text, visible)
+            if iterable_type is None and not is_file_list:
                 continue
-            after_close = masked[close_paren + 1:cend].lstrip()
+            after_close = masked[close_paren:cend].lstrip()
             if after_close.startswith("{"):
                 body_open = masked.find("{", close_paren, cend)
                 loop_scope = (match.start(), _balanced_group_end(masked, body_open) or cend)
             else:
                 newline = masked.find("\n", close_paren, cend)
                 loop_scope = (match.start(), newline + 1 if newline >= 0 else cend)
+                if is_file_list:
+                    # This new inference supports braced bodies only. A
+                    # newline is not a Kotlin statement boundary; do not let
+                    # a guessed File binding escape a braceless loop. Keep a
+                    # conservative unknown shadow through this callable.
+                    iterable_type = None
+                    loop_scope = (match.start(), cend)
             if match.group("simple") is not None:
-                element = _iterable_element_type(iterable_type)
-                if element is None:
+                element = _iterable_element_type(iterable_type) if iterable_type is not None else None
+                if element is None and not is_file_list:
                     continue
+                if is_file_list:
+                    loop_name = match.group("simple")
+                    # Unknown inner locals must shadow this newly inferred
+                    # File just as they shadow its argument bindings.
+                    inferred.extend(item for item in unknown if item[0] == loop_name)
+                    if loop_name == "it":
+                        element = None
+                    for nested_scope in scopes:
+                        if not (loop_scope[0] < nested_scope[0] < nested_scope[1] <= loop_scope[1]):
+                            continue
+                        header = re.match(
+                            r"\s*(?:\([^{}]*\)|[A-Za-z_]\w*)\s*(?::[^{}=;]+)?(?:\s*,[^{}=;]+)?\s*->",
+                            masked[nested_scope[0] + 1:nested_scope[1]],
+                        )
+                        if header and loop_name in _IDENTIFIER.findall(header.group(0)):
+                            # Unknown callback dispatches are not covered by
+                            # the later closed lambda map. Never inherit the
+                            # outer File through a same-named parameter.
+                            inferred.append((loop_name, None, nested_scope[0] + 1, nested_scope))
                 inferred.append((match.group("simple"), element,
                                  match.start(), loop_scope))
             else:
-                value_type = _map_value_type(iterable_type)
+                value_type = _map_value_type(iterable_type) if iterable_type is not None else None
                 args = _split_generic_args(iterable_type) if value_type is not None else None
                 if value_type is None or args is None:
+                    if is_file_list:
+                        for name in (match.group("first"), match.group("second")):
+                            inferred.append((name, None, match.start(), loop_scope))
                     continue
                 inferred.append((match.group("first"), args[0],
                                  match.start(), loop_scope))
@@ -2584,7 +2755,7 @@ def _receiver_types(
     # ``List<File>``: DatabaseBackupRepositoryImpl.kt:2463,
     # ImageCache.kt:119).  Element-UNKNOWN receivers keep failing closed.
     if body_start >= 0:
-        bindings: list[tuple[str, str, int, tuple[int, int]]] = []
+        bindings: list[tuple[str, str | None, int, tuple[int, int]]] = []
         # GR-07 convergence round 6: the scan starts at the SPAN start, not
         # at ``body_start``.  A property whose whole body is one dispatch
         # chain (``get() = File(...).also { ... }``) has its first brace ON
@@ -2597,12 +2768,40 @@ def _receiver_types(
             lambda_scope = scope_for(open_brace + 1, (open_brace, cend))
             if lambda_scope[0] < open_brace:
                 continue
-            receiver_text, receiver_is_bare = _receiver_expression(masked, match.start())
+            lambda_body = masked[open_brace + 1:lambda_scope[1]]
+            # A function type in the BODY is not a parameter header. Match
+            # only parameter-shaped prefixes before looking for the arrow.
+            header = re.match(
+                r"\s*((?:[A-Za-z_]\w*(?:\s*:[^{};]+?)?"
+                r"|\(\s*[A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*\s*\))"
+                r"(?:\s*,\s*[A-Za-z_]\w*(?:\s*:[^{};]+?)?)*)\s*->",
+                lambda_body,
+            )
+            parameter_name = header.group(1).strip() if header else "it"
+            if not _IDENTIFIER.fullmatch(parameter_name):
+                # Unsupported explicit headers must not borrow an outer
+                # binding or invent an implicit it. Retain unknown shadows.
+                for name in sorted(set(_IDENTIFIER.findall(parameter_name))):
+                    bindings.append((name, None, open_brace + 1, lambda_scope))
+                continue
+            # Resolve the receiver at the dispatch, not at a later use inside
+            # a body that may shadow it. Prior lambda bindings keep their own
+            # lexical ranges; sibling and out-of-scope locals cannot leak in.
+            visible_types = finalize(
+                candidates + member_inferred + inferred + bindings,
+                at=match.start(),
+            )
+            receiver_text, _ = _receiver_expression(masked, match.start())
+            # The safe-call token belongs to the dispatch, not to a bare
+            # receiver's identifier. Qualified/wrapped receivers are not
+            # unwrapped here and must still satisfy the closed-chain rules.
+            if receiver_text.endswith("?"):
+                receiver_core = receiver_text[:-1].rstrip()
+                if _IDENTIFIER.fullmatch(receiver_core):
+                    receiver_text = receiver_core
             receiver_kind: str | None = None
-            if receiver_is_bare:
-                candidate_type = resolved.get(receiver_text)
-                if not isinstance(candidate_type, str):
-                    candidate_type = inferred_by_name.get(receiver_text)
+            if _IDENTIFIER.fullmatch(receiver_text):
+                candidate_type = visible_types.get(receiver_text)
                 receiver_kind = candidate_type if isinstance(candidate_type, str) else None
             else:
                 # GR-07 convergence round 6: the constructed-head check runs
@@ -2617,9 +2816,7 @@ def _receiver_types(
                 receiver_kind = _constructor_call_type(receiver_text)
                 if receiver_kind is None and "." in receiver_text:
                     first, rest = receiver_text.split(".", 1)
-                    root_type = resolved.get(first)
-                    if not isinstance(root_type, str):
-                        root_type = inferred_by_name.get(first)
+                    root_type = visible_types.get(first)
                     if isinstance(root_type, str):
                         receiver_kind = root_type
                         for segment in rest.split("."):
@@ -2635,9 +2832,7 @@ def _receiver_types(
                     # over the CLOSED member maps
                     # (``backups.take(...)``, ``cacheDir.listFiles()?``).
                     chain_root = receiver_text.lstrip("?").split(".", 1)[0].strip()
-                    chain_root_type = _env_lookup(
-                        resolved, inferred_by_name, chain_root,
-                    )
+                    chain_root_type = visible_types.get(chain_root)
                     if isinstance(chain_root_type, str):
                         receiver_kind = _walk_closed_chain(
                             receiver_text, chain_root_type,
@@ -2650,8 +2845,8 @@ def _receiver_types(
                 # closed.
                 if match.group("dispatch") == "forEach":
                     receiver_kind = _iterable_element_type(receiver_kind)
-            if receiver_kind is not None:
-                bindings.append(("it", receiver_kind, open_brace + 1, lambda_scope))
+            # An unknown inner parameter still shadows an outer known value.
+            bindings.append((parameter_name, receiver_kind, open_brace + 1, lambda_scope))
         if bindings:
             resolved = finalize(candidates + member_inferred + inferred + bindings)
     # GR-07 convergence round: captured type TEXTS keep their source spelling
@@ -2805,6 +3000,22 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
     # only the non-defaulted subset of one overload resolve to it.
     dao_parameter_defaults = _dao_method_parameter_defaults(sources, dao_simple)
     same_file_property_cache: dict[str, dict[tuple[str, str], str]] = {}
+    # A project declaration may shadow the default-imported factory. Do not
+    # guess overload resolution; this conservative veto only gates the new
+    # File-list iteration shape and grants no mutation permission.
+    # helper_ranges only indexes DB-relevant helpers, so a plain member or
+    # top-level ``fun listOf`` in any project file must also veto (fail closed).
+    list_of_shadowed = any(
+        item.callable_name == "listOf" or item.owner_fqcn.rsplit(".", 1)[-1] == "listOf"
+        for item in declarations.helper_ranges
+    ) or any(
+        _LIST_OF_DECLARATION.search(mask_kotlin_source(text))
+        for text in sources.values()
+    )
+    file_list_iteration_paths = {
+        path for path, text in sources.items()
+        if not list_of_shadowed and _list_of_imports_supported(mask_kotlin_source(text))
+    }
 
     # Typed authorization index: bucket entries by (canonical path, exact
     # operation) so each discovered mutation is compared only against the
@@ -2962,6 +3173,9 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
             diagnostics.append(_range_diagnostic(
                 "DB_SIGNATURE_UNRESOLVED", declaration.path,
                 db_relevant=db_relevant,
+                # This is the affected declaration, not necessarily the
+                # malformed sibling header in a failed owner-wide parse.
+                line=declaration.start_line if db_relevant else None,
             ))
             continue
         # A property's accessor parameter lists live AFTER the first body
@@ -3033,6 +3247,7 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
                 function_returns=function_returns,
                 function_returns_by_name=function_returns_by_name,
                 same_file_property_types=same_file_properties,
+                allow_file_list_iteration=declaration.path in file_list_iteration_paths,
             )
             if accessor_parameters:
                 merged = dict(accessor_parameters)
@@ -3100,6 +3315,7 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
             is_structural = operation in _STRUCTURAL
             receiver_supported = _structural_access_supported(
                 receiver, receiver_is_bare, receiver_type, operation, receiver_types,
+                safe_call=safe_call,
             )
             if is_structural and not receiver_supported:
                 diagnostics.append(_line_diagnostic(
@@ -3147,18 +3363,25 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
             if (safe_call and receiver_type is None) or (
                 not receiver_is_bare and receiver_type is None
             ):
-                diagnostics.append(GuardDiagnostic(
-                    "DB_DAO_SCOPE_UNRESOLVED", path=declaration.path,
+                diagnostics.append(_line_diagnostic(
+                    "DB_DAO_SCOPE_UNRESOLVED", declaration.path,
+                    _line(source, call.start()),
                 ))
                 continue
             typ = receiver_type
             fqcn_candidates = set(dao_simple.get((typ or "").rstrip("?") or "", ()))
             if not fqcn_candidates:
                 if typ is None:
-                    diagnostics.append(GuardDiagnostic("DB_DAO_SCOPE_UNRESOLVED", path=declaration.path))
+                    diagnostics.append(_line_diagnostic(
+                        "DB_DAO_SCOPE_UNRESOLVED", declaration.path,
+                        _line(source, call.start()),
+                    ))
                 continue
             if len(fqcn_candidates) != 1:
-                diagnostics.append(GuardDiagnostic("DB_DAO_SCOPE_UNRESOLVED", path=declaration.path))
+                diagnostics.append(_line_diagnostic(
+                    "DB_DAO_SCOPE_UNRESOLVED", declaration.path,
+                    _line(source, call.start()),
+                ))
                 continue
             dao = next(iter(fqcn_candidates))
             candidates = dao_methods.get((dao, operation), [])
@@ -3204,8 +3427,9 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
                         f"({', '.join(item.parameters)})" in mutator_methods
                         for item in candidates
                     ):
-                        diagnostics.append(GuardDiagnostic(
-                            "DB_SIGNATURE_UNRESOLVED", path=declaration.path,
+                        diagnostics.append(_line_diagnostic(
+                            "DB_SIGNATURE_UNRESOLVED", declaration.path,
+                            _line(source, call.start()),
                         ))
                     continue
             else:
@@ -3248,6 +3472,27 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
                         )
                         if insensitive_item == insensitive_arguments:
                             matching.append(item)
+                if (
+                    not matching and normalized_arguments is not None
+                    and argument_bindings is not None
+                    and all(name is None for name, _ in argument_bindings)
+                ):
+                    # Full positional bindings need only the inventory's
+                    # ordered types, not parameter-name/default metadata.
+                    # Pure interface DAOs may have no executable helper range
+                    # and therefore no entry in that auxiliary source map.
+                    # Apply the same closed compatibility rule here; exact
+                    # arity and a unique accepting target remain mandatory.
+                    matching = [
+                        item for item in candidates
+                        if len(item.parameters) == len(normalized_arguments)
+                        and all(
+                            _binding_type_matches(argument, parameter)
+                            for argument, parameter in zip(
+                                normalized_arguments, item.parameters,
+                            )
+                        )
+                    ]
                 if len(matching) != 1 and argument_bindings is not None:
                     # GR-07 final close-out (NotificationIntakeWorker.kt:411):
                     # Kotlin binds omitted DEFAULT parameters at compile time,
@@ -3301,7 +3546,10 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
                         for item in candidates
                     ):
                         continue
-                    diagnostics.append(GuardDiagnostic("DB_CALL_TARGET_AMBIGUOUS", path=declaration.path))
+                    diagnostics.append(_line_diagnostic(
+                        "DB_CALL_TARGET_AMBIGUOUS", declaration.path,
+                        _line(source, call.start()),
+                    ))
                     continue
                 method = matching[0]
             mutator = next((item for item in inventory.mutators if item.method == f"{method.dao.canonical_path}::{dao}#{operation}({', '.join(method.parameters)})"), None)
@@ -3479,8 +3727,9 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
                     # DB_SIGNATURE_UNRESOLVED diagnostic path -- the same
                     # shape every other unresolved path here uses -- and the
                     # finding is skipped.  Identical emissions deduplicate.
-                    diagnostics.append(GuardDiagnostic(
-                        "DB_SIGNATURE_UNRESOLVED", path=declaration.path,
+                    diagnostics.append(_line_diagnostic(
+                        "DB_SIGNATURE_UNRESOLVED", declaration.path,
+                        _line(source, match.start()),
                     ))
                     continue
                 if not _structural_match(structural, declaration.path,
@@ -3514,6 +3763,7 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
                 function_returns=function_returns,
                 function_returns_by_name=function_returns_by_name,
                 same_file_property_types=same_file_properties,
+                allow_file_list_iteration=declaration.path in file_list_iteration_paths,
             )
             receiver_type = receiver_types_at_access.get(receiver) if receiver_is_bare else None
             # Same verified-handle contract as the method-call structural
@@ -3546,8 +3796,9 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
                 # structural path above: an unresolved signature becomes the
                 # controlled DB_SIGNATURE_UNRESOLVED diagnostic, never a
                 # finding.
-                diagnostics.append(GuardDiagnostic(
-                    "DB_SIGNATURE_UNRESOLVED", path=declaration.path,
+                diagnostics.append(_line_diagnostic(
+                    "DB_SIGNATURE_UNRESOLVED", declaration.path,
+                    _line(source, match.start()),
                 ))
                 continue
             if not _structural_match(structural, declaration.path,

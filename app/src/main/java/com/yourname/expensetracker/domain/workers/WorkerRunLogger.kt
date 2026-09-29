@@ -167,8 +167,7 @@ class WorkerRunLoggerImpl @Inject constructor(
 
         private fun TerminalResult.toOutcome(
             intendedStatus: String,
-            reasonCode: String?,
-            error: Throwable?
+            reasonCode: String?
         ): TerminalWriteOutcome = when (this) {
             TerminalResult.Completed -> TerminalWriteOutcome.Durable
             is TerminalResult.AlreadyCompletedDb -> TerminalWriteOutcome.AlreadyTerminal(status)
@@ -180,7 +179,7 @@ class WorkerRunLoggerImpl @Inject constructor(
                 intendedStatus, reasonCode, "TERMINAL_WRITE_ZERO_AFFECTED", null
             )
             is TerminalResult.NotDurableFailure -> TerminalWriteOutcome.NotDurable(
-                intendedStatus, reasonCode, "TERMINAL_WRITE_FAILED", error?.javaClass?.simpleName
+                intendedStatus, reasonCode, "TERMINAL_WRITE_FAILED", error.javaClass.simpleName
             )
         }
 
@@ -289,7 +288,7 @@ class WorkerRunLoggerImpl @Inject constructor(
                 terminalDiagnosticCode = safeReason,
                 snapshotProvider = snapshotProvider
             ))
-            return result.toOutcome("SUCCESS", safeReason, null)
+            return result.toOutcome("SUCCESS", safeReason)
         }
 
         override suspend fun skipped(reason: String, snapshotProvider: (() -> WorkerRunCounters?)?): TerminalWriteOutcome {
@@ -300,7 +299,7 @@ class WorkerRunLoggerImpl @Inject constructor(
                 terminalDiagnosticCode = safeReason,
                 snapshotProvider = snapshotProvider
             ))
-            return result.toOutcome("SKIPPED", safeReason, null)
+            return result.toOutcome("SKIPPED", safeReason)
         }
 
         override suspend fun retry(reason: String, error: Throwable?, snapshotProvider: (() -> WorkerRunCounters?)?): TerminalWriteOutcome {
@@ -313,7 +312,7 @@ class WorkerRunLoggerImpl @Inject constructor(
                 terminalDiagnosticCode = classifyDiagnostic(safeReason, error),
                 snapshotProvider = snapshotProvider
             ))
-            return result.toOutcome("RETRY", safeReason, error)
+            return result.toOutcome("RETRY", safeReason)
         }
 
         override suspend fun failure(reason: String, error: Throwable?, snapshotProvider: (() -> WorkerRunCounters?)?): TerminalWriteOutcome {
@@ -326,7 +325,7 @@ class WorkerRunLoggerImpl @Inject constructor(
                 terminalDiagnosticCode = classifyDiagnostic(safeReason, error),
                 snapshotProvider = snapshotProvider
             ))
-            return result.toOutcome("FAILED", safeReason, error)
+            return result.toOutcome("FAILED", safeReason)
         }
 
         override suspend fun cancelled(reason: String, snapshotProvider: (() -> WorkerRunCounters?)?): TerminalWriteOutcome {
@@ -338,7 +337,7 @@ class WorkerRunLoggerImpl @Inject constructor(
                 terminalDiagnosticCode = safeReason,
                 snapshotProvider = snapshotProvider
             ))
-            return result.toOutcome("CANCELLED", safeReason, null)
+            return result.toOutcome("CANCELLED", safeReason)
         }
 
         override suspend fun staleAborted(snapshotProvider: (() -> WorkerRunCounters?)?): TerminalWriteOutcome {
@@ -349,7 +348,7 @@ class WorkerRunLoggerImpl @Inject constructor(
                 terminalDiagnosticCode = reason,
                 snapshotProvider = snapshotProvider
             ))
-            return result.toOutcome("STALE_ABORTED", reason, null)
+            return result.toOutcome("STALE_ABORTED", reason)
         }
     }
 }

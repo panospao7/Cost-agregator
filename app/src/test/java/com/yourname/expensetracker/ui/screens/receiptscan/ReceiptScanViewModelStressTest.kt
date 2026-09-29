@@ -2,6 +2,8 @@ package com.yourname.expensetracker.ui.screens.receiptscan
 
 import android.net.Uri
 import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.viewModelScope
+import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.domain.dto.AiArtifactRecord
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
@@ -28,19 +30,33 @@ import com.yourname.expensetracker.domain.receipt.ReceiptParser
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ReceiptItemCategorizationRepository
 import com.yourname.expensetracker.data.repository.ReceiptRepository
-import com.yourname.expensetracker.domain.model.Result
+import com.yourname.expensetracker.domain.receipt.ReceiptProcessingStatus
+import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
+import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
+import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
+import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.spyk
 import io.mockk.verify
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
-import org.junit.Ignore
+import kotlinx.coroutines.test.runCurrent
+import org.junit.After
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -54,8 +70,6 @@ import org.robolectric.annotation.Config
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
-@Ignore("Stress test: may hang in CI, run manually")
-@Suppress("DEPRECATION_ERROR")
 class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
 
     private lateinit var receiptRepository: ReceiptRepository
@@ -70,12 +84,23 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
     private lateinit var aiRuntimeDiagnostics: AiRuntimeDiagnostics
     private lateinit var settingsFlow: kotlinx.coroutines.flow.MutableStateFlow<AiSettings>
 
+    private lateinit var receiptLifecycleCoordinator: ReceiptLifecycleCoordinator
+    private lateinit var receiptParser: ReceiptParser
+    private lateinit var receiptLinkService: ReceiptLinkService
+    private lateinit var merchantNormalizer: MerchantNormalizer
+    private lateinit var hybridClassifier: HybridExpenseClassifier
+    private lateinit var fixtureScope: CoroutineScope
     private lateinit var viewModel: ReceiptScanViewModel
 
     @Before
     override fun setup() {
         super.setup()
         receiptRepository = mockk(relaxed = true)
+        receiptLifecycleCoordinator = mockk()
+        receiptParser = mockk()
+        receiptLinkService = mockk()
+        merchantNormalizer = mockk()
+        hybridClassifier = mockk()
         categoryRepository = mockk(relaxed = true)
         currencySettingsRepository = mockk(relaxed = true)
         aiSettingsRepository = mockk(relaxed = true)
@@ -84,14 +109,18 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
         suggestReceiptExtractionUseCase = mockk(relaxed = true)
         suggestCategoryFallbackUseCase = mockk(relaxed = true)
         aiArtifactRepository = mockk(relaxed = true)
-        aiRuntimeDiagnostics = mockk(relaxed = true)
+        // Spy over a real instance: the default `now = timeProvider.now()` argument is
+        // resolved from the instance field, which is null on a constructor-less mock.
+        aiRuntimeDiagnostics = spyk(AiRuntimeDiagnostics(timeProvider))
         settingsFlow = kotlinx.coroutines.flow.MutableStateFlow(AiSettings(aiEnabled = true))
         
         val categorizeReceiptItemsUseCase = mockk<CategorizeReceiptItemsUseCase>(relaxed = true)
         val itemCategorizationRepository = mockk<ReceiptItemCategorizationRepository>(relaxed = true)
 
-        every { timeProvider.now() } returns System.currentTimeMillis()
-        every { categoryRepository.allCategories } returns flowOf(emptyList())
+        every { timeProvider.now() } returns 1_700_000_000_000L
+        every { categoryRepository.allCategories } returns flowOf(
+            listOf(Category(id = 5L, name = "Groceries", icon = "G", color = "#008800"))
+        )
         every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
         coEvery { currencySettingsRepository.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
         every { aiSettingsRepository.settings() } returns settingsFlow
@@ -110,22 +139,38 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
             itemCategorizationRepository,
             aiArtifactRepository,
             aiRuntimeDiagnostics,
-            receiptLifecycleCoordinator = mockk(),
-            receiptParser = mockk(),
+            receiptLifecycleCoordinator = receiptLifecycleCoordinator,
+            receiptParser = receiptParser,
             transactionLifecycleCoordinator = mockk(),
-            receiptLinkService = mockk(),
-            merchantNormalizer = mockk(),
-            hybridClassifier = mockk(),
+            receiptLinkService = receiptLinkService,
+            merchantNormalizer = merchantNormalizer,
+            hybridClassifier = hybridClassifier,
         )
+        // Exercise the production WhileSubscribed category stream on the same scheduler.
+        fixtureScope = CoroutineScope(SupervisorJob() + testDispatcher)
+        fixtureScope.launch { viewModel.categories.collect { } }
+        testDispatcher.scheduler.runCurrent()
+        assertEquals(listOf(5L), viewModel.categories.value.map { it.id })
+    }
+
+    @After
+    override fun tearDown() {
+        try {
+            if (::viewModel.isInitialized) viewModel.viewModelScope.cancel()
+            if (::fixtureScope.isInitialized) fixtureScope.cancel()
+            testDispatcher.scheduler.runCurrent()
+        } finally {
+            super.tearDown()
+        }
     }
 
     @Test
-    fun `stress - initial step is CAPTURE`() = runTest {
+    fun `stress - initial step is CAPTURE`() = runTest(testDispatcher) {
         assertEquals(ScanStep.CAPTURE, viewModel.state.value.step)
     }
 
     @Test
-    fun `stress - createTempPhotoUri returns uri and updates state`() = runTest {
+    fun `stress - createTempPhotoUri returns uri and updates state`() = runTest(testDispatcher) {
         val uri = viewModel.createTempPhotoUri()
         advanceUntilIdle()
         assertNotNull(uri)
@@ -133,52 +178,51 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `stress - processPhoto with no uri does not crash`() = runTest {
+    fun `stress - processPhoto with no uri does not crash`() = runTest(testDispatcher) {
         viewModel.processPhoto()
         advanceUntilIdle()
         assertEquals(ScanStep.CAPTURE, viewModel.state.value.step)
     }
 
     @Test
-    fun `stress - processGalleryImage with uri updates step to PROCESSING`() = runTest {
+    fun `stress - processGalleryImage with uri updates step to PROCESSING`() = runTest(testDispatcher) {
         val uri = Uri.parse("content://test/gallery.jpg")
+        coEvery { receiptLifecycleCoordinator.processReceiptInput(uri, any()) } coAnswers {
+            awaitCancellation()
+        }
         viewModel.processGalleryImage(uri)
-        advanceUntilIdle()
-        assertTrue(viewModel.state.value.step != ScanStep.CAPTURE)
+        runCurrent()
+        assertEquals(ScanStep.PROCESSING, viewModel.state.value.step)
         assertEquals(uri, viewModel.state.value.imageUri)
+        coVerify(exactly = 1) { receiptLifecycleCoordinator.processReceiptInput(uri, any()) }
     }
 
     @Test
-    fun `stress - OCR fallback resets editable and transient state`() = runTest {
+    fun `stress - OCR fallback resets editable and transient state`() = runTest(testDispatcher) {
         val uri = Uri.parse("content://test/fallback.jpg")
         val now = 1_234_567L
         every { timeProvider.now() } returns now
 
-        coEvery { receiptRepository.processReceipt(uri, autoCreateReview = false) } throws RuntimeException("OCR boom")
-        coEvery { receiptRepository.saveManualReceiptRecord(uri) } returns com.yourname.expensetracker.data.repository.ReceiptRepository.ProcessReceiptResult(
-            receipt = ScannedReceipt(
-                id = 42L,
-                imagePath = "/manual/path.jpg",
-                rawOcrText = "[OCR Failed or Skipped]",
-                parsedTotal = null,
-                parsedMerchant = null,
-                parsedDate = now,
-                parsedItems = null,
-                parsedTaxAmount = null,
-                currency = "EUR",
-                confidence = 0f
-            ),
-            parsed = ReceiptParser.ParsedReceipt(
-                merchantName = null,
-                total = null,
-                subtotal = null,
-                tax = null,
-                date = now,
-                currency = "EUR",
-                lineItems = emptyList(),
-                confidence = 0f
+        coEvery { receiptLifecycleCoordinator.processReceiptInput(uri, any()) } returns Result.success(
+            ReceiptLifecycleCoordinator.ReceiptProcessOutcome(
+                savedReceipt = ScannedReceipt(
+                    id = 42L,
+                    imagePath = "/manual/path.jpg",
+                    rawOcrText = "[OCR Failed or Skipped]",
+                    parsedTotal = null,
+                    parsedMerchant = null,
+                    parsedDate = now,
+                    parsedItems = null,
+                    parsedTaxAmount = null,
+                    currency = "EUR",
+                    confidence = 0f,
+                    processingStatus = ReceiptProcessingStatus.OCR_FAILED.name
+                ),
+                inserted = true,
+                postCommitBatch = null
             )
         )
+        coEvery { receiptLinkService.checkCanLinkReceipt(42L) } returns true
 
         val field = ReceiptScanViewModel::class.java.getDeclaredField("_state")
         field.isAccessible = true
@@ -189,8 +233,10 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
             imageUri = Uri.parse("content://test/previous.jpg"),
             receiptId = 7L,
             rawOcrText = "OLD OCR",
+            showRawText = true,
             editMerchant = "Old Merchant",
             editAmount = "9.99",
+            editCurrency = "EUR",
             editDate = 111L,
             selectedCategoryId = 5L,
             errorMessage = "Old error",
@@ -216,7 +262,10 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
             ),
             isAnalyzingItems = true,
             showItemBreakdown = true,
-            itemAnalysisError = "old item analysis error"
+            itemAnalysisError = "old item analysis error",
+            hasPartialOcr = true,
+            hasUnverifiedOcrCoverage = true,
+            pendingAppliedAiCapabilities = setOf(AiCapability.RECEIPT_EXTRACTION, AiCapability.CATEGORIZATION_FALLBACK)
         )
 
         viewModel.processGalleryImage(uri)
@@ -225,7 +274,7 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
         val state = viewModel.state.value
         assertEquals(ScanStep.REVIEW, state.step)
         assertEquals(42L, state.receiptId)
-        assertEquals("[OCR Failed or Skipped]", state.rawOcrText)
+        assertEquals("", state.rawOcrText)
         assertEquals("", state.editMerchant)
         assertEquals("", state.editAmount)
         assertEquals(now, state.editDate)
@@ -233,7 +282,7 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
         assertEquals(0f, state.ocrConfidence, 0.001f)
         assertEquals(false, state.isSaving)
         assertEquals(null, state.saveResult)
-        assertTrue(state.errorMessage?.contains("OCR Failed") == true)
+        assertEquals("OCR could not be processed (OCR_FAILED). You can enter details manually.", state.errorMessage)
         assertEquals(AiLoadState.Idle, state.receiptAssistState)
         assertEquals(null, state.receiptAssistMessage)
         assertEquals(null, state.receiptAssistDiagnostics)
@@ -244,10 +293,18 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
         assertEquals(false, state.isAnalyzingItems)
         assertEquals(false, state.showItemBreakdown)
         assertEquals(null, state.itemAnalysisError)
+        assertEquals("EUR", state.editCurrency)
+        assertFalse(state.showRawText)
+        assertFalse(state.hasPartialOcr)
+        assertFalse(state.hasUnverifiedOcrCoverage)
+        assertTrue(state.pendingAppliedAiCapabilities.isEmpty())
+        assertEquals("", state.debugData?.rawText)
+        assertEquals(listOf("Processing Error: OCR_FAILED"), state.debugData?.parsingLogs)
+        coVerify(exactly = 1) { receiptLifecycleCoordinator.processReceiptInput(uri, any()) }
     }
 
     @Test
-    fun `stress - requestReceiptAssist sets Ready and applies fields`() = runTest {
+    fun `stress - requestReceiptAssist sets Ready and applies fields`() = runTest(testDispatcher) {
         val suggestion = ReceiptAssistSuggestion(
             merchant = SuggestedValue("Lidl"),
             total = SuggestedValue(12.34),
@@ -295,11 +352,12 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
         assertEquals("Lidl", viewModel.state.value.editMerchant)
         assertEquals("12.34", viewModel.state.value.editAmount)
         assertEquals(999L, viewModel.state.value.editDate)
-        coVerify { aiArtifactRepository.markApplied(any()) }
+        assertEquals(setOf(AiCapability.RECEIPT_EXTRACTION), viewModel.state.value.pendingAppliedAiCapabilities)
+        coVerify(exactly = 0) { aiArtifactRepository.markApplied(any()) }
     }
 
     @Test
-    fun `stress - requestReceiptAssist surfaces on-device diagnostics when latest artifact is local`() = runTest {
+    fun `stress - requestReceiptAssist surfaces on-device diagnostics when latest artifact is local`() = runTest(testDispatcher) {
         val suggestion = ReceiptAssistSuggestion(
             merchant = SuggestedValue("Lidl")
         )
@@ -343,7 +401,7 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `stress - requestReceiptAssist surfaces image-aware message when vision input was used`() = runTest {
+    fun `stress - requestReceiptAssist surfaces image-aware message when vision input was used`() = runTest(testDispatcher) {
         val suggestion = ReceiptAssistSuggestion(
             merchant = SuggestedValue("AB Βασιλόπουλος")
         )
@@ -387,7 +445,7 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `stress - image cloud toggle alone does not enable quick save`() = runTest {
+    fun `stress - image cloud toggle alone does not enable quick save`() = runTest(testDispatcher) {
         settingsFlow.value = AiSettings(
             aiEnabled = true,
             receiptAssistEnabled = true,
@@ -400,7 +458,7 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `stress - requestReceiptAssist keeps failed artifact diagnostics on error`() = runTest {
+    fun `stress - requestReceiptAssist keeps failed artifact diagnostics on error`() = runTest(testDispatcher) {
         coEvery { suggestReceiptExtractionUseCase(7L, false) } returns ReceiptAssistGenerationResult.Error(
             "AI receipt assist failed."
         )
@@ -441,7 +499,7 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `stress - requestCategoryAssist sets Ready and applies category`() = runTest {
+    fun `stress - requestCategoryAssist sets Ready and applies category`() = runTest(testDispatcher) {
         val receipt = ScannedReceipt(
             id = 7L,
             imagePath = "receipt.jpg",
@@ -504,11 +562,12 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
         advanceUntilIdle()
 
         assertEquals(5L, viewModel.state.value.selectedCategoryId)
-        coVerify { aiArtifactRepository.markApplied(any()) }
+        assertEquals(setOf(AiCapability.CATEGORIZATION_FALLBACK), viewModel.state.value.pendingAppliedAiCapabilities)
+        coVerify(exactly = 0) { aiArtifactRepository.markApplied(any()) }
     }
 
     @Test
-    fun `stress - requestCategoryAssist keeps failed artifact diagnostics on error`() = runTest {
+    fun `stress - requestCategoryAssist keeps failed artifact diagnostics on error`() = runTest(testDispatcher) {
         val receipt = ScannedReceipt(
             id = 7L,
             imagePath = "receipt.jpg",
@@ -562,7 +621,7 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `stress - requestReceiptQuickSaveConfirmation builds preview from AI suggestions`() = runTest {
+    fun `stress - requestReceiptQuickSaveConfirmation builds preview from AI suggestions`() = runTest(testDispatcher) {
         settingsFlow.value = AiSettings(aiEnabled = true, receiptQuickSaveEnabled = true)
         advanceUntilIdle()
 
@@ -576,6 +635,9 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
             editMerchant = "",
             editAmount = "",
             editDate = 999L,
+            editCurrency = "EUR",
+            // Above the production RCP-11 quick-save confidence minimum (0.5f).
+            ocrConfidence = 0.8f,
             receiptQuickSaveEnabled = true,
             receiptAssistState = AiLoadState.Ready(
                 ReceiptAssistSuggestion(
@@ -599,7 +661,7 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `stress - quickSaveUnavailableReason explains when AI assist has not been requested`() = runTest {
+    fun `stress - quickSaveUnavailableReason explains when AI assist has not been requested`() = runTest(testDispatcher) {
         settingsFlow.value = AiSettings(aiEnabled = true, receiptQuickSaveEnabled = true)
         advanceUntilIdle()
 
@@ -622,7 +684,7 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `stress - requestReceiptQuickSaveConfirmation blocks when toggle is off`() = runTest {
+    fun `stress - requestReceiptQuickSaveConfirmation blocks when toggle is off`() = runTest(testDispatcher) {
         settingsFlow.value = AiSettings(aiEnabled = true, receiptQuickSaveEnabled = false)
         advanceUntilIdle()
 
@@ -652,7 +714,7 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `stress - receipt quick save preview clears and confirm stops after toggle turns off`() = runTest {
+    fun `stress - receipt quick save preview clears and confirm stops after toggle turns off`() = runTest(testDispatcher) {
         settingsFlow.value = AiSettings(aiEnabled = true, receiptQuickSaveEnabled = true)
         advanceUntilIdle()
 
@@ -666,6 +728,9 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
             editMerchant = "",
             editAmount = "",
             editDate = 999L,
+            editCurrency = "EUR",
+            // Above the production RCP-11 quick-save confidence minimum (0.5f).
+            ocrConfidence = 0.8f,
             receiptQuickSaveEnabled = true,
             receiptAssistState = AiLoadState.Ready(
                 ReceiptAssistSuggestion(
@@ -688,36 +753,27 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
         viewModel.confirmReceiptQuickSave()
         advanceUntilIdle()
 
-        coVerify(exactly = 0) {
-            receiptRepository.createExpenseFromReceipt(
-                receiptId = any(),
-                merchant = any(),
-                amount = any(),
-                currency = any(),
-                categoryId = any(),
-                date = any(),
-                paymentMethod = any(),
-                notes = any()
-            )
-        }
+        coVerify(exactly = 0) { receiptLifecycleCoordinator.createExpenseAndLinkReceipt(any()) }
+        coVerify(exactly = 0) { aiArtifactRepository.markApplied(any()) }
     }
 
     @Test
-    fun `stress - confirmReceiptQuickSave saves through normal repository path`() = runTest {
+    fun `stress - confirmReceiptQuickSave saves through lifecycle path`() = runTest(testDispatcher) {
         settingsFlow.value = AiSettings(aiEnabled = true, receiptQuickSaveEnabled = true)
         advanceUntilIdle()
+        val saveResult = CompletableDeferred<Long>()
+        coEvery { receiptLinkService.checkCanLinkReceipt(7L) } returns true
+        coEvery { merchantNormalizer.normalize(rawName = "Lidl", autoCreate = true) } returns mockk {
+            every { canonical } returns mockk {
+                every { normalizedName } returns "lidl"
+            }
+        }
         coEvery {
-            receiptRepository.createExpenseFromReceipt(
-                receiptId = 7L,
-                merchant = "Lidl",
-                amount = 12.34,
-                currency = "EUR",
-                categoryId = 5L,
-                date = 999L,
-                paymentMethod = any(),
-                notes = null
-            )
-        } returns Result.Success(9L)
+            hybridClassifier.learnFromCorrection(merchantName = "lidl", correctCategoryId = 5L, amount = 12.34)
+        } returns Unit
+        coEvery { receiptLifecycleCoordinator.createExpenseAndLinkReceipt(any()) } coAnswers {
+            Result.success(saveResult.await())
+        }
         coEvery { aiArtifactRepository.getLatest("scanned_receipt:7", AiCapability.RECEIPT_EXTRACTION) } returns AiArtifactRecord(
             id = 11L,
             targetType = AiTargetType.SCANNED_RECEIPT,
@@ -755,6 +811,9 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
             editMerchant = "",
             editAmount = "",
             editDate = 999L,
+            editCurrency = "EUR",
+            // Above the production RCP-11 quick-save confidence minimum (0.5f).
+            ocrConfidence = 0.8f,
             receiptQuickSaveEnabled = true,
             receiptAssistState = AiLoadState.Ready(
                 ReceiptAssistSuggestion(
@@ -768,20 +827,45 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
         )
 
         viewModel.requestReceiptQuickSaveConfirmation()
+        assertNotNull(viewModel.state.value.quickSavePreview)
         viewModel.confirmReceiptQuickSave()
+        runCurrent()
+        assertTrue(viewModel.state.value.isSaving)
+        assertEquals(ScanStep.REVIEW, viewModel.state.value.step)
+        assertNotNull(viewModel.state.value.quickSavePreview)
+        coVerify(exactly = 1) { receiptLifecycleCoordinator.createExpenseAndLinkReceipt(any()) }
+        coVerify(exactly = 0) { aiArtifactRepository.markApplied(any()) }
+
+        saveResult.complete(9L)
         advanceUntilIdle()
 
         assertEquals(ScanStep.DONE, viewModel.state.value.step)
         assertEquals("Lidl", viewModel.state.value.editMerchant)
         assertEquals("12.34", viewModel.state.value.editAmount)
         assertEquals(5L, viewModel.state.value.selectedCategoryId)
-        coVerify { aiArtifactRepository.markApplied(11L) }
-        coVerify { aiArtifactRepository.markApplied(12L) }
+        assertEquals(9L, (viewModel.state.value.saveResult as? SaveReceiptResult.Success)?.expenseId)
+        assertNull(viewModel.state.value.quickSavePreview)
+        assertTrue(viewModel.state.value.pendingAppliedAiCapabilities.isEmpty())
+        coVerify(exactly = 1) { receiptLifecycleCoordinator.createExpenseAndLinkReceipt(any()) }
+        coVerify(exactly = 1) {
+            receiptLifecycleCoordinator.createExpenseAndLinkReceipt(match {
+                it.scannedReceiptId == 7L && it.merchant == "Lidl" && it.amount == 12.34 &&
+                    it.currency == "EUR" && it.categoryId == 5L && it.date == 999L &&
+                    it.notes == "Scanned from receipt"
+            })
+        }
+        coVerify(exactly = 1) { receiptLinkService.checkCanLinkReceipt(7L) }
+        coVerify(exactly = 1) { merchantNormalizer.normalize(rawName = "Lidl", autoCreate = true) }
+        coVerify(exactly = 1) {
+            hybridClassifier.learnFromCorrection(merchantName = "lidl", correctCategoryId = 5L, amount = 12.34)
+        }
+        coVerify(exactly = 1) { aiArtifactRepository.markApplied(11L) }
+        coVerify(exactly = 1) { aiArtifactRepository.markApplied(12L) }
         verify { aiRuntimeDiagnostics.recordInteraction(type = "phase4_accept", message = any(), now = any()) }
     }
 
     @Test
-    fun `stress - dismissCategoryAssist clears state and marks artifact dismissed`() = runTest {
+    fun `stress - dismissCategoryAssist clears state and marks artifact dismissed`() = runTest(testDispatcher) {
         coEvery { aiArtifactRepository.getLatest("scanned_receipt:7", AiCapability.CATEGORIZATION_FALLBACK) } returns AiArtifactRecord(
             id = 5L,
             targetType = AiTargetType.SCANNED_RECEIPT,
@@ -817,7 +901,7 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `stress - dismissReceiptAssist clears state and marks artifact dismissed`() = runTest {
+    fun `stress - dismissReceiptAssist clears state and marks artifact dismissed`() = runTest(testDispatcher) {
         coEvery { aiArtifactRepository.getLatest("scanned_receipt:7", AiCapability.RECEIPT_EXTRACTION) } returns AiArtifactRecord(
             id = 4L,
             targetType = AiTargetType.SCANNED_RECEIPT,
@@ -850,5 +934,91 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
         coVerify { aiArtifactRepository.markDismissed(4L) }
         assertEquals(AiLoadState.Idle, viewModel.state.value.receiptAssistState)
         assertEquals(null, viewModel.state.value.receiptAssistDiagnostics)
+    }
+
+    @Test
+    fun switchingReceiptsDoesNotMarkUnappliedArtifactsOnTheNextReceipt() = runTest(testDispatcher) {
+        val field = ReceiptScanViewModel::class.java.getDeclaredField("_state")
+        field.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val stateFlow = field.get(viewModel) as kotlinx.coroutines.flow.MutableStateFlow<ReceiptScanState>
+        stateFlow.value = ReceiptScanState(
+            step = ScanStep.REVIEW,
+            receiptId = 7L,
+            editCurrency = "EUR",
+            receiptAssistState = AiLoadState.Ready(
+                ReceiptAssistSuggestion(merchant = SuggestedValue("AI for receipt seven"))
+            )
+        )
+        viewModel.applyAllReceiptAssist()
+        assertEquals(setOf(AiCapability.RECEIPT_EXTRACTION), viewModel.state.value.pendingAppliedAiCapabilities)
+
+        val uri = Uri.parse("content://test/another-receipt.jpg")
+        val scanResult = CompletableDeferred<ReceiptLifecycleCoordinator.ReceiptProcessOutcome>()
+        coEvery { receiptLifecycleCoordinator.processReceiptInput(uri, any()) } coAnswers {
+            Result.success(scanResult.await())
+        }
+        coEvery { receiptLinkService.checkCanLinkReceipt(18L) } returns true
+        viewModel.processGalleryImage(uri)
+        assertEquals(ScanStep.PROCESSING, viewModel.state.value.step)
+        assertTrue(viewModel.state.value.pendingAppliedAiCapabilities.isEmpty())
+        runCurrent()
+        scanResult.complete(
+            ReceiptLifecycleCoordinator.ReceiptProcessOutcome(
+                savedReceipt = ScannedReceipt(
+                    id = 18L,
+                    imagePath = null,
+                    rawOcrText = "SECOND RECEIPT",
+                    parsedTotal = 10.0,
+                    parsedMerchant = "Second merchant",
+                    parsedDate = 999L,
+                    parsedItems = null,
+                    parsedTaxAmount = null,
+                    currency = "EUR",
+                    confidence = 0.9f,
+                    processingStatus = ReceiptProcessingStatus.PARSED.name
+                ),
+                inserted = false,
+                postCommitBatch = null
+            )
+        )
+        advanceUntilIdle()
+        assertEquals(ScanStep.REVIEW, viewModel.state.value.step)
+        assertEquals(18L, viewModel.state.value.receiptId)
+        assertTrue(viewModel.state.value.pendingAppliedAiCapabilities.isEmpty())
+
+        // The reopened receipt has a suggestion, but this user has not applied it.
+        coEvery { aiArtifactRepository.getLatest("scanned_receipt:18", AiCapability.RECEIPT_EXTRACTION) } returns
+            AiArtifactRecord(
+                id = 22L, targetType = AiTargetType.SCANNED_RECEIPT, targetId = 18L,
+                targetKey = "scanned_receipt:18", capability = AiCapability.RECEIPT_EXTRACTION,
+                status = AiArtifactStatus.READY, mode = AiMode.AUTO, promptVersion = "v1",
+                sourceHash = "hash", createdAt = 0L, updatedAt = 0L
+            )
+        coEvery { merchantNormalizer.normalize(rawName = "Second merchant", autoCreate = true) } returns mockk {
+            every { canonical } returns mockk { every { normalizedName } returns "second merchant" }
+        }
+        coEvery { hybridClassifier.classify(merchantName = "second merchant", amount = 10.0) } returns mockk {
+            every { categoryId } returns 5L
+        }
+        coEvery {
+            hybridClassifier.learnFromCorrection(merchantName = "second merchant", correctCategoryId = 5L, amount = 10.0)
+        } returns Unit
+        coEvery { receiptLifecycleCoordinator.createExpenseAndLinkReceipt(any()) } returns Result.success(90L)
+
+        viewModel.saveExpense()
+        advanceUntilIdle()
+
+        assertEquals(ScanStep.DONE, viewModel.state.value.step)
+        coVerify(exactly = 1) {
+            receiptLifecycleCoordinator.createExpenseAndLinkReceipt(match {
+                it.scannedReceiptId == 18L && it.merchant == "Second merchant" &&
+                    it.amount == 10.0 && it.currency == "EUR"
+            })
+        }
+        coVerify(exactly = 0) {
+            aiArtifactRepository.getLatest("scanned_receipt:18", AiCapability.RECEIPT_EXTRACTION)
+        }
+        coVerify(exactly = 0) { aiArtifactRepository.markApplied(any()) }
     }
 }

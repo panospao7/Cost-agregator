@@ -1180,6 +1180,43 @@ def test_malformed_not_in_shapes_fail_closed(sql):
     assert not result.is_read and not result.is_mutation
 
 
+@pytest.mark.parametrize("depth", [0, 1, 2, 4])
+@pytest.mark.parametrize("verb", ["SELECT", "DELETE"])
+@pytest.mark.parametrize("predicate", [
+    "id IN (SELECT id FROM keep)",
+    "id NOT IN (SELECT id FROM keep)",
+    "EXISTS (SELECT id FROM keep)",
+])
+def test_nested_subquery_rebases_its_actual_depth(depth, verb, predicate):
+    statement = "SELECT * FROM things" if verb == "SELECT" else "DELETE FROM things"
+    result = classify_sql(
+        statement + " WHERE " + "(" * depth + predicate + ")" * depth
+    )
+    assert result.operation == verb
+    assert result.error_code is None
+    assert result.is_read is (verb == "SELECT")
+    assert result.is_mutation is (verb == "DELETE")
+
+
+@pytest.mark.parametrize("depth", [1, 3])
+@pytest.mark.parametrize("verb", ["SELECT", "DELETE"])
+@pytest.mark.parametrize("subquery", [
+    "SELECT FROM keep",
+    "SELECT id FROM",
+    "SELECT id FROM keep WHERE",
+    "SELECT id FROM keep; DELETE FROM keep",
+])
+def test_nested_subquery_rebasing_keeps_invalid_sql_fail_closed(depth, verb, subquery):
+    statement = "SELECT * FROM things" if verb == "SELECT" else "DELETE FROM things"
+    predicate = "id NOT IN (" + subquery + ")"
+    result = classify_sql(
+        statement + " WHERE " + "(" * depth + predicate + ")" * depth
+    )
+    assert result.operation == OPERATION_UNCLASSIFIABLE
+    assert result.error_code == ERROR_UNCLASSIFIABLE
+    assert not result.is_read and not result.is_mutation
+
+
 @pytest.mark.parametrize("sql", [
     "SELECT changes()",
     "SELECT changes() AS affected",

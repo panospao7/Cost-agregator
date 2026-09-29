@@ -85,7 +85,7 @@ class MerchantKeyBackfillWorkerTest {
         // First call returns the un-keyed row; second call returns empty (done)
         coEvery { expenseRepository.getExpensesWithNullMerchantKey(any()) } returnsMany
                 listOf(listOf(expense), emptyList())
-        coEvery { expenseRepository.updateMerchantKey(any(), any()) } returns Unit
+        coEvery { expenseRepository.updateMerchantKey(any(), any()) } returns true
 
         val result = buildWorker().doWork()
 

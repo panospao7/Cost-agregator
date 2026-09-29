@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import org.json.JSONArray
@@ -83,6 +84,8 @@ class DataStoreMaintenanceSafeDiagnosticSink @Inject constructor(
                 val trimmed = if (existing.size > MAX_RECORDS) existing.takeLast(MAX_RECORDS) else existing
                 prefs[KEY_RECORDS] = serializeRecords(trimmed)
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Timber.w(e, "DataStoreMaintenanceSafeDiagnosticSink: failed to persist record")
         }
@@ -131,6 +134,8 @@ class DataStoreMaintenanceSafeDiagnosticSink @Inject constructor(
                 val trimmed = if (existing.size > MAX_RECORDS) existing.takeLast(MAX_RECORDS) else existing
                 prefs[KEY_RECORDS] = serializeRecords(trimmed)
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Timber.w(e, "DataStoreMaintenanceSafeDiagnosticSink: failed to persist diagnostic event")
         }

@@ -18,6 +18,7 @@ import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyAuditContext
 import com.yourname.expensetracker.domain.privacy.PrivacyAuditLogger
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -166,6 +167,8 @@ class CloudWarrantyExtractionService @Inject constructor(
                     Timber.e(e, "CloudWarrantyExtractionService: network error extracting warranty correlationId=%s", correlationId)
                     return@withContext null
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Timber.e(e, "CloudWarrantyExtractionService: error extracting warranty correlationId=%s", correlationId)
                 return@withContext null

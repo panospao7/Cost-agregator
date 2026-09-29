@@ -734,6 +734,8 @@ MUTATION_VERBS = (
 MUTATION_EXACT_NAMES = (
     "getOrInsertByNameNoCase",
     "staleAbortIfStillRunning",
+    # TransactionEventDao's set-based privacy-retention UPDATE.
+    "nullSnapshotsOlderThan",
 )
 
 MUTATION_TOKENS = tuple(sorted(set(MUTATION_VERBS) | set(MUTATION_EXACT_NAMES)))

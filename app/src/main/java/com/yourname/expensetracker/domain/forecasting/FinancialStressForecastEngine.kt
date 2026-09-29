@@ -88,16 +88,16 @@ class FinancialStressForecastEngine @Inject constructor(
      * @return StressForecastResult containing forecasts for all horizons
      */
     suspend fun computeStressForecast(displayCurrency: String? = null): StressForecastResult {
-        val startTime = timeProvider.now()
-        val resolvedDisplayCurrency = resolveDisplayCurrency(displayCurrency)
+        var resolvedDisplayCurrency = displayCurrency.orEmpty()
         
         return try {
+            val startTime = timeProvider.now()
+            resolvedDisplayCurrency = resolveDisplayCurrency(displayCurrency)
             val now = timeProvider.now()
 
-            // No canonical account-balance source exists in this pipeline.
-            // Use a neutral starting point instead of presenting month-to-date
-            // net cashflow as if it were the user's real cash balance.
-            val currentBalance = resolveStartingBalanceBaseline()
+            // Reuse the resolved forecast currency for the existing balance
+            // provider; an explicit currency must not re-read home settings.
+            val currentBalance = resolveStartingBalanceBaseline(resolvedDisplayCurrency)
             val patterns = recurringPatternsProvider.getConfirmedPatterns()
 
             // Normalize purchases and deposits to display currency
@@ -174,32 +174,17 @@ class FinancialStressForecastEngine @Inject constructor(
             
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-            // FCST-17: Structured diagnostics instead of silent catch-all.
-            // The exception type and message are captured and logged so the
-            // caller can distinguish between transient errors (network, timeout)
-            // and permanent ones (data corruption, invalid configuration).
-            val isRecoverable = e !is IllegalArgumentException &&
-                e !is IllegalStateException
-            Timber.e(
-                e, "$TAG: Failed to compute stress forecast. " +
-                "type=%s recoverable=%s stage=compute_stress_forecast",
-                e::class.qualifiedName.orEmpty(), isRecoverable
-            )
-            // Return degraded fallback with non-LOW risk
+            Timber.w("STRESS_FORECAST_UNAVAILABLE class=%s", e.javaClass.simpleName)
             StressForecastResult(
-                horizons = createDefaultHorizons(
-                    fallbackRiskLevel = StressRiskLevel.MODERATE,
-                    fallbackCrunchProbability = 0.20,
-                    displayCurrency = resolvedDisplayCurrency
-                ),
-                overallRiskLevel = StressRiskLevel.MODERATE,
+                horizons = emptyList(),
+                overallRiskLevel = null,
                 earliestCrunchDate = null,
-                recommendations = listOf(
-                    "Stress forecast is temporarily unavailable due to a calculation issue.",
-                    "Showing a degraded estimate. Please retry shortly and verify your recent transactions."
-                ),
+                recommendations = emptyList(),
                 displayCurrency = resolvedDisplayCurrency,
-                mode = StressForecastMode.ESTIMATED_INDEX
+                mode = StressForecastMode.ESTIMATED_INDEX,
+                isPartial = true,
+                qualityWarnings = listOf("STRESS_FORECAST_UNAVAILABLE"),
+                failure = StressForecastFailure.CALCULATION_UNAVAILABLE
             )
         }
     }
@@ -689,10 +674,9 @@ class FinancialStressForecastEngine @Inject constructor(
      * Future implementations can swap in BankConnectionBalanceProvider or
      * ManualBalanceProvider via DI without changing this engine.
      */
-    private suspend fun resolveStartingBalanceBaseline(): Double {
+    private suspend fun resolveStartingBalanceBaseline(displayCurrency: String): Double {
         // P6-P1-13: Delegate to AccountBalanceProvider (currently NetCashflowBalanceProvider)
-        val homeCurrency = resolveDisplayCurrency(null)
-        val balance = runCatching { accountBalanceProvider.currentBalance(homeCurrency) }.getOrNull()
+        val balance = runCatching { accountBalanceProvider.currentBalance(displayCurrency) }.getOrNull()
         if (balance != null) {
             Timber.d("FCST-9: resolveStartingBalanceBaseline via AccountBalanceProvider = %.2f", balance)
             return balance
@@ -718,38 +702,17 @@ class FinancialStressForecastEngine @Inject constructor(
      */
     private suspend fun getEmergencyBuffer(): Double {
         return runCatching { currencySettingsRepository.emergencyBuffer().first() }
-            .getOrElse { DEFAULT_EMERGENCY_BUFFER_FALLBACK }
+            .getOrElse {
+                if (it is kotlinx.coroutines.CancellationException) throw it
+                DEFAULT_EMERGENCY_BUFFER_FALLBACK
+            }
     }
 
     /**
      * Resolve the display currency from the optional parameter or settings.
      */
     private suspend fun resolveDisplayCurrency(fallback: String?): String {
-        return fallback ?: runCatching { currencySettingsRepository.homeCurrency().first() }
-            .getOrElse { throw IllegalStateException("Home currency unavailable: ${it.message}") }
-    }
-
-    /**
-     * Create default horizons for error case.
-     */
-    private fun createDefaultHorizons(
-        fallbackRiskLevel: StressRiskLevel = StressRiskLevel.LOW,
-        fallbackCrunchProbability: Double = 0.0,
-        displayCurrency: String = ""
-    ): List<StressHorizon> {
-        return listOf(DAYS_30, DAYS_60, DAYS_90).map { days ->
-            StressHorizon(
-                daysAhead = days,
-                projectedBalance = 0.0,
-                minProjectedBalance = 0.0,
-                probabilityOfCrunch = fallbackCrunchProbability,
-                riskLevel = fallbackRiskLevel,
-                recurringObligations = 0.0,
-                expectedIncome = 0.0,
-                discretionaryBuffer = 0.0,
-                displayCurrency = displayCurrency
-            )
-        }
+        return fallback ?: currencySettingsRepository.homeCurrency().first()
     }
 
     /**
@@ -795,16 +758,19 @@ enum class StressForecastMode {
     NET_CASHFLOW_ESTIMATE
 }
 
+enum class StressForecastFailure { CALCULATION_UNAVAILABLE }
+
 data class StressForecastResult(
     val horizons: List<StressHorizon>,
-    val overallRiskLevel: StressRiskLevel,
+    val overallRiskLevel: StressRiskLevel?,
     val earliestCrunchDate: Long?,
     val recommendations: List<String>,
     val displayCurrency: String = "",
     val mode: StressForecastMode = StressForecastMode.NET_CASHFLOW_ESTIMATE,
     val isPartial: Boolean = false,
     val qualityWarnings: List<String> = emptyList(),
-    val excludedCount: Int = 0
+    val excludedCount: Int = 0,
+    val failure: StressForecastFailure? = null
 )
 
 /**

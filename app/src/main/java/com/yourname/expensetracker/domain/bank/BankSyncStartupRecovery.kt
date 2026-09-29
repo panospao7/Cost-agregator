@@ -3,7 +3,9 @@ package com.yourname.expensetracker.domain.bank
 import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.BankStatementImportRunDao
-import com.yourname.expensetracker.data.database.dao.OperationRunDao
+import com.yourname.expensetracker.domain.diagnostics.StaleBankOperationRunRecovery
+import com.yourname.expensetracker.domain.workers.LeaseAcquisitionBlockedException
+import com.yourname.expensetracker.domain.workers.WorkerLeaseRegistry
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
@@ -27,10 +29,11 @@ import javax.inject.Singleton
  */
 @Singleton
 class BankSyncStartupRecovery @Inject constructor(
-    private val operationRunDao: OperationRunDao,
+    private val operationRunRecovery: StaleBankOperationRunRecovery,
     private val bankStatementImportRunDao: BankStatementImportRunDao,
     private val writeBarrier: DatabaseWriteBarrier,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val leaseRegistry: WorkerLeaseRegistry
 ) {
 
     data class RecoveryResult(
@@ -54,36 +57,32 @@ class BankSyncStartupRecovery @Inject constructor(
             return RecoveryResult(operationRunsRecovered = 0, statementRunsRecovered = 0)
         }
 
-        val reasonCode = DiagnosticReasonCode.STALE_RUNNING_ABORTED.name
-
-        // Family 1: bank operation runs.
-        var operationRunsRecovered = 0
-        val staleRuns = operationRunDao.getStaleRunning(staleThresholdMs)
-        for (run in staleRuns) {
-            if (!run.operationType.contains("BANK", ignoreCase = true)) continue
-            operationRunsRecovered += operationRunDao.finalizeIfRunning(
-                id = run.id,
-                status = "CANCELLED",
-                finishedAt = timeProvider.now(),
-                errorSummary = reasonCode
-            )
+        // Startup is not a CoroutineWorker, but its suspended Room work must
+        // participate in the same maintenance admission/drain protocol.
+        val lease = try {
+            leaseRegistry.acquire("bank_startup_recovery")
+        } catch (_: LeaseAcquisitionBlockedException) {
+            return RecoveryResult(operationRunsRecovered = 0, statementRunsRecovered = 0)
         }
+        try {
+            lease.checkpoint("BankSyncStartupRecovery.recoverStaleRuns")
+            val operationRunsRecovered = operationRunRecovery.recoverStaleBankRuns(staleThresholdMs, lease)
 
-        // Family 2: bank statement import runs (post-parse import ledger).
-        var statementRunsRecovered = 0
-        val staleStatementRuns = bankStatementImportRunDao.getStaleRunningRuns(staleThresholdMs)
-        for (run in staleStatementRuns) {
-            bankStatementImportRunDao.markStaleFailed(
-                runId = run.id,
-                now = timeProvider.now(),
-                reason = reasonCode
-            )
-            statementRunsRecovered++
+            lease.checkpoint("BankSyncStartupRecovery.readStaleStatements")
+            val staleStatementRuns = bankStatementImportRunDao.getStaleRunningRuns(staleThresholdMs)
+            var statementRunsRecovered = 0
+            for (run in staleStatementRuns) {
+                lease.checkpoint("BankSyncStartupRecovery.markStaleStatement")
+                statementRunsRecovered += bankStatementImportRunDao.markStaleFailed(
+                    runId = run.id,
+                    cutoffMs = staleThresholdMs,
+                    now = timeProvider.now(),
+                    reason = DiagnosticReasonCode.STALE_RUNNING_ABORTED.name
+                )
+            }
+            return RecoveryResult(operationRunsRecovered, statementRunsRecovered)
+        } finally {
+            lease.close()
         }
-
-        return RecoveryResult(
-            operationRunsRecovered = operationRunsRecovered,
-            statementRunsRecovered = statementRunsRecovered
-        )
     }
 }

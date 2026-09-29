@@ -50,27 +50,12 @@ class WorkerGuardArchitectureGuardTest {
         val ALLOWLISTED_WORKERS = emptySet<String>()
     }
 
-    /**
-     * Matches the supertype clause `: CoroutineWorker` of a class declaration.
-     * The `androidx.work.CoroutineWorker` import line does not match because it is
-     * preceded by a `.` rather than a `:`, and `\s*` only spans contiguous
-     * whitespace so it cannot bridge an unrelated colon to a distant token.
-     */
-    private val coroutineWorkerSupertype = Regex(""":\s*CoroutineWorker\b""")
-
-    /**
-     * Matches an actual guard invocation: `runGuarded(` or `runGuardedWithContext(`.
-     * Receiver-agnostic so a worker that injects the guard under a different field
-     * name is still recognised, while a worker that never calls the guard is not.
-     */
-    private val guardInvocation = Regex("""runGuarded(WithContext)?\s*\(""")
-
     private fun discoverCoroutineWorkerFiles(): List<File> =
         sourceRoot.walkTopDown()
             .filter { it.isFile && it.extension == "kt" }
             .filter { file ->
-                val text = runCatching { file.readText() }.getOrNull() ?: return@filter false
-                coroutineWorkerSupertype.containsMatchIn(text)
+                // A read/parse failure fails this test; never silently omit a file.
+                WorkerEntryPointProof.inspect(file.readText()).isNotEmpty()
             }
             .toList()
 
@@ -90,7 +75,7 @@ class WorkerGuardArchitectureGuardTest {
             val name = file.nameWithoutExtension
             if (name in ALLOWLISTED_WORKERS) continue
             val text = file.readText()
-            if (!guardInvocation.containsMatchIn(text)) {
+            if (WorkerEntryPointProof.inspect(text).any { !it.guarded }) {
                 violations.add(
                     "${file.name}: extends CoroutineWorker but never calls runGuarded/runGuardedWithContext " +
                         "(WorkerExecutionGuard). Route it through the guard, or — only if it is a genuinely " +
@@ -125,7 +110,7 @@ class WorkerGuardArchitectureGuardTest {
         for (file in discoverCoroutineWorkerFiles()) {
             val name = file.nameWithoutExtension
             if (name !in ALLOWLISTED_WORKERS) continue
-            if (guardInvocation.containsMatchIn(file.readText())) {
+            if (WorkerEntryPointProof.inspect(file.readText()).all { it.guarded }) {
                 redundant.add(name)
             }
         }

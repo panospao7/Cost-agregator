@@ -471,7 +471,50 @@ class WorkerRunLoggerTest {
         assertEquals("RETRY", nd.intendedStatus)
         assertEquals(DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name, nd.reasonCode)
         assertEquals("TERMINAL_WRITE_FAILED", nd.failureCode)
-        assertEquals("RuntimeException", nd.errorClass)
+        assertEquals("SQLException", nd.errorClass)
+    }
+
+    @Test
+    fun `successful worker reports the terminal persistence exception class`() = runTest {
+        coEvery { dao.insert(any()) } returns 1L
+        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } throws
+            SQLException("sensitive database failure details")
+
+        val outcome = logger.start("test_worker").success()
+
+        assertEquals(
+            TerminalWriteOutcome.NotDurable(
+                intendedStatus = "SUCCESS",
+                reasonCode = DiagnosticReasonCode.WORKER_SUCCESS.name,
+                failureCode = "TERMINAL_WRITE_FAILED",
+                errorClass = "SQLException"
+            ),
+            outcome
+        )
+    }
+
+    @Test
+    fun `failed worker preserves separate worker and persistence exception classes`() = runTest {
+        coEvery { dao.insert(any()) } returns 1L
+        val workerErrorClass = slot<String>()
+        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), capture(workerErrorClass), any(), any(), any(), any(), any()) } throws
+            SQLException("sensitive database failure details")
+
+        val outcome = logger.start("test_worker").failure(
+            DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name,
+            IllegalArgumentException("sensitive worker failure details")
+        )
+
+        assertEquals("IllegalArgumentException", workerErrorClass.captured)
+        assertEquals(
+            TerminalWriteOutcome.NotDurable(
+                intendedStatus = "FAILED",
+                reasonCode = DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name,
+                failureCode = "TERMINAL_WRITE_FAILED",
+                errorClass = "SQLException"
+            ),
+            outcome
+        )
     }
 
     @Test
@@ -579,7 +622,9 @@ class WorkerRunLoggerTest {
         val handle = logger.start("test_worker")
         val timeoutEx = kotlinx.coroutines.runBlocking {
             try {
-                kotlinx.coroutines.withTimeout(1L) { kotlinx.coroutines.delay(10L) }
+                // The body must never finish first: the timeout fires on a different
+                // thread than runBlocking's delay queue, so a finite delay races it.
+                kotlinx.coroutines.withTimeout(1L) { kotlinx.coroutines.delay(Long.MAX_VALUE) }
                 throw IllegalStateException("Expected TimeoutCancellationException")
             } catch (e: kotlinx.coroutines.TimeoutCancellationException) { e }
         }
@@ -672,7 +717,8 @@ class WorkerRunLoggerTest {
     fun `classifyDiagnostic_timeout_returns_TIMEOUT`() {
         val timeoutEx = kotlinx.coroutines.runBlocking {
             try {
-                kotlinx.coroutines.withTimeout(1L) { kotlinx.coroutines.delay(10L) }
+                // See retry_persists_terminal_reason_code_and_classifies_diagnostic.
+                kotlinx.coroutines.withTimeout(1L) { kotlinx.coroutines.delay(Long.MAX_VALUE) }
                 throw IllegalStateException("Expected TimeoutCancellationException")
             } catch (e: kotlinx.coroutines.TimeoutCancellationException) { e }
         }

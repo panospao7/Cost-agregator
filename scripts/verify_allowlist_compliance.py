@@ -66,6 +66,10 @@ TEXT_ALLOWLISTS = [
 
 # ── YAML Allowlist Validation ──────────────────────────────────────────────────
 
+class AllowlistInputError(ValueError):
+    """Controlled infrastructure failure; never includes input or exception text."""
+
+
 def _parse_allowed_writers_entries(data: dict) -> List[dict]:
     """
     Parse entries from the `allowed_writers` format used by db_access_allowlist.yml.
@@ -74,11 +78,11 @@ def _parse_allowed_writers_entries(data: dict) -> List[dict]:
     entries = []
     raw_entries = data.get("allowed_writers", [])
     if not isinstance(raw_entries, list):
-        return entries
+        raise AllowlistInputError("ALLOWLIST_INPUT_INVALID")
 
     for idx, item in enumerate(raw_entries):
         if not isinstance(item, dict):
-            continue
+            raise AllowlistInputError("ALLOWLIST_INPUT_INVALID")
         entry = {
             "class": item.get("class", f"entry-{idx}"),
             "reason": str(item.get("reason", "")),
@@ -101,11 +105,11 @@ def _parse_release_block_entries(data: dict) -> List[dict]:
     entries = []
     raw_entries = data.get("release_block_tests", [])
     if not isinstance(raw_entries, list):
-        return entries
+        raise AllowlistInputError("ALLOWLIST_INPUT_INVALID")
 
     for idx, item in enumerate(raw_entries):
         if not isinstance(item, dict):
-            continue
+            raise AllowlistInputError("ALLOWLIST_INPUT_INVALID")
         entry = {
             "class": item.get("class", f"entry-{idx}"),
             "reason": str(item.get("reason", "")),
@@ -128,7 +132,7 @@ def _parse_flat_yaml_entries(data: List[dict]) -> List[dict]:
     entries = []
     for idx, item in enumerate(data):
         if not isinstance(item, dict):
-            continue
+            raise AllowlistInputError("ALLOWLIST_INPUT_INVALID")
         # Determine the identifier: prefer `path`, fall back to `class`, `worker_class`, or index
         identifier = (
             str(item.get("path", "")) or
@@ -158,20 +162,29 @@ def _parse_flat_yaml_entries(data: List[dict]) -> List[dict]:
 
 
 def _load_yaml_data(path: str) -> Optional[object]:
-    """Load YAML data from a file. Returns None on failure."""
-    if not os.path.exists(path):
-        return None
+    """Load a required YAML input or raise a bounded infrastructure error."""
     try:
         import yaml
     except ImportError:
-        print("WARNING: PyYAML not installed, cannot parse YAML allowlist", file=sys.stderr)
-        return None
+        raise AllowlistInputError("ALLOWLIST_PARSER_UNAVAILABLE") from None
+
+    class UniqueKeyLoader(yaml.SafeLoader):
+        def construct_mapping(self, node, deep=False):
+            self.flatten_mapping(node)
+            keys = [self.construct_object(key, deep=deep) for key, _ in node.value]
+            if len(keys) != len(set(keys)):
+                raise yaml.YAMLError("duplicate mapping key")
+            return super().construct_mapping(node, deep=deep)
+
     try:
         with open(path, encoding="utf-8") as f:
-            return yaml.safe_load(f)
-    except Exception as e:
-        print(f"ERROR: Could not parse YAML allowlist {path}: {e}", file=sys.stderr)
-        return None
+            return yaml.load(f, Loader=UniqueKeyLoader)
+    except FileNotFoundError:
+        raise AllowlistInputError("ALLOWLIST_INPUT_MISSING") from None
+    except (OSError, UnicodeError):
+        raise AllowlistInputError("ALLOWLIST_INPUT_UNREADABLE") from None
+    except Exception:
+        raise AllowlistInputError("ALLOWLIST_INPUT_INVALID") from None
 
 
 def parse_db_access_allowlist(path: str) -> List[dict]:
@@ -179,21 +192,22 @@ def parse_db_access_allowlist(path: str) -> List[dict]:
     Parse YAML allowlist file using PyYAML.
     Auto-detects format: allowed_writers (nested) or flat list.
     Returns a list of normalized entries with keys: class, reason, allowed_until, owner.
-    If PyYAML is not installed, falls back to returning an empty list with a warning.
+    Missing parsers/inputs and unsupported structures are infrastructure failures.
+    Only explicit empty lists represent an intentionally empty allowlist.
     """
     data = _load_yaml_data(path)
-    if data is None:
-        return []
-
     # Detect format
     if isinstance(data, dict):
-        if "allowed_writers" in data:
+        formats = {"allowed_writers", "release_block_tests"}.intersection(data)
+        if len(formats) != 1:
+            raise AllowlistInputError("ALLOWLIST_INPUT_INVALID")
+        if "allowed_writers" in formats:
             return _parse_allowed_writers_entries(data)
-        if "release_block_tests" in data:
+        if "release_block_tests" in formats:
             return _parse_release_block_entries(data)
     elif isinstance(data, list):
         return _parse_flat_yaml_entries(data)
-    return []
+    raise AllowlistInputError("ALLOWLIST_INPUT_INVALID")
 
 
 def check_yaml_allowlist(path: str, project_root: str = None) -> List[str]:
@@ -325,12 +339,13 @@ def check_text_allowlist(path: str, project_root: str = None) -> List[str]:
     violations = []
     rel_path = os.path.relpath(path, project_root)
 
-    if not os.path.exists(path):
-        print(f"WARNING: Text allowlist not found: {rel_path}", file=sys.stderr)
-        return violations
-
-    with open(path, encoding="utf-8") as f:
-        lines = f.readlines()
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = f.readlines()
+    except FileNotFoundError:
+        raise AllowlistInputError("ALLOWLIST_INPUT_MISSING") from None
+    except (OSError, UnicodeError):
+        raise AllowlistInputError("ALLOWLIST_INPUT_UNREADABLE") from None
 
     for lineno, line in enumerate(lines, 1):
         stripped = line.strip()
@@ -382,22 +397,24 @@ def main():
 
     # ── Validate YAML allowlists ──────────────────────────────
     for yaml_path in YAML_ALLOWLISTS:
-        if not os.path.exists(yaml_path):
-            print(f"WARNING: YAML allowlist not found: {yaml_path}", file=sys.stderr)
-            continue
         rel = os.path.relpath(yaml_path, project_root)
         print(f"Checking YAML allowlist: {rel}")
-        violations = check_yaml_allowlist(yaml_path, project_root=project_root)
+        try:
+            violations = check_yaml_allowlist(yaml_path, project_root=project_root)
+        except AllowlistInputError as error:
+            print(str(error), file=sys.stderr)
+            sys.exit(2)
         all_violations.extend(violations)
 
     # ── Validate plain-text allowlists ────────────────────────
     for text_path in TEXT_ALLOWLISTS:
-        if not os.path.exists(text_path):
-            print(f"WARNING: Text allowlist not found: {text_path}", file=sys.stderr)
-            continue
         rel = os.path.relpath(text_path, project_root)
         print(f"Checking text allowlist: {rel}")
-        violations = check_text_allowlist(text_path, project_root=project_root)
+        try:
+            violations = check_text_allowlist(text_path, project_root=project_root)
+        except AllowlistInputError as error:
+            print(str(error), file=sys.stderr)
+            sys.exit(2)
         all_violations.extend(violations)
 
     # ── Report ────────────────────────────────────────────

@@ -47,10 +47,21 @@ class RestoreJournal @Inject constructor(
         val sourceRelativePath: String,
         val status: AssetRestoreStatus,
         val targetPath: String? = null,
-        val error: String? = null
+        val error: String? = null,
+        /** Private recovery identity; a captured null differs from an old journal without a snapshot. */
+        val expectedImagePath: String? = null,
+        val expectedImagePathRecorded: Boolean = false,
+        /** S2: bundle proof (checksums.json SHA-256 + extracted size); null on legacy journals. */
+        val expectedSha256: String? = null,
+        val expectedSize: Long? = null
     )
 
-    enum class AssetRestoreStatus { PENDING, COMPLETED, FAILED }
+    /**
+     * S2 durable asset ledger: PENDING -> TEMP_WRITTEN -> FINAL_DURABLE -> DB_UPDATED
+     * -> COMPLETED, with FAILED(reason) terminal. Each transition is journaled before
+     * the next side effect so a crash at any point replays from a known state.
+     */
+    enum class AssetRestoreStatus { PENDING, TEMP_WRITTEN, FINAL_DURABLE, DB_UPDATED, COMPLETED, FAILED }
 
     data class JournalEntry(
         val operationId: String = UUID.randomUUID().toString(),
@@ -87,11 +98,20 @@ class RestoreJournal @Inject constructor(
                 assetTasks.forEach { t ->
                     arr.put(JSONObject().apply {
                         put("receiptId", t.receiptId)
-                        put("src", t.sourceRelativePath)
+                        // S2: the bundle file name embeds the original receipt file name,
+                        // so it is a recovery-only field (stripped from diagnostics).
+                        put("_src", t.sourceRelativePath)
                         put("status", t.status.name)
                         // Store only basename for asset target path
                         if (t.targetPath != null) put("targetName", java.io.File(t.targetPath).name)
                         if (t.error != null) put("error", t.error)
+                        if (t.expectedImagePathRecorded) {
+                            put("_expectedImagePath", t.expectedImagePath ?: JSONObject.NULL)
+                        }
+                        if (t.expectedSha256 != null && t.expectedSize != null) {
+                            put("_sha256", t.expectedSha256)
+                            put("_size", t.expectedSize)
+                        }
                     })
                 }
             })
@@ -101,6 +121,12 @@ class RestoreJournal @Inject constructor(
         fun toDiagnosticsJson(): JSONObject {
             val json = toJson()
             listOf("_sourceBackupPath", "_stagedDbPath", "_safetyBackupPath", "_liveDbPath", "_extractTempDirPath").forEach { json.remove(it) }
+            val tasks = json.getJSONArray("assetTasks")
+            for (index in 0 until tasks.length()) {
+                val task = tasks.getJSONObject(index)
+                // S2: every "_"-prefixed task key is recovery-only (source name, pointer, proof).
+                task.keys().asSequence().filter { it.startsWith("_") }.toList().forEach { task.remove(it) }
+            }
             return json
         }
 
@@ -132,6 +158,23 @@ class RestoreJournal @Inject constructor(
                     ?: legacyValue?.takeIf { it != "null" }
             }
 
+            /** S2: current `_src`, legacy `src`; a task with neither is corrupt. */
+            private fun taskSource(task: JSONObject): String =
+                if (task.has("_src")) requiredString(task, "_src") else requiredString(task, "src")
+
+            /** S2: proof is all-or-nothing and strictly typed; anything else is corrupt. */
+            private fun taskProof(task: JSONObject): Pair<String, Long>? {
+                val hasSha = task.has("_sha256")
+                val hasSize = task.has("_size")
+                if (!hasSha && !hasSize) return null
+                if (!hasSha || !hasSize) throw IllegalArgumentException("RESTORE_JOURNAL_CORRUPT_INPUT")
+                val sha = (task.opt("_sha256") as? String)?.takeIf { isSha256Hex(it) }
+                    ?: throw IllegalArgumentException("RESTORE_JOURNAL_CORRUPT_INPUT")
+                val size = requiredLong(task, "_size").takeIf { it >= 0L }
+                    ?: throw IllegalArgumentException("RESTORE_JOURNAL_CORRUPT_INPUT")
+                return sha to size
+            }
+
             fun fromJson(
                 json: JSONObject,
                 nowEpochMs: Long,
@@ -158,14 +201,19 @@ class RestoreJournal @Inject constructor(
                     (0 until tasks.length()).map { index ->
                         val task = tasks.optJSONObject(index)
                             ?: throw IllegalArgumentException("RESTORE_JOURNAL_CORRUPT_INPUT")
+                        val proof = taskProof(task)
                         AssetRestoreTask(
                             receiptId = requiredLong(task, "receiptId"),
-                            sourceRelativePath = requiredString(task, "src"),
+                            sourceRelativePath = taskSource(task),
                             status = AssetRestoreStatus.values().firstOrNull {
                                 it.name == requiredString(task, "status")
                             } ?: throw IllegalArgumentException("RESTORE_JOURNAL_CORRUPT_INPUT"),
                             targetPath = recoveryPath(task, "target", "targetName"),
-                            error = optionalString(task, "error")?.takeIf { it != "null" }
+                            error = optionalString(task, "error")?.takeIf { it != "null" },
+                            expectedImagePath = optionalString(task, "_expectedImagePath"),
+                            expectedImagePathRecorded = task.has("_expectedImagePath"),
+                            expectedSha256 = proof?.first,
+                            expectedSize = proof?.second
                         )
                     }
                 }
@@ -196,9 +244,11 @@ class RestoreJournal @Inject constructor(
     /** Narrow deterministic seam for fsync/rename failure tests; production uses the real APIs. */
     internal var testWriteTextSynced: ((File, String) -> Unit)? = null
     internal var testRenameTo: ((File, File) -> Boolean)? = null
-    internal enum class IoStage { INSPECT, READ, OPEN, WRITE, SYNC, RENAME, DELETE }
+    internal enum class IoStage { INSPECT, READ, OPEN, WRITE, SYNC, RENAME, DELETE, MOVE }
     internal var beforeIo: ((File, IoStage) -> Unit)? = null
     internal var testDelete: ((File) -> Boolean)? = null
+    /** S2 seam for receipt-asset SYNC/MOVE faults (see [ReceiptAssetRecovery]); production leaves it null. */
+    internal var testAssetIo: ((File, IoStage) -> Unit)? = null
 
     // ── RestoreJournalEvent (append-only stage trail) ─────────────
 
@@ -296,10 +346,17 @@ class RestoreJournal @Inject constructor(
             val tmpFile = File(targetFile.parentFile, "${targetFile.name}.tmp")
             // P7-CURRENT-022: fsync temp file before rename so the event is crash-durable.
             writeTextSynced(tmpFile, json.toString(2))
-            // DDL-C67-07: check rename result; fallback to copy+delete
-            if (!tmpFile.renameTo(targetFile)) {
-                writeTextSynced(targetFile, tmpFile.readText())
-                tmpFile.delete()
+            // DDL-C67-07 + S2: a failed rename falls back to an atomic replace - never an
+            // in-place rewrite of the (possibly active) journal. If that also fails the
+            // event is discarded with its temp file; the journal itself stays intact.
+            if (!renameTo(tmpFile, targetFile)) {
+                try {
+                    atomicReplace(tmpFile, targetFile)
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    tmpFile.delete()
+                    throw e
+                }
             }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
@@ -567,11 +624,9 @@ class RestoreJournal @Inject constructor(
                 if (existingEvents != null && existingEvents.length() > 0) newJson.put("events", existingEvents)
                 val tmpFile = File(journalFile.parentFile, "${journalFile.name}.tmp")
                 writeTextSynced(tmpFile, newJson.toString(2))
-                if (!renameTo(tmpFile, journalFile)) {
-                    writeTextSynced(journalFile, tmpFile.readText())
-                    if (!journalFile.exists()) throw JournalDurabilityException()
-                    deleteChecked(tmpFile)
-                }
+                // S2: the fallback is an atomic replace, never an in-place rewrite that a
+                // crash could tear; on failure the prior journal and the tmp both survive.
+                if (!renameTo(tmpFile, journalFile)) atomicReplace(tmpFile, journalFile)
                 if (!journalFile.exists()) throw JournalDurabilityException()
                 Timber.d("Restore journal: state=%s operationId=%s", entry.state, entry.operationId)
             } catch (e: JournalDurabilityException) {
@@ -693,10 +748,7 @@ class RestoreJournal @Inject constructor(
             val tmp = File(context.filesDir, "$fileName.tmp")
             beforeIo?.invoke(journalFile, IoStage.READ)
             writeTextSynced(tmp, journalFile.readText())
-            if (!renameTo(tmp, target)) {
-                writeTextSynced(target, tmp.readText())
-                deleteChecked(tmp)
-            }
+            if (!renameTo(tmp, target)) atomicReplace(tmp, target)
             if (!target.exists()) throw JournalDurabilityException()
             deleteChecked(journalFile)
             Timber.d("Restore journal preserved as %s", fileName)
@@ -713,6 +765,21 @@ class RestoreJournal @Inject constructor(
     private fun renameTo(source: File, target: File): Boolean {
         beforeIo?.invoke(target, IoStage.RENAME)
         return testRenameTo?.invoke(source, target) ?: source.renameTo(target)
+    }
+
+    /**
+     * S2: fallback for a `false` [renameTo] (e.g. hosts whose rename refuses an existing
+     * target). [java.nio.file.Files.move] with ATOMIC_MOVE swaps the fsync'd [source] in
+     * one step, so [target] is either the old bytes or the new bytes - never torn. Any
+     * failure propagates; the caller maps it to [JournalDurabilityException].
+     */
+    private fun atomicReplace(source: File, target: File) {
+        beforeIo?.invoke(target, IoStage.MOVE)
+        java.nio.file.Files.move(
+            source.toPath(), target.toPath(),
+            java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+            java.nio.file.StandardCopyOption.REPLACE_EXISTING
+        )
     }
 
     private fun deleteChecked(file: File) {
@@ -863,6 +930,26 @@ class RestoreJournal @Inject constructor(
 
         /** Duplicate receipt-id asset tasks in one journal - all conflicting tasks fail closed. */
         const val ASSET_REASON_DUPLICATE_TASK = "DUPLICATE_ASSET_TASK"
+
+        const val ASSET_REASON_EXPECTED_PATH_MISSING = "EXPECTED_IMAGE_PATH_MISSING"
+        const val ASSET_REASON_IMAGE_PATH_CONFLICT = "IMAGE_PATH_CONFLICT"
+
+        /** S2: no bundle checksum/size proof for the task (legacy journal or unlisted file) - fail closed. */
+        const val ASSET_REASON_PROOF_MISSING = "ASSET_PROOF_MISSING"
+
+        /** S2: copied, published, or completed bytes do not match the recorded proof. */
+        const val ASSET_REASON_INTEGRITY_MISMATCH = "ASSET_INTEGRITY_MISMATCH"
+
+        /** S2: fsync/publish IO failed; the operation-owned temp is discarded. */
+        const val ASSET_REASON_WRITE_FAILED = "ASSET_WRITE_FAILED"
+
+        const val ASSET_REASON_SOURCE_MISSING = "SOURCE_MISSING"
+        const val ASSET_REASON_ROW_MISSING = "RECEIPT_ROW_MISSING"
+        const val ASSET_REASON_RESTORE_FAILED = "ASSET_RESTORE_FAILED"
+
+        private val SHA256_HEX = Regex("^[0-9a-f]{64}$")
+
+        internal fun isSha256Hex(value: String): Boolean = SHA256_HEX.matches(value)
 
         /**
          * File extensions a restored receipt asset may use. The backup write side

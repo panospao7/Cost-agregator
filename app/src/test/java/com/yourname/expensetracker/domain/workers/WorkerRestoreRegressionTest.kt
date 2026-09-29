@@ -11,6 +11,7 @@ import com.yourname.expensetracker.data.backup.DatabaseAccessType
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.dao.BackgroundJobRunDao
+import com.yourname.expensetracker.domain.util.SystemMonotonicTimeProvider
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.*
 import kotlinx.coroutines.CancellationException
@@ -42,6 +43,7 @@ class WorkerRestoreRegressionTest {
     private val timeProvider = object : TimeProvider {
         override fun now(): Long = System.currentTimeMillis()
     }
+    private val monotonicTimeProvider = SystemMonotonicTimeProvider()
 
     private lateinit var leaseRegistry: WorkerLeaseRegistryImpl
 
@@ -49,7 +51,7 @@ class WorkerRestoreRegressionTest {
     fun setUp() {
         every { writeBarrier.checkWritesAllowed(any<String>()) } returns Unit
         every { writeBarrier.checkWritesAllowed(any<DatabaseAccessOperation>()) } returns Unit
-        leaseRegistry = WorkerLeaseRegistryImpl(writeBarrier, timeProvider)
+        leaseRegistry = WorkerLeaseRegistryImpl(writeBarrier, monotonicTimeProvider)
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -128,7 +130,7 @@ class WorkerRestoreRegressionTest {
         lateinit var actualLeases: WorkerLeaseRegistryImpl
         val mode = RestoreMaintenanceMode(context, dagger.Lazy { actualLeases }, timeProvider)
         val barrier = DatabaseWriteBarrier(mode)
-        actualLeases = WorkerLeaseRegistryImpl(barrier, timeProvider)
+        actualLeases = WorkerLeaseRegistryImpl(barrier, monotonicTimeProvider)
         val logger = mockk<WorkerRunLogger>()
         val handle = mockk<WorkerRunHandle>(relaxed = true)
         coEvery { logger.start(any(), any(), any(), any(), any(), any()) } returns handle

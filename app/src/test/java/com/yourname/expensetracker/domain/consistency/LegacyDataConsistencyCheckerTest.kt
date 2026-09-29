@@ -32,6 +32,7 @@ class LegacyDataConsistencyCheckerTest {
         // Unused by the checker — stub implementations:
         override suspend fun insert(receipt: ScannedReceipt): Long = 0
         override suspend fun update(receipt: ScannedReceipt) {}
+        override suspend fun updateImagePathIfUnchanged(receiptId: Long, expectedImagePath: String?, imagePath: String): Int = 0
         override suspend fun delete(receipt: ScannedReceipt) {}
         override suspend fun deleteById(id: Long) {}
         override fun getAllFlow() = throw NotImplementedError()
@@ -78,6 +79,11 @@ class LegacyDataConsistencyCheckerTest {
 
         override suspend fun getEventsForReceipt(receiptId: Long): List<ReceiptEvent> =
             events.filter { it.receiptId == receiptId }
+
+        override suspend fun getLatestSavedOcrMetadata(receiptId: Long): String? =
+            events.filter { it.receiptId == receiptId && it.eventType == "RECEIPT_SAVED" }
+                .maxWithOrNull(compareBy<ReceiptEvent>({ it.occurredAt }, { it.id }))
+                ?.metadata?.take(2049)
 
         override suspend fun insert(event: ReceiptEvent): Long = 0
 

@@ -51,8 +51,8 @@ import java.util.Calendar
  *   when computing stress forecasts (e.g. only active budgets, only confirmed expenses).
  * - Currency normalization: ensure multi-currency expenses are normalized to home
  *   currency before aggregation, and that non-home-currency budgets are handled.
- * - Generation failure fallback: test that when Monte Carlo simulation fails (throws),
- *   the engine falls back to a safe degraded forecast with MODERATE risk level.
+ * - Generation failure: a failed calculation is explicitly unavailable, with no
+ *   invented risk level, probability, horizons, or financial advice.
  * - Exclusive end boundary: confirm that the end boundary of date ranges is treated
  *   as exclusive (or inclusive) consistently, preventing off-by-one errors in
  *   lookback windows.
@@ -71,6 +71,7 @@ class FinancialStressForecastEngineTest {
     private lateinit var recurringOccurrenceDao: RecurringOccurrenceDao
     private lateinit var databaseReadBarrier: DatabaseReadBarrier
     private lateinit var currencyConverter: com.yourname.expensetracker.domain.currency.CurrencyConverter
+    private lateinit var accountBalanceProvider: AccountBalanceProvider
 
     private lateinit var engine: FinancialStressForecastEngine
 
@@ -79,6 +80,56 @@ class FinancialStressForecastEngineTest {
 
     private var allExpenses: List<Expense> = emptyList()
     private var allDeposits: List<Expense> = emptyList()
+
+    @Test
+    fun currencySettingsFailureReturnsUnavailableWithoutInventedHorizons() = runTest {
+        every { currencySettingsRepository.homeCurrency() } returns kotlinx.coroutines.flow.flow {
+            throw IllegalStateException("SECRET settings payload")
+        }
+        val result = engine.computeStressForecast()
+        assertEquals(StressForecastFailure.CALCULATION_UNAVAILABLE, result.failure)
+        assertNull(result.overallRiskLevel)
+        assertTrue(result.horizons.isEmpty())
+        assertTrue(result.recommendations.isEmpty())
+        assertTrue(result.isPartial)
+    }
+
+    @Test
+    fun currencySettingsCancellationPropagatesUnchanged() = runTest {
+        val cancellation = kotlinx.coroutines.CancellationException("test cancellation")
+        every { currencySettingsRepository.homeCurrency() } returns kotlinx.coroutines.flow.flow { throw cancellation }
+        org.junit.Assert.assertSame(cancellation, runCatching { engine.computeStressForecast() }.exceptionOrNull())
+    }
+
+    @Test
+    fun calculationCancellationPropagatesUnchanged() = runTest {
+        val cancellation = kotlinx.coroutines.CancellationException("test cancellation")
+        coEvery { expenseRepository.getDepositsBetween(any(), any()) } throws cancellation
+        org.junit.Assert.assertSame(cancellation, runCatching { engine.computeStressForecast() }.exceptionOrNull())
+    }
+
+    @Test
+    fun explicitCurrencyKeepsSuccessfulNoDataForecastAvailable() = runTest {
+        every { currencySettingsRepository.homeCurrency() } returns kotlinx.coroutines.flow.flow {
+            throw IllegalStateException("settings unavailable")
+        }
+        val result = engine.computeStressForecast("EUR")
+        assertNull(result.failure)
+        org.junit.Assert.assertNotNull(result.overallRiskLevel)
+        assertEquals(listOf(30, 60, 90), result.horizons.map { it.daysAhead })
+        io.mockk.verify(exactly = 0) { currencySettingsRepository.homeCurrency() }
+        coVerify(exactly = 1) { accountBalanceProvider.currentBalance("EUR") }
+    }
+
+    @Test
+    fun resolvedSettingsCurrencyIsReusedForStartingBalance() = runTest {
+        val result = engine.computeStressForecast()
+
+        assertNull(result.failure)
+        assertEquals(listOf(30, 60, 90), result.horizons.map { it.daysAhead })
+        verify(exactly = 1) { currencySettingsRepository.homeCurrency() }
+        coVerify(exactly = 1) { accountBalanceProvider.currentBalance("EUR") }
+    }
 
     @Before
     fun setup() {
@@ -126,6 +177,7 @@ class FinancialStressForecastEngineTest {
         recurringOccurrenceDao = mockk(relaxed = true)
         databaseReadBarrier = mockk(relaxed = true)
         currencyConverter = mockk(relaxed = true)
+        accountBalanceProvider = mockk(relaxed = true)
         // Identity conversion is explicit so confirmed EUR obligations are not
         // silently discarded by a relaxed mock returning null.
         coEvery {
@@ -161,7 +213,7 @@ class FinancialStressForecastEngineTest {
             recurringLifecycleCoordinator = recurringLifecycleCoordinator,
             recurringOccurrenceDao = recurringOccurrenceDao,
             currencyConverter = currencyConverter,
-            accountBalanceProvider = mockk(relaxed = true),
+            accountBalanceProvider = accountBalanceProvider,
             databaseReadBarrier = databaseReadBarrier
         )
     }
@@ -210,19 +262,19 @@ class FinancialStressForecastEngineTest {
     }
 
     @Test
-    fun `computeStressForecast when calculation fails returns degraded non-low fallback`() = runTest {
+    fun calculationFailureReturnsUnavailableRatherThanInventedRisk() = runTest {
         // Fail a dependency the forecast actually reads, not the obsolete budget path.
         coEvery { expenseRepository.getDepositsBetween(any(), any()) } throws IllegalStateException("boom")
 
         val result = engine.computeStressForecast()
 
-        assertEquals(StressRiskLevel.MODERATE, result.overallRiskLevel)
+        assertNull(result.overallRiskLevel)
         assertNull(result.earliestCrunchDate)
-        assertEquals(listOf(30, 60, 90), result.horizons.map { it.daysAhead })
-        assertTrue(result.horizons.all { it.riskLevel == StressRiskLevel.MODERATE })
-        assertTrue(result.horizons.all { it.probabilityOfCrunch == 0.20 })
-        assertTrue(result.recommendations.any { it.contains("temporarily unavailable", ignoreCase = true) })
-        assertTrue(result.recommendations.any { it.contains("degraded", ignoreCase = true) })
+        assertTrue(result.horizons.isEmpty())
+        assertTrue(result.recommendations.isEmpty())
+        assertTrue(result.isPartial)
+        assertEquals(StressForecastFailure.CALCULATION_UNAVAILABLE, result.failure)
+        assertEquals(listOf("STRESS_FORECAST_UNAVAILABLE"), result.qualityWarnings)
         coVerify(exactly = 1) { expenseRepository.getDepositsBetween(any(), any()) }
     }
 

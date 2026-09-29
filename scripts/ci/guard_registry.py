@@ -463,7 +463,7 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
                        "executes the section-7 rows of "
                        "docs/ci/GR00-GR04_validation_checklist.md against "
                        "the live repository (active DB gate accepted with "
-                       "20 x DB_SIGNATURE_UNRESOLVED advisories, "
+                       "21 x DB_SIGNATURE_UNRESOLVED advisories, "
                        "inventory-only platform durability branch, "
                        "migration fold truth 93/55/38, source-roots "
                        "meta-guard silent exit 0, candidate v2 "

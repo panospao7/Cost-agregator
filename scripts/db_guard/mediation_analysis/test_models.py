@@ -4,9 +4,19 @@ Run directly with: python test_models.py
 """
 
 import dataclasses
+import os
+import sys
 import unittest
 
-import models
+# Use the same canonical package under recursive pytest and direct execution.
+# A bare "models" depends on cwd/sys.path and can bind an unrelated module.
+_ROOT = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+)
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+from scripts.db_guard.mediation_analysis import models  # noqa: E402
 
 EXPECTED_MEMBERS = {
     "ResolutionState": (
@@ -35,6 +45,15 @@ EXPECTED_COUNTS = {
     "GuardContext": 3,
     "ProofState": 12,
 }
+
+
+class ModuleIdentityTests(unittest.TestCase):
+    def test_models_uses_the_canonical_mediation_package(self):
+        self.assertEqual(models.__name__, "scripts.db_guard.mediation_analysis.models")
+        self.assertEqual(
+            os.path.realpath(models.__file__),
+            os.path.realpath(os.path.join(os.path.dirname(__file__), "models.py")),
+        )
 
 
 class EnumVocabularyTests(unittest.TestCase):

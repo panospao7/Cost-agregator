@@ -77,6 +77,8 @@ interface DatabaseBackupRepository {
     
     /**
      * Get the current database statistics (transaction count, etc.)
+     * @throws DatabaseStatsUnavailableException when reads are blocked or unavailable.
+     * Successful zero counts mean an empty database, never a failed read.
      */
     suspend fun getDatabaseStats(): DatabaseStats
     

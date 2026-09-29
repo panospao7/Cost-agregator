@@ -81,6 +81,63 @@ class BackupRestoreViewModelPrivacyDenialTest : ViewModelTestUtils() {
         )
     }
 
+    @Test
+    fun unavailableBackupInfoIsNotPresentedAsNoPreviousBackup() = runTest(testDispatcher) {
+        for (reason in com.yourname.expensetracker.domain.backup.DatabaseStatsFailureReason.values()) {
+            coEvery { databaseBackupRepository.getDatabaseStats() } throws
+                com.yourname.expensetracker.domain.backup.DatabaseStatsUnavailableException(reason)
+            val vm = createViewModel()
+            advanceUntilIdle()
+            assertTrue(vm.uiState.value.backupInfoUnavailable)
+            assertNull(vm.uiState.value.lastBackupDate)
+            assertNull(vm.uiState.value.privacyBlocked)
+            assertNull(vm.uiState.value.errorMessage)
+        }
+    }
+
+    @Test
+    fun unexpectedStatsFailureDoesNotLeakIntoBackupUiState() = runTest(testDispatcher) {
+        coEvery { databaseBackupRepository.getDatabaseStats() } throws
+            IllegalStateException("SECRET /private/account.db financial payload")
+        val vm = createViewModel()
+        advanceUntilIdle()
+        assertTrue(vm.uiState.value.backupInfoUnavailable)
+        assertFalse(vm.uiState.value.toString().contains("SECRET"))
+        assertFalse(vm.uiState.value.toString().contains("/private/"))
+    }
+
+    @Test
+    fun successfulEmptyStatsRemainAvailableWithoutInventingBackupDate() = runTest(testDispatcher) {
+        val vm = createViewModel()
+        advanceUntilIdle()
+        assertFalse(vm.uiState.value.backupInfoUnavailable)
+        assertNull(vm.uiState.value.lastBackupDate)
+    }
+
+    @Test
+    fun successfulBackupTimestampRemainsAvailable() = runTest(testDispatcher) {
+        coEvery { databaseBackupRepository.getDatabaseStats() } returns
+            DatabaseStats(0, 0, 0, 0, lastBackupDate = 1_700_000_000_000L)
+        val vm = createViewModel()
+        advanceUntilIdle()
+        assertFalse(vm.uiState.value.backupInfoUnavailable)
+        assertNotNull(vm.uiState.value.lastBackupDate)
+    }
+
+    @Test
+    fun statsCancellationCancelsTheLoadInsteadOfPublishingUnavailability() = runTest(testDispatcher) {
+        var loadJob: Job? = null
+        coEvery { databaseBackupRepository.getDatabaseStats() } coAnswers {
+            loadJob = kotlinx.coroutines.currentCoroutineContext()[Job]
+            throw kotlinx.coroutines.CancellationException("test cancellation")
+        }
+        val vm = createViewModel()
+        advanceUntilIdle()
+        assertTrue(requireNotNull(loadJob).isCancelled)
+        assertFalse(vm.uiState.value.backupInfoUnavailable)
+        assertNull(vm.uiState.value.errorMessage)
+    }
+
     private fun createViewModel() = BackupRestoreViewModel(
         context,
         databaseBackupRepository,
@@ -165,6 +222,45 @@ class BackupRestoreViewModelPrivacyDenialTest : ViewModelTestUtils() {
             assertTrue(blocked.reasonCode in PrivacyGateReasonCodes.ALL)
             assertEquals(PrivacyGateReasonCodes.PRIVACY_GATE_FAILURE, blocked.reasonCode)
         }
+
+    @Test
+    fun malformedDenialReasonFailsClosedWithoutLeakingToStateOrLogs() = runTest(testDispatcher) {
+        val failure = PrivacyDeniedException(
+            PrivacyCapability.ENCRYPTED_BACKUP,
+            reasonCode = "/private/receipt financial_data"
+        )
+        coEvery { databaseBackupRepository.createCostBackup(any(), any(), any(), any(), any()) } returns Result.failure(failure)
+        coEvery { databaseBackupRepository.restoreCostBackup(any(), any()) } returns Result.failure(failure)
+        val logs = mutableListOf<Pair<Throwable?, String>>()
+        val tree = object : timber.log.Timber.Tree() {
+            override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+                logs += t to message
+            }
+        }
+        timber.log.Timber.plant(tree)
+        try {
+            for (restore in listOf(false, true)) {
+                val vm = createViewModel()
+                advanceUntilIdle()
+                if (restore) vm.restoreBackup(destinationUri(), "secret")
+                else vm.createBackup(destinationUri(), "secret")
+                advanceUntilIdle()
+
+                val state = vm.uiState.value
+                assertEquals(PrivacyGateReasonCodes.PRIVACY_GATE_FAILURE, state.privacyBlocked!!.reasonCode)
+                assertNull(state.errorMessage)
+                assertFalse(state.isBackingUp || state.isRestoring)
+            }
+            coVerify(exactly = 1) { databaseBackupRepository.restoreCostBackup(any(), "secret") }
+            assertTrue(logs.any { it.second.contains("BACKUP_CREATE_FAILED") })
+            assertTrue(logs.any { it.second.contains("RESTORE_FAILED") })
+            assertTrue(logs.all {
+                it.first == null && !it.second.contains("/private/") && !it.second.contains("financial_data")
+            })
+        } finally {
+            timber.log.Timber.uproot(tree)
+        }
+    }
 
     // ── 2. Fail-closed generic failure (no blocked state, bounded message) ────
 

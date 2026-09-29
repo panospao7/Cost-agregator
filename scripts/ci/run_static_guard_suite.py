@@ -170,12 +170,13 @@ from guard_execution_plan import (  # noqa: E402
 # Suite-owned infrastructure legs (not registry guards — they are suite
 # meta-infrastructure and stay suite-owned): the registry integrity gate
 # must run FIRST and the guard test runner runs LAST.  Commands are
-# byte-identical to the pre-migration manifest.
+# declared here. Guard tests recurse over scripts so nested proof/parser tests
+# cannot silently fall outside a shallow filename-glob selection.
 SUITE_INFRASTRUCTURE_LEGS: List[Tuple[str, List[str], str]] = [
     ("guard_registry", ["python3", "scripts/ci/verify_guard_registry.py"], "blocking"),
     (
         "guard_tests",
-        [SUITE_PYTHON, "-m", "pytest", "scripts/test_verify_*.py", "scripts/ci/test_*.py", "-v", "--tb=short"],
+        [SUITE_PYTHON, "-m", "pytest", "scripts", "-v", "--tb=short"],
         "blocking",
     ),
 ]

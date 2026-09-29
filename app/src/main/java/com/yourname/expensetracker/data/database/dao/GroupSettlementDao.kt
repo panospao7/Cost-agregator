@@ -13,6 +13,9 @@ interface GroupSettlementDao {
     @Query("SELECT * FROM group_settlements WHERE groupId = :groupId ORDER BY createdAt DESC")
     suspend fun getSettlementsForGroup(groupId: Long): List<GroupSettlementEntity>
 
+    @Query("SELECT * FROM group_settlements WHERE groupId IN (:groupIds) ORDER BY createdAt DESC")
+    suspend fun getSettlementsForGroups(groupIds: List<Long>): List<GroupSettlementEntity>
+
     @Query("DELETE FROM group_settlements WHERE id = :id")
     suspend fun deleteSettlement(id: Long)
 }

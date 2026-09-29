@@ -1018,9 +1018,13 @@ class ExpenseRepository @Inject constructor(
     // Guard: DatabaseWriteBarrier.
     // Audit: no lifecycle event by design (MerchantKeyBackfillWorker).
     @OptIn(RestrictedExpenseDaoMutation::class)
-    suspend fun updateMerchantKey(expenseId: Long, merchantKey: String) {
+    suspend fun updateMerchantKey(expenseId: Long, merchantKey: String): Boolean {
         writeBarrier.checkWritesAllowed("ExpenseRepository.updateMerchantKey")
-        expenseDao.updateMerchantKey(expenseId, merchantKey)
+        val current = expenseDao.getById(expenseId) ?: return false
+        if (current.merchantKey != null ||
+            com.yourname.expensetracker.domain.util.MerchantKeyGenerator.generate(current.merchant) != merchantKey
+        ) return false
+        return expenseDao.updateMerchantKey(expenseId, merchantKey, current.merchant) == 1
     }
 
     // === Monthly/Weekly Totals Dashboard Methods ===

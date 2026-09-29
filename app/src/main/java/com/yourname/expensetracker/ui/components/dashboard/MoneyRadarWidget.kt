@@ -45,22 +45,43 @@ fun MoneyRadarWidget(
     onActionClick: (MoneyRadarAction) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val urgencyScore = data.urgencyScore
+    if (urgencyScore == null || data.urgencyLevel == UrgencyLevel.UNAVAILABLE) {
+        BentoCard(
+            modifier = modifier,
+            containerColor = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        ) {
+            Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                Text("Money Radar", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    androidx.compose.ui.res.stringResource(com.yourname.expensetracker.R.string.money_radar_unavailable),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = SemanticColors.TextSecondary
+                )
+            }
+        }
+        return
+    }
     val context = LocalContext.current
     val budgetImpactMapper = remember(context) { MonteCarloBudgetImpactUiMapper(context) }
     val urgencyColor = when (data.urgencyLevel) {
         UrgencyLevel.GREEN -> SemanticColors.SuccessGreen
         UrgencyLevel.YELLOW -> SemanticColors.WarningOrange
         UrgencyLevel.RED -> SemanticColors.DangerRed
+        UrgencyLevel.UNAVAILABLE -> SemanticColors.TextMuted
     }
     
     val urgencyLabel = when (data.urgencyLevel) {
         UrgencyLevel.GREEN -> "All Clear"
         UrgencyLevel.YELLOW -> "Attention Needed"
         UrgencyLevel.RED -> "Action Required"
+        UrgencyLevel.UNAVAILABLE -> "Unavailable"
     }
     
     val animatedProgress by animateFloatAsState(
-        targetValue = data.urgencyScore / 100f,
+        targetValue = urgencyScore / 100f,
         label = "urgency_progress"
     )
     
@@ -95,6 +116,7 @@ fun MoneyRadarWidget(
             UrgencyLevel.GREEN -> SemanticColors.SuccessGreen.copy(alpha = 0.05f)
             UrgencyLevel.YELLOW -> SemanticColors.WarningOrange.copy(alpha = 0.05f)
             UrgencyLevel.RED -> SemanticColors.DangerRed.copy(alpha = 0.05f)
+            UrgencyLevel.UNAVAILABLE -> MaterialTheme.colorScheme.surface
         },
         border = BorderStroke(
             1.dp,
@@ -102,6 +124,7 @@ fun MoneyRadarWidget(
                 UrgencyLevel.GREEN -> SemanticColors.SuccessGreen.copy(alpha = 0.3f)
                 UrgencyLevel.YELLOW -> SemanticColors.WarningOrange.copy(alpha = 0.3f)
                 UrgencyLevel.RED -> SemanticColors.DangerRed.copy(alpha = 0.3f)
+                UrgencyLevel.UNAVAILABLE -> MaterialTheme.colorScheme.outlineVariant
             }
         )
     ) {
@@ -228,7 +251,7 @@ fun MoneyRadarWidget(
                         icon = Icons.Rounded.Event,
                         count = data.dueBills.size,
                         label = "Bills",
-                        isUrgent = data.dueBills.isNotEmpty() && data.urgencyScore > 30,
+                        isUrgent = data.dueBills.isNotEmpty() && urgencyScore > 30,
                         onClick = { onActionClick(MoneyRadarAction.ViewBills(data.dueBills)) }
                     )
                 }
@@ -239,7 +262,7 @@ fun MoneyRadarWidget(
                         icon = Icons.Rounded.Warning,
                         count = data.anomalyAlerts.size,
                         label = "Alerts",
-                        isUrgent = data.anomalyAlerts.isNotEmpty() && data.urgencyScore > 30,
+                        isUrgent = data.anomalyAlerts.isNotEmpty() && urgencyScore > 30,
                         onClick = { onActionClick(MoneyRadarAction.ReviewAnomalies(data.anomalyAlerts)) }
                     )
                 }

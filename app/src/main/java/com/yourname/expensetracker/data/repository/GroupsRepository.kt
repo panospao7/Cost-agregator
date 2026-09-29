@@ -9,11 +9,13 @@ import com.yourname.expensetracker.domain.groups.GroupValidationError
 import com.yourname.expensetracker.domain.groups.GroupCreationResult
 import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
 import com.yourname.expensetracker.domain.groups.Result
+import com.yourname.expensetracker.domain.groups.SharedGroupSettlement
 
 data class GroupDetailsAggregate(
     val group: ExpenseGroup,
     val members: List<GroupMember>,
-    val expenses: List<GroupExpense>
+    val expenses: List<GroupExpense>,
+    val settlements: List<SharedGroupSettlement> = emptyList()
 )
 
 sealed class DeleteGroupMemberResult {

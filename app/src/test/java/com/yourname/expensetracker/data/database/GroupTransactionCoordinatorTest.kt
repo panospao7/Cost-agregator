@@ -160,7 +160,8 @@ class GroupTransactionCoordinatorTest {
             coordinator = coordinator,
             currencySettingsRepository = currencySettingsRepository,
             timeProvider = timeProvider,
-            ioDispatcher = Dispatchers.Unconfined
+            ioDispatcher = Dispatchers.Unconfined,
+            settlementDao = database.groupSettlementDao()
         )
     }
 
@@ -169,6 +170,34 @@ class GroupTransactionCoordinatorTest {
     fun tearDown() {
         database.close()
         Dispatchers.resetMain()
+    }
+
+    @Test
+    fun settlementBulkReadReturnsOnlyRequestedGroupsAndRepositoryCarriesHistory() = runTest {
+        // Seed historical rows directly in the test fixture; no production writer is added.
+        val settlementDao = database.groupSettlementDao()
+        val groupIds = (1..2).map { index ->
+            val groupId = groupDao.insert(ExpenseGroup(name = "Group $index", defaultCurrency = "EUR"))
+            val sender = memberDao.insert(GroupMember(groupId = groupId, name = "Sender"))
+            val recipient = memberDao.insert(GroupMember(groupId = groupId, name = "Recipient"))
+            settlementDao.insert(com.yourname.expensetracker.data.database.entity.GroupSettlementEntity(
+                groupId = groupId, fromMemberId = sender, toMemberId = recipient,
+                amount = 20.0, currency = "EUR", createdAt = TEST_DATE,
+                status = if (index == 1) "COMPLETED" else "CANCELLED"))
+            groupId
+        }
+        val selected = settlementDao.getSettlementsForGroups(listOf(groupIds.first()))
+        assertThat(selected.map { it.groupId }).containsExactly(groupIds.first())
+        assertThat(selected.single().status).isEqualTo("COMPLETED")
+        assertThat(settlementDao.getSettlementsForGroups(emptyList())).isEmpty()
+
+        val aggregates = groupsRepository.getActiveGroupsWithDetails()
+        assertThat(aggregates).hasSize(2)
+        aggregates.forEach { aggregate ->
+            assertThat(aggregate.settlements.single().groupId).isEqualTo(aggregate.group.id)
+        }
+        assertThat(aggregates.flatMap { it.settlements }.map { it.status })
+            .containsExactly("COMPLETED", "CANCELLED")
     }
 
     @Test

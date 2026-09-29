@@ -1017,7 +1017,14 @@ class ReviewViewModel @Inject constructor(
                         canCancel = true
                     )
                 }
-                if (result.failureCount > 0) {
+                if (result.partialCount > 0) {
+                    _errorMessage.value = buildString {
+                        append("Partial OCR in " + result.partialCount + " of " + result.successCount + " saved receipts. ")
+                        append("Check the originals before approving.")
+                        if (result.duplicateCount > 0) append(" " + result.duplicateCount + " duplicates.")
+                        if (result.failureCount > 0) append(" " + result.failureCount + " failed.")
+                    }
+                } else if (result.failureCount > 0) {
                     val firstError = result.errors.firstOrNull()?.let {
                         if (it.length > 60) it.take(57) + "..." else it
                     }
@@ -1034,6 +1041,8 @@ class ReviewViewModel @Inject constructor(
                 } else {
                     _errorMessage.value = "Successfully processed all ${result.successCount} receipts!"
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _errorMessage.value = "Batch processing failed. Please try again."
             } finally {
@@ -1059,8 +1068,11 @@ class ReviewViewModel @Inject constructor(
                 when (val result = receiptLifecycleCoordinator.processBankStatement(uri)) {
                     is Result.Success<*> -> {
                         val bankResult = result.data as BankStatementResult
-                        _errorMessage.value = "Imported ${bankResult.transactionsFound} transactions from statement! " +
+                        val summary = "Imported ${bankResult.transactionsFound} transactions from statement! " +
                             "(${bankResult.reviewsCreated} reviews created, ${bankResult.duplicatesSkipped} duplicates skipped)"
+                        _errorMessage.value = if (bankResult.isPartial) {
+                            "Statement partially imported; some pages were not processed. $summary"
+                        } else summary
                         bankResult.debugData?.let { data ->
                             _debugData.value = data
                             debugDataStorage.save(data)
@@ -1076,6 +1088,7 @@ class ReviewViewModel @Inject constructor(
                     Result.Loading -> { /* no-op */ }
                 }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 // RP-15: bounded message only — exception text is never rendered.
                 _errorMessage.value = "Import failed"
             } finally {

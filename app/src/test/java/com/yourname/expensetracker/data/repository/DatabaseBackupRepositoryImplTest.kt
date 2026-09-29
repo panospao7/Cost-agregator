@@ -39,6 +39,7 @@ import com.yourname.expensetracker.domain.diagnostics.OperationRunHandle
 import com.yourname.expensetracker.domain.diagnostics.OperationRunRecorder
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDeniedException
+import com.yourname.expensetracker.domain.privacy.PrivacyGateReasonCodes
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CopyableThrowable
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -51,6 +52,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -261,6 +263,11 @@ class DatabaseBackupRepositoryImplTest {
         val reason = slot<String>()
         coVerify(exactly = 1) { operationRun.failedFinal(capture(reason)) }
         assertEquals(DiagnosticReasonCode.PRIVACY_DENIED.name, reason.captured)
+        val denial = result.exceptionOrNull() as PrivacyDeniedException
+        assertEquals(PrivacyCapability.ENCRYPTED_BACKUP, denial.capability)
+        assertEquals(PrivacyGateReasonCodes.ENCRYPTED_BACKUP_DISABLED, denial.reasonCode)
+        assertEquals(denial.reasonCode, denial.message)
+        assertFalse(denial.toString().contains("secret reason"))
     }
 
     @Test
@@ -282,6 +289,11 @@ class DatabaseBackupRepositoryImplTest {
         val reason = slot<String>()
         coVerify(exactly = 1) { operationRun.failedFinal(capture(reason)) }
         assertEquals(DiagnosticReasonCode.PRIVACY_FAIL_CLOSED.name, reason.captured)
+        val denial = result.exceptionOrNull() as PrivacyDeniedException
+        assertEquals(PrivacyCapability.ENCRYPTED_BACKUP, denial.capability)
+        assertEquals(PrivacyGateReasonCodes.PRIVACY_GATE_FAILURE, denial.reasonCode)
+        assertEquals(denial.reasonCode, denial.message)
+        assertFalse(denial.toString().contains("secret reason"))
     }
 
     @Test
@@ -1033,7 +1045,8 @@ class DatabaseBackupRepositoryImplTest {
             val outputDir = secondArg<File>()
             outputDir.mkdirs()
             if (withReceiptAsset) {
-                val receiptsDir = File(outputDir, "receipts")
+                // S2: real bundle layout (CostbackupBundle.create writes files/receipts/{id}_{name}).
+                val receiptsDir = File(outputDir, "files/receipts")
                 receiptsDir.mkdirs()
                 File(receiptsDir, "5_photo.jpg").writeBytes(byteArrayOf(9, 8, 7))
             }
@@ -1128,16 +1141,27 @@ class DatabaseBackupRepositoryImplTest {
      */
     private suspend fun runDirectAssetRestore(
         journal: RestoreJournal,
-        vararg sourceFiles: String
+        vararg sourceFiles: String,
+        priorTask: RestoreJournal.AssetRestoreTask? = null,
+        withProof: Boolean = true,
+        extractedRoot: File? = null,
+        configureDao: (com.yourname.expensetracker.data.database.dao.ScannedReceiptDao) -> Unit = {}
     ): Pair<DatabaseBackupRepositoryImpl.ReceiptAssetRestoreOutcome, com.yourname.expensetracker.data.database.dao.ScannedReceiptDao> {
-        val assetsDir = File(tempDir, "asset_extract")
-        assetsDir.deleteRecursively()
-        val receiptsSrc = File(assetsDir, "receipts")
+        val assetsDir = extractedRoot ?: File(tempDir, "asset_extract")
+        if (extractedRoot == null) assetsDir.deleteRecursively()
+        // S2: the bundle layout is files/receipts/{id}_{name} plus checksums.json proofs.
+        val receiptsSrc = File(assetsDir, "files/receipts")
         receiptsSrc.mkdirs()
-        sourceFiles.forEach { name -> File(receiptsSrc, name).writeBytes(byteArrayOf(1, 2, 3)) }
+        sourceFiles.forEach { name -> File(receiptsSrc, name).writeBytes(ASSET_BYTES) }
+        if (withProof && extractedRoot == null) {
+            val entries = sourceFiles.associate { "files/receipts/$it" to ASSET_SHA256 }
+            File(assetsDir, "checksums.json").writeText(
+                CostbackupBundle.ChecksumsManifest(entries).toJson().toString()
+            )
+        }
 
         val dao = mockk<com.yourname.expensetracker.data.database.dao.ScannedReceiptDao>(relaxed = true)
-        coEvery { dao.getById(any()) } returns com.yourname.expensetracker.data.database.entity.ScannedReceipt(
+        var receipt = com.yourname.expensetracker.data.database.entity.ScannedReceipt(
             id = 5L,
             imagePath = "/legacy/photo.jpg",
             rawOcrText = "seed",
@@ -1148,6 +1172,13 @@ class DatabaseBackupRepositoryImplTest {
             parsedTaxAmount = null,
             confidence = 0.5f
         )
+        coEvery { dao.getById(5L) } coAnswers { receipt }
+        coEvery { dao.updateImagePathIfUnchanged(any(), any(), any()) } coAnswers {
+            if (firstArg<Long>() == receipt.id && secondArg<String?>() == receipt.imagePath) {
+                receipt = receipt.copy(imagePath = thirdArg<String>())
+                1
+            } else 0
+        }
         val assetDb = mockk<AppDatabase>(relaxed = true)
         every { assetDb.scannedReceiptDao() } returns dao
 
@@ -1161,6 +1192,12 @@ class DatabaseBackupRepositoryImplTest {
         )
         entry = journal.transitionTo(entry, RestoreJournal.JournalState.ASSETS_RESTORING)
 
+        if (priorTask != null) {
+            entry = entry.copy(assetTasks = listOf(priorTask))
+            journal.writeJournal(entry)
+        }
+        configureDao(dao)
+
         val repo = createRepository(journal = journal)
         val outcome = repo.restoreReceiptAssets(
             assetsDir = assetsDir,
@@ -1171,6 +1208,14 @@ class DatabaseBackupRepositoryImplTest {
         return outcome to dao
     }
 
+    private val ASSET_BYTES = byteArrayOf(1, 2, 3)
+    private val ASSET_SHA256: String =
+        java.security.MessageDigest.getInstance("SHA-256").digest(ASSET_BYTES).joinToString("") { "%02x".format(it) }
+
+    /** S2: no operation-owned temp (any `*.tmp`) may survive in the receipts dir. */
+    private fun noAssetTemps(): Boolean =
+        File(tempDir, "receipts").listFiles { f -> f.name.endsWith(".tmp") }.isNullOrEmpty()
+
     @Test
     fun `restoreReceiptAssets restores under identity-derived name and returns ledger for the caller`() = runTest(testDispatcher) {
         val journal = newRealJournal()
@@ -1179,7 +1224,7 @@ class DatabaseBackupRepositoryImplTest {
         val finalFile = File(File(tempDir, "receipts"), "restored_5.jpg")
         assertTrue("Asset must be restored under the identity-derived final name", finalFile.exists())
         assertEquals("Asset bytes must be preserved", 3L, finalFile.length())
-        assertFalse("Temp copy must be gone after the durable rename", File(finalFile.parentFile, "restored_5.jpg.tmp").exists())
+        assertTrue("Temp copy must be gone after the durable publish", noAssetTemps())
 
         // The returned ledger (RP-03 fix: caller carries it into the committed journal).
         val ledger = outcome.journalEntry!!.assetTasks
@@ -1191,9 +1236,13 @@ class DatabaseBackupRepositoryImplTest {
         assertEquals(RestoreJournal.AssetRestoreStatus.COMPLETED, onDisk.assetTasks.single().status)
         assertEquals("restored_5.jpg", onDisk.assetTasks.single().targetPath)
 
-        val updated = slot<com.yourname.expensetracker.data.database.entity.ScannedReceipt>()
-        coVerify(exactly = 1) { dao.update(capture(updated)) }
-        assertEquals(finalFile.absolutePath, updated.captured.imagePath)
+        coVerify(exactly = 1) {
+            dao.updateImagePathIfUnchanged(5L, "/legacy/photo.jpg", finalFile.absolutePath)
+        }
+        coVerify(exactly = 0) { dao.update(any()) }
+        assertEquals(finalFile.absolutePath, dao.getById(5L)!!.imagePath)
+        assertTrue(onDisk.assetTasks.single().expectedImagePathRecorded)
+        assertEquals("/legacy/photo.jpg", onDisk.assetTasks.single().expectedImagePath)
     }
 
     @Test
@@ -1211,8 +1260,9 @@ class DatabaseBackupRepositoryImplTest {
         assertEquals(RestoreJournal.AssetRestoreStatus.FAILED, task.status)
         assertEquals(RestoreJournal.ASSET_REASON_TARGET_COLLISION, task.error)
         assertTrue("Foreign final file bytes must be untouched", finalFile.readBytes().contentEquals(foreignBytes))
-        assertFalse("No temp residue may linger", File(finalFile.parentFile, "restored_5.jpg.tmp").exists())
+        assertTrue("No temp residue may linger", noAssetTemps())
         coVerify(exactly = 0) { dao.update(any()) }
+        coVerify(exactly = 0) { dao.updateImagePathIfUnchanged(any(), any(), any()) }
     }
 
     @Test
@@ -1228,6 +1278,7 @@ class DatabaseBackupRepositoryImplTest {
             tasks.all { it.status == RestoreJournal.AssetRestoreStatus.FAILED && it.error == RestoreJournal.ASSET_REASON_DUPLICATE_TASK }
         )
         coVerify(exactly = 0) { dao.update(any()) }
+        coVerify(exactly = 0) { dao.updateImagePathIfUnchanged(any(), any(), any()) }
         assertFalse(
             "No final file may be created for duplicate tasks",
             File(File(tempDir, "receipts"), "restored_5.jpg").exists()
@@ -1245,8 +1296,369 @@ class DatabaseBackupRepositoryImplTest {
         assertEquals(RestoreJournal.ASSET_REASON_INVALID_TARGET, task.error)
         assertFalse("No file may be produced for a rejected extension", File(File(tempDir, "receipts"), "restored_5.exe").exists())
         coVerify(exactly = 0) { dao.update(any()) }
+        coVerify(exactly = 0) { dao.updateImagePathIfUnchanged(any(), any(), any()) }
     }
 
+    @Test
+    fun asset_restore_zero_affected_rows_never_completes_the_task() = runTest(testDispatcher) {
+        val journal = newRealJournal()
+        val (outcome, dao) = runDirectAssetRestore(journal, "5_photo.jpg", configureDao = { dao ->
+            coEvery { dao.updateImagePathIfUnchanged(any(), any(), any()) } returns 0
+        })
+        val task = outcome.journalEntry!!.assetTasks.single()
+        assertEquals(RestoreJournal.AssetRestoreStatus.FAILED, task.status)
+        assertEquals(RestoreJournal.ASSET_REASON_IMAGE_PATH_CONFLICT, task.error)
+        assertEquals("/legacy/photo.jpg", dao.getById(5L)!!.imagePath)
+        assertTrue(outcome.warnings.isNotEmpty())
+        assertEquals(task.status, journal.readJournal()!!.assetTasks.single().status)
+        coVerify(exactly = 0) { dao.update(any()) }
+        // S2: readback proves the row never referenced the published final - it is operation-owned residue.
+        assertFalse(File(File(tempDir, "receipts"), "restored_5.jpg").exists())
+        assertTrue(noAssetTemps())
+    }
+
+    @Test
+    fun asset_restore_requires_pointer_readback_even_after_one_affected_row() = runTest(testDispatcher) {
+        val journal = newRealJournal()
+        val (outcome, dao) = runDirectAssetRestore(journal, "5_photo.jpg", configureDao = { dao ->
+            coEvery { dao.updateImagePathIfUnchanged(any(), any(), any()) } returns 1
+        })
+        assertEquals(RestoreJournal.AssetRestoreStatus.FAILED, outcome.journalEntry!!.assetTasks.single().status)
+        assertEquals(RestoreJournal.ASSET_REASON_IMAGE_PATH_CONFLICT, outcome.journalEntry!!.assetTasks.single().error)
+        assertEquals("/legacy/photo.jpg", dao.getById(5L)!!.imagePath)
+        coVerify(exactly = 0) { dao.update(any()) }
+        // S2: an unconfirmed CAS (row count vs readback disagree) keeps the file - the DB may reference it.
+        assertTrue(File(File(tempDir, "receipts"), "restored_5.jpg").exists())
+    }
+
+    @Test
+    fun asset_restore_preserves_the_original_journal_snapshot_instead_of_rebasing_it() = runTest(testDispatcher) {
+        val journal = newRealJournal()
+        val prior = RestoreJournal.AssetRestoreTask(
+            5L, "5_photo.jpg", RestoreJournal.AssetRestoreStatus.PENDING,
+            expectedImagePath = "/older/photo.jpg", expectedImagePathRecorded = true,
+            expectedSha256 = ASSET_SHA256, expectedSize = ASSET_BYTES.size.toLong()
+        )
+        val (outcome, dao) = runDirectAssetRestore(journal, "5_photo.jpg", priorTask = prior)
+        val task = outcome.journalEntry!!.assetTasks.single()
+        assertEquals(RestoreJournal.ASSET_REASON_IMAGE_PATH_CONFLICT, task.error)
+        assertEquals(prior.expectedImagePath, journal.readJournal()!!.assetTasks.single().expectedImagePath)
+        assertEquals("/legacy/photo.jpg", dao.getById(5L)!!.imagePath)
+        assertFalse(File(File(tempDir, "receipts"), "restored_5.jpg").exists())
+        coVerify(exactly = 0) { dao.updateImagePathIfUnchanged(any(), any(), any()) }
+    }
+
+    @Test
+    fun asset_restore_does_not_invent_a_snapshot_for_a_legacy_pending_task() = runTest(testDispatcher) {
+        val journal = newRealJournal()
+        val prior = RestoreJournal.AssetRestoreTask(5L, "5_photo.jpg", RestoreJournal.AssetRestoreStatus.PENDING)
+        val (outcome, dao) = runDirectAssetRestore(journal, "5_photo.jpg", priorTask = prior)
+        val task = outcome.journalEntry!!.assetTasks.single()
+        assertEquals(RestoreJournal.AssetRestoreStatus.FAILED, task.status)
+        assertEquals(RestoreJournal.ASSET_REASON_EXPECTED_PATH_MISSING, task.error)
+        assertFalse(task.expectedImagePathRecorded)
+        coVerify(exactly = 0) { dao.updateImagePathIfUnchanged(any(), any(), any()) }
+    }
+
+    @Test
+    fun asset_restore_pointer_cancellation_propagates_without_completing_the_ledger() = runTest(testDispatcher) {
+        val journal = newRealJournal()
+        kotlin.test.assertFailsWith<kotlinx.coroutines.CancellationException> {
+            runDirectAssetRestore(journal, "5_photo.jpg", configureDao = { dao ->
+                coEvery { dao.updateImagePathIfUnchanged(any(), any(), any()) } throws
+                    kotlinx.coroutines.CancellationException("TEST_CANCELLED")
+            })
+        }
+        // S2 contract: the published final is journaled FINAL_DURABLE before the CAS, so a
+        // cancelled CAS resumes from FINAL_DURABLE (never COMPLETED) on the next launch.
+        val onDisk = journal.readJournal()!!.assetTasks.single()
+        assertEquals(RestoreJournal.AssetRestoreStatus.FINAL_DURABLE, onDisk.status)
+        assertTrue(File(File(tempDir, "receipts"), "restored_5.jpg").exists())
+    }
+
+
+    @Test
+    fun asset_restore_requires_durable_snapshot_before_copy_or_mutation() = runTest(testDispatcher) {
+        val journal = newRealJournal()
+        var capturedDao: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao? = null
+        try {
+            kotlin.test.assertFailsWith<RestoreJournal.JournalDurabilityException> {
+                runDirectAssetRestore(journal, "5_photo.jpg", configureDao = { dao ->
+                    capturedDao = dao
+                    journal.beforeIo = { _, stage ->
+                        if (stage == RestoreJournal.IoStage.WRITE) throw java.io.IOException("TEST_JOURNAL_WRITE_FAILED")
+                    }
+                })
+            }
+        } finally {
+            journal.beforeIo = null
+        }
+        val dao = requireNotNull(capturedDao)
+        coVerify(exactly = 0) { dao.updateImagePathIfUnchanged(any(), any(), any()) }
+        coVerify(exactly = 0) { dao.update(any()) }
+        assertFalse(File(File(tempDir, "receipts"), "restored_5.jpg").exists())
+        assertTrue(journal.readJournal()!!.assetTasks.isEmpty())
+    }
+
+    @Test
+    fun asset_snapshot_read_failure_is_an_asset_warning_not_a_verified_database_failure() = runTest(testDispatcher) {
+        val journal = newRealJournal()
+        val (outcome, dao) = runDirectAssetRestore(journal, "5_photo.jpg", configureDao = { dao ->
+            coEvery { dao.getById(5L) } throws IllegalStateException("TEST_READ_FAILED")
+        })
+        val task = outcome.journalEntry!!.assetTasks.single()
+        assertEquals(RestoreJournal.AssetRestoreStatus.FAILED, task.status)
+        assertEquals("ASSET_RESTORE_FAILED", task.error)
+        assertFalse(task.expectedImagePathRecorded)
+        assertTrue(outcome.warnings.isNotEmpty())
+        assertFalse(File(File(tempDir, "receipts"), "restored_5.jpg").exists())
+        coVerify(exactly = 0) { dao.updateImagePathIfUnchanged(any(), any(), any()) }
+        coVerify(exactly = 0) { dao.update(any()) }
+    }
+
+    @Test
+    fun asset_snapshot_read_cancellation_is_not_converted_to_an_asset_warning() = runTest(testDispatcher) {
+        val journal = newRealJournal()
+        kotlin.test.assertFailsWith<kotlinx.coroutines.CancellationException> {
+            runDirectAssetRestore(journal, "5_photo.jpg", configureDao = { dao ->
+                coEvery { dao.getById(5L) } throws kotlinx.coroutines.CancellationException("TEST_CANCELLED")
+            })
+        }
+        assertTrue(journal.readJournal()!!.assetTasks.isEmpty())
+        assertFalse(File(File(tempDir, "receipts"), "restored_5.jpg").exists())
+    }
+
+    // -- S2 (RP-03 asset recovery): proof, durability, crash-replay and residue matrix --
+
+    private val receiptsOut: File get() = File(tempDir, "receipts")
+    private val finalAsset: File get() = File(receiptsOut, "restored_5.jpg")
+
+    private fun seededReceipt(imagePath: String?) = com.yourname.expensetracker.data.database.entity.ScannedReceipt(
+        id = 5L, imagePath = imagePath, rawOcrText = "seed", parsedTotal = null, parsedMerchant = null,
+        parsedDate = null, parsedItems = null, parsedTaxAmount = null, confidence = 0.5f
+    )
+
+    private fun provenTask(status: RestoreJournal.AssetRestoreStatus, targetPath: String? = null) =
+        RestoreJournal.AssetRestoreTask(
+            5L, "5_photo.jpg", status, targetPath = targetPath,
+            expectedImagePath = "/legacy/photo.jpg", expectedImagePathRecorded = true,
+            expectedSha256 = ASSET_SHA256, expectedSize = ASSET_BYTES.size.toLong()
+        )
+
+    @Test
+    fun s2_asset_without_bundle_proof_fails_closed_before_any_side_effect() = runTest(testDispatcher) {
+        val journal = newRealJournal()
+        val (outcome, dao) = runDirectAssetRestore(journal, "5_photo.jpg", withProof = false)
+        val task = outcome.journalEntry!!.assetTasks.single()
+        assertEquals(RestoreJournal.AssetRestoreStatus.FAILED, task.status)
+        assertEquals(RestoreJournal.ASSET_REASON_PROOF_MISSING, task.error)
+        assertFalse(finalAsset.exists())
+        coVerify(exactly = 0) { dao.updateImagePathIfUnchanged(any(), any(), any()) }
+    }
+
+    @Test
+    fun s2_checksum_mismatch_never_publishes_or_moves_the_pointer() = runTest(testDispatcher) {
+        val journal = newRealJournal()
+        val (outcome, dao) = runDirectAssetRestore(journal, "5_photo.jpg", configureDao = {
+            // Same size, different bytes than the checksums.json proof.
+            File(tempDir, "asset_extract/files/receipts/5_photo.jpg").writeBytes(byteArrayOf(3, 2, 1))
+        })
+        val task = outcome.journalEntry!!.assetTasks.single()
+        assertEquals(RestoreJournal.ASSET_REASON_INTEGRITY_MISMATCH, task.error)
+        assertFalse(finalAsset.exists())
+        assertTrue(noAssetTemps())
+        coVerify(exactly = 0) { dao.updateImagePathIfUnchanged(any(), any(), any()) }
+        assertEquals("/legacy/photo.jpg", dao.getById(5L)!!.imagePath)
+    }
+
+    @Test
+    fun s2_oversized_source_is_an_integrity_mismatch() = runTest(testDispatcher) {
+        val journal = newRealJournal()
+        val (outcome, _) = runDirectAssetRestore(journal, "5_photo.jpg", configureDao = {
+            File(tempDir, "asset_extract/files/receipts/5_photo.jpg").writeBytes(byteArrayOf(1, 2, 3, 4))
+        })
+        assertEquals(RestoreJournal.ASSET_REASON_INTEGRITY_MISMATCH, outcome.journalEntry!!.assetTasks.single().error)
+        assertFalse(finalAsset.exists())
+        assertTrue(noAssetTemps())
+    }
+
+    @Test
+    fun s2_asset_fsync_failure_fails_the_task_and_discards_the_temp() = runTest(testDispatcher) {
+        val journal = newRealJournal()
+        journal.testAssetIo = { _, stage ->
+            if (stage == RestoreJournal.IoStage.SYNC) throw java.io.IOException("TEST_FSYNC_FAILED")
+        }
+        try {
+            val (outcome, dao) = runDirectAssetRestore(journal, "5_photo.jpg")
+            val task = outcome.journalEntry!!.assetTasks.single()
+            assertEquals(RestoreJournal.AssetRestoreStatus.FAILED, task.status)
+            assertEquals(RestoreJournal.ASSET_REASON_WRITE_FAILED, task.error)
+            assertFalse(finalAsset.exists())
+            assertTrue(noAssetTemps())
+            coVerify(exactly = 0) { dao.updateImagePathIfUnchanged(any(), any(), any()) }
+        } finally {
+            journal.testAssetIo = null
+        }
+    }
+
+    @Test
+    fun s2_publish_failure_fails_the_task_and_discards_the_temp() = runTest(testDispatcher) {
+        val journal = newRealJournal()
+        journal.testAssetIo = { _, stage ->
+            if (stage == RestoreJournal.IoStage.MOVE) throw java.io.IOException("TEST_MOVE_FAILED")
+        }
+        try {
+            val (outcome, dao) = runDirectAssetRestore(journal, "5_photo.jpg")
+            assertEquals(RestoreJournal.ASSET_REASON_WRITE_FAILED, outcome.journalEntry!!.assetTasks.single().error)
+            assertFalse(finalAsset.exists())
+            assertTrue(noAssetTemps())
+            coVerify(exactly = 0) { dao.updateImagePathIfUnchanged(any(), any(), any()) }
+        } finally {
+            journal.testAssetIo = null
+        }
+    }
+
+    @Test
+    fun s2_ledger_rebuild_keeps_a_task_whose_source_disappeared() = runTest(testDispatcher) {
+        val journal = newRealJournal()
+        val orphan = RestoreJournal.AssetRestoreTask(
+            9L, "9_gone.jpg", RestoreJournal.AssetRestoreStatus.PENDING,
+            expectedImagePath = null, expectedImagePathRecorded = true,
+            expectedSha256 = ASSET_SHA256, expectedSize = ASSET_BYTES.size.toLong()
+        )
+        val (outcome, _) = runDirectAssetRestore(journal, "5_photo.jpg", priorTask = orphan)
+        val tasks = outcome.journalEntry!!.assetTasks
+        assertEquals(2, tasks.size)
+        assertEquals(RestoreJournal.AssetRestoreStatus.COMPLETED, tasks.single { it.receiptId == 5L }.status)
+        val lost = tasks.single { it.receiptId == 9L }
+        assertEquals(RestoreJournal.AssetRestoreStatus.FAILED, lost.status)
+        assertEquals(RestoreJournal.ASSET_REASON_SOURCE_MISSING, lost.error)
+        assertEquals(2, journal.readJournal()!!.assetTasks.size)
+    }
+
+    @Test
+    fun s2_warnings_never_echo_bundle_file_names() = runTest(testDispatcher) {
+        val journal = newRealJournal()
+        val (outcome, _) = runDirectAssetRestore(journal, "secretname.jpg", "5_privatephoto.exe")
+        assertTrue(outcome.warnings.isNotEmpty())
+        assertTrue(outcome.warnings.none { it.contains("secretname") || it.contains("privatephoto") })
+    }
+
+    @Test
+    fun s2_final_durable_with_pointer_already_moved_replays_without_a_second_cas() = runTest(testDispatcher) {
+        val journal = newRealJournal()
+        receiptsOut.mkdirs()
+        finalAsset.writeBytes(ASSET_BYTES)
+        val (outcome, dao) = runDirectAssetRestore(
+            journal, "5_photo.jpg",
+            priorTask = provenTask(RestoreJournal.AssetRestoreStatus.FINAL_DURABLE, finalAsset.absolutePath),
+            configureDao = { dao -> coEvery { dao.getById(5L) } returns seededReceipt(finalAsset.absolutePath) }
+        )
+        assertEquals(RestoreJournal.AssetRestoreStatus.COMPLETED, outcome.journalEntry!!.assetTasks.single().status)
+        coVerify(exactly = 0) { dao.updateImagePathIfUnchanged(any(), any(), any()) }
+        assertTrue(finalAsset.readBytes().contentEquals(ASSET_BYTES))
+    }
+
+    @Test
+    fun s2_crash_after_publish_adopts_the_proven_final_instead_of_colliding() = runTest(testDispatcher) {
+        val journal = newRealJournal()
+        receiptsOut.mkdirs()
+        finalAsset.writeBytes(ASSET_BYTES)
+        val (outcome, dao) = runDirectAssetRestore(
+            journal, "5_photo.jpg",
+            priorTask = provenTask(RestoreJournal.AssetRestoreStatus.TEMP_WRITTEN, finalAsset.absolutePath)
+        )
+        assertEquals(RestoreJournal.AssetRestoreStatus.COMPLETED, outcome.journalEntry!!.assetTasks.single().status)
+        coVerify(exactly = 1) { dao.updateImagePathIfUnchanged(5L, "/legacy/photo.jpg", finalAsset.absolutePath) }
+        assertEquals(finalAsset.absolutePath, dao.getById(5L)!!.imagePath)
+    }
+
+    @Test
+    fun s2_crash_after_publish_never_adopts_a_foreign_final() = runTest(testDispatcher) {
+        val journal = newRealJournal()
+        receiptsOut.mkdirs()
+        val foreign = byteArrayOf(7, 7, 7)
+        finalAsset.writeBytes(foreign)
+        val (outcome, dao) = runDirectAssetRestore(
+            journal, "5_photo.jpg",
+            priorTask = provenTask(RestoreJournal.AssetRestoreStatus.TEMP_WRITTEN, finalAsset.absolutePath)
+        )
+        assertEquals(RestoreJournal.ASSET_REASON_TARGET_COLLISION, outcome.journalEntry!!.assetTasks.single().error)
+        assertTrue(finalAsset.readBytes().contentEquals(foreign))
+        coVerify(exactly = 0) { dao.updateImagePathIfUnchanged(any(), any(), any()) }
+    }
+
+    @Test
+    fun s2_completed_task_replay_verifies_the_final_bytes() = runTest(testDispatcher) {
+        val journal = newRealJournal()
+        receiptsOut.mkdirs()
+        finalAsset.writeBytes(byteArrayOf(6, 6, 6))
+        val (outcome, dao) = runDirectAssetRestore(
+            journal, "5_photo.jpg",
+            priorTask = provenTask(RestoreJournal.AssetRestoreStatus.COMPLETED, finalAsset.absolutePath),
+            configureDao = { dao -> coEvery { dao.getById(5L) } returns seededReceipt(finalAsset.absolutePath) }
+        )
+        assertEquals(RestoreJournal.ASSET_REASON_INTEGRITY_MISMATCH, outcome.journalEntry!!.assetTasks.single().error)
+        coVerify(exactly = 0) { dao.updateImagePathIfUnchanged(any(), any(), any()) }
+        assertTrue("Verification never rewrites files", finalAsset.readBytes().contentEquals(byteArrayOf(6, 6, 6)))
+    }
+
+    @Test
+    fun s2_required_transition_journal_failure_propagates_before_the_cas() = runTest(testDispatcher) {
+        val journal = newRealJournal()
+        var capturedDao: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao? = null
+        try {
+            kotlin.test.assertFailsWith<RestoreJournal.JournalDurabilityException> {
+                runDirectAssetRestore(journal, "5_photo.jpg", configureDao = { dao ->
+                    capturedDao = dao
+                    var writes = 0
+                    // Allow the ledger pre-population write, fail the TEMP_WRITTEN transition.
+                    journal.beforeIo = { file, stage ->
+                        if (stage == RestoreJournal.IoStage.WRITE && file.name.startsWith("restore_journal") && ++writes == 2) {
+                            throw java.io.IOException("TEST_JOURNAL_WRITE_FAILED")
+                        }
+                    }
+                })
+            }
+        } finally {
+            journal.beforeIo = null
+        }
+        val dao = requireNotNull(capturedDao)
+        coVerify(exactly = 0) { dao.updateImagePathIfUnchanged(any(), any(), any()) }
+        assertFalse(finalAsset.exists())
+        assertTrue(noAssetTemps())
+        assertEquals(RestoreJournal.AssetRestoreStatus.PENDING, journal.readJournal()!!.assetTasks.single().status)
+    }
+
+    @Test
+    fun s2_real_bundle_round_trip_restores_the_receipt_image() = runTest(testDispatcher) {
+        val source = File(tempDir, "bundle_src").apply { mkdirs() }
+        val image = File(source, "photo.jpg").apply { writeBytes(ASSET_BYTES) }
+        val dbSource = File(source, "db.bin").apply { writeBytes(ByteArray(64) { it.toByte() }) }
+        val bundle = File(tempDir, "roundtrip.costbackup")
+        val created = CostbackupBundle.create(
+            outputFile = bundle,
+            databaseFile = dbSource,
+            receiptFiles = mapOf("files/receipts/5_photo.jpg" to image),
+            password = "pw-roundtrip",
+            nowEpochMs = 1716163200000L,
+            tableCounts = mapOf("expenses" to 1),
+            databaseVersion = 1,
+            redacted = false,
+            includeReceiptImages = true
+        )
+        assertTrue(created.isSuccess)
+        val extractRoot = File(tempDir, "roundtrip_extract")
+        assertTrue(CostbackupBundle.extract(bundle, extractRoot, "pw-roundtrip", nowEpochMs = 1716163200000L).isSuccess)
+
+        val journal = newRealJournal()
+        val (outcome, dao) = runDirectAssetRestore(journal, extractedRoot = extractRoot)
+        val task = outcome.journalEntry!!.assetTasks.single()
+        assertEquals(RestoreJournal.AssetRestoreStatus.COMPLETED, task.status)
+        assertEquals(ASSET_SHA256, task.expectedSha256)
+        assertTrue(finalAsset.readBytes().contentEquals(ASSET_BYTES))
+        assertEquals(finalAsset.absolutePath, dao.getById(5L)!!.imagePath)
+    }
 
     private enum class RestoreOperation { COSTBACKUP, IMPORT, RESET }
 
@@ -1521,7 +1933,7 @@ class DatabaseBackupRepositoryImplTest {
                             if (operation == RestoreOperation.COSTBACKUP) {
                                 val entry = fixture.journal.readJournal()!!
                                 org.junit.Assert.assertArrayEquals(byteArrayOf(9, 8, 7),
-                                    File(entry.extractTempDirPath!!, "receipts/5_photo.jpg").readBytes())
+                                    File(entry.extractTempDirPath!!, "files/receipts/5_photo.jpg").readBytes())
                             }
                         } else {
                             assertEquals(RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED, mockRestoreMaintenanceMode.currentMode())
@@ -1545,7 +1957,7 @@ class DatabaseBackupRepositoryImplTest {
             assertTrue(result.exceptionOrNull() is RestoreJournal.JournalDurabilityException)
             val entry = fixture.journal.readJournal()!!
             assertEquals(RestoreJournal.JournalState.VERIFYING, entry.state)
-            org.junit.Assert.assertArrayEquals(byteArrayOf(9, 8, 7), File(entry.extractTempDirPath!!, "receipts/5_photo.jpg").readBytes())
+            org.junit.Assert.assertArrayEquals(byteArrayOf(9, 8, 7), File(entry.extractTempDirPath!!, "files/receipts/5_photo.jpg").readBytes())
             org.junit.Assert.assertArrayEquals(before, File(entry.safetyBackupPath!!).readBytes())
             org.junit.Assert.assertArrayEquals(before, File(dbFile.path + ".pre_restore").readBytes())
             verify(exactly = 0) { mockRestoreMaintenanceMode.exit(any()) }
@@ -1698,7 +2110,7 @@ class DatabaseBackupRepositoryImplTest {
                 assertTrue(File(retained.safetyBackupPath!!).exists())
                 if (operation == RestoreOperation.COSTBACKUP) {
                     org.junit.Assert.assertArrayEquals(byteArrayOf(9, 8, 7),
-                        File(retained.extractTempDirPath!!, "receipts/5_photo.jpg").readBytes())
+                        File(retained.extractTempDirPath!!, "files/receipts/5_photo.jpg").readBytes())
                     assertTrue(File(dbFile.path + ".pre_restore").exists())
                 }
             } finally { releaseRestoreFixture() }
@@ -1737,6 +2149,62 @@ class DatabaseBackupRepositoryImplTest {
                 assertTrue(fixture.journal.hasJournal())
                 assertTrue(File(fixture.journal.readJournal()!!.safetyBackupPath!!).exists())
             } finally { releaseRestoreFixture() }
+        }
+    }
+
+    @Test
+    fun databaseStatsBlockedModesDoNotReachAnyDao() = runTest(testDispatcher) {
+        for (mode in RestoreMaintenanceMode.Mode.values().filter { it != RestoreMaintenanceMode.Mode.NORMAL }) {
+            every { mockRestoreMaintenanceMode.currentMode() } returns mode
+            val failure = runCatching { repository.getDatabaseStats() }.exceptionOrNull()
+            assertTrue(failure is com.yourname.expensetracker.domain.backup.DatabaseStatsUnavailableException)
+            assertEquals(
+                com.yourname.expensetracker.domain.backup.DatabaseStatsFailureReason.READ_BLOCKED,
+                (failure as com.yourname.expensetracker.domain.backup.DatabaseStatsUnavailableException).reason
+            )
+        }
+        io.mockk.verify(exactly = 0) { database.expenseDao() }
+        io.mockk.verify(exactly = 0) { database.categoryDao() }
+        io.mockk.verify(exactly = 0) { database.merchantCategoryDao() }
+        io.mockk.verify(exactly = 0) { database.pendingReviewDao() }
+    }
+
+    @Test
+    fun databaseStatsQueryFailureIsNotSuccessfulZeroCounts() = runTest(testDispatcher) {
+        every { mockRestoreMaintenanceMode.currentMode() } returns RestoreMaintenanceMode.Mode.NORMAL
+        coEvery { database.expenseDao().getTotalCount() } throws
+            android.database.sqlite.SQLiteException("SECRET database path and financial payload")
+        val failure = runCatching { repository.getDatabaseStats() }.exceptionOrNull()
+        assertTrue(failure is com.yourname.expensetracker.domain.backup.DatabaseStatsUnavailableException)
+        assertEquals("QUERY_FAILED", failure?.message)
+        assertNull(failure?.cause)
+        assertEquals(
+            com.yourname.expensetracker.domain.backup.DatabaseStatsFailureReason.QUERY_FAILED,
+            (failure as com.yourname.expensetracker.domain.backup.DatabaseStatsUnavailableException).reason
+        )
+    }
+
+    @Test
+    fun databaseStatsPreservesCancellationIdentity() = runTest(testDispatcher) {
+        every { mockRestoreMaintenanceMode.currentMode() } returns RestoreMaintenanceMode.Mode.NORMAL
+        val cancellation = IdentityCancellationException("test cancellation")
+        coEvery { database.expenseDao().getTotalCount() } throws cancellation
+        org.junit.Assert.assertSame(cancellation, runCatching { repository.getDatabaseStats() }.exceptionOrNull())
+    }
+
+    @Test
+    fun databaseStatsValidEmptyAndNonemptyReadsRemainSuccessful() = runTest(testDispatcher) {
+        every { mockRestoreMaintenanceMode.currentMode() } returns RestoreMaintenanceMode.Mode.NORMAL
+        for (count in listOf(0, 7)) {
+            coEvery { database.expenseDao().getTotalCount() } returns count
+            coEvery { database.categoryDao().getCount() } returns count
+            coEvery { database.merchantCategoryDao().getCount() } returns count
+            coEvery { database.pendingReviewDao().getPendingCount() } returns count
+            val stats = repository.getDatabaseStats()
+            assertEquals(count, stats.transactionCount)
+            assertEquals(count, stats.categoryCount)
+            assertEquals(count, stats.merchantCount)
+            assertEquals(count, stats.pendingReviewCount)
         }
     }
 
@@ -1814,7 +2282,13 @@ class DatabaseBackupRepositoryImplTest {
         try {
             db.execSQL("PRAGMA user_version = $APP_DATABASE_SCHEMA_VERSION")
             for (tableName in BackupVerifier.allTableNames()) {
-                db.execSQL("CREATE TABLE IF NOT EXISTS \"$tableName\" (id INTEGER PRIMARY KEY)")
+                val referenceColumn = when (tableName) {
+                    "receipt_expense_links" -> ", expenseId INTEGER"
+                    "recurring_occurrences" -> ", sourceId INTEGER"
+                    "budget_forecasts" -> ", budgetId INTEGER"
+                    else -> ""
+                }
+                db.execSQL("CREATE TABLE IF NOT EXISTS \"$tableName\" (id INTEGER PRIMARY KEY$referenceColumn)")
             }
             // One expense row so the manifest tableCounts carries real data.
             db.execSQL("INSERT INTO expenses (id) VALUES (1)")

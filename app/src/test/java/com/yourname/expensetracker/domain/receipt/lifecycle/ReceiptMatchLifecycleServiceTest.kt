@@ -4,12 +4,24 @@ import androidx.test.core.app.ApplicationProvider
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ReceiptEventDao
+import com.yourname.expensetracker.data.database.dao.RestrictedExpenseDaoMutation
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.MatchStatus
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.util.TimeProvider
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CopyableThrowable
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.yield
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
@@ -18,6 +30,8 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertFailsWith
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 private const val FIXED_NOW = 1_710_000_000_000L
@@ -32,6 +46,7 @@ private const val FIXED_NOW = 1_710_000_000_000L
  * asserting that a [com.yourname.expensetracker.data.database.entity.ReceiptEvent]
  * row with the correct eventType and receiptId is persisted via the real DAO.
  */
+@OptIn(RestrictedExpenseDaoMutation::class, ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
 class ReceiptMatchLifecycleServiceTest {
@@ -65,6 +80,185 @@ class ReceiptMatchLifecycleServiceTest {
     @After
     fun teardown() {
         database.close()
+    }
+
+    @Test
+    fun saveSuggestionIsConditionalIdempotentAndColumnScoped() = runTest {
+        val receiptId = insertReceipt()
+        val before = requireNotNull(scannedReceiptDao.getById(receiptId))
+
+        assertTrue(service.saveMatchSuggestion(receiptId, 901L, 0.7))
+        assertEquals(before.copy(
+            matchStatus = MatchStatus.SUGGESTED,
+            suggestedExpenseId = 901L,
+            matchConfidence = 0.7f,
+            updatedAt = FIXED_NOW
+        ), scannedReceiptDao.getById(receiptId))
+        assertFalse(service.saveMatchSuggestion(receiptId, 901L, 0.7))
+        assertEquals(1, receiptEventDao.getEventsForReceipt(receiptId).size)
+
+        assertTrue(service.saveMatchSuggestion(receiptId, 902L, 0.8))
+        assertEquals(902L, scannedReceiptDao.getById(receiptId)!!.suggestedExpenseId)
+        assertEquals(2, receiptEventDao.getEventsForReceipt(receiptId).size)
+    }
+
+    @Test
+    fun rejectedReceiptCannotBeResuggested() = runTest {
+        val receiptId = insertReceipt()
+        service.rejectAllSuggestions(receiptId)
+        val rejected = scannedReceiptDao.getById(receiptId)
+
+        assertFalse(service.saveMatchSuggestion(receiptId, 901L, 0.7))
+
+        assertEquals(rejected, scannedReceiptDao.getById(receiptId))
+        assertEquals(listOf("MATCH_REJECTED"), receiptEventDao.getEventsForReceipt(receiptId).map { it.eventType })
+    }
+
+    @Test
+    fun linkedReceiptsCannotBeDowngradedByASuggestion() = runTest {
+        val expenseId = database.expenseDao().insertAtomic(Expense(
+            amount = 12.34,
+            currency = "EUR",
+            merchant = "Matched merchant",
+            transactionType = TransactionType.PURCHASE,
+            date = FIXED_NOW
+        ))
+        assertTrue(expenseId > 0)
+        for (status in listOf(MatchStatus.AUTO_MATCHED, MatchStatus.MANUALLY_MATCHED, MatchStatus.UNMATCHED)) {
+            val receiptId = insertReceipt()
+            scannedReceiptDao.updateLinkTargets(receiptId, expenseId, status.name, 0.9f, FIXED_NOW)
+            val linked = scannedReceiptDao.getById(receiptId)
+
+            assertFalse(service.saveMatchSuggestion(receiptId, 902L, 0.7))
+
+            assertEquals(linked, scannedReceiptDao.getById(receiptId))
+            assertTrue(receiptEventDao.getEventsForReceipt(receiptId).isEmpty())
+        }
+    }
+
+    @Test
+    fun missingReceiptDoesNotCreateSuggestionEvent() = runTest {
+        assertFalse(service.saveMatchSuggestion(Long.MAX_VALUE, 901L, 0.7))
+        assertTrue(receiptEventDao.getEventsForReceipt(Long.MAX_VALUE).isEmpty())
+    }
+
+    @Test
+    fun nullableConfidenceSuggestionCasIsIdempotent() = runTest {
+        val receiptId = insertReceipt()
+        assertEquals(1, scannedReceiptDao.updateMatchSuggestion(receiptId, 901L, null, FIXED_NOW))
+        assertEquals(0, scannedReceiptDao.updateMatchSuggestion(receiptId, 901L, null, FIXED_NOW))
+        assertEquals(1, scannedReceiptDao.updateMatchSuggestion(receiptId, 901L, 0.7f, FIXED_NOW))
+    }
+
+    @Test
+    fun eventFailureRollsBackSuggestion() = runTest {
+        val receiptId = insertReceipt()
+        val before = scannedReceiptDao.getById(receiptId)
+        val failure = IdentityWriteFailure("TEST_EVENT_WRITE_FAILURE")
+        val failingEvents = mockk<ReceiptEventDao>()
+        coEvery { failingEvents.insert(any()) } throws failure
+        val failingService = ReceiptMatchLifecycleService(
+            database, scannedReceiptDao, failingEvents, writeBarrier, timeProvider
+        )
+
+        val thrown = assertFailsWith<IllegalStateException> {
+            failingService.saveMatchSuggestion(receiptId, 901L, 0.7)
+        }
+
+        assertSame(failure, thrown)
+        assertEquals(before, scannedReceiptDao.getById(receiptId))
+        assertTrue(receiptEventDao.getEventsForReceipt(receiptId).isEmpty())
+    }
+
+    @Test
+    fun suspendedEventFailureRollsBackSuggestion() = runTest {
+        val receiptId = insertReceipt()
+        val before = scannedReceiptDao.getById(receiptId)
+        val failure = IdentityWriteFailure("TEST_SUSPENDED_EVENT_WRITE_FAILURE")
+        val failingEvents = mockk<ReceiptEventDao>()
+        coEvery { failingEvents.insert(any()) } coAnswers {
+            yield()
+            throw failure
+        }
+        val failingService = ReceiptMatchLifecycleService(
+            database, scannedReceiptDao, failingEvents, writeBarrier, timeProvider
+        )
+
+        val thrown = assertFailsWith<IllegalStateException> {
+            failingService.saveMatchSuggestion(receiptId, 901L, 0.7)
+        }
+
+        assertSame(failure, thrown)
+        assertEquals(before, scannedReceiptDao.getById(receiptId))
+        assertTrue(receiptEventDao.getEventsForReceipt(receiptId).isEmpty())
+    }
+
+    @Test
+    fun eventCancellationPreservesIdentityAndRollsBackSuggestion() = runTest {
+        val receiptId = insertReceipt()
+        val before = scannedReceiptDao.getById(receiptId)
+        val cancellation = IdentityCancellation("TEST_EVENT_WRITE_CANCELLED")
+        val failingEvents = mockk<ReceiptEventDao>()
+        coEvery { failingEvents.insert(any()) } coAnswers {
+            yield()
+            throw cancellation
+        }
+        val failingService = ReceiptMatchLifecycleService(
+            database, scannedReceiptDao, failingEvents, writeBarrier, timeProvider
+        )
+
+        val thrown = assertFailsWith<CancellationException> {
+            failingService.saveMatchSuggestion(receiptId, 901L, 0.7)
+        }
+
+        assertSame(cancellation, thrown)
+        assertEquals(before, scannedReceiptDao.getById(receiptId))
+        assertTrue(receiptEventDao.getEventsForReceipt(receiptId).isEmpty())
+    }
+
+    @Test
+    fun callerCancellationDuringEventWriteRollsBackSuggestion() = runTest {
+        val receiptId = insertReceipt()
+        val before = scannedReceiptDao.getById(receiptId)
+        val eventEntered = CompletableDeferred<Unit>()
+        val suspendedEvents = mockk<ReceiptEventDao>()
+        coEvery { suspendedEvents.insert(any()) } coAnswers {
+            eventEntered.complete(Unit)
+            awaitCancellation()
+        }
+        val suspendedService = ReceiptMatchLifecycleService(
+            database, scannedReceiptDao, suspendedEvents, writeBarrier, timeProvider
+        )
+        val pending = async {
+            suspendedService.saveMatchSuggestion(receiptId, 901L, 0.7)
+        }
+
+        try {
+            eventEntered.await()
+            pending.cancel(IdentityCancellation("TEST_CALLER_CANCELLED"))
+            pending.join()
+
+            assertTrue(pending.isCancelled)
+            assertFailsWith<CancellationException> { pending.await() }
+            assertEquals(before, scannedReceiptDao.getById(receiptId))
+            assertTrue(receiptEventDao.getEventsForReceipt(receiptId).isEmpty())
+        } finally {
+            pending.cancel()
+            pending.join()
+        }
+    }
+
+    // Match the existing backup-test convention: exclude coroutine debug
+    // stacktrace copies so assertSame detects application wrapping/replacement.
+    // Do not disable recovery globally or relax the identity/rollback assertions.
+    private class IdentityWriteFailure(message: String) :
+        IllegalStateException(message), CopyableThrowable<IdentityWriteFailure> {
+        override fun createCopy(): IdentityWriteFailure? = null
+    }
+
+    private class IdentityCancellation(message: String) :
+        CancellationException(message), CopyableThrowable<IdentityCancellation> {
+        override fun createCopy(): IdentityCancellation? = null
     }
 
     private suspend fun insertReceipt(

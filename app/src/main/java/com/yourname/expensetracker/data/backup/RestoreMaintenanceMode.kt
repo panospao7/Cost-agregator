@@ -6,6 +6,8 @@ import androidx.work.WorkManager
 import com.google.common.util.concurrent.ListenableFuture
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.util.CancellationSafe
+import com.yourname.expensetracker.domain.util.MonotonicTimeProvider
+import com.yourname.expensetracker.domain.util.SystemMonotonicTimeProvider
 import com.yourname.expensetracker.domain.workers.WorkerLeaseRegistry
 import com.yourname.expensetracker.domain.workers.WorkerRegistry
 import com.yourname.expensetracker.domain.workers.WorkerSpec
@@ -40,7 +42,8 @@ import kotlin.coroutines.resumeWithException
 class RestoreMaintenanceMode @Inject constructor(
     @ApplicationContext private val context: Context,
     private val workerLeaseRegistry: dagger.Lazy<WorkerLeaseRegistry>,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val monotonicTimeProvider: MonotonicTimeProvider = SystemMonotonicTimeProvider()
 ) {
     class PersistenceException : IllegalStateException(MODE_PERSISTENCE_FAILURE)
     class WorkerRescheduleException : IllegalStateException(WORKER_RESCHEDULE_FAILURE)
@@ -407,10 +410,10 @@ class RestoreMaintenanceMode @Inject constructor(
         } catch (_: Exception) {
             return false
         }
-        val deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(SCHEDULE_CONFIRM_TIMEOUT_MS)
+        val deadlineNanos = monotonicTimeProvider.nowNanos() + TimeUnit.MILLISECONDS.toNanos(SCHEDULE_CONFIRM_TIMEOUT_MS)
 
         for (workerName in WorkerSpec.DEFAULTS.keys) {
-            val remainingNanos = deadlineNanos - System.nanoTime()
+            val remainingNanos = deadlineNanos - monotonicTimeProvider.nowNanos()
             if (remainingNanos <= 0L) return false
 
             val workInfos = try {
@@ -480,7 +483,10 @@ class RestoreMaintenanceMode @Inject constructor(
                             }
                         }
                     } catch (e: Exception) {
-                        if (continuation.isActive) {
+                        if (e is CancellationException) {
+                            // Future was cancelled: propagate as coroutine cancellation.
+                            continuation.cancel(e)
+                        } else if (continuation.isActive) {
                             try {
                                 continuation.resumeWithException(e)
                             } catch (_: IllegalStateException) {

@@ -44,19 +44,20 @@ class ReceiptMatchLifecycleService @Inject constructor(
         receiptId: Long,
         suggestedExpenseId: Long,
         confidence: Double
-    ) {
+    ): Boolean {
         writeBarrier.checkWritesAllowed("ReceiptMatchLifecycleService.saveMatchSuggestion")
         val now = timeProvider.now()
-        database.withTransaction {
-            val receipt = scannedReceiptDao.getById(receiptId) ?: return@withTransaction
+        return database.withTransaction {
+            val receipt = scannedReceiptDao.getById(receiptId) ?: return@withTransaction false
             // P3-004 (RP-12 12b): column-scoped write — no full-row update that
             // could resurrect purged raw OCR / parsed columns.
-            scannedReceiptDao.updateMatchSuggestion(
+            val updated = scannedReceiptDao.updateMatchSuggestion(
                 receiptId = receiptId,
                 suggestedExpenseId = suggestedExpenseId,
                 confidence = confidence.toFloat(),
                 now = now
             )
+            if (updated != 1) return@withTransaction false
             receiptEventDao.insert(ReceiptEvent(
                 receiptId = receiptId, sourceType = receipt.sourceType,
                 documentType = receipt.documentType,
@@ -66,6 +67,7 @@ class ReceiptMatchLifecycleService @Inject constructor(
                 message = "Suggested match to expense $suggestedExpenseId (confidence=$confidence)",
                 metadata = null, errorDetails = null
             ))
+            true
         }
     }
 

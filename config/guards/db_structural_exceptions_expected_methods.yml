@@ -69,7 +69,7 @@ baseline:
 # only; ownership cardinality is an observational migration metric and is not
 # pinned here.
 counts:
-  structural_entries: 64
+  structural_entries: 65
 
 expected:
 
@@ -241,21 +241,21 @@ expected:
     linked_issue: "MIT-003"
   - path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
     class: DatabaseBackupRepositoryImpl
-    method_pattern: "createCostBackup"
+    method_pattern: "runCostBackupExport"
     operation: writableDatabase
     reason: "File-level backup/restore — writable DB access for WAL checkpoint before snapshot"
     owner: "@panospao7"
     linked_issue: "MIT-003"
   - path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
     class: DatabaseBackupRepositoryImpl
-    method_pattern: "createCostBackup"
+    method_pattern: "runCostBackupExport"
     operation: getDatabasePath
     reason: "File-level backup/restore — resolves live DB path for backup source"
     owner: "@panospao7"
     linked_issue: "MIT-003"
   - path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
     class: DatabaseBackupRepositoryImpl
-    method_pattern: "createCostBackup"
+    method_pattern: "runCostBackupExport"
     operation: openDatabase
     reason: "File-level backup/restore — opens DB snapshot for copy"
     owner: "@panospao7"
@@ -554,5 +554,15 @@ fixtures:
     reason: >
       SQLite snapshot creation via VACUUM INTO — VACUUM INTO SQL executed on
       the source database.
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # Human-authorized 2026-09-28: additional exact restore-cleanup helper.
+  # This is not a reclassification of the retained restoreCostBackup tuple.
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
+    class: DatabaseBackupRepositoryImpl
+    method_pattern: "cleanupRestoreStaging"
+    operation: deleteRecursively
+    reason: "File-level backup/restore — best-effort cleanup of the restore extraction workspace"
     owner: "@panospao7"
     linked_issue: "MIT-003"

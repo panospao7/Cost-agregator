@@ -18,6 +18,7 @@ import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.PeriodRange
 import com.yourname.expensetracker.domain.ai.service.QueryInterpretationService
 import com.yourname.expensetracker.domain.config.AppConfig
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
@@ -56,6 +57,8 @@ class OnDeviceQueryInterpretationService @Inject constructor() : QueryInterpreta
         } catch (e: GenAiException) {
             Timber.w(e, "OnDeviceQueryInterpretationService: GenAI error (code=%d)", e.errorCode)
             unsupported()
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Timber.w(e, "OnDeviceQueryInterpretationService: unexpected error")
             unsupported()

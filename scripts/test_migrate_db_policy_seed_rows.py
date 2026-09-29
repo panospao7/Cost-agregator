@@ -529,6 +529,7 @@ Authored coverage; execution pending in this environment.
 from __future__ import annotations
 
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import yaml
@@ -1375,6 +1376,76 @@ def _entry_fields(entry):
         entry.owner,
         entry.linked_issue,
     )
+
+
+# GR-14u51b (3d3b5bc9, 2026-09-12) added write-barrier admission to the
+# existing ten retention targets. Frozen GR-08k1 seeds retain their original
+# two-argument signature; the living combined input uses the third argument.
+# This is an exact identity move, not a new authorization or a removal.
+_RETENTION_OLD_PARAMETERS = (
+    "com.yourname.expensetracker.data.database.AppDatabase",
+    "com.yourname.expensetracker.domain.util.TimeProvider",
+)
+_RETENTION_CURRENT_PARAMETERS = _RETENTION_OLD_PARAMETERS + (
+    "com.yourname.expensetracker.data.backup.DatabaseWriteBarrier",
+)
+_RETENTION_SIGNATURE_MOVES = frozenset(
+    (accessor, "com.yourname.expensetracker.data.database.dao." + dao, operation)
+    for accessor, dao, operation in (
+        ("rawNotificationDao", "RawNotificationDao", "updateRawContentPurged"),
+        ("scannedReceiptDao", "ScannedReceiptDao", "updateRawOcrTextPurged"),
+        ("aiArtifactDao", "AiArtifactDao", "deleteExpired"),
+        ("aiChatMessageDao", "AiChatMessageDao", "deleteOlderThan"),
+        ("emailReceiptDao", "EmailReceiptDao", "redactSensitiveFieldsOlderThan"),
+        ("notificationIntakeDao", "NotificationIntakeDao", "purgeRawPayload"),
+        ("pipelineDiagnosticEventDao", "PipelineDiagnosticEventDao", "deleteOlderThan"),
+        ("pendingReviewDao", "PendingReviewDao", "redactNotificationTextOlderThan"),
+        ("backgroundJobRunDao", "BackgroundJobRunDao", "redactErrorMessagesOlderThan"),
+        ("bankStatementImportItemDao", "BankStatementImportItemDao", "redactMerchantOlderThan"),
+    )
+)
+
+
+def _after_reviewed_seed_signature_move(entry):
+    if (
+        entry.path == "app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt"
+        and entry.owner_fqcn == "com.yourname.expensetracker.di.RetentionModule"
+        and entry.kind == CallableKind.FUNCTION
+        and entry.method == "provideRetentionTargets"
+        and entry.receiver is None
+        and tuple(entry.parameter_types) == _RETENTION_OLD_PARAMETERS
+        and (entry.dao_accessor, entry.dao_fqcn, entry.operation) in _RETENTION_SIGNATURE_MOVES
+    ):
+        return replace(entry, parameter_types=_RETENTION_CURRENT_PARAMETERS)
+    return entry
+
+
+def test_reviewed_retention_seed_signature_move_is_field_exact():
+    entries = [
+        entry for entry in _load_seed_entries(GR08K1_SEED_FILE)
+        if entry.method == "provideRetentionTargets"
+    ]
+    assert len(entries) == 10
+    assert {
+        (entry.dao_accessor, entry.dao_fqcn, entry.operation) for entry in entries
+    } == _RETENTION_SIGNATURE_MOVES
+    for entry in entries:
+        moved = _after_reviewed_seed_signature_move(entry)
+        assert tuple(moved.parameter_types) == _RETENTION_CURRENT_PARAMETERS
+        # Every authorization and provenance field is preserved verbatim.
+        assert replace(moved, parameter_types=_RETENTION_OLD_PARAMETERS) == entry
+        for change in (
+            {"path": "app/src/main/java/example/Other.kt"},
+            {"owner_fqcn": "example.Other"},
+            {"method": "other"},
+            {"receiver": "example.Receiver"},
+            {"parameter_types": _RETENTION_OLD_PARAMETERS + ("Long",)},
+            {"dao_accessor": "otherDao"},
+            {"dao_fqcn": "example.OtherDao"},
+            {"operation": "unreviewedOperation"},
+        ):
+            near_miss = replace(entry, **change)
+            assert _after_reviewed_seed_signature_move(near_miss) == near_miss
 
 
 def test_real_tracked_gr08b_seed_file_loads_with_exactly_thirteen_rows():
@@ -7339,9 +7410,10 @@ def test_combined_seed_file_concatenates_all_twenty_seven_batch_seed_files():
     # GR-14u34: the combined doc is the living --seed-rows input and the
     # GR-14 dead-writer tranches pruned it (421 -> 379 through GR-14u34 -> 368 through GR-14u35 -> 359 through GR-14u36 -> 352 through GR-14u37);
     # the frozen per-batch files above keep their historical counts.  The
-    # contract is now: combined == concat(batch files) MINUS the
-    # documented removal ledger, with the ledger itself validated against
-    # both sides so it can rot in neither direction.
+    # contract is now: combined == concat(batch files) MINUS the documented
+    # removal ledger, AFTER the ten exact GR-14u51b signature moves above.
+    # Frozen inputs and all authorization metadata remain unchanged; both
+    # ledgers are pinned so neither can silently grow or rot.
     assert len(combined) == 352
     combined_fields = sorted(_entry_fields(entry) for entry in combined)
     batch_all = (
@@ -7364,8 +7436,17 @@ def test_combined_seed_file_concatenates_all_twenty_seven_batch_seed_files():
     assert not (_SEED_REMOVAL_LEDGER & combined_ledger_keys), sorted(
         _SEED_REMOVAL_LEDGER & combined_ledger_keys
     )
+    moved_entries = [
+        entry for entry in batch_all
+        if _after_reviewed_seed_signature_move(entry) != entry
+    ]
+    assert len(moved_entries) == 10
+    assert {
+        (entry.dao_accessor, entry.dao_fqcn, entry.operation)
+        for entry in moved_entries
+    } == _RETENTION_SIGNATURE_MOVES
     batch_fields = sorted(
-        _entry_fields(entry)
+        _entry_fields(_after_reviewed_seed_signature_move(entry))
         for entry in batch_all
         if "|".join(_seed_removal_key(entry)) not in _SEED_REMOVAL_LEDGER
     )

@@ -52,10 +52,15 @@ if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
 
 from guardrails.production_source_scope import (  # noqa: E402
+    PRODUCTION_SOURCE_SCOPE_UNREADABLE,
     ProductionSourceScopeError,
     iter_production_kotlin_files,
     resolve_production_source_scope,
 )
+from guardrails.cloud_payload_proof import (  # noqa: E402
+    CloudProofError, executable_kotlin_source, unproved_post_lines,
+)
+from kotlin_callable_parser import ParserError  # noqa: E402
 
 ALLOWLIST_PATH = os.path.join(SCRIPT_DIR, "allowlists", "cloud_payload_allowlist.yml")
 
@@ -70,14 +75,8 @@ CLOUD_PROVIDER_PKG = "data/ai/provider"
 # R1: RequestBody.create(
 REQUEST_BODY_CREATE_RE = re.compile(r'RequestBody\s*\.\s*create\s*\(')
 
-# R2: Request.Builder() and .post( patterns
-REQUEST_BUILDER_RE = re.compile(r'Request\s*\.\s*Builder\s*\(\s*\)')
-POST_CALL_RE = re.compile(r'\.post\s*\(')
-
-# Policy markers that indicate compliance
-POLICY_MARKERS_RE = re.compile(
-    r'(?:\bCloudPayloadPolicy\b|\bPreparedCloudPayload\b|\bcloudPayloadPolicy\b)'
-)
+# R2 uses per-body provenance in guardrails/cloud_payload_proof.py.
+# Neither a policy type/name nor an unused preparation establishes compliance.
 
 
 # ── Violation formatting ───────────────────────────────────────────────────
@@ -149,12 +148,12 @@ def scan_file(filepath: str, rel_path: str) -> List[str]:
     violations: List[str] = []
 
     try:
-        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+        with open(filepath, "r", encoding="utf-8") as f:
             content = f.read()
-    except OSError:
-        return violations
+    except (OSError, UnicodeError):
+        raise ProductionSourceScopeError(PRODUCTION_SOURCE_SCOPE_UNREADABLE) from None
 
-    lines = content.splitlines()
+    lines = executable_kotlin_source(content).splitlines()
     norm_path = rel_path.replace("\\", "/")
 
     # ── R1: RequestBody.create( anywhere ────────────────────────────────
@@ -170,26 +169,14 @@ def scan_file(filepath: str, rel_path: str) -> List[str]:
                           f"CloudPayloadPolicy instead of building raw OkHttp bodies")
             )
 
-    # ── R2: Cloud provider POST without policy marker ───────────────────
+    # ── R2: Every posted body must have proved policy provenance ────────
     if CLOUD_PROVIDER_PKG in norm_path:
-        has_request_builder = bool(REQUEST_BUILDER_RE.search(content))
-        has_post = bool(POST_CALL_RE.search(content))
-        has_policy = bool(POLICY_MARKERS_RE.search(content))
-
-        if has_request_builder and has_post and not has_policy:
-            # Find the first Request.Builder() or .post( line for line reference
-            for i, line in enumerate(lines, 1):
-                stripped = line.strip()
-                if stripped.startswith("//") or stripped.startswith("*"):
-                    continue
-                if REQUEST_BUILDER_RE.search(line) or POST_CALL_RE.search(line):
-                    violations.append(
-                        violation(rel_path, i,
-                                  f"Cloud provider constructs Request.Builder().post(...) "
-                                  f"without CloudPayloadPolicy/PreparedCloudPayload — "
-                                  f"policy bypass detected")
-                    )
-                    break  # one violation per file for this rule
+        for lineno in unproved_post_lines(content):
+            violations.append(violation(
+                rel_path, lineno,
+                "Cloud provider POST body has unproved CloudPayloadPolicy provenance — "
+                "serialize the actual PreparedCloudPayload; markers and unused results are insufficient",
+            ))
 
     return violations
 
@@ -241,7 +228,11 @@ def main():
         filepath = source_file.absolute_path
         rel_path = source_file.repository_relative_path
 
-        file_violations = scan_file(filepath, rel_path)
+        try:
+            file_violations = scan_file(filepath, rel_path)
+        except (ProductionSourceScopeError, ParserError, CloudProofError):
+            print("ERROR: CLOUD_PAYLOAD_SOURCE_UNREADABLE_OR_UNPARSEABLE", file=sys.stderr)
+            sys.exit(2)
 
         # Filter out allowlisted entries
         for v in file_violations:

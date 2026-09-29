@@ -495,6 +495,11 @@ _BUILTINS = frozenset({
     "Class",
 })
 
+# Wave-2 discovery: backup callbacks use the default-imported Kotlin Result.
+# The project also declares unrelated Result types, so consult real in-scope
+# project declarations before this default, never a global simple-name guess.
+_DEFAULT_IMPORTED_TYPES = frozenset({"Result"})
+
 # Closed root packages of EXTERNAL (non-project) platform/SDK types.  A fully
 # qualified spelling under one of these roots is concrete without an import:
 # the compiler resolves it syntactically and no project declaration can share
@@ -510,6 +515,11 @@ _BUILTINS = frozenset({
 # downstream signature comparison, so a fabricated identity can never match a
 # real DAO authorization target -- it stays visible as an unmatched call.
 _EXTERNAL_TYPE_ROOTS = frozenset({"java", "javax", "kotlin", "android", "androidx"})
+
+# The backup cancellation helper uses this dependency type fully qualified,
+# without importing it. Support that exact spelling, not the whole kotlinx
+# namespace or arbitrary same-named types. Signature identity stays verbatim.
+_EXTERNAL_QUALIFIED_TYPES = frozenset({"kotlinx.coroutines.CancellationException"})
 
 
 @dataclass(frozen=True)
@@ -830,7 +840,7 @@ def _resolve_type(typ: str, env: _TypeEnvironment, *, allow_vararg: bool = False
             # misspelled external FQCN resolves here but keeps its exact
             # spelling for every downstream comparison, so it can never match
             # a real authorization target silently.
-            if name.split(".", 1)[0] in _EXTERNAL_TYPE_ROOTS:
+            if name in _EXTERNAL_QUALIFIED_TYPES or name.split(".", 1)[0] in _EXTERNAL_TYPE_ROOTS:
                 return name
             _fail("TYPE_UNRESOLVED")
         # Resolution is deliberately ordered: exact qualified spelling,
@@ -877,6 +887,20 @@ def _resolve_type(typ: str, env: _TypeEnvironment, *, allow_vararg: bool = False
         # declared name, not a misspelled class.  Checked after every real
         # declaration source so it can never shadow one.
         if name in env.type_variables:
+            return name
+        if name in _DEFAULT_IMPORTED_TYPES:
+            if env.project_types is not None:
+                wildcard_candidates = {
+                    package + "." + name for package in env.wildcards
+                    if package + "." + name in env.project_types.qualified
+                }
+                if len(wildcard_candidates) > 1:
+                    _fail("TYPE_UNRESOLVED")
+                if wildcard_candidates:
+                    return next(iter(wildcard_candidates))
+                same_package = env.package + "." + name if env.package else name
+                if same_package in env.project_types.qualified:
+                    return same_package
             return name
         # GR-07 step A, final fallback: the project-wide index.  Same-file
         # scopes, the file's package, imports, aliases, and builtins all

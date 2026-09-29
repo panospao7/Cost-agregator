@@ -8,6 +8,7 @@ import com.yourname.expensetracker.data.database.entity.OperationRun
 import com.yourname.expensetracker.data.database.entity.OperationRunEvent
 import com.yourname.expensetracker.domain.util.CancellationSafe
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.workers.WorkerLease
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -60,6 +61,12 @@ object NoOpOperationRunHandle : OperationRunHandle {
     override suspend fun cancelled(reason: String?) = Unit
 }
 
+/** Recovery of existing bank ledger rows, owned by the same Room ledger writer. */
+interface StaleBankOperationRunRecovery {
+    /** The caller holds this registered maintenance-drain lease until recovery returns. */
+    suspend fun recoverStaleBankRuns(staleThresholdMs: Long, lease: WorkerLease): Int
+}
+
 interface OperationRunRecorder {
     suspend fun start(
         operationType: String,
@@ -84,7 +91,24 @@ class RoomOperationRunRecorder @Inject constructor(
     private val timeProvider: TimeProvider,
     private val safeSink: MaintenanceSafeDiagnosticSink,
     private val restoreMaintenanceMode: RestoreMaintenanceMode
-) : OperationRunRecorder {
+) : OperationRunRecorder, StaleBankOperationRunRecovery {
+
+    override suspend fun recoverStaleBankRuns(staleThresholdMs: Long, lease: WorkerLease): Int {
+        lease.checkpoint("OperationRunRecorder.recoverStaleBankRuns")
+        val staleRuns = runDao.getStaleRunning(staleThresholdMs)
+        var recovered = 0
+        for (run in staleRuns) {
+            if (!run.operationType.contains("BANK", ignoreCase = true)) continue
+            lease.checkpoint("OperationRunRecorder.recoverStaleBankRuns")
+            recovered += runDao.finalizeIfRunning(
+                id = run.id,
+                status = "CANCELLED",
+                finishedAt = timeProvider.now(),
+                errorSummary = DiagnosticReasonCode.STALE_RUNNING_ABORTED.name
+            )
+        }
+        return recovered
+    }
 
     override suspend fun start(
         operationType: String,

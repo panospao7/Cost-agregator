@@ -84,13 +84,17 @@ data class OcrResult(
     val savedImagePath: String,
     // F1: Warranty extraction result
     val warrantyExtractionResult: com.yourname.expensetracker.domain.usecase.warranty.WarrantyCreationResult? = null,
-    // P2-15: PDF truncation metadata — populated when processing multi-page PDFs
+    // Successfully recognized pages, not attempted pages; populated for PDFs.
     val pagesProcessed: Int? = null,
     val totalPages: Int? = null,
     // RP-13 13a (P3-003): pages whose OCR failed after retries while sibling
     // pages succeeded (per-page isolation). Null when no page failed.
     val failedPages: Int? = null
-)
+) {
+    /** Also recognizes older producers that reported attempted pages as processed. */
+    val isPartial: Boolean
+        get() = ReceiptOcrCoverage(pagesProcessed, totalPages, failedPages).isPartial
+}
 
 data class TextBlock(
     val text: String,
@@ -715,7 +719,7 @@ class ReceiptOcrService @Inject constructor(
                 fullText = allFullText.toString().trim(),
                 blocks = allBlocks,
                 savedImagePath = savedThumbnailPath,
-                pagesProcessed = pagesToProcess,
+                pagesProcessed = pagesToProcess - failedPages,
                 totalPages = totalPages,
                 failedPages = failedPages.takeIf { it > 0 }
             )

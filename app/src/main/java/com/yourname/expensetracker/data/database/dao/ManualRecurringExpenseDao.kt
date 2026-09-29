@@ -70,8 +70,8 @@ interface ManualRecurringExpenseDao {
     suspend fun deleteById(id: Long)
     
     // Status management
-    @Query("UPDATE manual_recurring_expenses SET isActive = :isActive WHERE id = :id")
-    suspend fun setActiveStatus(id: Long, isActive: Boolean)
+    @Query("UPDATE manual_recurring_expenses SET isActive = :isActive WHERE id = :id AND isActive != :isActive")
+    suspend fun setActiveStatus(id: Long, isActive: Boolean): Int
 
     @Query("UPDATE manual_recurring_expenses SET nextDate = :nextDate WHERE id = :id")
     suspend fun updateNextDate(id: Long, nextDate: Long)

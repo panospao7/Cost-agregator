@@ -6653,6 +6653,7 @@ entries:
   - String?
   - String?
   - String
+  - String?
   daoAccessor: expenseDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
   operation: updateTransferAccountName
@@ -6671,6 +6672,7 @@ entries:
   - String?
   - String?
   - String
+  - String?
   daoAccessor: expenseDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
   operation: updateTransferDirection
@@ -6689,6 +6691,7 @@ entries:
   - String?
   - String?
   - String
+  - String?
   daoAccessor: transactionEventDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
   operation: insert
@@ -6746,6 +6749,7 @@ entries:
   - com.yourname.expensetracker.data.database.entity.TransferDirection?
   - String?
   - String
+  - String?
   daoAccessor: expenseDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
   operation: updateTransactionType
@@ -6765,6 +6769,7 @@ entries:
   - com.yourname.expensetracker.data.database.entity.TransferDirection?
   - String?
   - String
+  - String?
   daoAccessor: expenseDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
   operation: updateTransferAccountName
@@ -6784,6 +6789,7 @@ entries:
   - com.yourname.expensetracker.data.database.entity.TransferDirection?
   - String?
   - String
+  - String?
   daoAccessor: expenseDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
   operation: updateTransferDirection
@@ -6803,6 +6809,7 @@ entries:
   - com.yourname.expensetracker.data.database.entity.TransferDirection?
   - String?
   - String
+  - String?
   daoAccessor: transactionEventDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
   operation: insert

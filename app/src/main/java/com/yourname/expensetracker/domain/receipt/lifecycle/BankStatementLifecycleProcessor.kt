@@ -63,8 +63,21 @@ data class BankStatementResult(
     val reviewsCreated: Int,
     val duplicatesSkipped: Int,
     val debugData: DebugData? = null,
-    val duplicateOfReceiptId: Long? = null
+    val duplicateOfReceiptId: Long? = null,
+    val isPartial: Boolean = false
 )
+
+/** Pure terminal policy; page failures do not invent failed transaction counts. */
+internal fun bankStatementCompletionStatus(
+    failedItemCount: Int,
+    skippedItemCount: Int,
+    duplicateItemCount: Int,
+    pdfPartial: Boolean
+): String = when {
+    (failedItemCount + skippedItemCount) > 0 -> BankStatementImportRun.STATUS_FAILED
+    pdfPartial || duplicateItemCount > 0 -> BankStatementImportRun.STATUS_COMPLETED_WITH_SKIPS
+    else -> BankStatementImportRun.STATUS_COMPLETED
+}
 
 /**
  * Lifecycle-aware processor for bank statement images / PDFs.
@@ -430,10 +443,10 @@ class BankStatementLifecycleProcessor @Inject constructor(
                 message = "Bank statement processed with $transactionsFound transactions"
             ))
 
-            // P2-15 / P3-REG-009: Write PDF_PARTIAL if bank statement PDF was truncated
+            // Truncation and isolated recognition failures both make the import partial.
             val pagesProcessed = ocrResult.pagesProcessed
             val totalPages = ocrResult.totalPages
-            if (pagesProcessed != null && totalPages != null && pagesProcessed < totalPages) {
+            if (ocrResult.isPartial) {
                 receiptLifecycleEventWriter.write(context, ReceiptLifecycleEvent(
                     receiptId = receiptId,
                     sourceType = ReceiptSourceType.BANK_STATEMENT.name,
@@ -441,10 +454,12 @@ class BankStatementLifecycleProcessor @Inject constructor(
                     eventType = "PDF_PARTIAL",
                     newStatus = ReceiptProcessingStatus.PARSED.name,
                     actor = "system:bank_statement_processor",
-                    message = "Bank statement PDF partially processed: $pagesProcessed of $totalPages pages",
+                    message = "Bank statement PDF partially processed",
                     metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                        .put("pagesProcessed", pagesProcessed)
-                        .put("totalPages", totalPages)
+                        .apply {
+                            pagesProcessed?.let { put("pagesProcessed", it) }
+                            totalPages?.let { put("totalPages", it) }
+                        }
                         .build()
                 ))
                 // P3-03EA-05: Also update run fields for self-contained ledger
@@ -832,11 +847,12 @@ class BankStatementLifecycleProcessor @Inject constructor(
             val pendDupCount = bankStatementImportItemDao.countByRunAndStatus(importRunId, BankStatementImportItem.STATUS_DUPLICATE_PENDING_REVIEW)
             val createdCount = bankStatementImportItemDao.countByRunAndStatus(importRunId, BankStatementImportItem.STATUS_CREATED_REVIEW)
             val totalItems = finalFailedItemCount + skippedItemCount + expDupCount + pendDupCount + createdCount
-            val finalStatus = when {
-                (finalFailedItemCount + skippedItemCount) > 0 -> BankStatementImportRun.STATUS_FAILED
-                (expDupCount + pendDupCount) > 0 -> BankStatementImportRun.STATUS_COMPLETED_WITH_SKIPS
-                else -> BankStatementImportRun.STATUS_COMPLETED
-            }
+            val finalStatus = bankStatementCompletionStatus(
+                failedItemCount = finalFailedItemCount,
+                skippedItemCount = skippedItemCount,
+                duplicateItemCount = expDupCount + pendDupCount,
+                pdfPartial = ocrResult.isPartial
+            )
             val endTime = timeProvider.now()
 
             // ── Step 8: Finalize run + receipt status + events atomically ──────
@@ -866,7 +882,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                         duplicateExpenseCount = expDupCount,
                         duplicatePendingCount = pendDupCount,
                         failedItemCount = finalFailedItemCount + skippedItemCount,
-                        errorSummary = null
+                        errorSummary = if (ocrResult.isPartial) "PDF_PARTIAL" else null
                     )
 
                     val receiptToUpdate = scannedReceiptDao.getById(receiptId)
@@ -937,7 +953,8 @@ class BankStatementLifecycleProcessor @Inject constructor(
                 transactionsFound = transactionsFound,
                 reviewsCreated = reviewsCreated,
                 duplicatesSkipped = duplicatesSkipped,
-                debugData = debugData
+                debugData = debugData,
+                isPartial = ocrResult.isPartial
             )
 
             Timber.d("BankStatementLifecycleProcessor: receiptId=%d, txs=%d, reviews=%d, dups=%d",

@@ -194,6 +194,8 @@ MUTATION_VERBS = (
 MUTATION_EXACT_NAMES = (
     "getOrInsertByNameNoCase",
     "staleAbortIfStillRunning",
+    # TransactionEventDao's set-based privacy-retention UPDATE.
+    "nullSnapshotsOlderThan",
 )
 
 MUTATION_TOKENS = tuple(sorted(set(MUTATION_VERBS) | set(MUTATION_EXACT_NAMES)))
@@ -289,7 +291,14 @@ if (
     )
 
 # ── Declaration parsing (exact structural matching) ───────────────────────────
-FUN_DECL_RE = re.compile(r'\bfun\s+(\w+)\s*[<(]')
+# Kotlin places declaration-site type parameters before the function name.
+# Recognize bounded identifier/reified lists without consuming arbitrary
+# header text; the method name remains the only capture and exact scope key.
+FUN_DECL_RE = re.compile(
+    r'\bfun\s+(?:<\s*(?:reified\s+)?[A-Za-z_]\w*'
+    r'(?:\s*,\s*(?:reified\s+)?[A-Za-z_]\w*)*\s*>\s*)?'
+    r'(\w+)\s*[<(]'
+)
 VAL_OBJECT_DECL_RE = re.compile(r'\bval\s+(\w+)\s*=\s*object\b')
 TYPE_DECL_RE = re.compile(r'\b(?:object|class|interface)\s+(\w+)\b')
 
@@ -758,7 +767,8 @@ MANIFEST_COUNT_KEYS = frozenset({"structural_entries"})
 # metric, not structural authorization evidence.
 # GR-08j: 62 -> 64 (two exact named-object Room-migration tuples,
 # MIGRATION_16_17/migrate and MIGRATION_41_42/migrate on AppDatabase.kt).
-PINNED_STRUCTURAL_ENTRY_COUNT = 64
+# Human-authorized 2026-09-28: one exact cleanupRestoreStaging fixture, 64 -> 65.
+PINNED_STRUCTURAL_ENTRY_COUNT = 65
 
 # ── Immutable checked-in tuple contracts (expected/fixtures classification) ────
 # The manifest's ``expected`` and ``fixtures`` sections must EXACTLY equal these
@@ -769,7 +779,7 @@ PINNED_STRUCTURAL_ENTRY_COUNT = 64
 #     GR-08j named-object Room-migration tuples).  Operation evidence is
 #     REQUIRED for every expected tuple: the operation token must occur in the
 #     exact declaration body.
-#   * MANIFEST_IMMUTABLE_FIXTURE_TUPLES — 4 tuples.  Fixture tuples keep
+#   * MANIFEST_IMMUTABLE_FIXTURE_TUPLES — 5 tuples.  Fixture tuples keep
 #     declaration-only semantics, and ONLY because their exact identities are
 #     independently pinned here — a reclassified or invented fixture tuple can
 #     never escape this contract.
@@ -849,9 +859,11 @@ MANIFEST_IMMUTABLE_EXPECTED_TUPLES = frozenset([
     (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "queryRoomCountsForVerification", "writableDatabase"),
     (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "verifyDatabaseFileStateForVerification", "openDatabase"),
     (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "exportDatabase", "getDatabasePath"),
-    (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "createCostBackup", "writableDatabase"),
-    (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "createCostBackup", "getDatabasePath"),
-    (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "createCostBackup", "openDatabase"),
+    # RP-03A (0835b5c7f, 2026-09-14) moved the existing export pipeline into
+    # this shared helper. One-for-one identity moves; exact evidence required.
+    (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "runCostBackupExport", "writableDatabase"),
+    (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "runCostBackupExport", "getDatabasePath"),
+    (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "runCostBackupExport", "openDatabase"),
     (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "restoreCostBackup", "getDatabasePath"),
     (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "restoreCostBackup", "deleteRecursively"),
     (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "restoreCostBackup", "writableDatabase"),
@@ -899,9 +911,11 @@ MANIFEST_IMMUTABLE_FIXTURE_TUPLES = frozenset([
     (_STRUCT_PATH_BACKUP_VERIFIER, "BackupVerifier", "verifyQuick", "openDatabase"),
     (_STRUCT_PATH_SNAPSHOT_CREATOR, "SqliteSnapshotCreator", "tryVacuumInto", "openDatabase"),
     (_STRUCT_PATH_SNAPSHOT_CREATOR, "SqliteSnapshotCreator", "tryVacuumInto", "execSQL"),
+    # Human-authorized 2026-09-28; no caller permission is removed or widened.
+    (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "cleanupRestoreStaging", "deleteRecursively"),
 ])
 
-# Derived contract counts (58 expected / 4 fixtures).
+# Derived contract counts (60 expected / 5 fixtures).
 MANIFEST_IMMUTABLE_EXPECTED_COUNT = len(MANIFEST_IMMUTABLE_EXPECTED_TUPLES)
 MANIFEST_IMMUTABLE_FIXTURE_COUNT = len(MANIFEST_IMMUTABLE_FIXTURE_TUPLES)
 
