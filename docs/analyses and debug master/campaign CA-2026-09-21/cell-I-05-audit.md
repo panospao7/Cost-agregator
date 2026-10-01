@@ -30,13 +30,15 @@ Inventory reconciliation:
 ### ID: CA-I-05-001
 Title: User-facing location clear bypasses the transaction lifecycle
 Defect class: 1 — Legal-path violation
-Severity: P1
+Severity: P2
 Evidence: `app/src/main/java/com/yourname/expensetracker/ui/screens/transactions/TransactionsViewModel.kt`, `clearLocation`, lines 710-718 calls `expenseRepository.clearExpenseLocation(expense.id)`; `app/src/main/java/com/yourname/expensetracker/data/repository/ExpenseRepository.kt`, `clearExpenseLocation`, lines 981-988 directly calls `expenseDao.clearLocation` after only `DatabaseWriteBarrier` checking. The repository's own allowlist labels this operation “maintenance/backfill” and explicitly says “no lifecycle event by design,” but the production caller is the user-facing `TransactionsScreen.kt` clear action at lines 941-942.
 Impact path: Transactions screen → TransactionsViewModel.clearLocation → ExpenseRepository.clearExpenseLocation → ExpenseDao.clearLocation; the location mutation commits without `TransactionLifecycleCoordinator.updateLocation`, `UPDATED` TransactionEvent, or post-commit side-effect planning/dispatch. UI reports “Location cleared” and refreshes, so the missing audit/event path is silent.
 Caller trace: `TransactionsScreen` EditLocationDialog `onClear` → `TransactionsViewModel.clearLocation`; separate backfill callers use `conditionallySetLocation` and are not this path.
 Existing tests/guards: `config/guards/db_ownership_policy.yml` allowlists `clearExpenseLocation` as GR-08l1 maintenance; `DbGuardPolicyFixtureTest` covers the allowlist. `scripts/guards/check_lifecycle_bypasses.kts` maps `expenseDao.clearLocation` to the coordinator but does not distinguish a user UI caller. No test found asserting a clear action emits an UPDATED event.
 Cross-cell impact: P-02 transaction lifecycle and P-09 location enrichment; any event-driven analytics, provenance, or side-effect consumer misses a user location clear.
 Old-ID cross-refs: none.
+
+Implementation update (2026-09-30; validation pending): `TransactionsViewModel.clearLocation()` now calls `TransactionLifecycleCoordinator.clearLocation()`. The coordinator clears location columns inside the lifecycle transaction and records an `UPDATED` event with before/after snapshots. `ExpenseRepository.clearExpenseLocation()` remains as a deprecated compatibility method that delegates to the coordinator and no longer accesses `ExpenseDao`. The ownership policy removes the old repository grant and adds coordinator grants for the expense clear and audit-event insert. Coordinator, ViewModel, and policy-fixture regression coverage has been added.
 
 ### ID: CA-I-05-002
 Title: ViewModels expose raw exception messages to UI state and logs

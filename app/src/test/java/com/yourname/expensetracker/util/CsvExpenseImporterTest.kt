@@ -8,6 +8,7 @@ import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import com.yourname.expensetracker.domain.provenance.CreateExpenseSourceLinkRequirements
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
@@ -261,5 +262,42 @@ class CsvExpenseImporterTest {
         assertThat(result.imported).isEqualTo(0)
         assertThat(result.errors).isEqualTo(1)
         coVerify(exactly = 0) { coordinator.createExpense(any()) }
+    }
+
+    @Test
+    fun `CA-P-12-001 rows carry CSV provenance batch id and row number`() = runTest {
+        val cat = Category(id = 1, name = "Cat", icon = "C", color = "#112233")
+        coEvery { categoryDao.getByName(any()) } returns cat
+        val requests = mutableListOf<CreateExpenseRequest>()
+        coEvery { coordinator.createExpense(capture(requests)) } returns CreateExpenseResult.Created(1L)
+
+        val csv = "date,amount,merchant,category\n" +
+            "2024-01-15,1.00,A,Cat\n" +
+            "2024-01-16,2.00,B,Cat\n" +
+            "2024-01-17,3.00,C,Cat"
+        importer.importFromContent(csv) as CsvExpenseImporter.ImportResult.Success
+
+        assertThat(requests).hasSize(3)
+        requests.forEach { request ->
+            assertThat(CreateExpenseSourceLinkRequirements.missingRequirements(request)).isEmpty()
+        }
+        assertThat(requests.map { it.csvRowNumber }).containsExactly(1, 2, 3).inOrder()
+        assertThat(requests.map { it.csvImportBatchId }.toSet()).hasSize(1)
+        assertThat(requests.first().csvImportBatchId).isNotEmpty()
+    }
+
+    @Test
+    fun `CA-P-12-001 each import run mints a distinct batch id`() = runTest {
+        val cat = Category(id = 1, name = "Cat", icon = "C", color = "#112233")
+        coEvery { categoryDao.getByName(any()) } returns cat
+        val requests = mutableListOf<CreateExpenseRequest>()
+        coEvery { coordinator.createExpense(capture(requests)) } returns CreateExpenseResult.Created(1L)
+
+        val csv = "date,amount,merchant,category\n2024-01-15,1.00,A,Cat"
+        importer.importFromContent(csv)
+        importer.importFromContent(csv)
+
+        assertThat(requests).hasSize(2)
+        assertThat(requests[0].csvImportBatchId).isNotEqualTo(requests[1].csvImportBatchId)
     }
 }

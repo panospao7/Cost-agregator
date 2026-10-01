@@ -13,6 +13,7 @@ import kotlinx.coroutines.CancellationException
 import org.json.JSONException
 import org.json.JSONObject
 import java.util.Locale
+import java.util.UUID
 import javax.inject.Inject
 
 class JsonExpenseImporter @Inject constructor(
@@ -49,6 +50,7 @@ class JsonExpenseImporter @Inject constructor(
             val json = JSONObject(jsonContent)
             val rows = json.optJSONArray("rows") ?: return ImportResult(false, 0, 0, 1, listOf("No rows array found"), emptyList())
             val version = json.optInt("schemaVersion", 1)
+            val csvImportBatchId = UUID.randomUUID().toString()
 
             var imported = 0; var skipped = 0; var errors = 0
             val errorMessages = mutableListOf<String>()
@@ -57,7 +59,11 @@ class JsonExpenseImporter @Inject constructor(
             for (i in 0 until rows.length()) {
                 try {
                     val row = rows.getJSONObject(i)
-                    val request = if (version >= 2) parseV2Row(row, i, fileImportRunId) else parseV1Row(row, i, fileImportRunId)
+                    val request = if (version >= 2) {
+                        parseV2Row(row, i, fileImportRunId, csvImportBatchId, i + 1)
+                    } else {
+                        parseV1Row(row, i, fileImportRunId, csvImportBatchId, i + 1)
+                    }
                     @Suppress("DEPRECATION_ERROR") // TODO: migrate to createExpenseStandalone()
                     when (val result = coordinator.createExpense(request)) {
                         is CreateExpenseResult.Created -> { imported++; expenseIds.add(result.expenseId) }
@@ -83,7 +89,13 @@ class JsonExpenseImporter @Inject constructor(
         }
     }
 
-    private suspend fun parseV2Row(row: JSONObject, i: Int, fileImportRunId: Long? = null): CreateExpenseRequest {
+    private suspend fun parseV2Row(
+        row: JSONObject,
+        i: Int,
+        fileImportRunId: Long? = null,
+        csvImportBatchId: String,
+        csvRowNumber: Int
+    ): CreateExpenseRequest {
         val merchant = row.getString("merchant")
         // RP-19 (19-B) amount precedence (single rule for every type, see the
         // roundtrip matrix): original `amount` first, `effectiveAmount` only
@@ -118,11 +130,19 @@ class JsonExpenseImporter @Inject constructor(
             businessPurpose = row.optString("businessPurpose", "").takeIf { it.isNotBlank() },
             deduplicationMode = DeduplicationMode.STANDARD,
             idempotencyKey = row.optLong("id", i.toLong()).let { if (it > 0) "import:json:$it" else null },
-            fileImportRunId = fileImportRunId
+            fileImportRunId = fileImportRunId,
+            csvImportBatchId = csvImportBatchId,
+            csvRowNumber = csvRowNumber
         )
     }
 
-    private suspend fun parseV1Row(row: JSONObject, i: Int, fileImportRunId: Long? = null): CreateExpenseRequest {
+    private suspend fun parseV1Row(
+        row: JSONObject,
+        i: Int,
+        fileImportRunId: Long? = null,
+        csvImportBatchId: String,
+        csvRowNumber: Int
+    ): CreateExpenseRequest {
         val categoryId = row.optString("category", null)?.let { name ->
             categoryDao.getByName(name)?.id ?: categoryDao.insert(com.yourname.expensetracker.data.database.entity.Category(name = name, icon = "📂", color = "#888888"))
         }
@@ -136,7 +156,9 @@ class JsonExpenseImporter @Inject constructor(
             notes = row.optString("notes", "").takeIf { it.isNotBlank() },
             deduplicationMode = DeduplicationMode.STANDARD,
             idempotencyKey = row.optLong("id", i.toLong()).let { if (it > 0) "import:json:$it" else null },
-            fileImportRunId = fileImportRunId
+            fileImportRunId = fileImportRunId,
+            csvImportBatchId = csvImportBatchId,
+            csvRowNumber = csvRowNumber
         )
     }
 

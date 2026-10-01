@@ -24,6 +24,7 @@ import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.provenance.SourceLinkQueryService
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.data.database.entity.EntitySourceLink
 import javax.inject.Inject
 import timber.log.Timber
@@ -46,7 +47,8 @@ class TransactionsViewModel @Inject constructor(
  private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider,
  val geocodingService: com.yourname.expensetracker.domain.location.GeocodingService,
  private val currencySettingsRepository: CurrencySettingsRepository,
- private val sourceLinkQueryService: SourceLinkQueryService
+  private val sourceLinkQueryService: SourceLinkQueryService,
+  private val transactionLifecycleCoordinator: TransactionLifecycleCoordinator
 ) : ViewModel() {
 
     companion object {
@@ -729,7 +731,11 @@ class TransactionsViewModel @Inject constructor(
     fun clearLocation(expense: Expense) {
         viewModelScope.launch {
             try {
-                expenseRepository.clearExpenseLocation(expense.id)
+                transactionLifecycleCoordinator.clearLocation(
+                    expenseId = expense.id,
+                    source = com.yourname.expensetracker.domain.config.AppConfig.Location.SOURCE_USER_MANUAL,
+                    reason = "User cleared location"
+                )
                 _successMessage.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Location cleared"))
                 refresh()
             } catch (e: Exception) {

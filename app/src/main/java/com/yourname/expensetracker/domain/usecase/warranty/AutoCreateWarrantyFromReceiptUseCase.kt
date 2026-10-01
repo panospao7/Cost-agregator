@@ -12,6 +12,7 @@ import com.yourname.expensetracker.domain.receipt.WarrantyExtractionData
 import com.yourname.expensetracker.domain.receipt.WarrantyTextExtractor
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
+import kotlinx.coroutines.CancellationException
 import timber.log.Timber
 import java.time.Instant
 import java.time.ZoneId
@@ -61,6 +62,7 @@ class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
     companion object {
         private const val HIGH_CONFIDENCE_THRESHOLD = 0.70
         private const val MINIMUM_CONFIDENCE_THRESHOLD = 0.40
+        private const val RETURN_WINDOW_PERSIST_FAILED = "RETURN_WINDOW_PERSIST_FAILED"
         private const val TAG = "AutoCreateWarranty"
     }
 
@@ -95,7 +97,11 @@ class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
             val existingWarranty = warrantyTrackerRepository.getWarrantyByReceiptId(receiptId)
             if (existingWarranty != null) {
                 Timber.tag(TAG).d("Warranty already exists for receipt $receiptId")
-                return WarrantyCreationResult.AlreadyExists(existingWarranty.id)
+                return if (persistReturnWindow(receiptId, existingWarranty)) {
+                    WarrantyCreationResult.AlreadyExists(existingWarranty.id)
+                } else {
+                    WarrantyCreationResult.Failure(RETURN_WINDOW_PERSIST_FAILED)
+                }
             }
 
             // Step 2: Extract warranty data from OCR text
@@ -139,6 +145,8 @@ class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
                 }
             }
 
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Timber.tag(TAG).e(e, "Failed to create warranty from receipt $receiptId")
             return WarrantyCreationResult.Failure(e.message ?: "Unknown error")
@@ -160,7 +168,11 @@ class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
             if (existingWarranty.needsReview || existingWarranty.status == WarrantyStatus.PENDING_REVIEW) {
                 promoteReviewDraft(existingWarranty, finalData, autoDetect = true)
             } else {
-                WarrantyCreationResult.AlreadyExists(existingWarranty.id)
+                if (persistReturnWindow(receiptId, existingWarranty)) {
+                    WarrantyCreationResult.AlreadyExists(existingWarranty.id)
+                } else {
+                    WarrantyCreationResult.Failure(RETURN_WINDOW_PERSIST_FAILED)
+                }
             }
         } else {
             createWarranty(receiptId, finalData, autoDetect = true, needsReview = false)
@@ -240,7 +252,9 @@ class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
             return WarrantyCreationResult.Failure("Failed to persist warranty")
         }
 
-        persistReturnWindow(receiptId, warranty.copy(id = warrantyId))
+        if (!persistReturnWindow(receiptId, warranty.copy(id = warrantyId))) {
+            return WarrantyCreationResult.Failure(RETURN_WINDOW_PERSIST_FAILED)
+        }
         
         Timber.tag(TAG).i(
             "Created warranty $warrantyId for receipt $receiptId " +
@@ -310,7 +324,9 @@ class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
             }
         }
 
-        persistReturnWindow(receiptId, draftWarranty.copy(id = insertedId))
+        if (!persistReturnWindow(receiptId, draftWarranty.copy(id = insertedId))) {
+            return WarrantyCreationResult.Failure(RETURN_WINDOW_PERSIST_FAILED)
+        }
 
         Timber.tag(TAG).i(
             "Created low-confidence review draft $insertedId for receipt $receiptId " +
@@ -350,7 +366,9 @@ class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
 
         warrantyTrackerRepository.updateWarranty(updatedWarranty)
         if (existingWarranty.receiptId != null) {
-            persistReturnWindow(existingWarranty.receiptId, updatedWarranty)
+            if (!persistReturnWindow(existingWarranty.receiptId, updatedWarranty)) {
+                return WarrantyCreationResult.Failure(RETURN_WINDOW_PERSIST_FAILED)
+            }
         }
         Timber.tag(TAG).i(
             "Promoted review draft ${existingWarranty.id} for receipt ${existingWarranty.receiptId} " +
@@ -359,11 +377,19 @@ class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
         return WarrantyCreationResult.Success(existingWarranty.id, data.confidence)
     }
 
-    private suspend fun persistReturnWindow(receiptId: Long, warranty: Warranty) {
-        runCatching {
+    private suspend fun persistReturnWindow(receiptId: Long, warranty: Warranty): Boolean {
+        try {
             warrantyTrackerRepository.upsertReturnWindowForReceipt(receiptId, warranty)
-        }.onFailure { error ->
-            Timber.tag(TAG).w(error, "Failed to persist return window for receipt $receiptId")
+            return true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.tag(TAG).w(
+                "Failed to persist return window for receipt %d (%s)",
+                receiptId,
+                e::class.simpleName ?: "UnknownException"
+            )
+            return false
         }
     }
 

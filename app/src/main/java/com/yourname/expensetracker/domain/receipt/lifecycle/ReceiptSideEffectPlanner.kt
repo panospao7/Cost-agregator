@@ -26,6 +26,7 @@ import com.yourname.expensetracker.domain.sideeffect.SideEffectPriority
 import com.yourname.expensetracker.domain.sideeffect.SideEffectSkipReason
 import com.yourname.expensetracker.domain.sideeffect.SideEffectTriggerType
 import com.yourname.expensetracker.domain.usecase.warranty.AutoCreateWarrantyFromReceiptUseCase
+import com.yourname.expensetracker.domain.usecase.warranty.WarrantyCreationResult
 import com.yourname.expensetracker.domain.util.TimeProvider
 import timber.log.Timber
 import javax.inject.Inject
@@ -208,8 +209,15 @@ class ReceiptSideEffectPlanner @Inject constructor(
                 }
                 writeMatchEvent(receipt, "RAW_USED_EPHEMERALLY",
                     "Warranty extraction used ephemeral raw OCR text")
-                autoCreateWarrantyUseCase.execute(receiptId, receiptText)
-                SideEffectOutcome.Completed
+                when (autoCreateWarrantyUseCase.execute(receiptId, receiptText)) {
+                    is WarrantyCreationResult.Success,
+                    is WarrantyCreationResult.LowConfidence,
+                    is WarrantyCreationResult.AlreadyExists -> SideEffectOutcome.Completed
+                    is WarrantyCreationResult.Failure -> SideEffectOutcome.FailedRetryable(
+                        reason = "warranty_creation_failed",
+                        errorClass = "WarrantyCreationResult.Failure"
+                    )
+                }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {

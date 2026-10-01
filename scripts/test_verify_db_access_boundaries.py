@@ -5313,7 +5313,7 @@ _RECEIPT_COLUMN_SCOPE_CASES = (
         (
             "Long", "Long", "String", "String", "String?", "Float?", "Boolean",
             "com.yourname.expensetracker.data.database.entity.MatchStatus?",
-            "Boolean", "Boolean",
+            "Boolean", "Boolean", "((Long) -> Unit)?",
         ),
         ("claimForAutoMatch", "updateLinkTargets"),
     ),
@@ -5555,12 +5555,12 @@ def test_checked_in_structural_only_manifest_contract_via_production_apis():
 
     Activated truth (PR-GR-07 wave 2): the ACTIVE ownership policy IS the
     promoted schemaVersion-2 document.  It loads cleanly through the
-    production v2 loader into exactly 423 immutable typed entries — a v1
+    production v2 loader into exactly 424 immutable typed entries — a v1
     document can never occupy the active path again, so there is no
     not-v2 rejection left to pin here.
 
-    Derivation of the 423 pin: the checked-in active document
-    ``config/guards/db_ownership_policy.yml`` carries 423 schemaVersion-2
+    Derivation of the 424 pin: the checked-in active document
+    ``config/guards/db_ownership_policy.yml`` carries 424 schemaVersion-2
     entry rows (each with exactly one ``ownerFqcn``/``daoAccessor``/
     ``operation`` mutation identity; the v2 loader performs no dedupe), as
     of the GR-14a exact-policy wave (5 rows for the default-@Transaction
@@ -5598,14 +5598,15 @@ def test_checked_in_structural_only_manifest_contract_via_production_apis():
     three exact recovery identities are added (AppStartupCoordinator
     startup asset resume, RP-03; RoomOperationRunRecorder stale bank-run
     finalize and BankSyncStartupRecovery stale statement-run transition,
-    RP-17): 420 - 1 + 1 + 3 = 423. The Wave-2 recovery exact-identity tests
-    pin those four grants.
+    RP-17): 420 - 1 + 1 + 3 = 423. CA-I-05-001 adds one net identity
+    (two coordinator-owned grants replace one repository grant), yielding
+    424. The Wave-2 recovery exact-identity tests pin those four grants.
     Re-derive this pin after every policy promotion.
     """
     from scripts.db_guard.source_roots import load_source_root_manifest
 
     entries = load_db_ownership_policy()
-    assert len(entries) == 423
+    assert len(entries) == 424
     # Every loaded row is an immutable typed v2 entry: no legacy dict rows.
     for entry in entries:
         assert hasattr(entry, "owner_fqcn")
@@ -5959,13 +5960,13 @@ def test_transfer_policy_correlation_signatures_preserve_exact_mutation_pairs():
 def test_current_db_gate_activated_policy_real_config_pipeline(tmp_path, monkeypatch):
     """Activated truth (current retained policy): invoking the CLI
     in-process with the REAL config paths runs the FULL activated pipeline —
-    the active schemaVersion-2 policy loads (423 typed entries), the v2
+    the active schemaVersion-2 policy loads (424 typed entries), the v2
     evidence stage runs over the real tree with NO loader/evidence failure,
     and the structural-manifest gate IS consulted and stays clean.
 
-    The 423-entry pin is derived by the checked-in-manifest test above
-    (Wave-2 recovery reconciliation 420 - 1 + 1 + 3 = 423);
-    the current exact-identity reconciliation adds seven net rows to:
+    The 424-entry pin is derived by the checked-in-manifest test above
+    (the 423-entry Wave-2 recovery reconciliation plus one net CA-I-05-001
+    identity); the current exact-identity reconciliation adds seven net rows to:
     406 post-GR-14u37/RP-02 entries plus six existing RP-14 retention
     mutations and the authorized RP-12 net increase of one (five obsolete
     receipt-update identities replaced by six exact column-scoped identities).
@@ -6048,9 +6049,9 @@ def test_current_db_gate_activated_policy_real_config_pipeline(tmp_path, monkeyp
     # authorized RP-12 split (five obsolete identities replaced by six),
     # plus seven net exact-owner reconciliation entries, plus the Wave-2
     # recovery reconciliation (restore update -> CAS 1:1, three new exact
-    # recovery rows): 420 - 1 + 1 + 3 = 423.
+    # recovery rows): 420 - 1 + 1 + 3 = 423; CA-I-05-001 adds one net row.
     # Re-derived per the checked-in-manifest contract pin above.
-    assert len(entries) == 423
+    assert len(entries) == 424
 
     # The structural gate really ran (post-activation it is no longer
     # short-circuited by a loader block) and stayed clean.

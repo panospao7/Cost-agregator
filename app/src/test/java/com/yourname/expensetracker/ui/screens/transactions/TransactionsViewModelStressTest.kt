@@ -11,6 +11,7 @@ import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.SortOrder
 import com.yourname.expensetracker.domain.location.GeocodingService
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
@@ -73,6 +74,7 @@ class TransactionsViewModelStressTest : ViewModelTestUtils() {
             geocodingService,
             currencySettingsRepository = mockk(),
             sourceLinkQueryService = mockk(relaxed = true),
+            transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true),
         )
     }
 

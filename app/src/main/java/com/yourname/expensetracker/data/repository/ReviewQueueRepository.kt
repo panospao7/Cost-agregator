@@ -103,7 +103,8 @@ class ReviewQueueRepository @Inject constructor(
     private data class ReviewApprovalTxOutcome(
         val type: ReviewApprovalTxType,
         val expenseId: Long? = null,
-        val transactionActions: PostCommitActionBatch = PostCommitActionBatch.empty("")
+        val transactionActions: PostCommitActionBatch = PostCommitActionBatch.empty(""),
+        val categorySideEffectExpenseId: Long? = null
     )
 
     private enum class ReviewApprovalTxType { CREATED, DUPLICATE, ALREADY_PROCESSED }
@@ -213,6 +214,7 @@ class ReviewQueueRepository @Inject constructor(
             resolvedAddress = if (locationCleared) null else finalAddress
         )
 
+        var categorySideEffectExpenseId: Long? = null
         val txOutcome = try {
             // GR-14p-c: canonical direct scope — the mutations' proof is local
             // to the legal writer, independent of caller context.
@@ -308,7 +310,10 @@ class ReviewQueueRepository @Inject constructor(
                                 receiptId = receiptId,
                                 expenseId = id,
                                 linkType = "REVIEW_APPROVAL",
-                                source = ExpenseSource.REVIEW_APPROVAL.name
+                                source = ExpenseSource.REVIEW_APPROVAL.name,
+                                deferredCategorySideEffectSink = { linkedExpenseId ->
+                                    categorySideEffectExpenseId = linkedExpenseId
+                                }
                             )
                             if (linkResult.isFailure) {
                                 throw IllegalStateException(
@@ -339,7 +344,12 @@ class ReviewQueueRepository @Inject constructor(
                             notificationText = review.notificationText
                         )
                         userCorrectionDao.insert(correction)
-                        ReviewApprovalTxOutcome(ReviewApprovalTxType.CREATED, id, mutation.postCommitActions)
+                        ReviewApprovalTxOutcome(
+                            type = ReviewApprovalTxType.CREATED,
+                            expenseId = id,
+                            transactionActions = mutation.postCommitActions,
+                            categorySideEffectExpenseId = categorySideEffectExpenseId
+                        )
                     }
                     is CreateExpenseResult.DuplicateSkipped -> {
                         sourceStatsDao.incrementDuplicate(review.packageName)
@@ -397,6 +407,17 @@ class ReviewQueueRepository @Inject constructor(
             ReviewApprovalTxType.CREATED -> {
                 // ── Deferred lifecycle side effects (now safely post-commit) ──────────
                 postCommitActionRunner.run(txOutcome.transactionActions)
+
+                txOutcome.categorySideEffectExpenseId?.let { expenseId ->
+                    runPostCommitSafely(
+                        action = "category side effects after review approval (reviewId=$reviewId, expenseId=$expenseId)"
+                    ) {
+                        receiptLinkService.dispatchAssignedCategorySideEffectsAfterCommit(
+                            expenseId = expenseId,
+                            source = "RECEIPT_ITEM_MAJORITY"
+                        )
+                    }
+                }
 
                 // ── Source-specific post-commit side effects ─────────────────────────
                 runPostCommitSafely(

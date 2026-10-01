@@ -20,7 +20,6 @@ import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.diagnostics.AppPipeline
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
-import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
 import com.yourname.expensetracker.domain.privacy.PrivacySettings
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsLoadState
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
@@ -179,7 +178,7 @@ class ReceiptLifecycleCoordinatorTest {
         // instead of relying on relaxed kotlin.Result handling (same explicit link
         // stubbing style as ReceiptMatchingWorkerTest).
         coEvery {
-            receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+            receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         } returns Result.success(mockk<com.yourname.expensetracker.data.database.entity.ReceiptExpenseLink>(relaxed = true))
 
         coordinator = ReceiptLifecycleCoordinator(
@@ -214,7 +213,6 @@ class ReceiptLifecycleCoordinatorTest {
             receiptParser = receiptParser,
             transactionRunner = transactionRunner,
             receiptLifecycleEventWriter = receiptLifecycleEventWriter,
-            effectiveCloudAiPolicyResolver = mockk(relaxed = true)
         )
     }
 
@@ -240,7 +238,7 @@ class ReceiptLifecycleCoordinatorTest {
         assertEquals("DUPLICATE_TRANSACTION", failure!!.message)
         assertNull(failure.cause)
         coVerify(exactly = 1) { transactionLifecycleCoordinator.createExpenseDbOnlyV2(atomicSaveRequest()) }
-        coVerify(exactly = 0) { receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
         assertNoAtomicSaveSideEffects()
     }
 
@@ -250,7 +248,7 @@ class ReceiptLifecycleCoordinatorTest {
         coEvery { transactionLifecycleCoordinator.createExpenseDbOnlyV2(any()) } throws failure
 
         assertSame(failure, coordinator.createExpenseAndLinkReceipt(atomicSaveRequest()).exceptionOrNull())
-        coVerify(exactly = 0) { receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
         assertNoAtomicSaveSideEffects()
     }
 
@@ -262,7 +260,7 @@ class ReceiptLifecycleCoordinatorTest {
         assertSame(cancellation, assertFailsWith<CancellationException> {
             coordinator.createExpenseAndLinkReceipt(atomicSaveRequest())
         })
-        coVerify(exactly = 0) { receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
         assertNoAtomicSaveSideEffects()
     }
 
@@ -281,7 +279,7 @@ class ReceiptLifecycleCoordinatorTest {
     @Test
     fun `atomic save propagates result wrapped link cancellation without side effects`() = runTest {
         val cancellation = CancellationException("private receipt")
-        coEvery { receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns
+        coEvery { receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns
             Result.failure(cancellation)
 
         assertSame(cancellation, assertFailsWith<CancellationException> {
@@ -293,7 +291,7 @@ class ReceiptLifecycleCoordinatorTest {
     @Test
     fun `atomic save link failure leaves transaction exceptionally without side effects`() = runTest {
         val linkFailure = IllegalStateException("SQL /private/receipt merchant 918")
-        coEvery { receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns
+        coEvery { receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns
             Result.failure(linkFailure)
         var transactionFailure: Throwable? = null
         coEvery { transactionRunner.runInTransaction<Any>(any(), any(), any(), any(), any(), any()) } coAnswers {
@@ -328,8 +326,19 @@ class ReceiptLifecycleCoordinatorTest {
             transactionReturned = true
             result
         }
-        coEvery { receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } coAnswers {
+        val categorySideEffectSink = slot<(Long) -> Unit>()
+        coEvery {
+            receiptLinkService.linkReceiptToExpense(
+                receiptId = 17L,
+                expenseId = 500L,
+                linkType = "DIRECT_SAVE",
+                source = ExpenseSource.RECEIPT_SCAN.name,
+                writeSourceLink = false,
+                deferredCategorySideEffectSink = capture(categorySideEffectSink)
+            )
+        } coAnswers {
             assertFalse(transactionReturned)
+            categorySideEffectSink.captured.invoke(500L)
             Result.success(mockk<com.yourname.expensetracker.data.database.entity.ReceiptExpenseLink>(relaxed = true))
         }
         every { receiptSideEffectPlanner.planAfterReceiptLinked(17L, 500L, "DIRECT_SAVE", null, null) } answers {
@@ -340,13 +349,20 @@ class ReceiptLifecycleCoordinatorTest {
         assertEquals(500L, coordinator.createExpenseAndLinkReceipt(atomicSaveRequest()).getOrThrow())
         coVerify(exactly = 1) { receiptLinkService.linkReceiptToExpense(
             receiptId = 17L, expenseId = 500L, linkType = "DIRECT_SAVE",
-            source = ExpenseSource.RECEIPT_SCAN.name, writeSourceLink = false
+            source = ExpenseSource.RECEIPT_SCAN.name, writeSourceLink = false,
+            deferredCategorySideEffectSink = any()
         ) }
+        coVerify(exactly = 1) {
+            receiptLinkService.dispatchAssignedCategorySideEffectsAfterCommit(
+                expenseId = 500L,
+                source = "RECEIPT_ITEM_MAJORITY"
+            )
+        }
         coVerify(exactly = 1) { postCommitActionRunner.run(any()) }
     }
 
     @Test
-    fun `processReceiptInput validates and persists receipt`() = runTest {
+    fun `processReceiptInput allows on-device OCR without cloud AI policy`() = runTest {
         val uri = mockk<Uri>(relaxed = true)
         val validationResult = ReceiptInputValidator.ValidationResult(
             isValid = true,

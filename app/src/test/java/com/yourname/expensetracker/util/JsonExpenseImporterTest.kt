@@ -3,6 +3,7 @@ package com.yourname.expensetracker.util
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.dao.CategoryDao
+import com.yourname.expensetracker.domain.provenance.CreateExpenseSourceLinkRequirements
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
@@ -84,6 +85,63 @@ class JsonExpenseImporterTest {
         assertTrue(result.success)
         assertEquals(providedDate, requestSlot.captured.date)
         assertEquals("Provider must not be called when a valid date exists", 0, provider.nowCalls)
+    }
+
+    @Test
+    fun `JSON rows carry import provenance batch id and row number`() = runTest {
+        val requests = mutableListOf<CreateExpenseRequest>()
+        coEvery { coordinator.createExpense(capture(requests)) } returns CreateExpenseResult.Created(1L)
+
+        val result = newImporter(newCountingProvider()).importFromContent(
+            """
+                {
+                  "schemaVersion": 2,
+                  "rows": [
+                    {"merchant": "A", "amount": 1.00},
+                    {"merchant": "B", "amount": 2.00},
+                    {"merchant": "C", "amount": 3.00}
+                  ]
+                }
+            """.trimIndent()
+        )
+
+        assertTrue(result.success)
+        assertEquals(3, requests.size)
+        requests.forEach { request ->
+            assertTrue(CreateExpenseSourceLinkRequirements.missingRequirements(request).isEmpty())
+        }
+        assertEquals(listOf(1, 2, 3), requests.map { it.csvRowNumber })
+        assertEquals(1, requests.map { it.csvImportBatchId }.toSet().size)
+        assertTrue(requests.first().csvImportBatchId?.isNotEmpty() == true)
+    }
+
+    @Test
+    fun `legacy JSON rows carry import provenance`() = runTest {
+        val requests = mutableListOf<CreateExpenseRequest>()
+        coEvery { coordinator.createExpense(capture(requests)) } returns CreateExpenseResult.Created(1L)
+
+        val result = newImporter(newCountingProvider()).importFromContent(
+            """{"rows":[{"merchant":"Legacy","amount":4.50}]}"""
+        )
+
+        assertTrue(result.success)
+        assertEquals(1, requests.size)
+        assertTrue(CreateExpenseSourceLinkRequirements.missingRequirements(requests.single()).isEmpty())
+        assertEquals(1, requests.single().csvRowNumber)
+        assertTrue(requests.single().csvImportBatchId?.isNotEmpty() == true)
+    }
+
+    @Test
+    fun `each JSON import run mints a distinct batch id`() = runTest {
+        val requests = mutableListOf<CreateExpenseRequest>()
+        coEvery { coordinator.createExpense(capture(requests)) } returns CreateExpenseResult.Created(1L)
+        val content = """{"schemaVersion":2,"rows":[{"merchant":"A","amount":1.00}]}"""
+
+        newImporter(newCountingProvider()).importFromContent(content)
+        newImporter(newCountingProvider()).importFromContent(content)
+
+        assertEquals(2, requests.size)
+        assertTrue(requests[0].csvImportBatchId != requests[1].csvImportBatchId)
     }
 
     @Test

@@ -13,11 +13,11 @@ import java.io.File
  *
  * ## Coverage
  * - **Structural exceptions:** Exact class, method_pattern, operation, and path
- *   matching for the 64-entry structural policy (migrations, rescue,
+ *   matching for the 65-entry structural policy (migrations, rescue,
  *   backup/restore, diagnostics, privacy export, restore verification).
  * - **Structural manifest:** The checked-in
  *   `config/guards/db_structural_exceptions_expected_methods.yml` is loaded and
- *   validated directly — counts block (`structural_entries: 64` ONLY; ownership
+ *   validated directly — counts block (`structural_entries: 65` ONLY; ownership
  *   cardinality is not manifest metadata and an `ownership_entries` counts key
  *   fails closed), expected
  *   60 + fixtures 4, exact union equality with the structural YAML tuple set,
@@ -25,7 +25,7 @@ import java.io.File
  *   BOTH sections (a cross-section duplicate fails closed), and no
  *   duplicate/wildcard/raw/write tuples.
      * - **Ownership policy:** The active `db_ownership_policy.yml` is the
-     *   activated v2 document (`schemaVersion: 2`, 406 entries — one entry per
+     *   activated v2 document (`schemaVersion: 2`, 424 entries — one entry per
      *   canonical mutation key, with `ownerFqcn` / `daoAccessor` / `barrierMode`
      *   fields). The fixture parser accepts the v2 document header and entry
      *   schema and maps v2 fields onto the shared [ParsedEntry] model; legacy
@@ -1068,25 +1068,25 @@ class DbGuardPolicyFixtureTest {
     // ══════════════════════════════════════════════════════════════════
 
     @Test
-    fun `manifest — ownership policy has exactly 406 entries`() {
+    fun `manifest — ownership policy has exactly 424 entries`() {
         val entries = parseEntries(ownershipPolicyFile)
-        assertEquals("Ownership policy must have exactly 406 entries", 406, entries.size)
+        assertEquals("Ownership policy must have exactly 424 entries", 424, entries.size)
     }
 
     @Test
-    fun `manifest — structural exceptions has exactly 64 entries`() {
+    fun `manifest — structural exceptions has exactly 65 entries`() {
         val entries = parseEntries(structuralExceptionsFile)
-        assertEquals("Structural exceptions must have exactly 64 entries", 64, entries.size)
+        assertEquals("Structural exceptions must have exactly 65 entries", 65, entries.size)
     }
 
     @Test
-    fun `manifest — counts block pins structural 64 only`() {
+    fun `manifest — counts block pins structural 65 only`() {
         // GR-04 decoupling: the manifest governs structural exceptions ONLY.
         // Its counts block carries structural_entries and nothing else; the
         // ownership policy's own 99-entry size is an independent property of
         // the policy file, never manifest metadata.
         val manifest = parseStructuralManifest(structuralManifestFile)
-        assertEquals("Manifest structural_entries count", 64, manifest.structuralEntries)
+        assertEquals("Manifest structural_entries count", 65, manifest.structuralEntries)
         assertEquals(
             "Manifest structural count must match the checked-in structural YAML",
             parseEntries(structuralExceptionsFile).size, manifest.structuralEntries
@@ -1124,13 +1124,13 @@ class DbGuardPolicyFixtureTest {
     }
 
     @Test
-    fun `manifest — expected has exactly 60 tuples and fixtures exactly 4`() {
+    fun `manifest — expected has exactly 60 tuples and fixtures exactly 5`() {
         val manifest = parseStructuralManifest(structuralManifestFile)
         assertEquals("Manifest expected tuples", 60, manifest.expected.size)
-        assertEquals("Manifest fixture tuples", 4, manifest.fixtures.size)
+        assertEquals("Manifest fixture tuples", 5, manifest.fixtures.size)
         assertEquals(
-            "expected + fixtures must total the structural 64",
-            64, manifest.expected.size + manifest.fixtures.size
+            "expected + fixtures must total the structural 65",
+            65, manifest.expected.size + manifest.fixtures.size
         )
     }
 
@@ -1141,7 +1141,7 @@ class DbGuardPolicyFixtureTest {
             .map { it.toManifestTuple() }
             .toSet()
         val union = (manifest.expected + manifest.fixtures).toSet()
-        assertEquals("Expected+fixtures union must have exactly 64 distinct tuples", 64, union.size)
+        assertEquals("Expected+fixtures union must have exactly 65 distinct tuples", 65, union.size)
         assertEquals(
             "Expected+fixtures union must EXACTLY equal the structural YAML tuple set",
             structuralTuples, union
@@ -1174,7 +1174,7 @@ class DbGuardPolicyFixtureTest {
     @Test
     fun `manifest — fixtures have no duplicate, wildcard, raw, or write tuples`() {
         val manifest = parseStructuralManifest(structuralManifestFile)
-        assertEquals("fixtures must have 4 distinct tuples", 4, manifest.fixtures.toSet().size)
+        assertEquals("fixtures must have 5 distinct tuples", 5, manifest.fixtures.toSet().size)
         for (tuple in manifest.fixtures) {
             assertValidStructuralTuple(
                 tuple,
@@ -1187,7 +1187,7 @@ class DbGuardPolicyFixtureTest {
     fun `structural exceptions — no duplicate tuples, wildcard, raw, or write operations`() {
         val entries = parseEntries(structuralExceptionsFile)
         val tuples = entries.map { it.toManifestTuple() }
-        assertEquals("Structural YAML must have 64 distinct tuples", 64, tuples.toSet().size)
+        assertEquals("Structural YAML must have 65 distinct tuples", 65, tuples.toSet().size)
         for (tuple in tuples) {
             assertValidStructuralTuple(
                 tuple,
@@ -1314,16 +1314,18 @@ class DbGuardPolicyFixtureTest {
     @Test
     fun `ownership — DataRetentionWorker entry has exact DAO and exact operation`() {
         val entries = parseEntries(ownershipPolicyFile)
-        val entry = findEntry(entries, "DataRetentionWorker", methodName = "doWork")
+        // RP-16 exact audit-owner move: the guarded retention loop's private
+        // checkpoint audit helper owns the write (not the coarse doWork row).
+        val entry = findEntry(entries, "DataRetentionWorker", methodName = "emitRetentionAudit")
         assertNotNull("DataRetentionWorker entry not found in ownership policy", entry)
 
         val expectedDaos = setOf("auditDao")
         assertEquals("DataRetentionWorker DAOs", expectedDaos, entry!!.daos.toSet())
         assertEquals("DataRetentionWorker operation", "insert", entry.operation)
-        // Truthful mediated-barrier contract: write protection is provided by
-        // WorkerExecutionGuard, not a direct writeBarrier call inside doWork.
-        assertEquals("DataRetentionWorker barrier_required", false, entry.barrierRequired)
-        assertEquals("DataRetentionWorker barrier_via", "WorkerExecutionGuard", entry.barrierVia)
+        // Truthful direct-barrier contract: the helper rechecks the
+        // DatabaseWriteBarrier itself before PrivacyAuditDao.insert.
+        assertEquals("DataRetentionWorker barrier_required", true, entry.barrierRequired)
+        assertEquals("DataRetentionWorker barrier_via", null, entry.barrierVia)
         assertEquals("owner", "@panospao7", entry.owner)
         assertEquals("linked_issue", "MIT-DB-08P1", entry.linkedIssue)
         assertTrue("Reason must mention audit or privacy",
@@ -1449,7 +1451,8 @@ class DbGuardPolicyFixtureTest {
         // Every approved (method, operation) pair — no wildcard entry.
         // doWork writes deliveryDao.recoverStaleClaimed + deliveryDao.deleteOlderThan;
         // private deliverReminder writes insertOrIgnore, claim, markSentFromClaimed,
-        // markFailed. All are WorkerExecutionGuard-mediated (barrier_required false).
+        // markFailed, and the RP-16 keyed claim recovery markFailedByKey. All are
+        // WorkerExecutionGuard-mediated (barrier_required false).
         data class Spec(val method: String, val operation: String, val hint: String)
 
         val expected = listOf(
@@ -1458,7 +1461,8 @@ class DbGuardPolicyFixtureTest {
             Spec("deliverReminder", "insertOrIgnore", "idempotent"),
             Spec("deliverReminder", "claim", "claim"),
             Spec("deliverReminder", "markSentFromClaimed", "SENT"),
-            Spec("deliverReminder", "markFailed", "failure")
+            Spec("deliverReminder", "markFailed", "failure"),
+            Spec("deliverReminder", "markFailedByKey", "keyed")
         )
 
         val workerEntries = entries.filter { it.className == "WarrantyExpirationWorker" }
@@ -1700,7 +1704,7 @@ class DbGuardPolicyFixtureTest {
     @Test
     fun `ownership — unrelated DAO userCorrectionDao not on DataRetentionWorker`() {
         val entries = parseEntries(ownershipPolicyFile)
-        val entry = findEntry(entries, "DataRetentionWorker", methodName = "doWork")
+        val entry = findEntry(entries, "DataRetentionWorker", methodName = "emitRetentionAudit")
         assertNotNull("DataRetentionWorker must exist for negative check", entry)
         assertFalse("DataRetentionWorker should NOT list userCorrectionDao",
             entry!!.daos.contains("userCorrectionDao"))
@@ -1849,7 +1853,6 @@ class DbGuardPolicyFixtureTest {
         data class Spec(val method: String, val dao: String, val operation: String)
 
         val expected = listOf(
-            Spec("clearExpenseLocation", "expenseDao", "clearLocation"),
             Spec("conditionallySetLocation", "expenseDao", "conditionallySetLocation"),
             Spec("deleteAllExpenses", "expenseDao", "deleteAll"),
             Spec("incrementBackfillAttempts", "expenseDao", "incrementBackfillAttempts"),

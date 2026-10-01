@@ -14,6 +14,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import java.util.UUID
 import javax.inject.Inject
 
 /**
@@ -136,6 +137,9 @@ class CsvExpenseImporter @Inject constructor(
             var errorCount = 0
             val perRowResults = mutableListOf<RowResult>()
             val total = dataRecords.size
+            // CA-P-12-001: CSV_IMPORT provenance requires a batch id + row
+            // number; one batch id per import run, 1-based data-row number.
+            val csvImportBatchId = UUID.randomUUID().toString()
 
             dataRecords.forEachIndexed { index, record ->
                 val rowResult = if (record.malformed) {
@@ -143,7 +147,13 @@ class CsvExpenseImporter @Inject constructor(
                     // row; an unclosed quote never fabricates spurious rows.
                     RowResult.Failed("Invalid CSV row: unclosed quote")
                 } else {
-                    parseAndImportRecord(record.fields, columnIndex, fileImportRunId)
+                    parseAndImportRecord(
+                        record.fields,
+                        columnIndex,
+                        fileImportRunId,
+                        csvImportBatchId = csvImportBatchId,
+                        csvRowNumber = index + 1
+                    )
                 }
                 perRowResults.add(rowResult)
 
@@ -179,7 +189,9 @@ class CsvExpenseImporter @Inject constructor(
     private suspend fun parseAndImportRecord(
         fields: List<String>,
         columnIndex: Map<String, Int>,
-        fileImportRunId: Long? = null
+        fileImportRunId: Long? = null,
+        csvImportBatchId: String,
+        csvRowNumber: Int
     ): RowResult {
         return try {
             fun col(name: String): String? {
@@ -240,7 +252,9 @@ class CsvExpenseImporter @Inject constructor(
                 source = ExpenseSource.CSV_IMPORT,
                 categoryId = categoryId,
                 notes = notesFromCol.ifEmpty { null },
-                fileImportRunId = fileImportRunId
+                fileImportRunId = fileImportRunId,
+                csvImportBatchId = csvImportBatchId,
+                csvRowNumber = csvRowNumber
             )
 
             @Suppress("DEPRECATION_ERROR") // TODO: migrate to createExpenseStandalone()

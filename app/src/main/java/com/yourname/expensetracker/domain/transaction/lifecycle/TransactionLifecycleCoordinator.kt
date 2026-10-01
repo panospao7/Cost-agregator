@@ -109,6 +109,26 @@ class TransactionLifecycleCoordinator @Inject constructor(
         return "idem:${request.source.name}:$key"
     }
 
+    /**
+     * CA-P-02-003: dedupeKey to persist when an update changes key fields.
+     * A STRICT_EXTERNAL_ID row keeps its `idem:` external-identity key — a
+     * content key would reopen the retry-duplicate window for the source.
+     * Content-keyed rows are recomputed from the post-update fields.
+     */
+    private fun dedupeKeyForUpdate(
+        existingDedupeKey: String?,
+        amount: Double,
+        merchant: String,
+        date: Long,
+        currency: String,
+        transactionType: TransactionType
+    ): String {
+        if (existingDedupeKey != null && existingDedupeKey.startsWith("idem:")) return existingDedupeKey
+        return DuplicateDetectionPolicy.generateDedupeKeyWithType(
+            amount, merchant, date, currency, transactionType
+        )
+    }
+
     private fun standardCreateDedupeKey(request: CreateExpenseRequest): String {
         return DuplicateDetectionPolicy.generateDedupeKeyWithType(
             amount = request.amount,
@@ -625,6 +645,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
         //    Side effects (step 7, 8) remain outside the transaction (post-commit).
         // GR-14p-a: canonical direct scope — the mutations' proof is local
         // to the legal writer, independent of caller context.
+        // Set when the in-transaction precheck resolved and audited a duplicate.
+        var precheckDuplicate: Pair<Long, Boolean>? = null
         val insertedId = writeBarrier.runWrite(
             DatabaseAccessOperation(
                 "TransactionLifecycleCoordinator.createExpenseMutation"
@@ -646,9 +668,13 @@ class TransactionLifecycleCoordinator @Inject constructor(
                         )
                         if (isDuplicate) {
                             val duplicateId = findDuplicateIdForExpense(expense)
-                            val label = if (dedupMode == DeduplicationMode.BULK_IMPORT) "Bulk import duplicate" else "Standard duplicate"
-                            writeDuplicateEvent(expense, request, now, duplicateId, label, correlationId)
-                            return@withTransaction -(duplicateId ?: 1L)
+                            if (duplicateId != null) {
+                                val label = if (dedupMode == DeduplicationMode.BULK_IMPORT) "Bulk import duplicate" else "Standard duplicate"
+                                val logged = writeDuplicateEvent(expense, request, now, duplicateId, label, correlationId)
+                                precheckDuplicate = duplicateId to logged
+                                return@withTransaction -duplicateId
+                            }
+                            return@withTransaction -1L
                         }
                     }
                     else -> { /* STRICT_EXTERNAL_ID handled above, SKIP_FOR_DEBUG_RESTORE = no-op */ }
@@ -716,6 +742,17 @@ class TransactionLifecycleCoordinator @Inject constructor(
             }
         }
 
+        // The precheck duplicate is already resolved and audited once; falling
+        // through to the insert-conflict resolver would write a second
+        // CREATE_DUPLICATE_SKIPPED for the same attempt.
+        precheckDuplicate?.let { (existingId, eventLogged) ->
+            return Pair(CreateExpenseResult.DuplicateSkipped(
+                existingExpenseId = existingId,
+                reason = "Duplicate of existing expense $existingId",
+                eventLogged = eventLogged
+            ), PostCommitActionBatch.empty(correlationId))
+        }
+
         if (insertedId <= 0L) {
             // P2-002: Try to resolve the existing expense ID before declaring
             // an unresolved conflict. [resolutionCode] records which identity
@@ -770,7 +807,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 ), PostCommitActionBatch.empty(correlationId))
             }
 
-            // Unresolved — write INSERT_CONFLICT
+            // Unresolved — write INSERT_CONFLICT.
             bestEffortEvent {
                 transactionEventDao.insert(
                     TransactionEvent(
@@ -1006,7 +1043,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 existing.transactionType != expense.transactionType
 
             val updatedExpense = if (keyFieldsChanged) {
-                val newDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
+                val newDedupeKey = dedupeKeyForUpdate(
+                    existingDedupeKey = existing.dedupeKey,
                     amount = expense.amount,
                     merchant = expense.merchant,
                     date = expense.date,
@@ -1294,6 +1332,69 @@ class TransactionLifecycleCoordinator @Inject constructor(
     }
 
     /**
+     * Clears an expense location through the lifecycle path.
+     *
+     * A user-initiated clear is an auditable mutation, so it writes the same
+     * UPDATED event shape as [updateLocation] with null location fields.
+     */
+    suspend fun clearLocation(
+        expenseId: Long,
+        source: String = "USER_EDIT",
+        reason: String? = null,
+        correlationId: String? = null
+    ) {
+        writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.clearLocation")
+
+        val now = timeProvider.now()
+        var outcome = ExpenseUpdateOutcome.NotFound
+        database.withTransaction {
+            val existing = expenseDao.getById(expenseId)
+            if (existing == null) {
+                outcome = ExpenseUpdateOutcome.NotFound
+                return@withTransaction
+            }
+            if (existing.latitude == null && existing.longitude == null &&
+                existing.locationSource == null && existing.placeId == null &&
+                existing.resolvedAddress == null && existing.backfillAttempts == 0
+            ) {
+                outcome = ExpenseUpdateOutcome.NoChange
+                return@withTransaction
+            }
+
+            val beforeSnapshot = expenseToSnapshot(existing)
+            val updated = existing.copy(
+                latitude = null,
+                longitude = null,
+                locationSource = null,
+                placeId = null,
+                resolvedAddress = null,
+                backfillAttempts = 0
+            )
+            expenseDao.clearLocation(expenseId)
+            transactionEventDao.insert(TransactionEvent(
+                expenseId = expenseId,
+                eventType = LifecycleEventType.UPDATED.name,
+                source = source,
+                actor = null,
+                occurredAt = now,
+                dedupeKey = existing.dedupeKey,
+                duplicateExpenseId = null,
+                beforeSnapshot = beforeSnapshot,
+                afterSnapshot = expenseToSnapshot(expenseId, updated),
+                metadata = null,
+                reason = reason,
+                correlationId = correlationId
+            ))
+            outcome = ExpenseUpdateOutcome.Updated
+        }
+
+        when (outcome) {
+            ExpenseUpdateOutcome.Updated, ExpenseUpdateOutcome.NoChange -> Unit
+            ExpenseUpdateOutcome.NotFound -> throw IllegalArgumentException("Expense not found: $expenseId")
+        }
+    }
+
+    /**
      * Updates business/tax fields on an expense via explicit patch contract.
      *
      * Supported fields: isBusinessExpense, requiresReceipt, businessPurpose,
@@ -1503,8 +1604,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
             }
 
             val beforeSnapshot = expenseToSnapshot(existing)
-            val newDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
-                existing.amount, newMerchant, existing.date, existing.currency, existing.transactionType
+            val newDedupeKey = dedupeKeyForUpdate(
+                existing.dedupeKey, existing.amount, newMerchant, existing.date, existing.currency, existing.transactionType
             )
 
             // Collision check inside transaction for TOCTOU safety.
@@ -1610,8 +1711,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 }
 
                 val beforeSnapshot = expenseToSnapshot(existing)
-                val newDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
-                    existing.amount, existing.merchant, existing.date, existing.currency, newType
+                val newDedupeKey = dedupeKeyForUpdate(
+                    existing.dedupeKey, existing.amount, existing.merchant, existing.date, existing.currency, newType
                 )
 
                 // Collision check inside transaction for TOCTOU safety.
@@ -1817,10 +1918,14 @@ class TransactionLifecycleCoordinator @Inject constructor(
 
             val beforeSnapshot = expenseToSnapshot(existing)
 
-            val newDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
-                existing.amount, existing.merchant, existing.date, existing.currency, newType
+            val newDedupeKey = dedupeKeyForUpdate(
+                existing.dedupeKey, existing.amount, existing.merchant, existing.date, existing.currency, newType
             )
-            val dedupeKeyChanged = existing.dedupeKey != newDedupeKey
+            // CA-P-02-003: an `idem:` key is preserved across a type change, so
+            // key equality alone no longer implies "type unchanged" — the
+            // collision preflight must still run when the type actually moves.
+            val dedupeKeyChanged = existing.dedupeKey != newDedupeKey ||
+                (newDedupeKey.startsWith("idem:") && existing.transactionType != newType)
 
             // No-op detection: recomputed key unchanged AND transfer metadata unchanged
             if (!dedupeKeyChanged &&
@@ -2261,8 +2366,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
             // letting a row write die on the raw dedupeKey unique index.
             val targetIds = affectedExpenses.map { it.id }.toHashSet()
             for (expense in affectedExpenses) {
-                val newDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
-                    expense.amount, newMerchant, expense.date, expense.currency, expense.transactionType
+                val newDedupeKey = dedupeKeyForUpdate(
+                    expense.dedupeKey, expense.amount, newMerchant, expense.date, expense.currency, expense.transactionType
                 )
                 val collidingId = expenseDao.findBlockingDuplicateIdCurrencyAware(
                     amount = expense.amount,
@@ -2282,8 +2387,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
             }
 
             for (expense in affectedExpenses) {
-                val newDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
-                    expense.amount, newMerchant, expense.date, expense.currency, expense.transactionType
+                val newDedupeKey = dedupeKeyForUpdate(
+                    expense.dedupeKey, expense.amount, newMerchant, expense.date, expense.currency, expense.transactionType
                 )
                 expenseDao.updateMerchantAndKey(expense.id, newMerchant, newMerchantKey, newDedupeKey)
             }

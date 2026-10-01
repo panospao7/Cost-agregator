@@ -92,6 +92,7 @@ enum class OwnershipFilter {
  * - updateSharedExpenseDetails → coordinator.updateOwnership()
  * - updateOwnership → coordinator.updateOwnership()
  * - updateExpenseLocation → coordinator.updateLocation()
+ * - clearExpenseLocation → coordinator.clearLocation()
  * - updateExpenseCategoryBulk → coordinator.bulkUpdateCategory()
  * - updateExpenseMerchantBulk → coordinator.bulkUpdateMerchant()
  *
@@ -104,7 +105,6 @@ enum class OwnershipFilter {
  * Writing `TransactionEvent.UPDATED` per row from background workers would
  * flood `transaction_events` with noise. These workers touch 1-2 columns each:
  * - `conditionallySetLocation` — LocationBackfillWorker (lat/lon/source/placeId)
- * - `clearExpenseLocation` — location reset path
  * - `incrementBackfillAttempts` — dead-letter counter for backfill retries
  * - `updateMerchantKey` — MerchantKeyBackfillWorker (merchantKey column only)
  *
@@ -123,7 +123,7 @@ enum class OwnershipFilter {
  * - `deleteAllExpenses()` — guarded by `BuildConfig.DEBUG`
  * - `createDebugSnapshot()` / `restoreDebugSnapshot()` — guarded by `BuildConfig.DEBUG`
  *
- * Total: 7 remaining (all intentional/backfill).
+ * Total: 6 remaining (all intentional/backfill).
  *
  * ### NOT YET IMPLEMENTED (no update path exists yet):
  * - Business/tax field updates (isBusinessExpense, businessPurpose, businessCategory,
@@ -978,14 +978,9 @@ class ExpenseRepository @Inject constructor(
     )
     }
 
-    // EXPENSE_DAO_MUTATION_ALLOWLIST:
-    // Reason: maintenance/backfill location column clear.
-    // Guard: DatabaseWriteBarrier.
-    // Audit: no lifecycle event by design.
-    @OptIn(RestrictedExpenseDaoMutation::class)
+    @Deprecated("Use TransactionLifecycleCoordinator.clearLocation() instead for proper lifecycle tracking.")
     suspend fun clearExpenseLocation(expenseId: Long) {
-        writeBarrier.checkWritesAllowed("ExpenseRepository.clearExpenseLocation")
-        expenseDao.clearLocation(expenseId)
+        transactionLifecycleCoordinator.clearLocation(expenseId)
     }
 
     /** Reactive flow of unlocated expenses — used by Map tab unlocated panel. */

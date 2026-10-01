@@ -10,6 +10,7 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionEvent
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
+import com.yourname.expensetracker.domain.transaction.LifecycleEventType
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
@@ -285,6 +286,68 @@ class TransactionLifecycleCoordinatorUpdateTest {
         coVerify(exactly = 0) { transactionEventDao.insert(any()) }
     }
 
+    @Test
+    fun `clearLocation changed writes auditable event and clears columns`() = runTest(timeout = 60.seconds) {
+        val located = expense().copy(
+            latitude = 37.9,
+            longitude = 23.7,
+            locationSource = "USER_MANUAL",
+            placeId = "p1",
+            resolvedAddress = "addr"
+        )
+        val eventSlot = slot<TransactionEvent>()
+        coEvery { expenseDao.getById(1L) } returns located
+        coEvery { transactionEventDao.insert(capture(eventSlot)) } returns 1L
+
+        coordinator.clearLocation(
+            expenseId = 1L,
+            source = "USER_MANUAL",
+            reason = "User cleared location",
+            correlationId = "corr-1"
+        )
+
+        coVerify(exactly = 1) { expenseDao.clearLocation(1L) }
+        assertEquals(LifecycleEventType.UPDATED.name, eventSlot.captured.eventType)
+        assertEquals("USER_MANUAL", eventSlot.captured.source)
+        assertEquals("User cleared location", eventSlot.captured.reason)
+        assertEquals("corr-1", eventSlot.captured.correlationId)
+        assertTrue(eventSlot.captured.beforeSnapshot != null)
+        assertTrue(eventSlot.captured.afterSnapshot != null)
+    }
+
+    @Test
+    fun `clearLocation already clear is silent no-op`() = runTest(timeout = 60.seconds) {
+        coEvery { expenseDao.getById(1L) } returns expense()
+
+        coordinator.clearLocation(1L)
+
+        coVerify(exactly = 0) { expenseDao.clearLocation(any()) }
+        coVerify(exactly = 0) { transactionEventDao.insert(any()) }
+    }
+
+    @Test
+    fun `clearLocation resets backfill attempts even when location fields are empty`() = runTest(timeout = 60.seconds) {
+        coEvery { expenseDao.getById(1L) } returns expense().copy(backfillAttempts = 2)
+        coEvery { transactionEventDao.insert(any()) } returns 1L
+
+        coordinator.clearLocation(1L)
+
+        coVerify(exactly = 1) { expenseDao.clearLocation(1L) }
+        coVerify(exactly = 1) { transactionEventDao.insert(any()) }
+    }
+
+    @Test
+    fun `clearLocation missing row fails typed with no event`() = runTest(timeout = 60.seconds) {
+        coEvery { expenseDao.getById(1L) } returns null
+
+        assertFailsWith<IllegalArgumentException> {
+            coordinator.clearLocation(1L)
+        }
+
+        coVerify(exactly = 0) { expenseDao.clearLocation(any()) }
+        coVerify(exactly = 0) { transactionEventDao.insert(any()) }
+    }
+
     // ── P2-005: updateMerchant ───────────────────────────────────────────────
 
     @Test
@@ -512,6 +575,109 @@ class TransactionLifecycleCoordinatorUpdateTest {
         coVerify(exactly = 0) { planner.planUpdated(any(), any(), any(), any()) }
         coVerify(exactly = 0) { expenseDao.updateTransactionType(any(), any(), any()) }
     }
+
+    // ── CA-P-02-003: STRICT_EXTERNAL_ID `idem:` keys survive key-field edits ──
+
+    private val idemKey = "idem:NOTIFICATION_AUTO_ACCEPT:ext-123"
+
+    @Test
+    fun `CA-P-02-003 updateExpense key-field edit preserves idem key`() = runTest(timeout = 60.seconds) {
+        coEvery { expenseDao.getById(1L) } returns expense(dedupeKey = idemKey)
+        stubNoCollisions()
+        val updatedSlot = slot<Expense>()
+        coEvery { expenseDao.update(capture(updatedSlot)) } returns Unit
+        coEvery { transactionEventDao.insert(any()) } returns 1L
+
+        coordinator.updateExpense(expense(dedupeKey = idemKey).copy(amount = 75.0, merchant = "Other"))
+
+        assertEquals(idemKey, updatedSlot.captured.dedupeKey)
+    }
+
+    @Test
+    fun `CA-P-02-003 updateExpense key-field edit still recomputes content key`() = runTest(timeout = 60.seconds) {
+        coEvery { expenseDao.getById(1L) } returns expense()
+        stubNoCollisions()
+        val updatedSlot = slot<Expense>()
+        coEvery { expenseDao.update(capture(updatedSlot)) } returns Unit
+        coEvery { transactionEventDao.insert(any()) } returns 1L
+
+        coordinator.updateExpense(expense().copy(amount = 75.0))
+
+        assertEquals(
+            DuplicateDetectionPolicy.generateDedupeKeyWithType(
+                75.0, "Test", now, "EUR", TransactionType.PURCHASE
+            ),
+            updatedSlot.captured.dedupeKey
+        )
+    }
+
+    @Test
+    fun `CA-P-02-003 updateMerchant preserves idem key`() = runTest(timeout = 60.seconds) {
+        coEvery { expenseDao.getById(1L) } returns expense(dedupeKey = idemKey)
+        stubNoCollisions()
+        coEvery { transactionEventDao.insert(any()) } returns 1L
+
+        coordinator.updateMerchant(1L, newMerchant = "New Merchant")
+
+        coVerify(exactly = 1) { expenseDao.updateMerchantAndKey(1L, "New Merchant", any(), idemKey) }
+    }
+
+    @Test
+    fun `CA-P-02-003 updateType preserves idem key`() = runTest(timeout = 60.seconds) {
+        coEvery { expenseDao.getById(1L) } returns expense(dedupeKey = idemKey)
+        stubNoCollisions()
+        coEvery { transactionEventDao.insert(any()) } returns 1L
+
+        coordinator.updateType(1L, newType = TransactionType.TRANSFER)
+
+        coVerify(exactly = 1) { expenseDao.updateTransactionType(1L, TransactionType.TRANSFER.name, idemKey) }
+    }
+
+    @Test
+    fun `CA-P-02-003 updateTypeAndTransferDetails type change on idem row is not a no-op`() =
+        runTest(timeout = 60.seconds) {
+            val row = expense(dedupeKey = idemKey).copy(
+                transferDirection = TransferDirection.OUTGOING,
+                transferAccountName = "Acc1"
+            )
+            coEvery { expenseDao.getById(1L) } returns row
+            stubNoCollisions()
+            coEvery { transactionEventDao.insert(any()) } returns 1L
+
+            // Key is preserved, transfer metadata unchanged — only the type moves.
+            coordinator.updateTypeAndTransferDetails(1L, TransactionType.TRANSFER, TransferDirection.OUTGOING, "Acc1")
+
+            coVerify(exactly = 1) {
+                expenseDao.findBlockingDuplicateIdCurrencyAware(
+                    any(), any(), any(), any(), TransactionType.TRANSFER.name, any(), any(), any()
+                )
+            }
+            coVerify(exactly = 1) { transactionEventDao.insert(any()) }
+            coVerify(exactly = 1) { planner.planUpdated(1L, any(), null, TransactionUpdateKind.FULL) }
+        }
+
+    @Test
+    fun `CA-P-02-003 bulkUpdateMerchant preserves idem key and recomputes content key`() =
+        runTest(timeout = 60.seconds) {
+            val idemRow = expense(id = 1L, dedupeKey = idemKey)
+            val contentRow = expense(id = 2L)
+            coEvery { expenseDao.getExpensesByMerchantKey(any()) } returns listOf(idemRow, contentRow)
+            stubNoCollisions()
+            coEvery { transactionEventDao.insert(any()) } returns 1L
+
+            val result = coordinator.bulkUpdateMerchant("Test", "Renamed")
+
+            assertTrue(result.isSuccess)
+            coVerify(exactly = 1) { expenseDao.updateMerchantAndKey(1L, "Renamed", any(), idemKey) }
+            coVerify(exactly = 1) {
+                expenseDao.updateMerchantAndKey(
+                    2L, "Renamed", any(),
+                    DuplicateDetectionPolicy.generateDedupeKeyWithType(
+                        50.0, "Renamed", now, "EUR", TransactionType.PURCHASE
+                    )
+                )
+            }
+        }
 
     // ── P2-007 (11c): transfer edits carry caller correlation ────────────────
 

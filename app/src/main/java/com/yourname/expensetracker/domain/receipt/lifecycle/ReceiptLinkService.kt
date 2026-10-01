@@ -142,6 +142,9 @@ class ReceiptLinkService @Inject constructor(
      *   the AUTO_MATCH path of the matching worker so two overlapping runs cannot
      *   both auto-link the same receipt. Ignored for BANK_STATEMENT receipts
      *   (which do not transition match status here).
+     * @param deferredCategorySideEffectSink Optional capture-only callback for callers
+     *   that are themselves inside a larger transaction. The caller must dispatch
+     *   the captured expense ID after its outer transaction commits.
      * @return [Result.success] with the link on success, [Result.failure] on error.
      */
     suspend fun linkReceiptToExpense(
@@ -154,7 +157,8 @@ class ReceiptLinkService @Inject constructor(
         allowRelink: Boolean = false,
         matchStatus: MatchStatus? = null,
         writeSourceLink: Boolean = true,
-        requireUnmatchedClaim: Boolean = false
+        requireUnmatchedClaim: Boolean = false,
+        deferredCategorySideEffectSink: ((Long) -> Unit)? = null
     ): Result<ReceiptExpenseLink> {
         // Guard: block writes during restore maintenance mode
         try {
@@ -358,16 +362,15 @@ class ReceiptLinkService @Inject constructor(
             Result.success(link.copy(id = linkId))
             }
 
-            // RP-11 FIX 4: post-commit side-effect dispatch for a category
-            // assignment that committed inside the transaction above. Running
-            // it here — after runInTransaction returned — guarantees the budget
-            // recheck / anomaly alert see committed data and never run for a
-            // rolled-back link transaction (no phantom side effects, no
-            // extended lock window). Best-effort: failures are logged by the
-            // port and must not fail the already-committed link.
             if (assignedCategoryId != null) {
-                try {
-                    categoryAssignmentPort.dispatchAssignedCategorySideEffects(
+                if (deferredCategorySideEffectSink != null) {
+                    deferredCategorySideEffectSink(expenseId)
+                    Timber.d(
+                        "RCP-30: Category side effects deferred for outer transaction on expense %d (category %d)",
+                        expenseId, assignedCategoryId
+                    )
+                } else {
+                    dispatchAssignedCategorySideEffectsAfterCommit(
                         expenseId = expenseId,
                         source = "RECEIPT_ITEM_MAJORITY"
                     )
@@ -375,10 +378,6 @@ class ReceiptLinkService @Inject constructor(
                         "RCP-30: Post-commit side effects dispatched for expense %d (category %d)",
                         expenseId, assignedCategoryId
                     )
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    Timber.w(e, "RCP-30: Post-commit side-effect dispatch failed for expense %d", expenseId)
                 }
             }
 
@@ -390,6 +389,22 @@ class ReceiptLinkService @Inject constructor(
             // was rolled back with the transaction. Surface as a failure the worker
             // can recognise (and treat as a no-op) rather than a false success.
             Result.failure(e)
+        }
+    }
+
+    suspend fun dispatchAssignedCategorySideEffectsAfterCommit(
+        expenseId: Long,
+        source: String
+    ) {
+        try {
+            categoryAssignmentPort.dispatchAssignedCategorySideEffects(
+                expenseId = expenseId,
+                source = source
+            )
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.w(e, "RCP-30: Post-commit side-effect dispatch failed for expense %d", expenseId)
         }
     }
 

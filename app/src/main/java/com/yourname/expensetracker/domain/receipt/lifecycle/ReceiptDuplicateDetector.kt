@@ -73,7 +73,8 @@ class ReceiptDuplicateDetector @Inject constructor(
      * 1. **EXACT_HASH** — If [imageHash] is non-null and matches an existing row,
      *    returns immediately with 1.0 confidence.
      * 2. **TEXT_FINGERPRINT** — If [textFingerprint] is non-null and matches,
-     *    returns with 0.95 confidence.
+     *    returns with 0.95 confidence — unless both the incoming and the existing
+     *    semantic fingerprints are known and differ (CA-P-03-004).
      * 3. **SEMANTIC** — If [semanticFingerprint] is non-null and matches,
      *    returns with 0.8 confidence.
      * 4. **EXTERNAL_ID** — If [externalSourceId] is non-null and matches the
@@ -110,9 +111,13 @@ class ReceiptDuplicateDetector @Inject constructor(
         }
 
         // 2. Text fingerprint match — high confidence
+        // CA-P-03-004: the text fingerprint strips amounts and dates, so two
+        // receipts from the same merchant template (e.g. TOTAL 3.50 vs 4.50)
+        // collide. When both sides carry a semantic fingerprint and they
+        // disagree, the text hit is not a duplicate — fall through.
         if (textFingerprint != null) {
             val existing = scannedReceiptDao.getByTextFingerprint(textFingerprint)
-            if (existing != null) {
+            if (existing != null && !semanticFingerprintsConflict(semanticFingerprint, existing.semanticFingerprint)) {
                 return DuplicateResult(
                     isDuplicate = true,
                     confidence = 0.95f,
@@ -160,6 +165,10 @@ class ReceiptDuplicateDetector @Inject constructor(
             matchType = "NONE"
         )
     }
+
+    /** True only when both semantic fingerprints are known and differ. */
+    private fun semanticFingerprintsConflict(incoming: String?, existing: String?): Boolean =
+        !incoming.isNullOrBlank() && !existing.isNullOrBlank() && incoming != existing
 
     /**
      * Computes a normalized text fingerprint from raw OCR text.

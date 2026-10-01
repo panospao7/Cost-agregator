@@ -1,6 +1,6 @@
 {
   "guard": "cancellation",
-  "generated": "2026-09-29T12:59:18.170077+00:00",
+  "generated": "2026-09-30T15:56:00+00:00",
   "fingerprints": [
     "G-CANCEL-01 app/src/main/java/com/yourname/expensetracker/data/ai/provider/DefaultAiEnvironmentMonitor.kt",
     "G-CANCEL-01 app/src/main/java/com/yourname/expensetracker/data/ai/provider/HybridDedupeJudgeService.kt",
@@ -31,7 +31,6 @@
     "G-CANCEL-01 app/src/main/java/com/yourname/expensetracker/domain/tax/TaxEstimator.kt",
     "G-CANCEL-01 app/src/main/java/com/yourname/expensetracker/domain/usecase/dashboard/ComputeDashboardWidgetsUseCase.kt",
     "G-CANCEL-01 app/src/main/java/com/yourname/expensetracker/domain/usecase/savings/MonthlySavingsSweepUseCase.kt",
-    "G-CANCEL-01 app/src/main/java/com/yourname/expensetracker/domain/usecase/warranty/AutoCreateWarrantyFromReceiptUseCase.kt",
     "G-CANCEL-01 app/src/main/java/com/yourname/expensetracker/service/NotificationCaptureService.kt",
     "G-CANCEL-01 app/src/main/java/com/yourname/expensetracker/ui/screens/budget/BudgetViewModel.kt",
     "G-CANCEL-01 app/src/main/java/com/yourname/expensetracker/ui/screens/map/SpendingMapViewModel.kt",
@@ -55,12 +54,10 @@
     "G-CANCEL-02 app/src/main/java/com/yourname/expensetracker/domain/tax/TaxEstimator.kt",
     "G-CANCEL-02 app/src/main/java/com/yourname/expensetracker/domain/usecase/dashboard/ComputeDashboardWidgetsUseCase.kt",
     "G-CANCEL-02 app/src/main/java/com/yourname/expensetracker/domain/usecase/savings/MonthlySavingsSweepUseCase.kt",
-    "G-CANCEL-02 app/src/main/java/com/yourname/expensetracker/domain/usecase/warranty/AutoCreateWarrantyFromReceiptUseCase.kt",
     "G-CANCEL-02 app/src/main/java/com/yourname/expensetracker/ui/screens/map/SpendingMapViewModel.kt",
     "G-CANCEL-02 app/src/main/java/com/yourname/expensetracker/util/JsonExpenseImporter.kt",
     "G-CANCEL-03 app/src/main/java/com/yourname/expensetracker/domain/diagnostics/OperationRunRecorder.kt",
-    "G-CANCEL-03 app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptAssetStore.kt",
-    "G-CANCEL-03 app/src/main/java/com/yourname/expensetracker/domain/usecase/warranty/AutoCreateWarrantyFromReceiptUseCase.kt"
+    "G-CANCEL-03 app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptAssetStore.kt"
   ],
   "occurrence_counts": {
     "G-CANCEL-01 app/src/main/java/com/yourname/expensetracker/data/ai/provider/DefaultAiEnvironmentMonitor.kt": 1,
@@ -92,7 +89,6 @@
     "G-CANCEL-01 app/src/main/java/com/yourname/expensetracker/domain/tax/TaxEstimator.kt": 1,
     "G-CANCEL-01 app/src/main/java/com/yourname/expensetracker/domain/usecase/dashboard/ComputeDashboardWidgetsUseCase.kt": 1,
     "G-CANCEL-01 app/src/main/java/com/yourname/expensetracker/domain/usecase/savings/MonthlySavingsSweepUseCase.kt": 1,
-    "G-CANCEL-01 app/src/main/java/com/yourname/expensetracker/domain/usecase/warranty/AutoCreateWarrantyFromReceiptUseCase.kt": 1,
     "G-CANCEL-01 app/src/main/java/com/yourname/expensetracker/service/NotificationCaptureService.kt": 1,
     "G-CANCEL-01 app/src/main/java/com/yourname/expensetracker/ui/screens/budget/BudgetViewModel.kt": 1,
     "G-CANCEL-01 app/src/main/java/com/yourname/expensetracker/ui/screens/map/SpendingMapViewModel.kt": 1,
@@ -116,11 +112,9 @@
     "G-CANCEL-02 app/src/main/java/com/yourname/expensetracker/domain/tax/TaxEstimator.kt": 1,
     "G-CANCEL-02 app/src/main/java/com/yourname/expensetracker/domain/usecase/dashboard/ComputeDashboardWidgetsUseCase.kt": 1,
     "G-CANCEL-02 app/src/main/java/com/yourname/expensetracker/domain/usecase/savings/MonthlySavingsSweepUseCase.kt": 1,
-    "G-CANCEL-02 app/src/main/java/com/yourname/expensetracker/domain/usecase/warranty/AutoCreateWarrantyFromReceiptUseCase.kt": 1,
     "G-CANCEL-02 app/src/main/java/com/yourname/expensetracker/ui/screens/map/SpendingMapViewModel.kt": 1,
     "G-CANCEL-02 app/src/main/java/com/yourname/expensetracker/util/JsonExpenseImporter.kt": 2,
     "G-CANCEL-03 app/src/main/java/com/yourname/expensetracker/domain/diagnostics/OperationRunRecorder.kt": 3,
-    "G-CANCEL-03 app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptAssetStore.kt": 3,
-    "G-CANCEL-03 app/src/main/java/com/yourname/expensetracker/domain/usecase/warranty/AutoCreateWarrantyFromReceiptUseCase.kt": 1
+    "G-CANCEL-03 app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptAssetStore.kt": 3
   }
 }

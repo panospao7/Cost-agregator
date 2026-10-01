@@ -30,15 +30,16 @@ All callsites that route through `TransactionLifecycleCoordinator`:
 | 8 | `updateExpense()` | `ExpenseRepository.updateExpense()` | Full-row update |
 | 9 | `updateCategory()` | `ExpenseRepository.updateExpenseCategory()` | Category-only update |
 | 10 | `updateLocation()` | `ExpenseRepository.updateExpenseLocation()` | User location edit |
-| 11 | `updateMerchant()` | `ExpenseRepository.updateExpenseMerchant()` | Single merchant rename |
-| 12 | `updateType()` | `ExpenseRepository.updateExpenseType()` | Transaction type change |
-| 13 | `updateTransferDetails()` | `ExpenseRepository.updateTransferDetails()` | Transfer direction/account |
-| 14 | `updateOwnership()` | `ExpenseRepository.updateNotMineDetails()` / `updateSharedExpenseDetails()` / `updateOwnership()` | Ownership field updates |
-| 15 | `bulkUpdateCategory()` | `ExpenseRepository.updateExpenseCategoryBulk()` | Bulk category reassign |
-| 16 | `bulkUpdateMerchant()` | `ExpenseRepository.updateExpenseMerchantBulk()` | Bulk merchant rename |
-| 17 | `updateBusinessTaxFields()` | *(no current caller — API surface only)* | Business/tax field updates |
-| 18 | `deleteExpense()` | `ExpenseRepository.deleteExpense()` | Single expense deletion |
-| 19 | `deleteExpense(Expense)` | `ExpenseRepository.deleteExpense()` | By-entity deletion |
+| 11 | `clearLocation()` | `TransactionsViewModel.clearLocation()` | User location clear; emits `UPDATED` event |
+| 12 | `updateMerchant()` | `ExpenseRepository.updateExpenseMerchant()` | Single merchant rename |
+| 13 | `updateType()` | `ExpenseRepository.updateExpenseType()` | Transaction type change |
+| 14 | `updateTransferDetails()` | `ExpenseRepository.updateTransferDetails()` | Transfer direction/account |
+| 15 | `updateOwnership()` | `ExpenseRepository.updateNotMineDetails()` / `updateSharedExpenseDetails()` / `updateOwnership()` | Ownership field updates |
+| 16 | `bulkUpdateCategory()` | `ExpenseRepository.updateExpenseCategoryBulk()` | Bulk category reassign |
+| 17 | `bulkUpdateMerchant()` | `ExpenseRepository.updateExpenseMerchantBulk()` | Bulk merchant rename |
+| 18 | `updateBusinessTaxFields()` | *(no current caller — API surface only)* | Business/tax field updates |
+| 19 | `deleteExpense()` | `ExpenseRepository.deleteExpense()` | Single expense deletion |
+| 20 | `deleteExpense(Expense)` | `ExpenseRepository.deleteExpense()` | By-entity deletion |
 
 ---
 
@@ -49,9 +50,8 @@ Background workers that update 1-2 columns per row. Writing `TransactionEvent.UP
 | # | Method | Worker | Columns touched |
 |---|--------|--------|-----------------|
 | 1 | `ExpenseRepository.conditionallySetLocation()` | `LocationBackfillWorker` | `latitude`, `longitude`, `locationSource`, `placeId`, `resolvedAddress` |
-| 2 | `ExpenseRepository.clearExpenseLocation()` | *(location reset path)* | `latitude`, `longitude` |
-| 3 | `ExpenseRepository.incrementBackfillAttempts()` | `LocationBackfillWorker` | `backfillAttempts` (dead-letter counter) |
-| 4 | `ExpenseRepository.updateMerchantKey()` | `MerchantKeyBackfillWorker` | `merchantKey` |
+| 2 | `ExpenseRepository.incrementBackfillAttempts()` | `LocationBackfillWorker` | `backfillAttempts` (dead-letter counter) |
+| 3 | `ExpenseRepository.updateMerchantKey()` | `MerchantKeyBackfillWorker` | `merchantKey` |
 
 ---
 

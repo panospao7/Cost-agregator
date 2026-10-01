@@ -6,6 +6,7 @@ import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.location.GeocodingService
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.provenance.SourceLinkQueryService
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
@@ -37,6 +38,7 @@ class TransactionsViewModelTest : ViewModelTestUtils() {
     private val categories = mockk<CategoryRepository>(relaxed = true)
     private val sourceLinks = mockk<SourceLinkQueryService>(relaxed = true)
     private val recurring = mockk<RecurringExpenseRepository>(relaxed = true)
+    private val transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true)
     private lateinit var model: TransactionsViewModel
     private val hostile = IllegalStateException("secret merchant=private sql=/data/918")
     private val logs = mutableListOf<Pair<Throwable?, String>>()
@@ -64,7 +66,8 @@ class TransactionsViewModelTest : ViewModelTestUtils() {
             recurring,
             mockk<MerchantLocationRepository>(relaxed = true),
             mockk<TimeProvider>(relaxed = true), mockk<GeocodingService>(relaxed = true),
-            mockk<CurrencySettingsRepository>(relaxed = true), sourceLinks
+            mockk<CurrencySettingsRepository>(relaxed = true), sourceLinks,
+            transactionLifecycleCoordinator
         )
     }
 
@@ -120,7 +123,7 @@ class TransactionsViewModelTest : ViewModelTestUtils() {
         coEvery { expenses.updateTransferDetails(any(), any(), any(), any()) } throws failure
         coEvery { expenses.updateOwnership(any(), any(), any(), any(), any(), any(), any()) } throws failure
         coEvery { expenses.updateExpenseLocation(any(), any(), any(), any(), any(), any()) } throws failure
-        coEvery { expenses.clearExpenseLocation(any()) } throws failure
+        coEvery { transactionLifecycleCoordinator.clearLocation(any(), any(), any(), any()) } throws failure
         coEvery { recurring.addRecurringExpense(merchant = any(), amount = any(), frequency = any(), lastDate = any(), currency = any()) } throws failure
         return listOf(
             "Failed to delete transaction (TRANSACTION_DELETE_FAILED)" to { model.deleteExpense(expense) },

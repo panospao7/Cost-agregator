@@ -9,6 +9,7 @@ import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.RoomDomainTransactionRunner
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.MatchStatus
+import com.yourname.expensetracker.data.database.entity.ReceiptItemCategorization
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -264,6 +265,77 @@ class ReceiptLinkServiceColumnScopeTest {
         // The rolled-back transaction dispatched nothing.
         coVerify(exactly = 0) {
             dispatchPort.dispatchAssignedCategorySideEffects(any(), any(), any())
+        }
+    }
+
+    @Test
+    fun `nested caller can defer category side effects until outer commit`() = runTest {
+        val dao = database.scannedReceiptDao()
+        val receiptId = dao.insert(receipt(createdAt = now - 10_000))
+        val expenseId = database.expenseDao().insert(expense("Groceries"))
+        database.receiptItemCategorizationDao().insert(
+            ReceiptItemCategorization(
+                receiptId = receiptId,
+                itemDescription = "Milk",
+                itemAmount = 4.0,
+                suggestedCategoryId = 42L,
+                suggestedCategoryName = "Groceries",
+                confidence = 0.95f,
+                aiRationale = null,
+                alternativeCategoriesJson = null,
+                userCorrectedCategoryId = null,
+                userCorrectedCategoryName = null,
+                userCorrectedAt = null,
+                taxAmount = null
+            )
+        )
+
+        val dispatchPort = mockk<ExpenseCategoryAssignmentPort>()
+        coEvery { dispatchPort.assignCategoryIfUnset(any(), any(), any(), any()) } returns
+            CategoryAssignmentOutcome.Assigned
+        coEvery { dispatchPort.dispatchAssignedCategorySideEffects(any(), any(), any()) } returns Unit
+        val deferredService = ReceiptLinkService(
+            database = database,
+            receiptExpenseLinkDao = database.receiptExpenseLinkDao(),
+            scannedReceiptDao = database.scannedReceiptDao(),
+            receiptLifecycleEventWriter = mockk(relaxed = true),
+            receiptItemCategorizationDao = database.receiptItemCategorizationDao(),
+            warrantyDao = database.warrantyDao(),
+            returnWindowDao = database.returnWindowDao(),
+            expenseDao = database.expenseDao(),
+            timeProvider = timeProvider,
+            writeBarrier = writeBarrier,
+            sourceLinkWriter = mockk(relaxed = true),
+            categoryAssignmentPort = dispatchPort,
+            transactionRunner = RoomDomainTransactionRunner(database, timeProvider)
+        )
+
+        var capturedExpenseId: Long? = null
+        val result = deferredService.linkReceiptToExpense(
+            receiptId = receiptId,
+            expenseId = expenseId,
+            linkType = "REVIEW_APPROVAL",
+            source = "TEST",
+            deferredCategorySideEffectSink = { capturedExpenseId = it }
+        )
+
+        assertTrue("link should succeed: ${result.exceptionOrNull()}", result.isSuccess)
+        assertEquals(expenseId, capturedExpenseId)
+        coVerify(exactly = 0) {
+            dispatchPort.dispatchAssignedCategorySideEffects(any(), any(), any())
+        }
+
+        deferredService.dispatchAssignedCategorySideEffectsAfterCommit(
+            expenseId = capturedExpenseId!!,
+            source = "RECEIPT_ITEM_MAJORITY"
+        )
+
+        coVerify(exactly = 1) {
+            dispatchPort.dispatchAssignedCategorySideEffects(
+                expenseId,
+                "RECEIPT_ITEM_MAJORITY",
+                null
+            )
         }
     }
 }

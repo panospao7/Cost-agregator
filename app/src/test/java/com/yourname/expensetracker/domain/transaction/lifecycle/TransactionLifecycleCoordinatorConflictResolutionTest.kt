@@ -174,6 +174,75 @@ class TransactionLifecycleCoordinatorConflictResolutionTest {
         } returns false
     }
 
+    // ── Precheck duplicate is audited exactly once ───────────────────────────
+
+    /**
+     * A duplicate resolved by the in-transaction precheck writes one
+     * CREATE_DUPLICATE_SKIPPED and returns — it must not fall through to the
+     * insert-conflict resolver, which would audit the same attempt again.
+     * (Real-Room pin: TransactionLifecycleCoordinatorDbContractTest
+     * `createExpense duplicate detected and skipped` — exactly 2 events.)
+     */
+    @Test
+    fun `precheck duplicate writes exactly one duplicate-skipped event`() = runTest(timeout = 60.seconds) {
+        coEvery {
+            expenseDao.isDuplicateCurrencyAware(any(), any(), any(), any(), any(), any(), any(), any())
+        } returns true
+        coEvery {
+            expenseDao.findDuplicateIdCurrencyAware(any(), any(), any(), any(), any(), any(), any(), any())
+        } returns 42L
+
+        val result = coordinator.createExpenseStandaloneV2(
+            request().copy(source = ExpenseSource.MANUAL_ENTRY)
+        )
+
+        assertTrue("Expected DuplicateSkipped, got $result", result is CreateExpenseResult.DuplicateSkipped)
+        assertEquals(42L, (result as CreateExpenseResult.DuplicateSkipped).existingExpenseId)
+        assertTrue(result.eventLogged)
+        coVerify(exactly = 1) {
+            transactionEventDao.insert(match {
+                it.eventType == com.yourname.expensetracker.domain.transaction.LifecycleEventType.CREATE_DUPLICATE_SKIPPED.name
+            })
+        }
+        coVerify(exactly = 0) { expenseDao.insertAtomic(any()) }
+        // The insert-conflict resolver never runs for a precheck duplicate.
+        coVerify(exactly = 0) { expenseDao.findIdByDedupeKey(any()) }
+    }
+
+    @Test
+    fun `unresolved precheck duplicate does not duplicate audit when conflict resolver resolves`() =
+        runTest(timeout = 60.seconds) {
+            coEvery {
+                expenseDao.isDuplicateCurrencyAware(any(), any(), any(), any(), any(), any(), any(), any())
+            } returns true
+            coEvery {
+                expenseDao.findDuplicateIdCurrencyAware(any(), any(), any(), any(), any(), any(), any(), any())
+            } returnsMany listOf(null, 42L)
+            coEvery { expenseDao.findIdByDedupeKey(canonicalKey()) } returns null
+
+            val result = coordinator.createExpenseStandaloneV2(
+                request().copy(source = ExpenseSource.MANUAL_ENTRY)
+            )
+
+            assertTrue("Expected DuplicateSkipped, got $result", result is CreateExpenseResult.DuplicateSkipped)
+            assertEquals(42L, (result as CreateExpenseResult.DuplicateSkipped).existingExpenseId)
+            assertTrue(result.eventLogged)
+            coVerify(exactly = 1) {
+                transactionEventDao.insert(match {
+                    it.eventType == com.yourname.expensetracker.domain.transaction.LifecycleEventType.CREATE_DUPLICATE_SKIPPED.name
+                })
+            }
+            coVerify(exactly = 0) {
+                transactionEventDao.insert(match {
+                    it.eventType == com.yourname.expensetracker.domain.transaction.LifecycleEventType.CREATE_INSERT_CONFLICT.name
+                })
+            }
+            coVerify(exactly = 0) { expenseDao.insertAtomic(any()) }
+            coVerify(exactly = 2) {
+                expenseDao.findDuplicateIdCurrencyAware(any(), any(), any(), any(), any(), any(), any(), any())
+            }
+        }
+
     // ── P2-002: resolution order rawNotificationId → dedupeKey → fuzzy ───────
 
     @Test

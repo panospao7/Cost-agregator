@@ -14,8 +14,6 @@ import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.diagnostics.EventMetadataSanitizer
-import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicy
-import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
 import com.yourname.expensetracker.domain.privacy.PrivacySettings
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsLoadState
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
@@ -110,15 +108,6 @@ class ReceiptPartialOcrPipelineTest {
         val settings = PrivacySettings()
         coEvery { privacy.getSettings() } returns settings
         coEvery { privacy.getLoadState() } returns PrivacySettingsLoadState.Loaded(settings)
-        val cloudPolicy = mockk<EffectiveCloudAiPolicyResolver>()
-        coEvery { cloudPolicy.resolve() } returns EffectiveCloudAiPolicy(
-            cloudAllowed = true,
-            reason = null,
-            redactBeforeCloud = false,
-            receiptImageUploadAllowed = true,
-            bankStatementCloudAllowed = false
-        )
-
         assets = mockk()
         coEvery { assets.computeUriHash(uri) } returns Result.success(imageHash)
         coEvery { assets.computeFileHash(assetPath) } returns Result.success(imageHash)
@@ -201,8 +190,7 @@ class ReceiptPartialOcrPipelineTest {
             sourceLinkWriter = mockk(relaxed = true),
             receiptSideEffectPlanner = planner,
             receiptInsertResolver = insertResolver,
-            receiptParser = parser,
-            effectiveCloudAiPolicyResolver = cloudPolicy
+            receiptParser = parser
         )
     }
 

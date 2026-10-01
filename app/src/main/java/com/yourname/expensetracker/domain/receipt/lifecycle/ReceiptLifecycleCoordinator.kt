@@ -47,8 +47,6 @@ import com.yourname.expensetracker.domain.receipt.ReceiptSourceType
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
-import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
-import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.RawPersistencePolicyResolver
 import com.yourname.expensetracker.domain.privacy.RawContentSanitizer
 import com.yourname.expensetracker.domain.privacy.RawStorageMode
@@ -134,8 +132,6 @@ class ReceiptLifecycleCoordinator @Inject constructor(
     // items JSON into the in-memory LineItem projection for the post-commit
     // categorization action (fresh inserts under restricted storage modes).
     private val receiptParser: ReceiptParser,
-    // U-PR5: Authoritative cloud AI gate — checks both PrivacySettings and AiSettings before cloud OCR calls
-    private val effectiveCloudAiPolicyResolver: EffectiveCloudAiPolicyResolver
 ) {
 
     companion object {
@@ -357,13 +353,6 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         //    Ownership boundary: ReceiptRepository/OCR owns file persistence.
         //    The coordinator works with the imagePath from the response, not its own copy.
         return try {
-            // U-PR5: Authoritative cloud AI gate — blocks cloud OCR when privacy or AI settings disable it.
-            val ocrPolicy = effectiveCloudAiPolicyResolver.resolve()
-            ocrPolicy.requireAllowed(PrivacyCapability.CLOUD_AI_RECEIPT_OCR)
-            if (ocrPolicy.redactBeforeCloud) {
-                Timber.d("processReceiptInput: redactBeforeCloud=true — cloud OCR payload redaction active")
-            }
-
             val processResult = receiptRepository.processReceipt(
                 imageUri = uri,
                 autoCreateReview = options.createReview,
@@ -1012,6 +1001,7 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
         var needsReviewReason: String? = null
         val createdExpenseIds = mutableListOf<Long>()
         val linkedExistingExpenseIds = mutableListOf<Long>()
+        val categorySideEffectExpenseIds = linkedSetOf<Long>()
         var receiptPlan: PostCommitActionBatch? = null
         val transactionActionBatches = mutableListOf<PostCommitActionBatch>()
 
@@ -1191,7 +1181,10 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
                             val linkResult = receiptLinkService.linkReceiptToExpense(
                                 savedId, created.expenseId, "EMAIL_RECEIPT",
                                 source = ExpenseSource.EMAIL_RECEIPT.name,
-                                writeSourceLink = false
+                                writeSourceLink = false,
+                                deferredCategorySideEffectSink = { expenseId ->
+                                    categorySideEffectExpenseIds += expenseId
+                                }
                             )
                             if (linkResult.isFailure) {
                                 throw IllegalStateException("Link failed: ${linkResult.exceptionOrNull()?.message}", linkResult.exceptionOrNull())
@@ -1205,7 +1198,10 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
                             val linkResult = receiptLinkService.linkReceiptToExpense(
                                 savedId, dupSkipped.existingExpenseId, "EMAIL_RECEIPT",
                                 source = ExpenseSource.EMAIL_RECEIPT.name,
-                                writeSourceLink = false
+                                writeSourceLink = false,
+                                deferredCategorySideEffectSink = { expenseId ->
+                                    categorySideEffectExpenseIds += expenseId
+                                }
                             )
                             if (linkResult.isFailure) {
                                 throw IllegalStateException("Link failed: ${linkResult.exceptionOrNull()?.message}", linkResult.exceptionOrNull())
@@ -1314,6 +1310,13 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
             transactionActionBatches.fold(receiptPlanToRun) { acc, batch -> acc + batch }
         } else {
             receiptPlanToRun
+        }
+
+        for (expenseId in categorySideEffectExpenseIds) {
+            receiptLinkService.dispatchAssignedCategorySideEffectsAfterCommit(
+                expenseId = expenseId,
+                source = "RECEIPT_ITEM_MAJORITY"
+            )
         }
 
         postCommitActionRunner.runBestEffortAfterCommit(
@@ -1579,6 +1582,7 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
 
         // S7-66F-001: Use createExpenseDbOnlyV2 so side effects are NOT dispatched inside the transaction.
         // If linking fails and the transaction rolls back, no side effects will have run.
+        var categorySideEffectExpenseId: Long? = null
         val txResult: Pair<Result<Long>, PostCommitActionBatch> = try {
             transactionRunner.runInTransaction(
                 correlationId = java.util.UUID.randomUUID().toString(),
@@ -1593,7 +1597,10 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
                             expenseId = result.expenseId,
                             linkType = "DIRECT_SAVE",
                             source = com.yourname.expensetracker.domain.transaction.ExpenseSource.RECEIPT_SCAN.name,
-                            writeSourceLink = false
+                            writeSourceLink = false,
+                            deferredCategorySideEffectSink = { expenseId ->
+                                categorySideEffectExpenseId = expenseId
+                            }
                         )
                         if (linkResult.isFailure) {
                             val failure = linkResult.exceptionOrNull()!!
@@ -1622,6 +1629,12 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
 
         // S7-66F-001: Dispatch side effects only after successful commit
         expenseIdResult.onSuccess { expenseId ->
+            if (categorySideEffectExpenseId != null) {
+                receiptLinkService.dispatchAssignedCategorySideEffectsAfterCommit(
+                    expenseId = categorySideEffectExpenseId!!,
+                    source = "RECEIPT_ITEM_MAJORITY"
+                )
+            }
             val receiptActions = receiptSideEffectPlanner.planAfterReceiptLinked(
                 receiptId = receiptId,
                 expenseId = expenseId,

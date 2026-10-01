@@ -1032,21 +1032,6 @@ entries:
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/ExpenseRepository.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.ExpenseRepository
   kind: function
-  method: clearExpenseLocation
-  receiver: null
-  parameterTypes:
-  - Long
-  daoAccessor: expenseDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
-  operation: clearLocation
-  barrierMode: helper
-  reason: 'GR-08l1 EXACT_POLICY: maintenance location-column clear behind the write
-    barrier; no lifecycle event by design per the EXPENSE_DAO_MUTATION_ALLOWLIST comment'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08L
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/ExpenseRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.ExpenseRepository
-  kind: function
   method: conditionallySetLocation
   receiver: null
   parameterTypes:
@@ -4786,6 +4771,7 @@ entries:
   - com.yourname.expensetracker.data.database.entity.MatchStatus?
   - Boolean
   - Boolean
+  - ((Long) -> Unit)?
   daoAccessor: receiptExpenseLinkDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao
   operation: insert
@@ -4811,6 +4797,7 @@ entries:
   - com.yourname.expensetracker.data.database.entity.MatchStatus?
   - Boolean
   - Boolean
+  - ((Long) -> Unit)?
   daoAccessor: receiptItemCategorizationDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptItemCategorizationDao
   operation: linkToExpense
@@ -4836,6 +4823,7 @@ entries:
   - com.yourname.expensetracker.data.database.entity.MatchStatus?
   - Boolean
   - Boolean
+  - ((Long) -> Unit)?
   daoAccessor: returnWindowDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.ReturnWindowDao
   operation: updateExpenseIdByReceiptId
@@ -4861,6 +4849,7 @@ entries:
   - com.yourname.expensetracker.data.database.entity.MatchStatus?
   - Boolean
   - Boolean
+  - ((Long) -> Unit)?
   daoAccessor: scannedReceiptDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
   operation: claimForAutoMatch
@@ -4888,6 +4877,7 @@ entries:
   - com.yourname.expensetracker.data.database.entity.MatchStatus?
   - Boolean
   - Boolean
+  - ((Long) -> Unit)?
   daoAccessor: scannedReceiptDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
   operation: updateLinkTargets
@@ -4913,6 +4903,7 @@ entries:
   - com.yourname.expensetracker.data.database.entity.MatchStatus?
   - Boolean
   - Boolean
+  - ((Long) -> Unit)?
   daoAccessor: warrantyDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.WarrantyDao
   operation: updateExpenseIdByReceiptId
@@ -6671,6 +6662,42 @@ entries:
 - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
   ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
   kind: function
+  method: clearLocation
+  receiver: null
+  parameterTypes:
+  - Long
+  - String
+  - String?
+  - String?
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: clearLocation
+  barrierMode: helper
+  reason: 'CA-I-05-001 EXACT_POLICY (human-approved 2026-09-30): user location clear
+    routes through the transaction lifecycle coordinator and preserves audit snapshots'
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: clearLocation
+  receiver: null
+  parameterTypes:
+  - Long
+  - String
+  - String?
+  - String?
+  daoAccessor: transactionEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
+  operation: insert
+  barrierMode: helper
+  reason: 'CA-I-05-001 EXACT_POLICY: user location clear UPDATED lifecycle event with
+    before/after snapshots; barrier via checkWritesAllowed helper'
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
   method: updateLocation
   receiver: null
   parameterTypes:
@@ -7365,6 +7392,8 @@ entries:
   - org.json.JSONObject
   - Int
   - Long?
+  - String
+  - Int
   daoAccessor: categoryDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.CategoryDao
   operation: insert
@@ -7383,6 +7412,8 @@ entries:
   - org.json.JSONObject
   - Int
   - Long?
+  - String
+  - Int
   daoAccessor: categoryDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.CategoryDao
   operation: insert

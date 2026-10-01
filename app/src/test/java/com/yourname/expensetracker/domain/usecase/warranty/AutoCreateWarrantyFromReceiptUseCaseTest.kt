@@ -11,8 +11,10 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
 import io.mockk.slot
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -53,6 +55,7 @@ class AutoCreateWarrantyFromReceiptUseCaseTest {
         coEvery { warrantyTrackerRepository.getWarrantyByReceiptId(receiptId) } returns null
         val insertedWarrantySlot = slot<Warranty>()
         coEvery { warrantyTrackerRepository.addWarrantyIgnoreConflicts(capture(insertedWarrantySlot)) } returns 777L
+        coEvery { warrantyTrackerRepository.upsertReturnWindowForReceipt(receiptId, any()) } returns null
 
         val result = useCase.execute(receiptId = receiptId, receiptText = ocr)
 
@@ -80,6 +83,7 @@ class AutoCreateWarrantyFromReceiptUseCaseTest {
         coEvery { warrantyTrackerRepository.getWarrantyByReceiptId(receiptId) } returns null
         val draftSlot = slot<Warranty>()
         coEvery { warrantyTrackerRepository.addWarrantyIgnoreConflicts(capture(draftSlot)) } returns 778L
+        coEvery { warrantyTrackerRepository.upsertReturnWindowForReceipt(receiptId, any()) } returns null
 
         val result = useCase.execute(receiptId = receiptId, receiptText = ocr)
 
@@ -106,6 +110,7 @@ class AutoCreateWarrantyFromReceiptUseCaseTest {
             warrantyDurationMonths = 12,
             warrantyEndDate = FIXED_NOW + 1_000L
         )
+        coEvery { warrantyTrackerRepository.upsertReturnWindowForReceipt(receiptId, any()) } returns null
 
         val result = useCase.execute(receiptId, "ANY OCR")
 
@@ -186,6 +191,92 @@ class AutoCreateWarrantyFromReceiptUseCaseTest {
     }
 
     @Test
+    fun `execute propagates cancellation without converting it to Failure`() = runTest {
+        val receiptId = 1008L
+        val cancellation = CancellationException("cancelled")
+        coEvery { receiptRepository.getReceiptById(receiptId) } throws cancellation
+
+        val thrown = try {
+            useCase.execute(receiptId, "OCR")
+            null
+        } catch (error: CancellationException) {
+            error
+        }
+
+        assertSame(cancellation, thrown)
+    }
+
+    @Test
+    fun `execute propagates cancellation from return window persistence`() = runTest {
+        val receiptId = 1009L
+        val cancellation = CancellationException("return-window-cancelled")
+        val ocr = """
+            MERCHANT: TECH STORE
+            DATE: ${recentDate()}
+            PRODUCT: ULTRA LAPTOP PRO 15
+            WARRANTY: 24 MONTHS
+        """.trimIndent()
+
+        coEvery { warrantyTrackerRepository.getWarrantyByReceiptId(receiptId) } returns null
+        coEvery { warrantyTrackerRepository.addWarrantyIgnoreConflicts(any()) } returns 779L
+        coEvery { warrantyTrackerRepository.upsertReturnWindowForReceipt(receiptId, any()) } throws cancellation
+
+        val thrown = try {
+            useCase.execute(receiptId, ocr)
+            null
+        } catch (error: CancellationException) {
+            error
+        }
+
+        assertSame(cancellation, thrown)
+    }
+
+    @Test
+    fun `execute returns controlled failure when return window persistence fails`() = runTest {
+        val receiptId = 1010L
+        val ocr = """
+            MERCHANT: TECH STORE
+            DATE: ${recentDate()}
+            PRODUCT: ULTRA LAPTOP PRO 15
+            WARRANTY: 24 MONTHS
+        """.trimIndent()
+
+        coEvery { warrantyTrackerRepository.getWarrantyByReceiptId(receiptId) } returns null
+        coEvery { warrantyTrackerRepository.addWarrantyIgnoreConflicts(any()) } returns 780L
+        coEvery {
+            warrantyTrackerRepository.upsertReturnWindowForReceipt(receiptId, any())
+        } throws IllegalStateException("database detail must not escape")
+
+        val result = useCase.execute(receiptId, ocr)
+
+        assertTrue(result is WarrantyCreationResult.Failure)
+        assertEquals("RETURN_WINDOW_PERSIST_FAILED", (result as WarrantyCreationResult.Failure).error)
+    }
+
+    @Test
+    fun `execute retries return window persistence for an existing warranty`() = runTest {
+        val receiptId = 1011L
+        val existingWarranty = Warranty(
+            id = 56L,
+            receiptId = receiptId,
+            productName = "Existing Item",
+            merchantName = "Existing Shop",
+            purchaseDate = FIXED_NOW - 1_000L,
+            warrantyDurationMonths = 12,
+            warrantyEndDate = FIXED_NOW + 1_000L
+        )
+        coEvery { warrantyTrackerRepository.getWarrantyByReceiptId(receiptId) } returns existingWarranty
+        coEvery {
+            warrantyTrackerRepository.upsertReturnWindowForReceipt(receiptId, existingWarranty)
+        } throws IllegalStateException("database detail must not escape")
+
+        val result = useCase.execute(receiptId, "ANY OCR")
+
+        assertTrue(result is WarrantyCreationResult.Failure)
+        assertEquals("RETURN_WINDOW_PERSIST_FAILED", (result as WarrantyCreationResult.Failure).error)
+    }
+
+    @Test
     fun `createWarrantyForReview promotes existing draft instead of inserting duplicate`() = runTest {
         val receiptId = 2001L
         val existingDraft = Warranty(
@@ -210,6 +301,7 @@ class AutoCreateWarrantyFromReceiptUseCaseTest {
 
         coEvery { warrantyTrackerRepository.getWarrantyByReceiptId(receiptId) } returns existingDraft
         coEvery { warrantyTrackerRepository.updateWarranty(any()) } returns Unit
+        coEvery { warrantyTrackerRepository.upsertReturnWindowForReceipt(receiptId, any()) } returns null
 
         val result = useCase.createWarrantyForReview(receiptId, confirmedData)
 
