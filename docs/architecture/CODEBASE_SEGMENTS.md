@@ -2,7 +2,7 @@
 
 Canonical guide for segment ownership and AI analysis.
 
-**Last updated:** 2026-09-21 (verified against source). Database schema version: v148 (`data/database/AppDatabase.kt`).
+**Last updated:** 2026-10-01 (verified against source). Database schema version: v149 (`data/database/AppDatabase.kt`).
 
 ## Rules
 - One segment list, one ascending order, one owning section per segment.
@@ -308,7 +308,8 @@ Owns startup wiring, service lifecycle recovery, and background runtime jobs.
 - `domain/workers/WorkerReasonCodes.kt` — Central exception → safe structured reason-code mapping (PR12J-1)
 - `domain/workers/WorkerTerminalDiagnosticSink.kt` / `FileWorkerTerminalDiagnosticSink.kt` — Durable file-backed fallback diagnostic when terminal DB status writes fail (PR12H-3)
 - `domain/workers/ScheduleResult.kt` — Scheduling outcome from `WorkerSpecScheduler` for diagnostic emission
-- `di/WorkerModule.kt` — Binds WorkerRunLogger interface → WorkerRunLoggerImpl, NotificationPermissionChecker → AndroidNotificationPermissionChecker
+- `di/WorkerModule.kt` — Binds worker leases/drain control, notification permission, and WorkManager
+- `di/DiagnosticsModule.kt` — Binds WorkerRunLogger interface → WorkerRunLoggerImpl
 - `service/reminder/BillReminderWorker.kt`
 - `service/receiptmatching/ReceiptMatchingWorker.kt`
 - `service/warranty/WarrantyExpirationWorker.kt`
@@ -588,7 +589,7 @@ Owns debug surfaces, diagnostics pipeline, pipeline diagnostics, data integrity 
 - `data/database/entity/OperationRun.kt` — Operation run record
 - `data/database/dao/OperationRunDao.kt` — DAO for operation runs
 - `domain/privacy/RetentionTarget.kt` — Interface for retention-purgeable targets (owned here, privacy-aligned)
-- `domain/privacy/RetentionRegistry.kt` — Registry with 10 registered retention targets (Hilt multibinding)
+- `domain/privacy/RetentionRegistry.kt` — Registry with 15 registered retention targets (Hilt multibinding)
 - `di/RetentionModule.kt` — DI bindings for retention targets
 
 **Boundary note:** `PipelineDiagnosticEvent` / `PipelineDiagnosticEventDao` are owned by Segment 8 (Analytics) and listed there; this segment consumes them via the diagnostics pipeline.
@@ -607,10 +608,11 @@ Owns Hilt module wiring and app-wide providers.
 - `di/PrivacyModule.kt`
 - `di/ProvenanceModule.kt` — Data provenance bindings
 - `di/ReminderSettingsModule.kt` — BillReminderSettingsRepository binding
-- `di/RetentionModule.kt` — Retention target registry bindings (10 registered targets)
+- `di/RetentionModule.kt` — Retention target registry bindings (15 registered targets)
 - `di/ServiceModule.kt`
 - `di/TimeModule.kt`
-- `di/WorkerModule.kt` — Binds WorkerRunLogger interface → WorkerRunLoggerImpl, NotificationPermissionChecker → AndroidNotificationPermissionChecker
+- `di/WorkerModule.kt` — Binds worker leases/drain control, notification permission, and WorkManager
+- `di/DiagnosticsModule.kt` — Binds WorkerRunLogger interface → WorkerRunLoggerImpl
 - `MainApplication.kt`
 
 **Boundary note:** `BackupRepositoryModule.kt` is also listed under Segment 18 (Export & Backup) as it cross-cuts DI wiring with backup infrastructure. `PrivacyModule.kt` cross-cuts with Segment 28 (Security & API Key Management).

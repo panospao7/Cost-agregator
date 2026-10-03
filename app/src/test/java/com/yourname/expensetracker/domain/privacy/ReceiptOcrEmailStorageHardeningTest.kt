@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.privacy
 
 import com.yourname.expensetracker.data.privacy.DefaultSensitiveHashingService
+import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptStructuredDataPolicy
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -93,15 +94,18 @@ class ReceiptOcrEmailStorageHardeningTest {
     }
 
     @Test
-    fun parsed_items_kept_in_store_redacted_mode() {
-        val items = """[{"item":"Coffee","price":5.0}]"""
+    fun parsed_items_are_policy_redacted_in_store_redacted_mode() {
+        val items = """[{"description":"Coffee","quantity":1,"unitPrice":5.0,"totalPrice":5.0}]"""
         val payload = ReceiptPersistencePayload.build(
             mode = RawStorageMode.STORE_REDACTED,
             rawOcrText = "Full text",
-            parsedItemsJson = items
+            parsedItemsJson = items,
+            currency = "EUR"
         )
         assertNull(payload.rawOcrText)
-        assertEquals(items, payload.parsedItemsJson)
+        assertNotNull(payload.parsedItemsJson)
+        assertTrue(ReceiptStructuredDataPolicy.isRedactedItemsJson(payload.parsedItemsJson))
+        assertFalse(payload.parsedItemsJson!!.contains("Coffee"))
         assertEquals("[REDACTED]", payload.reviewSnippet)
     }
 
@@ -202,7 +206,7 @@ class ReceiptOcrEmailStorageHardeningTest {
     }
 
     @Test
-    fun email_store_redacted_removes_body_keeps_items() {
+    fun email_store_redacted_removes_body_and_policy_redacts_items() {
         val payload = EmailReceiptPersistencePayload.build(
             mode = RawStorageMode.STORE_REDACTED,
             subject = "Sensitive",
@@ -212,14 +216,17 @@ class ReceiptOcrEmailStorageHardeningTest {
             messageIdHash = "hash",
             contentFingerprintHash = "fp",
             providerOrderIdHash = "order",
-            parsedItemsJson = """[{"item":"Coffee"}]"""
+            parsedItemsJson = """[{"description":"Coffee","quantity":1,"unitPrice":5.0,"totalPrice":5.0}]""",
+            currency = "EUR"
         )
         assertEquals("[REDACTED]", payload.subject)
         assertEquals("[REDACTED]", payload.sender)
         assertNull(payload.bodyText)
         assertNull(payload.messageIdStored)
         assertEquals("hash", payload.messageIdHash)
-        assertEquals("""[{"item":"Coffee"}]""", payload.parsedItemsJson)
+        assertNotNull(payload.parsedItemsJson)
+        assertTrue(ReceiptStructuredDataPolicy.isRedactedItemsJson(payload.parsedItemsJson))
+        assertFalse(payload.parsedItemsJson!!.contains("Coffee"))
     }
 
     @Test

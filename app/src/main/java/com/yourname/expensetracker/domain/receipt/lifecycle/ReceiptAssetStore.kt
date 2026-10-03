@@ -4,8 +4,10 @@ import android.content.Context
 import android.net.Uri
 import androidx.core.content.FileProvider
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
+import com.yourname.expensetracker.domain.util.CancellationSafe
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import timber.log.Timber
 import java.io.File
 import java.io.FileInputStream
@@ -30,6 +32,10 @@ class ReceiptAssetStore @Inject constructor(
     @ApplicationContext private val context: Context,
     private val timeProvider: TimeProvider
 ) {
+    class BackupManifestException : IllegalStateException(
+        "RECEIPT_ASSET_COLLECTION_FAILED"
+    )
+
     private val receiptsDir: File
         get() = File(context.filesDir, RECEIPTS_DIR).also {
             if (!it.exists()) it.mkdirs()
@@ -66,7 +72,7 @@ class ReceiptAssetStore @Inject constructor(
      *         [Result.failure] if the source cannot be read or the copy fails.
      */
     suspend fun persistReceiptAsset(sourceUri: Uri): Result<String> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-        runCatching {
+        CancellationSafe.runCatchingCancellable {
             val dir = receiptsDir
             val fileName = "${timeProvider.now()}_${UUID.randomUUID()}.jpg"
             val destFile = File(dir, fileName)
@@ -98,7 +104,7 @@ class ReceiptAssetStore @Inject constructor(
      *         [Result.failure] if the file does not exist or cannot be read.
      */
     suspend fun computeFileHash(filePath: String): Result<String> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-        runCatching {
+        CancellationSafe.runCatchingCancellable {
             val digest = MessageDigest.getInstance("SHA-256")
             val buffer = ByteArray(8192)
 
@@ -125,7 +131,7 @@ class ReceiptAssetStore @Inject constructor(
      *         [Result.failure] if the URI cannot be opened or read.
      */
     suspend fun computeUriHash(uri: Uri): Result<String> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-        runCatching {
+        CancellationSafe.runCatchingCancellable {
             val digest = MessageDigest.getInstance("SHA-256")
             val buffer = ByteArray(8192)
 
@@ -202,7 +208,8 @@ class ReceiptAssetStore @Inject constructor(
      * For each such receipt, the method:
      * - Verifies that the file exists on disk.
      * - Looks up the file size from [File.length].
-     * - Computes the SHA-256 hash of the file content (best-effort; non-fatal).
+     * - Computes the SHA-256 hash of the file content; unreadable or hash-failing
+     *   assets fail backup creation instead of being silently omitted.
      * - Infers the MIME type from the file extension.
      *
      * Use this manifest to include receipt images in an archive-based backup.
@@ -210,24 +217,29 @@ class ReceiptAssetStore @Inject constructor(
      * @param receipts List of all [ScannedReceipt] rows (typically from
      *            [ScannedReceiptDao.getAllWithImagePath]).
      * @return A list of [ReceiptAssetManifestEntry] entries, one per receipt
-     *         that has an [imagePath] and whose file exists on disk.
+     *         that has an [imagePath]. Missing or unreadable assets fail closed
+     *         instead of being silently omitted from the backup.
      */
     suspend fun generateBackupManifest(receipts: List<ScannedReceipt>): List<ReceiptAssetManifestEntry> =
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             receipts
                 .filter { it.imagePath != null }
-                .mapNotNull { receipt ->
+                .map { receipt ->
                     val path = receipt.imagePath!!
                     val file = File(path)
                     if (!file.exists() || !file.isFile) {
                         Timber.w("Backup manifest: receipt asset file missing: [REDACTED] (receiptId=%d)", receipt.id)
-                        return@mapNotNull null
+                        throw BackupManifestException()
                     }
-                    val fileHash = runCatching {
+                    val fileHash = try {
                         computeFileHashSync(path)
-                    }.getOrElse { error ->
-                        Timber.w(error, "Backup manifest: hash computation failed for [REDACTED]")
-                        null
+                    } catch (error: Exception) {
+                        if (error is CancellationException) throw error
+                        Timber.w(
+                            "Backup manifest: hash computation failed for [REDACTED] (class=%s)",
+                            error::class.java.simpleName
+                        )
+                        throw BackupManifestException()
                     }
                     val mimeType = URLConnection.guessContentTypeFromName(file.name)
                         ?: "application/octet-stream"

@@ -50,7 +50,8 @@ class RecurringOccurrenceExpander @Inject constructor() {
         val endDate: Long,
         val anchorDate: Long,
         val sourceType: String,
-        val sourceId: Long
+        val sourceId: Long,
+        val anchorDayOfMonth: Int? = null
     )
 
     /**
@@ -118,7 +119,8 @@ class RecurringOccurrenceExpander @Inject constructor() {
 
         // RP-04 P4-005: derive the fixed anchor day ONCE per expansion operation so all
         // month-based advances within this expansion agree on the same anchor day.
-        val anchorDayOfMonth = TimePeriodUtils.getDayOfMonth(TimePeriodUtils.getStartOfDay(request.anchorDate))
+        val anchorDayOfMonth = request.anchorDayOfMonth
+            ?: TimePeriodUtils.getDayOfMonth(TimePeriodUtils.getStartOfDay(request.anchorDate))
 
         val candidates = mutableListOf<OccurrenceCandidate>()
         var currentDate = TimePeriodUtils.getStartOfDay(request.anchorDate)

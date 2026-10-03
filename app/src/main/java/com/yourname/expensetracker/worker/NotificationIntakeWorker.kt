@@ -22,6 +22,7 @@ import com.yourname.expensetracker.domain.workers.RetryableWorkerException
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.domain.workers.WorkerRunContext
 import com.yourname.expensetracker.domain.workers.BlockedPolicy
+import com.yourname.expensetracker.domain.workers.WorkerCheckpointBlockedException
 import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
 import com.yourname.expensetracker.domain.workers.WorkerGuardResult
 import com.yourname.expensetracker.domain.workers.WorkerSpec
@@ -32,6 +33,7 @@ import dagger.assisted.AssistedInject
 import kotlinx.coroutines.CancellationException
 import timber.log.Timber
 import java.io.IOException
+import java.security.GeneralSecurityException
 
 @HiltWorker
 class NotificationIntakeWorker @AssistedInject constructor(
@@ -103,41 +105,81 @@ class NotificationIntakeWorker @AssistedInject constructor(
                 workerId = "intake-worker-${timeProvider.now()}"
             )
             if (claimed == 0) {
-                return@runGuardedWithContext // Already claimed — idempotent success (true NO_WORK)
+                if (meta.status == NotificationIntakeStatus.FAILED_RETRYABLE.name &&
+                    meta.nextAttemptAt != null && meta.nextAttemptAt > now
+                ) {
+                    throw RetryableWorkerException(DiagnosticReasonCode.WORKER_RETRYABLE_ERROR.name)
+                }
+                return@runGuardedWithContext // Already claimed or no longer actionable.
             }
             ctx.addRowsUpdated() // PR12I-3: claim succeeded
 
-            // Reload metadata after claim (still no payload)
-            ctx.checkpoint("intake:reloadMetadata")
-            val claimedMeta = intakeDao.getProcessingMetadataById(intakeId)
-                ?: return@runGuardedWithContext
-            ctx.addRowsScanned() // PR12I-3: reload metadata found row
-
-            // PR12H-2: Mid-run privacy recheck BEFORE loading any payload
-            ctx.checkpoint("intake:privacyBeforePayloadLoad")
-            if (!isNotificationCaptureAllowed()) {
-                intakeDao.markPrivacyDeniedAndPurgeAllPayload(id = intakeId, nowMs = now)
-                ctx.addRowsUpdated() // PR12I-3: privacy purge
-                return@runGuardedWithContext
-            }
-
-            // PR12H-2: Only now load the payload — after privacy is confirmed
-            ctx.checkpoint("intake:loadPayload")
-            val payload = intakeDao.getPayloadForProcessing(intakeId)
-            if (payload != null) ctx.addRowsScanned() // PR12I-3: payload found
-
-            // PR 1 FIX: Load/decrypt processing payload BEFORE filter.
-            // Previously filtered on null visible fields (broken for encrypted transient modes).
-            val isRaw = claimedMeta.rawStorageMode == "STORE_RAW"
+            val claimedMeta: NotificationIntakeProcessingMetadata
             val processingTitle: String?
             val processingText: String?
             val processingBody: String?
             val processingSubText: String?
             val processingExtrasJson: String?
+            try {
+                // Reload metadata after claim (still no payload)
+                ctx.checkpoint("intake:reloadMetadata")
+                claimedMeta = intakeDao.getProcessingMetadataById(intakeId)
+                    ?: throw IllegalStateException("CLAIMED_METADATA_UNAVAILABLE")
+                ctx.addRowsScanned() // PR12I-3: reload metadata found row
 
-            if (isRaw) {
-                if (payload == null) {
-                    Timber.w("IntakeWorker: no payload available for raw intakeId=$intakeId")
+                // PR12H-2: Mid-run privacy recheck BEFORE loading any payload
+                ctx.checkpoint("intake:privacyBeforePayloadLoad")
+                if (!isNotificationCaptureAllowed()) {
+                    intakeDao.markPrivacyDeniedAndPurgeAllPayload(id = intakeId, nowMs = now)
+                    ctx.addRowsUpdated() // PR12I-3: privacy purge
+                    return@runGuardedWithContext
+                }
+
+                // PR12H-2: Only now load the payload — after privacy is confirmed
+                ctx.checkpoint("intake:loadPayload")
+                val payload = intakeDao.getPayloadForProcessing(intakeId)
+                if (payload != null) ctx.addRowsScanned() // PR12I-3: payload found
+
+                // PR 1 FIX: Load/decrypt processing payload BEFORE filter.
+                // Previously filtered on null visible fields (broken for encrypted transient modes).
+                val isRaw = claimedMeta.rawStorageMode == "STORE_RAW"
+                if (isRaw) {
+                    if (payload == null) {
+                        Timber.w("IntakeWorker: no payload available for raw intakeId=$intakeId")
+                        ctx.checkpoint("intake:payloadUnavailable")
+                        intakeDao.markTerminal(
+                            id = intakeId,
+                            status = NotificationIntakeStatus.PAYLOAD_UNAVAILABLE_PRIVACY.name,
+                            rawId = null, expenseId = null, reviewId = null,
+                            finalOutcome = "PAYLOAD_UNAVAILABLE_PRIVACY",
+                            nowMs = now
+                        )
+                        purgePayloadBestEffort(intakeId, now, ctx)
+                        return@runGuardedWithContext
+                    }
+                    processingTitle = payload.title
+                    processingText = payload.text
+                    processingBody = payload.bigText
+                    processingSubText = payload.subText
+                    processingExtrasJson = payload.extrasJson
+                } else if (payload != null
+                    && payload.transientPayloadCiphertext != null
+                    && payload.transientPayloadNonce != null
+                    && payload.transientPayloadVersion != null
+                ) {
+                    ctx.checkpoint("intake:beforeDecrypt")
+                    val decrypted = crypto.decrypt(
+                        payload.transientPayloadCiphertext,
+                        payload.transientPayloadNonce,
+                        payload.transientPayloadVersion
+                    )
+                    processingTitle = decrypted.title
+                    processingText = decrypted.text
+                    processingBody = decrypted.bigText
+                    processingSubText = decrypted.subText
+                    processingExtrasJson = decrypted.extrasJson
+                } else {
+                    Timber.w("IntakeWorker: no payload available for intakeId=$intakeId")
                     ctx.checkpoint("intake:payloadUnavailable")
                     intakeDao.markTerminal(
                         id = intakeId,
@@ -146,43 +188,45 @@ class NotificationIntakeWorker @AssistedInject constructor(
                         finalOutcome = "PAYLOAD_UNAVAILABLE_PRIVACY",
                         nowMs = now
                     )
+                    ctx.addRowsUpdated() // PR12I-3: terminal mark
                     purgePayloadBestEffort(intakeId, now, ctx)
                     return@runGuardedWithContext
                 }
-                processingTitle = payload.title
-                processingText = payload.text
-                processingBody = payload.bigText
-                processingSubText = payload.subText
-                processingExtrasJson = payload.extrasJson
-            } else if (payload != null
-                && payload.transientPayloadCiphertext != null
-                && payload.transientPayloadNonce != null
-                && payload.transientPayloadVersion != null
-            ) {
-                ctx.checkpoint("intake:beforeDecrypt")
-                val decrypted = crypto.decrypt(
-                    payload.transientPayloadCiphertext,
-                    payload.transientPayloadNonce,
-                    payload.transientPayloadVersion
-                )
-                processingTitle = decrypted.title
-                processingText = decrypted.text
-                processingBody = decrypted.bigText
-                processingSubText = decrypted.subText
-                processingExtrasJson = decrypted.extrasJson
-            } else {
-                Timber.w("IntakeWorker: no payload available for intakeId=$intakeId")
-                ctx.checkpoint("intake:payloadUnavailable")
-                intakeDao.markTerminal(
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: WorkerCheckpointBlockedException) {
+                throw e
+            } catch (e: Exception) {
+                CancellationSafe.rethrowIfCancellation(e)
+                if (isRetryable(e) && meta.attempts + 1 < meta.maxAttempts) {
+                    val backoff = computeBackoff(meta.attempts + 1)
+                    ctx.checkpoint("intake:preprocessRetryable")
+                    intakeDao.markRetryableFailure(
+                        id = intakeId,
+                        nextAttemptAt = now + backoff,
+                        failureCode = "WORKER_EXCEPTION",
+                        failureHash = null,
+                        nowMs = now
+                    )
+                    ctx.addRowsUpdated()
+                    throw RetryableWorkerException(DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name)
+                }
+
+                val failureCode = if (e is GeneralSecurityException) {
+                    "DECRYPT_FAILED"
+                } else {
+                    "WORKER_EXCEPTION"
+                }
+                ctx.checkpoint("intake:preprocessFinal")
+                intakeDao.markFinalFailure(
                     id = intakeId,
-                    status = NotificationIntakeStatus.PAYLOAD_UNAVAILABLE_PRIVACY.name,
-                    rawId = null, expenseId = null, reviewId = null,
-                    finalOutcome = "PAYLOAD_UNAVAILABLE_PRIVACY",
+                    failureCode = failureCode,
+                    failureHash = null,
                     nowMs = now
                 )
-                ctx.addRowsUpdated() // PR12I-3: terminal mark
+                ctx.addRowsUpdated()
                 purgePayloadBestEffort(intakeId, now, ctx)
-                return@runGuardedWithContext
+                throw RuntimeException(failureCode)
             }
 
             // Run filter on the processing payload (decrypted or raw)
@@ -342,6 +386,8 @@ class NotificationIntakeWorker @AssistedInject constructor(
                     throw RuntimeException("MAX_RETRIES_EXHAUSTED")
                 }
             } catch (e: RetryableWorkerException) {
+                throw e
+            } catch (e: WorkerCheckpointBlockedException) {
                 throw e
             } catch (e: CancellationException) {
                 Timber.d("IntakeWorker: cancelled intakeId=$intakeId")

@@ -398,6 +398,14 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val purchases = currentPeriodExpenses.filter {
             it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE && !it.isNotMine
         }
+        // Week-to-date is independent of the current-month card. Keep the
+        // widened source window for calendar weeks that began in the previous
+        // month, while retaining the half-open upper bound at the reference time.
+        val weekPurchases = expenses.filter {
+            it.date >= weekStart && it.date < periodEnd &&
+                it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE &&
+                !it.isNotMine
+        }
         // NEW-P5-003: Exclude shared-expense deposits (isSharedExpense=true) so deposit
         // totals reflect only the user's own income, not shared-expense repayments.
         // P5-004 (RP-05): the exclusion is live now that the identity survives the
@@ -410,7 +418,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
 
         val periodAggregate = engine.aggregateExpenses(purchases, homeCurrency, rateBasis, com.yourname.expensetracker.domain.core.money.TransactionTypeFilter.PURCHASE_ONLY)
         val todayAggregate = engine.aggregateExpenses(purchases.filter { it.date >= todayStart }, homeCurrency, rateBasis, com.yourname.expensetracker.domain.core.money.TransactionTypeFilter.PURCHASE_ONLY)
-        val weekAggregate = engine.aggregateExpenses(purchases.filter { it.date >= weekStart }, homeCurrency, rateBasis, com.yourname.expensetracker.domain.core.money.TransactionTypeFilter.PURCHASE_ONLY)
+        val weekAggregate = engine.aggregateExpenses(weekPurchases, homeCurrency, rateBasis, com.yourname.expensetracker.domain.core.money.TransactionTypeFilter.PURCHASE_ONLY)
         val monthAggregate = engine.aggregateExpenses(purchases.filter { it.date >= periodStart }, homeCurrency, rateBasis, com.yourname.expensetracker.domain.core.money.TransactionTypeFilter.PURCHASE_ONLY)
         val depositAggregate = engine.aggregateExpenses(deposits, homeCurrency, rateBasis, com.yourname.expensetracker.domain.core.money.TransactionTypeFilter.INCOME_ONLY)
 

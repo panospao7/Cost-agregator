@@ -182,7 +182,7 @@ diagnostic, cancellation propagates, and no durable row is left in `RECEIVED`.
 > binding (nanos→millis once per read; window/TTL semantics unchanged;
 > forward-jump testing impossible-by-construction with a single time source
 > — documented in the test KDoc); transient payload now length-prefixed
-> framing with a presence bit behind a 0xFF first-byte marker inside the
+> framing with a leading presence byte inside the
 > ciphertext (legacy NUL-joined rows still decrypt via a preserved verbatim
 > legacy parser; no Room migration, no key bump). Validated: static review
 > green (tester + strict reviewer); NEW tests authored but NOT RUN (9

@@ -136,6 +136,30 @@ class ComputeDashboardNormalizedInputWindowTest {
     }
 
     @Test
+    fun `week aggregate includes preceding-month days in the same calendar week`() = runTest {
+        val periodStart = TimePeriodUtils.getMonthRange(NOW).first
+        val periodEnd = TimePeriodUtils.addDays(periodStart, 1) + 12 * 60 * 60 * 1000L
+        val weekStart = TimePeriodUtils.getStartOfWeek(periodEnd)
+        val precedingMonthPurchase = purchase(
+            id = 1,
+            amount = 100.0,
+            date = TimePeriodUtils.addDays(weekStart, 1)
+        )
+        val currentMonthPurchase = purchase(
+            id = 2,
+            amount = 20.0,
+            date = periodStart + 6 * 60 * 60 * 1000L
+        )
+
+        val result = useCase.produceDashboardNormalizedInput(
+            listOf(precedingMonthPurchase, currentMonthPurchase), periodStart, periodEnd
+        ) as DashboardNormalizedInputResult.Available
+
+        assertEquals(20.0, result.input.periodAggregate.displayAmount, 0.001)
+        assertEquals(120.0, result.input.weekAggregate.displayAmount, 0.001)
+    }
+
+    @Test
     fun `previous month aggregate uses the calendar-previous month`() = runTest {
         val (periodStart, periodEnd) = TimePeriodUtils.getMonthRange(NOW)
         val previousMonth = TimePeriodUtils.getMonthRange(NOW, -1)

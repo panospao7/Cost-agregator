@@ -322,6 +322,8 @@ class RecurringRuleLifecycleCoordinator @Inject constructor(
      * - Linked actual expenses: rule updates never unlink a PAID row (terminal rows are not
      *   modified); expense-side changes keep flowing through
      *   [RecurringLifecycleCoordinator.reconcileExpenseLinkAfterUpdate].
+     * - Inactive rule updates persist only the rule snapshot and critical event; activation and
+     *   deactivation own all derived occurrence, planned-expense, and reminder state.
      *
      * ## Transaction boundary (single `withTransaction`)
      * barrier check → load old rule + occurrences → validate/normalize new rule → compute slot
@@ -367,6 +369,31 @@ class RecurringRuleLifecycleCoordinator @Inject constructor(
         now: Long
     ) {
         val ruleId = normalized.id
+
+        if (!old.isActive) {
+            manualRecurringExpenseDao.update(normalized)
+            eventWriter.writeCritical(
+                occurrenceId = null,
+                eventType = "RULE_UPDATED_RECONCILED",
+                metadata = JSONObject().apply {
+                    put("ruleId", ruleId)
+                    put("oldAmount", old.amount)
+                    put("newAmount", normalized.amount)
+                    put("oldCurrency", old.currency)
+                    put("newCurrency", normalized.currency)
+                    put("oldFrequency", old.frequency.name)
+                    put("newFrequency", normalized.frequency.name)
+                    put("adopted", 0)
+                    put("retired", 0)
+                    put("created", 0)
+                    put("skippedRepresentedSlots", 0)
+                    put("reconciliationSkipped", "inactive_rule")
+                }.toString(),
+                occurredAt = now
+            )
+            return
+        }
+
         val referenceDay = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(now)
 
         // ── 1. Load all occurrences of this rule ─────────────────────────────

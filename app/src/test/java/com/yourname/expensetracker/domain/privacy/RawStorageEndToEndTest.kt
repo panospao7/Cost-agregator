@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.privacy
 
 import com.yourname.expensetracker.data.privacy.DefaultSensitiveHashingService
+import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptStructuredDataPolicy
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -149,10 +150,13 @@ class RawStorageEndToEndTest {
         val payload = ReceiptPersistencePayload.build(
             mode = RawStorageMode.STORE_REDACTED,
             rawOcrText = OCR_SENTINEL,
-            parsedItemsJson = """[{"item":"$OCR_SENTINEL"}]"""
+            parsedItemsJson = """[{"description":"$OCR_SENTINEL","quantity":1,"unitPrice":5.0,"totalPrice":5.0}]""",
+            currency = "EUR"
         )
         assertNull(payload.rawOcrText)
-        // parsedItems kept in STORE_REDACTED but raw OCR text is gone
+        assertNotNull(payload.parsedItemsJson)
+        assertTrue(ReceiptStructuredDataPolicy.isRedactedItemsJson(payload.parsedItemsJson))
+        assertFalse(payload.parsedItemsJson!!.contains(OCR_SENTINEL))
         assertFalse(payload.reviewSnippet?.contains("SECRET") ?: false)
     }
 

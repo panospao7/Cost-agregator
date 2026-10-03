@@ -85,8 +85,8 @@ class LifestyleInflationDetector @Inject constructor(
         val lifestyleCreep = detectLifestyleCreep(incomeByMonth, spendingByMonth, discretionaryByMonth)
         
         // Calculate trend
-        val incomeTrend = calculateTrend(incomeByMonth.map { it.value })
-        val spendingTrend = calculateTrend(spendingByMonth.map { it.value })
+        val incomeTrend = calculateTrend(incomeByMonth)
+        val spendingTrend = calculateTrend(spendingByMonth)
         
         // Detect hedonic adaptation (spending increases but satisfaction doesn't)
         val hedonicAdaptation = detectHedonicAdaptation(spendingByMonth, discretionaryByMonth)
@@ -231,7 +231,8 @@ class LifestyleInflationDetector @Inject constructor(
         return alerts
     }
     
-    private fun calculateTrend(values: List<Double>): Double {
+    private fun calculateTrend(valuesByMonth: Map<YearMonth, Double>): Double {
+        val values = valuesByMonth.toSortedMap().values.toList()
         if (values.size < 2) return 0.0
         
         val first = values.first()

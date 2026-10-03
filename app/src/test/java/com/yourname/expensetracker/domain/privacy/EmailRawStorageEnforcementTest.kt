@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.privacy
 
+import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptStructuredDataPolicy
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -95,7 +96,8 @@ class EmailRawStorageEnforcementTest {
             messageIdHash = "abc123hash",
             contentFingerprintHash = "fp456hash",
             providerOrderIdHash = "ord789hash",
-            parsedItemsJson = """[{"desc":"Book","price":50.0}]"""
+            parsedItemsJson = """[{"description":"Book","quantity":1,"unitPrice":50.0,"totalPrice":50.0}]""",
+            currency = "USD"
         )
 
         assertEquals("[REDACTED]", payload.subject)
@@ -104,8 +106,9 @@ class EmailRawStorageEnforcementTest {
         assertNull("REDACTED must not persist raw messageId", payload.messageIdStored)
         // Hash kept for dedup
         assertEquals("abc123hash", payload.messageIdHash)
-        // Parsed items allowed in REDACTED mode
         assertNotNull(payload.parsedItemsJson)
+        assertTrue(ReceiptStructuredDataPolicy.isRedactedItemsJson(payload.parsedItemsJson))
+        assertFalse(payload.parsedItemsJson!!.contains("Book"))
     }
 
     // ── PRIV-441-09: messageId hash dedup ────────────────────────────────────

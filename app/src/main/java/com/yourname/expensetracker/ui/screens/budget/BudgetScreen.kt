@@ -1297,6 +1297,8 @@ fun AutopilotQualityChip(quality: BudgetRecommendationQuality) {
             "Low history" to SemanticColors.WarningOrange
         BudgetRecommendationQuality.PARTIAL_DATA ->
             "Partial data" to SemanticColors.WarningOrange
+        BudgetRecommendationQuality.INFEASIBLE_CONSTRAINTS ->
+            "Infeasible limits" to SemanticColors.WarningOrange
         BudgetRecommendationQuality.COMPLETE ->
             return
     }

@@ -5036,61 +5036,45 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
-         * Callback that creates supplementary partial unique indexes and CHECK
-         * constraints on **fresh install** for tables where Room annotations
-         * cannot express them.
+         * Legacy/reference callback containing historical index and CHECK
+         * repairs. The canonical [fileBuilder] and [inMemoryBuilder] do not
+         * register this callback.
          *
-         * Room's `@Index` annotation does not support `WHERE` clauses, and there
-         * is no `@Check` annotation, so these must be applied via raw SQL after
-         * Room creates the schema.  Tables are rebuilt (CREATE-new, INSERT,
-         * DROP-old, RENAME) to apply CHECK constraints.
-         *
-         * On upgrade paths the same indexes/constraints are created by the
-         * respective migrations ([MIGRATION_70_71], [MIGRATION_74_75],
-         * [MIGRATION_75_76], [MIGRATION_104_105], [MIGRATION_106_107]).
+         * Fresh-install schemas are owned by Room entity declarations.
+         * Upgrade-only repairs are owned by the corresponding migrations.
+         * This callback remains available for historical investigation and is
+         * not part of the production fresh-install contract.
          *
          * ## E5: Index name parity with entity declarations
          * The materialized-key unique indexes in Phase 7 (MIGRATION_104_105)
-         * originally used the `idx_` prefix.  MIGRATION_106_107 corrected these
-         * to `index_` to match Room's auto-naming convention.  However, the
-         * FRESH_INSTALL_CALLBACK below still uses the old `idx_` prefix for:
+         * originally used the `idx_` prefix. MIGRATION_106_107 corrected these
+         * to `index_` to match Room's auto-naming convention. The callback SQL
+         * below is historical/reference-only and is not registered by the
+         * canonical builders:
          *   - `index_budgets_activeOverallKey`         (matches entity)
          *   - `index_budgets_activeCategoryKey`        (matches entity)
          *   - `index_group_members_currentUserGroupKey` (matches entity)
          *   - `index_planned_expenses_openSourceOccurrenceKey` (matches entity)
          *
-         * These `CREATE UNIQUE INDEX IF NOT EXISTS` statements are idempotent
-         * and functionally correct (the prefix difference does not affect
-         * correctness).  A future cleanup should rename them to `index_` for
-         * consistency.  On fresh installs both the `idx_` and the Room-generated
-         * `index_` forms would coexist, which is harmless since they reference
-         * different columns.  On upgrades from v104 the migration chain
-         * produces the `index_` forms correctly.
+         * These statements document historical migration investigations. They
+         * do not describe current fresh-install behavior; the migration chain
+         * owns upgrade-time repairs and Room owns the canonical fresh schema.
          *
-         * ## MIG-1: Fresh-install callback parity
-         * Index name parity between FRESH_INSTALL_CALLBACK and entity
-         * declarations was documented in Batch E (see E5 above). The four
-         * `index_`-prefixed indexes in the callback now match Room entity conventions.
-         * as-is because:
-         *  - They are backed by `CREATE UNIQUE INDEX IF NOT EXISTS`, which is
-         *    idempotent — both `idx_` and `index_` forms can coexist harmlessly.
-         *  - Fresh-install paths are tested by
-         *    [FreshInstallIndexParityTest] and [FreshInstallBatch8ParityTest],
-         *    which verify the callback fires and produces correct schemas.
-         *  - Room's auto-migration from v104 produces the `index_` forms
-         *    correctly, so upgrade paths are not affected.
+         * ## MIG-1: Fresh-install schema ownership
+         * [FRESH_INSTALL_CALLBACK] is retained as a legacy/reference callback for
+         * migration investigations, but the canonical [fileBuilder] and
+         * [inMemoryBuilder] intentionally do not register it. Fresh-install
+         * schemas are owned by Room entity declarations; migration paths own
+         * upgrade-only repairs. Fresh-install parity tests therefore exercise
+         * the canonical builders and compare their schemas with the entity
+         * contract rather than asserting that this legacy callback fires.
          *
-         * ## Invariants enforced
-         *  - At most one raw_notification per (packageName, timestamp) combo per NULL pattern.
-         *  - savings_goals: targetAmount > 0, currentAmount >= 0.
-         *  - mileage_tracking: distanceKm > 0, deductionRatePerKm >= 0, fuelCost >= 0,
-         *    odometer ordering.
-         *  - pending_reviews: suggestedAmount > 0, suggestedType ∈ known enum set.
-         *  - budgets: amount > 0, notifyAtWarning > 0, notifyAtCritical > 0,
-         *    notifyAtWarning ≤ notifyAtCritical,
-         *    materialized-key invariant (activeOverallKey / activeCategoryKey).
-         *  - group_members: currentUserGroupKey invariant.
-         *  - planned_expenses: openSourceOccurrenceKey invariant.
+         * ## Historical repair invariants
+         * The legacy callback below documents CHECK/index repairs that were used
+         * by older migration investigations. The canonical v149 fresh-install
+         * schema is owned by Room entities; the 144→145 pending_reviews rebuild
+         * intentionally removed the migration-only CHECK constraints, so the
+         * callback is not registered by the production builders.
          */
         val FRESH_INSTALL_CALLBACK = object : RoomDatabase.Callback() {
             override fun onCreate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
@@ -8714,12 +8698,11 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
         }
 
         /**
-         * Creates a file-backed [RoomDatabase.Builder] pre-configured with
-         * [FRESH_INSTALL_CALLBACK] and the full migration chain.
+         * Creates a file-backed [RoomDatabase.Builder] with the canonical
+         * registered migration chain and WAL mode.
          *
-         * Every test that needs a fresh `AppDatabase` **must** go through this
-         * factory so that supplementary indexes (Batch 3 through Batch 8) are
-         * present, matching the production fresh-install path.
+         * Fresh-install schema comes from Room entities. The legacy
+         * [FRESH_INSTALL_CALLBACK] is intentionally not registered here.
          */
         @JvmStatic
         fun fileBuilder(

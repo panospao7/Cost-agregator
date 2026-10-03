@@ -37,7 +37,8 @@ class RecurringOccurrenceExpanderTest {
         anchorDate: Long,
         startDate: Long,
         endDate: Long,
-        sourceId: Long = 1L
+        sourceId: Long = 1L,
+        anchorDayOfMonth: Int? = null
     ) = RecurringOccurrenceExpander.ExpandRequest(
         merchant = "Test Merchant",
         amount = 10.0,
@@ -48,7 +49,8 @@ class RecurringOccurrenceExpanderTest {
         endDate = endDate,
         anchorDate = anchorDate,
         sourceType = "RECURRING_RULE",
-        sourceId = sourceId
+        sourceId = sourceId,
+        anchorDayOfMonth = anchorDayOfMonth
     )
 
     // ── Monthly Jan-31 across leap year ─────────────────────────────────────
@@ -239,6 +241,31 @@ class RecurringOccurrenceExpanderTest {
                 LocalDate.of(2027, 3, 31)
             ),
             dueDays
+        )
+    }
+
+    @Test
+    fun `explicit anchor day survives a clamped catch-up anchor`() {
+        val clampedAnchor = dayOf(2027, 2, 28)
+        val start = dayOf(2027, 2, 1)
+        val end = dayOf(2027, 4, 1)
+
+        val result = expander.expand(
+            request(
+                frequency = RecurrenceFrequency.MONTHLY,
+                anchorDate = clampedAnchor,
+                startDate = start,
+                endDate = end,
+                anchorDayOfMonth = 31
+            )
+        )
+
+        assertEquals(
+            listOf(
+                LocalDate.of(2027, 2, 28),
+                LocalDate.of(2027, 3, 31)
+            ),
+            result.map { localDayOf(it.dueDate) }
         )
     }
 

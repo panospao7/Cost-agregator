@@ -591,6 +591,10 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         val redacted: Boolean
     )
 
+    private class ReceiptAssetCollectionException : IllegalStateException(
+        "RECEIPT_ASSET_COLLECTION_FAILED"
+    )
+
     /**
      * Shared .costbackup export pipeline — privacy gate, BACKUP_EXPORTING
      * entry/drain, WAL checkpoint, write-barrier double-check, frozen snapshot
@@ -610,7 +614,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
 
         // Privacy is a non-blocking preflight. Rejected exports must not enter
         // the maintenance cleanup scope because they never acquired it.
-        val resolvedIncludeReceiptImages = privacyMode?.includesReceiptImages ?: includeReceiptImages
+        val resolvedIncludeReceiptImages = privacyMode?.includesReceiptImages
+            ?: (includeReceiptImages && !redacted)
         val resolvedRedacted = privacyMode?.redactsRawText ?: redacted
         val encryptedDecision = try {
             privacyGate.check(
@@ -749,8 +754,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 }
 
                 // Collect receipt assets
-                // P7-P1-2: Skip receipt images when redacted=true (they contain PII).
-                val receiptFiles = if (resolvedIncludeReceiptImages && !resolvedRedacted) {
+                val receiptFiles = if (resolvedIncludeReceiptImages) {
                     collectReceiptAssetsForBackup()
                 } else {
                     emptyMap()
@@ -1435,16 +1439,16 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 for (entry in manifest) {
                     val relPath = "files/receipts/${entry.receiptId}_${java.io.File(entry.imagePath).name}"
                     val file = java.io.File(entry.imagePath)
-                    if (file.exists() && file.isFile) {
-                        result[relPath] = file
-                    }
+                    if (!file.exists() || !file.isFile) throw ReceiptAssetCollectionException()
+                    result[relPath] = file
                 }
                 Timber.d("Collected %d receipt asset(s) for backup", result.size)
                 result
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
+                if (e is ReceiptAssetCollectionException) throw e
                 Timber.e("Backup: UNKNOWN_ERROR stage=collect_assets class=%s", e::class.java.simpleName)
-                emptyMap()
+                throw ReceiptAssetCollectionException()
             }
         }
     }

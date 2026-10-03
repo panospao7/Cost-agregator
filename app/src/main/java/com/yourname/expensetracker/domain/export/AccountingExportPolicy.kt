@@ -4,6 +4,30 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import java.util.Locale
 import javax.inject.Inject
 
+enum class AccountingExportViolation {
+    SINGLE_CURRENCY,
+    PURCHASE_ONLY
+}
+
+class AccountingExportPolicyViolationException(
+    val exportName: String,
+    val violation: AccountingExportViolation,
+    val detailValues: List<String>
+) : IllegalArgumentException(
+    when (violation) {
+        AccountingExportViolation.SINGLE_CURRENCY ->
+            "$exportName export requires a single-currency dataset. " +
+                "Filter the export to one currency before exporting. Found: ${detailValues.joinToString(", ")}."
+        AccountingExportViolation.PURCHASE_ONLY ->
+            "$exportName export supports PURCHASE transactions only. " +
+                "Remove unsupported transaction types before exporting: ${detailValues.joinToString(", ")}."
+    }
+)
+
+class AccountingExportEmptyDatasetException(
+    val exportName: String
+) : IllegalArgumentException("ACCOUNTING_EXPORT_EMPTY_DATASET")
+
 class AccountingExportPolicy @Inject constructor() {
 
     companion object {
@@ -107,9 +131,10 @@ class AccountingExportPolicy @Inject constructor() {
             .distinct()
 
         if (currencies.size > 1) {
-            throw IllegalArgumentException(
-                "$exportName export requires a single-currency dataset. " +
-                    "Filter the export to one currency before exporting. Found: ${currencies.joinToString(", ")}."
+            throw AccountingExportPolicyViolationException(
+                exportName = exportName,
+                violation = AccountingExportViolation.SINGLE_CURRENCY,
+                detailValues = currencies
             )
         }
     }
@@ -131,9 +156,10 @@ class AccountingExportPolicy @Inject constructor() {
             .distinct()
 
         if (unsupportedTypes.isNotEmpty()) {
-            throw IllegalArgumentException(
-                "$exportName export supports PURCHASE transactions only. " +
-                    "Remove unsupported transaction types before exporting: ${unsupportedTypes.joinToString(", ")}."
+            throw AccountingExportPolicyViolationException(
+                exportName = exportName,
+                violation = AccountingExportViolation.PURCHASE_ONLY,
+                detailValues = unsupportedTypes.map { it.name }
             )
         }
     }

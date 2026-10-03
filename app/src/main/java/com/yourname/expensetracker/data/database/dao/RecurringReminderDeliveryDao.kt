@@ -24,6 +24,7 @@ interface RecurringReminderDeliveryDao {
         SELECT * FROM recurring_reminder_deliveries
         WHERE (status = 'SCHEDULED' AND scheduledAt <= :now)
            OR (status = 'SNOOZED' AND snoozedUntil IS NOT NULL AND snoozedUntil <= :now)
+           OR (status = 'FAILED_TRANSIENT' AND scheduledAt <= :now)
         ORDER BY COALESCE(snoozedUntil, scheduledAt)
     """)
     suspend fun getPendingDeliveries(now: Long): List<RecurringReminderDelivery>
@@ -53,7 +54,8 @@ interface RecurringReminderDeliveryDao {
     @Query("""
         SELECT * FROM recurring_reminder_deliveries
         WHERE ((status = 'SCHEDULED' AND scheduledAt <= :now)
-            OR (status = 'SNOOZED' AND snoozedUntil IS NOT NULL AND snoozedUntil <= :now))
+            OR (status = 'SNOOZED' AND snoozedUntil IS NOT NULL AND snoozedUntil <= :now)
+            OR (status = 'FAILED_TRANSIENT' AND scheduledAt <= :now))
           AND occurrenceId IN (SELECT id FROM recurring_occurrences WHERE status = 'PLANNED')
         ORDER BY COALESCE(snoozedUntil, scheduledAt)
     """)
@@ -61,7 +63,8 @@ interface RecurringReminderDeliveryDao {
 
     /**
      * Atomically claim a reminder delivery for processing.
-     * Only succeeds if the delivery is SCHEDULED and due, or SNOOZED and its snoozedUntil has passed.
+     * Only succeeds if the delivery is SCHEDULED and due, SNOOZED and its snoozedUntil has passed,
+     * or FAILED_TRANSIENT and its scheduledAt has passed.
      * Sets claimedAt, lastAttemptAt, increments attemptCount, and clears failureReason.
      * Returns 1 if the claim was successful, 0 if another worker already claimed it.
      *
@@ -82,6 +85,8 @@ interface RecurringReminderDeliveryDao {
             (status = 'SCHEDULED' AND scheduledAt <= :now)
             OR
             (status = 'SNOOZED' AND snoozedUntil IS NOT NULL AND snoozedUntil <= :now)
+            OR
+            (status = 'FAILED_TRANSIENT' AND scheduledAt <= :now)
           )
     """)
     suspend fun claimDelivery(id: Long, now: Long): Int

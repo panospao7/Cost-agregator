@@ -150,6 +150,43 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
     }
 
     @Test
+    fun `projected spending points include confirmed recurring occurrences`() = runTest {
+        val forecast = engine.synthesize(
+            pastSumDaily = listOf(0.0),
+            recurringPatterns = emptyList(),
+            plannedExpenses = emptyList(),
+            savingsGoals = emptyList(),
+            budgetStatuses = emptyList(),
+            spendingPace = SpendingPace(
+                currentMonthSpent = 0.0,
+                daysElapsed = 15,
+                daysInMonth = 31,
+                projectedTotal = 0.0,
+                previousMonthTotal = null,
+                averageMonthlyTotal = null,
+                pacePercentage = 0.0f,
+                paceStatus = PaceStatus.NO_BASELINE,
+                displayCurrency = "EUR"
+            ),
+            confirmedOccurrences = listOf(
+                ConfirmedOccurrence(
+                    dueDate = millis(2024, Calendar.JANUARY, 20),
+                    expectedAmount = 100.0,
+                    expectedCurrency = "EUR",
+                    merchant = null,
+                    categoryId = null
+                )
+            )
+        )
+
+        val projected = forecast.components.projectedSpendingPoints
+        assertEquals(0.0, projected.first(), 0.001)
+        assertEquals(100.0, projected[5], 0.001)
+        assertEquals(100.0, projected.last(), 0.001)
+        assertEquals(100.0, forecast.components.totalCommitted, 0.001)
+    }
+
+    @Test
     fun `synthesize respects strict goal reserves`() = runTest {
         // Arrange
         val goals = listOf(

@@ -65,6 +65,7 @@ class ExportOptionsViewModelTest {
         coEvery { exportDataRepository.getExpensesBetween(any(), any()) } returns emptyList()
         // ViewModel uses getExpensesPage for streaming
         coEvery { exportDataRepository.getExpensesPage(any(), any(), any(), any(), any()) } returns emptyList()
+        coEvery { exportDataRepository.getSourceLinksForExpenses(any()) } returns emptyMap()
         coEvery { exportDataRepository.getCategoryNameMap() } returns emptyMap()
         coEvery { exportDataRepository.createExportFile(any(), any()) } returns File(System.getProperty("java.io.tmpdir"), "test_export.csv")
 
@@ -122,7 +123,7 @@ class ExportOptionsViewModelTest {
         val expenses = listOf(createExpense(merchant = "Coffee"))
         coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns expenses.size
         coEvery { exportDataRepository.getExpensesBetween(any(), any()) } returns expenses
-        coEvery { exportDataRepository.getExpensesPage(any(), any(), any(), any(), any()) } returns expenses
+        stubPagedExpenses(expenses)
 
         val out = createTempFile(prefix = "export_viewmodel_", suffix = ".csv")
         every { exportDataRepository.createExportFile(any(), any()) } returns out
@@ -139,11 +140,32 @@ class ExportOptionsViewModelTest {
     }
 
     @Test
+    fun `changing format clears a completed export result`() = runBlocking {
+        val expenses = listOf(createExpense(merchant = "Coffee"))
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns expenses.size
+        stubPagedExpenses(expenses)
+
+        val out = createTempFile(prefix = "export_format_switch_", suffix = ".csv")
+        every { exportDataRepository.createExportFile(any(), any()) } returns out
+
+        viewModel.generateExport()
+        assertTrue(viewModel.uiState.value.exportSuccess)
+
+        viewModel.selectFormat("json")
+
+        val state = viewModel.uiState.value
+        assertEquals("json", state.selectedFormat)
+        assertFalse(state.exportSuccess)
+        assertEquals(null, state.exportFilePath)
+        assertEquals(null, state.exportPreview)
+    }
+
+    @Test
     fun `generate generic csv neutralizes spreadsheet formula fields in preview`() = runBlocking {
         val expenses = listOf(createExpense(merchant = "=SUM(A1:A2)"))
         coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns expenses.size
         coEvery { exportDataRepository.getExpensesBetween(any(), any()) } returns expenses
-        coEvery { exportDataRepository.getExpensesPage(any(), any(), any(), any(), any()) } returns expenses
+        stubPagedExpenses(expenses)
 
         val out = createTempFile(prefix = "export_formula_", suffix = ".csv")
         every { exportDataRepository.createExportFile(any(), any()) } returns out
@@ -172,7 +194,7 @@ class ExportOptionsViewModelTest {
         )
         coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns expenses.size
         coEvery { exportDataRepository.getExpensesBetween(any(), any()) } returns expenses
-        coEvery { exportDataRepository.getExpensesPage(any(), any(), any(), any(), any()) } returns expenses
+        stubPagedExpenses(expenses)
         coEvery { exportDataRepository.getCategoryNameMap() } returns mapOf(1L to "Food")
 
         val out = createTempFile(prefix = "export_json_", suffix = ".json")
@@ -188,7 +210,7 @@ class ExportOptionsViewModelTest {
         assertTrue(preview.contains("\"schemaVersion\":2"))
         assertTrue(preview.contains("\"exportType\":\"expenses\""))
         assertTrue(preview.contains("\"merchant\":\"Cafe \\\"Central\\\"\""))
-        assertTrue(preview.contains("\"notes\":\"line1\\n2\\\\\""))
+        assertTrue(preview.contains("\"notes\":\"line1\\nline2\\\\\""))
     }
 
     @Test
@@ -204,7 +226,7 @@ class ExportOptionsViewModelTest {
             )
         )
         coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns expenses.size
-        coEvery { exportDataRepository.getExpensesPage(any(), any(), any(), any(), any()) } returns expenses
+        stubPagedExpenses(expenses)
         coEvery { exportDataRepository.getCategoryNameMap() } returns mapOf(1L to "Food")
 
         val out = createTempFile(prefix = "export_json_biz_", suffix = ".json")
@@ -212,12 +234,12 @@ class ExportOptionsViewModelTest {
 
         viewModel.selectFormat("json")
         viewModel.generateExport()
-        val preview = viewModel.uiState.value.exportPreview.orEmpty()
+        val output = out.readText()
 
         // P12-P1-06: Verify business/tax fields are present in JSON output
-        assertTrue("JSON must contain businessCategory", preview.contains("\"businessCategory\":\"Travel\""))
-        assertTrue("JSON must contain businessProject", preview.contains("\"businessProject\":\"ProjectX\""))
-        assertTrue("JSON must contain requiresReceipt", preview.contains("\"requiresReceipt\":true"))
+        assertTrue("JSON must contain businessCategory", output.contains("\"businessCategory\":\"Travel\""))
+        assertTrue("JSON must contain businessProject", output.contains("\"businessProject\":\"ProjectX\""))
+        assertTrue("JSON must contain requiresReceipt", output.contains("\"requiresReceipt\":true"))
     }
 
     @Test
@@ -233,37 +255,36 @@ class ExportOptionsViewModelTest {
             )
         )
         coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns expenses.size
-        coEvery { exportDataRepository.getExpensesPage(any(), any(), any(), any(), any()) } returns expenses
+        stubPagedExpenses(expenses)
         coEvery { exportDataRepository.getCategoryNameMap() } returns mapOf(1L to "Food")
 
         val out = createTempFile(prefix = "export_csv_biz_", suffix = ".csv")
         every { exportDataRepository.createExportFile(any(), any()) } returns out
 
         viewModel.generateExport()
-        val preview = viewModel.uiState.value.exportPreview.orEmpty()
+        val output = out.readText()
 
         // P12-P1-06: Verify CSV header contains the new columns
-        assertTrue("CSV header must contain BusinessCategory", preview.contains("BusinessCategory"))
-        assertTrue("CSV header must contain BusinessProject", preview.contains("BusinessProject"))
-        assertTrue("CSV header must contain RequiresReceipt", preview.contains("RequiresReceipt"))
+        assertTrue("CSV header must contain BusinessCategory", output.contains("BusinessCategory"))
+        assertTrue("CSV header must contain BusinessProject", output.contains("BusinessProject"))
+        assertTrue("CSV header must contain RequiresReceipt", output.contains("RequiresReceipt"))
         // Verify data row contains the values
-        assertTrue("CSV data must contain Travel", preview.contains("Travel"))
-        assertTrue("CSV data must contain ProjectX", preview.contains("ProjectX"))
-        assertTrue("CSV data must contain true for requiresReceipt", preview.contains(",true,"))
+        assertTrue("CSV data must contain Travel", output.contains("Travel"))
+        assertTrue("CSV data must contain ProjectX", output.contains("ProjectX"))
+        assertTrue("CSV data must contain true for requiresReceipt", output.contains(",true,"))
     }
 
     @Test
     fun `generate xero export surfaces mixed currency policy failure`() = runBlocking {
-        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns 2
-        coEvery {
-            exportDataRepository.getExpensesBetween(any(), any())
-        } returns listOf(
+        val expenses = listOf(
             createExpense(id = 1L, merchant = "Cafe", currency = "EUR"),
             createExpense(id = 2L, merchant = "Hotel", currency = "USD")
         )
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns 2
         coEvery {
-            exportDataRepository.getExpensesPage(any(), any(), any(), any(), any())
-        } returns emptyList()
+            exportDataRepository.getExpensesBetween(any(), any(), any())
+        } returns expenses
+        stubPagedExpenses(expenses, emptyList())
 
         viewModel.selectFormat("xero")
         viewModel.generateExport()
@@ -275,15 +296,14 @@ class ExportOptionsViewModelTest {
 
     @Test
     fun `generate quickbooks export surfaces non purchase policy failure`() = runBlocking {
-        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns 1
-        coEvery {
-            exportDataRepository.getExpensesBetween(any(), any())
-        } returns listOf(
+        val expenses = listOf(
             createExpense(id = 1L, merchant = "ATM", transactionType = TransactionType.WITHDRAWAL)
         )
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns 1
         coEvery {
-            exportDataRepository.getExpensesPage(any(), any(), any(), any(), any())
-        } returns emptyList()
+            exportDataRepository.getExpensesBetween(any(), any(), any())
+        } returns expenses
+        stubPagedExpenses(expenses, emptyList())
 
         viewModel.selectFormat("quickbooks")
         viewModel.generateExport()
@@ -297,7 +317,7 @@ class ExportOptionsViewModelTest {
     fun `generate freshbooks export rejects empty dataset`() = runBlocking {
         // RP-19 (19-C): accounting formats reject empty datasets — a
         // header-only accounting file is not importable by the target tool.
-        val out = createTempFile(prefix = "export_empty_freshbooks_", suffix = ".csv")
+        val out = File(createTempDir(prefix = "export_empty_freshbooks_"), "expenses.csv")
         every { exportDataRepository.createExportFile(any(), any()) } returns out
         coEvery { exportDataRepository.getExpensesBetween(any(), any()) } returns emptyList()
         coEvery { exportDataRepository.getExpensesPage(any(), any(), any(), any(), any()) } returns emptyList()
@@ -418,6 +438,34 @@ class ExportOptionsViewModelTest {
     }
 
     @Test
+    fun `changing format while export is running cancels stale publication`() = runBlocking {
+        val out = createTempFile(prefix = "export_format_race_", suffix = ".csv")
+        every { exportDataRepository.createExportFile(any(), any()) } returns out
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns 1
+
+        val started = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+        coEvery {
+            exportDataRepository.getExpensesPage(any(), any(), any(), any(), any())
+        } coAnswers {
+            started.complete(Unit)
+            release.await()
+            emptyList<Expense>()
+        }
+
+        viewModel.generateExport()
+        started.await()
+        viewModel.selectFormat("json")
+        release.complete(Unit)
+
+        val state = viewModel.uiState.value
+        assertEquals("json", state.selectedFormat)
+        assertFalse(state.isLoading)
+        assertFalse(state.exportSuccess)
+        assertEquals(null, state.exportFilePath)
+    }
+
+    @Test
     fun `fx rate columns serialize without scientific notation or truncation`() = runBlocking {
         // RP-19 (19-C): rates use the dedicated formatter in both CSV and JSON.
         val expense = createExpense(merchant = "Cafe").copy(
@@ -426,7 +474,7 @@ class ExportOptionsViewModelTest {
         )
         coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns 1
         coEvery { exportDataRepository.getExpensesBetween(any(), any()) } returns listOf(expense)
-        coEvery { exportDataRepository.getExpensesPage(any(), any(), any(), any(), any()) } returns listOf(expense)
+        stubPagedExpenses(listOf(expense), emptyList())
         val csvOut = createTempFile(prefix = "export_rate_csv_", suffix = ".csv")
         every { exportDataRepository.createExportFile(any(), any()) } returns csvOut
 
@@ -437,7 +485,7 @@ class ExportOptionsViewModelTest {
         assertFalse(csvText.contains("E-7"))
 
         val tinyRate = expense.copy(exchangeRateUsed = 0.0000001)
-        coEvery { exportDataRepository.getExpensesPage(any(), any(), any(), any(), any()) } returns listOf(tinyRate)
+        stubPagedExpenses(listOf(tinyRate), emptyList())
         val jsonOut = createTempFile(prefix = "export_rate_json_", suffix = ".json")
         every { exportDataRepository.createExportFile(any(), any()) } returns jsonOut
 
@@ -472,7 +520,7 @@ class ExportOptionsViewModelTest {
 
         val expenses = listOf(createExpense(merchant = "Coffee"))
         coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns expenses.size
-        coEvery { exportDataRepository.getExpensesPage(any(), any(), any(), any(), any()) } returns expenses
+        stubPagedExpenses(expenses)
         val out = createTempFile(prefix = "export_real_gate_", suffix = ".csv")
         every { exportDataRepository.createExportFile(any(), any()) } returns out
 
@@ -491,7 +539,7 @@ class ExportOptionsViewModelTest {
 
         val expenses = listOf(createExpense(merchant = "Coffee"))
         coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns expenses.size
-        coEvery { exportDataRepository.getExpensesPage(any(), any(), any(), any(), any()) } returns expenses
+        stubPagedExpenses(expenses)
         val out = createTempFile(prefix = "export_raw_denied_", suffix = ".csv")
         every { exportDataRepository.createExportFile(any(), any()) } returns out
 
@@ -519,7 +567,7 @@ class ExportOptionsViewModelTest {
     fun `encrypted export uses non-default passphrase and never leaves plaintext at final path`() = runBlocking {
         val expenses = listOf(createExpense(merchant = "Coffee"))
         coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns expenses.size
-        coEvery { exportDataRepository.getExpensesPage(any(), any(), any(), any(), any()) } returns expenses
+        stubPagedExpenses(expenses)
 
         val dir = createTempDir(prefix = "export_enc_")
         val out = File(dir, "expenses_1.csv")
@@ -554,7 +602,7 @@ class ExportOptionsViewModelTest {
     fun `encrypted export deletes plaintext when encryption fails`() = runBlocking {
         val expenses = listOf(createExpense(merchant = "Coffee"))
         coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns expenses.size
-        coEvery { exportDataRepository.getExpensesPage(any(), any(), any(), any(), any()) } returns expenses
+        stubPagedExpenses(expenses)
 
         val dir = createTempDir(prefix = "export_enc_fail_")
         val out = File(dir, "expenses_1.csv")
@@ -570,6 +618,15 @@ class ExportOptionsViewModelTest {
         // No plaintext temp and no plaintext final file left behind.
         assertFalse(File(out.parentFile, ".tmp_${out.name}").exists())
         assertFalse(out.exists())
+    }
+
+    private fun stubPagedExpenses(vararg pages: List<Expense>) {
+        val remainingPages = pages.toMutableList()
+        coEvery {
+            exportDataRepository.getExpensesPage(any(), any(), any(), any(), any())
+        } coAnswers {
+            if (remainingPages.isEmpty()) emptyList() else remainingPages.removeAt(0)
+        }
     }
 
     private fun createExpense(

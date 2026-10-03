@@ -1,7 +1,7 @@
 # ExpenseTracker Android Codebase - Ground-Truth Inventory
 
-**Generated:** 2026-09-07 (verified snapshot; re-verified 2026-09-21)  
-**Database Version:** v148  
+**Generated:** 2026-10-02 (verified snapshot; re-verified against source)
+**Database Version:** v149
 **Architecture:** Clean Architecture + MVVM + Jetpack Compose + Room + Hilt DI
 
 ---
@@ -10,11 +10,11 @@
 
 Snapshot summary only: this inventory tracks the current UI, domain, data, and DI surfaces without freezing volatile counts.
 
-### Drift Sync (2026-09-07 / Verification Pass)
+### Drift Sync (2026-10-02 / Verification Pass)
 
-Verified against production source (`app/src/main/java`): 68 DAO files, 40 ViewModel files, 29 `*Worker*`-named files (including `domain/workers/` infrastructure), DB **v148** with **70** registered entities, 10 registered retention targets.
+Verified against production source (`app/src/main/java`): 68 DAO files, 40 ViewModel files, 29 `*Worker*`-named files (including `domain/workers/` infrastructure), DB **v149** with **70** registered entities, 15 registered retention targets.
 
-- **DB v147 → v148** — PR12A: worker-run tracing columns added to `background_job_runs` (`workId`, `uniqueWorkName`, `specVersion`, `runAttempt`, `leaseId`, `terminalReasonCode`, `terminalDiagnosticCode`, `partialFailureCount`, `failedTargetCount`).
+- **DB v148 → v149** — RP-16/RP-17: worker-run counters plus bank-review identity columns and indexes added to `background_job_runs` and `pending_reviews`.
 - **`data/database/DatabaseSchemaPolicy.kt`** — single source of truth for schema version, migration baseline (v145), and the registered migration array; consumed by production, tests, and CI (`scripts/verify_migration_matrix.py`).
 - **Worker-run tracing hardening (PR12H/J)** — new `domain/workers/` infrastructure: `WorkerGuardVerifier`, `WorkerReasonCodes` (exception → safe structured reason-code mapping), `WorkerTerminalDiagnosticSink`/`FileWorkerTerminalDiagnosticSink` (durable fallback when terminal DB status writes fail), `ScheduleResult`.
 - **Reminder action workers** — `SnoozeReminderActionWorker` / `DismissReminderActionWorker` (`service/reminder/`) are one-shot workers enqueued by the reminder receivers so reminder mutations run through `WorkerExecutionGuard` (lease/barrier/run-ledger).
@@ -431,7 +431,7 @@ Actual repository inventory (interfaces and implementations); counts shift as im
 
 ---
 
-## 6. DATABASE (Version 148)
+## 6. DATABASE (Version 149)
 
 ### Entities
 
@@ -503,8 +503,8 @@ One DAO per entity (mostly 1-to-1 mapping)
 - **RestrictedExpenseDaoMutation** — Restricted DAO mutation wrapper
 
 ### Migration History
-- Database Version: **148** (incremental: 120→121→122→...→146→147→148). Key milestones: 131→141 for recurring lifecycle hardening (8 bumps), 141→142 for budget_forecasts.budgetId FK CASCADE, 142→143 for warranty_reminder_deliveries table, 143→145 for schema cleanup (pending_reviews rebuild, index cleanup), 145→146 for `negotiation_outcomes` table, 146→147 for `group_members.leftAt` + `group_expenses.idempotencyKey`, 147→148 for `background_job_runs` worker-run tracing columns (PR12A).
-- **Active migrations:** `DatabaseMigrations.ALL` = `[MIGRATION_145_146, MIGRATION_146_147, MIGRATION_147_148]` (defined in `DatabaseMigrations.kt`)
+- Database Version: **149** (incremental: 120→121→122→...→146→147→148→149). Key milestones: 131→141 for recurring lifecycle hardening (8 bumps), 141→142 for budget_forecasts.budgetId FK CASCADE, 142→143 for warranty_reminder_deliveries table, 143→145 for schema cleanup (pending_reviews rebuild, index cleanup), 145→146 for `negotiation_outcomes` table, 146→147 for `group_members.leftAt` + `group_expenses.idempotencyKey`, 147→148 for `background_job_runs` worker-run tracing columns (PR12A), 148→149 for worker-run counters and bank-review identity columns/indexes (RP-16/RP-17).
+- **Active migrations:** `DatabaseMigrations.ALL` = `[MIGRATION_145_146, MIGRATION_146_147, MIGRATION_147_148, MIGRATION_148_149]` (defined in `DatabaseMigrations.kt`)
 - **Schema policy:** `data/database/DatabaseSchemaPolicy.kt` — `CURRENT_VERSION`, `MIGRATION_BASELINE = 145`, `UNSUPPORTED_VERSIONS = 1..<145` (destructive fallback below baseline), `ALL_MIGRATIONS`
 - Historical migrations defined in `AppDatabase.kt` companion but **not registered** in the active chain.
 - Export schema: Enabled
@@ -541,7 +541,7 @@ One DAO per entity (mostly 1-to-1 mapping)
 - **TaxModule** - Tax estimation
 - **NaturalLanguageModule** - Natural language search bindings
 - **EmailIngestionModule** - Email receipt ingestion
-- **RetentionModule** - Retention target bindings (10 targets)
+- **RetentionModule** - Retention target bindings (15 targets)
 - **DiagnosticsModule** - Pipeline diagnostics wiring (also binds WorkerRunLogger)
 - **ProvenanceModule** - Data provenance
 - **ReminderSettingsModule** - Bill reminder dispatch settings
@@ -747,7 +747,7 @@ One DAO per entity (mostly 1-to-1 mapping)
 ✅ Room Database Persistence  
 
 ### Database
-✅ Version 148 with current migration chain (120→121→122→...→146→147→148; active migrations in `DatabaseMigrations.ALL`, policy in `DatabaseSchemaPolicy.kt`)  
+✅ Version 149 with current migration chain (120→121→122→...→146→147→148→149; active migrations in `DatabaseMigrations.ALL`, policy in `DatabaseSchemaPolicy.kt`)
 ✅ Export schema enabled  
 ✅ Type converters defined
 
@@ -774,4 +774,4 @@ One DAO per entity (mostly 1-to-1 mapping)
 
 ## End of Inventory
 
-**This inventory represents a comprehensive analysis of the ExpenseTracker codebase as of 2026-09-21.**
+**This inventory represents a comprehensive analysis of the ExpenseTracker codebase as of 2026-10-02.**

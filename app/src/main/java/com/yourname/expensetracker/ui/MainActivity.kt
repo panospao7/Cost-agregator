@@ -375,6 +375,15 @@ fun MainScreen(
     // Navigation Controller - Single source of truth for ALL navigation
     val navigation = LocalNavigationController.current
     val currentDestination = navigation.destination
+    val visualSplitDestination = currentDestination as? NavigationDestination.VisualSplitEditor
+    var restoredVisualSplitExpense by remember(visualSplitDestination?.resolvedExpenseId) {
+        mutableStateOf(visualSplitDestination?.expense)
+    }
+
+    LaunchedEffect(visualSplitDestination?.resolvedExpenseId, visualSplitDestination?.expense) {
+        restoredVisualSplitExpense = visualSplitDestination?.expense
+            ?: visualSplitDestination?.resolvedExpenseId?.let { expenseRepository.getExpenseById(it) }
+    }
 
     BackHandler(enabled = navigation.canNavigateBack()) {
         navigation.navigateBack()
@@ -790,9 +799,10 @@ fun MainScreen(
                     )
                 }
                 is NavigationDestination.VisualSplitEditor -> {
+                    val editorExpense = currentDestination.expense ?: restoredVisualSplitExpense
                     VisualSplitEditorScreen(
-                        totalAmount = currentDestination.resolvedExpenseAmount ?: 0.0,
-                        currencyCode = currentDestination.resolvedExpenseCurrency ?: "EUR",
+                        totalAmount = editorExpense?.amount ?: currentDestination.resolvedExpenseAmount ?: 0.0,
+                        currencyCode = editorExpense?.currency ?: currentDestination.resolvedExpenseCurrency ?: "EUR",
                         expenseId = currentDestination.resolvedExpenseId,
                         templateId = currentDestination.templateId,
                         onSplitComplete = { shares, splitType ->

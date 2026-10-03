@@ -530,6 +530,81 @@ class BudgetAutopilotEngineTest {
     // ── parity: autopilot & forecasting share the same series semantics ─────
 
     @Test
+    fun `infeasible hierarchy limits produce non-actionable capped recommendations`() = runTest {
+        coEvery { budgetRepository.getActiveBudgets() } returns listOf(
+            budget(id = 1L, categoryId = null, amount = 100.0),
+            budget(id = 2L, categoryId = 1L, amount = 100.0),
+            budget(id = 3L, categoryId = 2L, amount = 100.0)
+        )
+        val febKey = TimePeriodUtils.formatMonthKey(TimePeriodUtils.addMonths(now, -2))
+        val marKey = TimePeriodUtils.formatMonthKey(TimePeriodUtils.addMonths(now, -1))
+        coEvery {
+            multiCurrencyRepository.getHistoricalCategoryMonthlySpend(any(), any())
+        } returns listOf(
+            CategoryMonthlySpend(SpendScope.Overall, febKey, completeAggregate(100.0)),
+            CategoryMonthlySpend(SpendScope.Overall, marKey, completeAggregate(100.0)),
+            CategoryMonthlySpend(SpendScope.Category(1L), febKey, completeAggregate(300.0)),
+            CategoryMonthlySpend(SpendScope.Category(1L), marKey, completeAggregate(300.0)),
+            CategoryMonthlySpend(SpendScope.Category(2L), febKey, completeAggregate(300.0)),
+            CategoryMonthlySpend(SpendScope.Category(2L), marKey, completeAggregate(300.0))
+        )
+
+        val recommendations = engine.generateRecommendations().categoryRecommendations
+
+        assertApproxEquals(
+            100.0,
+            recommendations.single { it.categoryId == null }.recommendedBudget,
+            0.01
+        )
+        assertApproxEquals(
+            115.0,
+            recommendations.single { it.categoryId == 1L }.recommendedBudget,
+            0.01
+        )
+        assertApproxEquals(
+            115.0,
+            recommendations.single { it.categoryId == 2L }.recommendedBudget,
+            0.01
+        )
+        assertTrue(
+            recommendations.all {
+                !it.isActionable &&
+                    it.quality == BudgetRecommendationQuality.INFEASIBLE_CONSTRAINTS
+            }
+        )
+    }
+
+    @Test
+    fun `feasible hierarchy scaling stays within overall and per-budget caps`() = runTest {
+        coEvery { budgetRepository.getActiveBudgets() } returns listOf(
+            budget(id = 1L, categoryId = null, amount = 190.0),
+            budget(id = 2L, categoryId = 1L, amount = 100.0),
+            budget(id = 3L, categoryId = 2L, amount = 100.0)
+        )
+        val febKey = TimePeriodUtils.formatMonthKey(TimePeriodUtils.addMonths(now, -2))
+        val marKey = TimePeriodUtils.formatMonthKey(TimePeriodUtils.addMonths(now, -1))
+        coEvery {
+            multiCurrencyRepository.getHistoricalCategoryMonthlySpend(any(), any())
+        } returns listOf(
+            CategoryMonthlySpend(SpendScope.Overall, febKey, completeAggregate(190.0)),
+            CategoryMonthlySpend(SpendScope.Overall, marKey, completeAggregate(190.0)),
+            CategoryMonthlySpend(SpendScope.Category(1L), febKey, completeAggregate(300.0)),
+            CategoryMonthlySpend(SpendScope.Category(1L), marKey, completeAggregate(300.0)),
+            CategoryMonthlySpend(SpendScope.Category(2L), febKey, completeAggregate(300.0)),
+            CategoryMonthlySpend(SpendScope.Category(2L), marKey, completeAggregate(300.0))
+        )
+
+        val recommendations = engine.generateRecommendations().categoryRecommendations
+        val categories = recommendations.filter { it.categoryId != null }
+
+        assertTrue(categories.all { it.isActionable })
+        assertTrue(categories.all { it.recommendedBudget in 85.0..115.0 })
+        assertApproxEquals(95.0, categories[0].recommendedBudget, 0.01)
+        assertApproxEquals(95.0, categories[1].recommendedBudget, 0.01)
+        assertApproxEquals(190.0, categories.sumOf { it.recommendedBudget }, 0.01)
+    }
+
+    @Test
     fun `autopilot history series and forecasting series agree for same input`() = runTest {
         val parityNow = millis(2026, Calendar.APRIL, 1) - (2L * 60L * 60L * 1000L) // 2026-04-01 10:00
         every { timeProvider.now() } returns parityNow

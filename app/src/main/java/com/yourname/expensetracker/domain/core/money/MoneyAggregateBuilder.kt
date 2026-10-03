@@ -13,6 +13,31 @@ import timber.log.Timber
  */
 object MoneyAggregateBuilder {
 
+    /**
+     * Builds a typed aggregate for values that are already normalized to the
+     * requested home currency. Callers must use this boundary instead of
+     * performing raw collection sums in consumer engines.
+     */
+    fun fromHomeCurrencyAmounts(
+        amounts: Iterable<Double>,
+        homeCurrency: String
+    ): MoneyAggregate {
+        val currency = CurrencyCode.parse(homeCurrency)
+            ?: throw IllegalArgumentException("Unsupported home currency")
+        var total = 0.0
+        var count = 0
+        for (amount in amounts) {
+            require(amount.isFinite()) { "Normalized amount must be finite" }
+            total += amount
+            count++
+        }
+        return if (count == 0) {
+            MoneyAggregate.empty(currency, RateBasis.IDENTITY)
+        } else {
+            MoneyAggregate.singleCurrency(total, currency, count, RateBasis.IDENTITY)
+        }
+    }
+
     /** NEW-P5-009: controlled warning text for count/bucket list mismatches. */
     private const val NEW_P5_009_WARNING =
         "Transaction counts incomplete: count list does not match bucket list; per-bucket counts are approximate"

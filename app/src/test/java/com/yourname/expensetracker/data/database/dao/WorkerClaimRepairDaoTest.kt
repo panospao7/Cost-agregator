@@ -94,6 +94,17 @@ class WorkerClaimRepairDaoTest {
     }
 
     @Test
+    fun `metadata projection preserves future nextAttemptAt`() = runTest {
+        val now = 1_700_000_000_000L
+        val nextAttemptAt = now + 60_000L
+        seedIntake(id = 5L, status = "FAILED_RETRYABLE", nextAttemptAt = nextAttemptAt)
+
+        val metadata = intakeDao.getProcessingMetadataById(5L)
+
+        assertEquals(nextAttemptAt, metadata?.nextAttemptAt)
+    }
+
+    @Test
     fun `claim succeeds once the backoff has elapsed`() = runTest {
         val now = 1_700_000_000_000L
         seedIntake(id = 2L, status = "FAILED_RETRYABLE", nextAttemptAt = now - 1L)

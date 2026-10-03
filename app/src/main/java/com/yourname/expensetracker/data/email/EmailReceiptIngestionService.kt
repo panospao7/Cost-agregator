@@ -131,7 +131,7 @@ class EmailReceiptIngestionService @Inject constructor(
                     isTerminal = true
                 ))
             } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e }
-            return@withPermit EmailReceiptResult.ParseError(e.message ?: "Database writes blocked during restore")
+            return@withPermit EmailReceiptResult.ParseError("RESTORE_BLOCKED")
         }
         try {
             // Step 1: Detect provider
@@ -280,7 +280,7 @@ class EmailReceiptIngestionService @Inject constructor(
                             isTerminal = true
                         ))
                     } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e }
-                    EmailReceiptResult.ParseError(coordinatorResult.message)
+                    EmailReceiptResult.ParseError("PROCESSING_FAILED")
                 }
                 is EmailReceiptProcessResult.NeedsReview -> {
                     try {
@@ -299,7 +299,11 @@ class EmailReceiptIngestionService @Inject constructor(
             }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-            Timber.e(e, "Error processing email receipt (correlationId=$correlationId)")
+            Timber.e(
+                "Error processing email receipt correlationId=%s class=%s",
+                correlationId,
+                e::class.java.simpleName
+            )
             try {
                 diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
                     pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.EMAIL,

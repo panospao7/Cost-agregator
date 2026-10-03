@@ -612,12 +612,10 @@ object CostbackupBundle {
             zos.closeEntry()
 
             // -- files/receipts/ --
-            // P7-P1-2: When redacted=true, receipt images must not be included (they contain PII).
-            if (includeReceiptImages && !redacted) {
+            if (includeReceiptImages) {
                 for ((relPath, file) in receiptFiles) {
                     if (!file.exists() || !file.isFile) {
-                        Timber.w("Receipt file missing during bundle creation")
-                        continue
+                        throw IllegalStateException("RECEIPT_ASSET_MISSING")
                     }
                     zos.putNextEntry(ZipEntry(relPath))
                     FileInputStream(file).use { it.copyTo(zos) }
@@ -626,14 +624,14 @@ object CostbackupBundle {
             }
 
             // -- checksums.json --
-            // P7-P1-2: When redacted=true, receipt images must not be included (they contain PII).
             val checksumEntries = mutableMapOf<String, String>().apply {
                 put("database.sqlite", sha256Hex(databaseFile))
-                if (includeReceiptImages && !redacted) {
+                if (includeReceiptImages) {
                     for ((relPath, file) in receiptFiles) {
-                        if (file.exists() && file.isFile) {
-                            put(relPath, sha256Hex(file))
+                        if (!file.exists() || !file.isFile) {
+                            throw IllegalStateException("RECEIPT_ASSET_MISSING")
                         }
+                        put(relPath, sha256Hex(file))
                     }
                 }
             }

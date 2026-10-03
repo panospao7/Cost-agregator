@@ -21,10 +21,9 @@ import kotlinx.coroutines.withContext
  * handles enum parsing (TransactionType, BudgetPeriod), and sets sensible
  * defaults for entity fields not covered by seed data classes.
  *
- * ## Fresh-install callback
- * [AppDatabase.Companion.FRESH_INSTALL_CALLBACK] runs every time the
- * database is created and adds partial unique indexes and CHECK constraints.
- * It does **not** seed default categories — that is done by
+ * ## Fresh-install schema
+ * The canonical Room builder supplies the fresh-install schema. It does **not**
+ * seed default categories - that is done by
  * `CategoryRepository.ensureDefaultCategories()` at the repository layer.
  * The seeder always inserts the categories explicitly provided in
  * [ScenarioSeed.categories], so tests have full control over which
@@ -73,7 +72,7 @@ class ScenarioSeeder(private val db: AppDatabase) {
                 categoryIds[catSeed.name] = id
             } else {
                 // OnConflictStrategy.IGNORE — category may already exist
-                // from a previous seed or from FRESH_INSTALL_CALLBACK.
+                // from a previous seed or from the canonical Room schema.
                 // When a conflict occurs Room returns -1 (not 0), so we
                 // use id > 0L to distinguish a real insert from a skip.
                 // Look up the existing row by name.

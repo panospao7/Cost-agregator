@@ -19,6 +19,7 @@ data class NotificationIntakeProcessingMetadata(
     val status: String,
     val attempts: Int,
     val maxAttempts: Int,
+    val nextAttemptAt: Long? = null,
     val payloadMode: String,
     val rawStorageMode: String,
     val packageName: String,
@@ -57,7 +58,7 @@ interface NotificationIntakeDao {
     suspend fun getById(id: Long): NotificationIntakeEntity?
 
     @Query("""
-        SELECT id, status, attempts, maxAttempts, payloadMode, rawStorageMode,
+        SELECT id, status, attempts, maxAttempts, nextAttemptAt, payloadMode, rawStorageMode,
                packageName, appName, postTime, capturedAt, source,
                correlationId, dedupeFingerprint
         FROM notification_intake

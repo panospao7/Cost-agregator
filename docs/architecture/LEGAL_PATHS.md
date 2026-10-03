@@ -1,6 +1,6 @@
 # Legal Paths — Architecture Law
 
-> **Last updated:** 2026-09-21 (verified against code: DB v148, guarded-worker set, CI guard suite)
+> **Last updated:** 2026-10-01 (verified against code: DB v149, guarded-worker set, CI guard suite)
 >
 > **Purpose:** Define the ONE allowed implementation path for each major operation.  
 > **Rule:** Any code that uses a different path is a bug, regardless of whether it "works."  
@@ -131,8 +131,9 @@ PROCESS receipt (camera/gallery/file/PDF):
   → Coordinator owns: insert + metadata + fingerprints + event + side effects
 
 CREATE expense FROM receipt:
-  → ReceiptLifecycleCoordinator.createExpenseFromReceipt()
-  → database.withTransaction { coordinator.createExpense(DEFER) + linkService.link() }
+  → ReceiptLifecycleCoordinator.createExpenseAndLinkReceipt()
+  → database.withTransaction { createExpenseDbOnlyV2() + linkService.link() }
+  → Collects post-commit actions and dispatches them after commit
   → Throws on link failure → rollback
 
 LINK/UNLINK receipt:
@@ -722,14 +723,22 @@ CREATE / ACCEPT subscription:
   → Uses RecurringExpenseRepository + SubscriptionPriceHistoryDao + SubscriptionUsageDao
   → Returns Result<ManualRecurringExpense>
 
+CREATE pending subscription candidate:
+  → NotificationProcessingPipeline.detectAndSaveSubscriptionCandidate()
+  → DatabaseWriteBarrier check
+  → SubscriptionCandidateDao.insert
+  → Post-commit candidate persistence; acceptance still uses SubscriptionManagerEngine
+
 RECORD price change:
   → SubscriptionManagerEngine.recordPriceChange(subscriptionId, newPrice, effectiveDate)
   → Atomic: updates subscription.currentPrice + inserts SubscriptionPriceHistory row
   → Returns Result<Unit>
 
 RECORD usage:
-  → SubscriptionManagerEngine.recordUsage(subscriptionId, usageData)
-  → SubscriptionUsageDao.insert within transaction scope
+  → SubscriptionManagementViewModel.recordUsage()
+  → SubscriptionManagementRepository.insertUsage()
+  → DatabaseWriteBarrier check
+  → SubscriptionUsageDao.insert within the repository transaction scope
 
 ANALYZE subscription health:
   → SubscriptionManagerEngine.analyzeSubscription(subscriptionId)
@@ -744,7 +753,8 @@ CALCULATE savings:
 
 FORBIDDEN:
   ❌ SubscriptionPriceHistoryDao.insert() outside recordPriceChange
-  ❌ SubscriptionCandidateDao.insert/delete outside validateAndCreate/acceptCandidate
+  ❌ Direct SubscriptionCandidateDao.insert/delete outside the registered pipeline
+    candidate writer and SubscriptionManagerEngine acceptance path
   ❌ SubscriptionManagerEngine.getTotalMonthlySubscriptionCost() [Deprecated — raw Double across currencies]
   ❌ SubscriptionManagerEngine.calculatePotentialSavings() [Deprecated WARNING — raw Double; no aggregate alternative exists yet]
   ❌ Direct DAO mutations bypassing engine validation

@@ -1,7 +1,7 @@
 # Hilt Module Bindings Map
 
 > Complete interface → implementation binding map for all 33 Hilt @Module files (+ 1 @EntryPoint).
-> **Last updated:** 2026-09-21 (verified against source; DB schema v148).
+> **Last updated:** 2026-10-01 (verified against source; DB schema v149).
 >
 > **Note:** `SubscriptionModule.kt` was deleted in 2026-05-09 refactoring — `SubscriptionManagerEngine`
 > is auto-provided by its `@Singleton @Inject constructor`. Replaced in count by `WorkerModule.kt`.
@@ -13,7 +13,7 @@
 ### `DatabaseModule` — `di/DatabaseModule.kt`
 ```
 Provides:
-  AppDatabase                                 → AppDatabase (Room, schema v148)
+  AppDatabase                                 → AppDatabase (Room, schema v149)
   GroupTransactionCoordinatorInterface        → GroupTransactionCoordinator
   DomainTransactionRunner                     → RoomDomainTransactionRunner
                                                 (PR 3: shared withTransaction wrapper; all
@@ -115,6 +115,7 @@ Note: `WorkerRunLogger` → `WorkerRunLoggerImpl` is bound by `DiagnosticsModule
 Provides:
   Gson                                        → GsonBuilder().setLenient().create()
   NotificationService                         → AndroidNotificationService
+  PostedAlertCanceller                        → AndroidPostedAlertCanceller
   GeocodingService                            → CompositeGeocodingService
   NearbyPoiService                            → OverpassNearbyService
   ForegroundLocationProvider                  → AndroidForegroundLocationProvider
@@ -438,10 +439,12 @@ Provides:
 
 ### `RetentionModule` — `di/RetentionModule.kt`
 `@Module @InstallIn(SingletonComponent::class)` providing:
-- `RetentionRegistry` with 10 registered `RetentionTarget` entries:
+- `RetentionRegistry` with 15 registered `RetentionTarget` entries:
   - `raw_notifications`, `scanned_receipts.rawOcrText`, `ai_artifacts`, `ai_chat_messages`, `email_receipt_sources`
   - `notification_intake`, `pipeline_diagnostic_events`, `pending_reviews.notificationText`
   - `background_job_runs.errorMessage`, `bank_statement_import_items.merchant`
+  - `10_transaction_events.snapshots`, `20_transaction_events.rows`, `30_operation_runs`
+  - `40_receipt_events`, `50_privacy_audit_events`
 
 ---
 
@@ -483,4 +486,4 @@ BackupRepositoryModule ──► Backup/Restore
 ```
 
 ---
-**Stats:** 33 Hilt @Module files · 65+ repositories · 68 DAOs (64 DaoModule + 3 AiModule + 1 unbound) · 70 entities · DB v148 (DatabaseSchemaPolicy.CURRENT_VERSION)
+**Stats:** 33 Hilt @Module files · 65+ repositories · 68 DAOs (64 DaoModule + 3 AiModule + 1 unbound) · 70 entities · DB v149 (DatabaseSchemaPolicy.CURRENT_VERSION)

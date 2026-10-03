@@ -77,6 +77,7 @@ class BudgetAutopilotEngine @Inject constructor(
         private const val HIGH_VOLATILITY_SAFETY_FACTOR = 1.15
         private const val MEDIUM_VOLATILITY_SAFETY_FACTOR = 1.08
         private const val LOW_VOLATILITY_SAFETY_FACTOR = 1.0
+        private const val HIERARCHY_EPSILON = 0.000001
     }
 
     /**
@@ -208,10 +209,9 @@ class BudgetAutopilotEngine @Inject constructor(
             recommendedBudget *= periodNormalizer
             
             // 7. Apply delta caps (±15% per cycle)
-            val maxDelta = currentBudgetInDisplayCurrency * DELTA_CAP_PERCENTAGE
-            recommendedBudget = recommendedBudget.coerceIn(
-                currentBudgetInDisplayCurrency - maxDelta,
-                currentBudgetInDisplayCurrency + maxDelta
+            recommendedBudget = clampRecommendedBudget(
+                currentBudget = currentBudgetInDisplayCurrency,
+                candidate = recommendedBudget
             )
             
             // 8. Calculate delta and percentage
@@ -270,25 +270,10 @@ class BudgetAutopilotEngine @Inject constructor(
         }
 
         // BUD-5: Enforce hierarchy — category budget totals must not exceed the
-        // overall budget. If they do, proportionally scale down each category
-        // recommendation so the sum fits within the overall budget.
+        // overall budget when the constraints are feasible. Infeasible
+        // lower-bound constraints are returned as non-actionable results.
         val adjustedRecommendations = if (hasOverallBudget) {
-            val overallRec = categoryRecommendations.find { it.categoryId == null }
-            val categoryRecs = categoryRecommendations.filter { it.categoryId != null }
-            if (overallRec != null && categoryRecs.isNotEmpty()) {
-                val categorySum = categoryRecs.sumOf { it.recommendedBudget }
-                if (categorySum > overallRec.recommendedBudget && categorySum > 0.0) {
-                    val scaleFactor = overallRec.recommendedBudget / categorySum
-                    categoryRecommendations.map { rec ->
-                        if (rec.categoryId != null) {
-                            val scaledBudget = rec.recommendedBudget * scaleFactor
-                            rec.copy(recommendedBudget = scaledBudget, delta = scaledBudget - rec.currentBudget,
-                                deltaPercentage = if (rec.currentBudget > 0) ((scaledBudget - rec.currentBudget) / rec.currentBudget * 100) else 0.0,
-                                reason = rec.reason + " (scaled to fit overall budget)")
-                        } else rec
-                    }
-                } else categoryRecommendations
-            } else categoryRecommendations
+            adjustRecommendationsForOverallBudget(categoryRecommendations)
         } else {
             categoryRecommendations
         }
@@ -338,6 +323,80 @@ class BudgetAutopilotEngine @Inject constructor(
             generatedAt = now,
             displayCurrency = displayCurrency.code
         )
+    }
+
+    private fun adjustRecommendationsForOverallBudget(
+        recommendations: List<CategoryBudgetRecommendation>
+    ): List<CategoryBudgetRecommendation> {
+        val overallRecommendation = recommendations.find { it.categoryId == null }
+            ?: return recommendations
+        val categoryRecommendations = recommendations.filter { it.categoryId != null }
+        if (categoryRecommendations.isEmpty()) return recommendations
+
+        val overallBudget = overallRecommendation.recommendedBudget.coerceAtLeast(0.0)
+        val categorySum = categoryRecommendations.sumOf { it.recommendedBudget }
+        if (categorySum <= overallBudget) return recommendations
+
+        val minimumCategorySum = categoryRecommendations.sumOf { recommendation ->
+            (recommendation.currentBudget * (1.0 - DELTA_CAP_PERCENTAGE)).coerceAtLeast(0.0)
+        }
+        if (minimumCategorySum > overallBudget + HIERARCHY_EPSILON) {
+            return recommendations.map { recommendation ->
+                recommendation.copy(
+                    quality = BudgetRecommendationQuality.INFEASIBLE_CONSTRAINTS,
+                    isActionable = false,
+                    reason = recommendation.reason +
+                        " Overall and per-budget limits are infeasible; no budget change is recommended."
+                )
+            }
+        }
+
+        val requiredReduction = categorySum - overallBudget
+        val totalReductionRoom = categoryRecommendations.sumOf { recommendation ->
+            val lowerBound = (recommendation.currentBudget *
+                (1.0 - DELTA_CAP_PERCENTAGE)).coerceAtLeast(0.0)
+            (recommendation.recommendedBudget - lowerBound).coerceAtLeast(0.0)
+        }
+        if (totalReductionRoom <= HIERARCHY_EPSILON ||
+            requiredReduction > totalReductionRoom + HIERARCHY_EPSILON
+        ) {
+            return recommendations.map { recommendation ->
+                recommendation.copy(
+                    quality = BudgetRecommendationQuality.INFEASIBLE_CONSTRAINTS,
+                    isActionable = false,
+                    reason = recommendation.reason +
+                        " Overall and per-budget limits are infeasible; no budget change is recommended."
+                )
+            }
+        }
+
+        return recommendations.map { recommendation ->
+            if (recommendation.categoryId == null) {
+                recommendation
+            } else {
+                val lowerBound = (recommendation.currentBudget *
+                    (1.0 - DELTA_CAP_PERCENTAGE)).coerceAtLeast(0.0)
+                val reductionRoom =
+                    (recommendation.recommendedBudget - lowerBound).coerceAtLeast(0.0)
+                val reducedBudget = recommendation.recommendedBudget -
+                    requiredReduction * reductionRoom / totalReductionRoom
+                val cappedBudget = clampRecommendedBudget(
+                    currentBudget = recommendation.currentBudget,
+                    candidate = reducedBudget
+                )
+                recommendation.copy(
+                    recommendedBudget = cappedBudget,
+                    delta = cappedBudget - recommendation.currentBudget,
+                    deltaPercentage = if (recommendation.currentBudget > 0) {
+                        (cappedBudget - recommendation.currentBudget) /
+                            recommendation.currentBudget * 100
+                    } else {
+                        0.0
+                    },
+                    reason = recommendation.reason + " (scaled within budget limits)"
+                )
+            }
+        }
     }
 
     private suspend fun resolveDisplayCurrency(): CurrencyCode {
@@ -436,6 +495,14 @@ class BudgetAutopilotEngine @Inject constructor(
             byScope.getOrPut(row.scope) { linkedMapOf() }[row.monthKey] = row.aggregate
         }
         return byScope
+    }
+
+    private fun clampRecommendedBudget(currentBudget: Double, candidate: Double): Double {
+        val maxDelta = currentBudget * DELTA_CAP_PERCENTAGE
+        return candidate.coerceIn(
+            currentBudget - maxDelta,
+            currentBudget + maxDelta
+        )
     }
 
     /**
@@ -591,12 +658,16 @@ data class BudgetAutopilotRecommendations(
  * - [LOW_HISTORY]: fewer than the required complete months — recommendation
  *   equals the current budget and is not actionable.
  *
+ * - [INFEASIBLE_CONSTRAINTS]: overall and per-budget limits cannot both be
+ *   satisfied; the result is not actionable.
+ *
  * Quality is in-memory only; it is never persisted.
  */
 enum class BudgetRecommendationQuality {
     COMPLETE,
     PARTIAL_DATA,
-    LOW_HISTORY
+    LOW_HISTORY,
+    INFEASIBLE_CONSTRAINTS
 }
 
 /**

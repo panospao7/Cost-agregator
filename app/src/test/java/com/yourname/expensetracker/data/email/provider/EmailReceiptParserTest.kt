@@ -58,12 +58,32 @@ class EmailReceiptParserTest {
             ) ?: 0.0,
             0.001
         )
-        // Mid-line "Your Total:" is covered by the word-bounded keyword fallback
+        // Mid-line non-summary text must not be accepted by the keyword fallback.
+        assertNull(parser.exposeExtractTotalAmount("Your Total: \$12.34"))
         assertEquals(
             12.34,
-            parser.exposeExtractTotalAmount("Your Total: \$12.34") ?: 0.0,
+            parser.exposeExtractTotalAmount("3 items, total \$12.34") ?: 0.0,
             0.001
         )
+        assertEquals(
+            15.00,
+            parser.exposeExtractTotalAmount("3 items at \$5.00, total \$15.00") ?: 0.0,
+            0.001
+        )
+        assertEquals(
+            15.00,
+            parser.exposeExtractTotalAmount("Total 3 items at \$5.00, total \$15.00") ?: 0.0,
+            0.001
+        )
+        assertEquals(
+            12.34,
+            parser.exposeExtractTotalAmount("3 items, Totals: \$12.34") ?: 0.0,
+            0.001
+        )
+        assertNull(parser.exposeExtractTotalAmount("3 items, total savings \$5.00"))
+        assertNull(parser.exposeExtractTotalAmount("Total savings \$5.00"))
+        assertNull(parser.exposeExtractTotalAmount("3 items totalPrice \$5.00"))
+        assertNull(parser.exposeExtractTotalAmount("3 items totality \$5.00"))
         // "Subtotal" and value-less "Total items" lines are never selected
         assertNull(parser.exposeExtractTotalAmount("Subtotal: \$40.00"))
         assertNull(parser.exposeExtractTotalAmount("Total items: 3"))
@@ -100,6 +120,13 @@ class EmailReceiptParserTest {
         assertNull(parser.exposeDetectCurrency("read it, contact us, from de — total 12,00"))
         // Conflicting ISO codes fail closed
         assertNull(parser.exposeDetectCurrency("USD or EUR"))
+        assertNull(
+            parser.exposeDetectCurrency(
+                "checkout at amazon.de: USD or EUR",
+                mapOf("amazon.de" to "EUR")
+            )
+        )
+        assertNull(parser.exposeDetectCurrency("Total \$45.90, EUR"))
         // Untrusted domains are ignored
         assertNull(parser.exposeDetectCurrency("visit food.de", mapOf("amazon.de" to "EUR")))
     }

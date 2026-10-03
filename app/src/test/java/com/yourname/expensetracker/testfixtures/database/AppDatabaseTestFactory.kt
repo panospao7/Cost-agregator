@@ -6,8 +6,8 @@ import com.yourname.expensetracker.data.database.AppDatabase
 /**
  * Factory for creating in-memory [AppDatabase] instances for testing.
  *
- * Uses [AppDatabase.inMemoryBuilder] which applies all migrations and the
- * [AppDatabase.Companion.FRESH_INSTALL_CALLBACK] but runs in-memory (no file I/O).
+ * Uses [AppDatabase.inMemoryBuilder] which applies the canonical Room schema
+ * and registered migrations in memory (no file I/O).
  * Main-thread queries are allowed by the builder so tests don't need
  * [kotlinx.coroutines.Dispatchers.Main] setup for DAO access.
  */

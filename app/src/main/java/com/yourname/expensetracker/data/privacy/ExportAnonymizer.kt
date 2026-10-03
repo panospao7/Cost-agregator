@@ -5,6 +5,7 @@ import com.yourname.expensetracker.diagnostics.Severity
 import com.yourname.expensetracker.diagnostics.safeDiagnostic
 import timber.log.Timber
 import java.io.File
+import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -14,6 +15,8 @@ import javax.inject.Singleton
  *
  * Strips, per PII-bearing table (all in a single transaction):
  * - `scanned_receipts.rawOcrText`
+ * - `scanned_receipts.parsedItems` is retained only when it is a validated
+ *   `REDACTED_V1` numeric projection; legacy/raw item JSON is cleared
  * - `raw_notifications` raw content (`title`, `text`, `bigText`, `subText`,
  *   `extrasJson`, `parseResult`)
  * - `notification_intake` raw content (`title`, `text`, `bigText`, `subText`,
@@ -39,6 +42,7 @@ class ExportAnonymizer @Inject constructor() {
 
     companion object {
         private const val TAG = "ExportAnonymizer"
+        private const val SCANNED_RECEIPT_BATCH_SIZE = 128
     }
 
     /**
@@ -99,24 +103,122 @@ class ExportAnonymizer @Inject constructor() {
     }
 
     /**
-     * Nulls out [ScannedReceipt.rawOcrText] for rows where it is not null.
+     * Nulls out raw OCR and unapproved parsed-item JSON in [ScannedReceipt].
      * Uses direct SQL because this operates on a standalone SQLite file.
+     * Rows are inspected and updated in bounded keyset batches so the cleanup
+     * does not accumulate the full table or its raw parsed-item payloads.
+     * Only the exact REDACTED_V1 structured projection is retained.
      *
      * @return number of rows updated
      */
     private fun sanitizeScannedReceipts(db: SQLiteDatabase): Int {
         if (!tableExists(db, "scanned_receipts")) return 0
+        val hasRawOcrText = columnExists(db, "scanned_receipts", "rawOcrText")
+        val hasParsedItems = columnExists(db, "scanned_receipts", "parsedItems")
+        if (!hasRawOcrText && !hasParsedItems) return 0
 
-        val cursor = db.rawQuery(
-            "SELECT COUNT(*) FROM scanned_receipts WHERE rawOcrText IS NOT NULL",
-            null
+        val columns = buildList {
+            add("id")
+            if (hasRawOcrText) add("rawOcrText")
+            if (hasParsedItems) add("parsedItems")
+        }
+        var lastId: Long? = null
+        var sanitizedRowCount = 0
+        var rawOcrTextNeedsClearing = false
+        while (true) {
+            val selection = lastId?.let { "id > ?" } ?: "1 = 1"
+            val selectionArgs = lastId?.let { arrayOf(it.toString()) }
+            val parsedItemIds = ArrayList<Long>(SCANNED_RECEIPT_BATCH_SIZE)
+            var batchLastId: Long? = null
+            var batchSanitizedRowCount = 0
+            var hasRows = false
+            val cursor = db.rawQuery(
+                "SELECT ${columns.joinToString(", ")} FROM scanned_receipts " +
+                    "WHERE $selection ORDER BY id LIMIT $SCANNED_RECEIPT_BATCH_SIZE",
+                selectionArgs
+            )
+            cursor.use {
+                val idIndex = it.getColumnIndexOrThrow("id")
+                val rawIndex = if (hasRawOcrText) it.getColumnIndex("rawOcrText") else -1
+                val parsedIndex = if (hasParsedItems) it.getColumnIndex("parsedItems") else -1
+                if (it.moveToFirst()) {
+                    hasRows = true
+                    do {
+                        val id = it.getLong(idIndex)
+                        batchLastId = id
+                        var rowNeedsSanitization = false
+                        if (rawIndex >= 0 && !it.isNull(rawIndex)) {
+                            rawOcrTextNeedsClearing = true
+                            rowNeedsSanitization = true
+                        }
+                        if (parsedIndex >= 0 && !it.isNull(parsedIndex) &&
+                            !isApprovedRedactedItemsJson(it.getString(parsedIndex))
+                        ) {
+                            parsedItemIds += id
+                            rowNeedsSanitization = true
+                        }
+                        if (rowNeedsSanitization) {
+                            batchSanitizedRowCount++
+                        }
+                    } while (it.moveToNext())
+                }
+            }
+
+            if (!hasRows) break
+
+            if (parsedItemIds.isNotEmpty()) {
+                val placeholders = List(parsedItemIds.size) { "?" }.joinToString(",")
+                db.execSQL(
+                    "UPDATE scanned_receipts SET parsedItems = NULL WHERE id IN ($placeholders)",
+                    parsedItemIds.map { it as Any }.toTypedArray()
+                )
+            }
+            sanitizedRowCount += batchSanitizedRowCount
+            lastId = batchLastId ?: break
+        }
+
+        if (rawOcrTextNeedsClearing) {
+            db.execSQL(
+                "UPDATE scanned_receipts SET rawOcrText = NULL WHERE rawOcrText IS NOT NULL"
+            )
+        }
+
+        Timber.d(
+            "$TAG: Sanitised structured receipt fields in $sanitizedRowCount scanned_receipt rows"
         )
-        val count = cursor.use { if (it.moveToFirst()) it.getInt(0) else 0 }
-        if (count == 0) return 0
+        return sanitizedRowCount
+    }
 
-        db.execSQL("UPDATE scanned_receipts SET rawOcrText = NULL WHERE rawOcrText IS NOT NULL")
-        Timber.d("$TAG: Nulled OCR text in $count scanned_receipt rows")
-        return count
+    private fun isApprovedRedactedItemsJson(json: String): Boolean {
+        return try {
+            val root = JSONObject(json)
+            val rootKeys = root.keys().asSequence().toSet()
+            if (rootKeys != setOf("schema", "items")) return false
+            if (root.optString("schema") != "REDACTED_V1") return false
+            val items = root.optJSONArray("items") ?: return false
+            val allowedKeys = setOf("quantity", "unitPrice", "totalPrice", "currency")
+            for (index in 0 until items.length()) {
+                val item = items.optJSONObject(index) ?: return false
+                val keys = item.keys().asSequence().toSet()
+                if (!keys.all { it in allowedKeys } ||
+                    !keys.contains("totalPrice") || !keys.contains("currency") ||
+                    item.isNull("totalPrice") || item.optDouble("totalPrice", Double.NaN).isNaN() ||
+                    item.isNull("currency") || item.optString("currency").isBlank()
+                ) {
+                    return false
+                }
+                for (key in listOf("quantity", "unitPrice")) {
+                    if (item.has(key) && !item.isNull(key) &&
+                        item.optDouble(key, Double.NaN).isNaN()
+                    ) {
+                        return false
+                    }
+                }
+            }
+            true
+        } catch (_: Exception) {
+            false
+        }
     }
 
     /**
@@ -306,5 +408,15 @@ class ExportAnonymizer @Inject constructor() {
             arrayOf(tableName)
         )
         return cursor.use { it.moveToFirst() }
+    }
+
+    private fun columnExists(db: SQLiteDatabase, tableName: String, columnName: String): Boolean {
+        val cursor = db.rawQuery("PRAGMA table_info($tableName)", null)
+        return cursor.use {
+            val nameIndex = it.getColumnIndexOrThrow("name")
+            generateSequence {
+                if (it.moveToNext()) it.getString(nameIndex) else null
+            }.any { name -> name == columnName }
+        }
     }
 }

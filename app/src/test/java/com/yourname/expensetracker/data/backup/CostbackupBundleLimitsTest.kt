@@ -75,6 +75,69 @@ class CostbackupBundleLimitsTest {
     }
 
     @Test
+    fun `redacted image-inclusive bundle keeps receipt assets and manifest flags aligned`() {
+        val dbFile = tmp.newFile("database_with_receipt.bin").apply {
+            writeBytes(ByteArray(128) { (it % 251).toByte() })
+        }
+        val receiptFile = tmp.newFile("receipt.jpg").apply {
+            writeBytes(byteArrayOf(1, 2, 3, 4))
+        }
+        val bundle = File(tmp.root, "redacted_with_images.costbackup")
+
+        val created = CostbackupBundle.create(
+            outputFile = bundle,
+            databaseFile = dbFile,
+            receiptFiles = mapOf("files/receipts/receipt.jpg" to receiptFile),
+            password = password,
+            nowEpochMs = nowEpochMs,
+            tableCounts = mapOf("expenses" to 1),
+            databaseVersion = 1,
+            redacted = true,
+            includeReceiptImages = true,
+            privacyModeName = "REDACT_RAW_TEXT"
+        )
+        assertTrue("bundle creation should succeed", created.isSuccess)
+
+        val extracted = CostbackupBundle.extract(
+            bundleFile = bundle,
+            outputDir = File(tmp.root, "extract_redacted_with_images"),
+            password = password,
+            nowEpochMs = nowEpochMs
+        )
+
+        assertTrue("bundle extraction should succeed", extracted.isSuccess)
+        val result = extracted.getOrNull()!!
+        assertTrue(result.manifest.options.redacted)
+        assertTrue(result.manifest.options.includeReceiptImages)
+        assertTrue(result.manifest.includes.receiptImages)
+        assertEquals(1, result.manifest.receiptAssetCount)
+        assertTrue(result.extractedFiles.containsKey("files/receipts/receipt.jpg"))
+    }
+
+    @Test
+    fun `bundle creation fails when a required receipt asset is missing`() {
+        val dbFile = tmp.newFile("database_missing_receipt.bin").apply {
+            writeBytes(ByteArray(128) { (it % 251).toByte() })
+        }
+        val missingReceipt = File(tmp.root, "receipt_missing.jpg")
+
+        val result = CostbackupBundle.create(
+            outputFile = File(tmp.root, "missing_receipt.costbackup"),
+            databaseFile = dbFile,
+            receiptFiles = mapOf("files/receipts/receipt_missing.jpg" to missingReceipt),
+            password = password,
+            nowEpochMs = nowEpochMs,
+            tableCounts = mapOf("expenses" to 1),
+            databaseVersion = 1,
+            redacted = false,
+            includeReceiptImages = true
+        )
+
+        assertTrue("required receipt asset failure must fail the bundle", result.isFailure)
+        assertEquals("RECEIPT_ASSET_MISSING", result.exceptionOrNull()?.message)
+    }
+
+    @Test
     fun `extract rejects entry exceeding per-entry byte limit`() {
         // database.sqlite is 64 KB; cap a single entry at 1 KB.
         val bundle = buildBundle(dbBytes = 64 * 1024)

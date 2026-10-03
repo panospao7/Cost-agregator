@@ -46,7 +46,7 @@ class CancellationPropagationContractTest {
             "reconcileAllLinkedExpensesAfterBulkUpdate", "failed++",
             scopeMethod = "reconcileAllLinkedExpensesAfterBulkUpdate"),
         CriticalCatch("com/yourname/expensetracker/domain/forecasting/FinancialStressForecastEngine.kt",
-            "computeStressForecast outer", "FCST-17"),
+            "computeStressForecast outer", "STRESS_FORECAST_UNAVAILABLE"),
         CriticalCatch("com/yourname/expensetracker/domain/forecasting/FinancialStressForecastEngine.kt",
             "projectOccurrences per-rule", "projectOccurrences failed"),
         CriticalCatch("com/yourname/expensetracker/data/repository/BudgetRepository.kt",

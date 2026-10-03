@@ -108,7 +108,10 @@ class AmazonReceiptParser : BaseEmailParser() {
         // RP-18 18-A: line-anchored, specific-labels-first hierarchy —
         // "Order Total"/"Grand Total" beat a bare "Total", and mid-line words
         // ("Subtotal") or value-less "Total items: 3" lines can never match.
-        return extractTotalAmount(text, listOf("order total", "grand total"))
+        return extractTotalAmount(
+            text,
+            listOf("your order total", "order total", "grand total")
+        )
     }
 
     private fun extractOrderNumber(text: String): String? {

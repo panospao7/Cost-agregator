@@ -179,10 +179,11 @@ abstract class BaseEmailParser : EmailReceiptParser {
             RegexOption.IGNORE_CASE
         )
 
-        // Last-resort keyword lines: "total" not preceded by a letter or
-        // hyphen, so "Subtotal"/"SUBTOTAL" can never match; deliberately no
-        // trailing boundary so the "Totals:" recovery spelling also matches.
-        private val totalKeywordLineRegex = Regex("""(?i)(?<![\p{L}-])total""")
+        // Last-resort summary-row keyword lines: "total" not preceded by a
+        // letter or hyphen, so "Subtotal"/"SUBTOTAL" can never match;
+        // Accept the standalone labels "total" and "totals", but never a
+        // prefix inside words such as "totalPrice" or "totality".
+        private val totalKeywordLineRegex = Regex("""(?i)(?<![\p{L}-])totals?\b""")
 
         // RP-18 18-A: aggregate/summary rows ("3 items, total 45,90") are never line items.
         private val summaryRowRegex = Regex(
@@ -195,6 +196,9 @@ abstract class BaseEmailParser : EmailReceiptParser {
         // false-positive on the ordinary words "us", "de" and "it".
         private val currencySymbolToCode = listOf("€" to "EUR", "£" to "GBP", "$" to "USD")
         private val currencyIsoRegex = Regex("""\b(USD|EUR|GBP)\b""")
+        private val nonFinalTotalContextRegex = Regex(
+            """(?i)^\s*(?:savings?|saved|discount|tax|vat|shipping|delivery|subtotal|items?)\b"""
+        )
     }
 
     protected fun extractAmount(text: String): Double? {
@@ -212,11 +216,10 @@ abstract class BaseEmailParser : EmailReceiptParser {
      * RP-18 18-A: line-anchored, specific-first total extraction.
      *
      * Hierarchy: each label in [specificLabels] (most specific first) → the
-     * bare "total" label LAST → any line containing a word-bounded "total"
-     * (never "Subtotal"). A generic "Total" match therefore cannot win over a
-     * specific labelled total ("Grand Total", "Order Total", "Total amount", …),
-     * and mid-line words like "Subtotal" or value-less "Total items: 3" lines
-     * can never be selected.
+     * bare "total" label LAST → a summary row containing a word-bounded
+     * "total" (never "Subtotal"). A generic "Total" match therefore cannot
+     * win over a specific labelled total ("Grand Total", "Order Total",
+     * "Total amount", …), and non-summary mid-line text cannot be selected.
      */
     protected fun extractTotalAmount(text: String, specificLabels: List<String>): Double? {
         for (label in specificLabels) {
@@ -239,15 +242,31 @@ abstract class BaseEmailParser : EmailReceiptParser {
             setOf(RegexOption.IGNORE_CASE, RegexOption.MULTILINE)
         )
         for (match in lineRegex.findAll(text)) {
-            extractStrictAmount(match.groupValues[1])?.let { return it }
+            extractLabeledRemainderAmount(match.groupValues[1])?.let { return it }
         }
         return null
     }
 
+    private fun extractLabeledRemainderAmount(remainder: String): Double? {
+        val trimmed = remainder.trim()
+        if (nonFinalTotalContextRegex.containsMatchIn(trimmed)) return null
+
+        val nestedTotals = totalKeywordLineRegex.findAll(trimmed).toList()
+        val finalRemainder = nestedTotals.lastOrNull()?.let { match ->
+            trimmed.substring(match.range.last + 1)
+        } ?: trimmed
+        if (nonFinalTotalContextRegex.containsMatchIn(finalRemainder)) return null
+        return extractStrictAmount(finalRemainder)
+    }
+
     private fun extractKeywordLineTotal(text: String): Double? {
         for (line in text.lineSequence()) {
-            if (!totalKeywordLineRegex.containsMatchIn(line)) continue
-            extractStrictAmount(line)?.let { return it }
+            if (!isSummaryRow(line)) continue
+            for (totalMatch in totalKeywordLineRegex.findAll(line)) {
+                val suffix = line.substring(totalMatch.range.last + 1)
+                if (nonFinalTotalContextRegex.containsMatchIn(suffix)) continue
+                extractStrictAmount(suffix)?.let { return it }
+            }
         }
         return null
     }
@@ -299,10 +318,9 @@ abstract class BaseEmailParser : EmailReceiptParser {
         char == 'x' || char == 'X' || char == '×' || char == '@' || char == '*'
 
     /**
-     * RP-18 18-A: resolve a currency code from [text] — currency symbols,
-     * then word-bounded 3-letter ISO codes, then [trustedDomainCodes] domains.
-     * Multiple symbols resolve by fixed priority (EUR, GBP, USD); conflicting
-     * ISO codes fail closed. Returns null when no trusted signal exists
+     * RP-18 18-A: resolve a currency code from [text]. Explicit symbols and
+     * word-bounded 3-letter ISO codes are reconciled before trusted-domain
+     * fallback. Any explicit conflict fails closed. Returns null when no trusted signal exists
      * (the caller must skip with [EmailParseSkipReason.CURRENCY_UNRESOLVED]) —
      * no default currency is ever guessed.
      */
@@ -311,11 +329,21 @@ abstract class BaseEmailParser : EmailReceiptParser {
         trustedDomainCodes: Map<String, String> = emptyMap()
     ): String? {
         val upper = text.uppercase(Locale.US)
-        for ((symbol, code) in currencySymbolToCode) {
-            if (upper.contains(symbol)) return code
-        }
+        val symbolMatches = currencySymbolToCode
+            .filter { (symbol, _) -> upper.contains(symbol) }
+            .map { (_, code) -> code }
+            .toSet()
         val isoMatches = currencyIsoRegex.findAll(upper).map { it.groupValues[1] }.toSet()
-        if (isoMatches.size == 1) return isoMatches.first()
+        if (symbolMatches.size > 1 || isoMatches.size > 1) return null
+        val explicitCode = when {
+            symbolMatches.size == 1 -> symbolMatches.single()
+            isoMatches.size == 1 -> isoMatches.single()
+            else -> null
+        }
+        if (symbolMatches.isNotEmpty() && isoMatches.isNotEmpty() && symbolMatches.single() != isoMatches.single()) {
+            return null
+        }
+        if (explicitCode != null) return explicitCode
         for ((domain, code) in trustedDomainCodes) {
             if (containsBoundedToken(upper, domain.uppercase(Locale.US))) return code
         }

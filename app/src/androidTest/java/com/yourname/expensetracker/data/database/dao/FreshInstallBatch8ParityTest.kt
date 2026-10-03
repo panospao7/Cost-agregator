@@ -1,7 +1,6 @@
 package com.yourname.expensetracker.data.database.dao
 
 import android.database.Cursor
-import android.database.sqlite.SQLiteConstraintException
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.yourname.expensetracker.data.database.AppDatabase
@@ -15,35 +14,28 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * **Batch 8 closure — fresh-install parity behavioral test.**
+ * **Batch 8 closure - fresh-install parity behavioral test.**
  *
- * Proves that CHECK constraints and the `expenses.splitTemplateId` FK with
- * `ON DELETE SET NULL` semantics created by [AppDatabase.FRESH_INSTALL_CALLBACK]
- * are enforced on brand-new (in-memory) databases built via
- * [AppDatabase.inMemoryBuilder].
+ * Verifies Room-owned fresh-install behavior, including the
+ * `expenses.splitTemplateId` FK with `ON DELETE SET NULL` semantics, on
+ * brand-new in-memory databases built via [AppDatabase.inMemoryBuilder].
  *
- * Uses raw SQL for invalid inserts that Room DAOs would prevent at compile time,
- * and Room DAOs for valid inserts and FK-semantics verification.
+ * Historical migration-only CHECK constraints are covered by
+ * [DatabaseMigrationTest]. They were intentionally removed by the 144→145
+ * pending_reviews rebuild and are not part of the canonical v149 fresh-install
+ * contract because [AppDatabase.FRESH_INSTALL_CALLBACK] is legacy and is not
+ * registered.
  *
- * Constraints under test (all added by [AppDatabase.MIGRATION_75_76] on upgrade
- * and [AppDatabase.FRESH_INSTALL_CALLBACK] on fresh install):
- *
- * | Table              | CHECK constraint(s)                                              |
- * |--------------------|------------------------------------------------------------------|
- * | pending_reviews    | suggestedAmount > 0; suggestedType IN (known enum set)           |
- * | savings_goals      | targetAmount > 0; currentAmount >= 0                             |
- * | mileage_tracking   | distanceKm > 0; endOdometer >= startOdometer (when both present) |
- * | budgets            | amount > 0; notifyAtWarning > 0 AND <= notifyAtCritical          |
+ * The remaining fresh-install contract is the Room-owned FK:
  *
  * | Table    | FK semantics                                              |
  * |----------|-----------------------------------------------------------|
- * | expenses | splitTemplateId → split_templates(id) ON DELETE SET NULL   |
+ * | expenses | splitTemplateId -> split_templates(id) ON DELETE SET NULL |
  */
 @RunWith(AndroidJUnit4::class)
 class FreshInstallBatch8ParityTest {
@@ -62,87 +54,12 @@ class FreshInstallBatch8ParityTest {
         database.close()
     }
 
-    // ── pending_reviews CHECK constraints ───────────────────────────────────
-
-    @Test
-    fun pending_reviews_rejects_zero_suggestedAmount() {
-        val db = database.openHelper.writableDatabase
-        try {
-            db.execSQL(
-                """
-                INSERT INTO pending_reviews (
-                    rawNotificationId, suggestedAmount, suggestedCurrency,
-                    suggestedMerchant, suggestedType, suggestedCategoryId,
-                    confidence, packageName, notificationTitle, notificationText,
-                    createdAt, status
-                ) VALUES (
-                    NULL, 0.0, 'EUR',
-                    'Test', 'PURCHASE', NULL,
-                    0.8, 'com.test', 'title', 'text',
-                    ${System.currentTimeMillis()}, 'PENDING'
-                )
-                """.trimIndent()
-            )
-            fail("Expected CHECK constraint violation for suggestedAmount = 0")
-        } catch (_: Exception) {
-            // expected — CHECK(suggestedAmount > 0) fires
-        }
-    }
-
-    @Test
-    fun pending_reviews_rejects_negative_suggestedAmount() {
-        val db = database.openHelper.writableDatabase
-        try {
-            db.execSQL(
-                """
-                INSERT INTO pending_reviews (
-                    rawNotificationId, suggestedAmount, suggestedCurrency,
-                    suggestedMerchant, suggestedType, suggestedCategoryId,
-                    confidence, packageName, notificationTitle, notificationText,
-                    createdAt, status
-                ) VALUES (
-                    NULL, -1.0, 'EUR',
-                    'Test', 'PURCHASE', NULL,
-                    0.8, 'com.test', 'title', 'text',
-                    ${System.currentTimeMillis()}, 'PENDING'
-                )
-                """.trimIndent()
-            )
-            fail("Expected CHECK constraint violation for suggestedAmount = -1")
-        } catch (_: Exception) {
-            // expected — CHECK(suggestedAmount > 0) fires
-        }
-    }
-
-    @Test
-    fun pending_reviews_rejects_invalid_suggestedType() {
-        val db = database.openHelper.writableDatabase
-        try {
-            db.execSQL(
-                """
-                INSERT INTO pending_reviews (
-                    rawNotificationId, suggestedAmount, suggestedCurrency,
-                    suggestedMerchant, suggestedType, suggestedCategoryId,
-                    confidence, packageName, notificationTitle, notificationText,
-                    createdAt, status
-                ) VALUES (
-                    NULL, 10.0, 'EUR',
-                    'Test', 'REFUND', NULL,
-                    0.8, 'com.test', 'title', 'text',
-                    ${System.currentTimeMillis()}, 'PENDING'
-                )
-                """.trimIndent()
-            )
-            fail("Expected CHECK constraint violation for suggestedType = 'REFUND'")
-        } catch (_: Exception) {
-            // expected — CHECK(suggestedType IN (...)) fires
-        }
-    }
+    // -- pending_reviews Room-owned indexes and valid writes --
 
     @Test
     fun pending_reviews_accepts_valid_insert() {
         val db = database.openHelper.writableDatabase
-        // Should not throw — all values satisfy CHECKs
+        // Should not throw for a valid Room-shaped row.
         db.execSQL(
             """
             INSERT INTO pending_reviews (
@@ -267,55 +184,7 @@ class FreshInstallBatch8ParityTest {
         )
     }
 
-    // ── savings_goals CHECK constraints ─────────────────────────────────────
-
-    @Test
-    fun savings_goals_rejects_zero_targetAmount() {
-        val db = database.openHelper.writableDatabase
-        try {
-            db.execSQL(
-                """
-                INSERT INTO savings_goals (name, targetAmount, currentAmount, protectionLevel, createdAt)
-                VALUES ('Vacation', 0.0, 0.0, 'WARNING', ${System.currentTimeMillis()})
-                """.trimIndent()
-            )
-            fail("Expected CHECK constraint violation for targetAmount = 0")
-        } catch (_: Exception) {
-            // expected — CHECK(targetAmount > 0) fires
-        }
-    }
-
-    @Test
-    fun savings_goals_rejects_negative_targetAmount() {
-        val db = database.openHelper.writableDatabase
-        try {
-            db.execSQL(
-                """
-                INSERT INTO savings_goals (name, targetAmount, currentAmount, protectionLevel, createdAt)
-                VALUES ('Vacation', -100.0, 0.0, 'WARNING', ${System.currentTimeMillis()})
-                """.trimIndent()
-            )
-            fail("Expected CHECK constraint violation for targetAmount = -100")
-        } catch (_: Exception) {
-            // expected — CHECK(targetAmount > 0) fires
-        }
-    }
-
-    @Test
-    fun savings_goals_rejects_negative_currentAmount() {
-        val db = database.openHelper.writableDatabase
-        try {
-            db.execSQL(
-                """
-                INSERT INTO savings_goals (name, targetAmount, currentAmount, protectionLevel, createdAt)
-                VALUES ('Vacation', 1000.0, -50.0, 'WARNING', ${System.currentTimeMillis()})
-                """.trimIndent()
-            )
-            fail("Expected CHECK constraint violation for currentAmount = -50")
-        } catch (_: Exception) {
-            // expected — CHECK(currentAmount >= 0) fires
-        }
-    }
+    // -- savings_goals valid writes --
 
     @Test
     fun savings_goals_accepts_valid_insert() = runBlocking {
@@ -331,75 +200,12 @@ class FreshInstallBatch8ParityTest {
         assertTrue("Valid savings goal should insert successfully", id > 0)
     }
 
-    // ── mileage_tracking CHECK constraints ──────────────────────────────────
-
-    @Test
-    fun mileage_tracking_rejects_zero_distanceKm() {
-        val db = database.openHelper.writableDatabase
-        try {
-            db.execSQL(
-                """
-                INSERT INTO mileage_tracking (
-                    date, distanceKm, isBusinessTrip, tripPurpose,
-                    deductionRatePerKm, createdAt
-                ) VALUES (
-                    ${System.currentTimeMillis()}, 0.0, 1, 'Client visit',
-                    0.30, ${System.currentTimeMillis()}
-                )
-                """.trimIndent()
-            )
-            fail("Expected CHECK constraint violation for distanceKm = 0")
-        } catch (_: Exception) {
-            // expected — CHECK(distanceKm > 0) fires
-        }
-    }
-
-    @Test
-    fun mileage_tracking_rejects_negative_distanceKm() {
-        val db = database.openHelper.writableDatabase
-        try {
-            db.execSQL(
-                """
-                INSERT INTO mileage_tracking (
-                    date, distanceKm, isBusinessTrip, tripPurpose,
-                    deductionRatePerKm, createdAt
-                ) VALUES (
-                    ${System.currentTimeMillis()}, -5.0, 1, 'Client visit',
-                    0.30, ${System.currentTimeMillis()}
-                )
-                """.trimIndent()
-            )
-            fail("Expected CHECK constraint violation for distanceKm = -5")
-        } catch (_: Exception) {
-            // expected — CHECK(distanceKm > 0) fires
-        }
-    }
-
-    @Test
-    fun mileage_tracking_rejects_inverted_odometers() {
-        val db = database.openHelper.writableDatabase
-        try {
-            db.execSQL(
-                """
-                INSERT INTO mileage_tracking (
-                    date, startOdometer, endOdometer, distanceKm,
-                    isBusinessTrip, tripPurpose, deductionRatePerKm, createdAt
-                ) VALUES (
-                    ${System.currentTimeMillis()}, 50000.0, 49000.0, 10.0,
-                    1, 'Client visit', 0.30, ${System.currentTimeMillis()}
-                )
-                """.trimIndent()
-            )
-            fail("Expected CHECK constraint violation for endOdometer < startOdometer")
-        } catch (_: Exception) {
-            // expected — CHECK(endOdometer IS NULL OR startOdometer IS NULL OR endOdometer >= startOdometer) fires
-        }
-    }
+    // -- mileage_tracking Room-shaped valid writes --
 
     @Test
     fun mileage_tracking_accepts_valid_insert_with_odometers() {
         val db = database.openHelper.writableDatabase
-        // Should not throw — all values satisfy CHECKs
+        // Should not throw for a valid Room-shaped row.
         db.execSQL(
             """
             INSERT INTO mileage_tracking (
@@ -417,7 +223,7 @@ class FreshInstallBatch8ParityTest {
     @Test
     fun mileage_tracking_accepts_null_odometers() {
         val db = database.openHelper.writableDatabase
-        // NULL odometers should pass the CHECK — the constraint only applies when both are present
+        // NULL odometers are valid in the Room entity schema.
         db.execSQL(
             """
             INSERT INTO mileage_tracking (
@@ -431,70 +237,7 @@ class FreshInstallBatch8ParityTest {
         )
     }
 
-    // ── budgets CHECK constraints ───────────────────────────────────────────
-
-    @Test
-    fun budgets_rejects_zero_amount() {
-        val db = database.openHelper.writableDatabase
-        try {
-            db.execSQL(
-                """
-                INSERT INTO budgets (
-                    categoryId, amount, period, periodMode, startDate,
-                    isActive, notifyAtWarning, notifyAtCritical, rollover, createdAt
-                ) VALUES (
-                    NULL, 0.0, 'MONTHLY', 'ROLLING', ${System.currentTimeMillis()},
-                    1, 0.75, 0.9, 0, ${System.currentTimeMillis()}
-                )
-                """.trimIndent()
-            )
-            fail("Expected CHECK constraint violation for amount = 0")
-        } catch (_: Exception) {
-            // expected — CHECK(amount > 0) fires
-        }
-    }
-
-    @Test
-    fun budgets_rejects_negative_amount() {
-        val db = database.openHelper.writableDatabase
-        try {
-            db.execSQL(
-                """
-                INSERT INTO budgets (
-                    categoryId, amount, period, periodMode, startDate,
-                    isActive, notifyAtWarning, notifyAtCritical, rollover, createdAt
-                ) VALUES (
-                    NULL, -100.0, 'MONTHLY', 'ROLLING', ${System.currentTimeMillis()},
-                    1, 0.75, 0.9, 0, ${System.currentTimeMillis()}
-                )
-                """.trimIndent()
-            )
-            fail("Expected CHECK constraint violation for amount = -100")
-        } catch (_: Exception) {
-            // expected — CHECK(amount > 0) fires
-        }
-    }
-
-    @Test
-    fun budgets_rejects_warning_greater_than_critical() {
-        val db = database.openHelper.writableDatabase
-        try {
-            db.execSQL(
-                """
-                INSERT INTO budgets (
-                    categoryId, amount, period, periodMode, startDate,
-                    isActive, notifyAtWarning, notifyAtCritical, rollover, createdAt
-                ) VALUES (
-                    NULL, 500.0, 'MONTHLY', 'ROLLING', ${System.currentTimeMillis()},
-                    1, 0.95, 0.80, 0, ${System.currentTimeMillis()}
-                )
-                """.trimIndent()
-            )
-            fail("Expected CHECK constraint violation for notifyAtWarning (0.95) > notifyAtCritical (0.80)")
-        } catch (_: Exception) {
-            // expected — CHECK(notifyAtWarning <= notifyAtCritical) fires
-        }
-    }
+    // -- budgets Room-shaped valid writes --
 
     @Test
     fun budgets_accepts_valid_insert() = runBlocking {
@@ -516,7 +259,7 @@ class FreshInstallBatch8ParityTest {
     @Test
     fun budgets_accepts_equal_warning_and_critical() {
         val db = database.openHelper.writableDatabase
-        // warning == critical is valid (CHECK is <=, not <)
+        // Equal warning and critical thresholds are valid in the Room schema.
         db.execSQL(
             """
             INSERT INTO budgets (

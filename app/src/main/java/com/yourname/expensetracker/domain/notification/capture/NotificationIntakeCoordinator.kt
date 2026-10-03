@@ -485,8 +485,8 @@ class NotificationIntakeCoordinator @Inject constructor(
         // maxAttempts, controlled code only, locks cleared, conditional on the
         // enqueue-attempt state.
         val operation = workManager.enqueueUniqueWork(
-            "intake_${notificationKeyHash}",
-            ExistingWorkPolicy.REPLACE,
+            "notification-intake-${outcome.intakeId}",
+            ExistingWorkPolicy.KEEP,
             request
         )
         val enqueued = try {

@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.domain.privacy
 
+import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptStructuredDataPolicy
+
 /**
  * Sanitized payload for persisting email receipt data according to the current
  * email receipt [RawStorageMode].
@@ -25,7 +27,7 @@ data class EmailReceiptPersistencePayload(
     val contentFingerprintHash: String?,
     /** HMAC hash of provider order ID — null if not available or DO_NOT_STORE. */
     val providerOrderIdHash: String?,
-    /** Parsed items JSON — null unless STORE_RAW or STORE_REDACTED. */
+    /** Parsed items JSON — raw or policy-redacted only; otherwise omitted. */
     val parsedItemsJson: String?,
     val mode: RawStorageMode
 ) {
@@ -39,7 +41,8 @@ data class EmailReceiptPersistencePayload(
             messageIdHash: String?,
             contentFingerprintHash: String?,
             providerOrderIdHash: String?,
-            parsedItemsJson: String?
+            parsedItemsJson: String?,
+            currency: String? = null
         ): EmailReceiptPersistencePayload = when (mode) {
             RawStorageMode.STORE_RAW -> EmailReceiptPersistencePayload(
                 subject = subject,
@@ -60,7 +63,13 @@ data class EmailReceiptPersistencePayload(
                 messageIdHash = messageIdHash,
                 contentFingerprintHash = contentFingerprintHash,
                 providerOrderIdHash = providerOrderIdHash,
-                parsedItemsJson = parsedItemsJson,
+                parsedItemsJson = currency?.let {
+                    ReceiptStructuredDataPolicy.persistedItemsFromParserJson(
+                        fullItemsJson = parsedItemsJson,
+                        currency = it,
+                        mode = RawStorageMode.STORE_REDACTED
+                    )
+                },
                 mode = mode
             )
             RawStorageMode.STORE_METADATA_ONLY -> EmailReceiptPersistencePayload(

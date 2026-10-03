@@ -243,6 +243,23 @@ class NotificationIntakeCoordinatorTest {
     }
 
     @Test
+    fun `captureForRetry uses a per-row KEEP work identity`() = runTest {
+        coEvery { intakeDao.getByFingerprint(any()) } returns null
+        coEvery { intakeDao.insertOrIgnore(any()) } returns 7L
+        val workName = slot<String>()
+        val workPolicy = slot<ExistingWorkPolicy>()
+        coEvery {
+            workManager.enqueueUniqueWork(capture(workName), capture(workPolicy), any<OneTimeWorkRequest>())
+        } returns CompletedOperation()
+
+        val result = captureForRetry()
+
+        assertTrue(result is NotificationIntakeCaptureResult.Enqueued)
+        assertEquals("notification-intake-7", workName.captured)
+        assertEquals(ExistingWorkPolicy.KEEP, workPolicy.captured)
+    }
+
+    @Test
     fun `captureForRetry during restore skips silently before any insert`() = runTest {
         // Merged (gr-14f-mediated) semantics: the deferred path logs and skips —
         // it never throws on a barrier block.

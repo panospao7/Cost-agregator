@@ -156,6 +156,22 @@ class AnalyticsInputAssemblerProvenanceTest {
         assertThat(excluded.message).isEqualTo("Analytics excluded transaction(s) because exchange rates were unavailable.")
     }
 
+    @Test
+    fun `data quality counts affected transactions rather than warning objects`() = runTest {
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+            expense(id = 30L, amount = 50.0, currency = "USD"),
+            expense(id = 31L, amount = 60.0, currency = "USD")
+        )
+
+        val input = assembler.build(period = widePeriod)
+
+        assertThat(input.dataQuality.excludedCount).isEqualTo(2)
+        assertThat(input.dataQuality.missingRateCount).isEqualTo(2)
+        assertThat(input.dataQuality.confidenceMultiplier).isWithin(0.000001).of(0.96)
+        assertThat(input.dataQuality.warnings).hasSize(1)
+        assertThat(input.dataQuality.warnings.single().affectedTransactionCount).isEqualTo(2)
+    }
+
     // -----------------------------------------------------------------------
     // ExcludedExpense — mixed: valid + invalid
     // -----------------------------------------------------------------------

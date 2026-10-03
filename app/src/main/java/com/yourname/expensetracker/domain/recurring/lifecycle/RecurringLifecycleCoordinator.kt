@@ -76,7 +76,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
          * retry path is created for them.
          */
         val TERMINAL_STATUSES =
-            setOf("DISMISSED", "CANCELLED", "FAILED_FINAL", "SENT", "FAILED_PERMISSION")
+            setOf("DISMISSED", "CANCELLED", "FAILED_FINAL", "FAILED_PERMISSION")
 
         /**
          * RP-04 P4-006: controlled reason code for reminder deliveries cancelled
@@ -149,7 +149,8 @@ class RecurringLifecycleCoordinator @Inject constructor(
                 endDate = endDate,
                 anchorDate = anchorDate,
                 sourceType = SOURCE_TYPE_RECURRING_RULE,
-                sourceId = rule.id
+                sourceId = rule.id,
+                anchorDayOfMonth = anchorDayOfMonth
             )
 
             val candidates = expander.expand(request)
@@ -247,7 +248,8 @@ class RecurringLifecycleCoordinator @Inject constructor(
             endDate = endDate,
             anchorDate = anchorDate,
             sourceType = SOURCE_TYPE_RECURRING_RULE,
-            sourceId = rule.id
+            sourceId = rule.id,
+            anchorDayOfMonth = anchorDayOfMonth
         )
 
         val candidates = expander.expand(request)

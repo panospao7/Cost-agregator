@@ -148,9 +148,7 @@ internal fun NavigationDestination.toSaveToken(): String = when (this) {
         base = "visual_split_editor",
         params = mapOf(
             "templateId" to templateId?.toString(),
-            "expenseId" to (expenseId ?: expense?.id)?.toString(),
-            "expenseAmount" to (expenseAmount ?: expense?.amount)?.toString(),
-            "expenseCurrency" to (expenseCurrency ?: expense?.currency)
+            "expenseId" to (expenseId ?: expense?.id)?.toString()
         )
     )
     is NavigationDestination.CurrencyManagement -> "currency_management"
@@ -233,9 +231,7 @@ internal fun destinationFromSaveToken(
         baseToken == "visual_split_editor" -> {
             NavigationDestination.VisualSplitEditor(
                 templateId = params["templateId"]?.toLongOrNull(),
-                expenseId = params["expenseId"]?.toLongOrNull(),
-                expenseAmount = params["expenseAmount"]?.toDoubleOrNull(),
-                expenseCurrency = params["expenseCurrency"]?.takeIf { it.isNotBlank() }
+                expenseId = params["expenseId"]?.toLongOrNull()
             )
         }
         baseToken == "currency_management" -> NavigationDestination.CurrencyManagement

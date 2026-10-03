@@ -1,6 +1,6 @@
 # Engine Interaction Map
 
-> **Last updated:** 2026-09-21 (verified against code: DB v148, guarded-worker set, guard suite)
+> **Last updated:** 2026-10-02 (verified against code: DB v149, guarded-worker set, guard suite)
 >
 > **Purpose:** Before fixing any engine, check this map to know which pipelines will be affected.  
 > **Rule:** Any engine change requires verifying ALL affected pipelines still work.

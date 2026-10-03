@@ -5,12 +5,15 @@ import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+import com.yourname.expensetracker.domain.service.PostedAlertCanceller
+import com.yourname.expensetracker.domain.util.NotificationId
 import com.yourname.expensetracker.domain.workers.BlockedPolicy
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
 import com.yourname.expensetracker.domain.workers.toWorkerResult
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
+import kotlinx.coroutines.CancellationException
 import timber.log.Timber
 
 /**
@@ -26,7 +29,8 @@ class DismissReminderActionWorker @AssistedInject constructor(
     @Assisted context: Context,
     @Assisted params: WorkerParameters,
     private val coordinator: RecurringLifecycleCoordinator,
-    private val executionGuard: WorkerExecutionGuard
+    private val executionGuard: WorkerExecutionGuard,
+    private val postedAlertCanceller: PostedAlertCanceller
 ) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
@@ -47,10 +51,23 @@ class DismissReminderActionWorker @AssistedInject constructor(
         ) { ctx ->
             ctx.checkpoint("reminderAction:dismiss:beforeLoad")
             coordinator.dismissReminderDelivery(deliveryId)
+            cancelPostedAlertBestEffort(NotificationId.forBill(deliveryId))
             ctx.checkpoint("reminderAction:dismiss:afterWrite")
         }
 
         return result.toWorkerResult()
+    }
+
+    private fun cancelPostedAlertBestEffort(notificationId: NotificationId) {
+        try {
+            postedAlertCanceller.cancel(notificationId)
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Timber.w(
+                "DismissReminderActionWorker: alert cancellation failed class=%s",
+                e::class.java.simpleName
+            )
+        }
     }
 
     companion object {

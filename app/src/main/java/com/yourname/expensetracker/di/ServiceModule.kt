@@ -7,12 +7,14 @@ import com.yourname.expensetracker.data.location.GooglePlacesGeocodingService
 import com.yourname.expensetracker.data.location.NominatimGeocodingService
 import com.yourname.expensetracker.data.location.OverpassNearbyService
 import com.yourname.expensetracker.data.location.PhotonGeocodingService
+import com.yourname.expensetracker.data.service.AndroidPostedAlertCanceller
 import com.yourname.expensetracker.data.service.AndroidNotificationService
 import com.yourname.expensetracker.domain.location.ForegroundLocationProvider
 import com.yourname.expensetracker.domain.location.GeocodingService
 import com.yourname.expensetracker.domain.location.NearbyPoiService
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.service.NotificationService
+import com.yourname.expensetracker.domain.service.PostedAlertCanceller
 import com.yourname.expensetracker.service.NavigationTargetResolver
 import com.yourname.expensetracker.service.NavigationTargetResolverImpl
 import com.yourname.expensetracker.data.repository.WidgetStyleRepositoryImpl
@@ -45,6 +47,12 @@ object ServiceModule {
     fun provideNotificationService(
         service: AndroidNotificationService
     ): NotificationService = service
+
+    @Provides
+    @Singleton
+    fun providePostedAlertCanceller(
+        canceller: AndroidPostedAlertCanceller
+    ): PostedAlertCanceller = canceller
 
     /**
      * Binds the cascade geocoding service as the app-wide [GeocodingService].

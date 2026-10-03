@@ -29,6 +29,8 @@ import io.mockk.unmockkStatic
 import io.mockk.slot
 import io.mockk.verify
 import kotlinx.coroutines.test.runTest
+import java.time.LocalDate
+import java.time.ZoneId
 import kotlin.time.Duration.Companion.seconds
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -60,6 +62,9 @@ class RecurringLifecycleCoordinatorTest {
     private val now = 1_712_000_000_000L
     private val startDate = now
     private val endDate = now + 30L * 24L * 60L * 60L * 1000L // 30 days later
+
+    private fun dayOf(year: Int, month: Int, day: Int): Long =
+        LocalDate.of(year, month, day).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
 
     @Before
     fun setup() {
@@ -344,6 +349,65 @@ class RecurringLifecycleCoordinatorTest {
         assertTrue(dismissed is ReminderActionResult.NoOp)
         assertTrue(snoozed is ReminderActionResult.NoOp)
         coVerify(exactly = 0) { reminderDeliveryDao.update(any()) }
+    }
+
+    @Test
+    fun `sentDeliveryCanBeSnoozedByPostedNotificationAction`() = runTest(timeout = 60.seconds) {
+        coEvery { reminderDeliveryDao.getById(3L) } returns testDelivery(id = 3L, status = "SENT")
+
+        val result = coordinator.snoozeReminderDelivery(3L)
+
+        assertTrue(result is ReminderActionResult.Updated)
+        val updateSlot = slot<RecurringReminderDelivery>()
+        coVerify(exactly = 1) { reminderDeliveryDao.update(capture(updateSlot)) }
+        assertEquals("SNOOZED", updateSlot.captured.status)
+        assertEquals(now + 24L * 60L * 60L * 1000L, updateSlot.captured.snoozedUntil)
+    }
+
+    @Test
+    fun `sentDeliveryCanBeDismissedByPostedNotificationAction`() = runTest(timeout = 60.seconds) {
+        coEvery { reminderDeliveryDao.getById(4L) } returns testDelivery(id = 4L, status = "SENT")
+
+        val result = coordinator.dismissReminderDelivery(4L)
+
+        assertTrue(result is ReminderActionResult.Updated)
+        val updateSlot = slot<RecurringReminderDelivery>()
+        coVerify(exactly = 1) { reminderDeliveryDao.update(capture(updateSlot)) }
+        assertEquals("DISMISSED", updateSlot.captured.status)
+        assertEquals(now, updateSlot.captured.dismissedAt)
+    }
+
+    @Test
+    fun `projectOccurrencesCarriesOriginalAnchorDayThroughCatchUp`() = runTest(timeout = 60.seconds) {
+        val originalAnchor = dayOf(2027, 1, 31)
+        val firstCatchUp = dayOf(2027, 2, 28)
+        val finalAnchor = dayOf(2027, 3, 31)
+        val rule = ManualRecurringExpense(
+            id = 5L,
+            merchant = "Month End",
+            amount = 25.0,
+            currency = "EUR",
+            frequency = RecurrenceFrequency.MONTHLY,
+            nextDate = originalAnchor
+        )
+        coEvery { manualRecurringExpenseDao.getById(5L) } returns rule
+        coEvery {
+            expander.advanceDate(originalAnchor, RecurrenceFrequency.MONTHLY, 31)
+        } returns firstCatchUp
+        coEvery {
+            expander.advanceDate(firstCatchUp, RecurrenceFrequency.MONTHLY, 31)
+        } returns finalAnchor
+        coEvery { expander.expand(any()) } returns emptyList()
+        coEvery { expenseDao.getExpensesBetween(any(), any()) } returns emptyList()
+        coEvery { resolver.resolve(any(), any()) } returns emptyList()
+
+        val result = coordinator.projectOccurrences(5L, dayOf(2027, 3, 1), dayOf(2027, 4, 1))
+
+        assertTrue(result.isEmpty())
+        val requestSlot = slot<RecurringOccurrenceExpander.ExpandRequest>()
+        coVerify(exactly = 1) { expander.expand(capture(requestSlot)) }
+        assertEquals(31, requestSlot.captured.anchorDayOfMonth)
+        assertEquals(finalAnchor, requestSlot.captured.anchorDate)
     }
 
     @Test

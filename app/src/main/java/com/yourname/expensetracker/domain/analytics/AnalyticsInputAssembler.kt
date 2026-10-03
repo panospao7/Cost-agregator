@@ -143,9 +143,9 @@ class AnalyticsInputAssembler @Inject constructor(
             }
 
         val excludedCount = result.excludedCount
-        val missingWarnings = result.severeWarnings.count {
+        val missingRateCount = result.severeWarnings.filter {
             it.type == AnalyticsConversionWarningType.MISSING_EXCHANGE_RATE
-        }
+        }.sumOf { it.affectedTransactionCount }
 
         // 7. PR-A9: Compute confidence penalty & multiplier from data quality.
         //   excludedCount/total > 0.1 → penalty up to 0.5
@@ -154,8 +154,8 @@ class AnalyticsInputAssembler @Inject constructor(
         val confidencePenalty = if (excludedCount > 0) {
             (excludedCount.toDouble() / totalCount).coerceAtMost(0.5)
         } else 0.0
-        val confidenceMultiplier = if (missingWarnings > 0) {
-            maxOf(0.8, 1.0 - missingWarnings * 0.02)
+        val confidenceMultiplier = if (missingRateCount > 0) {
+            maxOf(0.8, 1.0 - missingRateCount * 0.02)
         } else 1.0
 
         return NormalizedAnalyticsInput(
@@ -166,13 +166,13 @@ class AnalyticsInputAssembler @Inject constructor(
             dataQuality = AnalyticsDataQuality(
                 isPartial = excludedCount > 0 || result.hasWarnings,
                 excludedCount = excludedCount,
-                staleRateCount = result.warnings.count {
+                staleRateCount = result.warnings.filter {
                     it.type == AnalyticsConversionWarningType.STALE_EXCHANGE_RATE
-                },
-                missingRateCount = missingWarnings,
-                invalidCurrencyCount = result.severeWarnings.count {
+                }.sumOf { it.affectedTransactionCount },
+                missingRateCount = missingRateCount,
+                invalidCurrencyCount = result.severeWarnings.filter {
                     it.type == AnalyticsConversionWarningType.INVALID_TRANSACTION_CURRENCY
-                },
+                }.sumOf { it.affectedTransactionCount },
                 conversionWarnings = result.warnings.map { it.message },
                 confidencePenalty = confidencePenalty,
                 confidenceMultiplier = confidenceMultiplier,

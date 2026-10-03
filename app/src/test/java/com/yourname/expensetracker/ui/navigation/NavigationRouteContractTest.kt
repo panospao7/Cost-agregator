@@ -4,6 +4,7 @@ import android.net.Uri
 import io.mockk.every
 import io.mockk.mockkStatic
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -186,7 +187,7 @@ class NavigationRouteContractTest {
     }
 
     @Test
-    fun `visual split editor with all fields roundtrips`() {
+    fun `visual split editor financial fields stay out of persisted tokens`() {
         val original = NavigationDestination.VisualSplitEditor(
             templateId = 1L,
             expenseId = 2L,
@@ -196,7 +197,16 @@ class NavigationRouteContractTest {
         )
         val token = original.toSaveToken()
         val restored = destinationFromSaveToken(token)
-        assertEquals(original, restored)
+        assertTrue(token.contains("templateId=1"))
+        assertTrue(token.contains("expenseId=2"))
+        assertFalse(token.contains("expenseAmount"))
+        assertFalse(token.contains("expenseCurrency"))
+        assertEquals(100.50, original.resolvedExpenseAmount ?: -1.0, 0.001)
+        assertEquals("USD", original.resolvedExpenseCurrency)
+        restored as NavigationDestination.VisualSplitEditor
+        assertNull(restored.expenseAmount)
+        assertNull(restored.expenseCurrency)
+        assertEquals(2L, restored.resolvedExpenseId)
     }
 
     @Test
@@ -332,15 +342,11 @@ class NavigationRouteContractTest {
             ),
             NavigationDestination.VisualSplitEditor(
                 templateId = null, expenseId = null,
-                expenseAmount = 99.99, expenseCurrency = null, expense = null
-            ),
-            NavigationDestination.VisualSplitEditor(
-                templateId = null, expenseId = null,
-                expenseAmount = null, expenseCurrency = "EUR", expense = null
+                expenseAmount = null, expenseCurrency = null, expense = null
             ),
             NavigationDestination.VisualSplitEditor(
                 templateId = 3L, expenseId = 4L,
-                expenseAmount = 49.95, expenseCurrency = "USD", expense = null
+                expenseAmount = null, expenseCurrency = null, expense = null
             ),
             NavigationDestination.VisualSplitEditor.forTemplateCreation(),
             NavigationDestination.VisualSplitEditor.forTemplateEdit(88L)

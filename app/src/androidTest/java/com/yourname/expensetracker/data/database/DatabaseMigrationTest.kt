@@ -4,6 +4,7 @@ import androidx.room.Room
 import androidx.room.testing.MigrationTestHelper
 import android.database.sqlite.SQLiteDatabase
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
+import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -388,7 +389,6 @@ class DatabaseMigrationTest {
             AppDatabase::class.java,
             testDb
         )
-            .addCallback(AppDatabase.FRESH_INSTALL_CALLBACK)
             .fallbackToDestructiveMigration()
             .build()
 
@@ -3868,32 +3868,86 @@ class DatabaseMigrationTest {
     }
 
     /**
-     * Verifies that a fresh database created at version 148 produces an
-     * identityHash matching the schema produced by migrating 147 → 148.
+     * Verifies that a fresh database created at version 149 produces an
+     * identityHash matching the schema produced by migrating 148 → 149.
      * The `runMigrationsAndValidate` call with validateDroppedTables=true
      * performs this comparison automatically.
      */
     @Test
     @Throws(IOException::class)
-    fun fresh_148_schema_matches_migrated_147_148_schema() {
-        assumeTrue(hasSchema(147) && hasSchema(148))
+    fun fresh_149_schema_matches_migrated_148_149_schema() {
+        assumeTrue(hasSchema(148) && hasSchema(149))
 
-        // Create DB at 147, run migration to 148, and validate against exported schema
-        var db = helper.createDatabase(testDb, 147)
+        // Create DB at 148, run migration to 149, and validate against exported schema
+        var db = helper.createDatabase(testDb, 148)
         db.close()
 
         db = helper.runMigrationsAndValidate(
             testDb,
-            148,
+            149,
             true,
-            DatabaseMigrations.MIGRATION_147_148
+            DatabaseMigrations.MIGRATION_148_149
         )
 
         // If we reach here without exception, the identityHash of the migrated
-        // DB matches the fresh 148 exported schema JSON — runMigrationsAndValidate
+        // DB matches the fresh 149 exported schema JSON — runMigrationsAndValidate
         // enforces this automatically.
         assertNotNull(db)
         db.close()
+    }
+
+    /**
+     * The legacy 75→76 CHECK constraints for pending reviews and budgets were
+     * intentionally removed by the 144→145 rebuild.  Fresh Room schemas and
+     * upgraded v149 schemas must therefore share the same no-CHECK contract.
+     */
+    @Test
+    @Throws(IOException::class)
+    fun fresh_and_migrated_149_share_the_current_constraint_contract() {
+        assumeTrue(hasSchema(148) && hasSchema(149))
+
+        val migratedName = "migration-149-constraint-contract"
+        var migrated = helper.createDatabase(migratedName, 148)
+        migrated.close()
+        migrated = helper.runMigrationsAndValidate(
+            migratedName,
+            149,
+            true,
+            DatabaseMigrations.MIGRATION_148_149
+        )
+
+        val fresh = AppDatabase.inMemoryBuilder(
+            ApplicationProvider.getApplicationContext()
+        ).build()
+        try {
+            val migratedDb = migrated
+            val freshDb = fresh.openHelper.writableDatabase
+            listOf("pending_reviews", "budgets").forEach { tableName ->
+                val freshSql = tableCreateSql(freshDb, tableName)
+                val migratedSql = tableCreateSql(migratedDb, tableName)
+                assertEquals(
+                    "Fresh and migrated v149 $tableName CHECK contracts must match",
+                    freshSql.contains("CHECK", ignoreCase = true),
+                    migratedSql.contains("CHECK", ignoreCase = true)
+                )
+                assertFalse(
+                    "Current v149 $tableName contract must not retain legacy CHECK constraints",
+                    freshSql.contains("CHECK", ignoreCase = true)
+                )
+            }
+        } finally {
+            fresh.close()
+            migrated.close()
+        }
+    }
+
+    private fun tableCreateSql(database: SupportSQLiteDatabase, tableName: String): String {
+        database.query(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = '$tableName'"
+        ).use { cursor ->
+            assertTrue("Missing table $tableName in schema", cursor.moveToFirst())
+            return cursor.getString(0)
+        }
     }
 
     /**

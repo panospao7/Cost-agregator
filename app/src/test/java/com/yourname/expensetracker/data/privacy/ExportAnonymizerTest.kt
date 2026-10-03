@@ -111,6 +111,58 @@ class ExportAnonymizerTest {
     }
 
     @Test
+    fun sanitizeExport_clears_legacy_item_text_but_keeps_approved_numeric_projection() {
+        val file = tempFolder.newFile("structured_receipts.db")
+        val db = SQLiteDatabase.openOrCreateDatabase(file, null)
+        val legacyItems = """[{"description":"SECRET_ITEM","quantity":1,"totalPrice":5.0}]"""
+        val approvedItems = """{"schema":"REDACTED_V1","items":[{"quantity":1,"unitPrice":5.0,"totalPrice":5.0,"currency":"EUR"}]}"""
+        val unexpectedRootItems = """{"schema":"REDACTED_V1","items":[{"quantity":1,"totalPrice":5.0,"currency":"EUR"}],"description":"SECRET_ITEM"}"""
+        db.execSQL("CREATE TABLE scanned_receipts (id INTEGER PRIMARY KEY, rawOcrText TEXT, parsedItems TEXT)")
+        db.execSQL(
+            "INSERT INTO scanned_receipts(id, rawOcrText, parsedItems) VALUES (?, NULL, ?)",
+            arrayOf<Any>(1, legacyItems)
+        )
+        db.execSQL(
+            "INSERT INTO scanned_receipts(id, rawOcrText, parsedItems) VALUES (?, NULL, ?)",
+            arrayOf<Any>(2, approvedItems)
+        )
+        db.execSQL(
+            "INSERT INTO scanned_receipts(id, rawOcrText, parsedItems) VALUES (?, NULL, ?)",
+            arrayOf<Any>(3, unexpectedRootItems)
+        )
+        db.close()
+
+        anonymizer.sanitizeExport(file)
+
+        assertEquals(null, queryString(file, "SELECT parsedItems FROM scanned_receipts WHERE id=1"))
+        assertEquals(approvedItems, queryString(file, "SELECT parsedItems FROM scanned_receipts WHERE id=2"))
+        assertEquals(null, queryString(file, "SELECT parsedItems FROM scanned_receipts WHERE id=3"))
+    }
+
+    @Test
+    fun sanitizeExport_processes_large_scanned_receipt_table_in_bounded_batches() {
+        val file = tempFolder.newFile("large_structured_receipts.db")
+        val db = SQLiteDatabase.openOrCreateDatabase(file, null)
+        val approvedItems = """{"schema":"REDACTED_V1","items":[{"totalPrice":5.0,"currency":"EUR"}]}"""
+        val rawItems = """[{"description":"SECRET_ITEM","totalPrice":5.0}]"""
+        db.execSQL("CREATE TABLE scanned_receipts (id INTEGER PRIMARY KEY, rawOcrText TEXT, parsedItems TEXT)")
+        for (id in 1..257) {
+            db.execSQL(
+                "INSERT INTO scanned_receipts(id, rawOcrText, parsedItems) VALUES (?, ?, ?)",
+                arrayOf<Any>(id, "SECRET_OCR_$id", if (id % 2 == 0) approvedItems else rawItems)
+            )
+        }
+        db.close()
+
+        anonymizer.sanitizeExport(file)
+
+        assertEquals(128.0, queryDouble(file, "SELECT COUNT(*) FROM scanned_receipts WHERE parsedItems IS NOT NULL"), 0.0)
+        assertEquals(0.0, queryDouble(file, "SELECT COUNT(*) FROM scanned_receipts WHERE rawOcrText IS NOT NULL"), 0.0)
+        assertEquals(null, queryString(file, "SELECT parsedItems FROM scanned_receipts WHERE id=1"))
+        assertEquals(approvedItems, queryString(file, "SELECT parsedItems FROM scanned_receipts WHERE id=2"))
+    }
+
+    @Test
     fun sanitizeExport_is_safe_when_optional_tables_missing() {
         val file = tempFolder.newFile("minimal.db")
         val db = SQLiteDatabase.openOrCreateDatabase(file, null)

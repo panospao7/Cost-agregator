@@ -41,6 +41,22 @@ class LifestyleAnalysisTest : AnalyticsEngineTestBase() {
     }
 
     @Test
+    fun `growth trends use chronological month keys rather than source insertion order`() = runTest {
+        every { expenseDao.getExpensesBetweenFlowUncapped(any(), any()) } returns flowOf(
+            listOf(
+                income("2026-03-05", 1200.0), spend("2026-03-10", 900.0, "restaurant"),
+                income("2026-01-05", 1000.0), spend("2026-01-10", 500.0, "supermarket"),
+                income("2026-02-05", 1100.0), spend("2026-02-10", 550.0, "supermarket")
+            )
+        )
+
+        val report = detector.analyzeLifestyleInflation(monthsToAnalyze = 6)
+
+        assertApproxEquals(0.20, report.incomeGrowthRate, 0.0001)
+        assertApproxEquals(0.80, report.spendingGrowthRate, 0.0001)
+    }
+
+    @Test
     fun `lifestyle inflation detects creep`() = runTest {
         every { expenseDao.getExpensesBetweenFlowUncapped(any(), any()) } returns flowOf(
             listOf(

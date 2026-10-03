@@ -6,6 +6,9 @@ import com.yourname.expensetracker.data.database.entity.EntitySourceLink
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.repository.ExportDataRepository
 import com.yourname.expensetracker.domain.export.AccountingExportPolicy
+import com.yourname.expensetracker.domain.export.AccountingExportEmptyDatasetException
+import com.yourname.expensetracker.domain.export.AccountingExportPolicyViolationException
+import com.yourname.expensetracker.domain.export.AccountingExportViolation
 import com.yourname.expensetracker.domain.export.CsvCellSanitizer
 import com.yourname.expensetracker.domain.export.ExpenseExportMapper
 import com.yourname.expensetracker.domain.export.FreshBooksExporter
@@ -117,14 +120,20 @@ class ExportOptionsViewModel @Inject constructor(
                 )
                 _uiState.value = _uiState.value.copy(expenseCount = count, error = null)
             } catch (e: DatabaseAccessBlockedException) {
-                Timber.e(e, "Failed loading expense count — database restore in progress")
+                Timber.e(
+                    "Failed loading expense count — database restore in progress class=%s",
+                    e::class.java.simpleName
+                )
                 _uiState.value = _uiState.value.copy(
                     expenseCount = 0,
                     error = "Cannot load expense count while a database restore is in progress. " +
                         "Please wait for the restore to complete and try again."
                 )
             } catch (e: Exception) {
-                Timber.e(e, "Failed loading expense count for export")
+                Timber.e(
+                    "Failed loading expense count for export class=%s",
+                    e::class.java.simpleName
+                )
                 _uiState.value = _uiState.value.copy(
                     expenseCount = 0,
                     error = "Failed to load expense count. Pull to retry."
@@ -134,7 +143,27 @@ class ExportOptionsViewModel @Inject constructor(
     }
 
     fun selectFormat(formatId: String) {
-        _uiState.value = _uiState.value.copy(selectedFormat = formatId)
+        val current = _uiState.value
+        if (formatId == current.selectedFormat) return
+        if (current.isLoading) {
+            exportJobSerializer.cancelActive()
+            exportJob = null
+        }
+        exportGeneration++
+        val hasCompletedResult = current.exportSuccess ||
+            current.exportFilePath != null ||
+            current.exportPreview != null
+        _uiState.value = if (hasCompletedResult) {
+            current.copy(
+                selectedFormat = formatId,
+                exportPreview = null,
+                exportPreviewTruncated = false,
+                exportFilePath = null,
+                exportSuccess = false
+            )
+        } else {
+            current.copy(selectedFormat = formatId, isLoading = false)
+        }
     }
 
     fun setDateRange(startDate: Long, endDate: Long) {
@@ -202,6 +231,7 @@ class ExportOptionsViewModel @Inject constructor(
         // concurrently and cancellation cleanup always completes first.
         exportJob = exportJobSerializer.launch(viewModelScope) {
             val generation = ++exportGeneration
+            val selectedFormatAtStart = _uiState.value.selectedFormat
             _uiState.value = _uiState.value.copy(
                 isLoading = true,
                 exportPreview = null,
@@ -262,7 +292,7 @@ class ExportOptionsViewModel @Inject constructor(
             }
 
             try {
-                val format = _uiState.value.selectedFormat
+                val format = selectedFormatAtStart
                 val startDate = _uiState.value.startDate
                 val endDate = _uiState.value.endDate
                 Timber.i("Export started: format=%s, startDate=%d, endDate=%d", format, startDate, endDate)
@@ -294,9 +324,8 @@ class ExportOptionsViewModel @Inject constructor(
                 // header-only accounting file is not importable by the target
                 // tool. CSV/JSON may emit header-only files (with a warning).
                 if (expenseCount == 0 && format.requiresAccountingPolicy()) {
-                    throw IllegalArgumentException(
-                        "No expenses found for selected date range — " +
-                            "${format.accountingExportDisplayName()} export requires a non-empty dataset"
+                    throw AccountingExportEmptyDatasetException(
+                        exportName = format.accountingExportDisplayName()
                     )
                 }
                 if (expenseCount == 0) {
@@ -412,7 +441,9 @@ class ExportOptionsViewModel @Inject constructor(
                     }
                 }
 
-                if (exportGeneration != generation) return@launch
+                if (exportGeneration != generation ||
+                    _uiState.value.selectedFormat != selectedFormatAtStart
+                ) return@launch
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     exportPreview = previewCollector.value,
@@ -423,14 +454,21 @@ class ExportOptionsViewModel @Inject constructor(
                 )
                 Timber.i("Export finished: format=%s, previewChars=%d", format, previewCollector.value.length)
             } catch (e: kotlinx.coroutines.CancellationException) {
-                if (exportGeneration != generation) return@launch
+                if (exportGeneration != generation ||
+                    _uiState.value.selectedFormat != selectedFormatAtStart
+                ) return@launch
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     error = "Export cancelled"
                 )
             } catch (e: Exception) {
-                if (exportGeneration != generation) return@launch
-                Timber.e(e, "Failed generating export")
+                if (exportGeneration != generation ||
+                    _uiState.value.selectedFormat != selectedFormatAtStart
+                ) return@launch
+                Timber.e(
+                    "Failed generating export class=%s",
+                    e::class.java.simpleName
+                )
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     error = e.toUserMessage()
@@ -982,6 +1020,14 @@ private fun String.accountingExportDisplayName(): String = when (this) {
 }
 
 private fun Exception.toUserMessage(): String = when (this) {
-    is IllegalArgumentException -> message ?: "Export data is invalid for the selected format."
+    is AccountingExportEmptyDatasetException ->
+        "${exportName} export requires a non-empty dataset."
+    is AccountingExportPolicyViolationException -> when (violation) {
+        AccountingExportViolation.SINGLE_CURRENCY ->
+            "${exportName} export requires a single-currency dataset."
+        AccountingExportViolation.PURCHASE_ONLY ->
+            "${exportName} export supports PURCHASE transactions only."
+    }
+    is IllegalArgumentException -> "Export data is invalid for the selected format."
     else -> "Failed to generate export. Please try again."
 }

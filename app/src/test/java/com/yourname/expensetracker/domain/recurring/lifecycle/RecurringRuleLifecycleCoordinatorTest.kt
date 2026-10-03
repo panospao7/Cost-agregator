@@ -483,6 +483,23 @@ class RecurringRuleLifecycleCoordinatorTest {
     // ── updateRule: logical reconciliation ──────────────────────────────────
 
     @Test
+    fun `updateInactiveRulePersistsSnapshotWithoutRegeneratingDerivedState`() = runTest(timeout = 60.seconds) {
+        seedRule(rule(id = 1L, isActive = false))
+
+        coordinator.updateRule(rule(id = 1L, amount = 99.0, isActive = true))
+
+        val updated = ruleDao.getById(1L)
+        assertNotNull(updated)
+        assertFalse(updated!!.isActive)
+        assertEquals(99.0, updated!!.amount, 0.0001)
+        assertTrue(occurrenceDao.getBySource("RECURRING_RULE", 1L).isEmpty())
+        assertTrue(plannedRowsFor(1L).isEmpty())
+        assertTrue(deliveryDao.getPendingDeliveries(NOW).isEmpty())
+        val event = eventsOfType("RULE_UPDATED_RECONCILED").single()
+        assertTrue(event.metadata!!.contains("inactive_rule"))
+    }
+
+    @Test
     fun `updateAmountPreservesOverdueOpenOccurrenceAndUpdatesFutureOpenOccurrences`() = runTest(timeout = 60.seconds) {
         seedRule(rule(id = 1L))
         // Overdue open occurrence (before reference day) + future open occurrence

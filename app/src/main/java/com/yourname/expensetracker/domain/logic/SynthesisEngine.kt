@@ -259,24 +259,34 @@ class SynthesisEngine @Inject constructor(
         // manual rules), fall back to simple single-date filtering.
         var recurringConversionFailures = 0
 
-        val committedUpcomingBills = if (confirmedOccurrences.isNotEmpty()) {
+        val committedRecurringByDay = if (confirmedOccurrences.isNotEmpty()) {
             confirmedOccurrences
                 .filter { it.dueDate >= startOfToday && it.dueDate < endOfMonthExclusive }
-                .mapNotNull { occ ->
-                    if (displayCurrency.isBlank()) occ.expectedAmount
-                    else convertAmount(occ.expectedAmount, occ.expectedCurrency, displayCurrency)
-                        ?: run { recurringConversionFailures++; null }
+                .groupBy { occurrence ->
+                    Instant.ofEpochMilli(occurrence.dueDate).atZone(ZoneId.systemDefault()).dayOfMonth
                 }
-                .sum()
+                .mapValues { (_, occurrences) ->
+                    occurrences.mapNotNull { occ ->
+                        if (displayCurrency.isBlank()) occ.expectedAmount
+                        else convertAmount(occ.expectedAmount, occ.expectedCurrency, displayCurrency)
+                            ?: run { recurringConversionFailures++; null }
+                    }.sum()
+                }
         } else {
             recurringPatterns.filter {
                 it.confidence >= 0.90f && it.nextExpectedDate >= startOfToday && it.nextExpectedDate < endOfMonthExclusive
-            }.mapNotNull { p ->
-                if (displayCurrency.isBlank()) p.averageAmount
-                else convertAmount(p.averageAmount, p.currency, displayCurrency)
-                    ?: run { recurringConversionFailures++; null }
-            }.sum()
+            }.groupBy { pattern ->
+                Instant.ofEpochMilli(pattern.nextExpectedDate).atZone(ZoneId.systemDefault()).dayOfMonth
+            }.mapValues { (_, patterns) ->
+                patterns.mapNotNull { p ->
+                    if (displayCurrency.isBlank()) p.averageAmount
+                    else convertAmount(p.averageAmount, p.currency, displayCurrency)
+                        ?: run { recurringConversionFailures++; null }
+                }.sum()
+            }
         }
+
+        val committedUpcomingBills = committedRecurringByDay.values.sum()
         
         // Convert planned expenses to displayCurrency (same pattern as recurring)
         val committedPlanned = filteredPlannedExpenses.filter {
@@ -415,11 +425,22 @@ class SynthesisEngine @Inject constructor(
         val likelyDays = likelyExpensesByDay.keys.sorted()
         var mustCumulative = 0.0
         var likelyCumulative = 0.0
+        val committedRecurringDays = committedRecurringByDay.keys.sorted()
+        var committedRecurringCumulative = 0.0
         var mustIndex = 0
         var likelyIndex = 0
+        var committedRecurringIndex = 0
         
         val projectedPoints = (dayOfMonth..daysInMonth).map { targetDay ->
             // Add any expenses that occur on or before this day to running total
+            while (committedRecurringIndex < committedRecurringDays.size &&
+                committedRecurringDays[committedRecurringIndex] <= targetDay
+            ) {
+                committedRecurringCumulative += committedRecurringByDay[
+                    committedRecurringDays[committedRecurringIndex]
+                ] ?: 0.0
+                committedRecurringIndex++
+            }
             while (mustIndex < mustDays.size && mustDays[mustIndex] <= targetDay) {
                 mustCumulative += mustExpensesByDay[mustDays[mustIndex]] ?: 0.0
                 mustIndex++
@@ -432,7 +453,7 @@ class SynthesisEngine @Inject constructor(
             val daysFromNow = targetDay - dayOfMonth
             val discretionarySpending = typicalDailyDiscretionary * daysFromNow
             
-            lastKnownTotal + discretionarySpending + mustCumulative + likelyCumulative
+            lastKnownTotal + committedRecurringCumulative + discretionarySpending + mustCumulative + likelyCumulative
         }
         
         // 5. Calculate Discretionary (Available)

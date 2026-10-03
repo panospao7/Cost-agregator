@@ -21,10 +21,10 @@ import org.junit.runner.RunWith
 /**
  * **Batch 7 closure — fresh-install parity regression test.**
  *
- * Verifies that every callback-managed index created by
- * [AppDatabase.FRESH_INSTALL_CALLBACK] is actually present when the database
- * is built via [AppDatabase.inMemoryBuilder].  This catches drift where a
- * builder path omits the callback and silently loses constraint enforcement.
+ * Verifies that every Room-declared index is present when the database is
+ * built via [AppDatabase.inMemoryBuilder]. Fresh-install schema is owned by
+ * Room entities; the legacy [AppDatabase.FRESH_INSTALL_CALLBACK] is not part
+ * of the canonical builder contract.
  *
  * The test inspects `sqlite_master` for the expected index names **and**
  * verifies the subscription-candidate SQLite uniqueness is no longer present,
@@ -74,9 +74,8 @@ class FreshInstallIndexParityTest {
     // ── Schema-level assertions ─────────────────────────────────────────────
 
     /**
-     * Fresh installs must keep Room-declared `group_members` / `group_expenses`
-     * indexes plus the runtime-only callback-managed indexes that are not part
-     * of Room's exported schema contract.
+     * Fresh installs must keep the Room-declared indexes for the tables covered
+     * by this parity contract.
      */
     @Test
     fun fresh_install_keeps_expected_indexes_in_sqlite_master() {
@@ -91,11 +90,12 @@ class FreshInstallIndexParityTest {
             "index_group_expenses_paidById",
             "index_group_expenses_groupId_date",
             "index_group_expenses_isReimbursable",
-            // Fresh-install-only raw_notifications runtime dedup constraints
-            "index_raw_notifications_dedup_nonnull",
-            "index_raw_notifications_dedup_both_null",
-            "index_raw_notifications_dedup_title_null",
-            "index_raw_notifications_dedup_text_null",
+            // Room-declared raw_notifications indexes
+            "index_raw_notifications_packageName_timestamp",
+            "index_raw_notifications_capturedAt",
+            "index_raw_notifications_isRelevant",
+            "index_raw_notifications_packageName_timestamp_title_text_bigText",
+            "index_raw_notifications_dedupeFingerprint",
             // Room-declared subscription_candidates indexes
             "index_subscription_candidates_canonicalMerchant",
             "index_subscription_candidates_isConverted",
@@ -119,7 +119,7 @@ class FreshInstallIndexParityTest {
         for (expected in expectedIndexes) {
             assertTrue(
                 "Expected index '$expected' is missing from fresh in-memory DB. " +
-                    "FRESH_INSTALL_CALLBACK may not have fired. Found indexes: $actualIndexes",
+                    "Room's canonical schema may have drifted. Found indexes: $actualIndexes",
                 actualIndexes.contains(expected)
             )
         }

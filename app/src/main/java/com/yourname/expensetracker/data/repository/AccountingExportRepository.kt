@@ -209,7 +209,21 @@ class AccountingExportRepository @Inject constructor(
         } catch (e: Exception) {
             ExportResult(
                 success = false,
-                errorMessage = e.message ?: "Unknown error during export"
+                errorMessage = when (e) {
+                    is AccountingExportPolicyViolationException -> when (e.violation) {
+                        AccountingExportViolation.SINGLE_CURRENCY ->
+                            "${e.exportName} export requires a single-currency dataset. " +
+                                "Found: ${e.detailValues.joinToString(", ")}."
+                        AccountingExportViolation.PURCHASE_ONLY ->
+                            "${e.exportName} export supports PURCHASE transactions only. " +
+                                "Unsupported types: ${e.detailValues.joinToString(", ")}."
+                    }
+                    is AccountingExportEmptyDatasetException ->
+                        "${e.exportName} export requires a non-empty dataset."
+                    is IllegalArgumentException ->
+                        "Export data is invalid for the selected format."
+                    else -> "Failed to generate export. Please try again."
+                }
             )
         }
     }

@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.domain.model.BudgetSnapshot
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -30,24 +31,36 @@ class BudgetVsActualEngine @Inject constructor() {
         homeCurrency: String
     ): BudgetVsActualResult {
         val items = mutableListOf<BudgetVsActualItem>()
-        var totalBudget = 0.0
-        var totalActual = 0.0
 
         // Aggregate actual spending by category
-        val categorySpending = actuals.includedExpenses
+        val purchaseExpenses = actuals.includedExpenses
             .filter { it.transactionType == "PURCHASE" && !it.isNotMine }
+        val categorySpending = purchaseExpenses
             .groupBy { it.categoryId }
-            .mapValues { (_, expenses) -> expenses.sumOf { it.normalizedAmount } }
+            .mapValues { (_, expenses) ->
+                MoneyAggregateBuilder.fromHomeCurrencyAmounts(
+                    amounts = expenses.asSequence().map { it.normalizedAmount }.asIterable(),
+                    homeCurrency = homeCurrency
+                ).displayAmount
+            }
+        val overallActual = MoneyAggregateBuilder.fromHomeCurrencyAmounts(
+            amounts = categorySpending.values,
+            homeCurrency = homeCurrency
+        ).displayAmount
+        val hasOverallBudget = budgets.any { it.categoryId == null }
 
         // Build a category-name map from the actuals for display purposes
-        val categoryNames = actuals.includedExpenses
-            .filter { it.transactionType == "PURCHASE" && !it.isNotMine }
+        val categoryNames = purchaseExpenses
             .associate { it.categoryId to it.categoryNameSnapshot }
             .filterValues { it != null }
             .mapValues { it.value!! }
 
         for (budget in budgets) {
-            val actual = categorySpending[budget.categoryId] ?: 0.0
+            val actual = if (budget.categoryId == null) {
+                overallActual
+            } else {
+                categorySpending[budget.categoryId] ?: 0.0
+            }
             val limit = budget.amount
             val percentage = if (limit > 0) actual / limit else 0.0
             val catName = budget.categoryId?.let { categoryNames[it] }
@@ -66,8 +79,26 @@ class BudgetVsActualEngine @Inject constructor() {
                     isOverBudget = actual > limit
                 )
             )
-            totalBudget += limit
-            totalActual += actual
+        }
+
+        val totalBudget = if (hasOverallBudget) {
+            MoneyAggregateBuilder.fromHomeCurrencyAmounts(
+                amounts = budgets.filter { it.categoryId == null }.map { it.amount },
+                homeCurrency = homeCurrency
+            ).displayAmount
+        } else {
+            MoneyAggregateBuilder.fromHomeCurrencyAmounts(
+                amounts = items.map { it.budgetLimit },
+                homeCurrency = homeCurrency
+            ).displayAmount
+        }
+        val totalActual = if (hasOverallBudget) {
+            overallActual
+        } else {
+            MoneyAggregateBuilder.fromHomeCurrencyAmounts(
+                amounts = items.map { it.actualSpent },
+                homeCurrency = homeCurrency
+            ).displayAmount
         }
 
         return BudgetVsActualResult(
