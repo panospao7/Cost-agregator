@@ -20,6 +20,8 @@ import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
 import com.yourname.expensetracker.domain.ai.service.AiEngagementRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.analytics.TotalsAggregationEngine
+import com.yourname.expensetracker.domain.core.money.MoneyAggregate
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateResult
 import com.yourname.expensetracker.domain.model.CategoryBreakdown
 import com.yourname.expensetracker.domain.model.PeriodDrillDownState
 import com.yourname.expensetracker.domain.model.PeriodTotal
@@ -595,6 +597,12 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    private fun statusAggregate(period: PeriodTotal): MoneyAggregate? = when (val result = period.moneyResult) {
+        is MoneyAggregateResult.Available -> result.aggregate
+        is MoneyAggregateResult.Unavailable -> null
+        null -> null
+    }
+
     fun reloadCurrentTotalsLevel() {
         val state = _totalsDrillDownState.value
         val year = com.yourname.expensetracker.ui.util.UiTimeUtils.getYear(timeProvider.now())
@@ -614,7 +622,7 @@ class HomeViewModel @Inject constructor(
                 Timber.d("Average for month: $average")
                 
                 val updatedTotals = totals.map { period ->
-                    period.copy(status = totalsAggregationEngine.getPeriodStatus(period.totalAmount, average))
+                    period.copy(status = totalsAggregationEngine.getPeriodStatus(statusAggregate(period), average))
                 }
                 
                 _totalsDrillDownState.update { state ->
@@ -682,7 +690,7 @@ class HomeViewModel @Inject constructor(
                     excludeCurrent = newLevel == PeriodType.MONTH || newLevel == PeriodType.WEEK
                 )
                 val updatedTotals = newTotals.map { p ->
-                    p.copy(status = totalsAggregationEngine.getPeriodStatus(p.totalAmount, average))
+                    p.copy(status = totalsAggregationEngine.getPeriodStatus(statusAggregate(p), average))
                 }
 
                 _totalsDrillDownState.update { state ->
@@ -721,7 +729,7 @@ class HomeViewModel @Inject constructor(
                         val years = totalsAggregationEngine.getYearlyTotals().first()
                         // P5-014 (RP-07): completed-history comparison baseline.
                         val avg = totalsAggregationEngine.getAverageForPeriodType(PeriodType.YEAR, excludeCurrent = true)
-                        val updatedYears = years.map { it.copy(status = totalsAggregationEngine.getPeriodStatus(it.totalAmount, avg)) }
+                        val updatedYears = years.map { it.copy(status = totalsAggregationEngine.getPeriodStatus(statusAggregate(it), avg)) }
                         Triple(updatedYears, null, null)
                     }
                     PeriodType.MONTH -> {
@@ -732,7 +740,7 @@ class HomeViewModel @Inject constructor(
                             val months = totalsAggregationEngine.getMonthlyTotals(year).first()
                             // P5-014 (RP-07): completed-history comparison baseline.
                             val avg = totalsAggregationEngine.getAverageForPeriodType(PeriodType.MONTH, excludeCurrent = true)
-                            val updatedMonths = months.map { it.copy(status = totalsAggregationEngine.getPeriodStatus(it.totalAmount, avg)) }
+                            val updatedMonths = months.map { it.copy(status = totalsAggregationEngine.getPeriodStatus(statusAggregate(it), avg)) }
                             // Find grandparent (year) for the month
                             val years = totalsAggregationEngine.getYearlyTotals().first()
                             val grandparent = years.find { it.periodKey == year.toString() }
@@ -743,7 +751,7 @@ class HomeViewModel @Inject constructor(
                             val months = totalsAggregationEngine.getMonthlyTotals(currentYear).first()
                             // P5-014 (RP-07): completed-history comparison baseline.
                             val avg = totalsAggregationEngine.getAverageForPeriodType(PeriodType.MONTH, excludeCurrent = true)
-                            val updatedMonths = months.map { it.copy(status = totalsAggregationEngine.getPeriodStatus(it.totalAmount, avg)) }
+                            val updatedMonths = months.map { it.copy(status = totalsAggregationEngine.getPeriodStatus(statusAggregate(it), avg)) }
                             Triple(updatedMonths, null, null)
                         }
                     }
@@ -755,7 +763,7 @@ class HomeViewModel @Inject constructor(
                             val weeks = totalsAggregationEngine.getWeeklyTotals(year, month).first()
                             // P5-014 (RP-07): completed-history comparison baseline.
                             val avg = totalsAggregationEngine.getAverageForPeriodType(PeriodType.WEEK, excludeCurrent = true)
-                            val updatedWeeks = weeks.map { it.copy(status = totalsAggregationEngine.getPeriodStatus(it.totalAmount, avg)) }
+                            val updatedWeeks = weeks.map { it.copy(status = totalsAggregationEngine.getPeriodStatus(statusAggregate(it), avg)) }
                             // Find grandparent (month) for the week
                             val months = totalsAggregationEngine.getMonthlyTotals(year).first()
                             val grandparent = months.find { it.periodKey == parent.periodKey }

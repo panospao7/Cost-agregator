@@ -109,7 +109,7 @@ class BlockPartyDstAlignmentTest {
             displayCurrency = "EUR"
         )
         val monteCarloSimulator = mockk<MonteCarloSpendingSimulator>(relaxed = true)
-        coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns null
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any()) } returns null
         val healthCalculator = mockk<com.yourname.expensetracker.domain.health.FinancialHealthCalculator>(relaxed = true)
         val healthScoreV2 = mockk<FinancialHealthScoreV2>(relaxed = true)
         coEvery { healthScoreV2.calculateHealthScore(any(), any()) } returns HealthScoreOutcome.Available(
@@ -127,7 +127,8 @@ class BlockPartyDstAlignmentTest {
         val lifestyleSavingsPromptUseCase = mockk<LifestyleSavingsPromptUseCase>(relaxed = true)
         coEvery { lifestyleSavingsPromptUseCase.evaluateAndPrompt() } returns null
         val monthlySavingsSweepUseCase = mockk<MonthlySavingsSweepUseCase>(relaxed = true)
-        coEvery { monthlySavingsSweepUseCase.computeSweepRecommendation() } returns null
+        coEvery { monthlySavingsSweepUseCase.computeSweepRecommendationResult() } returns
+            com.yourname.expensetracker.domain.usecase.savings.SavingsSweepComputationResult.NoRecommendation()
         val computeMoneyRadarUseCase = mockk<ComputeMoneyRadarUseCase>(relaxed = true)
         coEvery { computeMoneyRadarUseCase.compute() } returns MoneyRadarData(
             urgencyScore = 0,

@@ -15,6 +15,11 @@ import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.data.repository.SavingsGoalRepository
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.analytics.AnalyticsNormalizationResult
+import com.yourname.expensetracker.domain.analytics.AnalyticsConversionWarning
+import com.yourname.expensetracker.domain.analytics.AnalyticsConversionWarningType
+import com.yourname.expensetracker.domain.core.money.ConversionQuality
+import com.yourname.expensetracker.domain.core.money.RateBasis
+import com.yourname.expensetracker.domain.savings.SavingsInputStage
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.MultiConversionAggregate
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
@@ -30,6 +35,7 @@ import com.yourname.expensetracker.domain.forecasting.SimulationConfidence
 import com.yourname.expensetracker.domain.forecasting.SimulationMetadata
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.flowOf
@@ -78,6 +84,7 @@ class MonthlySavingsSweepUseCaseTest {
         every { recurringExpenseRepository.getAllFlow() } returns flowOf(emptyList())
         every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(emptyList())
         every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
+        every { currencySettingsRepository.lastRateUpdate() } returns flowOf(0L)
         coEvery { currencySettingsRepository.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
         coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } returns emptyList()
         coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns monteCarlo(p50 = 100.0, p75 = 120.0, confidence = 0.9)
@@ -337,6 +344,235 @@ class MonthlySavingsSweepUseCaseTest {
         assertTrue(byId.getValue(2L).suggestedAllocation <= 900.0)
     }
 
+    @Test
+    fun `mixed goal currencies allocate only to computation currency goals`() = runTest {
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(
+            budgetStatus(1L, null, 1000.0, 800.0)
+        ))
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(listOf(
+            goal(1L, "Home", 1000.0, 100.0),
+            goal(2L, "Foreign", 1000.0, 100.0).copy(currency = "USD", currencyAssumption = "EXPLICIT")
+        ))
+        val result = requireNotNull(useCase.computeSweepRecommendation())
+        assertEquals("EUR", result.currency)
+        assertEquals(CurrencyCode.EUR, result.moneySafeSweepAmount?.currency)
+        assertEquals(listOf(1L), result.goalAllocations.map { it.goalId })
+        assertTrue(result.goalAllocations.sumOf { it.suggestedAllocation } <= result.safeSweepAmount)
+    }
+
+    @Test
+    fun `all foreign goals decline without relabeling a sweep`() = runTest {
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(budgetStatus(1L, null, 1000.0, 800.0)))
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(listOf(
+            goal(1L, "Foreign", 1000.0, 100.0).copy(currency = "USD", currencyAssumption = "EXPLICIT")
+        ))
+        assertTrue(useCase.computeSweepRecommendationResult() is SavingsSweepComputationResult.NoRecommendation)
+    }
+
+    @Test
+    fun `excluded spending declines sweep rather than improving safe money`() = runTest {
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(budgetStatus(1L, null, 1000.0, 800.0)))
+        coEvery { analyticsCurrencyNormalizer.normalizeSnapshots(any(), any()) } returns AnalyticsNormalizationResult(
+            "EUR", emptyList(), emptyList(), emptyList(), null, totalInputCount = 2
+        )
+        val result = useCase.computeSweepRecommendationResult() as SavingsSweepComputationResult.Unavailable
+        assertEquals("DISPLAY_CONVERSION_UNAVAILABLE", result.reasonCode)
+        assertEquals(2, result.metadata.totalInputCount)
+        assertEquals(2, result.metadata.excludedInputCount)
+        coVerify(exactly = 0) { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun invalidTargetIsUnavailableEvenWithoutBudgets() = runTest {
+        every { currencySettingsRepository.homeCurrency() } returns flowOf("SECRET invalid")
+        val result = useCase.computeSweepRecommendationResult() as SavingsSweepComputationResult.Unavailable
+        assertEquals("INVALID_TARGET_CURRENCY", result.reasonCode)
+        assertNull(result.metadata.currency)
+        assertTrue(!result.toString().contains("SECRET"))
+    }
+
+    @Test
+    fun settingsReadFailureIsControlledUnavailableNotNoRecommendation() = runTest {
+        every { currencySettingsRepository.homeCurrency() } throws IllegalStateException("SECRET /private/database")
+        val result = useCase.computeSweepRecommendationResult() as SavingsSweepComputationResult.Unavailable
+        assertEquals("HOME_CURRENCY_UNAVAILABLE", result.reasonCode)
+        assertTrue(!result.toString().contains("SECRET"))
+    }
+
+    @Test
+    fun settingsTimeoutRemainsUnavailable() = runTest {
+        every { currencySettingsRepository.homeCurrency() } returns kotlinx.coroutines.flow.flow {
+            kotlinx.coroutines.awaitCancellation()
+        }
+        val result = useCase.computeSweepRecommendationResult() as SavingsSweepComputationResult.Unavailable
+        assertEquals("HOME_CURRENCY_UNAVAILABLE", result.reasonCode)
+        assertEquals(5_000L, testScheduler.currentTime)
+    }
+
+    @Test
+    fun partialBudgetAndUnknownPercentRemainUnavailable() = runTest {
+        for (status in listOf(
+            budgetStatus(1L, null, 1000.0, 800.0).copy(isPartial = true),
+            budgetStatus(1L, null, 1000.0, 800.0).copy(percentKnown = false)
+        )) {
+            every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(status))
+            val result = useCase.computeSweepRecommendationResult() as SavingsSweepComputationResult.Unavailable
+            assertEquals("DISPLAY_CONVERSION_UNAVAILABLE", result.reasonCode)
+            assertEquals(ConversionQuality.UNAVAILABLE, result.metadata.conversionQuality)
+        }
+        coVerify(exactly = 0) { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun missingAndStaleUpcomingConversionRemainUnavailableWithControlledMetadata() = runTest {
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(budgetStatus(1L, null, 1000.0, 800.0)))
+        every { recurringExpenseRepository.getAllFlow() } returns flowOf(listOf(
+            ManualRecurringExpense(
+                id = 1L, merchant = "SECRET merchant", amount = 20.0, currency = "USD",
+                frequency = RecurrenceFrequency.MONTHLY, nextDate = withinWindowNow + dayMs, note = null
+            )
+        ))
+        for (code in listOf("MISSING_RATE", "STALE_RATE")) {
+            coEvery { currencyConverter.convertMultiple(any(), any()) } returns MultiConversionAggregate(
+                0.0, "EUR", listOf(com.yourname.expensetracker.domain.currency.FailedConversion(
+                    20.0, "USD", "EUR", "SECRET /private/receipt", code
+                ))
+            )
+            val result = useCase.computeSweepRecommendationResult() as SavingsSweepComputationResult.Unavailable
+            assertEquals("DISPLAY_CONVERSION_UNAVAILABLE", result.reasonCode)
+            assertEquals(1, result.metadata.excludedInputCount)
+            assertTrue((if (code == "STALE_RATE") "STALE_EXCHANGE_RATE" else "MISSING_EXCHANGE_RATE")
+                in result.metadata.warningCodes)
+            assertTrue(!result.toString().contains("SECRET"))
+        }
+        coVerify(exactly = 0) { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun unavailableForecastCannotProduceSweepMoney() = runTest {
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(budgetStatus(1L, null, 1000.0, 800.0)))
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns
+            MonteCarloResult.unavailable("SECRET forecast")
+        val result = useCase.computeSweepRecommendationResult() as SavingsSweepComputationResult.Unavailable
+        assertEquals("DISPLAY_CONVERSION_UNAVAILABLE", result.reasonCode)
+        assertTrue(!result.toString().contains("SECRET"))
+    }
+
+    @Test
+    fun staleNormalizationRetainsCountsWarningAndRateTimestamp() = runTest {
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(budgetStatus(1L, null, 1000.0, 800.0)))
+        coEvery { analyticsCurrencyNormalizer.normalizeSnapshots(any(), any()) } returns AnalyticsNormalizationResult(
+            "EUR", emptyList(), emptyList(), listOf(
+                AnalyticsConversionWarning(AnalyticsConversionWarningType.STALE_EXCHANGE_RATE, "SECRET row", 2)
+            ), 321L, totalInputCount = 2
+        )
+        val result = useCase.computeSweepRecommendationResult() as SavingsSweepComputationResult.Unavailable
+        assertEquals(2, result.metadata.excludedInputCount)
+        assertEquals(321L, result.metadata.latestRateTimestamp)
+        assertTrue("STALE_EXCHANGE_RATE" in result.metadata.warningCodes)
+        assertTrue(!result.toString().contains("SECRET"))
+    }
+
+    @Test
+    fun availableSweepRetainsDistinctRatePoliciesAndSettingsVersion() = runTest {
+        every { currencySettingsRepository.lastRateUpdate() } returns flowOf(999L)
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(budgetStatus(1L, null, 1000.0, 800.0)))
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(listOf(goal(1L, "Home", 1000.0, 100.0)))
+        val result = useCase.computeSweepRecommendationResult() as SavingsSweepComputationResult.Available
+        assertEquals("EUR", result.metadata.currency)
+        assertEquals(999L, result.metadata.settingsRateTimestamp)
+        assertEquals(999L, result.recommendation.rateTimestamp)
+        assertEquals(setOf(RateBasis.TRANSACTION_DATE, RateBasis.LATEST_AVAILABLE), result.metadata.requestedRateBases)
+        assertEquals(setOf(SavingsInputStage.CURRENT_SPENDING, SavingsInputStage.RECURRING_UPCOMING,
+            SavingsInputStage.PLANNED_UPCOMING), result.metadata.inputs.map { it.stage }.toSet())
+        assertEquals(ConversionQuality.COMPLETE, result.metadata.conversionQuality)
+    }
+
+    @Test
+    fun noBudgetsAndNoUnderspendAreValidNoRecommendation() = runTest {
+        val empty = useCase.computeSweepRecommendationResult() as SavingsSweepComputationResult.NoRecommendation
+        assertEquals("EUR", empty.metadata.currency)
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(budgetStatus(1L, null, 1000.0, 1100.0)))
+        assertTrue(useCase.computeSweepRecommendationResult() is SavingsSweepComputationResult.NoRecommendation)
+        coVerify(exactly = 0) { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) }
+    }
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private class IdentityCancellation : kotlinx.coroutines.CancellationException("SECRET cancellation"),
+        kotlinx.coroutines.CopyableThrowable<IdentityCancellation> {
+        override fun createCopy(): IdentityCancellation? = null
+    }
+
+    @Test
+    fun typedSweepPreservesCancellationIdentity() = runTest {
+        val cancelled = IdentityCancellation()
+        every { currencySettingsRepository.homeCurrency() } throws cancelled
+        org.junit.Assert.assertSame(cancelled, runCatching { useCase.computeSweepRecommendationResult() }.exceptionOrNull())
+    }
+
+    @Test
+    fun `sweep summary cannot relabel captured computation currency`() {
+        val result = SavingsSweepRecommendation(50.0, 10.0, 40.0, emptyList(), withinWindowNow, withinWindowNow, 0.9, "USD")
+        assertTrue(result.getSummary().contains("40"))
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) { result.getSummary("EUR") }
+    }
+
+    @Test
+    fun unknownActiveGoalCannotBecomeNoUnderspendOrNoEligibleGoals() = runTest {
+        for (currency in listOf("EUR", "USD", "GBP")) {
+            for (provenance in listOf("LEGACY_DEFAULT", "UNKNOWN", "", "ASSUMED_HOME_CURRENCY", "SECRET unknown")) {
+                every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(listOf(
+                    goal(1L, "Goal", 1000.0, 0.0).copy(currency = currency, currencyAssumption = provenance)
+                ))
+                val result = useCase.computeSweepRecommendationResult() as SavingsSweepComputationResult.Unavailable
+                assertEquals("INVALID_SOURCE_CURRENCY", result.reasonCode)
+                assertEquals(ConversionQuality.UNAVAILABLE, result.metadata.conversionQuality)
+                assertEquals(listOf("INVALID_SOURCE_CURRENCY"), result.metadata.warningCodes)
+                assertTrue(!result.toString().contains("SECRET"))
+            }
+        }
+        coVerify(exactly = 0) { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun mixedExplicitAndLegacyGoalsCannotReceivePartialSweep() = runTest {
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(budgetStatus(1L, null, 1000.0, 800.0)))
+        for (currency in listOf("EUR", "USD")) {
+            every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(listOf(
+                goal(1L, "Known", 1000.0, 100.0),
+                goal(2L, "Legacy", 1000.0, 100.0).copy(currency = currency, currencyAssumption = "LEGACY_DEFAULT")
+            ))
+            val result = useCase.computeSweepRecommendationResult() as SavingsSweepComputationResult.Unavailable
+            assertEquals("INVALID_SOURCE_CURRENCY", result.reasonCode)
+        }
+        coVerify(exactly = 0) { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun explicitEurUsdGbpSweepsRetainOriginalAmountsAndUnits() = runTest {
+        for (currency in listOf("EUR", "USD", "GBP")) {
+            every { currencySettingsRepository.homeCurrency() } returns flowOf(currency)
+            val status = budgetStatus(1L, null, 1000.0, 900.0)
+            every { budgetRepository.getBudgetStatuses() } returns flowOf(
+                listOf(status.copy(currency = currency, budget = status.budget.copy(currency = currency)))
+            )
+            every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(listOf(
+                goal(1L, "Known", 1000.0, 100.0).copy(currency = currency, currencyAssumption = "EXPLICIT_HOME_CURRENCY")
+            ))
+            coEvery { analyticsCurrencyNormalizer.normalizeSnapshots(any(), currency) } returns
+                AnalyticsNormalizationResult(currency, emptyList(), emptyList(), emptyList(), null, totalInputCount = 0)
+            coEvery { currencyConverter.convertMultiple(any(), currency) } returns
+                MultiConversionAggregate(0.0, currency, emptyList())
+            coEvery { monteCarloSimulator.simulate(any(), any(), any(), currency, any()) } returns
+                monteCarlo(100.0, 120.0, 0.9).copy(displayCurrency = currency)
+            val result = useCase.computeSweepRecommendationResult() as SavingsSweepComputationResult.Available
+            assertApproxEquals(80.0, result.recommendation.safeSweepAmount)
+            assertEquals(currency, result.recommendation.currency)
+            assertEquals(currency, result.metadata.currency)
+            assertEquals(listOf(currency), result.recommendation.goalAllocations.map { it.currency })
+        }
+    }
+
     private fun budgetStatus(
         budgetId: Long,
         categoryId: Long?,
@@ -371,6 +607,7 @@ class MonthlySavingsSweepUseCaseTest {
             currentAmount = current,
             targetDate = null,
             protectionLevel = GoalProtectionLevel.WARNING,
+            currencyAssumption = "EXPLICIT",
             createdAt = withinWindowNow - dayMs
         )
     }

@@ -462,9 +462,11 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             // coordinator would reclassify these as OCR_COMPLETED.
             val isOcrFailure = receipt.rawOcrText == "[OCR Failed or Skipped]" ||
                 receipt.rawOcrText.startsWith("Scan Failed:")
+            val hasResolvedSourceMoney = receipt.parsedTotal != null && receipt.currency.isNotBlank()
             val processingStatus = when {
                 isOcrFailure -> ReceiptProcessingStatus.OCR_FAILED.name
                 receipt.processingStatus == ReceiptProcessingStatus.PARSE_FAILED.name -> ReceiptProcessingStatus.PARSE_FAILED.name
+                !hasResolvedSourceMoney -> ReceiptProcessingStatus.PARSE_FAILED.name
                 processResult.ocrCoverage.isPartial -> ReceiptProcessingStatus.OCR_PARTIAL.name
                 receipt.parsedMerchant != null -> ReceiptProcessingStatus.PARSED.name
                 else -> ReceiptProcessingStatus.OCR_COMPLETED.name
@@ -481,7 +483,8 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 duplicateDetector.computeTextFingerprintPublic(rawOcrForFingerprint)
             } else null
 
-            val semanticFingerprint = if (receipt.parsedMerchant != null && receipt.parsedTotal != null && receipt.parsedDate != null) {
+            val semanticFingerprint = if (receipt.parsedMerchant != null && receipt.parsedTotal != null &&
+                receipt.parsedDate != null && receipt.currency.isNotBlank()) {
                 duplicateDetector.computeSemanticFingerprintPublic(
                     receipt.parsedMerchant,
                     receipt.parsedTotal,
@@ -635,12 +638,15 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 }
 
                 // MIT-041: Create PendingReview inside the same transaction so receipt + event + review are atomic.
-                if (options.createReview || parsed.confidence < BATCH_REVIEW_CONFIDENCE_THRESHOLD) {
+                // Unresolved source money is always review-required; it must never become an
+                // actionable expense through a guessed currency or missing total.
+                val requiresMoneyReview = parsed.total == null || parsed.currency.isBlank()
+                if (options.createReview || requiresMoneyReview || parsed.confidence < BATCH_REVIEW_CONFIDENCE_THRESHOLD) {
                     val review = PendingReview(
                         scannedReceiptId = insertedId,
                         suggestedMerchant = parsed.merchantName ?: "Unknown",
-                        suggestedAmount = parsed.total ?: 0.0,
-                        suggestedCurrency = parsed.currency ?: FALLBACK_CURRENCY,
+                        suggestedAmount = parsed.total?.amount ?: 0.0,
+                        suggestedCurrency = parsed.currency.takeIf { it.isNotBlank() } ?: FALLBACK_CURRENCY,
                         suggestedDate = parsed.date ?: now,
                         confidence = parsed.confidence,
                         suggestedType = TransactionType.PURCHASE.name,

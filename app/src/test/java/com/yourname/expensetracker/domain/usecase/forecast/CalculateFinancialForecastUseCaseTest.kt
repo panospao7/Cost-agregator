@@ -142,7 +142,7 @@ class CalculateFinancialForecastUseCaseTest {
 
         useCase.invoke().first()
 
-        assertEquals(80.0, capturedInput.captured.spendingPace.currentMonthSpent, 0.0001)
+        assertEquals(80.0, requireNotNull(capturedInput.captured.spendingPace.currentMonthSpent), 0.0001)
     }
 
     @Test
@@ -216,7 +216,7 @@ class CalculateFinancialForecastUseCaseTest {
 
         useCase.invoke().first()
 
-        assertEquals(1200.0, capturedInput.captured.spendingPace.projectedTotal, 0.0001)
+        assertEquals(1200.0, requireNotNull(capturedInput.captured.spendingPace.projectedTotal), 0.0001)
         assertEquals(2, capturedInput.captured.spendingPace.daysElapsed)
     }
 
@@ -266,7 +266,7 @@ class CalculateFinancialForecastUseCaseTest {
 
         assertEquals(listOf(10.0, 50.0), capturedInput.captured.pastSumDaily.take(2))
         assertEquals(GoalProtectionLevel.STRICT, capturedInput.captured.savingsGoals.single().protectionLevel)
-        assertEquals(50.0, capturedInput.captured.spendingPace.currentMonthSpent, 0.0001)
+        assertEquals(50.0, requireNotNull(capturedInput.captured.spendingPace.currentMonthSpent), 0.0001)
         assertEquals(155.0, capturedInput.captured.spendingPace.previousMonthTotal ?: 0.0, 0.0001)
         assertEquals(com.yourname.expensetracker.domain.analytics.PaceStatus.UNDER_PACE, capturedInput.captured.spendingPace.paceStatus)
     }

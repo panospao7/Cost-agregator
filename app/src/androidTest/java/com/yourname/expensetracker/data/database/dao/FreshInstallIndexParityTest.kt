@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.database.dao
 
+import android.database.sqlite.SQLiteConstraintException
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.yourname.expensetracker.data.database.AppDatabase
@@ -14,6 +15,7 @@ import org.junit.After
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -27,15 +29,15 @@ import org.junit.runner.RunWith
  * of the canonical builder contract.
  *
  * The test inspects `sqlite_master` for the expected index names **and**
- * verifies the subscription-candidate SQLite uniqueness is no longer present,
- * while budget-forecast behavior still relies on app-layer handling.
+ * verifies declared uniqueness still rejects duplicates without the removed
+ * legacy partial indexes. Budget-forecast history keeps distinct creation instants.
  *
  * ## RSP-R6A: Fresh-vs-migrated parity test plan (full)
  * The current test only validates fresh-install (in-memory) databases. A full
  * parity test suite should compare `sqlite_master` output between:
  * 1. A fresh install via [AppDatabase.inMemoryBuilder] (this test).
  * 2. A fully migrated database created by running the entire migration chain
- *    from v6 (or the lowest exported schema) to [APP_DATABASE_SCHEMA_VERSION]
+ *    from the supported DatabaseSchemaPolicy.MIGRATION_BASELINE to current
  *    via [MigrationTestHelper.runMigrationsAndValidate].
  *
  * ### Parity assertions (planned)
@@ -100,10 +102,12 @@ class FreshInstallIndexParityTest {
             "index_subscription_candidates_canonicalMerchant",
             "index_subscription_candidates_isConverted",
             "index_subscription_candidates_confidence",
+            "index_subscription_candidates_canonicalMerchant_userAction",
             // Room-declared budget_forecasts indexes
             "index_budget_forecasts_budgetId",
             "index_budget_forecasts_forecastDate",
-            "index_budget_forecasts_isActive"
+            "index_budget_forecasts_isActive",
+            "index_budget_forecasts_budgetId_targetPeriodStart_forecastDate"
         )
 
         val db = database.openHelper.writableDatabase
@@ -140,7 +144,8 @@ class FreshInstallIndexParityTest {
             setOf(
                 "index_budget_forecasts_budgetId",
                 "index_budget_forecasts_forecastDate",
-                "index_budget_forecasts_isActive"
+                "index_budget_forecasts_isActive",
+                "index_budget_forecasts_budgetId_targetPeriodStart_forecastDate"
             ),
             budgetForecastIndexes
         )
@@ -162,7 +167,8 @@ class FreshInstallIndexParityTest {
             setOf(
                 "index_subscription_candidates_canonicalMerchant",
                 "index_subscription_candidates_isConverted",
-                "index_subscription_candidates_confidence"
+                "index_subscription_candidates_confidence",
+                "index_subscription_candidates_canonicalMerchant_userAction"
             ),
             subscriptionCandidateIndexes
         )
@@ -171,14 +177,14 @@ class FreshInstallIndexParityTest {
     // ── Batch 7 behavioural assertions ──────────────────────────────────────
 
     /**
-     * Fresh installs must no longer enforce pending-candidate uniqueness via a
-     * non-Room SQLite index.
+     * Room's declared merchant/action unique index still rejects duplicates
+     * even though the legacy partial SQLite index is absent.
      */
     @Test
-    fun duplicate_pending_subscription_candidate_can_exist_without_non_room_index() = runBlocking {
+    fun duplicate_pending_subscription_candidate_is_rejected_by_room_index() = runBlocking {
         val dao = database.subscriptionCandidateDao()
 
-        dao.insert(
+        val firstId = dao.insert(
             SubscriptionCandidate(
                 merchant = "Netflix Inc.",
                 canonicalMerchant = "Netflix",
@@ -195,8 +201,8 @@ class FreshInstallIndexParityTest {
             )
         )
 
-        val secondId = dao.insert(
-            SubscriptionCandidate(
+        try {
+            dao.insert(SubscriptionCandidate(
                 merchant = "Netflix Inc.",
                 canonicalMerchant = "Netflix",
                 detectedInterval = "MONTHLY",
@@ -209,11 +215,15 @@ class FreshInstallIndexParityTest {
                 estimatedAnnualCost = 203.88,
                 userAction = "pending",
                 isConverted = false
-            )
-        )
-
-        assertTrue(secondId > 0)
-        assertEquals(2, dao.getPendingCandidates().size)
+            ))
+            fail("Room uniqueness must reject a duplicate pending merchant/action")
+        } catch (_: SQLiteConstraintException) {
+            // Expected: the original candidate must remain untouched.
+        }
+        val pending = dao.getPendingCandidates()
+        assertEquals(1, pending.size)
+        assertEquals(firstId, pending.single().id)
+        assertEquals(15.99, pending.single().averageAmount, 0.0)
     }
 
     /**
@@ -238,7 +248,7 @@ class FreshInstallIndexParityTest {
 
         val first = BudgetForecast(
             budgetId = budgetId,
-            forecastDate = System.currentTimeMillis(),
+            forecastDate = 1_700_000_000_001L,
             targetPeriodStart = 1_700_000_000_000L,
             targetPeriodEnd = 1_702_000_000_000L,
             predictedSpending = 400.0,
@@ -247,13 +257,13 @@ class FreshInstallIndexParityTest {
             riskLevel = ForecastRiskLevel.MEDIUM,
             overspendProbability = 0.20,
             isActive = true,
-            createdAt = System.currentTimeMillis()
+            createdAt = 1_700_000_000_001L
         )
         forecastDao.insertWithDeactivation(first)
 
         val duplicate = BudgetForecast(
             budgetId = budgetId,
-            forecastDate = System.currentTimeMillis(),
+            forecastDate = 1_700_000_000_002L,
             targetPeriodStart = 1_700_000_000_000L,
             targetPeriodEnd = 1_702_000_000_000L,
             predictedSpending = 450.0,
@@ -262,7 +272,7 @@ class FreshInstallIndexParityTest {
             riskLevel = ForecastRiskLevel.HIGH,
             overspendProbability = 0.60,
             isActive = true,
-            createdAt = System.currentTimeMillis()
+            createdAt = 1_700_000_000_002L
         )
 
         forecastDao.insertWithDeactivation(duplicate)
@@ -310,19 +320,21 @@ class FreshInstallIndexParityTest {
             firstSeen = 1_700_000_000_000L,
             lastSeen = 1_703_000_000_000L,
             estimatedAnnualCost = 119.88,
-            userAction = "pending",
-            isConverted = true  // converted → excluded from partial index
+            userAction = "accepted", // Matches SubscriptionCandidateDao.markAsConverted.
+            isConverted = true
         )
         val id = dao.insert(converted)
         assertTrue("Converted candidate should insert without collision", id > 0)
+        assertEquals(1, dao.getPendingCandidates().size)
+        assertEquals(2, dao.getAllForMerchant("Spotify").size)
     }
 
     /**
-     * Direct inserts can coexist now because budget_forecasts keeps only
-     * Room-declared indexes on fresh install.
+     * Distinct forecast instants coexist under the Room composite unique index;
+     * a duplicate at the same instant is rejected without overwriting history.
      */
     @Test
-    fun duplicate_active_budget_forecast_direct_insert_does_not_collide() = runBlocking {
+    fun distinct_active_budget_forecast_instants_coexist_but_duplicate_instant_is_rejected() = runBlocking {
         val budgetDao = database.budgetDao()
         val budgetId = budgetDao.insert(
             Budget(
@@ -338,7 +350,7 @@ class FreshInstallIndexParityTest {
 
         val active = BudgetForecast(
             budgetId = budgetId,
-            forecastDate = System.currentTimeMillis(),
+            forecastDate = 1_700_000_000_001L,
             targetPeriodStart = 1_700_000_000_000L,
             targetPeriodEnd = 1_702_000_000_000L,
             predictedSpending = 400.0,
@@ -347,13 +359,13 @@ class FreshInstallIndexParityTest {
             riskLevel = ForecastRiskLevel.MEDIUM,
             overspendProbability = 0.20,
             isActive = true,
-            createdAt = System.currentTimeMillis()
+            createdAt = 1_700_000_000_001L
         )
         forecastDao.insert(active)
 
         val duplicate = BudgetForecast(
             budgetId = budgetId,
-            forecastDate = System.currentTimeMillis(),
+            forecastDate = 1_700_000_000_002L,
             targetPeriodStart = 1_700_000_000_000L,
             targetPeriodEnd = 1_702_000_000_000L,
             predictedSpending = 420.0,
@@ -362,9 +374,18 @@ class FreshInstallIndexParityTest {
             riskLevel = ForecastRiskLevel.MEDIUM,
             overspendProbability = 0.25,
             isActive = true,
-            createdAt = System.currentTimeMillis()
+            createdAt = 1_700_000_000_002L
         )
         val id = forecastDao.insert(duplicate)
-        assertTrue("Duplicate active forecast should insert without SQLite collision", id > 0)
+        assertTrue("A distinct forecast instant must insert without collision", id > 0)
+        try {
+            forecastDao.insert(duplicate.copy(predictedSpending = 430.0))
+            fail("The same budget/period/instant must not overwrite forecast history")
+        } catch (_: SQLiteConstraintException) {
+            // Expected: both earlier rows and their financial values are preserved.
+        }
+        val forecasts = forecastDao.getForecastsForBudget(budgetId).first()
+        assertEquals(2, forecasts.size)
+        assertEquals(setOf(400.0, 420.0), forecasts.map { it.predictedSpending }.toSet())
     }
 }

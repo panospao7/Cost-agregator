@@ -1,6 +1,8 @@
 package com.yourname.expensetracker.data.repository
 
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import kotlinx.coroutines.CoroutineScope
@@ -13,7 +15,9 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertThrows
 import org.junit.Test
 import java.io.File
 import java.nio.file.Files
@@ -87,6 +91,172 @@ class SavingsContributionHistoryRepositoryTest {
         assertTrue(handle.repository.getContributionsBetween(monthStart, monthEnd).isEmpty())
     }
 
+    @Test
+    fun `corrupt history is preserved and cannot be read as empty history`() = runTest {
+        val timeProvider = FakeTimeProvider.forDate(2026, 4, 15)
+        val handle = createRepository(createStateFile(), timeProvider)
+        val key = stringPreferencesKey("savings_contribution_history_json")
+        handle.dataStore.edit { preferences -> preferences[key] = "not-json" }
+
+        assertThrows(SavingsContributionHistoryUnavailableException::class.java) {
+            kotlinx.coroutines.runBlocking { handle.repository.getAllContributions() }
+        }
+        assertEquals("not-json", handle.repository.snapshotJson())
+        assertFalse(handle.repository.recordContribution(1L, 10.0, currency = "EUR"))
+        assertEquals("not-json", handle.repository.snapshotJson())
+    }
+
+    @Test
+    fun nullAndIncompatibleHistoryShapesAreNotEmptyHistory() = runTest {
+        val handle = createRepository(createStateFile(), FakeTimeProvider.forDate(2026, 4, 15))
+        for (raw in listOf(
+            "null", "[]", "{}", "", "{\"events\":null}", "{\"events\":{}}",
+            "{\"events\":[null]}", "{\"events\":[true]}", "{\"events\":[1]}", "{\"events\":[{}]}",
+            "{\"events\":[],\"isCorrupt\":true}", "{\"events\":[],\"isCorrupt\":null}",
+            "{\"events\":[],\"isCorrupt\":\"false\"}", "{\"events\":[null],\"events\":[]}",
+            "{\"events\":[]} {\"events\":[]}", "{events:[]}"
+        )) assertCorruptAndUnchanged(handle, raw)
+    }
+
+    @Test
+    fun invalidEventValuesAndScalarCoercionsAreRejectedBeforeCleanup() = runTest {
+        val clock = FakeTimeProvider.forDate(2026, 4, 15)
+        val handle = createRepository(createStateFile(), clock)
+        val fields = listOf(
+            "goalId" to listOf("null", "0", "-1", "1.5", "9223372036854775808", "\"1\"", "true"),
+            "amount" to listOf("null", "0", "-1", "1e309", "NaN", "\"NaN\"", "\"1\"", "true", "[]"),
+            "timestamp" to listOf("null", "0", "-1", "1.5", "9223372036854775808", "\"1\"", "true"),
+            "source" to listOf("\"\"", "\" \"", "\"MANUAL\"", "\"unknown\"", "\"SECRET financial payload\"", "1", "true", "{}"),
+            "currency" to listOf("\"\"", "\"ZZZ\"", "\"UNKNOWN\"", "\"SECRET currency\"", "1", "true", "{}")
+        )
+        for ((field, invalidValues) in fields) {
+            for (value in invalidValues) {
+                val event = validEventJson(clock.now())
+                    .replace(Regex("\"$field\":(?:\"[^\"]*\"|[^,}]+)"), "\"$field\":$value")
+                assertCorruptAndUnchanged(handle, "{\"events\":[$event]}")
+            }
+        }
+        for (field in listOf("goalId", "amount", "timestamp")) {
+            val event = validEventJson(clock.now())
+                .replace(Regex("\"$field\":(?:\"[^\"]*\"|[^,}]+),?"), "")
+                .replace(",}", "}")
+            assertCorruptAndUnchanged(handle, "{\"events\":[$event]}")
+        }
+        val duplicateAmount = validEventJson(clock.now()).replace("\"amount\":10.0", "\"amount\":-1,\"amount\":10.0")
+        assertCorruptAndUnchanged(handle, "{\"events\":[$duplicateAmount]}")
+    }
+
+    @Test
+    fun everyEventIsValidatedBeforeRetentionAndEventCountPruning() = runTest {
+        val clock = FakeTimeProvider.forDate(2026, 4, 15)
+        val handle = createRepository(createStateFile(), clock)
+        val valid = validEventJson(clock.now())
+        val invalidStale = validEventJson(1L).replace("\"amount\":10.0", "\"amount\":-1")
+        assertCorruptAndUnchanged(handle, "{\"events\":[$valid,$invalidStale]}")
+        val overLimit = "{\"events\":[$invalidStale," + List(5000) { valid }.joinToString(",") + "]}"
+        assertCorruptAndUnchanged(handle, overLimit)
+    }
+
+    @Test
+    fun semanticCorruptionSurvivesRepositoryRecreationWithoutOverwrite() = runTest {
+        val clock = FakeTimeProvider.forDate(2026, 4, 15)
+        val file = createStateFile()
+        val first = createRepository(file, clock)
+        val raw = "{\"events\":[${validEventJson(clock.now())},null]}"
+        assertCorruptAndUnchanged(first, raw)
+        first.scope.cancel()
+        first.scope.coroutineContext[Job]?.join()
+        scopes.remove(first.scope)
+        val recreated = createRepository(file, clock)
+        val error = runCatching { recreated.repository.getAllContributions() }.exceptionOrNull()
+        assertTrue(error is SavingsContributionHistoryUnavailableException)
+        assertEquals(raw, recreated.repository.snapshotJson())
+        assertFalse(recreated.repository.recordContribution(1L, 10.0, source = "manual", currency = "EUR"))
+        assertEquals(raw, recreated.repository.snapshotJson())
+    }
+
+    @Test
+    fun absentAndExplicitEmptyHistoryRemainGenuineEmptyHistory() = runTest {
+        val handle = createRepository(createStateFile(), FakeTimeProvider.forDate(2026, 4, 15))
+        assertTrue(handle.repository.getAllContributions().isEmpty())
+        assertNull(handle.repository.snapshotJson())
+        for (raw in listOf("{\"events\":[]}", "{\"events\":[],\"isCorrupt\":false}")) {
+            handle.dataStore.edit { it[stateKey] = raw }
+            assertTrue(handle.repository.getAllContributions().isEmpty())
+            assertNull(handle.repository.snapshotJson())
+            assertTrue(handle.repository.recordContribution(1L, 10.0, source = "manual", currency = "EUR"))
+        }
+    }
+
+    @Test
+    fun missingAndNullLegacyCurrencyStayUnknownButNotCorrupt() = runTest {
+        val clock = FakeTimeProvider.forDate(2026, 4, 15)
+        val handle = createRepository(createStateFile(), clock)
+        for (currencyField in listOf("", ",\"currency\":null")) {
+            handle.dataStore.edit {
+                it[stateKey] = "{\"events\":[{\"goalId\":1,\"amount\":10.0,\"timestamp\":${clock.now()}$currencyField}]}"
+            }
+            val event = handle.repository.getAllContributions().single()
+            assertNull(event.currency)
+            assertNull(event.source)
+            assertTrue(handle.repository.recordContribution(1L, 5.0, source = "manual", currency = "USD"))
+            assertEquals(listOf(null, "USD"), handle.repository.getAllContributions().map { it.currency })
+        }
+    }
+
+    @Test
+    fun rejectedNewInputsCannotChangeExistingValidHistory() = runTest {
+        val clock = FakeTimeProvider.forDate(2026, 4, 15)
+        val handle = createRepository(createStateFile(), clock)
+        assertTrue(handle.repository.recordContribution(1L, 10.0, source = "manual", currency = "EUR"))
+        val before = handle.repository.snapshotJson()
+        for (id in listOf(0L, -1L, Long.MIN_VALUE)) {
+            assertFalse(handle.repository.recordContribution(id, 10.0, source = "manual", currency = "EUR"))
+        }
+        for (amount in listOf(0.0, -1.0, Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY)) {
+            assertFalse(handle.repository.recordContribution(1L, amount, source = "manual", currency = "EUR"))
+        }
+        for (timestamp in listOf(0L, -1L, Long.MIN_VALUE)) {
+            assertFalse(handle.repository.recordContribution(1L, 10.0, timestamp, "manual", "EUR"))
+        }
+        for (source in listOf("", " ", "MANUAL", "unknown", "SECRET financial payload", "x".repeat(500))) {
+            assertFalse(handle.repository.recordContribution(1L, 10.0, source = source, currency = "EUR"))
+        }
+        for (currency in listOf("", "ZZZ", "SECRET currency")) {
+            assertFalse(handle.repository.recordContribution(1L, 10.0, source = "manual", currency = currency))
+        }
+        assertEquals(before, handle.repository.snapshotJson())
+    }
+
+    @Test
+    fun finitePositiveAndPositiveLongBoundariesRoundTripWithoutCoercion() = runTest {
+        // Preserve the existing positive epoch-millis contract, not an invented
+        // future-date cutoff. The injected retention reference keeps timestamp 1.
+        val handle = createRepository(createStateFile(), FakeTimeProvider(1L))
+        assertTrue(handle.repository.recordContribution(1L, Double.MIN_VALUE, 1L, "manual", "EUR"))
+        assertTrue(handle.repository.recordContribution(Long.MAX_VALUE, Double.MAX_VALUE, Long.MAX_VALUE, "legacy", "GBP"))
+        val events = handle.repository.getAllContributions()
+        assertEquals(listOf(1L, Long.MAX_VALUE), events.map { it.goalId })
+        assertEquals(listOf(1L, Long.MAX_VALUE), events.map { it.timestamp })
+        assertEquals(Double.MIN_VALUE, events.first().amount, 0.0)
+        assertEquals(Double.MAX_VALUE, events.last().amount, 0.0)
+    }
+
+    private val stateKey = stringPreferencesKey("savings_contribution_history_json")
+
+    private fun validEventJson(timestamp: Long) =
+        "{\"goalId\":1,\"amount\":10.0,\"timestamp\":$timestamp,\"source\":\"manual\",\"currency\":\"EUR\"}"
+
+    private suspend fun assertCorruptAndUnchanged(handle: RepositoryHandle, raw: String) {
+        handle.dataStore.edit { it[stateKey] = raw }
+        val error = runCatching { handle.repository.getAllContributions() }.exceptionOrNull()
+        assertTrue(error is SavingsContributionHistoryUnavailableException)
+        assertEquals("SAVINGS_HISTORY_CORRUPT", error?.message)
+        assertEquals(raw, handle.repository.snapshotJson())
+        assertFalse(handle.repository.recordContribution(1L, 10.0, source = "manual", currency = "EUR"))
+        assertEquals(raw, handle.repository.snapshotJson())
+    }
+
     private fun createRepository(
         stateFile: File,
         timeProvider: FakeTimeProvider
@@ -99,7 +269,8 @@ class SavingsContributionHistoryRepositoryTest {
         )
         return RepositoryHandle(
             repository = SavingsContributionHistoryRepository(dataStore, timeProvider),
-            scope = scope
+            scope = scope,
+            dataStore = dataStore
         )
     }
 
@@ -109,6 +280,7 @@ class SavingsContributionHistoryRepositoryTest {
 
     private data class RepositoryHandle(
         val repository: SavingsContributionHistoryRepository,
-        val scope: CoroutineScope
+        val scope: CoroutineScope,
+        val dataStore: androidx.datastore.core.DataStore<androidx.datastore.preferences.core.Preferences>
     )
 }

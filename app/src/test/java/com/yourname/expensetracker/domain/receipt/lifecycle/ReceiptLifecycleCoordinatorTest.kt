@@ -383,7 +383,7 @@ class ReceiptLifecycleCoordinatorTest {
         )
         val parsedReceipt = ReceiptParser.ParsedReceipt(
             merchantName = "Test Shop",
-            total = 25.0,
+            total = ReceiptParser.sourceMoneyOrNull(25.0, "EUR"),
             subtotal = null,
             tax = null,
             date = null,
@@ -461,7 +461,7 @@ class ReceiptLifecycleCoordinatorTest {
     )
 
     private fun parsedScanReceipt() = ReceiptParser.ParsedReceipt(
-        merchantName = "Test Shop", total = 25.0, subtotal = null, tax = null,
+        merchantName = "Test Shop", total = ReceiptParser.sourceMoneyOrNull(25.0, "EUR"), subtotal = null, tax = null,
         date = null, currency = "EUR", lineItems = emptyList(),
         confidence = 0.95f, taxInclusive = false
     )

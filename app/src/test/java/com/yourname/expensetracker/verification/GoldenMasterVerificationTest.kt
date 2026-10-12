@@ -64,6 +64,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.After
@@ -268,7 +269,7 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
             budgetCalculator = mockk<BudgetCalculator>(relaxed = true),
             monteCarloSimulator = monteCarloSimulator,
             timeProvider = timeProvider,
-            analyticsCurrencyNormalizer = mockk(relaxed = true),
+            analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
             cashFlowCalculator = mockk(relaxed = true),
             spendingThresholdCalculator = mockk(relaxed = true)
         )
@@ -311,7 +312,7 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
             comparisonRange = null
         )
         val (categoryAnalytics1, _) = advancedEngine.getCategoryAnalytics(period, "EUR")
-        val advancedTotal = categoryAnalytics1.sumOf { it.totalSpent }
+        val advancedTotal = categoryAnalytics1.sumOf { requireNotNull(it.totalSpent) }
         val totalsTotal = totalsEngine.getDailyTotalsForRange(MARCH_START, APRIL_START)
             .first()
             .sumOf { it.totalAmount }
@@ -338,10 +339,12 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
 
         assertApproxEquals(LINEAR_PROJECTION, linearProjection, 0.02)
         assertTrue("Trend forecast must use non-empty spending history, not a zero mock default", trendProjection > 0.0)
+        val nonNullTrendProjection = requireNotNull(trendProjection)
+        val nonNullLinearProjection = requireNotNull(linearProjection)
         assertTrue(
             "Trend forecast should diverge from linear projection (different contract). " +
                 "linear=$linearProjection trend=$trendProjection",
-            abs(trendProjection - linearProjection) > 0.01
+            abs(nonNullTrendProjection - nonNullLinearProjection) > 0.01
         )
     }
 
@@ -377,15 +380,15 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
             .first()
             .associateBy { it.category.name }
 
-        assertApproxEquals(FOOD_TOTAL, insightMap.getValue("Food").currentTotal, 0.01)
-        assertApproxEquals(TRANSPORT_TOTAL, insightMap.getValue("Transport").currentTotal, 0.01)
-        assertApproxEquals(ENTERTAINMENT_TOTAL, insightMap.getValue("Entertainment").currentTotal, 0.01)
-        assertApproxEquals(HOUSING_TOTAL, insightMap.getValue("Housing").currentTotal, 0.01)
-        assertApproxEquals(SHOPPING_TOTAL, insightMap.getValue("Shopping").currentTotal, 0.01)
-        assertApproxEquals(HEALTH_TOTAL, insightMap.getValue("Health").currentTotal, 0.01)
+        assertApproxEquals(FOOD_TOTAL, requireNotNull(insightMap.getValue("Food").currentTotal), 0.01)
+        assertApproxEquals(TRANSPORT_TOTAL, requireNotNull(insightMap.getValue("Transport").currentTotal), 0.01)
+        assertApproxEquals(ENTERTAINMENT_TOTAL, requireNotNull(insightMap.getValue("Entertainment").currentTotal), 0.01)
+        assertApproxEquals(HOUSING_TOTAL, requireNotNull(insightMap.getValue("Housing").currentTotal), 0.01)
+        assertApproxEquals(SHOPPING_TOTAL, requireNotNull(insightMap.getValue("Shopping").currentTotal), 0.01)
+        assertApproxEquals(HEALTH_TOTAL, requireNotNull(insightMap.getValue("Health").currentTotal), 0.01)
 
         assertApproxEquals(HOUSING_TOTAL, totalsMap.getValue("Housing").totalAmount, 0.01)
-        assertApproxEquals(100.0, insightMap.values.sumOf { it.percentageOfTotal.toDouble() }, 0.1)
+        assertApproxEquals(100.0, insightMap.values.sumOf { requireNotNull(it.percentageOfTotal).toDouble() }, 0.1)
         assertApproxEquals(100.0, totalsMap.values.sumOf { it.percentageOfTotal.toDouble() }, 0.1)
     }
 
@@ -406,7 +409,7 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
         )
         every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(budgetStatus))
 
-        coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns MonteCarloResult(
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns MonteCarloResult(
             percentile10 = 2000.0,
             percentile25 = 2000.0,
             percentile50 = 2000.0,
@@ -429,8 +432,10 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
                 currentAmount = 1000.0,
                 targetDate = null,
                 protectionLevel = GoalProtectionLevel.STRICT,
+                currencyAssumption = "EXPLICIT",
                 createdAt = NOW_MARCH_30_2026
-            )
+            ),
+            homeCurrency = "EUR"
         )
 
         // Budget surplus component = 61.51 * 0.5 = 30.755
@@ -452,7 +457,7 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
         )
 
         val (categoryAnalytics2, _) = advancedEngine.getCategoryAnalytics(period, "EUR")
-        val advancedTotal = categoryAnalytics2.sumOf { it.totalSpent }
+        val advancedTotal = categoryAnalytics2.sumOf { requireNotNull(it.totalSpent) }
         val dashboardTotal = dashboardEngine.generateDashboardData(MARCH_START, APRIL_START).totalSpent
 
         assertApproxEquals(MARCH_TOTAL_EFFECTIVE, advancedTotal, 0.01)
@@ -493,7 +498,8 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
             "EUR"
         )
 
-        assertApproxEquals(0.0, emptySnapshot.monthlyComparison.currentTotal, 0.01)
+        assertApproxEquals(0.0, emptySnapshot.monthlyComparison.currentTotal)
+        assertTrue(emptySnapshot.monthlyComparison.currentMoneyResult is com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Available)
         assertApproxEquals(0.0, stats.averageDailySpend, 0.01)
         assertEquals(0, stats.daysWithSpending)
     }
@@ -546,7 +552,7 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
     fun `DIVERGENCE - Monte Carlo dashboard vs SmartSavings differ by knownUpcoming input`() = runTest {
         // Dashboard passes knownUpcoming from SynthesisEngine; SmartSavings passes 0.0
         // Therefore Dashboard projection should > SmartSavings projection by ~committed amount
-        coEvery { monteCarloSimulator.simulate(any(), any(), any()) } answers {
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } answers {
             val spentToDate = firstArg<Double>()
             val knownUpcoming = secondArg<Double>()
             val budgetAmount = thirdArg<Double?>()
@@ -573,14 +579,16 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
         val dashboardResult = monteCarloSimulator.simulate(
             spentToDate = MARCH_TOTAL_EFFECTIVE,
             knownUpcoming = 460.0, // Rent + Utilities effective
-            budgetAmount = BUDGET_AMOUNT
+            budgetAmount = BUDGET_AMOUNT,
+            displayCurrency = "EUR"
         )
 
         // SmartSavings scenario: knownUpcoming = 0.0
         val savingsResult = monteCarloSimulator.simulate(
             spentToDate = MARCH_TOTAL_EFFECTIVE,
             knownUpcoming = 0.0,
-            budgetAmount = null
+            budgetAmount = null,
+            displayCurrency = "EUR"
         )
 
         // Dashboard p50 should be higher by ~knownUpcoming amount
@@ -631,9 +639,11 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
         // Linear uses currentSpent * (daysInMonth / daysElapsed)
         // These should differ because formulas are fundamentally different, not because a fixture returned zero.
         assertTrue("Trend forecast must use non-empty spending history", trendProjection > 0.0)
+        val nonNullTrendProjection = requireNotNull(trendProjection)
+        val nonNullLinearProjection = requireNotNull(linearProjection)
         assertTrue(
             "Trend forecast should diverge from linear projection. linear=$linearProjection trend=$trendProjection",
-            abs(trendProjection - linearProjection) > 0.01
+            abs(nonNullTrendProjection - nonNullLinearProjection) > 0.01
         )
     }
 
@@ -809,7 +819,7 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
 
         // All engines should use effectiveAmount (not raw amount)
         val (categoryAnalytics3, _) = advancedEngine.getCategoryAnalytics(period, "EUR")
-        val advancedTotal = categoryAnalytics3.sumOf { it.totalSpent }
+        val advancedTotal = categoryAnalytics3.sumOf { requireNotNull(it.totalSpent) }
         val insightsTotal = insightsEngine.generateInsights(contractCategories.toAnalyticsCategoryRefs(), allTransactions.toExpenseSnapshots(), "EUR")
             .monthlyComparison.currentTotal
 
@@ -819,7 +829,7 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
 
         // Verify they're NOT using raw amount
         assertTrue(advancedTotal < MARCH_TOTAL_RAW_PURCHASE)
-        assertTrue(insightsTotal < MARCH_TOTAL_RAW_PURCHASE)
+        assertTrue(requireNotNull(insightsTotal) < MARCH_TOTAL_RAW_PURCHASE)
     }
 
     private fun buildGoldenMasterTransactions(): List<Expense> = listOf(

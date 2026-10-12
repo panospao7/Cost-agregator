@@ -1474,6 +1474,9 @@
     <string name="savings_fire_emoji">🔥</string>
     <string name="savings_contributions_this_month">contributions this month</string>
     <string name="savings_section_recommendations">Smart Recommendations</string>
+    <string name="savings_recommendation_unavailable">Savings recommendations are unavailable. Some financial inputs could not be verified. Refresh to try again.</string>
+    <string name="savings_goal_currency_unavailable">Goal amounts are unavailable because their currency could not be verified.</string>
+    <string name="savings_history_write_unavailable">Contribution history could not be verified. The goal balance may already have changed. Check it before trying again.</string>
     <string name="savings_section_your_goals">Your Goals</string>
     <string name="savings_progress_percent_complete">%1$d%% complete</string>
     <string name="savings_label_total_saved">Total Saved %1$s</string>

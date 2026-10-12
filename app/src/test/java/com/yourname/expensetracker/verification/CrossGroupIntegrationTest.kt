@@ -87,6 +87,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -301,7 +302,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
                 coEvery { assembleNormalized(any()) } returns mockk(relaxed = true)
             },
             currencyConverter = mockk(relaxed = true),
-            currencySettingsRepository = mockk(relaxed = true),
+            currencySettingsRepository = localCurrencySettingsRepository,
             // RP-06 6a: real calculator + the test's fake TimeProvider so pace math is real.
             spendingPaceCalculator = spendingPaceCalculator
         )
@@ -586,6 +587,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
             sharedExpenseDataPort = mockk {
                 coEvery { getGroupMembersOnce(any()) } returns emptyList<SharedExpenseMember>()
                 coEvery { getGroupExpensesOnce(any()) } returns emptyList<SharedGroupExpense>()
+                coEvery { getGroupSettlementsOnce(any()) } returns emptyList()
                 coEvery { getGroupOnce(any()) } returns mockk(relaxed = true)
             },
             timeProvider = timeProvider,
@@ -594,7 +596,8 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
         )
         val balances = sharedManager.calculateBalances(1L)
 
-        assertApproxEquals(0.0, insights.monthlyComparison.currentTotal, 0.0)
+        assertApproxEquals(0.0, requireNotNull(insights.monthlyComparison.currentTotal), 0.0)
+        assertTrue(insights.monthlyComparison.currentMoneyResult is com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Available)
         assertTrue(insights.anomalies.isEmpty())
         assertApproxEquals(0.0, advancedStats.averageDailySpend, 0.0)
         assertEquals(0, advancedStats.daysWithSpending)

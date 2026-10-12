@@ -6,16 +6,24 @@ import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.analytics.AnalyticsNormalizationResult
+import com.yourname.expensetracker.domain.analytics.AnalyticsConversionWarning
+import com.yourname.expensetracker.domain.analytics.AnalyticsConversionWarningType
+import com.yourname.expensetracker.domain.analytics.NormalizedExpenseSnapshot
+import com.yourname.expensetracker.domain.core.money.ConversionQuality
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode
+import com.yourname.expensetracker.domain.core.money.RateBasis
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.toExpenseSnapshot
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -88,7 +96,9 @@ class HistoricalSpendingDistributionBoundaryTest {
         coEvery { analyticsCurrencyNormalizer.normalizeExpenses(any(), any()) } answers {
             val expenses = firstArg<List<Expense>>()
             AnalyticsNormalizationResult(
-                homeCurrency = "EUR", normalizedExpenses = emptyList(),
+                homeCurrency = "EUR", normalizedExpenses = expenses.map {
+                    com.yourname.expensetracker.domain.analytics.NormalizedExpenseSnapshot(it.toExpenseSnapshot(), it.currency, it.effectiveAmount, it.effectiveAmount)
+                },
                 includedExpenses = expenses.map { it.toExpenseSnapshot() },
                 warnings = emptyList(), latestRateTimestamp = null, totalInputCount = expenses.size
             )
@@ -98,6 +108,277 @@ class HistoricalSpendingDistributionBoundaryTest {
     // ========================================================================
     // Week bucketing — Monday-start, locale-independent
     // ========================================================================
+
+    @Test
+    fun `excluded history cannot become quiet zero spend weeks`() = runTest {
+        coEvery { analyticsCurrencyNormalizer.normalizeExpenses(any(), any()) } returns AnalyticsNormalizationResult(
+            "EUR", emptyList(), emptyList(), emptyList(), null, totalInputCount = 10
+        )
+        val distribution = HistoricalSpendingDistribution(expenseRepository, timeProvider, analyticsCurrencyNormalizer, currencySettingsRepository)
+        org.junit.Assert.assertNull(distribution.computeDistribution("EUR"))
+    }
+
+    @Test
+    fun `settings cancellation propagates instead of becoming an unavailable fit`() = runTest {
+        every { currencySettingsRepository.homeCurrency() } returns kotlinx.coroutines.flow.flow {
+            throw kotlinx.coroutines.CancellationException("TEST_CANCELLED")
+        }
+        val distribution = HistoricalSpendingDistribution(expenseRepository, timeProvider, analyticsCurrencyNormalizer, currencySettingsRepository)
+        val error = runCatching { distribution.computeDistribution() }.exceptionOrNull()
+        assertTrue(error is kotlinx.coroutines.CancellationException)
+    }
+
+    @Test
+    fun `explicit EUR basis does not reread or relabel through changed settings`() = runTest {
+        every { currencySettingsRepository.homeCurrency() } returns flowOf("USD")
+        val distribution = HistoricalSpendingDistribution(expenseRepository, timeProvider, analyticsCurrencyNormalizer, currencySettingsRepository)
+        distribution.computeDistribution("EUR")
+        io.mockk.coVerify(exactly = 1) { analyticsCurrencyNormalizer.normalizeExpenses(any(), "EUR") }
+        io.mockk.verify(exactly = 0) { currencySettingsRepository.homeCurrency() }
+    }
+
+    @Test
+    fun invalidExplicitCurrencyIsUnavailableBeforeReadingHistory() = runTest {
+        val distribution = HistoricalSpendingDistribution(
+            expenseRepository,
+            timeProvider,
+            analyticsCurrencyNormalizer,
+            currencySettingsRepository
+        )
+
+        val result = distribution.computeDistributionResult("XYZ")
+
+        assertTrue(result is HistoricalDistributionResult.Unavailable)
+        assertEquals(
+            MoneyDisplayUnavailableReasonCode.INVALID_TARGET_CURRENCY,
+            (result as HistoricalDistributionResult.Unavailable).reasonCode
+        )
+        coVerify(exactly = 0) { expenseRepository.getExpensesBetween(any(), any()) }
+        coVerify(exactly = 0) { analyticsCurrencyNormalizer.normalizeExpenses(any(), any()) }
+    }
+
+    @Test
+    fun settingsFailureIsUnavailableAndNeverFallsBackToEur() = runTest {
+        every { currencySettingsRepository.homeCurrency() } returns kotlinx.coroutines.flow.flow {
+            throw IllegalStateException("settings unavailable")
+        }
+        val distribution = HistoricalSpendingDistribution(
+            expenseRepository,
+            timeProvider,
+            analyticsCurrencyNormalizer,
+            currencySettingsRepository
+        )
+
+        val result = distribution.computeDistributionResult()
+
+        assertTrue(result is HistoricalDistributionResult.Unavailable)
+        assertEquals(
+            MoneyDisplayUnavailableReasonCode.HOME_CURRENCY_UNAVAILABLE,
+            (result as HistoricalDistributionResult.Unavailable).reasonCode
+        )
+        coVerify(exactly = 0) { analyticsCurrencyNormalizer.normalizeExpenses(any(), any()) }
+    }
+
+    @Test
+    fun `normalization cancellation propagates instead of creating quiet history`() = runTest {
+        coEvery { analyticsCurrencyNormalizer.normalizeExpenses(any(), any()) } throws
+            kotlinx.coroutines.CancellationException("TEST_CANCELLED")
+        val distribution = HistoricalSpendingDistribution(expenseRepository, timeProvider, analyticsCurrencyNormalizer, currencySettingsRepository)
+        val error = runCatching { distribution.computeDistribution("EUR") }.exceptionOrNull()
+        assertTrue(error is kotlinx.coroutines.CancellationException)
+    }
+
+    @Test
+    fun `partial excluded history remains unavailable instead of fitting quiet weeks`() = runTest {
+        val now = timeProvider.now()
+        val excludedDate = TimePeriodUtils.addDays(
+            TimePeriodUtils.getStartOfWeek(now),
+            -7
+        )
+        val excluded = expense(99L, excludedDate, 250.0)
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(excluded)
+        coEvery { analyticsCurrencyNormalizer.normalizeExpenses(any(), any()) } returns AnalyticsNormalizationResult(
+            homeCurrency = "EUR",
+            normalizedExpenses = emptyList(),
+            includedExpenses = emptyList(),
+            warnings = listOf(
+                com.yourname.expensetracker.domain.analytics.AnalyticsConversionWarning(
+                    type = com.yourname.expensetracker.domain.analytics.AnalyticsConversionWarningType.MISSING_EXCHANGE_RATE,
+                    message = "test",
+                    affectedTransactionCount = 1
+                )
+            ),
+            latestRateTimestamp = null,
+            totalInputCount = 1
+        )
+
+        val distribution = HistoricalSpendingDistribution(
+            expenseRepository,
+            timeProvider,
+            analyticsCurrencyNormalizer,
+            currencySettingsRepository
+        )
+
+        assertNull(distribution.computeDistribution("EUR"))
+    }
+
+    @Test
+    fun `typed result preserves unavailable quality and normalization counts`() = runTest {
+        val excluded = expense(100L, TimePeriodUtils.addDays(timeProvider.now(), -7), 250.0)
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(excluded)
+        coEvery { analyticsCurrencyNormalizer.normalizeExpenses(any(), any()) } returns AnalyticsNormalizationResult(
+            homeCurrency = "EUR",
+            normalizedExpenses = emptyList(),
+            includedExpenses = emptyList(),
+            warnings = listOf(
+                com.yourname.expensetracker.domain.analytics.AnalyticsConversionWarning(
+                    type = com.yourname.expensetracker.domain.analytics.AnalyticsConversionWarningType.MISSING_EXCHANGE_RATE,
+                    message = "test",
+                    affectedTransactionCount = 1
+                )
+            ),
+            latestRateTimestamp = null,
+            totalInputCount = 1
+        )
+
+        val result = HistoricalSpendingDistribution(
+            expenseRepository,
+            timeProvider,
+            analyticsCurrencyNormalizer,
+            currencySettingsRepository
+        ).computeDistributionResult("EUR")
+
+        assertTrue(result is HistoricalDistributionResult.Unavailable)
+        val unavailable = result as HistoricalDistributionResult.Unavailable
+        assertEquals(
+            com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE,
+            unavailable.reasonCode
+        )
+        assertEquals(1, unavailable.totalInputCount)
+        assertEquals(0, unavailable.includedInputCount)
+        assertEquals(1, unavailable.excludedInputCount)
+        assertEquals(1, unavailable.warnings.single().affectedTransactionCount)
+    }
+
+    @Test
+    fun `successful fits retain normalized counts rate basis and timestamp`() = runTest {
+        val expenses = completedLookbackWeekStarts(timeProvider.now()).flatMapIndexed { weekIndex, start ->
+            (0..3).map { day ->
+                expense((weekIndex * 4 + day + 1).toLong(), TimePeriodUtils.addDays(start, day),
+                    100.0 + (weekIndex % 5) * 5.0)
+            }
+        }
+        val distribution = HistoricalSpendingDistribution(
+            expenseRepository, timeProvider, analyticsCurrencyNormalizer, currencySettingsRepository
+        )
+        for (sourceCurrency in listOf("EUR", "USD", "GBP")) {
+            val rawExpenses = expenses.map { it.copy(currency = sourceCurrency) }
+            coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns rawExpenses
+            coEvery { analyticsCurrencyNormalizer.normalizeExpenses(any(), "EUR") } answers {
+                val rows = firstArg<List<Expense>>()
+                val normalizedRows = rows.map {
+                    NormalizedExpenseSnapshot(
+                        snapshot = it.copy(currency = "EUR").toExpenseSnapshot(),
+                        originalCurrency = it.currency,
+                        originalEffectiveAmount = it.effectiveAmount,
+                        normalizedEffectiveAmount = it.effectiveAmount,
+                        rateBasis = if (sourceCurrency == "EUR") "IDENTITY" else "TRANSACTION_DATE",
+                        rateValidDate = it.date,
+                        rateLastUpdated = 123456L
+                    )
+                }
+                AnalyticsNormalizationResult(
+                    homeCurrency = "EUR", normalizedExpenses = normalizedRows,
+                    includedExpenses = normalizedRows.map { it.snapshot }, warnings = emptyList(),
+                    latestRateTimestamp = 123456L, totalInputCount = rows.size
+                )
+            }
+
+            val result = distribution.computeDistributionResult("EUR")
+
+            assertTrue(result is HistoricalDistributionResult.Available)
+            val fit = (result as HistoricalDistributionResult.Available).fit
+            assertTrue(fit.isUsable)
+            assertEquals(ConversionQuality.COMPLETE, fit.moneyQuality.quality)
+            assertEquals(expenses.size, fit.moneyQuality.totalInputCount)
+            assertEquals(expenses.size, fit.moneyQuality.includedInputCount)
+            assertEquals(0, fit.moneyQuality.excludedInputCount)
+            assertEquals(RateBasis.TRANSACTION_DATE, fit.moneyQuality.requestedRateBasis)
+            assertEquals(
+                if (sourceCurrency == "EUR") RateBasis.IDENTITY else RateBasis.TRANSACTION_DATE,
+                fit.moneyQuality.actualRateBasis
+            )
+            assertEquals(123456L, fit.moneyQuality.latestRateTimestamp)
+            assertTrue(fit.moneyQuality.warnings.isEmpty())
+        }
+    }
+
+    @Test
+    fun `stale rate history remains unavailable with quality counts warnings and timestamp`() = runTest {
+        val raw = expense(101L, TimePeriodUtils.addDays(timeProvider.now(), -7), 250.0).copy(currency = "USD")
+        val snapshot = raw.copy(currency = "EUR").toExpenseSnapshot()
+        val warning = AnalyticsConversionWarning(
+            type = AnalyticsConversionWarningType.STALE_EXCHANGE_RATE,
+            message = "Stale exchange rate",
+            affectedTransactionCount = 1
+        )
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(raw)
+        coEvery { analyticsCurrencyNormalizer.normalizeExpenses(any(), "EUR") } returns AnalyticsNormalizationResult(
+            homeCurrency = "EUR",
+            normalizedExpenses = listOf(NormalizedExpenseSnapshot(
+                snapshot, "USD", raw.effectiveAmount, snapshot.effectiveAmount,
+                rateBasis = "TRANSACTION_DATE", qualityWarning = AnalyticsConversionWarningType.STALE_EXCHANGE_RATE
+            )),
+            includedExpenses = listOf(snapshot), warnings = listOf(warning),
+            latestRateTimestamp = 123456L, totalInputCount = 1
+        )
+
+        val result = HistoricalSpendingDistribution(
+            expenseRepository, timeProvider, analyticsCurrencyNormalizer, currencySettingsRepository
+        ).computeDistributionResult("EUR")
+
+        assertTrue(result is HistoricalDistributionResult.Unavailable)
+        val unavailable = result as HistoricalDistributionResult.Unavailable
+        assertEquals(MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE, unavailable.reasonCode)
+        assertEquals(ConversionQuality.ESTIMATED, unavailable.quality)
+        assertEquals(1, unavailable.totalInputCount)
+        assertEquals(1, unavailable.includedInputCount)
+        assertEquals(0, unavailable.excludedInputCount)
+        assertEquals(listOf(warning), unavailable.warnings)
+        assertEquals(123456L, unavailable.latestRateTimestamp)
+        assertEquals(RateBasis.TRANSACTION_DATE, unavailable.requestedRateBasis)
+    }
+
+    @Test
+    fun `partially converted history retains excluded counts without a fit`() = runTest {
+        val included = expense(201L, TimePeriodUtils.addDays(timeProvider.now(), -7), 100.0)
+        val excluded = included.copy(id = 202L, currency = "USD")
+        val snapshot = included.toExpenseSnapshot()
+        val warning = AnalyticsConversionWarning(
+            type = AnalyticsConversionWarningType.MISSING_EXCHANGE_RATE,
+            message = "Missing exchange rate", affectedTransactionCount = 1
+        )
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(included, excluded)
+        coEvery { analyticsCurrencyNormalizer.normalizeExpenses(any(), "EUR") } returns AnalyticsNormalizationResult(
+            homeCurrency = "EUR",
+            normalizedExpenses = listOf(NormalizedExpenseSnapshot(snapshot, "EUR", 100.0, 100.0)),
+            includedExpenses = listOf(snapshot), warnings = listOf(warning),
+            latestRateTimestamp = 123456L, totalInputCount = 2
+        )
+
+        val result = HistoricalSpendingDistribution(
+            expenseRepository, timeProvider, analyticsCurrencyNormalizer, currencySettingsRepository
+        ).computeDistributionResult("EUR")
+
+        assertTrue(result is HistoricalDistributionResult.Unavailable)
+        val unavailable = result as HistoricalDistributionResult.Unavailable
+        assertEquals(ConversionQuality.PARTIAL, unavailable.quality)
+        assertEquals(2, unavailable.totalInputCount)
+        assertEquals(1, unavailable.includedInputCount)
+        assertEquals(1, unavailable.excludedInputCount)
+        assertEquals(listOf(warning), unavailable.warnings)
+        assertEquals(123456L, unavailable.latestRateTimestamp)
+    }
 
     @Test
     fun `week bucket key is the Monday of that week not locale-dependent`() {

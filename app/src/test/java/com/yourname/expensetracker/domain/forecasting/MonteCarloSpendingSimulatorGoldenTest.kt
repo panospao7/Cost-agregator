@@ -38,7 +38,8 @@ class MonteCarloSpendingSimulatorGoldenTest : AnalyticsEngineTestBase() {
             qualifyingWeekCount = 12,
             totalWeeksExamined = 18,
             trimmedWeeklyTotals = listOf(420.0, 500.0, 560.0, 610.0, 700.0, 760.0),
-            allWeeklyTotals = listOf(400.0, 480.0, 520.0, 610.0, 730.0, 810.0, 920.0, 1010.0)
+            allWeeklyTotals = listOf(400.0, 480.0, 520.0, 610.0, 730.0, 810.0, 920.0, 1010.0),
+            displayCurrency = "EUR"
         )
 
         val confidence = SimulationConfidence(
@@ -47,13 +48,15 @@ class MonteCarloSpendingSimulatorGoldenTest : AnalyticsEngineTestBase() {
             reason = "Based on 12 weeks"
         )
 
-        coEvery { historicalDistribution.computeDistribution() } returns fit
+        coEvery { historicalDistribution.computeDistributionResult("EUR") } returns
+            HistoricalDistributionResult.Available(fit)
         every { dataQualityAssessor.assess(fit, 8) } returns confidence
 
         val result = simulator.simulate(
             spentToDate = 991.79,
             knownUpcoming = 300.0,
-            budgetAmount = 2500.0
+            budgetAmount = 2500.0,
+            displayCurrency = "EUR"
         )
 
         assertNotNull(result)

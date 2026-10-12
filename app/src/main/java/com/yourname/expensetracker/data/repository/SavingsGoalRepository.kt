@@ -65,6 +65,8 @@ class SavingsGoalRepository @Inject constructor(
             targetAmount = targetAmount,
             currentAmount = currentAmount,
             targetDate = targetDate,
+            currency = currency,
+            currencyAssumption = currencyAssumption,
             protectionLevel = when (protectionLevel) {
                 com.yourname.expensetracker.data.database.entity.GoalProtectionLevel.STRICT -> GoalProtectionLevel.STRICT
                 com.yourname.expensetracker.data.database.entity.GoalProtectionLevel.WARNING -> GoalProtectionLevel.WARNING
@@ -81,6 +83,8 @@ class SavingsGoalRepository @Inject constructor(
             targetAmount = targetAmount,
             currentAmount = currentAmount,
             targetDate = targetDate,
+            currency = currency,
+            currencyAssumption = currencyAssumption,
             protectionLevel = when (protectionLevel) {
                 GoalProtectionLevel.STRICT -> com.yourname.expensetracker.data.database.entity.GoalProtectionLevel.STRICT
                 GoalProtectionLevel.WARNING -> com.yourname.expensetracker.data.database.entity.GoalProtectionLevel.WARNING

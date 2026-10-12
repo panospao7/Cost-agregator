@@ -89,6 +89,24 @@ fun SavingsGoalsScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            if (state.contributionHistoryWriteFailure != null) {
+                Text(
+                    text = stringResource(R.string.savings_history_write_unavailable),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+
+            if (state.smartUnavailableReason != null || state.sweepUnavailableReason != null) {
+                Text(
+                    text = stringResource(R.string.savings_recommendation_unavailable),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+
             // Monthly Savings Sweep Recommendation
             val sweepRec = state.sweepRecommendation
             if (sweepRec != null) {
@@ -96,7 +114,7 @@ fun SavingsGoalsScreen(
                 recommendation = sweepRec,
                 onAccept = { viewModel.acceptSweepRecommendation() },
                 onDismiss = { viewModel.dismissSweepRecommendation() },
-                homeCurrency = state.homeCurrency
+                homeCurrency = sweepRec.currency
             )
                 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -172,8 +190,8 @@ fun SavingsGoalsScreen(
                                 goal = goal,
                                 dateFormat = dateFormat,
                                 onClick = { viewModel.selectGoal(goal) },
-                                onQuickAdd = { viewModel.contributeToGoal(goal.id, 10.0) },
-                                homeCurrency = state.homeCurrency
+                                canContribute = state.contributionHistoryWriteFailure == null,
+                                onQuickAdd = { viewModel.contributeToGoal(goal.id, 10.0, goal.currency) }
                             )
                         }
                     }
@@ -218,28 +236,15 @@ fun SavingsGoalsScreen(
                     Text(
                         stringResource(
                             R.string.savings_contribute_dialog_message_format,
-                            CurrencyFormatter.formatMoney(recommendation.recommendedAmount, state.homeCurrency)
+                            CurrencyFormatter.formatMoney(recommendation.recommendedAmount, recommendation.currency)
                         )
                     )
                 },
                 confirmButton = {
                     Button(
                         onClick = {
-                            viewModel.contributeToGoal(
-                                goalId = recommendation.goal.id,
-                                amount = recommendation.recommendedAmount
-                            )
+                            viewModel.acceptSmartRecommendation(recommendation)
                             recommendationToConfirm = null
-                            val savedMessage = context.getString(
-                                R.string.savings_saved_amount_message_format,
-                                CurrencyFormatter.formatMoney(recommendation.recommendedAmount, state.homeCurrency)
-                            )
-                            scope.launch {
-                                snackbarHostState.showSnackbar(
-                                    message = savedMessage,
-                                    withDismissAction = true
-                                )
-                            }
                         }
                     ) {
                         Text(stringResource(R.string.action_confirm))
@@ -257,9 +262,9 @@ fun SavingsGoalsScreen(
 
 @Composable
 private fun GamificationHeader(
-    level: Int,
+    level: Int?,
     title: String,
-    totalSaved: Double,
+    totalSaved: Double?,
     streak: SavingsStreak?,
     homeCurrency: String
 ) {
@@ -276,7 +281,7 @@ private fun GamificationHeader(
             ) {
                 Column {
                     Text(
-                        text = stringResource(R.string.savings_level_format, level),
+                        text = level?.let { stringResource(R.string.savings_level_format, it) } ?: "Unavailable",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.primary
                     )
@@ -300,12 +305,12 @@ private fun GamificationHeader(
             Spacer(modifier = Modifier.height(8.dp))
             
             Text(
-                text = stringResource(R.string.savings_label_total_saved, CurrencyFormatter.formatMoney(totalSaved, homeCurrency)),
+                text = stringResource(R.string.savings_label_total_saved, totalSaved?.let { CurrencyFormatter.formatMoney(it, homeCurrency) } ?: "Unavailable"),
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold
             )
             
-            if (streak != null) {
+            if (streak?.isAvailable == true) {
                 Text(
                     text = stringResource(R.string.savings_contributions_this_month, streak.monthlyContributions),
                     style = MaterialTheme.typography.bodySmall,
@@ -344,7 +349,7 @@ private fun SmartRecommendationCard(
                     fontWeight = FontWeight.Medium
                 )
                 Text(
-                    text = stringResource(R.string.savings_safe_to_save, CurrencyFormatter.formatMoney(rec.recommendedAmount, homeCurrency)),
+                    text = stringResource(R.string.savings_safe_to_save, CurrencyFormatter.formatMoney(rec.recommendedAmount, rec.currency)),
                     style = MaterialTheme.typography.bodySmall
                 )
                 Text(
@@ -519,9 +524,22 @@ private fun GoalCard(
     goal: SavingsGoal,
     dateFormat: DateTimeFormatter,
     onClick: () -> Unit,
-    onQuickAdd: () -> Unit,
-    homeCurrency: String
+    canContribute: Boolean,
+    onQuickAdd: () -> Unit
 ) {
+    if (com.yourname.expensetracker.domain.savings.SavingsGoalCurrencyPolicy.knownCurrencyOrNull(goal) == null) {
+        Card(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(goal.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text(
+                    stringResource(R.string.savings_goal_currency_unavailable),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        return
+    }
     val progress = (goal.currentAmount / goal.targetAmount).coerceIn(0.0, 1.0)
     val isCompleted = goal.currentAmount >= goal.targetAmount
     
@@ -560,7 +578,7 @@ private fun GoalCard(
                         Text(stringResource(R.string.savings_done))
                     }
                 } else {
-                    TextButton(onClick = onQuickAdd) {
+                    TextButton(onClick = onQuickAdd, enabled = canContribute) {
                         Text(stringResource(R.string.savings_action_add_amount, "10"))
                     }
                 }
@@ -581,11 +599,11 @@ private fun GoalCard(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = CurrencyFormatter.formatMoney(goal.currentAmount, homeCurrency),
+                    text = CurrencyFormatter.formatMoney(goal.currentAmount, goal.currency),
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Text(
-                    text = stringResource(R.string.savings_of_target, CurrencyFormatter.formatMoney(goal.targetAmount, homeCurrency)),
+                    text = stringResource(R.string.savings_of_target, CurrencyFormatter.formatMoney(goal.targetAmount, goal.currency)),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

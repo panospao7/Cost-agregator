@@ -4,11 +4,14 @@ import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.domain.analytics.InsightsEngine
 import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.SpendingPace
+import com.yourname.expensetracker.domain.analytics.SingleCurrencyAnalyticsInput
 import com.yourname.expensetracker.domain.analytics.SpendingPaceCalculator
 import com.yourname.expensetracker.domain.analytics.toExpenseSnapshot
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
-import com.yourname.expensetracker.domain.core.money.CurrencyCode
-import com.yourname.expensetracker.domain.core.money.MoneyAmount
+import com.yourname.expensetracker.domain.core.money.MoneyAggregate
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode
 import com.yourname.expensetracker.domain.forecasting.ConfidenceLevel
 import com.yourname.expensetracker.domain.forecasting.ForecastDataQuality
 import com.yourname.expensetracker.domain.forecasting.ForecastInputAssembler
@@ -41,6 +44,8 @@ import com.yourname.expensetracker.domain.text.DashboardTextKeys
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.usecase.savings.SavingsSweepComputationResult
+import com.yourname.expensetracker.domain.savings.SmartSavingsOutcomeMetadata
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.first
@@ -206,7 +211,14 @@ sealed class DashboardWidget {
         val riskBuffer: Double,
         val goalAllocations: List<SweepGoalAllocation>,
         val confidence: Double,
-        val daysUntilMonthEnd: Int
+        val daysUntilMonthEnd: Int,
+        val currency: String = "",
+        val metadata: SmartSavingsOutcomeMetadata = SmartSavingsOutcomeMetadata()
+    ) : DashboardWidget()
+
+    data class SavingsSweepUnavailable(
+        val reasonCode: String,
+        val metadata: SmartSavingsOutcomeMetadata
     ) : DashboardWidget()
     
     data class SweepGoalAllocation(
@@ -231,14 +243,11 @@ sealed class DashboardWidget {
 
 data class CategorySpending(
     val category: CategoryInfo,
-    val total: Double,
+    val moneyTotal: MoneyAggregate,
     val percentage: Float,
-    val currency: String,  // S4-023: no default — callers must pass home currency explicitly
     /** RP-05 batch 2 (P5-012): true for the reserved uncategorized pseudo-category (id 0L) — never clickable/filterable as a real category. */
     val isUncategorized: Boolean = false
-) {
-    val moneyTotal: MoneyAmount get() = MoneyAmount(total, CurrencyCode(currency))
-}
+)
 
 data class SpendingTrendSeries(
     val label: String,
@@ -681,16 +690,39 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         // same shape InsightsEngine uses via NormalizedExpense.toExpenseSnapshot().
         // NO_BASELINE means no pace widget is emitted; the -1f sentinel never
         // reaches UI because of that gate.
-        val paceSnapshots = normalized.normalizedExpenses.map { it.toExpenseSnapshot() }
+        val paceInput = com.yourname.expensetracker.domain.analytics.NormalizedAnalyticsInput(
+            homeCurrency = normalized.homeCurrency.code,
+            includedExpenses = normalized.normalizedExpenses
+        )
         val previousMonthBounds = TimePeriodUtils.getMonthRange(ctx.now, -1)
-        val calculatorPace = spendingPaceCalculator.calculate(
+        val calculatedPace = spendingPaceCalculator.calculate(
             currentMonthStart = ctx.monthStart,
             previousMonthStart = previousMonthBounds.first,
             previousMonthEnd = previousMonthBounds.second, // exclusive end == current month start (half-open contract)
-            allExpenses = paceSnapshots,
+            currentInput = paceInput,
+            previousInput = paceInput,
             displayCurrency = normalized.homeCurrency.code,
             referenceNowMs = now
         )
+        val hasCompletePaceInput = !normalized.dataQuality.isPartial &&
+            normalized.dataQuality.conversionQuality == com.yourname.expensetracker.domain.core.money.ConversionQuality.COMPLETE
+        val calculatorPace = if (!hasCompletePaceInput) {
+            val unavailable = com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Unavailable(
+                reason = com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE.name,
+                requestedRateBasis = normalized.dataQuality.requestedRateBasis,
+                metadata = com.yourname.expensetracker.domain.core.money.MoneyAggregateMetadata(
+                    excludedTransactionCount = normalized.dataQuality.excludedTransactionCount,
+                    staleRateCount = normalized.dataQuality.staleRateCount,
+                    missingRateCount = normalized.dataQuality.missingRateCount,
+                    invalidCurrencyCount = normalized.dataQuality.invalidCurrencyCount
+                )
+            )
+            calculatedPace.copy(
+                currentMonthSpent = null, projectedTotal = null, previousMonthTotal = null,
+                averageMonthlyTotal = null, pacePercentage = -1f, paceStatus = PaceStatus.NO_BASELINE,
+                currentMoneyResult = unavailable, previousMoneyResult = unavailable
+            )
+        } else calculatedPace
         // Preserve the dashboard's richer enrichment: averageMonthlyTotal keeps the
         // completed-month history policy above. previousMonthTotal stays the
         // calculator's honest result (null when no baseline) — the calculator's
@@ -701,10 +733,12 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             daysInMonth = calculatorPace.daysInMonth,
             projectedTotal = calculatorPace.projectedTotal,
             previousMonthTotal = calculatorPace.previousMonthTotal,
-            averageMonthlyTotal = historicalAverage,
+            averageMonthlyTotal = historicalAverage.takeIf { hasCompletePaceInput },
             pacePercentage = calculatorPace.pacePercentage,
             paceStatus = calculatorPace.paceStatus,
-            displayCurrency = calculatorPace.displayCurrency
+            displayCurrency = calculatorPace.displayCurrency,
+            currentMoneyResult = calculatorPace.currentMoneyResult,
+            previousMoneyResult = calculatorPace.previousMoneyResult
         )
 
         val normalizedForecastInput = NormalizedForecastInput(
@@ -717,7 +751,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             budgetStatuses = data.budgetStatuses,
             spendingPace = spendingPace,
             dataQuality = ForecastDataQuality(
-                isPartial = normalized.dataQuality.isPartial,
+                isPartial = !hasCompletePaceInput,
                 excludedActualCount = normalized.dataQuality.excludedTransactionCount,
                 conversionWarnings = listOfNotNull(normalized.dataQuality.warningMessage)
             )
@@ -821,7 +855,12 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val dailySpending = normalized.input.normalizedExpenses
             .filter { it.transactionType == "PURCHASE" && !it.isNotMine }
             .groupBy { TimePeriodUtils.getStartOfDay(it.date) }
-            .mapValues { (_, expenses) -> expenses.sumOf { it.normalizedAmount }.toFloat() }
+            .mapValues { (_, expenses) ->
+                MoneyAggregateBuilder.fromHomeCurrencyAmounts(
+                    expenses.map { it.normalizedAmount },
+                    normalized.input.homeCurrency.code
+                ).displayAmount.toFloat()
+            }
 
         // Build daily history list aligned with calendar days
         val daysInMonth = TimePeriodUtils.getDaysInMonth(ctx.now)
@@ -899,41 +938,46 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         ctx: ComputeContext,
         runwayResult: RunwayResult
     ): DashboardWidget.MonteCarloForecast? {
-        if (runwayResult is RunwayResult.Unavailable) {
-            return DashboardWidget.MonteCarloForecast(
-                result = MonteCarloResult.unavailable(runwayResult.reason),
-                currencyQuality = runwayResult.currencyQuality
-            )
+        fun unavailable(reason: MoneyDisplayUnavailableReasonCode) = DashboardWidget.MonteCarloForecast(
+            result = MonteCarloResult.unavailable(reason.name),
+            currencyQuality = CurrencyQualityUi.unavailable(reason.name)
+        )
+
+        val input = (ctx.normalizedInputResult as? DashboardNormalizedInputResult.Available)?.input
+            ?: return unavailable(MoneyDisplayUnavailableReasonCode.HOME_CURRENCY_UNAVAILABLE)
+        if (input.dataQuality.isPartial ||
+            input.dataQuality.conversionQuality != com.yourname.expensetracker.domain.core.money.ConversionQuality.COMPLETE
+        ) {
+            return unavailable(MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE)
+        }
+        val availableResult = runwayResult as? RunwayResult.Available
+            ?: return unavailable(MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE)
+        // Future obligations are normalized separately from historical dashboard amounts.
+        if (availableResult.forecast.isPartial || availableResult.forecast.excludedCount > 0) {
+            return unavailable(MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE)
         }
         return try {
             // CURR-587-05: Use normalized month aggregate instead of raw repository call
-            val spentToDate = when (val normalized = ctx.normalizedInputResult) {
-                is DashboardNormalizedInputResult.Available -> normalized.input.periodAggregate.displayAmount
-                is DashboardNormalizedInputResult.Unavailable -> {
-                    return DashboardWidget.MonteCarloForecast(
-                        result = MonteCarloResult.unavailable(normalized.reason),
-                        currencyQuality = CurrencyQualityUi(
-                            isPartial = true,
-                            quality = com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE,
-                            warningMessage = normalized.reason
-                        )
-                    )
-                }
-            }
-            val availableResult = runwayResult as RunwayResult.Available
+            val spentToDate = input.periodAggregate.displayAmount
             val knownUpcoming = availableResult.totalCommitted + availableResult.totalLikely
             val budgetForMC = if (ctx.totalBudgetAmount > 0) ctx.totalBudgetAmount else null // G-MONEY-ALLOW[CURR-587-05][G-MONEY-15]: legacy budget path until budget normalization
 
             val mcResult = monteCarloSimulator.simulate(
                 spentToDate = spentToDate,
                 knownUpcoming = knownUpcoming,
-                budgetAmount = budgetForMC
+                budgetAmount = budgetForMC,
+                displayCurrency = input.homeCurrency.code
             )
 
-            mcResult?.let { DashboardWidget.MonteCarloForecast(it) }
-        } catch (e: Exception) {
-            Timber.e(e, "Monte Carlo simulation failed")
-            null
+            mcResult?.let {
+                DashboardWidget.MonteCarloForecast(it, CurrencyQualityUi.from(input.dataQuality))
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: MoneyDisplayUnavailableException) {
+            unavailable(e.reasonCode)
+        } catch (_: Exception) {
+            unavailable(MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE)
         }
     }
 
@@ -972,12 +1016,11 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             }
             CategorySpending(
                 category = cat,
-                total = aggregate.displayAmount,
+                moneyTotal = aggregate,
                 percentage = if (total > 0.0) ((aggregate.displayAmount / total) * 100).toFloat() else 0f,
-                currency = input.homeCurrency.code,
                 isUncategorized = isUncategorized
             )
-        }.sortedByDescending { it.total } // P5-012: sort AFTER the pseudo-category maps in, so it competes for top slots
+        }.sortedByDescending { it.moneyTotal.displayAmount } // P5-012: sort AFTER the pseudo-category maps in, so it competes for top slots
     }
 
     // CURR-587-08: SpendingTrend now consumes DashboardNormalizedInput — no direct conversion.
@@ -1125,34 +1168,51 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         }
     }
 
-    private suspend fun computeSavingsSweepWidget(): DashboardWidget.SavingsSweepPrompt? {
+    private suspend fun computeSavingsSweepWidget(): DashboardWidget? {
         return try {
-            kotlinx.coroutines.withTimeoutOrNull(3000L) {
-                monthlySavingsSweepUseCase.computeSweepRecommendation()
-            }?.let { recommendation ->
-                DashboardWidget.SavingsSweepPrompt(
-                    sweepAmount = recommendation.safeSweepAmount,
-                    underspend = recommendation.totalUnderspend,
-                    riskBuffer = recommendation.riskBuffer,
-                    goalAllocations = recommendation.goalAllocations.map { allocation ->
-                        DashboardWidget.SweepGoalAllocation(
-                            goalId = allocation.goalId,
-                            goalName = allocation.goalName,
-                            suggestedAmount = allocation.suggestedAllocation,
-                            currentProgress = allocation.currentProgress,
-                            targetAmount = allocation.targetAmount
-                        )
-                    },
-                    confidence = recommendation.confidence,
-                    daysUntilMonthEnd = TimePeriodUtils.daysBetween(recommendation.computedAt, recommendation.monthEnd)
-                        .coerceAtLeast(0)
+            val result = kotlinx.coroutines.withTimeoutOrNull(3000L) {
+                monthlySavingsSweepUseCase.computeSweepRecommendationResult()
+            } ?: SavingsSweepComputationResult.Unavailable(
+                MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE.name
+            )
+            when (result) {
+                is SavingsSweepComputationResult.NoRecommendation -> null
+                is SavingsSweepComputationResult.Unavailable -> DashboardWidget.SavingsSweepUnavailable(
+                    MoneyDisplayUnavailableReasonCode.entries.firstOrNull { it.name == result.reasonCode }?.name
+                        ?: MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE.name,
+                    result.metadata
                 )
+                is SavingsSweepComputationResult.Available -> {
+                    val recommendation = result.recommendation
+                    DashboardWidget.SavingsSweepPrompt(
+                        sweepAmount = recommendation.safeSweepAmount,
+                        underspend = recommendation.totalUnderspend,
+                        riskBuffer = recommendation.riskBuffer,
+                        goalAllocations = recommendation.goalAllocations.map { allocation ->
+                            DashboardWidget.SweepGoalAllocation(
+                                goalId = allocation.goalId,
+                                goalName = allocation.goalName,
+                                suggestedAmount = allocation.suggestedAllocation,
+                                currentProgress = allocation.currentProgress,
+                                targetAmount = allocation.targetAmount
+                            )
+                        },
+                        confidence = recommendation.confidence,
+                        daysUntilMonthEnd = TimePeriodUtils.daysBetween(recommendation.computedAt, recommendation.monthEnd)
+                            .coerceAtLeast(0),
+                        currency = recommendation.currency,
+                        metadata = result.metadata
+                    )
+                }
             }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             Timber.w("SAVINGS_SWEEP_UNAVAILABLE class=%s", e.javaClass.simpleName)
-            null
+            DashboardWidget.SavingsSweepUnavailable(
+                MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE.name,
+                SmartSavingsOutcomeMetadata(conversionQuality = com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE)
+            )
         }
     }
 
@@ -1178,7 +1238,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         streakData: Triple<Int, Int, Int>,
         healthScoreV2Result: com.yourname.expensetracker.domain.health.FinancialHealthResult?,
         lifestyleWidget: DashboardWidget.LifestyleSavingsPrompt?,
-        savingsSweepWidget: DashboardWidget.SavingsSweepPrompt?,
+        savingsSweepWidget: DashboardWidget?,
         moneyRadarData: MoneyRadarData,
         stressForecastResult: com.yourname.expensetracker.domain.forecasting.StressForecastResult?
     ): List<DashboardWidget> {

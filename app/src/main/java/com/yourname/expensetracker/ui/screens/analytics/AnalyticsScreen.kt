@@ -962,16 +962,16 @@ fun DayOfWeekChartBento(dayOfWeekPattern: List<DayOfWeekInsight>) {
             )
             Spacer(modifier = Modifier.height(16.dp))
 
-            if (dayOfWeekPattern.isEmpty()) {
+            if (dayOfWeekPattern.none { it.totalSpent != null }) {
                 Box(modifier = Modifier.fillMaxWidth().height(120.dp), contentAlignment = Alignment.Center) {
                     Text(stringResource(R.string.analytics_insufficient_data_short), style = MaterialTheme.typography.bodySmall)
                 }
             } else {
                 val sorted = remember(dayOfWeekPattern) {
-                    dayOfWeekPattern.sortedBy { it.dayIndex }
+                    dayOfWeekPattern.filter { it.totalSpent != null }.sortedBy { it.dayIndex }
                 }
                 val chartEntryModel = remember(sorted) {
-                    val values = sorted.map { it.totalSpent.toSafeChartAmount() }
+                    val values = sorted.mapNotNull { it.totalSpent?.toSafeChartAmount() }
                     val safeValues = if (values.size < 2) values + 0f else values
                     val entries = safeValues.mapIndexed { index, value ->
                         entryOf(index.toFloat(), value)
@@ -994,25 +994,31 @@ fun DayOfWeekChartBento(dayOfWeekPattern: List<DayOfWeekInsight>) {
 
                 if (sorted.size >= 2) {
                     Spacer(modifier = Modifier.height(8.dp))
-                    val highest = sorted.maxByOrNull { it.totalSpent }
-                    val lowest = sorted.filter { it.totalSpent > 0 }.minByOrNull { it.totalSpent }
+                    val highest = sorted.maxByOrNull { it.totalSpent ?: Double.NEGATIVE_INFINITY }
+                    val lowest = sorted
+                        .filter { (it.totalSpent ?: 0.0) > 0 }
+                        .minByOrNull { it.totalSpent ?: Double.POSITIVE_INFINITY }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        highest?.let {
-                            Text(
-                                stringResource(R.string.analytics_peak_most_format, it.dayName, formatAmount(it.totalSpent, it.displayCurrency, showCents = false)),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = SemanticColors.DangerRed.copy(alpha = 0.8f)
-                            )
+                        highest?.let { entry ->
+                            entry.totalSpent?.let { amount ->
+                                Text(
+                                    stringResource(R.string.analytics_peak_most_format, entry.dayName, formatAmount(amount, entry.displayCurrency, showCents = false)),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = SemanticColors.DangerRed.copy(alpha = 0.8f)
+                                )
+                            }
                         }
-                        lowest?.let {
-                            Text(
-                                stringResource(R.string.analytics_peak_least_format, it.dayName, formatAmount(it.totalSpent, it.displayCurrency, showCents = false)),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = SemanticColors.SuccessGreen.copy(alpha = 0.8f)
-                            )
+                        lowest?.let { entry ->
+                            entry.totalSpent?.let { amount ->
+                                Text(
+                                    stringResource(R.string.analytics_peak_least_format, entry.dayName, formatAmount(amount, entry.displayCurrency, showCents = false)),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = SemanticColors.SuccessGreen.copy(alpha = 0.8f)
+                                )
+                            }
                         }
                     }
                 }
@@ -1235,7 +1241,11 @@ fun CategoryItem(item: AnalyticsCategoryBreakdown, homeCurrency: String = item.d
         Column(modifier = Modifier.weight(1f)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(item.category.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-                Text(CurrencyFormatter.formatMoney(item.total, homeCurrency), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                Text(
+                    CurrencyFormatter.formatMoney(item.moneyTotal.amount, item.moneyTotal.currency.code),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold
+                )
             }
             Spacer(modifier = Modifier.height(6.dp))
             LinearProgressIndicator(

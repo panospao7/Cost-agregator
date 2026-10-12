@@ -244,92 +244,83 @@ class SpendingPersonalityClassifierTest {
     }
 
     @Test
-    fun `calculateFeatureScores computes expected values for impulse and diversity metrics`() {
+    fun `normalized classification computes expected feature scores`() = runTest {
         val incomeDate = millis(2026, Calendar.JANUARY, 5, 9)
         val purchases = listOf(
-            purchase(
-                id = 1L,
-                amount = 100.0,
-                merchant = "Alpha",
-                merchantKey = "alpha",
-                categoryId = 1L,
-                date = millis(2026, Calendar.JANUARY, 5, 22)
-            ),
-            purchase(
-                id = 2L,
-                amount = 50.0,
-                merchant = "Beta",
-                merchantKey = "beta",
-                categoryId = 1L,
-                date = millis(2026, Calendar.JANUARY, 7, 10)
-            ),
-            purchase(
-                id = 3L,
-                amount = 50.0,
-                merchant = "Beta",
-                merchantKey = "beta",
-                categoryId = 2L,
-                date = millis(2026, Calendar.JANUARY, 7, 21)
-            ),
-            purchase(
-                id = 4L,
-                amount = 100.0,
-                merchant = "Gamma",
-                merchantKey = "gamma",
-                categoryId = 2L,
-                date = millis(2026, Calendar.JANUARY, 8, 11)
-            )
+            purchase(1L, 50.0, "Alpha", millis(2026, Calendar.JANUARY, 5, 22), "alpha", 1L),
+            purchase(2L, 50.0, "Beta", millis(2026, Calendar.JANUARY, 5, 10), "beta", 1L),
+            purchase(3L, 50.0, "Beta", millis(2026, Calendar.JANUARY, 7, 21), "beta", 2L),
+            purchase(4L, 50.0, "Gamma", millis(2026, Calendar.JANUARY, 7, 11), "gamma", 2L),
+            purchase(5L, 50.0, "Alpha", millis(2026, Calendar.JANUARY, 10, 20), "alpha", 1L),
+            purchase(6L, 50.0, "Beta", millis(2026, Calendar.JANUARY, 10, 12), "beta", 2L),
+            purchase(7L, 50.0, "Gamma", millis(2026, Calendar.JANUARY, 12, 21), "gamma", 1L),
+            purchase(8L, 50.0, "Alpha", millis(2026, Calendar.JANUARY, 12, 10), "alpha", 2L),
+            purchase(9L, 50.0, "Beta", millis(2026, Calendar.JANUARY, 17, 20), "beta", 1L),
+            purchase(10L, 50.0, "Gamma", millis(2026, Calendar.JANUARY, 17, 11), "gamma", 2L)
         )
         val income = deposit(
             id = 99L,
             amount = 1200.0,
             date = incomeDate
         )
-        val budgets = listOf(
-            BudgetSnapshot(categoryId = 1L, amount = 200.0, currency = "EUR"),
-            BudgetSnapshot(categoryId = 2L, amount = 100.0, currency = "EUR")
-        )
+        val featureScores = classifier.classify(
+            SingleCurrencyAnalyticsInput.from(purchases + income, "EUR")
+        ).featureScores
 
-        val featureScores = invokeCalculateFeatureScores(
-            purchases = purchases,
-            allExpenses = purchases + income,
-            budgets = budgets
-        )
-
-        assertApproxEquals(0.25, featureScores.getValue("impulseRatio"), 0.0001)
-        assertApproxEquals(0.75, featureScores.getValue("merchantDiversity"), 0.0001)
+        assertApproxEquals(0.2, featureScores.getValue("impulseRatio"), 0.0001)
+        assertApproxEquals(0.3, featureScores.getValue("merchantDiversity"), 0.0001)
+        assertApproxEquals(0.4, featureScores.getValue("weekendSpendShare"), 0.0001)
         assertApproxEquals(0.5, featureScores.getValue("nightSpendShare"), 0.0001)
         assertApproxEquals(0.0, featureScores.getValue("variance"), 0.0001)
-        assertApproxEquals(0.7, featureScores.getValue("budgetAdherence"), 0.0001)
+        assertApproxEquals(0.5, featureScores.getValue("budgetAdherence"), 0.0001)
         assertApproxEquals(0.0, featureScores.getValue("anomalyFrequency"), 0.0001)
-        assertApproxEquals(0.5, featureScores.getValue("categoryDiversity"), 0.0001)
-        assertApproxEquals(4.0 / 3.0, featureScores.getValue("transactionsPerMonth"), 0.0001)
-        assertApproxEquals(0.375, featureScores.getValue("avgTransactionSize"), 0.0001)
+        assertApproxEquals(0.2, featureScores.getValue("categoryDiversity"), 0.0001)
+        assertApproxEquals(10.0 / 3.0, featureScores.getValue("transactionsPerMonth"), 0.0001)
+        assertApproxEquals(0.25, featureScores.getValue("avgTransactionSize"), 0.0001)
         assertTrue(featureScores.values.none { it.isNaN() })
     }
 
     @Test
-    fun `calculateWeekendSpendShare treats sunday as weekend and monday as weekday`() {
-        val sunday = purchase(id = 1L, amount = 50.0, merchant = "Sunday", date = millis(2026, Calendar.MARCH, 8, 12))
-        val monday = purchase(id = 2L, amount = 30.0, merchant = "Monday", date = millis(2026, Calendar.MARCH, 9, 12))
+    fun `normalized classification treats sunday as weekend and monday as weekday`() = runTest {
+        val sunday = (1L..10L).map { id ->
+            purchase(id, 10.0, "Sunday", millis(2026, Calendar.MARCH, 8, 12))
+        }
+        val monday = (11L..20L).map { id ->
+            purchase(id, 10.0, "Monday", millis(2026, Calendar.MARCH, 9, 12))
+        }
+        val mixed = sunday.take(5) + monday.take(5)
 
-        assertApproxEquals(1.0, invokeCalculateWeekendSpendShare(listOf(sunday)), 0.0001)
-        assertApproxEquals(0.0, invokeCalculateWeekendSpendShare(listOf(monday)), 0.0001)
-        assertApproxEquals(0.625, invokeCalculateWeekendSpendShare(listOf(sunday, monday)), 0.0001)
+        suspend fun weekendShare(expenses: List<ExpenseSnapshot>): Double =
+            classifier.classify(SingleCurrencyAnalyticsInput.from(expenses, "EUR"))
+                .featureScores.getValue("weekendSpendShare")
+
+        assertApproxEquals(1.0, weekendShare(sunday), 0.0001)
+        assertApproxEquals(0.0, weekendShare(monday), 0.0001)
+        assertApproxEquals(0.5, weekendShare(mixed), 0.0001)
     }
 
     @Test
-    fun `calculateNightSpendShare uses 8pm hour boundary`() {
-        val at19 = purchase(id = 1L, amount = 40.0, merchant = "Before 8pm", date = millis(2026, Calendar.MARCH, 5, 19))
-        val at20 = purchase(id = 2L, amount = 40.0, merchant = "At 8pm", date = millis(2026, Calendar.MARCH, 5, 20))
+    fun `normalized classification uses 8pm night boundary`() = runTest {
+        val at19 = (1L..10L).map { id ->
+            purchase(id, 10.0, "Before 8pm", millis(2026, Calendar.MARCH, 5, 19))
+        }
+        val at20 = (11L..20L).map { id ->
+            purchase(id, 10.0, "At 8pm", millis(2026, Calendar.MARCH, 5, 20))
+        }
+        val mixed = at19.take(5) + at20.take(5)
 
-        assertApproxEquals(0.0, invokeCalculateNightSpendShare(listOf(at19)), 0.0001)
-        assertApproxEquals(1.0, invokeCalculateNightSpendShare(listOf(at20)), 0.0001)
-        assertApproxEquals(0.5, invokeCalculateNightSpendShare(listOf(at19, at20)), 0.0001)
+        suspend fun nightShare(expenses: List<ExpenseSnapshot>): Double =
+            classifier.classify(SingleCurrencyAnalyticsInput.from(expenses, "EUR"))
+                .featureScores.getValue("nightSpendShare")
+
+        assertApproxEquals(0.0, nightShare(at19), 0.0001)
+        assertApproxEquals(1.0, nightShare(at20), 0.0001)
+        assertApproxEquals(0.5, nightShare(mixed), 0.0001)
     }
 
     @Test
     fun `classifier preserves weekend and night semantics across DST spring forward with fixed timestamps`() = GlobalTimeZoneTestLock.withLock {
+        runTest {
         val originalTz = TimeZone.getDefault()
         try {
             TimeZone.setDefault(TimeZone.getTimeZone("America/New_York"))
@@ -346,15 +337,21 @@ class SpendingPersonalityClassifierTest {
             val purchases = listOf(
                 purchase(id = 1L, amount = 10.0, merchant = "DST Pre", date = before),
                 purchase(id = 2L, amount = 20.0, merchant = "DST Post", date = after)
-            )
+            ) + (3L..10L).map { id ->
+                purchase(id = id, amount = 10.0, merchant = "DST $id", date = if (id % 2L == 0L) before else after)
+            }
 
             // Both purchases fall on Sunday (March 8), so the weekend share is 100%.
-            assertApproxEquals(1.0, invokeCalculateWeekendSpendShare(purchases), 0.0001)
+            val featureScores = classifier.classify(
+                SingleCurrencyAnalyticsInput.from(purchases, "EUR")
+            ).featureScores
+            assertApproxEquals(1.0, featureScores.getValue("weekendSpendShare"), 0.0001)
 
             // Hours 1 and 3 are both before 8 PM, so neither counts as night.
-            assertApproxEquals(0.0, invokeCalculateNightSpendShare(purchases), 0.0001)
+            assertApproxEquals(0.0, featureScores.getValue("nightSpendShare"), 0.0001)
         } finally {
             TimeZone.setDefault(originalTz)
+        }
         }
     }
 
@@ -433,40 +430,6 @@ class SpendingPersonalityClassifierTest {
                 tips.any { it.contains(keyword, ignoreCase = true) }
             )
         }
-    }
-
-    @Suppress("UNCHECKED_CAST")
-    private fun invokeCalculateFeatureScores(
-        purchases: List<ExpenseSnapshot>,
-        allExpenses: List<ExpenseSnapshot>,
-        budgets: List<BudgetSnapshot>
-    ): Map<String, Double> {
-        val method = SpendingPersonalityClassifier::class.java.getDeclaredMethod(
-            "calculateFeatureScores",
-            List::class.java,
-            List::class.java,
-            List::class.java
-        )
-        method.isAccessible = true
-        return method.invoke(classifier, purchases, allExpenses, budgets) as Map<String, Double>
-    }
-
-    private fun invokeCalculateWeekendSpendShare(purchases: List<ExpenseSnapshot>): Double {
-        val method = SpendingPersonalityClassifier::class.java.getDeclaredMethod(
-            "calculateWeekendSpendShare",
-            List::class.java
-        )
-        method.isAccessible = true
-        return method.invoke(classifier, purchases) as Double
-    }
-
-    private fun invokeCalculateNightSpendShare(purchases: List<ExpenseSnapshot>): Double {
-        val method = SpendingPersonalityClassifier::class.java.getDeclaredMethod(
-            "calculateNightSpendShare",
-            List::class.java
-        )
-        method.isAccessible = true
-        return method.invoke(classifier, purchases) as Double
     }
 
     private fun invokeDeterminePersonalityType(featureScores: Map<String, Double>): SpendingPersonalityType {

@@ -1,6 +1,8 @@
 package com.yourname.expensetracker.ui.screens.home
 
 import com.yourname.expensetracker.domain.model.CategoryInfo
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.usecase.dashboard.CategorySpending
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -21,9 +23,8 @@ class TopCategoryTransactionFilterTest {
             color = "#808080",
             isIncome = false
         ),
-        total = 10.0,
+        moneyTotal = MoneyAggregate.singleCurrency(10.0, CurrencyCode.EUR),
         percentage = 100f,
-        currency = "EUR",
         isUncategorized = isUncategorized
     )
 

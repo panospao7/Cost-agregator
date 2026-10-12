@@ -1068,7 +1068,7 @@ private fun ReviewStep(
                     }
                 }
 
-                parsed.tax?.let { tax ->
+                parsed.tax?.amount?.let { tax ->
                     HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text(stringResource(R.string.receipt_tax_vat_label), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

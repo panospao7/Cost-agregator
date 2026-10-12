@@ -14,6 +14,7 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.verify
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -158,4 +159,84 @@ class ReceiptItemCategorizationInputBuilderTest {
         assertEquals("mail me at [REDACTED_EMAIL]", result.lineItems[0].description)
         assertTrue(result.redactBeforeCloud)
     }
+
+    @Test
+    fun `persisted item inputs preserve receipt currency and tax without a home currency fallback`() = runTest {
+        every { aiPolicy.canUseCloudFor(any(), AiCapability.RECEIPT_ITEM_CATEGORIZATION) } returns false
+        coEvery { categoryRepository.getAll() } returns emptyList()
+        every { receiptParser.lineItemsFromJson(any()) } returns listOf(
+            ReceiptParser.LineItem(description = "Food", quantity = null, unitPrice = null, totalPrice = 12.5)
+        )
+
+        for (currency in listOf("CAD", "JPY", " cad ")) {
+            val result = builder.build(receiptWithTax(currency), AiSettings())
+
+            assertEquals(currency, result.currency)
+            assertEquals(1.25, requireNotNull(result.totalTax), 0.0)
+            assertEquals(12.5, result.lineItems.single().totalPrice, 0.0)
+            assertFalse(result.redactBeforeCloud)
+        }
+    }
+
+    @Test
+    fun `missing and unsupported receipt currencies remain unresolved at the input boundary`() = runTest {
+        every { aiPolicy.canUseCloudFor(any(), AiCapability.RECEIPT_ITEM_CATEGORIZATION) } returns false
+        coEvery { categoryRepository.getAll() } returns emptyList()
+        every { receiptParser.lineItemsFromJson(any()) } returns emptyList()
+
+        for (currency in listOf("", "XXX", "ZZZ")) {
+            val result = builder.build(receiptWithTax(currency), AiSettings())
+
+            assertEquals(currency, result.currency)
+            assertEquals(1.25, requireNotNull(result.totalTax), 0.0)
+        }
+    }
+
+    @Test
+    fun `ephemeral item inputs retain the same receipt currency and tax contract`() = runTest {
+        every { aiPolicy.canUseCloudFor(any(), AiCapability.RECEIPT_ITEM_CATEGORIZATION) } returns false
+        coEvery { categoryRepository.getAll() } returns emptyList()
+        val ephemeral = listOf(
+            ReceiptParser.LineItem(description = "Food", quantity = null, unitPrice = null, totalPrice = 12.5)
+        )
+
+        val result = builder.build(receiptWithTax("JPY"), AiSettings(), ephemeral)
+
+        assertEquals("JPY", result.currency)
+        assertEquals(1.25, requireNotNull(result.totalTax), 0.0)
+        assertEquals(ephemeral, result.lineItems)
+        verify(exactly = 0) { receiptParser.lineItemsFromJson(any()) }
+    }
+
+    @Test
+    fun `redaction preserves explicit adjustment provenance without guessing from a negative amount`() = runTest {
+        every { aiPolicy.canUseCloudFor(any(), AiCapability.RECEIPT_ITEM_CATEGORIZATION) } returns true
+        every { aiPolicy.shouldRedact(any(), AiCapability.RECEIPT_ITEM_CATEGORIZATION) } returns true
+        coEvery { categoryRepository.getAll() } returns emptyList()
+        val ephemeral = listOf(
+            ReceiptParser.LineItem("discount", null, null, -2.0, isAdjustment = true),
+            ReceiptParser.LineItem("invalid price", null, null, -1.0)
+        )
+
+        val result = builder.build(receiptWithTax("EUR"), AiSettings(), ephemeral)
+
+        assertTrue(result.redactBeforeCloud)
+        assertTrue(result.lineItems.first().isAdjustment)
+        assertFalse(result.lineItems.last().isAdjustment)
+        assertEquals(listOf(-2.0, -1.0), result.lineItems.map { it.totalPrice })
+        verify(exactly = 0) { receiptParser.lineItemsFromJson(any()) }
+    }
+
+    private fun receiptWithTax(currency: String) = ScannedReceipt(
+        id = 9L,
+        imagePath = null,
+        rawOcrText = "",
+        parsedTotal = 12.5,
+        parsedMerchant = "Merchant",
+        parsedDate = null,
+        parsedItems = "items",
+        parsedTaxAmount = 1.25,
+        currency = currency,
+        confidence = 0.8f
+    )
 }

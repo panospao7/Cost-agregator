@@ -43,7 +43,7 @@ class CategoryBreakdownFlowTest : ViewModelTestUtils() {
 
         val loaded = pipeline.awaitViewModelState(testDispatcher)
 
-        val vmTotals = loaded.categoryBreakdown.associate { it.category.id to it.total }
+        val vmTotals = loaded.categoryBreakdown.associate { it.category.id to it.moneyTotal.amount }
         val vmPercentages = loaded.categoryBreakdown.associate { it.category.id to it.percentage }
 
         assertApproxEquals(80.0, daoTotals[1L] ?: 0.0)

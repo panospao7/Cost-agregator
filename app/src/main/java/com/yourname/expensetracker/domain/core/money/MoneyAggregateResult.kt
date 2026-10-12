@@ -45,3 +45,11 @@ fun MoneyAggregateResult.warningOrNull(): String? = when (this) {
     is MoneyAggregateResult.Available -> aggregate.warningMessage
     is MoneyAggregateResult.Unavailable -> warningMessage
 }
+
+fun MoneyAggregateResult.requireDisplayAmount(): Double = when (this) {
+    is MoneyAggregateResult.Available -> aggregate.displayAmount
+    is MoneyAggregateResult.Unavailable -> throw MoneyDisplayUnavailableException(
+        MoneyDisplayUnavailableReasonCode.entries.firstOrNull { it.name == reason }
+            ?: MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE
+    )
+}

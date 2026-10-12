@@ -357,6 +357,7 @@ dependencies {
 
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation("androidx.test:runner:1.5.2")
+    androidTestUtil("androidx.test:orchestrator:1.6.1")
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.ui.test.junit4)

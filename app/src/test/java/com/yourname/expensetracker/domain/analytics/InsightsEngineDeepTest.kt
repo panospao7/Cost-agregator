@@ -14,6 +14,7 @@ import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -75,7 +76,7 @@ class InsightsEngineDeepTest {
     @Test
     fun `spending pace canonical formula and status are correct`() = runTest {
         every { timeProvider.now() } returns dateMs(2026, 4, 16)
-        every { spendingPaceCalculator.calculate(any(), any(), any(), any(), any(), any()) } returns SpendingPace(
+        every { spendingPaceCalculator.calculate(any(), any(), any(), any<List<com.yourname.expensetracker.domain.model.ExpenseSnapshot>>(), any(), any()) } returns SpendingPace(
             currentMonthSpent = 1600.0,
             daysElapsed = 16,
             daysInMonth = 30,
@@ -111,7 +112,7 @@ class InsightsEngineDeepTest {
 
         assertApproxEquals(75f, food.percentageOfTotal, 0.01f)
         assertApproxEquals(25f, transport.percentageOfTotal, 0.01f)
-        assertApproxEquals(100.0, snapshot.categoryInsights.sumOf { it.percentageOfTotal.toDouble() }, 0.05)
+        assertApproxEquals(100.0, snapshot.categoryInsights.sumOf { requireNotNull(it.percentageOfTotal).toDouble() }, 0.05)
     }
 
     @Test
@@ -170,7 +171,8 @@ class InsightsEngineDeepTest {
         every { timeProvider.now() } returns dateMs(2026, 4, 10)
         val snapshot = engine.generateInsights(categories, emptyList(), "EUR")
 
-        assertApproxEquals(0.0, snapshot.monthlyComparison.currentTotal)
+        org.junit.Assert.assertEquals(0.0, requireNotNull(snapshot.monthlyComparison.currentTotal), 0.0)
+        assertTrue(snapshot.monthlyComparison.currentMoneyResult is com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Available)
         assertTrue(snapshot.categoryInsights.isEmpty())
         assertTrue(snapshot.topMerchants.isEmpty())
         assertEquals(7, snapshot.dayOfWeekPattern.size)

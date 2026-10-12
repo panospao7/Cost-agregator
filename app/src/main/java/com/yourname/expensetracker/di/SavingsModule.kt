@@ -87,12 +87,14 @@ object SavingsModule {
         savingsContributionHistoryRepository: SavingsContributionHistoryRepository,
         timeProvider: com.yourname.expensetracker.domain.util.TimeProvider,
         analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer,
-        currencySettingsRepository: CurrencySettingsRepository
+        currencySettingsRepository: CurrencySettingsRepository,
+        currencyConverter: com.yourname.expensetracker.domain.currency.CurrencyConverter
     ): SavingsGamificationEngine = SavingsGamificationEngine(
         savingsGoalRepository,
         savingsContributionHistoryRepository,
         timeProvider,
         analyticsCurrencyNormalizer,
-        currencySettingsRepository
+        currencySettingsRepository,
+        currencyConverter
     )
 }

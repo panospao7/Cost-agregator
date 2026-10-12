@@ -37,7 +37,7 @@ class MonthlyComparisonCalculatorTest {
             displayCurrency = "EUR"
         )
 
-        assertApproxEquals(1283.59, comparison.currentTotal, 0.01)
+        assertApproxEquals(1283.59, requireNotNull(comparison.currentTotal), 0.01)
         assertApproxEquals(1058.00, comparison.previousTotal!!, 0.01)
         assertApproxEquals(225.59, comparison.changeAmount!!, 0.01)
         assertApproxEquals(21.32f, comparison.changePercentage!!, 0.01f)
@@ -71,7 +71,7 @@ class MonthlyComparisonCalculatorTest {
             displayCurrency = "EUR"
         )
 
-        assertApproxEquals(300.0, comparison.currentTotal, 0.01)
+        assertApproxEquals(300.0, requireNotNull(comparison.currentTotal), 0.01)
         assertApproxEquals(0.0, comparison.previousTotal!!, 0.01)
         assertNull(comparison.changeAmount)
         assertNull(comparison.changePercentage)
@@ -114,7 +114,7 @@ class MonthlyComparisonCalculatorTest {
 
         assertEquals(3, comparison.currentCount)
         assertEquals(2, comparison.previousCount)
-        assertApproxEquals(120.0, comparison.currentTotal, 0.01)
+        assertApproxEquals(120.0, requireNotNull(comparison.currentTotal), 0.01)
         assertApproxEquals(30.0, comparison.previousTotal!!, 0.01)
         assertApproxEquals(300.0f, comparison.changePercentage!!, 0.01f)
     }

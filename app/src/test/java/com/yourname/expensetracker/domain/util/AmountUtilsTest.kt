@@ -4,6 +4,27 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AmountUtilsTest {
+
+    @Test
+    fun `malformed money diagnostics contain controlled codes not input`() {
+        val messages = mutableListOf<String>()
+        val errors = mutableListOf<Throwable?>()
+        val tree = object : timber.log.Timber.Tree() {
+            override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+                messages += message
+                errors += t
+            }
+        }
+        timber.log.Timber.plant(tree)
+        try {
+            assertNull(AmountUtils.parseAmount("SECRET_PAYLOAD €1,23,456.00"))
+            assertTrue(messages.isNotEmpty())
+            assertTrue(messages.all { it == "AMOUNT_GROUPING_INVALID" || it == "AMOUNT_FORMAT_INVALID" })
+            assertTrue(errors.all { it == null })
+        } finally {
+            timber.log.Timber.uproot(tree)
+        }
+    }
     
     @Test
     fun `parseAmount - valid formats parse correctly`() {

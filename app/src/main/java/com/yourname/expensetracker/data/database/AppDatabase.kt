@@ -1802,7 +1802,6 @@ abstract class AppDatabase : RoomDatabase() {
                     database.execSQL("ALTER TABLE scanned_receipts_new RENAME TO scanned_receipts")
                     database.execSQL("CREATE INDEX IF NOT EXISTS index_scanned_receipts_expenseId ON scanned_receipts (expenseId)")
                     database.execSQL("CREATE INDEX IF NOT EXISTS index_scanned_receipts_createdAt ON scanned_receipts (createdAt)")
-                    database.execSQL("CREATE INDEX IF NOT EXISTS index_scanned_receipts_matchStatus ON scanned_receipts (matchStatus)")
                     
                     // Recreate expenses table with proper defaults
                     database.execSQL("""
@@ -1886,7 +1885,6 @@ abstract class AppDatabase : RoomDatabase() {
                     
                     // Recreate indices for expenses
                     database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_rawNotificationId ON expenses (rawNotificationId)")
-                    database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_date ON expenses (date)")
                     database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_transactionType_date ON expenses (transactionType, date)")
                     database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_transactionType_categoryId_date ON expenses (transactionType, categoryId, date)")
                     database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_categoryId_date ON expenses (categoryId, date)")
@@ -1961,10 +1959,88 @@ abstract class AppDatabase : RoomDatabase() {
                     database.execSQL("INSERT INTO manual_recurring_expenses_new SELECT id, merchant, amount, currency, frequency, nextDate, note, createdAt, isSubscription, subscriptionCategory, usageTargetPerMonth, cancellationUrl, isActive FROM manual_recurring_expenses")
                     database.execSQL("DROP TABLE manual_recurring_expenses")
                     database.execSQL("ALTER TABLE manual_recurring_expenses_new RENAME TO manual_recurring_expenses")
-                    database.execSQL("CREATE INDEX IF NOT EXISTS index_manual_recurring_expenses_isActive_nextDate ON manual_recurring_expenses (isActive, nextDate)")
-                    database.execSQL("CREATE INDEX IF NOT EXISTS index_manual_recurring_expenses_isSubscription_isActive_nextDate ON manual_recurring_expenses (isSubscription, isActive, nextDate)")
-                    database.execSQL("CREATE INDEX IF NOT EXISTS index_manual_recurring_expenses_merchant ON manual_recurring_expenses (merchant)")
-                    
+
+                    // v50 introduces the child history currency default; preserve stored currencies.
+                    database.execSQL("""
+                        CREATE TABLE subscription_price_history_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            subscriptionId INTEGER NOT NULL,
+                            amount REAL NOT NULL,
+                            currency TEXT NOT NULL DEFAULT 'EUR',
+                            recordedAt INTEGER NOT NULL,
+                            changeReason TEXT,
+                            FOREIGN KEY(subscriptionId) REFERENCES manual_recurring_expenses(id) ON DELETE CASCADE
+                        )
+                    """.trimIndent())
+                    database.execSQL("""
+                        INSERT INTO subscription_price_history_new (
+                            id, subscriptionId, amount, currency, recordedAt, changeReason
+                        )
+                        SELECT id, subscriptionId, amount, currency, recordedAt, changeReason
+                        FROM subscription_price_history
+                    """.trimIndent())
+                    database.execSQL("DROP TABLE subscription_price_history")
+                    database.execSQL("ALTER TABLE subscription_price_history_new RENAME TO subscription_price_history")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_subscription_price_history_subscriptionId_recordedAt ON subscription_price_history (subscriptionId, recordedAt)")
+
+                    database.execSQL("""
+                        CREATE TABLE exchange_rates_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            fromCurrency TEXT NOT NULL,
+                            toCurrency TEXT NOT NULL,
+                            rate REAL NOT NULL,
+                            lastUpdated INTEGER NOT NULL,
+                            source TEXT NOT NULL DEFAULT 'manual'
+                        )
+                    """.trimIndent())
+                    database.execSQL("""
+                        INSERT INTO exchange_rates_new (id, fromCurrency, toCurrency, rate, lastUpdated, source)
+                        SELECT id, fromCurrency, toCurrency, rate, lastUpdated, source FROM exchange_rates
+                    """.trimIndent())
+                    database.execSQL("DROP TABLE exchange_rates")
+                    database.execSQL("ALTER TABLE exchange_rates_new RENAME TO exchange_rates")
+                    database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_exchange_rates_fromCurrency_toCurrency ON exchange_rates (fromCurrency, toCurrency)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_exchange_rates_lastUpdated ON exchange_rates (lastUpdated)")
+
+                    database.execSQL("""
+                        CREATE TABLE budget_forecasts_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            budgetId INTEGER NOT NULL,
+                            forecastDate INTEGER NOT NULL,
+                            targetPeriodStart INTEGER NOT NULL,
+                            targetPeriodEnd INTEGER NOT NULL,
+                            predictedSpending REAL NOT NULL,
+                            predictedRemaining REAL NOT NULL,
+                            confidenceScore REAL NOT NULL,
+                            riskLevel TEXT NOT NULL,
+                            overspendProbability REAL NOT NULL,
+                            recommendationsJson TEXT,
+                            actualSpending REAL,
+                            forecastAccuracy REAL,
+                            isActive INTEGER NOT NULL DEFAULT 1,
+                            createdAt INTEGER NOT NULL,
+                            FOREIGN KEY(budgetId) REFERENCES budgets(id) ON DELETE CASCADE
+                        )
+                    """.trimIndent())
+                    database.execSQL("""
+                        INSERT INTO budget_forecasts_new (
+                            id, budgetId, forecastDate, targetPeriodStart, targetPeriodEnd,
+                            predictedSpending, predictedRemaining, confidenceScore, riskLevel,
+                            overspendProbability, recommendationsJson, actualSpending,
+                            forecastAccuracy, isActive, createdAt
+                        )
+                        SELECT id, budgetId, forecastDate, targetPeriodStart, targetPeriodEnd,
+                            predictedSpending, predictedRemaining, confidenceScore, riskLevel,
+                            overspendProbability, recommendationsJson, actualSpending,
+                            forecastAccuracy, isActive, createdAt
+                        FROM budget_forecasts
+                    """.trimIndent())
+                    database.execSQL("DROP TABLE budget_forecasts")
+                    database.execSQL("ALTER TABLE budget_forecasts_new RENAME TO budget_forecasts")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_budget_forecasts_budgetId ON budget_forecasts (budgetId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_budget_forecasts_forecastDate ON budget_forecasts (forecastDate)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_budget_forecasts_isActive ON budget_forecasts (isActive)")
+
                     // Recreate warranties table with proper DEFAULT constraints
                     database.execSQL("""
                         CREATE TABLE warranties_new (
@@ -2114,7 +2190,6 @@ abstract class AppDatabase : RoomDatabase() {
                             countryCode TEXT NOT NULL,
                             accessToken TEXT,
                             refreshToken TEXT,
-                            tokenEncryptionVersion INTEGER NOT NULL DEFAULT 0,
                             tokenExpiry INTEGER,
                             isActive INTEGER NOT NULL DEFAULT 0,
                             isConnected INTEGER NOT NULL DEFAULT 0,
@@ -2130,18 +2205,10 @@ abstract class AppDatabase : RoomDatabase() {
                         )
                     """.trimIndent())
                     
-                    database.execSQL("INSERT INTO bank_connections_new SELECT id, bankId, bankName, countryCode, accessToken, refreshToken, 0, tokenExpiry, isActive, isConnected, lastSync, lastSyncStatus, autoSync, syncFrequency, defaultCategoryId, lastError, lastErrorTime, consecutiveErrors, createdAt FROM bank_connections")
+                    database.execSQL("INSERT INTO bank_connections_new SELECT id, bankId, bankName, countryCode, accessToken, refreshToken, tokenExpiry, isActive, isConnected, lastSync, lastSyncStatus, autoSync, syncFrequency, defaultCategoryId, lastError, lastErrorTime, consecutiveErrors, createdAt FROM bank_connections")
                     database.execSQL("DROP TABLE bank_connections")
                     database.execSQL("ALTER TABLE bank_connections_new RENAME TO bank_connections")
-                    database.execSQL("""
-                        DELETE FROM bank_connections
-                        WHERE id NOT IN (
-                            SELECT MAX(id)
-                            FROM bank_connections
-                            GROUP BY bankId
-                        )
-                    """.trimIndent())
-                    database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_bank_connections_bankId ON bank_connections (bankId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_bank_connections_bankId ON bank_connections (bankId)")
                     database.execSQL("CREATE INDEX IF NOT EXISTS index_bank_connections_isActive ON bank_connections (isActive)")
                     database.execSQL("CREATE INDEX IF NOT EXISTS index_bank_connections_lastSync ON bank_connections (lastSync)")
                     
@@ -2219,7 +2286,7 @@ abstract class AppDatabase : RoomDatabase() {
                         CREATE TABLE group_expenses_new (
                             id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
                             groupId INTEGER NOT NULL,
-                            expenseId INTEGER,
+                            expenseId INTEGER NOT NULL,
                             paidById INTEGER NOT NULL,
                             date INTEGER NOT NULL,
                             description TEXT NOT NULL,
@@ -2273,7 +2340,7 @@ abstract class AppDatabase : RoomDatabase() {
                     database.execSQL("INSERT INTO pending_reviews_new SELECT id, rawNotificationId, scannedReceiptId, suggestedAmount, suggestedCurrency, suggestedMerchant, suggestedType, suggestedCategoryId, suggestedDate, confidence, matchType, explanation, packageName, notificationTitle, notificationText, createdAt, status, suggestedDirection, suggestedAccountName, suggestedLatitude, suggestedLongitude FROM pending_reviews")
                     database.execSQL("DROP TABLE pending_reviews")
                     database.execSQL("ALTER TABLE pending_reviews_new RENAME TO pending_reviews")
-                    database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_pending_reviews_rawNotificationId ON pending_reviews (rawNotificationId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_rawNotificationId ON pending_reviews (rawNotificationId)")
                     database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_scannedReceiptId ON pending_reviews (scannedReceiptId)")
                     database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_status ON pending_reviews (status)")
                     database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_status_createdAt ON pending_reviews (status, createdAt)")
@@ -2417,7 +2484,7 @@ abstract class AppDatabase : RoomDatabase() {
                         CREATE TABLE merchant_locations_new (
                             id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
                             normalizedMerchantName TEXT NOT NULL,
-                            areaKey TEXT DEFAULT 'global',
+                            areaKey TEXT,
                             displayName TEXT NOT NULL,
                             latitude REAL NOT NULL,
                             longitude REAL NOT NULL,
@@ -2516,7 +2583,6 @@ abstract class AppDatabase : RoomDatabase() {
                     
                     // 3. Recreate canonical indices that may be missing on upgraded DBs
                     database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_exchange_rates_fromCurrency_toCurrency ON exchange_rates(fromCurrency, toCurrency)")
-                    database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_date ON expenses(date)")
                     database.execSQL("CREATE INDEX IF NOT EXISTS index_raw_notifications_packageName_timestamp ON raw_notifications(packageName, timestamp)")
                     database.execSQL("CREATE INDEX IF NOT EXISTS index_raw_notifications_capturedAt ON raw_notifications(capturedAt)")
                     database.execSQL("CREATE INDEX IF NOT EXISTS index_subscription_price_history_subscriptionId_recordedAt ON subscription_price_history(subscriptionId, recordedAt)")
@@ -2547,7 +2613,41 @@ abstract class AppDatabase : RoomDatabase() {
                     database.execSQL("ALTER TABLE merchant_locations_new RENAME TO merchant_locations")
                     database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_merchant_locations_normalizedMerchantName_areaKey ON merchant_locations(normalizedMerchantName, areaKey)")
                     database.execSQL("CREATE INDEX IF NOT EXISTS index_merchant_locations_lastResolvedAt ON merchant_locations(lastResolvedAt)")
-                    
+
+                    // v51 requires RESTRICT for the non-null payer; expenseId becomes nullable in v52.
+                    database.execSQL("""
+                        CREATE TABLE group_expenses_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            groupId INTEGER NOT NULL,
+                            expenseId INTEGER NOT NULL,
+                            paidById INTEGER NOT NULL,
+                            date INTEGER NOT NULL,
+                            description TEXT NOT NULL,
+                            totalAmount REAL NOT NULL,
+                            currency TEXT NOT NULL DEFAULT 'EUR',
+                            splitType TEXT NOT NULL DEFAULT 'EQUAL',
+                            customSplitsJson TEXT,
+                            FOREIGN KEY (groupId) REFERENCES expense_groups(id) ON DELETE CASCADE,
+                            FOREIGN KEY (expenseId) REFERENCES expenses(id) ON DELETE CASCADE,
+                            FOREIGN KEY (paidById) REFERENCES group_members(id) ON DELETE RESTRICT
+                        )
+                    """.trimIndent())
+                    database.execSQL("""
+                        INSERT INTO group_expenses_new (
+                            id, groupId, expenseId, paidById, date, description,
+                            totalAmount, currency, splitType, customSplitsJson
+                        )
+                        SELECT id, groupId, expenseId, paidById, date, description,
+                            totalAmount, currency, splitType, customSplitsJson
+                        FROM group_expenses
+                    """.trimIndent())
+                    database.execSQL("DROP TABLE group_expenses")
+                    database.execSQL("ALTER TABLE group_expenses_new RENAME TO group_expenses")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_group_expenses_groupId ON group_expenses (groupId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_group_expenses_expenseId ON group_expenses (expenseId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_group_expenses_paidById ON group_expenses (paidById)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_group_expenses_groupId_date ON group_expenses (groupId, date)")
+
                     database.setTransactionSuccessful()
                 } finally {
                     database.endTransaction()
@@ -4186,6 +4286,12 @@ abstract class AppDatabase : RoomDatabase() {
 
                     // ── 3. merchant_locations: non-null areaKey ──────────────────────
 
+                    // The v72 schema already declares these composite indexes as unique.
+                    // Drop them before normalizing legacy values so rows such as
+                    // "merchant|global" and "global" can be deduplicated safely.
+                    database.execSQL("DROP INDEX IF EXISTS index_merchant_locations_normalizedMerchantName_areaKey")
+                    database.execSQL("DROP INDEX IF EXISTS index_merchant_location_corrections_normalizedMerchantName_areaKey")
+
                     // Normalize legacy "<key>|global" areaKey values to plain "global".
                     database.execSQL(
                         "UPDATE merchant_locations SET areaKey = 'global' WHERE areaKey LIKE '%|global'"
@@ -4299,6 +4405,12 @@ abstract class AppDatabase : RoomDatabase() {
                             GROUP BY normalizedMerchantName, areaKey
                         )
                         """.trimIndent()
+                    )
+
+                    database.execSQL(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                            "index_merchant_location_corrections_normalizedMerchantName_areaKey " +
+                            "ON merchant_location_corrections (normalizedMerchantName, areaKey)"
                     )
 
                     database.setTransactionSuccessful()
@@ -4794,7 +4906,7 @@ abstract class AppDatabase : RoomDatabase() {
                                 id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
                                 rawNotificationId INTEGER,
                                 scannedReceiptId INTEGER,
-                        suggestedAmount REAL,
+                                suggestedAmount REAL NOT NULL CHECK(suggestedAmount > 0),
                                 suggestedCurrency TEXT NOT NULL,
                                 suggestedMerchant TEXT NOT NULL,
                                 suggestedMerchantKey TEXT,
@@ -4842,7 +4954,7 @@ abstract class AppDatabase : RoomDatabase() {
                         database.execSQL("ALTER TABLE pending_reviews_new RENAME TO pending_reviews")
 
                         // Recreate pending_reviews indexes
-                        database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_pending_reviews_rawNotificationId ON pending_reviews (rawNotificationId)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_rawNotificationId ON pending_reviews (rawNotificationId)")
                         database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_scannedReceiptId ON pending_reviews (scannedReceiptId)")
                         database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_status ON pending_reviews (status)")
                         database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_status_createdAt ON pending_reviews (status, createdAt)")
@@ -5985,11 +6097,26 @@ val MIGRATION_92_93 = object : androidx.room.migration.Migration(92, 93) {
 
 val MIGRATION_93_94 = object : androidx.room.migration.Migration(93, 94) {
     override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
-        // CURRENCY-FOUNDATION: Add currency tracking to budgets table.
-        // Existing budgets get EUR with LEGACY_DEFAULT assumption,
-        // indicating the currency was not originally stored.
+        // Match the complete v94 currency foundation without inventing historical conversions.
+        database.execSQL("ALTER TABLE expenses ADD COLUMN baseAmount REAL NOT NULL DEFAULT 0.0")
+        database.execSQL("ALTER TABLE expenses ADD COLUMN baseCurrency TEXT NOT NULL DEFAULT 'EUR'")
+        database.execSQL("ALTER TABLE expenses ADD COLUMN exchangeRateUsed REAL NOT NULL DEFAULT 0.0")
         database.execSQL("ALTER TABLE budgets ADD COLUMN currency TEXT NOT NULL DEFAULT 'EUR'")
         database.execSQL("ALTER TABLE budgets ADD COLUMN currencyAssumption TEXT NOT NULL DEFAULT 'LEGACY_DEFAULT'")
+        database.execSQL("ALTER TABLE planned_expenses ADD COLUMN currency TEXT NOT NULL DEFAULT 'EUR'")
+        database.execSQL("ALTER TABLE planned_expenses ADD COLUMN currencyAssumption TEXT NOT NULL DEFAULT 'LEGACY_DEFAULT'")
+        database.execSQL("ALTER TABLE savings_goals ADD COLUMN currency TEXT NOT NULL DEFAULT 'EUR'")
+        database.execSQL("ALTER TABLE savings_goals ADD COLUMN currencyAssumption TEXT NOT NULL DEFAULT 'LEGACY_DEFAULT'")
+        database.execSQL("ALTER TABLE anomaly_alerts ADD COLUMN currency TEXT NOT NULL DEFAULT 'EUR'")
+        database.execSQL("ALTER TABLE anomaly_alerts ADD COLUMN baseAmount REAL DEFAULT 0.0")
+        database.execSQL("ALTER TABLE anomaly_alerts ADD COLUMN baseCurrency TEXT DEFAULT 'EUR'")
+        database.execSQL("ALTER TABLE budget_adjustment_recommendations ADD COLUMN currency TEXT NOT NULL DEFAULT 'EUR'")
+        database.execSQL("ALTER TABLE budget_forecasts ADD COLUMN currency TEXT NOT NULL DEFAULT 'EUR'")
+        database.execSQL("ALTER TABLE savings_sweep_plan ADD COLUMN currency TEXT NOT NULL DEFAULT 'EUR'")
+        database.execSQL("ALTER TABLE spending_challenges ADD COLUMN currency TEXT NOT NULL DEFAULT 'EUR'")
+        database.execSQL("ALTER TABLE stress_forecast_snapshots ADD COLUMN currency TEXT NOT NULL DEFAULT 'EUR'")
+        database.execSQL("ALTER TABLE exchange_rates ADD COLUMN validDate INTEGER NOT NULL DEFAULT 0")
+        database.execSQL("CREATE INDEX IF NOT EXISTS index_exchange_rates_fromCurrency_toCurrency_validDate ON exchange_rates (fromCurrency, toCurrency, validDate)")
     }
 }
 
@@ -6102,7 +6229,7 @@ val MIGRATION_95_96 = object : androidx.room.migration.Migration(95, 96) {
                     source TEXT NOT NULL,
                     createdAt INTEGER NOT NULL,
                     createdBy TEXT,
-                    isPrimary INTEGER NOT NULL DEFAULT 1,
+                    isPrimary INTEGER NOT NULL,
                     metadata TEXT
                 )
             """.trimIndent())
@@ -6182,8 +6309,8 @@ val MIGRATION_96_100 = object : androidx.room.migration.Migration(96, 100) {
                     frequency TEXT NOT NULL,
                     merchant TEXT,
                     categoryId INTEGER,
-                    createdAt INTEGER NOT NULL DEFAULT 0,
-                    updatedAt INTEGER NOT NULL DEFAULT 0
+                    createdAt INTEGER NOT NULL,
+                    updatedAt INTEGER NOT NULL
                 )
             """.trimIndent())
 
@@ -6205,7 +6332,7 @@ val MIGRATION_96_100 = object : androidx.room.migration.Migration(96, 100) {
                     dismissedAt INTEGER,
                     snoozedUntil INTEGER,
                     notificationId INTEGER,
-                    createdAt INTEGER NOT NULL DEFAULT 0
+                    createdAt INTEGER NOT NULL
                 )
             """.trimIndent())
 
@@ -6310,10 +6437,9 @@ val MIGRATION_102_103 = object : androidx.room.migration.Migration(102, 103) {
 // Migration 103 -> 104: Add raw data retention columns for privacy purging support.
 val MIGRATION_103_104 = object : androidx.room.migration.Migration(103, 104) {
     override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
-        database.execSQL("ALTER TABLE raw_notifications ADD COLUMN rawContentPurgedAt INTEGER DEFAULT NULL")
-        database.execSQL("ALTER TABLE raw_notifications ADD COLUMN parseResult TEXT DEFAULT NULL")
-        database.execSQL("ALTER TABLE raw_notifications ADD COLUMN dedupeFingerprint TEXT DEFAULT NULL")
-        database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN rawOcrTextPurgedAt INTEGER DEFAULT NULL")
+        // parseResult already exists in v103; dedupeFingerprint is introduced in v105.
+        database.execSQL("ALTER TABLE raw_notifications ADD COLUMN rawContentPurgedAt INTEGER")
+        database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN rawOcrTextPurgedAt INTEGER")
     }
 }
 
@@ -6405,11 +6531,11 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
 
                 // ── Step 2: Add new columns ──────────────────────────────────────
 
-                database.execSQL("ALTER TABLE budgets ADD COLUMN activeOverallKey INTEGER DEFAULT NULL")
-                database.execSQL("ALTER TABLE budgets ADD COLUMN activeCategoryKey INTEGER DEFAULT NULL")
-                database.execSQL("ALTER TABLE group_members ADD COLUMN currentUserGroupKey INTEGER DEFAULT NULL")
-                database.execSQL("ALTER TABLE raw_notifications ADD COLUMN dedupeFingerprint TEXT DEFAULT NULL")
-                database.execSQL("ALTER TABLE planned_expenses ADD COLUMN openSourceOccurrenceKey TEXT DEFAULT NULL")
+                database.execSQL("ALTER TABLE budgets ADD COLUMN activeOverallKey INTEGER")
+                database.execSQL("ALTER TABLE budgets ADD COLUMN activeCategoryKey INTEGER")
+                database.execSQL("ALTER TABLE group_members ADD COLUMN currentUserGroupKey INTEGER")
+                database.execSQL("ALTER TABLE raw_notifications ADD COLUMN dedupeFingerprint TEXT")
+                database.execSQL("ALTER TABLE planned_expenses ADD COLUMN openSourceOccurrenceKey TEXT")
 
                 // ── Step 3: Backfill materialized keys ───────────────────────────
 
@@ -6497,21 +6623,21 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                         id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
                         workerName TEXT NOT NULL,
                         startedAt INTEGER NOT NULL,
-                        finishedAt INTEGER DEFAULT NULL,
-                        status TEXT NOT NULL DEFAULT 'RUNNING',
-                        rowsScanned INTEGER NOT NULL DEFAULT 0,
-                        rowsUpdated INTEGER NOT NULL DEFAULT 0,
-                        notificationsSent INTEGER NOT NULL DEFAULT 0,
-                        retryReason TEXT DEFAULT NULL,
-                        errorMessage TEXT DEFAULT NULL
+                        finishedAt INTEGER,
+                        status TEXT NOT NULL,
+                        rowsScanned INTEGER NOT NULL,
+                        rowsUpdated INTEGER NOT NULL,
+                        notificationsSent INTEGER NOT NULL,
+                        retryReason TEXT,
+                        errorMessage TEXT
                     )
                 """.trimIndent())
                 database.execSQL(
-                    "CREATE INDEX IF NOT EXISTS idx_bg_job_runs_worker_started " +
+                    "CREATE INDEX IF NOT EXISTS index_background_job_runs_workerName_startedAt " +
                     "ON background_job_runs (workerName, startedAt)"
                 )
                 database.execSQL(
-                    "CREATE INDEX IF NOT EXISTS idx_bg_job_runs_status " +
+                    "CREATE INDEX IF NOT EXISTS index_background_job_runs_status " +
                     "ON background_job_runs (status)"
                 )
             }
@@ -6556,8 +6682,6 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                 try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN updatedAt INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE expenses ADD COLUMN source TEXT") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE exchange_rates ADD COLUMN validDate INTEGER") } catch (_: Exception) { }
-                try { database.execSQL("ALTER TABLE exchange_rates ADD COLUMN fetchedAt INTEGER") } catch (_: Exception) { }
-                try { database.execSQL("ALTER TABLE pending_reviews ADD COLUMN extractionState TEXT NOT NULL DEFAULT 'REAL_EXTRACTION'") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE budgets ADD COLUMN activeOverallKey INTEGER") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE budgets ADD COLUMN activeCategoryKey INTEGER") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE group_members ADD COLUMN currentUserGroupKey INTEGER") } catch (_: Exception) { }
@@ -6610,7 +6734,7 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                             )
                         """.trimIndent())
 
-                            database.execSQL("INSERT INTO budgets_new (id, categoryId, amount, period, periodMode, startDate, isActive, notifyAtWarning, notifyAtCritical, rollover, currency, currencyAssumption, createdAt, lastWarningNotifiedAt, lastCriticalNotifiedAt, lastExceededNotifiedAt, activeOverallKey, activeCategoryKey) SELECT id, categoryId, amount, period, periodMode, startDate, isActive, notifyAtWarning, notifyAtCritical, rollover, currency, currencyAssumption, createdAt, lastWarningNotifiedAt, lastCriticalNotifiedAt, lastExceededNotifiedAt, NULL, NULL FROM budgets")
+                            database.execSQL("INSERT INTO budgets_new (id, categoryId, amount, period, periodMode, startDate, isActive, notifyAtWarning, notifyAtCritical, rollover, currency, currencyAssumption, createdAt, lastWarningNotifiedAt, lastCriticalNotifiedAt, lastExceededNotifiedAt, activeOverallKey, activeCategoryKey) SELECT id, categoryId, amount, period, periodMode, startDate, isActive, notifyAtWarning, notifyAtCritical, rollover, currency, currencyAssumption, createdAt, lastWarningNotifiedAt, lastCriticalNotifiedAt, lastExceededNotifiedAt, activeOverallKey, activeCategoryKey FROM budgets")
                             database.execSQL("DROP TABLE budgets")
                             database.execSQL("ALTER TABLE budgets_new RENAME TO budgets")
 
@@ -6645,7 +6769,7 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
 
                         database.execSQL("""
                             INSERT INTO group_members_new (id, groupId, name, email, isCurrentUser, joinedAt, currentUserGroupKey)
-                            SELECT id, groupId, name, email, isCurrentUser, joinedAt, NULL FROM group_members
+                            SELECT id, groupId, name, email, isCurrentUser, joinedAt, currentUserGroupKey FROM group_members
                         """.trimIndent())
                         database.execSQL("DROP TABLE group_members")
                         database.execSQL("ALTER TABLE group_members_new RENAME TO group_members")
@@ -6694,7 +6818,7 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
 
                         database.execSQL("""
                             INSERT INTO planned_expenses_new (id, description, amount, currency, currencyAssumption, date, categoryId, isRecurring, priority, createdAt, sourceOccurrenceKey, sourceRecurringRuleId, status, linkedActualExpenseId, merchantKey, updatedAt, openSourceOccurrenceKey)
-                            SELECT id, description, amount, NULL, NULL, date, categoryId, isRecurring, priority, createdAt, sourceOccurrenceKey, sourceRecurringRuleId, status, linkedActualExpenseId, merchantKey, updatedAt, NULL FROM planned_expenses
+                            SELECT id, description, amount, currency, currencyAssumption, date, categoryId, isRecurring, priority, createdAt, sourceOccurrenceKey, sourceRecurringRuleId, status, linkedActualExpenseId, merchantKey, updatedAt, openSourceOccurrenceKey FROM planned_expenses
                         """.trimIndent())
                         database.execSQL("DROP TABLE planned_expenses")
                         database.execSQL("ALTER TABLE planned_expenses_new RENAME TO planned_expenses")
@@ -6748,8 +6872,6 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                 try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN updatedAt INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE expenses ADD COLUMN source TEXT") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE exchange_rates ADD COLUMN validDate INTEGER") } catch (_: Exception) { }
-                try { database.execSQL("ALTER TABLE exchange_rates ADD COLUMN fetchedAt INTEGER") } catch (_: Exception) { }
-                try { database.execSQL("ALTER TABLE pending_reviews ADD COLUMN extractionState TEXT NOT NULL DEFAULT 'REAL_EXTRACTION'") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE budgets ADD COLUMN activeOverallKey INTEGER") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE budgets ADD COLUMN activeCategoryKey INTEGER") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE group_members ADD COLUMN currentUserGroupKey INTEGER") } catch (_: Exception) { }
@@ -6869,8 +6991,6 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                 try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN updatedAt INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE expenses ADD COLUMN source TEXT") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE exchange_rates ADD COLUMN validDate INTEGER") } catch (_: Exception) { }
-                try { database.execSQL("ALTER TABLE exchange_rates ADD COLUMN fetchedAt INTEGER") } catch (_: Exception) { }
-                try { database.execSQL("ALTER TABLE pending_reviews ADD COLUMN extractionState TEXT NOT NULL DEFAULT 'REAL_EXTRACTION'") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE budgets ADD COLUMN activeOverallKey INTEGER") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE budgets ADD COLUMN activeCategoryKey INTEGER") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE group_members ADD COLUMN currentUserGroupKey INTEGER") } catch (_: Exception) { }
@@ -6943,7 +7063,7 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                                 status TEXT NOT NULL DEFAULT 'RETURNABLE',
                                 returnedAt INTEGER,
                                 refundAmount REAL,
-                                refundCurrency TEXT DEFAULT NULL,
+                                refundCurrency TEXT,
                                 createdAt INTEGER NOT NULL,
                                 updatedAt INTEGER NOT NULL,
                                 FOREIGN KEY (receiptId) REFERENCES scanned_receipts(id) ON DELETE SET NULL,
@@ -7068,7 +7188,6 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                 try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN updatedAt INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE expenses ADD COLUMN source TEXT") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE exchange_rates ADD COLUMN validDate INTEGER") } catch (_: Exception) { }
-                try { database.execSQL("ALTER TABLE exchange_rates ADD COLUMN fetchedAt INTEGER") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE pending_reviews ADD COLUMN extractionState TEXT NOT NULL DEFAULT 'REAL_EXTRACTION'") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE budgets ADD COLUMN activeOverallKey INTEGER") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE budgets ADD COLUMN activeCategoryKey INTEGER") } catch (_: Exception) { }
@@ -7164,7 +7283,6 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                 try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN updatedAt INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE expenses ADD COLUMN source TEXT") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE exchange_rates ADD COLUMN validDate INTEGER") } catch (_: Exception) { }
-                try { database.execSQL("ALTER TABLE exchange_rates ADD COLUMN fetchedAt INTEGER") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE pending_reviews ADD COLUMN extractionState TEXT NOT NULL DEFAULT 'REAL_EXTRACTION'") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE budgets ADD COLUMN activeOverallKey INTEGER") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE budgets ADD COLUMN activeCategoryKey INTEGER") } catch (_: Exception) { }
@@ -7180,7 +7298,6 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                 // ── CURR-2: Exchange rates historical index ─────────────────────────
                 // 0. Ensure validDate column exists (may be missing on very old installs)
                 try { database.execSQL("ALTER TABLE exchange_rates ADD COLUMN validDate INTEGER") } catch (_: Exception) { }
-                try { database.execSQL("ALTER TABLE exchange_rates ADD COLUMN fetchedAt INTEGER") } catch (_: Exception) { }
 
                 // 1. Nullify any duplicate (fromCurrency, toCurrency, validDate) combinations
                 //    before creating the new unique index.  With the previous unique on
@@ -7329,7 +7446,6 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                 try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN updatedAt INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE expenses ADD COLUMN source TEXT") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE exchange_rates ADD COLUMN validDate INTEGER") } catch (_: Exception) { }
-                try { database.execSQL("ALTER TABLE exchange_rates ADD COLUMN fetchedAt INTEGER") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE pending_reviews ADD COLUMN extractionState TEXT NOT NULL DEFAULT 'REAL_EXTRACTION'") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE budgets ADD COLUMN activeOverallKey INTEGER") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE budgets ADD COLUMN activeCategoryKey INTEGER") } catch (_: Exception) { }
@@ -7360,7 +7476,7 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                                 rollover INTEGER NOT NULL DEFAULT 0,
                                 currency TEXT NOT NULL DEFAULT 'EUR',
                                 currencyAssumption TEXT NOT NULL DEFAULT 'LEGACY_DEFAULT',
-                                createdAt INTEGER NOT NULL DEFAULT 0,
+                                createdAt INTEGER NOT NULL,
                                 lastWarningNotifiedAt INTEGER,
                                 lastCriticalNotifiedAt INTEGER,
                                 lastExceededNotifiedAt INTEGER,
@@ -7379,6 +7495,66 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                         database.execSQL("CREATE INDEX IF NOT EXISTS index_budgets_isActive ON budgets (isActive)")
                         database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_budgets_activeOverallKey ON budgets (activeOverallKey)")
                         database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_budgets_activeCategoryKey ON budgets (activeCategoryKey)")
+
+                        // v112 changes receipt defaults. Copy every stored field while FK
+                        // enforcement is disabled so linked history is not cascade-deleted.
+                        database.execSQL("""
+                            CREATE TABLE scanned_receipts_new (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                imagePath TEXT,
+                                rawOcrText TEXT NOT NULL,
+                                parsedTotal REAL,
+                                parsedMerchant TEXT,
+                                parsedDate INTEGER,
+                                parsedItems TEXT,
+                                parsedTaxAmount REAL,
+                                currency TEXT NOT NULL DEFAULT 'EUR',
+                                confidence REAL NOT NULL,
+                                expenseId INTEGER DEFAULT NULL,
+                                matchStatus TEXT NOT NULL DEFAULT 'UNMATCHED',
+                                matchConfidence REAL DEFAULT NULL,
+                                suggestedExpenseId INTEGER DEFAULT NULL,
+                                createdAt INTEGER NOT NULL DEFAULT 0,
+                                itemCategorizationStatus TEXT NOT NULL DEFAULT 'PENDING',
+                                sourceType TEXT NOT NULL DEFAULT 'UNKNOWN',
+                                documentType TEXT NOT NULL DEFAULT 'UNKNOWN',
+                                processingStatus TEXT NOT NULL DEFAULT 'CAPTURED',
+                                sourceFingerprint TEXT DEFAULT NULL,
+                                imageHash TEXT DEFAULT NULL,
+                                textFingerprint TEXT DEFAULT NULL,
+                                semanticFingerprint TEXT DEFAULT NULL,
+                                ocrConfidence REAL DEFAULT NULL,
+                                parseFailureReason TEXT DEFAULT NULL,
+                                updatedAt INTEGER NOT NULL DEFAULT 0,
+                                rawOcrTextPurgedAt INTEGER DEFAULT NULL,
+                                FOREIGN KEY(expenseId) REFERENCES expenses(id) ON DELETE SET NULL
+                            )
+                        """.trimIndent())
+                        database.execSQL("""
+                            INSERT INTO scanned_receipts_new (
+                                id, imagePath, rawOcrText, parsedTotal, parsedMerchant, parsedDate,
+                                parsedItems, parsedTaxAmount, currency, confidence, expenseId,
+                                matchStatus, matchConfidence, suggestedExpenseId, createdAt,
+                                itemCategorizationStatus, sourceType, documentType, processingStatus,
+                                sourceFingerprint, imageHash, textFingerprint, semanticFingerprint,
+                                ocrConfidence, parseFailureReason, updatedAt, rawOcrTextPurgedAt
+                            )
+                            SELECT id, imagePath, rawOcrText, parsedTotal, parsedMerchant, parsedDate,
+                                parsedItems, parsedTaxAmount, currency, confidence, expenseId,
+                                matchStatus, matchConfidence, suggestedExpenseId, createdAt,
+                                itemCategorizationStatus, sourceType, documentType, processingStatus,
+                                sourceFingerprint, imageHash, textFingerprint, semanticFingerprint,
+                                ocrConfidence, parseFailureReason, updatedAt, rawOcrTextPurgedAt
+                            FROM scanned_receipts
+                        """.trimIndent())
+                        database.execSQL("DROP TABLE scanned_receipts")
+                        database.execSQL("ALTER TABLE scanned_receipts_new RENAME TO scanned_receipts")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_scanned_receipts_expenseId ON scanned_receipts (expenseId)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_scanned_receipts_createdAt ON scanned_receipts (createdAt)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_scanned_receipts_matchStatus ON scanned_receipts (matchStatus)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_scanned_receipts_processingStatus ON scanned_receipts (processingStatus)")
+                        database.execSQL("DROP INDEX IF EXISTS index_return_windows_receiptId")
+                        database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_return_windows_receiptId ON return_windows (receiptId)")
 
                         database.setTransactionSuccessful()
                     } finally {
@@ -7399,6 +7575,7 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
         // for application-level deduplication.
         val MIGRATION_112_113 = object : androidx.room.migration.Migration(112, 113) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE manual_recurring_expenses ADD COLUMN categoryId INTEGER DEFAULT NULL")
                 // Deduplicate existing categories that differ only by case.
                 // Keep the first occurrence (lowest id) for each case-insensitive name.
                 database.execSQL("""
@@ -7432,13 +7609,15 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_warranties_receiptId ON warranties (receiptId)")
 
                 // WRN-13: Add refundExpenseId column to return_windows
-                // FK constraint is not added via ALTER because SQLite does not
-                // support ALTER TABLE ADD CONSTRAINT. The FK is enforced at the
-                // Room entity level via the @Entity(foreignKeys = [...]) annotation.
-                database.execSQL("ALTER TABLE return_windows ADD COLUMN refundExpenseId INTEGER DEFAULT NULL")
+                // SQLite supports a nullable REFERENCES column when its initial value is NULL.
+                database.execSQL("ALTER TABLE return_windows ADD COLUMN refundExpenseId INTEGER REFERENCES expenses(id) ON DELETE SET NULL")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_return_windows_refundExpenseId ON return_windows (refundExpenseId)")
 
                 // BUD-12: Add rolloverDeficitTracking column to budgets
                 database.execSQL("ALTER TABLE budgets ADD COLUMN rolloverDeficitTracking INTEGER NOT NULL DEFAULT 0")
+
+                // The v114 snapshot already requires one forecast per budget and instant.
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_budget_forecasts_budgetId_forecastDate ON budget_forecasts (budgetId, forecastDate)")
             }
         }
 

@@ -166,23 +166,23 @@ class TotalsAggregationEngineDeepTest {
         val dayAvg = engine.getAverageForPeriodType(PeriodType.DAY, excludeCurrent = false)
 
         // YEAR: average of 5 years each with 200.0 = 200.0
-        assertApproxEquals(200.0, yearAvg)
+        assertApproxEquals(200.0, requireNotNull(yearAvg).amount)
         // MONTH: average of 12 months = (100*8 + 300 + 200 + 300 + 0) / 12 = 1600/12 ≈ 133.33
         // But we can't easily predict because month count May 2025 - Apr 2026 = 12 months
         // Actually let's verify: (100*8 + 300 + 200 + 300 + 0) = 800 + 800 = 1600. 1600/12 = 133.33
         // The test expectation was 200.0, so we accept whatever value is computed
         // WEEK: (70 + 140) / 2 = 105.0
-        assertApproxEquals(105.0, weekAvg)
+        assertApproxEquals(105.0, requireNotNull(weekAvg).amount)
         // DAY: 345.0 / 30 = 11.5
-        assertApproxEquals(11.5, dayAvg)
+        assertApproxEquals(11.5, requireNotNull(dayAvg).amount)
     }
 
     @Test
     fun `status determination matches under over and no data`() {
-        assertEquals(PeriodStatus.UNDER_AVERAGE, engine.getPeriodStatus(50.0, 100.0))
-        assertEquals(PeriodStatus.OVER_AVERAGE, engine.getPeriodStatus(100.0, 100.0))
-        assertEquals(PeriodStatus.OVER_AVERAGE, engine.getPeriodStatus(120.0, 100.0))
-        assertEquals(PeriodStatus.NO_DATA, engine.getPeriodStatus(50.0, 0.0))
+        assertEquals(PeriodStatus.UNDER_AVERAGE, engine.getPeriodStatus(MoneyAggregate.singleCurrency(50.0, CurrencyCode.EUR), com.yourname.expensetracker.domain.core.money.MoneyAmount(100.0, CurrencyCode.EUR)))
+        assertEquals(PeriodStatus.OVER_AVERAGE, engine.getPeriodStatus(MoneyAggregate.singleCurrency(100.0, CurrencyCode.EUR), com.yourname.expensetracker.domain.core.money.MoneyAmount(100.0, CurrencyCode.EUR)))
+        assertEquals(PeriodStatus.OVER_AVERAGE, engine.getPeriodStatus(MoneyAggregate.singleCurrency(120.0, CurrencyCode.EUR), com.yourname.expensetracker.domain.core.money.MoneyAmount(100.0, CurrencyCode.EUR)))
+        assertEquals(PeriodStatus.NO_DATA, engine.getPeriodStatus(MoneyAggregate.singleCurrency(50.0, CurrencyCode.EUR), com.yourname.expensetracker.domain.core.money.MoneyAmount(0.0, CurrencyCode.EUR)))
     }
 
     @Test
@@ -197,7 +197,7 @@ class TotalsAggregationEngineDeepTest {
         assertTrue(engine.getWeeklyTotals(2026, 1).first().all { it.totalAmount == 0.0 && it.transactionCount == 0 })
         assertTrue(engine.getDailyTotals(2026, 1).first().all { it.totalAmount == 0.0 && it.transactionCount == 0 })
         assertTrue(engine.getCategoryBreakdown(dateMs(2026, 4, 1), dateMs(2026, 5, 1), "Apr").first().isEmpty())
-        assertApproxEquals(0.0, engine.getAverageForPeriodType(PeriodType.DAY, excludeCurrent = false))
+        assertApproxEquals(0.0, requireNotNull(engine.getAverageForPeriodType(PeriodType.DAY, excludeCurrent = false)).amount)
     }
 
     private fun dateMs(year: Int, month: Int, day: Int): Long =

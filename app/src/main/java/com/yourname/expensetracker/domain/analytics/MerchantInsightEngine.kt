@@ -14,21 +14,41 @@ class MerchantInsightEngine @Inject constructor() {
         private const val RECURRING_THRESHOLD = 3
     }
 
+    @Deprecated("Use normalized input; compatibility snapshots must all match the explicit currency")
     fun calculate(
         allExpenses: List<ExpenseSnapshot>,
-        displayCurrency: String = "EUR"
+        displayCurrency: String = SingleCurrencyAnalyticsInput.currencyOf(allExpenses)
     ): List<MerchantInsight> {
-        val purchases = allExpenses.filter { 
-            it.transactionType == DomainTransactionType.PURCHASE && 
-            !it.isNotMine 
-        }
+        val input = SingleCurrencyAnalyticsInput.from(allExpenses, displayCurrency)
+        return calculate(input)
+    }
+
+    fun calculate(input: NormalizedAnalyticsInput): List<MerchantInsight> {
+        val displayCurrency = input.homeCurrency
+        val purchases = input.includedExpenses
+            .filter {
+                it.transactionType == DomainTransactionType.PURCHASE.name &&
+                    !it.isNotMine &&
+                    input.period?.contains(it.date) != false
+            }
+            .map { it.toExpenseSnapshot() }
         
         val merchantGroups = purchases.groupBy { it.canonicalMerchantKey() }
+        val normalizedById = input.includedExpenses.associateBy { it.id }
         
-        return merchantGroups.map { (_, expenses) ->
+        return merchantGroups.mapNotNull { (_, expenses) ->
             val merchantName = resolveMerchantDisplayName(expenses)
-            val amounts = expenses.map { it.effectiveAmount }
-            val total = amounts.sum()
+            val normalizedExpenses = expenses.mapNotNull { normalizedById[it.id] }
+            if (normalizedExpenses.size != expenses.size) return@mapNotNull null
+            val totalResult = NormalizedAnalyticsMoneyAdapter.aggregateUnattributedSlice(
+                input = input,
+                includedExpenses = normalizedExpenses,
+                displayCurrency = displayCurrency
+            )
+            val total = (totalResult as? com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Available)
+                ?.aggregate?.displayAmount
+                ?: return@mapNotNull null
+            val amounts = normalizedExpenses.map { it.normalizedAmount }
             val count = amounts.size
             val avg = if (count > 0) total / count else 0.0
             val min = amounts.minOrNull() ?: 0.0

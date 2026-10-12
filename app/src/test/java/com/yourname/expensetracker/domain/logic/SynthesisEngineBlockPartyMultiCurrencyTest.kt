@@ -274,29 +274,30 @@ class SynthesisEngineBlockPartyMultiCurrencyTest {
         assertTrue(pastDays.all { it.actualSpent == 0.0 })
     }
 
-    // ── 4. blank bpCurrency：与旧版逐字节一致（恒等求和，不触发 converter）──
+    // ── 4. blank bpCurrency：fail closed without a typed aggregation basis ──
 
     @Test
-    fun `blank displayCurrency时保留恒等求和且不触发converter`() = runTest {
+    fun `blank displayCurrency excludes raw amounts and records failures`() = runTest {
         coEvery {
             currencyConverter.convertOutcome(any(), any(), any(), any(), any(), any())
         } throws AssertionError("blank displayCurrency must not call convertOutcome")
 
-        // displayCurrency = ""（旧版 golden 场景）
+        // displayCurrency = "" has no safe source-to-target money basis.
         val forecast = forecast("")
         val blockParty = engine.calculateBlockPartyData(
             forecast = forecast,
             expenses = listOf(
                 tx(30.0, day = 10, currency = "EUR"),
-                tx(50.0, day = 10, currency = "USD")   // 混币种也不转换——legacy 行为
+                tx(50.0, day = 10, currency = "USD")
             ),
             dailySpending = List(31) { 0f },
             budgetLimit = 2000.0
         )
 
         val day10 = blockParty.first { it.dayOfMonth == 10 }
-        // 旧版行为：直接 sumOf effectiveAmount，不做转换
-        assertEquals(80.0, day10.actualSpent, 0.0001)
+        // Raw source amounts are excluded; normalized history supplies zero here.
+        assertEquals(0.0, day10.actualSpent, 0.0001)
+        assertEquals(2, day10.conversionFailureCount)
         coVerify(exactly = 0) {
             currencyConverter.convertOutcome(any(), any(), any(), any(), any(), any())
         }
@@ -360,27 +361,26 @@ class SynthesisEngineBlockPartyMultiCurrencyTest {
     }
 
     @Test
-    fun `恒等路径天conversionFailureCount全为0且不触发converter`() = runTest {
+    fun `blank currency days record excluded raw amounts without calling converter`() = runTest {
         coEvery {
             currencyConverter.convertOutcome(any(), any(), any(), any(), any(), any())
         } throws AssertionError("blank displayCurrency must not call convertOutcome")
 
-        // blank bpCurrency → identity sum（旧版 golden 场景），永不失败
+        // Blank bpCurrency has no typed aggregation basis, so each raw row is excluded.
         val forecast = forecast("")
         val blockParty = engine.calculateBlockPartyData(
             forecast = forecast,
             expenses = listOf(
                 tx(30.0, day = 10, currency = "EUR"),
-                tx(50.0, day = 12, currency = "USD")   // 混币种也不转换——identity 路径
+                tx(50.0, day = 12, currency = "USD")
             ),
             dailySpending = List(31) { 0f },
             budgetLimit = 2000.0
         )
 
-        assertTrue(
-            "Identity-path days must carry 0 conversion failures",
-            blockParty.all { it.conversionFailureCount == 0 }
-        )
+        assertEquals(1, blockParty.first { it.dayOfMonth == 10 }.conversionFailureCount)
+        assertEquals(1, blockParty.first { it.dayOfMonth == 12 }.conversionFailureCount)
+        assertEquals(2, blockParty.sumOf { it.conversionFailureCount })
         coVerify(exactly = 0) {
             currencyConverter.convertOutcome(any(), any(), any(), any(), any(), any())
         }

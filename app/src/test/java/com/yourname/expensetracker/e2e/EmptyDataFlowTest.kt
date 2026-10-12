@@ -41,6 +41,6 @@ class EmptyDataFlowTest : ViewModelTestUtils() {
         assertEquals(0.0, stats.averageDailySpend, 0.0)
         assertEquals(0.0, loaded.currentTotal, 0.0)
         assertEquals(0, loaded.transactionCount)
-        assertEquals(emptyList<Double>(), loaded.categoryBreakdown.map { it.total })
+        assertEquals(emptyList<Double>(), loaded.categoryBreakdown.map { it.moneyTotal.amount })
     }
 }

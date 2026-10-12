@@ -19,6 +19,7 @@ import org.junit.After
 import kotlin.test.assertFailsWith
 
 class InsightsEngineTest {
+    private var nextExpenseId = 1L
     private lateinit var engine: InsightsEngine
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
     private val recurringEngine = mockk<com.yourname.expensetracker.domain.logic.RecurringExpenseEngine>(relaxed = true)
@@ -67,13 +68,13 @@ class InsightsEngineTest {
 
     @Test
     fun `monthly comparison cancellation propagates without fallback log`() = runTest {
-        every { monthlyCalculator.calculate(any(), any(), any(), any()) } throws CancellationException("private receipt")
+        every { monthlyCalculator.calculate(any(), any(), any<List<com.yourname.expensetracker.domain.model.ExpenseSnapshot>>(), any()) } throws CancellationException("private receipt")
         assertCancellationWithoutFallbackLog()
     }
 
     @Test
     fun `category insights cancellation propagates without fallback log`() = runTest {
-        every { categoryCalculator.calculate(any(), any(), any(), any(), any()) } throws CancellationException("private receipt")
+        every { categoryCalculator.calculate(any(), any(), any(), any<List<com.yourname.expensetracker.domain.model.ExpenseSnapshot>>(), any()) } throws CancellationException("private receipt")
         assertCancellationWithoutFallbackLog()
     }
 
@@ -85,7 +86,7 @@ class InsightsEngineTest {
 
     @Test
     fun `spending pace cancellation propagates without fallback log`() = runTest {
-        every { paceCalculator.calculate(any(), any(), any(), any(), any(), any()) } throws CancellationException("private receipt")
+        every { paceCalculator.calculate(any(), any(), any(), any<List<com.yourname.expensetracker.domain.model.ExpenseSnapshot>>(), any(), any()) } throws CancellationException("private receipt")
         assertCancellationWithoutFallbackLog()
     }
 
@@ -97,23 +98,39 @@ class InsightsEngineTest {
 
     @Test
     fun `weekday cancellation propagates without fallback log`() = runTest {
-        every { weekdayCalculator.analyze(any(), any(), any(), any()) } throws CancellationException("private receipt")
+        every {
+            weekdayCalculator.analyze(
+                any(),
+                any(),
+                any<NormalizedAnalyticsInput>(),
+                any(),
+                any()
+            )
+        } throws CancellationException("private receipt")
         assertCancellationWithoutFallbackLog()
     }
 
     @Test
     fun `all seven insight boundaries degrade without leaking exception text`() = runTest {
         val hostile = IllegalStateException("merchant=private /storage/secret.db amount=918")
-        every { monthlyCalculator.calculate(any(), any(), any(), any()) } throws hostile
-        every { categoryCalculator.calculate(any(), any(), any(), any(), any()) } throws hostile
+        every { monthlyCalculator.calculate(any(), any(), any<List<com.yourname.expensetracker.domain.model.ExpenseSnapshot>>(), any()) } throws hostile
+        every { categoryCalculator.calculate(any(), any(), any(), any<List<com.yourname.expensetracker.domain.model.ExpenseSnapshot>>(), any()) } throws hostile
         every { merchantCalculator.calculate(any(), any()) } throws hostile
-        every { paceCalculator.calculate(any(), any(), any(), any(), any(), any()) } throws hostile
+        every { paceCalculator.calculate(any(), any(), any(), any<List<com.yourname.expensetracker.domain.model.ExpenseSnapshot>>(), any(), any()) } throws hostile
         every { anomalyCalculator.detect(any(), any(), any(), any(), any()) } throws hostile
         coEvery { recurringEngine.getPatternsFromSnapshots(any()) } throws hostile
-        every { weekdayCalculator.analyze(any(), any(), any(), any()) } throws hostile
+        every {
+            weekdayCalculator.analyze(
+                any(),
+                any(),
+                any<NormalizedAnalyticsInput>(),
+                any(),
+                any()
+            )
+        } throws hostile
 
         val snapshot = engine.generateInsights(emptyList(), emptyList(), "EUR")
-        assertEquals(0.0, snapshot.monthlyComparison.currentTotal, 0.0)
+        org.junit.Assert.assertNull(snapshot.monthlyComparison.currentTotal)
         assertTrue(snapshot.categoryInsights.isEmpty())
         assertTrue(snapshot.topMerchants.isEmpty())
         assertEquals(PaceStatus.NO_BASELINE, snapshot.spendingPace.paceStatus)
@@ -127,7 +144,7 @@ class InsightsEngineTest {
     }
 
     private fun makeExpense(merchant: String, amount: Double, daysAgo: Int) = Expense(
-        id = 0,
+        id = nextExpenseId++,
         amount = amount,
         currency = "EUR",
         merchant = merchant,

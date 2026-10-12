@@ -9,6 +9,9 @@ import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
 import com.yourname.expensetracker.domain.core.money.MoneyBucket
+import com.yourname.expensetracker.domain.core.money.MoneyBucketInput
+import com.yourname.expensetracker.domain.core.money.BucketDatePolicy
+import com.yourname.expensetracker.domain.core.money.RateBasis
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -42,10 +45,35 @@ class AccountantReportPdfExporter @Inject constructor(
     private val currencyConverter: CurrencyConverter,
     private val currencySettingsRepository: CurrencySettingsRepository
 ) {
+    internal data class SourceSection(
+        val currency: String,
+        val expenses: List<Expense>,
+        val total: MoneyAggregate,
+        val categories: Map<String, MoneyAggregate>
+    )
+
+    internal fun generateSourceSections(
+        expenses: List<Expense>,
+        categories: Map<Long, String>,
+        transactionTypeFilter: TransactionType? = TransactionType.PURCHASE
+    ): List<SourceSection> = expenses
+        .filter { transactionTypeFilter == null || it.transactionType == transactionTypeFilter }
+        .groupBy { it.reportCurrencyCode() }
+        .toSortedMap()
+        .map { (currency, rows) ->
+            SourceSection(
+                currency, rows, rows.sourceAggregate(currency),
+                rows.groupBy { categories[it.categoryId] ?: "Uncategorized" }
+                    .mapValues { (_, categoryRows) -> categoryRows.sourceAggregate(currency) }
+            )
+        }
 
     /**
      * Compute a MoneyAggregate for business-deductible expenses, grouped by
      * original currency and converted to [homeCurrency].
+     *
+     * **LATEST-RATE** valuation is retained explicitly for deductible totals;
+     * historical transaction dates are not used by this compatibility report.
      *
      * PR-E22: Replaces raw-Double deductible totals with a proper MoneyAggregate
      * so consumers see per-currency buckets and conversion-failure diagnostics.
@@ -60,12 +88,22 @@ class AccountantReportPdfExporter @Inject constructor(
     ): MoneyAggregate {
         val deductibleByCurrency = expenses
             .filter { it.isBusinessExpense }
-            .groupBy { it.currency.uppercase() }
+            .groupBy { it.reportCurrencyCode() }
+        val targetCurrency = CurrencyCode.parse(homeCurrency)?.takeIf { it in CurrencyCode.ALL_SUPPORTED }
+            ?: throw com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException(
+                com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode.INVALID_TARGET_CURRENCY
+            )
         val buckets = deductibleByCurrency.map { (ccy, list) ->
-            Pair(list.sumOf { it.effectiveAmount }, ccy)
+            val sourceCurrency = CurrencyCode.parse(ccy)?.takeIf { it in CurrencyCode.ALL_SUPPORTED }
+                ?: throw com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException(
+                    com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode.INVALID_SOURCE_CURRENCY
+                )
+            MoneyBucketInput(list.typedTotal(ccy), sourceCurrency, list.size)
         }
-        val transactionCounts = deductibleByCurrency.map { (_, list) -> list.size }
-        return MoneyAggregateBuilder.fromBuckets(buckets, homeCurrency, currencyConverter, transactionCounts)
+        return MoneyAggregateBuilder.fromBuckets(
+            buckets, targetCurrency, currencyConverter,
+            RateBasis.LATEST_AVAILABLE, BucketDatePolicy.Latest
+        )
     }
 
     /**
@@ -80,6 +118,7 @@ class AccountantReportPdfExporter @Inject constructor(
         endDate: Long,
         transactionTypeFilter: TransactionType? = TransactionType.PURCHASE
     ): ByteArray {
+        val sections = generateSourceSections(expenses, categories, transactionTypeFilter)
         val document = PdfDocument()
         val formatters = ExportFormatters(Locale.getDefault(), ZoneId.systemDefault())
 
@@ -93,8 +132,6 @@ class AccountantReportPdfExporter @Inject constructor(
         return try {
             val writer = PdfReportWriter(document)
             val period = "${formatters.formatMonth(startDate)} - ${formatters.formatMonth(endDate)}"
-            val expensesByCurrency = filteredExpenses.groupBy { it.reportCurrencyCode() }
-                .toSortedMap()
 
             writer.writeTitle("Accountant Report")
             writer.writeBody("Period: $period")
@@ -103,34 +140,36 @@ class AccountantReportPdfExporter @Inject constructor(
 
             writer.writeHeading("Summary")
             writer.writeBody("Transaction Count: ${filteredExpenses.size}")
-            expensesByCurrency.forEach { (currency, currencyExpenses) ->
+            sections.forEach { section ->
+                val currency = section.currency
+                val currencyExpenses = section.expenses
                 // SAFE: per-currency buckets
                 writer.writeBody(
-                    "$currency Total Expenses: ${formatAmount(currencyExpenses.sumOf { it.effectiveAmount }, currency, formatters)}"
+                    "$currency Total Expenses: ${formatAmount(section.total.displayAmount, currency, formatters)}"
                 )
                 writer.writeBody("$currency Transaction Count: ${currencyExpenses.size}")
             }
-            if (expensesByCurrency.size > 1) {
+            if (sections.size > 1) {
                 writer.writeBody("Note: Multi-currency report. Totals are shown per-currency only.")
                 writer.writeBody("A combined total across currencies is not shown because conversion rates may vary.")
             }
 
-            expensesByCurrency.forEach { (currency, currencyExpenses) ->
+            sections.forEach { section ->
+                val currency = section.currency
+                val currencyExpenses = section.expenses
                 writer.blankLine()
                 writer.writeHeading("$currency Category Breakdown")
 
                 // SAFE: per-currency buckets
-                val totalForCurrency = currencyExpenses.sumOf { it.effectiveAmount }
-                currencyExpenses
-                    .groupBy { categories[it.categoryId] ?: "Uncategorized" }
+                val totalForCurrency = section.total.displayAmount
+                section.categories
                     .toList()
-                    .sortedByDescending { (_, categoryExpenses) ->
-                        // SAFE: per-currency buckets
-                        categoryExpenses.sumOf { it.effectiveAmount }
+                    .sortedByDescending { (_, categoryTotal) ->
+                        categoryTotal.displayAmount
                     }
-                    .forEach { (categoryName, categoryExpenses) ->
+                    .forEach { (categoryName, categoryAggregate) ->
                     // SAFE: per-currency buckets
-                    val categoryTotal = categoryExpenses.sumOf { it.effectiveAmount }
+                    val categoryTotal = categoryAggregate.displayAmount
                     val percentage = if (totalForCurrency > 0.0) {
                         categoryTotal / totalForCurrency * 100.0
                         } else {
@@ -138,7 +177,7 @@ class AccountantReportPdfExporter @Inject constructor(
                         }
                         writer.writeBody(
                             "$categoryName: ${formatAmount(categoryTotal, currency, formatters)} " +
-                                "(${categoryExpenses.size} transactions, ${formatters.formatOneDecimal(percentage)}%)"
+                                "(${categoryAggregate.totalTransactionCount} transactions, ${formatters.formatOneDecimal(percentage)}%)"
                         )
                     }
 
@@ -169,8 +208,8 @@ class AccountantReportPdfExporter @Inject constructor(
         }
     }
 
-    // TODO (T05): Accept filingCurrency parameter. Currently hardcoded to EUR.
-    // Use CurrencyFormatter.format(amount, filingCurrency) for correct symbol.
+    // Report sections retain each source currency; the deductible aggregate uses
+    // the explicitly pinned latest-available rate policy before formatting.
     private fun formatAmount(amount: Double, currency: String, formatters: ExportFormatters): String {
         return "$currency ${formatters.formatTwoDecimals(amount)}"
     }
@@ -178,6 +217,22 @@ class AccountantReportPdfExporter @Inject constructor(
     private fun Expense.reportCurrencyCode(): String {
         val normalized = currency.trim().uppercase(Locale.ROOT)
         return normalized.ifEmpty { "UNKNOWN" }
+    }
+
+    private fun List<Expense>.typedTotal(currency: String): Double = sourceAggregate(currency).displayAmount
+
+    private fun List<Expense>.sourceAggregate(currency: String): MoneyAggregate {
+        return when (val result = MoneyAggregateBuilder.fromSourceCurrencyAmounts(
+            amounts = map { it.effectiveAmount },
+            sourceCurrency = currency
+        )) {
+            is com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Available -> {
+                result.aggregate
+            }
+            is com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Unavailable -> {
+                throw IllegalStateException("ACCOUNTING_REPORT_CURRENCY_UNAVAILABLE")
+            }
+        }
     }
 
     private class PdfReportWriter(

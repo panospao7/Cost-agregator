@@ -96,6 +96,7 @@ object DashboardWidgetRegistry {
         is DashboardWidget.MoneyRadar                   -> MONEY_RADAR
         is DashboardWidget.FinancialStressForecast      -> FINANCIAL_STRESS
         is DashboardWidget.SavingsSweepPrompt           -> SAVINGS_SWEEP
+        is DashboardWidget.SavingsSweepUnavailable      -> SAVINGS_SWEEP
     }
 
     /** Whether a widget should span both grid columns. Derived from metadata. */

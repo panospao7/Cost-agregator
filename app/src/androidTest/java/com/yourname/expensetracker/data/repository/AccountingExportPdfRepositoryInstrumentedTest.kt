@@ -1,8 +1,10 @@
 package com.yourname.expensetracker.data.repository
 
 import android.content.Context
-import android.net.Uri
-import androidx.core.content.FileProvider
+import android.graphics.Bitmap
+import android.graphics.Color
+import android.graphics.pdf.PdfRenderer
+import android.os.ParcelFileDescriptor
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
@@ -21,14 +23,13 @@ import com.yourname.expensetracker.data.database.entity.Category
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
-import io.mockk.mockkStatic
-import io.mockk.unmockkStatic
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
-import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -39,20 +40,17 @@ import java.time.LocalDate
 import java.time.ZoneId
 
 /**
- * Real PDF serialization and repository output, moved from the JVM-only suite.
+ * Real PDF serialization, page rendering and repository output, separate from source-money unit tests.
  * Requires an Android device/emulator; the resolved desktop native runtime does
  * not support Windows. The original success/count/path/nonempty/%PDF assertions
  * are retained here, not replaced by a mocked PDF header in a unit test.
  */
 @RunWith(AndroidJUnit4::class)
 class AccountingExportPdfRepositoryInstrumentedTest {
-    @get:Rule
-    val temporaryFolder = TemporaryFolder(ApplicationProvider.getApplicationContext<Context>().cacheDir)
+    private val applicationContext = ApplicationProvider.getApplicationContext<Context>()
 
-    @After
-    fun releaseFileProviderMock() {
-        unmockkStatic(FileProvider::class)
-    }
+    @get:Rule
+    val temporaryFolder = TemporaryFolder(applicationContext.cacheDir)
 
     @Test
     fun exportExpensesAccountantReportPdfWritesPdfOutput() = runTest {
@@ -85,14 +83,8 @@ class AccountingExportPdfRepositoryInstrumentedTest {
             readBarrier = mockk(relaxed = true),
             privacyGate = privacyGate
         )
-        val root = temporaryFolder.newFolder("pdf-export")
-        val context = mockk<Context>()
-        every { context.filesDir } returns root
-        every { context.cacheDir } returns root
-        every { context.packageName } returns "com.yourname.expensetracker.test"
-        mockkStatic(FileProvider::class)
-        every { FileProvider.getUriForFile(any(), any(), any()) } returns
-            Uri.parse("content://com.yourname.expensetracker.test/exports/report.pdf")
+        // Use the real framework context and FileProvider, not native class retransformation.
+        val context = applicationContext
 
         val start = ms("2026-03-01")
         val end = ms("2026-04-01")
@@ -124,17 +116,83 @@ class AccountingExportPdfRepositoryInstrumentedTest {
             )
         } returns expenses
 
-        val result = repository.exportExpenses(context, start, end, ExportFormat.ACCOUNTANT_REPORT_PDF)
+        // Fixed fixture time gives a deterministic name. Never overwrite an existing file,
+        // and clean only these two synthetic artifacts, not the application's export folder.
+        val outputFile = File(context.filesDir, "exports/accountant_report_20260401_000000.pdf")
+        val tempFile = File(outputFile.parentFile, "${outputFile.name}.tmp_${timeProvider.now()}")
+        assertFalse("Synthetic PDF output must not already exist", outputFile.exists())
+        assertFalse("Synthetic PDF temporary output must not already exist", tempFile.exists())
+        try {
+            val result = repository.exportExpenses(context, start, end, ExportFormat.ACCOUNTANT_REPORT_PDF)
 
-        assertTrue("PDF export must succeed", result.success)
-        assertEquals(expenses.size, result.recordCount)
-        assertTrue(result.filePath.orEmpty().endsWith(".pdf"))
+            assertTrue("PDF export must succeed", result.success)
+            assertEquals(expenses.size, result.recordCount)
+            assertTrue(result.filePath.orEmpty().endsWith(".pdf"))
+            assertTrue("Synthetic export must use the expected output file", outputFile.absolutePath == result.filePath)
 
-        val pdfBytes = File(result.filePath!!).readBytes()
-        assertTrue("PDF file must not be empty", pdfBytes.isNotEmpty())
-        val header = pdfBytes.copyOfRange(0, minOf(4, pdfBytes.size)).toString(Charsets.US_ASCII)
-        assertEquals("%PDF", header)
+            val pdfBytes = File(result.filePath!!).readBytes()
+            assertTrue("PDF file must not be empty", pdfBytes.isNotEmpty())
+            val header = pdfBytes.copyOfRange(0, minOf(4, pdfBytes.size)).toString(Charsets.US_ASCII)
+            assertEquals("%PDF", header)
+            assertEquals("content", result.fileUri!!.scheme)
+            applicationContext.contentResolver.openInputStream(result.fileUri!!).use { stream ->
+                assertTrue("Export must be readable through the real FileProvider", stream != null)
+                assertTrue(pdfBytes.contentEquals(stream!!.readBytes()))
+            }
+            assertTrue(assertPdfPagesRender(File(result.filePath!!)) > 0)
+        } finally {
+            outputFile.delete()
+            tempFile.delete()
+        }
     }
+
+    @Test
+    fun mixedCurrencyReportSerializesAndRendersMultiplePagesWithoutFx() {
+        val converter = mockk<CurrencyConverter>()
+        val exporter = AccountantReportPdfExporter(
+            object : TimeProvider { override fun now() = ms("2026-04-01") },
+            converter, mockk<CurrencySettingsRepository>()
+        )
+        val start = ms("2026-03-01")
+        val expenses = (1..90).map { index ->
+            Expense(
+                id = index.toLong(), amount = 600.0 + index,
+                currency = listOf("EUR", "USD", "GBP")[(index - 1) % 3],
+                merchant = "Synthetic transaction $index", transactionType = TransactionType.PURCHASE,
+                date = start + index * 1_000L, categoryId = if (index % 2 == 0) 1L else null
+            )
+        }
+        val pdfFile = temporaryFolder.newFile("mixed-source-report.pdf")
+        pdfFile.writeBytes(exporter.export(expenses, mapOf(1L to "Test category"), start, ms("2026-04-01")))
+        assertTrue("Report must span more than one page", assertPdfPagesRender(pdfFile) >= 2)
+        coVerify(exactly = 0) { converter.convertOutcome(any(), any(), any(), any(), any(), any()) }
+    }
+
+    /** Native Android PDF gate: parse and rasterize every page, not just inspect a header. */
+    private fun assertPdfPagesRender(pdfFile: File): Int =
+        ParcelFileDescriptor.open(pdfFile, ParcelFileDescriptor.MODE_READ_ONLY).use { descriptor ->
+            PdfRenderer(descriptor).use { renderer ->
+                assertTrue("PDF must contain pages", renderer.pageCount > 0)
+                repeat(renderer.pageCount) { index ->
+                    renderer.openPage(index).use { page ->
+                        assertTrue("Page dimensions must be positive", page.width > 0 && page.height > 0)
+                        val bitmap = Bitmap.createBitmap(page.width, page.height, Bitmap.Config.ARGB_8888)
+                        try {
+                            bitmap.eraseColor(Color.WHITE)
+                            page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                            val pixels = IntArray(bitmap.width * bitmap.height)
+                            bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+                            assertTrue("Rendered page must contain visible content", pixels.any {
+                                Color.alpha(it) > 0 && (it and 0x00ffffff) != 0x00ffffff
+                            })
+                        } finally {
+                            bitmap.recycle()
+                        }
+                    }
+                }
+                renderer.pageCount
+            }
+        }
 
     private fun ms(date: String): Long =
         LocalDate.parse(date).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()

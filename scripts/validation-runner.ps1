@@ -74,20 +74,35 @@ function Write-JsonAtomic {
     $temporary = "$Path.$PID.tmp"
     $json = $Value | ConvertTo-Json -Depth 12
     [System.IO.File]::WriteAllText($temporary, $json, (New-Object System.Text.UTF8Encoding($false)))
-    Move-Item -LiteralPath $temporary -Destination $Path -Force
+    for ($attempt = 0; $attempt -lt 10; $attempt++) {
+        try {
+            if ([System.IO.File]::Exists($Path)) {
+                [System.IO.File]::Replace($temporary, $Path, [System.Management.Automation.Language.NullString]::Value)
+            }
+            else {
+                [System.IO.File]::Move($temporary, $Path)
+            }
+            return
+        }
+        catch [System.IO.IOException] {
+            if ($attempt -eq 9) { throw "E_RESULT_WRITE_FAILED" }
+            Start-Sleep -Milliseconds 100
+        }
+    }
 }
 
 function Read-JsonFile {
     param([Parameter(Mandatory = $true)][string]$Path)
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-        return $null
+    for ($attempt = 0; $attempt -lt 10; $attempt++) {
+        try {
+            if (Test-Path -LiteralPath $Path -PathType Leaf) {
+                return Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
+            }
+        }
+        catch { }
+        if ($attempt -lt 9) { Start-Sleep -Milliseconds 100 }
     }
-    try {
-        return Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
-    }
-    catch {
-        return $null
-    }
+    return $null
 }
 
 function Get-RunDirectory {
@@ -119,6 +134,7 @@ function Complete-OrphanedRun {
     param([Parameter(Mandatory = $true)]$Lock)
     $recordPath = Get-RunRecordPath -Id $Lock.run_id
     $record = Read-JsonFile -Path $recordPath
+    if ($null -eq $record) { throw "E_RUN_RECORD_MISSING" }
     if ($null -ne $record -and $script:TerminalStatuses -notcontains $record.status) {
         # A dead worker can leave a live Gradle child. Do not free the global
         # lock until the child tree is gone, or a second build could overlap.
@@ -128,13 +144,25 @@ function Complete-OrphanedRun {
         }
         $record.status = "INFRA_FAILURE"
         $record.failure_code = "E_ORPHANED_RUN"
+        $record.exit_code = 2
+        $record.worktree_fingerprint_end = Get-WorktreeFingerprint
         $record.finished_at = Get-UtcTimestamp
+        foreach ($logName in @("stdout.log", "stderr.log")) {
+            $logPath = Join-Path (Get-RunDirectory -Id $Lock.run_id) $logName
+            if (-not [System.IO.File]::Exists($logPath)) {
+                [System.IO.File]::WriteAllText($logPath, "", (New-Object System.Text.UTF8Encoding($false)))
+            }
+        }
         Write-JsonAtomic -Path $recordPath -Value $record
         [System.IO.File]::WriteAllText(
             (Join-Path (Get-RunDirectory -Id $Lock.run_id) "complete.marker"),
             "VALIDATION_COMPLETE`nstatus=INFRA_FAILURE`nexit_code=2`n",
             (New-Object System.Text.UTF8Encoding($false))
         )
+        Get-ChildItem -LiteralPath (Get-RunDirectory -Id $Lock.run_id) -Filter "result.json.*.tmp" -File -ErrorAction SilentlyContinue |
+            ForEach-Object {
+                Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue
+            }
     }
 }
 
@@ -144,7 +172,11 @@ function Resolve-ActiveLock {
     }
 
     $lock = Read-JsonFile -Path $script:LockPath
-    if ($null -eq $lock -or $null -eq $lock.run_id) {
+    if ($null -eq $lock) {
+        if (-not (Test-Path -LiteralPath $script:LockPath -PathType Leaf)) { return $null }
+        throw "E_INVALID_LOCK"
+    }
+    if ($null -eq $lock.run_id) {
         throw "E_INVALID_LOCK"
     }
 
@@ -170,6 +202,24 @@ function Resolve-ActiveLock {
     Complete-OrphanedRun -Lock $lock
     Remove-Item -LiteralPath $script:LockPath -Force -ErrorAction SilentlyContinue
     return $null
+}
+
+function Resolve-RunRecord {
+    param([Parameter(Mandatory = $true)][string]$Id)
+    Resolve-ActiveLock | Out-Null
+    $record = Read-JsonFile -Path (Get-RunRecordPath -Id $Id)
+    if ($null -eq $record) { throw "E_RUN_NOT_FOUND" }
+    if ($script:TerminalStatuses -contains $record.status) { return $record }
+    if (Test-ProcessAlive -ProcessId ([int]$record.worker_pid)) { return $record }
+    $started = [DateTime]::MinValue
+    [DateTime]::TryParse([string]$record.started_at, [ref]$started) | Out-Null
+    if (((Get-Date).ToUniversalTime() - $started.ToUniversalTime()).TotalSeconds -lt 30) {
+        return $record
+    }
+    $activeLock = Read-JsonFile -Path $script:LockPath
+    if ($null -ne $activeLock -and $activeLock.run_id -eq $Id) { return $record }
+    Complete-OrphanedRun -Lock @{ run_id = $Id }
+    return Read-JsonFile -Path (Get-RunRecordPath -Id $Id)
 }
 
 function New-LockFile {
@@ -439,6 +489,7 @@ function Test-ExternalGradleClient {
 function Find-OverlappingSuccessfulRun {
     param(
         [Parameter(Mandatory = $true)][string]$RequestedProfile,
+        [Parameter(Mandatory = $true)][string]$RequestedCommand,
         [Parameter(Mandatory = $true)][string]$Fingerprint
     )
     if (-not (Test-Path -LiteralPath $script:RunsRoot -PathType Container)) { return $null }
@@ -446,9 +497,12 @@ function Find-OverlappingSuccessfulRun {
         Sort-Object Name -Descending | Select-Object -First 50)) {
         $record = Read-JsonFile -Path (Join-Path $directory.FullName "result.json")
         if ($null -eq $record -or $record.status -ne "PASS") { continue }
+        if ($record.exit_code -ne 0 -or $record.worktree_fingerprint_start -ne $Fingerprint) { continue }
         if ($record.worktree_fingerprint_end -ne $Fingerprint) { continue }
         if (-not (Test-Path -LiteralPath (Join-Path $directory.FullName "complete.marker") -PathType Leaf)) { continue }
-        if ($record.profile -eq $RequestedProfile) { return $record }
+        if ($record.profile -eq $RequestedProfile -and
+            $record.PSObject.Properties["command"] -and
+            $record.command -ceq $RequestedCommand) { return $record }
         # Gradle :app:check and the canonical static suite are different gates.
         # Never assume that one passing result satisfies another profile.
     }
@@ -471,7 +525,7 @@ function Start-ValidationRun {
     $startFingerprint = Get-WorktreeFingerprint
     if ($startFingerprint -eq "UNKNOWN") { throw "E_WORKTREE_FINGERPRINT_UNAVAILABLE" }
     if (-not $AllowOverlap) {
-        $overlap = Find-OverlappingSuccessfulRun -RequestedProfile $Profile -Fingerprint $startFingerprint
+        $overlap = Find-OverlappingSuccessfulRun -RequestedProfile $Profile -RequestedCommand (Get-SafeCommandDisplay -Spec $spec) -Fingerprint $startFingerprint
         if ($null -ne $overlap) { throw "E_DUPLICATE_OR_OVERLAPPING_VALIDATION" }
     }
     $id = "vr-{0}-{1}" -f ([DateTime]::UtcNow.ToString("yyyyMMdd-HHmmss")), ([Guid]::NewGuid().ToString("N").Substring(0, 8))
@@ -597,16 +651,14 @@ function Invoke-ValidationWorker {
     }
     if ($null -eq $lock -or $lock.run_id -ne $RunId -or
         $lock.worker_pid -ne $PID -or $record.worker_pid -ne $PID) { throw "E_LOCK_OWNERSHIP_LOST" }
-    $lock.worker_pid = $PID
-    Write-JsonAtomic -Path $script:LockPath -Value $lock
-
-    $record.worker_pid = $PID
-    $record.status = "RUNNING"
-    Write-JsonAtomic -Path $recordPath -Value $record
-
     $exitCode = 2
     $failureCode = $null
     try {
+        $lock.worker_pid = $PID
+        Write-JsonAtomic -Path $script:LockPath -Value $lock
+        $record.worker_pid = $PID
+        $record.status = "RUNNING"
+        Write-JsonAtomic -Path $recordPath -Value $record
         $spec = Get-ProfileSpec -Name $request.profile -Filter $request.test_filter -ShardName $request.shard -SelectedGuard $request.guard_id -RequestedPython $request.python_executable
         $stdout = Join-Path $runDirectory "stdout.log"
         $stderr = Join-Path $runDirectory "stderr.log"
@@ -618,6 +670,7 @@ function Invoke-ValidationWorker {
         $startInfo.CreateNoWindow = $true
         $startInfo.RedirectStandardOutput = $true
         $startInfo.RedirectStandardError = $true
+        $startInfo.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8"
 
         $process = New-Object System.Diagnostics.Process
         $process.StartInfo = $startInfo
@@ -748,9 +801,7 @@ function Write-RunStatus {
     param([Parameter(Mandatory = $true)][string]$Id)
     # Reconcile a dead detached worker into a durable infra result instead of
     # leaving callers to poll RUNNING forever.
-    Resolve-ActiveLock | Out-Null
-    $record = Read-JsonFile -Path (Get-RunRecordPath -Id $Id)
-    if ($null -eq $record) { throw "E_RUN_NOT_FOUND" }
+    $record = Resolve-RunRecord -Id $Id
     if ($record.status -eq "PASS" -and -not (Test-Path -LiteralPath (Join-Path (Get-RunDirectory -Id $Id) "complete.marker") -PathType Leaf)) {
         if ($null -ne (Resolve-ActiveLock)) { $record.status = "RUNNING" }
         else {
@@ -769,8 +820,7 @@ function Wait-ForRun {
     if (-not $RunId) { throw "E_RUN_ID_REQUIRED" }
     $deadline = (Get-Date).AddSeconds($MaxWaitSeconds)
     do {
-        $record = Read-JsonFile -Path (Get-RunRecordPath -Id $RunId)
-        if ($null -eq $record) { throw "E_RUN_NOT_FOUND" }
+        $record = Resolve-RunRecord -Id $RunId
         if ($script:TerminalStatuses -contains $record.status) {
             if ($record.status -eq "PASS" -and -not (Test-Path -LiteralPath (Join-Path (Get-RunDirectory -Id $RunId) "complete.marker") -PathType Leaf)) {
                 if ($null -ne (Resolve-ActiveLock)) {

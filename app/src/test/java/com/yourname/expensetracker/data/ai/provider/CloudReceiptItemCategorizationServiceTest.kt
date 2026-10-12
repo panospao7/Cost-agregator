@@ -26,6 +26,119 @@ import org.junit.Test
 class CloudReceiptItemCategorizationServiceTest {
 
     @Test
+    fun `cloud tax and item amounts do not override deterministic source allocation`() {
+        val input = ReceiptItemCategorizationInput(
+            1L, "merchant", listOf(
+                ReceiptParser.LineItem("first", null, null, 3.0),
+                ReceiptParser.LineItem("second", null, null, 7.0)
+            ), listOf(CategoryRef(1L, "Food")), totalTax = 1.0, currency = "EUR"
+        )
+        val response = """{
+            "items":[
+                {"sourceIndex":0,"description":"first","amount":99.0,"categoryId":1,"categoryName":"Food","confidence":0.9},
+                {"sourceIndex":1,"description":"second","amount":99.0,"categoryId":1,"categoryName":"Food","confidence":0.9}
+            ], "taxDistribution":{"1":99.0}
+        }"""
+        val result = requireNotNull(parseMoneyResponse(response, input))
+        val allocation = result.taxAllocation as com.yourname.expensetracker.domain.ai.model.ReceiptTaxAllocation.Available
+        assertEquals(listOf(3.0, 7.0), result.items.map { it.amount })
+        assertEquals(listOf(0.3, 0.7), allocation.itemAmounts.map { it.amount })
+        assertEquals(mapOf(1L to 1.0), result.taxDistribution)
+        assertTrue(result.needsReview)
+    }
+
+    @Test
+    fun `incomplete cloud item lists cannot manufacture source tax allocations`() {
+        val input = ReceiptItemCategorizationInput(
+            1L, "merchant", listOf(ReceiptParser.LineItem("first", null, null, 3.0)),
+            emptyList(), totalTax = 1.0, currency = "EUR"
+        )
+        org.junit.Assert.assertNull(parseMoneyResponse("""{"items":[],"taxDistribution":{}}""", input))
+    }
+
+    @Test
+    fun `cloud response order cannot change source item allocation`() {
+        val input = ReceiptItemCategorizationInput(
+            1L, "merchant", listOf(
+                ReceiptParser.LineItem("first", null, null, 3.0),
+                ReceiptParser.LineItem("second", null, null, 7.0)
+            ), listOf(CategoryRef(1L, "Food")), totalTax = null, currency = "EUR"
+        )
+        val response = """{
+            "items":[
+                {"sourceIndex":1,"description":"second","amount":7.0,"categoryId":1,"categoryName":"Food","confidence":0.9},
+                {"sourceIndex":0,"description":"first","amount":3.0,"categoryId":1,"categoryName":"Food","confidence":0.9}
+            ]
+        }"""
+
+        val result = requireNotNull(parseMoneyResponse(response, input))
+        assertEquals(listOf(3.0, 7.0), result.items.map { it.amount })
+        assertEquals(listOf("first", "second"), result.items.map { it.itemDescription })
+    }
+
+    @Test
+    fun `cloud response without a stable source index fails closed`() {
+        val input = defaultInput(cloudCategoryOptions = emptyList())
+        val response = """{
+            "items":[
+                {"description":"item_a","amount":4.5,"categoryId":null,"categoryName":"cat_1","confidence":0.9}
+            ]
+        }"""
+
+        org.junit.Assert.assertNull(parseMoneyResponse(response, input))
+    }
+
+    @Test
+    fun `cloud cannot invent adjustment provenance for a negative price`() {
+        val input = ReceiptItemCategorizationInput(
+            1L, "merchant", listOf(
+                ReceiptParser.LineItem("product", null, null, 100.0),
+                ReceiptParser.LineItem("discount", null, null, -20.0)
+            ), listOf(CategoryRef(1L, "Food")), totalTax = 8.0, currency = "EUR"
+        )
+        val response = """{
+            "items":[
+                {"sourceIndex":0,"description":"product","amount":100.0,"categoryId":1,"categoryName":"Food","confidence":0.9},
+                {"sourceIndex":1,"description":"discount","amount":-20.0,"categoryId":1,"categoryName":"Food","confidence":0.9,"isAdjustment":true}
+            ]
+        }"""
+
+        val rejected = requireNotNull(parseMoneyResponse(response, input))
+        val failure = rejected.taxAllocation as com.yourname.expensetracker.domain.ai.model.ReceiptTaxAllocation.Unavailable
+        assertEquals("RECEIPT_ITEM_ADJUSTMENT_UNCONFIRMED", failure.failure.reason)
+        assertTrue(rejected.needsReview)
+        assertFalse(rejected.items.last().isAdjustment)
+
+        val confirmedInput = input.copy(lineItems = input.lineItems.mapIndexed { index, item ->
+            item.copy(isAdjustment = index == 1)
+        })
+        val confirmed = requireNotNull(parseMoneyResponse(response, confirmedInput))
+        val allocation = confirmed.taxAllocation as com.yourname.expensetracker.domain.ai.model.ReceiptTaxAllocation.Available
+        assertEquals(listOf(10.0, -2.0), allocation.itemAmounts.map { it.amount })
+        assertTrue(confirmed.items.last().isAdjustment)
+    }
+
+    private fun parseMoneyResponse(
+        modelText: String,
+        input: ReceiptItemCategorizationInput
+    ): com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationResult? {
+        val service = CloudReceiptItemCategorizationService(
+            mockk<SecureKeyStorage>(), OkHttpClient(), mockk<PrivacyGate>(relaxed = true),
+            com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy(
+                com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver.failClosedNoAi(),
+                com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor()
+            )
+        )
+        val body = JSONObject().put("candidates", JSONArray().put(
+            JSONObject().put("content", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", modelText))))
+        )).toString()
+        val method = service.javaClass.getDeclaredMethod("parseResponse", String::class.java, String::class.java, ReceiptItemCategorizationInput::class.java)
+        method.isAccessible = true
+        return method.invoke(service, body, "test", input) as? com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationResult
+    }
+
+
+    @Test
     fun `categorizeItems redaction on does not include raw category names in payload`() = runBlocking {
         val keyStorage = mockk<SecureKeyStorage>(relaxed = true)
         every { keyStorage.getKey(SecureKeyStorage.KEY_GEMINI) } returns "test-key"
@@ -57,6 +170,7 @@ class CloudReceiptItemCategorizationServiceTest {
                                         {
                                           "items": [
                                             {
+                                              "sourceIndex": 0,
                                               "description": "item_a",
                                               "amount": 4.5,
                                               "categoryId": 1,
@@ -134,6 +248,7 @@ class CloudReceiptItemCategorizationServiceTest {
             {
               "items": [
                 {
+                  "sourceIndex": 0,
                   "description": "item_a",
                   "amount": 4.5,
                   "categoryId": null,
@@ -182,6 +297,7 @@ class CloudReceiptItemCategorizationServiceTest {
             {
               "items": [
                 {
+                  "sourceIndex": 0,
                   "description": "item_a",
                   "amount": 4.5,
                   "categoryId": null,

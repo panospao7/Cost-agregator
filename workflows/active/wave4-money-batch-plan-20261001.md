@@ -220,6 +220,10 @@ The money track is a separate workstream and should start with an inventory batc
 
 ### M-0 — Money contract and finding classification
 
+**Status (2026-10-04):** Discovery/classification remains based on checkpoint `a1c66173` and the historical 83-finding/28-file inventory; no fresh guard count is claimed. M-1a/M-1b, the M-2a foundation, M-2b1 daily/totals producers, M-2b2 normalized period comparisons, M-2c1/M-2c2 analytics slices, and the M-2d personality caller audit are authored in the combined worktree. Independent strict review and live validation remain pending under the user's validate-later instruction. Legacy/scalar consumer migration is still open. M-3 through M-5 remain unstarted. Resume from `workflows/active/money-m2c1-20261004-handoff.md`, `workflows/active/money-m2c2-20261004-handoff.md`, and `workflows/active/money-m2d-20261004-handoff.md`; retain all earlier focused queues.
+
+**Inventory and resume point:** `workflows/active/money-m0-inventory-20261003.md` and `workflows/active/money-m0-20261003-handoff.md`. The inventory splits the larger phases into pipeline-local slices and identifies early radar/cash-flow corrections plus the decision-gated legacy contribution-currency contract.
+
 **Work:**
 
 - Re-read all 83 findings against the current source and classify each as true financial aggregation, typed scalar that needs a better boundary, or a scanner false positive requiring guard-rule review.
@@ -230,6 +234,8 @@ The money track is a separate workstream and should start with an inventory batc
 **Exit:** A file-level inventory with no blanket `Double` replacement and no proposed allowlist expansion.
 
 ### M-1 — Receipt and item-value producers
+
+**Status (2026-10-03):** M-1a receipt/source-currency boundary and 27 direct regression tests are authored. M-1b adds typed on-device item/category aggregates and explicit tax-allocation states, with 21 new service/input regressions. Local source review only; compile/tests/guards NOT RUN and independent review pending. The four parser price sums and two on-device category/tax sums are routed through the approved builder, but the optional scalar DTO/helper declarations and legacy/cloud tax consumers remain open. No fresh finding-count reduction is claimed. Resume at `workflows/active/money-m1b-20261003-handoff.md`; retain the M-1a queue for the combined tree.
 
 **Primary files:** receipt parsing and AI receipt-item categorization surfaces, including raw price-field aggregation.
 

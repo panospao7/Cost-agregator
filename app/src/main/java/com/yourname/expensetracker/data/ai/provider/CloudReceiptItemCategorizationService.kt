@@ -221,10 +221,10 @@ class CloudReceiptItemCategorizationService @Inject constructor(
 
         val categoriesList = input.userCategories.joinToString(", ") { "${it.name} (id: ${it.id})" }
         
-        val itemsList = input.lineItems.joinToString("\n") { item ->
+        val itemsList = input.lineItems.mapIndexed { index, item ->
             val safeDescription = item.description ?: "unknown item"
-            "- $safeDescription: ${CurrencyFormatter.format(item.totalPrice, input.currency)}"
-        }
+            "- [sourceIndex=$index] $safeDescription: ${CurrencyFormatter.format(item.totalPrice, input.currency)}"
+        }.joinToString("\n")
         
         return """
 You are a receipt item categorization assistant. Categorize each item below.
@@ -236,11 +236,12 @@ Items:
 $itemsList
 
 For each item, provide:
-1. categoryId (from available categories, or null if suggesting new)
-2. categoryName (MUST match one of the available categories exactly, or provide a new category name)
-3. confidence (0.0-1.0)
-4. rationale (brief explanation)
-5. isNewCategorySuggestion (true only if suggesting a category not in the list)
+1. sourceIndex (the exact sourceIndex from the input item; do not reorder or invent indices)
+2. categoryId (from available categories, or null if suggesting new)
+3. categoryName (MUST match one of the available categories exactly, or provide a new category name)
+4. confidence (0.0-1.0)
+5. rationale (brief explanation)
+6. isNewCategorySuggestion (true only if suggesting a category not in the list)
 
 If an item doesn't fit existing categories, you MAY suggest a new category name (isNewCategorySuggestion: true).
 
@@ -256,6 +257,7 @@ Output JSON format:
 {
   "items": [
     {
+      "sourceIndex": 0,
       "description": "item name",
       "amount": 2.50,
       "categoryId": 5,
@@ -331,10 +333,17 @@ Output JSON format:
             val result = JSONObject(jsonText)
             
             val itemsArray = result.optJSONArray("items") ?: return null
-            val items = mutableListOf<CategorizedReceiptItem>()
-            
+            val indexedItems = mutableMapOf<Int, CategorizedReceiptItem>()
+
             for (i in 0 until itemsArray.length()) {
                 val item = itemsArray.getJSONObject(i)
+                val sourceIndex = item.optStrictLongStrictOrNull("sourceIndex")
+                    ?.takeIf { it in 0L until input.lineItems.size.toLong() }
+                    ?.toInt()
+                    ?: throw JSONException("Missing or invalid 'sourceIndex' in items[$i]")
+                if (indexedItems.containsKey(sourceIndex)) {
+                    throw JSONException("Duplicate 'sourceIndex' $sourceIndex in items[$i]")
+                }
                 val amount = item.optFiniteDoubleStrictOrNull("amount")
                     ?: throw JSONException("Missing numeric 'amount' in items[$i]")
                 val confidence = item.optFiniteDoubleStrictOrNull("confidence")
@@ -367,7 +376,7 @@ Output JSON format:
                     }
                 }
                 
-                items.add(CategorizedReceiptItem(
+                indexedItems[sourceIndex] = CategorizedReceiptItem(
                     itemDescription = item.optString("description", ""),
                     amount = amount,
                     suggestedCategory = CategorySuggestion(
@@ -380,7 +389,7 @@ Output JSON format:
                     rationale = item.optString("rationale", ""),
                     alternatives = alternatives,
                     needsReview = confidence.toFloat() < 0.7f
-                ))
+                )
             }
             
             val newCategories = mutableListOf<String>()
@@ -390,31 +399,39 @@ Output JSON format:
                 }
             }
             
-            val taxDistribution = mutableMapOf<Long, Double>()
-            result.optJSONObject("taxDistribution")?.let { taxObj ->
-                taxObj.keys().forEach { key ->
-                    val categoryId = key.toLongOrNull() ?: return@forEach
-                    val taxAmount = taxObj.optFiniteDoubleStrictOrNull(key)
-                        ?: throw JSONException("Missing numeric taxDistribution['$key']")
-                    taxDistribution[categoryId] = taxAmount
-                }
+            if (indexedItems.size != input.lineItems.size) return null
+            val sourceItems = input.lineItems.mapIndexed { index, lineItem ->
+                val item = indexedItems[index] ?: return null
+                item.copy(
+                    amount = lineItem.totalPrice,
+                    needsReview = item.needsReview || item.amount != lineItem.totalPrice ||
+                        (lineItem.totalPrice < 0.0 && !lineItem.isAdjustment),
+                    isAdjustment = lineItem.isAdjustment
+                )
             }
-            
-            val avgConfidence = if (items.isNotEmpty()) {
-                items.map { it.confidence }.average().toFloat()
+            val taxAllocation = com.yourname.expensetracker.domain.ai.model.ReceiptTaxAllocator.allocate(
+                input.totalTax, sourceItems, input.currency
+            )
+            val taxDistribution = (taxAllocation as? com.yourname.expensetracker.domain.ai.model.ReceiptTaxAllocation.Available)
+                ?.categoryAmounts?.mapValues { it.value.amount }.orEmpty()
+
+            val avgConfidence = if (sourceItems.isNotEmpty()) {
+                sourceItems.map { it.confidence }.average().toFloat()
             } else 0f
             
             ReceiptItemCategorizationResult(
-                items = items,
+                items = sourceItems,
                 totalConfidence = avgConfidence,
-                needsReview = items.any { it.needsReview },
+                needsReview = sourceItems.any { it.needsReview } || taxAllocation is com.yourname.expensetracker.domain.ai.model.ReceiptTaxAllocation.Unavailable,
                 suggestedNewCategories = newCategories,
-                taxDistribution = taxDistribution
+                taxDistribution = taxDistribution,
+                taxAllocation = taxAllocation
             )
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(
-                e,
-                "CloudReceiptItemCategorizationService: Error parsing AI response (bodyLength=%d, bodyHash=%s, correlationId=%s)",
+                "CloudReceiptItemCategorizationService: RESPONSE_INVALID class=%s (bodyLength=%d, bodyHash=%s, correlationId=%s)",
+                e::class.java.simpleName,
                 body.length,
                 body.sha256Prefix(),
                 correlationId

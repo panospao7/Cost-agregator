@@ -13,6 +13,9 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.currency.SupportedCurrency
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateResult
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode
 import javax.inject.Inject
 import javax.inject.Singleton
 import timber.log.Timber
@@ -21,25 +24,11 @@ import kotlin.coroutines.cancellation.CancellationException
 // === Engine ===
 
 /**
- * ## CURRENCY NORMALIZATION: Caller responsibility
- * This engine does **not** inject [AnalyticsCurrencyNormalizer]. All amount
- * arithmetic (averages, medians, anomaly detection, daily totals) operates
- * directly on [ExpenseSnapshot.effectiveAmount] — which is only safe if the
- * caller has already normalized the data to a single currency before passing
- * it in. If un-normalized multi-currency data reaches this engine, raw
- * `Double` sums (e.g. `map { it.effectiveAmount }.average()`,
- * `maxByOrNull { it.effectiveAmount }`, `monthTotals.merge(key, p.effectiveAmount)`)
- * will produce incorrect results by mixing values in different currencies.
- *
- * Callers should use [AnalyticsCurrencyNormalizer.normalizeSnapshots] before
- * passing expenses to [generateInsights] or [getLegacyInsights].
- *
- * A07 OPEN: Several methods default `displayCurrency` to `"EUR"`. New callers
- * must pass explicit currency via [generateInsights(input: NormalizedAnalyticsInput)]
- * once available. Legacy `generateInsights(displayCurrency = "EUR")` paths are
- * tolerated for backward compatibility but should be migrated.
- *
- * PR-E11: Accept NormalizedAnalyticsInput instead of querying raw expenses.
+ * ## Enforced currency boundary
+ * Production inputs are normalized once by AnalyticsInputAssembler. Snapshot
+ * compatibility entry points validate homogeneous supported currency before
+ * performing financial statistics, and cannot guess an empty input currency.
+ * Unavailable monthly/pace values remain null; section failures do not claim zero.
  *
  * ## AIML-11: Confidence propagation
  * Insights that rely on AI-classified transactions inherit the classifier's
@@ -94,7 +83,7 @@ class InsightsEngine @Inject constructor(
             monthlyComparison = MonthlyComparison(
                 currentMonth = MonthPeriod(0, 0, 0L, 0L),
                 previousMonth = null,
-                currentTotal = 0.0,
+                currentTotal = null,
                 previousTotal = null,
                 changeAmount = null,
                 changePercentage = null,
@@ -105,10 +94,10 @@ class InsightsEngine @Inject constructor(
             categoryInsights = emptyList(),
             topMerchants = emptyList(),
             spendingPace = SpendingPace(
-                currentMonthSpent = 0.0,
+                currentMonthSpent = null,
                 daysElapsed = 0,
                 daysInMonth = 30,
-                projectedTotal = 0.0,
+                projectedTotal = null,
                 previousMonthTotal = null,
                 averageMonthlyTotal = null,
                 // NEW-P6-013: canonical -1f sentinel paired with NO_BASELINE.
@@ -152,7 +141,8 @@ class InsightsEngine @Inject constructor(
                     message = msg,
                     affectedTransactionCount = 0
                 )
-            }
+            },
+            currentInput = input
         )
     }
 
@@ -213,7 +203,9 @@ class InsightsEngine @Inject constructor(
             categories = categories,
             allExpenses = allSnapshots,
             displayCurrency = currentInput.homeCurrency,
-            conversionWarnings = mergedWarnings
+            conversionWarnings = mergedWarnings,
+            currentInput = currentInput,
+            previousInput = historicalInput
         )
     }
 
@@ -229,9 +221,10 @@ class InsightsEngine @Inject constructor(
         categories: List<AnalyticsCategoryRef>,
         allExpenses: List<ExpenseSnapshot>,
         /** Placeholder default. Production callers should pass explicit currency. */
-        displayCurrency: String = "EUR",
+        displayCurrency: String = SingleCurrencyAnalyticsInput.currencyOf(allExpenses),
         conversionWarnings: List<AnalyticsConversionWarning> = emptyList()
     ): InsightsSnapshot {
+        SingleCurrencyAnalyticsInput.from(allExpenses, displayCurrency)
         val currentMonth = MonthPeriod(
             year = TimePeriodUtils.getYear(periodRange.start),
             month = TimePeriodUtils.getMonth(periodRange.start),
@@ -262,9 +255,10 @@ class InsightsEngine @Inject constructor(
         categories: List<AnalyticsCategoryRef>,
         allExpenses: List<ExpenseSnapshot>,
         /** Placeholder default. Production callers should pass explicit currency. */
-        displayCurrency: String = "EUR",
+        displayCurrency: String = SingleCurrencyAnalyticsInput.currencyOf(allExpenses),
         conversionWarnings: List<AnalyticsConversionWarning> = emptyList()
     ): InsightsSnapshot {
+        SingleCurrencyAnalyticsInput.from(allExpenses, displayCurrency)
         val now = timeProvider.now()
         val currentMonth = getMonthPeriod(now)
         val previousMonth = getPreviousMonthPeriod(currentMonth)
@@ -287,8 +281,11 @@ class InsightsEngine @Inject constructor(
         categories: List<AnalyticsCategoryRef>,
         allExpenses: List<ExpenseSnapshot>,
         displayCurrency: String,
-        conversionWarnings: List<AnalyticsConversionWarning>
+        conversionWarnings: List<AnalyticsConversionWarning>,
+        currentInput: NormalizedAnalyticsInput? = null,
+        previousInput: NormalizedAnalyticsInput? = null
     ): InsightsSnapshot = coroutineScope {
+        SingleCurrencyAnalyticsInput.from(allExpenses, displayCurrency)
         // Compute a reference "now" for relative-period calculations (day-of-week analysis etc.)
         val now = timeProvider.now()
 
@@ -297,21 +294,59 @@ class InsightsEngine @Inject constructor(
         // Start all independent queries in parallel with error handling
         val monthlyComparisonDeferred = async {
             try {
-                monthlyComparisonCalculator.calculate(currentMonth, previousMonth, allExpenses, displayCurrency)
+                if (currentInput != null) {
+                    monthlyComparisonCalculator.calculate(
+                        currentMonth = currentMonth,
+                        previousMonth = previousMonth,
+                        currentInput = currentInput,
+                        previousInput = previousInput,
+                        displayCurrency = displayCurrency
+                    )
+                } else {
+                    monthlyComparisonCalculator.calculate(currentMonth, previousMonth, allExpenses, displayCurrency)
+                }
             } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e("InsightsEngine: UNKNOWN_ERROR stage=monthlyComparison class=%s", e::class.java.simpleName); null }
         }
         val categoryInsightsDeferred = async {
             try {
-                categoryInsightEngine.calculate(currentMonth, previousMonth, categoryMap, allExpenses, displayCurrency)
+                if (currentInput != null) {
+                    categoryInsightEngine.calculate(
+                        currentMonth = currentMonth,
+                        previousMonth = previousMonth,
+                        categoryMap = categoryMap,
+                        currentInput = currentInput,
+                        previousInput = previousInput,
+                        displayCurrency = displayCurrency
+                    )
+                } else {
+                    categoryInsightEngine.calculate(currentMonth, previousMonth, categoryMap, allExpenses, displayCurrency)
+                }
             } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e("InsightsEngine: UNKNOWN_ERROR stage=categoryInsights class=%s", e::class.java.simpleName); null }
         }
         val topMerchantsDeferred = async {
             try {
-                merchantInsightEngine.calculate(allExpenses, displayCurrency)
+                if (currentInput != null) {
+                    merchantInsightEngine.calculate(currentInput)
+                } else {
+                    merchantInsightEngine.calculate(allExpenses, displayCurrency)
+                }
             } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e("InsightsEngine: UNKNOWN_ERROR stage=topMerchants class=%s", e::class.java.simpleName); null }
         }
         val spendingPaceDeferred = async { 
-            try { buildSpendingPace(currentMonth, previousMonth, allExpenses, displayCurrency) } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e("InsightsEngine: UNKNOWN_ERROR stage=spendingPace class=%s", e::class.java.simpleName); null }
+            try {
+                if (currentInput != null) {
+                    buildSpendingPace(
+                        currentMonth = currentMonth,
+                        previousMonth = previousMonth,
+                        currentInput = currentInput,
+                        previousInput = previousInput,
+                        allExpenses = allExpenses,
+                        displayCurrency = displayCurrency
+                    )
+                } else {
+                    buildSpendingPace(currentMonth, previousMonth, allExpenses, displayCurrency)
+                }
+            } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e("InsightsEngine: UNKNOWN_ERROR stage=spendingPace class=%s", e::class.java.simpleName); null }
         }
         val anomaliesDeferred = async { 
             try { findAnomalies(currentMonth, categoryMap, allExpenses, displayCurrency) } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e("InsightsEngine: UNKNOWN_ERROR stage=anomalies class=%s", e::class.java.simpleName); null }
@@ -330,7 +365,22 @@ class InsightsEngine @Inject constructor(
         val threeMonthsAgo = getMonthPeriod(now, -2)
         val dayOfWeekPatternDeferred = async {
             try {
-                dayOfWeekAnalyzer.analyze(threeMonthsAgo.startMs, currentMonth.endMs, allExpenses, displayCurrency)
+                if (currentInput != null) {
+                    dayOfWeekAnalyzer.analyze(
+                        startDate = threeMonthsAgo.startMs,
+                        endDate = currentMonth.endMs,
+                        input = currentInput,
+                        historicalInput = previousInput,
+                        displayCurrency = displayCurrency
+                    )
+                } else {
+                    dayOfWeekAnalyzer.analyze(
+                        startDate = threeMonthsAgo.startMs,
+                        endDate = currentMonth.endMs,
+                        input = SingleCurrencyAnalyticsInput.from(allExpenses, displayCurrency),
+                        displayCurrency = displayCurrency
+                    )
+                }
             } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e("InsightsEngine: UNKNOWN_ERROR stage=dayOfWeekPattern class=%s", e::class.java.simpleName); null }
         }
         // Await all results with error resilience
@@ -349,10 +399,37 @@ class InsightsEngine @Inject constructor(
                     && it.date < currentMonth.endMs
                     && !it.isNotMine
         }
-        val largestTransaction = currentMonthPurchases.maxByOrNull { it.effectiveAmount }
-        val avgTxSize = if (currentMonthPurchases.isNotEmpty())
-            currentMonthPurchases.map { it.effectiveAmount }.average() else 0.0
-        val medianTxSize = calculateMedian(currentMonthPurchases.map { it.effectiveAmount })
+        val compatibilityMonthInput = if (currentInput == null && currentMonthPurchases.isNotEmpty()) {
+            try {
+                SingleCurrencyAnalyticsInput.from(
+                    currentMonthPurchases,
+                    SingleCurrencyAnalyticsInput.currencyOf(currentMonthPurchases)
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
+        } else {
+            null
+        }
+        val canonicalMonthPurchases = currentInput?.includedExpenses
+            ?.filter { it.transactionType == DomainTransactionType.PURCHASE.name && it.date >= currentMonth.startMs && it.date < currentMonth.endMs && !it.isNotMine }
+            ?.map { it.toExpenseSnapshot() }
+            ?: compatibilityMonthInput?.includedExpenses?.map { it.toExpenseSnapshot() }
+            ?: emptyList()
+        val canonicalMonthAmounts = currentInput?.includedExpenses
+            ?.filter { it.transactionType == DomainTransactionType.PURCHASE.name && it.date >= currentMonth.startMs && it.date < currentMonth.endMs && !it.isNotMine }
+            ?.map { it.normalizedAmount }
+            ?: compatibilityMonthInput?.includedExpenses?.map { it.normalizedAmount }
+            ?: emptyList()
+        val largestTransactionPair = canonicalMonthPurchases
+            .zip(canonicalMonthAmounts)
+            .maxByOrNull { it.second }
+        val largestTransaction = largestTransactionPair?.first
+        val largestTransactionDisplayAmount = largestTransactionPair?.second
+        val avgTxSize = canonicalMonthAmounts.average().takeIf { canonicalMonthAmounts.isNotEmpty() } ?: 0.0
+        val medianTxSize = calculateMedian(canonicalMonthAmounts)
 
         // How many months of data we have
         val totalMonthsOfData = countDistinctMonths(allExpenses)
@@ -362,7 +439,7 @@ class InsightsEngine @Inject constructor(
             monthlyComparison = monthlyComparison ?: MonthlyComparison(
                 currentMonth = currentMonth,
                 previousMonth = null,
-                currentTotal = 0.0,
+                currentTotal = null,
                 previousTotal = null,
                 changeAmount = null,
                 changePercentage = null,
@@ -370,13 +447,13 @@ class InsightsEngine @Inject constructor(
                 previousCount = null,
                 displayCurrency = displayCurrency
             ),
-            categoryInsights = categoryInsights ?: emptyList(),
+            categoryInsights = categoryInsights.orEmpty().filter { it.currentTotal != null && it.moneyResult !is com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Unavailable },
             topMerchants = topMerchants ?: emptyList(),
             spendingPace = spendingPace ?: SpendingPace(
-                currentMonthSpent = 0.0,
+                currentMonthSpent = null,
                 daysElapsed = 0,
                 daysInMonth = 30,
-                projectedTotal = 0.0,
+                projectedTotal = null,
                 previousMonthTotal = null,
                 averageMonthlyTotal = null,
                 // NEW-P6-013: canonical -1f sentinel paired with NO_BASELINE.
@@ -386,21 +463,26 @@ class InsightsEngine @Inject constructor(
             ),
             anomalies = anomalies ?: emptyList(),
             recurringExpenses = recurringExpenseResult.items,
-            dayOfWeekPattern = dayOfWeekPattern ?: emptyList(),
-            largestTransaction = largestTransaction?.toAnalyticsSummary(),
+            dayOfWeekPattern = dayOfWeekPattern.orEmpty().filter {
+                it.moneyResult !is com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Unavailable
+            },
+            largestTransaction = largestTransaction?.let {
+                largestTransactionDisplayAmount?.let { amount -> it.toAnalyticsSummary(amount) }
+            },
             averageTransactionSize = avgTxSize,
             medianTransactionSize = medianTxSize,
             totalMonthsOfData = totalMonthsOfData,
             displayCurrency = displayCurrency,
-            conversionWarnings = conversionWarnings + recurringExpenseResult.warnings
+            conversionWarnings = conversionWarnings + recurringExpenseResult.warnings,
+            largestTransactionDisplayAmount = largestTransactionDisplayAmount
         )
     }
 
-    private fun ExpenseSnapshot.toAnalyticsSummary(): AnalyticsTransactionSummary {
+    private fun ExpenseSnapshot.toAnalyticsSummary(displayAmount: Double): AnalyticsTransactionSummary {
         return AnalyticsTransactionSummary(
             id = id,
-            amount = effectiveAmount,
-            effectiveAmount = effectiveAmount,
+            amount = displayAmount,
+            effectiveAmount = displayAmount,
             currency = currency,
             merchant = merchant,
             date = date,
@@ -420,12 +502,18 @@ class InsightsEngine @Inject constructor(
         "Legacy convenience wrapper. Prefer constructing SpendingInsight list directly from InsightsSnapshot fields.",
         level = DeprecationLevel.WARNING
     )
-    fun getLegacyInsights(snapshot: InsightsSnapshot, /** Placeholder default. Production callers should pass explicit currency. */ homeCurrency: String = "EUR"): List<SpendingInsight> {
+    fun getLegacyInsights(snapshot: InsightsSnapshot, homeCurrency: String = snapshot.monthlyComparison.displayCurrency): List<SpendingInsight> {
+        require(com.yourname.expensetracker.domain.core.money.CurrencyCode.parse(homeCurrency) ==
+            com.yourname.expensetracker.domain.core.money.CurrencyCode.parse(snapshot.displayCurrency)
+        ) { "INSIGHT_DISPLAY_CURRENCY_MISMATCH" }
         val insights = mutableListOf<SpendingInsight>()
 
         // 1. Monthly Comparison (Spending Increase/Decrease)
         val comparison = snapshot.monthlyComparison
-        if (comparison.changePercentage != null) {
+        if (comparison.changePercentage != null &&
+            comparison.currentTotal != null &&
+            comparison.previousTotal != null
+        ) {
             if (comparison.changePercentage > 20) {
                 insights.add(
                         SpendingInsight(
@@ -437,7 +525,7 @@ class InsightsEngine @Inject constructor(
                             UiText.fromKey(
             DomainTextKeys.ANALYTICS_INSIGHT_SPENDING_UP_DESCRIPTION_FORMAT,
                         formatCurrency(comparison.currentTotal, homeCurrency),
-                        formatCurrency(comparison.previousTotal ?: 0.0, homeCurrency)
+                        formatCurrency(comparison.previousTotal, homeCurrency)
                             ),
                             (comparison.changePercentage / 100).coerceAtMost(1.0f).toFloat()
                         )
@@ -452,7 +540,7 @@ class InsightsEngine @Inject constructor(
                             ),
                             UiText.fromKey(
             DomainTextKeys.ANALYTICS_INSIGHT_SPENDING_DOWN_DESCRIPTION_FORMAT,
-                        formatCurrency((comparison.previousTotal ?: 0.0) - comparison.currentTotal, homeCurrency)
+                        formatCurrency(comparison.previousTotal - comparison.currentTotal, homeCurrency)
                             ),
                             0.3f
                         )
@@ -480,7 +568,11 @@ class InsightsEngine @Inject constructor(
         // 3. Category Trends
         snapshot.categoryInsights.take(3).forEach { catInsight ->
             if (catInsight.changeFromPrevious != null) {
-                 if (catInsight.changeFromPrevious > 40 && catInsight.currentTotal > 50) {
+                 if (catInsight.changeFromPrevious > 40 &&
+                     catInsight.currentTotal != null &&
+                     catInsight.previousTotal != null &&
+                     catInsight.currentTotal > 50
+                 ) {
                     insights.add(
                         SpendingInsight(
                             InsightType.CATEGORY_TREND, catInsight.category.icon,
@@ -492,7 +584,7 @@ class InsightsEngine @Inject constructor(
                             UiText.fromKey(
                         DomainTextKeys.ANALYTICS_INSIGHT_CATEGORY_UP_DESCRIPTION_FORMAT,
                         formatCurrency(catInsight.currentTotal, homeCurrency),
-                        formatCurrency(catInsight.previousTotal ?: 0.0, homeCurrency)
+                        formatCurrency(catInsight.previousTotal, homeCurrency)
                             ),
                             0.7f
                         )
@@ -521,7 +613,8 @@ class InsightsEngine @Inject constructor(
 
         // 5. Largest Transaction
         val largest = snapshot.largestTransaction
-        if (largest != null && largest.effectiveAmount > 50) {
+        val largestAmount = snapshot.largestTransactionDisplayAmount
+        if (largest != null && largestAmount != null && largestAmount > 50) {
              insights.add(
                 SpendingInsight(
                     InsightType.UNUSUAL_TRANSACTION, "⚡",
@@ -531,7 +624,7 @@ class InsightsEngine @Inject constructor(
                     ),
                     UiText.fromKey(
                     DomainTextKeys.ANALYTICS_INSIGHT_LARGEST_TRANSACTION_DESCRIPTION_FORMAT,
-                        formatCurrency(largest.effectiveAmount, homeCurrency),
+                        formatCurrency(largestAmount, homeCurrency),
                         formatDate(largest.date)
                     ),
                     0.25f
@@ -586,8 +679,36 @@ class InsightsEngine @Inject constructor(
             averageMonthlyTotal = avgMonthly,
             pacePercentage = canonicalPace.pacePercentage,
             paceStatus = canonicalPace.paceStatus,
-            displayCurrency = displayCurrency
+            displayCurrency = displayCurrency,
+            currentMoneyResult = canonicalPace.currentMoneyResult,
+            previousMoneyResult = canonicalPace.previousMoneyResult
         )
+    }
+
+    private fun buildSpendingPace(
+        currentMonth: MonthPeriod,
+        previousMonth: MonthPeriod,
+        currentInput: NormalizedAnalyticsInput,
+        previousInput: NormalizedAnalyticsInput?,
+        allExpenses: List<ExpenseSnapshot>,
+        displayCurrency: String
+    ): SpendingPace {
+        return spendingPaceCalculator.calculate(
+            currentMonthStart = currentMonth.startMs,
+            previousMonthStart = previousMonth.startMs,
+            previousMonthEnd = previousMonth.endMs,
+            currentInput = currentInput,
+            previousInput = previousInput,
+            displayCurrency = displayCurrency,
+            referenceNowMs = minOf(timeProvider.now(), currentMonth.endMs)
+        ).let { canonicalPace ->
+            canonicalPace.copy(
+                averageMonthlyTotal = calculateAverageMonthlySpend(
+                    allExpenses = allExpenses,
+                    currentMonth = currentMonth
+                )
+            )
+        }
     }
 
     private fun calculateAverageMonthlySpend(
@@ -601,10 +722,19 @@ class InsightsEngine @Inject constructor(
         }
         if (purchases.isEmpty()) return null
 
+        val normalizedPurchases = try {
+            SingleCurrencyAnalyticsInput
+                .from(purchases, SingleCurrencyAnalyticsInput.currencyOf(purchases))
+                .includedExpenses
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            return null
+        }
         val monthTotals = mutableMapOf<String, Double>()
-        for (p in purchases) {
+        for (p in normalizedPurchases) {
             val key = String.format("%d-%02d", TimePeriodUtils.getYear(p.date), TimePeriodUtils.getMonth(p.date) + 1)
-            monthTotals.merge(key, p.effectiveAmount) { a, b -> a + b }
+            monthTotals.merge(key, p.normalizedAmount) { a, b -> a + b }
         }
 
         return if (monthTotals.isNotEmpty()) monthTotals.values.average() else null
@@ -633,8 +763,20 @@ class InsightsEngine @Inject constructor(
         displayCurrency: String
     ): List<AnomalyTransaction> = coroutineScope {
 
+        val safeNormalizedById = try {
+            SingleCurrencyAnalyticsInput
+                .from(allExpenses, displayCurrency)
+                .includedExpenses
+                .associateBy { it.id }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            return@coroutineScope emptyList()
+        }
+        val safeExpenses = safeNormalizedById.values.map { it.toExpenseSnapshot() }
+
         // ── Path 1: merchant-level DB-backed detection (existing logic) ────────
-        val historicalPurchasesByMerchant = allExpenses
+        val historicalPurchasesByMerchant = safeExpenses
             .asSequence()
             .filter {
                 it.transactionType == DomainTransactionType.PURCHASE &&
@@ -644,7 +786,7 @@ class InsightsEngine @Inject constructor(
             }
             .groupBy { it.merchantKey!!.trim() }
 
-        val currentMonthPurchasesByMerchant = allExpenses
+        val currentMonthPurchasesByMerchant = safeExpenses
             .asSequence()
             .filter {
                 it.transactionType == DomainTransactionType.PURCHASE &&
@@ -660,7 +802,9 @@ class InsightsEngine @Inject constructor(
             val historicalExpenses = historicalPurchasesByMerchant[merchantKey].orEmpty()
             if (historicalExpenses.size < 3) return@mapNotNull null
 
-            val historicalAverage = historicalExpenses.map { it.effectiveAmount }.average()
+            val historicalAmounts = historicalExpenses.mapNotNull { safeNormalizedById[it.id]?.normalizedAmount }
+            if (historicalAmounts.size != historicalExpenses.size) return@mapNotNull null
+            val historicalAverage = historicalAmounts.average()
             if (!historicalAverage.isFinite() || historicalAverage <= 0.0) {
                 return@mapNotNull null
             }
@@ -671,8 +815,11 @@ class InsightsEngine @Inject constructor(
                 else                                  -> 3.0
             }
 
-            val currentMaxExpense = currentMonthExpenses.maxByOrNull { it.effectiveAmount } ?: return@mapNotNull null
-            val currentMax = currentMaxExpense.effectiveAmount
+            val currentMaxExpense = currentMonthExpenses.maxByOrNull {
+                safeNormalizedById[it.id]?.normalizedAmount ?: Double.NEGATIVE_INFINITY
+            } ?: return@mapNotNull null
+            val currentMax = safeNormalizedById[currentMaxExpense.id]?.normalizedAmount
+                ?: return@mapNotNull null
 
             if (currentMax > historicalAverage * multiplier) {
                 AnomalyCandidate(
@@ -689,9 +836,11 @@ class InsightsEngine @Inject constructor(
             .sortedByDescending { it.deviationMultiple }
             .take(5)
 
-        val merchantAnomalies: List<AnomalyTransaction> = topCandidates.map { candidate ->
+        val merchantAnomalies: List<AnomalyTransaction> = topCandidates.mapNotNull { candidate ->
+            val normalizedAmount = safeNormalizedById[candidate.expense.id]?.normalizedAmount
+                ?: return@mapNotNull null
             AnomalyTransaction(
-                expense           = candidate.expense.toAnalyticsSummary(),
+                expense           = candidate.expense.toAnalyticsSummary(normalizedAmount),
                 merchantAvg       = candidate.historicalAvg,
                 deviationMultiple = candidate.deviationMultiple,
                 category          = candidate.expense.categoryId
@@ -706,7 +855,7 @@ class InsightsEngine @Inject constructor(
         // AI-2: Compute recurring merchant keys to suppress recurring expenses
         // from statistical anomaly detection.
         val recurringKeys: Set<String> = try {
-            recurringExpenseEngine.getPatternsFromSnapshots(allExpenses)
+            recurringExpenseEngine.getPatternsFromSnapshots(safeExpenses)
                 .mapNotNull { pattern ->
                     pattern.merchantName.takeIf { it.isNotBlank() }
                         ?.let { com.yourname.expensetracker.domain.util.MerchantKeyGenerator.generate(it) }
@@ -718,7 +867,7 @@ class InsightsEngine @Inject constructor(
             emptySet()
         }
         val statisticalAnomalies: List<AnomalyTransaction> =
-            anomalyDetector.detect(currentMonth, analyticsCategoryMap, allExpenses, displayCurrency, recurringKeys)
+            anomalyDetector.detect(currentMonth, analyticsCategoryMap, safeExpenses, displayCurrency, recurringKeys)
 
         // ── Merge: deduplicate by expense.id; statistical results fill gaps ────
         val merged = mutableMapOf<Long, AnomalyTransaction>()
@@ -819,27 +968,61 @@ class InsightsEngine @Inject constructor(
     // A08: Replace buildDailyTotals(expenses, days) with buildBuckets(expenses, startMs, endMs, granularity).
     // Using timeProvider.now() as the anchor means the window shifts every day, which is wrong
     // for historical analysis. An explicit startMs/endMs pair keeps the window fixed.
-    fun buildDailyTotals(expenses: List<ExpenseSnapshot>, days: Int): Map<String, Double> {
-        val now = timeProvider.now()
-        val result = LinkedHashMap<String, Double>()
-
-        // Initialize all days with 0
-        for (i in days - 1 downTo 0) {
-            val dayTs = TimePeriodUtils.addDays(now, -i)
-            val key = DateFormatterUtils.formatTimestampJavaTime(dayTs, "yyyy-MM-dd")
-            result[key] = 0.0
+    @Deprecated(
+        message = "Use buildDailyTotals(NormalizedAnalyticsInput, days) for money-safe analytics",
+        level = DeprecationLevel.WARNING
+    )
+    internal fun buildDailyTotals(expenses: List<ExpenseSnapshot>, days: Int): Map<String, Double> {
+        val purchases = expenses.filter {
+            it.transactionType == DomainTransactionType.PURCHASE && !it.isNotMine
         }
+        if (purchases.isEmpty()) return emptyDailyTotals(days)
+        val normalized = try {
+            SingleCurrencyAnalyticsInput.from(
+                purchases,
+                SingleCurrencyAnalyticsInput.currencyOf(purchases)
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            return emptyMap()
+        }
+        return buildDailyTotals(normalized, days)
+    }
 
-        // Fill in actual values - Optimized: reuse Date object
-        val purchases = expenses.filter { it.transactionType == DomainTransactionType.PURCHASE }
-        for (expense in purchases) {
-            val key = DateFormatterUtils.formatTimestampJavaTime(expense.date, "yyyy-MM-dd")
-            if (result.containsKey(key)) {
-                result[key] = (result[key] ?: 0.0) + expense.effectiveAmount
+    fun buildDailyTotals(input: NormalizedAnalyticsInput, days: Int): Map<String, Double> {
+        if (days <= 0) return emptyMap()
+        val now = timeProvider.now()
+        val result = linkedMapOf<String, Double>()
+        val purchases = input.includedExpenses
+            .filter { it.transactionType == DomainTransactionType.PURCHASE.name && !it.isNotMine }
+        for (offset in days - 1 downTo 0) {
+            val start = TimePeriodUtils.getStartOfDay(TimePeriodUtils.addDays(now, -offset))
+            val end = TimePeriodUtils.addDays(start, 1)
+            val moneyResult = NormalizedAnalyticsMoneyAdapter.aggregateInputSlice(
+                input, purchases, startInclusiveMillis = start, endExclusiveMillis = end
+            )
+            val amount = when (moneyResult) {
+                is MoneyAggregateResult.Available -> moneyResult.aggregate.displayAmount
+                is MoneyAggregateResult.Unavailable -> throw MoneyDisplayUnavailableException(
+                    MoneyDisplayUnavailableReasonCode.entries.firstOrNull { it.name == moneyResult.reason }
+                        ?: MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE
+                )
+            }
+            result[DateFormatterUtils.formatTimestampJavaTime(start, "yyyy-MM-dd")] = amount
+        }
+        return result
+    }
+
+    private fun emptyDailyTotals(days: Int): LinkedHashMap<String, Double> {
+        val now = timeProvider.now()
+        return LinkedHashMap<String, Double>().apply {
+            for (i in days - 1 downTo 0) {
+                val dayTs = TimePeriodUtils.addDays(now, -i)
+                val key = DateFormatterUtils.formatTimestampJavaTime(dayTs, "yyyy-MM-dd")
+                put(key, 0.0)
             }
         }
-
-        return result
     }
 
     private fun calculateMedian(values: List<Double>): Double {
@@ -876,7 +1059,7 @@ class InsightsEngine @Inject constructor(
 
     // === Exposed Suspend Functions for Repository Usage ===
     
-    suspend fun getSpendingPaceSuspend(expenses: List<ExpenseSnapshot>? = null, /** Placeholder default. Production callers should pass explicit currency. */ displayCurrency: String = "EUR"): SpendingPace {
+    suspend fun getSpendingPaceSuspend(expenses: List<ExpenseSnapshot>? = null, displayCurrency: String? = null): SpendingPace {
         val now = timeProvider.now()
         val currentMonth = getMonthPeriod(now)
         val previousMonth = getPreviousMonthPeriod(currentMonth)
@@ -887,10 +1070,12 @@ class InsightsEngine @Inject constructor(
             expenseRepository.getExpenseSnapshotsBetween(sixMonthsAgo, now)
         }
         
-        return buildSpendingPace(currentMonth, previousMonth, recentExpenses, displayCurrency = displayCurrency)
+        val currency = displayCurrency ?: SingleCurrencyAnalyticsInput.currencyOf(recentExpenses)
+        SingleCurrencyAnalyticsInput.from(recentExpenses, currency)
+        return buildSpendingPace(currentMonth, previousMonth, recentExpenses, displayCurrency = currency)
     }
 
-    private fun formatCurrency(amount: Double, /** Placeholder default. Production callers should pass explicit currency. */ currency: String = "EUR"): String = CurrencyFormatter.formatMoney(amount, currency)
+    private fun formatCurrency(amount: Double, currency: String): String = CurrencyFormatter.formatMoney(amount, currency)
     
     private fun formatDate(dateMs: Long): String {
          return DateFormatterUtils.formatTimestampJavaTime(dateMs, "MMM dd")

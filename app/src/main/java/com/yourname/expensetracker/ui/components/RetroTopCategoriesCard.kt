@@ -328,7 +328,7 @@ private fun RetroCategoryRow(
                     ) {
                         // Amount
                         Text(
-                            text = CurrencyFormatter.formatMoney(category.total, currency, showCents = false),
+                            text = CurrencyFormatter.formatMoney(category.moneyTotal.displayAmount, category.moneyTotal.displayCurrency.code, showCents = false),
                             style = MaterialTheme.typography.bodyMedium.copy(
                                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold
@@ -486,7 +486,7 @@ private fun RetroCategoryDetailDialog(
                         )
                         
                         Text(
-                            text = CurrencyFormatter.formatMoney(category.total, currency),
+                            text = CurrencyFormatter.formatMoney(category.moneyTotal.displayAmount, category.moneyTotal.displayCurrency.code),
                             style = MaterialTheme.typography.titleMedium.copy(
                                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold
@@ -782,11 +782,11 @@ private fun RetroAnalyticsSection(
         )
         
         // Current stats
- RetroStatRowCategories("THIS MONTH", CurrencyFormatter.formatMoney(category.total, currency), RetroColorsCategories.NeonWhite)
+ RetroStatRowCategories("THIS MONTH", CurrencyFormatter.formatMoney(category.moneyTotal.displayAmount, category.moneyTotal.displayCurrency.code), RetroColorsCategories.NeonWhite)
 
  if (trendInfo?.previousTotal != null) {
  Spacer(modifier = Modifier.height(4.dp))
- val change = category.total - trendInfo.previousTotal
+ val change = category.moneyTotal.displayAmount - trendInfo.previousTotal
  val changeText = if (change >= 0) {
  "+${CurrencyFormatter.formatMoney(change, currency)}"
  } else {

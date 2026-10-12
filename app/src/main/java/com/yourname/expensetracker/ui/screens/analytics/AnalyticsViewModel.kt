@@ -16,6 +16,11 @@ import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.time.PeriodKind
 import com.yourname.expensetracker.domain.core.time.PeriodRange
 import com.yourname.expensetracker.domain.core.money.MoneyAmount
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateResult
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode
+import com.yourname.expensetracker.domain.core.money.aggregateOrNull
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.DomainTransferDirection
@@ -37,6 +42,7 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import java.time.Instant
@@ -64,10 +70,41 @@ data class BudgetVsActualItem(
     val moneyActualSpent: MoneyAmount get() = MoneyAmount(actualSpent, CurrencyCode(displayCurrency))
 }
 
+internal fun logAnalyticsComputeFailure(error: Exception) {
+    Timber.e("ANALYTICS_COMPUTE_FAILED class=%s", error.javaClass.simpleName.take(80))
+}
+
+internal fun buildMerchantBreakdown(
+    expenseSnapshots: List<ExpenseSnapshot>,
+    input: NormalizedAnalyticsInput,
+    displayCurrency: String
+): List<MerchantBreakdown> = expenseSnapshots
+    .groupBy { it.canonicalMerchantKey() }
+    .mapNotNull { (_, expenses) ->
+        val transactionIds = expenses.mapTo(mutableSetOf()) { it.id }
+        val normalized = input.includedExpenses.filter { it.id in transactionIds }
+        val totalAmount = NormalizedAnalyticsMoneyAdapter.aggregateUnattributedSlice(
+            input, normalized, displayCurrency = displayCurrency
+        ).aggregateOrNull()?.displayAmount ?: return@mapNotNull null
+        MerchantBreakdown(
+            name = resolveMerchantDisplayName(expenses),
+            totalSpent = totalAmount,
+            transactionCount = expenses.size,
+            averageTransaction = totalAmount / expenses.size,
+            categoryId = expenses.firstOrNull()?.categoryId,
+            displayCurrency = displayCurrency
+        )
+    }
+    .sortedByDescending { it.totalSpent }
+
 data class AnalyticsState(
     val selectedPeriod: TimePeriod = TimePeriod.MONTH,
+    /** Legacy scalar projection; inspect [currentTotalMoneyResult] for availability. */
     val currentTotal: Double = 0.0,
+    /** Legacy scalar projection; inspect [previousTotalMoneyResult] for availability. */
     val previousTotal: Double? = null,
+    val currentTotalMoneyResult: MoneyAggregateResult? = null,
+    val previousTotalMoneyResult: MoneyAggregateResult? = null,
     val changePercent: Float? = null,
     val transactionCount: Int = 0,
     val categoryBreakdown: List<AnalyticsCategoryBreakdown> = emptyList(),
@@ -110,14 +147,26 @@ data class AnalyticsState(
 ) {
     /** PR2: nullable money helper — returns null when homeCurrency is null/blank/invalid */
     val moneyCurrentTotalOrNull: MoneyAmount? get() {
+        if (isLoading || error != null) return null
         val ccy = homeCurrency?.trim()?.uppercase()?.takeIf { it.isNotEmpty() } ?: return null
-        val currencyCode = CurrencyCode.parse(ccy) ?: return null
-        return MoneyAmount(currentTotal, currencyCode)
+        val currencyCode = CurrencyCode.parse(ccy)?.takeIf { it in CurrencyCode.ALL_SUPPORTED } ?: return null
+        val amount = when (val result = currentTotalMoneyResult) {
+            is MoneyAggregateResult.Available -> {
+                if (result.aggregate.displayCurrency != currencyCode) return null
+                result.aggregate.displayAmount
+            }
+            is MoneyAggregateResult.Unavailable -> return null
+            null -> currentTotal
+        }
+        return amount.takeIf { it.isFinite() }?.let { MoneyAmount(it, currencyCode) }
     }
 
     /** PR2: deprecated unsafe helper — kept for binary compatibility but guarded */
     @Deprecated("Use moneyCurrentTotalOrNull which handles null/invalid currency safely", ReplaceWith("moneyCurrentTotalOrNull"))
-    val moneyCurrentTotal: MoneyAmount get() = moneyCurrentTotalOrNull ?: MoneyAmount(currentTotal, CurrencyCode.EUR)
+    val moneyCurrentTotal: MoneyAmount
+        get() = moneyCurrentTotalOrNull ?: throw MoneyDisplayUnavailableException(
+            MoneyDisplayUnavailableReasonCode.INVALID_TARGET_CURRENCY
+        )
 
     /** Universal contract: typed loadable state. */
     val loadableState: com.yourname.expensetracker.ui.model.LoadableUiState<AnalyticsState>
@@ -126,6 +175,12 @@ data class AnalyticsState(
             error != null -> com.yourname.expensetracker.ui.model.LoadableUiState.Error(
                 com.yourname.expensetracker.domain.model.UiText.DynamicString(error)
             )
+            currentTotalMoneyResult != null && moneyCurrentTotalOrNull == null ->
+                com.yourname.expensetracker.ui.model.LoadableUiState.Error(
+                    com.yourname.expensetracker.domain.model.UiText.DynamicString(
+                        "Analytics totals are unavailable for the selected currency."
+                    )
+                )
             else -> com.yourname.expensetracker.ui.model.LoadableUiState.Data(this)
         }
 }
@@ -196,6 +251,10 @@ class AnalyticsViewModel @Inject constructor(
         val homeCurrency: String?,
         val rateTimestamp: Long
     )
+
+    private fun advancedFailureCode(error: Exception): String =
+        (error as? com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException)?.reasonCode?.name
+            ?: "ANALYTICS_SECTION_FAILED"
 
     private data class AdvResult(
         val cats: List<EnhancedCategoryAnalytics>,
@@ -326,7 +385,7 @@ class AnalyticsViewModel @Inject constructor(
                 throw e  // S9-008: never swallow cancellation
             } catch (e: Exception) {
                 // S9-008: Top-level catch — surface compute failures as visible error state
-                Timber.e(e, "Analytics compute failed for period $period")
+                logAnalyticsComputeFailure(e)
                 emit(AnalyticsState(
                     isLoading = false,
                     selectedPeriod = period,
@@ -416,12 +475,27 @@ class AnalyticsViewModel @Inject constructor(
             )
         }
 
-        // SAFE: currentExpenseSnapshots is pre-normalized via AnalyticsCurrencyNormalizer at line 292
-        val currentTotal = currentExpenseSnapshots.sumOf { it.effectiveAmount }
-        // SAFE: previousExpenseSnapshots is pre-normalized via AnalyticsCurrencyNormalizer at line 293
-        val previousTotal = previousExpenseSnapshots.sumOf { it.effectiveAmount }
-        val changePercent = if (previousTotal > 0.0) {
-            ((currentTotal - previousTotal) / previousTotal * 100).toFloat()
+        // Legacy scalar state remains for existing UI contracts; the typed result is
+        // the source of truth and unavailable conversion is not treated as spend.
+        val currentTotalResult = NormalizedAnalyticsMoneyAdapter.aggregateInputSlice(
+            currentInput, currentInput.includedExpenses, displayCurrency = homeCurrency
+        )
+        val previousTotalResult = NormalizedAnalyticsMoneyAdapter.aggregateInputSlice(
+            previousInput, previousInput.includedExpenses, displayCurrency = homeCurrency
+        )
+        val currentAvailableAmount = currentTotalResult.aggregateOrNull()?.displayAmount
+        val previousAvailableAmount = previousTotalResult.aggregateOrNull()?.displayAmount
+        val currentMoneyError = if (currentTotalResult is MoneyAggregateResult.Unavailable) {
+            "Analytics totals are unavailable for the selected currency."
+        } else {
+            null
+        }
+        // Keep the legacy scalar for existing UI contracts, while the typed result
+        // remains authoritative for unavailable/partial conversion states.
+        val currentTotal = currentAvailableAmount ?: 0.0
+        val previousTotal = previousAvailableAmount ?: 0.0
+        val changePercent = if (currentAvailableAmount != null && previousAvailableAmount != null && previousAvailableAmount > 0.0) {
+            ((currentAvailableAmount - previousAvailableAmount) / previousAvailableAmount * 100).toFloat()
         } else {
             null
         }
@@ -438,38 +512,32 @@ class AnalyticsViewModel @Inject constructor(
                         icon = "❓",
                     color = "#9E9E9E"
                 )
-                // SAFE: snapshots grouped from currentExpenseSnapshots (normalized at line 292)
-                val total = snapshots.sumOf { it.effectiveAmount }
+                val normalized = currentInput.includedExpenses.filter { it.categoryId == categoryId }
+                val total = NormalizedAnalyticsMoneyAdapter.aggregateUnattributedSlice(
+                    currentInput, normalized, displayCurrency = homeCurrency
+                ).aggregateOrNull()?.displayAmount ?: return@mapNotNull null
                 AnalyticsCategoryBreakdown(
                     category = category,
-                    total = total,
+                    moneyTotal = MoneyAmount(total, CurrencyCode(homeCurrency)),
                     count = snapshots.size,
                     percentage = if (totalForPercentage > 0.0) ((total / totalForPercentage) * 100f).toFloat() else 0f,
                     displayCurrency = homeCurrency
                 )
             }
-            .sortedByDescending { it.total }
+            .sortedByDescending { it.moneyTotal.amount }
 
         // Merchant breakdown (Still manual for now, or move to Repo later)
-        val merchantBreakdown = currentExpenseSnapshots
-            .groupBy { it.canonicalMerchantKey() }
-            .map { (_, exps) ->
-                // SAFE: exps grouped from currentExpenseSnapshots (normalized at line 292)
-                val totalAmount = exps.sumOf { it.effectiveAmount }
-                MerchantBreakdown(
-                    name = resolveMerchantDisplayName(exps),
-                    totalSpent = totalAmount,
-                    transactionCount = exps.size,
-                    averageTransaction = totalAmount / exps.size,
-                    categoryId = exps.firstOrNull()?.categoryId,
-                    displayCurrency = homeCurrency
-                )
-            }
-            .sortedByDescending { it.totalSpent }
+        val merchantBreakdown = buildMerchantBreakdown(
+            currentExpenseSnapshots,
+            currentInput,
+            homeCurrency
+        )
 
         // Daily totals for chart — built by DailyBucketEngine from normalized input
         val dailyTotals = currentInput.period?.let {
-            dailyBucketEngine.buildBuckets(currentInput, it).associate { bucket -> bucket.date to bucket.total }
+            dailyBucketEngine.buildBuckets(currentInput, it).mapNotNull { bucket ->
+                bucket.total?.let { total -> bucket.date to total.displayAmount }
+            }.toMap()
         } ?: emptyMap()
 
         // Insights
@@ -570,7 +638,7 @@ class AnalyticsViewModel @Inject constructor(
             Timber.d("========================")
         }
 
-        val advResult = advancedCache[cacheKey] ?: coroutineScope {
+        val advResult = advancedCache[cacheKey] ?: supervisorScope {
             // Build 12-month historical input for merchant analytics
             val historicalStart = TimePeriodUtils.addMonths(currentStart, -12)
             val historicalExpenses = expenseRepository.getExpensesBetween(historicalStart, currentEnd)
@@ -592,10 +660,10 @@ class AnalyticsViewModel @Inject constructor(
             val (stats, statWarnings) = try { statsDeferred.await() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { null to emptyList<AnalyticsConversionWarning>() }
             // S9-012: Collect per-section errors so UI can show "section unavailable" instead of silent empty
             val sectionErrors = buildMap<String, String> {
-                try { catDeferred.await() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { put("categories", e.message ?: "Category analytics failed") }
-                try { merchDeferred.await() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { put("merchants", e.message ?: "Merchant analytics failed") }
-                try { patternsDeferred.await() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { put("patterns", e.message ?: "Spending patterns failed") }
-                try { statsDeferred.await() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { put("statistics", e.message ?: "Statistical insights failed") }
+                try { catDeferred.await() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { put("categories", advancedFailureCode(e)) }
+                try { merchDeferred.await() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { put("merchants", advancedFailureCode(e)) }
+                try { patternsDeferred.await() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { put("patterns", advancedFailureCode(e)) }
+                try { statsDeferred.await() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { put("statistics", advancedFailureCode(e)) }
             }
             AdvResult(
                 cats = cats,
@@ -701,7 +769,10 @@ class AnalyticsViewModel @Inject constructor(
  return AnalyticsState(
   selectedPeriod = period,
   currentTotal = currentTotal,
-  previousTotal = if (previousTotal > 0) previousTotal else null,
+  previousTotal = previousAvailableAmount,
+  currentTotalMoneyResult = currentTotalResult,
+  previousTotalMoneyResult = previousTotalResult,
+  error = currentMoneyError,
   changePercent = changePercent,
   transactionCount = currentExpenseSnapshots.size,
  categoryBreakdown = categoryBreakdown,
@@ -715,10 +786,10 @@ class AnalyticsViewModel @Inject constructor(
  suspectTransactions = suspectTransactions,
  dayOfWeekPattern = dayOfWeekPattern,
  budgetVsActual = budgetVsActual,
- statisticalInsights = advResult.stats,
- enhancedCategories = advResult.cats,
- enhancedMerchants = advResult.merchs,
- spendingPatterns = advResult.patterns,
+ statisticalInsights = advResult.stats?.takeIf { it.totalMoneyResult !is com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Unavailable },
+ enhancedCategories = advResult.cats.filter { it.totalMoneyResult !is com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Unavailable },
+ enhancedMerchants = advResult.merchs.filter { it.totalMoneyResult !is com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Unavailable },
+ spendingPatterns = advResult.patterns?.takeIf { it.totalMoneyResult !is com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Unavailable },
  hourOfDayPattern = hourOfDayPattern,
  currentDateRange = Pair(currentStart, currentEnd),
  locationInsights = locationInsights,
@@ -756,6 +827,27 @@ class AnalyticsViewModel @Inject constructor(
             .fold(1) { acc, budget -> 31 * acc + budget.hashCode() }
     }
 
+    private fun sumNormalizedExpenses(
+        expenses: List<ExpenseSnapshot>,
+        displayCurrency: String
+    ): Double {
+        val target = CurrencyCode.parse(displayCurrency)
+            ?: throw MoneyDisplayUnavailableException(MoneyDisplayUnavailableReasonCode.INVALID_TARGET_CURRENCY)
+        if (expenses.any { CurrencyCode.parse(it.currency) != target }) {
+            throw MoneyDisplayUnavailableException(MoneyDisplayUnavailableReasonCode.INVALID_SOURCE_CURRENCY)
+        }
+        return MoneyAggregateBuilder.fromHomeCurrencyAmounts(
+            expenses.map { it.effectiveAmount },
+            target.code
+        ).displayAmount
+    }
+
+    private fun sumNormalizedValues(values: List<Double>, displayCurrency: String): Double {
+        val target = CurrencyCode.parse(displayCurrency)
+            ?: throw MoneyDisplayUnavailableException(MoneyDisplayUnavailableReasonCode.INVALID_TARGET_CURRENCY)
+        return MoneyAggregateBuilder.fromHomeCurrencyAmounts(values, target.code).displayAmount
+    }
+
     /**
      * @param currentExpenses Pre-normalized (via AnalyticsCurrencyNormalizer at call site line ~292)
      */
@@ -774,8 +866,8 @@ class AnalyticsViewModel @Inject constructor(
             byDay.getOrPut(dayMs) { mutableListOf() }.add(exp)
         }
 
-        // SAFE: currentExpenses is pre-normalized via AnalyticsCurrencyNormalizer (caller line ~292)
-        val dailyTotals = byDay.mapValues { (_, exps) -> exps.sumOf { it.effectiveAmount } }
+        // currentExpenses is pre-normalized via AnalyticsCurrencyNormalizer (caller line ~292).
+        val dailyTotals = byDay.mapValues { (_, exps) -> sumNormalizedExpenses(exps, displayCurrency) }
         if (dailyTotals.size < 3) return emptyList()
 
         val totals = dailyTotals.values.sorted()
@@ -834,8 +926,10 @@ class AnalyticsViewModel @Inject constructor(
                     MonthlyYearTotal(
                         month = month,
                         monthLabel = monthNames[month],
-                        // SAFE: purchases is pre-normalized via AnalyticsCurrencyNormalizer (caller line ~301)
-                        total = exps.sumOf { it.effectiveAmount },
+                        moneyTotal = MoneyAmount(
+                            sumNormalizedExpenses(exps, displayCurrency),
+                            CurrencyCode(displayCurrency)
+                        ),
                         transactionCount = exps.size,
                         displayCurrency = displayCurrency
                     )
@@ -849,8 +943,8 @@ class AnalyticsViewModel @Inject constructor(
         // Need at least some data to be useful
         if (currentMonths.isEmpty() && priorMonths.isEmpty()) return null
 
-        val currentTotal = currentMonths.sumOf { it.total }
-        val priorTotal = priorMonths.sumOf { it.total }
+        val currentTotal = sumNormalizedValues(currentMonths.map { it.moneyTotal.amount }, displayCurrency)
+        val priorTotal = sumNormalizedValues(priorMonths.map { it.moneyTotal.amount }, displayCurrency)
 
         val changePercent = if (priorTotal > 0)
             ((currentTotal - priorTotal) / priorTotal * 100).toFloat()
@@ -864,7 +958,7 @@ class AnalyticsViewModel @Inject constructor(
             val c = currentMap[month]
             val p = priorMap[month]
             if (c != null || p != null) {
-                Triple(monthNames[month], c?.total ?: 0.0, p?.total ?: 0.0)
+                Triple(monthNames[month], c?.moneyTotal?.amount ?: 0.0, p?.moneyTotal?.amount ?: 0.0)
             } else null
         }
 
@@ -952,7 +1046,9 @@ class AnalyticsViewModel @Inject constructor(
 
         // Average total spend per cycle within 7 days
         // SAFE: allExpenses pre-normalized via AnalyticsCurrencyNormalizer (caller line ~294)
-        val avgTotalIn7Days = cycles.map { c -> c.purchasesAfter.sumOf { it.effectiveAmount } }.average()
+        val avgTotalIn7Days = cycles
+            .map { c -> sumNormalizedExpenses(c.purchasesAfter, displayCurrency) }
+            .average()
 
         // Per-category accumulation across cycles
         data class CatAccum(var totalSpent: Double = 0.0, var cycleCount: Int = 0)
@@ -960,8 +1056,7 @@ class AnalyticsViewModel @Inject constructor(
         cycles.forEach { c ->
             val spentByCategory = c.purchasesAfter
                 .groupBy { it.categoryId }
-                // SAFE: allExpenses pre-normalized via AnalyticsCurrencyNormalizer (caller line ~294)
-                .mapValues { (_, exps) -> exps.sumOf { it.effectiveAmount } }
+                .mapValues { (_, exps) -> sumNormalizedExpenses(exps, displayCurrency) }
             spentByCategory.forEach { (catId, spent) ->
                 val a = catAccum.getOrPut(catId) { CatAccum() }
                 a.totalSpent += spent
@@ -986,7 +1081,7 @@ class AnalyticsViewModel @Inject constructor(
 
         return PostSalaryPattern(
             salaryCount = salaryEvents.size,
-            avgSalaryAmount = salaryEvents.map { it.effectiveAmount }.average(),
+            avgSalaryAmount = sumNormalizedExpenses(salaryEvents, displayCurrency) / salaryEvents.size,
             avgDaysToFirstPurchase = avgDaysToFirst,
             topCategories = topCategories,
             avgTotalSpentIn7Days = avgTotalIn7Days,
@@ -1012,7 +1107,7 @@ class AnalyticsViewModel @Inject constructor(
         val broadWindowMs = TimePeriodUtils.DAY_IN_MILLIS // 24h for same-day duplicates
 
         // Average transaction amount for outlier detection
-        val avgAmount = currentExpenses.map { it.effectiveAmount }.average()
+        val avgAmount = sumNormalizedExpenses(currentExpenses, displayCurrency) / currentExpenses.size
 
         // Track already-flagged IDs to avoid double-reporting
         val flagged = mutableSetOf<Long>()

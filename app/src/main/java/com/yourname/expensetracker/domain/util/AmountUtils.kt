@@ -44,7 +44,8 @@ object AmountUtils {
             .anyMatch { Character.getType(it) == Character.OTHER_SYMBOL.toInt() }
         if (hasOtherSymbol) return null
         
-        var cleaned = amountStr.trim()
+        // Grouping validation operates on numeric text, not its supported prefix.
+        var cleaned = amountStr.trim().replace(Regex("^[€$£¥]\\s*"), "")
 
         var isNegative = false
         
@@ -86,22 +87,22 @@ object AmountUtils {
                 if (lastComma > lastDot) {
                     val decimalParts = cleaned.split(",")
                     if (decimalParts.size != 2 || decimalParts[1].isEmpty()) {
-                        Timber.w("Ambiguous amount format: $amountStr")
+                        Timber.w("AMOUNT_FORMAT_INVALID")
                         return@parseAmount null
                     }
                     if (!hasStrictThousandsGrouping(decimalParts[0], separator = '.')) {
-                        Timber.w("Ambiguous amount format (inconsistent grouping): $amountStr")
+                        Timber.w("AMOUNT_GROUPING_INVALID")
                         return@parseAmount null
                     }
                     cleaned.replace(".", "").replace(",", ".")
                 } else {
                     val decimalParts = cleaned.split(".")
                     if (decimalParts.size != 2 || decimalParts[1].isEmpty()) {
-                        Timber.w("Ambiguous amount format: $amountStr")
+                        Timber.w("AMOUNT_FORMAT_INVALID")
                         return@parseAmount null
                     }
                     if (!hasStrictThousandsGrouping(decimalParts[0], separator = ',')) {
-                        Timber.w("Ambiguous amount format (inconsistent grouping): $amountStr")
+                        Timber.w("AMOUNT_GROUPING_INVALID")
                         return@parseAmount null
                     }
                     cleaned.replace(",", "")
@@ -122,13 +123,13 @@ object AmountUtils {
                             !firstGroup.all { it.isDigit() } ||
                             groupingParts.any { it.length != 3 }
                         ) {
-                            Timber.w("Ambiguous amount format (inconsistent grouping): $amountStr")
+                            Timber.w("AMOUNT_GROUPING_INVALID")
                             return@parseAmount null
                         }
                         cleaned.replace(",", "")
                     }
                     else -> {
-                        Timber.w("Ambiguous amount format: $amountStr")
+                        Timber.w("AMOUNT_FORMAT_INVALID")
                         return@parseAmount null
                     }
                 }
@@ -143,7 +144,8 @@ object AmountUtils {
             val value = finalCleaned.toDoubleOrNull() ?: return null
             if (isNegative) -value else value
         } catch (e: Exception) {
-            Timber.w("Failed to parse amount")
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Timber.w("AMOUNT_PARSE_FAILED")
             null
         }
     }

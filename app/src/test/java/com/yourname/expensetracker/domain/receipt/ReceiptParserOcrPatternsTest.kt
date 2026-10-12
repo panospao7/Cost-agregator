@@ -46,7 +46,7 @@ class ReceiptParserOcrPatternsTest {
             ΣΥΝΟΛΟ € 50,00
         """.trimIndent()
         val result = parser.parse(input)
-        assertEquals("Should extract total from ΣΥΝΟΛΟ", 50.00, result.total!!, 0.01)
+        assertEquals("Should extract total from ΣΥΝΟΛΟ", 50.00, result.total!!.amount, 0.01)
     }
 
     @Test
@@ -56,7 +56,7 @@ class ReceiptParserOcrPatternsTest {
             ΤΕΛΙΚΟ 12,50 €
         """.trimIndent()
         val result = parser.parse(input)
-        assertEquals("Should extract total from ΤΕΛΙΚΟ", 12.50, result.total!!, 0.01)
+        assertEquals("Should extract total from ΤΕΛΙΚΟ", 12.50, result.total!!.amount, 0.01)
     }
 
     @Test
@@ -66,7 +66,7 @@ class ReceiptParserOcrPatternsTest {
             ΠΛΗΡΩΤΕΟ 35,00 €
         """.trimIndent()
         val result = parser.parse(input)
-        assertEquals("Should extract total from ΠΛΗΡΩΤΕΟ", 35.00, result.total!!, 0.01)
+        assertEquals("Should extract total from ΠΛΗΡΩΤΕΟ", 35.00, result.total!!.amount, 0.01)
     }
 
     @Test
@@ -76,7 +76,7 @@ class ReceiptParserOcrPatternsTest {
             ΠΟΣΟ: €80,43
         """.trimIndent()
         val result = parser.parse(input)
-        assertEquals("Should extract total from ΠΟΣΟ", 80.43, result.total!!, 0.01)
+        assertEquals("Should extract total from ΠΟΣΟ", 80.43, result.total!!.amount, 0.01)
     }
 
     @Test
@@ -87,7 +87,7 @@ class ReceiptParserOcrPatternsTest {
         """.trimIndent()
         val result = parser.parse(input)
         // ΜΕΤΡΗΤΑ is cash given, not total - but should still parse amount
-        assertNotNull("Should parse amount from ΜΕΤΡΗΤΑ line", result.total)
+        assertNotNull("Should parse amount from ΜΕΤΡΗΤΑ line", result.total?.amount)
     }
 
     @Test
@@ -96,7 +96,7 @@ class ReceiptParserOcrPatternsTest {
             NAHPΩTEO: 45,50 €
         """.trimIndent()
         val result = parser.parse(input)
-        assertEquals(45.50, result.total!!, 0.01)
+        assertEquals(45.50, result.total!!.amount, 0.01)
     }
 
     @Test
@@ -104,8 +104,8 @@ class ReceiptParserOcrPatternsTest {
         val input = """
             YNUAIKH AEIA: 50,00 EYRL
         """.trimIndent()
-        val result = parser.parse(input)
-        assertEquals(50.00, result.total!!, 0.01)
+        val result = parser.parse(input + "\nCURRENCY: EUR")
+        assertEquals(50.00, result.total!!.amount, 0.01)
     }
 
     // ============================================
@@ -119,7 +119,7 @@ class ReceiptParserOcrPatternsTest {
             ΣΥΝΟΛΙΚΗ ΑΞΙΑ: 20,01 ΕΥΡΩ
         """.trimIndent()
         val result = parser.parse(input)
-        assertEquals("Should extract total from ΣΥΝΟΛΙΚΗ ΑΞΙΑ", 20.01, result.total!!, 0.01)
+        assertEquals("Should extract total from ΣΥΝΟΛΙΚΗ ΑΞΙΑ", 20.01, result.total!!.amount, 0.01)
         assertEquals("Should detect EUR currency", "EUR", result.currency)
     }
 
@@ -131,7 +131,7 @@ class ReceiptParserOcrPatternsTest {
         """.trimIndent()
         val result = parser.parse(input)
         // ΚΑΘΑΡΗ ΑΞΙΑ is net value (subtotal), should be extracted
-        assertNotNull("Should parse ΚΑΘΑΡΗ ΑΞΙΑ", result.subtotal)
+        assertNotNull("Should parse ΚΑΘΑΡΗ ΑΞΙΑ", result.subtotal?.amount)
     }
 
     @Test
@@ -141,7 +141,7 @@ class ReceiptParserOcrPatternsTest {
             ΓΕΝΙΚΟ ΣΥΝΟΛΟ: 100,00 €
         """.trimIndent()
         val result = parser.parse(input)
-        assertEquals("Should extract total from ΓΕΝΙΚΟ ΣΥΝΟΛΟ", 100.00, result.total!!, 0.01)
+        assertEquals("Should extract total from ΓΕΝΙΚΟ ΣΥΝΟΛΟ", 100.00, result.total!!.amount, 0.01)
     }
 
     // ============================================
@@ -159,7 +159,7 @@ class ReceiptParserOcrPatternsTest {
             TOTAL 45, 50 €
         """.trimIndent()
         val result = parser.parse(input)
-        assertEquals("Should fix '45, 50' to 45.50", 45.50, result.total!!, 0.01)
+        assertEquals("Should fix '45, 50' to 45.50", 45.50, result.total!!.amount, 0.01)
     }
 
     @Test
@@ -169,7 +169,7 @@ class ReceiptParserOcrPatternsTest {
             TOTAL 12 .50 €
         """.trimIndent()
         val result = parser.parse(input)
-        assertEquals("Should fix '12 .50' to 12.50", 12.50, result.total!!, 0.01)
+        assertEquals("Should fix '12 .50' to 12.50", 12.50, result.total!!.amount, 0.01)
     }
 
     @Test
@@ -179,14 +179,14 @@ class ReceiptParserOcrPatternsTest {
             TOTAL 1 250,50 €
         """.trimIndent()
         val result = parser.parse(input)
-        assertEquals("Should fix '1 250,50' to 1250.50", 1250.50, result.total!!, 0.01)
+        assertEquals("Should fix '1 250,50' to 1250.50", 1250.50, result.total!!.amount, 0.01)
     }
 
     @Test
     fun `test severely mangled number`() {
         val input = "TOTAL 4 5 . 5 0 EUR"
         val result = parser.parse(input)
-        assertEquals("Should fix '4 5 . 5 0' to 45.50", 45.50, result.total!!, 0.01)
+        assertEquals("Should fix '4 5 . 5 0' to 45.50", 45.50, result.total!!.amount, 0.01)
     }
 
     // ============================================
@@ -201,9 +201,9 @@ class ReceiptParserOcrPatternsTest {
             20,13 24,00%
             E0,13
         """.trimIndent()
-        val result = parser.parse(input)
+        val result = parser.parse(input + "\nCURRENCY: EUR")
         // Should ignore 'E0,13' and extract '20,13' from the line with percentage
-        assertEquals("Should extract amount before %", 20.13, result.total!!, 0.01)
+        assertEquals("Should extract amount before %", 20.13, result.total!!.amount, 0.01)
     }
 
     @Test
@@ -216,7 +216,7 @@ class ReceiptParserOcrPatternsTest {
         """.trimIndent()
         val result = parser.parse(input)
         // Should skip the ΦΠΑ lines and pick the ΣΥΝΟΛΟ amount
-        assertEquals("Should skip tax lines and pick total", 44.20, result.total!!, 0.01)
+        assertEquals("Should skip tax lines and pick total", 44.20, result.total!!.amount, 0.01)
     }
 
     // ============================================
@@ -231,8 +231,8 @@ class ReceiptParserOcrPatternsTest {
             AP: 1926788
             TOTAL: 50.00
         """.trimIndent()
-        val result = parser.parse(input)
-        assertEquals("Should skip serial and pick total", 50.00, result.total!!, 0.01)
+        val result = parser.parse(input + "\nCURRENCY: EUR")
+        assertEquals("Should skip serial and pick total", 50.00, result.total!!.amount, 0.01)
     }
 
     @Test
@@ -242,8 +242,8 @@ class ReceiptParserOcrPatternsTest {
             ΑΡΙΘΜΟΣ ΑΠΌΔΕΙΞΗΣ: 123456
             ΣΥΝΟΛΟ: 15.20
         """.trimIndent()
-        val result = parser.parse(input)
-        assertEquals("Should skip ΑΡΙΘΜΟΣ and pick total", 15.20, result.total!!, 0.01)
+        val result = parser.parse(input + "\nCURRENCY: EUR")
+        assertEquals("Should skip ΑΡΙΘΜΟΣ and pick total", 15.20, result.total!!.amount, 0.01)
     }
 
     // ============================================
@@ -268,7 +268,7 @@ class ReceiptParserOcrPatternsTest {
             TOTAL 1.2 5 0, 5 0 €
         """.trimIndent()
         val result = parser.parse(input)
-        assertEquals(1250.50, result.total!!, 0.01)
+        assertEquals(1250.50, result.total!!.amount, 0.01)
     }
 
     // ============================================
@@ -282,7 +282,7 @@ class ReceiptParserOcrPatternsTest {
             TOTAL €50,00
         """.trimIndent()
         val result = parser.parse(input)
-        assertEquals("Should parse €50,00", 50.00, result.total!!, 0.01)
+        assertEquals("Should parse €50,00", 50.00, result.total!!.amount, 0.01)
     }
 
     @Test
@@ -292,7 +292,7 @@ class ReceiptParserOcrPatternsTest {
             TOTAL 50,00 €
         """.trimIndent()
         val result = parser.parse(input)
-        assertEquals("Should parse 50,00 €", 50.00, result.total!!, 0.01)
+        assertEquals("Should parse 50,00 €", 50.00, result.total!!.amount, 0.01)
     }
 
     @Test
@@ -302,7 +302,7 @@ class ReceiptParserOcrPatternsTest {
             TOTAL EUR 100,00
         """.trimIndent()
         val result = parser.parse(input)
-        assertEquals("Should parse EUR 100,00", 100.00, result.total!!, 0.01)
+        assertEquals("Should parse EUR 100,00", 100.00, result.total!!.amount, 0.01)
         assertEquals("Should detect EUR currency", "EUR", result.currency)
     }
 
@@ -387,7 +387,7 @@ class ReceiptParserOcrPatternsTest {
             TOTAL 124,00 €
         """.trimIndent()
         val result = parser.parse(input)
-        assertEquals("Should extract VAT", 24.00, result.tax!!, 0.01)
+        assertEquals("Should extract VAT", 24.00, result.tax!!.amount, 0.01)
     }
 
     @Test
@@ -398,7 +398,7 @@ class ReceiptParserOcrPatternsTest {
             TOTAL 50,00 €
         """.trimIndent()
         val result = parser.parse(input)
-        assertNotNull("Should parse Φ.Π.Α.", result.tax)
+        assertNotNull("Should parse Φ.Π.Α.", result.tax?.amount)
     }
 
     @Test
@@ -410,7 +410,7 @@ class ReceiptParserOcrPatternsTest {
         """.trimIndent()
         val result = parser.parse(input)
         // 24,00% should NOT be picked as total
-        assertNotEquals("VAT percentage should not be total", 24.00, result.total)
+        assertNotEquals("VAT percentage should not be total", 24.00, result.total?.amount)
     }
 
     // ============================================
@@ -426,7 +426,7 @@ class ReceiptParserOcrPatternsTest {
         """.trimIndent()
         val result = parser.parse(input)
         // Should NOT pick 1.574 as total
-        assertEquals("Should pick actual total, not unit price", 45.50, result.total!!, 0.01)
+        assertEquals("Should pick actual total, not unit price", 45.50, result.total!!.amount, 0.01)
     }
 
     // ============================================
@@ -437,21 +437,21 @@ class ReceiptParserOcrPatternsTest {
     fun `test complete line - ΣΥΝΟΛΟ € 50,00`() {
         val input = "ΣΥΝΟΛΟ € 50,00"
         val result = parser.parse(input)
-        assertEquals("Should parse 'ΣΥΝΟΛΟ € 50,00'", 50.00, result.total!!, 0.01)
+        assertEquals("Should parse 'ΣΥΝΟΛΟ € 50,00'", 50.00, result.total!!.amount, 0.01)
     }
 
     @Test
     fun `test complete line - ΣΥΝΟΛΟ 80_43 EUR`() {
         val input = "ΣΥΝΟΛΟ: 80,43 €"
         val result = parser.parse(input)
-        assertEquals("Should parse 'ΣΥΝΟΛΟ: 80,43 €'", 80.43, result.total!!, 0.01)
+        assertEquals("Should parse 'ΣΥΝΟΛΟ: 80,43 €'", 80.43, result.total!!.amount, 0.01)
     }
 
     @Test
     fun `test complete line - ΠΟΣΟ_AMOUNT`() {
         val input = "ΠΟΣΟ/AMOUNT: €80,43"
         val result = parser.parse(input)
-        assertEquals("Should parse 'ΠΟΣΟ/AMOUNT: €80,43'", 80.43, result.total!!, 0.01)
+        assertEquals("Should parse 'ΠΟΣΟ/AMOUNT: €80,43'", 80.43, result.total!!.amount, 0.01)
     }
 
     // ============================================
@@ -465,7 +465,7 @@ class ReceiptParserOcrPatternsTest {
             EYNONO € 5,00
         """.trimIndent()
         val result = parser.parse(input)
-        assertEquals("Should parse EYNONO as ΣΥΝΟΛΟ", 5.00, result.total!!, 0.01)
+        assertEquals("Should parse EYNONO as ΣΥΝΟΛΟ", 5.00, result.total!!.amount, 0.01)
     }
 
     @Test
@@ -475,7 +475,7 @@ class ReceiptParserOcrPatternsTest {
             METPHTA 25,74 ΕΥΡΩ
         """.trimIndent()
         val result = parser.parse(input)
-        assertNotNull("Should parse METPHTA line", result.total)
+        assertNotNull("Should parse METPHTA line", result.total?.amount)
     }
 
     @Test
@@ -485,7 +485,7 @@ class ReceiptParserOcrPatternsTest {
             TOTAL 50,00 EYPΩ
         """.trimIndent()
         val result = parser.parse(input)
-        assertEquals("Should parse EYPΩ as EUR", 50.00, result.total!!, 0.01)
+        assertEquals("Should parse EYPΩ as EUR", 50.00, result.total!!.amount, 0.01)
         assertEquals("Currency should be EUR", "EUR", result.currency)
     }
 
@@ -496,7 +496,7 @@ class ReceiptParserOcrPatternsTest {
             TOTAL 50,00 EYP9
         """.trimIndent()
         val result = parser.parse(input)
-        assertEquals("Should parse EYP9 as EUR", 50.00, result.total!!, 0.01)
+        assertEquals("Should parse EYP9 as EUR", 50.00, result.total!!.amount, 0.01)
     }
 
     @Test
@@ -535,7 +535,7 @@ class ReceiptParserOcrPatternsTest {
             182,00 €
         """.trimIndent()
         val result = parser.parse(input)
-        assertEquals("Should parse ZYNOAO IONTAN", 182.00, result.total!!, 0.01)
+        assertEquals("Should parse ZYNOAO IONTAN", 182.00, result.total!!.amount, 0.01)
     }
 
     @Test
@@ -545,7 +545,7 @@ class ReceiptParserOcrPatternsTest {
             NAHPQTEO 10,00 €
         """.trimIndent()
         val result = parser.parse(input)
-        assertEquals("Should parse NAHPQTEO as ΠΛΗΡΩΤΕΟ", 10.00, result.total!!, 0.01)
+        assertEquals("Should parse NAHPQTEO as ΠΛΗΡΩΤΕΟ", 10.00, result.total!!.amount, 0.01)
     }
 
 
@@ -604,7 +604,7 @@ class ReceiptParserOcrPatternsTest {
         """.trimIndent()
         val result = parser.parse(input)
         assertTrue("Should extract line items", result.lineItems.isNotEmpty())
-        assertEquals("Total should match", 33.60, result.total!!, 0.01)
+        assertEquals("Total should match", 33.60, result.total!!.amount, 0.01)
     }
 
     @Test
@@ -632,7 +632,7 @@ class ReceiptParserOcrPatternsTest {
             NOsO/AMOUNT: €35,00
         """.trimIndent()
         val result = parser.parse(input)
-        assertEquals("Should parse card receipt total", 35.00, result.total!!, 0.01)
+        assertEquals("Should parse card receipt total", 35.00, result.total!!.amount, 0.01)
     }
 
     @Test
@@ -643,7 +643,7 @@ class ReceiptParserOcrPatternsTest {
             EYXAPISTOYME - THANK YOU
         """.trimIndent()
         val result = parser.parse(input)
-        assertEquals("Should parse total before thank you", 50.00, result.total!!, 0.01)
+        assertEquals("Should parse total before thank you", 50.00, result.total!!.amount, 0.01)
     }
 
     // ============================================
@@ -654,14 +654,14 @@ class ReceiptParserOcrPatternsTest {
     fun `test bilingual total`() {
         val input = "TOTAL / ΣΥΝΟΛΟ: €45.50"
         val result = parser.parse(input)
-        assertEquals("Should parse bilingual total", 45.50, result.total!!, 0.01)
+        assertEquals("Should parse bilingual total", 45.50, result.total!!.amount, 0.01)
     }
 
     @Test
     fun `test bilingual cash`() {
         val input = "CASH / ΜΕΤΡΗΤΑ: €50.00"
         val result = parser.parse(input)
-        assertNotNull("Should parse bilingual cash", result.total)
+        assertNotNull("Should parse bilingual cash", result.total?.amount)
     }
 
     @Test
@@ -673,8 +673,8 @@ class ReceiptParserOcrPatternsTest {
             TOTAL: €42.76
         """.trimIndent()
         val result = parser.parse(input)
-        assertEquals("Should parse total", 42.76, result.total!!, 0.01)
-        assertEquals("Should parse VAT", 2.76, result.tax!!, 0.01)
+        assertEquals("Should parse total", 42.76, result.total!!.amount, 0.01)
+        assertEquals("Should parse VAT", 2.76, result.tax!!.amount, 0.01)
     }
 
     // ============================================
@@ -689,7 +689,7 @@ class ReceiptParserOcrPatternsTest {
         """.trimIndent()
         val result = parser.parse(input)
         // 2020.50 should be valid (has decimal)
-        assertEquals("Should allow year-like amount with decimal", 2020.50, result.total!!, 0.01)
+        assertEquals("Should allow year-like amount with decimal", 2020.50, result.total!!.amount, 0.01)
     }
 
     @Test
@@ -701,7 +701,7 @@ class ReceiptParserOcrPatternsTest {
         """.trimIndent()
         val result = parser.parse(input)
         // 2026 should NOT be the total
-        assertNotEquals("Year should not be total", 2026.0, result.total)
+        assertNotEquals("Year should not be total", 2026.0, result.total?.amount)
     }
 
     @Test
@@ -713,7 +713,7 @@ class ReceiptParserOcrPatternsTest {
         """.trimIndent()
         val result = parser.parse(input)
         // Phone number should not be picked as amount
-        assertTrue("Total should be reasonable", result.total!! < 1000)
+        assertTrue("Total should be reasonable", result.total!!.amount < 1000)
     }
 
     @Test
@@ -725,7 +725,7 @@ class ReceiptParserOcrPatternsTest {
         """.trimIndent()
         val result = parser.parse(input)
         // Tax ID (094206641) should not be picked as amount
-        assertTrue("Total should be reasonable", result.total!! < 1000)
+        assertTrue("Total should be reasonable", result.total!!.amount < 1000)
     }
 
     // ============================================

@@ -96,7 +96,7 @@ class SpendingPaceCalculatorValidationTest {
         )
         
         // Then: Daily rates should be equal (50 per day)
-        val currentDailyRate = result.currentMonthSpent / result.daysElapsed
+        val currentDailyRate = requireNotNull(result.currentMonthSpent) / result.daysElapsed
         val previousDailyRate = result.previousMonthTotal!! / 31 // March has 31 days
         
         assertEquals(50.0, currentDailyRate, 0.01)
@@ -135,7 +135,7 @@ class SpendingPaceCalculatorValidationTest {
         )
         
         // Then: Current daily rate is double (100 vs 50)
-        val currentDailyRate = result.currentMonthSpent / result.daysElapsed
+        val currentDailyRate = requireNotNull(result.currentMonthSpent) / result.daysElapsed
         val previousDailyRate = result.previousMonthTotal!! / 31
         
         assertEquals(100.0, currentDailyRate, 0.01)
@@ -174,7 +174,7 @@ class SpendingPaceCalculatorValidationTest {
         )
         
         // Then: Current daily rate is half (25 vs 50)
-        val currentDailyRate = result.currentMonthSpent / result.daysElapsed
+        val currentDailyRate = requireNotNull(result.currentMonthSpent) / result.daysElapsed
         val previousDailyRate = result.previousMonthTotal!! / 31
         
         assertEquals(25.0, currentDailyRate, 0.01)
@@ -207,11 +207,12 @@ class SpendingPaceCalculatorValidationTest {
             currentMonthStart = createDate(2024, 4, 1),
             previousMonthStart = previousMonthStart,
             previousMonthEnd = previousMonthEnd,
-            allExpenses = currentExpenses
+            allExpenses = currentExpenses,
+            displayCurrency = "EUR"
         )
         
         // Then: Projected total should be 500 * 30 / 10 = 1500
-        assertEquals(1500.0, result.projectedTotal, 0.01)
+        assertEquals(1500.0, requireNotNull(result.projectedTotal), 0.01)
         assertEquals(10, result.daysElapsed)
         assertEquals(30, result.daysInMonth)
     }
@@ -236,12 +237,13 @@ class SpendingPaceCalculatorValidationTest {
             currentMonthStart = createDate(2024, 4, 1),
             previousMonthStart = previousMonthStart,
             previousMonthEnd = previousMonthEnd,
-            allExpenses = currentExpenses
+            allExpenses = currentExpenses,
+            displayCurrency = "EUR"
         )
         
         // Then: Without a prior baseline, early days use a stabilized projection floor.
         // day=2, stabilizedDays=max(2,5)=5 => 200*30/5 = 1200
-        assertEquals(1200.0, result.projectedTotal, 0.01)
+        assertEquals(1200.0, requireNotNull(result.projectedTotal), 0.01)
         assertEquals(2, result.daysElapsed)
         assertEquals(30, result.daysInMonth)
     }
@@ -266,12 +268,13 @@ class SpendingPaceCalculatorValidationTest {
             currentMonthStart = createDate(2024, 4, 1),
             previousMonthStart = previousMonthStart,
             previousMonthEnd = previousMonthEnd,
-            allExpenses = currentExpenses
+            allExpenses = currentExpenses,
+            displayCurrency = "EUR"
         )
         
         // Then: Without a prior baseline, day 4 is still stabilized to a 5-day floor.
         // 400*30/5 = 2400
-        assertEquals(2400.0, result.projectedTotal, 0.01)
+        assertEquals(2400.0, requireNotNull(result.projectedTotal), 0.01)
         assertEquals(4, result.daysElapsed)
         assertEquals(30, result.daysInMonth)
     }
@@ -306,7 +309,7 @@ class SpendingPaceCalculatorValidationTest {
         )
         
         // Then: Pace percentage should be (60/50) * 100 = 120%
-        val currentDailyRate = result.currentMonthSpent / result.daysElapsed
+        val currentDailyRate = requireNotNull(result.currentMonthSpent) / result.daysElapsed
         val previousDailyRate = result.previousMonthTotal!! / 31
         
         assertEquals(60.0, currentDailyRate, 0.01)
@@ -334,7 +337,8 @@ class SpendingPaceCalculatorValidationTest {
             currentMonthStart = createDate(2024, 4, 1),
             previousMonthStart = previousMonthStart,
             previousMonthEnd = previousMonthEnd,
-            allExpenses = currentExpenses
+            allExpenses = currentExpenses,
+            displayCurrency = "EUR"
         )
         
         // Then: -1 is the explicit sentinel for an unavailable baseline.
@@ -361,15 +365,16 @@ class SpendingPaceCalculatorValidationTest {
             currentMonthStart = createDate(2024, 4, 1),
             previousMonthStart = previousMonthStart,
             previousMonthEnd = previousMonthEnd,
-            allExpenses = currentExpenses
+            allExpenses = currentExpenses,
+            displayCurrency = "EUR"
         )
         
         // Then: Current spending should be 0
-        assertEquals(0.0, result.currentMonthSpent, 0.01)
+        assertEquals(0.0, requireNotNull(result.currentMonthSpent), 0.01)
         assertEquals(15, result.daysElapsed)
         
         // Projected total should be 0
-        assertEquals(0.0, result.projectedTotal, 0.01)
+        assertEquals(0.0, requireNotNull(result.projectedTotal), 0.01)
     }
 
     @Test
@@ -394,11 +399,12 @@ class SpendingPaceCalculatorValidationTest {
             currentMonthStart = createDate(2024, 4, 1),
             previousMonthStart = previousMonthStart,
             previousMonthEnd = previousMonthEnd,
-            allExpenses = currentExpenses
+            allExpenses = currentExpenses,
+            displayCurrency = "EUR"
         )
         
         // Then: Should only count purchases (500 + 400 = 900)
-        assertEquals(900.0, result.currentMonthSpent, 0.01)
+        assertEquals(900.0, requireNotNull(result.currentMonthSpent), 0.01)
     }
 
     @Test
@@ -423,11 +429,12 @@ class SpendingPaceCalculatorValidationTest {
             currentMonthStart = createDate(2024, 4, 1),
             previousMonthStart = previousMonthStart,
             previousMonthEnd = previousMonthEnd,
-            allExpenses = currentExpenses
+            allExpenses = currentExpenses,
+            displayCurrency = "EUR"
         )
         
         // Then: Should only count mine (500 + 400 = 900)
-        assertEquals(900.0, result.currentMonthSpent, 0.01)
+        assertEquals(900.0, requireNotNull(result.currentMonthSpent), 0.01)
     }
 
     @Test
@@ -458,12 +465,12 @@ class SpendingPaceCalculatorValidationTest {
         )
         
         // Then: Projected total should equal actual spending
-        assertEquals(1500.0, result.projectedTotal, 0.01)
+        assertEquals(1500.0, requireNotNull(result.projectedTotal), 0.01)
         assertEquals(30, result.daysElapsed)
         assertEquals(30, result.daysInMonth)
         
         // Daily rates should be equal
-        val currentDailyRate = result.currentMonthSpent / result.daysElapsed
+        val currentDailyRate = requireNotNull(result.currentMonthSpent) / result.daysElapsed
         val previousDailyRate = result.previousMonthTotal!! / 31
         
         assertEquals(50.0, currentDailyRate, 0.01)
@@ -505,10 +512,10 @@ class SpendingPaceCalculatorValidationTest {
         assertEquals(28, result.daysInMonth)
         
         // Projected total: 700 * 28 / 14 = 1400
-        assertEquals(1400.0, result.projectedTotal, 0.01)
+        assertEquals(1400.0, requireNotNull(result.projectedTotal), 0.01)
         
         // Daily rates: current 50, previous 50 (1550/31 = 50)
-        val currentDailyRate = result.currentMonthSpent / result.daysElapsed
+        val currentDailyRate = requireNotNull(result.currentMonthSpent) / result.daysElapsed
         val previousDailyRate = result.previousMonthTotal!! / 31
         
         assertEquals(50.0, currentDailyRate, 0.01)
@@ -536,7 +543,8 @@ class SpendingPaceCalculatorValidationTest {
             currentMonthStart = createDate(2024, 2, 1),
             previousMonthStart = previousMonthStart,
             previousMonthEnd = previousMonthEnd,
-            allExpenses = currentExpenses
+            allExpenses = currentExpenses,
+            displayCurrency = "EUR"
         )
         
         // Then: February 2024 has 29 days (leap year)
@@ -544,7 +552,7 @@ class SpendingPaceCalculatorValidationTest {
         assertEquals(29, result.daysInMonth)
         
         // Projected total: 700 * 29 / 14 = 1450
-        assertEquals(1450.0, result.projectedTotal, 0.01)
+        assertEquals(1450.0, requireNotNull(result.projectedTotal), 0.01)
     }
 
     private fun TransactionType.toDomainTransactionType(): DomainTransactionType {

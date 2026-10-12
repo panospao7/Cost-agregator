@@ -4,6 +4,7 @@ import com.yourname.expensetracker.domain.ai.model.CategorizedReceiptItem
 import com.yourname.expensetracker.domain.ai.model.CategorySuggestion
 import com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationInput
 import com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationResult
+import com.yourname.expensetracker.domain.ai.model.ReceiptTaxAllocation
 import com.yourname.expensetracker.domain.ai.service.ReceiptItemCategorizationService
 import com.yourname.expensetracker.domain.dto.CategoryRef
 import kotlinx.coroutines.Dispatchers
@@ -32,21 +33,28 @@ class OnDeviceReceiptItemCategorizationService @Inject constructor() : ReceiptIt
             try {
                 val categorizedItems = input.lineItems.map { item ->
                     categorizeSingleItem(item.description, item.totalPrice, input.userCategories)
+                        .let { categorized -> categorized.copy(
+                            isAdjustment = item.isAdjustment,
+                            needsReview = categorized.needsReview || (item.totalPrice < 0.0 && !item.isAdjustment)
+                        ) }
                 }
                 
-                // Calculate tax distribution proportionally
-                val taxDistribution = if (input.totalTax != null && input.totalTax > 0) {
-                    calculateTaxDistribution(input.totalTax, categorizedItems)
-                } else emptyMap()
+                val taxAllocation = calculateTaxDistribution(input.totalTax, categorizedItems, input.currency)
+                val taxDistribution = (taxAllocation as? ReceiptTaxAllocation.Available)
+                    ?.categoryAmounts?.mapValues { it.value.amount } ?: emptyMap()
                 
-                val avgConfidence = categorizedItems.map { it.confidence }.average().toFloat()
+                val avgConfidence = if (categorizedItems.isEmpty()) 0f else {
+                    categorizedItems.map { it.confidence }.average().toFloat()
+                }
                 
                 ReceiptItemCategorizationResult(
                     items = categorizedItems,
                     totalConfidence = avgConfidence,
-                    needsReview = categorizedItems.any { it.needsReview },
+                    needsReview = categorizedItems.isEmpty() || categorizedItems.any { it.needsReview } ||
+                        taxAllocation is ReceiptTaxAllocation.Unavailable,
                     suggestedNewCategories = emptyList(),
-                    taxDistribution = taxDistribution
+                    taxDistribution = taxDistribution,
+                    taxAllocation = taxAllocation
                 )
             } catch (e: Exception) {
                 Timber.e(e, "Error in on-device item categorization")
@@ -164,18 +172,11 @@ class OnDeviceReceiptItemCategorizationService @Inject constructor() : ReceiptIt
     }
     
     private fun calculateTaxDistribution(
-        totalTax: Double,
-        items: List<CategorizedReceiptItem>
-    ): Map<Long, Double> {
-        val totalAmount = items.sumOf { it.amount }
-        if (totalAmount <= 0) return emptyMap()
-        
-        return items.groupBy { it.suggestedCategory?.categoryId ?: -1 }
-            .mapValues { (_, itemsInCategory) ->
-                val categoryTotal = itemsInCategory.sumOf { it.amount }
-                val proportion = categoryTotal / totalAmount
-                totalTax * proportion
-            }
-            .filter { it.key > 0 }
-    }
+        totalTax: Double?,
+        items: List<CategorizedReceiptItem>,
+        currency: String
+    ): ReceiptTaxAllocation = com.yourname.expensetracker.domain.ai.model.ReceiptTaxAllocator.allocate(
+        totalTax, items, currency
+    )
+
 }

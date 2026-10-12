@@ -127,9 +127,9 @@ class ReceiptRepositoryStressTest {
         )
         val parsed = ReceiptParser.ParsedReceipt(
             merchantName = "Coffee Shop",
-            total = 12.50,
-            subtotal = 10.0,
-            tax = 2.50,
+            total = ReceiptParser.sourceMoneyOrNull(12.50, "EUR"),
+            subtotal = ReceiptParser.sourceMoneyOrNull(10.0, "EUR"),
+            tax = ReceiptParser.sourceMoneyOrNull(2.50, "EUR"),
             date = System.currentTimeMillis(),
             currency = "EUR",
             lineItems = emptyList(),
@@ -156,7 +156,7 @@ class ReceiptRepositoryStressTest {
         val (receipt, resultParsed) = repository.processReceipt(uri)
 
         assertNotNull(receipt)
-        assertEquals(12.50, resultParsed.total!!, 0.001)
+        assertEquals(12.50, resultParsed.total!!.amount, 0.001)
         assertEquals("Coffee Shop", resultParsed.merchantName)
         coVerify { scannedReceiptDao.insert(any()) }
     }
@@ -171,7 +171,7 @@ class ReceiptRepositoryStressTest {
 
         assertNotNull(receipt)
         assertEquals("Scan Failed: OCR failed", receipt.rawOcrText)
-        assertEquals(null, parsed.total)
+        assertEquals(null, parsed.total?.amount)
         coVerify { scannedReceiptDao.insert(any()) }
         coVerify { scannedReceiptDao.update(any()) }
         verify(exactly = 1) { ocrService.persistImageCopy(uri) }
@@ -196,7 +196,7 @@ class ReceiptRepositoryStressTest {
         assertEquals("Garbage text that cannot be parsed", receipt.rawOcrText)
         assertEquals(null, receipt.parsedTotal)
         assertEquals(0f, receipt.confidence, 0.001f)
-        assertEquals(null, parsed.total)
+        assertEquals(null, parsed.total?.amount)
         coVerify { scannedReceiptDao.insert(any()) }
     }
 
@@ -210,7 +210,7 @@ class ReceiptRepositoryStressTest {
         assertNotNull(receipt)
         assertEquals("[OCR Failed or Skipped]", receipt.rawOcrText)
         assertEquals(null, parsed.merchantName)
-        assertEquals(null, parsed.total)
+        assertEquals(null, parsed.total?.amount)
         coVerify { scannedReceiptDao.insert(any()) }
         verify(exactly = 1) { ocrService.persistImageCopy(uri) }
         coVerify(exactly = 0) { ocrService.processImage(uri) }
@@ -225,7 +225,7 @@ class ReceiptRepositoryStressTest {
         val ocrResult = OcrResult("Total 10.00", emptyList(), "/path.jpg")
         val parsed = ReceiptParser.ParsedReceipt(
             merchantName = "Store",
-            total = 10.0,
+            total = ReceiptParser.sourceMoneyOrNull(10.0, "EUR"),
             subtotal = null,
             tax = null,
             date = System.currentTimeMillis(),
@@ -270,7 +270,7 @@ class ReceiptRepositoryStressTest {
         val ocrResult = OcrResult("Total 5.00", emptyList(), "/path.jpg")
         val parsed = ReceiptParser.ParsedReceipt(
             merchantName = "Store",
-            total = 5.0,
+            total = ReceiptParser.sourceMoneyOrNull(5.0, "EUR"),
             subtotal = null,
             tax = null,
             date = System.currentTimeMillis(),
@@ -380,7 +380,7 @@ class ReceiptRepositoryStressTest {
         assertEquals(longText, receipt.rawOcrText)
         assertEquals(null, receipt.parsedTotal)
         assertEquals(0f, receipt.confidence, 0.001f)
-        assertEquals(null, parsed.total)
+        assertEquals(null, parsed.total?.amount)
         coVerify { scannedReceiptDao.insert(any()) }
     }
 

@@ -16,6 +16,7 @@ import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.SpendingPace
 import com.yourname.expensetracker.domain.analytics.SpendingPaceProjection
+import com.yourname.expensetracker.domain.analytics.SingleCurrencyAnalyticsInput
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.model.ConfirmedOccurrence
@@ -32,6 +33,8 @@ import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycle
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.core.money.BucketDatePolicy
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateResult
 import com.yourname.expensetracker.domain.core.money.MoneyNormalizationEngine
 import com.yourname.expensetracker.domain.core.money.RateBasis
 import com.yourname.expensetracker.domain.core.money.MoneyBucketInput
@@ -294,39 +297,37 @@ class ForecastInputAssembler @Inject constructor(
         )
     }
 
-    fun buildPastSumDaily(expenses: List<ExpenseSnapshot>): List<Double> {
+    fun buildPastSumDaily(expenses: List<ExpenseSnapshot>, displayCurrency: String): List<Double> {
+        SingleCurrencyAnalyticsInput.from(expenses, displayCurrency)
         val now = timeProvider.now()
         val monthStart = TimePeriodUtils.getStartOfMonth(now)
         val currentDayIndex = TimePeriodUtils.daysBetween(monthStart, now).coerceAtLeast(0)
-        val amountByDay = DoubleArray(currentDayIndex + 1)
-
-        expenses.forEach { expense ->
-            if (expense.transactionType != DomainTransactionType.PURCHASE) return@forEach
-            if (expense.isNotMine) return@forEach
-            if (expense.date !in monthStart..now) return@forEach
-
-            val dayIndex = TimePeriodUtils.daysBetween(monthStart, expense.date)
-            if (dayIndex in amountByDay.indices) {
-                amountByDay[dayIndex] += expense.effectiveAmount
-            }
+        val ownedPurchases = expenses.filter {
+            it.transactionType == DomainTransactionType.PURCHASE && !it.isNotMine &&
+                it.date in monthStart..now
         }
-
-        var runningTotal = 0.0
-        return amountByDay.map { amount ->
-            runningTotal += amount
-            runningTotal
+        return (0..currentDayIndex).map { dayIndex ->
+            MoneyAggregateBuilder.fromHomeCurrencyAmounts(
+                amounts = ownedPurchases.asSequence()
+                    .filter { TimePeriodUtils.daysBetween(monthStart, it.date) <= dayIndex }
+                    .map { it.effectiveAmount }.asIterable(),
+                homeCurrency = displayCurrency
+            ).displayAmount
         }
     }
 
-    fun buildSpendingPace(expenses: List<ExpenseSnapshot>, displayCurrency: String = "EUR"): SpendingPace {
+    fun buildSpendingPace(expenses: List<ExpenseSnapshot>, displayCurrency: String): SpendingPace {
+        SingleCurrencyAnalyticsInput.from(expenses, displayCurrency)
         val now = timeProvider.now()
         val currentMonthStart = TimePeriodUtils.getStartOfMonth(now)
         val previousMonthStart = TimePeriodUtils.getStartOfMonth(TimePeriodUtils.addMonths(now, -1))
         val daysInMonth = TimePeriodUtils.getDaysInMonth(now)
         val daysElapsed = (TimePeriodUtils.daysBetween(currentMonthStart, now) + 1).coerceAtLeast(1)
 
-        val monthSpent = expenses.sumOfIfOwnedPurchase { it.date in currentMonthStart..now }
-        val previousMonthSpent = expenses.sumOfIfOwnedPurchase {
+        val monthSpent = expenses.sumOfIfOwnedPurchase(displayCurrency) {
+            it.date in currentMonthStart..now
+        }
+        val previousMonthSpent = expenses.sumOfIfOwnedPurchase(displayCurrency) {
             it.date >= previousMonthStart && it.date < currentMonthStart
         }
 
@@ -339,7 +340,12 @@ class ForecastInputAssembler @Inject constructor(
             .groupBy { "${TimePeriodUtils.getYear(it.date)}-${TimePeriodUtils.getMonth(it.date)}" }
             .values
             // SAFE: data normalized via AnalyticsCurrencyNormalizer at line 299 (inside assemble())
-            .map { monthExpenses -> monthExpenses.sumOf { it.effectiveAmount } }
+            .map { monthExpenses ->
+                MoneyAggregateBuilder.fromHomeCurrencyAmounts(
+                    amounts = monthExpenses.map { it.effectiveAmount },
+                    homeCurrency = displayCurrency
+                ).displayAmount
+            }
             .takeIf { it.isNotEmpty() }
             ?.average()
 
@@ -536,7 +542,19 @@ class ForecastInputAssembler @Inject constructor(
                     expensesInCurrency.map { it.copy(currency = resolvedHomeCurrency) }
                 )
             } else {
-                val totalAmount = expensesInCurrency.sumOf { it.amount }
+                val totalAmount = when (val sourceTotal = MoneyAggregateBuilder.fromSourceCurrencyAmounts(
+                    amounts = expensesInCurrency.map { it.amount },
+                    sourceCurrency = currency
+                )) {
+                    is MoneyAggregateResult.Available -> sourceTotal.aggregate.displayAmount
+                    is MoneyAggregateResult.Unavailable -> {
+                        plannedConversionFailures += expensesInCurrency.size
+                        plannedWarnings.add(
+                            "Planned expenses in $currency could not be converted to $resolvedHomeCurrency"
+                        )
+                        continue
+                    }
+                }
                 val bucketInput = MoneyBucketInput(
                     amount = totalAmount,
                     currency = CurrencyCode(currency),
@@ -579,7 +597,7 @@ class ForecastInputAssembler @Inject constructor(
         } else 0.0
 
         return ForecastInput(
-            pastSumDaily = buildPastSumDaily(normalizedExpenses),
+            pastSumDaily = buildPastSumDaily(normalizedExpenses, resolvedHomeCurrency),
             recurringPatterns = mergeRecurringPatterns(
                 manualEntities = manualRecurringEntities,
                 detectedPatterns = detectedRecurringPatterns
@@ -662,6 +680,7 @@ class ForecastInputAssembler @Inject constructor(
     }
 
     private fun List<ExpenseSnapshot>.sumOfIfOwnedPurchase(
+        homeCurrency: String,
         predicate: (ExpenseSnapshot) -> Boolean
     ): Double = filter {
         it.transactionType == DomainTransactionType.PURCHASE &&
@@ -669,7 +688,12 @@ class ForecastInputAssembler @Inject constructor(
             predicate(it)
     }
         // SAFE: data normalized via AnalyticsCurrencyNormalizer at line 299 (inside assemble())
-        .sumOf { it.effectiveAmount }
+        .let { purchases ->
+            MoneyAggregateBuilder.fromHomeCurrencyAmounts(
+                amounts = purchases.map { it.effectiveAmount },
+                homeCurrency = homeCurrency
+            ).displayAmount
+        }
 
     /**
      * CURR-587-06: Assemble forecast input from pre-normalized data.
@@ -698,7 +722,19 @@ class ForecastInputAssembler @Inject constructor(
                     expensesInCurrency.map { it.copy(currency = resolvedHomeCurrency) }
                 )
             } else {
-                val totalAmount = expensesInCurrency.sumOf { it.amount }
+                val totalAmount = when (val sourceTotal = MoneyAggregateBuilder.fromSourceCurrencyAmounts(
+                    amounts = expensesInCurrency.map { it.amount },
+                    sourceCurrency = currency
+                )) {
+                    is MoneyAggregateResult.Available -> sourceTotal.aggregate.displayAmount
+                    is MoneyAggregateResult.Unavailable -> {
+                        plannedConversionFailures += expensesInCurrency.size
+                        plannedWarnings.add(
+                            "Planned expenses in $currency could not be converted to $resolvedHomeCurrency"
+                        )
+                        continue
+                    }
+                }
                 val bucketInput = MoneyBucketInput(
                     amount = totalAmount,
                     currency = CurrencyCode(currency),

@@ -472,6 +472,50 @@ class ReceiptScanViewModelTest : ViewModelTestUtils() {
         assertTrue(failureLogs.isEmpty())
     }
 
+    @Test
+    fun `tax inclusive parsed amount cannot be relabeled by a currency edit`() = runTest(testDispatcher) {
+        coEvery { links.checkCanLinkReceipt(17L) } returns true
+        coEvery { coordinator.createExpenseAndLinkReceipt(any()) } returns
+            Result.failure(ReceiptLifecycleCoordinator.DuplicateTransactionException())
+        setState(ReceiptScanState(
+            step = ScanStep.REVIEW, receiptId = 17L, editMerchant = "Merchant",
+            editAmount = "20", editCurrency = "USD", editDate = 1_700_000_000_000L,
+            parsedReceipt = ReceiptParser.ParsedReceipt(
+                "Merchant", ReceiptParser.sourceMoneyOrNull(10.0, "EUR"), null, null,
+                null, "EUR", emptyList(), 0.9f, taxInclusive = true
+            )
+        ))
+
+        model.saveExpense()
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { coordinator.createExpenseAndLinkReceipt(match {
+            it.amount == 20.0 && it.currency == "USD"
+        }) }
+    }
+
+    @Test
+    fun `tax inclusive parsed amount is preserved in its original currency`() = runTest(testDispatcher) {
+        coEvery { links.checkCanLinkReceipt(17L) } returns true
+        coEvery { coordinator.createExpenseAndLinkReceipt(any()) } returns
+            Result.failure(ReceiptLifecycleCoordinator.DuplicateTransactionException())
+        setState(ReceiptScanState(
+            step = ScanStep.REVIEW, receiptId = 17L, editMerchant = "Merchant",
+            editAmount = "20", editCurrency = "EUR", editDate = 1_700_000_000_000L,
+            parsedReceipt = ReceiptParser.ParsedReceipt(
+                "Merchant", ReceiptParser.sourceMoneyOrNull(10.0, "EUR"), null, null,
+                null, "EUR", emptyList(), 0.9f, taxInclusive = true
+            )
+        ))
+
+        model.saveExpense()
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { coordinator.createExpenseAndLinkReceipt(match {
+            it.amount == 10.0 && it.currency == "EUR"
+        }) }
+    }
+
     private fun setState(state: ReceiptScanState) {
         val field = ReceiptScanViewModel::class.java.getDeclaredField("_state")
         field.isAccessible = true

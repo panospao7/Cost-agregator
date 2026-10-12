@@ -211,7 +211,7 @@ class AnalyticsRepository @Inject constructor(
                     }
                     AnalyticsCategoryBreakdown(
                         category = ref,
-                        total = amount,
+                        moneyTotal = MoneyAmount(amount, CurrencyCode(homeCurrency)),
                         count = normalization.normalizedExpenses.count { it.snapshot.categoryId == categoryId && !it.snapshot.isNotMine },
                         percentage = if (totalSpent > 0) (amount / totalSpent * 100).toFloat() else 0f,
                         displayCurrency = homeCurrency,
@@ -219,7 +219,7 @@ class AnalyticsRepository @Inject constructor(
                         warningMessage = normalization.warnings.firstOrNull()?.message
                     )
                 }
-                .sortedByDescending { it.total }
+                .sortedByDescending { it.moneyTotal.amount }
             )
         }
     }

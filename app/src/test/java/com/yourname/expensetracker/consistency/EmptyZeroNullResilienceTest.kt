@@ -21,6 +21,7 @@ import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateResult
 import com.yourname.expensetracker.domain.currency.ExchangeRateStore
 import com.yourname.expensetracker.domain.currency.MultiConversionAggregate
 import com.yourname.expensetracker.domain.groups.MemberBalance
@@ -73,7 +74,7 @@ class EmptyZeroNullResilienceTest : AnalyticsEngineTestBase() {
         recurringExpenseEngine = mockk()
         healthScoreHistoryDao = mockk(relaxed = true)
         exchangeRateStore = mockk(relaxed = true)
-        val analyticsCurrencyNormalizer = mockk<AnalyticsCurrencyNormalizer>(relaxed = true)
+        val analyticsCurrencyNormalizer = AnalyticsCurrencyNormalizer(CurrencyConverter(exchangeRateStore, timeProvider = timeProvider))
         val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
         every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
         coEvery { currencySettingsRepository.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
@@ -85,8 +86,11 @@ class EmptyZeroNullResilienceTest : AnalyticsEngineTestBase() {
             recurringExpenseEngine.getPatterns(any<List<com.yourname.expensetracker.data.database.entity.Expense>>())
         } returns emptyList()
         coEvery { healthScoreHistoryDao.getMostRecent() } returns null
+        coEvery { healthScoreHistoryDao.getMostRecentBefore(any(), any()) } returns null
         coEvery { healthScoreHistoryDao.getHistoryForPeriod(any(), any()) } returns emptyList()
         coEvery { exchangeRateStore.getRate(any(), any()) } returns null
+        val cashFlowCalculator = mockk<com.yourname.expensetracker.domain.cashflow.CashFlowCalculator>()
+        coEvery { cashFlowCalculator.getUpcomingBills(any()) } returns emptyList()
 
         financialHealthScoreV2 = FinancialHealthScoreV2(
             budgetRepository = budgetRepository,
@@ -97,7 +101,7 @@ class EmptyZeroNullResilienceTest : AnalyticsEngineTestBase() {
             timeProvider = timeProvider,
             analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
             currencySettingsRepository = currencySettingsRepository,
-            cashFlowCalculator = mockk(),
+            cashFlowCalculator = cashFlowCalculator,
             writeBarrier = mockk(relaxed = true),
         )
 
@@ -113,7 +117,7 @@ class EmptyZeroNullResilienceTest : AnalyticsEngineTestBase() {
         assertApproxEquals(0.0, snapshot.zeroAmountBudget.amount, 0.0)
         assertTrue(snapshot.zeroAmountBudgetRange.first < snapshot.zeroAmountBudgetRange.second)
 
-        // SpendingPaceCalculator (zero-days-elapsed scenario is coerced safely)
+        assertTrue(snapshot.spendingPace.currentMoneyResult is MoneyAggregateResult.Available)
         assertApproxEquals(0.0, snapshot.spendingPace.currentMonthSpent, 0.0)
         assertApproxEquals(0.0, snapshot.spendingPace.projectedTotal, 0.0)
         assertNull(snapshot.spendingPace.previousMonthTotal)
@@ -291,9 +295,11 @@ class EmptyZeroNullResilienceTest : AnalyticsEngineTestBase() {
         )
     }
 
-    private fun assertFiniteDoubles(vararg values: Double) {
+    private fun assertFiniteDoubles(vararg values: Double?) {
         values.forEach { value ->
-            assertTrue("Expected finite double but got $value", value.isFinite())
+            if (value != null) {
+                assertTrue("Expected finite double but got $value", value.isFinite())
+            }
         }
     }
 

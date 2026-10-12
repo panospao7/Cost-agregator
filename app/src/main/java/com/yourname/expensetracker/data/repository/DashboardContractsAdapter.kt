@@ -162,10 +162,10 @@ class DashboardContractsAdapter @Inject constructor(
                 .first()
 
             breakdown.map { item ->
-                val previousAmount = previousByCategoryId[item.category.id]?.total ?: 0.0
+                val previousAmount = previousByCategoryId[item.category.id]?.moneyTotal?.amount ?: 0.0
                 val changeFromLastPeriod = when {
-                    previousAmount > 0.0 -> ((item.total - previousAmount) / previousAmount) * 100.0
-                    item.total > 0.0 -> 100.0
+                    previousAmount > 0.0 -> ((item.moneyTotal.amount - previousAmount) / previousAmount) * 100.0
+                    item.moneyTotal.amount > 0.0 -> 100.0
                     else -> 0.0
                 }
                 DashboardCategoryBreakdown(
@@ -173,7 +173,7 @@ class DashboardContractsAdapter @Inject constructor(
                     categoryName = item.category.name,
                     categoryIcon = item.category.icon,
                     categoryColor = item.category.color,
-                    amount = item.total,
+                    amount = item.moneyTotal.amount,
                     percentage = item.percentage.toDouble(),
                     changeFromLastPeriod = changeFromLastPeriod,
                     isPartial = item.isPartial,

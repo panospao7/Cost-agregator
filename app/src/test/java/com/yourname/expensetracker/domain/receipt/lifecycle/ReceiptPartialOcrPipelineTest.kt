@@ -116,7 +116,7 @@ class ReceiptPartialOcrPipelineTest {
         )
         coEvery { ocr.processUriWithMime(uri, any()) } coAnswers { recognition }
         coEvery { parser.parse(any(), homeCurrency = any()) } returns ReceiptParser.ParsedReceipt(
-            merchantName = null, total = 10.0, subtotal = null, tax = null,
+            merchantName = null, total = ReceiptParser.sourceMoneyOrNull(10.0, "EUR"), subtotal = null, tax = null,
             date = now, currency = "EUR", lineItems = emptyList(), confidence = 0.9f
         )
         duplicates = mockk()

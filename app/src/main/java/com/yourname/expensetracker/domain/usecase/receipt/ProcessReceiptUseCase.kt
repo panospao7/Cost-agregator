@@ -1,11 +1,14 @@
 package com.yourname.expensetracker.domain.usecase.receipt
 
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
 import com.yourname.expensetracker.domain.receipt.ReceiptOcrService
 import com.yourname.expensetracker.domain.receipt.ReceiptSource
 import com.yourname.expensetracker.domain.usecase.warranty.WarrantyCreationResult
+import kotlinx.coroutines.CancellationException
 import javax.inject.Inject
 
 /**
@@ -21,9 +24,7 @@ class ProcessReceiptUseCase @Inject constructor(
 ) {
     suspend operator fun invoke(source: ReceiptSource): Result<ProcessedReceipt> {
         return try {
-            // P3-PR1 (P3-P1-07): Use actual home currency instead of hardcoded EUR default.
-            // Coerce to non-null so it matches ReceiptParser.parse(homeCurrency: String).
-            val homeCurrency = userCurrencyProvider.getHomeCurrency() ?: "EUR"
+            val homeCurrency = userCurrencyProvider.getHomeCurrency()
             val processedSource = when (source) {
                 is ReceiptSource.UriRef -> {
                     val ocrResult = ocrService.processUri(source.value)
@@ -49,6 +50,10 @@ class ProcessReceiptUseCase @Inject constructor(
                 }
             }
 
+            val resolvedAmount = processedSource.amount
+                ?.takeIf { it.currency in CurrencyCode.ALL_SUPPORTED }
+                ?: return Result.failure(ReceiptMoneyUnavailableException())
+
             val normalizedMerchant = merchantNormalizer.normalize(
                 processedSource.merchant ?: "Unknown"
             ).canonical.normalizedName
@@ -57,7 +62,7 @@ class ProcessReceiptUseCase @Inject constructor(
 
             Result.success(ProcessedReceipt(
                 merchant = normalizedMerchant,
-                amount = processedSource.amount ?: 0.0,
+                amount = resolvedAmount,
                 categoryId = result.categoryId,
                 categoryConfidence = result.confidence.toFloat(),
                 date = processedSource.date,
@@ -65,15 +70,19 @@ class ProcessReceiptUseCase @Inject constructor(
                 // F1: Pass through warranty extraction result if available
                 warrantyResult = processedSource.warrantyResult
             ))
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
 }
 
+class ReceiptMoneyUnavailableException : IllegalStateException("RECEIPT_MONEY_UNAVAILABLE")
+
 private data class SourceProcessingResult(
     val merchant: String?,
-    val amount: Double?,
+    val amount: MoneyAmount?,
     val date: Long?,
     val imagePath: String,
     val warrantyResult: WarrantyCreationResult?
@@ -81,7 +90,7 @@ private data class SourceProcessingResult(
 
 data class ProcessedReceipt(
     val merchant: String,
-    val amount: Double,
+    val amount: MoneyAmount,
     val categoryId: Long?,
     val categoryConfidence: Float,
     val date: Long?,

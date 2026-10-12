@@ -2,6 +2,8 @@ package com.yourname.expensetracker.domain.forecasting
 
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException
 import timber.log.Timber
 import java.util.Random
 import javax.inject.Inject
@@ -71,9 +73,17 @@ class MonteCarloSpendingSimulator @Inject constructor(
         spentToDate: Double,
         knownUpcoming: Double,
         budgetAmount: Double?,
-        displayCurrency: String = "EUR",
+        displayCurrency: String,
         estimatedWeeklyRecurring: Double = 0.0
     ): MonteCarloResult? {
+        // Validate before deterministic end-of-month/no-fit branches so an
+        // omitted, malformed, or unsupported target can never be relabeled EUR.
+        val resolvedDisplayCurrency = CurrencyCode.parse(displayCurrency)
+            ?.takeIf { it in CurrencyCode.ALL_SUPPORTED }
+            ?.code
+            ?: throw MoneyDisplayUnavailableException(
+                com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode.INVALID_TARGET_CURRENCY
+            )
         val now = timeProvider.now()
         val daysInMonth = TimePeriodUtils.getDaysInMonth(now)
         val dayOfMonth = TimePeriodUtils.getDayOfMonth(now)
@@ -81,11 +91,17 @@ class MonteCarloSpendingSimulator @Inject constructor(
 
         // If it's the last day of the month, the "forecast" is just what we've spent + known upcoming
         if (daysRemaining == 0) {
-            return buildEndOfMonthResult(spentToDate, knownUpcoming, budgetAmount, now, displayCurrency)
+            return buildEndOfMonthResult(spentToDate, knownUpcoming, budgetAmount, now, resolvedDisplayCurrency)
         }
 
         // Step 1: Get the historical distribution fit
-        val fit = historicalDistribution.computeDistribution(homeCurrency = displayCurrency)
+        val fit = when (val distribution = historicalDistribution.computeDistributionResult(homeCurrency = resolvedDisplayCurrency)) {
+            is HistoricalDistributionResult.Available -> distribution.fit
+            is HistoricalDistributionResult.NoFit -> null
+            is HistoricalDistributionResult.Unavailable -> throw MoneyDisplayUnavailableException(
+                distribution.reasonCode
+            )
+        }
 
         // Compute recency: count qualifying weeks in last 8 weeks for confidence scoring
         val recentWeeksQualifying = countRecentQualifyingWeeks(fit)
@@ -95,7 +111,7 @@ class MonteCarloSpendingSimulator @Inject constructor(
         if (fit == null || !fit.isUsable) {
             Timber.w("Distribution not usable; returning deterministic-only forecast")
             return buildDegradedResult(
-                spentToDate, knownUpcoming, budgetAmount, daysRemaining, confidence, fit, now, displayCurrency
+                spentToDate, knownUpcoming, budgetAmount, daysRemaining, confidence, fit, now, resolvedDisplayCurrency
             )
         }
 
@@ -154,9 +170,10 @@ class MonteCarloSpendingSimulator @Inject constructor(
                 logNormalMu = fit.mu,
                 logNormalSigma = fit.sigma,
                 daysRemaining = daysRemaining,
-                computedAt = now
+                computedAt = now,
+                historicalMoneyQuality = fit.moneyQuality
             ),
-            displayCurrency = displayCurrency
+            displayCurrency = resolvedDisplayCurrency
         )
     }
 
@@ -168,10 +185,16 @@ class MonteCarloSpendingSimulator @Inject constructor(
         knownUpcoming: Double,
         budgetAmount: Double?,
         now: Long,
-        displayCurrency: String = "EUR"
+        displayCurrency: String
     ): MonteCarloResult {
         val total = spentToDate + knownUpcoming
-        val fit = historicalDistribution.computeDistribution(homeCurrency = displayCurrency)
+        val fit = when (val distribution = historicalDistribution.computeDistributionResult(homeCurrency = displayCurrency)) {
+            is HistoricalDistributionResult.Available -> distribution.fit
+            is HistoricalDistributionResult.NoFit -> null
+            is HistoricalDistributionResult.Unavailable -> throw MoneyDisplayUnavailableException(
+                distribution.reasonCode
+            )
+        }
         val confidence = dataQualityAssessor.assess(fit, countRecentQualifyingWeeks(fit))
 
         val probUnderBudget = if (budgetAmount != null && budgetAmount > 0) {
@@ -196,7 +219,8 @@ class MonteCarloSpendingSimulator @Inject constructor(
                 logNormalMu = fit?.mu ?: 0.0,
                 logNormalSigma = fit?.sigma ?: 0.0,
                 daysRemaining = 0,
-                computedAt = now
+                computedAt = now,
+                historicalMoneyQuality = fit?.moneyQuality
             ),
             displayCurrency = displayCurrency
         )
@@ -214,7 +238,7 @@ class MonteCarloSpendingSimulator @Inject constructor(
         confidence: SimulationConfidence,
         fit: DistributionFit?,
         now: Long,
-        displayCurrency: String = "EUR"
+        displayCurrency: String
     ): MonteCarloResult {
         val deterministicTotal = spentToDate + knownUpcoming
 
@@ -241,7 +265,8 @@ class MonteCarloSpendingSimulator @Inject constructor(
                 logNormalMu = fit?.mu ?: 0.0,
                 logNormalSigma = fit?.sigma ?: 0.0,
                 daysRemaining = daysRemaining,
-                computedAt = now
+                computedAt = now,
+                historicalMoneyQuality = fit?.moneyQuality
             ),
             displayCurrency = displayCurrency
         )

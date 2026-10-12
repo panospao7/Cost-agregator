@@ -13,6 +13,7 @@ import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.model.DomainTransactionType
@@ -498,7 +499,10 @@ class BudgetForecastingEngine @Inject constructor(
             .map { (monthKey, expenses) ->
                 MonthlySpendingTotal(
                     monthKey = monthKey,
-                    total = expenses.sumOf { it.effectiveAmount },
+                    total = MoneyAggregateBuilder.fromHomeCurrencyAmounts(
+                        amounts = expenses.map { it.effectiveAmount },
+                        homeCurrency = homeCurrency
+                    ).displayAmount,
                     txCount = expenses.size
                 )
             }

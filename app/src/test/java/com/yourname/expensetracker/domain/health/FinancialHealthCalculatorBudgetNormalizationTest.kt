@@ -32,7 +32,7 @@ class FinancialHealthCalculatorBudgetNormalizationTest {
     @Test
     fun `daily spending target normalizes monthly budget by actual overlap`() {
         val now = toEpochMs(2026, 4, 15, 12, 0)
-        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), mockk(), currencySettingsRepository)
+        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer(mockk()), currencySettingsRepository)
         val (todayStart, todayEnd) = TimePeriodUtils.getDayRange(now)
         val monthStart = TimePeriodUtils.getStartOfMonth(now)
         val monthEnd = TimePeriodUtils.getEndOfMonth(now)
@@ -62,7 +62,7 @@ class FinancialHealthCalculatorBudgetNormalizationTest {
     @Test
     fun `weekly spending target does not double count overall and category budgets`() {
         val now = toEpochMs(2026, 4, 15, 12, 0)
-        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), mockk(), currencySettingsRepository)
+        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer(mockk()), currencySettingsRepository)
         val (weekStart, weekEnd) = TimePeriodUtils.getWeekRange(now)
         val monthStart = TimePeriodUtils.getStartOfMonth(now)
         val monthEnd = TimePeriodUtils.getEndOfMonth(now)
@@ -102,7 +102,7 @@ class FinancialHealthCalculatorBudgetNormalizationTest {
     @Test
     fun `monthly spending target sums overlapping mixed budget windows`() {
         val now = toEpochMs(2026, 4, 15, 12, 0)
-        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), mockk(), currencySettingsRepository)
+        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer(mockk()), currencySettingsRepository)
         val (monthStart, monthEnd) = TimePeriodUtils.getMonthRange(now)
         val (weekStart, weekEnd) = TimePeriodUtils.getWeekRange(now)
 

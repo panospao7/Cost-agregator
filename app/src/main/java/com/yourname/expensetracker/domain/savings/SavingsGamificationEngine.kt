@@ -2,7 +2,24 @@ package com.yourname.expensetracker.domain.savings
 
 import com.yourname.expensetracker.data.repository.SavingsContributionEvent
 import com.yourname.expensetracker.data.repository.SavingsContributionHistoryRepository
+import com.yourname.expensetracker.data.repository.SavingsContributionHistoryUnavailableException
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.core.money.BucketDatePolicy
+import com.yourname.expensetracker.domain.core.money.ConversionQuality
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAggregate
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateMetadata
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateResult
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
+import com.yourname.expensetracker.domain.core.money.NormalizedMoneyRow
+import com.yourname.expensetracker.domain.core.money.NormalizedMoneyQuality
+import com.yourname.expensetracker.domain.core.money.MoneyBucketInput
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode
+import com.yourname.expensetracker.domain.core.money.RateBasis
+import com.yourname.expensetracker.domain.core.money.StaleRatePolicy
+import com.yourname.expensetracker.domain.core.money.ConversionOutcome
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.text.DomainTextKeys
@@ -18,7 +35,9 @@ data class SavingsStreak(
     val personalBestDays: Int,
     val lastSavingsDate: Long?,
     val monthlyContributions: Int,
-    val totalContributedThisMonth: Double
+    val totalContributedThisMonth: Double?,
+    val totalContributedThisMonthResult: MoneyAggregateResult? = null,
+    val isAvailable: Boolean = true
 )
 
 data class SavingsAchievement(
@@ -29,7 +48,8 @@ data class SavingsAchievement(
     val isUnlocked: Boolean,
     val unlockedAt: Long?,
     val progress: Double, // 0.0 to 1.0
-    val requirement: UiText
+    val requirement: UiText,
+    val isAvailable: Boolean = true
 )
 
 @Singleton
@@ -38,7 +58,8 @@ class SavingsGamificationEngine @Inject constructor(
     private val contributionHistoryRepository: SavingsContributionHistoryRepository,
     private val timeProvider: TimeProvider,
     private val analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer,
-    private val currencySettingsRepository: CurrencySettingsRepository
+    private val currencySettingsRepository: CurrencySettingsRepository,
+    private val currencyConverter: CurrencyConverter
 ) {
     companion object {
         // Achievement thresholds in home currency
@@ -54,26 +75,33 @@ class SavingsGamificationEngine @Inject constructor(
             personalBestDays = contributionMetrics.personalBestDays,
             lastSavingsDate = contributionMetrics.lastSavingsDate,
             monthlyContributions = contributionMetrics.monthlyContributions,
-            totalContributedThisMonth = contributionMetrics.totalContributedThisMonth
+            totalContributedThisMonth = contributionMetrics.totalContributedThisMonth,
+            totalContributedThisMonthResult = contributionMetrics.totalContributedThisMonthResult,
+            isAvailable = contributionMetrics.historyAvailable
         )
     }
     
-    suspend fun getAchievements(userId: String = "default", homeCurrency: String = "EUR"): List<SavingsAchievement> {
+    suspend fun getAchievements(userId: String = "default", homeCurrency: String): List<SavingsAchievement> {
         val goals = savingsGoalRepository.observeSavingsGoals().first()
-        val contributionMetrics = analyzeContributionHistory()
+        val contributionMetrics = analyzeContributionHistory(homeCurrency, goals)
         val sortedGoals = goals.sortedBy { it.createdAt }
         val firstGoalUnlockedAt = sortedGoals.firstOrNull()?.createdAt
-        val totalSavedThresholds = resolveTotalSavedThresholdUnlocks(goals, contributionMetrics.contributions)
+        val totalSavedAggregate = aggregateGoalBalances(goals, homeCurrency)
+        val totalSaved = totalSavedAggregate.displayAmountOrNull()
+            .takeIf { contributionMetrics.historyAvailable }
+        val totalSavedThresholds = resolveTotalSavedThresholdUnlocks(
+            goals = goals,
+            normalizedContributions = contributionMetrics.normalizedContributions,
+            totalSaved = totalSaved
+        )
         val bestProgressGoal = goals.maxByOrNull {
             it.currentAmount / it.targetAmount.coerceAtLeast(0.01)
         }
-        val goalCrusherUnlockedAt = resolveGoalCrusherUnlockedAt(goals, contributionMetrics.contributions)
-        
-        var totalSaved = 0.0
-        for (goal in goals) {
-            // TODO: Convert goal.currentAmount to home currency before summing across goals
-            totalSaved += goal.currentAmount
-        }
+        val goalCrusherUnlockedAt = resolveGoalCrusherUnlockedAt(
+            goals = goals,
+            normalizedContributions = contributionMetrics.normalizedContributions
+        )
+
         val goalCount = goals.size
         var completedGoals = 0
         for (goal in goals) {
@@ -98,13 +126,16 @@ class SavingsGamificationEngine @Inject constructor(
                 title = UiText.fromKey(DomainTextKeys.SAVINGS_WEEK_WARRIOR),
                 description = UiText.fromKey(DomainTextKeys.SAVINGS_ACHIEVEMENT_DESC_STREAK),
                 icon = "🔥",
-                isUnlocked = contributionMetrics.sevenDayStreakUnlockedAt != null,
+                isUnlocked = contributionMetrics.historyAvailable && contributionMetrics.sevenDayStreakUnlockedAt != null,
                 unlockedAt = contributionMetrics.sevenDayStreakUnlockedAt,
-                progress = if (contributionMetrics.sevenDayStreakUnlockedAt != null) {
+                progress = if (!contributionMetrics.historyAvailable) {
+                    0.0
+                } else if (contributionMetrics.sevenDayStreakUnlockedAt != null) {
                     1.0
                 } else {
                     (contributionMetrics.currentStreakDays / 7.0).coerceIn(0.0, 1.0)
                 },
+                isAvailable = contributionMetrics.historyAvailable,
                 requirement = UiText.fromKey(DomainTextKeys.SAVINGS_ACHIEVEMENT_REQ_STREAK)
             ),
             SavingsAchievement(
@@ -115,9 +146,10 @@ class SavingsGamificationEngine @Inject constructor(
                     UiTextArg.Money(CENTURY_SAVER_THRESHOLD, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false)
                 ),
                 icon = "💯",
-                isUnlocked = totalSaved >= CENTURY_SAVER_THRESHOLD,
-                unlockedAt = if (totalSaved >= CENTURY_SAVER_THRESHOLD) totalSavedThresholds[CENTURY_SAVER_THRESHOLD] else null,
-                progress = (totalSaved / CENTURY_SAVER_THRESHOLD).coerceIn(0.0, 1.0),
+                isUnlocked = totalSaved != null && totalSaved >= CENTURY_SAVER_THRESHOLD,
+                unlockedAt = if (totalSaved != null && totalSaved >= CENTURY_SAVER_THRESHOLD) totalSavedThresholds[CENTURY_SAVER_THRESHOLD] else null,
+                progress = totalSaved?.let { (it / CENTURY_SAVER_THRESHOLD).coerceIn(0.0, 1.0) } ?: 0.0,
+                isAvailable = totalSaved != null,
                 requirement = UiText.fromKey(
                     DomainTextKeys.SAVINGS_ACHIEVEMENT_REQ_SAVED_FORMAT,
                     UiTextArg.Money(CENTURY_SAVER_THRESHOLD, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false)
@@ -128,9 +160,10 @@ class SavingsGamificationEngine @Inject constructor(
                 title = UiText.fromKey(DomainTextKeys.SAVINGS_GOAL_CRUSHER),
                 description = UiText.fromKey(DomainTextKeys.SAVINGS_ACHIEVEMENT_DESC_COMPLETE_FIRST_GOAL),
                 icon = "🏆",
-                isUnlocked = completedGoals >= 1,
-                unlockedAt = if (completedGoals >= 1) goalCrusherUnlockedAt else null,
-                progress = if (completedGoals >= 1) 1.0 else 
+                isUnlocked = totalSaved != null && completedGoals >= 1,
+                unlockedAt = if (totalSaved != null && completedGoals >= 1) goalCrusherUnlockedAt else null,
+                isAvailable = totalSaved != null,
+                progress = if (totalSaved == null) 0.0 else if (completedGoals >= 1) 1.0 else
                     (bestProgressGoal?.let {
                         it.currentAmount / it.targetAmount.coerceAtLeast(0.01)
                     } ?: 0.0).coerceIn(0.0, 1.0),
@@ -144,9 +177,10 @@ class SavingsGamificationEngine @Inject constructor(
                     UiTextArg.Money(GRAND_SAVER_THRESHOLD, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false)
                 ),
                 icon = "💰",
-                isUnlocked = totalSaved >= GRAND_SAVER_THRESHOLD,
-                unlockedAt = if (totalSaved >= GRAND_SAVER_THRESHOLD) totalSavedThresholds[GRAND_SAVER_THRESHOLD] else null,
-                progress = (totalSaved / GRAND_SAVER_THRESHOLD).coerceIn(0.0, 1.0),
+                isUnlocked = totalSaved != null && totalSaved >= GRAND_SAVER_THRESHOLD,
+                unlockedAt = if (totalSaved != null && totalSaved >= GRAND_SAVER_THRESHOLD) totalSavedThresholds[GRAND_SAVER_THRESHOLD] else null,
+                progress = totalSaved?.let { (it / GRAND_SAVER_THRESHOLD).coerceIn(0.0, 1.0) } ?: 0.0,
+                isAvailable = totalSaved != null,
                 requirement = UiText.fromKey(
                     DomainTextKeys.SAVINGS_ACHIEVEMENT_REQ_SAVED_FORMAT,
                     UiTextArg.Money(GRAND_SAVER_THRESHOLD, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false)
@@ -171,18 +205,40 @@ class SavingsGamificationEngine @Inject constructor(
         }
     }
 
-    private suspend fun analyzeContributionHistory(): ContributionMetrics {
+    private suspend fun analyzeContributionHistory(
+        computationCurrency: String? = null,
+        goals: List<com.yourname.expensetracker.domain.model.SavingsGoal> = emptyList()
+    ): ContributionMetrics {
         val now = timeProvider.now()
-        val contributions = contributionHistoryRepository.getAllContributions()
+        val homeCurrency = computationCurrency ?: currencySettingsRepository.homeCurrency().first()
+        val contributions = try {
+            contributionHistoryRepository.getAllContributions().sortedBy { it.timestamp }
+        } catch (error: SavingsContributionHistoryUnavailableException) {
+            return ContributionMetrics(
+                totalContributedThisMonth = null,
+                totalContributedThisMonthResult = MoneyAggregateResult.Unavailable(
+                    reason = "SAVINGS_HISTORY_CORRUPT",
+                    requestedRateBasis = RateBasis.TRANSACTION_DATE,
+                    metadata = MoneyAggregateMetadata()
+                ),
+                historyAvailable = false
+            )
+        }
+        val normalizedContributions = normalizeContributions(contributions, homeCurrency, goals)
+        val (monthStart, monthEnd) = TimePeriodUtils.getMonthRange(now)
+        val currentMonthContributions = normalizedContributions.filter {
+            it.event.timestamp >= monthStart && it.event.timestamp < monthEnd
+        }
+        val contributionMoney = aggregateNormalizedContributions(currentMonthContributions, homeCurrency)
         if (contributions.isEmpty()) {
-            return ContributionMetrics()
+            return ContributionMetrics(
+                totalContributedThisMonth = contributionMoney.displayAmountOrNull(),
+                totalContributedThisMonthResult = contributionMoney,
+                normalizedContributions = normalizedContributions
+            )
         }
 
-        val sortedContributions = contributions.sortedBy { it.timestamp }
-        val (monthStart, monthEnd) = TimePeriodUtils.getMonthRange(now)
-        val currentMonthContributions = sortedContributions.filter {
-            it.timestamp >= monthStart && it.timestamp < monthEnd
-        }
+        val sortedContributions = contributions
         val contributionDays = sortedContributions
             .map { TimePeriodUtils.getStartOfDay(it.timestamp) }
             .distinct()
@@ -193,36 +249,205 @@ class SavingsGamificationEngine @Inject constructor(
             personalBestDays = calculatePersonalBestDays(contributionDays),
             lastSavingsDate = sortedContributions.lastOrNull()?.timestamp,
             monthlyContributions = currentMonthContributions.size,
-            totalContributedThisMonth = currentMonthContributions.sumOf { it.amount },
+            totalContributedThisMonth = contributionMoney.displayAmountOrNull(),
+            totalContributedThisMonthResult = contributionMoney,
             sevenDayStreakUnlockedAt = findStreakUnlockedAt(sortedContributions, 7),
-            contributions = sortedContributions
+            contributions = sortedContributions,
+            normalizedContributions = normalizedContributions
         )
     }
 
-    private fun resolveTotalSavedThresholdUnlocks(
+    private data class NormalizedContribution(
+        val event: SavingsContributionEvent,
+        val homeRow: NormalizedMoneyRow?,
+        val goalAmount: MoneyAmount? = null,
+        val unavailableReason: String? = null
+    )
+
+    private suspend fun normalizeContributions(
+        contributions: List<SavingsContributionEvent>,
+        homeCurrencyCode: String,
+        goals: List<com.yourname.expensetracker.domain.model.SavingsGoal>
+    ): List<NormalizedContribution> {
+        val homeCurrency = CurrencyCode.parse(homeCurrencyCode)?.takeIf { it in CurrencyCode.ALL_SUPPORTED }
+            ?: return contributions.map {
+                NormalizedContribution(it, null, unavailableReason = MoneyDisplayUnavailableReasonCode.INVALID_TARGET_CURRENCY.name)
+            }
+        val goalCurrencies = goals.filter { it.currentAmount >= it.targetAmount }.associate { goal ->
+            goal.id to SavingsGoalCurrencyPolicy.knownCurrencyOrNull(goal)
+        }
+        return contributions.map { contribution ->
+            val sourceCurrency = CurrencyCode.parse(contribution.currency)
+                ?.takeIf { it in CurrencyCode.ALL_SUPPORTED }
+            val normalized = when {
+                sourceCurrency == null -> NormalizedContribution(
+                    contribution, null, unavailableReason = MoneyDisplayUnavailableReasonCode.INVALID_SOURCE_CURRENCY.name
+                )
+                sourceCurrency == homeCurrency -> NormalizedContribution(
+                    contribution, NormalizedMoneyRow(contribution.amount, homeCurrency, sourceCurrency)
+                )
+                else -> when (val outcome = currencyConverter.convertOutcome(
+                    amount = contribution.amount,
+                    fromCurrency = sourceCurrency.code,
+                    toCurrency = homeCurrency.code,
+                    rateBasis = RateBasis.TRANSACTION_DATE,
+                    atMillis = contribution.timestamp,
+                    stalePolicy = StaleRatePolicy.forBasis(RateBasis.TRANSACTION_DATE)
+                )) {
+                    is ConversionOutcome.Converted -> NormalizedContribution(
+                        contribution, NormalizedMoneyRow(
+                            outcome.convertedAmount, homeCurrency, sourceCurrency, rateValidDate = outcome.rateValidDate
+                        )
+                    )
+                    is ConversionOutcome.Failed -> NormalizedContribution(
+                        contribution, null, unavailableReason = outcome.failureType.name
+                    )
+                }
+            }
+            // Compare historical contributions with the target in goal units.
+            // Reuse identity/home conversions rather than valuing the target at latest FX.
+            val goalCurrency = goalCurrencies[contribution.goalId]
+            val goalAmount = when {
+                sourceCurrency == null || goalCurrency == null -> null
+                goalCurrency == sourceCurrency -> MoneyAmount(contribution.amount, goalCurrency)
+                goalCurrency == homeCurrency -> normalized.homeRow?.let { MoneyAmount(it.amount, goalCurrency) }
+                else -> when (val outcome = currencyConverter.convertOutcome(
+                    amount = contribution.amount, fromCurrency = sourceCurrency.code, toCurrency = goalCurrency.code,
+                    rateBasis = RateBasis.TRANSACTION_DATE, atMillis = contribution.timestamp,
+                    stalePolicy = StaleRatePolicy.forBasis(RateBasis.TRANSACTION_DATE)
+                )) {
+                    is ConversionOutcome.Converted -> MoneyAmount(outcome.convertedAmount, goalCurrency)
+                    is ConversionOutcome.Failed -> null
+                }
+            }
+            normalized.copy(goalAmount = goalAmount)
+        }
+    }
+
+    private fun aggregateNormalizedContributions(
+        contributions: List<NormalizedContribution>,
+        homeCurrencyCode: String
+    ): MoneyAggregateResult {
+        val homeCurrency = CurrencyCode.parse(homeCurrencyCode)?.takeIf { it in CurrencyCode.ALL_SUPPORTED }
+            ?: return MoneyAggregateResult.Unavailable(
+                reason = MoneyDisplayUnavailableReasonCode.INVALID_TARGET_CURRENCY.name,
+                requestedRateBasis = RateBasis.TRANSACTION_DATE,
+                metadata = MoneyAggregateMetadata(excludedTransactionCount = contributions.size)
+            )
+        val failed = contributions.count { it.homeRow == null }
+        val rows = contributions.mapNotNull { it.homeRow }
+        val result = MoneyAggregateBuilder.fromNormalizedRows(
+            rows = rows, targetCurrency = homeCurrency,
+            quality = NormalizedMoneyQuality(
+                excludedTransactionCount = failed,
+                missingRateCount = contributions.count { it.unavailableReason == "MISSING_RATE" || it.unavailableReason == "MISSING_HISTORICAL_RATE" },
+                staleRateCount = contributions.count { it.unavailableReason == "STALE_RATE" },
+                invalidCurrencyCount = contributions.count { it.unavailableReason == "INVALID_SOURCE_CURRENCY" }
+            ),
+            requestedRateBasis = RateBasis.TRANSACTION_DATE,
+            actualRateBasis = if (rows.all { it.sourceCurrency == homeCurrency }) RateBasis.IDENTITY else RateBasis.TRANSACTION_DATE
+        )
+        if (failed > 0) {
+            return MoneyAggregateResult.Unavailable(
+                reason = contributions.firstNotNullOfOrNull { it.unavailableReason }
+                    ?: MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE.name,
+                requestedRateBasis = RateBasis.TRANSACTION_DATE,
+                metadata = when (result) {
+                    is MoneyAggregateResult.Available -> result.aggregate.metadata
+                    is MoneyAggregateResult.Unavailable -> result.metadata
+                }
+            )
+        }
+        return result
+    }
+
+    suspend fun aggregateGoalBalances(
         goals: List<com.yourname.expensetracker.domain.model.SavingsGoal>,
-        contributions: List<SavingsContributionEvent>
+        homeCurrencyCode: String
+    ): MoneyAggregateResult {
+        val homeCurrency = CurrencyCode.parse(homeCurrencyCode)?.takeIf { it in CurrencyCode.ALL_SUPPORTED }
+            ?: return MoneyAggregateResult.Unavailable(
+                reason = MoneyDisplayUnavailableReasonCode.INVALID_TARGET_CURRENCY.name,
+                requestedRateBasis = RateBasis.LATEST_AVAILABLE,
+                metadata = MoneyAggregateMetadata(excludedTransactionCount = goals.size)
+            )
+        if (goals.isEmpty()) {
+            return MoneyAggregateResult.Available(MoneyAggregate.empty(homeCurrency, RateBasis.LATEST_AVAILABLE))
+        }
+
+        val buckets = goals.map { goal ->
+            val sourceCurrency = SavingsGoalCurrencyPolicy.knownCurrencyOrNull(goal)
+                ?: return MoneyAggregateResult.Unavailable(
+                    reason = MoneyDisplayUnavailableReasonCode.INVALID_SOURCE_CURRENCY.name,
+                    requestedRateBasis = RateBasis.LATEST_AVAILABLE,
+                    metadata = MoneyAggregateMetadata(
+                        excludedTransactionCount = goals.size,
+                        invalidCurrencyCount = 1
+                    )
+                )
+            MoneyBucketInput(
+                amount = goal.currentAmount,
+                currency = sourceCurrency,
+                transactionCount = 1
+            )
+        }
+        val aggregate = MoneyAggregateBuilder.fromBuckets(
+            buckets = buckets,
+            homeCurrency = homeCurrency,
+            converter = currencyConverter,
+            rateBasis = RateBasis.LATEST_AVAILABLE,
+            bucketDatePolicy = BucketDatePolicy.Latest
+        )
+        return if (aggregate.conversionQuality == ConversionQuality.UNAVAILABLE) {
+            MoneyAggregateResult.Unavailable(
+                reason = MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE.name,
+                requestedRateBasis = RateBasis.LATEST_AVAILABLE,
+                metadata = aggregate.metadata,
+                warningMessage = aggregate.warningMessage
+                    ?: MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE.name
+            )
+        } else {
+            MoneyAggregateResult.Available(aggregate)
+        }
+    }
+
+    private fun MoneyAggregateResult.displayAmountOrNull(): Double? =
+        (this as? MoneyAggregateResult.Available)
+            ?.aggregate
+            ?.takeIf { it.conversionQuality == ConversionQuality.COMPLETE }
+            ?.displayAmount
+
+    private suspend fun resolveTotalSavedThresholdUnlocks(
+        goals: List<com.yourname.expensetracker.domain.model.SavingsGoal>,
+        normalizedContributions: List<NormalizedContribution>,
+        totalSaved: Double?
     ): Map<Double, Long?> {
         val thresholds = listOf(CENTURY_SAVER_THRESHOLD, GRAND_SAVER_THRESHOLD)
         val unlocks = thresholds.associateWith { null as Long? }.toMutableMap()
         var cumulativeSaved = 0.0
-
-        for (contribution in contributions.sortedBy { it.timestamp }) {
-            cumulativeSaved += contribution.amount
+        for (normalized in normalizedContributions) {
+            val amount = normalized.homeRow?.amount ?: break
+            cumulativeSaved += amount
             for (threshold in thresholds) {
                 if (unlocks[threshold] == null && cumulativeSaved >= threshold) {
-                    unlocks[threshold] = contribution.timestamp
+                    unlocks[threshold] = normalized.event.timestamp
                 }
             }
+            if (unlocks.values.all { it != null }) break
         }
 
         val fallbackTimestamp = goals.minOfOrNull { it.createdAt }
-        return unlocks.mapValues { (_, unlockedAt) -> unlockedAt ?: fallbackTimestamp }
+        for (threshold in thresholds) {
+            if (normalizedContributions.isEmpty() && unlocks[threshold] == null && totalSaved != null && totalSaved >= threshold) {
+                unlocks[threshold] = fallbackTimestamp
+            }
+        }
+        return unlocks
     }
 
-    private fun resolveGoalCrusherUnlockedAt(
+    private suspend fun resolveGoalCrusherUnlockedAt(
         goals: List<com.yourname.expensetracker.domain.model.SavingsGoal>,
-        contributions: List<SavingsContributionEvent>
+        normalizedContributions: List<NormalizedContribution>
     ): Long? {
         val completedGoalIds = goals
             .filter { it.currentAmount >= it.targetAmount }
@@ -232,17 +457,24 @@ class SavingsGamificationEngine @Inject constructor(
             return null
         }
 
-        val cumulativeByGoal = mutableMapOf<Long, Double>()
-        for (contribution in contributions.sortedBy { it.timestamp }) {
-            val goal = completedGoalIds[contribution.goalId] ?: continue
-            val updatedAmount = (cumulativeByGoal[goal.id] ?: 0.0) + contribution.amount
-            cumulativeByGoal[goal.id] = updatedAmount
-            if (updatedAmount >= goal.targetAmount.coerceAtLeast(0.01)) {
-                return contribution.timestamp
+        val totalsByGoal = mutableMapOf<Long, Double>()
+        val unresolvedGoals = mutableSetOf<Long>()
+        for (normalized in normalizedContributions) {
+            val goalId = normalized.event.goalId
+            val goal = completedGoalIds[goalId] ?: continue
+            if (goalId in unresolvedGoals) continue
+            val amount = normalized.goalAmount?.takeIf { it.currency == CurrencyCode.parse(goal.currency) }?.amount
+            if (amount == null) {
+                unresolvedGoals += goalId
+                continue
             }
+            val updatedAmount = (totalsByGoal[goalId] ?: 0.0) + amount
+            totalsByGoal[goalId] = updatedAmount
+            // Chronological events make the first valid crossing the earliest
+            // across goals, independently of their creation/list order.
+            if (updatedAmount >= goal.targetAmount) return normalized.event.timestamp
         }
-
-        return completedGoalIds.values.minOfOrNull { it.createdAt }
+        return null
     }
 
     private fun calculateCurrentStreakDays(contributionDays: List<Long>, referenceTime: Long): Int {
@@ -331,8 +563,11 @@ class SavingsGamificationEngine @Inject constructor(
         val personalBestDays: Int = 0,
         val lastSavingsDate: Long? = null,
         val monthlyContributions: Int = 0,
-        val totalContributedThisMonth: Double = 0.0,
+        val totalContributedThisMonth: Double? = 0.0,
+        val totalContributedThisMonthResult: MoneyAggregateResult? = null,
         val sevenDayStreakUnlockedAt: Long? = null,
-        val contributions: List<SavingsContributionEvent> = emptyList()
+        val contributions: List<SavingsContributionEvent> = emptyList(),
+        val normalizedContributions: List<NormalizedContribution> = emptyList(),
+        val historyAvailable: Boolean = true
     )
 }

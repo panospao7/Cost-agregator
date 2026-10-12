@@ -11,6 +11,10 @@ data class MoneyAggregateMetadata(
     val invalidCurrencyCount: Int = 0,
     val latestRateValidDate: Long? = null,
     val oldestRateValidDate: Long? = null,
+    /** Original currencies represented by already-normalized rows. */
+    val sourceCurrencyCodes: Set<CurrencyCode> = emptySet(),
+    /** Valid dates of rates carried by already-normalized rows. */
+    val rateValidDates: Set<Long> = emptySet(),
     /**
      * NEW-P5-009 (RP-06 §6c): true when a NON-EMPTY per-bucket transaction
      * counts list supplied to the aggregate builder did not line up with the

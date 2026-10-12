@@ -260,7 +260,8 @@ class DashboardContractsAdapterTest {
                 coEvery { evaluateAndPrompt() } returns null
             },
             monthlySavingsSweepUseCase = mockk<MonthlySavingsSweepUseCase>(relaxed = true).apply {
-                coEvery { computeSweepRecommendation() } returns null
+                coEvery { computeSweepRecommendationResult() } returns
+                    com.yourname.expensetracker.domain.usecase.savings.SavingsSweepComputationResult.NoRecommendation()
             },
             computeMoneyRadarUseCase = mockk(relaxed = true),
             stressForecastEngine = mockk<FinancialStressForecastEngine>(relaxed = true).apply {
@@ -329,7 +330,7 @@ class DashboardContractsAdapterTest {
             as com.yourname.expensetracker.domain.usecase.dashboard.DashboardNormalizedInputResult.Available
         assertEquals(0.0, normalizedInput.input.depositAggregate!!.displayAmount, 0.0001)
         // The shared PURCHASE remains ordinary spend (not excluded by the flag).
-        assertEquals(25.0, compiled.totalSpent, 0.0001)
+        assertEquals(25.0, requireNotNull(compiled.totalSpent), 0.0001)
         val periodSummary = compiled.allWidgets.filterIsInstance<DashboardWidget.PeriodSummary>().single()
         assertEquals(25.0, periodSummary.monthSpent, 0.0001)
         // Same-input control: an OWN deposit is counted as income (proves the
@@ -406,7 +407,7 @@ class DashboardContractsAdapterTest {
 
         val pace = inputSlot.captured.spendingPace
         assertEquals("baseline = completed-month mean, never MTD", 150.0, pace.averageMonthlyTotal!!, 0.0001)
-        assertEquals(60.0, pace.currentMonthSpent, 0.0001)
+        assertEquals(60.0, requireNotNull(pace.currentMonthSpent), 0.0001)
     }
 
     /**
@@ -449,7 +450,7 @@ class DashboardContractsAdapterTest {
         assertEquals("Uncategorized", pseudo.category.name)
         assertEquals("?", pseudo.category.icon)
         assertEquals("#808080", pseudo.category.color)
-        assertEquals(80.0, pseudo.total, 0.0001)
+        assertEquals(80.0, pseudo.moneyTotal.displayAmount, 0.0001)
         // Denominator includes every bucket: percentages sum to 100%.
         assertTrue(
             "percentages must be sum-complete, got ${topCategories.categories.sumOf { it.percentage.toDouble() }}",
@@ -574,7 +575,8 @@ class DashboardContractsAdapterTest {
                 coEvery { evaluateAndPrompt() } returns null
             },
             monthlySavingsSweepUseCase = mockk<MonthlySavingsSweepUseCase>(relaxed = true).apply {
-                coEvery { computeSweepRecommendation() } returns null
+                coEvery { computeSweepRecommendationResult() } returns
+                    com.yourname.expensetracker.domain.usecase.savings.SavingsSweepComputationResult.NoRecommendation()
             },
             computeMoneyRadarUseCase = mockk(relaxed = true),
             stressForecastEngine = mockk<FinancialStressForecastEngine>(relaxed = true),

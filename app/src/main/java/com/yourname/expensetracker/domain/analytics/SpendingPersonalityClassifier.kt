@@ -6,18 +6,22 @@ import com.yourname.expensetracker.domain.model.BudgetSnapshot
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.BudgetRepository
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateResult
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode
+import com.yourname.expensetracker.domain.core.money.NormalizedMoneyRow
+import com.yourname.expensetracker.domain.core.money.RateBasis
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import timber.log.Timber
-import java.util.Calendar
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.abs
 import kotlin.math.sqrt
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * Classifies users' spending behavior into personality types and provides coaching nudges.
@@ -33,10 +37,9 @@ import kotlin.math.sqrt
  * 
  * Rule-based v1 (transparent), optional ML later.
  *
- * A04 OPEN: classify() currently queries raw ExpenseSnapshot data from the
- * repository. It must be migrated to consume NormalizedAnalyticsInput before
- * monetary feature extraction can be considered currency-safe.
- * TODO: Add classify(input: NormalizedAnalyticsInput) overload.
+ * The deprecated no-argument overload remains for isolated legacy tests and
+ * compatibility only. Production analytics callers use the normalized-input
+ * overload, so monetary feature extraction does not mix source currencies.
  */
 @Singleton
 class SpendingPersonalityClassifier @Inject constructor(
@@ -79,268 +82,33 @@ class SpendingPersonalityClassifier @Inject constructor(
         replaceWith = ReplaceWith("classify(input)", "com.yourname.expensetracker.domain.analytics.NormalizedAnalyticsInput"),
         level = DeprecationLevel.WARNING
     )
-    suspend fun classify(): SpendingPersonalityProfile = withContext(Dispatchers.Default) {
-        val now = timeProvider.now()
-        val analysisStartMs = TimePeriodUtils.addMonths(now, -ANALYSIS_MONTHS)
-        
-        coroutineScope {
-            // Fetch all necessary data in parallel
-            val allExpensesDeferred = async { 
-                expenseRepository.getExpenseSnapshotsBetween(analysisStartMs, now)
-            }
-            val budgetsDeferred = async { budgetRepository.getActiveBudgetSnapshots() }
-            
-            val allExpenses = allExpensesDeferred.await()
-            val budgets = budgetsDeferred.await()
-            
-            // Filter to purchases only, excluding "not mine" expenses
-            val purchases = allExpenses.filter { 
-                it.transactionType == DomainTransactionType.PURCHASE && !it.isNotMine 
-            }
-            
-            if (purchases.size < MIN_TRANSACTIONS_FOR_ANALYSIS) {
-                Timber.tag(TAG).d("Insufficient data for personality classification: ${purchases.size} transactions")
-                return@coroutineScope createInsufficientDataProfile()
-            }
-            
-            // Calculate feature scores
-            val featureScores = calculateFeatureScores(purchases, allExpenses, budgets)
-            
-            // Determine personality type based on feature scores
-            val personalityType = determinePersonalityType(featureScores)
-            
-            // A09: Raw-query path has no NormalizedAnalyticsInput.dataQuality;
-            // default to moderate confidence. The normalized path uses full dataQuality.
-            val confidence = 0.6
-            
-            // Generate explanation
-            val explanation = generateExplanation(personalityType, featureScores)
-            
-            // Generate coaching tips
-            val coachingTips = generateCoachingTips(personalityType, featureScores)
-            
-            SpendingPersonalityProfile(
-                personalityType = personalityType,
-                confidence = confidence,
-                featureScores = featureScores,
-                explanation = explanation,
-                coachingTips = coachingTips,
-                lastUpdated = now
+    internal suspend fun classify(): SpendingPersonalityProfile = withContext(Dispatchers.Default) {
+        val allExpenses = expenseRepository.getExpenseSnapshotsBetween(
+            TimePeriodUtils.addMonths(timeProvider.now(), -ANALYSIS_MONTHS),
+            timeProvider.now()
+        )
+        val purchases = allExpenses.filter {
+            it.transactionType == DomainTransactionType.PURCHASE && !it.isNotMine
+        }
+        if (purchases.size < MIN_TRANSACTIONS_FOR_ANALYSIS) {
+            return@withContext createInsufficientDataProfile()
+        }
+        val normalizedInput = try {
+            SingleCurrencyAnalyticsInput.from(
+                allExpenses,
+                SingleCurrencyAnalyticsInput.currencyOf(purchases)
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            return@withContext createUnavailableDataProfile(
+                MoneyAggregateResult.Unavailable(
+                    reason = MoneyDisplayUnavailableReasonCode.INVALID_SOURCE_CURRENCY.name,
+                    requestedRateBasis = RateBasis.IDENTITY
+                )
             )
         }
-    }
-    
-    /**
-     * Calculate all feature scores for personality classification.
-     */
-    private fun calculateFeatureScores(
-        purchases: List<ExpenseSnapshot>,
-        allExpenses: List<ExpenseSnapshot>,
-        budgets: List<BudgetSnapshot>
-    ): Map<String, Double> {
-        val scores = mutableMapOf<String, Double>()
-        
-        // 1. Impulse Ratio: % of transactions within 1 day of income deposits
-        scores["impulseRatio"] = calculateImpulseRatio(purchases, allExpenses)
-        
-        // 2. Merchant Diversity: unique merchants / total transactions
-        scores["merchantDiversity"] = calculateMerchantDiversity(purchases)
-        
-        // 3. Weekend Spend Share: % of spending on weekends (Sat=6, Sun=7 in Calendar)
-        scores["weekendSpendShare"] = calculateWeekendSpendShare(purchases)
-        
-        // 4. Night Spend Share: % of spending after 8 PM
-        scores["nightSpendShare"] = calculateNightSpendShare(purchases)
-        
-        // 5. Spending Variance: coefficient of variation in daily spending
-        scores["variance"] = calculateSpendingVariance(purchases)
-        
-        // 6. Budget Adherence: how well user sticks to budgets (1.0 = perfect)
-        scores["budgetAdherence"] = calculateBudgetAdherence(purchases, budgets)
-        
-        // 7. Anomaly Frequency: how often anomalies occur
-        scores["anomalyFrequency"] = calculateAnomalyFrequency(purchases)
-        
-        // 8. Category Diversity: unique categories / total transactions
-        scores["categoryDiversity"] = calculateCategoryDiversity(purchases)
-        
-        // 9. Transaction Count per month
-        scores["transactionsPerMonth"] = purchases.size.toDouble() / ANALYSIS_MONTHS
-        
-        // 10. Average transaction size (normalized)
-        scores["avgTransactionSize"] = calculateNormalizedAvgTransactionSize(purchases)
-        
-        Timber.tag(TAG).d("Feature scores: $scores")
-        
-        return scores
-    }
-    
-    /**
-     * Calculate impulse ratio: % of purchases within 1 day of income deposits.
-     */
-    private fun calculateImpulseRatio(
-        purchases: List<ExpenseSnapshot>,
-        allExpenses: List<ExpenseSnapshot>
-    ): Double {
-        // Find income/deposit dates
-        val incomeDates = allExpenses
-            .filter { it.transactionType == DomainTransactionType.DEPOSIT || 
-                      (it.transferDirection == DomainTransferDirection.INCOMING && it.amount > 100) }
-            .map { it.date }
-            .distinct()
-        
-        if (incomeDates.isEmpty()) return 0.0
-        
-        val impulsePurchases = purchases.count { purchase ->
-            incomeDates.any { incomeDate ->
-                val diffDays = abs(TimePeriodUtils.daysBetween(incomeDate, purchase.date))
-                diffDays <= IMPULSE_WINDOW_DAYS
-            }
-        }
-        
-        return impulsePurchases.toDouble() / purchases.size.coerceAtLeast(1)
-    }
-    
-    /**
-     * Calculate merchant diversity: unique merchants / total transactions.
-     */
-    private fun calculateMerchantDiversity(purchases: List<ExpenseSnapshot>): Double {
-        val uniqueMerchants = purchases.map { it.merchantKey ?: it.merchant.lowercase() }.distinct().size
-        return uniqueMerchants.toDouble() / purchases.size.coerceAtLeast(1)
-    }
-    
-    /**
-     * Calculate weekend spend share: % of spending on Saturday and Sunday.
-     */
-    private fun calculateWeekendSpendShare(purchases: List<ExpenseSnapshot>): Double {
-        // T4A: TimePeriodUtils.getDayOfWeek returns Calendar-style constants (Sunday=1..Saturday=7),
-        // preserving the original weekend semantics.
-        val weekendSpending = purchases.filter { purchase ->
-            val dayOfWeek = TimePeriodUtils.getDayOfWeek(purchase.date)
-            dayOfWeek == Calendar.SATURDAY || dayOfWeek == Calendar.SUNDAY
-        // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
-        }.sumOf { it.effectiveAmount }
-        
-        // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
-        val totalSpending = purchases.sumOf { it.effectiveAmount }
-        
-        return if (totalSpending > 0) weekendSpending / totalSpending else 0.0
-    }
-    
-    /**
-     * Calculate night spend share: % of spending after 8 PM.
-     */
-    private fun calculateNightSpendShare(purchases: List<ExpenseSnapshot>): Double {
-        // T4A: TimePeriodUtils.getHourOfDay returns the local hour (0-23) in the system
-        // default zone, preserving the original ">= 8 PM" night semantics.
-        val nightSpending = purchases.filter { purchase ->
-            TimePeriodUtils.getHourOfDay(purchase.date) >= NIGHT_HOUR_THRESHOLD
-        // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
-        }.sumOf { it.effectiveAmount }
-        
-        // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
-        val totalSpending = purchases.sumOf { it.effectiveAmount }
-        
-        return if (totalSpending > 0) nightSpending / totalSpending else 0.0
-    }
-    
-    /**
-     * Calculate spending variance: coefficient of variation in daily spending.
-     */
-    private fun calculateSpendingVariance(purchases: List<ExpenseSnapshot>): Double {
-        // Group by day
-        val dailyTotals = purchases.groupBy { expense ->
-            val dayStart = TimePeriodUtils.getStartOfDay(expense.date)
-            dayStart
-        // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
-        }.mapValues { it.value.sumOf { e -> e.effectiveAmount } }
-        
-        val dailyAmounts = dailyTotals.values.toList()
-        if (dailyAmounts.size < 2) return 0.0
-        
-        val mean = dailyAmounts.average()
-        if (mean == 0.0) return 0.0
-        
-        // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
-        val variance = dailyAmounts.sumOf { (it - mean) * (it - mean) } / dailyAmounts.size
-        val stdDev = sqrt(variance)
-        
-        return stdDev / mean // Coefficient of variation
-    }
-    
-    /**
-     * Calculate budget adherence: 1.0 = perfect adherence, 0.0 = completely over budget.
-     */
-    private fun calculateBudgetAdherence(
-        purchases: List<ExpenseSnapshot>,
-        budgets: List<BudgetSnapshot>
-    ): Double {
-        if (budgets.isEmpty()) return 0.5 // Neutral if no budgets set
-        
-        var totalAdherence = 0.0
-        var budgetCount = 0
-        
-        // Group purchases by category
-        val purchasesByCategory = purchases.groupBy { it.categoryId }
-        
-        budgets.forEach { budget ->
-            val categoryPurchases = purchasesByCategory[budget.categoryId] ?: emptyList()
-            // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
-            val categorySpending = categoryPurchases.sumOf { it.effectiveAmount }
-            
-            val adherence = if (budget.amount > 0) {
-                val ratio = categorySpending / budget.amount
-                when {
-                    ratio <= 1.0 -> 1.0 // Within budget
-                    ratio <= 1.1 -> 0.8 // Slightly over
-                    ratio <= 1.25 -> 0.6 // Moderately over
-                    else -> 0.4 // Significantly over
-                }
-            } else {
-                0.5
-            }
-            
-            totalAdherence += adherence
-            budgetCount++
-        }
-        
-        return if (budgetCount > 0) totalAdherence / budgetCount else 0.5
-    }
-    
-    /**
-     * Calculate anomaly frequency: estimated from transaction variance and outliers.
-     */
-    private fun calculateAnomalyFrequency(purchases: List<ExpenseSnapshot>): Double {
-        if (purchases.size < 5) return 0.0
-        
-        val amounts = purchases.map { it.effectiveAmount }
-        val mean = amounts.average()
-        // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
-        val stdDev = sqrt(amounts.sumOf { (it - mean) * (it - mean) } / amounts.size)
-        
-        if (stdDev == 0.0) return 0.0
-        
-        // Count transactions > 2 std dev from mean
-        val anomalies = amounts.count { abs(it - mean) > 2 * stdDev }
-        
-        return anomalies.toDouble() / purchases.size
-    }
-    
-    /**
-     * Calculate category diversity: unique categories / total transactions.
-     */
-    private fun calculateCategoryDiversity(purchases: List<ExpenseSnapshot>): Double {
-        val uniqueCategories = purchases.mapNotNull { it.categoryId }.distinct().size
-        return uniqueCategories.toDouble() / purchases.size.coerceAtLeast(1)
-    }
-    
-    /**
-     * Calculate normalized average transaction size (0-1 scale).
-     */
-    private fun calculateNormalizedAvgTransactionSize(purchases: List<ExpenseSnapshot>): Double {
-        val avgAmount = purchases.map { it.effectiveAmount }.average()
-        // Normalize: typical range €5 - €200, map to 0-1
-        return (avgAmount / 200.0).coerceIn(0.0, 1.0)
+        classify(normalizedInput)
     }
 
     /**
@@ -570,20 +338,33 @@ class SpendingPersonalityClassifier @Inject constructor(
      * - impulseRatio only detects DEPOSIT income events, not INCOMING transfers.
      *
      * These differences affect the feature vector but prevent raw-Double
-     * mixed-currency summing. The normalized path is currency-safe.
+     * mixed-currency summing. The normalized path is currency-safe. Excluded
+     * rows are not reintroduced as zero-value purchases, and data quality
+     * reduces confidence rather than fabricating a complete result.
      *
      * Uses [input.includedExpenses] (already converted to home currency) instead of
      * querying raw snapshots directly. The dataQuality flag reduces confidence when
      * input is partial.
      */
     suspend fun classify(input: NormalizedAnalyticsInput): SpendingPersonalityProfile {
-        val expenses = input.includedExpenses
+        val expenses = input.includedExpenses.filter {
+            input.period?.contains(it.date) != false
+        }
         val purchases = expenses.filter { it.transactionType == "PURCHASE" && !it.isNotMine }
         val allExpensesList = expenses.filter { !it.isNotMine }
 
         if (purchases.size < MIN_TRANSACTIONS_FOR_ANALYSIS) {
             Timber.tag(TAG).d("Insufficient data for personality classification: ${purchases.size} transactions")
             return createInsufficientDataProfile()
+        }
+
+        val aggregateResult = aggregateNormalizedPurchases(input, purchases)
+        if (aggregateResult is MoneyAggregateResult.Unavailable) {
+            Timber.tag(TAG).w(
+                "Normalized personality input unavailable reason=%s",
+                aggregateResult.reason
+            )
+            return createUnavailableDataProfile(aggregateResult)
         }
 
         // Calculate feature scores from normalized input
@@ -617,7 +398,10 @@ class SpendingPersonalityClassifier @Inject constructor(
         featureScores["transactionsPerMonth"] = purchases.size.toDouble() / ANALYSIS_MONTHS
 
         // 10. Average transaction size (normalized 0-1)
-        featureScores["avgTransactionSize"] = calculateAvgTransactionSizeFromNormalized(purchases)
+        featureScores["avgTransactionSize"] = calculateAvgTransactionSizeFromNormalized(
+            purchases,
+            aggregateResult
+        )
 
         Timber.tag(TAG).d("Feature scores (normalized input): $featureScores")
 
@@ -642,9 +426,20 @@ class SpendingPersonalityClassifier @Inject constructor(
             featureScores = featureScores,
             explanation = explanation,
             coachingTips = coachingTips,
-            lastUpdated = timeProvider.now()
+            lastUpdated = timeProvider.now(),
+            moneyResult = aggregateResult
         )
     }
+
+    private fun aggregateNormalizedPurchases(
+        input: NormalizedAnalyticsInput,
+        purchases: List<NormalizedExpense>
+    ): MoneyAggregateResult = NormalizedAnalyticsMoneyAdapter.aggregateInputSlice(
+        input = input,
+        includedExpenses = purchases,
+        startInclusiveMillis = input.period?.startInclusiveMillis,
+        endExclusiveMillis = input.period?.endExclusiveMillis
+    )
 
     private fun calculateMerchantDiversityFromNormalized(purchases: List<NormalizedExpense>): Double {
         val uniqueMerchants = purchases.map { it.merchantKey ?: it.merchant }.distinct().size
@@ -664,16 +459,20 @@ class SpendingPersonalityClassifier @Inject constructor(
         val nightCount = purchases.count { exp ->
             val hour = java.time.Instant.ofEpochMilli(exp.date)
                 .atZone(java.time.ZoneId.systemDefault()).hour
-            hour in 22..23 || hour in 0..5
+            hour >= NIGHT_HOUR_THRESHOLD
         }
         return nightCount.toDouble() / purchases.size.coerceAtLeast(1)
     }
 
     private fun calculateSpendingVarianceFromNormalized(purchases: List<NormalizedExpense>): Double {
-        val amounts = purchases.map { it.normalizedAmount }
-        val mean = amounts.average()
-        if (mean == 0.0 || amounts.isEmpty()) return 0.0
-        val variance = amounts.map { (it - mean) * (it - mean) }.average()
+        val dailyAmounts = purchases
+            .groupBy { TimePeriodUtils.getStartOfDay(it.date) }
+            .values
+            .map { dayExpenses -> aggregateNormalizedAmounts(dayExpenses) ?: return 0.0 }
+        if (dailyAmounts.size < 2) return 0.0
+        val mean = dailyAmounts.average()
+        if (mean == 0.0) return 0.0
+        val variance = dailyAmounts.sumOf { (it - mean) * (it - mean) } / dailyAmounts.size
         return (Math.sqrt(variance) / mean).coerceIn(0.0, 1.0)
     }
 
@@ -682,11 +481,30 @@ class SpendingPersonalityClassifier @Inject constructor(
         return (uniqueCategories.toDouble() / purchases.size.coerceAtLeast(1)).coerceIn(0.0, 1.0)
     }
 
-    private fun calculateAvgTransactionSizeFromNormalized(purchases: List<NormalizedExpense>): Double {
-        val avgAmount = purchases.map { it.normalizedAmount }.average()
+    private fun calculateAvgTransactionSizeFromNormalized(
+        purchases: List<NormalizedExpense>,
+        aggregateResult: MoneyAggregateResult
+    ): Double {
+        val avgAmount = (aggregateResult as? MoneyAggregateResult.Available)
+            ?.aggregate
+            ?.displayAmount
+            ?.div(purchases.size)
+            ?: 0.0
         // Normalize: typical range €5 - €200, map to 0-1 (matches no-arg calculateNormalizedAvgTransactionSize)
         return (avgAmount / 200.0).coerceIn(0.0, 1.0)
     }
+
+    private fun createUnavailableDataProfile(
+        moneyResult: MoneyAggregateResult.Unavailable
+    ): SpendingPersonalityProfile = SpendingPersonalityProfile(
+        personalityType = SpendingPersonalityType.BALANCED,
+        confidence = 0.0,
+        featureScores = emptyMap(),
+        explanation = listOf("Normalized money data is unavailable for personality analysis"),
+        coachingTips = listOf("Resolve the missing currency or conversion data before relying on this analysis."),
+        lastUpdated = timeProvider.now(),
+        moneyResult = moneyResult
+    )
 
     private fun calculateImpulseRatioFromNormalized(
         purchases: List<NormalizedExpense>,
@@ -713,16 +531,38 @@ class SpendingPersonalityClassifier @Inject constructor(
     private fun calculateAnomalyFrequencyFromNormalized(purchases: List<NormalizedExpense>): Double {
         if (purchases.size < 5) return 0.0
 
-        val amounts = purchases.map { it.normalizedAmount }
-        val mean = amounts.average()
-        val stdDev = sqrt(amounts.sumOf { (it - mean) * (it - mean) } / amounts.size)
+        val mean = (aggregateNormalizedAmounts(purchases) ?: return 0.0) / purchases.size
+        val squaredDeviation = purchases.fold(0.0) { total, expense ->
+            val deviation = expense.normalizedAmount - mean
+            total + deviation * deviation
+        }
+        val stdDev = sqrt(squaredDeviation / purchases.size)
 
         if (stdDev == 0.0) return 0.0
 
         // Count transactions > 2 std dev from mean
-        val anomalies = amounts.count { abs(it - mean) > 2 * stdDev }
+        val anomalies = purchases.count { abs(it.normalizedAmount - mean) > 2 * stdDev }
 
         return anomalies.toDouble() / purchases.size
+    }
+
+    private fun aggregateNormalizedAmounts(expenses: List<NormalizedExpense>): Double? {
+        val targetCurrency = CurrencyCode.parse(expenses.firstOrNull()?.normalizedCurrency)
+            ?.takeIf { it in CurrencyCode.ALL_SUPPORTED }
+            ?: return null
+        val rows = expenses.map { expense ->
+            NormalizedMoneyRow(
+                amount = expense.normalizedAmount,
+                normalizedCurrency = targetCurrency,
+                sourceCurrency = CurrencyCode.parse(expense.originalCurrency),
+                rateValidDate = expense.rateValidDate,
+                transactionId = expense.id
+            )
+        }
+        return when (val result = MoneyAggregateBuilder.fromNormalizedRows(rows, targetCurrency)) {
+            is MoneyAggregateResult.Available -> result.aggregate.displayAmount
+            is MoneyAggregateResult.Unavailable -> null
+        }
     }
 
 }
@@ -736,7 +576,8 @@ data class SpendingPersonalityProfile(
     val featureScores: Map<String, Double>,
     val explanation: List<String>,
     val coachingTips: List<String>,
-    val lastUpdated: Long
+    val lastUpdated: Long,
+    val moneyResult: MoneyAggregateResult? = null
 )
 
 /**

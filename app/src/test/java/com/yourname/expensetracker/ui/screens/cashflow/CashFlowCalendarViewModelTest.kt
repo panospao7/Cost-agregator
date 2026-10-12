@@ -14,7 +14,9 @@ import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.ConversionQuality
 import com.yourname.expensetracker.domain.core.money.MoneyAmount
+import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.util.ViewModelTestUtils
@@ -54,6 +56,21 @@ class CashFlowCalendarViewModelTest : ViewModelTestUtils() {
         coEvery { cashFlowCalculator.getUpcomingBills(30) } returns emptyList()
 
         viewModel = createViewModel()
+    }
+
+    @Test
+    fun `partial cash flow aggregate is not rendered as a complete amount`() {
+        val partial = MoneyAggregate.singleCurrency(42.0, CurrencyCode("EUR"), 1).copy(
+            isPartial = true,
+            conversionQuality = ConversionQuality.PARTIAL
+        )
+
+        assertThat(formatCashFlowAggregate(partial, isPartial = true))
+            .isEqualTo("Partial / unavailable")
+        assertThat(formatCashFlowAggregate(partial, isPartial = false))
+            .isEqualTo("Unavailable")
+        assertThat(formatCashFlowAggregate(MoneyAggregate.singleCurrency(42.0, CurrencyCode.EUR), isPartial = true))
+            .isEqualTo("Partial / unavailable")
     }
 
     @Test

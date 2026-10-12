@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateResult
 import timber.log.Timber
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
@@ -10,17 +11,11 @@ import javax.inject.Singleton
 /**
  * Computes per-category spending insights (totals, changes from previous month).
  *
- * ## CURRENCY NORMALIZATION: SAFE — pre-normalized by caller
- * This engine does **not** inject [AnalyticsCurrencyNormalizer]. It relies on
- * the caller (typically [InsightsEngine]) having already normalized all
- * [ExpenseSnapshot] data to a single currency via
- * [AnalyticsCurrencyNormalizer.normalizeSnapshots] before it reaches this
- * class. All `sumOf { it.effectiveAmount }` calls operate on already-normalized
- * values.
- *
- * If un-normalized multi-currency data reaches this engine, category totals,
- * change percentages, and percentage-of-total calculations will be incorrect
- * because they mix amounts in different currencies.
+ * ## Enforced currency boundary
+ * Normalized inputs retain their home currency and rate provenance. The legacy
+ * snapshot adapter accepts only one supported source currency matching the
+ * requested target; it never converts or relabels mixed-currency rows.
+ * Unavailable conversion data is not projected as zero spending.
  *
  * ## Known limitation: stale/deleted category IDs
  * When an expense references a [categoryId] that no longer exists in the
@@ -55,31 +50,56 @@ class CategoryInsightEngine @Inject constructor() {
 
     private val missingCategoryHitCount = ConcurrentHashMap<Long, Int>()
 
+    @Deprecated("Use normalized input; compatibility snapshots must all match the explicit currency")
     fun calculate(
         currentMonth: MonthPeriod,
         previousMonth: MonthPeriod?,
         categoryMap: Map<Long, AnalyticsCategoryRef>,
         allExpenses: List<ExpenseSnapshot>,
-        displayCurrency: String = "EUR"
+        displayCurrency: String = SingleCurrencyAnalyticsInput.currencyOf(allExpenses)
     ): List<CategoryInsight> {
-        val currentExpenses = allExpenses.filter { 
-            it.date >= currentMonth.startMs && 
-            it.date < currentMonth.endMs &&
-            it.transactionType.isSpending && 
-            !it.isNotMine 
+        val input = SingleCurrencyAnalyticsInput.from(allExpenses, displayCurrency)
+        return calculate(currentMonth, previousMonth, categoryMap, input, input, displayCurrency)
+    }
+
+    /**
+     * Calculates category insights from canonical normalized analytics inputs.
+     *
+     * Dimension-level exclusion ownership is not available in the normalized
+     * contract. If a conversion exclusion belongs to the requested month, each
+     * category aggregate therefore fails closed instead of attaching the
+     * whole-month exclusion count to one category or silently redistributing it.
+     */
+    fun calculate(
+        currentMonth: MonthPeriod,
+        previousMonth: MonthPeriod?,
+        categoryMap: Map<Long, AnalyticsCategoryRef>,
+        currentInput: NormalizedAnalyticsInput,
+        previousInput: NormalizedAnalyticsInput? = null,
+        displayCurrency: String = currentInput.homeCurrency
+    ): List<CategoryInsight> {
+        val currentExpenses = currentInput.includedExpenses.filter {
+            it.date >= currentMonth.startMs &&
+                it.date < currentMonth.endMs &&
+                currentInput.period?.contains(it.date) != false &&
+                it.transactionType == DomainTransactionType.PURCHASE.name &&
+                !it.isNotMine
         }
-        
-        val previousExpenses = previousMonth?.let { pm ->
-            allExpenses.filter { 
-                it.date >= pm.startMs && 
-                it.date < pm.endMs &&
-                it.transactionType.isSpending && 
-                !it.isNotMine 
+        val previousSource = previousInput ?: currentInput
+        val previousExpenses = previousMonth?.let { month ->
+            previousSource.includedExpenses.filter {
+                it.date >= month.startMs &&
+                    it.date < month.endMs &&
+                    previousSource.period?.contains(it.date) != false &&
+                    it.transactionType == DomainTransactionType.PURCHASE.name &&
+                    !it.isNotMine
             }
-        }
-        
-        // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
-        val totalCurrent = currentExpenses.sumOf { it.effectiveAmount }
+        }.orEmpty()
+
+        val currentTotalResult = NormalizedAnalyticsMoneyAdapter.aggregateInputSlice(
+            currentInput, currentExpenses, currentMonth.startMs, currentMonth.endMs, displayCurrency = displayCurrency
+        )
+        val currentTotal = availableAmount(currentTotalResult)
 
         val missingCategoryUsage = currentExpenses
             .asSequence()
@@ -87,7 +107,6 @@ class CategoryInsightEngine @Inject constructor() {
             .filter { !categoryMap.containsKey(it) }
             .groupingBy { it }
             .eachCount()
-
         if (missingCategoryUsage.isNotEmpty()) {
             val affectedTransactions = missingCategoryUsage.values.sum()
             missingCategoryUsage.forEach { (categoryId, count) ->
@@ -109,48 +128,65 @@ class CategoryInsightEngine @Inject constructor() {
                 cumulativeSample
             )
         }
-        
-        val categoryTotals = currentExpenses.groupBy { it.categoryId }
-        val previousTotalsByCategory: Map<Long?, Pair<Double, Int>> = previousExpenses
-            ?.groupBy { it.categoryId }
-            ?.mapValues { (_, expenses) ->
-                // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
-                Pair(expenses.sumOf { it.effectiveAmount }, expenses.size)
-            }
-            ?: emptyMap()
-        
-        return categoryTotals.map { (categoryId, expenses) ->
+
+        val currentByCategory = currentExpenses.groupBy { it.categoryId }
+        val previousByCategory = previousExpenses.groupBy { it.categoryId }
+        return currentByCategory.map { (categoryId, expenses) ->
             val category = categoryId?.let { categoryMap[it] } ?: FALLBACK_CATEGORY
-            // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
-            val currentTotal = expenses.sumOf { it.effectiveAmount }
-            val currentCount = expenses.size
-            
-            val previousTotal = previousTotalsByCategory[categoryId]?.first
-            val previousCount = previousTotalsByCategory[categoryId]?.second
-            
-            val changeFromPrevious = if (previousTotal != null && previousTotal > 0) {
-                ((currentTotal - previousTotal) / previousTotal * 100).toFloat()
-            } else null
-            
-            val percentageOfTotal = if (totalCurrent > 0) {
-                (currentTotal / totalCurrent * 100).toFloat()
-            } else 0f
-            
+            val categoryResult = aggregateMonth(currentInput, expenses, currentMonth, displayCurrency)
+            val previousCategoryExpenses = previousByCategory[categoryId]
+            val previousCategoryResult = previousMonth?.let {
+                aggregateMonth(previousSource, previousCategoryExpenses.orEmpty(), it, displayCurrency)
+            }
+            val currentAmount = availableAmount(categoryResult)
+            val previousAmount = previousCategoryExpenses?.let {
+                (previousCategoryResult as? MoneyAggregateResult.Available)?.aggregate?.displayAmount
+            }
+            val changeFromPrevious = if (currentAmount != null && previousAmount != null && previousAmount > 0) {
+                ((currentAmount - previousAmount) / previousAmount * 100).toFloat()
+            } else {
+                null
+            }
+            val percentageOfTotal = if (currentTotal != null && currentAmount != null) {
+                if (currentTotal > 0) (currentAmount / currentTotal * 100).toFloat() else 0f
+            } else {
+                null
+            }
             CategoryInsight(
                 category = category,
-                currentTotal = currentTotal,
-                currentCount = currentCount,
-                previousTotal = previousTotal,
-                previousCount = previousCount,
+                currentTotal = currentAmount,
+                currentCount = expenses.size,
+                previousTotal = previousAmount,
+                previousCount = previousCategoryExpenses?.size,
                 averageOverMonths = null,
                 monthsOfData = 1,
                 percentageOfTotal = percentageOfTotal,
                 changeFromPrevious = changeFromPrevious,
                 changeFromAverage = null,
-                displayCurrency = displayCurrency
+                displayCurrency = displayCurrency,
+                moneyResult = categoryResult,
+                previousMoneyResult = previousCategoryResult
             )
         }.sortedByDescending { it.currentTotal }
     }
+
+    private fun aggregateMonth(
+        input: NormalizedAnalyticsInput,
+        expenses: Iterable<NormalizedExpense>,
+        month: MonthPeriod,
+        displayCurrency: String
+    ): MoneyAggregateResult = NormalizedAnalyticsMoneyAdapter.aggregateUnattributedSlice(
+        input = input.copy(
+            excludedExpenses = input.excludedExpenses.filter {
+                it.date == null || (it.date >= month.startMs && it.date < month.endMs && input.period?.contains(it.date) != false)
+            }
+        ),
+        includedExpenses = expenses,
+        displayCurrency = displayCurrency
+    )
+
+    private fun availableAmount(result: MoneyAggregateResult): Double? =
+        (result as? MoneyAggregateResult.Available)?.aggregate?.displayAmount
 
 
     private fun pruneMissingCategoryHitsIfNeeded() {

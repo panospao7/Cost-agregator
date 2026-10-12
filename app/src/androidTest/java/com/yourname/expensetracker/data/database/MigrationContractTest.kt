@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.database
 
 import android.content.Context
+import android.database.sqlite.SQLiteConstraintException
 import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.sqlite.db.SupportSQLiteOpenHelper
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
@@ -541,6 +542,24 @@ class MigrationContractTest {
             db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_merchant_locations_normalizedMerchantName_areaKey ON merchant_locations (normalizedMerchantName, areaKey)")
             db.execSQL("CREATE INDEX IF NOT EXISTS index_merchant_locations_lastResolvedAt ON merchant_locations (lastResolvedAt)")
 
+            db.execSQL("""
+                CREATE TABLE merchant_location_corrections (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    normalizedMerchantName TEXT NOT NULL,
+                    correctedLatitude REAL NOT NULL,
+                    correctedLongitude REAL NOT NULL,
+                    areaLatitude REAL,
+                    areaLongitude REAL,
+                    areaKey TEXT NOT NULL,
+                    areaRadiusKm REAL NOT NULL DEFAULT 5.0,
+                    osmId TEXT,
+                    displayAddress TEXT,
+                    createdAt INTEGER NOT NULL
+                )
+            """.trimIndent())
+            db.execSQL("CREATE UNIQUE INDEX index_merchant_location_corrections_normalizedMerchantName_areaKey ON merchant_location_corrections (normalizedMerchantName, areaKey)")
+            db.execSQL("CREATE INDEX index_merchant_location_corrections_createdAt ON merchant_location_corrections (createdAt)")
+
             // ── seed: duplicate searchKey canonicals ──────────────────────────
             val now = 1700000000000L
             db.execSQL("INSERT INTO merchant_canonicals (id, normalizedName, searchKey, totalOccurrences, totalSpent, createdAt, updatedAt) VALUES (1, 'McDonalds A', 'mcdonalds', 10, 100.0, $now, $now)")
@@ -562,6 +581,11 @@ class MigrationContractTest {
             db.execSQL("INSERT INTO merchant_locations (id, normalizedMerchantName, areaKey, displayName, latitude, longitude, source, lastResolvedAt, hitCount) VALUES (101, 'mcdonalds', 'global', 'McD-global', 37.9, 23.7, 'NOMINATIM', $now, 3)")
             // A standalone NULL row with no collision
             db.execSQL("INSERT INTO merchant_locations (id, normalizedMerchantName, areaKey, displayName, latitude, longitude, source, lastResolvedAt, hitCount) VALUES (102, 'starbucks', NULL, 'Starbucks', 37.95, 23.75, 'NOMINATIM', $now, 1)")
+
+            // Normalizing the legacy key collides with 'global'; the largest id survives.
+            db.execSQL("INSERT INTO merchant_location_corrections (id, normalizedMerchantName, correctedLatitude, correctedLongitude, areaKey, createdAt) VALUES (200, 'mcdonalds', 37.9, 23.7, 'global', $now)")
+            db.execSQL("INSERT INTO merchant_location_corrections (id, normalizedMerchantName, correctedLatitude, correctedLongitude, areaKey, createdAt) VALUES (201, 'mcdonalds', 38.0, 23.8, 'mcdonalds|global', $now)")
+            db.execSQL("INSERT INTO merchant_location_corrections (id, normalizedMerchantName, correctedLatitude, correctedLongitude, areaKey, createdAt) VALUES (202, 'starbucks', 37.95, 23.75, 'local', $now)")
 
             // ── run migration ────────────────────────────────────────────────
             AppDatabase.MIGRATION_72_73.migrate(db)
@@ -626,6 +650,30 @@ class MigrationContractTest {
                 }
             }
             colInfo.close()
+
+            db.query("SELECT id, correctedLatitude, correctedLongitude FROM merchant_location_corrections WHERE normalizedMerchantName = 'mcdonalds' AND areaKey = 'global'").use { cursor ->
+                assertEquals(1, cursor.count)
+                assertTrue(cursor.moveToFirst())
+                assertEquals(201L, cursor.getLong(0))
+                assertEquals(38.0, cursor.getDouble(1), 0.001)
+                assertEquals(23.8, cursor.getDouble(2), 0.001)
+            }
+            db.query("SELECT areaKey FROM merchant_location_corrections WHERE id = 202").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("local", cursor.getString(0))
+            }
+            assertTrue("correction index must remain unique", isUniqueIndex("index_merchant_location_corrections_normalizedMerchantName_areaKey"))
+            var duplicateRejected = false
+            try {
+                db.execSQL("INSERT INTO merchant_location_corrections (normalizedMerchantName, correctedLatitude, correctedLongitude, areaKey, createdAt) VALUES ('mcdonalds', 0.0, 0.0, 'global', $now)")
+            } catch (_: SQLiteConstraintException) {
+                duplicateRejected = true
+            }
+            assertTrue("normalized correction duplicates must be rejected", duplicateRejected)
+            db.query("SELECT COUNT(*) FROM merchant_location_corrections").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(2, cursor.getInt(0))
+            }
         }
     }
 
@@ -1131,6 +1179,30 @@ class MigrationContractTest {
      * 142->143 warranty-reminder-deliveries contract tests.
      */
     private fun seedV142WarrantyParent(db: SupportSQLiteDatabase) {
+        // MIGRATION_142_143 also rebuilds raw_notifications. Keep this fixture
+        // aligned with the exported v142 table shape so the contract exercises
+        // the real migration path rather than an incomplete synthetic schema.
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS raw_notifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                packageName TEXT NOT NULL,
+                appName TEXT,
+                title TEXT,
+                text TEXT,
+                bigText TEXT,
+                subText TEXT,
+                extrasJson TEXT,
+                timestamp INTEGER NOT NULL,
+                capturedAt INTEGER NOT NULL,
+                isProcessed INTEGER NOT NULL,
+                isRelevant INTEGER,
+                parseResult TEXT,
+                rawContentPurgedAt INTEGER,
+                dedupeFingerprint TEXT
+            )
+            """.trimIndent()
+        )
         db.execSQL(
             """
             CREATE TABLE IF NOT EXISTS warranties (

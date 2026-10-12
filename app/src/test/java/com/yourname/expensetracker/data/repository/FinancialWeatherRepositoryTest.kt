@@ -341,7 +341,7 @@ class FinancialWeatherRepositoryTest {
         assertEquals(25.0, pastSum[1], 0.01) // Day 1: isNotMine filtered out, stays at 25
 
         // isNotMine expense is also excluded from computed spending pace
-        assertEquals(25.0, capturedInput.captured.spendingPace.currentMonthSpent, 0.01)
+        assertEquals(25.0, requireNotNull(capturedInput.captured.spendingPace.currentMonthSpent), 0.01)
     }
 
     @Test

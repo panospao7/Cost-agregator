@@ -402,13 +402,13 @@ class ReceiptScanViewModel @Inject constructor(
                     }
 
                     val computedTaxInclusive = ReceiptParser.isTaxInclusive(
-                        receipt.parsedTotal, receipt.parsedTaxAmount, lineItems
+                        receipt.parsedTotal, receipt.parsedTaxAmount, lineItems, receipt.currency
                     )
                     val parsed = ReceiptParser.ParsedReceipt(
                         merchantName = receipt.parsedMerchant,
-                        total = receipt.parsedTotal,
+                        total = ReceiptParser.sourceMoneyOrNull(receipt.parsedTotal, receipt.currency),
                         subtotal = null,
-                        tax = receipt.parsedTaxAmount,
+                        tax = ReceiptParser.sourceMoneyOrNull(receipt.parsedTaxAmount, receipt.currency),
                         date = receipt.parsedDate,
                         currency = receipt.currency,
                         lineItems = lineItems,
@@ -419,7 +419,7 @@ class ReceiptScanViewModel @Inject constructor(
                     val debugData = DebugData(
                         rawText = receipt.rawOcrText,
                         parsedTransactions = listOfNotNull(
-                            parsed.total?.let { total ->
+                            parsed.total?.amount?.let { total ->
                                 ParsedTransaction(
                                     amount = total,
                                     currency = parsed.currency,
@@ -449,11 +449,11 @@ class ReceiptScanViewModel @Inject constructor(
                             rawOcrText = receipt.rawOcrText,
                             editMerchant = parsed.merchantName ?: "",
                             // S7-011: Locale.US for consistent decimal formatting
-                            editAmount = parsed.total?.let { total ->
+                            editAmount = parsed.total?.amount?.let { total ->
                                 String.format(java.util.Locale.US, "%.2f", total)
                             } ?: "",
                             // S7-009: Use OCR currency if present, else keep loaded home currency
-                            editCurrency = parsed.currency?.takeIf { c -> c.isNotBlank() } ?: it.editCurrency,
+                            editCurrency = parsed.currency.takeIf { c -> c.isNotBlank() } ?: it.editCurrency,
                             editDate = parsed.date ?: timeProvider.now(),
                             ocrConfidence = parsed.confidence,
                             selectedCategoryId = null,
@@ -1223,8 +1223,9 @@ class ReceiptScanViewModel @Inject constructor(
                 // S7-012: Tax-inclusive override only when user has NOT edited the amount
                 val taxInclusive = _state.value.parsedReceipt?.taxInclusive == true
                 val parsedTotal = _state.value.parsedReceipt?.total
+                    ?.takeIf { it.currency.code == resolvedCurrency }?.amount
                 val effectiveAmount = if (taxInclusive && parsedTotal != null && !_state.value.isAmountEditedByUser) {
-                    Timber.d("RCP-14: Using parsed total %.2f for tax-inclusive receipt %d (user did not edit)", parsedTotal, request.receiptId)
+                    Timber.d("ReceiptScan: tax_inclusive_total_applied receiptId=%d", request.receiptId)
                     parsedTotal
                 } else {
                     request.amount

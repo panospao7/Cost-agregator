@@ -3,7 +3,10 @@ package com.yourname.expensetracker.domain.health
 import com.yourname.expensetracker.data.database.dao.HealthScoreHistoryDao
 import com.yourname.expensetracker.data.database.entity.HealthScoreHistory
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.analytics.requireCompleteMoneyInput
 import com.yourname.expensetracker.domain.analytics.AnalyticsNormalizationResult
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
 import com.yourname.expensetracker.domain.cashflow.CashFlowCalculator
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.model.DomainTransactionType
@@ -13,6 +16,7 @@ import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.logic.RecurrenceCalculator
 import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
+import com.yourname.expensetracker.domain.savings.SavingsGoalCurrencyPolicy
 import com.yourname.expensetracker.domain.savings.SavingsGoalRepository
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -79,7 +83,8 @@ class FinancialHealthScoreV2 @Inject constructor(
     private val currencySettingsRepository: CurrencySettingsRepository,
     /** @suppress Injected for AIML-25: upcoming-bill-aware runway calculation. */
     private val cashFlowCalculator: CashFlowCalculator,
-    private val writeBarrier: com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+    private val writeBarrier: com.yourname.expensetracker.data.backup.DatabaseWriteBarrier,
+    private val currencyConverter: com.yourname.expensetracker.domain.currency.CurrencyConverter? = null
 ) {
     companion object {
         // Component weights (must sum to 1.0)
@@ -155,8 +160,13 @@ class FinancialHealthScoreV2 @Inject constructor(
             }
             // P5-008: normalization failure or any excluded row is a typed
             // unavailable — the raw Expense fallback is gone.
-            if (normalized == null || normalized.excludedCount > 0) {
+            if (normalized == null || normalized.excludedCount > 0 || normalized.hasWarnings) {
                 Timber.w("Health score unavailable: expense normalization failed (normalized=${normalized != null})")
+                return HealthScoreOutcome.Unavailable(HealthScoreUnavailableReason.NORMALIZATION_FAILED)
+            }
+            try {
+                normalized.requireCompleteMoneyInput(homeCurrency)
+            } catch (error: com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException) {
                 return HealthScoreOutcome.Unavailable(HealthScoreUnavailableReason.NORMALIZATION_FAILED)
             }
             val normalizedExpenses = normalized.includedExpenses
@@ -173,12 +183,13 @@ class FinancialHealthScoreV2 @Inject constructor(
             val savingsGoals = savingsGoalRepository.getSavingsGoals()
             
             // Calculate individual component scores
-            val savingsRateScore = calculateSavingsRateScore(deposits, purchases)
+            val savingsRateScore = calculateSavingsRateScore(deposits, purchases, homeCurrency)
             val runwayScore = calculateRunwayScore(
                 purchases = purchases,
                 savingsGoals = savingsGoals,
                 periodStart = periodStart,
-                periodEnd = periodEnd
+                periodEnd = periodEnd,
+                homeCurrency = homeCurrency
             )
             val budgetAdherenceScore = calculateBudgetAdherenceScore(budgetStatuses)
             val billReliabilityScore = calculateBillReliabilityScore(expenses, periodStart, periodEnd)
@@ -286,7 +297,7 @@ class FinancialHealthScoreV2 @Inject constructor(
         } catch (e: Exception) {
             // P5-008: never fabricate an all-50 result. Bounded diagnostic only
             // (exception class name; no message text, no payload, no stack trace).
-            Timber.e("Health score unavailable: data load failed (%s)", e.javaClass.simpleName)
+            Timber.e("Health score unavailable: data load failed (%s)", e.javaClass.simpleName.take(80))
             HealthScoreOutcome.Unavailable(HealthScoreUnavailableReason.DATA_LOAD_FAILED)
         }
     }
@@ -299,12 +310,19 @@ class FinancialHealthScoreV2 @Inject constructor(
      */
     private fun calculateSavingsRateScore(
         deposits: List<ExpenseSnapshot>,
-        purchases: List<ExpenseSnapshot>
+        purchases: List<ExpenseSnapshot>,
+        homeCurrency: String
     ): Int {
         // SAFE: data normalized at lines 89-91 via AnalyticsCurrencyNormalizer
-        val totalIncome = deposits.sumOf { it.effectiveAmount }
+        val totalIncome = MoneyAggregateBuilder.fromHomeCurrencyAmounts(
+            amounts = deposits.map { it.effectiveAmount },
+            homeCurrency = homeCurrency
+        ).displayAmount
         // SAFE: data normalized at lines 89-91 via AnalyticsCurrencyNormalizer
-        val totalExpenses = purchases.sumOf { it.effectiveAmount }
+        val totalExpenses = MoneyAggregateBuilder.fromHomeCurrencyAmounts(
+            amounts = purchases.map { it.effectiveAmount },
+            homeCurrency = homeCurrency
+        ).displayAmount
         
         // If no income data, return neutral score
         if (totalIncome <= 0) {
@@ -331,8 +349,15 @@ class FinancialHealthScoreV2 @Inject constructor(
         purchases: List<ExpenseSnapshot>,
         savingsGoals: List<SavingsGoal>,
         periodStart: Long,
-        periodEnd: Long
+        periodEnd: Long,
+        homeCurrency: String
     ): Int {
+        val targetCurrency = CurrencyCode.parse(homeCurrency)?.takeIf { it in CurrencyCode.ALL_SUPPORTED }
+            ?: throw HealthScoreUnavailableError(HealthScoreUnavailableReason.HOME_CURRENCY_UNAVAILABLE)
+        // Validate every balance before neutral-score shortcuts, including zero/completed goals.
+        if (savingsGoals.any { SavingsGoalCurrencyPolicy.knownCurrencyOrNull(it) == null }) {
+            throw HealthScoreUnavailableError(HealthScoreUnavailableReason.NORMALIZATION_FAILED)
+        }
         val now = timeProvider.now()
         val effectivePeriodEnd = minOf(now, periodEnd)
         if (effectivePeriodEnd <= periodStart) {
@@ -350,7 +375,12 @@ class FinancialHealthScoreV2 @Inject constructor(
         // SAFE: purchases already normalized at lines 89-91 via AnalyticsCurrencyNormalizer
         val observedSpend = purchases
             .filter { it.date < effectivePeriodEnd }
-            .sumOf { it.effectiveAmount }
+            .let { observed ->
+                MoneyAggregateBuilder.fromHomeCurrencyAmounts(
+                    amounts = observed.map { it.effectiveAmount },
+                    homeCurrency = homeCurrency
+                ).displayAmount
+            }
         val daysInReferenceMonth = TimePeriodUtils.getDaysInMonth(periodStart)
         val projectedMonthlyBurn = if (observedSpend > 0.0 && elapsedDays > 0) {
             observedSpend / elapsedDays.toDouble() * daysInReferenceMonth.toDouble()
@@ -358,7 +388,7 @@ class FinancialHealthScoreV2 @Inject constructor(
             0.0
         }
 
-        val historicalMonthlyBaseline = calculateHistoricalMonthlyBaseline(periodStart)
+        val historicalMonthlyBaseline = calculateHistoricalMonthlyBaseline(periodStart, homeCurrency)
 
         if (historicalMonthlyBaseline == null && coverage < RUNWAY_MIN_COVERAGE_WITHOUT_BASELINE) {
             // Too little data to infer a stable burn rate without historical baseline.
@@ -374,10 +404,14 @@ class FinancialHealthScoreV2 @Inject constructor(
             else -> projectedMonthlyBurn
         }
 
-        // Use accumulated savings, not unspent monthly budget, for runway calculation.
-        // TODO: Convert goal.currentAmount to comparable currency before summing across goals
-        // SAFE: savings goals are user-defined in home currency (amounts are logically already in home currency)
-        val totalSavings = savingsGoals.sumOf { it.currentAmount }
+        val totalSavings = aggregateRunwayMoney(
+            savingsGoals.map { goal ->
+                com.yourname.expensetracker.domain.core.money.MoneyBucketInput(
+                    goal.currentAmount, supportedRunwayCurrency(goal.currency), 1
+                )
+            }, targetCurrency, com.yourname.expensetracker.domain.core.money.RateBasis.LATEST_AVAILABLE,
+            com.yourname.expensetracker.domain.core.money.BucketDatePolicy.Latest
+        )
 
         // AIML-25: Subtract upcoming known bills from savings so the runway reflects
         // the net buffer available after paying committed/likely obligations.
@@ -387,11 +421,18 @@ class FinancialHealthScoreV2 @Inject constructor(
         ).coerceAtLeast(0)
         val upcomingBills = if (daysRemainingInPeriod > 0) {
             try {
-                cashFlowCalculator.getUpcomingBills(daysAhead = daysRemainingInPeriod)
-                    .sumOf { it.averageAmount }
+                val bills = cashFlowCalculator.getUpcomingBills(daysAhead = daysRemainingInPeriod)
+                aggregateRunwayMoney(
+                    bills.map { bill -> com.yourname.expensetracker.domain.core.money.MoneyBucketInput(
+                        bill.averageAmount, supportedRunwayCurrency(bill.currency), 1, bill.nextExpectedDate
+                    ) }, targetCurrency, com.yourname.expensetracker.domain.core.money.RateBasis.FORECAST_DATE,
+                    com.yourname.expensetracker.domain.core.money.BucketDatePolicy.RequireBucketDate
+                )
             } catch (e: Exception) {
-                Timber.w(e, "Failed to compute upcoming bills for runway, using gross savings")
-                0.0
+                if (e is CancellationException) throw e
+                if (e is HealthScoreUnavailableError) throw e
+                Timber.w("HEALTH_RUNWAY_COMMITMENTS_UNAVAILABLE")
+                throw HealthScoreUnavailableError(HealthScoreUnavailableReason.DATA_LOAD_FAILED)
             }
         } else 0.0
         val netSavings = (totalSavings - upcomingBills).coerceAtLeast(0.0)
@@ -402,12 +443,8 @@ class FinancialHealthScoreV2 @Inject constructor(
         }
 
         Timber.d(
-            "Runway stabilization: observed=%.2f, projectedMonthly=%.2f, historicalBaseline=%.2f, coverage=%.3f, effectiveMonthly=%.2f",
-            observedSpend,
-            projectedMonthlyBurn,
-            historicalMonthlyBaseline ?: 0.0,
-            coverage,
-            monthlyExpenses
+            "HEALTH_RUNWAY_CALCULATED baseline_known=%s",
+            historicalMonthlyBaseline != null
         )
 
         // Calculate runway in months (using netSavings which subtracts upcoming bills)
@@ -423,7 +460,28 @@ class FinancialHealthScoreV2 @Inject constructor(
             .coerceIn(0, 100)
     }
 
-    private suspend fun calculateHistoricalMonthlyBaseline(currentPeriodStart: Long): Double? {
+    private fun supportedRunwayCurrency(code: String): CurrencyCode =
+        CurrencyCode.parse(code)?.takeIf { it in CurrencyCode.ALL_SUPPORTED }
+            ?: throw HealthScoreUnavailableError(HealthScoreUnavailableReason.NORMALIZATION_FAILED)
+
+    private suspend fun aggregateRunwayMoney(
+        buckets: List<com.yourname.expensetracker.domain.core.money.MoneyBucketInput>,
+        targetCurrency: CurrencyCode,
+        rateBasis: com.yourname.expensetracker.domain.core.money.RateBasis,
+        datePolicy: com.yourname.expensetracker.domain.core.money.BucketDatePolicy
+    ): Double {
+        if (buckets.all { it.currency == targetCurrency }) {
+            return MoneyAggregateBuilder.fromHomeCurrencyAmounts(buckets.map { it.amount }, targetCurrency.code).displayAmount
+        }
+        val converter = currencyConverter ?: throw HealthScoreUnavailableError(HealthScoreUnavailableReason.NORMALIZATION_FAILED)
+        val aggregate = MoneyAggregateBuilder.fromBuckets(buckets, targetCurrency, converter, rateBasis, datePolicy)
+        if (aggregate.isPartial || aggregate.conversionQuality != com.yourname.expensetracker.domain.core.money.ConversionQuality.COMPLETE) {
+            throw HealthScoreUnavailableError(HealthScoreUnavailableReason.NORMALIZATION_FAILED)
+        }
+        return aggregate.displayAmount
+    }
+
+    private suspend fun calculateHistoricalMonthlyBaseline(currentPeriodStart: Long, homeCurrency: String): Double? {
         val baselineStart = TimePeriodUtils.getStartOfMonth(
             TimePeriodUtils.addMonths(currentPeriodStart, -3)
         )
@@ -437,16 +495,6 @@ class FinancialHealthScoreV2 @Inject constructor(
             return null
         }
 
-        val homeCurrency = try {
-            currencySettingsRepository.homeCurrency().first()
-        } catch (e: Exception) {
-            // U-001 (RP-01): caller cancellation propagates; genuine
-            // unavailability surfaces as the typed Unavailable reason.
-            // G-PII-01 preserved: no raw exception message is surfaced.
-            if (e is CancellationException) throw e
-            Timber.w("Health score unavailable: home currency could not be resolved for baseline")
-            throw HealthScoreUnavailableError(HealthScoreUnavailableReason.HOME_CURRENCY_UNAVAILABLE)
-        }
         // P5-008: raw effectiveAmount fallback is gone. Baseline normalization
         // failure (or any excluded row) aborts baseline derivation; the score
         // becomes Unavailable(NORMALIZATION_FAILED) via HealthScoreUnavailableError.
@@ -459,8 +507,13 @@ class FinancialHealthScoreV2 @Inject constructor(
             if (e is CancellationException) throw e
             null
         }
-        if (normalized == null || normalized.excludedCount > 0) {
+        if (normalized == null || normalized.excludedCount > 0 || normalized.hasWarnings) {
             Timber.w("Health score unavailable: baseline expense normalization failed (normalized=${normalized != null})")
+            throw HealthScoreUnavailableError(HealthScoreUnavailableReason.NORMALIZATION_FAILED)
+        }
+        try {
+            normalized.requireCompleteMoneyInput(homeCurrency)
+        } catch (error: com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException) {
             throw HealthScoreUnavailableError(HealthScoreUnavailableReason.NORMALIZATION_FAILED)
         }
         val normalizedAmountById = normalized.includedExpenses.associateBy { it.id }
@@ -762,7 +815,7 @@ class FinancialHealthScoreV2 @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Timber.e(e, "Failed to save health score history")
+            Timber.e("HEALTH_HISTORY_SAVE_FAILED class=%s", e.javaClass.simpleName.take(80))
         }
     }
 

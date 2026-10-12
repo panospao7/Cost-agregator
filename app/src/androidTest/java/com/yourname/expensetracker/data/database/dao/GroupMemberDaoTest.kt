@@ -354,11 +354,11 @@ class GroupMemberDaoTest {
     }
 
     /**
-     * Duplicate non-null linked expense IDs are now prevented in app logic,
-     * not by a non-Room SQLite partial index.
+     * Room's expenseId unique index rejects duplicate links, independently of
+     * the removed legacy partial index. The first link must not be replaced.
      */
     @Test
-    fun freshInstall_allowsDuplicateNonNullExpenseIdInGroupExpenses_withoutLegacyPartialIndex() = runBlocking {
+    fun freshInstall_rejectsDuplicateNonNullExpenseIdInGroupExpenses_withRoomUniqueIndex() = runBlocking {
         val groupId = insertGroup()
         val memberId = groupMemberDao.insert(makeMember(groupId, "Payer"))
 
@@ -373,7 +373,7 @@ class GroupMemberDaoTest {
         )
 
         // First link — should succeed.
-        groupExpenseDao.insert(
+        val firstLinkId = groupExpenseDao.insert(
             GroupExpense(
                 groupId = groupId,
                 expenseId = expenseId,
@@ -384,25 +384,28 @@ class GroupMemberDaoTest {
             )
         )
 
-        val secondId = groupExpenseDao.insert(
-            GroupExpense(
+        try {
+            groupExpenseDao.insert(GroupExpense(
                 groupId = groupId,
                 expenseId = expenseId,
                 paidById = memberId,
                 date = 1_700_000_000_000L,
                 description = "Duplicate link",
                 totalAmount = 50.0
-            )
-        )
-
-        assertTrue(secondId > 0)
+            ))
+            fail("Room uniqueness must reject a duplicate linked expense")
+        } catch (_: SQLiteConstraintException) {
+            // Expected: do not replace the first link or its financial history.
+        }
         val matches = groupExpenseDao.getExpensesForGroupOnce(groupId).filter { it.expenseId == expenseId }
-        assertEquals(2, matches.size)
+        assertEquals(1, matches.size)
+        assertEquals(firstLinkId, matches.single().id)
+        assertEquals("First link", matches.single().description)
     }
 
     /**
      * NULL expenseId rows (standalone group expenses) must remain unconstrained —
-     * the partial unique index only covers `WHERE expenseId IS NOT NULL`.
+     * SQLite's Room-declared unique index allows multiple NULL values.
      */
     @Test
     fun freshInstall_allowsMultipleNullExpenseIdInGroupExpenses() = runBlocking {

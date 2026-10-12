@@ -8,6 +8,7 @@ import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import com.yourname.expensetracker.domain.core.money.CurrencyAssumption
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.util.AmountUtils
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.util.CurrencyNormalizer
@@ -29,6 +30,8 @@ class BankStatementParser @Inject constructor(
     private val currencySettingsRepository: CurrencySettingsRepository
 ) {
     companion object {
+        // ParsedTransaction requires a three-letter code; XXX is never supported money.
+        private const val UNKNOWN_CURRENCY = "XXX"
         // ── Header / footer pre-filter constants ─────────────────────────────
         /** Minimum line length (characters) to be considered a real transaction row. */
         const val MIN_LINE_LENGTH: Int = 15
@@ -103,25 +106,33 @@ class BankStatementParser @Inject constructor(
     /**
      * Resolves the home currency from [CurrencySettingsRepository] as a suspend function.
      *
-     * Falls back to "EUR" with a warning log and
-     * [CurrencyAssumption.ASSUMED_HOME_CURRENCY] metadata hint if no home
-     * currency is configured.
+     * Returns null when the configured home currency cannot be resolved.
+     * The caller must fail closed rather than assigning a guessed currency.
      */
-    suspend fun resolveHomeCurrencySuspend(): String {
+    suspend fun resolveHomeCurrencySuspend(): String? {
         // NEW-P3-008: Wrap homeCurrency() with a 3s timeout — DataStore reads
-        // can block indefinitely. Falls back to "EUR" with a warning on timeout.
-        val currency = kotlinx.coroutines.withTimeoutOrNull(3_000L) {
-            currencySettingsRepository.homeCurrency().first()
+        // can block indefinitely. An unresolved value must remain unavailable.
+        val currency = try {
+            kotlinx.coroutines.withTimeoutOrNull(3_000L) {
+                currencySettingsRepository.homeCurrency().first()
+            }
+        } catch (error: Exception) {
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            Timber.w("BANK_HOME_CURRENCY_UNAVAILABLE_READ")
+            return null
         }
-        if (currency != null && currency.isNotBlank()) {
-            return currency
+        val supportedCurrency = CurrencyCode.parse(currency)?.takeIf { it in CurrencyCode.ALL_SUPPORTED }
+        if (supportedCurrency != null) {
+            return supportedCurrency.code
         }
         if (currency == null) {
-            Timber.w("Timeout reading home currency, fallback to EUR (NEW-P3-008)")
+            Timber.w("BANK_HOME_CURRENCY_UNAVAILABLE_TIMEOUT")
+        } else if (currency.isBlank()) {
+            Timber.w("BANK_HOME_CURRENCY_UNAVAILABLE_EMPTY")
         } else {
-            Timber.w("No home currency configured, fallback to EUR (CurrencyAssumption.ASSUMED_HOME_CURRENCY)")
+            Timber.w("BANK_HOME_CURRENCY_UNAVAILABLE_INVALID")
         }
-        return "EUR"
+        return null
     }
 
     /**
@@ -129,12 +140,14 @@ class BankStatementParser @Inject constructor(
      * Groups text into horizontal rows and then extracts data from each row.
      *
      * @param blocks The OCR text blocks to parse.
-     * @param homeCurrency The home currency to use when a transaction's currency
-     *            cannot be determined from the text.  The caller must resolve this
-     *            via [resolveHomeCurrencySuspend] or another mechanism.
+     * @param homeCurrency Optional legacy assumption label, never source evidence.
+     *            Missing/unsupported settings use XXX with UNKNOWN provenance;
+     *            explicit supported source currency does not depend on settings.
      */
-    fun parse(blocks: List<TextBlock>, homeCurrency: String): List<ParsedTransaction> {
+    fun parse(blocks: List<TextBlock>, homeCurrency: String?): List<ParsedTransaction> {
         if (blocks.isEmpty()) return emptyList()
+        val resolvedHomeCurrency = CurrencyCode.parse(homeCurrency)
+            ?.takeIf { it in CurrencyCode.ALL_SUPPORTED }?.code ?: UNKNOWN_CURRENCY
 
         // 1. Group blocks into rows based on vertical proximity
         // Now returns List<List<TextBlock>> to preserve spatial data
@@ -179,21 +192,21 @@ class BankStatementParser @Inject constructor(
             for (parser in parserOrder) {
                 when (parser) {
                     "revolut" -> {
-                        val revolutTx = tryParseRevolutTransaction(rowBlocks, homeCurrency)
+                        val revolutTx = tryParseRevolutTransaction(rowBlocks, resolvedHomeCurrency)
                         if (revolutTx != null) {
                             transactions.add(revolutTx)
                             break
                         }
                     }
                     "greek" -> {
-                        val greekNbgTx = tryParseGreekNbgTransaction(rowText, homeCurrency)
+                        val greekNbgTx = tryParseGreekNbgTransaction(rowText, resolvedHomeCurrency)
                         if (greekNbgTx != null) {
                             transactions.add(greekNbgTx)
                             break
                         }
                     }
                     "generic" -> {
-                        val genericTx = extractTransactionFromRow(rowText, columnInfo, homeCurrency)
+                        val genericTx = extractTransactionFromRow(rowText, columnInfo, resolvedHomeCurrency)
                         if (genericTx != null) {
                             transactions.add(genericTx)
                         }
@@ -202,7 +215,10 @@ class BankStatementParser @Inject constructor(
             }
         }
 
-        return transactions
+        return transactions.map { transaction ->
+            if (transaction.currency == UNKNOWN_CURRENCY) transaction.copy(currencyAssumption = CurrencyAssumption.UNKNOWN)
+            else transaction
+        }
     }
 
     /**
@@ -315,7 +331,11 @@ class BankStatementParser @Inject constructor(
 
             // 2. Skip lines containing bank-specific keywords
             val upper = line.uppercase()
-            if (HEADER_KEYWORDS.any { keyword -> upper.contains(keyword.uppercase()) }) continue
+            if (HEADER_KEYWORDS.any { keyword ->
+                    if (keyword == "AM" || keyword == "PM") {
+                        Regex("\\b$keyword\\b").containsMatchIn(upper)
+                    } else upper.contains(keyword.uppercase())
+                }) continue
 
             // 3. Skip lines that are pure numbers (card/account numbers) or noise,
             //    UNLESS they also carry a date or amount pattern (possible OCR-mangled
@@ -415,7 +435,7 @@ class BankStatementParser @Inject constructor(
      * 
      * Uses horizontal positions to distinguish Money Out vs Money In.
      */
-    private fun tryParseRevolutTransaction(rowBlocks: List<TextBlock>, homeCurrency: String = "EUR"): ParsedTransaction? {
+    private fun tryParseRevolutTransaction(rowBlocks: List<TextBlock>, homeCurrency: String): ParsedTransaction? {
         if (rowBlocks.isEmpty()) return null
         
         val rowText = rowBlocks.joinToString(" ") { it.text }
@@ -426,7 +446,7 @@ class BankStatementParser @Inject constructor(
         val dateRegex = Regex("""(?i)\b($months\s+\d{1,2})[\s,]*(\d{4})\b""")
         val dateMatch = dateRegex.find(rowText)
         if (dateMatch == null) {
-            if (BuildConfig.DEBUG) Timber.d("RevolutParser: Date regex failed for row -> $rowText")
+            if (BuildConfig.DEBUG) Timber.d("BANK_STATEMENT_DATE_INVALID")
             return null
         }
         
@@ -438,7 +458,7 @@ class BankStatementParser @Inject constructor(
         val amountMatches = Regex("""[€$£]\s*[\d.,]+""").findAll(rowText).map { it.value }.toList()
         
         if (amountMatches.size < 2) {
-            if (BuildConfig.DEBUG) Timber.d("RevolutParser: Less than 2 amounts found (${amountMatches.size}) for row -> $rowText")
+            if (BuildConfig.DEBUG) Timber.d("BANK_STATEMENT_AMOUNT_COLUMNS_MISSING")
             return null
         }
         
@@ -451,13 +471,13 @@ class BankStatementParser @Inject constructor(
         // €1.234,56 correctly).
         val rawAmountToken = txAmountStr.replace(Regex("""[€$£\s]"""), "")
         val parsedAmount = AmountUtils.parseAmount(rawAmountToken) ?: run {
-            if (BuildConfig.DEBUG) Timber.d("RevolutParser: Failed to parse amount '$txAmountStr' in row -> $rowText")
+            if (BuildConfig.DEBUG) Timber.d("BANK_STATEMENT_AMOUNT_PARSE_FAILED")
             return null
         }
         val absAmount = kotlin.math.abs(parsedAmount)
         
         if (absAmount <= 0.0 || !absAmount.isFinite()) {
-            if (BuildConfig.DEBUG) Timber.d("RevolutParser: Invalid absolute amount ($absAmount) in row -> $rowText")
+            if (BuildConfig.DEBUG) Timber.d("BANK_STATEMENT_AMOUNT_INVALID")
             return null
         }
         
@@ -491,7 +511,7 @@ class BankStatementParser @Inject constructor(
         val rowWidth = rowRight - rowLeft
         
         if (rowWidth <= 0) {
-            if (BuildConfig.DEBUG) Timber.d("RevolutParser: Invalid row width ($rowWidth) in row -> $rowText")
+            if (BuildConfig.DEBUG) Timber.d("BANK_STATEMENT_LAYOUT_INVALID")
             return null
         }
         
@@ -537,7 +557,7 @@ class BankStatementParser @Inject constructor(
             validationNowEpochMs = timeProvider.now(),
             currencyAssumption = currencyAssumption
         )
-        if (BuildConfig.DEBUG) Timber.d("RevolutParser: Successfully parsed -> [REDACTED] | [REDACTED] | [REDACTED]")
+        if (BuildConfig.DEBUG) Timber.d("BANK_STATEMENT_ROW_PARSED")
         return tx
     }
 
@@ -551,6 +571,7 @@ class BankStatementParser @Inject constructor(
                 .toInstant()
                 .toEpochMilli()
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             null
         }
     }
@@ -568,7 +589,7 @@ class BankStatementParser @Inject constructor(
      *   DATE TIME AM/PM 00 X/P AMOUNT TERMINAL DESCRIPTION
      *   Example: 3/5/2026 4:41:36 μμ 00 Χ -2,9 85016130 ΑΓΟΡΑ (ΕΞΟΥΣΙΟΔΟΤΗΣΗ) - YES STORES
      */
-    private fun tryParseGreekNbgTransaction(rowText: String, homeCurrency: String = "EUR"): ParsedTransaction? {
+    private fun tryParseGreekNbgTransaction(rowText: String, homeCurrency: String): ParsedTransaction? {
         val cleanRow = rowText.replace('\u00A0', ' ').trim()
 
         // Skip header rows and non-transaction rows
@@ -610,7 +631,7 @@ class BankStatementParser @Inject constructor(
                 val amPm = parts[2]      // πμ or μμ
                 val timestamp = parseGreekBankDateTimeWithAmPm(dateStr, timeStr, amPm)
                 if (timestamp == null) {
-                    if (BuildConfig.DEBUG) Timber.tag("BankStatementParser").w("Failed to parse NBG date: $dateStr $timeStr $amPm")
+                    if (BuildConfig.DEBUG) Timber.tag("BankStatementParser").w("BANK_STATEMENT_DATE_INVALID")
                     return null
                 }
 
@@ -625,13 +646,13 @@ class BankStatementParser @Inject constructor(
                     .trim()
 
                 if (merchant.isBlank()) {
-                    if (BuildConfig.DEBUG) Timber.tag("BankStatementParser").w("Empty merchant after stripping prefix in: $cleanRow")
+                    if (BuildConfig.DEBUG) Timber.tag("BankStatementParser").w("BANK_STATEMENT_MERCHANT_MISSING")
                     return null
                 }
 
                 val cleanedMerchant = merchantCleaner.clean(merchant)
 
-                if (BuildConfig.DEBUG) Timber.tag("BankStatementParser").d("Parsed NBG (new): $cleanedMerchant €${kotlin.math.abs(amount)} ($type)")
+                if (BuildConfig.DEBUG) Timber.tag("BankStatementParser").d("BANK_STATEMENT_ROW_PARSED")
 
                 return ParsedTransaction(
                     amount = kotlin.math.abs(amount),
@@ -675,7 +696,7 @@ class BankStatementParser @Inject constructor(
                 } + 2
 
                 if (merchantStartIndex < 2 || merchantStartIndex >= typeIndex) {
-                    if (BuildConfig.DEBUG) Timber.tag("BankStatementParser").w("Could not find merchant in: $cleanRow")
+                    if (BuildConfig.DEBUG) Timber.tag("BankStatementParser").w("BANK_STATEMENT_MERCHANT_MISSING")
                     return null
                 }
 
@@ -683,13 +704,13 @@ class BankStatementParser @Inject constructor(
                 val merchant = merchantParts.joinToString(" ").trim()
 
                 if (merchant.isBlank()) {
-                    if (BuildConfig.DEBUG) Timber.tag("BankStatementParser").w("Empty merchant in: $cleanRow")
+                    if (BuildConfig.DEBUG) Timber.tag("BankStatementParser").w("BANK_STATEMENT_MERCHANT_MISSING")
                     return null
                 }
 
                 val cleanedMerchant = merchantCleaner.clean(merchant)
 
-                if (BuildConfig.DEBUG) Timber.tag("BankStatementParser").d("Parsed NBG (old): $cleanedMerchant €${kotlin.math.abs(amount)} ($type)")
+                if (BuildConfig.DEBUG) Timber.tag("BankStatementParser").d("BANK_STATEMENT_ROW_PARSED")
 
                 return ParsedTransaction(
                     amount = kotlin.math.abs(amount),
@@ -705,7 +726,8 @@ class BankStatementParser @Inject constructor(
                 )
             }
         } catch (e: Exception) {
-            if (BuildConfig.DEBUG) Timber.tag("BankStatementParser").w("Failed to parse NBG transaction: ${e.message} | Row: $cleanRow")
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            if (BuildConfig.DEBUG) Timber.tag("BankStatementParser").w("BANK_STATEMENT_ROW_PARSE_FAILED")
             return null
         }
     }
@@ -723,6 +745,7 @@ class BankStatementParser @Inject constructor(
                 .toInstant()
                 .toEpochMilli()
         } catch (e1: Exception) {
+            if (e1 is kotlinx.coroutines.CancellationException) throw e1
             try {
                 // Fallback: flexible single-digit day/month (d/M/yyyy H:mm:ss)
                 val flexFormatter = DateTimeFormatter.ofPattern("d/M/yyyy H:mm:ss", Locale.US)
@@ -731,6 +754,7 @@ class BankStatementParser @Inject constructor(
                     .toInstant()
                     .toEpochMilli()
             } catch (e2: Exception) {
+                if (e2 is kotlinx.coroutines.CancellationException) throw e2
                 // Final fallback: try just the date
                 parseGreekBankDate(dateStr)
             }
@@ -759,7 +783,8 @@ class BankStatementParser @Inject constructor(
                 .toInstant()
                 .toEpochMilli()
         } catch (e: Exception) {
-            if (BuildConfig.DEBUG) Timber.tag("BankStatementParser").w("Failed to parse NBG date with AM/PM: $dateStr $timeStr $amPm")
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            if (BuildConfig.DEBUG) Timber.tag("BankStatementParser").w("BANK_STATEMENT_DATE_INVALID")
             null
         }
     }
@@ -775,6 +800,7 @@ class BankStatementParser @Inject constructor(
             // Use parseAmount which handles both European and US formats
             AmountUtils.parseAmount(cleaned)
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             null
         }
     }
@@ -790,11 +816,12 @@ class BankStatementParser @Inject constructor(
                 .toInstant()
                 .toEpochMilli()
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             null
         }
     }
 
-    private fun extractTransactionFromRow(rowText: String, columnInfo: DateColumnInfo = DateColumnInfo(false, false), homeCurrency: String = "EUR"): ParsedTransaction? {
+    private fun extractTransactionFromRow(rowText: String, columnInfo: DateColumnInfo = DateColumnInfo(false, false), homeCurrency: String): ParsedTransaction? {
         // 1. Clean noise
         val cleanRow = rowText.replace('\u00A0', ' ').trim()
         
@@ -995,6 +1022,7 @@ class BankStatementParser @Inject constructor(
                         val parsedDate = LocalDate.parse("${d.padStart(2, '0')}/${m.padStart(2, '0')}/$year", dateFormatter)
                         foundDates.add(parsedDate.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli())
                     } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
                         // Skip invalid dates
                     }
                 }
@@ -1038,7 +1066,8 @@ class BankStatementParser @Inject constructor(
                         val parsed = LocalDate.parse("${d.padStart(2, '0')}/${m.padStart(2, '0')}/$year", dateFormatter)
                         return parsed.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
                     } catch (e: Exception) {
-                        if (BuildConfig.DEBUG) Timber.d("Failed to parse date: $d/$m/$year")
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+                        if (BuildConfig.DEBUG) Timber.d("BANK_STATEMENT_DATE_INVALID")
                     }
                 }
             }

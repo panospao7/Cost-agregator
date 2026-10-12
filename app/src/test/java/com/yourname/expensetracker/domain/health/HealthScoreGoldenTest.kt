@@ -40,16 +40,23 @@ class HealthScoreGoldenTest : AnalyticsEngineTestBase() {
         savingsGoalRepository = mockk(relaxed = true)
         recurringExpenseEngine = mockk(relaxed = true)
         healthScoreHistoryDao = mockk(relaxed = true)
-        val analyticsCurrencyNormalizer = mockk<AnalyticsCurrencyNormalizer>(relaxed = true)
+        val analyticsCurrencyNormalizer = com.yourname.expensetracker.testAnalyticsCurrencyNormalizer(
+            com.yourname.expensetracker.testCurrencyConverter()
+        )
         val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
         every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
         coEvery { currencySettingsRepository.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
 
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
         every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
+        coEvery { savingsGoalRepository.getSavingsGoals() } returns emptyList()
+        coEvery { budgetRepository.getBudgetStatusesAt(any()) } returns emptyList()
         coEvery { recurringExpenseEngine.getPatterns(any()) } returns emptyList()
         coEvery { healthScoreHistoryDao.getMostRecent() } returns null
+        coEvery { healthScoreHistoryDao.getMostRecentBefore(any(), any()) } returns null
         coEvery { healthScoreHistoryDao.getHistoryForPeriod(any(), any()) } returns emptyList()
+        val cashFlowCalculator = mockk<com.yourname.expensetracker.domain.cashflow.CashFlowCalculator>()
+        coEvery { cashFlowCalculator.getUpcomingBills(any()) } returns emptyList()
 
         engine = FinancialHealthScoreV2(
             budgetRepository = budgetRepository,
@@ -60,7 +67,7 @@ class HealthScoreGoldenTest : AnalyticsEngineTestBase() {
             timeProvider = timeProvider,
             analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
             currencySettingsRepository = currencySettingsRepository,
-            cashFlowCalculator = mockk(),
+            cashFlowCalculator = cashFlowCalculator,
             writeBarrier = mockk(relaxed = true),
         )
     }
@@ -70,18 +77,17 @@ class HealthScoreGoldenTest : AnalyticsEngineTestBase() {
         every { timeProvider.now() } returns atTime("2026-03-31", 23, 59, 59)
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns goldenMarchExpenses()
 
-        // P5-008: the normalizer mock is relaxed (empty-but-valid result,
-        // excludedCount = 0), so this pin exercises the empty-valid → Available
-        // neutral-policy path on real golden data. availableResult() surfaces
-        // any unexpected Unavailable as a loud test failure.
+        // Real identity normalization must process the golden purchases/deposits.
+        // Income exceeds spending by >20%, no goals imply zero runway; weighted
+        // total = 100*.30 + 0*.25 + 50*.25 + 75*.20 = 57.5, truncated to 57.
         val result = engine.availableResult()
 
-        assertApproxEquals(50.0, result.savingsRateScore.toDouble(), 0.01)
-        assertApproxEquals(50.0, result.runwayScore.toDouble(), 0.01)
+        assertApproxEquals(100.0, result.savingsRateScore.toDouble(), 0.01)
+        assertApproxEquals(0.0, result.runwayScore.toDouble(), 0.01)
         assertApproxEquals(50.0, result.budgetAdherenceScore.toDouble(), 0.01)
         assertApproxEquals(75.0, result.billReliabilityScore.toDouble(), 0.01)
-        assertApproxEquals(55.0, result.overallScore.toDouble(), 0.01)
-        assertEquals(HealthTrend.IMPROVING, result.trend)
+        assertApproxEquals(57.0, result.overallScore.toDouble(), 0.01)
+        assertEquals(HealthTrend.STABLE, result.trend)
     }
 
     @Test
@@ -96,7 +102,7 @@ class HealthScoreGoldenTest : AnalyticsEngineTestBase() {
         assertApproxEquals(50.0, result.budgetAdherenceScore.toDouble(), 0.01)
         assertApproxEquals(75.0, result.billReliabilityScore.toDouble(), 0.01)
         assertApproxEquals(55.0, result.overallScore.toDouble(), 0.01)
-        assertEquals(HealthTrend.IMPROVING, result.trend)
+        assertEquals(HealthTrend.STABLE, result.trend)
     }
 
     private fun goldenMarchExpenses() = listOf(

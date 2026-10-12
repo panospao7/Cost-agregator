@@ -2,6 +2,8 @@ package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAmount
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateResult
+import com.yourname.expensetracker.domain.core.money.aggregateOrNull
 import com.yourname.expensetracker.domain.core.time.PeriodKind
 import com.yourname.expensetracker.domain.model.UiText
 
@@ -36,18 +38,20 @@ data class MonthPeriod(
 
 data class CategoryInsight(
     val category: AnalyticsCategoryRef,
-    val currentTotal: Double,
+    val currentTotal: Double?,
     val currentCount: Int,
     val previousTotal: Double?,
     val previousCount: Int?,
     val averageOverMonths: Double?,
     val monthsOfData: Int,
-    val percentageOfTotal: Float,
+    val percentageOfTotal: Float?,
     val changeFromPrevious: Float?, // percentage change
     val changeFromAverage: Float?, // percentage deviation from average
-    val displayCurrency: String
+    val displayCurrency: String,
+    val moneyResult: MoneyAggregateResult? = null,
+    val previousMoneyResult: MoneyAggregateResult? = null
 ) {
-    val moneyCurrentTotal: MoneyAmount get() = MoneyAmount(currentTotal, CurrencyCode(displayCurrency))
+    val moneyCurrentTotal: MoneyAmount? get() = currentTotal?.let { MoneyAmount(it, CurrencyCode(displayCurrency)) }
 }
 
 data class MerchantInsight(
@@ -65,18 +69,22 @@ data class MerchantInsight(
 }
 
 data class SpendingPace(
-    val currentMonthSpent: Double,
+    val currentMonthSpent: Double?,
     val daysElapsed: Int,
     val daysInMonth: Int,
-    val projectedTotal: Double,
+    val projectedTotal: Double?,
     val previousMonthTotal: Double?,
     val averageMonthlyTotal: Double?,
     val pacePercentage: Float, // how far through the month's typical spend
     val paceStatus: PaceStatus,
-    val displayCurrency: String
+    val displayCurrency: String,
+    val currentMoneyResult: MoneyAggregateResult? = null,
+    val previousMoneyResult: MoneyAggregateResult? = null
 ) {
-    val moneyCurrentMonthSpent: MoneyAmount get() = MoneyAmount(currentMonthSpent, CurrencyCode(displayCurrency))
-    val moneyProjectedTotal: MoneyAmount get() = MoneyAmount(projectedTotal, CurrencyCode(displayCurrency))
+    val moneyCurrentMonthSpent: MoneyAmount? get() = currentMonthSpent?.let { MoneyAmount(it, CurrencyCode(displayCurrency)) }
+    val moneyProjectedTotal: MoneyAmount? get() = projectedTotal?.let { MoneyAmount(it, CurrencyCode(displayCurrency)) }
+    val moneyPreviousMonthTotal: MoneyAmount?
+        get() = previousMonthTotal?.let { MoneyAmount(it, CurrencyCode(displayCurrency)) }
 }
 
 enum class PaceStatus {
@@ -130,26 +138,33 @@ data class RecurringExpense(
 data class DayOfWeekInsight(
     val dayName: String,
     val dayIndex: Int, // 0=Mon, 6=Sun
-    val totalSpent: Double,
+    val totalSpent: Double?,
     val transactionCount: Int,
-    val avgPerTransaction: Double,
-    val displayCurrency: String
+    val avgPerTransaction: Double?,
+    val displayCurrency: String,
+    val moneyResult: MoneyAggregateResult? = null
 ) {
-    val moneyTotalSpent: MoneyAmount get() = MoneyAmount(totalSpent, CurrencyCode(displayCurrency))
+    val moneyTotalSpent: MoneyAmount? get() = totalSpent?.let { MoneyAmount(it, CurrencyCode(displayCurrency)) }
 }
 
 data class MonthlyComparison(
     val currentMonth: MonthPeriod,
     val previousMonth: MonthPeriod?,
-    val currentTotal: Double,
+    val currentTotal: Double?,
     val previousTotal: Double?,
     val changeAmount: Double?,
     val changePercentage: Float?,
     val currentCount: Int,
     val previousCount: Int?,
-    val displayCurrency: String
+    val displayCurrency: String,
+    val currentMoneyResult: MoneyAggregateResult? = null,
+    val previousMoneyResult: MoneyAggregateResult? = null
 ) {
-    val moneyCurrentTotal: MoneyAmount get() = MoneyAmount(currentTotal, CurrencyCode(displayCurrency))
+    val moneyCurrentTotal: MoneyAmount? get() = currentTotal?.let { MoneyAmount(it, CurrencyCode(displayCurrency)) }
+    val moneyPreviousTotal: MoneyAmount?
+        get() = previousTotal?.let { MoneyAmount(it, CurrencyCode(displayCurrency)) }
+    val typedCurrentAggregate get() = currentMoneyResult?.aggregateOrNull()
+    val typedPreviousAggregate get() = previousMoneyResult?.aggregateOrNull()
 }
 
 enum class AnalyticsConversionWarningType {
@@ -182,7 +197,9 @@ data class InsightsSnapshot(
     val medianTransactionSize: Double,
     val totalMonthsOfData: Int,
     val displayCurrency: String,
-    val conversionWarnings: List<AnalyticsConversionWarning> = emptyList()
+    val conversionWarnings: List<AnalyticsConversionWarning> = emptyList(),
+    /** Normalized amount used for largest-transaction insight formatting. */
+    val largestTransactionDisplayAmount: Double? = null
 ) {
     val moneyAverageTransactionSize: MoneyAmount get() = MoneyAmount(averageTransactionSize, CurrencyCode(displayCurrency))
     val moneyMedianTransactionSize: MoneyAmount get() = MoneyAmount(medianTransactionSize, CurrencyCode(displayCurrency))
@@ -194,16 +211,25 @@ data class SpendingPeriod(
     val label: String,
     val startDate: Long,
     val endDate: Long,
-    val total: Double,
-    val previousTotal: Double?,         // For comparison
+    val moneyTotal: MoneyAmount,
+    val previousMoneyTotal: MoneyAmount?, // For comparison
     val byCategory: List<AnalyticsCategoryBreakdown>,
     val byMerchant: List<MerchantBreakdown>,
-    val dailyTotals: Map<String, Double>,   // "2024-01-15" → 45.60
+    val dailyTotals: Map<String, MoneyAmount>,
     val transactionCount: Int
 ) {
+    init {
+        require(previousMoneyTotal == null || previousMoneyTotal.currency == moneyTotal.currency) {
+            "PERIOD_MONEY_CURRENCY_MISMATCH"
+        }
+        require(dailyTotals.values.all { it.currency == moneyTotal.currency }) {
+            "PERIOD_MONEY_CURRENCY_MISMATCH"
+        }
+    }
+
     val changePercent: Float?
-        get() = if (previousTotal != null && previousTotal > 0)
-            ((total - previousTotal) / previousTotal * 100).toFloat()
+        get() = if (previousMoneyTotal != null && previousMoneyTotal.amount > 0)
+            ((moneyTotal - previousMoneyTotal).amount / previousMoneyTotal.amount * 100).toFloat()
         else null
 }
 
@@ -215,14 +241,18 @@ typealias LegacyAnalyticsCategoryBreakdown = AnalyticsCategoryBreakdown
 
 data class AnalyticsCategoryBreakdown(
     val category: AnalyticsCategoryRef,
-    val total: Double,
+    val moneyTotal: MoneyAmount,
     val count: Int,
     val percentage: Float,          // 0-100
     val displayCurrency: String,
     val isPartial: Boolean = false,
     val warningMessage: String? = null
 ) {
-    val moneyTotal: MoneyAmount get() = MoneyAmount(total, CurrencyCode(displayCurrency))
+    init {
+        require(CurrencyCode.parse(displayCurrency) == moneyTotal.currency) {
+            "CATEGORY_MONEY_CURRENCY_MISMATCH"
+        }
+    }
 }
 
 data class MerchantBreakdown(
@@ -307,11 +337,15 @@ fun TimePeriod.toPeriodKind(): PeriodKind = when (this) {
 data class MonthlyYearTotal(
     val month: Int,        // 0-indexed (Calendar.JANUARY = 0)
     val monthLabel: String, // "Jan", "Feb", ...
-    val total: Double,
+    val moneyTotal: MoneyAmount,
     val transactionCount: Int,
     val displayCurrency: String
 ) {
-    val moneyTotal: MoneyAmount get() = MoneyAmount(total, CurrencyCode(displayCurrency))
+    init {
+        require(CurrencyCode.parse(displayCurrency) == moneyTotal.currency) {
+            "MONTH_MONEY_CURRENCY_MISMATCH"
+        }
+    }
 }
 
 /**

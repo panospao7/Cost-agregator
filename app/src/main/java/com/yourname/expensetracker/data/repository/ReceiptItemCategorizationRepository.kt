@@ -62,7 +62,57 @@ class ReceiptItemCategorizationRepository @Inject constructor(
     ): Int {
         writeBarrier.checkWritesAllowed("ReceiptItemCategorizationRepository.saveCategorizationResult")
         var insertedCount = 0
-        result.items.forEach { item ->
+        val allocation = result.taxAllocation as? com.yourname.expensetracker.domain.ai.model.ReceiptTaxAllocation.Available
+        require(result.items.all { it.amount.isFinite() && (it.amount >= 0.0 || it.isAdjustment) }) {
+            "RECEIPT_ITEM_ADJUSTMENT_UNCONFIRMED"
+        }
+        require(result.taxDistribution.isEmpty() || allocation != null) { "RECEIPT_ITEM_TAX_ALLOCATION_REQUIRED" }
+        require(allocation == null || allocation.itemAmounts.size == result.items.size) { "RECEIPT_ITEM_TAX_COUNT_MISMATCH" }
+        if (allocation != null) {
+            require((allocation.itemAmounts + allocation.categoryAmounts.values + allocation.unallocatedTax)
+                .all { it.currency == allocation.requestedTax.currency } &&
+                allocation.itemAggregate.displayCurrency == allocation.requestedTax.currency
+            ) {
+                "RECEIPT_ITEM_TAX_CURRENCY_MISMATCH"
+            }
+            require(allocation.requestedTax.amount.isFinite() && allocation.requestedTax.amount >= 0.0 &&
+                (allocation.itemAmounts + allocation.categoryAmounts.values + allocation.unallocatedTax)
+                    .all { it.amount.isFinite() }
+            ) { "RECEIPT_ITEM_TAX_INVALID_AMOUNT" }
+            require(result.taxDistribution == allocation.categoryAmounts.mapValues { it.value.amount }) {
+                "RECEIPT_ITEM_TAX_COMPATIBILITY_MISMATCH"
+            }
+            val requested = java.math.BigDecimal.valueOf(allocation.requestedTax.amount)
+            val allocated = allocation.itemAmounts.fold(java.math.BigDecimal.ZERO) { total, share ->
+                total.add(java.math.BigDecimal.valueOf(share.amount))
+            }
+            require(allocated.compareTo(requested) == 0) {
+                "RECEIPT_ITEM_TAX_NOT_CONSERVED"
+            }
+            val projected = allocation.categoryAmounts.values.fold(java.math.BigDecimal.ZERO) { total, share ->
+                total.add(java.math.BigDecimal.valueOf(share.amount))
+            }.add(java.math.BigDecimal.valueOf(allocation.unallocatedTax.amount))
+            require(projected.compareTo(requested) == 0) {
+                "RECEIPT_ITEM_TAX_PROJECTION_NOT_CONSERVED"
+            }
+            val expectedCategories = linkedMapOf<Long, java.math.BigDecimal>()
+            var expectedUnallocated = java.math.BigDecimal.ZERO
+            result.items.forEachIndexed { index, item ->
+                val share = java.math.BigDecimal.valueOf(allocation.itemAmounts[index].amount)
+                val categoryId = item.suggestedCategory?.categoryId?.takeIf { it > 0 }
+                if (categoryId == null) {
+                    expectedUnallocated = expectedUnallocated.add(share)
+                } else {
+                    expectedCategories[categoryId] = (expectedCategories[categoryId] ?: java.math.BigDecimal.ZERO).add(share)
+                }
+            }
+            require(allocation.categoryAmounts.keys.all { it in expectedCategories } &&
+                expectedCategories.all { (categoryId, amount) ->
+                    amount.compareTo(java.math.BigDecimal.valueOf(allocation.categoryAmounts[categoryId]?.amount ?: 0.0)) == 0
+                } && expectedUnallocated.compareTo(java.math.BigDecimal.valueOf(allocation.unallocatedTax.amount)) == 0
+            ) { "RECEIPT_ITEM_TAX_CATEGORY_MISMATCH" }
+        }
+        result.items.forEachIndexed { index, item ->
             val alternativesJson = JSONArray().apply {
                 item.alternatives.forEach { alt ->
                     put(JSONObject().apply {
@@ -85,7 +135,7 @@ class ReceiptItemCategorizationRepository @Inject constructor(
                 userCorrectedCategoryId = null,
                 userCorrectedCategoryName = null,
                 userCorrectedAt = null,
-                taxAmount = result.taxDistribution[item.suggestedCategory?.categoryId],
+                taxAmount = allocation?.itemAmounts?.get(index)?.amount,
                 isNewCategorySuggestion = item.suggestedCategory?.isNewCategorySuggestion ?: false,
                 createdAt = now,
                 updatedAt = now

@@ -862,9 +862,17 @@ fun HomeScreen(
                 is DashboardWidget.SavingsSweepPrompt -> {
                     SavingsSweepPromptCard(
                         widget = widget,
-                        homeCurrency = homeCurrency ?: "",
+                        homeCurrency = widget.currency,
                         onAction = { onNavigateToFeature(NavigationDestination.SavingsGoals) }
                     )
+                }
+                is DashboardWidget.SavingsSweepUnavailable -> {
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = stringResource(R.string.savings_recommendation_unavailable),
+                            modifier = Modifier.padding(16.dp)
+                        )
+                    }
                 }
                             // S4-D914-013: else logs in debug so new widget types are not silently invisible
                             else -> { if (com.yourname.expensetracker.BuildConfig.DEBUG) error("Unhandled DashboardWidget type: ${widget::class.simpleName}") }
@@ -1151,7 +1159,7 @@ fun CategorySpendingRow(item: DomainCategorySpending) {
     val spendingDesc = stringResource(
         R.string.a11y_category_spending_format,
         item.category.name,
-        item.total,
+        item.moneyTotal.displayAmount,
         item.percentage
     )
     Row(
@@ -1195,7 +1203,10 @@ fun CategorySpendingRow(item: DomainCategorySpending) {
         Spacer(modifier = Modifier.width(12.dp))
         Column(horizontalAlignment = Alignment.End) {
             Text(
-                CurrencyFormatter.formatMoney(item.total, item.currency),
+                CurrencyFormatter.formatMoney(
+                    item.moneyTotal.displayAmount,
+                    item.moneyTotal.displayCurrency.code
+                ),
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Bold
             )

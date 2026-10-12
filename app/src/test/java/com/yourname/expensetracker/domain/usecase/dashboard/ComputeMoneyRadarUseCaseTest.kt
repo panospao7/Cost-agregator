@@ -13,6 +13,13 @@ import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
+import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.core.money.ConversionOutcome
+import com.yourname.expensetracker.domain.core.money.ConversionPath
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.RateBasis
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.forecasting.MergedRecurringPatternsProvider
 import com.yourname.expensetracker.domain.forecasting.ConfidenceLevel
 import com.yourname.expensetracker.domain.forecasting.MonteCarloResult
@@ -54,6 +61,8 @@ class ComputeMoneyRadarUseCaseTest {
     private lateinit var monteCarloSimulator: MonteCarloSpendingSimulator
     private lateinit var expenseRepository: ExpenseRepository
     private lateinit var budgetRepository: BudgetRepository
+    private lateinit var currencyConverter: CurrencyConverter
+    private lateinit var currencySettingsRepository: CurrencySettingsRepository
     private lateinit var timeProvider: TimeProvider
     private lateinit var useCase: ComputeMoneyRadarUseCase
 
@@ -94,7 +103,7 @@ class ComputeMoneyRadarUseCaseTest {
         stubHealthyRadarSignals()
         every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1000.0)))
         coEvery { expenseRepository.getExpensesSince(any()) } returns emptyList()
-        coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns null
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any()) } returns null
         assertRadarUnavailable(useCase.compute())
     }
 
@@ -104,7 +113,7 @@ class ComputeMoneyRadarUseCaseTest {
         every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1000.0)))
         coEvery { expenseRepository.getExpensesSince(any()) } returns emptyList()
         val simulation = monteCarloResult(probabilityUnderBudget = 0.5)
-        coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns simulation
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any()) } returns simulation
         for (outcome in listOf(Result.Loading, Result.Duplicate, Result.Error(message = "SECRET payload"))) {
             every { getMonteCarloBudgetImpact(1000.0, simulation) } returns outcome
             assertRadarUnavailable(useCase.compute())
@@ -116,7 +125,7 @@ class ComputeMoneyRadarUseCaseTest {
         stubHealthyRadarSignals()
         coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns
             listOf(recurring("Bill", 10.0, now + dayMs))
-        coEvery { expenseRepository.getTotalDepositsForPeriod(any(), any()) } throws IllegalStateException("private")
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } throws IllegalStateException("private")
         assertRadarUnavailable(useCase.compute())
     }
 
@@ -124,6 +133,70 @@ class ComputeMoneyRadarUseCaseTest {
         coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns emptyList()
         coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+    }
+
+    @Test
+    fun `invalid home currency cannot make an existing budget look healthy`() = runTest {
+        stubHealthyRadarSignals()
+        every { currencySettingsRepository.homeCurrency() } returns flowOf("")
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1000.0)))
+
+        assertRadarUnavailable(useCase.compute())
+        coVerify(exactly = 0) { monteCarloSimulator.simulate(any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `unresolved budget currency is unavailable rather than no budget risk`() = runTest {
+        stubHealthyRadarSignals()
+        val status = overallBudgetStatus(1000.0)
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(
+            status.copy(budget = status.budget.copy(currency = "UNKNOWN"))
+        ))
+
+        assertRadarUnavailable(useCase.compute())
+        coVerify(exactly = 0) { monteCarloSimulator.simulate(any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `excluded source money cannot produce a healthy budget forecast`() = runTest {
+        stubHealthyRadarSignals()
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1000.0)))
+        coEvery { expenseRepository.getExpensesSince(any()) } returns listOf(
+            expense(100.0, TransactionType.PURCHASE, now - dayMs).copy(currency = "UNKNOWN")
+        )
+
+        assertRadarUnavailable(useCase.compute())
+        coVerify(exactly = 0) { monteCarloSimulator.simulate(any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `mixed source spending uses normalized values and explicit non EUR simulation currency`() = runTest {
+        stubHealthyRadarSignals()
+        every { currencySettingsRepository.homeCurrency() } returns flowOf("USD")
+        val status = overallBudgetStatus(1000.0)
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(
+            status.copy(budget = status.budget.copy(currency = "USD"))
+        ))
+        coEvery { expenseRepository.getExpensesSince(any()) } returns listOf(
+            expense(200.0, TransactionType.PURCHASE, now - dayMs).copy(currency = "USD"),
+            expense(50.0, TransactionType.PURCHASE, now - 2 * dayMs)
+        )
+        coEvery { currencyConverter.convertOutcome(50.0, "EUR", "USD", RateBasis.TRANSACTION_DATE, any(), any()) } returns
+            ConversionOutcome.Converted(
+                originalAmount = 50.0, originalCurrency = CurrencyCode.EUR,
+                convertedAmount = 100.0, targetCurrency = CurrencyCode.USD,
+                rateUsed = 2.0, rateBasis = RateBasis.TRANSACTION_DATE,
+                rateValidDate = now - 2 * dayMs, rateLastUpdated = now,
+                rateSource = "test", conversionPath = ConversionPath.DIRECT
+            )
+        val simulation = monteCarloResult(probabilityUnderBudget = 0.5)
+        coEvery { monteCarloSimulator.simulate(300.0, 0.0, 1000.0, "USD") } returns simulation
+        every { getMonteCarloBudgetImpact(1000.0, simulation) } returns Result.Success(
+            MonteCarloBudgetImpact(1000.0, 1000.0, 0.0, 0.5, RiskTier.MEDIUM)
+        )
+
+        assertNotNull(useCase.compute().budgetRisk)
+        coVerify(exactly = 1) { monteCarloSimulator.simulate(300.0, 0.0, 1000.0, "USD") }
     }
 
     private fun assertRadarUnavailable(result: MoneyRadarData) {
@@ -143,7 +216,10 @@ class ComputeMoneyRadarUseCaseTest {
         monteCarloSimulator = mockk()
         expenseRepository = mockk()
         budgetRepository = mockk()
+        currencyConverter = mockk()
+        currencySettingsRepository = mockk()
         timeProvider = mockk()
+        every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
 
         useCase = ComputeMoneyRadarUseCase(
             recurringPatternsProvider = mergedRecurringPatternsProvider,
@@ -152,6 +228,9 @@ class ComputeMoneyRadarUseCaseTest {
             monteCarloSimulator = monteCarloSimulator,
             expenseRepository = expenseRepository,
             budgetRepository = budgetRepository,
+            analyticsCurrencyNormalizer = AnalyticsCurrencyNormalizer(currencyConverter),
+            currencySettingsRepository = currencySettingsRepository,
+            currencyConverter = currencyConverter,
             timeProvider = timeProvider
         )
 
@@ -174,10 +253,12 @@ class ComputeMoneyRadarUseCaseTest {
         coEvery { expenseRepository.getExpensesSince(any()) } returns listOf(
             expense(300.0, TransactionType.PURCHASE, now - 5 * dayMs)
         )
-        coEvery { expenseRepository.getTotalDepositsForPeriod(any(), any()) } returns 1000.0
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+            expense(1000.0, TransactionType.DEPOSIT, now - dayMs)
+        )
 
         val mcResult = monteCarloResult(probabilityUnderBudget = 0.20)
-        coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns mcResult
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any()) } returns mcResult
 
         val impact = MonteCarloBudgetImpact(
             budgetAmount = 1000.0,
@@ -226,7 +307,9 @@ class ComputeMoneyRadarUseCaseTest {
         )
         coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
-        coEvery { expenseRepository.getTotalDepositsForPeriod(any(), any()) } returns 5000.0
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+            expense(5000.0, TransactionType.DEPOSIT, now - dayMs)
+        )
 
         val result = useCase.compute()
 
@@ -244,7 +327,9 @@ class ComputeMoneyRadarUseCaseTest {
         )
         coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
-        coEvery { expenseRepository.getTotalDepositsForPeriod(any(), any()) } returns 5000.0
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+            expense(5000.0, TransactionType.DEPOSIT, now - dayMs)
+        )
 
         val result = useCase.compute()
 
@@ -277,7 +362,9 @@ class ComputeMoneyRadarUseCaseTest {
         coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(r1, r2, outside)
         coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
         every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1000.0)))
-        coEvery { expenseRepository.getTotalDepositsForPeriod(any(), any()) } returns 1000.0
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+            expense(1000.0, TransactionType.DEPOSIT, now - dayMs)
+        )
         coEvery { expenseRepository.getExpensesSince(any()) } returns listOf(
             expense(300.0, TransactionType.PURCHASE, now - 4 * dayMs),
             expense(100.0, TransactionType.PURCHASE, now - 2 * dayMs, isNotMine = true),
@@ -288,7 +375,7 @@ class ComputeMoneyRadarUseCaseTest {
         var capturedSpentToDate = -1.0
         var capturedKnownUpcoming = -1.0
         var capturedBudgetAmount: Double? = null
-        coEvery { monteCarloSimulator.simulate(any(), any(), any()) } answers {
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any()) } answers {
             capturedSpentToDate = firstArg()
             capturedKnownUpcoming = secondArg()
             capturedBudgetAmount = thirdArg()
@@ -333,7 +420,9 @@ class ComputeMoneyRadarUseCaseTest {
         )
         coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
-        coEvery { expenseRepository.getTotalDepositsForPeriod(any(), any()) } returns 2_000.0
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+            expense(2_000.0, TransactionType.DEPOSIT, now - dayMs)
+        )
 
         val result = useCase.compute()
 
@@ -354,11 +443,13 @@ class ComputeMoneyRadarUseCaseTest {
         coEvery { expenseRepository.getExpensesSince(any()) } returns listOf(
             expense(300.0, TransactionType.PURCHASE, earlierToday - dayMs)
         )
-        coEvery { expenseRepository.getTotalDepositsForPeriod(any(), any()) } returns 1000.0
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+            expense(1000.0, TransactionType.DEPOSIT, now - dayMs)
+        )
 
         val mcResult = monteCarloResult(probabilityUnderBudget = 0.4)
         var capturedKnownUpcoming = -1.0
-        coEvery { monteCarloSimulator.simulate(any(), any(), any()) } answers {
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any()) } answers {
             capturedKnownUpcoming = secondArg()
             mcResult
         }
@@ -408,7 +499,7 @@ class ComputeMoneyRadarUseCaseTest {
         )
         assertNull(result.primaryCta)
 
-        coVerify(exactly = 0) { monteCarloSimulator.simulate(any(), any(), any()) }
+        coVerify(exactly = 0) { monteCarloSimulator.simulate(any(), any(), any(), any()) }
     }
 
     @Test
@@ -420,11 +511,13 @@ class ComputeMoneyRadarUseCaseTest {
             expense(300.0, TransactionType.PURCHASE, now - dayMs),
             expense(999.0, TransactionType.PURCHASE, now + dayMs)
         )
-        coEvery { expenseRepository.getTotalDepositsForPeriod(any(), any()) } returns 1000.0
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+            expense(1000.0, TransactionType.DEPOSIT, now - dayMs)
+        )
 
         var capturedSpentToDate = -1.0
         val mcResult = monteCarloResult(probabilityUnderBudget = 0.5)
-        coEvery { monteCarloSimulator.simulate(any(), any(), any()) } answers {
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any()) } answers {
             capturedSpentToDate = firstArg()
             mcResult
         }
@@ -451,9 +544,11 @@ class ComputeMoneyRadarUseCaseTest {
         coEvery { expenseRepository.getExpensesSince(any()) } returns listOf(
             expense(300.0, TransactionType.PURCHASE, now - dayMs)
         )
-        coEvery { expenseRepository.getTotalDepositsForPeriod(any(), any()) } returns 1000.0
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+            expense(1000.0, TransactionType.DEPOSIT, now - dayMs)
+        )
         val mcResult = monteCarloResult(probabilityUnderBudget = 0.6)
-        coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns mcResult
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any()) } returns mcResult
 
         every { getMonteCarloBudgetImpact(1000.0, mcResult) } returns Result.Success(
             MonteCarloBudgetImpact(
@@ -487,7 +582,9 @@ class ComputeMoneyRadarUseCaseTest {
         )
         coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
-        coEvery { expenseRepository.getTotalDepositsForPeriod(any(), any()) } returns 5000.0
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+            expense(5000.0, TransactionType.DEPOSIT, now - dayMs)
+        )
 
         val result = useCase.compute()
 
@@ -504,7 +601,9 @@ class ComputeMoneyRadarUseCaseTest {
         )
         coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
-        coEvery { expenseRepository.getTotalDepositsForPeriod(any(), any()) } returns 5000.0
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+            expense(5000.0, TransactionType.DEPOSIT, now - dayMs)
+        )
 
         val result = useCase.compute()
 
@@ -527,10 +626,12 @@ class ComputeMoneyRadarUseCaseTest {
         coEvery { expenseRepository.getExpensesSince(any()) } returns listOf(
             expense(300.0, TransactionType.PURCHASE, now - 5 * dayMs)
         )
-        coEvery { expenseRepository.getTotalDepositsForPeriod(any(), any()) } returns 1000.0
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+            expense(1000.0, TransactionType.DEPOSIT, now - dayMs)
+        )
 
         val mcResult = monteCarloResult(probabilityUnderBudget = 0.4)
-        coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns mcResult
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any()) } returns mcResult
         every { getMonteCarloBudgetImpact(1000.0, mcResult) } returns Result.Success(
             MonteCarloBudgetImpact(
                 budgetAmount = 1000.0,

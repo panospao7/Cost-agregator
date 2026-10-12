@@ -91,6 +91,8 @@ class HealthScoreEdgeCaseTest : AnalyticsEngineTestBase() {
         coEvery { healthScoreHistoryDao.insert(any()) } returns 1L
         coEvery { healthScoreHistoryDao.update(any()) } just runs
         coEvery { healthScoreHistoryDao.deleteOlderThan(any()) } returns 0
+        val cashFlowCalculator = mockk<com.yourname.expensetracker.domain.cashflow.CashFlowCalculator>()
+        coEvery { cashFlowCalculator.getUpcomingBills(any()) } returns emptyList()
 
         calculator = FinancialHealthScoreV2(
             budgetRepository = budgetRepository,
@@ -101,7 +103,7 @@ class HealthScoreEdgeCaseTest : AnalyticsEngineTestBase() {
             timeProvider = timeProvider,
             analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
             currencySettingsRepository = currencySettingsRepository,
-            cashFlowCalculator = mockk(),
+            cashFlowCalculator = cashFlowCalculator,
             writeBarrier = mockk(relaxed = true),
         )
     }

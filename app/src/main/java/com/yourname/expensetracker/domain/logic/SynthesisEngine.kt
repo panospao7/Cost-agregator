@@ -14,6 +14,7 @@ import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
 import com.yourname.expensetracker.domain.text.DomainTextKeys
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.core.money.ConversionOutcome
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
 import com.yourname.expensetracker.domain.core.money.RateBasis
 import com.yourname.expensetracker.domain.core.money.StaleRatePolicy
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
@@ -462,6 +463,9 @@ class SynthesisEngine @Inject constructor(
         val budgetLimit = if (overallBudget > 0) overallBudget else categoryBudgetsSum
         
         val spentSoFar = spendingPace.currentMonthSpent
+            ?: throw com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException(
+                com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE
+            )
         
         // Revised Formula: Limit - (Spent + Future Committed + Future Likely + Goal Reserves)
         // If budgetLimit is 0, we use a fallback or express "Unknown" state
@@ -663,30 +667,38 @@ class SynthesisEngine @Inject constructor(
             val dailyTarget = baseDiscretionaryRate + recurringOnDay + plannedOnDay
             val actualFromHistory = dailySpending.getOrNull(day - 1)?.toDouble()
             // RP-06 6b slice 3 (P5-CURRENT-009): raw items are metadata-only
-            // (topTransactions); their amounts participate in ARITHMETIC only via
-            // the typed converter. Blank item currency (legacy callers) keeps the
-            // identity sum; blank bpCurrency keeps the exact legacy behavior so
-            // single-currency goldens are byte-identical. Failed conversions are
-            // excluded (contribute 0) and counted — no source-currency amount ever
-            // enters a bpCurrency sum.
+            // (topTransactions); their amounts participate in arithmetic only
+            // when a target currency is available. A blank target has no typed
+            // basis, so the raw list is excluded and normalized daily history is
+            // used instead. Failed conversions are excluded and counted — no
+            // source-currency amount enters a typed target-currency aggregate.
             val actualFromExpenses = when {
                 expensesByDay[day] == null -> null
-                bpCurrency.isBlank() -> expensesByDay[day]!!.sumOf { it.effectiveAmount }
-                else -> expensesByDay[day]!!.sumOf { item ->
-                    if (item.currency.isBlank()) item.effectiveAmount
-                    else convertAmount(item.effectiveAmount, item.currency, bpCurrency)
-                        ?: run { bpConversionFailures++; dayConversionFailures++; 0.0 }
+                bpCurrency.isBlank() -> {
+                    // A blank target currency is legacy/unknown input. Do not
+                    // aggregate source amounts without a typed currency basis;
+                    // fall back to the already-normalized daily history below.
+                    bpConversionFailures += expensesByDay[day]!!.size
+                    dayConversionFailures += expensesByDay[day]!!.size
+                    null
+                }
+                else -> {
+                    val convertedAmounts = expensesByDay[day]!!.mapNotNull { item ->
+                        if (item.currency.isBlank()) item.effectiveAmount
+                        else convertAmount(item.effectiveAmount, item.currency, bpCurrency)
+                            ?: run { bpConversionFailures++; dayConversionFailures++; null }
+                    }
+                    MoneyAggregateBuilder.fromHomeCurrencyAmounts(
+                        convertedAmounts,
+                        bpCurrency
+                    ).displayAmount
                 }
             }
-            // FCST-3: Sum actual occurrences correctly — prefer expenses from the expense
-            // table over daily history since the history may not account for all entries
-            // (e.g., recently added expenses). Using expenses as the primary source ensures
-            // the actual column always reflects all persisted data.
-            // Contract: a day with a raw list but only failed conversions still uses the
-            // raw-list branch (sum 0.0, not the normalized history); a day with NO raw
-            // list falls through to the normalized daily value via ?:. An empty raw
-            // list never overwrites a valid normalized value (emptyList sums to 0.0 only
-            // when the key exists; absent key yields null → history fallback).
+            // FCST-3: Prefer source expenses when a typed target-currency basis exists;
+            // otherwise use normalized daily history. A day with a non-empty raw list
+            // and a valid target uses the raw-list branch even when every conversion
+            // fails (the typed aggregate is zero). A blank target intentionally falls
+            // through because its source amounts cannot be safely aggregated.
             val actual = actualFromExpenses ?: actualFromHistory
             val actualOrZero = actual ?: 0.0
 

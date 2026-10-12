@@ -27,6 +27,7 @@ class EffectiveAmountConsistencyTest {
     private lateinit var spendingPaceCalculator: SpendingPaceCalculator
     private lateinit var monthlyComparisonCalculator: MonthlyComparisonCalculator
     private lateinit var dayOfWeekAnalyzer: DayOfWeekAnalyzer
+    private var nextExpenseId = 1L
 
     private fun fixedTime(year: Int, month: Int, day: Int): Long {
         return Calendar.getInstance().apply {
@@ -38,6 +39,7 @@ class EffectiveAmountConsistencyTest {
     @Before
     fun setup() {
         every { timeProvider.now() } returns fixedTime(2024, 5, 15) // June 15, 2024
+        nextExpenseId = 1L
         spendingPaceCalculator = SpendingPaceCalculator(timeProvider)
         monthlyComparisonCalculator = MonthlyComparisonCalculator()
         dayOfWeekAnalyzer = DayOfWeekAnalyzer()
@@ -59,7 +61,7 @@ class EffectiveAmountConsistencyTest {
         val pace = spendingPaceCalculator.calculate(
             monthStart, prevMonthStart, prevMonthEnd, listOf(mine, notMine).toExpenseSnapshots(), "EUR"
         )
-        assertEquals("Only mine (100) should count", 100.0, pace.currentMonthSpent, 0.001)
+        assertEquals("Only mine (100) should count", 100.0, requireNotNull(pace.currentMonthSpent), 0.001)
     }
 
     @Test
@@ -73,7 +75,7 @@ class EffectiveAmountConsistencyTest {
         val result = monthlyComparisonCalculator.calculate(
             currentMonth, prevMonth, listOf(mine, notMine).toExpenseSnapshots(), "EUR"
         )
-        assertEquals("Only mine (200) should count", 200.0, result.currentTotal, 0.001)
+        assertEquals("Only mine (200) should count", 200.0, requireNotNull(result.currentTotal), 0.001)
     }
 
     @Test
@@ -85,7 +87,7 @@ class EffectiveAmountConsistencyTest {
         val notMine = createExpense(300.0, start + 86400000, isNotMine = true)
 
         val insights = dayOfWeekAnalyzer.analyze(start, end, listOf(mine, notMine).toExpenseSnapshots(), "EUR")
-        val totalFromInsights = insights.sumOf { it.totalSpent }
+        val totalFromInsights = insights.sumOf { requireNotNull(it.totalSpent) }
         assertEquals("Only mine (50) should count", 50.0, totalFromInsights, 0.001)
     }
 
@@ -109,7 +111,7 @@ class EffectiveAmountConsistencyTest {
         val pace = spendingPaceCalculator.calculate(
             monthStart, prevMonthStart, prevMonthEnd, listOf(shared).toExpenseSnapshots(), "EUR"
         )
-        assertEquals("Should use myShareAmount (40)", 40.0, pace.currentMonthSpent, 0.001)
+        assertEquals("Should use myShareAmount (40)", 40.0, requireNotNull(pace.currentMonthSpent), 0.001)
     }
 
     @Test
@@ -128,7 +130,7 @@ class EffectiveAmountConsistencyTest {
         val pace = spendingPaceCalculator.calculate(
             monthStart, prevMonthStart, prevMonthEnd, listOf(shared).toExpenseSnapshots(), "EUR"
         )
-        assertEquals("Should use 50% of 100 = 50", 50.0, pace.currentMonthSpent, 0.001)
+        assertEquals("Should use 50% of 100 = 50", 50.0, requireNotNull(pace.currentMonthSpent), 0.001)
     }
 
     @Test
@@ -146,7 +148,7 @@ class EffectiveAmountConsistencyTest {
         val result = monthlyComparisonCalculator.calculate(
             currentMonth, prevMonth, listOf(shared).toExpenseSnapshots(), "EUR"
         )
-        assertEquals("Should use myShareAmount (75)", 75.0, result.currentTotal, 0.001)
+        assertEquals("Should use myShareAmount (75)", 75.0, requireNotNull(result.currentTotal), 0.001)
     }
 
     // ============================================================================
@@ -200,7 +202,7 @@ class EffectiveAmountConsistencyTest {
         val pace = spendingPaceCalculator.calculate(
             monthStart, prevMonthStart, prevMonthEnd, expenses.toExpenseSnapshots(), "EUR"
         )
-        assertEquals(expectedTotal, pace.currentMonthSpent, 0.001)
+        assertEquals(expectedTotal, requireNotNull(pace.currentMonthSpent), 0.001)
     }
 
     private fun monthStart(year: Int, calendarMonth: Int): Long {
@@ -229,6 +231,7 @@ class EffectiveAmountConsistencyTest {
         myShareAmount: Double? = null,
         mySharePercentage: Int? = null
     ): Expense = Expense(
+        id = nextExpenseId++,
         amount = amount,
         merchant = "Test",
         transactionType = TransactionType.PURCHASE,

@@ -1,11 +1,12 @@
 package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.domain.core.time.PeriodRange
+import com.yourname.expensetracker.domain.core.money.MoneyAggregate
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateResult
 import javax.inject.Inject
 import javax.inject.Singleton
 import java.time.Instant
 import java.time.ZoneId
-import java.time.ZonedDateTime
 import java.time.temporal.ChronoUnit
 
 /**
@@ -19,9 +20,13 @@ class DailyBucketEngine @Inject constructor() {
 
     data class DailyBucket(
         val date: Long,       // epoch millis at start of day (local midnight)
-        val total: Double,    // normalized amount (already home-currency)
-        val count: Int
-    )
+        val count: Int,
+        val moneyResult: MoneyAggregateResult
+    ) {
+        /** Typed projection for chart consumers that need the daily total. */
+        val total: MoneyAggregate?
+            get() = (moneyResult as? MoneyAggregateResult.Available)?.aggregate
+    }
 
     fun buildBuckets(
         input: NormalizedAnalyticsInput,
@@ -41,7 +46,14 @@ class DailyBucketEngine @Inject constructor() {
         while (current.toInstant().toEpochMilli() < period.endExclusiveMillis) {
             val dayEpoch = current.toInstant().toEpochMilli()
             val dayExpenses = byDay[dayEpoch].orEmpty()
-            buckets.add(DailyBucket(dayEpoch, dayExpenses.sumOf { it.normalizedAmount }, dayExpenses.size))
+            val nextDayEpoch = current.plusDays(1).toInstant().toEpochMilli()
+            val moneyResult = NormalizedAnalyticsMoneyAdapter.aggregateInputSlice(
+                input = input,
+                includedExpenses = dayExpenses,
+                startInclusiveMillis = dayEpoch,
+                endExclusiveMillis = nextDayEpoch
+            )
+            buckets.add(DailyBucket(dayEpoch, dayExpenses.size, moneyResult))
             current = current.plusDays(1)
         }
         return buckets

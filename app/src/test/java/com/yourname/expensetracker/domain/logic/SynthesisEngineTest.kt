@@ -290,7 +290,7 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `calculateBlockPartyData falls back to expenses when daily history is empty`() = runTest {
+    fun `calculateBlockPartyData falls back to explicitly targeted expenses when history is empty`() = runTest {
         val pace = SpendingPace(
             currentMonthSpent = 100.0,
             daysElapsed = 15,
@@ -309,7 +309,8 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
             plannedExpenses = emptyList(),
             savingsGoals = emptyList(),
             budgetStatuses = listOf(createBudgetStatus(limit = 1000.0)),
-            spendingPace = pace
+            spendingPace = pace,
+            displayCurrency = "EUR"
         )
 
         val calendar = Calendar.getInstance().apply { timeInMillis = 1705320000000L } // Jan 15, 2024
@@ -472,7 +473,8 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
             plannedExpenses = emptyList(),
             savingsGoals = emptyList(),
             budgetStatuses = listOf(createBudgetStatus(limit = 1000.0)),
-            spendingPace = pace
+            spendingPace = pace,
+            displayCurrency = "EUR"
         )
 
         val day10Ts = millis(2024, Calendar.JANUARY, 10)

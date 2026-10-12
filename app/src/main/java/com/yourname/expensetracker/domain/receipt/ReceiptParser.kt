@@ -12,6 +12,13 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 import com.yourname.expensetracker.domain.util.AmountUtils
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateResult
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode
+import com.yourname.expensetracker.domain.core.money.RateBasis
+import com.yourname.expensetracker.domain.core.money.aggregateOrNull
 import com.yourname.expensetracker.domain.util.StringDistanceUtils
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -56,6 +63,16 @@ class ReceiptParser @Inject constructor(
         private val TIME_PATTERN = Regex("""\b\d{1,2}:\d{2}(:\d{2})?\b""")
         private val CHANGE_PATTERN = Regex("""(CHANGE|ΡΕΣΤΑ|RESTA|ΑΛΛΑΓΗ)""")
         private val QUANTITY_PREFIX_PATTERN = Regex("""^\d+\s*[xX*]\s*.+""")
+        private val CURRENCY_CODE_PATTERN = Regex("""(?<![\p{L}_])([A-Z]{3})(?![\p{L}_])""")
+        private val CURRENCY_AMOUNT_BEFORE = Regex("""\d(?:[\d.,]*\d)?[ \t]*[€£$]?[ \t]*$""")
+        private val CURRENCY_AMOUNT_AFTER = Regex("""^[ \t]*[€£$]?[ \t]*\d""")
+        private val CURRENCY_LABEL_PREFIX = Regex("""^[ \t]*CURRENCY[ \t]*[:=]?[ \t]*$""")
+        private val DOLLAR_SYMBOL_PATTERN = Regex("""(?:(?<![A-Z])(US|CA|AU|SG|NZ|HK|MX|C|A|S|R))?\$""")
+        private val DOLLAR_CURRENCY_CODES = mapOf(
+            "US" to "USD", "CA" to "CAD", "AU" to "AUD", "SG" to "SGD",
+            "C" to "CAD", "A" to "AUD", "NZ" to "NZD", "MX" to "MXN",
+            "S" to "SGD", "HK" to "HKD", "R" to "BRL"
+        )
 
         /**
          * RCP-14: Shared 5%-threshold detection for tax-inclusive receipts.
@@ -66,11 +83,23 @@ class ReceiptParser @Inject constructor(
         fun isTaxInclusive(
             parsedTotal: Double?,
             parsedTaxAmount: Double?,
-            lineItems: List<LineItem>?
+            lineItems: List<LineItem>?,
+            currency: String
         ): Boolean {
-            if (parsedTotal == null || parsedTaxAmount == null || lineItems.isNullOrEmpty()) return false
-            val lineItemsSum = lineItems.sumOf { it.totalPrice }
+            if (parsedTotal == null || !parsedTotal.isFinite() ||
+                parsedTaxAmount == null || !parsedTaxAmount.isFinite() || lineItems.isNullOrEmpty()
+            ) return false
+            val lineItemsSum = MoneyAggregateBuilder.fromSourceCurrencyAmounts(
+                lineItems.asSequence().map { it.totalPrice }.asIterable(), currency
+            ).aggregateOrNull()?.displayAmount ?: return false
             return kotlin.math.abs(lineItemsSum - parsedTotal) < (parsedTotal * 0.05)
+        }
+
+        fun sourceMoneyOrNull(amount: Double?, currency: String): MoneyAmount? {
+            val sourceCurrency = CurrencyCode.parse(currency)
+                ?.takeIf { it in CurrencyCode.ALL_SUPPORTED }
+                ?: return null
+            return amount?.takeIf { it.isFinite() }?.let { MoneyAmount(it, sourceCurrency) }
         }
     }
 
@@ -94,9 +123,9 @@ class ReceiptParser @Inject constructor(
 
     data class ParsedReceipt(
         val merchantName: String?,
-        val total: Double?,
-        val subtotal: Double?,
-        val tax: Double?,
+        val total: MoneyAmount?,
+        val subtotal: MoneyAmount?,
+        val tax: MoneyAmount?,
         val date: Long?,
         val currency: String,
         val lineItems: List<LineItem>,
@@ -123,13 +152,55 @@ class ReceiptParser @Inject constructor(
          */
         val taxInclusive: Boolean = false,
         /**
-         * RCP-18: Indicates how the [total] was derived. `null` means the
+         * RCP-18: Indicates how [total] was derived. `null` means the
          * provenance was not tracked (legacy parsing path). Set appropriately
          * in [parse] based on whether an OCR-extracted total was found or the
          * total was computed from line-item sums.
          */
-        val totalSource: TotalSource? = null
-    )
+        val totalSource: TotalSource? = null,
+        /** True when numeric total/line-item evidence existed but its source currency was unresolved. */
+        val hasUnresolvedTotalEvidence: Boolean = false
+    ) {
+        init {
+            val sourceCurrency = CurrencyCode.parse(currency)
+                ?.takeIf { it in CurrencyCode.ALL_SUPPORTED }
+            listOfNotNull(total, subtotal, tax).forEach { amount ->
+                require(sourceCurrency == amount.currency) {
+                    "RECEIPT_MONEY_CURRENCY_MISMATCH"
+                }
+            }
+        }
+
+        val subtotalAggregate: MoneyAggregateResult
+            get() = sourceValue(subtotal)
+        val taxAggregate: MoneyAggregateResult
+            get() = sourceValue(tax)
+        val lineItemsAggregate: MoneyAggregateResult
+            get() = MoneyAggregateBuilder.fromSourceCurrencyAmounts(
+                lineItems.map { it.totalPrice }, currency
+            )
+        private fun sourceValue(value: MoneyAmount?): MoneyAggregateResult = if (value == null) {
+            MoneyAggregateResult.Unavailable("RECEIPT_VALUE_MISSING", RateBasis.IDENTITY)
+        } else {
+            MoneyAggregateBuilder.fromSourceCurrencyAmounts(
+                listOf(value.amount), value.currency.code
+            )
+        }
+        val totalAggregate: MoneyAggregateResult
+            get() {
+                if (total == null) {
+                    return MoneyAggregateResult.Unavailable(
+                        reason = if (hasUnresolvedTotalEvidence) {
+                            MoneyDisplayUnavailableReasonCode.INVALID_SOURCE_CURRENCY.name
+                        } else {
+                            "RECEIPT_TOTAL_MISSING"
+                        },
+                        requestedRateBasis = RateBasis.IDENTITY
+                    )
+                }
+                return sourceValue(total)
+            }
+    }
 
     /**
      * @property itemIndex Sequential index within the receipt (0-based).
@@ -141,7 +212,8 @@ class ReceiptParser @Inject constructor(
         val quantity: Double?,
         val unitPrice: Double?,
         val totalPrice: Double,
-        val itemIndex: Int = 0
+        val itemIndex: Int = 0,
+        val isAdjustment: Boolean = false
     )
 
     // Total amount patterns (Greek + English receipts)
@@ -206,7 +278,12 @@ class ReceiptParser @Inject constructor(
         )
     )
 
-    fun parse(rawText: String, homeCurrency: String = "EUR"): ParsedReceipt {
+    /**
+     * Extracts source-money syntax without conversion. Missing or conflicting
+     * source currency leaves the total unavailable and requires review.
+     * [homeCurrency] is retained for call compatibility, never as OCR evidence.
+     */
+    fun parse(rawText: String, homeCurrency: String? = null): ParsedReceipt {
         // 1. Pre-process text to fix OCR spacing issues and Greek characters
         val cleanedText = normalizeGreekOcr(rawText)
         val lines = cleanedText.lines().filter { it.isNotBlank() }
@@ -229,13 +306,26 @@ class ReceiptParser @Inject constructor(
         // 7. Extract line items
         val lineItems = extractLineItems(cleanedText)
 
+        val sourceCurrency = CurrencyCode.parse(detectCurrency(cleanedText).orEmpty())
+            ?.takeIf { it in CurrencyCode.ALL_SUPPORTED }
+        val currency = sourceCurrency?.code.orEmpty()
+        val lineItemsAggregate = MoneyAggregateBuilder.fromSourceCurrencyAmounts(
+            lineItems.asSequence().map { it.totalPrice }.asIterable(), currency
+        )
+        val lineItemsSum = lineItemsAggregate.aggregateOrNull()?.let { aggregate ->
+            MoneyAmount(aggregate.displayAmount, aggregate.displayCurrency)
+        }
+
         // 8. Cross-validate
-        val finalTotal = total ?: lineItems.sumOf { it.totalPrice }.takeIf { it > 0 }
+        val finalTotal = sourceCurrency?.let { code ->
+            total?.takeIf { it.isFinite() }?.let { MoneyAmount(it, code) }
+                ?: lineItemsSum?.takeIf { it.isPositive() }
+        }
 
         // RCP-18: Track how the total was derived — from OCR extraction,
         // from line-item summation, or not available.
         val resolvedTotalSource = when {
-            total != null -> TotalSource.OCR_TOTAL
+            finalTotal != null && total?.isFinite() == true -> TotalSource.OCR_TOTAL
             finalTotal != null && lineItems.isNotEmpty() -> TotalSource.LINE_ITEMS
             else -> TotalSource.MANUAL
         }
@@ -254,36 +344,44 @@ class ReceiptParser @Inject constructor(
         //     includes the proportional tax — do not add tax on top.
         //   - For a tax-exclusive subtotal, compute: subtotal = total - tax.
         //     The line items sum already approximates `total` (within 5%).
-        val taxInclusive = if (finalTotal != null && tax != null && lineItems.isNotEmpty()) {
-            val itemsSum = lineItems.sumOf { it.totalPrice }
-            val diff = kotlin.math.abs(finalTotal - itemsSum)
-            diff < finalTotal * 0.05
+        val taxAmount = sourceCurrency?.let { code ->
+            tax?.takeIf { it.isFinite() }?.let { MoneyAmount(it, code) }
+        }
+        val taxInclusive = if (finalTotal != null && taxAmount != null &&
+            lineItems.isNotEmpty() && lineItemsSum != null
+        ) {
+            val difference = (finalTotal - lineItemsSum).abs().amount
+            difference < finalTotal.amount * 0.05
         } else false
 
         // 10. Calculate subtotal
-        val finalSubtotal = subtotal
-            ?: if (finalTotal != null && tax != null) finalTotal - tax else null
+        val finalSubtotal = sourceCurrency?.let { code ->
+            subtotal?.takeIf { it.isFinite() }?.let { MoneyAmount(it, code) }
+        } ?: if (finalTotal != null && taxAmount != null) {
+                finalTotal - taxAmount
+            } else null
 
         // 11. Confidence - set to 0 if critical fields are missing
         val hasCriticalData = merchant != null || finalTotal != null || date != null
         val confidence = if (!hasCriticalData) {
             0f
         } else {
-            calculateConfidence(merchant, finalTotal, date, lineItems, tax)
+            calculateConfidence(merchant, finalTotal, date, lineItems, taxAmount, lineItemsAggregate)
         }
 
         return ParsedReceipt(
             merchantName = merchant,
             total = finalTotal,
             subtotal = finalSubtotal,
-            tax = tax,
+            tax = taxAmount,
             date = date,
-            // Fallback chain: detected currency → explicit homeCurrency → "EUR" last resort
-            currency = detectCurrency(cleanedText) ?: homeCurrency,
+            currency = currency,
             lineItems = lineItems,
             confidence = confidence,
             taxInclusive = taxInclusive,
-            totalSource = resolvedTotalSource
+            totalSource = resolvedTotalSource,
+            hasUnresolvedTotalEvidence = sourceCurrency == null &&
+                (total?.isFinite() == true || lineItems.any { it.totalPrice.isFinite() })
         )
     }
 
@@ -334,8 +432,8 @@ class ReceiptParser @Inject constructor(
         normalized = normalized.replace(COMPOUND_MERIKO, "SUBTOTAL_KEY")
         normalized = normalized.replace(COMPOUND_TELIKI, "TOTAL_KEY")
 
-        val boundary = """(?:^|[\s:;.,/-])"""
-        val endBoundary = """(?:$|[\s:;.,/-])"""
+        val boundary = """(?m)(?:^|[ \t:;.,/-])"""
+        val endBoundary = """(?:$|[ \t:;.,/-])"""
 
         // Total keywords
         normalized = normalized.replace(Regex(boundary + "ΣΥΝΟΛΟ" + endBoundary), " TOTAL_KEY ")
@@ -827,28 +925,51 @@ class ReceiptParser @Inject constructor(
     }
 
     private fun detectCurrency(text: String): String? {
-        return when {
-            text.contains("€") || 
-            text.contains("EUR", ignoreCase = true) ||
+        val currencies = mutableSetOf<String>()
+        for (line in text.lineSequence()) {
+            for (match in CURRENCY_CODE_PATTERN.findAll(line)) {
+                val prefix = line.substring(0, match.range.first)
+                val suffix = line.substring(match.range.last + 1)
+                val labeledCurrency = CURRENCY_LABEL_PREFIX.matches(prefix) && suffix.isBlank()
+                val currency = CurrencyCode.parse(match.groupValues[1])
+                    ?.takeIf { it in CurrencyCode.ALL_SUPPORTED }
+                val monetarySignal = labeledCurrency ||
+                    CURRENCY_AMOUNT_BEFORE.containsMatchIn(prefix) ||
+                    CURRENCY_AMOUNT_AFTER.containsMatchIn(suffix)
+                val explicitMonetaryContext = labeledCurrency || suffix.isBlank() ||
+                    Regex("(?i)\\b(total|subtotal|tax|vat|amount|price|due|currency)\\b").containsMatchIn(line)
+                if (monetarySignal && explicitMonetaryContext && currency == null &&
+                    match.groupValues[1] !in setOf("VAT", "TAX", "QTY")) return ""
+                if (currency != null && (line.trim() == currency.code || monetarySignal)) currencies.add(currency.code)
+            }
+        }
+        if (text.contains("€") ||
             text.contains("ΕΥΡΩ", ignoreCase = true) ||
-            text.contains("ΕΥΡ", ignoreCase = true) -> "EUR"
-            
-            text.contains("$") || text.contains("USD", ignoreCase = true) -> "USD"
-            
-            // Be more strict with GBP to avoid OYP/OYR corruption
-            text.contains("£") || 
-            (text.contains("GBP", ignoreCase = true) && !text.contains("OYP") && !text.contains("OYR")) -> "GBP"
-            
-            else -> null // Currency not detected
+            text.contains("ΕΥΡ", ignoreCase = true)
+        ) currencies.add("EUR")
+        var hasGenericDollar = false
+        for (match in DOLLAR_SYMBOL_PATTERN.findAll(text)) {
+            val currency = DOLLAR_CURRENCY_CODES[match.groupValues[1]]
+            if (currency == null) hasGenericDollar = true else currencies.add(currency)
+        }
+        if (hasGenericDollar && currencies.none { it == "USD" || it in DOLLAR_CURRENCY_CODES.values }) {
+            currencies.add("USD")
+        }
+        if (text.contains("£")) currencies.add("GBP")
+        return when (currencies.size) {
+            0 -> null
+            1 -> currencies.first()
+            else -> ""
         }
     }
 
     private fun calculateConfidence(
         merchant: String?,
-        total: Double?,
+        total: MoneyAmount?,
         date: Long?,
         items: List<LineItem>,
-        tax: Double?
+        tax: MoneyAmount?,
+        lineItemsAggregate: MoneyAggregateResult
     ): Float {
         var score = 0f
         
@@ -860,10 +981,10 @@ class ReceiptParser @Inject constructor(
         }
         
         // Total (40%) - Most important
-        if (total != null && total > 0) {
+        if (total?.isPositive() == true) {
             score += 0.40f
             // Bonus if total is reasonable
-            if (total in 0.5..2000.0) score += 0.05f
+            if (total.amount in 0.5..2000.0) score += 0.05f
         }
         
         // Date (15%)
@@ -881,13 +1002,13 @@ class ReceiptParser @Inject constructor(
         }
         
         // Tax (5%)
-        if (tax != null && tax > 0) score += 0.05f
+        if (tax?.isPositive() == true) score += 0.05f
 
         // Cross-validation bonus (10%)
-        if (total != null && items.isNotEmpty()) {
-            val itemsSum = items.sumOf { it.totalPrice }
-            val diff = kotlin.math.abs(total - itemsSum)
-            if (diff < total * 0.10) { // Within 10%
+        val itemsSum = lineItemsAggregate.aggregateOrNull()?.displayAmount
+        if (total != null && items.isNotEmpty() && itemsSum != null) {
+            val diff = kotlin.math.abs(total.amount - itemsSum)
+            if (diff < total.amount * 0.10) { // Within 10%
                 score += 0.10f
             }
         }
@@ -903,6 +1024,7 @@ class ReceiptParser @Inject constructor(
                 put("description", item.description)
                 put("totalPrice", item.totalPrice)
                 put("itemIndex", item.itemIndex)
+                if (item.isAdjustment) put("isAdjustment", true)
                 item.quantity?.let { put("quantity", it) }
                 item.unitPrice?.let { put("unitPrice", it) }
             }
@@ -923,7 +1045,8 @@ class ReceiptParser @Inject constructor(
                     totalPrice = obj.getDouble("totalPrice"),
                     quantity = if (obj.has("quantity")) obj.getDouble("quantity") else null,
                     unitPrice = if (obj.has("unitPrice")) obj.getDouble("unitPrice") else null,
-                    itemIndex = if (obj.has("itemIndex")) obj.getInt("itemIndex") else i
+                    itemIndex = if (obj.has("itemIndex")) obj.getInt("itemIndex") else i,
+                    isAdjustment = obj.optBoolean("isAdjustment", false)
                 )
             }
         } catch (e: Exception) {

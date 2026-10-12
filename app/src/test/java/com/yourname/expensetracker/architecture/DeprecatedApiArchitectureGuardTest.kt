@@ -289,8 +289,8 @@ class DeprecatedApiArchitectureGuardTest {
             if (file.name == "SpendingPersonalityClassifier.kt") return@forEach
             val content = file.readText()
             // Match "classify()" but not "classify(input" or "classify(Normalized"
-            val regex = Regex("spendingPersonalityClassifier\\.classify\\s*\\(\\s*\\)")
-            val matches = regex.findAll(content).toList()
+            val regex = Regex("[A-Za-z_][A-Za-z0-9_]*\\.classify\\s*\\(\\s*\\)")
+            val matches = if (content.contains("SpendingPersonalityClassifier")) regex.findAll(content).toList() else emptyList()
             if (matches.isNotEmpty()) {
                 violations.add("${file.name}: found ${matches.size} call(s) to raw classify()")
             }

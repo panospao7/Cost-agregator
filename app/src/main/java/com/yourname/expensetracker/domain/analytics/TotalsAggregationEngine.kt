@@ -7,6 +7,10 @@ import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
 import com.yourname.expensetracker.data.repository.MonthMoneyAggregate
 import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateResult
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
+import com.yourname.expensetracker.domain.core.money.aggregateOrNull
 import com.yourname.expensetracker.domain.model.CategoryBreakdown
 import com.yourname.expensetracker.domain.model.CategoryInfo
 import com.yourname.expensetracker.domain.model.PeriodStatus
@@ -110,9 +114,10 @@ class TotalsAggregationEngine @Inject constructor(
                 periodType = PeriodType.MONTH,
                 startDateMs = monthStart,
                 endDateMs = monthEnd,
-                status = getPeriodStatus(total, average),
+                status = getPeriodStatus(monthly?.aggregate, average),
                 isPartial = monthly?.aggregate?.isPartial ?: false,
-                warningMessage = monthly?.aggregate?.warningMessage
+                warningMessage = monthly?.aggregate?.warningMessage,
+                moneyResult = monthly?.aggregate?.let(MoneyAggregateResult::Available)
             )
         }
     }
@@ -172,9 +177,10 @@ class TotalsAggregationEngine @Inject constructor(
                 periodType = PeriodType.WEEK,
                 startDateMs = clippedStart,
                 endDateMs = clippedEnd,
-                status = getPeriodStatus(aggregate.displayAmount, average),
+                status = getPeriodStatus(aggregate, average),
                 isPartial = aggregate.isPartial,
-                warningMessage = aggregate.warningMessage
+                warningMessage = aggregate.warningMessage,
+                moneyResult = MoneyAggregateResult.Available(aggregate)
             )
         }
     }
@@ -217,9 +223,10 @@ class TotalsAggregationEngine @Inject constructor(
                     periodType = PeriodType.DAY,
                     startDateMs = dayStart,
                     endDateMs = dayEnd,
-                    status = getPeriodStatus(aggregate.displayAmount, average),
+                    status = getPeriodStatus(aggregate, average),
                     isPartial = aggregate.isPartial,
-                    warningMessage = aggregate.warningMessage
+                    warningMessage = aggregate.warningMessage,
+                    moneyResult = MoneyAggregateResult.Available(aggregate)
                 )
             }
         }
@@ -244,9 +251,10 @@ class TotalsAggregationEngine @Inject constructor(
                 periodType = PeriodType.DAY,
                 startDateMs = dayStart,
                 endDateMs = dayEnd,
-                status = getPeriodStatus(aggregate.displayAmount, average),
+                status = getPeriodStatus(aggregate, average),
                 isPartial = aggregate.isPartial,
-                warningMessage = aggregate.warningMessage
+                warningMessage = aggregate.warningMessage,
+                moneyResult = MoneyAggregateResult.Available(aggregate)
             )
         }
     }
@@ -280,9 +288,10 @@ class TotalsAggregationEngine @Inject constructor(
                 periodType = PeriodType.YEAR,
                 startDateMs = startMs,
                 endDateMs = endMs,
-                status = getPeriodStatus(total, average),
+                status = getPeriodStatus(aggregate, average),
                 isPartial = aggregate?.isPartial ?: false,
-                warningMessage = aggregate?.warningMessage
+                warningMessage = aggregate?.warningMessage,
+                moneyResult = aggregate?.let(MoneyAggregateResult::Available)
             )
         }.filter { it.totalAmount > 0 || it.periodKey == currentYear.toString() }
     }
@@ -322,7 +331,19 @@ class TotalsAggregationEngine @Inject constructor(
         // NEW-P5-008: Explicit PURCHASE_ONLY filter ensures category breakdown matches
         // dashboard totals and excludes deposits/transfers.
         val categoryAggregates = multiCurrencyRepository.getCategoryAggregatesHistorical(startMs, endMs)
-        val grandTotal = categoryAggregates.values.sumOf { it.displayAmount }
+        val currencies = categoryAggregates.values.map { it.displayCurrency }.distinct()
+        require(currencies.size <= 1 && categoryAggregates.values.none {
+            it.conversionQuality == com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE
+        }) { "CATEGORY_MONEY_UNAVAILABLE" }
+        val grandTotal = currencies.singleOrNull()?.let { currency ->
+            val result = MoneyAggregateBuilder.fromSourceCurrencyAmounts(
+                categoryAggregates.values.map { it.displayAmount }, currency.code
+            )
+            (result as? MoneyAggregateResult.Available)?.aggregate?.displayAmount
+                ?: throw com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException(
+                    com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE
+                )
+        } ?: 0.0
 
         categoryAggregates.mapNotNull { (categoryId, aggregate) ->
             val category = if (categoryId == null) {
@@ -381,7 +402,7 @@ class TotalsAggregationEngine @Inject constructor(
      * partial-state ([MoneyAggregate.isPartial]/[MoneyAggregate.warningMessage])
      * continues to propagate on the returned totals.
      */
-    suspend fun getAverageForPeriodType(periodType: PeriodType, excludeCurrent: Boolean): Double = withContext(ioDispatcher) {
+    suspend fun getAverageForPeriodType(periodType: PeriodType, excludeCurrent: Boolean): MoneyAmount? = withContext(ioDispatcher) {
         try {
             val now = timeProvider.now()
 
@@ -389,13 +410,16 @@ class TotalsAggregationEngine @Inject constructor(
                 PeriodType.YEAR -> {
                     val currentYear = TimePeriodUtils.getYear(now)
                     val endYear = if (excludeCurrent) currentYear - 1 else currentYear
-                    val yearTotals = (currentYear - 4..endYear).mapNotNull { year ->
+                    val yearTotals = (currentYear - 4..endYear).map { year ->
                         val (startMs, endMs) = getYearRange(year)
-                        // P5-P1-01 FIX: historical TRANSACTION_DATE basis matches getYearlyTotals
-                        val total = purchaseTotalHistorical(startMs, endMs)?.displayAmount ?: 0.0
-                        if (total > 0) total else null
+                        purchaseTotalHistorical(startMs, endMs)
                     }
-                    yearTotals.takeIf { it.isNotEmpty() }?.average() ?: 0.0
+                    if (yearTotals.any { it == null || !isComparisonAvailable(it) } || yearTotals.filterNotNull()
+                            .map { it.displayCurrency }.distinct().size > 1) {
+                        null
+                    } else {
+                        averageMoney(yearTotals.filterNotNull().filter { it.displayAmount > 0 })
+                    }
                 }
                 PeriodType.MONTH -> {
                     val startMs = TimePeriodUtils.getStartOfMonth(TimePeriodUtils.addMonths(now, -12))
@@ -408,12 +432,9 @@ class TotalsAggregationEngine @Inject constructor(
                         val currentYear = TimePeriodUtils.getYear(now)
                         val currentMonth = TimePeriodUtils.getMonth(now) + 1
                         val currentMonthKey = "%04d-%02d".format(currentYear, currentMonth)
-                        months.filter { it.monthKey < currentMonthKey }
-                            .map { it.aggregate.displayAmount }
-                            .average()
-                            .takeIf { !it.isNaN() } ?: 0.0
+                        averageMoney(months.filter { it.monthKey < currentMonthKey }.map { it.aggregate })
                     } else {
-                        months.map { it.aggregate.displayAmount }.average().takeIf { !it.isNaN() } ?: 0.0
+                        averageMoney(months.map { it.aggregate })
                     }
                 }
                 PeriodType.WEEK -> {
@@ -421,23 +442,22 @@ class TotalsAggregationEngine @Inject constructor(
                     val weeks = multiCurrencyRepository.getWeeklyAggregatesHistorical(startMs, now)
                     if (excludeCurrent) {
                         val currentWeekStart = TimePeriodUtils.getStartOfWeek(now)
-                        weeks.filter { periodAgg ->
+                        val completedWeeks = weeks.filter { periodAgg ->
                             val weekStart = TimePeriodUtils.parseWeekKeyToStart(periodAgg.periodKey) ?: return@filter false
                             weekStart < currentWeekStart
                         }
-                            .map { it.aggregate.displayAmount }
-                            .average()
-                            .takeIf { !it.isNaN() } ?: 0.0
+                        averageMoney(completedWeeks.map { it.aggregate })
                     } else {
-                        weeks.map { it.aggregate.displayAmount }.average().takeIf { !it.isNaN() } ?: 0.0
+                        averageMoney(weeks.map { it.aggregate })
                     }
                 }
                 PeriodType.DAY -> {
                     val startMs = TimePeriodUtils.getStartOfDay(TimePeriodUtils.addDays(now, -30))
                     // P5-P1-01 FIX: historical TRANSACTION_DATE basis matches the daily drilldown
                     val daysCount = TimePeriodUtils.daysBetween(startMs, now).coerceAtLeast(1)
-                    val total = purchaseTotalHistorical(startMs, now)?.displayAmount ?: 0.0
-                    total / daysCount
+                    purchaseTotalHistorical(startMs, now)?.let { aggregate ->
+                        averageMoney(listOf(aggregate), daysCount)
+                    }
                 }
             }
         } catch (e: Exception) {
@@ -446,17 +466,33 @@ class TotalsAggregationEngine @Inject constructor(
                 "UNKNOWN_ERROR operation=average class=%s",
                 e::class.java.simpleName
             )
-            0.0
+            null
         }
     }
 
-    fun getPeriodStatus(total: Double, average: Double): PeriodStatus {
+    private fun averageMoney(aggregates: List<MoneyAggregate>, divisor: Int = aggregates.size): MoneyAmount? {
+        val currency = aggregates.map { it.displayCurrency }.distinct().singleOrNull() ?: return null
+        if (divisor <= 0 || aggregates.any { !isComparisonAvailable(it) }) return null
+        val aggregate = MoneyAggregateBuilder.fromSourceCurrencyAmounts(
+            aggregates.map { it.displayAmount }, currency.code
+        ).aggregateOrNull() ?: return null
+        return MoneyAmount(aggregate.displayAmount / divisor, currency)
+    }
+
+    fun getPeriodStatus(total: MoneyAggregate?, average: MoneyAmount?): PeriodStatus {
         return when {
-            average <= 0 -> PeriodStatus.NO_DATA
-            total < average -> PeriodStatus.UNDER_AVERAGE
+            total == null || average == null -> PeriodStatus.NO_DATA
+            !isComparisonAvailable(total) -> PeriodStatus.NO_DATA
+            total.displayCurrency != average.currency -> PeriodStatus.NO_DATA
+            average.amount <= 0 -> PeriodStatus.NO_DATA
+            total.displayAmount < average.amount -> PeriodStatus.UNDER_AVERAGE
             else -> PeriodStatus.OVER_AVERAGE
         }
     }
+
+    private fun isComparisonAvailable(aggregate: MoneyAggregate): Boolean =
+        !aggregate.isPartial && aggregate.conversionFailures.isEmpty() &&
+            aggregate.conversionQuality != com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE
 
     private fun formatPeriodLabel(type: PeriodType, date: java.time.LocalDate): String {
         return when (type) {
@@ -491,31 +527,6 @@ class TotalsAggregationEngine @Inject constructor(
         val weekOneStart = TimePeriodUtils.getStartOfWeek(jan4)
         val weekStart = TimePeriodUtils.addDays(weekOneStart, (weekOfYear - 1) * 7)
         return weekStart to TimePeriodUtils.addDays(weekStart, 7)
-    }
-
-    private fun buildDailyPeriodTotals(
-        startMs: Long,
-        endMs: Long,
-        dailyTotals: List<com.yourname.expensetracker.data.database.dao.DailyTotal>,
-        average: Double
-    ): List<PeriodTotal> {
-        val totalsByStart = dailyTotals.associateBy { TimePeriodUtils.getStartOfDay(it.startDate) }
-        return generateDayStarts(startMs, endMs).map { dayStart ->
-            val dayEnd = TimePeriodUtils.getEndOfDay(dayStart)
-            val daily = totalsByStart[dayStart]
-            val total = daily?.total ?: 0.0
-            val date = toLocalDate(dayStart)
-            PeriodTotal(
-                periodLabel = DAY_FORMAT.format(date),
-                periodKey = dayKey(dayStart),
-                totalAmount = total,
-                transactionCount = daily?.txCount ?: 0,
-                periodType = PeriodType.DAY,
-                startDateMs = dayStart,
-                endDateMs = dayEnd,
-                status = getPeriodStatus(total, average)
-            )
-        }
     }
 
     private fun generateWeekStarts(monthStartMs: Long, monthEndMs: Long): List<Long> {
@@ -586,9 +597,14 @@ class TotalsAggregationEngine @Inject constructor(
                 java.time.Instant.ofEpochMilli(period.endExclusiveMillis)
             ).toDays().coerceAtLeast(1)
         } ?: expenses.map { it.date }.distinct().size.coerceAtLeast(1)
-        val average = if (expenses.isNotEmpty()) {
-            expenses.sumOf { it.normalizedAmount } / calendarDays.toDouble()
-        } else 0.0
+        val overallResult = aggregateNormalizedSlice(
+            includedExpenses = expenses,
+            excludedExpenses = input.excludedExpenses,
+            homeCurrency = input.homeCurrency
+        )
+        val overallAmount = (overallResult as? MoneyAggregateResult.Available)?.aggregate?.displayAmount
+            ?: return emptyList()
+        val average = overallAmount / calendarDays.toDouble()
 
         // Group by day using the same dayKey format as [dayKey]
         val groupedByDay = expenses.groupBy { exp ->
@@ -596,11 +612,27 @@ class TotalsAggregationEngine @Inject constructor(
             "%04d%02d%02d".format(date.year, date.monthValue, date.dayOfMonth)
         }
 
-        return groupedByDay.map { (periodKey, group) ->
+        return groupedByDay.mapNotNull { (periodKey, group) ->
             val firstDate = Instant.ofEpochMilli(group.first().date).atZone(systemZoneId()).toLocalDate()
             val dayStart = firstDate.atStartOfDay(systemZoneId()).toInstant().toEpochMilli()
-            val dayEnd = dayStart + 86_400_000L // 24 hours in ms
-            val total = group.sumOf { it.normalizedAmount }
+            val dayEnd = TimePeriodUtils.getEndOfDay(dayStart)
+            val dayEndExclusive = dayEnd
+            val dayExcluded = input.excludedExpenses.filter { excluded ->
+                excluded.date != null &&
+                    excluded.date >= dayStart &&
+                    excluded.date < dayEndExclusive &&
+                    input.period?.let { period ->
+                        excluded.date >= period.startInclusiveMillis &&
+                            excluded.date < period.endExclusiveMillis
+                    } != false
+            }
+            val moneyResult = aggregateNormalizedSlice(
+                includedExpenses = group,
+                excludedExpenses = dayExcluded + input.excludedExpenses.filter { it.date == null },
+                homeCurrency = input.homeCurrency
+            )
+            val total = (moneyResult as? MoneyAggregateResult.Available)?.aggregate?.displayAmount
+                ?: return@mapNotNull null
 
             PeriodTotal(
                 periodLabel = DAY_FORMAT.format(firstDate),
@@ -613,7 +645,16 @@ class TotalsAggregationEngine @Inject constructor(
                 status = if (average > 0 && total > average) PeriodStatus.OVER_AVERAGE
                          else if (average > 0) PeriodStatus.UNDER_AVERAGE
                          else defaultStatus,
-                dataQuality = input.dataQuality
+                dataQuality = sliceQuality(
+                    excludedExpenses = dayExcluded,
+                    unattributedExcludedCount = input.excludedExpenses.count { it.date == null }
+                ),
+                isPartial = isPartial(moneyResult),
+                warningMessage = when (moneyResult) {
+                    is MoneyAggregateResult.Available -> moneyResult.aggregate.warningMessage
+                    is MoneyAggregateResult.Unavailable -> moneyResult.warningMessage
+                },
+                moneyResult = moneyResult
             )
         }.sortedBy { it.periodKey }
     }
@@ -625,16 +666,24 @@ class TotalsAggregationEngine @Inject constructor(
      * available, as it avoids the raw DAO sum pitfalls of the deprecated methods.
      */
     data class TotalsSummary(
-        val total: Double,
+        val total: MoneyAmount?,
         val count: Int,
-        val avgPerDay: Double,
-        val avgPerWeek: Double,
-        val currency: String
+        val avgPerDay: MoneyAmount?,
+        val avgPerWeek: MoneyAmount?,
+        val currency: String,
+        val moneyResult: MoneyAggregateResult? = null
     )
 
     fun summarize(input: NormalizedAnalyticsInput): TotalsSummary {
         val expenses = input.includedExpenses.filter { it.transactionType == "PURCHASE" && !it.isNotMine }
-        val total = expenses.sumOf { it.normalizedAmount }
+        val moneyResult = aggregateNormalizedSlice(
+            includedExpenses = expenses,
+            excludedExpenses = input.excludedExpenses,
+            homeCurrency = input.homeCurrency
+        )
+        val total = (moneyResult as? MoneyAggregateResult.Available)?.aggregate?.let { aggregate ->
+            MoneyAmount(aggregate.displayAmount, aggregate.displayCurrency)
+        }
         val count = expenses.size
         val days = input.period?.let { period ->
             java.time.Duration.between(
@@ -644,10 +693,55 @@ class TotalsAggregationEngine @Inject constructor(
         } ?: 30
         return TotalsSummary(
             total = total, count = count,
-            avgPerDay = total / days,
-            avgPerWeek = total / (days / 7.0).coerceAtLeast(1.0),
-            currency = input.homeCurrency
+            avgPerDay = total?.let { MoneyAmount(it.amount / days, it.currency) },
+            avgPerWeek = total?.let {
+                MoneyAmount(it.amount / (days / 7.0).coerceAtLeast(1.0), it.currency)
+            },
+            currency = input.homeCurrency,
+            moneyResult = moneyResult
         )
+    }
+
+    private fun aggregateNormalizedSlice(
+        includedExpenses: Iterable<NormalizedExpense>,
+        excludedExpenses: Iterable<ExcludedExpense>,
+        homeCurrency: String
+    ): MoneyAggregateResult {
+        val excluded = excludedExpenses.toList()
+        val attributed = excluded.filter { it.date != null }
+        val unattributedCount = excluded.count { it.date == null }
+        return NormalizedAnalyticsMoneyAdapter.aggregateSlice(
+            includedExpenses = includedExpenses,
+            excludedExpenses = attributed,
+            homeCurrency = homeCurrency,
+            dataQuality = sliceQuality(attributed, unattributedCount),
+            unattributedExcludedCount = unattributedCount
+        )
+    }
+
+    private fun sliceQuality(
+        excludedExpenses: List<ExcludedExpense>,
+        unattributedExcludedCount: Int
+    ): AnalyticsDataQuality {
+        val excludedCount = excludedExpenses.size + unattributedExcludedCount
+        return AnalyticsDataQuality(
+            isPartial = excludedCount > 0,
+            excludedCount = excludedCount,
+            staleRateCount = excludedExpenses.count {
+                it.warningType == AnalyticsConversionWarningType.STALE_EXCHANGE_RATE
+            },
+            missingRateCount = excludedExpenses.count {
+                it.warningType == AnalyticsConversionWarningType.MISSING_EXCHANGE_RATE
+            },
+            invalidCurrencyCount = excludedExpenses.count {
+                it.warningType == AnalyticsConversionWarningType.INVALID_TRANSACTION_CURRENCY
+            }
+        )
+    }
+
+    private fun isPartial(result: MoneyAggregateResult): Boolean = when (result) {
+        is MoneyAggregateResult.Available -> result.aggregate.isPartial
+        is MoneyAggregateResult.Unavailable -> true
     }
 
     private fun systemZoneId(): ZoneId = ZoneId.systemDefault()

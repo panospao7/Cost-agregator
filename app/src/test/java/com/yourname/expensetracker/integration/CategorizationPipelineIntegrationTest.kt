@@ -242,6 +242,17 @@ class CategorizationPipelineIntegrationTest {
         val parsed = AmountUtils.parseAmount(largeAmount)
         
         assertNotNull("Should parse large amount", parsed)
+        assertEquals(1_000_000.0, parsed!!, 0.0)
+    }
+
+    @Test
+    fun `integration - supported currency prefixes preserve grouping and sign validation`() {
+        assertEquals(1234.56, AmountUtils.parseAmount("€1.234,56")!!, 0.0)
+        assertEquals(1234.56, AmountUtils.parseAmount("$1,234.56")!!, 0.0)
+        assertEquals(-1234.56, AmountUtils.parseAmount("£-1,234.56")!!, 0.0)
+        assertNull(AmountUtils.parseAmount("€1,23,456.00"))
+        assertTrue(AmountUtils.isValidAmount(1_000_000.0))
+        assertFalse(AmountUtils.isValidAmount(1_000_000.01))
     }
 
     @Test

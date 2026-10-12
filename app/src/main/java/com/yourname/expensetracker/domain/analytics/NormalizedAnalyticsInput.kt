@@ -35,7 +35,8 @@ data class NormalizedExpense(
     val rateValidDate: Long? = null,
     val rateLastUpdated: Long? = null,
     val rateSource: String? = null,
-    val conversionPath: String? = null
+    val conversionPath: String? = null,
+    val qualityWarning: AnalyticsConversionWarningType? = null
 )
 
 /**
@@ -46,6 +47,7 @@ data class ExcludedExpense(
     val originalAmount: Double,
     val originalCurrency: String,
     val reason: ExclusionReason,
+    val date: Long? = null,
     val warningType: AnalyticsConversionWarningType? = null,
     val message: String? = null
 )

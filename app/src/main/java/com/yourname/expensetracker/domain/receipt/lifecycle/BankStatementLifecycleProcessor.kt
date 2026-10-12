@@ -27,6 +27,7 @@ import com.yourname.expensetracker.domain.ai.usecase.StatementValidationContract
 import com.yourname.expensetracker.domain.ai.usecase.StatementValidationOutcome
 import com.yourname.expensetracker.domain.ai.usecase.ValidateBankStatementTransactionsUseCase
 import com.yourname.expensetracker.domain.core.money.CurrencyAssumption
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.debug.DebugData
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
 import com.yourname.expensetracker.domain.parser.ParsedTransactionType
@@ -199,7 +200,10 @@ class BankStatementLifecycleProcessor @Inject constructor(
             val ocrResult = receiptRepository.runStatementOcr(uri)
 
             // ── Step 3: Parse transactions ─────────────────────────────────────
-            val homeCurrency = bankStatementParser.resolveHomeCurrencySuspend()
+            // Home is informational for validation, not source-currency evidence.
+            // Explicit source rows can proceed without settings; unknown rows are
+            // represented by the parser and skipped at the existing item boundary.
+            val homeCurrency = bankStatementParser.resolveHomeCurrencySuspend().orEmpty()
             val parsedTransactions = bankStatementParser.parse(ocrResult.blocks, homeCurrency)
 
             val transactionsFound = parsedTransactions.size
@@ -297,7 +301,8 @@ class BankStatementLifecycleProcessor @Inject constructor(
             // blank reaches the ledger skip instead of a fabricated currency.
             fun parserPolicyCurrency(originalTx: ParsedTransaction): String =
                 if (originalTx.currencyAssumption == CurrencyAssumption.PARSED_FROM_SOURCE) {
-                    originalTx.currency
+                    CurrencyCode.parse(originalTx.currency)?.takeIf { it in CurrencyCode.ALL_SUPPORTED }?.code
+                        ?: StatementValidationContracts.CURRENCY_UNKNOWN
                 } else {
                     StatementValidationContracts.CURRENCY_UNKNOWN
                 }
@@ -561,7 +566,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                     // The validator applies the explicit-source/validated policy;
                     // a blank currency here is CURRENCY_UNKNOWN — no home fallback,
                     // no guessed currency in a review or dedupe key.
-                    if (tx.currency.isBlank()) {
+                    if (CurrencyCode.parse(tx.currency)?.let { it in CurrencyCode.ALL_SUPPORTED } != true) {
                         bankStatementImportItemDao.insert(
                             BankStatementImportItem(
                                 runId = importRunId,

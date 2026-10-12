@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.model
 
 import com.yourname.expensetracker.domain.analytics.AnalyticsDataQuality
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateResult
 
 enum class PeriodType { YEAR, MONTH, WEEK, DAY }
 
@@ -19,7 +20,9 @@ data class PeriodTotal(
     /** E2-005: Propagated from MoneyAggregate.isPartial — true when conversion failures exist. */
     val isPartial: Boolean = false,
     /** E2-005: Propagated from MoneyAggregate.warningMessage — describes excluded transactions. */
-    val warningMessage: String? = null
+    val warningMessage: String? = null,
+    /** Typed money result retained alongside the legacy scalar projection. */
+    val moneyResult: MoneyAggregateResult? = null
 ) {
     init {
         require(periodLabel.isNotBlank()) { "periodLabel cannot be blank" }

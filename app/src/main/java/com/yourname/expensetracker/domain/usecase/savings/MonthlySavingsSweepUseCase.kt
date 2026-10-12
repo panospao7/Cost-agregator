@@ -6,17 +6,29 @@ import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.PlannedExpenseRepository
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.analytics.completeMoneyAggregateForRows
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode
 import com.yourname.expensetracker.domain.budget.BudgetStatus
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.SavingsGoal
 import com.yourname.expensetracker.domain.savings.SavingsGoalRepository
+import com.yourname.expensetracker.domain.savings.SavingsGoalCurrencyPolicy
+import com.yourname.expensetracker.domain.savings.SavingsDecisionQuality
+import com.yourname.expensetracker.domain.savings.SavingsInputStage
+import com.yourname.expensetracker.domain.savings.SmartSavingsOutcomeMetadata
+import com.yourname.expensetracker.domain.core.money.ConversionQuality
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
 import java.time.Instant
 import java.time.LocalDate
@@ -70,20 +82,51 @@ class MonthlySavingsSweepUseCase @Inject constructor(
     }
 
     /**
-     * Compute end-of-month savings sweep recommendation.
-     *
-     * Returns null if:
-     * - Not within the recommendation window (last 5 days of month)
-     * - No active budgets or no underspend
-     * - No active savings goals
-     * - Safe sweep amount below minimum threshold
-     * - Confidence below threshold
-     *
-     * @return SavingsSweepRecommendation with allocation plan, or null
+     * Typed decision boundary. `Unavailable` is distinct from a valid empty/no-op
+     * recommendation so callers cannot silently flatten failed money input to null.
      */
-    suspend fun computeSweepRecommendation(): SavingsSweepRecommendation? {
+    suspend fun computeSweepRecommendationResult(): SavingsSweepComputationResult {
+        val quality = SavingsDecisionQuality("")
+        return try {
+            computeAvailableSweepRecommendation(quality)?.let {
+                SavingsSweepComputationResult.Available(it, quality.snapshot())
+            }
+                ?: SavingsSweepComputationResult.NoRecommendation(quality.snapshot())
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: MoneyDisplayUnavailableException) {
+            SavingsSweepComputationResult.Unavailable(error.reasonCode.name, quality.snapshot(unavailable = true))
+        } catch (_: Exception) {
+            SavingsSweepComputationResult.Unavailable(
+                MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE.name,
+                quality.snapshot(unavailable = true)
+            )
+        }
+    }
+
+    /** Compatibility adapter for legacy nullable presentation callers. */
+    @Deprecated("Presentation compatibility only; use computeSweepRecommendationResult")
+    suspend fun computeSweepRecommendation(): SavingsSweepRecommendation? =
+        (computeSweepRecommendationResult() as? SavingsSweepComputationResult.Available)?.recommendation
+
+    private suspend fun computeAvailableSweepRecommendation(quality: SavingsDecisionQuality): SavingsSweepRecommendation? {
         val now = timeProvider.now()
-        val homeCurrency = currencySettingsRepository.homeCurrency().first()
+        val settings = try {
+            withTimeoutOrNull(5_000L) {
+                val currency = currencySettingsRepository.homeCurrency().first()
+                quality.currency = currency
+                currency to currencySettingsRepository.lastRateUpdate().first()
+            } ?: quality.fail(MoneyDisplayUnavailableReasonCode.HOME_CURRENCY_UNAVAILABLE)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            quality.fail(MoneyDisplayUnavailableReasonCode.HOME_CURRENCY_UNAVAILABLE)
+        }
+        val (homeCurrency, rateTimestamp) = settings
+        quality.currency = homeCurrency
+        quality.settingsRateTimestamp = rateTimestamp
+        val targetCurrency = CurrencyCode.parse(homeCurrency)?.takeIf { it in CurrencyCode.ALL_SUPPORTED }
+            ?: quality.fail(MoneyDisplayUnavailableReasonCode.INVALID_TARGET_CURRENCY)
         // G-TIME-01: derive calendar fields from the injected TimeProvider instant
         // (java.time, system default timezone — same field values the Calendar read).
         val zone = ZoneId.systemDefault()
@@ -94,6 +137,14 @@ class MonthlySavingsSweepUseCase @Inject constructor(
             Timber.d("Not within sweep window, skipping")
             return null
         }
+
+        // Check provenance before any zero/underspend shortcut. Explicit foreign
+        // goals remain unsupported for allocation; unknown goals are not zero gaps.
+        val allGoals = savingsGoalRepository.observeSavingsGoals().first()
+        if (SavingsGoalCurrencyPolicy.hasUnknownActiveGoals(allGoals)) {
+            quality.fail(MoneyDisplayUnavailableReasonCode.INVALID_SOURCE_CURRENCY)
+        }
+        val goals = allGoals.filter { SavingsGoalCurrencyPolicy.isRecommendationEligible(it, targetCurrency) }
 
         // Calculate month boundaries
         val daysInMonth = today.lengthOfMonth()
@@ -106,27 +157,40 @@ class MonthlySavingsSweepUseCase @Inject constructor(
 
         // Get budget statuses and calculate underspend
         val budgetStatuses = budgetRepository.getBudgetStatuses().first()
+        if (budgetStatuses.any { it.isPartial || !it.percentKnown ||
+                it.conversionWarning != null ||
+                CurrencyCode.parse(it.currency) != targetCurrency ||
+                CurrencyCode.parse(it.budget.currency) != targetCurrency }) {
+            quality.fail(MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE)
+        }
+        if (budgetStatuses.any { !it.remainingAmount.isFinite() || !it.spentAmount.isFinite() ||
+                !it.budget.amount.isFinite() }) quality.fail(MoneyDisplayUnavailableReasonCode.INVALID_AMOUNT)
         if (budgetStatuses.isEmpty()) {
             Timber.d("No active budgets, skipping sweep")
             return null
         }
 
         val (underspend, totalBudgeted, totalSpent) = calculateUnderspend(budgetStatuses)
+        if (listOf(underspend, totalBudgeted, totalSpent).any { !it.isFinite() }) {
+            quality.fail(MoneyDisplayUnavailableReasonCode.INVALID_AMOUNT)
+        }
         if (underspend <= 0) {
-            Timber.d("No underspend available (underspend=$underspend), skipping sweep")
+            Timber.d("SAVINGS_SWEEP_NO_UNDERSPEND")
             return null
         }
 
         // Calculate spent to date for Monte Carlo (normalized to home currency)
-        val spentToDate = calculateSpentToDate(monthStart, now, homeCurrency)
-        val knownUpcoming = calculateKnownUpcomingObligations(now, nextMonthStart)
+        val spentToDate = calculateSpentToDate(monthStart, now, homeCurrency, quality)
+        val knownUpcoming = calculateKnownUpcomingObligations(now, nextMonthStart, homeCurrency, quality)
 
         // Run Monte Carlo simulation
         val monteCarloResult = monteCarloSimulator.simulate(
             spentToDate = spentToDate,
             knownUpcoming = knownUpcoming,
-            budgetAmount = totalBudgeted
+            budgetAmount = totalBudgeted,
+            displayCurrency = homeCurrency
         )
+        quality.requireForecast(monteCarloResult)
 
         // Calculate risk buffer from Monte Carlo uncertainty
         val riskBuffer = calculateRiskBuffer(
@@ -141,13 +205,9 @@ class MonthlySavingsSweepUseCase @Inject constructor(
         // Calculate safe sweep amount
         val safeSweepAmount = (underspend - riskBuffer).coerceAtLeast(0.0)
         if (safeSweepAmount < MIN_SWEEP_AMOUNT) {
-            Timber.d("Safe sweep amount too low ($safeSweepAmount), skipping")
+            Timber.d("SAVINGS_SWEEP_BELOW_MINIMUM")
             return null
         }
-
-        // Get active goals
-        val goals = savingsGoalRepository.observeSavingsGoals().first()
-            .filter { it.targetAmount > 0.0 && it.currentAmount < it.targetAmount } // Only valid, incomplete goals
 
         if (goals.isEmpty()) {
             Timber.d("No active savings goals, skipping sweep")
@@ -155,7 +215,7 @@ class MonthlySavingsSweepUseCase @Inject constructor(
         }
 
         // Calculate goal allocations
-        val allocations = allocateAcrossGoals(safeSweepAmount, goals)
+        val allocations = allocateAcrossGoals(safeSweepAmount, goals).map { it.copy(currency = homeCurrency) }
 
         // Calculate confidence score
         val confidence = calculateConfidence(
@@ -167,7 +227,7 @@ class MonthlySavingsSweepUseCase @Inject constructor(
         )
 
         if (confidence < MIN_CONFIDENCE) {
-            Timber.d("Confidence too low ($confidence), skipping sweep")
+            Timber.d("SAVINGS_SWEEP_LOW_CONFIDENCE")
             return null
         }
 
@@ -178,7 +238,9 @@ class MonthlySavingsSweepUseCase @Inject constructor(
             goalAllocations = allocations,
             computedAt = now,
             monthEnd = monthEndInclusive,
-            confidence = confidence
+            confidence = confidence,
+            currency = homeCurrency,
+            rateTimestamp = rateTimestamp
         )
     }
 
@@ -222,18 +284,19 @@ class MonthlySavingsSweepUseCase @Inject constructor(
     /**
      * Calculate total spending from month start to current time (normalized to home currency).
      */
-    private suspend fun calculateSpentToDate(monthStart: Long, now: Long, homeCurrency: String): Double {
+    private suspend fun calculateSpentToDate(monthStart: Long, now: Long, homeCurrency: String, quality: SavingsDecisionQuality): Double {
         val rawExpenses = expenseRepository.getExpenseSnapshotsBetween(monthStart, now)
         val normalized = analyticsCurrencyNormalizer.normalizeSnapshots(rawExpenses, homeCurrency)
+        quality.requireComplete(SavingsInputStage.CURRENT_SPENDING, normalized)
         // SAFE: normalized via AnalyticsCurrencyNormalizer at line 220
         return normalized.includedExpenses
             .filter { it.transactionType.isSpendingType() && !it.isNotMine }
-            .sumOf { it.effectiveAmount }
+            .let { spending ->
+                normalized.completeMoneyAggregateForRows(spending, homeCurrency).displayAmount
+            }
     }
 
-    private suspend fun calculateKnownUpcomingObligations(now: Long, monthEndExclusive: Long): Double {
-        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
-            .getOrElse { throw IllegalStateException("Home currency unavailable: ${it.message}") }
+    private suspend fun calculateKnownUpcomingObligations(now: Long, monthEndExclusive: Long, homeCurrency: String, quality: SavingsDecisionQuality): Double {
 
         // ── Recurring expenses (normalised to home currency) ──────────────────
         val recurringPairs = recurringExpenseRepository.getAllFlow().first()
@@ -241,12 +304,16 @@ class MonthlySavingsSweepUseCase @Inject constructor(
             .map { it.amount to it.currency }
 
         val recurringAggregate = currencyConverter.convertMultiple(recurringPairs, homeCurrency) // G-MONEY-ALLOW[CURR-587][G-MONEY-17]: savings sweep latest-rate estimate, not a dashboard money widget
+        quality.recordUpcoming(
+            SavingsInputStage.RECURRING_UPCOMING, recurringPairs.size, recurringAggregate.failedConversions.size,
+            recurringAggregate.failedConversions.map {
+                if (it.failureType == com.yourname.expensetracker.domain.currency.FailedConversion.STALE_RATE)
+                    "STALE_EXCHANGE_RATE" else "MISSING_EXCHANGE_RATE"
+            }, recurringPairs.all { CurrencyCode.parse(it.second) == CurrencyCode.parse(homeCurrency) }
+        )
         val recurringUpcoming = recurringAggregate.total
         if (recurringAggregate.hasFailures) {
-            Timber.w(
-                "MonthlySavingsSweepUseCase: ${recurringAggregate.failedConversions.size} recurring " +
-                "conversion failure(s) excluded from known-upcoming total"
-            )
+            quality.fail(MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE)
         }
 
         // ── Occurrence-aware dedup for planned expenses ──────────────────────
@@ -258,7 +325,8 @@ class MonthlySavingsSweepUseCase @Inject constructor(
                 .map { it.occurrenceKey }
                 .toSet()
         } catch (e: Exception) {
-            emptySet()
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            quality.fail(MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE)
         }
 
         val plannedPairs = plannedExpenseRepository.getAllPlannedExpenses().first()
@@ -270,15 +338,19 @@ class MonthlySavingsSweepUseCase @Inject constructor(
             .map { it.amount to it.currency }
 
         val plannedAggregate = currencyConverter.convertMultiple(plannedPairs, homeCurrency) // G-MONEY-ALLOW[CURR-587][G-MONEY-17]: savings sweep latest-rate estimate, not a dashboard money widget
+        quality.recordUpcoming(
+            SavingsInputStage.PLANNED_UPCOMING, plannedPairs.size, plannedAggregate.failedConversions.size,
+            plannedAggregate.failedConversions.map {
+                if (it.failureType == com.yourname.expensetracker.domain.currency.FailedConversion.STALE_RATE)
+                    "STALE_EXCHANGE_RATE" else "MISSING_EXCHANGE_RATE"
+            }, plannedPairs.all { CurrencyCode.parse(it.second) == CurrencyCode.parse(homeCurrency) }
+        )
         val plannedUpcoming = plannedAggregate.total
         if (plannedAggregate.hasFailures) {
-            Timber.w(
-                "MonthlySavingsSweepUseCase: ${plannedAggregate.failedConversions.size} planned " +
-                "conversion failure(s) excluded from known-upcoming total"
-            )
+            quality.fail(MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE)
         }
 
-        return recurringUpcoming + plannedUpcoming
+        return MoneyAggregateBuilder.fromHomeCurrencyAmounts(listOf(recurringUpcoming, plannedUpcoming), homeCurrency).displayAmount
     }
 
     /**
@@ -442,6 +514,20 @@ class MonthlySavingsSweepUseCase @Inject constructor(
 /**
  * End-of-month savings sweep recommendation.
  */
+sealed interface SavingsSweepComputationResult {
+    data class Available(
+        val recommendation: SavingsSweepRecommendation,
+        val metadata: SmartSavingsOutcomeMetadata = SmartSavingsOutcomeMetadata()
+    ) : SavingsSweepComputationResult
+    data class Unavailable(
+        val reasonCode: String,
+        val metadata: SmartSavingsOutcomeMetadata = SmartSavingsOutcomeMetadata(conversionQuality = ConversionQuality.UNAVAILABLE)
+    ) : SavingsSweepComputationResult
+    data class NoRecommendation(
+        val metadata: SmartSavingsOutcomeMetadata = SmartSavingsOutcomeMetadata()
+    ) : SavingsSweepComputationResult
+}
+
 data class SavingsSweepRecommendation(
     /** Total underspend across all budget categories */
     val totalUnderspend: Double,
@@ -462,12 +548,20 @@ data class SavingsSweepRecommendation(
     val monthEnd: Long,
 
     /** Confidence score 0.0-1.0 for the recommendation */
-    val confidence: Double
+    val confidence: Double,
+    val currency: String = "",
+    val rateTimestamp: Long = 0L
 ) {
+    val moneySafeSweepAmount: com.yourname.expensetracker.domain.core.money.MoneyAmount?
+        get() = CurrencyCode.parse(currency)?.takeIf { it in CurrencyCode.ALL_SUPPORTED }
+            ?.let { com.yourname.expensetracker.domain.core.money.MoneyAmount(safeSweepAmount, it) }
     /**
      * Get a human-readable summary of the sweep recommendation.
      */
-    fun getSummary(/** Placeholder default. Production callers should pass explicit currency. */ displayCurrency: String = "EUR"): String {
+    fun getSummary(displayCurrency: String = currency): String {
+        require(CurrencyCode.parse(displayCurrency) == moneySafeSweepAmount?.currency && moneySafeSweepAmount != null) {
+            "SWEEP_CURRENCY_MISMATCH"
+        }
         return "Safe to save: ${CurrencyFormatter.formatMoney(safeSweepAmount, displayCurrency)} " +
                "(underspend: ${CurrencyFormatter.formatMoney(totalUnderspend, displayCurrency)}, " +
                "risk buffer: ${CurrencyFormatter.formatMoney(riskBuffer, displayCurrency)})"
@@ -501,8 +595,12 @@ data class GoalAllocation(
     val suggestedAllocation: Double,
 
     /** Percentage of total sweep allocated to this goal */
-    val allocationPercentage: Double
+    val allocationPercentage: Double,
+    val currency: String = ""
 ) {
+    val moneySuggestedAllocation: com.yourname.expensetracker.domain.core.money.MoneyAmount?
+        get() = CurrencyCode.parse(currency)?.takeIf { it in CurrencyCode.ALL_SUPPORTED }
+            ?.let { com.yourname.expensetracker.domain.core.money.MoneyAmount(suggestedAllocation, it) }
     /**
      * Calculate progress percentage after applying this allocation.
      */

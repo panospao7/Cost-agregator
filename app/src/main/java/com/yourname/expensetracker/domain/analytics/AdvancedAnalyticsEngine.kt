@@ -12,6 +12,14 @@ import com.yourname.expensetracker.di.DefaultDispatcher
 import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateMetadata
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateResult
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode
+import com.yourname.expensetracker.domain.core.money.MoneyBucket
+import com.yourname.expensetracker.domain.core.money.RateBasis
 import com.yourname.expensetracker.domain.model.BudgetSnapshot
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -40,8 +48,11 @@ import kotlin.math.sqrt
  * - [getSpendingPatterns] — normalizes expenses (lines 364-365)
  * - [getStatisticalInsights] — normalizes expenses (lines 472-473)
  *
- * All `sumOf { it.effectiveAmount }`, `amounts.sum()`, and other raw-Double
- * arithmetic operate on normalized values. No gap exists.
+ * Financial totals, velocity, histogram totals, and time slices use the
+ * canonical money aggregate boundary. Normalized inputs retain original
+ * currency and rate-date provenance without a second conversion. Scalar
+ * compatibility projections and chart/statistical consumers still require
+ * the separately planned caller migration before money-guard closure.
  *
  * TODO (PR-E11): Accept NormalizedAnalyticsInput instead of querying raw expenses.
  * Engine should not call CurrencyConverter itself unless explicitly responsible.
@@ -196,16 +207,26 @@ class AdvancedAnalyticsEngine @Inject constructor(
             }
         )
         val currentPurchases = input.includedExpenses
-            .filter { it.transactionType == "PURCHASE" && !it.isNotMine }
+            .filter { it.transactionType == "PURCHASE" && !it.isNotMine && input.period?.contains(it.date) != false }
             .map { it.toExpenseSnapshot() }
         val previousPurchases = previousInput?.includedExpenses
-            ?.filter { it.transactionType == "PURCHASE" && !it.isNotMine }
+            ?.filter { it.transactionType == "PURCHASE" && !it.isNotMine && previousInput?.period?.contains(it.date) != false }
             ?.map { it.toExpenseSnapshot() }
             ?: emptyList()
         val allWarnings = (input.dataQuality.warnings +
             (previousInput?.dataQuality?.warnings ?: emptyList())).distinct()
         computeCategoryAnalyticsCore(
-            currentPurchases, previousPurchases, categories, budgets, period, input.homeCurrency, allWarnings
+            currentPurchases,
+            previousPurchases,
+            categories,
+            budgets,
+            period,
+            input.homeCurrency,
+            allWarnings,
+            currentContext = MoneySliceContext(input, input.includedExpenses.associateBy { it.id }),
+            previousContext = previousInput?.let {
+                MoneySliceContext(it, it.includedExpenses.associateBy { expense -> expense.id })
+            }
         )
     }
 
@@ -262,44 +283,63 @@ class AdvancedAnalyticsEngine @Inject constructor(
         budgets: List<BudgetSnapshot>,
         period: AnalyticsPeriodRange,
         displayCurrency: String,
-        allWarnings: List<AnalyticsConversionWarning>
+        allWarnings: List<AnalyticsConversionWarning>,
+        currentContext: MoneySliceContext? = null,
+        previousContext: MoneySliceContext? = null
     ): Pair<List<EnhancedCategoryAnalytics>, List<AnalyticsConversionWarning>> {
         // Build lookup maps
         val categoryMap = categories.associateBy { it.id }
-        val budgetMap = budgets.associateBy { it.categoryId }
+        val budgetMap = budgets.filter {
+            CurrencyCode.parse(it.currency) == CurrencyCode.parse(displayCurrency) && it.amount.isFinite()
+        }.associateBy { it.categoryId }
         
         // Group expenses by category
         val currentByCategory = currentPurchases.groupBy { it.categoryId }
         val previousByCategory = previousPurchases.groupBy { it.categoryId }
         
         // Build sparkline data (daily cumulative by category)
-        val sparklineData = buildSparklineDataByCategory(currentPurchases, period)
+        val sparklineData = buildSparklineDataByCategory(currentPurchases, period, displayCurrency, currentContext)
         
         // Build analytics for each category with spending
         return currentByCategory.mapNotNull { (categoryId, expenses) ->
             val category = categoryMap[categoryId] ?: return@mapNotNull null
             
-            val amounts = expenses.map { it.effectiveAmount }
+            val totalResult = aggregateMoney(expenses, displayCurrency, currentContext)
+            if (totalResult is MoneyAggregateResult.Unavailable) {
+                throwUnavailable(totalResult)
+            }
+            val total = availableAmount(totalResult)
+            val amounts = expenses.map { normalizedValue(it, displayCurrency, currentContext) }
             val sortedAmounts = amounts.sorted()
-            val total = amounts.sum()
             
             // Previous period comparison
-            val previousTotal = previousByCategory[categoryId]?.sumOf { it.effectiveAmount }
-            val changePercent = calculateChangePercent(total, previousTotal)
+            val previousExpenses = previousByCategory[categoryId]
+            val previousResult = if (previousExpenses != null || previousContext?.scopedInput()?.excludedExpenses?.isNotEmpty() == true) {
+                aggregateMoney(previousExpenses.orEmpty(), displayCurrency, previousContext)
+            } else null
+            val previousTotal = (previousResult as? MoneyAggregateResult.Available)?.aggregate?.displayAmount
+            val changePercent = if (totalResult is MoneyAggregateResult.Available) {
+                calculateChangePercent(total, previousTotal)
+            } else null
             
             // Budget context
             val budget = budgetMap[categoryId]
-            val budgetUtilization = budget?.let { b ->
+            val budgetUtilization = budget?.takeIf { totalResult is MoneyAggregateResult.Available }?.let { b ->
                 if (b.amount > 0) (total / b.amount * 100).toFloat() else null
             }
-            val budgetStatus = budget?.let { b -> determineBudgetStatus(total, b.amount) }
+            val budgetStatus = budget?.takeIf { totalResult is MoneyAggregateResult.Available }
+                ?.let { b -> determineBudgetStatus(total, b.amount) }
             
             // Percentiles
             val p25 = getPercentile(sortedAmounts, 0.25)
             val p75 = getPercentile(sortedAmounts, 0.75)
             
             // Velocity (spending acceleration within period)
-            val velocity = calculateVelocity(expenses)
+            val velocityResult = calculateVelocityResult(expenses, displayCurrency, currentContext)
+            val velocity = when (velocityResult) {
+                is MoneyAggregateResult.Available -> velocityResult.aggregate.displayAmount
+                is MoneyAggregateResult.Unavailable -> return@mapNotNull null
+            }
             
             EnhancedCategoryAnalytics(
                 category = AnalyticsCategoryRef(
@@ -312,21 +352,24 @@ class AdvancedAnalyticsEngine @Inject constructor(
                 displayCurrency = displayCurrency,
                 totalSpent = total,
                 transactionCount = expenses.size,
-                averagePerTransaction = if (amounts.isNotEmpty()) amounts.average() else 0.0,
+                averagePerTransaction = if (expenses.isNotEmpty()) total / expenses.size else 0.0,
                 medianTransaction = getPercentile(sortedAmounts, 0.50),
                 previousPeriodTotal = previousTotal,
                 changePercent = changePercent,
                 trendDirection = determineTrendDirection(changePercent),
                 budgetAmount = budget?.amount,
                 budgetUtilizationPercent = budgetUtilization,
-                budgetRemaining = budget?.let { it.amount - total },
+                budgetRemaining = budget?.takeIf { totalResult is MoneyAggregateResult.Available }?.let { it.amount - total },
                 budgetStatus = budgetStatus,
                 minTransaction = sortedAmounts.firstOrNull() ?: 0.0,
                 maxTransaction = sortedAmounts.lastOrNull() ?: 0.0,
                 percentile25 = p25,
                 percentile75 = p75,
-                sparklineData = sparklineData[categoryId] ?: emptyList(),
-                velocity = velocity
+                sparklineData = if (totalResult is MoneyAggregateResult.Available) sparklineData[categoryId].orEmpty() else emptyList(),
+                velocity = velocity,
+                totalMoneyResult = totalResult,
+                previousPeriodMoneyResult = previousResult,
+                velocityMoneyResult = velocityResult
             )
         }.sortedByDescending { it.totalSpent }
             .let { Pair(it, allWarnings) }
@@ -353,14 +396,21 @@ class AdvancedAnalyticsEngine @Inject constructor(
             comparisonRange = null
         )
         val currentPurchases = input.includedExpenses
-            .filter { it.transactionType == "PURCHASE" && !it.isNotMine }
+            .filter { it.transactionType == "PURCHASE" && !it.isNotMine && input.period?.contains(it.date) != false }
             .map { it.toExpenseSnapshot() }
         val historicalPurchases = historicalInput.includedExpenses
-            .filter { it.transactionType == "PURCHASE" && !it.isNotMine }
+            .filter { it.transactionType == "PURCHASE" && !it.isNotMine && historicalInput.period?.contains(it.date) != false }
             .map { it.toExpenseSnapshot() }
         val allWarnings = (input.dataQuality.warnings + historicalInput.dataQuality.warnings).distinct()
         computeMerchantAnalyticsCore(
-            currentPurchases, historicalPurchases, period, input.homeCurrency, limit, allWarnings
+            currentPurchases,
+            historicalPurchases,
+            period,
+            input.homeCurrency,
+            limit,
+            allWarnings,
+            currentContext = MoneySliceContext(input, input.includedExpenses.associateBy { it.id }),
+            historicalContext = MoneySliceContext(historicalInput, historicalInput.includedExpenses.associateBy { it.id })
         )
     }
 
@@ -421,29 +471,37 @@ class AdvancedAnalyticsEngine @Inject constructor(
         period: AnalyticsPeriodRange,
         displayCurrency: String,
         limit: Int,
-        allWarnings: List<AnalyticsConversionWarning>
+        allWarnings: List<AnalyticsConversionWarning>,
+        currentContext: MoneySliceContext? = null,
+        historicalContext: MoneySliceContext? = null
     ): Pair<List<EnhancedMerchantAnalytics>, List<AnalyticsConversionWarning>> {
         val historicalByMerchantKey = historicalPurchases.groupBy { it.canonicalMerchantKey() }
 
         return currentPurchases
             .groupBy { it.canonicalMerchantKey() }
-            .map { (merchantKey, transactions) ->
-                val amounts = transactions.map { it.effectiveAmount }
+            .mapNotNull { (merchantKey, transactions) ->
+                val totalResult = aggregateMoney(transactions, displayCurrency, currentContext)
+                if (totalResult is MoneyAggregateResult.Unavailable) return@mapNotNull null
+                val amounts = transactions.map { normalizedValue(it, displayCurrency, currentContext) }
                 val sortedAmounts = amounts.sorted()
                 val dates = transactions.map { it.date }.sorted()
                 val displayName = resolveMerchantDisplayName(transactions)
                 
                 // Historical context for price trends
-                val historicalForMerchant = historicalByMerchantKey[merchantKey]
+                val historicalCandidates = historicalByMerchantKey[merchantKey]
                     .orEmpty()
                     .sortedBy { it.date }
+                val historicalResult = aggregateMoney(historicalCandidates, displayCurrency, historicalContext)
+                val historicalForMerchant = if (historicalResult is MoneyAggregateResult.Available) {
+                    historicalCandidates
+                } else emptyList()
                 
                 // Visit frequency analysis
                 val avgDaysBetween = calculateAverageDaysBetween(dates)
                 val visitFrequency = determineVisitFrequency(transactions.size, period, avgDaysBetween)
                 
                 // Price trend analysis
-                val priceTrendData = analyzePriceTrend(historicalForMerchant)
+                val priceTrendData = analyzePriceTrend(historicalForMerchant, displayCurrency, historicalContext)
                 
                 // Loyalty score
                 val loyaltyScore = calculateLoyaltyScore(amounts, historicalForMerchant.size)
@@ -455,8 +513,11 @@ class AdvancedAnalyticsEngine @Inject constructor(
                 val streakCount = calculateStreakCount(historicalForMerchant)
                 
                 // Spending by day of week
-                val spendingByDay = calculateSpendingByDayOfWeek(transactions)
-                
+                val spendingByDayMoney = transactions.groupBy { calendarDayToIndex(it.date) }
+                    .mapValues { (_, dayTransactions) -> aggregateMoney(dayTransactions, displayCurrency, currentContext) }
+                val spendingByDay = spendingByDayMoney.mapNotNull { (day, result) ->
+                    (result as? MoneyAggregateResult.Available)?.aggregate?.displayAmount?.let { day to it }
+                }.toMap()
                 // Predicted next visit
                 val predictedNext = predictNextVisit(dates, avgDaysBetween)
                 
@@ -464,9 +525,9 @@ class AdvancedAnalyticsEngine @Inject constructor(
                     merchant = displayName,
                     period = period,
                     displayCurrency = displayCurrency,
-                    totalSpent = amounts.sum(),
+                    totalSpent = availableAmount(totalResult),
                     transactionCount = transactions.size,
-                    averagePerVisit = if (amounts.isNotEmpty()) amounts.average() else 0.0,
+                    averagePerVisit = if (transactions.isNotEmpty()) availableAmount(totalResult) / transactions.size else 0.0,
                     medianPerVisit = getPercentile(sortedAmounts, 0.50),
                     visitFrequency = visitFrequency,
                     averageDaysBetweenVisits = avgDaysBetween,
@@ -481,7 +542,9 @@ class AdvancedAnalyticsEngine @Inject constructor(
                     spendingByDayOfWeek = spendingByDay,
                     recentTransactions = transactions
                         .take(5)
-                        .map { it.toAnalyticsTransactionSummary() }
+                        .map { it.toAnalyticsTransactionSummary() },
+                    totalMoneyResult = totalResult,
+                    spendingByDayMoneyResults = spendingByDayMoney
                 )
             }
             .sortedWith(compareByDescending<EnhancedMerchantAnalytics> { it.transactionCount }
@@ -532,37 +595,69 @@ class AdvancedAnalyticsEngine @Inject constructor(
             comparisonRange = null
         )
         val purchases = input.includedExpenses
-            .filter { it.transactionType == "PURCHASE" && !it.isNotMine }
+            .filter { it.transactionType == "PURCHASE" && !it.isNotMine && input.period?.contains(it.date) != false }
             .map { it.toExpenseSnapshot() }
-        computeSpendingPatternsCore(purchases, period, input.homeCurrency, input.dataQuality.warnings)
+        computeSpendingPatternsCore(
+            purchases,
+            period,
+            input.homeCurrency,
+            input.dataQuality.warnings,
+            MoneySliceContext(input, input.includedExpenses.associateBy { it.id })
+        )
     }
 
     private fun computeSpendingPatternsCore(
         purchases: List<ExpenseSnapshot>,
         period: AnalyticsPeriodRange,
         displayCurrency: String,
-        allWarnings: List<AnalyticsConversionWarning>
+        allWarnings: List<AnalyticsConversionWarning>,
+        moneyContext: MoneySliceContext? = null
     ): Pair<SpendingPatternAnalysis, List<AnalyticsConversionWarning>> {
+        val totalResult = aggregateMoney(purchases, displayCurrency, moneyContext) { true }
+        if (totalResult is MoneyAggregateResult.Unavailable) {
+            throwUnavailable(totalResult)
+        }
         if (purchases.isEmpty()) {
-            return Pair(createEmptyPatternAnalysis(period, displayCurrency), allWarnings)
+            return Pair(
+                createEmptyPatternAnalysis(period, displayCurrency, totalResult),
+                allWarnings
+            )
         }
+        val totalSpent = availableAmount(totalResult)
 
-        val totalSpent = purchases.sumOf { it.effectiveAmount }
-
-        val dayTotals = DoubleArray(7)
-        val dayCounts = IntArray(7)
-        val timeSlotStats = mutableMapOf<TimeSlot, Double>()
-
-        for (purchase in purchases) {
-            val dayIndex = calendarDayToIndex(purchase.date)
-            val hour = TimePeriodUtils.getHourOfDay(purchase.date)
-
-            dayTotals[dayIndex] += purchase.effectiveAmount
-            dayCounts[dayIndex]++
-
-            val slot = hourToTimeSlot(hour)
-            timeSlotStats[slot] = (timeSlotStats[slot] ?: 0.0) + purchase.effectiveAmount
+        val purchasesByDay = purchases.groupBy { calendarDayToIndex(it.date) }
+        val dayCounts = IntArray(7) { index -> purchasesByDay[index].orEmpty().size }
+        val dayMoneyResults = (0..6).associateWith { index ->
+            aggregateMoney(purchasesByDay[index].orEmpty(), displayCurrency, moneyContext) {
+                it.date == null || calendarDayToIndex(it.date) == index
+            }
         }
+        val purchasesByTimeSlot = purchases.groupBy {
+            hourToTimeSlot(TimePeriodUtils.getHourOfDay(it.date))
+        }
+        val timeSlotMoneyResults = TimeSlot.values().associateWith { slot ->
+            aggregateMoney(purchasesByTimeSlot[slot].orEmpty(), displayCurrency, moneyContext) {
+                it.date == null || hourToTimeSlot(TimePeriodUtils.getHourOfDay(it.date)) == slot
+            }
+        }
+        val weekdayResult = aggregateMoney(
+            purchases.filter { calendarDayToIndex(it.date) in 0..4 }, displayCurrency, moneyContext
+        ) { it.date == null || calendarDayToIndex(it.date) in 0..4 }
+        val weekendResult = aggregateMoney(
+            purchases.filter { calendarDayToIndex(it.date) in 5..6 }, displayCurrency, moneyContext
+        ) { it.date == null || calendarDayToIndex(it.date) in 5..6 }
+        if (dayMoneyResults.values.any { it is MoneyAggregateResult.Unavailable } ||
+            timeSlotMoneyResults.values.any { it is MoneyAggregateResult.Unavailable } ||
+            weekdayResult is MoneyAggregateResult.Unavailable ||
+            weekendResult is MoneyAggregateResult.Unavailable
+        ) {
+            return Pair(
+                createEmptyPatternAnalysis(period, displayCurrency, totalResult),
+                allWarnings
+            )
+        }
+        val dayTotals = DoubleArray(7) { index -> availableAmount(dayMoneyResults.getValue(index)) }
+        val timeSlotStats = timeSlotMoneyResults.mapValues { (_, result) -> availableAmount(result) }
 
         val dayOfWeekStats = (0..6).associateWith { index ->
             DayOfWeekStats(
@@ -572,12 +667,12 @@ class AdvancedAnalyticsEngine @Inject constructor(
                 transactionCount = dayCounts[index],
                 averagePerDay = if (dayCounts[index] > 0) dayTotals[index] / dayCounts[index] else 0.0,
                 percentageOfWeek = if (totalSpent > 0) (dayTotals[index] / totalSpent * 100).toFloat() else 0f,
-                displayCurrency = displayCurrency
+                displayCurrency = displayCurrency,
+                moneyResult = dayMoneyResults.getValue(index)
             )
         }
-
-        val weekdayTotal = (0..4).sumOf { dayTotals[it] }
-        val weekendTotal = (5..6).sumOf { dayTotals[it] }
+        val weekdayTotal = availableAmount(weekdayResult)
+        val weekendTotal = availableAmount(weekendResult)
         val weekdayCount = (0..4).sumOf { dayCounts[it] }
         val weekendCount = (5..6).sumOf { dayCounts[it] }
 
@@ -589,12 +684,14 @@ class AdvancedAnalyticsEngine @Inject constructor(
             weekdayAveragePerTransaction = if (weekdayCount > 0) weekdayTotal / weekdayCount else 0.0,
             weekendAveragePerTransaction = if (weekendCount > 0) weekendTotal / weekendCount else 0.0,
             weekendToWeekdayRatio = if (weekdayTotal > 0) (weekendTotal / weekdayTotal).toFloat() else 0f,
-            displayCurrency = displayCurrency
+            displayCurrency = displayCurrency,
+            weekdayMoneyResult = weekdayResult,
+            weekendMoneyResult = weekendResult
         )
 
-        val detectedPatterns = detectSpendingPatterns(
-            purchases, dayTotals, timeSlotStats, totalSpent
-        )
+        val detectedPatterns = if (totalResult is MoneyAggregateResult.Available && !totalResult.aggregate.isPartial) {
+            detectSpendingPatterns(purchases, dayTotals, timeSlotStats, totalSpent, displayCurrency, moneyContext)
+        } else emptyList()
 
         return Pair(SpendingPatternAnalysis(
             period = period,
@@ -603,13 +700,17 @@ class AdvancedAnalyticsEngine @Inject constructor(
             leastActiveDayIndex = dayTotals.indices.minByOrNull { dayTotals[it] } ?: 0,
             weekendVsWeekday = weekendWeekdayComparison,
             timeOfDayDistribution = timeSlotStats,
-            detectedPatterns = detectedPatterns
+            detectedPatterns = detectedPatterns,
+            totalMoneyResult = totalResult,
+            dayOfWeekMoneyResults = dayMoneyResults,
+            timeOfDayMoneyResults = timeSlotMoneyResults
         ), allWarnings)
     }
 
     private fun createEmptyPatternAnalysis(
         period: AnalyticsPeriodRange,
-        displayCurrency: String
+        displayCurrency: String,
+        totalMoneyResult: MoneyAggregateResult? = null
     ): SpendingPatternAnalysis {
         return SpendingPatternAnalysis(
             period = period,
@@ -625,7 +726,8 @@ class AdvancedAnalyticsEngine @Inject constructor(
                 displayCurrency = displayCurrency
             ),
             timeOfDayDistribution = emptyMap(),
-            detectedPatterns = emptyList()
+            detectedPatterns = emptyList(),
+            totalMoneyResult = totalMoneyResult
         )
     }
     
@@ -671,32 +773,41 @@ class AdvancedAnalyticsEngine @Inject constructor(
             comparisonRange = null
         )
         val purchases = input.includedExpenses
-            .filter { it.transactionType == "PURCHASE" && !it.isNotMine }
+            .filter { it.transactionType == "PURCHASE" && !it.isNotMine && input.period?.contains(it.date) != false }
             .map { it.toExpenseSnapshot() }
-        computeStatisticalInsightsCore(purchases, period, input.homeCurrency, input.dataQuality.warnings)
+        computeStatisticalInsightsCore(
+            purchases, period, input.homeCurrency, input.dataQuality.warnings,
+            MoneySliceContext(input, input.includedExpenses.associateBy { it.id })
+        )
     }
 
     private fun computeStatisticalInsightsCore(
         purchases: List<ExpenseSnapshot>,
         period: AnalyticsPeriodRange,
         displayCurrency: String,
-        allWarnings: List<AnalyticsConversionWarning>
+        allWarnings: List<AnalyticsConversionWarning>,
+        moneyContext: MoneySliceContext? = null
     ): Pair<StatisticalInsights, List<AnalyticsConversionWarning>> {
+        val totalResult = aggregateMoney(purchases, displayCurrency, moneyContext) { true }
+        if (totalResult is MoneyAggregateResult.Unavailable) {
+            throwUnavailable(totalResult)
+        }
         if (purchases.isEmpty()) {
-            return Pair(createEmptyStatisticalInsights(period, displayCurrency), allWarnings)
+            return Pair(createEmptyStatisticalInsights(period, displayCurrency).copy(totalMoneyResult = totalResult), allWarnings)
         }
 
-        val amounts = purchases.map { it.effectiveAmount }
+        val amounts = purchases.map { normalizedValue(it, displayCurrency, moneyContext) }
         val sortedAmounts = amounts.sorted()
 
-        val mean = amounts.average()
+        val totalAmount = availableAmount(totalResult)
+        val mean = totalAmount / amounts.size
         val variance = if (amounts.size > 1) {
             amounts.sumOf { (it - mean) * (it - mean) } / (amounts.size - 1)
         } else 0.0
         val stdDev = sqrt(variance)
         val cv = if (mean > 0) (stdDev / mean).toFloat() else 0f
 
-        val histogram = buildHistogram(amounts, 10, displayCurrency)
+        val histogram = buildHistogram(purchases, 10, displayCurrency, moneyContext)
 
         val percentiles = TransactionPercentiles(
             p10 = getPercentile(sortedAmounts, 0.10),
@@ -709,14 +820,27 @@ class AdvancedAnalyticsEngine @Inject constructor(
             displayCurrency = displayCurrency
         )
 
-        val dailyTotals = purchases.groupBy { expense ->
-            val dayStart = TimePeriodUtils.getStartOfDay(expense.date)
-            "${TimePeriodUtils.getYear(dayStart)}-${TimePeriodUtils.getMonth(dayStart) + 1}-${TimePeriodUtils.getDayOfMonth(dayStart)}"
-        }.mapValues { it.value.sumOf { e -> e.effectiveAmount } }
+        val purchasesByDay = purchases.groupBy { TimePeriodUtils.getStartOfDay(it.date) }
+        val excludedDays = moneyContext?.scopedInput()?.excludedExpenses.orEmpty()
+            .mapNotNull { it.date?.let(TimePeriodUtils::getStartOfDay) }
+        val dailyResults = (purchasesByDay.keys + excludedDays).associate { dayStart ->
+            val result = aggregateMoney(purchasesByDay[dayStart].orEmpty(), displayCurrency, moneyContext) {
+                it.date == null || TimePeriodUtils.getStartOfDay(it.date) == dayStart
+            }
+            val key = "${TimePeriodUtils.getYear(dayStart)}-${TimePeriodUtils.getMonth(dayStart) + 1}-${TimePeriodUtils.getDayOfMonth(dayStart)}"
+            key to result
+        }
+        if (dailyResults.values.any { it is MoneyAggregateResult.Unavailable }) {
+            return Pair(
+                createEmptyStatisticalInsights(period, displayCurrency)
+                    .copy(totalMoneyResult = totalResult, dailyMoneyResults = dailyResults),
+                allWarnings
+            )
+        }
+        val dailyTotals = dailyResults.mapValues { (_, result) -> availableAmount(result) }
 
         val periodDays = TimePeriodUtils.daysBetween(period.startMs, period.endMs).coerceAtLeast(1)
 
-        val totalAmount = purchases.sumOf { it.effectiveAmount }
         val averageDailySpend = totalAmount / periodDays
 
         return Pair(StatisticalInsights(
@@ -731,15 +855,17 @@ class AdvancedAnalyticsEngine @Inject constructor(
             medianTransaction = percentiles.p50,
             modeTransaction = findMode(amounts),
             largestTransaction = purchases
-                .maxByOrNull { it.effectiveAmount }
+                .maxByOrNull { normalizedValue(it, displayCurrency, moneyContext) }
                 ?.toAnalyticsTransactionSummary(),
             smallestTransaction = purchases
-                .minByOrNull { it.effectiveAmount }
+                .minByOrNull { normalizedValue(it, displayCurrency, moneyContext) }
                 ?.toAnalyticsTransactionSummary(),
             averageDailySpend = averageDailySpend,
             maxDailySpend = dailyTotals.values.maxOrNull() ?: 0.0,
-            daysWithSpending = dailyTotals.size,
-            daysWithoutSpending = (periodDays - dailyTotals.size).coerceAtLeast(0)
+            daysWithSpending = purchasesByDay.size,
+            daysWithoutSpending = (periodDays - purchasesByDay.size).coerceAtLeast(0),
+            totalMoneyResult = totalResult,
+            dailyMoneyResults = dailyResults
         ), allWarnings)
     }
 
@@ -844,7 +970,9 @@ class AdvancedAnalyticsEngine @Inject constructor(
     
     private fun buildSparklineDataByCategory(
         purchases: List<ExpenseSnapshot>,
-        period: AnalyticsPeriodRange
+        period: AnalyticsPeriodRange,
+        displayCurrency: String,
+        moneyContext: MoneySliceContext?
     ): Map<Long?, List<Double>> {
         val periodStartDay = TimePeriodUtils.getStartOfDay(period.startMs)
         val now = timeProvider.now()
@@ -873,47 +1001,47 @@ class AdvancedAnalyticsEngine @Inject constructor(
             periodDays
         }
 
-        val dailyByCategory = mutableMapOf<Long?, DoubleArray>()
-
-        for (purchase in purchases) {
-            val purchaseDay = TimePeriodUtils.getStartOfDay(purchase.date)
-            val dayIndex = TimePeriodUtils.daysBetween(periodStartDay, purchaseDay)
-
-            if (dayIndex in 0 until periodDays) {
-                val catArray = dailyByCategory.getOrPut(purchase.categoryId) { 
-                    DoubleArray(periodDays) 
-                }
-                catArray[dayIndex] += purchase.effectiveAmount
-            }
-        }
-        
-        // Build cumulative data for sparkline with safe running total
-        return dailyByCategory.mapValues { (_, daily) ->
-            var running = 0.0
-            val cumulative = ArrayList<Double>(daysPassed)
-            for (i in 0 until daysPassed) {
-                running += daily[i]
-                cumulative.add(running)
-            }
-            cumulative
+        return purchases.groupBy { it.categoryId }.mapValues { (_, categoryExpenses) ->
+            (0 until daysPassed).map { dayIndex ->
+                val dayEnd = TimePeriodUtils.addDays(periodStartDay, dayIndex + 1)
+                val result = aggregateMoney(
+                    categoryExpenses.filter { it.date < dayEnd }, displayCurrency, moneyContext
+                )
+                (result as? MoneyAggregateResult.Available)?.aggregate?.displayAmount
+            }.takeIf { totals -> totals.all { it != null } }?.map { it!! }.orEmpty()
         }
     }
     
-    private fun calculateVelocity(expenses: List<ExpenseSnapshot>): Double {
-        if (expenses.size < 2) return 0.0
-        
+
+    private fun calculateVelocityResult(
+        expenses: List<ExpenseSnapshot>,
+        displayCurrency: String,
+        moneyContext: MoneySliceContext?
+    ): MoneyAggregateResult {
+        val totalResult = aggregateMoney(expenses, displayCurrency, moneyContext)
+        if (totalResult !is MoneyAggregateResult.Available) return totalResult
         val sorted = expenses.sortedBy { it.date }
         val midpoint = sorted.size / 2
-        
         val firstHalf = sorted.subList(0, midpoint)
         val secondHalf = sorted.subList(midpoint, sorted.size)
-        
-        // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
-        val firstHalfTotal = firstHalf.sumOf { it.effectiveAmount }
-        // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
-        val secondHalfTotal = secondHalf.sumOf { it.effectiveAmount }
-        
-        return secondHalfTotal - firstHalfTotal
+        val velocity = if (expenses.size < 2) 0.0 else {
+            val secondResult = aggregateMoney(secondHalf, displayCurrency, moneyContext)
+            val firstResult = aggregateMoney(firstHalf, displayCurrency, moneyContext)
+            if (secondResult is MoneyAggregateResult.Unavailable) return secondResult
+            if (firstResult is MoneyAggregateResult.Unavailable) return firstResult
+            availableAmount(secondResult) - availableAmount(firstResult)
+        }
+        if (!velocity.isFinite()) {
+            return MoneyAggregateResult.Unavailable(
+                MoneyDisplayUnavailableReasonCode.INVALID_AMOUNT.name,
+                totalResult.aggregate.requestedRateBasis,
+                totalResult.aggregate.metadata
+            )
+        }
+        return MoneyAggregateResult.Available(totalResult.aggregate.copy(
+            displayAmount = velocity,
+            sourceBuckets = listOf(MoneyBucket(totalResult.aggregate.displayCurrency, velocity, expenses.size))
+        ))
     }
     
     private fun calculateAverageDaysBetween(dates: List<Long>): Double? {
@@ -950,19 +1078,21 @@ class AdvancedAnalyticsEngine @Inject constructor(
     }
     
     private fun analyzePriceTrend(
-        historicalExpenses: List<ExpenseSnapshot>
+        historicalExpenses: List<ExpenseSnapshot>,
+        displayCurrency: String,
+        moneyContext: MoneySliceContext?
     ): PriceTrendResult {
         if (historicalExpenses.size < 2) {
             return PriceTrendResult(MerchantPriceTrend.INSUFFICIENT_DATA, null, null, null)
         }
         
         val sorted = historicalExpenses.sortedBy { it.date }
-        val first = sorted.first().effectiveAmount
-        val last = sorted.last().effectiveAmount
+        val first = normalizedValue(sorted.first(), displayCurrency, moneyContext)
+        val last = normalizedValue(sorted.last(), displayCurrency, moneyContext)
         val change = if (first > 0) ((last - first) / first * 100).toFloat() else null
         
         // Collinear points (all same amount): treat as STABLE (LOW bug fix)
-        val allSame = sorted.all { kotlin.math.abs(it.effectiveAmount - first) < 0.001 }
+        val allSame = sorted.all { kotlin.math.abs(normalizedValue(it, displayCurrency, moneyContext) - first) < 0.001 }
         val trend = when {
             change == null -> MerchantPriceTrend.INSUFFICIENT_DATA
             allSame -> MerchantPriceTrend.STABLE
@@ -999,14 +1129,13 @@ class AdvancedAnalyticsEngine @Inject constructor(
     }
 
     private suspend fun resolveHomeCurrency(): String {
-        return runCatching { currencySettingsRepository.homeCurrency().first() }
-            .getOrDefault(defaultDisplayCurrency())
+        val currency = currencySettingsRepository.homeCurrency().first()
+        return CurrencyCode.parse(currency)?.takeIf { it in CurrencyCode.ALL_SUPPORTED }?.code
+            ?: throw com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException(
+                MoneyDisplayUnavailableReasonCode.HOME_CURRENCY_UNAVAILABLE
+            )
     }
 
-    private fun defaultDisplayCurrency(): String =
-        runCatching { java.util.Currency.getInstance(Locale.getDefault()).currencyCode }
-            .getOrElse { throw IllegalStateException("Home currency unavailable: ${it.message}") }
-    
     private fun calculateLoyaltyScore(amounts: List<Double>, historicalCount: Int): Float {
         if (amounts.isEmpty()) return 0f
         
@@ -1099,17 +1228,6 @@ class AdvancedAnalyticsEngine @Inject constructor(
         return maxStreak
     }
     
-    private fun calculateSpendingByDayOfWeek(transactions: List<ExpenseSnapshot>): Map<Int, Double> {
-        val result = mutableMapOf<Int, Double>()
-        
-        for (tx in transactions) {
-            val dayIndex = calendarDayToIndex(tx.date)
-            result[dayIndex] = (result[dayIndex] ?: 0.0) + tx.effectiveAmount
-        }
-        
-        return result
-    }
-    
     private fun predictNextVisit(dates: List<Long>, avgDaysBetween: Double?): Long? {
         if (dates.isEmpty() || avgDaysBetween == null || avgDaysBetween <= 0) return null
         
@@ -1121,7 +1239,9 @@ class AdvancedAnalyticsEngine @Inject constructor(
         purchases: List<ExpenseSnapshot>,
         dayTotals: DoubleArray,
         timeSlotStats: Map<TimeSlot, Double>,
-        totalSpent: Double
+        totalSpent: Double,
+        displayCurrency: String,
+        moneyContext: MoneySliceContext?
     ): List<DetectedPattern> {
         val patterns = mutableListOf<DetectedPattern>()
         
@@ -1157,7 +1277,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         }
         
         // Impulse Buyer pattern (high transaction variance)
-        val amounts = purchases.map { it.effectiveAmount }
+        val amounts = purchases.map { normalizedValue(it, displayCurrency, moneyContext) }
         val avg = amounts.average()
         val stdDev = if (amounts.size > 1) {
             // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
@@ -1182,58 +1302,161 @@ class AdvancedAnalyticsEngine @Inject constructor(
      * O(n) complexity.
      */
     private fun buildHistogram(
-        values: List<Double>,
+        purchases: List<ExpenseSnapshot>,
         binCount: Int = 10,
-        displayCurrency: String = defaultDisplayCurrency()
+        displayCurrency: String,
+        moneyContext: MoneySliceContext? = null
     ): List<HistogramBin> {
-        if (values.isEmpty()) return emptyList()
-        
+        if (purchases.isEmpty()) return emptyList()
+        val values = purchases.map { normalizedValue(it, displayCurrency, moneyContext) }
         val min = values.minOrNull() ?: 0.0
         val max = values.maxOrNull() ?: 0.0
-        val sum = values.sum()
-        
         if (min == max) {
+            val result = aggregateMoney(purchases, displayCurrency, moneyContext)
+            if (result is MoneyAggregateResult.Unavailable) return emptyList()
             return listOf(HistogramBin(
                 rangeStart = min, 
                 rangeEnd = max, 
                 count = values.size, 
-                total = sum,
                 percentage = 100f,
-                displayCurrency = displayCurrency
+                displayCurrency = displayCurrency,
+                moneyResult = result
             ))
         }
         
         val range = max - min
         val binWidth = range / binCount
         
-        // Count frequencies and sums
-        val counts = IntArray(binCount)
-        val totals = DoubleArray(binCount)
-        
-        for (value in values) {
-            val binIndex = ((value - min) / binWidth).toInt()
-            // Handle edge case where value == max (goes into last bin)
+        val grouped = Array(binCount) { mutableListOf<ExpenseSnapshot>() }
+        for (purchase in purchases) {
+            val binIndex = ((normalizedValue(purchase, displayCurrency, moneyContext) - min) / binWidth).toInt()
             val index = binIndex.coerceIn(0, binCount - 1)
-            counts[index]++
-            totals[index] += value
+            grouped[index].add(purchase)
         }
         
         // Create bin objects
         val totalCount = values.size.toFloat()
-        return counts.mapIndexed { index, count ->
+        val results = grouped.map { transactions ->
+            aggregateMoney(transactions, displayCurrency, moneyContext)
+        }
+        if (results.any { it is MoneyAggregateResult.Unavailable }) return emptyList()
+        return grouped.mapIndexed { index, transactions ->
+            val count = transactions.size
+            val result = results[index]
             val binStart = min + (index * binWidth)
             val binEnd = min + ((index + 1) * binWidth)
             HistogramBin(
                 rangeStart = binStart,
                 rangeEnd = binEnd,
                 count = count,
-                total = totals[index],
                 percentage = if (totalCount > 0) (count / totalCount) * 100f else 0f,
-                displayCurrency = displayCurrency
+                displayCurrency = displayCurrency,
+                moneyResult = result
             )
         }
     }
     
+    private data class MoneySliceContext(
+        val input: NormalizedAnalyticsInput,
+        val includedById: Map<Long, NormalizedExpense>
+    ) {
+        fun scopedInput(): NormalizedAnalyticsInput = input.copy(
+            excludedExpenses = input.excludedExpenses.filter {
+                it.date == null || input.period?.contains(it.date) != false
+            }
+        )
+    }
+
+    private fun aggregateMoney(
+        expenses: List<ExpenseSnapshot>,
+        displayCurrency: String,
+        moneyContext: MoneySliceContext?,
+        includeExcluded: ((ExcludedExpense) -> Boolean)? = null
+    ): MoneyAggregateResult {
+        if (moneyContext == null) {
+            val normalized = try {
+                SingleCurrencyAnalyticsInput.from(expenses, displayCurrency)
+            } catch (_: Exception) {
+                return MoneyAggregateResult.Unavailable(
+                    MoneyDisplayUnavailableReasonCode.INVALID_SOURCE_CURRENCY.name,
+                    RateBasis.IDENTITY,
+                    MoneyAggregateMetadata(includedTransactionCount = expenses.size, invalidCurrencyCount = expenses.size)
+                )
+            }
+            return NormalizedAnalyticsMoneyAdapter.aggregateUnattributedSlice(
+                normalized,
+                normalized.includedExpenses,
+                displayCurrency = displayCurrency
+            )
+        }
+        val rows = expenses.mapNotNull { moneyContext.includedById[it.id] }
+        if (rows.size != expenses.size) {
+            return MoneyAggregateResult.Unavailable(
+                MoneyDisplayUnavailableReasonCode.INVALID_TRANSACTION_COUNTS.name,
+                RateBasis.TRANSACTION_DATE,
+                MoneyAggregateMetadata(includedTransactionCount = rows.size)
+            )
+        }
+        val input = moneyContext.scopedInput()
+        return if (includeExcluded == null) {
+            NormalizedAnalyticsMoneyAdapter.aggregateUnattributedSlice(input, rows, displayCurrency = displayCurrency)
+        } else {
+            NormalizedAnalyticsMoneyAdapter.aggregateSelectedSlice(input, rows, includeExcluded, displayCurrency = displayCurrency, exclusionAttribution = ExclusionAttribution.TEMPORAL)
+        }
+    }
+
+    private fun normalizedValue(
+        expense: ExpenseSnapshot,
+        displayCurrency: String,
+        moneyContext: MoneySliceContext?
+    ): Double {
+        val target = CurrencyCode.parse(displayCurrency)
+            ?.takeIf { it in CurrencyCode.ALL_SUPPORTED }
+            ?: throw com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException(
+                MoneyDisplayUnavailableReasonCode.INVALID_TARGET_CURRENCY
+            )
+        val row = moneyContext?.includedById?.get(expense.id)
+        val amount = if (moneyContext != null) {
+            if (row == null || CurrencyCode.parse(moneyContext.input.homeCurrency) != target ||
+                CurrencyCode.parse(row.normalizedCurrency) != target
+            ) {
+                throw com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException(
+                    MoneyDisplayUnavailableReasonCode.INVALID_SOURCE_CURRENCY
+                )
+            }
+            row.normalizedAmount
+        } else {
+            if (CurrencyCode.parse(expense.currency) != target) {
+                throw com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException(
+                    MoneyDisplayUnavailableReasonCode.INVALID_SOURCE_CURRENCY
+                )
+            }
+            SingleCurrencyAnalyticsInput
+                .from(listOf(expense), displayCurrency)
+                .includedExpenses
+                .single()
+                .normalizedAmount
+        }
+        if (!amount.isFinite()) {
+            throw com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException(
+                MoneyDisplayUnavailableReasonCode.INVALID_AMOUNT
+            )
+        }
+        return amount
+    }
+
+    private fun availableAmount(result: MoneyAggregateResult): Double = when (result) {
+        is MoneyAggregateResult.Available -> result.aggregate.displayAmount
+        is MoneyAggregateResult.Unavailable -> throwUnavailable(result)
+    }
+
+    private fun throwUnavailable(result: MoneyAggregateResult.Unavailable): Nothing {
+        throw MoneyDisplayUnavailableException(
+            MoneyDisplayUnavailableReasonCode.entries.firstOrNull { it.name == result.reason }
+                ?: MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE
+        )
+    }
+
     private fun findMode(amounts: List<Double>): Double? {
         if (amounts.isEmpty()) return null
         

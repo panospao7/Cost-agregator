@@ -36,13 +36,13 @@ class DayOfWeekAnalyzerTest {
 
         assertEquals(listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"), insights.map { it.dayName })
 
-        assertApproxEquals(10.0, insights.first { it.dayName == "Mon" }.totalSpent, 0.01)
-        assertApproxEquals(20.0, insights.first { it.dayName == "Tue" }.totalSpent, 0.01)
-        assertApproxEquals(30.0, insights.first { it.dayName == "Wed" }.totalSpent, 0.01)
-        assertApproxEquals(40.0, insights.first { it.dayName == "Thu" }.totalSpent, 0.01)
-        assertApproxEquals(50.0, insights.first { it.dayName == "Fri" }.totalSpent, 0.01)
-        assertApproxEquals(60.0, insights.first { it.dayName == "Sat" }.totalSpent, 0.01)
-        assertApproxEquals(70.0, insights.first { it.dayName == "Sun" }.totalSpent, 0.01)
+        assertApproxEquals(10.0, requireNotNull(insights.first { it.dayName == "Mon" }.totalSpent), 0.01)
+        assertApproxEquals(20.0, requireNotNull(insights.first { it.dayName == "Tue" }.totalSpent), 0.01)
+        assertApproxEquals(30.0, requireNotNull(insights.first { it.dayName == "Wed" }.totalSpent), 0.01)
+        assertApproxEquals(40.0, requireNotNull(insights.first { it.dayName == "Thu" }.totalSpent), 0.01)
+        assertApproxEquals(50.0, requireNotNull(insights.first { it.dayName == "Fri" }.totalSpent), 0.01)
+        assertApproxEquals(60.0, requireNotNull(insights.first { it.dayName == "Sat" }.totalSpent), 0.01)
+        assertApproxEquals(70.0, requireNotNull(insights.first { it.dayName == "Sun" }.totalSpent), 0.01)
 
         assertEquals(0, insights.first { it.dayName == "Mon" }.dayIndex)
         assertEquals(6, insights.first { it.dayName == "Sun" }.dayIndex)
@@ -60,8 +60,8 @@ class DayOfWeekAnalyzerTest {
             displayCurrency = "EUR"
         )
 
-        val weekendTotal = insights.filter { it.dayIndex == 5 || it.dayIndex == 6 }.sumOf { it.totalSpent }
-        val weekdayTotal = insights.filter { it.dayIndex in 0..4 }.sumOf { it.totalSpent }
+        val weekendTotal = insights.filter { it.dayIndex == 5 || it.dayIndex == 6 }.sumOf { requireNotNull(it.totalSpent) }
+        val weekdayTotal = insights.filter { it.dayIndex in 0..4 }.sumOf { requireNotNull(it.totalSpent) }
 
         assertApproxEquals(953.09, weekendTotal, 0.01)
         assertApproxEquals(330.50, weekdayTotal, 0.01)
@@ -78,8 +78,8 @@ class DayOfWeekAnalyzerTest {
         assertEquals(7, insights.size)
         assertEquals(listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"), insights.map { it.dayName })
         insights.forEach {
-            assertApproxEquals(0.0, it.totalSpent, 0.01)
-            assertApproxEquals(0.0, it.avgPerTransaction, 0.01)
+            assertApproxEquals(0.0, requireNotNull(it.totalSpent), 0.01)
+            assertApproxEquals(0.0, requireNotNull(it.avgPerTransaction), 0.01)
             assertEquals(0, it.transactionCount)
         }
     }
@@ -100,7 +100,7 @@ class DayOfWeekAnalyzerTest {
 
         assertEquals(listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"), insights.map { it.dayName })
         assertEquals(listOf(0, 1, 2, 3, 4, 5, 6), insights.map { it.dayIndex })
-        assertApproxEquals(700.0, insights.last().totalSpent, 0.01)
+        assertApproxEquals(700.0, requireNotNull(insights.last().totalSpent), 0.01)
     }
 
     @Test
@@ -118,11 +118,11 @@ class DayOfWeekAnalyzerTest {
         val monday = insights.first { it.dayName == "Mon" }
 
         assertEquals(6, sunday.dayIndex)
-        assertApproxEquals(40.0, sunday.totalSpent, 0.01)
+        assertApproxEquals(40.0, requireNotNull(sunday.totalSpent), 0.01)
         assertEquals(1, sunday.transactionCount)
 
         assertEquals(0, monday.dayIndex)
-        assertApproxEquals(25.0, monday.totalSpent, 0.01)
+        assertApproxEquals(25.0, requireNotNull(monday.totalSpent), 0.01)
         assertEquals(1, monday.transactionCount)
     }
 
@@ -156,11 +156,11 @@ class DayOfWeekAnalyzerTest {
             val monday = insights.first { it.dayName == "Mon" }
 
             assertEquals(6, sunday.dayIndex)
-            assertApproxEquals(30.0, sunday.totalSpent, 0.01)
+            assertApproxEquals(30.0, requireNotNull(sunday.totalSpent), 0.01)
             assertEquals(2, sunday.transactionCount)
 
             assertEquals(0, monday.dayIndex)
-            assertApproxEquals(30.0, monday.totalSpent, 0.01)
+            assertApproxEquals(30.0, requireNotNull(monday.totalSpent), 0.01)
             assertEquals(1, monday.transactionCount)
         } finally {
             TimeZone.setDefault(originalTz)

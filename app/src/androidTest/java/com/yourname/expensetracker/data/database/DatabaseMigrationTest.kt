@@ -3,6 +3,7 @@ package com.yourname.expensetracker.data.database
 import androidx.room.Room
 import androidx.room.testing.MigrationTestHelper
 import android.database.sqlite.SQLiteDatabase
+import android.database.sqlite.SQLiteConstraintException
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.test.core.app.ApplicationProvider
@@ -27,13 +28,182 @@ class DatabaseMigrationTest {
 
     private val testDb = "migration-test"
 
+    /**
+     * Historical migrations are intentionally not registered by the production
+     * database builder (v145 is the supported baseline). These tests exercise
+     * the archived chain explicitly through MigrationTestHelper.
+     */
+    private val archivedMigrations = arrayOf<androidx.room.migration.Migration>(
+        AppDatabase.MIGRATION_6_7,
+        AppDatabase.MIGRATION_7_8,
+        AppDatabase.MIGRATION_8_9,
+        AppDatabase.MIGRATION_9_10,
+        AppDatabase.MIGRATION_10_11,
+        AppDatabase.MIGRATION_11_12,
+        AppDatabase.MIGRATION_12_13,
+        AppDatabase.MIGRATION_13_14,
+        AppDatabase.MIGRATION_14_15,
+        AppDatabase.MIGRATION_15_16,
+        AppDatabase.Companion.MIGRATION_16_17,
+        AppDatabase.MIGRATION_17_18,
+        AppDatabase.MIGRATION_18_19,
+        AppDatabase.MIGRATION_19_20,
+        AppDatabase.MIGRATION_20_21,
+        AppDatabase.MIGRATION_21_22,
+        AppDatabase.MIGRATION_22_23,
+        AppDatabase.MIGRATION_23_24,
+        AppDatabase.MIGRATION_24_25,
+        AppDatabase.MIGRATION_25_26,
+        AppDatabase.MIGRATION_26_27,
+        AppDatabase.MIGRATION_27_28,
+        AppDatabase.MIGRATION_28_29,
+        AppDatabase.MIGRATION_29_30,
+        AppDatabase.MIGRATION_30_31,
+        AppDatabase.MIGRATION_31_32,
+        AppDatabase.MIGRATION_32_33,
+        AppDatabase.MIGRATION_33_34,
+        AppDatabase.MIGRATION_34_35,
+        AppDatabase.MIGRATION_35_36,
+        AppDatabase.MIGRATION_36_37,
+        AppDatabase.MIGRATION_37_38,
+        AppDatabase.MIGRATION_38_39,
+        AppDatabase.MIGRATION_39_40,
+        AppDatabase.MIGRATION_40_41,
+        AppDatabase.Companion.MIGRATION_41_42,
+        AppDatabase.MIGRATION_42_43,
+        AppDatabase.MIGRATION_43_44,
+        AppDatabase.MIGRATION_44_45,
+        AppDatabase.MIGRATION_45_46,
+        AppDatabase.MIGRATION_46_47,
+        AppDatabase.MIGRATION_47_48,
+        AppDatabase.MIGRATION_48_49,
+        AppDatabase.MIGRATION_49_50,
+        AppDatabase.MIGRATION_50_51,
+        AppDatabase.MIGRATION_51_52,
+        AppDatabase.MIGRATION_52_53,
+        AppDatabase.MIGRATION_53_54,
+        AppDatabase.MIGRATION_54_55,
+        AppDatabase.MIGRATION_55_56,
+        AppDatabase.MIGRATION_56_57,
+        AppDatabase.MIGRATION_57_58,
+        AppDatabase.MIGRATION_58_59,
+        AppDatabase.MIGRATION_59_60,
+        AppDatabase.MIGRATION_60_61,
+        AppDatabase.MIGRATION_61_62,
+        AppDatabase.MIGRATION_62_63,
+        AppDatabase.MIGRATION_63_64,
+        AppDatabase.MIGRATION_64_65,
+        AppDatabase.MIGRATION_65_66,
+        AppDatabase.MIGRATION_66_67,
+        AppDatabase.MIGRATION_67_68,
+        AppDatabase.MIGRATION_68_69,
+        AppDatabase.MIGRATION_69_70,
+        AppDatabase.MIGRATION_70_71,
+        AppDatabase.MIGRATION_71_72,
+        AppDatabase.MIGRATION_72_73,
+        AppDatabase.MIGRATION_73_74,
+        AppDatabase.MIGRATION_74_75,
+        AppDatabase.MIGRATION_75_76,
+        AppDatabase.MIGRATION_76_77,
+        AppDatabase.MIGRATION_77_78,
+        AppDatabase.MIGRATION_78_79,
+        AppDatabase.MIGRATION_79_80,
+        AppDatabase.MIGRATION_80_81,
+        AppDatabase.MIGRATION_81_82,
+        AppDatabase.MIGRATION_82_83,
+        AppDatabase.MIGRATION_83_84,
+        AppDatabase.MIGRATION_84_85,
+        AppDatabase.MIGRATION_85_86,
+        AppDatabase.MIGRATION_86_87,
+        AppDatabase.MIGRATION_87_88,
+        AppDatabase.MIGRATION_88_89,
+        AppDatabase.MIGRATION_89_90,
+        AppDatabase.MIGRATION_90_91,
+        AppDatabase.MIGRATION_91_92,
+        AppDatabase.MIGRATION_92_93,
+        AppDatabase.MIGRATION_93_94,
+        AppDatabase.MIGRATION_94_95,
+        AppDatabase.MIGRATION_95_96,
+        AppDatabase.MIGRATION_96_100,
+        AppDatabase.MIGRATION_100_101,
+        AppDatabase.MIGRATION_101_102,
+        AppDatabase.MIGRATION_102_103,
+        AppDatabase.MIGRATION_103_104,
+        AppDatabase.MIGRATION_104_105,
+        AppDatabase.MIGRATION_105_106,
+        AppDatabase.MIGRATION_106_107,
+        AppDatabase.MIGRATION_107_108,
+        AppDatabase.MIGRATION_108_109,
+        AppDatabase.MIGRATION_109_110,
+        AppDatabase.MIGRATION_110_111,
+        AppDatabase.MIGRATION_111_112,
+        AppDatabase.MIGRATION_112_113,
+        AppDatabase.MIGRATION_113_114,
+        AppDatabase.MIGRATION_114_115,
+        AppDatabase.MIGRATION_115_116,
+        AppDatabase.MIGRATION_116_117,
+        AppDatabase.MIGRATION_117_118,
+        AppDatabase.MIGRATION_118_119,
+        AppDatabase.MIGRATION_119_120,
+        AppDatabase.MIGRATION_120_121,
+        AppDatabase.MIGRATION_121_122,
+        AppDatabase.MIGRATION_122_123,
+        AppDatabase.MIGRATION_123_124,
+        AppDatabase.MIGRATION_124_125,
+        AppDatabase.MIGRATION_125_126,
+        AppDatabase.MIGRATION_126_127,
+        AppDatabase.MIGRATION_127_128,
+        AppDatabase.MIGRATION_128_129,
+        AppDatabase.MIGRATION_129_130,
+        AppDatabase.MIGRATION_130_131,
+        AppDatabase.MIGRATION_131_132,
+        AppDatabase.MIGRATION_132_133,
+        AppDatabase.MIGRATION_133_134,
+        AppDatabase.MIGRATION_134_135,
+        AppDatabase.MIGRATION_135_136,
+        AppDatabase.MIGRATION_136_137,
+        AppDatabase.MIGRATION_137_138,
+        AppDatabase.MIGRATION_138_139,
+        AppDatabase.MIGRATION_139_140,
+        AppDatabase.MIGRATION_140_141,
+        AppDatabase.MIGRATION_141_142,
+        AppDatabase.MIGRATION_142_143,
+        AppDatabase.MIGRATION_143_144,
+        AppDatabase.MIGRATION_144_145
+    )
+
     @get:Rule
-    val helper: MigrationTestHelper = MigrationTestHelper(
+    val migrationTestHelper: MigrationTestHelper = MigrationTestHelper(
         InstrumentationRegistry.getInstrumentation(),
         AppDatabase::class.java,
         emptyList(),
         FrameworkSQLiteOpenHelperFactory()
     )
+
+    private val helper = ArchivedMigrationHelper(migrationTestHelper, archivedMigrations)
+
+    private class ArchivedMigrationHelper(
+        private val delegate: MigrationTestHelper,
+        private val archivedMigrations: Array<androidx.room.migration.Migration>
+    ) {
+        fun createDatabase(name: String, version: Int): SupportSQLiteDatabase =
+            delegate.createDatabase(name, version)
+
+        fun runMigrationsAndValidate(
+            name: String,
+            targetVersion: Int,
+            validateDroppedTables: Boolean,
+            vararg migrations: androidx.room.migration.Migration
+        ): SupportSQLiteDatabase {
+            val effectiveMigrations = if (migrations.isEmpty()) archivedMigrations else migrations
+            return delegate.runMigrationsAndValidate(
+                name,
+                targetVersion,
+                validateDroppedTables,
+                *effectiveMigrations
+            )
+        }
+    }
 
     @Test
     @Throws(IOException::class)
@@ -65,6 +235,162 @@ class DatabaseMigrationTest {
 
     @Test
     @Throws(IOException::class)
+    fun migrate_93_to_94_preserves_amounts_and_adds_currency_foundation() {
+        assertTrue("v93 and v94 snapshots are required", hasSchema(93) && hasSchema(94))
+        var db = helper.createDatabase("migration-93-94", 93)
+        db.execSQL("INSERT INTO expenses (id, amount, currency, merchant, transactionType, date) VALUES (1, 12.5, 'USD', 'Synthetic shop', 'PURCHASE', 1000)")
+        db.execSQL("INSERT INTO budgets (id, amount, period, startDate, createdAt) VALUES (1, 250.0, 'MONTHLY', 1000, 1000)")
+        db.execSQL("INSERT INTO planned_expenses (id, description, amount, date, priority, createdAt) VALUES (1, 'Synthetic plan', 45.0, 2000, 'LOW', 1000)")
+        db.execSQL("INSERT INTO savings_goals (id, name, targetAmount, currentAmount, protectionLevel, createdAt) VALUES (1, 'Synthetic goal', 500.0, 75.0, 'LOW', 1000)")
+        db.execSQL("INSERT INTO anomaly_alerts (id, expenseId, merchant, amount, anomalyReason, severity, alertedAt) VALUES (1, 1, 'Synthetic shop', 12.5, 'SYNTHETIC', 'LOW', 1000)")
+        db.execSQL("INSERT INTO exchange_rates (id, fromCurrency, toCurrency, rate, lastUpdated, source) VALUES (1, 'USD', 'EUR', 0.9, 1000, 'api')")
+        db.close()
+
+        db = helper.runMigrationsAndValidate("migration-93-94", 94, true, AppDatabase.MIGRATION_93_94)
+        db.query("SELECT amount, currency, baseAmount, baseCurrency, exchangeRateUsed FROM expenses WHERE id = 1").use { row ->
+            assertTrue(row.moveToFirst())
+            assertEquals(12.5, row.getDouble(0), 0.001)
+            assertEquals("USD", row.getString(1))
+            assertEquals(0.0, row.getDouble(2), 0.001)
+            assertEquals("EUR", row.getString(3))
+            assertEquals(0.0, row.getDouble(4), 0.001)
+        }
+        for ((table, amountColumn, expectedAmount) in listOf(
+            Triple("budgets", "amount", 250.0),
+            Triple("planned_expenses", "amount", 45.0),
+            Triple("savings_goals", "currentAmount", 75.0)
+        )) {
+            db.query("SELECT $amountColumn, currency, currencyAssumption FROM $table WHERE id = 1").use { row ->
+                assertTrue(row.moveToFirst())
+                assertEquals(expectedAmount, row.getDouble(0), 0.001)
+                assertEquals("EUR", row.getString(1))
+                assertEquals("LEGACY_DEFAULT", row.getString(2))
+            }
+        }
+        db.query("SELECT amount, currency, baseAmount, baseCurrency FROM anomaly_alerts WHERE id = 1").use { row ->
+            assertTrue(row.moveToFirst())
+            assertEquals(12.5, row.getDouble(0), 0.001)
+            assertEquals("EUR", row.getString(1))
+            assertEquals(0.0, row.getDouble(2), 0.001)
+            assertEquals("EUR", row.getString(3))
+        }
+        // These alert fields are deliberately nullable, unlike the expense conversion fields.
+        db.execSQL("UPDATE anomaly_alerts SET baseAmount = NULL, baseCurrency = NULL WHERE id = 1")
+        db.query("SELECT baseAmount, baseCurrency FROM anomaly_alerts WHERE id = 1").use { row ->
+            assertTrue(row.moveToFirst())
+            assertTrue(row.isNull(0))
+            assertTrue(row.isNull(1))
+        }
+        db.query("SELECT rate, source, validDate FROM exchange_rates WHERE id = 1").use { row ->
+            assertTrue(row.moveToFirst())
+            assertEquals(0.9, row.getDouble(0), 0.001)
+            assertEquals("api", row.getString(1))
+            assertEquals(0L, row.getLong(2))
+        }
+        db.query("PRAGMA foreign_key_check").use { rows ->
+            assertFalse("currency additions must preserve FK integrity", rows.moveToFirst())
+        }
+        db.close()
+    }
+
+    @Test
+    @Throws(IOException::class)
+    fun migrate_103_to_104_preserves_parse_result_and_adds_retention_columns() {
+        assumeTrue(hasSchema(103) && hasSchema(104))
+        var db = helper.createDatabase("migration-103-104", 103)
+        db.execSQL("INSERT INTO raw_notifications (id, packageName, timestamp, capturedAt, isProcessed, parseResult) VALUES (1, 'com.test', 1000, 1000, 1, 'synthetic-result')")
+        db.execSQL("INSERT INTO scanned_receipts (id, rawOcrText, confidence, createdAt, updatedAt) VALUES (1, 'synthetic-ocr', 0.9, 1000, 1000)")
+        db.close()
+
+        db = helper.runMigrationsAndValidate("migration-103-104", 104, true, AppDatabase.MIGRATION_103_104)
+        db.query("SELECT parseResult, rawContentPurgedAt FROM raw_notifications WHERE id = 1").use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals("synthetic-result", cursor.getString(0))
+            assertTrue(cursor.isNull(1))
+        }
+        db.query("SELECT rawOcrText, rawOcrTextPurgedAt FROM scanned_receipts WHERE id = 1").use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals("synthetic-ocr", cursor.getString(0))
+            assertTrue(cursor.isNull(1))
+        }
+        db.close()
+    }
+
+    @Test
+    @Throws(IOException::class)
+    fun migrate_106_to_114_preserves_materialized_keys_currency_and_receipt_history() {
+        assertTrue("v106, v107 and v114 snapshots are required", hasSchema(106) && hasSchema(107) && hasSchema(114))
+        var db = helper.createDatabase("migration-106-107", 106)
+        db.execSQL("INSERT INTO expense_groups (id, name, createdAt) VALUES (1, 'Synthetic group', 1000)")
+        db.execSQL("INSERT INTO group_members (id, groupId, name, isCurrentUser, joinedAt, currentUserGroupKey) VALUES (1, 1, 'Synthetic user', 1, 1000, 1)")
+        db.execSQL("INSERT INTO budgets (id, amount, period, periodMode, startDate, isActive, currency, currencyAssumption, createdAt, activeOverallKey) VALUES (1, 250.0, 'MONTHLY', 'ROLLING', 1000, 1, 'USD', 'EXPLICIT', 1000, 1)")
+        db.execSQL("INSERT INTO planned_expenses (id, description, amount, currency, currencyAssumption, date, isRecurring, priority, createdAt, status, updatedAt, sourceOccurrenceKey, openSourceOccurrenceKey) VALUES (1, 'Synthetic plan', 45.0, 'GBP', 'EXPLICIT', 2000, 0, 'LOW', 1000, 'PLANNED', 1000, NULL, NULL)")
+        db.execSQL("INSERT INTO planned_expenses (id, description, amount, currency, currencyAssumption, date, priority, createdAt, updatedAt, sourceOccurrenceKey, openSourceOccurrenceKey) VALUES (2, 'Synthetic recurring plan', 65.0, 'GBP', 'EXPLICIT', 2000, 'LOW', 1000, 1000, 'synthetic-occurrence', 'synthetic-occurrence')")
+        db.execSQL("INSERT INTO expenses (id, amount, currency, merchant, transactionType, date) VALUES (1, 12.5, 'USD', 'Synthetic shop', 'PURCHASE', 1000)")
+        db.execSQL("INSERT INTO scanned_receipts (id, rawOcrText, parsedTotal, currency, confidence, expenseId, createdAt, updatedAt) VALUES (1, 'synthetic-ocr', 12.5, 'USD', 0.9, 1, 1000, 1500)")
+        db.execSQL("INSERT INTO warranties (id, receiptId, expenseId, productName, merchantName, purchaseDate, warrantyDurationMonths, warrantyEndDate, createdAt, updatedAt) VALUES (1, 1, 1, 'Synthetic product', 'Synthetic shop', 1000, 12, 2000, 1000, 1000)")
+        db.execSQL("INSERT INTO return_windows (id, receiptId, expenseId, productName, merchantName, purchaseDate, returnDays, returnDeadline, createdAt, updatedAt) VALUES (1, 1, 1, 'Synthetic product', 'Synthetic shop', 1000, 30, 2000, 1000, 1000)")
+        db.close()
+
+        db = helper.runMigrationsAndValidate("migration-106-107", 107, true, AppDatabase.MIGRATION_106_107)
+        db.query("SELECT currency, currencyAssumption, activeOverallKey FROM budgets WHERE id = 1").use { row ->
+            assertTrue(row.moveToFirst())
+            assertEquals("USD", row.getString(0))
+            assertEquals("EXPLICIT", row.getString(1))
+            assertEquals(1L, row.getLong(2))
+        }
+        db.query("SELECT currentUserGroupKey FROM group_members WHERE id = 1").use { row ->
+            assertTrue(row.moveToFirst())
+            assertEquals(1L, row.getLong(0))
+        }
+        db.query("SELECT currency, currencyAssumption, openSourceOccurrenceKey FROM planned_expenses WHERE id = 1").use { row ->
+            assertTrue(row.moveToFirst())
+            assertEquals("GBP", row.getString(0))
+            assertEquals("EXPLICIT", row.getString(1))
+            assertTrue(row.isNull(2))
+        }
+        db.query("SELECT sourceOccurrenceKey, openSourceOccurrenceKey FROM planned_expenses WHERE id = 2").use { row ->
+            assertTrue(row.moveToFirst())
+            assertEquals("synthetic-occurrence", row.getString(0))
+            assertEquals("synthetic-occurrence", row.getString(1))
+        }
+        db.close()
+
+        db = helper.runMigrationsAndValidate("migration-106-107", 114, true)
+        db.query("SELECT currency, currencyAssumption, activeOverallKey FROM budgets WHERE id = 1").use { row ->
+            assertTrue(row.moveToFirst())
+            assertEquals("USD", row.getString(0))
+            assertEquals("EXPLICIT", row.getString(1))
+            assertEquals(1L, row.getLong(2))
+        }
+        db.query("SELECT currency, openSourceOccurrenceKey FROM planned_expenses WHERE id = 2").use { row ->
+            assertTrue(row.moveToFirst())
+            assertEquals("GBP", row.getString(0))
+            assertEquals("synthetic-occurrence", row.getString(1))
+        }
+        db.query("SELECT rawOcrText, parsedTotal, currency, createdAt, updatedAt FROM scanned_receipts WHERE id = 1").use { row ->
+            assertTrue(row.moveToFirst())
+            assertEquals("synthetic-ocr", row.getString(0))
+            assertEquals(12.5, row.getDouble(1), 0.001)
+            assertEquals("USD", row.getString(2))
+            assertEquals(1000L, row.getLong(3))
+            assertEquals(1500L, row.getLong(4))
+        }
+        for (table in listOf("warranties", "return_windows")) {
+            db.query("SELECT receiptId, expenseId FROM $table WHERE id = 1").use { row ->
+                assertTrue("receipt child must survive: $table", row.moveToFirst())
+                assertEquals(1L, row.getLong(0))
+                assertEquals(1L, row.getLong(1))
+            }
+        }
+        db.query("PRAGMA foreign_key_check").use { rows ->
+            assertFalse("archived rebuilds must preserve FK integrity", rows.moveToFirst())
+        }
+        db.close()
+    }
+
+    @Test
+    @Throws(IOException::class)
     fun migrate_113_to_114_adds_refundExpenseId_and_rolloverDeficitTracking() {
         assumeTrue(hasSchema(113) && hasSchema(114))
         var db = helper.createDatabase("migration-113-114", 113)
@@ -76,6 +402,7 @@ class DatabaseMigrationTest {
         db.execSQL("INSERT INTO return_windows (receiptId, expenseId, productName, merchantName, purchaseDate, returnDays, returnDeadline, status, createdAt, updatedAt) VALUES (1, 1, 'Test', 'Test', 1700000000000, 30, 1703000000000, 'RETURNABLE', 1700000000000, 1700000000000)")
         // Seed a budget
         db.execSQL("INSERT INTO budgets (amount, currency, startDate, periodMode, period, isActive, createdAt) VALUES (500.0, 'EUR', 1700000000000, 'CALENDAR', 'MONTHLY', 1, 1700000000000)")
+        db.execSQL("INSERT INTO budget_forecasts (id, budgetId, forecastDate, targetPeriodStart, targetPeriodEnd, predictedSpending, predictedRemaining, confidenceScore, riskLevel, overspendProbability, createdAt) VALUES (1, 1, 1000, 1000, 2000, 125.0, 375.0, 0.8, 'LOW', 0.1, 1000)")
         db.close()
 
         db = helper.runMigrationsAndValidate("migration-113-114", 114, true)
@@ -89,6 +416,7 @@ class DatabaseMigrationTest {
             }
         }
         assertTrue("refundExpenseId column missing", hasRefundExpenseId)
+        cursor.close()
 
         // Verify rolloverDeficitTracking column exists
         val cursor2 = db.query("PRAGMA table_info(budgets)")
@@ -99,9 +427,42 @@ class DatabaseMigrationTest {
             }
         }
         assertTrue("rolloverDeficitTracking column missing", hasRolloverDeficit)
+        cursor2.close()
+
+        db.query("SELECT productName, refundExpenseId FROM return_windows WHERE id = 1").use { row ->
+            assertTrue(row.moveToFirst())
+            assertEquals("Test", row.getString(0))
+            assertTrue(row.isNull(1))
+        }
+        db.query("SELECT amount, rolloverDeficitTracking FROM budgets WHERE id = 1").use { row ->
+            assertTrue(row.moveToFirst())
+            assertEquals(500.0, row.getDouble(0), 0.001)
+            assertEquals(0, row.getInt(1))
+        }
+        var duplicateForecastRejected = false
+        try {
+            // Distinct targetPeriodStart avoids conflating the two unique-index contracts.
+            db.execSQL("INSERT INTO budget_forecasts (budgetId, forecastDate, targetPeriodStart, targetPeriodEnd, predictedSpending, predictedRemaining, confidenceScore, riskLevel, overspendProbability, createdAt) VALUES (1, 1000, 3000, 4000, 99.0, 401.0, 0.8, 'LOW', 0.1, 1000)")
+        } catch (_: SQLiteConstraintException) {
+            duplicateForecastRejected = true
+        }
+        assertTrue("v114 must reject another forecast for the same budget and instant", duplicateForecastRejected)
+        db.query("SELECT id, predictedSpending FROM budget_forecasts WHERE budgetId = 1").use { row ->
+            assertEquals(1, row.count)
+            assertTrue(row.moveToFirst())
+            assertEquals(1L, row.getLong(0))
+            assertEquals(125.0, row.getDouble(1), 0.001)
+        }
 
         // Verify multiple warranties per receipt works (unique constraint removed)
         db.execSQL("INSERT INTO expenses (amount, currency, merchant, transactionType, date, createdAt) VALUES (50.0, 'EUR', 'Test2', 'PURCHASE', 1700000000000, 1700000000000)")
+        db.execSQL("PRAGMA foreign_keys=ON")
+        db.execSQL("UPDATE return_windows SET refundExpenseId = 2 WHERE id = 1")
+        db.execSQL("DELETE FROM expenses WHERE id = 2")
+        db.query("SELECT refundExpenseId FROM return_windows WHERE id = 1").use { row ->
+            assertTrue(row.moveToFirst())
+            assertTrue("deleting the refund must preserve the return window and clear its link", row.isNull(0))
+        }
         db.execSQL("INSERT INTO warranties (receiptId, productName, merchantName, purchaseDate, warrantyDurationMonths, warrantyEndDate, status, createdAt, updatedAt) VALUES (1, 'Product1', 'Merchant1', 1700000000000, 12, 1731532800000, 'ACTIVE', 1700000000000, 1700000000000)")
         db.execSQL("INSERT INTO warranties (receiptId, productName, merchantName, purchaseDate, warrantyDurationMonths, warrantyEndDate, status, createdAt, updatedAt) VALUES (1, 'Product2', 'Merchant1', 1700000000000, 24, 1763155200000, 'ACTIVE', 1700000000000, 1700000000000)")
         // If this doesn't throw, the unique constraint was successfully removed
@@ -636,6 +997,11 @@ class DatabaseMigrationTest {
         assumeTrue(hasSchema(49) && hasSchema(50))
 
         var db = helper.createDatabase(testDb, 49)
+        db.execSQL("INSERT INTO manual_recurring_expenses (id, merchant, amount, currency, frequency, nextDate, createdAt, isSubscription, isActive) VALUES (1, 'Synthetic subscription', 15.0, 'USD', 'MONTHLY', 2000, 1000, 1, 1)")
+        db.execSQL("INSERT INTO subscription_price_history (id, subscriptionId, amount, currency, recordedAt, changeReason) VALUES (1, 1, 15.0, 'USD', 1000, 'synthetic')")
+        db.execSQL("INSERT INTO exchange_rates (id, fromCurrency, toCurrency, rate, lastUpdated, source) VALUES (1, 'USD', 'EUR', 0.9, 1000, 'api')")
+        db.execSQL("INSERT INTO budgets (id, amount, period, startDate, isActive, notifyAtWarning, notifyAtCritical, rollover, createdAt) VALUES (1, 250.0, 'MONTHLY', 1000, 1, 0.75, 0.9, 0, 1000)")
+        db.execSQL("INSERT INTO budget_forecasts (id, budgetId, forecastDate, targetPeriodStart, targetPeriodEnd, predictedSpending, predictedRemaining, confidenceScore, riskLevel, overspendProbability, isActive, createdAt) VALUES (1, 1, 1000, 1000, 2000, 100.0, 150.0, 0.8, 'LOW', 0.1, 0, 1000)")
 
         db.execSQL("""
             INSERT INTO categories (id, name, icon, color, isDefault)
@@ -673,6 +1039,38 @@ class DatabaseMigrationTest {
 
         db.query("PRAGMA foreign_key_check").use { fkCursor ->
             assertFalse("No FK violations expected after 49→50", fkCursor.moveToFirst())
+        }
+        db.query("SELECT subscriptionId, amount, currency, changeReason FROM subscription_price_history WHERE id = 1").use { row ->
+            assertTrue(row.moveToFirst())
+            assertEquals(1L, row.getLong(0))
+            assertEquals(15.0, row.getDouble(1), 0.001)
+            assertEquals("USD", row.getString(2))
+            assertEquals("synthetic", row.getString(3))
+        }
+        db.execSQL("INSERT INTO subscription_price_history (id, subscriptionId, amount, recordedAt) VALUES (2, 1, 16.0, 2000)")
+        db.query("SELECT currency FROM subscription_price_history WHERE id = 2").use { row ->
+            assertTrue(row.moveToFirst())
+            assertEquals("EUR", row.getString(0))
+        }
+        db.query("SELECT rate, source FROM exchange_rates WHERE id = 1").use { row ->
+            assertTrue(row.moveToFirst())
+            assertEquals(0.9, row.getDouble(0), 0.001)
+            assertEquals("api", row.getString(1))
+        }
+        db.execSQL("INSERT INTO exchange_rates (id, fromCurrency, toCurrency, rate, lastUpdated) VALUES (2, 'GBP', 'EUR', 1.1, 2000)")
+        db.query("SELECT source FROM exchange_rates WHERE id = 2").use { row ->
+            assertTrue(row.moveToFirst())
+            assertEquals("manual", row.getString(0))
+        }
+        db.query("SELECT predictedSpending, isActive FROM budget_forecasts WHERE id = 1").use { row ->
+            assertTrue(row.moveToFirst())
+            assertEquals(100.0, row.getDouble(0), 0.001)
+            assertEquals(0, row.getInt(1))
+        }
+        db.execSQL("INSERT INTO budget_forecasts (id, budgetId, forecastDate, targetPeriodStart, targetPeriodEnd, predictedSpending, predictedRemaining, confidenceScore, riskLevel, overspendProbability, createdAt) VALUES (2, 1, 2000, 2000, 3000, 125.0, 125.0, 0.8, 'LOW', 0.1, 2000)")
+        db.query("SELECT isActive FROM budget_forecasts WHERE id = 2").use { row ->
+            assertTrue(row.moveToFirst())
+            assertEquals(1, row.getInt(0))
         }
 
         db.query(
@@ -869,6 +1267,10 @@ class DatabaseMigrationTest {
 
         // Create DB at version 50 (has schema drift issues)
         var db = helper.createDatabase(testDb, 50)
+        db.execSQL("INSERT INTO expense_groups (id, name, createdAt) VALUES (1, 'Synthetic group', 1000)")
+        db.execSQL("INSERT INTO group_members (id, groupId, name, joinedAt) VALUES (1, 1, 'Synthetic payer', 1000)")
+        db.execSQL("INSERT INTO expenses (id, amount, merchant, transactionType, date) VALUES (1, 25.0, 'Synthetic shop', 'PURCHASE', 1000)")
+        db.execSQL("INSERT INTO group_expenses (id, groupId, expenseId, paidById, date, description, totalAmount) VALUES (1, 1, 1, 1, 1000, 'Synthetic shared expense', 25.0)")
         db.close()
 
         // Run migration to 51 and validate
@@ -878,6 +1280,21 @@ class DatabaseMigrationTest {
             true,
             AppDatabase.MIGRATION_50_51
         )
+
+        db.execSQL("PRAGMA foreign_keys=ON")
+        var payerDeleteRejected = false
+        try {
+            db.execSQL("DELETE FROM group_members WHERE id = 1")
+        } catch (_: SQLiteConstraintException) {
+            payerDeleteRejected = true
+        }
+        assertTrue("the referenced payer must be protected by RESTRICT", payerDeleteRejected)
+        db.query("SELECT expenseId, paidById, totalAmount FROM group_expenses WHERE id = 1").use { row ->
+            assertTrue(row.moveToFirst())
+            assertEquals(1L, row.getLong(0))
+            assertEquals(1L, row.getLong(1))
+            assertEquals(25.0, row.getDouble(2), 0.001)
+        }
 
         // Verify scanned_receipts has correct indices
         val indexCursor = db.query(
@@ -2088,8 +2505,8 @@ class DatabaseMigrationTest {
 
         // Insert a category so we can reference it as a valid FK target.
         db.execSQL("""
-            INSERT INTO categories (id, name, icon, color, isDefault, sortOrder, isHidden)
-            VALUES (100, 'Groceries', 'cart', '#00FF00', 0, 1, 0)
+            INSERT INTO categories (id, name, icon, color, isDefault)
+            VALUES (100, 'Groceries', 'cart', '#00FF00', 0)
         """)
 
         // Row 1: valid defaultCategoryId → should survive.
@@ -2498,12 +2915,12 @@ class DatabaseMigrationTest {
 
         // We need a budget row for FK constraints.
         db.execSQL("""
-            INSERT INTO budgets (id, amount, period, isActive, createdAt)
-            VALUES (100, 500.0, 'MONTHLY', 1, 1000)
+            INSERT INTO budgets (id, amount, period, periodMode, startDate, isActive, createdAt)
+            VALUES (100, 500.0, 'MONTHLY', 'ROLLING', 1000, 1, 1000)
         """)
         db.execSQL("""
-            INSERT INTO budgets (id, amount, period, isActive, createdAt)
-            VALUES (200, 1000.0, 'MONTHLY', 1, 1000)
+            INSERT INTO budgets (id, amount, period, periodMode, startDate, isActive, createdAt)
+            VALUES (200, 1000.0, 'MONTHLY', 'ROLLING', 1000, 1, 1000)
         """)
 
         // Active duplicate pair: same budgetId+targetPeriodStart+targetPeriodEnd, both active.
@@ -2645,8 +3062,8 @@ class DatabaseMigrationTest {
 
         // Insert one budget for FK.
         db.execSQL("""
-            INSERT INTO budgets (id, amount, period, isActive, createdAt)
-            VALUES (100, 500.0, 'MONTHLY', 1, 1000)
+            INSERT INTO budgets (id, amount, period, periodMode, startDate, isActive, createdAt)
+            VALUES (100, 500.0, 'MONTHLY', 'ROLLING', 1000, 1, 1000)
         """)
 
         // Insert one active forecast — no duplicates.

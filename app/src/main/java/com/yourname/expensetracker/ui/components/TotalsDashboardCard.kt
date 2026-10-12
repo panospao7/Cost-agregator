@@ -9,10 +9,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.core.money.MoneyAggregate
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateResult
 import com.yourname.expensetracker.domain.model.PeriodStatus
 import com.yourname.expensetracker.domain.model.PeriodTotal
 import com.yourname.expensetracker.domain.model.PeriodType
-import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.theme.SemanticColors
 
 enum class PeriodLevel {
@@ -97,12 +98,11 @@ fun TotalsDashboardCard(
         Spacer(modifier = Modifier.height(16.dp))
 
         selectedPeriod?.let { period ->
-    CurrentPeriodSummary(
-        label = period.periodLabel,
-        total = period.totalAmount,
-        status = period.status,
-        currency = currency
-    )
+            CurrentPeriodSummary(
+                label = period.periodLabel,
+                money = (period.moneyResult as? MoneyAggregateResult.Available)?.aggregate,
+                status = period.status
+            )
             Spacer(modifier = Modifier.height(16.dp))
         }
 
@@ -140,10 +140,8 @@ fun TotalsDashboardCard(
 @Composable
 private fun CurrentPeriodSummary(
     label: String,
-    total: Double,
-    status: PeriodStatus,
-    /** Placeholder default. Production callers should pass explicit currency. */
-    currency: String = "EUR"
+    money: MoneyAggregate?,
+    status: PeriodStatus
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val statusColor = when (status) {
@@ -179,7 +177,7 @@ private fun CurrentPeriodSummary(
                     color = SemanticColors.TextSecondary
                 )
                 Text(
-                    text = CurrencyFormatter.formatMoney(total, currency),
+                    text = money?.formatDisplay() ?: stringResource(R.string.totals_status_no_data),
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.ExtraBold,
                     color = statusColor

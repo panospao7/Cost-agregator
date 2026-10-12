@@ -16,7 +16,7 @@ import org.junit.runner.RunWith
  * (bank review identity + connection scope hash).
  *
  * These intentionally do NOT depend on exported schema JSON snapshots — they
- * build a minimal v148-shaped `pending_reviews` table by hand, run the real
+ * build minimal v148-shaped bank-review and worker-run tables by hand, run the real
  * migration SQL against it, and assert concrete schema AND data behavior:
  *
  *  - both new nullable columns exist after migration;
@@ -36,6 +36,7 @@ class Migration148to149ContractTest {
             seedReview(db, id = 2, packageName = "com.android.messaging")
 
             DatabaseMigrations.MIGRATION_148_149.migrate(db)
+            assertExistingWorkerCounters(db)
 
             val columns = columnNames(db, "pending_reviews")
             assertTrue("bankReviewIdentity column missing", "bankReviewIdentity" in columns)
@@ -63,6 +64,7 @@ class Migration148to149ContractTest {
         withV148Db("contract-148-149-unique.db") { db ->
             seedReview(db, id = 1, packageName = "com.android.messaging")
             DatabaseMigrations.MIGRATION_148_149.migrate(db)
+            assertExistingWorkerCounters(db)
 
             // Multiple NULL identities never conflict (non-bank reviews).
             db.execSQL(
@@ -167,6 +169,16 @@ class Migration148to149ContractTest {
         }
     }
 
+    private fun assertExistingWorkerCounters(db: SupportSQLiteDatabase) {
+        db.query("SELECT workerName, rowsSkipped, errors FROM background_job_runs WHERE id = 1").use {
+            assertTrue("Merged migration must preserve the existing worker row", it.moveToFirst())
+            assertEquals("SyntheticWorker", it.getString(0))
+            assertEquals(0, it.getInt(1))
+            assertEquals(0, it.getInt(2))
+            assertTrue("Worker row must not be duplicated", !it.moveToNext())
+        }
+    }
+
     private inline fun withV148Db(
         name: String,
         block: (SupportSQLiteDatabase) -> Unit
@@ -176,7 +188,18 @@ class Migration148to149ContractTest {
 
         val callback = object : SupportSQLiteOpenHelper.Callback(version = 148) {
             override fun onCreate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE raw_notifications (id INTEGER PRIMARY KEY NOT NULL)")
+                db.execSQL("CREATE TABLE scanned_receipts (id INTEGER PRIMARY KEY NOT NULL)")
                 createV148PendingReviews(db)
+                // The merged migration also adds counters to the worker-run table.
+                db.execSQL(
+                    "CREATE TABLE background_job_runs (id INTEGER PRIMARY KEY NOT NULL, workerName TEXT NOT NULL)"
+                )
+                db.execSQL("INSERT INTO background_job_runs (id, workerName) VALUES (1, 'SyntheticWorker')")
+            }
+
+            override fun onConfigure(db: SupportSQLiteDatabase) {
+                db.setForeignKeyConstraintsEnabled(true)
             }
 
             override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit

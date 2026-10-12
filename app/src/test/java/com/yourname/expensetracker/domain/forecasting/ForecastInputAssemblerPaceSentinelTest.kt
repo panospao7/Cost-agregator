@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.forecasting
 
+import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.SpendingPaceCalculator
 import com.yourname.expensetracker.domain.model.DomainTransactionType
@@ -110,13 +111,37 @@ class ForecastInputAssemblerPaceSentinelTest {
 
         assertEquals(canonical.paceStatus, legacy.paceStatus)
         assertEquals(canonical.pacePercentage, legacy.pacePercentage, 1e-3f)
-        assertEquals(canonical.currentMonthSpent, legacy.currentMonthSpent, 1e-6)
+        assertApproxEquals(requireNotNull(canonical.currentMonthSpent), requireNotNull(legacy.currentMonthSpent), 1e-6)
         assertEquals(canonical.previousMonthTotal!!, legacy.previousMonthTotal!!, 1e-6)
-        assertEquals(canonical.projectedTotal, legacy.projectedTotal, 1e-6)
+        assertApproxEquals(requireNotNull(canonical.projectedTotal), requireNotNull(legacy.projectedTotal), 1e-6)
         assertEquals(canonical.daysElapsed, legacy.daysElapsed)
         assertEquals(canonical.daysInMonth, legacy.daysInMonth)
         // averageMonthlyTotal is intentionally different: the dashboard overlays
         // the RP-05 completed-history mean, the calculator leaves it null.
+    }
+
+    @Test
+    fun `forecast helpers reject mixed source currencies rather than relabeling amounts`() {
+        val expenses = listOf(
+            purchase(1, 100.0, fixedNowMs).copy(currency = "EUR"),
+            purchase(2, 150.0, fixedNowMs).copy(currency = "USD")
+        )
+        for (failure in listOf(
+            runCatching { assembler.buildPastSumDaily(expenses, "EUR") }.exceptionOrNull(),
+            runCatching { assembler.buildSpendingPace(expenses, "EUR") }.exceptionOrNull()
+        )) {
+            org.junit.Assert.assertTrue(failure is com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException)
+        }
+    }
+
+    @Test
+    fun `empty forecast helpers still require a supported explicit target`() {
+        org.junit.Assert.assertTrue(runCatching {
+            assembler.buildPastSumDaily(emptyList(), "")
+        }.exceptionOrNull() is com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException)
+        org.junit.Assert.assertTrue(runCatching {
+            assembler.buildSpendingPace(emptyList(), "")
+        }.exceptionOrNull() is com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException)
     }
 
     private fun purchase(

@@ -1,13 +1,14 @@
 package com.yourname.expensetracker.domain.health
 
 import com.yourname.expensetracker.data.database.entity.Expense
-import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.analytics.requireCompleteMoneyInput
+import com.yourname.expensetracker.domain.analytics.completeMoneyAggregateForRows
+import com.yourname.expensetracker.domain.analytics.AnalyticsNormalizationResult
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
-import com.yourname.expensetracker.domain.model.DomainTransferDirection
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -72,39 +73,52 @@ class FinancialHealthCalculator @Inject constructor(
         noSpendStreak: Int
     ): HealthScoreResult {
         val homeCurrency = runBlocking {
-            runCatching { currencySettingsRepository.homeCurrency().first() }
-                .getOrElse { throw IllegalStateException("Home currency unavailable: ${it.message}") }
+            try {
+                currencySettingsRepository.homeCurrency().first()
+            } catch (error: Exception) {
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                throw com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException(
+                    com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode.HOME_CURRENCY_UNAVAILABLE
+                )
+            }
         }
         val normalized = runBlocking {
-            runCatching {
+            try {
                 analyticsCurrencyNormalizer.normalizeExpenses(expenses, homeCurrency)
-            }.getOrNull()
+            } catch (error: Exception) {
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                throw com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException(
+                    com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE
+                )
+            }
         }
-        val normalizedExpenses = normalized?.includedExpenses
-            ?: expenses.map { it.toExpenseSnapshot() }
+        normalized.requireCompleteMoneyInput(homeCurrency)
 
         val todayScore = calculateTodayScore(
-            expenses = normalizedExpenses,
+            normalization = normalized,
             budgetStatuses = budgetStatuses,
             pendingReviews = pendingReviews,
             streak = todayStreak,
-            noSpendStreak = noSpendStreak
+            noSpendStreak = noSpendStreak,
+            homeCurrency = homeCurrency
         )
         
         val weekScore = calculateWeekScore(
-            expenses = normalizedExpenses,
+            normalization = normalized,
             budgetStatuses = budgetStatuses,
             pendingReviews = pendingReviews,
             streak = weekStreak,
-            noSpendStreak = noSpendStreak
+            noSpendStreak = noSpendStreak,
+            homeCurrency = homeCurrency
         )
         
         val monthScore = calculateMonthScore(
-            expenses = normalizedExpenses,
+            normalization = normalized,
             budgetStatuses = budgetStatuses,
             pendingReviews = pendingReviews,
             streak = monthStreak,
-            noSpendStreak = noSpendStreak
+            noSpendStreak = noSpendStreak,
+            homeCurrency = homeCurrency
         )
         
         val compositeScore = calculateCompositeScore(todayScore, weekScore, monthScore)
@@ -119,22 +133,23 @@ class FinancialHealthCalculator @Inject constructor(
     }
 
     private fun calculateTodayScore(
-        expenses: List<ExpenseSnapshot>,
+        normalization: AnalyticsNormalizationResult,
         budgetStatuses: List<BudgetStatusSnapshot>,
         pendingReviews: Int,
         streak: Int,
-        noSpendStreak: Int
+        noSpendStreak: Int,
+        homeCurrency: String
     ): PeriodHealthScore {
         val now = timeProvider.now()
         val (todayStart, todayEnd) = TimePeriodUtils.getDayRange(now)
         
-        val todayExpenses = expenses.filter { 
+        val todayExpenses = normalization.includedExpenses.filter {
             TimePeriodUtils.isInRange(it.date, todayStart, todayEnd) 
         }
         
         val todaySpending = spendingOnly(todayExpenses)
         // SAFE: data normalized at lines 66-72 via AnalyticsCurrencyNormalizer
-        val spentToday = todaySpending.sumOf { it.effectiveAmount }
+        val spentToday = normalization.completeMoneyAggregateForRows(todaySpending, homeCurrency).displayAmount
         
         // Calculate base score components
         val budgetHealth = calculateBudgetHealthScore(budgetStatuses)
@@ -168,27 +183,30 @@ class FinancialHealthCalculator @Inject constructor(
     }
 
     private fun calculateWeekScore(
-        expenses: List<ExpenseSnapshot>,
+        normalization: AnalyticsNormalizationResult,
         budgetStatuses: List<BudgetStatusSnapshot>,
         pendingReviews: Int,
         streak: Int,
-        noSpendStreak: Int
+        noSpendStreak: Int,
+        homeCurrency: String
     ): PeriodHealthScore {
         val now = timeProvider.now()
         val (weekStart, weekEnd) = TimePeriodUtils.getWeekRange(now)
         
-        val weekExpenses = expenses.filter { 
+        val weekExpenses = normalization.includedExpenses.filter {
             TimePeriodUtils.isInRange(it.date, weekStart, weekEnd) 
         }
         
         val weekSpending = spendingOnly(weekExpenses)
         // SAFE: data normalized at lines 66-72 via AnalyticsCurrencyNormalizer
-        val spentThisWeek = weekSpending.sumOf { it.effectiveAmount }
+        val spentThisWeek = normalization.completeMoneyAggregateForRows(weekSpending, homeCurrency).displayAmount
         
         // Calculate volatility (coefficient of variation)
         // SAFE: data normalized at lines 66-72 via AnalyticsCurrencyNormalizer
         val dailySpending = weekSpending.groupBy { TimePeriodUtils.getStartOfDay(it.date) }
-            .map { (_, exps) -> exps.sumOf { it.effectiveAmount } }
+            .map { (_, exps) ->
+                normalization.completeMoneyAggregateForRows(exps, homeCurrency).displayAmount
+            }
         
         val volatility = calculateVolatility(dailySpending)
         
@@ -223,27 +241,30 @@ class FinancialHealthCalculator @Inject constructor(
     }
 
     private fun calculateMonthScore(
-        expenses: List<ExpenseSnapshot>,
+        normalization: AnalyticsNormalizationResult,
         budgetStatuses: List<BudgetStatusSnapshot>,
         pendingReviews: Int,
         streak: Int,
-        noSpendStreak: Int
+        noSpendStreak: Int,
+        homeCurrency: String
     ): PeriodHealthScore {
         val now = timeProvider.now()
         val (monthStart, monthEnd) = TimePeriodUtils.getMonthRange(now)
         
-        val monthExpenses = expenses.filter { 
+        val monthExpenses = normalization.includedExpenses.filter {
             TimePeriodUtils.isInRange(it.date, monthStart, monthEnd) 
         }
         
         val monthSpending = spendingOnly(monthExpenses)
         // SAFE: data normalized at lines 66-72 via AnalyticsCurrencyNormalizer
-        val spentThisMonth = monthSpending.sumOf { it.effectiveAmount }
+        val spentThisMonth = normalization.completeMoneyAggregateForRows(monthSpending, homeCurrency).displayAmount
         
         // Calculate volatility
         // SAFE: data normalized at lines 66-72 via AnalyticsCurrencyNormalizer
         val dailySpending = monthSpending.groupBy { TimePeriodUtils.getStartOfDay(it.date) }
-            .map { (_, exps) -> exps.sumOf { it.effectiveAmount } }
+            .map { (_, exps) ->
+                normalization.completeMoneyAggregateForRows(exps, homeCurrency).displayAmount
+            }
         
         val volatility = calculateVolatility(dailySpending)
         
@@ -425,49 +446,12 @@ class FinancialHealthCalculator @Inject constructor(
     }
 
     /**
-     * Converts a data-layer [Expense] into a domain [ExpenseSnapshot] preserving
-     * the original effective amount and currency. Used as a fallback when
-     * cross-currency normalization is unavailable.
-     */
-    private fun Expense.toExpenseSnapshot(): ExpenseSnapshot = ExpenseSnapshot(
-        id = id,
-        amount = effectiveAmount,
-        effectiveAmount = effectiveAmount,
-        currency = currency,
-        merchant = merchant,
-        merchantKey = merchantKey,
-        transactionType = transactionType.toDomain(),
-        date = date,
-        categoryId = categoryId,
-        isNotMine = isNotMine,
-        transferDirection = transferDirection?.let { d ->
-            when (d) {
-                com.yourname.expensetracker.data.database.entity.TransferDirection.INCOMING ->
-                    DomainTransferDirection.INCOMING
-                com.yourname.expensetracker.data.database.entity.TransferDirection.OUTGOING ->
-                    DomainTransferDirection.OUTGOING
-            }
-        },
-        notes = notes
-    )
-
-    /**
      * Returns only the canonical spending rows from the given list.
      * Non-spend transaction types (DEPOSIT, TRANSFER, WITHDRAWAL, UNKNOWN)
      * are excluded so they do not inflate spend totals or distort volatility.
      */
     private fun spendingOnly(expenses: List<ExpenseSnapshot>): List<ExpenseSnapshot> =
         expenses.filter { it.transactionType.isSpending }
-
-    // Boundary mapper: data-layer TransactionType -> domain DomainTransactionType
-    private fun TransactionType.toDomain(): DomainTransactionType =
-        when (this) {
-            TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
-            TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
-            TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
-            TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
-            TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
-        }
 
     private fun calculateNormalizedBudgetTarget(
         budgetStatuses: List<BudgetStatusSnapshot>,

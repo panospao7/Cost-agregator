@@ -56,6 +56,21 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
     private val now = millis(2026, Calendar.APRIL, 15)
     private val dayMs = 24L * 60L * 60L * 1000L
 
+    @Test
+    fun `included row warning alone cannot improve health or persist a score`() = runTest {
+        val snapshot = expense(1L, 100.0, TransactionType.PURCHASE, now - dayMs).toExpenseSnapshot()
+        coEvery { analyticsCurrencyNormalizer.normalizeExpenses(any(), any()) } returns AnalyticsNormalizationResult(
+            "EUR", listOf(NormalizedExpenseSnapshot(snapshot, "EUR", 100.0, 100.0,
+                qualityWarning = com.yourname.expensetracker.domain.analytics.AnalyticsConversionWarningType.STALE_EXCHANGE_RATE)),
+            listOf(snapshot), emptyList(), null, totalInputCount = 1
+        )
+        val outcome = calculator.calculateHealthScore()
+        assertTrue(outcome is HealthScoreOutcome.Unavailable)
+        assertEquals(HealthScoreUnavailableReason.NORMALIZATION_FAILED, (outcome as HealthScoreOutcome.Unavailable).reason)
+        coVerify(exactly = 0) { healthScoreHistoryDao.insert(any()) }
+        coVerify(exactly = 0) { healthScoreHistoryDao.update(any()) }
+    }
+
     @Before
     override fun setUp() {
         super.setUp()
@@ -108,6 +123,101 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
             cashFlowCalculator = cashFlowCalculator,
             writeBarrier = writeBarrier
         )
+    }
+
+    @Test
+    fun `mixed currency savings make runway unavailable without persisting a score`() = runTest {
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+            expense(1L, 500.0, TransactionType.PURCHASE, now - dayMs)
+        )
+        coEvery { savingsGoalRepository.getSavingsGoals() } returns listOf(
+            goal(1L, 1000.0, 500.0).copy(currency = "USD")
+        )
+        val result = calculator.calculateHealthScore()
+        assertTrue(result is HealthScoreOutcome.Unavailable)
+        coVerify(exactly = 0) { healthScoreHistoryDao.insert(any()) }
+    }
+
+    @Test
+    fun `uncertain savings provenance is unavailable even for same home and zero balances`() = runTest {
+        val assumptions = listOf("LEGACY_DEFAULT", "UNKNOWN", "", "ASSUMED_HOME_CURRENCY",
+            "ASSUMED_LEGACY_EUR", "UNRECOGNIZED")
+        for (currency in listOf("EUR", "USD", "GBP")) {
+            for (assumption in assumptions) {
+                for (balance in listOf(0.0, 500.0)) {
+                    coEvery { savingsGoalRepository.getSavingsGoals() } returns listOf(
+                        goal(1L, 1000.0, balance).copy(currency = currency, currencyAssumption = assumption)
+                    )
+                    val outcome = calculator.calculateHealthScore()
+                    assertTrue(outcome is HealthScoreOutcome.Unavailable)
+                    assertEquals(HealthScoreUnavailableReason.NORMALIZATION_FAILED,
+                        (outcome as HealthScoreOutcome.Unavailable).reason)
+                }
+            }
+        }
+        coVerify(exactly = 0) { healthScoreHistoryDao.insert(any()) }
+        coVerify(exactly = 0) { healthScoreHistoryDao.update(any()) }
+    }
+
+    @Test
+    fun `unknown balance in mixed portfolio cannot be omitted or converted`() = runTest {
+        val converter = mockk<com.yourname.expensetracker.domain.currency.CurrencyConverter>()
+        val tested = FinancialHealthScoreV2(budgetRepository, expenseRepository, savingsGoalRepository,
+            recurringExpenseEngine, healthScoreHistoryDao, timeProvider, analyticsCurrencyNormalizer,
+            currencySettingsRepository, cashFlowCalculator, writeBarrier, converter)
+        for ((target, balance) in listOf(1000.0 to 0.0, 500.0 to 500.0)) {
+            coEvery { savingsGoalRepository.getSavingsGoals() } returns listOf(
+                goal(1L, 1000.0, 500.0).copy(currency = "USD"),
+                goal(2L, target, balance).copy(currencyAssumption = "LEGACY_DEFAULT")
+            )
+            val outcome = tested.calculateHealthScore() as HealthScoreOutcome.Unavailable
+            assertEquals(HealthScoreUnavailableReason.NORMALIZATION_FAILED, outcome.reason)
+        }
+        coVerify(exactly = 0) { converter.convertOutcome(any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { healthScoreHistoryDao.insert(any()) }
+        coVerify(exactly = 0) { healthScoreHistoryDao.update(any()) }
+    }
+
+    @Test
+    fun `unknown savings block both pre period and low coverage neutral shortcuts`() = runTest {
+        coEvery { savingsGoalRepository.getSavingsGoals() } returns listOf(
+            goal(1L, 1000.0, 0.0).copy(currencyAssumption = "LEGACY_DEFAULT")
+        )
+        val periodStart = TimePeriodUtils.getStartOfMonth(now)
+        val periodEnd = TimePeriodUtils.getEndOfMonth(now)
+        for (evaluationTime in listOf(periodStart - dayMs, periodStart + dayMs / 2)) {
+            every { timeProvider.now() } returns evaluationTime
+            val outcome = calculator.calculateHealthScore(periodStart, periodEnd) as HealthScoreOutcome.Unavailable
+            assertEquals(HealthScoreUnavailableReason.NORMALIZATION_FAILED, outcome.reason)
+        }
+        coVerify(exactly = 0) { healthScoreHistoryDao.insert(any()) }
+        coVerify(exactly = 0) { healthScoreHistoryDao.update(any()) }
+    }
+
+    @Test
+    fun `explicit home savings preserve runway arithmetic for EUR USD and GBP`() = runTest {
+        for (currency in listOf("EUR", "USD", "GBP")) {
+            every { currencySettingsRepository.homeCurrency() } returns flowOf(currency)
+            coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+                expense(1L, 900.0, TransactionType.PURCHASE, now - dayMs).copy(currency = currency)
+            )
+            coEvery { savingsGoalRepository.getSavingsGoals() } returns listOf(
+                goal(1L, 3000.0, 900.0).copy(currency = currency)
+            )
+            assertEquals(8, calculator.availableResult().runwayScore)
+        }
+        coVerify(exactly = 3) { healthScoreHistoryDao.insert(any()) }
+    }
+
+    @Test
+    fun `upcoming bill cancellation propagates rather than becoming zero bills`() = runTest {
+        coEvery { cashFlowCalculator.getUpcomingBills(any()) } throws CancellationException("TEST_CANCELLED")
+        try {
+            calculator.calculateHealthScore()
+            org.junit.Assert.fail("Cancellation must propagate")
+        } catch (error: CancellationException) {
+            assertEquals("TEST_CANCELLED", error.message)
+        }
     }
 
     @Test
@@ -635,6 +745,107 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
         coVerify(exactly = 0) { healthScoreHistoryDao.update(any()) }
     }
 
+    @Test
+    fun `runway converts mixed balances and dated mixed bills under explicit policies`() = runTest {
+        val converter = mockk<com.yourname.expensetracker.domain.currency.CurrencyConverter>()
+        val due = now + dayMs
+        coEvery { converter.convertOutcome(any(), any(), any(), any(), any(), any()) } answers {
+            val amount = firstArg<Double>()
+            val source = CurrencyCode(arg<String>(1))
+            val rate = if (source == CurrencyCode.USD) 0.5 else 2.0
+            com.yourname.expensetracker.domain.core.money.ConversionOutcome.Converted(
+                amount, source, amount * rate, CurrencyCode.EUR, rate, arg(3), arg<Long?>(4), null, "TEST",
+                com.yourname.expensetracker.domain.core.money.ConversionPath.DIRECT
+            )
+        }
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+            expense(1L, 500.0, TransactionType.PURCHASE, now - dayMs)
+        )
+        coEvery { savingsGoalRepository.getSavingsGoals() } returns listOf(
+            goal(1L, 10000.0, 1000.0).copy(currency = "USD", currencyAssumption = "EXPLICIT"),
+            goal(2L, 10000.0, 500.0)
+        )
+        coEvery { cashFlowCalculator.getUpcomingBills(any()) } returns listOf(
+            com.yourname.expensetracker.domain.model.RecurringPattern("Foreign", 100.0, "GBP",
+                com.yourname.expensetracker.domain.model.RecurrenceFrequency.MONTHLY, 0, 0.0, due, 1f, emptyList()),
+            com.yourname.expensetracker.domain.model.RecurringPattern("Home", 100.0, "EUR",
+                com.yourname.expensetracker.domain.model.RecurrenceFrequency.MONTHLY, 0, 0.0, due, 1f, emptyList())
+        )
+        val tested = FinancialHealthScoreV2(budgetRepository, expenseRepository, savingsGoalRepository,
+            recurringExpenseEngine, healthScoreHistoryDao, timeProvider, analyticsCurrencyNormalizer,
+            currencySettingsRepository, cashFlowCalculator, writeBarrier, converter)
+        assertEquals(11, tested.availableResult().runwayScore)
+        coVerify(exactly = 1) { converter.convertOutcome(1000.0, "USD", "EUR",
+            com.yourname.expensetracker.domain.core.money.RateBasis.LATEST_AVAILABLE, null, any()) }
+        coVerify(exactly = 1) { converter.convertOutcome(100.0, "GBP", "EUR",
+            com.yourname.expensetracker.domain.core.money.RateBasis.FORECAST_DATE, due, any()) }
+    }
+
+    @Test
+    fun `explicit three currency savings retain latest available valuation`() = runTest {
+        val converter = mockk<com.yourname.expensetracker.domain.currency.CurrencyConverter>()
+        coEvery { converter.convertOutcome(any(), any(), any(), any(), any(), any()) } answers {
+            val amount = firstArg<Double>()
+            val source = CurrencyCode(arg<String>(1))
+            val rate = if (source == CurrencyCode.USD) 0.5 else 2.0
+            com.yourname.expensetracker.domain.core.money.ConversionOutcome.Converted(
+                amount, source, amount * rate, CurrencyCode.EUR, rate, arg(3), arg<Long?>(4), null, "TEST",
+                com.yourname.expensetracker.domain.core.money.ConversionPath.DIRECT
+            )
+        }
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+            expense(1L, 500.0, TransactionType.PURCHASE, now - dayMs)
+        )
+        coEvery { savingsGoalRepository.getSavingsGoals() } returns listOf(
+            goal(1L, 10000.0, 500.0),
+            goal(2L, 10000.0, 1000.0).copy(currency = "USD", currencyAssumption = "USER_CONFIRMED"),
+            goal(3L, 10000.0, 150.0).copy(currency = "GBP", currencyAssumption = "PARSED_FROM_SOURCE")
+        )
+        val tested = FinancialHealthScoreV2(budgetRepository, expenseRepository, savingsGoalRepository,
+            recurringExpenseEngine, healthScoreHistoryDao, timeProvider, analyticsCurrencyNormalizer,
+            currencySettingsRepository, cashFlowCalculator, writeBarrier, converter)
+        assertEquals(21, tested.availableResult().runwayScore)
+        coVerify(exactly = 1) { converter.convertOutcome(1000.0, "USD", "EUR",
+            com.yourname.expensetracker.domain.core.money.RateBasis.LATEST_AVAILABLE, null, any()) }
+        coVerify(exactly = 1) { converter.convertOutcome(150.0, "GBP", "EUR",
+            com.yourname.expensetracker.domain.core.money.RateBasis.LATEST_AVAILABLE, null, any()) }
+        coVerify(exactly = 2) { converter.convertOutcome(any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `missing planned bill FX makes runway unavailable without history writes`() = runTest {
+        val converter = mockk<com.yourname.expensetracker.domain.currency.CurrencyConverter>()
+        coEvery { converter.convertOutcome(any(), any(), any(), any(), any(), any()) } returns
+            com.yourname.expensetracker.domain.core.money.ConversionOutcome.Failed(
+                100.0, "GBP", "EUR", com.yourname.expensetracker.domain.core.money.RateBasis.FORECAST_DATE,
+                com.yourname.expensetracker.domain.core.money.ConversionFailureType.MISSING_HISTORICAL_RATE, "TEST")
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+            expense(1L, 500.0, TransactionType.PURCHASE, now - dayMs)
+        )
+        coEvery { savingsGoalRepository.getSavingsGoals() } returns listOf(goal(1L, 10000.0, 1000.0))
+        coEvery { cashFlowCalculator.getUpcomingBills(any()) } returns listOf(
+            com.yourname.expensetracker.domain.model.RecurringPattern("Foreign", 100.0, "GBP",
+                com.yourname.expensetracker.domain.model.RecurrenceFrequency.MONTHLY, 0, 0.0, now + dayMs, 1f, emptyList())
+        )
+        val tested = FinancialHealthScoreV2(budgetRepository, expenseRepository, savingsGoalRepository,
+            recurringExpenseEngine, healthScoreHistoryDao, timeProvider, analyticsCurrencyNormalizer,
+            currencySettingsRepository, cashFlowCalculator, writeBarrier, converter)
+        val result = tested.calculateHealthScore() as HealthScoreOutcome.Unavailable
+        assertEquals(HealthScoreUnavailableReason.NORMALIZATION_FAILED, result.reason)
+        coVerify(exactly = 0) { healthScoreHistoryDao.insert(any()) }
+        coVerify(exactly = 0) { healthScoreHistoryDao.update(any()) }
+    }
+
+    @Test
+    fun `settings cancellation propagates without history persistence`() = runTest {
+        every { currencySettingsRepository.homeCurrency() } returns kotlinx.coroutines.flow.flow {
+            throw CancellationException("TEST_CANCELLED")
+        }
+        val error = runCatching { calculator.calculateHealthScore() }.exceptionOrNull()
+        assertTrue(error is CancellationException)
+        coVerify(exactly = 0) { healthScoreHistoryDao.insert(any()) }
+    }
+
     /** P5-008: unwrap [HealthScoreOutcome.Available]; an unexpected Unavailable fails the test loudly. */
     private suspend fun FinancialHealthScoreV2.availableResult(
         periodStart: Long = TimePeriodUtils.getStartOfMonth(timeProvider.now()),
@@ -690,7 +901,9 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
             currentAmount = current,
             targetDate = null,
             protectionLevel = GoalProtectionLevel.WARNING,
-            createdAt = now - dayMs
+            createdAt = now - dayMs,
+            currency = "EUR",
+            currencyAssumption = "EXPLICIT"
         )
     }
 

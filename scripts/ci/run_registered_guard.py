@@ -249,6 +249,7 @@ def execute_plan(
                 text=True,
                 encoding="utf-8",
                 errors="replace",
+                env={**os.environ, "PYTHONIOENCODING": "utf-8"},
             )
         except (FileNotFoundError, PermissionError, OSError):
             # Bounded diagnostic only — never the exception message (it may
@@ -260,15 +261,34 @@ def execute_plan(
         # Capture is for the bounded infra preview, not for suppression:
         # re-emit the child's output so callers keep console visibility.
         if completed.stdout:
-            sys.stdout.write(completed.stdout)
-            sys.stdout.flush()
+            _write_console_text(sys.stdout, completed.stdout)
         if completed.stderr:
-            sys.stderr.write(completed.stderr)
-            sys.stderr.flush()
+            _write_console_text(sys.stderr, completed.stderr)
         stderr_preview = redact_bounded_preview(completed.stderr)
     if child_exit in (EXIT_PASS, EXIT_VIOLATION, EXIT_INFRA):
         return child_exit, child_exit, duration, stderr_preview
     return EXIT_INFRA, child_exit, duration, stderr_preview
+
+
+def _write_console_text(stream: Any, text: str) -> None:
+    """Emit child output without letting a legacy console encoding crash the adapter."""
+    try:
+        stream.write(text)
+        stream.flush()
+        return
+    except UnicodeEncodeError:
+        pass
+
+    encoded = text.encode("utf-8", errors="replace")
+    buffer = getattr(stream, "buffer", None)
+    if buffer is not None:
+        buffer.write(encoded)
+        buffer.flush()
+        return
+
+    encoding = getattr(stream, "encoding", None) or "ascii"
+    stream.write(text.encode(encoding, errors="backslashreplace").decode(encoding))
+    stream.flush()
 
 
 # ── Summary ─────────────────────────────────────────────────────────────────────

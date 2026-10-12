@@ -23,6 +23,8 @@ import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.cashflow.CashFlowRiskLevel
 import com.yourname.expensetracker.domain.cashflow.DailyCashFlow
+import com.yourname.expensetracker.domain.core.money.ConversionQuality
+import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import java.time.Instant
@@ -371,10 +373,9 @@ private fun DailyCashFlowDetails(
             return
         }
 
-        // SAFE: CashFlowCalculator groups expenses by day which are almost always same-currency
-        val incomeTotal = cashFlow.income.sumOf { abs(it.amount) }
-        val expensesTotal = cashFlow.expenses.sumOf { it.effectiveAmount }
-        val recurringTotal = cashFlow.predictedRecurring.sumOf { it.averageAmount }
+        val incomeTotal = formatCashFlowAggregate(cashFlow.incomeAggregate, cashFlow.isPartial)
+        val expensesTotal = formatCashFlowAggregate(cashFlow.expenseAggregate, cashFlow.isPartial)
+        val recurringTotal = formatCashFlowAggregate(cashFlow.recurringAggregate, cashFlow.isPartial)
 
         Text(
             text = "Ending balance: ${CurrencyFormatter.formatMoney(cashFlow.endingBalance, homeCurrency)}",
@@ -384,17 +385,17 @@ private fun DailyCashFlowDetails(
         Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            text = "Income: ${CurrencyFormatter.formatMoney(incomeTotal, homeCurrency)}",
+            text = "Income: $incomeTotal",
             style = MaterialTheme.typography.bodyMedium,
             color = SemanticColors.StatusGreen
         )
         Text(
-            text = "Expenses: ${CurrencyFormatter.formatMoney(expensesTotal, homeCurrency)}",
+            text = "Expenses: $expensesTotal",
             style = MaterialTheme.typography.bodyMedium,
             color = SemanticColors.StatusRed
         )
         Text(
-            text = "Recurring: ${CurrencyFormatter.formatMoney(recurringTotal, homeCurrency)}",
+            text = "Recurring: $recurringTotal",
             style = MaterialTheme.typography.bodyMedium,
             color = SemanticColors.StatusYellow
         )
@@ -405,7 +406,7 @@ private fun DailyCashFlowDetails(
             Text(text = "Income items", fontWeight = FontWeight.SemiBold)
             cashFlow.income.take(3).forEach { income ->
                 Text(
-                    text = "• ${income.merchant}: +${CurrencyFormatter.formatMoney(abs(income.amount), homeCurrency)}",
+                    text = "• ${income.merchant}: +${CurrencyFormatter.formatMoney(abs(income.amount), income.currency)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -417,7 +418,7 @@ private fun DailyCashFlowDetails(
             Text(text = "Expense items", fontWeight = FontWeight.SemiBold)
             cashFlow.expenses.take(3).forEach { expense ->
                 Text(
-                    text = "• ${expense.merchant}: -${CurrencyFormatter.formatMoney(expense.amount, homeCurrency)}",
+                    text = "• ${expense.merchant}: -${CurrencyFormatter.formatMoney(expense.amount, expense.currency)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -429,7 +430,7 @@ private fun DailyCashFlowDetails(
             Text(text = "Recurring items", fontWeight = FontWeight.SemiBold)
             cashFlow.predictedRecurring.take(3).forEach { recurring ->
                 Text(
-                    text = "• ${recurring.merchantName}: -${CurrencyFormatter.formatMoney(recurring.averageAmount, homeCurrency)}",
+                    text = "• ${recurring.merchantName}: -${CurrencyFormatter.formatMoney(recurring.averageAmount, recurring.currency)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -440,3 +441,12 @@ private fun DailyCashFlowDetails(
         Spacer(modifier = Modifier.height(16.dp))
     }
 }
+
+internal fun formatCashFlowAggregate(aggregate: MoneyAggregate?, isPartial: Boolean): String =
+    aggregate?.takeIf {
+        !isPartial && !it.isPartial &&
+            it.conversionQuality == ConversionQuality.COMPLETE &&
+            it.conversionFailures.isEmpty()
+    }
+        ?.formatDisplay()
+        ?: if (isPartial) "Partial / unavailable" else "Unavailable"

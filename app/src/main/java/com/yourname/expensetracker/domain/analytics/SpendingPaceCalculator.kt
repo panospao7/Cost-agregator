@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateResult
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
@@ -9,17 +10,11 @@ import javax.inject.Singleton
 import timber.log.Timber
 
 /**
- * ## CURRENCY NORMALIZATION: SAFE — pre-normalized by caller
- * This engine does **not** inject [AnalyticsCurrencyNormalizer]. It relies on
- * the caller (typically [InsightsEngine]) having already normalized all
- * [ExpenseSnapshot] data to a single currency via
- * [AnalyticsCurrencyNormalizer.normalizeSnapshots] before it reaches this
- * class. All `sumOf { it.effectiveAmount }` calls operate on already-normalized
- * values.
- *
- * If un-normalized multi-currency data reaches this engine, the pace calculation
- * (current-month spend, previous-month spend, projected total) will be
- * incorrect because it mixes amounts in different currencies.
+ * ## Enforced currency boundary
+ * Normalized inputs retain their home currency and rate provenance. The legacy
+ * snapshot adapter accepts only one supported source currency matching the
+ * requested target; it never converts or relabels mixed-currency rows.
+ * Unavailable conversion data is not projected as zero spending.
  *
  * ## Pace formula
  *   pace% = (currentDailyRate / baselineDailyRate) × 100
@@ -40,80 +35,100 @@ class SpendingPaceCalculator @Inject constructor(
     // wrong when run against a past (historical) period — it compares to "now" instead of
     // the period's end.
     // A13-FIXED: Historical periods use period end, not timeProvider.now().
+    @Deprecated("Use normalized input; compatibility snapshots must all match the explicit currency")
     fun calculate(
         currentMonthStart: Long,
         previousMonthStart: Long,
         previousMonthEnd: Long,
         allExpenses: List<ExpenseSnapshot>,
-        displayCurrency: String = "EUR",
+        displayCurrency: String = SingleCurrencyAnalyticsInput.currencyOf(allExpenses),
+        referenceNowMs: Long = timeProvider.now()
+    ): SpendingPace {
+        val input = SingleCurrencyAnalyticsInput.from(allExpenses, displayCurrency)
+        return calculate(currentMonthStart, previousMonthStart, previousMonthEnd, input, input, displayCurrency, referenceNowMs)
+    }
+
+    /**
+     * Calculates pace from canonical normalized analytics inputs.
+     *
+     * The scalar fields remain available for legacy dashboard consumers, while
+     * the typed results preserve unavailable/partial state and rate provenance.
+     */
+    fun calculate(
+        currentMonthStart: Long,
+        previousMonthStart: Long,
+        previousMonthEnd: Long,
+        currentInput: NormalizedAnalyticsInput,
+        previousInput: NormalizedAnalyticsInput? = null,
+        displayCurrency: String = currentInput.homeCurrency,
         referenceNowMs: Long = timeProvider.now()
     ): SpendingPace {
         val currentMonthEnd = TimePeriodUtils.getEndOfMonth(currentMonthStart)
         val currentWindowEnd = minOf(referenceNowMs, currentMonthEnd)
         val daysInMonth = TimePeriodUtils.getDaysInMonth(currentMonthStart)
-        val currentDay = (TimePeriodUtils.daysBetween(currentMonthStart, currentWindowEnd) + 1).coerceAtLeast(1)
-        
-        val monthSpent = allExpenses
-            .filter { 
-                it.date >= currentMonthStart &&
-                it.date < currentWindowEnd &&
-                it.transactionType == DomainTransactionType.PURCHASE && 
-                !it.isNotMine 
-            }
-            // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
-            .sumOf { it.effectiveAmount }
-        
-        val previousMonthSpent = allExpenses
-            .filter {
-                it.date >= previousMonthStart &&
-                it.date < previousMonthEnd &&
-                it.transactionType == DomainTransactionType.PURCHASE &&
-                !it.isNotMine
-            }
-            // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
-            .sumOf { it.effectiveAmount }
+        val currentDay = (TimePeriodUtils.daysBetween(currentMonthStart, currentWindowEnd) + 1)
+            .coerceAtLeast(1)
 
-        // Canonical pace formula used across analytics engines:
-        // pace% = (currentDailyRate / baselineDailyRate) * 100
-        // currentDailyRate = currentSpent / daysElapsed
-        // baselineDailyRate = previousMonthTotal / daysInPreviousMonth
-        val currentDailyRate = if (currentDay > 0) monthSpent / currentDay else 0.0
+        val currentExpenses = currentInput.includedExpenses.filter {
+            it.date >= currentMonthStart &&
+                it.date < currentWindowEnd &&
+                it.transactionType == DomainTransactionType.PURCHASE.name &&
+                !it.isNotMine
+        }
+        val currentResult = NormalizedAnalyticsMoneyAdapter.aggregateInputSlice(
+            input = currentInput,
+            includedExpenses = currentExpenses,
+            startInclusiveMillis = currentMonthStart,
+            endExclusiveMillis = currentWindowEnd,
+            displayCurrency = displayCurrency
+        )
+
+        val previousExpenses = previousInput?.includedExpenses?.filter {
+            it.date >= previousMonthStart &&
+                it.date < previousMonthEnd &&
+                it.transactionType == DomainTransactionType.PURCHASE.name &&
+                !it.isNotMine
+        }
+        val previousResult = previousInput?.let { input ->
+            NormalizedAnalyticsMoneyAdapter.aggregateInputSlice(
+                input = input,
+                includedExpenses = previousExpenses.orEmpty(),
+                startInclusiveMillis = previousMonthStart,
+                endExclusiveMillis = previousMonthEnd,
+                displayCurrency = displayCurrency
+            )
+        }
+
+        val monthSpent = availableAmount(currentResult)
+        val previousMonthSpent = previousResult?.let(::availableAmount)
         val previousMonthDays = TimePeriodUtils.getDaysInMonth(previousMonthStart)
-        val baselineDailyRate = if (previousMonthDays > 0) previousMonthSpent / previousMonthDays else 0.0
-        val projectedTotal = calculateProjectedTotal(
-            monthSpent = monthSpent,
+        val currentDailyRate = monthSpent?.div(currentDay)
+        val baselineDailyRate = if (previousMonthDays > 0 && previousMonthSpent != null) {
+            previousMonthSpent / previousMonthDays
+        } else {
+            0.0
+        }
+        val projectedTotal = monthSpent?.let { availableSpent -> calculateProjectedTotal(
+            monthSpent = availableSpent,
             daysElapsed = currentDay,
             daysInMonth = daysInMonth,
             baselineDailyRate = baselineDailyRate
-        )
-
-        val hasBaseline = baselineDailyRate > 0.0
-        // NEW-P6-013: Return -1f (sentinel) instead of 0f when no baseline exists,
-        // because 0f is misleading — it would be indistinguishable from a true 0% pace.
+        ) }
+        val hasBaseline = currentResult is MoneyAggregateResult.Available &&
+            previousResult is MoneyAggregateResult.Available &&
+            currentDailyRate != null && baselineDailyRate > 0.0
         val pacePercentage = if (hasBaseline) {
-            (currentDailyRate / baselineDailyRate * 100).toFloat()
+            (currentDailyRate!! / baselineDailyRate * 100.0).toFloat()
         } else {
             -1f
         }
-
-        Timber.tag("SpendingPaceCalculator").d(
-            "Pace calculation: monthSpent=%.2f, daysElapsed=%d, currentDailyRate=%.4f, previousMonthSpent=%.2f, previousMonthDays=%d, baselineDailyRate=%.4f, pacePercentage=%.2f",
-            monthSpent,
-            currentDay,
-            currentDailyRate,
-            previousMonthSpent,
-            previousMonthDays,
-            baselineDailyRate,
-            pacePercentage
-        )
-
         val paceStatus = when {
             !hasBaseline -> PaceStatus.NO_BASELINE
             pacePercentage < PACE_UNDER_THRESHOLD -> PaceStatus.UNDER_PACE
             pacePercentage > PACE_OVER_THRESHOLD -> PaceStatus.OVER_PACE
             else -> PaceStatus.ON_PACE
         }
-        
+
         return SpendingPace(
             currentMonthSpent = monthSpent,
             daysElapsed = currentDay,
@@ -123,9 +138,14 @@ class SpendingPaceCalculator @Inject constructor(
             averageMonthlyTotal = null,
             pacePercentage = pacePercentage,
             paceStatus = paceStatus,
-            displayCurrency = displayCurrency
+            displayCurrency = displayCurrency,
+            currentMoneyResult = currentResult,
+            previousMoneyResult = previousResult
         )
     }
+
+    private fun availableAmount(result: MoneyAggregateResult): Double? =
+        (result as? MoneyAggregateResult.Available)?.aggregate?.displayAmount
 
     
     private fun calculateProjectedTotal(

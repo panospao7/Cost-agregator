@@ -1,17 +1,18 @@
 package com.yourname.expensetracker.data.database
 
-import androidx.room.Room
+import android.database.sqlite.SQLiteDatabase
 import androidx.room.testing.MigrationTestHelper
 import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.*
-import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.IOException
+import java.nio.ByteBuffer
+import java.nio.charset.CodingErrorAction
 
 @RunWith(AndroidJUnit4::class)
 class DatabaseMigrationMatrixTest {
@@ -39,28 +40,32 @@ class DatabaseMigrationMatrixTest {
     // LOWEST exported schema JSON is v33 — the oldest version we have a snapshot for.
     private val LOWEST_EXPORTED_SCHEMA = 33
 
-    // The migration baseline — versions below this use destructive fallback.
-    private val MIGRATION_BASELINE = 145
+    // Versions below the supported baseline are not implicitly reset.
+    private val MIGRATION_BASELINE = DatabaseSchemaPolicy.MIGRATION_BASELINE
 
     // Current latest DB version.
-    private val CURRENT_VERSION = 149
+    private val CURRENT_VERSION = DatabaseSchemaPolicy.CURRENT_VERSION
 
     // ── Baseline Chain Tests ──────────────────────────────────────────
 
     /**
-     * Tests the ACTIVE migration chain: v145 → v146 → v147 → v148.
+     * Tests the ACTIVE migration chain from the baseline to the current version.
      * These are the only migrations registered in DatabaseMigrations.ALL.
      * This is the critical path — if this fails, the migration ladder is broken.
      */
     @Test
     @Throws(IOException::class)
-    fun baseline_chain_145_to_148_passes() {
-        assumeTrue(hasSchema(MIGRATION_BASELINE) && hasSchema(CURRENT_VERSION))
+    fun baseline_chain_to_current_version_passes() {
+        assertTrue(hasSchema(MIGRATION_BASELINE) && hasSchema(CURRENT_VERSION))
 
         var db = helper.createDatabase("matrix-145-148", MIGRATION_BASELINE)
+        seedExpense(db)
         db.close()
 
-        db = helper.runMigrationsAndValidate("matrix-145-148", CURRENT_VERSION, true)
+        db = helper.runMigrationsAndValidate(
+            "matrix-145-148", CURRENT_VERSION, true, *DatabaseSchemaPolicy.ALL_MIGRATIONS
+        )
+        assertSeedExpense(db)
         db.close()
     }
 
@@ -70,11 +75,10 @@ class DatabaseMigrationMatrixTest {
     @Test
     @Throws(IOException::class)
     fun migrate_145_to_146_adds_negotiation_outcomes() {
-        assumeTrue(hasSchema(145) && hasSchema(146))
+        assertTrue(hasSchema(145) && hasSchema(146))
 
         var db = helper.createDatabase("matrix-145-146", 145)
-        // Seed an expense (parent table for FK)
-        db.execSQL("INSERT INTO expenses (id, amount, currency, merchant, date, effectiveAmount, transactionType, isNotMine) VALUES (1, 100.0, 'EUR', 'Test', 1000, 100.0, 'PURCHASE', 0)")
+        seedExpense(db)
         db.close()
 
         db = helper.runMigrationsAndValidate("matrix-145-146", 146, true, DatabaseMigrations.MIGRATION_145_146)
@@ -88,6 +92,7 @@ class DatabaseMigrationMatrixTest {
         assertTrue(hasIndex(db, "index_negotiation_outcomes_subscriptionId"))
         assertTrue(hasIndex(db, "index_negotiation_outcomes_createdAt"))
         assertTrue(hasIndex(db, "index_negotiation_outcomes_outcome"))
+        assertSeedExpense(db)
 
         db.close()
     }
@@ -98,7 +103,7 @@ class DatabaseMigrationMatrixTest {
     @Test
     @Throws(IOException::class)
     fun migrate_146_to_147_adds_leftAt_and_idempotencyKey() {
-        assumeTrue(hasSchema(146) && hasSchema(147))
+        assertTrue(hasSchema(146) && hasSchema(147))
 
         var db = helper.createDatabase("matrix-146-147", 146)
         db.close()
@@ -132,7 +137,7 @@ class DatabaseMigrationMatrixTest {
     @Test
     @Throws(IOException::class)
     fun migrate_147_to_148_adds_worker_tracing_columns() {
-        assumeTrue(hasSchema(147) && hasSchema(148))
+        assertTrue(hasSchema(147) && hasSchema(148))
 
         var db = helper.createDatabase("matrix-147-148", 147)
         db.close()
@@ -161,13 +166,12 @@ class DatabaseMigrationMatrixTest {
 
     /**
      * Individual migration: v148 → v149 (RP-17 17-D: bank review identity
-     * columns + unique index). Runs once the v149 schema snapshot is exported
-     * by the Room annotation processor; skipped (assumeTrue) until then.
+     * columns + unique index). The supported schema snapshots are required.
      */
     @Test
     @Throws(IOException::class)
     fun migrate_148_to_149_adds_bank_review_identity() {
-        assumeTrue(hasSchema(148) && hasSchema(149))
+        assertTrue(hasSchema(148) && hasSchema(149))
 
         var db = helper.createDatabase("matrix-148-149", 148)
         db.close()
@@ -192,24 +196,33 @@ class DatabaseMigrationMatrixTest {
     // ── Fresh-vs-Migrated Schema Parity ───────────────────────────────
 
     /**
-     * Fresh-install database at v148 must have identical schema to a
-     * database that was created at v145 and migrated to v148.
-     * This proves there is no schema drift between the two paths.
+     * Fresh creation and supported upgrades must produce the same tables.
+     * runMigrationsAndValidate separately checks the migrated schema against
+     * the current exported Room snapshot, including columns, indexes and FKs.
      */
     @Test
     @Throws(IOException::class)
-    fun fresh_vs_migrated_schema_parity_at_v148() {
-        assumeTrue(hasSchema(MIGRATION_BASELINE) && hasSchema(CURRENT_VERSION))
+    fun fresh_vs_migrated_table_parity_at_current_version() {
+        assertTrue(hasSchema(MIGRATION_BASELINE) && hasSchema(CURRENT_VERSION))
 
-        // Create fresh database at v148
-        val freshDb = helper.createDatabase("matrix-fresh-148", CURRENT_VERSION)
-        val freshTables = getTableNames(freshDb)
-        freshDb.close()
+        // Create a fresh database at the current version.
+        val freshDb = AppDatabase.fileBuilder(
+            InstrumentationRegistry.getInstrumentation().targetContext, "matrix-fresh-current"
+        ).allowMainThreadQueries().build()
+        val freshTables = try {
+            getTableNames(freshDb.openHelper.writableDatabase)
+        } finally {
+            freshDb.close()
+        }
 
-        // Create at v145 and migrate to v148
+        // Create at the baseline and migrate to current.
         var migratedDb = helper.createDatabase("matrix-migrated-148", MIGRATION_BASELINE)
+        seedExpense(migratedDb)
         migratedDb.close()
-        migratedDb = helper.runMigrationsAndValidate("matrix-migrated-148", CURRENT_VERSION, true)
+        migratedDb = helper.runMigrationsAndValidate(
+            "matrix-migrated-148", CURRENT_VERSION, true, *DatabaseSchemaPolicy.ALL_MIGRATIONS
+        )
+        assertSeedExpense(migratedDb)
         val migratedTables = getTableNames(migratedDb)
         migratedDb.close()
 
@@ -220,46 +233,80 @@ class DatabaseMigrationMatrixTest {
         )
     }
 
-    // ── Pre-Baseline Destructive Migration ────────────────────────────
+    // Unsupported databases must fail closed, not be silently reset.
 
     /**
-     * A database at v33 (pre-baseline) should be destructively recreated
-     * when opened at v148, since no migration path exists.
-     *
-     * Any data in the old DB is lost, but the schema is fresh-install clean.
+     * The canonical builder has no destructive fallback. Refusing an unsupported
+     * database must preserve its schema version and data for explicit rescue.
      */
     @Test
     @Throws(IOException::class)
-    fun pre_baseline_v33_destructive_migration_to_v148() {
-        assumeTrue(hasSchema(LOWEST_EXPORTED_SCHEMA) && hasSchema(CURRENT_VERSION))
-
-        var db = helper.createDatabase("matrix-33-destructive", LOWEST_EXPORTED_SCHEMA)
-        // Insert test data that will be destroyed
-        db.execSQL("INSERT INTO expenses (id, amount, currency, merchant, date, effectiveAmount, transactionType, isNotMine) VALUES (1, 999.0, 'EUR', 'OldData', 1000, 999.0, 'PURCHASE', 0)")
+    fun pre_baseline_database_is_refused_without_destroying_data() {
+        assertTrue(hasSchema(LOWEST_EXPORTED_SCHEMA))
+        assertTrue(LOWEST_EXPORTED_SCHEMA in DatabaseSchemaPolicy.UNSUPPORTED_VERSIONS)
+        val name = "matrix-pre-baseline-preservation"
+        val db = helper.createDatabase(name, LOWEST_EXPORTED_SCHEMA)
+        db.execSQL(
+            "INSERT INTO expenses (id, amount, currency, merchant, transactionType, date, createdAt, " +
+                "paymentMethod, isManualEntry, isNotMine, isSharedExpense, backfillAttempts) " +
+                "VALUES (1, 999.0, 'EUR', 'Synthetic legacy row', 'PURCHASE', 1000, 1000, 'UNKNOWN', 0, 0, 0, 0)"
+        )
         db.close()
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val currentDb = AppDatabase.fileBuilder(context, name).allowMainThreadQueries().build()
+        try {
+            try {
+                currentDb.openHelper.writableDatabase
+                fail("Unsupported versions must not be migrated or silently reset")
+            } catch (_: IllegalStateException) {
+                // Expected: there is no supported migration path from this version.
+            }
+        } finally {
+            currentDb.close()
+        }
+        SQLiteDatabase.openDatabase(context.getDatabasePath(name).absolutePath, null, SQLiteDatabase.OPEN_READONLY).use { legacy ->
+            legacy.rawQuery("PRAGMA user_version", null).use {
+                assertTrue(it.moveToFirst())
+                assertEquals(LOWEST_EXPORTED_SCHEMA, it.getInt(0))
+            }
+            legacy.rawQuery("SELECT id, amount, currency FROM expenses", null).use {
+                assertTrue("Legacy row must survive failed upgrade", it.moveToFirst())
+                assertEquals(1L, it.getLong(0))
+                assertEquals(999.0, it.getDouble(1), 0.0)
+                assertEquals("EUR", it.getString(2))
+                assertFalse(it.moveToNext())
+            }
+        }
+    }
 
-        // Run migrations to latest — this exercises ALL migrations from v33
-        db = helper.runMigrationsAndValidate("matrix-33-destructive", CURRENT_VERSION, true)
-
-        // After destructive migration from pre-baseline, the database should be empty
-        val cursor = db.query("SELECT COUNT(*) FROM expenses")
-        assertTrue(cursor.moveToFirst())
-        // Data may be preserved through migrations or destroyed — either is acceptable
-        // The key assertion: the schema matches v148
-        cursor.close()
-
-        // All v148 tables must exist
-        val tables = getTableNames(db)
-        assertTrue(tables.contains("expenses"))
-        assertTrue(tables.contains("background_job_runs"))
-        assertTrue(tables.contains("negotiation_outcomes"))
-        assertTrue(tables.contains("group_members"))
-        assertTrue(tables.contains("group_expenses"))
-
-        db.close()
+    @Test
+    fun supported_schema_assets_are_bom_free_utf8_json() {
+        val assets = InstrumentationRegistry.getInstrumentation().context.assets
+        for (version in MIGRATION_BASELINE..CURRENT_VERSION) {
+            val bytes = assets.open("${AppDatabase::class.java.canonicalName}/$version.json").use { it.readBytes() }
+            Charsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(bytes))
+            assertTrue("Supported schema must start with a JSON object", bytes.isNotEmpty() && bytes[0] == '{'.code.toByte())
+            assertFalse("Supported schema must not contain UTF-16 NUL bytes", bytes.any { it == 0.toByte() })
+        }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────
+
+    private fun seedExpense(db: SupportSQLiteDatabase) {
+        // effectiveAmount is computed in Kotlin, not a persisted Room column.
+        db.execSQL("INSERT INTO expenses (id, amount, currency, merchant, date, transactionType, isNotMine) VALUES (1, 100.0, 'EUR', 'Synthetic expense', 1000, 'PURCHASE', 0)")
+    }
+
+    private fun assertSeedExpense(db: SupportSQLiteDatabase) {
+        db.query("SELECT amount, currency FROM expenses WHERE id = 1").use {
+            assertTrue("Migration must preserve the expense", it.moveToFirst())
+            assertEquals(100.0, it.getDouble(0), 0.0)
+            assertEquals("EUR", it.getString(1))
+        }
+    }
 
     private fun hasIndex(db: SupportSQLiteDatabase, indexName: String): Boolean {
         db.query("SELECT name FROM sqlite_master WHERE type='index' AND name='$indexName'").use { cursor ->

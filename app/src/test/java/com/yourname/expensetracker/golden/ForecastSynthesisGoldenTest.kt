@@ -2,6 +2,7 @@ package com.yourname.expensetracker.golden
 
 import com.yourname.expensetracker.domain.forecasting.DataQualityAssessor
 import com.yourname.expensetracker.domain.forecasting.HistoricalSpendingDistribution
+import com.yourname.expensetracker.domain.forecasting.HistoricalDistributionResult
 import com.yourname.expensetracker.domain.forecasting.DistributionFit
 import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator
 import com.yourname.expensetracker.testfixtures.golden.GoldenScenarioVerifier
@@ -49,7 +50,8 @@ class ForecastSynthesisGoldenTest : GoldenTestBase() {
         )
 
         val historicalDistribution = mockk<HistoricalSpendingDistribution>()
-        coEvery { historicalDistribution.computeDistribution(any()) } returns fit
+        coEvery { historicalDistribution.computeDistributionResult(any()) } returns
+            HistoricalDistributionResult.Available(fit)
 
         val dataQualityAssessor = DataQualityAssessor()
         val simulator = MonteCarloSpendingSimulator(

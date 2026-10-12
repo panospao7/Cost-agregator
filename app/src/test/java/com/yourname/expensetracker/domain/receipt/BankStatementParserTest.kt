@@ -6,6 +6,8 @@ import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.runBlocking
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -17,6 +19,44 @@ class BankStatementParserTest {
     private lateinit var merchantCleaner: com.yourname.expensetracker.domain.util.MerchantCleaner
     private lateinit var timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
     private lateinit var currencySettingsRepository: com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+
+    @Test
+    fun `statement diagnostics omit rows amounts and exception messages`() {
+        val messages = mutableListOf<String>()
+        val errors = mutableListOf<Throwable?>()
+        val tree = object : timber.log.Timber.Tree() {
+            override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+                messages += message
+                errors += t
+            }
+        }
+        timber.log.Timber.plant(tree)
+        try {
+            parser.parse(revolutRow("Jul 5, 2023", "SECRET_ROW", "€29.99", null, "€1,470.01"), "EUR")
+            io.mockk.every { merchantCleaner.clean(any()) } throws IllegalStateException("SECRET_SQL_PATH")
+            val method = BankStatementParser::class.java.getDeclaredMethod("tryParseGreekNbgTransaction", String::class.java, String::class.java)
+            method.isAccessible = true
+            assertNull(method.invoke(parser, "3/5/2026 4:41:36 μμ 00 Χ -2,9 85016130 SECRET_ROW", "EUR"))
+            assertTrue(messages.isNotEmpty())
+            assertTrue(messages.all { it.startsWith("BANK_STATEMENT_") })
+            assertTrue(messages.none { it.contains("SECRET") || it.contains("29.99") || it.contains("1,470.01") })
+            assertTrue(errors.all { it == null })
+        } finally {
+            timber.log.Timber.uproot(tree)
+        }
+    }
+
+    @Test
+    fun `statement parser failure boundary does not suppress cancellation`() {
+        val cancellation = kotlinx.coroutines.CancellationException("TEST_CANCELLED")
+        io.mockk.every { merchantCleaner.clean(any()) } throws cancellation
+        val method = BankStatementParser::class.java.getDeclaredMethod("tryParseGreekNbgTransaction", String::class.java, String::class.java)
+        method.isAccessible = true
+        val failure = assertThrows(java.lang.reflect.InvocationTargetException::class.java) {
+            method.invoke(parser, "3/5/2026 4:41:36 μμ 00 Χ -2,9 85016130 Merchant", "EUR")
+        }
+        assertSame(cancellation, failure.cause)
+    }
 
     @Before
     fun setup() {
@@ -446,6 +486,16 @@ class BankStatementParserTest {
     }
 
     @Test
+    fun `AM within a merchant name does not discard a monetary statement row`() {
+        val blocks = revolutRow("Jul 5, 2023", "Amazon", "€29.99", null, "€1,470.01")
+        val results = parser.parse(blocks, "EUR")
+        assertEquals(1, results.size)
+        assertEquals(ParsedTransactionType.PURCHASE, results.single().type)
+        assertEquals("EUR", results.single().currency)
+        assertEquals(29.99, results.single().amount, 0.0)
+    }
+
+    @Test
     fun `revolut promo credit row is classified as DEPOSIT`() {
         val blocks = revolutRow(
             dateStr = "Aug 1, 2023",
@@ -599,5 +649,63 @@ class BankStatementParserTest {
             com.yourname.expensetracker.domain.core.money.CurrencyAssumption.ASSUMED_HOME_CURRENCY,
             results[0].currencyAssumption
         )
+    }
+
+    @Test
+    fun unsupportedHomeCurrencyIsUnresolvedAndSupportedValuesNormalize() = kotlinx.coroutines.test.runTest {
+        for (currency in listOf("", " ", "XXX", "ZZZ", "SECRET invalid")) {
+            io.mockk.every { currencySettingsRepository.homeCurrency() } returns flowOf(currency)
+            assertNull(parser.resolveHomeCurrencySuspend())
+        }
+        for (currency in listOf("EUR", "USD", "GBP")) {
+            io.mockk.every { currencySettingsRepository.homeCurrency() } returns flowOf(" " + currency.lowercase() + " ")
+            assertEquals(currency, parser.resolveHomeCurrencySuspend())
+        }
+    }
+
+    @Test
+    fun emptyTimedOutAndFailedSettingsNeverGuessHomeCurrency() = kotlinx.coroutines.test.runTest {
+        io.mockk.every { currencySettingsRepository.homeCurrency() } returns kotlinx.coroutines.flow.emptyFlow()
+        assertNull(parser.resolveHomeCurrencySuspend())
+        io.mockk.every { currencySettingsRepository.homeCurrency() } returns kotlinx.coroutines.flow.flow {
+            kotlinx.coroutines.awaitCancellation()
+        }
+        assertNull(parser.resolveHomeCurrencySuspend())
+        io.mockk.every { currencySettingsRepository.homeCurrency() } throws IllegalStateException("SECRET settings")
+        assertNull(parser.resolveHomeCurrencySuspend())
+    }
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private class IdentityCancellation : kotlinx.coroutines.CancellationException("SECRET cancellation"),
+        kotlinx.coroutines.CopyableThrowable<IdentityCancellation> {
+        override fun createCopy(): IdentityCancellation? = null
+    }
+
+    @Test
+    fun settingsCancellationPropagatesUnchanged() = kotlinx.coroutines.test.runTest {
+        val cancellation = IdentityCancellation()
+        io.mockk.every { currencySettingsRepository.homeCurrency() } throws cancellation
+        org.junit.Assert.assertSame(cancellation, runCatching { parser.resolveHomeCurrencySuspend() }.exceptionOrNull())
+    }
+
+    @Test
+    fun unknownHomeKeepsUnknownRowsButExplicitSourceStillWorks() {
+        val row = listOf(TextBlock("10/05 SHOP -12.50", null, 10, 100, 300, 120))
+        val explicit = listOf(TextBlock("10/05 SHOP -12.50 USD", null, 10, 100, 300, 120))
+        for (home in listOf(null, "", "ZZZ", "SECRET invalid")) {
+            val unknown = parser.parse(row, home).single()
+            assertEquals("XXX", unknown.currency)
+            assertEquals(com.yourname.expensetracker.domain.core.money.CurrencyAssumption.UNKNOWN, unknown.currencyAssumption)
+            val known = parser.parse(explicit, home).single()
+            assertEquals("USD", known.currency)
+            assertEquals(com.yourname.expensetracker.domain.core.money.CurrencyAssumption.PARSED_FROM_SOURCE, known.currencyAssumption)
+        }
+    }
+
+    @Test
+    fun `unresolved home currency is unavailable instead of guessed EUR`() = runBlocking {
+        io.mockk.every { currencySettingsRepository.homeCurrency() } returns flowOf("")
+
+        assertNull(parser.resolveHomeCurrencySuspend())
     }
 }

@@ -57,22 +57,22 @@ class CategoryInsightEngineTest {
         assertNotNull(dining)
         assertNotNull(rent)
 
-        assertApproxEquals(136.10, groceries!!.currentTotal, 0.01)
-        assertApproxEquals(10.60f, groceries.percentageOfTotal, 0.01f)
+        assertApproxEquals(136.10, requireNotNull(groceries!!.currentTotal), 0.01)
+        assertApproxEquals(10.60f, requireNotNull(groceries.percentageOfTotal), 0.01f)
         assertApproxEquals(147.45f, groceries.changeFromPrevious!!, 0.01f)
         assertEquals(3, groceries.currentCount)
 
-        assertApproxEquals(46.80, dining!!.currentTotal, 0.01)
-        assertApproxEquals(3.65f, dining.percentageOfTotal, 0.01f)
+        assertApproxEquals(46.80, requireNotNull(dining!!.currentTotal), 0.01)
+        assertApproxEquals(3.65f, requireNotNull(dining.percentageOfTotal), 0.01f)
         assertApproxEquals(56.0f, dining.changeFromPrevious!!, 0.01f)
         assertEquals(3, dining.currentCount)
 
-        assertApproxEquals(800.00, rent!!.currentTotal, 0.01)
-        assertApproxEquals(62.33f, rent.percentageOfTotal, 0.01f)
+        assertApproxEquals(800.00, requireNotNull(rent!!.currentTotal), 0.01)
+        assertApproxEquals(62.33f, requireNotNull(rent.percentageOfTotal), 0.01f)
         assertApproxEquals(0.0f, rent.changeFromPrevious!!, 0.01f)
         assertEquals(1, rent.currentCount)
 
-        val percentageSum = insights.sumOf { it.percentageOfTotal.toDouble() }
+        val percentageSum = insights.sumOf { requireNotNull(it.percentageOfTotal).toDouble() }
         assertApproxEquals(100.0, percentageSum, 0.01)
     }
 
@@ -103,8 +103,8 @@ class CategoryInsightEngineTest {
 
         assertEquals(1, insights.size)
         assertEquals("Uncategorized", insights.first().category.name)
-        assertApproxEquals(120.0, insights.first().currentTotal, 0.01)
-        assertApproxEquals(100.0f, insights.first().percentageOfTotal, 0.01f)
+        assertApproxEquals(120.0, requireNotNull(insights.first().currentTotal), 0.01)
+        assertApproxEquals(100.0f, requireNotNull(insights.first().percentageOfTotal), 0.01f)
     }
 
     @Test
@@ -153,11 +153,11 @@ class CategoryInsightEngineTest {
         )
 
         // Only PURCHASE transactions should be included
-        val totalAcrossInsights = insights.sumOf { it.currentTotal }
+        val totalAcrossInsights = insights.sumOf { requireNotNull(it.currentTotal) }
         assertApproxEquals(80.0, totalAcrossInsights, 0.01)
 
         // Deposit should not appear in any category
-        assertTrue(insights.none { it.currentTotal >= 2500.0 })
+        assertTrue(insights.none { requireNotNull(it.currentTotal) >= 2500.0 })
     }
 
     @Test
@@ -183,10 +183,10 @@ class CategoryInsightEngineTest {
             displayCurrency = "EUR"
         )
 
-        val totalAcrossInsights = insights.sumOf { it.currentTotal }
+        val totalAcrossInsights = insights.sumOf { requireNotNull(it.currentTotal) }
         assertApproxEquals(75.0, totalAcrossInsights, 0.01)
 
-        assertTrue(insights.none { it.currentTotal >= 500.0 })
+        assertTrue(insights.none { requireNotNull(it.currentTotal) >= 500.0 })
     }
 
     @Test
@@ -212,8 +212,8 @@ class CategoryInsightEngineTest {
         )
 
         assertEquals(1, insights.size)
-        assertApproxEquals(100.0, insights.first().currentTotal, 0.01)
-        assertApproxEquals(100.0f, insights.first().percentageOfTotal, 0.01f)
+        assertApproxEquals(100.0, requireNotNull(insights.first().currentTotal), 0.01)
+        assertApproxEquals(100.0f, requireNotNull(insights.first().percentageOfTotal), 0.01f)
     }
 
     @Test
@@ -246,7 +246,7 @@ class CategoryInsightEngineTest {
         )
 
         // Total from purchases: 200 + 60 + 40 = 300
-        val totalAcrossInsights = insights.sumOf { it.currentTotal }
+        val totalAcrossInsights = insights.sumOf { requireNotNull(it.currentTotal) }
         assertApproxEquals(300.0, totalAcrossInsights, 0.01)
 
         // Transaction count from purchases only
@@ -254,7 +254,7 @@ class CategoryInsightEngineTest {
         assertEquals(3, totalCount)
 
         // Percentages must sum to 100
-        val percentageSum = insights.sumOf { it.percentageOfTotal.toDouble() }
+        val percentageSum = insights.sumOf { requireNotNull(it.percentageOfTotal).toDouble() }
         assertApproxEquals(100.0, percentageSum, 0.01)
     }
 
@@ -396,7 +396,7 @@ class CategoryInsightEngineTest {
         )
 
         val groceries = insights.first { it.category.id == 2L }
-        assertApproxEquals(200.0, groceries.currentTotal, 0.01)
+        assertApproxEquals(200.0, requireNotNull(groceries.currentTotal), 0.01)
         assertApproxEquals(500.0, groceries.previousTotal ?: 0.0, 0.01)
         assertEquals(500, groceries.previousCount)
     }

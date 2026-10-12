@@ -119,7 +119,8 @@ class AnalyticsInputAssembler @Inject constructor(
                 rateValidDate = normExp.rateValidDate,
                 rateLastUpdated = normExp.rateLastUpdated,
                 rateSource = normExp.rateSource,
-                conversionPath = normExp.conversionPath
+                conversionPath = normExp.conversionPath,
+                qualityWarning = normExp.qualityWarning
             )
         }
 
@@ -137,6 +138,7 @@ class AnalyticsInputAssembler @Inject constructor(
                     originalAmount = exp.effectiveAmount,
                     originalCurrency = exp.currency,
                     reason = reason,
+                    date = exp.date,
                     warningType = result.excludedReasons[exp.id]?.first,
                     message = result.excludedReasons[exp.id]?.second
                 )

@@ -426,6 +426,9 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
             monteCarloSimulator = monteCarloSimulator,
             expenseRepository = expenseRepository,
             budgetRepository = budgetRepository,
+            analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
+            currencySettingsRepository = currencySettingsRepository,
+            currencyConverter = currencyConverter,
             timeProvider = timeProvider,
         )
 

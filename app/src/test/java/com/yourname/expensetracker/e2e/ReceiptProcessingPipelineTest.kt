@@ -97,13 +97,13 @@ class ReceiptProcessingPipelineTest : AnalyticsEngineTestBase() {
         val parsed = receiptParser.parse(ocrResult.fullText)
         val categorization = categorizationEngine.categorizeWithContext(
             merchant = parsed.merchantName ?: "",
-            amount = parsed.total ?: 0.0,
+            amount = parsed.total?.amount ?: 0.0,
             timestamp = fixedNow
         )
 
         // Assert
-        assertNotNull(parsed.total)
-        assertApproxEquals(45.30, parsed.total ?: 0.0, 0.01)
+        assertNotNull(parsed.total?.amount)
+        assertApproxEquals(45.30, parsed.total?.amount ?: 0.0, 0.01)
         assertEquals("LIDL", parsed.merchantName)
         assertEquals(2L, categorization.categoryId)
         assertEquals("Groceries", categorization.categoryName)
@@ -132,7 +132,7 @@ class ReceiptProcessingPipelineTest : AnalyticsEngineTestBase() {
     @Test
     fun `greek text normalization parses and categorizes correctly`() = runTest {
         // Arrange
-        val ocrText = "Σκλαβενίτης\nΣΥΝΟΛΟ 12,40\n05.03.2026"
+        val ocrText = "Σκλαβενίτης\nΣΥΝΟΛΟ 12,40 EUR\n05.03.2026"
         coEvery { ocrService.processImage(imageUri) } returns createOcrResult(ocrText)
         coEvery { merchantCategoryRepository.getAll() } returns listOf(
             MerchantCategory(merchantPattern = "sklavenitis", categoryId = 2L)
@@ -144,8 +144,8 @@ class ReceiptProcessingPipelineTest : AnalyticsEngineTestBase() {
         val categorization = categorizationEngine.categorize(parsed.merchantName ?: "")
 
         // Assert
-        assertNotNull(parsed.total)
-        assertApproxEquals(12.40, parsed.total ?: 0.0, 0.01)
+        assertNotNull(parsed.total?.amount)
+        assertApproxEquals(12.40, parsed.total?.amount ?: 0.0, 0.01)
         assertNotNull(parsed.merchantName)
         assertTrue(parsed.merchantName!!.contains("ΣΚΛΑΒΕΝ"))
         assertEquals(2L, categorization.categoryId)
@@ -157,7 +157,7 @@ class ReceiptProcessingPipelineTest : AnalyticsEngineTestBase() {
     @Test
     fun `unknown merchant categorized as Uncategorized`() = runTest {
         // Arrange
-        val ocrText = "QWERTYZX\nTOTAL 19.99\n05.03.2026"
+        val ocrText = "QWERTYZX\nTOTAL 19.99 EUR\n05.03.2026"
         coEvery { ocrService.processImage(imageUri) } returns createOcrResult(ocrText)
         coEvery { merchantCategoryRepository.getAll() } returns emptyList()
 
@@ -168,13 +168,26 @@ class ReceiptProcessingPipelineTest : AnalyticsEngineTestBase() {
         val finalCategoryName = categorization.categoryName ?: "Uncategorized"
 
         // Assert
-        assertNotNull(parsed.total)
-        assertApproxEquals(19.99, parsed.total ?: 0.0, 0.01)
+        assertNotNull(parsed.total?.amount)
+        assertApproxEquals(19.99, parsed.total?.amount ?: 0.0, 0.01)
         assertEquals("QWERTYZX", parsed.merchantName)
         assertEquals("Uncategorized", finalCategoryName)
         assertNull(categorization.categoryId)
         assertEquals(MatchType.UNKNOWN, categorization.matchType)
         assertApproxEquals(0.0, categorization.confidence, 0.0001)
+    }
+
+    @Test
+    fun `OCR total without source currency remains unavailable despite home currency`() = runTest {
+        coEvery { ocrService.processImage(imageUri) } returns
+            createOcrResult("QWERTYZX\nTOTAL 19.99\n05.03.2026")
+
+        val parsed = receiptParser.parse(ocrService.processImage(imageUri).fullText, homeCurrency = "USD")
+
+        assertNull(parsed.total)
+        assertEquals("", parsed.currency)
+        assertTrue(parsed.hasUnresolvedTotalEvidence)
+        assertTrue(parsed.totalAggregate is com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Unavailable)
     }
 
     private fun createOcrResult(text: String): OcrResult {

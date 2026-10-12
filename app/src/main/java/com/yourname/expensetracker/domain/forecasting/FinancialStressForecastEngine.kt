@@ -9,6 +9,8 @@ import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAmount
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
+import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
@@ -206,10 +208,10 @@ class FinancialStressForecastEngine @Inject constructor(
         
         // 1. Calculate recurring obligations within this horizon
         val recurringOutflowResult = calculateRecurringOutflows(patterns, horizonStart, horizonEnd, displayCurrency)
-        val recurringOutflows = recurringOutflowResult.total
+        val recurringOutflows = recurringOutflowResult.total.displayAmount
         
         // 2. Estimate expected income using pre-normalized deposits
-        val expectedIncome = estimateIncome(daysAhead, normalizedDeposits)
+        val expectedIncome = estimateIncome(daysAhead, normalizedDeposits, displayCurrency)
         
         // 3. Run Monte Carlo for discretionary spending using pre-normalized expenses
         val mcResult = runMonteCarloSimulation(daysAhead, patterns, normalizedExpenses, displayCurrency)
@@ -384,7 +386,13 @@ class FinancialStressForecastEngine @Inject constructor(
             totalOutflows += expandDetectedPatterns(detectedPatterns, startDate, endDate, displayCurrency)
         }
 
-        return RecurringOutflowResult(total = totalOutflows, materializedReadBlocked = materializedReadBlocked)
+        return RecurringOutflowResult(
+            total = MoneyAggregateBuilder.fromHomeCurrencyAmounts(
+                amounts = listOf(totalOutflows),
+                homeCurrency = displayCurrency
+            ),
+            materializedReadBlocked = materializedReadBlocked
+        )
     }
 
     /**
@@ -442,11 +450,15 @@ class FinancialStressForecastEngine @Inject constructor(
      */
     private suspend fun estimateIncome(
         daysAhead: Int,
-        normalizedDeposits: List<ExpenseSnapshot>
+        normalizedDeposits: List<ExpenseSnapshot>,
+        displayCurrency: String
     ): Double {
         if (normalizedDeposits.isEmpty()) return 0.0
         // SAFE: data normalized via AnalyticsCurrencyNormalizer at line 83
-        val totalDeposits = normalizedDeposits.sumOf { it.effectiveAmount }
+        val totalDeposits = MoneyAggregateBuilder.fromHomeCurrencyAmounts(
+            amounts = normalizedDeposits.map { it.effectiveAmount },
+            homeCurrency = displayCurrency
+        ).displayAmount
 
         // Compute the actual number of months spanned by the deposit history.
         val minDate = normalizedDeposits.minOf { it.date }
@@ -517,7 +529,12 @@ class FinancialStressForecastEngine @Inject constructor(
         // SAFE: discretionaryPurchases derived from normalizedExpenses normalized at line 89
         val discretionaryTotalsByDay = discretionaryPurchases
             .groupBy { TimePeriodUtils.getStartOfDay(it.date) }
-            .mapValues { (_, txns) -> txns.sumOf { it.effectiveAmount } }
+            .mapValues { (_, txns) ->
+                MoneyAggregateBuilder.fromHomeCurrencyAmounts(
+                    amounts = txns.map { it.effectiveAmount },
+                    homeCurrency = displayCurrency
+                ).displayAmount
+            }
 
         val sixtyDaysAgo = discretionaryPurchases.minOfOrNull { it.date }
             ?: TimePeriodUtils.addDays(timeProvider.now(), -60)
@@ -841,6 +858,6 @@ private data class MonteCarloHorizonResult(
  * as partial/degraded in that case.
  */
 private data class RecurringOutflowResult(
-    val total: Double,
+    val total: MoneyAggregate,
     val materializedReadBlocked: Boolean = false
 )

@@ -39,6 +39,7 @@ class DashboardWidgetRenderCoverageTest {
         DashboardWidget.FinancialHealthScoreV2Widget::class,
         DashboardWidget.LifestyleSavingsPrompt::class,
         DashboardWidget.SavingsSweepPrompt::class,
+        DashboardWidget.SavingsSweepUnavailable::class,
         DashboardWidget.MoneyRadar::class,
         DashboardWidget.FinancialStressForecast::class
     )
@@ -73,7 +74,7 @@ class DashboardWidgetRenderCoverageTest {
         val count = DashboardWidget::class.sealedSubclasses.size
         assertEquals(
             "DashboardWidget subclass count changed. Update RENDERED_WIDGETS.",
-            21, count
+            22, count
         )
     }
 }

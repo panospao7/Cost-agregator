@@ -1,5 +1,8 @@
 package com.yourname.expensetracker.domain.ai.model
 
+import com.yourname.expensetracker.domain.core.money.MoneyAggregate
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateResult
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
 import com.yourname.expensetracker.domain.dto.CategoryRef
 import com.yourname.expensetracker.domain.dto.ReceiptItemCategorizationSnapshot
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
@@ -33,7 +36,8 @@ data class CategorizedReceiptItem(
     val confidence: Float,
     val rationale: String,
     val alternatives: List<CategorySuggestion>,
-    val needsReview: Boolean
+    val needsReview: Boolean,
+    val isAdjustment: Boolean = false
 )
 
 /**
@@ -54,8 +58,26 @@ data class ReceiptItemCategorizationResult(
     val totalConfidence: Float,
     val needsReview: Boolean,
     val suggestedNewCategories: List<String>,
-    val taxDistribution: Map<Long, Double> // categoryId -> tax amount
+    val taxDistribution: Map<Long, Double>, // categoryId -> tax amount
+    val taxAllocation: ReceiptTaxAllocation? = null
 )
+
+sealed interface ReceiptTaxAllocation {
+    data object NotRequested : ReceiptTaxAllocation
+
+    data class Available(
+        val itemAggregate: MoneyAggregate,
+        val categoryAggregates: Map<Long, MoneyAggregate>,
+        val requestedTax: MoneyAmount,
+        val categoryAmounts: Map<Long, MoneyAmount>,
+        val unallocatedTax: MoneyAmount,
+        val itemAmounts: List<MoneyAmount> = emptyList()
+    ) : ReceiptTaxAllocation
+
+    data class Unavailable(
+        val failure: MoneyAggregateResult.Unavailable
+    ) : ReceiptTaxAllocation
+}
 
 /**
  * Sealed interface for categorization result states.

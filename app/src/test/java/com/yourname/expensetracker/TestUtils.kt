@@ -8,6 +8,7 @@ import org.junit.Assert
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Test utilities for creating test data and assertions.
@@ -21,6 +22,7 @@ import java.time.format.DateTimeFormatter
 // ============================================================================
 
 private val dateFormatter = DateTimeFormatter.ISO_LOCAL_DATE
+private val nextTestExpenseId = AtomicLong(System.currentTimeMillis())
 
 /**
  * Creates an Expense object for test purposes.
@@ -58,7 +60,7 @@ fun createExpense(
         .toEpochMilli()
 
     val expense = Expense(
-        id = id ?: System.currentTimeMillis(),
+        id = id ?: nextTestExpenseId.incrementAndGet(),
         amount = amount,
         merchant = merchant,
         transactionType = type,
@@ -124,6 +126,36 @@ fun assertApproxEquals(
     Assert.assertTrue(fullMessage, diff <= tolerance)
 }
 
+fun assertApproxEquals(
+    expected: Double,
+    actual: Double?,
+    tolerance: Double = 0.01,
+    message: String? = null
+) {
+    if (actual == null) {
+        Assert.fail(buildString {
+            if (message != null) append(message)
+            append("Expected $expected Â±$tolerance, but actual was null")
+        })
+    }
+    assertApproxEquals(expected, requireNotNull(actual), tolerance, message)
+}
+
+fun assertApproxEquals(
+    expected: Double?,
+    actual: Double?,
+    tolerance: Double = 0.01,
+    message: String? = null
+) {
+    if (expected == null || actual == null) {
+        Assert.fail(buildString {
+            if (message != null) append(message)
+            append("Expected and actual values must be non-null; expected=$expected actual=$actual")
+        })
+    }
+    assertApproxEquals(requireNotNull(expected), requireNotNull(actual), tolerance, message)
+}
+
 /**
  * Asserts that two Float values are approximately equal within a tolerance.
  *
@@ -144,6 +176,36 @@ fun assertApproxEquals(
         append("Expected $expected ±$tolerance, but was $actual (diff: $diff)")
     }
     Assert.assertTrue(fullMessage, diff <= tolerance)
+}
+
+fun assertApproxEquals(
+    expected: Float,
+    actual: Float?,
+    tolerance: Float = 0.1f,
+    message: String? = null
+) {
+    if (actual == null) {
+        Assert.fail(buildString {
+            if (message != null) append(message)
+            append("Expected $expected Â±$tolerance, but actual was null")
+        })
+    }
+    assertApproxEquals(expected, requireNotNull(actual), tolerance, message)
+}
+
+fun assertApproxEquals(
+    expected: Float?,
+    actual: Float?,
+    tolerance: Float = 0.1f,
+    message: String? = null
+) {
+    if (expected == null || actual == null) {
+        Assert.fail(buildString {
+            if (message != null) append(message)
+            append("Expected and actual values must be non-null; expected=$expected actual=$actual")
+        })
+    }
+    assertApproxEquals(requireNotNull(expected), requireNotNull(actual), tolerance, message)
 }
 
 /**

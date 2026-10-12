@@ -10,7 +10,7 @@ package com.yourname.expensetracker.domain.forecasting
  * Percentiles represent projected *total* month-end spending (actual-to-date + deterministic + stochastic).
  */
 data class MonteCarloResult(
-    /** Percentile bands for projected month-end total spending (in EUR). */
+    /** Percentile bands for projected month-end total spending in [displayCurrency]. */
     val percentile10: Double,
     val percentile25: Double,
     val percentile50: Double,
@@ -101,5 +101,8 @@ data class SimulationMetadata(
     val daysRemaining: Int,
 
     /** Timestamp of when the simulation was computed. */
-    val computedAt: Long
+    val computedAt: Long,
+
+    /** Historical conversion quality is independent of statistical confidence. */
+    val historicalMoneyQuality: HistoricalMoneyQuality? = null
 )

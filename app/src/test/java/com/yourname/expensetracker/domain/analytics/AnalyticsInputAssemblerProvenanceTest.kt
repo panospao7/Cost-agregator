@@ -90,6 +90,47 @@ class AnalyticsInputAssemblerProvenanceTest {
         assertThat(norm.conversionPath).isEqualTo("IDENTITY")
     }
 
+    @Test
+    fun `decision aggregate preserves historical source currency and rate dates`() = runTest {
+        val date = 1_700_000_000_000L
+        exchangeRateStore.putRate("USD", "EUR", 0.5, date, date, "TEST")
+        val normalized = normalizer.normalizeExpenses(listOf(
+            expense(1L, 20.0, "USD", date), expense(2L, 5.0, "EUR", date)
+        ), "EUR")
+        val aggregate = normalized.completeMoneyAggregateForRows(normalized.includedExpenses, "EUR")
+        assertThat(aggregate.displayAmount).isEqualTo(15.0)
+        assertThat(aggregate.totalTransactionCount).isEqualTo(2)
+        assertThat(aggregate.requestedRateBasis).isEqualTo(RateBasis.TRANSACTION_DATE)
+        assertThat(aggregate.actualRateBasis).isEqualTo(RateBasis.TRANSACTION_DATE)
+        assertThat(aggregate.metadata.sourceCurrencyCodes).containsExactly(
+            com.yourname.expensetracker.domain.core.money.CurrencyCode.USD,
+            com.yourname.expensetracker.domain.core.money.CurrencyCode.EUR
+        )
+        assertThat(aggregate.metadata.rateValidDates).contains(date)
+    }
+
+    @Test
+    fun `decision aggregate declines partial all failed and stale inputs but accepts genuine empty`() = runTest {
+        val date = 1_700_000_000_000L
+        val failed = listOf(expense(1L, 20.0, "USD", date), expense(2L, 30.0, "GBP", date))
+        for (rows in listOf(failed, failed + expense(3L, 5.0, "EUR", date))) {
+            val normalized = normalizer.normalizeExpenses(rows, "EUR")
+            org.junit.Assert.assertThrows(com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException::class.java) {
+                normalized.completeMoneyAggregateForRows(normalized.includedExpenses, "EUR")
+            }
+        }
+        exchangeRateStore.putRate("USD", "EUR", 0.5, date, date - 10L * 86_400_000L, "TEST")
+        val stale = normalizer.normalizeExpenses(listOf(expense(4L, 20.0, "USD", date)), "EUR")
+        assertThat(stale.includedExpenses).hasSize(1)
+        org.junit.Assert.assertThrows(com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException::class.java) {
+            stale.completeMoneyAggregateForRows(stale.includedExpenses, "EUR")
+        }
+        val empty = normalizer.normalizeExpenses(emptyList(), "EUR").completeMoneyAggregateForRows(emptyList(), "EUR")
+        assertThat(empty.displayAmount).isEqualTo(0.0)
+        assertThat(empty.isPartial).isFalse()
+        assertThat(empty.conversionQuality).isEqualTo(com.yourname.expensetracker.domain.core.money.ConversionQuality.COMPLETE)
+    }
+
     // -----------------------------------------------------------------------
     // Rate provenance on NormalizedExpense — successful conversion
     // -----------------------------------------------------------------------

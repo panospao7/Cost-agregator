@@ -13,6 +13,50 @@ import timber.log.Timber
  */
 object MoneyAggregateBuilder {
 
+    fun fromSourceCurrencyAmounts(
+        amounts: Iterable<Double>,
+        sourceCurrency: String?
+    ): MoneyAggregateResult {
+        val currency = CurrencyCode.parse(sourceCurrency)?.takeIf { it in CurrencyCode.ALL_SUPPORTED }
+        var count = 0
+        var total = 0.0
+        var invalidAmount = false
+        for (amount in amounts) {
+            count++
+            if (!amount.isFinite()) {
+                invalidAmount = true
+            } else if (!invalidAmount) {
+                total += amount
+                invalidAmount = !total.isFinite()
+            }
+        }
+        if (currency == null) {
+            return MoneyAggregateResult.Unavailable(
+                reason = MoneyDisplayUnavailableReasonCode.INVALID_SOURCE_CURRENCY.name,
+                requestedRateBasis = RateBasis.IDENTITY,
+                metadata = MoneyAggregateMetadata(
+                    excludedTransactionCount = count,
+                    invalidCurrencyCount = if (count == 0) 0 else 1
+                )
+            )
+        }
+        if (invalidAmount) {
+            return MoneyAggregateResult.Unavailable(
+                reason = MoneyDisplayUnavailableReasonCode.INVALID_AMOUNT.name,
+                requestedRateBasis = RateBasis.IDENTITY,
+                metadata = MoneyAggregateMetadata(excludedTransactionCount = count)
+            )
+        }
+        val aggregate = if (count == 0) {
+            MoneyAggregate.empty(currency, RateBasis.IDENTITY)
+        } else {
+            MoneyAggregate.singleCurrency(total, currency, count, RateBasis.IDENTITY)
+        }
+        return MoneyAggregateResult.Available(
+            aggregate.copy(metadata = MoneyAggregateMetadata(includedTransactionCount = count))
+        )
+    }
+
     /**
      * Builds a typed aggregate for values that are already normalized to the
      * requested home currency. Callers must use this boundary instead of
@@ -22,7 +66,7 @@ object MoneyAggregateBuilder {
         amounts: Iterable<Double>,
         homeCurrency: String
     ): MoneyAggregate {
-        val currency = CurrencyCode.parse(homeCurrency)
+        val currency = CurrencyCode.parse(homeCurrency)?.takeIf { it in CurrencyCode.ALL_SUPPORTED }
             ?: throw IllegalArgumentException("Unsupported home currency")
         var total = 0.0
         var count = 0
@@ -36,6 +80,146 @@ object MoneyAggregateBuilder {
         } else {
             MoneyAggregate.singleCurrency(total, currency, count, RateBasis.IDENTITY)
         }
+    }
+
+    /**
+     * Aggregates values that are already normalized to [targetCurrency].
+     *
+     * This operation never invokes a converter. A row with a different
+     * normalized currency is rejected instead of being converted implicitly,
+     * which prevents double conversion and mixed-currency totals. Exclusion
+     * and quality metadata must describe the same slice as [rows].
+     */
+    fun fromNormalizedRows(
+        rows: Iterable<NormalizedMoneyRow>,
+        targetCurrency: CurrencyCode,
+        quality: NormalizedMoneyQuality = NormalizedMoneyQuality(),
+        requestedRateBasis: RateBasis = RateBasis.IDENTITY,
+        actualRateBasis: RateBasis = requestedRateBasis
+    ): MoneyAggregateResult {
+        if (targetCurrency !in CurrencyCode.ALL_SUPPORTED) {
+            return MoneyAggregateResult.Unavailable(
+                reason = MoneyDisplayUnavailableReasonCode.INVALID_TARGET_CURRENCY.name,
+                requestedRateBasis = requestedRateBasis,
+                metadata = MoneyAggregateMetadata(
+                    excludedTransactionCount = quality.excludedTransactionCount,
+                    staleRateCount = quality.staleRateCount,
+                    missingRateCount = quality.missingRateCount,
+                    invalidCurrencyCount = quality.invalidCurrencyCount
+                )
+            )
+        }
+
+        var rowCount = 0
+        var includedTransactionCount = 0
+        var total = 0.0
+        var invalidAmount = false
+        var invalidCounts = false
+        var currencyMismatchCount = 0
+        val transactionIds = mutableSetOf<Long>()
+        val sourceCurrencies = linkedSetOf<CurrencyCode>()
+        val rateValidDates = sortedSetOf<Long>()
+
+        for (row in rows) {
+            rowCount++
+            if (row.transactionCount != 1 ||
+                row.transactionId?.let { !transactionIds.add(it) } == true
+            ) {
+                invalidCounts = true
+            } else {
+                includedTransactionCount += row.transactionCount
+            }
+            if (row.normalizedCurrency != targetCurrency) {
+                currencyMismatchCount += row.transactionCount.coerceAtLeast(0)
+            }
+            if (!row.amount.isFinite()) {
+                invalidAmount = true
+            } else if (!invalidAmount) {
+                total += row.amount
+                invalidAmount = !total.isFinite()
+            }
+            row.sourceCurrency?.let(sourceCurrencies::add)
+            row.rateValidDate?.let(rateValidDates::add)
+        }
+
+        val metadata = MoneyAggregateMetadata(
+            includedTransactionCount = includedTransactionCount,
+            excludedTransactionCount = quality.excludedTransactionCount,
+            staleRateCount = quality.staleRateCount,
+            missingRateCount = quality.missingRateCount,
+            invalidCurrencyCount = quality.invalidCurrencyCount + currencyMismatchCount,
+            latestRateValidDate = rateValidDates.maxOrNull(),
+            oldestRateValidDate = rateValidDates.minOrNull(),
+            sourceCurrencyCodes = sourceCurrencies,
+            rateValidDates = rateValidDates
+        )
+
+        if (invalidCounts) {
+            return MoneyAggregateResult.Unavailable(
+                reason = MoneyDisplayUnavailableReasonCode.INVALID_TRANSACTION_COUNTS.name,
+                requestedRateBasis = requestedRateBasis,
+                metadata = metadata
+            )
+        }
+        if (currencyMismatchCount > 0 || quality.invalidCurrencyCount > 0 && rowCount == 0) {
+            return MoneyAggregateResult.Unavailable(
+                reason = MoneyDisplayUnavailableReasonCode.INVALID_SOURCE_CURRENCY.name,
+                requestedRateBasis = requestedRateBasis,
+                metadata = metadata
+            )
+        }
+        if (invalidAmount) {
+            return MoneyAggregateResult.Unavailable(
+                reason = MoneyDisplayUnavailableReasonCode.INVALID_AMOUNT.name,
+                requestedRateBasis = requestedRateBasis,
+                metadata = metadata
+            )
+        }
+
+        val effectiveQuality = when {
+            quality.conversionQuality == ConversionQuality.UNAVAILABLE -> ConversionQuality.UNAVAILABLE
+            includedTransactionCount == 0 && quality.excludedTransactionCount > 0 -> ConversionQuality.UNAVAILABLE
+            quality.excludedTransactionCount > 0 || quality.conversionQuality == ConversionQuality.PARTIAL ->
+                ConversionQuality.PARTIAL
+            else -> quality.conversionQuality
+        }
+        if (effectiveQuality == ConversionQuality.UNAVAILABLE) {
+            return MoneyAggregateResult.Unavailable(
+                reason = MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE.name,
+                requestedRateBasis = requestedRateBasis,
+                metadata = metadata,
+                warningMessage = quality.warningMessage
+                    ?: MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE.name
+            )
+        }
+
+        val aggregate = if (includedTransactionCount == 0) {
+            MoneyAggregate.empty(targetCurrency, actualRateBasis).copy(
+                requestedRateBasis = requestedRateBasis,
+                actualRateBasis = actualRateBasis,
+                rateBasis = actualRateBasis,
+                conversionQuality = effectiveQuality,
+                warningMessage = quality.warningMessage,
+                metadata = metadata
+            )
+        } else {
+            MoneyAggregate(
+                displayAmount = total,
+                displayCurrency = targetCurrency,
+                sourceBuckets = listOf(
+                    MoneyBucket(targetCurrency, total, includedTransactionCount)
+                ),
+                conversionFailures = emptyList(),
+                isPartial = effectiveQuality != ConversionQuality.COMPLETE,
+                warningMessage = quality.warningMessage,
+                rateBasis = actualRateBasis,
+                requestedRateBasis = requestedRateBasis,
+                actualRateBasis = actualRateBasis,
+                conversionQuality = effectiveQuality,
+                metadata = metadata
+            )
+        }
+        return MoneyAggregateResult.Available(aggregate.copy(metadata = metadata))
     }
 
     /** NEW-P5-009: controlled warning text for count/bucket list mismatches. */

@@ -136,7 +136,8 @@ class AnalyticsCurrencyNormalizer @Inject constructor(
                     rateValidDate = expense.date,
                     rateLastUpdated = null,
                     rateSource = null,
-                    conversionPath = "IDENTITY"
+                    conversionPath = "IDENTITY",
+                    qualityWarning = null
                 )
                 else -> {
                     // P5-NEW-07 FIX: use convertOutcome (TRANSACTION_DATE) so staleness is
@@ -173,7 +174,7 @@ class AnalyticsCurrencyNormalizer @Inject constructor(
                             // of 0L is an unset sentinel and is not treated as stale.
                             val rateValidDate = outcome.rateValidDate
                             val sevenDaysMs = 7L * 24 * 60 * 60 * 1000
-                            if (rateValidDate != null && rateValidDate > 0L &&
+                            val qualityWarning = if (rateValidDate != null && rateValidDate > 0L &&
                                 kotlin.math.abs(expense.date - rateValidDate) > sevenDaysMs) {
                                 accumulateWarning(
                                     warnings = warnings,
@@ -182,6 +183,9 @@ class AnalyticsCurrencyNormalizer @Inject constructor(
                                     message = "Analytics used possibly stale exchange rates for transactions older than available rate data.",
                                     expenseId = expense.id
                                 )
+                                AnalyticsConversionWarningType.STALE_EXCHANGE_RATE
+                            } else {
+                                null
                             }
                             ConversionResult(
                                 amount = outcome.convertedAmount,
@@ -190,7 +194,8 @@ class AnalyticsCurrencyNormalizer @Inject constructor(
                                 rateValidDate = outcome.rateValidDate,
                                 rateLastUpdated = outcome.rateLastUpdated,
                                 rateSource = outcome.rateSource,
-                                conversionPath = outcome.conversionPath.name
+                                conversionPath = outcome.conversionPath.name,
+                                qualityWarning = qualityWarning
                             )
                         }
                     }
@@ -210,7 +215,8 @@ class AnalyticsCurrencyNormalizer @Inject constructor(
                 rateValidDate = conversionResult.rateValidDate,
                 rateLastUpdated = conversionResult.rateLastUpdated,
                 rateSource = conversionResult.rateSource,
-                conversionPath = conversionResult.conversionPath
+                conversionPath = conversionResult.conversionPath,
+                qualityWarning = conversionResult.qualityWarning
             )
         }
 
@@ -279,6 +285,59 @@ data class AnalyticsNormalizationResult(
     }
 }
 
+fun AnalyticsNormalizationResult.requireCompleteMoneyInput(targetCurrency: String) {
+    val target = CurrencyCode.parse(targetCurrency)?.takeIf { it in CurrencyCode.ALL_SUPPORTED }
+        ?: throw com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException(
+            com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode.INVALID_TARGET_CURRENCY
+        )
+    if (CurrencyCode.parse(homeCurrency) != target || excludedCount > 0 || hasWarnings ||
+        normalizedExpenses.any { it.qualityWarning != null } ||
+        includedExpenses.any { CurrencyCode.parse(it.currency) != target }
+    ) {
+        throw com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException(
+            com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE
+        )
+    }
+}
+
+/** Decision inputs fail closed on any lost/uncertain row, while retaining rate provenance. */
+fun AnalyticsNormalizationResult.completeMoneyAggregateForRows(
+    rows: Iterable<ExpenseSnapshot>,
+    targetCurrency: String
+): com.yourname.expensetracker.domain.core.money.MoneyAggregate {
+    requireCompleteMoneyInput(targetCurrency)
+    val target = CurrencyCode.parse(targetCurrency)!!
+    val selected = rows.toList()
+    val byId = normalizedExpenses.associateBy { it.snapshot.id }
+    val moneyRows = selected.map { row ->
+        val normalized = byId[row.id]
+        val source = normalized?.originalCurrency?.let(CurrencyCode::parse)
+        if (normalized == null || source == null || source !in CurrencyCode.ALL_SUPPORTED ||
+            row.effectiveAmount != normalized.normalizedEffectiveAmount ||
+            CurrencyCode.parse(row.currency) != target
+        ) {
+            throw com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException(
+                com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE
+            )
+        }
+        com.yourname.expensetracker.domain.core.money.NormalizedMoneyRow(
+            row.effectiveAmount, target, source, rateValidDate = normalized.rateValidDate,
+            transactionId = row.id
+        )
+    }
+    val result = com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder.fromNormalizedRows(
+        moneyRows, target,
+        requestedRateBasis = com.yourname.expensetracker.domain.core.money.RateBasis.TRANSACTION_DATE,
+        actualRateBasis = if (moneyRows.all { it.sourceCurrency == target })
+            com.yourname.expensetracker.domain.core.money.RateBasis.IDENTITY
+        else com.yourname.expensetracker.domain.core.money.RateBasis.TRANSACTION_DATE
+    )
+    return (result as? com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Available)?.aggregate
+        ?: throw com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException(
+            com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE
+        )
+}
+
 /**
  * Snapshot of a single expense after currency normalisation, including
  * conversion rate provenance metadata.
@@ -293,7 +352,8 @@ data class NormalizedExpenseSnapshot(
     val rateValidDate: Long? = null,
     val rateLastUpdated: Long? = null,
     val rateSource: String? = null,
-    val conversionPath: String? = null
+    val conversionPath: String? = null,
+    val qualityWarning: AnalyticsConversionWarningType? = null
 )
 
 private data class WarningKey(
@@ -328,7 +388,8 @@ private data class ConversionResult(
     val rateValidDate: Long?,
     val rateLastUpdated: Long?,
     val rateSource: String?,
-    val conversionPath: String?
+    val conversionPath: String?,
+    val qualityWarning: AnalyticsConversionWarningType?
 )
 
 private data class NormalizableAnalyticsExpense(

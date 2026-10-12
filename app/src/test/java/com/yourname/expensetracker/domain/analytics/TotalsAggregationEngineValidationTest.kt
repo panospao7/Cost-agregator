@@ -258,7 +258,7 @@ class TotalsAggregationEngineValidationTest {
         val average = engine.getAverageForPeriodType(PeriodType.DAY, excludeCurrent = false)
         
         // Then: Should return computed average (4500 / 30 = 150)
-        assertEquals(150.0, average, 0.01)
+        assertEquals(150.0, requireNotNull(average).amount, 0.01)
     }
 
     @Test
@@ -280,7 +280,7 @@ class TotalsAggregationEngineValidationTest {
         val average = engine.getAverageForPeriodType(PeriodType.MONTH, excludeCurrent = false)
         
         // Then: Should be (1000 + 1200 + 1100) / 3 = 1100
-        assertEquals(1100.0, average, 0.01)
+        assertEquals(1100.0, requireNotNull(average).amount, 0.01)
     }
 
     @Test
@@ -302,7 +302,7 @@ class TotalsAggregationEngineValidationTest {
         val average = engine.getAverageForPeriodType(PeriodType.MONTH, excludeCurrent = true)
         
         // Then: Should be (1000 + 1200) / 2 = 1100 (excluding current month)
-        assertEquals(1100.0, average, 0.01)
+        assertEquals(1100.0, requireNotNull(average).amount, 0.01)
     }
 
     // ========== SCENARIO 5: Category Breakdown Percentages ==========
@@ -402,7 +402,7 @@ class TotalsAggregationEngineValidationTest {
         val average = 1000.0
         
         // When: Determine period status
-        val status = engine.getPeriodStatus(total, average)
+        val status = engine.getPeriodStatus(MoneyAggregate.singleCurrency(total, CurrencyCode.EUR), com.yourname.expensetracker.domain.core.money.MoneyAmount(average, CurrencyCode.EUR))
         
         // Then: Should be UNDER_AVERAGE
         assertEquals(PeriodStatus.UNDER_AVERAGE, status)
@@ -415,7 +415,7 @@ class TotalsAggregationEngineValidationTest {
         val average = 1000.0
         
         // When: Determine period status
-        val status = engine.getPeriodStatus(total, average)
+        val status = engine.getPeriodStatus(MoneyAggregate.singleCurrency(total, CurrencyCode.EUR), com.yourname.expensetracker.domain.core.money.MoneyAmount(average, CurrencyCode.EUR))
         
         // Then: Should be OVER_AVERAGE
         assertEquals(PeriodStatus.OVER_AVERAGE, status)
@@ -428,7 +428,7 @@ class TotalsAggregationEngineValidationTest {
         val average = 0.0
         
         // When: Determine period status
-        val status = engine.getPeriodStatus(total, average)
+        val status = engine.getPeriodStatus(MoneyAggregate.singleCurrency(total, CurrencyCode.EUR), com.yourname.expensetracker.domain.core.money.MoneyAmount(average, CurrencyCode.EUR))
         
         // Then: Should be NO_DATA
         assertEquals(PeriodStatus.NO_DATA, status)

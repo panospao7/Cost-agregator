@@ -223,23 +223,23 @@ class ReceiptRepository @Inject constructor(
                 // is only a fallback for failures BEFORE any save (no double copy).
                 val path = (e as? com.yourname.expensetracker.domain.receipt.OcrRecognitionFailedException)?.savedImagePath
                     ?: try { ocrService.persistImageCopy(imageUri) } catch (_: Exception) { null }
-                val homeCur = homeCurrency()
                 val now = timeProvider.now()
                 val fallbackReceipt = ReceiptTimestampPolicy.forInsert(ScannedReceipt(
                     imagePath = path, rawOcrText = "[OCR Failed or Skipped]",
                     parsedTotal = null, parsedMerchant = null, parsedDate = now,
                     parsedItems = null, parsedTaxAmount = null,
-                    currency = homeCur, confidence = 0f,
+                    currency = "", confidence = 0f,
                     processingStatus = ReceiptProcessingStatus.OCR_FAILED.name
                 ), now)
                 return@withContext ProcessReceiptResult(
                     fallbackReceipt,
-                    ReceiptParser.ParsedReceipt(null, null, null, null, now, homeCur, emptyList(), 0f),
+                    ReceiptParser.ParsedReceipt(null, null, null, null, now, "", emptyList(), 0f),
                     pagesProcessed = null, totalPages = null, ephemeralRawOcrText = null
                 )
             }
 
-            // 2. Parse the OCR text with the user's home currency as fallback
+            // 2. Parse the OCR text with the user's home currency available for
+            //    draft/review metadata only; the parser must not guess source currency.
             // P3-CURRENT-018: Narrow try/catch to ONLY the parse call so that
             // DB/normalizer/classifier errors propagate as infrastructure failures
             // rather than being misclassified as PARSE_FAILED.
@@ -259,7 +259,7 @@ class ReceiptRepository @Inject constructor(
                     rawOcrText = sanitizeOcrBeforeInsert(ocrResult.fullText),
                     parsedTotal = null, parsedMerchant = null, parsedDate = null,
                     parsedItems = null, parsedTaxAmount = null,
-                    currency = homeCur, confidence = 0f,
+                    currency = "", confidence = 0f,
                     processingStatus = ReceiptProcessingStatus.PARSE_FAILED.name,
                     parseFailureReason = safeReason,
                     sourceType = ReceiptSourceType.CAMERA.name,
@@ -269,7 +269,7 @@ class ReceiptRepository @Inject constructor(
                 // Coordinator owns the insert + PARSE_FAILED event in one transaction.
                 return@withContext ProcessReceiptResult(
                     failedReceipt, // id = 0, coordinator will insert
-                    ReceiptParser.ParsedReceipt(null, null, null, null, now, homeCur, emptyList(), 0f),
+                    ReceiptParser.ParsedReceipt(null, null, null, null, now, "", emptyList(), 0f),
                     pagesProcessed = ocrResult.pagesProcessed,
                     totalPages = ocrResult.totalPages,
                     ephemeralRawOcrText = ocrResult.fullText,
@@ -288,12 +288,12 @@ class ReceiptRepository @Inject constructor(
             val receipt = ReceiptTimestampPolicy.forInsert(ScannedReceipt(
                 imagePath = ocrResult.savedImagePath,
                 rawOcrText = sanitizeOcrBeforeInsert(ocrResult.fullText),
-                parsedTotal = parsed.total,
+                parsedTotal = parsed.total?.amount,
                 parsedMerchant = normalizedMerchant ?: parsed.merchantName,
                 parsedDate = parsed.date,
                 parsedItems = if (parsed.lineItems.isNotEmpty())
                     receiptParser.lineItemsToJson(parsed.lineItems) else null,
-                parsedTaxAmount = parsed.tax,
+                parsedTaxAmount = parsed.tax?.amount,
                 currency = parsed.currency,
                 confidence = parsed.confidence
             ), now)
@@ -322,19 +322,18 @@ class ReceiptRepository @Inject constructor(
      */
     suspend fun saveManualReceiptRecord(imageUri: android.net.Uri): ProcessReceiptResult {
         val path = try { ocrService.persistImageCopy(imageUri) } catch (_: Exception) { null }
-        val homeCur = homeCurrency()
         val now = timeProvider.now()
         val receipt = ReceiptTimestampPolicy.forInsert(ScannedReceipt(
             imagePath = path, // null if copy failed — never raw URI
             rawOcrText = "[OCR Failed or Skipped]",
             parsedTotal = null, parsedMerchant = null, parsedDate = now,
             parsedItems = null, parsedTaxAmount = null,
-            currency = homeCur, confidence = 0f,
+            currency = "", confidence = 0f,
             processingStatus = ReceiptProcessingStatus.OCR_FAILED.name
         ), now)
         return ProcessReceiptResult(
             receipt, // id = 0, coordinator will insert
-            ReceiptParser.ParsedReceipt(null, null, null, null, now, homeCur, emptyList(), 0f)
+            ReceiptParser.ParsedReceipt(null, null, null, null, now, "", emptyList(), 0f)
         )
     }
 
@@ -352,7 +351,7 @@ class ReceiptRepository @Inject constructor(
      */
     private fun detectTaxInclusive(receipt: ScannedReceipt): Boolean {
         val lineItems = receipt.parsedItems?.let { receiptParser.lineItemsFromJson(it) }
-        return ReceiptParser.isTaxInclusive(receipt.parsedTotal, receipt.parsedTaxAmount, lineItems)
+        return ReceiptParser.isTaxInclusive(receipt.parsedTotal, receipt.parsedTaxAmount, lineItems, receipt.currency)
     }
 
     /**
@@ -365,9 +364,9 @@ class ReceiptRepository @Inject constructor(
      *  - Receipt-to-expense linking
      *  - Hybrid classifier correction learning
      *
-     * @param currency The expense currency. **Legacy default:** `"EUR"` is the
-     *   original hardcoded fallback; callers should explicitly pass the user's
-     *   home currency via [homeCurrency] instead.
+     * @param currency The expense currency. The disabled compatibility signature
+     *   uses `"XXX"` as an unresolved sentinel; callers must provide explicit
+     *   source-currency evidence through the receipt lifecycle coordinator.
      * @Deprecated Prefer using [TransactionLifecycleCoordinator.createExpense]
      * directly with [ReceiptLinkService.linkReceiptToExpense] for the linking
      * step. This method remains for backward compatibility but will be removed

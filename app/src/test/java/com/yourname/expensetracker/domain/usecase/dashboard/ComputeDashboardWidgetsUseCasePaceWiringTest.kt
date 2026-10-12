@@ -5,15 +5,22 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
 import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.toExpenseSnapshot
+import com.yourname.expensetracker.domain.core.money.ConversionQuality
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import com.yourname.expensetracker.domain.forecasting.ConfidenceLevel
 import com.yourname.expensetracker.domain.forecasting.FinancialStressForecastEngine
 import com.yourname.expensetracker.domain.forecasting.ForecastInputAssembler
+import com.yourname.expensetracker.domain.forecasting.MonteCarloResult
 import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator
 import com.yourname.expensetracker.domain.forecasting.NormalizedForecastInput
+import com.yourname.expensetracker.domain.forecasting.SimulationConfidence
+import com.yourname.expensetracker.domain.forecasting.SimulationMetadata
 import com.yourname.expensetracker.domain.forecasting.StressForecastResult
 import com.yourname.expensetracker.domain.forecasting.StressHorizon
 import com.yourname.expensetracker.domain.forecasting.StressRiskLevel
@@ -22,6 +29,8 @@ import com.yourname.expensetracker.domain.health.FinancialHealthScoreV2
 import com.yourname.expensetracker.domain.health.HealthScoreOutcome
 import com.yourname.expensetracker.domain.health.HealthTrend
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
+import com.yourname.expensetracker.domain.model.PlannedExpense
+import com.yourname.expensetracker.domain.model.PlannedExpensePriority
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.model.dashboard.DashboardExpense
 import com.yourname.expensetracker.domain.model.dashboard.FinancialWeather
@@ -31,13 +40,16 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.usecase.savings.LifestyleSavingsPromptUseCase
 import com.yourname.expensetracker.domain.usecase.savings.MonthlySavingsSweepUseCase
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.coroutines.CopyableThrowable
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import timber.log.Timber
 import java.time.LocalDateTime
 import java.time.ZoneId
 
@@ -62,30 +74,67 @@ class ComputeDashboardWidgetsUseCasePaceWiringTest {
     }
     private lateinit var computeUseCase: ComputeDashboardWidgetsUseCase
     private lateinit var monthlySavingsSweepUseCase: MonthlySavingsSweepUseCase
+    private lateinit var currencyConverter: CurrencyConverter
+    private lateinit var currencySettingsRepository: CurrencySettingsRepository
+    private lateinit var monteCarloSimulator: MonteCarloSpendingSimulator
+    private var lastForecastInput: NormalizedForecastInput? = null
+
+    @Test
+    fun `owner exclusions survive compatibility pace reconstruction`() = runTest {
+        fixedNowMs = toEpochMs(2026, 6, 15, 12, 0)
+        coEvery { currencyConverter.convertOutcome(any(), "XYZ", "EUR", any(), any(), any()) } answers {
+            com.yourname.expensetracker.domain.core.money.ConversionOutcome.Failed(
+                firstArg(), "XYZ", "EUR", arg(3),
+                com.yourname.expensetracker.domain.core.money.ConversionFailureType.INVALID_SOURCE_CURRENCY,
+                "TEST_INVALID_SOURCE"
+            )
+        }
+        val expenses = listOf(
+            purchase(1L, 100.0, toEpochMs(2026, 6, 2)),
+            purchase(2L, 300.0, toEpochMs(2026, 5, 10)),
+            purchase(3L, 900.0, toEpochMs(2026, 6, 3)).copy(currency = "XYZ")
+        )
+        val result = computeUseCase.compute(createProcessedData(expenses))
+        val pace = requireNotNull(lastForecastInput).spendingPace
+        assertEquals(PaceStatus.NO_BASELINE, pace.paceStatus)
+        org.junit.Assert.assertNull(pace.currentMonthSpent)
+        org.junit.Assert.assertNull(pace.previousMonthTotal)
+        org.junit.Assert.assertNull(pace.averageMonthlyTotal)
+        val unavailable = pace.currentMoneyResult as com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Unavailable
+        assertTrue(unavailable.metadata.excludedTransactionCount > 0)
+        assertTrue(unavailable.metadata.invalidCurrencyCount > 0)
+        val owner = (result.normalizedInput as DashboardNormalizedInputResult.Available).input
+        assertEquals(owner.dataQuality.excludedTransactionCount, unavailable.metadata.excludedTransactionCount)
+        assertTrue(result.allWidgets.none { it is DashboardWidget.SpendingPaceWidget })
+    }
 
     @Test
     fun savingsWidgetOwnDeadlinePreservesTheOtherDashboardWidgets() = runTest {
         fixedNowMs = toEpochMs(2026, 6, 15, 12, 0)
         val data = createProcessedData(emptyList())
         val baseline = computeUseCase.compute(data)
-        coEvery { monthlySavingsSweepUseCase.computeSweepRecommendation() } coAnswers {
+        coEvery { monthlySavingsSweepUseCase.computeSweepRecommendationResult() } coAnswers {
             kotlinx.coroutines.delay(10_000L)
-            null
+            com.yourname.expensetracker.domain.usecase.savings.SavingsSweepComputationResult.NoRecommendation()
         }
         val started = testScheduler.currentTime
         val result = computeUseCase.compute(data)
         assertEquals(3_000L, testScheduler.currentTime - started)
         assertTrue(result.allWidgets.none { it is DashboardWidget.SavingsSweepPrompt })
+        assertTrue(result.allWidgets.any { it is DashboardWidget.SavingsSweepUnavailable })
         assertTrue(result.allWidgets.isNotEmpty())
-        assertEquals(baseline.allWidgets.map { it::class }, result.allWidgets.map { it::class })
+        assertEquals(
+            baseline.allWidgets.map { it::class },
+            result.allWidgets.filterNot { it is DashboardWidget.SavingsSweepUnavailable }.map { it::class }
+        )
     }
 
     @Test
     fun callerDeadlineIsNotSwallowedBySavingsWidgetDeadline() = runTest {
         fixedNowMs = toEpochMs(2026, 6, 15, 12, 0)
-        coEvery { monthlySavingsSweepUseCase.computeSweepRecommendation() } coAnswers {
+        coEvery { monthlySavingsSweepUseCase.computeSweepRecommendationResult() } coAnswers {
             kotlinx.coroutines.delay(10_000L)
-            null
+            com.yourname.expensetracker.domain.usecase.savings.SavingsSweepComputationResult.NoRecommendation()
         }
         val started = testScheduler.currentTime
         val failure = runCatching {
@@ -109,7 +158,7 @@ class ComputeDashboardWidgetsUseCasePaceWiringTest {
     fun savingsWidgetPropagatesDependencyCancellationUnchanged() = runTest {
         fixedNowMs = toEpochMs(2026, 6, 15, 12, 0)
         val cancellation = IdentityCancellation("test cancellation")
-        coEvery { monthlySavingsSweepUseCase.computeSweepRecommendation() } throws cancellation
+        coEvery { monthlySavingsSweepUseCase.computeSweepRecommendationResult() } throws cancellation
         val failure = runCatching {
             computeUseCase.compute(createProcessedData(emptyList()))
         }.exceptionOrNull()
@@ -121,18 +170,270 @@ class ComputeDashboardWidgetsUseCasePaceWiringTest {
         fixedNowMs = toEpochMs(2026, 6, 15, 12, 0)
         val data = createProcessedData(emptyList())
         val baseline = computeUseCase.compute(data)
-        coEvery { monthlySavingsSweepUseCase.computeSweepRecommendation() } throws
+        coEvery { monthlySavingsSweepUseCase.computeSweepRecommendationResult() } throws
             IllegalStateException("SECRET financial payload")
         val result = computeUseCase.compute(data)
         assertTrue(result.allWidgets.none { it is DashboardWidget.SavingsSweepPrompt })
-        assertEquals(baseline.allWidgets.map { it::class }, result.allWidgets.map { it::class })
+        val unavailable = result.allWidgets.filterIsInstance<DashboardWidget.SavingsSweepUnavailable>().single()
+        assertEquals("DISPLAY_CONVERSION_UNAVAILABLE", unavailable.reasonCode)
+        assertEquals(
+            baseline.allWidgets.map { it::class },
+            result.allWidgets.filterNot { it is DashboardWidget.SavingsSweepUnavailable }.map { it::class }
+        )
     }
+
+    @Test
+    fun typedSavingsUnavailableRetainsReasonAndMetadataInsteadOfMoney() = runTest {
+        fixedNowMs = toEpochMs(2026, 6, 29, 12, 0)
+        val metadata = com.yourname.expensetracker.domain.savings.SmartSavingsOutcomeMetadata(
+            currency = "EUR", conversionQuality = ConversionQuality.UNAVAILABLE,
+            totalInputCount = 3, excludedInputCount = 3,
+            warningCodes = listOf("STALE_EXCHANGE_RATE"), latestRateTimestamp = 123L
+        )
+        coEvery { monthlySavingsSweepUseCase.computeSweepRecommendationResult() } returns
+            com.yourname.expensetracker.domain.usecase.savings.SavingsSweepComputationResult.Unavailable(
+                "DISPLAY_CONVERSION_UNAVAILABLE", metadata
+            )
+        val result = computeUseCase.compute(createProcessedData(emptyList()))
+        val widget = result.allWidgets.filterIsInstance<DashboardWidget.SavingsSweepUnavailable>().single()
+        assertEquals("DISPLAY_CONVERSION_UNAVAILABLE", widget.reasonCode)
+        assertEquals(metadata, widget.metadata)
+        assertEquals(DashboardWidgetRegistry.SAVINGS_SWEEP, DashboardWidgetRegistry.idFor(widget))
+        assertTrue(result.allWidgets.none { it is DashboardWidget.SavingsSweepPrompt })
+        coVerify(exactly = 0) { monthlySavingsSweepUseCase.computeSweepRecommendation() }
+    }
+
+    @Test
+    fun typedSavingsAvailableRetainsCapturedCurrencyAndQuality() = runTest {
+        fixedNowMs = toEpochMs(2026, 6, 29, 12, 0)
+        val metadata = com.yourname.expensetracker.domain.savings.SmartSavingsOutcomeMetadata(
+            currency = "GBP", totalInputCount = 4, includedInputCount = 4, latestRateTimestamp = 321L
+        )
+        val recommendation = com.yourname.expensetracker.domain.usecase.savings.SavingsSweepRecommendation(
+            50.0, 10.0, 40.0, emptyList(), fixedNowMs, fixedNowMs + 1_000L, 0.9, "GBP"
+        )
+        coEvery { monthlySavingsSweepUseCase.computeSweepRecommendationResult() } returns
+            com.yourname.expensetracker.domain.usecase.savings.SavingsSweepComputationResult.Available(
+                recommendation, metadata
+            )
+        val widget = computeUseCase.compute(createProcessedData(emptyList())).allWidgets
+            .filterIsInstance<DashboardWidget.SavingsSweepPrompt>().single()
+        assertEquals("GBP", widget.currency)
+        assertEquals(metadata, widget.metadata)
+        assertEquals(40.0, widget.sweepAmount, 0.0)
+    }
+
+    @Test
+    fun validNoSavingsRecommendationOmitsBothMoneyAndUnavailableWidgets() = runTest {
+        fixedNowMs = toEpochMs(2026, 6, 29, 12, 0)
+        val result = computeUseCase.compute(createProcessedData(emptyList()))
+        assertTrue(result.allWidgets.none {
+            it is DashboardWidget.SavingsSweepPrompt || it is DashboardWidget.SavingsSweepUnavailable
+        })
+    }
+
+    @Test
+    fun `Monte Carlo forwards non EUR home currency and preserves result denomination and quality`() = runTest {
+        fixedNowMs = toEpochMs(2026, 6, 15, 12, 0)
+        for (currency in listOf("USD", "GBP")) {
+            coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
+                HomeCurrencyResolution.Resolved(CurrencyCode(currency))
+            val forecast = monteCarloResult(currency)
+            coEvery { monteCarloSimulator.simulate(any(), any(), any(), currency, any()) } returns forecast
+            val expenses = listOf(purchase(1L, 100.0, toEpochMs(2026, 6, 2)).copy(currency = currency))
+
+            val result = computeUseCase.compute(createProcessedData(expenses))
+            val widget = result.allWidgets.filterIsInstance<DashboardWidget.MonteCarloForecast>().single()
+            val input = (result.normalizedInput as DashboardNormalizedInputResult.Available).input
+
+            assertTrue(!input.dataQuality.isPartial)
+            assertEquals(ConversionQuality.COMPLETE, input.dataQuality.conversionQuality)
+            coVerify(exactly = 1) {
+                monteCarloSimulator.simulate(
+                    spentToDate = 100.0, knownUpcoming = 0.0, budgetAmount = null,
+                    displayCurrency = currency, estimatedWeeklyRecurring = 0.0
+                )
+            }
+            assertSame(forecast, widget.result)
+            assertEquals(currency, widget.result.displayCurrency)
+            assertEquals(CurrencyQualityUi.from(input.dataQuality), widget.currencyQuality)
+        }
+    }
+
+    @Test
+    fun `Monte Carlo partial normalized input is unavailable without simulation`() = runTest {
+        fixedNowMs = toEpochMs(2026, 6, 15, 12, 0)
+        coEvery { currencyConverter.convertOutcome(any(), "XYZ", "EUR", any(), any(), any()) } answers {
+            com.yourname.expensetracker.domain.core.money.ConversionOutcome.Failed(
+                firstArg(), "XYZ", "EUR", arg(3),
+                com.yourname.expensetracker.domain.core.money.ConversionFailureType.INVALID_SOURCE_CURRENCY,
+                "TEST_INVALID_SOURCE"
+            )
+        }
+        val forecast = monteCarloResult("EUR")
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns forecast
+        val expenses = listOf(
+            purchase(1L, 100.0, toEpochMs(2026, 6, 2)),
+            purchase(2L, 900.0, toEpochMs(2026, 6, 3)).copy(currency = "XYZ")
+        )
+
+        val result = computeUseCase.compute(createProcessedData(expenses))
+        val input = (result.normalizedInput as DashboardNormalizedInputResult.Available).input
+
+        assertTrue(input.dataQuality.isPartial)
+        assertTrue(input.dataQuality.excludedTransactionCount > 0)
+        assertMonteCarloUnavailable(result, MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE)
+        coVerify(exactly = 0) { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `Monte Carlo incomplete future obligation is unavailable despite complete actual input`() = runTest {
+        fixedNowMs = toEpochMs(2026, 6, 15, 12, 0)
+        coEvery { currencyConverter.convertOutcome(any(), "XYZ", "EUR", any(), any(), any()) } answers {
+            com.yourname.expensetracker.domain.core.money.ConversionOutcome.Failed(
+                firstArg(), "XYZ", "EUR", arg(3),
+                com.yourname.expensetracker.domain.core.money.ConversionFailureType.INVALID_SOURCE_CURRENCY,
+                "TEST_INVALID_SOURCE"
+            )
+        }
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns monteCarloResult("EUR")
+        val data = createProcessedData(listOf(purchase(1L, 100.0, toEpochMs(2026, 6, 2))))
+        val planned = PlannedExpense(
+            id = 2L, description = "Upcoming bill", amount = 900.0, currency = "XYZ",
+            date = toEpochMs(2026, 6, 20), categoryId = 7L, isRecurring = false,
+            priority = PlannedExpensePriority.MUST
+        )
+
+        val result = computeUseCase.compute(data.copy(data = data.data.copy(plannedExpenses = listOf(planned))))
+        val input = (result.normalizedInput as DashboardNormalizedInputResult.Available).input
+
+        assertTrue(!input.dataQuality.isPartial)
+        assertEquals(ConversionQuality.COMPLETE, input.dataQuality.conversionQuality)
+        assertEquals(0, input.dataQuality.excludedTransactionCount)
+        assertTrue(!requireNotNull(lastForecastInput).dataQuality.isPartial)
+        assertEquals(listOf(planned), requireNotNull(lastForecastInput).plannedExpenses)
+        coVerify(atLeast = 1) {
+            currencyConverter.convertOutcome(
+                amount = 900.0, fromCurrency = "XYZ", toCurrency = "EUR",
+                rateBasis = com.yourname.expensetracker.domain.core.money.RateBasis.LATEST_AVAILABLE,
+                atMillis = null,
+                stalePolicy = com.yourname.expensetracker.domain.core.money.StaleRatePolicy.LatestDefault
+            )
+        }
+        assertMonteCarloUnavailable(result, MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE)
+        coVerify(exactly = 0) { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `Monte Carlo money display failures retain controlled unavailable reasons`() = runTest {
+        fixedNowMs = toEpochMs(2026, 6, 15, 12, 0)
+        val reason = MoneyDisplayUnavailableReasonCode.INVALID_SOURCE_CURRENCY
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } throws
+            MoneyDisplayUnavailableException(reason)
+
+        val result = computeUseCase.compute(createProcessedData(emptyList()))
+
+        assertMonteCarloUnavailable(result, reason)
+    }
+
+    @Test
+    fun `Monte Carlo propagates dependency cancellation unchanged`() = runTest {
+        fixedNowMs = toEpochMs(2026, 6, 15, 12, 0)
+        val cancellation = IdentityCancellation("test Monte Carlo cancellation")
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } throws cancellation
+
+        val failure = runCatching {
+            computeUseCase.compute(createProcessedData(emptyList()))
+        }.exceptionOrNull()
+
+        assertSame(cancellation, failure)
+    }
+
+    @Test
+    fun `Monte Carlo unexpected failure is unavailable without exposing exception or discarding other widgets`() = runTest {
+        fixedNowMs = toEpochMs(2026, 6, 15, 12, 0)
+        val data = createProcessedData(emptyList())
+        val baseline = computeUseCase.compute(data)
+        val secret = "SECRET financial payload /private/receipt.db"
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } throws
+            IllegalStateException(secret)
+        val logs = mutableListOf<Pair<String, Throwable?>>()
+        val tree = object : Timber.Tree() {
+            override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+                logs += message to t
+            }
+        }
+        Timber.plant(tree)
+        try {
+            val result = computeUseCase.compute(data)
+
+            assertMonteCarloUnavailable(result, MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE)
+            assertEquals(
+                baseline.allWidgets.map { it::class },
+                result.allWidgets.filterNot { it is DashboardWidget.MonteCarloForecast }.map { it::class }
+            )
+            assertTrue(logs.all { (message, throwable) -> throwable == null && !message.contains(secret) })
+        } finally {
+            Timber.uproot(tree)
+        }
+    }
+
+    @Test
+    fun `Monte Carlo genuine null omits only its widget`() = runTest {
+        fixedNowMs = toEpochMs(2026, 6, 15, 12, 0)
+        val data = createProcessedData(emptyList())
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns monteCarloResult("EUR")
+        val withForecast = computeUseCase.compute(data)
+        assertEquals(1, withForecast.allWidgets.filterIsInstance<DashboardWidget.MonteCarloForecast>().size)
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns null
+
+        val result = computeUseCase.compute(data)
+
+        assertTrue(result.allWidgets.none { it is DashboardWidget.MonteCarloForecast })
+        assertEquals(
+            withForecast.allWidgets.filterNot { it is DashboardWidget.MonteCarloForecast }.map { it::class },
+            result.allWidgets.map { it::class }
+        )
+    }
+
+    @Test
+    fun `Monte Carlo unavailable home currency uses controlled early reason without simulation`() = runTest {
+        fixedNowMs = toEpochMs(2026, 6, 15, 12, 0)
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
+            HomeCurrencyResolution.Failed("SECRET settings payload /private/settings")
+
+        val result = computeUseCase.compute(createProcessedData(emptyList()))
+
+        assertTrue(result.normalizedInput is DashboardNormalizedInputResult.Unavailable)
+        assertMonteCarloUnavailable(result, MoneyDisplayUnavailableReasonCode.HOME_CURRENCY_UNAVAILABLE)
+        coVerify(exactly = 0) { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) }
+    }
+
+    private fun assertMonteCarloUnavailable(
+        result: CompiledDashboardData,
+        reason: MoneyDisplayUnavailableReasonCode
+    ) {
+        val widget = result.allWidgets.filterIsInstance<DashboardWidget.MonteCarloForecast>().single()
+        assertEquals(MonteCarloResult.unavailable(reason.name), widget.result)
+        assertEquals(CurrencyQualityUi.unavailable(reason.name), widget.currencyQuality)
+    }
+
+    private fun monteCarloResult(currency: String) = MonteCarloResult(
+        percentile10 = 100.0, percentile25 = 125.0, percentile50 = 150.0,
+        percentile75 = 175.0, percentile90 = 200.0,
+        probabilityUnderBudget = null, budgetAmount = null,
+        spentToDate = 100.0, knownUpcoming = 0.0,
+        confidence = SimulationConfidence(0.8, ConfidenceLevel.HIGH, "TEST_COMPLETE"),
+        metadata = SimulationMetadata(12, 12, 1000, 1.0, 0.5, 15, fixedNowMs),
+        displayCurrency = currency
+    )
 
     @Before
     fun setup() {
+        currencyConverter = mockk(relaxed = true)
         val insightsEngine = mockk<com.yourname.expensetracker.domain.analytics.InsightsEngine>(relaxed = true)
-        val monteCarloSimulator = mockk<MonteCarloSpendingSimulator>(relaxed = true)
-        coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns null
+        monteCarloSimulator = mockk(relaxed = true)
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns null
         val healthScoreV2 = mockk<FinancialHealthScoreV2>(relaxed = true)
         coEvery { healthScoreV2.calculateHealthScore(any(), any()) } returns HealthScoreOutcome.Available(
             FinancialHealthResult(
@@ -149,7 +450,8 @@ class ComputeDashboardWidgetsUseCasePaceWiringTest {
         val lifestyleSavingsPromptUseCase = mockk<LifestyleSavingsPromptUseCase>(relaxed = true)
         coEvery { lifestyleSavingsPromptUseCase.evaluateAndPrompt() } returns null
         monthlySavingsSweepUseCase = mockk(relaxed = true)
-        coEvery { monthlySavingsSweepUseCase.computeSweepRecommendation() } returns null
+        coEvery { monthlySavingsSweepUseCase.computeSweepRecommendationResult() } returns
+            com.yourname.expensetracker.domain.usecase.savings.SavingsSweepComputationResult.NoRecommendation()
         val computeMoneyRadarUseCase = mockk<ComputeMoneyRadarUseCase>(relaxed = true)
         coEvery { computeMoneyRadarUseCase.compute() } returns MoneyRadarData(
             urgencyScore = 0,
@@ -169,7 +471,7 @@ class ComputeDashboardWidgetsUseCasePaceWiringTest {
             earliestCrunchDate = null,
             recommendations = emptyList()
         )
-        val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
+        currencySettingsRepository = mockk(relaxed = true)
         coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
             HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
         val multiCurrencyRepository = mockk<MultiCurrencyRepository>(relaxed = true)
@@ -183,6 +485,7 @@ class ComputeDashboardWidgetsUseCasePaceWiringTest {
         val forecastInputAssembler = mockk<ForecastInputAssembler>(relaxed = true)
         coEvery { forecastInputAssembler.assembleNormalized(any()) } answers {
             val input = arg<NormalizedForecastInput>(0)
+            lastForecastInput = input
             ForecastInputAssembler.ForecastInput(
                 pastSumDaily = input.pastSumDaily,
                 recurringPatterns = input.recurringPatterns,
@@ -199,7 +502,7 @@ class ComputeDashboardWidgetsUseCasePaceWiringTest {
         computeUseCase = ComputeDashboardWidgetsUseCase(
             writeBarrier = mockk(relaxed = true),
             insightsEngine = insightsEngine,
-            synthesisEngine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true)),
+            synthesisEngine = SynthesisEngine(timeProvider, currencyConverter = currencyConverter),
             monteCarloSimulator = monteCarloSimulator,
             timeProvider = timeProvider,
             healthCalculator = mockk(relaxed = true),
@@ -209,7 +512,7 @@ class ComputeDashboardWidgetsUseCasePaceWiringTest {
             computeMoneyRadarUseCase = computeMoneyRadarUseCase,
             stressForecastEngine = stressForecastEngine,
             forecastInputAssembler = forecastInputAssembler,
-            currencyConverter = mockk<CurrencyConverter>(relaxed = true),
+            currencyConverter = currencyConverter,
             currencySettingsRepository = currencySettingsRepository,
             multiCurrencyRepository = multiCurrencyRepository,
             // Real calculator with the test's fake TimeProvider — pace math is real.
@@ -246,7 +549,7 @@ class ComputeDashboardWidgetsUseCasePaceWiringTest {
             pace.pacePercentage,
             0.1f
         )
-        assertEquals(150.0, pace.currentMonthSpent, 0.001)
+        assertEquals(150.0, requireNotNull(pace.currentMonthSpent), 0.001)
         assertEquals(300.0, pace.previousMonthTotal!!, 0.001)
         // RP-05 enrichment: the calculator returns a null averageMonthlyTotal; the
         // dashboard must override it via the single-completed-month fallback

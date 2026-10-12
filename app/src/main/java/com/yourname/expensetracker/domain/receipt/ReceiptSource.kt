@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.domain.receipt
 
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
+
 /**
  * Platform-agnostic input descriptor for receipt processing.
  */
@@ -8,7 +10,7 @@ sealed interface ReceiptSource {
     data class ParsedContent(
         val rawText: String,
         val merchant: String? = null,
-        val amount: Double? = null,
+        val amount: MoneyAmount? = null,
         val date: Long? = null,
         val imagePath: String = ""
     ) : ReceiptSource

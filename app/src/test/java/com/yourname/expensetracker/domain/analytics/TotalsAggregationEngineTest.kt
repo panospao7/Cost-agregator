@@ -129,10 +129,10 @@ class TotalsAggregationEngineTest {
     }
 
     @Test
-    fun `average catch returns zero and emits bounded log`() = runTest {
+    fun `average catch returns unavailable and emits bounded log`() = runTest {
         coEvery { multiCurrencyRepo.getMonthlyAggregatesHistorical(any(), any()) } throws
             IllegalStateException("secret SQL /data/918")
-        assertEquals(0.0, engine.getAverageForPeriodType(PeriodType.MONTH, false), 0.0)
+        assertNull(engine.getAverageForPeriodType(PeriodType.MONTH, false))
         assertSafeLog("average")
     }
 
@@ -356,32 +356,104 @@ class TotalsAggregationEngineTest {
 
     @Test
     fun `getPeriodStatus returns UNDER_AVERAGE when below average`() {
-        val status = engine.getPeriodStatus(50.0, 100.0)
+        val status = engine.getPeriodStatus(MoneyAggregate.singleCurrency(50.0, CurrencyCode.EUR), com.yourname.expensetracker.domain.core.money.MoneyAmount(100.0, CurrencyCode.EUR))
         assertEquals(PeriodStatus.UNDER_AVERAGE, status)
     }
 
     @Test
     fun `getPeriodStatus returns OVER_AVERAGE when above average`() {
-        val status = engine.getPeriodStatus(150.0, 100.0)
+        val status = engine.getPeriodStatus(MoneyAggregate.singleCurrency(150.0, CurrencyCode.EUR), com.yourname.expensetracker.domain.core.money.MoneyAmount(100.0, CurrencyCode.EUR))
         assertEquals(PeriodStatus.OVER_AVERAGE, status)
     }
 
     @Test
     fun `getPeriodStatus returns OVER_AVERAGE when equal to average`() {
-        val status = engine.getPeriodStatus(100.0, 100.0)
+        val status = engine.getPeriodStatus(MoneyAggregate.singleCurrency(100.0, CurrencyCode.EUR), com.yourname.expensetracker.domain.core.money.MoneyAmount(100.0, CurrencyCode.EUR))
         assertEquals(PeriodStatus.OVER_AVERAGE, status)
     }
 
     @Test
     fun `getPeriodStatus returns NO_DATA when average is zero`() {
-        val status = engine.getPeriodStatus(50.0, 0.0)
+        val status = engine.getPeriodStatus(MoneyAggregate.singleCurrency(50.0, CurrencyCode.EUR), com.yourname.expensetracker.domain.core.money.MoneyAmount(0.0, CurrencyCode.EUR))
         assertEquals(PeriodStatus.NO_DATA, status)
     }
 
     @Test
     fun `getPeriodStatus returns NO_DATA when average is negative`() {
-        val status = engine.getPeriodStatus(50.0, -10.0)
+        val status = engine.getPeriodStatus(MoneyAggregate.singleCurrency(50.0, CurrencyCode.EUR), com.yourname.expensetracker.domain.core.money.MoneyAmount(-10.0, CurrencyCode.EUR))
         assertEquals(PeriodStatus.NO_DATA, status)
+    }
+
+    @Test
+    fun `getPeriodStatus returns NO_DATA when total is unavailable`() {
+        assertEquals(PeriodStatus.NO_DATA, engine.getPeriodStatus(null, com.yourname.expensetracker.domain.core.money.MoneyAmount(100.0, CurrencyCode.EUR)))
+    }
+
+    @Test
+    fun `getPeriodStatus refuses cross currency and unavailable baselines`() {
+        val aggregate = MoneyAggregate.singleCurrency(50.0, CurrencyCode.EUR)
+        assertEquals(PeriodStatus.NO_DATA, engine.getPeriodStatus(
+            aggregate, com.yourname.expensetracker.domain.core.money.MoneyAmount(100.0, CurrencyCode.USD)
+        ))
+        assertEquals(PeriodStatus.NO_DATA, engine.getPeriodStatus(aggregate, null))
+    }
+
+    @Test
+    fun `monthly average refuses mixed normalized currency labels`() = runTest {
+        coEvery { multiCurrencyRepo.getMonthlyAggregatesHistorical(any(), any()) } returns listOf(
+            MonthMoneyAggregate("2026-01", MoneyAggregate.singleCurrency(50.0, CurrencyCode.EUR)),
+            MonthMoneyAggregate("2026-02", MoneyAggregate.singleCurrency(100.0, CurrencyCode.USD))
+        )
+
+        assertNull(engine.getAverageForPeriodType(PeriodType.MONTH, false))
+    }
+
+    @Test
+    fun `daily average stays unavailable when conversion is unavailable`() = runTest {
+        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseTotalHistoricalResult(any(), any()) } returns
+            com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Unavailable(
+                "DISPLAY_CONVERSION_UNAVAILABLE", com.yourname.expensetracker.domain.core.money.RateBasis.TRANSACTION_DATE
+            )
+
+        assertNull(engine.getAverageForPeriodType(PeriodType.DAY, false))
+    }
+
+    @Test
+    fun `partial monthly conversion cannot become a complete baseline`() = runTest {
+        coEvery { multiCurrencyRepo.getMonthlyAggregatesHistorical(any(), any()) } returns listOf(
+            MonthMoneyAggregate("2026-01", MoneyAggregate.singleCurrency(100.0, CurrencyCode.EUR)),
+            MonthMoneyAggregate("2026-02", partialAggregate(50.0, 1))
+        )
+
+        assertNull(engine.getAverageForPeriodType(PeriodType.MONTH, false))
+    }
+
+    @Test
+    fun `partial daily conversion cannot become a complete baseline`() = runTest {
+        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseTotalHistoricalResult(any(), any()) } returns
+            com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Available(
+                partialAggregate(50.0, 1)
+            )
+
+        assertNull(engine.getAverageForPeriodType(PeriodType.DAY, false))
+    }
+
+    @Test
+    fun `partial zero year cannot be silently removed from the baseline`() = runTest {
+        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseTotalHistoricalResult(any(), any()) } returns
+            com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Available(
+                partialAggregate(0.0, 1)
+            )
+
+        assertNull(engine.getAverageForPeriodType(PeriodType.YEAR, false))
+    }
+
+    @Test
+    fun `partial total has no comparison status`() {
+        assertEquals(PeriodStatus.NO_DATA, engine.getPeriodStatus(
+            partialAggregate(50.0, 1),
+            com.yourname.expensetracker.domain.core.money.MoneyAmount(100.0, CurrencyCode.EUR)
+        ))
     }
 
     @Test
@@ -390,7 +462,7 @@ class TotalsAggregationEngineTest {
 
         val result = engine.getAverageForPeriodType(PeriodType.MONTH, excludeCurrent = false)
 
-        assertEquals(0.0, result, 0.01)
+        assertNull(result)
     }
 
     @Test
@@ -629,7 +701,7 @@ class TotalsAggregationEngineTest {
         val average = engine.getAverageForPeriodType(PeriodType.MONTH, excludeCurrent = false)
 
         // (1200 + 900 + 1500) / 3 = 1200.0 — purchase-only average
-        assertEquals(1200.0, average, 0.01)
+        assertEquals(1200.0, requireNotNull(average).amount, 0.01)
     }
 
     @Test
@@ -646,7 +718,7 @@ class TotalsAggregationEngineTest {
         val average = engine.getAverageForPeriodType(PeriodType.WEEK, excludeCurrent = false)
 
         // (250 + 350 + 300) / 3 = 300.0 — purchase-only average
-        assertEquals(300.0, average, 0.01)
+        assertEquals(300.0, requireNotNull(average).amount, 0.01)
     }
 
     @Test
@@ -662,7 +734,7 @@ class TotalsAggregationEngineTest {
         val average = engine.getAverageForPeriodType(PeriodType.DAY, excludeCurrent = false)
 
         // Faithfully returns purchase-only daily average from repository
-        assertEquals(42.50, average, 0.01)
+        assertEquals(42.50, requireNotNull(average).amount, 0.01)
     }
 
     @Test
@@ -688,7 +760,7 @@ class TotalsAggregationEngineTest {
         // Years 2022-2025 are checked (currentYear-4 until currentYear).
         // 2022 = 0 (excluded because total <= 0), 2023=10000, 2024=14000, 2025=12000
         // Average of non-zero years: (10000 + 14000 + 12000) / 3 = 12000.0
-        assertEquals(12000.0, average, 0.01)
+        assertEquals(12000.0, requireNotNull(average).amount, 0.01)
     }
 
     @Test
@@ -705,7 +777,7 @@ class TotalsAggregationEngineTest {
         val average = engine.getAverageForPeriodType(PeriodType.MONTH, excludeCurrent = true)
 
         // dropLast(1) removes current month: (800 + 1000) / 2 = 900.0
-        assertEquals(900.0, average, 0.01)
+        assertEquals(900.0, requireNotNull(average).amount, 0.01)
     }
 
     @Test
@@ -729,7 +801,7 @@ class TotalsAggregationEngineTest {
 
         val average = engine.getAverageForPeriodType(PeriodType.WEEK, excludeCurrent = true)
 
-        assertEquals(300.0, average, 0.01)
+        assertEquals(300.0, requireNotNull(average).amount, 0.01)
     }
 
     @Test
@@ -740,7 +812,7 @@ class TotalsAggregationEngineTest {
         // @Before default returns MoneyAggregate.empty (displayAmount=0) so avg = 0/days = 0
         val average = engine.getAverageForPeriodType(PeriodType.DAY, excludeCurrent = false)
 
-        assertEquals(0.0, average, 0.01)
+        assertEquals(0.0, requireNotNull(average).amount, 0.01)
     }
 
     @Test
@@ -766,7 +838,7 @@ class TotalsAggregationEngineTest {
 
         // Only 2022-2025 are considered; 2022 = 0 (filtered), 2023-2025 have data
         // Average = (10000 + 14000 + 12000) / 3 = 12000.0
-        assertEquals(12000.0, average, 0.01)
+        assertEquals(12000.0, requireNotNull(average).amount, 0.01)
     }
 
     @Test
@@ -792,7 +864,7 @@ class TotalsAggregationEngineTest {
 
         // Years 2022-2026 are considered; 2022 = 0 (filtered), 2023-2026 have data
         // Average = (10000 + 14000 + 12000 + 5000) / 4 = 10250.0
-        assertEquals(10250.0, average, 0.01)
+        assertEquals(10250.0, requireNotNull(average).amount, 0.01)
     }
 
     @Test
@@ -816,23 +888,23 @@ class TotalsAggregationEngineTest {
         val avgInclude = engine.getAverageForPeriodType(PeriodType.YEAR, excludeCurrent = false)
 
         // excludeCurrent=true:  (8000 + 12000) / 2 = 10000.0
-        assertEquals(10000.0, avgExclude, 0.01)
+        assertEquals(10000.0, requireNotNull(avgExclude).amount, 0.01)
         // excludeCurrent=false: (8000 + 12000 + 3000) / 3 = 7666.67
-        assertEquals(7666.67, avgInclude, 0.01)
+        assertEquals(7666.67, requireNotNull(avgInclude).amount, 0.01)
 
         // They must differ when current year has non-zero data
         assertTrue("excludeCurrent=true and false must differ", avgExclude != avgInclude)
     }
 
     @Test
-    fun `getAverageForPeriodType YEAR returns zero when no purchase data exists`() = runTest {
+    fun `getAverageForPeriodType YEAR returns unavailable when no purchase data exists`() = runTest {
         val referenceDate = getStartOfDay(2026, Calendar.APRIL, 15)
         every { timeProvider.now() } returns referenceDate
 
         // All years return 0 — @Before default returns MoneyAggregate.empty (displayAmount=0)
         val average = engine.getAverageForPeriodType(PeriodType.YEAR, excludeCurrent = false)
 
-        assertEquals(0.0, average, 0.01)
+        assertNull(average)
     }
 
     @Test

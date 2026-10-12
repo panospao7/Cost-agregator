@@ -176,11 +176,20 @@ class AnomalyDetector @Inject constructor(
         monthPeriod: MonthPeriod,
         categoryMap: Map<Long, AnalyticsCategoryRef>,
         allExpenses: List<ExpenseSnapshot>,
-        displayCurrency: String = "EUR",
+        displayCurrency: String,
         suppressRecurringMerchantKeys: Set<String> = emptySet()
     ): List<AnomalyTransaction> {
 
-        val monthExpenses = allExpenses.filter { expense ->
+        val normalizedExpenses = try {
+            SingleCurrencyAnalyticsInput
+                .from(allExpenses, displayCurrency)
+                .includedExpenses
+                .map { it.toExpenseSnapshot() }
+        } catch (_: Exception) {
+            return emptyList()
+        }
+
+        val monthExpenses = normalizedExpenses.filter { expense ->
             expense.date >= monthPeriod.startMs &&
             expense.date < monthPeriod.endMs &&
             expense.transactionType == DomainTransactionType.PURCHASE &&

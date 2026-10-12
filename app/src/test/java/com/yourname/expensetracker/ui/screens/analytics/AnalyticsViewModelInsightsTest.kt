@@ -116,6 +116,65 @@ class AnalyticsViewModelInsightsTest : ViewModelTestUtils() {
     }
 
     @Test
+    fun `merchant groups retain ownership with null blank and alias keys`() = runTest(testDispatcher) {
+        val now = 1704067200000L
+        val expenses = listOf(
+            Expense(id = 1L, amount = 10.0, merchant = "Alpha", merchantKey = null, date = now, transactionType = TransactionType.PURCHASE),
+            Expense(id = 2L, amount = 20.0, merchant = "Beta", merchantKey = null, date = now, transactionType = TransactionType.PURCHASE),
+            Expense(id = 3L, amount = 7.0, merchant = "Blank One", merchantKey = "", date = now, transactionType = TransactionType.PURCHASE),
+            Expense(id = 4L, amount = 8.0, merchant = "Blank Two", merchantKey = " ", date = now, transactionType = TransactionType.PURCHASE),
+            Expense(id = 5L, amount = 5.0, merchant = "Alias One", merchantKey = "retailer", date = now, transactionType = TransactionType.PURCHASE),
+            Expense(id = 6L, amount = 15.0, merchant = "Alias Two", merchantKey = "retailer", date = now, transactionType = TransactionType.PURCHASE)
+        )
+        val normalizedInput = NormalizedAnalyticsInput(
+            period = PeriodRange(
+                kind = PeriodKind.CUSTOM,
+                startInclusiveMillis = now - 86_400_000L,
+                endExclusiveMillis = now + 86_400_000L,
+                label = "TEST"
+            ),
+            homeCurrency = "EUR",
+            includedExpenses = expenses.map { expense ->
+                NormalizedExpense(
+                    expense.id, expense.amount, expense.amount, "EUR", expense.amount, "EUR", expense.date,
+                    expense.merchant, expense.merchantKey, null, null, "PURCHASE", false, false, null, null
+                )
+            }
+        )
+        val groups = buildMerchantBreakdown(
+            expenseSnapshots = normalizedInput.includedExpenses.map { it.toExpenseSnapshot() },
+            input = normalizedInput,
+            displayCurrency = "EUR"
+        )
+        assertEquals(5, groups.size)
+        assertEquals(65.0, groups.sumOf { it.totalSpent })
+        assertEquals(6, groups.sumOf { it.transactionCount })
+        assertEquals(10.0, groups.first { it.name == "Alpha" }.totalSpent)
+        assertEquals(20.0, groups.first { it.name == "Beta" }.totalSpent)
+        assertEquals(10.0, groups.first { it.transactionCount == 2 }.averageTransaction)
+    }
+
+    @Test
+    fun `analytics failure diagnostics retain only bounded exception class`() {
+        val messages = mutableListOf<String>()
+        val errors = mutableListOf<Throwable?>()
+        val tree = object : timber.log.Timber.Tree() {
+            override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+                messages += message
+                errors += t
+            }
+        }
+        timber.log.Timber.plant(tree)
+        try {
+            logAnalyticsComputeFailure(IllegalStateException("SECRET_SQL_PATH RECEIPT_PAYLOAD"))
+            assertEquals(listOf("ANALYTICS_COMPUTE_FAILED class=IllegalStateException"), messages)
+            assertTrue(errors.all { it == null })
+        } finally {
+            timber.log.Timber.uproot(tree)
+        }
+    }
+
+    @Test
     fun `normalized generateInsights overload is called instead of legacy`() = runTest(testDispatcher) {
         // Subscribe to state flow to trigger the upstream computation
         val collectJob = launch {

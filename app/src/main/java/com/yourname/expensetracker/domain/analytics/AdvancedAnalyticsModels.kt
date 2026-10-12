@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.analytics
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAmount
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateResult
 import com.yourname.expensetracker.domain.core.time.PeriodKind
 import com.yourname.expensetracker.domain.core.time.PeriodRange
 
@@ -73,7 +74,10 @@ data class EnhancedCategoryAnalytics(
     val sparklineData: List<Double>,
     
     // Spending velocity (positive = accelerating)
-    val velocity: Double
+    val velocity: Double,
+    val totalMoneyResult: MoneyAggregateResult? = null,
+    val previousPeriodMoneyResult: MoneyAggregateResult? = null,
+    val velocityMoneyResult: MoneyAggregateResult? = null
 ) {
     val moneyTotalSpent: MoneyAmount get() = MoneyAmount(totalSpent, CurrencyCode(displayCurrency))
 }
@@ -120,7 +124,9 @@ data class EnhancedMerchantAnalytics(
     val spendingByDayOfWeek: Map<Int, Double>,
     
     // Recent transactions preview
-    val recentTransactions: List<AnalyticsTransactionSummary>
+    val recentTransactions: List<AnalyticsTransactionSummary>,
+    val totalMoneyResult: MoneyAggregateResult? = null,
+    val spendingByDayMoneyResults: Map<Int, MoneyAggregateResult> = emptyMap()
 ) {
     val moneyTotalSpent: MoneyAmount get() = MoneyAmount(totalSpent, CurrencyCode(displayCurrency))
 }
@@ -155,7 +161,10 @@ data class SpendingPatternAnalysis(
     val timeOfDayDistribution: Map<TimeSlot, Double>,
     
     // Detected behavioral patterns
-    val detectedPatterns: List<DetectedPattern>
+    val detectedPatterns: List<DetectedPattern>,
+    val totalMoneyResult: MoneyAggregateResult? = null,
+    val dayOfWeekMoneyResults: Map<Int, MoneyAggregateResult> = emptyMap(),
+    val timeOfDayMoneyResults: Map<TimeSlot, MoneyAggregateResult> = emptyMap()
 )
 
 data class DayOfWeekStats(
@@ -165,7 +174,8 @@ data class DayOfWeekStats(
     val transactionCount: Int,
     val averagePerDay: Double,
     val percentageOfWeek: Float,
-    val displayCurrency: String
+    val displayCurrency: String,
+    val moneyResult: MoneyAggregateResult? = null
 ) {
     val moneyTotalSpent: MoneyAmount get() = MoneyAmount(totalSpent, CurrencyCode(displayCurrency))
 }
@@ -178,7 +188,9 @@ data class WeekendWeekdayComparison(
     val weekdayAveragePerTransaction: Double,
     val weekendAveragePerTransaction: Double,
     val weekendToWeekdayRatio: Float,
-    val displayCurrency: String
+    val displayCurrency: String,
+    val weekdayMoneyResult: MoneyAggregateResult? = null,
+    val weekendMoneyResult: MoneyAggregateResult? = null
 ) {
     val moneyWeekdayTotal: MoneyAmount get() = MoneyAmount(weekdayTotal, CurrencyCode(displayCurrency))
     val moneyWeekendTotal: MoneyAmount get() = MoneyAmount(weekendTotal, CurrencyCode(displayCurrency))
@@ -239,7 +251,9 @@ data class StatisticalInsights(
     val averageDailySpend: Double,
     val maxDailySpend: Double,
     val daysWithSpending: Int,
-    val daysWithoutSpending: Int
+    val daysWithoutSpending: Int,
+    val totalMoneyResult: MoneyAggregateResult? = null,
+    val dailyMoneyResults: Map<String, MoneyAggregateResult> = emptyMap()
 ) {
     val moneyMeanTransaction: MoneyAmount get() = MoneyAmount(meanTransaction, CurrencyCode(displayCurrency))
     val moneyMedianTransaction: MoneyAmount get() = MoneyAmount(medianTransaction, CurrencyCode(displayCurrency))
@@ -250,12 +264,10 @@ data class HistogramBin(
     val rangeStart: Double,
     val rangeEnd: Double,
     val count: Int,
-    val total: Double,
     val percentage: Float,
-    val displayCurrency: String
-) {
-    val moneyTotal: MoneyAmount get() = MoneyAmount(total, CurrencyCode(displayCurrency))
-}
+    val displayCurrency: String,
+    val moneyResult: MoneyAggregateResult? = null
+)
 
 data class TransactionPercentiles(
     val p10: Double,

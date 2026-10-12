@@ -103,7 +103,8 @@ class ComputeDashboardWidgetsHistoricalMeanPolicyTest {
                 coEvery { evaluateAndPrompt() } returns null
             },
             monthlySavingsSweepUseCase = mockk<MonthlySavingsSweepUseCase>(relaxed = true).apply {
-                coEvery { computeSweepRecommendation() } returns null
+                coEvery { computeSweepRecommendationResult() } returns
+                    com.yourname.expensetracker.domain.usecase.savings.SavingsSweepComputationResult.NoRecommendation()
             },
             computeMoneyRadarUseCase = mockk(relaxed = true),
             stressForecastEngine = mockk(relaxed = true),

@@ -257,7 +257,7 @@ class TotalsAggregationEngineStatusBaselineTest {
 
         val average = engine.getAverageForPeriodType(PeriodType.MONTH, excludeCurrent = false)
 
-        assertEquals(900.0, average, 0.01)
+        assertEquals(900.0, requireNotNull(average).amount, 0.01)
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────

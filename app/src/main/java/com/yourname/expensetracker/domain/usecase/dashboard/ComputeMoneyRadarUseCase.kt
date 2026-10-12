@@ -4,6 +4,14 @@ import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.core.money.ConversionOutcome
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
+import com.yourname.expensetracker.domain.core.money.RateBasis
+import com.yourname.expensetracker.domain.core.money.StaleRatePolicy
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.forecasting.MergedRecurringPatternsProvider
 import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator
 import com.yourname.expensetracker.domain.model.budget.MonteCarloBudgetImpact.RiskTier
@@ -98,6 +106,9 @@ class ComputeMoneyRadarUseCase @Inject constructor(
     private val monteCarloSimulator: MonteCarloSpendingSimulator,
     private val expenseRepository: ExpenseRepository,
     private val budgetRepository: BudgetRepository,
+    private val analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer,
+    private val currencySettingsRepository: CurrencySettingsRepository,
+    private val currencyConverter: CurrencyConverter,
     private val timeProvider: TimeProvider
 ) {
     companion object {
@@ -155,18 +166,21 @@ class ComputeMoneyRadarUseCase @Inject constructor(
 
     private suspend fun computeAvailable(): MoneyRadarData = coroutineScope {
         val now = timeProvider.now()
+        val homeCurrency = CurrencyCode.parse(currencySettingsRepository.homeCurrency().first())
+            ?.takeIf { it in CurrencyCode.ALL_SUPPORTED }?.code
+            ?: error("RADAR_CURRENCY_UNAVAILABLE")
         
         // Gather all data in parallel where possible
-        val dueBillsDeferred = async { getDueBills(now) }
+        val dueBillsDeferred = async { getDueBills(now, homeCurrency) }
         val anomalyAlertsDeferred = async { getUnresolvedAnomalies(now) }
-        val budgetRiskDeferred = async { getBudgetRisk(now) }
+        val budgetRiskDeferred = async { getBudgetRisk(now, homeCurrency) }
 
         val dueBills = dueBillsDeferred.await()
         val anomalyAlerts = anomalyAlertsDeferred.await()
         val budgetRisk = budgetRiskDeferred.await()
         
         // Calculate urgency score using weighted factors
-        val dueBillsScore = calculateDueBillsScore(dueBills, now)
+        val dueBillsScore = calculateDueBillsScore(dueBills, now, homeCurrency)
         val anomalyScore = calculateAnomalyScore(anomalyAlerts)
         val budgetRiskScore = calculateBudgetRiskScore(budgetRisk)
         
@@ -207,7 +221,7 @@ class ComputeMoneyRadarUseCase @Inject constructor(
     /**
      * Get bills due within the next 7 days from recurring patterns.
      */
-    private suspend fun getDueBills(now: Long): List<UpcomingBill> {
+    private suspend fun getDueBills(now: Long, homeCurrency: String): List<UpcomingBill> {
         val startOfToday = TimePeriodUtils.getStartOfDay(now)
         val windowEnd = now + (BILL_WINDOW_DAYS * ONE_DAY_MS)
         
@@ -223,7 +237,13 @@ class ComputeMoneyRadarUseCase @Inject constructor(
                     ).coerceAtLeast(0)
                     UpcomingBill(
                         merchant = pattern.merchantName,
-                        amount = pattern.averageAmount,
+                        amount = convertForRadar(
+                            amount = pattern.averageAmount,
+                            sourceCurrency = pattern.currency,
+                            targetCurrency = homeCurrency,
+                            atMillis = pattern.nextExpectedDate,
+                            rateBasis = RateBasis.FORECAST_DATE
+                        ) ?: error("RADAR_RECURRING_UNAVAILABLE"),
                         dueDate = pattern.nextExpectedDate,
                         daysUntilDue = daysUntil
                     )
@@ -263,14 +283,21 @@ class ComputeMoneyRadarUseCase @Inject constructor(
     /**
      * Get budget risk information using Monte Carlo simulation.
      */
-    private suspend fun getBudgetRisk(now: Long): BudgetRiskInfo? {
+    private suspend fun getBudgetRisk(now: Long, homeCurrency: String): BudgetRiskInfo? {
         return try {
             val startOfToday = TimePeriodUtils.getStartOfDay(now)
 
             // Get monthly budget
             val budgetStatuses = budgetRepository.getBudgetStatuses().first()
             val overallBudget = budgetStatuses.find { it.budget.categoryId == null }
-            val budgetAmount = overallBudget?.budget?.amount ?: 0.0
+            val budget = overallBudget?.budget ?: return null
+            val budgetAmount = convertForRadar(
+                amount = budget.amount,
+                sourceCurrency = budget.currency,
+                targetCurrency = homeCurrency,
+                atMillis = TimePeriodUtils.getEndOfMonth(now),
+                rateBasis = RateBasis.PERIOD_END
+            ) ?: error("RADAR_BUDGET_UNAVAILABLE")
             
             if (budgetAmount <= 0) {
                 return null // No budget set
@@ -279,28 +306,47 @@ class ComputeMoneyRadarUseCase @Inject constructor(
             // Get current month spending
             val (monthStart, _) = TimePeriodUtils.getMonthRange(now)
             val expenses = expenseRepository.getExpensesSince(monthStart)
-            
-            val spentToDate = expenses
                 .filter {
                     it.transactionType.toDomain() == DomainTransactionType.PURCHASE &&
                         !it.isNotMine &&
                         it.date <= now
                 }
-                // SAFE: Callers must normalize through AnalyticsCurrencyNormalizer before invoking this use case.
-                // This sum operates on pre-normalized amounts only.
-                .sumOf { it.effectiveAmount }
+            val normalizedExpenses = analyticsCurrencyNormalizer.normalizeExpenses(
+                expenses = expenses,
+                homeCurrencyCode = homeCurrency
+            )
+            if (normalizedExpenses.excludedCount > 0 || normalizedExpenses.hasWarnings) {
+                error("RADAR_SPENDING_UNAVAILABLE")
+            }
+            val spentToDate = MoneyAggregateBuilder.fromHomeCurrencyAmounts(
+                amounts = normalizedExpenses.normalizedExpenses.map { it.normalizedEffectiveAmount },
+                homeCurrency = homeCurrency
+            ).displayAmount
             
             // Include known upcoming recurring obligations in next 7 days
             val windowEnd = now + (BILL_WINDOW_DAYS * ONE_DAY_MS)
-            val upcomingRecurring = recurringPatternsProvider.getConfirmedPatterns()
+            val upcomingRecurringPatterns = recurringPatternsProvider.getConfirmedPatterns()
                 .filter { it.nextExpectedDate in startOfToday..windowEnd }
-                .sumOf { it.averageAmount }
+            val recurringAmounts = upcomingRecurringPatterns.map { pattern ->
+                convertForRadar(
+                    amount = pattern.averageAmount,
+                    sourceCurrency = pattern.currency,
+                    targetCurrency = homeCurrency,
+                    atMillis = pattern.nextExpectedDate,
+                    rateBasis = RateBasis.FORECAST_DATE
+                ) ?: error("RADAR_RECURRING_UNAVAILABLE")
+            }
+            val upcomingRecurring = MoneyAggregateBuilder.fromHomeCurrencyAmounts(
+                amounts = recurringAmounts,
+                homeCurrency = homeCurrency
+            ).displayAmount
 
             // Run Monte Carlo simulation
             val mcResult = monteCarloSimulator.simulate(
                 spentToDate = spentToDate,
                 knownUpcoming = upcomingRecurring,
-                budgetAmount = budgetAmount
+                budgetAmount = budgetAmount,
+                displayCurrency = homeCurrency
             )
             
             checkNotNull(mcResult) { "RADAR_BUDGET_UNAVAILABLE" }.let { result ->
@@ -324,11 +370,40 @@ class ComputeMoneyRadarUseCase @Inject constructor(
             throw e
         }
     }
+
+    private suspend fun convertForRadar(
+        amount: Double,
+        sourceCurrency: String,
+        targetCurrency: String,
+        atMillis: Long,
+        rateBasis: RateBasis
+    ): Double? {
+        if (!amount.isFinite()) return null
+        val source = CurrencyCode.parse(sourceCurrency)?.takeIf { it in CurrencyCode.ALL_SUPPORTED }
+            ?: return null
+        val target = CurrencyCode.parse(targetCurrency)?.takeIf { it in CurrencyCode.ALL_SUPPORTED }
+            ?: return null
+        if (source == target) return amount
+        return when (val outcome = currencyConverter.convertOutcome(
+            amount = amount,
+            fromCurrency = source.code,
+            toCurrency = target.code,
+            rateBasis = rateBasis,
+            atMillis = atMillis,
+            stalePolicy = StaleRatePolicy.forBasis(rateBasis)
+        )) {
+            is ConversionOutcome.Converted -> outcome.convertedAmount.takeIf {
+                it.isFinite() && outcome.targetCurrency == target && outcome.originalCurrency == source &&
+                    outcome.rateBasis == rateBasis
+            }
+            is ConversionOutcome.Failed -> null
+        }
+    }
     
     /**
      * Calculate due bills score (0-100 before weighting).
      */
-    private suspend fun calculateDueBillsScore(dueBills: List<UpcomingBill>, now: Long): Int {
+    private suspend fun calculateDueBillsScore(dueBills: List<UpcomingBill>, now: Long, homeCurrency: String): Int {
         if (dueBills.isEmpty()) return BILLS_SCORE_0
         
         val baseScore = when (dueBills.size) {
@@ -337,7 +412,7 @@ class ComputeMoneyRadarUseCase @Inject constructor(
         }
         
         // Check for any large bill (>50% of monthly income)
-        val monthlyIncome = getMonthlyIncome(now)
+        val monthlyIncome = getMonthlyIncome(now, homeCurrency)
         val hasLargeBill = if (monthlyIncome > 0) {
             dueBills.any { it.amount > monthlyIncome * LARGE_BILL_THRESHOLD_PERCENT }
         } else false
@@ -394,21 +469,17 @@ class ComputeMoneyRadarUseCase @Inject constructor(
         return (probabilityScore + magnitudeBonus + riskTierBonus).coerceAtMost(100)
     }
     
-    /**
-     * Get monthly income (deposits) for large bill threshold calculation.
-     *
-     * ## I4 Migration plan
-     * Currently uses [ExpenseRepository.getTotalDepositsForPeriod] which returns a raw
-     * Double without currency conversion. `MultiCurrencyRepository` has no deposit-specific
-     * equivalent yet. Once `getHomeCurrencyDepositTotal(start, end)` is added to MCR,
-     * inject it and replace the call above with:
-     * ```
-     * multiCurrencyRepository.getHomeCurrencyDepositTotal(monthStart, now).displayAmount
-     * ```
-     */
-    private suspend fun getMonthlyIncome(now: Long): Double {
+    private suspend fun getMonthlyIncome(now: Long, homeCurrency: String): Double {
         val (monthStart, _) = TimePeriodUtils.getMonthRange(now)
-        return expenseRepository.getTotalDepositsForPeriod(monthStart, now)
+        val deposits = expenseRepository.getExpensesBetween(monthStart, now).filter {
+            it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT &&
+                !it.isNotMine && it.date in monthStart..now
+        }
+        val normalized = analyticsCurrencyNormalizer.normalizeExpenses(deposits, homeCurrency)
+        if (normalized.excludedCount > 0 || normalized.hasWarnings) error("RADAR_INCOME_UNAVAILABLE")
+        return MoneyAggregateBuilder.fromHomeCurrencyAmounts(
+            normalized.normalizedExpenses.map { it.normalizedEffectiveAmount }, homeCurrency
+        ).displayAmount
     }
     
     /**

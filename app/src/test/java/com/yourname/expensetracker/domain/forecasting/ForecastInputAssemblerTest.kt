@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.forecasting
 
+import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
 import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseAccessType
@@ -367,7 +368,7 @@ class ForecastInputAssemblerTest {
             snapshot(amount = 111.0, date = now + DAY_MS, type = DomainTransactionType.PURCHASE)
         )
 
-        val result = assembler.buildPastSumDaily(expenses)
+        val result = assembler.buildPastSumDaily(expenses, "EUR")
 
         assertEquals(listOf(10.0, 30.0, 37.0), result)
     }
@@ -386,14 +387,14 @@ class ForecastInputAssemblerTest {
             snapshot(amount = 310.0, date = decStart + DAY_MS, type = DomainTransactionType.PURCHASE)
         )
 
-        val pace = assembler.buildSpendingPace(expenses)
+        val pace = assembler.buildSpendingPace(expenses, "EUR")
 
-        assertEquals(60.0, pace.currentMonthSpent, 0.0001)
+        assertApproxEquals(60.0, requireNotNull(pace.currentMonthSpent), 0.0001)
         assertEquals(3, pace.daysElapsed)
         assertEquals(31, pace.daysInMonth)
         // Days 1-4 use the canonical stabilized projection: 40% prior-month
         // baseline plus 60% current linear projection on day three.
-        assertEquals(496.0, pace.projectedTotal, 0.0001)
+        assertApproxEquals(496.0, requireNotNull(pace.projectedTotal), 0.0001)
         assertEquals(310.0, pace.previousMonthTotal ?: 0.0, 0.0001)
         assertEquals(310.0, pace.averageMonthlyTotal ?: 0.0, 0.0001)
         assertEquals(200f, pace.pacePercentage)
@@ -416,11 +417,11 @@ class ForecastInputAssemblerTest {
             snapshot(amount = 20.0, date = janStart + DAY_MS, type = DomainTransactionType.PURCHASE)
         )
 
-        val pace = assembler.buildSpendingPace(expenses)
+        val pace = assembler.buildSpendingPace(expenses, "EUR")
 
         assertEquals(-1f, pace.pacePercentage)
         assertEquals(PaceStatus.NO_BASELINE, pace.paceStatus)
-        assertEquals(30.0, pace.currentMonthSpent, 0.0001)
+        assertApproxEquals(30.0, requireNotNull(pace.currentMonthSpent), 0.0001)
         // No baseline ⇒ no previousMonthTotal (honest null, matching the calculator).
         assertEquals(null, pace.previousMonthTotal)
     }

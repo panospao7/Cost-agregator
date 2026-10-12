@@ -26,6 +26,7 @@ Run:
   python -m pytest scripts/ci/test_run_registered_guard.py -v
 """
 
+import io
 import json
 import os
 import shutil
@@ -186,6 +187,37 @@ def _read_summary(path: Path) -> Dict:
 
 
 class TestDirectEngineHappyPath:
+    def test_child_output_cannot_crash_on_legacy_console_encoding(self):
+        class LegacyConsole:
+            encoding = "cp1252"
+
+            def __init__(self):
+                self.buffer = io.BytesIO()
+
+            def write(self, text):
+                raise UnicodeEncodeError("cp1252", text, 0, 1, "unsupported")
+
+            def flush(self):
+                return None
+
+        stream = LegacyConsole()
+        rgr._write_console_text(stream, "guard output: \u03c0\n")
+        assert stream.buffer.getvalue() == b"guard output: \xcf\x80\n"
+
+    def test_child_output_supports_text_only_legacy_console(self):
+        class TextConsole(io.StringIO):
+            @property
+            def encoding(self):
+                return "ascii"
+
+            def write(self, text):
+                text.encode(self.encoding)
+                return super().write(text)
+
+        stream = TextConsole()
+        rgr._write_console_text(stream, "guard output: \u03c0\n")
+        assert stream.getvalue() == "guard output: \\u03c0\n"
+
     def test_exit0_pass_with_summary(self, tmp_path):
         root, registry = _make_direct_fixture(
             tmp_path, "import sys\nprint('mini ok')\nsys.exit(0)\n"

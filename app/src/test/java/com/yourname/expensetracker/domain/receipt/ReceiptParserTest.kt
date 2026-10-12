@@ -22,6 +22,15 @@ class ReceiptParserTest {
     }
 
     @Test
+    fun `Greek total normalization preserves the merchant line`() {
+        val parsed = parser.parse("Σκλαβενίτης\nΣΥΝΟΛΟ 12,40 EUR\n05.03.2026")
+
+        assertEquals("ΣΚΛΑΒΕΝΊΤΗΣ", parsed.merchantName)
+        assertEquals(12.40, requireNotNull(parsed.total).amount, 0.01)
+        assertEquals("EUR", parsed.currency)
+    }
+
+    @Test
     fun testExactHallucinationMap() {
         // Simulating: ZYNOAO for ΣΥΝΟΛΟ, and oIA for ΦΠΑ
         val ocr = """
@@ -31,8 +40,8 @@ class ReceiptParserTest {
             ZYNOAO 24,80
         """.trimIndent()
         
-        val parsed = parser.parse(ocr)
-        assertEquals("Exact hallucination map failed.", 24.80, parsed.total)
+        val parsed = parser.parse(ocr + "\nCURRENCY: EUR")
+        assertEquals("Exact hallucination map failed.", 24.80, parsed.total?.amount)
     }
 
     @Test
@@ -44,7 +53,7 @@ class ReceiptParserTest {
         """.trimIndent()
         
         val parsed = parser.parse(ocr)
-        assertEquals("Latin intrusion strip failed.", 80.43, parsed.total)
+        assertEquals("Latin intrusion strip failed.", 80.43, parsed.total?.amount)
     }
 
     @Test
@@ -57,7 +66,7 @@ class ReceiptParserTest {
         """.trimIndent()
         
         val parsed = parser.parse(ocr)
-        assertEquals("Geometric artifact strip failed.", 6.80, parsed.total)
+        assertEquals("Geometric artifact strip failed.", 6.80, parsed.total?.amount)
     }
 
     @Test
@@ -69,8 +78,8 @@ class ReceiptParserTest {
             METEHTA 12,50
         """.trimIndent()
         
-        val parsed = parser.parse(ocr)
-        assertEquals("Fuzzy matching fallback failed.", 12.50, parsed.total)
+        val parsed = parser.parse(ocr + "\nCURRENCY: EUR")
+        assertEquals("Fuzzy matching fallback failed.", 12.50, parsed.total?.amount)
     }
 
     @Test
@@ -81,7 +90,7 @@ class ReceiptParserTest {
             TOTAL 45,50 €
         """.trimIndent()
         val result = parser.parse(input)
-        assertEquals(45.50, result.total!!, 0.01)
+        assertEquals(45.50, result.total!!.amount, 0.01)
     }
 
     @Test
@@ -92,7 +101,7 @@ class ReceiptParserTest {
             TOTAL 1.250,50 €
         """.trimIndent()
         val result = parser.parse(input)
-        assertEquals(1250.50, result.total!!, 0.01)
+        assertEquals(1250.50, result.total!!.amount, 0.01)
     }
 
     @Test
@@ -102,8 +111,8 @@ class ReceiptParserTest {
             BURGER 12.50
             TOTAL 12.50
         """.trimIndent()
-        val result = parser.parse(input)
-        assertEquals(12.50, result.total!!, 0.01)
+        val result = parser.parse(input + "\nCURRENCY: USD")
+        assertEquals(12.50, result.total!!.amount, 0.01)
     }
 
     @Test
@@ -113,8 +122,8 @@ class ReceiptParserTest {
             DOWNPAYMENT 1,250.00
             TOTAL 1,250.00
         """.trimIndent()
-        val result = parser.parse(input)
-        assertEquals(1250.00, result.total!!, 0.01)
+        val result = parser.parse(input + "\nCURRENCY: USD")
+        assertEquals(1250.00, result.total!!.amount, 0.01)
     }
 
     @Test
@@ -124,8 +133,8 @@ class ReceiptParserTest {
             GALA 1,20
             EYNONO 1,20
         """.trimIndent()
-        val result = parser.parse(input)
-        assertEquals(1.20, result.total!!, 0.01)
+        val result = parser.parse(input + "\nCURRENCY: EUR")
+        assertEquals(1.20, result.total!!.amount, 0.01)
     }
 
     @Test
@@ -135,8 +144,8 @@ class ReceiptParserTest {
             COFFEE 2,50
             ZYNOAO 2,50
         """.trimIndent()
-        val result = parser.parse(input)
-        assertEquals(2.50, result.total!!, 0.01)
+        val result = parser.parse(input + "\nCURRENCY: EUR")
+        assertEquals(2.50, result.total!!.amount, 0.01)
     }
 
     @Test
@@ -146,8 +155,8 @@ class ReceiptParserTest {
             BREAD 0,90
             2YNONO 0,90
         """.trimIndent()
-        val result = parser.parse(input)
-        assertEquals(0.90, result.total!!, 0.01)
+        val result = parser.parse(input + "\nCURRENCY: EUR")
+        assertEquals(0.90, result.total!!.amount, 0.01)
     }
 
     @Test
@@ -157,8 +166,8 @@ class ReceiptParserTest {
             ITEM 10.00
             IYNOAO 10.00
         """.trimIndent()
-        val result = parser.parse(input)
-        assertEquals(10.00, result.total!!, 0.01)
+        val result = parser.parse(input + "\nCURRENCY: EUR")
+        assertEquals(10.00, result.total!!.amount, 0.01)
     }
 
     @Test
@@ -190,7 +199,7 @@ class ReceiptParserTest {
             COME AGAIN
         """.trimIndent()
         val result = parser.parse(input)
-        assertEquals(45.00, result.total!!, 0.01)
+        assertEquals(45.00, result.total!!.amount, 0.01)
     }
 
     @Test
@@ -215,8 +224,8 @@ class ReceiptParserTest {
             METPHTA 3,50
             ZYNOAO 3,50
         """.trimIndent()
-        val result = parser.parse(input)
-        assertEquals(3.50, result.total!!, 0.01)
+        val result = parser.parse(input + "\nCURRENCY: EUR")
+        assertEquals(3.50, result.total!!.amount, 0.01)
         assertTrue(result.lineItems.isEmpty())
     }
 
@@ -227,8 +236,8 @@ class ReceiptParserTest {
             ITEM 1 10.00
             NAHPQTEO 10.00
         """.trimIndent()
-        val result = parser.parse(input)
-        assertEquals(10.00, result.total!!, 0.01)
+        val result = parser.parse(input + "\nCURRENCY: EUR")
+        assertEquals(10.00, result.total!!.amount, 0.01)
     }
 
     @Test
@@ -237,8 +246,8 @@ class ReceiptParserTest {
             STORE
             TOTAL_KEY 4 5 , 5 0
         """.trimIndent()
-        val result = parser.parse(input)
-        assertEquals(45.50, result.total!!, 0.01)
+        val result = parser.parse(input + "\nCURRENCY: EUR")
+        assertEquals(45.50, result.total!!.amount, 0.01)
     }
 
     @Test

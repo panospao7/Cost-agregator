@@ -17,6 +17,7 @@ import org.junit.Test
 import java.util.Calendar
 
 class InsightsEngineEdgeCaseTest {
+    private var nextExpenseId = 1L
     
     private val expenseRepository = mockk<ExpenseRepository>(relaxed = true)
     private val recurringEngine = mockk<com.yourname.expensetracker.domain.logic.RecurringExpenseEngine>(relaxed = true)
@@ -27,7 +28,7 @@ class InsightsEngineEdgeCaseTest {
     fun setup() {
         val spendingPaceCalculator = mockk<SpendingPaceCalculator>(relaxed = true)
         val anomalyDetector = mockk<AnomalyDetector>(relaxed = true)
-        val monthlyComparisonCalculator = mockk<MonthlyComparisonCalculator>(relaxed = true)
+        val monthlyComparisonCalculator = MonthlyComparisonCalculator()
         val categoryInsightEngine = mockk<CategoryInsightEngine>(relaxed = true)
         val merchantInsightEngine = mockk<MerchantInsightEngine>(relaxed = true)
         val dayOfWeekAnalyzer = mockk<DayOfWeekAnalyzer>(relaxed = true)
@@ -66,7 +67,8 @@ class InsightsEngineEdgeCaseTest {
         val snapshot = engine.generateInsights(categories.toAnalyticsCategoryRefs(), emptyList(), "EUR")
         
         assertNotNull("Snapshot should not be null", snapshot)
-        assertEquals(0.0, snapshot.monthlyComparison.currentTotal, 0.01)
+        org.junit.Assert.assertEquals(0.0, requireNotNull(snapshot.monthlyComparison.currentTotal), 0.0)
+        assertTrue(snapshot.monthlyComparison.currentMoneyResult is com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Available)
         assertEquals(0, snapshot.monthlyComparison.currentCount)
         assertTrue("Category insights should be empty", snapshot.categoryInsights.isEmpty())
         assertTrue("Top merchants should be empty", snapshot.topMerchants.isEmpty())
@@ -168,7 +170,7 @@ class InsightsEngineEdgeCaseTest {
     }
 
     private fun makeExpense(merchant: String, amount: Double, daysAgo: Int) = Expense(
-        id = 0,
+        id = nextExpenseId++,
         amount = amount,
         currency = "EUR",
         merchant = merchant,

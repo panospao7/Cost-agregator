@@ -11,6 +11,8 @@ import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAmount
+import com.yourname.expensetracker.domain.core.money.MoneyAggregate
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
 import com.yourname.expensetracker.domain.core.money.MoneyNormalizationEngine
 import com.yourname.expensetracker.domain.core.money.RateBasis
 import com.yourname.expensetracker.domain.core.money.TransactionTypeFilter
@@ -54,7 +56,13 @@ data class DailyCashFlow(
      */
     val occurrenceGenerationFailed: Boolean = false,
     /** P6-CURRENT-018: number of manual rules whose occurrence projection failed. */
-    val failedOccurrenceRuleCount: Int = 0
+    val failedOccurrenceRuleCount: Int = 0,
+    /** Typed actual income aggregate used by detail consumers. */
+    val incomeAggregate: MoneyAggregate? = null,
+    /** Typed actual expense aggregate used by detail consumers. */
+    val expenseAggregate: MoneyAggregate? = null,
+    /** Typed recurring aggregate used by detail consumers. */
+    val recurringAggregate: MoneyAggregate? = null
 )
 
 enum class CashFlowRiskLevel {
@@ -372,7 +380,6 @@ class CashFlowCalculator @Inject constructor(
                 rateBasis = RateBasis.TRANSACTION_DATE,
                 transactionTypeFilter = TransactionTypeFilter.ALL_TYPES
             )
-            var dayIncome = incomeAggregate.displayAmount
             var conversionFailures = incomeAggregate.failedTransactionCount
 
             val expenseAggregate = normalizationEngine.aggregateExpenses(
@@ -381,8 +388,9 @@ class CashFlowCalculator @Inject constructor(
                 rateBasis = RateBasis.TRANSACTION_DATE,
                 transactionTypeFilter = TransactionTypeFilter.ALL_TYPES
             )
-            var dayExpensesTotal = expenseAggregate.displayAmount
             conversionFailures += expenseAggregate.failedTransactionCount
+            val recurringIncomeAmounts = mutableListOf<Double>()
+            val recurringExpenseAmounts = mutableListOf<Double>()
             // NEW-P6-015: Direction check for predicted recurring patterns.
             // Income-type rules contribute positively to the balance; expense-type
             // rules are subtracted.  Currently all manual patterns (id != null) are
@@ -410,11 +418,24 @@ class CashFlowCalculator @Inject constructor(
                     }
                 }
                 if (isIncomePattern(recurring)) {
-                    dayIncome += convertedAmount
+                    recurringIncomeAmounts += convertedAmount
                 } else {
-                    dayExpensesTotal += convertedAmount
+                    recurringExpenseAmounts += convertedAmount
                 }
             }
+
+            val dayIncome = MoneyAggregateBuilder.fromHomeCurrencyAmounts(
+                amounts = listOf(incomeAggregate.displayAmount) + recurringIncomeAmounts,
+                homeCurrency = homeCurrency
+            ).displayAmount
+            val dayExpensesTotal = MoneyAggregateBuilder.fromHomeCurrencyAmounts(
+                amounts = listOf(expenseAggregate.displayAmount) + recurringExpenseAmounts,
+                homeCurrency = homeCurrency
+            ).displayAmount
+            val recurringAggregate = MoneyAggregateBuilder.fromHomeCurrencyAmounts(
+                amounts = recurringIncomeAmounts + recurringExpenseAmounts,
+                homeCurrency = homeCurrency
+            )
 
             if (conversionFailures > 0) {
                 Timber.w("$TAG: %d conversion(s) failed for day %s — those amounts were dropped from cash flow", conversionFailures, dayKey)
@@ -449,7 +470,10 @@ class CashFlowCalculator @Inject constructor(
                     // P6-CURRENT-018: Surface occurrence-projection failures so
                     // bills approximated via ad-hoc fallback are flagged, not hidden.
                     occurrenceGenerationFailed = occurrenceGenerationFailed,
-                    failedOccurrenceRuleCount = failedOccurrenceRuleCount
+                    failedOccurrenceRuleCount = failedOccurrenceRuleCount,
+                    incomeAggregate = incomeAggregate,
+                    expenseAggregate = expenseAggregate,
+                    recurringAggregate = recurringAggregate
                 )
             )
             

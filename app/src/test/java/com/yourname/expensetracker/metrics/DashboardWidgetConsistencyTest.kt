@@ -88,7 +88,7 @@ class DashboardWidgetConsistencyTest {
             displayCurrency = "EUR"
         )
         val monteCarloSimulator = mockk<com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator>(relaxed = true)
-        coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns null
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any()) } returns null
         val healthCalculator = mockk<com.yourname.expensetracker.domain.health.FinancialHealthCalculator>(relaxed = true)
         val healthScoreV2 = mockk<FinancialHealthScoreV2>(relaxed = true)
         coEvery { healthScoreV2.calculateHealthScore(any(), any()) } returns HealthScoreOutcome.Available(
