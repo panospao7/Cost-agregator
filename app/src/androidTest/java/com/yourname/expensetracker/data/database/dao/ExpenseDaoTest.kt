@@ -20,7 +20,6 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.time.LocalDate
 import java.time.ZoneId
-import java.util.TimeZone
 
 @Suppress("DEPRECATION_ERROR")
 @RunWith(AndroidJUnit4::class)
@@ -168,34 +167,30 @@ class ExpenseDaoTest {
 
     @Test
     fun getWeeklyTotalsForPeriod_returnsCanonicalLocalWeekBoundariesFromRepositoryMapping() = runBlocking {
-        val originalTimeZone = TimeZone.getDefault()
-        try {
-            TimeZone.setDefault(TimeZone.getTimeZone("Europe/Athens"))
+        // SQLite's `localtime` uses the emulator/device timezone. Changing only
+        // java.util.TimeZone would make Java boundary calculations disagree with
+        // SQLite grouping, so exercise the actual device-local timezone instead.
+        val weekMonday = localDateAtHourMs(2026, 4, 20, 0)
+        val weekEnd = TimePeriodUtils.addDays(weekMonday, 7)
 
-            val weekMonday = localDateAtHourMs(2026, 4, 20, 0)
-            val weekEnd = TimePeriodUtils.addDays(weekMonday, 7)
+        expenseDao.insert(makeExpense(amount = 12.0, date = localDateAtHourMs(2026, 4, 20, 9)))
+        expenseDao.insert(makeExpense(amount = 8.0, date = localDateAtHourMs(2026, 4, 22, 11)))
 
-            expenseDao.insert(makeExpense(amount = 12.0, date = localDateAtHourMs(2026, 4, 20, 9)))
-            expenseDao.insert(makeExpense(amount = 8.0, date = localDateAtHourMs(2026, 4, 22, 11)))
+        val weekly = expenseDao.getWeeklyTotalsForPeriod(weekMonday, weekEnd)
 
-            val weekly = expenseDao.getWeeklyTotalsForPeriod(weekMonday, weekEnd)
+        assertEquals(1, weekly.size)
+        assertEquals("2026-04-20", weekly.first().weekKey)
 
-            assertEquals(1, weekly.size)
-            assertEquals("2026-04-20", weekly.first().weekKey)
+        // DAO now emits the canonical Monday date key; the repository converts
+        // this key to local-midnight epoch boundaries using TimePeriodUtils.
+        val canonicalStart = LocalDate.parse(weekly.first().weekKey)
+            .atStartOfDay(ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli()
+        val canonicalEnd = TimePeriodUtils.addDays(canonicalStart, 7)
 
-            // DAO now emits the canonical Monday date key; the repository converts
-            // this key to local-midnight epoch boundaries using TimePeriodUtils.
-            val canonicalStart = LocalDate.parse(weekly.first().weekKey)
-                .atStartOfDay(ZoneId.systemDefault())
-                .toInstant()
-                .toEpochMilli()
-            val canonicalEnd = TimePeriodUtils.addDays(canonicalStart, 7)
-
-            assertEquals(TimePeriodUtils.getStartOfWeek(localDateAtHourMs(2026, 4, 22, 12)), canonicalStart)
-            assertEquals(TimePeriodUtils.getEndOfWeek(localDateAtHourMs(2026, 4, 22, 12)), canonicalEnd)
-        } finally {
-            TimeZone.setDefault(originalTimeZone)
-        }
+        assertEquals(TimePeriodUtils.getStartOfWeek(localDateAtHourMs(2026, 4, 22, 12)), canonicalStart)
+        assertEquals(TimePeriodUtils.getEndOfWeek(localDateAtHourMs(2026, 4, 22, 12)), canonicalEnd)
     }
 
     @Test

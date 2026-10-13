@@ -2977,6 +2977,62 @@ entries:
     lost-update race; returns rows-affected > 0'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08L
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/SavingsSweepAcceptanceCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.SavingsSweepAcceptanceCoordinator
+  kind: function
+  method: accept
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.domain.usecase.savings.SavingsSweepRecommendation
+  daoAccessor: contributionLedgerDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SavingsContributionLedgerDao
+  operation: insert
+  barrierMode: helper
+  reason: 'W5-R16 EXACT_POLICY: atomic savings sweep acceptance writes the authoritative contribution ledger inside the coordinator Room transaction after the write barrier; idempotency and rollback are owned by this callable'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-W5-R16
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/SavingsSweepAcceptanceCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.SavingsSweepAcceptanceCoordinator
+  kind: function
+  method: accept
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.domain.usecase.savings.SavingsSweepRecommendation
+  daoAccessor: savingsGoalDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SavingsGoalDao
+  operation: addToGoalAmountIfSnapshot
+  barrierMode: helper
+  reason: 'W5-R16 EXACT_POLICY: compare-and-set savings balance update is performed only inside the coordinator atomic acceptance transaction, after snapshot/provenance validation'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-W5-R16
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/SavingsSweepAcceptanceCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.SavingsSweepAcceptanceCoordinator
+  kind: function
+  method: accept
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.domain.usecase.savings.SavingsSweepRecommendation
+  daoAccessor: savingsSweepPlanDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SavingsSweepPlanDao
+  operation: insert
+  barrierMode: helper
+  reason: 'W5-R16 EXACT_POLICY: acceptance snapshot plan is inserted inside the coordinator Room transaction and is rolled back with the balance and ledger on any rejected allocation'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-W5-R16
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/SavingsSweepAcceptanceCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.SavingsSweepAcceptanceCoordinator
+  kind: function
+  method: accept
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.domain.usecase.savings.SavingsSweepRecommendation
+  daoAccessor: savingsSweepPlanDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SavingsSweepPlanDao
+  operation: acceptPendingPlan
+  barrierMode: helper
+  reason: 'W5-R16 EXACT_POLICY: pending-to-accepted transition is conditional and remains in the coordinator Room transaction so accepted UI state implies the ledger and balance commit'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-W5-R16
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/SharedExpenseDataPortAdapter.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.SharedExpenseDataPortAdapter
   kind: function

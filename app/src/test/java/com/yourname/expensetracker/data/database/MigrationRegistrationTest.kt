@@ -2,7 +2,6 @@ package com.yourname.expensetracker.data.database
 
 import androidx.room.testing.MigrationTestHelper
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
-import androidx.test.platform.app.InstrumentationRegistry
 import com.google.common.truth.Truth.assertThat
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -21,7 +20,7 @@ class MigrationRegistrationTest {
 
     @get:Rule
     val helper: MigrationTestHelper = MigrationTestHelper(
-        InstrumentationRegistry.getInstrumentation(),
+        migrationTestInstrumentation(),
         AppDatabase::class.java,
         emptyList(),
         FrameworkSQLiteOpenHelperFactory()
@@ -66,7 +65,7 @@ class MigrationRegistrationTest {
         // deliberately NOT registered; upgrades from retired versions
         // (< 145) are not supported.
         val migrations = AppDatabase.ALL_MIGRATIONS
-        val expected = listOf(145 to 146, 146 to 147, 147 to 148, 148 to 149)
+        val expected = listOf(145 to 146, 146 to 147, 147 to 148, 148 to 149, 149 to 150)
         val actual = migrations.map { it.startVersion to it.endVersion }
         assertEquals(
             "ALL_MIGRATIONS must be exactly the post-baseline chain",

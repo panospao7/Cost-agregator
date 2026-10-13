@@ -131,8 +131,6 @@ class SmartSavingsEngine @Inject constructor(
             )
             val allocation = allocateAcrossGoals(listOf(goal), recommendation.safeAmount).single()
             recommendation.copy(safeAmount = allocation)
-        } catch (error: CancellationException) {
-            throw error
         } catch (error: MoneyDisplayUnavailableException) {
             SavingsRecommendation(
                 safeAmount = 0.0,
@@ -142,7 +140,8 @@ class SmartSavingsEngine @Inject constructor(
                 currency = homeCurrency,
                 isAvailable = false
             )
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
             SavingsRecommendation(
                 safeAmount = 0.0,
                 confidence = 0.0,
@@ -199,14 +198,13 @@ class SmartSavingsEngine @Inject constructor(
                 homeCurrency = homeCurrency,
                 quality = quality
             )
-        } catch (error: CancellationException) {
-            throw error
         } catch (error: MoneyDisplayUnavailableException) {
             return SmartSavingsComputationResult.Unavailable(
                 reasonCode = error.reasonCode.name,
                 metadata = quality.snapshot(unavailable = true)
             )
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
             return SmartSavingsComputationResult.Unavailable(
                 reasonCode = MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE.name,
                 metadata = quality.snapshot(unavailable = true)

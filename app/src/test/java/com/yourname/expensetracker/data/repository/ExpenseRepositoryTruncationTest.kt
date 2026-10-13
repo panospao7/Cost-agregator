@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.repository
 
+import com.yourname.expensetracker.BuildConfig
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
@@ -203,6 +204,14 @@ class ExpenseRepositoryTruncationTest {
 
     @Test
     fun `createDebugSnapshot uses uncapped getAllUncapped not capped getAll`() = runTest {
+        if (!BuildConfig.DEBUG) {
+            org.junit.Assert.assertTrue(
+                runCatching { repository.createDebugSnapshot() }.exceptionOrNull() is UnsupportedOperationException
+            )
+            coVerify(exactly = 0) { expenseDao.getAllUncapped() }
+            coVerify(exactly = 0) { expenseDao.getAll(any()) }
+            return@runTest
+        }
         val allExpenses = generateExpenses(5000)
         coEvery { expenseDao.getAllUncapped() } returns allExpenses
 

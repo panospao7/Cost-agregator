@@ -1,4 +1,35 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="privacy_raw_storage_bank_statement_label">Αποθήκευση τραπεζικών κινήσεων/API</string>
+    <string name="receipt_partial_ocr_warning">Ορισμένες σελίδες δεν ήταν δυνατό να διαβαστούν ή δεν υποβλήθηκαν σε επεξεργασία. Η απόδειξη είναι ελλιπής· ελέγξτε το πρωτότυπο πριν την αποθηκεύσετε.</string>
+    <string name="receipt_ocr_coverage_unverified_warning">Δεν ήταν δυνατό να επαληθευτεί η κάλυψη των σελίδων αυτής της αποθηκευμένης απόδειξης. Ελέγξτε το πρωτότυπο πριν βασιστείτε στα αναγνωρισμένα στοιχεία.</string>
+    <string name="privacy_blocked_generic">Αυτή η λειτουργία έχει αποκλειστεί από τις ρυθμίσεις απορρήτου σας.</string>
+    <string name="privacy_blocked_cloud_ai">Η τεχνητή νοημοσύνη στο cloud είναι απενεργοποιημένη στις ρυθμίσεις απορρήτου ή τεχνητής νοημοσύνης.</string>
+    <string name="privacy_blocked_receipt_image_upload">Η μεταφόρτωση εικόνων αποδείξεων στο cloud είναι απενεργοποιημένη.</string>
+    <string name="privacy_blocked_external_geocoding">Η εξωτερική γεωκωδικοποίηση (αναζήτηση διευθύνσεων) είναι απενεργοποιημένη.</string>
+    <string name="privacy_blocked_notification_capture">Η καταγραφή ειδοποιήσεων είναι απενεργοποιημένη.</string>
+    <string name="privacy_blocked_raw_export">Η εξαγωγή ακατέργαστων δεδομένων (χωρίς απόκρυψη στοιχείων) είναι απενεργοποιημένη.</string>
+    <string name="privacy_blocked_device_gps">Η τοποθεσία της συσκευής είναι απενεργοποιημένη από τις ρυθμίσεις απορρήτου.</string>
+    <string name="privacy_blocked_background_location">Η συμπλήρωση δεδομένων τοποθεσίας στο παρασκήνιο είναι απενεργοποιημένη.</string>
+    <string name="privacy_blocked_bank_statement_ai">Η ανάλυση τραπεζικών κινήσεων με τεχνητή νοημοσύνη είναι απενεργοποιημένη.</string>
+    <string name="privacy_blocked_encrypted_backup">Η δημιουργία κρυπτογραφημένου αντιγράφου ασφαλείας είναι απενεργοποιημένη.</string>
+    <string name="privacy_blocked_overpass">Τα δεδομένα χάρτη (Overpass API) είναι απενεργοποιημένα.</string>
+    <string name="privacy_blocked_debug_persistence">Η αποθήκευση δεδομένων αποσφαλμάτωσης είναι απενεργοποιημένη.</string>
+    <string name="privacy_blocked_debug_export">Η εξαγωγή δεδομένων αποσφαλμάτωσης δεν επιτρέπεται με τις τρέχουσες ρυθμίσεις απορρήτου.</string>
+    <string name="bank_sync_result_success">Ο συγχρονισμός ολοκληρώθηκε</string>
+    <string name="bank_sync_result_partial">Ο συγχρονισμός ολοκληρώθηκε — ορισμένα στοιχεία παραλείφθηκαν ή απέτυχαν</string>
+    <string name="bank_sync_result_reauth_required">Απαιτείται νέα ταυτοποίηση — συνδέστε ξανά αυτή την τράπεζα</string>
+    <string name="bank_sync_result_blocked">Ο συγχρονισμός αποκλείστηκε (αντίγραφο ασφαλείας/επαναφορά σε εξέλιξη ή ανενεργή σύνδεση)</string>
+    <string name="bank_sync_result_retryable">Ο συγχρονισμός απέτυχε — δοκιμάστε ξανά</string>
+    <string name="bank_sync_result_permanent">Ο συγχρονισμός απέτυχε</string>
+    <string name="bank_sync_result_connection_missing">Αυτή η σύνδεση δεν υπάρχει πλέον</string>
+    <string name="bank_feature_unavailable">Οι τραπεζικές συνδέσεις δεν είναι διαθέσιμες σε αυτή την έκδοση</string>
+    <string name="savings_recommendation_unavailable">Οι προτάσεις αποταμίευσης δεν είναι διαθέσιμες. Δεν ήταν δυνατό να επαληθευτούν ορισμένα οικονομικά δεδομένα. Ανανεώστε για να δοκιμάσετε ξανά.</string>
+    <string name="savings_goal_currency_unavailable">Τα ποσά των στόχων δεν είναι διαθέσιμα επειδή δεν ήταν δυνατό να επαληθευτεί το νόμισμά τους.</string>
+    <string name="savings_history_write_unavailable">Δεν ήταν δυνατό να επαληθευτεί το ιστορικό εισφορών. Το υπόλοιπο του στόχου ενδέχεται να έχει ήδη αλλάξει. Ελέγξτε το πριν δοκιμάσετε ξανά.</string>
+    <string name="financial_runway_no_remaining_period">Δεν απομένει χρονικό διάστημα</string>
+    <string name="backup_restore_info_unavailable">Οι πληροφορίες αντιγράφων ασφαλείας δεν είναι προσωρινά διαθέσιμες</string>
+    <string name="debug_database_stats_unavailable">Τα στατιστικά της βάσης δεδομένων δεν είναι προσωρινά διαθέσιμα</string>
+    <string name="money_radar_unavailable">Το Money Radar δεν είναι προσωρινά διαθέσιμο. Δεν ήταν δυνατό να αξιολογηθούν ορισμένες οικονομικές ενδείξεις.</string>
+    <string name="stress_forecast_unavailable">Η πρόβλεψη οικονομικής πίεσης δεν είναι προσωρινά διαθέσιμη. Δεν υπάρχει διαθέσιμη εκτίμηση κινδύνου.</string>
 </resources>

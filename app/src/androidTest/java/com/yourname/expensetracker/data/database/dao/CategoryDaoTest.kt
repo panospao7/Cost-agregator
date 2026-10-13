@@ -5,7 +5,12 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.entity.Category
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -94,6 +99,52 @@ class CategoryDaoTest {
         assertEquals("Utilities", updated!!.name)
         assertEquals("💡", updated.icon)
         assertEquals("#FFB300", updated.color)
+    }
+
+    @Test
+    fun get_or_insert_by_name_reuses_case_insensitive_category_without_overwriting_it() = runBlocking {
+        val first = categoryDao.getOrInsertByNameNoCase(
+            makeCategory(name = "Travel", icon = "T", color = "#3949AB")
+        )
+        val second = categoryDao.getOrInsertByNameNoCase(
+            makeCategory(name = "travel", icon = "t", color = "#00897B")
+        )
+
+        assertTrue(first.id > 0)
+        assertEquals(first, second)
+        assertEquals(1, categoryDao.getCount())
+        assertEquals(first, categoryDao.getByName("TRAVEL"))
+    }
+
+    @Test
+    fun concurrent_get_or_insert_by_name_returns_one_category_without_supplemental_index() = runBlocking {
+        database.openHelper.writableDatabase.query(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'index_categories_name_nocase'"
+        ).use { cursor ->
+            assertTrue("fresh Room schema must not have the supplemental index", !cursor.moveToFirst())
+        }
+        val start = CompletableDeferred<Unit>()
+        val saved = withTimeout(30_000L) {
+            val requests = (0 until 24).map { index ->
+                async(Dispatchers.IO) {
+                    start.await()
+                    categoryDao.getOrInsertByNameNoCase(
+                        makeCategory(
+                            name = if (index % 2 == 0) "Travel" else "travel",
+                            icon = "T",
+                            color = "#3949AB"
+                        )
+                    )
+                }
+            }
+            start.complete(Unit)
+            requests.awaitAll()
+        }
+
+        assertTrue(saved.all { it.id > 0 })
+        assertEquals(1, saved.map { it.id }.distinct().size)
+        assertEquals(1, categoryDao.getCount())
+        assertEquals(1, categoryDao.existsByName("TRAVEL"))
     }
 
     @Test

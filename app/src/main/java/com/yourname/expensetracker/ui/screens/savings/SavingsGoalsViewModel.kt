@@ -3,6 +3,8 @@ package com.yourname.expensetracker.ui.screens.savings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.repository.SavingsContributionHistoryRepository
+import com.yourname.expensetracker.data.repository.SavingsSweepAcceptanceCoordinator
+import com.yourname.expensetracker.data.repository.SavingsSweepAcceptanceResult
 import com.yourname.expensetracker.domain.model.GoalProtectionLevel
 import com.yourname.expensetracker.domain.model.SavingsGoal
 import com.yourname.expensetracker.domain.savings.*
@@ -93,6 +95,7 @@ class SavingsGoalsViewModel @Inject constructor(
     private val gamificationEngine: SavingsGamificationEngine,
     private val lifestyleSavingsPromptUseCase: LifestyleSavingsPromptUseCase,
  private val monthlySavingsSweepUseCase: MonthlySavingsSweepUseCase,
+ private val savingsSweepAcceptanceCoordinator: SavingsSweepAcceptanceCoordinator,
  private val timeProvider: TimeProvider,
  private val currencySettingsRepository: CurrencySettingsRepository
 ) : ViewModel() {
@@ -250,34 +253,16 @@ class SavingsGoalsViewModel @Inject constructor(
                     goal.currency != homeCurrency || allocation.moneySuggestedAllocation?.currency != CurrencyCode.parse(goal.currency) || goal.currentAmount != allocation.currentProgress ||
                     goal.targetAmount != allocation.targetAmount
             }) return@launch
-            
-            // Room and DataStore are separate persistence boundaries, so this UI
-            // path cannot provide batch atomicity. Do not partially apply a
-            // multi-goal recommendation until an owner-level transaction exists.
-            if (recommendation.goalAllocations.size != 1) return@launch
 
-            // The repository increment is atomic for this single-goal contract.
-            for (allocation in recommendation.goalAllocations) {
-                if (currencySettingsRepository.homeCurrency().first() != homeCurrency ||
-                    recommendation.rateTimestamp != currencySettingsRepository.lastRateUpdate().first()) return@launch
-                val currentGoal = savingsGoalRepository.observeSavingsGoals().first()
-                    .firstOrNull { it.id == allocation.goalId } ?: return@launch
-                if (currentGoal != goalsById[allocation.goalId] ||
-                    SavingsGoalCurrencyPolicy.knownCurrencyOrNull(currentGoal) == null) return@launch
-                if (currencySettingsRepository.homeCurrency().first() != homeCurrency ||
-                    recommendation.rateTimestamp != currencySettingsRepository.lastRateUpdate().first()) return@launch
-                val wasAdded = savingsGoalRepository.incrementSavingsGoalAmount(
-                    allocation.goalId,
-                    requireNotNull(allocation.moneySuggestedAllocation).amount
-                )
-                if (wasAdded) {
-                    val recorded = recordContributionHistory(
-                        goalId = allocation.goalId,
-                        amount = allocation.suggestedAllocation,
-                        currency = recommendation.currency,
-                        source = "sweep"
-                    )
-                    if (!recorded) return@launch
+            if (currencySettingsRepository.homeCurrency().first() != homeCurrency ||
+                recommendation.rateTimestamp != currencySettingsRepository.lastRateUpdate().first()) return@launch
+
+            when (val acceptance = savingsSweepAcceptanceCoordinator.accept(recommendation)) {
+                SavingsSweepAcceptanceResult.Accepted,
+                SavingsSweepAcceptanceResult.AlreadyAccepted -> Unit
+                is SavingsSweepAcceptanceResult.Rejected -> {
+                    _state.update { it.copy(sweepUnavailableReason = acceptance.reasonCode) }
+                    return@launch
                 }
             }
             

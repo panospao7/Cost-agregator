@@ -38,6 +38,7 @@ RUNNER_RELATIVE = "scripts/ci/run_registered_guard.py"
 MIGRATED_TASKS = [
     ("checkDirectTimeCalls", "time_boundaries"),
     ("checkRawMoneyAggregates", "raw_money_aggregates"),
+    ("verifyNoIgnoredGrowth", "ignored_test_budget"),
 ]
 
 RETIRED_TASKS = ["checkLifecycleBypasses", "checkLifecycleBypass"]
@@ -176,3 +177,14 @@ def test_db_wrapper_contract_is_pinned_in_the_db_contract_file() -> None:
     task = _task_text("verifyDbAccessBoundaries")
     assert RUNNER_RELATIVE in task
     assert 'guardId = "db_access"' in task
+
+
+def test_ignored_test_wrapper_cannot_override_the_registry_budget() -> None:
+    from scripts.ci.guard_registry import GUARD_REGISTRY
+
+    task = _task_text("verifyNoIgnoredGrowth")
+    assert "maxIgnoredTests" not in task
+    assert "ignoredCount" not in task
+    assert '"--baseline"' not in task
+    arguments = GUARD_REGISTRY["ignored_test_budget"]["execution"]["arguments"]
+    assert arguments == ("--fail-on-violation", "--baseline", "29")

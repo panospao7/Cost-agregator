@@ -898,6 +898,66 @@ class MigrationContractTest {
         }
     }
 
+    @Test
+    fun migration_112_to_113_deduplicates_categories_without_extra_index() {
+        withTestDb("migration-contract-112-113.db", version = 112) { db ->
+            db.execSQL("""
+                CREATE TABLE IF NOT EXISTS categories (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    name TEXT NOT NULL,
+                    icon TEXT NOT NULL,
+                    color TEXT NOT NULL,
+                    isDefault INTEGER NOT NULL DEFAULT 0
+                )
+            """.trimIndent())
+            db.execSQL("CREATE TABLE IF NOT EXISTS manual_recurring_expenses (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL)")
+            db.execSQL("INSERT INTO categories (id, name, icon, color, isDefault) VALUES (1, 'Food', 'F', '#FFFFFF', 0)")
+            db.execSQL("INSERT INTO categories (id, name, icon, color, isDefault) VALUES (2, 'food', 'f', '#000000', 0)")
+            db.execSQL("INSERT INTO categories (id, name, icon, color, isDefault) VALUES (3, 'Travel', 'T', '#123456', 0)")
+
+            AppDatabase.MIGRATION_112_113.migrate(db)
+
+            db.query("SELECT id, name FROM categories ORDER BY id").use { cursor ->
+                assertEquals(2, cursor.count)
+                assertTrue(cursor.moveToFirst())
+                assertEquals(1L, cursor.getLong(0))
+                assertEquals("Food", cursor.getString(1))
+                assertTrue(cursor.moveToNext())
+                assertEquals(3L, cursor.getLong(0))
+                assertEquals("Travel", cursor.getString(1))
+            }
+            db.query("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'index_categories_name_nocase'").use { cursor ->
+                assertFalse("category NOCASE index must not be outside the Room schema contract", cursor.moveToFirst())
+            }
+        }
+    }
+
+    @Test
+    fun migration_113_to_114_removes_historical_category_index() {
+        withTestDb("migration-contract-113-114-category-index.db", version = 113) { db ->
+            db.execSQL("CREATE TABLE categories (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+            db.execSQL("CREATE UNIQUE INDEX index_categories_name_nocase ON categories(name COLLATE NOCASE)")
+            db.execSQL("CREATE TABLE manual_recurring_expenses (id INTEGER PRIMARY KEY)")
+            db.execSQL("CREATE TABLE warranties (receiptId INTEGER)")
+            db.execSQL("CREATE UNIQUE INDEX index_warranties_receiptId ON warranties(receiptId)")
+            db.execSQL("CREATE TABLE expenses (id INTEGER PRIMARY KEY)")
+            db.execSQL("CREATE TABLE return_windows (id INTEGER PRIMARY KEY)")
+            db.execSQL("CREATE TABLE budgets (id INTEGER PRIMARY KEY)")
+            db.execSQL("CREATE TABLE budget_forecasts (budgetId INTEGER, forecastDate INTEGER)")
+            db.execSQL("INSERT INTO categories (id, name) VALUES (1, 'Food')")
+
+            AppDatabase.MIGRATION_113_114.migrate(db)
+
+            db.query("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'index_categories_name_nocase'").use { cursor ->
+                assertFalse("historical category index must be removed at v114", cursor.moveToFirst())
+            }
+            db.query("SELECT name FROM categories WHERE id = 1").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("Food", cursor.getString(0))
+            }
+        }
+    }
+
     // ── Pipeline 4 migration tests ──────────────────────────────────────────
 
     @Test

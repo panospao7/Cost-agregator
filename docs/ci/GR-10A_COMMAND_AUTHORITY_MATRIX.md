@@ -293,3 +293,18 @@ python3 scripts/ci/verify_guard_registry.py --root .
 - Guard rules: unchanged by command canonicalization (the extraction
   transcribes the retired rules 1:1; no rule was widened, narrowed, added,
   or removed).
+
+## 6. Wave 5 app-check correction (2026-10-13)
+
+`verifyNoIgnoredGrowth` now calls the registered `ignored_test_budget` guard via
+the same fail-closed Gradle bridge. The legacy substring counter counted KDoc
+mentions as annotations (32 textual lines, not 32 ignored tests). Canonical
+annotation discovery is already authoritative in the full static suite.
+
+The registry retains the fixed budget 29 and additionally enforces annotation
+reasons, `Disabled` annotations and the release-block denylist. Gradle cannot
+override that budget. No skips, policy exceptions or baseline growth are added.
+The `check` dependency remains. Wrapper/preflight/CI-mode/exit behavior is pinned
+in `scripts/ci/test_gradle_registered_guard_contract.py`; comment-versus-real
+annotation behavior is pinned in `scripts/test_verify_ignored_test_budget.py`.
+Refer to `FINAL_CI_GUARD_ACCEPTANCE_GATE.md` FG-03/FG-06/FG-07/FG-23.

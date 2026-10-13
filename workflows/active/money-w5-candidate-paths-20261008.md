@@ -343,3 +343,102 @@ staging or commit authority implied at that checkpoint. Details in the C1 packet
 - Local agent configuration, private session transcript, scratch patches/verdict,
   unrelated campaign/audit docs, generated outputs and line-ending-only ownership
   policy noise remain excluded and untouched.
+
+## Batch 8 and final automated evidence - 2026-10-13
+
+Selection-only continuation paths below; inspect authored hunks before any future
+staging. No staging, commit or push is authorized by this checkpoint. Prior
+WIP-transfer acceptance is historical, not final Wave 5 acceptance.
+
+All twelve final automated profiles passed at snapshot
+9b3c78c8856b8e278d9819ca7c2e589753cef61ed1392c8300b4148156adcf4d.
+The required 149-to-150 upgrade, baseline/fresh parity and both native PDF cases
+passed without skips. See money-w5-savings-b8-20261012-handoff.md for run IDs,
+commands/log paths, actual versus cached execution and remaining independent
+acceptance. Later documentation appends change the overall worktree fingerprint.
+
+Additional or reaffirmed paths:
+- .agents/skills/run-validation/SKILL.md
+- app/build.gradle.kts
+- app/schemas/com.yourname.expensetracker.data.database.AppDatabase/150.json
+- app/src/androidTest/java/com/yourname/expensetracker/data/database/dao/CategoryDaoTest.kt
+- app/src/androidTest/java/com/yourname/expensetracker/data/database/dao/ExpenseDaoTest.kt
+- app/src/androidTest/java/com/yourname/expensetracker/data/database/DatabaseMigrationMatrixTest.kt
+- app/src/androidTest/java/com/yourname/expensetracker/data/database/MigrationContractTest.kt
+- app/src/main/java/com/yourname/expensetracker/data/backup/BackupVerifier.kt
+- app/src/main/java/com/yourname/expensetracker/data/database/AppDatabase.kt
+- app/src/main/java/com/yourname/expensetracker/data/database/dao/CategoryDao.kt
+- app/src/main/java/com/yourname/expensetracker/data/database/dao/SavingsContributionLedgerDao.kt
+- app/src/main/java/com/yourname/expensetracker/data/database/dao/SavingsGoalDao.kt
+- app/src/main/java/com/yourname/expensetracker/data/database/dao/SavingsSweepPlanDao.kt
+- app/src/main/java/com/yourname/expensetracker/data/database/DatabaseMigrations.kt
+- app/src/main/java/com/yourname/expensetracker/data/database/entity/SavingsContributionLedgerEntry.kt
+- app/src/main/java/com/yourname/expensetracker/data/database/entity/SavingsSweepPlan.kt
+- app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
+- app/src/main/java/com/yourname/expensetracker/data/repository/SavingsContributionHistoryRepository.kt
+- app/src/main/java/com/yourname/expensetracker/data/repository/SavingsSweepAcceptanceCoordinator.kt
+- app/src/main/java/com/yourname/expensetracker/di/DaoModule.kt
+- app/src/main/java/com/yourname/expensetracker/di/SavingsModule.kt
+- app/src/main/java/com/yourname/expensetracker/domain/savings/SavingsGoalCurrencyPolicy.kt
+- app/src/main/java/com/yourname/expensetracker/domain/savings/SmartSavingsEngine.kt
+- app/src/main/java/com/yourname/expensetracker/ui/screens/savings/SavingsGoalsViewModel.kt
+- app/src/main/res/values-el/strings.xml
+- app/src/main/res/values-es/strings.xml
+- app/src/test/java/com/yourname/expensetracker/data/backup/BackupVerifierManifestTest.kt
+- app/src/test/java/com/yourname/expensetracker/data/backup/BackupVerifierSavingsLedgerTest.kt
+- app/src/test/java/com/yourname/expensetracker/data/database/DatabaseMigrationProofTest.kt
+- app/src/test/java/com/yourname/expensetracker/data/database/Migration148to149Test.kt
+- app/src/test/java/com/yourname/expensetracker/data/database/MigrationRegistrationTest.kt
+- app/src/test/java/com/yourname/expensetracker/data/database/MigrationTestInstrumentation.kt
+- app/src/test/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImplTest.kt
+- app/src/test/java/com/yourname/expensetracker/data/repository/ExpenseRepositoryTruncationTest.kt
+- app/src/test/java/com/yourname/expensetracker/data/repository/SavingsContributionHistoryRepositoryTest.kt
+- app/src/test/java/com/yourname/expensetracker/data/repository/SavingsSweepAcceptanceCoordinatorTest.kt
+- app/src/test/java/com/yourname/expensetracker/domain/bank/BankApiIntegrationTest.kt
+- app/src/test/java/com/yourname/expensetracker/domain/receipt/BankStatementParserTest.kt
+- app/src/test/java/com/yourname/expensetracker/guard/DbGuardPolicyFixtureTest.kt
+- app/src/test/java/com/yourname/expensetracker/scenarios/BackupRestoreContractTest.kt
+- app/src/test/java/com/yourname/expensetracker/ui/screens/savings/SavingsGoalsViewModelTest.kt
+- config/baselines/cancellation.json
+- config/guards/db_ownership_policy.yml
+- docs/architecture/ARCHITECTURE.md
+- docs/architecture/CODEBASE_INVENTORY.md
+- docs/architecture/CODEBASE_SEGMENTS.md
+- docs/architecture/ENGINE_INTERACTION_MAP.md
+- docs/architecture/LEGAL_PATHS.md
+- docs/ci/GR-10A_COMMAND_AUTHORITY_MATRIX.md
+- scripts/ci/test_gradle_registered_guard_contract.py
+- scripts/ci/test_validation_runner_protocol.py
+- scripts/test_verify_db_access_boundaries.py
+- scripts/test_verify_ignored_test_budget.py
+- scripts/validation-runner.ps1
+- workflows/active/money-w5-savings-b8-20261012-handoff.md
+
+Ownership-policy amendment: the earlier line-ending-only exclusion remains for
+unrelated formatting noise; the four exact human-approved MIT-DB-W5-R16 writer
+contracts are now selected authored hunks. No blanket owner grant. Cancellation
+baseline candidate now includes the five previously approved resolved removals
+recorded in the Batch 8 handoff, not the older one-removal-only snapshot. Refer
+to FINAL_CI_GUARD_ACCEPTANCE_GATE.md FG-03/FG-06/FG-07/FG-23.
+
+Runner extension permits only focused release-unit filters under the existing
+lock, timeout, fingerprint and marker protocol. Canonical ignored-test bridge
+retains fixed registry budget 29 and fail-closed reason/denylist enforcement.
+Release test fixtures assert production debug-only API denial; no release gate
+was relaxed. Schema JSON is test resources only, not release APK assets.
+
+Excluded and preserved: .codex/config.toml, .claude/, CLAUDE.md, private session
+transcript, docs/prompts/release-1.0-assurance/, its separate handoff, and generated
+build outputs. No blanket selection of the mixed worktree.
+
+Local strict review PASS is self-review only. Final independent reviewer and
+guardian acceptance remains NOT RUN; Wave 5 is PARTIAL, not finalized.
+The local-only/no-subagents amendment remains in force.
+
+## Renewed user-authorized checkpoint commit - 2026-10-13
+
+The user's "commit and push first" instruction authorizes staging, committing
+and pushing the 56 selected Wave 5 continuation paths, including this manifest.
+This supersedes the earlier selection-only/no-commit checkpoint wording for
+these exact paths. Unrelated/excluded files remain untouched. This is a WIP
+checkpoint with independent acceptance outstanding, not finalized Wave 5.

@@ -2,7 +2,6 @@ package com.yourname.expensetracker.data.database
 
 import androidx.room.testing.MigrationTestHelper
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
-import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -25,7 +24,7 @@ class Migration148to149Test {
 
     @get:Rule
     val helper: MigrationTestHelper = MigrationTestHelper(
-        InstrumentationRegistry.getInstrumentation(),
+        migrationTestInstrumentation(),
         AppDatabase::class.java,
         emptyList(),
         FrameworkSQLiteOpenHelperFactory()
@@ -82,7 +81,27 @@ class Migration148to149Test {
     }
 
     @Test
-    fun `schema version is 149`() {
-        assertEquals(149, DatabaseSchemaPolicy.CURRENT_VERSION)
+    fun schema_version_is_150() {
+        assertEquals(150, DatabaseSchemaPolicy.CURRENT_VERSION)
+    }
+
+    @Test
+    fun migration_149_to_150_creates_durable_savings_contribution_ledger() {
+        val dbName = "migration-149-150-test"
+        val db = helper.createDatabase(dbName, 149)
+        db.close()
+
+        val migrated = helper.runMigrationsAndValidate(
+            dbName, 150, true, DatabaseMigrations.MIGRATION_149_150
+        )
+        migrated.query("PRAGMA table_info(savings_sweep_plan)").use { cursor ->
+            val columns = mutableSetOf<String>()
+            while (cursor.moveToNext()) columns += cursor.getString(cursor.getColumnIndexOrThrow("name"))
+            assertTrue(columns.contains("acceptanceKey"))
+        }
+        migrated.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'savings_contribution_ledger'").use { cursor ->
+            assertTrue(cursor.moveToFirst())
+        }
+        migrated.close()
     }
 }

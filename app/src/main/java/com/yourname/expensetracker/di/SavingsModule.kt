@@ -3,6 +3,7 @@ package com.yourname.expensetracker.di
 import android.content.Context
 import com.yourname.expensetracker.data.repository.AutomatedSavingsRuleStateRepository
 import com.yourname.expensetracker.data.repository.SavingsContributionHistoryRepository
+import com.yourname.expensetracker.data.database.dao.SavingsContributionLedgerDao
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.savings.*
@@ -56,10 +57,12 @@ object SavingsModule {
     @Singleton
     fun provideSavingsContributionHistoryRepository(
         @ApplicationContext context: Context,
-        timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
+        timeProvider: com.yourname.expensetracker.domain.util.TimeProvider,
+        ledgerDao: SavingsContributionLedgerDao
     ): SavingsContributionHistoryRepository = SavingsContributionHistoryRepository(
         SavingsContributionHistoryRepository.createDataStore(context),
-        timeProvider
+        timeProvider,
+        ledgerDao
     )
 
     @Provides

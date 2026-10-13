@@ -40,7 +40,7 @@ import com.yourname.expensetracker.data.security.BankTokenCipher
  * specifically validates that a v5 database is correctly handled by
  * [fallbackToDestructiveMigration].
  */
-const val APP_DATABASE_SCHEMA_VERSION = 149
+const val APP_DATABASE_SCHEMA_VERSION = 150
 
 @Database(
     entities = [
@@ -57,6 +57,7 @@ const val APP_DATABASE_SCHEMA_VERSION = 149
         ManualRecurringExpense::class,
         PlannedExpense::class,
         SavingsGoal::class,
+        SavingsContributionLedgerEntry::class,
         MerchantCanonical::class,
         MerchantAlias::class,
         MerchantLocation::class,
@@ -135,6 +136,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun manualRecurringExpenseDao(): ManualRecurringExpenseDao
     abstract fun plannedExpenseDao(): PlannedExpenseDao
     abstract fun savingsGoalDao(): SavingsGoalDao
+    abstract fun savingsContributionLedgerDao(): SavingsContributionLedgerDao
     abstract fun merchantNormalizationDao(): MerchantNormalizationDao
     abstract fun merchantLocationDao(): MerchantLocationDao
     abstract fun aiArtifactDao(): AiArtifactDao
@@ -6943,6 +6945,11 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                         database.execSQL("CREATE INDEX IF NOT EXISTS index_planned_expenses_categoryId ON planned_expenses (categoryId)")
                         database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_planned_expenses_openSourceOccurrenceKey ON planned_expenses (openSourceOccurrenceKey)")
 
+                        // v108 also introduces these Room-declared uniqueness contracts.
+                        // Reject conflicting legacy rows rather than deleting financial history.
+                        database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_budget_forecasts_budgetId_targetPeriodStart ON budget_forecasts (budgetId, targetPeriodStart)")
+                        database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_subscription_candidates_canonicalMerchant_userAction ON subscription_candidates (canonicalMerchant, userAction)")
+
                         database.setTransactionSuccessful()
                     } finally {
                         database.endTransaction()
@@ -7566,13 +7573,13 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
             }
         }
 
-        // MIGRATION_112_113 — Category name uniqueness with COLLATE NOCASE
+        // MIGRATION_112_113 — Category name deduplication
         // ═════════════════════════════════════════════════════════════════════
         //
-        // Adds a UNIQUE index on categories(name COLLATE NOCASE) to enforce
-        // case-insensitive category name uniqueness at the DB level.
-        // See also Category.normalizedName and CategoryRepository.addCategory
-        // for application-level deduplication.
+        // Deduplicates legacy category rows that differ only by case. The
+        // historical supplemental NOCASE index was never part of the Room
+        // entity contract/exported schema, so uniqueness remains owned by the
+        // category DAO/repository path rather than by an extra schema index.
         val MIGRATION_112_113 = object : androidx.room.migration.Migration(112, 113) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
                 database.execSQL("ALTER TABLE manual_recurring_expenses ADD COLUMN categoryId INTEGER DEFAULT NULL")
@@ -7584,11 +7591,6 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                     )
                 """.trimIndent())
 
-                // Create unique index with NOCASE collation
-                database.execSQL("""
-                    CREATE UNIQUE INDEX IF NOT EXISTS index_categories_name_nocase
-                    ON categories(name COLLATE NOCASE)
-                """.trimIndent())
             }
         }
 
@@ -7604,6 +7606,11 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
         //         for carrying deficits forward in rollover calculation.
         val MIGRATION_113_114 = object : androidx.room.migration.Migration(113, 114) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Remove the historical supplemental category index if a v113
+                // database was produced by the earlier archived implementation.
+                // It is not part of the v114 Room schema contract.
+                database.execSQL("DROP INDEX IF EXISTS index_categories_name_nocase")
+
                 // WRN-6: Drop unique index and recreate as non-unique
                 database.execSQL("DROP INDEX IF EXISTS index_warranties_receiptId")
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_warranties_receiptId ON warranties (receiptId)")

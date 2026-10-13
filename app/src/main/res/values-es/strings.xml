@@ -245,4 +245,35 @@
     <string name="status_completed">Completado</string>
 
     <!-- Remaining strings use default (English) until full translation is completed -->
+    <string name="receipt_partial_ocr_warning">Algunas páginas no se pudieron leer o no se procesaron. Este recibo está incompleto; comprueba el original antes de guardarlo.</string>
+    <string name="receipt_ocr_coverage_unverified_warning">No se pudo verificar la cobertura de páginas de este recibo guardado. Comprueba el original antes de confiar en los datos reconocidos.</string>
+    <string name="privacy_blocked_generic">Esta función está bloqueada por tu configuración de privacidad.</string>
+    <string name="privacy_blocked_cloud_ai">La IA en la nube está desactivada en la configuración de privacidad o de IA.</string>
+    <string name="privacy_blocked_receipt_image_upload">La carga de imágenes de recibos a la nube está desactivada.</string>
+    <string name="privacy_blocked_external_geocoding">La geocodificación externa (búsqueda de direcciones) está desactivada.</string>
+    <string name="privacy_blocked_notification_capture">La captura de notificaciones está desactivada.</string>
+    <string name="privacy_blocked_raw_export">La exportación de datos sin ocultar información está desactivada.</string>
+    <string name="privacy_blocked_device_gps">La ubicación del dispositivo está desactivada por la configuración de privacidad.</string>
+    <string name="privacy_blocked_background_location">La recuperación de datos de ubicación en segundo plano está desactivada.</string>
+    <string name="privacy_blocked_bank_statement_ai">El análisis de extractos bancarios con IA está desactivado.</string>
+    <string name="privacy_blocked_encrypted_backup">La copia de seguridad cifrada está desactivada.</string>
+    <string name="privacy_blocked_overpass">Los datos de mapas (API Overpass) están desactivados.</string>
+    <string name="privacy_blocked_debug_persistence">El almacenamiento de datos de depuración está desactivado.</string>
+    <string name="privacy_blocked_debug_export">La exportación de depuración no está permitida con tu configuración de privacidad actual.</string>
+    <string name="bank_sync_result_success">Sincronización completada</string>
+    <string name="bank_sync_result_partial">Sincronización finalizada — algunos elementos se omitieron o fallaron</string>
+    <string name="bank_sync_result_reauth_required">Se requiere una nueva autenticación — vuelve a conectar este banco</string>
+    <string name="bank_sync_result_blocked">Sincronización bloqueada (copia de seguridad/restauración en curso o conexión inactiva)</string>
+    <string name="bank_sync_result_retryable">La sincronización falló — inténtalo de nuevo</string>
+    <string name="bank_sync_result_permanent">La sincronización falló</string>
+    <string name="bank_sync_result_connection_missing">Esta conexión ya no existe</string>
+    <string name="bank_feature_unavailable">Las conexiones bancarias no están disponibles en esta versión</string>
+    <string name="savings_recommendation_unavailable">Las recomendaciones de ahorro no están disponibles. No se pudieron verificar algunos datos financieros. Actualiza para volver a intentarlo.</string>
+    <string name="savings_goal_currency_unavailable">Los importes de los objetivos no están disponibles porque no se pudo verificar su moneda.</string>
+    <string name="savings_history_write_unavailable">No se pudo verificar el historial de aportaciones. El saldo del objetivo puede haber cambiado ya. Compruébalo antes de volver a intentarlo.</string>
+    <string name="financial_runway_no_remaining_period">No queda ningún período</string>
+    <string name="backup_restore_info_unavailable">La información de las copias de seguridad no está disponible temporalmente</string>
+    <string name="debug_database_stats_unavailable">Las estadísticas de la base de datos no están disponibles temporalmente</string>
+    <string name="money_radar_unavailable">Money Radar no está disponible temporalmente. No se pudieron evaluar algunas señales financieras.</string>
+    <string name="stress_forecast_unavailable">La previsión de estrés financiero no está disponible temporalmente. No hay ninguna estimación de riesgo disponible.</string>
 </resources>

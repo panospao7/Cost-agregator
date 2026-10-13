@@ -11,6 +11,7 @@ import com.google.gson.Gson
 import com.google.gson.stream.JsonReader
 import com.google.gson.stream.JsonToken
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.data.database.dao.SavingsContributionLedgerDao
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
@@ -32,7 +33,8 @@ class SavingsContributionHistoryUnavailableException : IllegalStateException("SA
 
 class SavingsContributionHistoryRepository(
     private val dataStore: DataStore<Preferences>,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val ledgerDao: SavingsContributionLedgerDao? = null
 ) {
 
     private val gson = Gson()
@@ -70,17 +72,23 @@ class SavingsContributionHistoryRepository(
     }
 
     suspend fun getAllContributions(): List<SavingsContributionEvent> {
-        var events = emptyList<SavingsContributionEvent>()
+        val state = readState(dataStore.data.first())
+        if (state.isCorrupt) throw SavingsContributionHistoryUnavailableException()
+        val events = pruneState(state, timeProvider.now()).events.sortedBy { it.timestamp }
 
-        dataStore.edit { preferences ->
-            val state = readState(preferences)
-            if (state.isCorrupt) throw SavingsContributionHistoryUnavailableException()
-            val currentState = pruneState(state, timeProvider.now())
-            events = currentState.events.sortedBy { it.timestamp }
-            writeState(preferences, currentState)
+        val ledgerEvents = ledgerDao?.getAll().orEmpty().map { entry ->
+            SavingsContributionEvent(
+                goalId = entry.goalId,
+                amount = entry.amount,
+                timestamp = entry.timestamp,
+                source = entry.source,
+                currency = entry.currency
+            )
         }
-
-        return events
+        if (ledgerEvents.any { !isValidEvent(it) }) {
+            throw SavingsContributionHistoryUnavailableException()
+        }
+        return (events + ledgerEvents).sortedBy { it.timestamp }
     }
 
     suspend fun getContributionsBetween(

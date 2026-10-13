@@ -13,10 +13,13 @@ import kotlinx.coroutines.flow.Flow
 /**
  * Data-access object for [Category] entities.
  *
- * ## BUD-28: Category name uniqueness (applied)
- * Category names are enforced as unique at the DB level via a UNIQUE index
- * on `name COLLATE NOCASE` (see MIGRATION_112_113). The [getByName] and
- * [existsByName] queries both use `COLLATE NOCASE` for case-insensitive lookups.
+ * ## BUD-28: Category name uniqueness
+ * Case-insensitive get-or-create is owned by [getOrInsertByNameNoCase], used
+ * by the category repository. Room does not impose name uniqueness on raw
+ * inserts: the historical supplemental `name COLLATE NOCASE` index was not
+ * part of the entity schema and is absent from current supported schemas.
+ * The [getByName] and [existsByName] queries use `COLLATE NOCASE` for
+ * case-insensitive lookups.
  *
  * See also [Category.normalizedName] for the computed lowercase+trimmed form.
  */

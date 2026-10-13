@@ -217,6 +217,8 @@ Wait-ForRun
 @pytest.mark.parametrize("profile,stored_command,requested_command,expected", [
     ("targeted-unit-test", "gradle --tests *ReceiptParser*", "gradle --tests *ReceiptParser*", True),
     ("targeted-unit-test", "gradle --tests *ReceiptParser*", "gradle --tests *TotalsAggregationEngine*", False),
+    ("targeted-release-unit-test", "gradle :app:testReleaseUnitTest --tests *ReceiptParser*", "gradle :app:testReleaseUnitTest --tests *ReceiptParser*", True),
+    ("targeted-release-unit-test", "gradle :app:testDebugUnitTest --tests *ReceiptParser*", "gradle :app:testReleaseUnitTest --tests *ReceiptParser*", False),
     ("registered-guard", "guard --guard-id cancellation", "guard --guard-id raw_money_aggregates", False),
 ])
 def test_duplicate_detection_requires_the_same_validation_command(

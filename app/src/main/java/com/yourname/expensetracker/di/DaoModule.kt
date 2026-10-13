@@ -247,6 +247,11 @@ object DaoModule {
 
     @Provides
     @Singleton
+    fun provideSavingsContributionLedgerDao(database: AppDatabase): SavingsContributionLedgerDao =
+        database.savingsContributionLedgerDao()
+
+    @Provides
+    @Singleton
     fun provideSpendingChallengeDao(database: AppDatabase): SpendingChallengeDao =
         database.spendingChallengeDao()
 

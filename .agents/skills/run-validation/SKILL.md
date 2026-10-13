@@ -25,7 +25,7 @@ test, lint, connected-test, and guard execution.
 
 ## Profiles
 
-`compile`, `assemble-debug`, `targeted-unit-test`, `unit-test-shard`,
+`compile`, `assemble-debug`, `targeted-unit-test`, `targeted-release-unit-test`, `unit-test-shard`,
 `trusted-tests`, `legacy-tests`, `unit-tests`, `migration-tests`, `lint`,
 `static-guards`, `registered-guard`, `app-check`, `connected-tests`,
 `runner-smoke`, `runner-stall-smoke`.

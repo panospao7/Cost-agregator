@@ -66,7 +66,7 @@ import javax.inject.Singleton
  * - Legacy `.db` / `.enc` export (plaintext or auto-key encrypted)
  * - `.costbackup` bundle format (user-password encrypted ZIP with manifest,
  *   checksums, DB snapshot, and receipt images)
- * - Full 56-table verification via [BackupVerifier]
+ * - Full 58-table verification via [BackupVerifier]
  * - Maintenance mode via [RestoreMaintenanceMode]
  * - Crash-safe restore journal via [RestoreJournal]
  */
@@ -1027,7 +1027,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             try {
                 BackupVerifier.validateManifestCompleteness(
                     manifestTableCounts,
-                    manifest.backupFormatVersion
+                    manifest.backupFormatVersion,
+                    manifest.databaseVersion
                 )
             } catch (e: BackupVerifier.IncompleteManifestException) {
                 restoreEvents.event("BUNDLE_VALIDATED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
@@ -1039,6 +1040,11 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 tempDir.deleteRecursively()
                 return@withContext Result.failure(e)
             }
+
+            val postMigrationTableCounts = BackupVerifier.expectedCountsAfterMigration(
+                manifestTableCounts,
+                manifest.databaseVersion
+            )
 
             // 5. Copy extracted DB to staging location
             val extractedDb = extractionResult.dbFile
@@ -1075,7 +1081,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     // P7-P1-1: Step 6b — Verify staged DB after migration BEFORE swapping to live.
                     // Catches migration corruption while the live DB remains intact.
                     val postMigrationCheck = com.yourname.expensetracker.domain.util.CancellationSafe.runCatchingCancellable {
-                        BackupVerifier.verifyQuick(stagedDbFile, manifestTableCounts)
+                        BackupVerifier.verifyQuick(stagedDbFile, postMigrationTableCounts)
                     }
 
                     postMigrationCheck.getOrElse { error ->
@@ -1229,7 +1235,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     liveSummary = queryRoomCountsForVerification(freshDb)
 
                     // Full verification
-                    val verificationResult = BackupVerifier.verify(liveDbFile, manifestTableCounts)
+                    val verificationResult = BackupVerifier.verify(liveDbFile, postMigrationTableCounts)
                     if (!verificationResult.passed) {
                         throw Exception("Live verification failed: ${verificationResult.errors.joinToString("; ")}")
                     }
@@ -1237,12 +1243,12 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
 
                     verifySummaryPreservedForVerification(
                         DatabaseImportSummary(
-                            transactionCount = manifestTableCounts["expenses"] ?: 0,
-                            categoryCount = manifestTableCounts["categories"] ?: 0,
-                            merchantCount = manifestTableCounts["merchant_categories"] ?: 0,
-                            pendingReviewCount = manifestTableCounts["pending_reviews"] ?: 0,
-                            budgetCount = manifestTableCounts["budgets"] ?: 0,
-                            allTableCounts = manifestTableCounts
+                            transactionCount = postMigrationTableCounts["expenses"] ?: 0,
+                            categoryCount = postMigrationTableCounts["categories"] ?: 0,
+                            merchantCount = postMigrationTableCounts["merchant_categories"] ?: 0,
+                            pendingReviewCount = postMigrationTableCounts["pending_reviews"] ?: 0,
+                            budgetCount = postMigrationTableCounts["budgets"] ?: 0,
+                            allTableCounts = postMigrationTableCounts
                         ),
                         liveSummary,
                         manifest.databaseVersion

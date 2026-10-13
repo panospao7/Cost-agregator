@@ -37,7 +37,8 @@ class BankStatementParserTest {
             val method = BankStatementParser::class.java.getDeclaredMethod("tryParseGreekNbgTransaction", String::class.java, String::class.java)
             method.isAccessible = true
             assertNull(method.invoke(parser, "3/5/2026 4:41:36 μμ 00 Χ -2,9 85016130 SECRET_ROW", "EUR"))
-            assertTrue(messages.isNotEmpty())
+            if (com.yourname.expensetracker.BuildConfig.DEBUG) assertTrue(messages.isNotEmpty())
+            else assertTrue(messages.isEmpty())
             assertTrue(messages.all { it.startsWith("BANK_STATEMENT_") })
             assertTrue(messages.none { it.contains("SECRET") || it.contains("29.99") || it.contains("1,470.01") })
             assertTrue(errors.all { it == null })

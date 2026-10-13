@@ -58,12 +58,12 @@ class DatabaseMigrationMatrixTest {
     fun baseline_chain_to_current_version_passes() {
         assertTrue(hasSchema(MIGRATION_BASELINE) && hasSchema(CURRENT_VERSION))
 
-        var db = helper.createDatabase("matrix-145-148", MIGRATION_BASELINE)
+        var db = helper.createDatabase("matrix-145-150", MIGRATION_BASELINE)
         seedExpense(db)
         db.close()
 
         db = helper.runMigrationsAndValidate(
-            "matrix-145-148", CURRENT_VERSION, true, *DatabaseSchemaPolicy.ALL_MIGRATIONS
+            "matrix-145-150", CURRENT_VERSION, true, *DatabaseSchemaPolicy.ALL_MIGRATIONS
         )
         assertSeedExpense(db)
         db.close()
@@ -193,6 +193,43 @@ class DatabaseMigrationMatrixTest {
         db.close()
     }
 
+    @Test
+    @Throws(IOException::class)
+    fun migrate_149_to_150_adds_savings_acceptance_ledger() {
+        assertTrue(hasSchema(149) && hasSchema(150))
+        var db = helper.createDatabase("matrix-149-150", 149)
+        db.execSQL(
+            "INSERT INTO savings_goals " +
+                "(id, name, targetAmount, currentAmount, protectionLevel, currency, currencyAssumption, createdAt) " +
+                "VALUES (1, 'Savings', 1000.0, 240.0, 'WARNING', 'EUR', 'EXPLICIT', 1710000000000)"
+        )
+        db.execSQL(
+            "INSERT INTO savings_sweep_plan " +
+                "(id, goalId, monthEnd, totalUnderspend, riskBuffer, safeSweepAmount, allocatedAmount, " +
+                "allocationPercentage, status, confidence, currency, computedAt) " +
+                "VALUES (1, 1, 1710000001000, 50.0, 10.0, 40.0, 40.0, 1.0, 'ACCEPTED', 0.9, 'EUR', 1710000000000)"
+        )
+        db.close()
+        db = helper.runMigrationsAndValidate("matrix-149-150", 150, true, DatabaseMigrations.MIGRATION_149_150)
+        assertTrue(hasIndex(db, "index_savings_sweep_plan_acceptanceKey"))
+        assertTrue(hasIndex(db, "index_savings_contribution_ledger_idempotencyKey"))
+        db.query("SELECT currentAmount, currencyAssumption FROM savings_goals WHERE id = 1").use { row ->
+            assertTrue(row.moveToFirst())
+            assertEquals(240.0, row.getDouble(0), 0.0)
+            assertEquals("EXPLICIT", row.getString(1))
+        }
+        db.query("SELECT status, acceptanceKey FROM savings_sweep_plan WHERE id = 1").use { row ->
+            assertTrue(row.moveToFirst())
+            assertEquals("ACCEPTED", row.getString(0))
+            assertTrue(row.isNull(1))
+        }
+        db.query("SELECT COUNT(*) FROM savings_contribution_ledger").use { row ->
+            assertTrue(row.moveToFirst())
+            assertEquals(0, row.getInt(0))
+        }
+        db.close()
+    }
+
     // ── Fresh-vs-Migrated Schema Parity ───────────────────────────────
 
     /**
@@ -216,11 +253,11 @@ class DatabaseMigrationMatrixTest {
         }
 
         // Create at the baseline and migrate to current.
-        var migratedDb = helper.createDatabase("matrix-migrated-148", MIGRATION_BASELINE)
+        var migratedDb = helper.createDatabase("matrix-migrated-150", MIGRATION_BASELINE)
         seedExpense(migratedDb)
         migratedDb.close()
         migratedDb = helper.runMigrationsAndValidate(
-            "matrix-migrated-148", CURRENT_VERSION, true, *DatabaseSchemaPolicy.ALL_MIGRATIONS
+            "matrix-migrated-150", CURRENT_VERSION, true, *DatabaseSchemaPolicy.ALL_MIGRATIONS
         )
         assertSeedExpense(migratedDb)
         val migratedTables = getTableNames(migratedDb)

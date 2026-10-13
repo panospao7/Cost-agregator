@@ -11,6 +11,7 @@ param(
         "compile",
         "assemble-debug",
         "targeted-unit-test",
+        "targeted-release-unit-test",
         "unit-test-shard",
         "trusted-tests",
         "legacy-tests",
@@ -416,6 +417,10 @@ function Get-ProfileSpec {
         "targeted-unit-test" {
             if (-not $Filter -or $Filter -notmatch '^[A-Za-z0-9_.$*?\-]+$') { throw "E_INVALID_TEST_FILTER" }
             return @{ executable = $gradle; arguments = @(":app:testDebugUnitTest", "--tests", $Filter) + $gradleTail; timeout = 2400; no_output_timeout = 600 }
+        }
+        "targeted-release-unit-test" {
+            if (-not $Filter -or $Filter -notmatch '^[A-Za-z0-9_.$*?\-]+$') { throw "E_INVALID_TEST_FILTER" }
+            return @{ executable = $gradle; arguments = @(":app:testReleaseUnitTest", "--tests", $Filter) + $gradleTail; timeout = 2400; no_output_timeout = 600 }
         }
         "unit-test-shard" { return @{ executable = $gradle; arguments = (New-TestArguments -Filters (Get-ShardFilters -Name $ShardName)) + $gradleTail; timeout = 3600; no_output_timeout = 900 } }
         "trusted-tests" { return @{ executable = $gradle; arguments = (New-TestArguments -Filters (Get-TrustedFilters)) + $gradleTail; timeout = 3600; no_output_timeout = 900 } }
@@ -868,6 +873,7 @@ function Show-Profiles {
         @{ name = "compile"; purpose = "Compile debug Kotlin" },
         @{ name = "assemble-debug"; purpose = "Build the debug APK" },
         @{ name = "targeted-unit-test"; purpose = "Run one allowlisted Gradle test filter" },
+        @{ name = "targeted-release-unit-test"; purpose = "Run one allowlisted release Gradle test filter" },
         @{ name = "unit-test-shard"; purpose = "Run one named manifest shard with -Shard" },
         @{ name = "trusted-tests"; purpose = "Run the curated trusted structural test group" },
         @{ name = "legacy-tests"; purpose = "Run ledger-routed suspected/confirmed hanging tests in isolation" },

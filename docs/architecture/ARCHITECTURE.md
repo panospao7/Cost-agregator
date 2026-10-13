@@ -621,7 +621,7 @@ data/
 │   ├── CostbackupBundle.kt      # AES-256-GCM encrypted ZIP: header + manifest + DB + receipt images + checksums
 │   ├── RestoreMaintenanceMode.kt # 8-state mode manager; pauses workers + notification capture during restore
 │   ├── RestoreJournal.kt        # Crash-safe 9-state restore journal (PREPARING → COMPLETE/FAILED, incl. ASSETS_RESTORING)
-│   ├── BackupVerifier.kt        # Full 57-entity 3-tier verification (EXACT / VALIDITY / OPTIONAL)
+│   ├── BackupVerifier.kt        # Full 58-table 3-tier verification (EXACT / VALIDITY / OPTIONAL)
 │   ├── DatabaseReadBarrier.kt   # Operation-level read blocking during restore
 │   └── DatabaseWriteBarrier.kt  # Operation-level write blocking during restore
 ├── ai/provider/                 # Cloud + on-device AI providers
@@ -1279,7 +1279,7 @@ Phase 8 introduces a persistent job-run tracking table, a worker-specification m
 ### Phase 9 — Backup & Restore Engine (May 2026)
 
 Phase 9 introduces a complete backup/restore subsystem with an encrypted bundle format,
-crash-safe journaling, worker pausing, and full 57-entity verification.
+crash-safe journaling, worker pausing, and full 58-table verification.
 
 #### New `data/backup/` Package
 
@@ -1288,7 +1288,7 @@ crash-safe journaling, worker pausing, and full 57-entity verification.
 | `CostbackupBundle` | `data/backup/CostbackupBundle.kt` | **`.costbackup` bundle format.** Outer layer: `COSTBACKUP1` magic (10B) + format version (2B) + salt (16B) + IV (12B) + AES-256-GCM ciphertext. Inner layer: standard ZIP containing `manifest.json`, `database.sqlite`, `files/receipts/`, `checksums.json`. Data classes: `BackupManifest`, `BackupIncludes`, `BackupOptionsManifest`, `ChecksumsManifest`. Exceptions: `WrongBackupPasswordException`, `UnsupportedBackupVersionException`, `InvalidBackupFormatException`, `ChecksumMismatchException`. Exposes `create()` and `extract()` as `Result<T>`. |
 | `RestoreMaintenanceMode` | `data/backup/RestoreMaintenanceMode.kt` | **8-state maintenance mode manager.** Modes: `NORMAL`, `BACKUP_EXPORTING`, `RESTORE_PREPARING`, `RESTORE_STAGING`, `RESTORE_SWAPPING`, `RESTORE_VERIFYING`, `RESTORE_ROLLING_BACK`, `RESTORE_COMPLETE_RESTART_REQUIRED`. On `enter()`: pauses all 7 WorkManager workers by cancelling each unique name in `WorkerSpec.DEFAULTS`. State persisted in `SharedPreferences` (survives process death). `isWritesAllowed()` returns `true` **only** in `NORMAL` (writes are blocked in `BACKUP_EXPORTING` too — that mode allows DB reads for snapshot export but not writes). `exit(forceRestartRequired)` optionally transitions to `RESTORE_COMPLETE_RESTART_REQUIRED` to keep writes blocked until app restart. |
 | `RestoreJournal` | `data/backup/RestoreJournal.kt` | **Crash-safe 9-state restore journal.** State machine: `PREPARING → STAGED → SAFETY_BACKUP_CREATED → SWAPPING → VERIFYING → ASSETS_RESTORING → COMPLETE` (with `ROLLING_BACK` and `FAILED` as recovery paths). Writes `restore_journal.json` before each critical step. `checkAndRecover()` returns `RecoveryResult` sealed class: `NoAction`, `CompleteClean`, `CleanedNonDestructive`, `AssetsIncomplete` (P7-P1-04: DB swapped but assets incomplete — journal preserved for recovery), `RecoveredFromSwap`, `CriticalRecoveryRequired`. Non-destructive states (`PREPARING`, `STAGED`, `FAILED`) clean staging files automatically. Destructive states (`SWAPPING`, `VERIFYING`, `ROLLING_BACK`) signal the caller to attempt safety-backup recovery. |
-| `BackupVerifier` | `data/backup/BackupVerifier.kt` | **Full 57-entity verification in 3 tiers.** `TIER_1_EXACT` (38 tables — user/business data incl. the lifecycle/event tables: row count **must** match exactly). `TIER_2_VALIDITY` (10 tables — derived/event-log: must pass integrity + FK checks). `TIER_3_OPTIONAL` (9 tables — cache/external: may be absent). Methods: `verify()` returns `VerificationSummary` with per-table results; `verifyQuick()` throws on first failure for pre-swap gating. Runs `PRAGMA integrity_check` and `PRAGMA foreign_key_check` on the restored database. |
+| `BackupVerifier` | `data/backup/BackupVerifier.kt` | **Full 58-table verification in 3 tiers.** `TIER_1_EXACT` (39 tables — user/business data incl. the lifecycle/event tables: row count **must** match exactly). `TIER_2_VALIDITY` (10 tables — derived/event-log: must pass integrity + FK checks). `TIER_3_OPTIONAL` (9 tables — cache/external: may be absent). Methods: `verify()` returns `VerificationSummary` with per-table results; `verifyQuick()` throws on first failure for pre-swap gating. Runs `PRAGMA integrity_check` and `PRAGMA foreign_key_check` on the restored database. |
 
 #### Integration Points
 
@@ -1315,6 +1315,9 @@ crash-safe journaling, worker pausing, and full 57-entity verification.
 
 5. BackupVerifier.verifyQuick(stagedDbFile, manifestTableCounts)
    → PRAGMA integrity_check + foreign_key_check + Tier 1 exact counts
+   → after Room migration, verifyQuick(stagedDbFile, postMigrationTableCounts)
+     verifies the migrated snapshot before any live swap; pre-v150 backups
+     require an exact zero-row savings contribution ledger
 
 6. Safety backup of live DB created
 
@@ -1324,8 +1327,8 @@ crash-safe journaling, worker pausing, and full 57-entity verification.
 
 9. RestoreJournal.transitionTo(SWAPPING)
 
-10. Reopen live DB; BackupVerifier.verify(liveDbFile, manifestTableCounts)
-    → full 57-entity 3-tier verification
+10. Reopen live DB; BackupVerifier.verify(liveDbFile, postMigrationTableCounts)
+    → full 58-table 3-tier verification
 
 11. RestoreJournal.transitionTo(VERIFYING)
 

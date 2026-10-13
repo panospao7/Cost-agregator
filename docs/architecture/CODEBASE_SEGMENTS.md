@@ -2,7 +2,7 @@
 
 Canonical guide for segment ownership and AI analysis.
 
-**Last updated:** 2026-10-01 (verified against source). Database schema version: v149 (`data/database/AppDatabase.kt`).
+**Last updated:** 2026-10-12 (schema/savings delta verified against source). Database schema version: v150 (`data/database/AppDatabase.kt`).
 
 ## Rules
 - One segment list, one ascending order, one owning section per segment.
@@ -419,7 +419,7 @@ Owns export pipelines, backup/restore flows, and file packaging.
 - `domain/export/AccountingExportPolicy.kt` — Export policy validation (single-currency, purchase-only, global dataset checks via `validateGlobalDataset()`)
 - `data/repository/AccountingExportRepository.kt`
 - `data/repository/DatabaseBackupRepositoryImpl.kt`
-- `data/backup/BackupVerifier.kt` — 57-entity 3-tier verification (TIER_1_EXACT / TIER_2_VALIDITY / TIER_3_OPTIONAL)
+- `data/backup/BackupVerifier.kt` — 58-table 3-tier verification (TIER_1_EXACT / TIER_2_VALIDITY / TIER_3_OPTIONAL)
 - `data/backup/CostbackupBundle.kt` — AES-256-GCM encrypted ZIP: header + manifest + DB + receipt images + checksums
 - `data/backup/RestoreJournal.kt` — Crash-safe 9-state restore journal; ASSETS_RESTORING state for asset recovery
 - `data/backup/RestoreMaintenanceMode.kt` — 11-state mode manager; pauses 7 workers; BACKUP_EXPORTING mode
@@ -688,6 +688,8 @@ Owns smart savings optimization and financial health score computation.
 - `domain/savings/AutomatedSavingsRuleEngine.kt`
 - `domain/savings/SavingsGamificationEngine.kt`
 - `domain/savings/SmartSavingsEngine.kt`
+- `data/repository/SavingsSweepAcceptanceCoordinator.kt` — authoritative Room balance/plan/ledger commit
+- `data/repository/SavingsContributionHistoryRepository.kt` — read-only legacy history view plus Room ledger
 - `domain/health/FinancialHealthCalculator.kt`
 - `domain/health/FinancialHealthScoreV2.kt`
 

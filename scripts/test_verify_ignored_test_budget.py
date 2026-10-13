@@ -41,6 +41,21 @@ def _make_denylist(tmp_path: Path, yaml_content: str) -> Path:
 
 # ── Test: all ignores have reasons ──────────────────────────────────────────
 
+def test_kdoc_mentions_do_not_count_but_real_annotations_still_do(tmp_path):
+    _write_test_file(tmp_path, "app/src/test/java/com/example/MentionTest.kt", '''
+        /** Removed the @Ignore annotation; no @Ignore in this active fixture. */
+        class MentionTest {
+            // @Ignore("not active")
+            @Ignore("Existing documented skip")
+            @Test fun ignored() {}
+        }
+    ''')
+    results = guard.scan_ignored_tests(tmp_path)
+    assert len(results) == 1
+    assert results[0][2] == "Existing documented skip"
+    assert results[0][4] == "Ignore"
+
+
 def test_all_ignores_have_reasons(tmp_path):
     """All @Ignore annotations in fixture files have non-empty reason strings."""
     _write_test_file(

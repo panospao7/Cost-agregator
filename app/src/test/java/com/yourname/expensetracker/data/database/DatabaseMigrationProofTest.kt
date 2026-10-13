@@ -3,7 +3,6 @@ package com.yourname.expensetracker.data.database
 import androidx.room.testing.MigrationTestHelper
 import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
-import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -33,7 +32,7 @@ class DatabaseMigrationProofTest {
 
     @get:Rule
     val helper: MigrationTestHelper = MigrationTestHelper(
-        InstrumentationRegistry.getInstrumentation(),
+        migrationTestInstrumentation(),
         AppDatabase::class.java,
         emptyList(),
         FrameworkSQLiteOpenHelperFactory()

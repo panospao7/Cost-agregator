@@ -106,11 +106,48 @@ object DatabaseMigrations {
         }
     }
 
+    /** B8/R16: durable, idempotent savings sweep acceptance ledger. */
+    val MIGRATION_149_150 = object : Migration(149, 150) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL("ALTER TABLE `savings_sweep_plan` ADD COLUMN `acceptanceKey` TEXT")
+            database.execSQL(
+                "CREATE UNIQUE INDEX IF NOT EXISTS `index_savings_sweep_plan_acceptanceKey` " +
+                    "ON `savings_sweep_plan` (`acceptanceKey`)"
+            )
+            database.execSQL(
+                "CREATE TABLE IF NOT EXISTS `savings_contribution_ledger` (" +
+                    "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "`idempotencyKey` TEXT NOT NULL, " +
+                    "`goalId` INTEGER NOT NULL, " +
+                    "`amount` REAL NOT NULL, " +
+                    "`currency` TEXT NOT NULL DEFAULT 'EUR', " +
+                    "`timestamp` INTEGER NOT NULL, " +
+                    "`source` TEXT NOT NULL, " +
+                    "`sweepPlanId` INTEGER, " +
+                    "FOREIGN KEY(`goalId`) REFERENCES `savings_goals`(`id`) " +
+                    "ON UPDATE NO ACTION ON DELETE CASCADE )"
+            )
+            database.execSQL(
+                "CREATE UNIQUE INDEX IF NOT EXISTS `index_savings_contribution_ledger_idempotencyKey` " +
+                    "ON `savings_contribution_ledger` (`idempotencyKey`)"
+            )
+            database.execSQL(
+                "CREATE INDEX IF NOT EXISTS `index_savings_contribution_ledger_goalId` " +
+                    "ON `savings_contribution_ledger` (`goalId`)"
+            )
+            database.execSQL(
+                "CREATE INDEX IF NOT EXISTS `index_savings_contribution_ledger_timestamp` " +
+                    "ON `savings_contribution_ledger` (`timestamp`)"
+            )
+        }
+    }
+
     /** All registered migrations, starting from v145 baseline. */
     val ALL: Array<Migration> = arrayOf(
         MIGRATION_145_146,
         MIGRATION_146_147,
         MIGRATION_147_148,
-        MIGRATION_148_149
+        MIGRATION_148_149,
+        MIGRATION_149_150
     )
 }

@@ -14,6 +14,8 @@ import com.yourname.expensetracker.domain.model.GoalProtectionLevel
 import com.yourname.expensetracker.domain.model.SavingsGoal
 import com.yourname.expensetracker.data.repository.SavingsContributionHistoryRepository
 import com.yourname.expensetracker.data.repository.SavingsGoalRepository
+import com.yourname.expensetracker.data.repository.SavingsSweepAcceptanceCoordinator
+import com.yourname.expensetracker.data.repository.SavingsSweepAcceptanceResult
 import com.yourname.expensetracker.domain.savings.RecommendationSource
 import com.yourname.expensetracker.domain.savings.SavingsAchievement
 import com.yourname.expensetracker.domain.savings.SavingsGamificationEngine
@@ -57,6 +59,7 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
     private val gamificationEngine = mockk<SavingsGamificationEngine>(relaxed = true)
     private val lifestyleSavingsPromptUseCase = mockk<LifestyleSavingsPromptUseCase>(relaxed = true)
     private val monthlySavingsSweepUseCase = mockk<MonthlySavingsSweepUseCase>(relaxed = true)
+    private val savingsSweepAcceptanceCoordinator = mockk<SavingsSweepAcceptanceCoordinator>(relaxed = true)
     private val currencyRepo = mockk<CurrencySettingsRepository>(relaxed = true)
 
     private lateinit var goalsFlow: MutableStateFlow<List<SavingsGoal>>
@@ -68,6 +71,7 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
     override fun setup() {
         super.setup()
         coEvery { savingsContributionHistoryRepository.recordContribution(any(), any(), any(), any(), any()) } returns true
+        coEvery { savingsSweepAcceptanceCoordinator.accept(any()) } returns SavingsSweepAcceptanceResult.Accepted
 
         every { monthlySavingsSweepUseCase.shouldShowSweepPrompt() } returns false
         every { gamificationEngine.calculateLevel(any()) } answers {
@@ -487,7 +491,7 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `multi-goal sweep is not partially applied without a batch transaction`() = runTest(testDispatcher) {
+    fun multi_goal_sweep_delegates_to_durable_batch_transaction() = runTest(testDispatcher) {
         val first = createGoal(1L, "Emergency", 1000.0, 200.0)
         val second = createGoal(2L, "Vacation", 1000.0, 100.0)
         configureRepositoryWithGoals(listOf(first, second))
@@ -509,6 +513,7 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
         viewModel.acceptSweepRecommendation()
         advanceUntilIdle()
 
+        coVerify(exactly = 1) { savingsSweepAcceptanceCoordinator.accept(sweep) }
         coVerify(exactly = 0) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
         coVerify(exactly = 0) { savingsContributionHistoryRepository.recordContribution(any(), any(), any(), any(), any()) }
     }
@@ -646,8 +651,44 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
         every { currencyRepo.homeCurrency() } returns flowOf("GBP")
         viewModel.acceptSweepRecommendation()
         advanceUntilIdle()
+        coVerify(exactly = 0) { savingsSweepAcceptanceCoordinator.accept(any()) }
         coVerify(exactly = 0) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
         coVerify(exactly = 0) { savingsContributionHistoryRepository.recordContribution(any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun sweepAcceptanceRechecksSettingsAfterRecomputation() = runTest(testDispatcher) {
+        val goal = createGoal(1L, "Known", 1000.0, 200.0)
+        configureRepositoryWithGoals(listOf(goal))
+        val sweep = com.yourname.expensetracker.domain.usecase.savings.SavingsSweepRecommendation(
+            50.0, 10.0, 40.0, listOf(com.yourname.expensetracker.domain.usecase.savings.GoalAllocation(
+                goal.id, goal.name, goal.currentAmount, goal.targetAmount, 40.0, 1.0, "EUR"
+            )), timeProvider.now(), timeProvider.now() + 1000L, 0.9, "EUR", 0L
+        )
+        coEvery { monthlySavingsSweepUseCase.computeSweepRecommendationResult() } returns
+            SavingsSweepComputationResult.Available(sweep)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+        viewModel.computeSweepRecommendation()
+        advanceUntilIdle()
+        var changeRate = false
+        coEvery { monthlySavingsSweepUseCase.computeSweepRecommendationResult() } coAnswers {
+            if (changeRate) {
+                every { currencyRepo.lastRateUpdate() } returns flowOf(1L)
+            } else {
+                every { currencyRepo.homeCurrency() } returns flowOf("USD")
+            }
+            SavingsSweepComputationResult.Available(sweep)
+        }
+        viewModel.acceptSweepRecommendation()
+        advanceUntilIdle()
+        every { currencyRepo.homeCurrency() } returns currencyFlow
+        changeRate = true
+        viewModel.acceptSweepRecommendation()
+        advanceUntilIdle()
+        coVerify(exactly = 0) { savingsSweepAcceptanceCoordinator.accept(any()) }
+        assertEquals(200.0, goalsFlow.value.single().currentAmount, 0.0)
+        assertEquals(sweep, viewModel.state.value.sweepRecommendation)
     }
 
     @Test
@@ -709,7 +750,7 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun failedSweepHistoryWriteIsNotDismissedAsSuccessOrAppliedTwice() = runTest(testDispatcher) {
+    fun rejected_sweep_acceptance_remains_visible_with_controlled_reason() = runTest(testDispatcher) {
         val goal = createGoal(1L, "Known", 1000.0, 200.0)
         configureRepositoryWithGoals(listOf(goal))
         val sweep = com.yourname.expensetracker.domain.usecase.savings.SavingsSweepRecommendation(
@@ -719,23 +760,25 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
         )
         coEvery { monthlySavingsSweepUseCase.computeSweepRecommendationResult() } returns
             SavingsSweepComputationResult.Available(sweep)
-        coEvery { savingsContributionHistoryRepository.recordContribution(any(), any(), any(), any(), any()) } returns false
+        coEvery { savingsSweepAcceptanceCoordinator.accept(sweep) } returns
+            SavingsSweepAcceptanceResult.Rejected("SAVINGS_GOAL_STALE")
         viewModel = createViewModel()
         advanceUntilIdle()
         viewModel.computeSweepRecommendation()
         advanceUntilIdle()
         viewModel.acceptSweepRecommendation()
         advanceUntilIdle()
-        assertEquals("SAVINGS_HISTORY_WRITE_REJECTED", viewModel.state.value.contributionHistoryWriteFailure)
-        assertNull(viewModel.state.value.sweepRecommendation)
-        assertEquals(240.0, goalsFlow.value.single().currentAmount, 0.0)
+        assertEquals("SAVINGS_GOAL_STALE", viewModel.state.value.sweepUnavailableReason)
+        assertEquals(sweep, viewModel.state.value.sweepRecommendation)
+        assertEquals(200.0, goalsFlow.value.single().currentAmount, 0.0)
         viewModel.computeSweepRecommendation()
         advanceUntilIdle()
-        assertNull(viewModel.state.value.sweepRecommendation)
+        assertEquals(sweep, viewModel.state.value.sweepRecommendation)
         viewModel.acceptSweepRecommendation()
         advanceUntilIdle()
-        coVerify(exactly = 1) { savingsGoalRepository.incrementSavingsGoalAmount(goal.id, 40.0) }
-        coVerify(exactly = 1) { savingsContributionHistoryRepository.recordContribution(goal.id, 40.0, any(), "sweep", "EUR") }
+        coVerify(exactly = 2) { savingsSweepAcceptanceCoordinator.accept(sweep) }
+        coVerify(exactly = 0) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
+        coVerify(exactly = 0) { savingsContributionHistoryRepository.recordContribution(any(), any(), any(), any(), any()) }
     }
 
     @Test
@@ -812,6 +855,7 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
             gamificationEngine = gamificationEngine,
             lifestyleSavingsPromptUseCase = lifestyleSavingsPromptUseCase,
             monthlySavingsSweepUseCase = monthlySavingsSweepUseCase,
+            savingsSweepAcceptanceCoordinator = savingsSweepAcceptanceCoordinator,
             timeProvider = timeProvider,
             currencySettingsRepository = currencyRepo,
         ).also { viewModels += it }

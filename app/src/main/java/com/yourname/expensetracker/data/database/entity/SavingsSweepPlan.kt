@@ -33,7 +33,8 @@ import com.yourname.expensetracker.domain.core.money.MoneyAmount
     indices = [
         Index("goalId"),
         Index("monthEnd", "status"),
-        Index("computedAt")
+        Index("computedAt"),
+        Index(value = ["acceptanceKey"], unique = true)
     ]
 )
 data class SavingsSweepPlan(
@@ -79,7 +80,10 @@ data class SavingsSweepPlan(
 
     /** When this plan was computed */
     /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
-    val computedAt: Long = 0L
+    val computedAt: Long = 0L,
+
+    /** Stable identity for one recommendation allocation; null for legacy plans. */
+    val acceptanceKey: String? = null
 ) {
     @get:Ignore
     val totalUnderspendMoneyAmount: MoneyAmount get() = MoneyAmount(totalUnderspend, CurrencyCode(currency))

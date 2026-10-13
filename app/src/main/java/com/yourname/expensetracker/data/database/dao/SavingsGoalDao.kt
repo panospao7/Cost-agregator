@@ -36,4 +36,17 @@ interface SavingsGoalDao {
      */
     @Query("UPDATE savings_goals SET currentAmount = currentAmount + :delta WHERE id = :goalId")
     suspend fun addToGoalAmount(goalId: Long, delta: Double): Int
+
+    @Query(
+        "UPDATE savings_goals SET currentAmount = currentAmount + :delta " +
+            "WHERE id = :goalId AND currentAmount = :expectedCurrentAmount " +
+            "AND targetAmount = :expectedTargetAmount AND currency = :currency"
+    )
+    suspend fun addToGoalAmountIfSnapshot(
+        goalId: Long,
+        expectedCurrentAmount: Double,
+        expectedTargetAmount: Double,
+        currency: String,
+        delta: Double
+    ): Int
 }

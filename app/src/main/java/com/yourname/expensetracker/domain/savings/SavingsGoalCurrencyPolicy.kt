@@ -6,15 +6,18 @@ import com.yourname.expensetracker.domain.model.SavingsGoal
 
 /** Matching currency labels are not evidence of a legacy goal's denomination. */
 object SavingsGoalCurrencyPolicy {
-    fun knownCurrencyOrNull(goal: SavingsGoal): CurrencyCode? {
-        val hasKnownProvenance = when (goal.currencyAssumption) {
+    fun knownCurrencyOrNull(goal: SavingsGoal): CurrencyCode? =
+        knownCurrencyOrNull(goal.currency, goal.currencyAssumption)
+
+    fun knownCurrencyOrNull(currency: String, currencyAssumption: String): CurrencyCode? {
+        val hasKnownProvenance = when (currencyAssumption) {
             "EXPLICIT", "EXPLICIT_HOME_CURRENCY" -> true
-            else -> when (CurrencyAssumption.fromSerializedName(goal.currencyAssumption)) {
+            else -> when (CurrencyAssumption.fromSerializedName(currencyAssumption)) {
                 CurrencyAssumption.USER_CONFIRMED, CurrencyAssumption.PARSED_FROM_SOURCE -> true
                 else -> false
             }
         }
-        return CurrencyCode.parse(goal.currency)
+        return CurrencyCode.parse(currency)
             ?.takeIf { hasKnownProvenance && it in CurrencyCode.ALL_SUPPORTED }
     }
 

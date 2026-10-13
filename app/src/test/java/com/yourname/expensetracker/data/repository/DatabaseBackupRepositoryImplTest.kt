@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.data.repository
 
+import com.yourname.expensetracker.BuildConfig
+
 import android.content.Context
 import android.content.ContentResolver
 import android.database.MatrixCursor
@@ -454,6 +456,10 @@ class DatabaseBackupRepositoryImplTest {
 
     @Test
     fun `backup creates file successfully`() = runTest(testDispatcher) {
+        if (!BuildConfig.DEBUG) {
+            assertRawExportDeniedInRelease()
+            return@runTest
+        }
         createSqliteDatabase(
             file = dbFile,
             expenseCount = 2,
@@ -563,6 +569,10 @@ class DatabaseBackupRepositoryImplTest {
 
     @Test
     fun `restore from backup works`() = runTest(testDispatcher) {
+        if (!BuildConfig.DEBUG) {
+            assertLegacyImportDeniedInRelease()
+            return@runTest
+        }
         createSqliteDatabase(
             file = dbFile,
             expenseCount = 1,
@@ -591,6 +601,10 @@ class DatabaseBackupRepositoryImplTest {
 
     @Test
     fun `journal created before maintenance mode entry during import`() = runTest(testDispatcher) {
+        if (!BuildConfig.DEBUG) {
+            assertLegacyImportDeniedInRelease()
+            return@runTest
+        }
         createSqliteDatabase(
             file = dbFile,
             expenseCount = 1,
@@ -620,6 +634,10 @@ class DatabaseBackupRepositoryImplTest {
 
     @Test
     fun `rollback safety if restore fails original db preserved`() = runTest(testDispatcher) {
+        if (!BuildConfig.DEBUG) {
+            assertLegacyImportDeniedInRelease()
+            return@runTest
+        }
         createSqliteDatabase(
             file = dbFile,
             expenseCount = 1,
@@ -675,6 +693,10 @@ class DatabaseBackupRepositoryImplTest {
 
     @Test
     fun `import repairs same version budgets defaults before reopen`() = runTest(testDispatcher) {
+        if (!BuildConfig.DEBUG) {
+            assertLegacyImportDeniedInRelease()
+            return@runTest
+        }
         createSqliteDatabase(
             file = dbFile,
             expenseCount = 1,
@@ -705,6 +727,10 @@ class DatabaseBackupRepositoryImplTest {
 
     @Test
     fun `import allows same lineage backup missing later non core tables`() = runTest(testDispatcher) {
+        if (!BuildConfig.DEBUG) {
+            assertLegacyImportDeniedInRelease()
+            return@runTest
+        }
         createSqliteDatabase(
             file = dbFile,
             expenseCount = 1,
@@ -731,6 +757,10 @@ class DatabaseBackupRepositoryImplTest {
 
     @Test
     fun `import does not reject backup with no expenses or categories when other tracked data exists`() = runTest(testDispatcher) {
+        if (!BuildConfig.DEBUG) {
+            assertLegacyImportDeniedInRelease()
+            return@runTest
+        }
         createSqliteDatabase(
             file = dbFile,
             expenseCount = 1,
@@ -762,6 +792,10 @@ class DatabaseBackupRepositoryImplTest {
 
     @Test
     fun `import rejects schema86 backups with non repairable budgets mismatch`() = runTest(testDispatcher) {
+        if (!BuildConfig.DEBUG) {
+            assertLegacyImportDeniedInRelease()
+            return@runTest
+        }
         createSqliteDatabase(
             file = dbFile,
             expenseCount = 1,
@@ -784,6 +818,10 @@ class DatabaseBackupRepositoryImplTest {
 
     @Test
     fun `import rejects schema86 backups with valid defaults but invalid budgets index uniqueness`() = runTest(testDispatcher) {
+        if (!BuildConfig.DEBUG) {
+            assertLegacyImportDeniedInRelease()
+            return@runTest
+        }
         createSqliteDatabase(
             file = dbFile,
             expenseCount = 1,
@@ -807,6 +845,10 @@ class DatabaseBackupRepositoryImplTest {
 
     @Test
     fun `temp migration open failure leaves live db untouched`() = runTest(testDispatcher) {
+        if (!BuildConfig.DEBUG) {
+            assertLegacyImportDeniedInRelease()
+            return@runTest
+        }
         createSqliteDatabase(
             file = dbFile,
             expenseCount = 2,
@@ -843,6 +885,10 @@ class DatabaseBackupRepositoryImplTest {
 
     @Test
     fun `successful staged import swaps only after verification`() = runTest(testDispatcher) {
+        if (!BuildConfig.DEBUG) {
+            assertLegacyImportDeniedInRelease()
+            return@runTest
+        }
         createSqliteDatabase(
             file = dbFile,
             expenseCount = 1,
@@ -907,6 +953,10 @@ class DatabaseBackupRepositoryImplTest {
 
     @Test
     fun `schema37 fixture import preserves exact core counts through staged pipeline seam`() = runTest(testDispatcher) {
+        if (!BuildConfig.DEBUG) {
+            assertLegacyImportDeniedInRelease()
+            return@runTest
+        }
         val fixture = Schema37FixtureCounts(
             expenseCount = 128,
             categoryCount = 19,
@@ -965,6 +1015,10 @@ class DatabaseBackupRepositoryImplTest {
 
     @Test
     fun `rollback on post swap reopen failure`() = runTest(testDispatcher) {
+        if (!BuildConfig.DEBUG) {
+            assertLegacyImportDeniedInRelease()
+            return@runTest
+        }
         createSqliteDatabase(
             file = dbFile,
             expenseCount = 2,
@@ -1662,6 +1716,29 @@ class DatabaseBackupRepositoryImplTest {
 
     private enum class RestoreOperation { COSTBACKUP, IMPORT, RESET }
 
+    private suspend fun assertLegacyImportDeniedInRelease() {
+        val before = dbFile.takeIf { it.exists() }?.readBytes()
+        val result = repository.importDatabase(File(tempDir, "release-raw-import.db"))
+        assertTrue(result.exceptionOrNull() is UnsupportedOperationException)
+        verify(exactly = 0) { mockRestoreJournal.beginJournal(any(), any(), any()) }
+        verify(exactly = 0) { mockRestoreMaintenanceMode.enter(any()) }
+        verify(exactly = 0) { database.close() }
+        if (before == null) assertFalse(dbFile.exists())
+        else org.junit.Assert.assertArrayEquals(before, dbFile.readBytes())
+    }
+
+    private suspend fun assertRawExportDeniedInRelease() {
+        assertTrue(runCatching { repository.exportDatabase() }.exceptionOrNull() is UnsupportedOperationException)
+        verify(exactly = 0) { mockRestoreMaintenanceMode.enter(any()) }
+        verify(exactly = 0) { supportDb.query("PRAGMA wal_checkpoint(TRUNCATE)") }
+        assertFalse(File(tempDir, "exports").exists())
+    }
+
+    private suspend fun supportedRestoreOperations(): List<RestoreOperation> {
+        if (!BuildConfig.DEBUG) assertLegacyImportDeniedInRelease()
+        return RestoreOperation.values().filter { BuildConfig.DEBUG || it != RestoreOperation.IMPORT }
+    }
+
     private data class RestoreFixture(
         val directory: File,
         val source: File,
@@ -1766,7 +1843,7 @@ class DatabaseBackupRepositoryImplTest {
 
     @Test
     fun all_restore_APIs_contain_begin_open_write_sync_and_corrupt_journal_failures() = runTest(testDispatcher) {
-        for (operation in RestoreOperation.values()) {
+        for (operation in supportedRestoreOperations()) {
             for (fault in listOf("OPEN", "WRITE", "SYNC", "CORRUPT")) {
                 val fixture = restoreFixture()
                 try {
@@ -1793,7 +1870,7 @@ class DatabaseBackupRepositoryImplTest {
 
     @Test
     fun all_restore_APIs_contain_entry_and_pre_destructive_transition_failures() = runTest(testDispatcher) {
-        for (operation in RestoreOperation.values()) {
+        for (operation in supportedRestoreOperations()) {
             for (fault in listOf("ENTRY", "STAGED", "SAFETY_BACKUP_CREATED", "SWAPPING")) {
                 val fixture = restoreFixture()
                 try {
@@ -1819,7 +1896,7 @@ class DatabaseBackupRepositoryImplTest {
 
     @Test
     fun all_restore_APIs_contain_abort_finalization_and_critical_persistence_failures() = runTest(testDispatcher) {
-        for (operation in RestoreOperation.values()) for (criticalFails in listOf(false, true)) {
+        for (operation in supportedRestoreOperations()) for (criticalFails in listOf(false, true)) {
             val fixture = restoreFixture()
             try {
                 val before = dbFile.readBytes()
@@ -1847,7 +1924,7 @@ class DatabaseBackupRepositoryImplTest {
             RestoreMaintenanceMode.PersistenceException(),
             kotlinx.coroutines.CancellationException("TEST_CRITICAL_PERSISTENCE_CANCELLED")
         )
-        for (operation in RestoreOperation.values()) for (journalCancellation in listOf(false, true)) {
+        for (operation in supportedRestoreOperations()) for (journalCancellation in listOf(false, true)) {
             for (criticalFailure in criticalFailures) {
                 val fixture = restoreFixture()
                 try {
@@ -1885,7 +1962,7 @@ class DatabaseBackupRepositoryImplTest {
 
     @Test
     fun swap_and_verification_failures_cross_rollback_and_terminal_durability() = runTest(testDispatcher) {
-        for (operation in listOf(RestoreOperation.COSTBACKUP, RestoreOperation.IMPORT))
+        for (operation in supportedRestoreOperations().filter { it != RestoreOperation.RESET })
             for (swapFailure in listOf(false, true)) for (rollbackFails in listOf(false, true))
                 for (terminalFails in listOf(false, true)) {
                     val fixture = restoreFixture()
@@ -2014,7 +2091,7 @@ class DatabaseBackupRepositoryImplTest {
 
     @Test
     fun successful_operations_publish_approved_stages_before_close_and_finalize_before_restart() = runTest(testDispatcher) {
-        for (operation in RestoreOperation.values()) for (terminalFails in listOf(false, true)) {
+        for (operation in supportedRestoreOperations()) for (terminalFails in listOf(false, true)) {
             val fixture = restoreFixture()
             try {
                 if (terminalFails) fixture.journal.beforeIo = { file, stage ->
@@ -2053,7 +2130,7 @@ class DatabaseBackupRepositoryImplTest {
 
     @Test
     fun drain_timeout_never_releases_writes_before_checked_abort_finalization() = runTest(testDispatcher) {
-        for (operation in RestoreOperation.values()) for (archiveFails in listOf(false, true)) {
+        for (operation in supportedRestoreOperations()) for (archiveFails in listOf(false, true)) {
             val fixture = restoreFixture()
             io.mockk.mockkConstructor(com.yourname.expensetracker.domain.workers.NoOpWorkerDrainController::class)
             try {
@@ -2084,7 +2161,7 @@ class DatabaseBackupRepositoryImplTest {
 
     @Test
     fun post_destructive_cancellation_keeps_evidence_and_original_identity_in_all_APIs() = runTest(testDispatcher) {
-        for (operation in RestoreOperation.values()) {
+        for (operation in supportedRestoreOperations()) {
             val fixture = restoreFixture()
             try {
                 val cancellation = IdentityCancellationException("TEST_POST_SWAP_CANCELLED")
@@ -2512,6 +2589,10 @@ class DatabaseBackupRepositoryImplTest {
 
     @Test
     fun `database is hot-swapped after import via AppDatabase fileBuilder`() = runTest(testDispatcher) {
+        if (!BuildConfig.DEBUG) {
+            assertLegacyImportDeniedInRelease()
+            return@runTest
+        }
         // Setup: create destination and source databases
         createSqliteDatabase(
             file = dbFile,
@@ -2551,6 +2632,10 @@ class DatabaseBackupRepositoryImplTest {
 
     @Test
     fun `export backup filename timestamp is derived from timeProvider`() = runTest(testDispatcher) {
+        if (!BuildConfig.DEBUG) {
+            assertRawExportDeniedInRelease()
+            return@runTest
+        }
         createSqliteDatabase(
             file = dbFile,
             expenseCount = 2,
@@ -2662,6 +2747,10 @@ class DatabaseBackupRepositoryImplTest {
 
     @Test
     fun `staging db names are uuid based and unique across imports`() = runTest(testDispatcher) {
+        if (!BuildConfig.DEBUG) {
+            assertLegacyImportDeniedInRelease()
+            return@runTest
+        }
         createSqliteDatabase(
             file = dbFile,
             expenseCount = 1,

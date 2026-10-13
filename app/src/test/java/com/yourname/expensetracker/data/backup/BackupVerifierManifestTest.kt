@@ -23,6 +23,34 @@ import org.robolectric.annotation.Config
 @Config(sdk = [28])
 class BackupVerifierManifestTest {
 
+    @Test
+    fun pre_ledger_database_backups_do_not_require_the_new_ledger_count() {
+        val required = BackupVerifier.requiredManifestTables(databaseVersion = 149)
+        assertFalse(required.contains("savings_contribution_ledger"))
+        BackupVerifier.validateManifestCompleteness(
+            required.associateWith { 0 },
+            databaseVersion = 149
+        )
+    }
+
+    @Test
+    fun pre_ledger_counts_gain_an_exact_empty_ledger_expectation_after_migration() {
+        val legacyCounts = mapOf("expenses" to 2)
+        assertEquals(
+            mapOf("expenses" to 2, "savings_contribution_ledger" to 0),
+            BackupVerifier.expectedCountsAfterMigration(legacyCounts, 149)
+        )
+    }
+
+    @Test
+    fun current_counts_are_not_changed_by_post_migration_normalization() {
+        val currentCounts = mapOf("savings_contribution_ledger" to 3)
+        assertEquals(
+            currentCounts,
+            BackupVerifier.expectedCountsAfterMigration(currentCounts, 150)
+        )
+    }
+
     // ── P7-CURRENT-014: required manifest tables ──────────────────
 
     @Test
@@ -30,6 +58,11 @@ class BackupVerifierManifestTest {
         val required = BackupVerifier.requiredManifestTables()
         assertTrue("expenses must be required", required.contains("expenses"))
         assertTrue("budgets must be required", required.contains("budgets"))
+        assertTrue("savings contribution ledger must be required", required.contains("savings_contribution_ledger"))
+        assertEquals(
+            BackupVerifier.VerificationTier.TIER_1_EXACT,
+            BackupVerifier.tableTier("savings_contribution_ledger")
+        )
         // Tier 1 exact tables must be required; Tier 3 optional tables must NOT be required.
         assertTrue("privacy_audit_events is now Tier 1 required", required.contains("privacy_audit_events"))
         assertFalse("exchange_rates is optional", required.contains("exchange_rates"))

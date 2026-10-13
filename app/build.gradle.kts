@@ -196,6 +196,7 @@ android {
         getByName("debug").assets.srcDirs("$projectDir/schemas")
         getByName("androidTest").assets.srcDirs("$projectDir/schemas")
         getByName("test").assets.srcDirs("$projectDir/schemas")
+        getByName("test").resources.srcDir("$projectDir/schemas")
     }
 
     testOptions {
@@ -371,6 +372,7 @@ dependencies {
 }
 
 tasks.register("verifyRoomSchemaSnapshots") {
+    notCompatibleWithConfigurationCache("Schema verification reads project files during execution")
     group = "verification"
     description = "Reports Room schema snapshot coverage by version, migration-aware"
 
@@ -522,37 +524,27 @@ tasks.named("check") {
     dependsOn("verifyRoomSchemaSnapshots")
 }
 
-// HIGH-6: Ignored-test count guard — fails if @Ignore annotations grow (wired to :app:check in PR 2)
+// HIGH-6: The registered guard owns annotation counting, reasons and the fixed
+// budget. KDoc mentions are not ignored tests; no local budget override is used.
 tasks.register("verifyNoIgnoredGrowth") {
+    notCompatibleWithConfigurationCache("Registered guard bridge uses project execution services")
     group = "verification"
-    description = "Fails if the number of @Ignore-annotated test methods grows beyond the threshold"
-
+    description = "Enforces the registered ignored-test budget, reasons and release denylist (fail closed)"
     doLast {
-        val maxAllowed = (findProperty("maxIgnoredTests")?.toString()?.toIntOrNull()) ?: 29
-        val testDirs = listOf(
-            file("$projectDir/src/test/java"),
-            file("$projectDir/src/test/kotlin"),
-            file("$projectDir/src/androidTest/java"),
-            file("$projectDir/src/androidTest/kotlin")
+        val taskName = "verifyNoIgnoredGrowth"
+        val runnerFile = file("$rootDir/scripts/ci/run_registered_guard.py")
+        validateRegisteredRunnerInput(taskName, runnerFile)
+        val pythonExecutable = pythonInterpreter()
+        pythonPreflightOrThrow(taskName, pythonExecutable)
+        runRegisteredGuardFromGradle(
+            taskName = taskName,
+            guardId = "ignored_test_budget",
+            pythonExecutable = pythonExecutable,
+            runnerFile = runnerFile,
+            extraArgs = listOf("--ci-mode"),
+            onViolation = { throw GradleException("Ignored-test budget, reason or release-denylist violation") },
+            onInfra = { throw GradleException("verifyNoIgnoredGrowth: registered guard infrastructure failure") },
         )
-        var ignoredCount = 0
-        for (dir in testDirs) {
-            if (dir.exists()) {
-                dir.walkTopDown()
-                    .filter { it.isFile && (it.extension == "kt" || it.extension == "java") }
-                    .forEach { file ->
-                        ignoredCount += file.readText().lines()
-                            .count { line -> line.contains("@Ignore") && !line.trimStart().startsWith("//") }
-                    }
-            }
-        }
-        logger.lifecycle("Ignored test methods/classes found: $ignoredCount (max allowed: $maxAllowed)")
-        if (ignoredCount > maxAllowed) {
-            throw GradleException(
-                "Ignored test count ($ignoredCount) exceeds threshold ($maxAllowed). " +
-                "Either fix/delete ignored tests or increase the threshold via -PmaxIgnoredTests=N."
-            )
-        }
     }
 }
 
@@ -580,6 +572,7 @@ tasks.register("verifyNoIgnoredGrowth") {
 // scanner.  The task below is the thin Gradle bridge; the rules are owned by
 // the registry execution schema.
 tasks.register("checkRawMoneyAggregates") {
+    notCompatibleWithConfigurationCache("Registered guard bridge uses project execution services")
     group = "verification"
     description = "Fails if production code uses raw Double financial aggregates without MoneyAggregate (registered guard raw_money_aggregates via run_registered_guard.py)"
     doLast {
@@ -620,6 +613,7 @@ tasks.register("checkRawMoneyAggregates") {
 // scripts/ci/guard_execution_plan.py — Gradle owns only the interpreter,
 // the root, and exit-to-GradleException mapping.
 tasks.register("checkDirectTimeCalls") {
+    notCompatibleWithConfigurationCache("Registered guard bridge uses project execution services")
     group = "verification"
     description = "Fails if production code calls wall-clock APIs outside the exact time-boundary exceptions (fail closed; canonical registry plan via run_registered_guard.py)"
     doLast {
@@ -703,6 +697,7 @@ tasks.named("check") {
 // Python interpreter (defaults to python3):
 //   -PpythonExecutable=/path/to/python3
 tasks.register("verifyDbAccessBoundaries") {
+    notCompatibleWithConfigurationCache("Registered guard bridge uses project execution services")
     group = "verification"
     description = "Fails build if unauthorized direct DAO mutations are found outside the approved writer policy (canonical registry plan via run_registered_guard.py; ratchet-enforced, fail closed)"
     doLast {

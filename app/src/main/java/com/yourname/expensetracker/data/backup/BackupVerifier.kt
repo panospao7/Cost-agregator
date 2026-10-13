@@ -7,7 +7,7 @@ import timber.log.Timber
 /**
  * Verifies database integrity and table row counts for restore operations.
  *
- * Replaces the old 5-table verification with full 57-entity verification.
+ * Replaces the old 5-table verification with full 58-table verification.
  *
  * ## Tier definitions
  *
@@ -34,14 +34,16 @@ import timber.log.Timber
  */
 object BackupVerifier {
 
-    // ── Verification tier assignment for all 57 entities ──────────
+    private const val SAVINGS_CONTRIBUTION_LEDGER_SCHEMA_VERSION = 150
+
+    // ── Verification tier assignment for all 58 tables ──────────
 
     /**
-     * All 57 entity table names with their verification tier.
+     * All 58 tracked table names with their verification tier.
      */
     private val TABLE_TIERS: Map<String, VerificationTier> = mapOf(
-        // ── Tier 1: Exact row count required (38 total) ──
-        // 31 listed here + 7 event/link tables grouped under the Tier 2 comment
+        // ── Tier 1: Exact row count required (39 total) ──
+        // 32 listed here + 7 event/link tables grouped under the Tier 2 comment
         // below (transaction_events, receipt_events, receipt_expense_links,
         // recurring_occurrences, recurring_reminder_deliveries,
         // recurring_lifecycle_events, warranty_reminder_deliveries) which are also
@@ -59,6 +61,7 @@ object BackupVerifier {
         "manual_recurring_expenses"      to VerificationTier.TIER_1_EXACT,
         "planned_expenses"               to VerificationTier.TIER_1_EXACT,
         "savings_goals"                  to VerificationTier.TIER_1_EXACT,
+        "savings_contribution_ledger"    to VerificationTier.TIER_1_EXACT,
         "warranties"                     to VerificationTier.TIER_1_EXACT,
         "return_windows"                 to VerificationTier.TIER_1_EXACT,
         "mileage_tracking"               to VerificationTier.TIER_1_EXACT,
@@ -186,8 +189,17 @@ object BackupVerifier {
      * a malformed manifest pass [verifyQuick] (which skips null counts) and only
      * fail in full [verify] AFTER the destructive swap.
      */
-    fun requiredManifestTables(backupFormatVersion: Int = 1): Set<String> =
-        TABLE_TIERS.filterValues { it == VerificationTier.TIER_1_EXACT }.keys
+    fun requiredManifestTables(
+        backupFormatVersion: Int = 1,
+        databaseVersion: Int? = null
+    ): Set<String> = TABLE_TIERS
+        .filterValues { it == VerificationTier.TIER_1_EXACT }
+        .keys
+        .filterTo(mutableSetOf()) { tableName ->
+            tableName != "savings_contribution_ledger" ||
+                databaseVersion == null ||
+                databaseVersion >= SAVINGS_CONTRIBUTION_LEDGER_SCHEMA_VERSION
+        }
 
     /**
      * P7-CURRENT-014: validates that [expectedCounts] (the backup manifest's
@@ -198,13 +210,35 @@ object BackupVerifier {
      */
     fun validateManifestCompleteness(
         expectedCounts: Map<String, Int>,
-        backupFormatVersion: Int = 1
+        backupFormatVersion: Int = 1,
+        databaseVersion: Int? = null
     ) {
-        val missing = requiredManifestTables(backupFormatVersion)
+        val missing = requiredManifestTables(backupFormatVersion, databaseVersion)
             .filter { it !in expectedCounts }
         if (missing.isNotEmpty()) {
             throw IncompleteManifestException(missing)
         }
+    }
+
+    /**
+     * Adds exact zero-count expectations for tables created by a Room migration.
+     *
+     * A pre-150 backup legitimately has no ledger count. The staged database is
+     * migrated before the second quick verification and before live full
+     * verification, so the newly created ledger must be verified as an empty
+     * exact table rather than silently omitted from those checks.
+     */
+    fun expectedCountsAfterMigration(
+        expectedCounts: Map<String, Int>,
+        sourceDatabaseVersion: Int?
+    ): Map<String, Int> {
+        if (sourceDatabaseVersion != null &&
+            sourceDatabaseVersion < SAVINGS_CONTRIBUTION_LEDGER_SCHEMA_VERSION &&
+            "savings_contribution_ledger" !in expectedCounts
+        ) {
+            return expectedCounts + ("savings_contribution_ledger" to 0)
+        }
+        return expectedCounts
     }
 
     // ── Strict count collection for backup creation (P7-CURRENT-015) ──

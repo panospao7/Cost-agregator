@@ -3,6 +3,8 @@ package com.yourname.expensetracker.data.repository
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import com.yourname.expensetracker.data.database.dao.SavingsContributionLedgerDao
+import com.yourname.expensetracker.data.database.entity.SavingsContributionLedgerEntry
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import kotlinx.coroutines.CoroutineScope
@@ -76,6 +78,77 @@ class SavingsContributionHistoryRepositoryTest {
         assertEquals(2, allEvents.size)
         assertFalse(allEvents.any { it.timestamp == staleTimestamp })
         assertEquals(listOf(yesterday, today), allEvents.map { it.timestamp })
+    }
+
+    @Test
+    fun `reading history does not rewrite legacy datastore bytes`() = runTest {
+        val timeProvider = FakeTimeProvider.forDate(2026, 4, 15)
+        val handle = createRepository(createStateFile(), timeProvider)
+        val staleTimestamp = FakeTimeProvider.forDate(2023, 12, 1, 8, 0).now()
+        val before = "{ \"events\": [${validEventJson(staleTimestamp)}] }"
+        handle.dataStore.edit { it[stateKey] = before }
+
+        assertTrue(handle.repository.getAllContributions().isEmpty())
+        assertEquals(before, handle.repository.snapshotJson())
+    }
+
+    @Test
+    fun invalidLedgerEventsFailClosedWithoutChangingLegacyHistory() = runTest {
+        val clock = FakeTimeProvider.forDate(2026, 4, 15)
+        val valid = SavingsContributionLedgerEntry(
+            idempotencyKey = "sweep-key", goalId = 1L, amount = 20.0,
+            currency = "EUR", timestamp = clock.now(), source = "sweep"
+        )
+        val invalid = listOf(
+            valid.copy(amount = Double.NaN), valid.copy(amount = -1.0),
+            valid.copy(goalId = 0L), valid.copy(timestamp = 0L),
+            valid.copy(currency = "ZZZ"), valid.copy(source = "uncontrolled payload")
+        )
+        invalid.forEach { entry ->
+            val handle = createRepository(createStateFile(), clock, ledgerDao(listOf(entry)))
+            val raw = "{\"events\":[${validEventJson(clock.now())}]}"
+            handle.dataStore.edit { it[stateKey] = raw }
+            val error = runCatching { handle.repository.getAllContributions() }.exceptionOrNull()
+            assertTrue(error is SavingsContributionHistoryUnavailableException)
+            assertEquals(raw, handle.repository.snapshotJson())
+        }
+    }
+
+    @Test
+    fun `history combines legacy events with authoritative ledger events`() = runTest {
+        val timeProvider = FakeTimeProvider.forDate(2026, 4, 15)
+        val ledgerTimestamp = timeProvider.now()
+        val ledgerEntry = SavingsContributionLedgerEntry(
+            id = 7L,
+            idempotencyKey = "sweep-key",
+            goalId = 2L,
+            amount = 30.0,
+            currency = "EUR",
+            timestamp = ledgerTimestamp,
+            source = "sweep",
+            sweepPlanId = 8L
+        )
+        val handle = createRepository(
+            createStateFile(),
+            timeProvider,
+            ledgerDao(listOf(ledgerEntry))
+        )
+        val manualTimestamp = ledgerTimestamp - 1_000L
+        assertTrue(
+            handle.repository.recordContribution(
+                goalId = 1L,
+                amount = 20.0,
+                timestamp = manualTimestamp,
+                source = "manual",
+                currency = "EUR"
+            )
+        )
+
+        val events = handle.repository.getAllContributions()
+
+        assertEquals(listOf(1L, 2L), events.map { it.goalId })
+        assertEquals(listOf("manual", "sweep"), events.map { it.source })
+        assertEquals(listOf(manualTimestamp, ledgerTimestamp), events.map { it.timestamp })
     }
 
     @Test
@@ -183,7 +256,7 @@ class SavingsContributionHistoryRepositoryTest {
         for (raw in listOf("{\"events\":[]}", "{\"events\":[],\"isCorrupt\":false}")) {
             handle.dataStore.edit { it[stateKey] = raw }
             assertTrue(handle.repository.getAllContributions().isEmpty())
-            assertNull(handle.repository.snapshotJson())
+            assertEquals(raw, handle.repository.snapshotJson())
             assertTrue(handle.repository.recordContribution(1L, 10.0, source = "manual", currency = "EUR"))
         }
     }
@@ -259,7 +332,8 @@ class SavingsContributionHistoryRepositoryTest {
 
     private fun createRepository(
         stateFile: File,
-        timeProvider: FakeTimeProvider
+        timeProvider: FakeTimeProvider,
+        ledgerDao: SavingsContributionLedgerDao? = null
     ): RepositoryHandle {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         scopes += scope
@@ -268,7 +342,7 @@ class SavingsContributionHistoryRepositoryTest {
             produceFile = { stateFile }
         )
         return RepositoryHandle(
-            repository = SavingsContributionHistoryRepository(dataStore, timeProvider),
+            repository = SavingsContributionHistoryRepository(dataStore, timeProvider, ledgerDao),
             scope = scope,
             dataStore = dataStore
         )
@@ -276,6 +350,18 @@ class SavingsContributionHistoryRepositoryTest {
 
     private fun createStateFile(): File {
         return Files.createTempFile("savings-contribution-history", ".preferences_pb").toFile()
+    }
+
+    private fun ledgerDao(
+        entries: List<SavingsContributionLedgerEntry>
+    ): SavingsContributionLedgerDao = object : SavingsContributionLedgerDao {
+        override suspend fun insert(entry: SavingsContributionLedgerEntry): Long =
+            throw UnsupportedOperationException("read-only test ledger")
+
+        override suspend fun getByIdempotencyKey(idempotencyKey: String): SavingsContributionLedgerEntry? =
+            entries.firstOrNull { it.idempotencyKey == idempotencyKey }
+
+        override suspend fun getAll(): List<SavingsContributionLedgerEntry> = entries
     }
 
     private data class RepositoryHandle(

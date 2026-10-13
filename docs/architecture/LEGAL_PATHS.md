@@ -1,12 +1,20 @@
 # Legal Paths — Architecture Law
 
-> **Last updated:** 2026-10-01 (verified against code: DB v149, guarded-worker set, CI guard suite)
+> **Last updated:** 2026-10-12 (schema/savings delta verified against code: DB v150; prior guarded-worker/CI verification retained)
 >
 > **Purpose:** Define the ONE allowed implementation path for each major operation.  
 > **Rule:** Any code that uses a different path is a bug, regardless of whether it "works."  
 > **Enforcement:** CI static guard suite (`scripts/ci/run_static_guard_suite.py`, registry in `scripts/ci/guard_registry.py`; policy in `docs/ci/guard-policy.md`), DB ownership policy (`config/guards/db_ownership_policy.yml`), in-repo architecture guard tests (`app/src/test/java/com/yourname/expensetracker/architecture/`), `DeprecationLevel.ERROR`, and contract tests.
 
 ---
+
+## Savings Sweep Acceptance
+
+`SavingsGoalsViewModel.acceptSweepRecommendation()` rechecks recommendation currency, rates, and goal snapshots, then delegates to `SavingsSweepAcceptanceCoordinator.accept()`. The coordinator checks `DatabaseWriteBarrier`, validates provenance/snapshots, and commits goal CAS updates, pending-to-accepted plans, and contribution-ledger rows in one Room transaction. Rejection or cancellation rolls back the batch; cancellation propagates.
+
+The durable ledger is the idempotency authority, including after optional plan cleanup. Sweep success must not dual-write authoritative history to DataStore. Validated legacy DataStore events remain read-only on history reads; existing manual contribution recording is unchanged. The ledger is exact-tier backup data. Pre-v150 backups acquire an exact zero-ledger expectation after migration, before staged and live verification.
+
+Direct writes outside the four exact coordinator callable/DAO contracts in `config/guards/db_ownership_policy.yml` are forbidden. No blanket owner allowance.
 
 ## Expense Mutations
 

@@ -1,7 +1,7 @@
 # ExpenseTracker Android Codebase - Ground-Truth Inventory
 
 **Generated:** 2026-10-02 (verified snapshot; re-verified against source)
-**Database Version:** v149
+**Database Version:** v150
 **Architecture:** Clean Architecture + MVVM + Jetpack Compose + Room + Hilt DI
 
 ---
@@ -12,7 +12,9 @@ Snapshot summary only: this inventory tracks the current UI, domain, data, and D
 
 ### Drift Sync (2026-10-02 / Verification Pass)
 
-Verified against production source (`app/src/main/java`): 68 DAO files, 40 ViewModel files, 29 `*Worker*`-named files (including `domain/workers/` infrastructure), DB **v149** with **70** registered entities, 15 registered retention targets.
+Verified against production source (`app/src/main/java`): 69 DAO files, 40 ViewModel files, 29 `*Worker*`-named files (including `domain/workers/` infrastructure), DB **v150** with **71** registered entities, 15 registered retention targets. Schema/DAO delta verified 2026-10-12.
+
+- **DB v149 to v150** — Wave 5: additive `savings_contribution_ledger` and unique nullable `savings_sweep_plan.acceptanceKey`; sweep acceptance commits balance, ledger, and plan status atomically through `SavingsSweepAcceptanceCoordinator`.
 
 - **DB v148 → v149** — RP-16/RP-17: worker-run counters plus bank-review identity columns and indexes added to `background_job_runs` and `pending_reviews`.
 - **`data/database/DatabaseSchemaPolicy.kt`** — single source of truth for schema version, migration baseline (v145), and the registered migration array; consumed by production, tests, and CI (`scripts/verify_migration_matrix.py`).
@@ -39,7 +41,7 @@ All 12 pipelines (P1-P12) are hardened and complete. Universal PRs U-PR1 through
 - **`BillReminderWorker`** — checks runtime settings before dispatching.
 - **`TransactionUpdateKind`** expanded — `AMOUNT`, `DATE`, `CURRENCY`, `OWNERSHIP`, `PAYMENT_CORE`. `affectsRecurringMatch()` centralizes reconciliation triggers.
 - **DB v131 → v141** — 8 version bumps for new tables/columns.
-- **`AppDatabase`** — 70 entities.
+- **`AppDatabase`** — 71 entities.
 - **Single-writer principal** enforced for `RecurringRuleLifecycleCoordinator` — no direct DAO mutations outside coordinator.
 - `TransactionLifecycleCoordinator` — depends on `CurrencySettingsRepository` to resolve the user's home currency for base snapshot conversion metadata.
 - Reminder action receivers (`SnoozeReminderReceiver`, `DismissReminderReceiver`) are Hilt entry points; both enforce `RestoreMaintenanceMode` write gating and use `TimeProvider`.
@@ -437,7 +439,7 @@ Actual repository inventory (interfaces and implementations); counts shift as im
 
 **Core finance:**
 - Expense, Category, Budget, ManualRecurringExpense
-- PlannedExpense, SavingsGoal, ScannedReceipt
+- PlannedExpense, SavingsGoal, SavingsContributionLedgerEntry, ScannedReceipt
 
 **Capture / review:**
 - RawNotification, BlockedPackage, PendingReview
@@ -500,11 +502,12 @@ One DAO per entity (mostly 1-to-1 mapping)
 - **BankStatementImportItemDao** — Bank statement import line items
 - **WarrantyReminderDeliveryDao** — Warranty reminder delivery tracking
 - **NegotiationOutcomeDao** — Negotiation outcome tracking
+- **SavingsContributionLedgerDao** — Authoritative savings sweep contributions and idempotency
 - **RestrictedExpenseDaoMutation** — Restricted DAO mutation wrapper
 
 ### Migration History
-- Database Version: **149** (incremental: 120→121→122→...→146→147→148→149). Key milestones: 131→141 for recurring lifecycle hardening (8 bumps), 141→142 for budget_forecasts.budgetId FK CASCADE, 142→143 for warranty_reminder_deliveries table, 143→145 for schema cleanup (pending_reviews rebuild, index cleanup), 145→146 for `negotiation_outcomes` table, 146→147 for `group_members.leftAt` + `group_expenses.idempotencyKey`, 147→148 for `background_job_runs` worker-run tracing columns (PR12A), 148→149 for worker-run counters and bank-review identity columns/indexes (RP-16/RP-17).
-- **Active migrations:** `DatabaseMigrations.ALL` = `[MIGRATION_145_146, MIGRATION_146_147, MIGRATION_147_148, MIGRATION_148_149]` (defined in `DatabaseMigrations.kt`)
+- Database Version: **150** (incremental: 120→121→122→...→146→147→148→149→150). Key milestones: 131→141 for recurring lifecycle hardening (8 bumps), 141→142 for budget_forecasts.budgetId FK CASCADE, 142→143 for warranty_reminder_deliveries table, 143→145 for schema cleanup (pending_reviews rebuild, index cleanup), 145→146 for `negotiation_outcomes` table, 146→147 for `group_members.leftAt` + `group_expenses.idempotencyKey`, 147→148 for `background_job_runs` worker-run tracing columns (PR12A), 148→149 for worker-run counters and bank-review identity columns/indexes (RP-16/RP-17), 149→150 for the authoritative savings ledger and sweep acceptance identity.
+- **Active migrations:** `DatabaseMigrations.ALL` = `[MIGRATION_145_146, MIGRATION_146_147, MIGRATION_147_148, MIGRATION_148_149, MIGRATION_149_150]` (defined in `DatabaseMigrations.kt`)
 - **Schema policy:** `data/database/DatabaseSchemaPolicy.kt` — `CURRENT_VERSION`, `MIGRATION_BASELINE = 145`, `UNSUPPORTED_VERSIONS = 1..<145` (destructive fallback below baseline), `ALL_MIGRATIONS`
 - Historical migrations defined in `AppDatabase.kt` companion but **not registered** in the active chain.
 - Export schema: Enabled
@@ -747,7 +750,7 @@ One DAO per entity (mostly 1-to-1 mapping)
 ✅ Room Database Persistence  
 
 ### Database
-✅ Version 149 with current migration chain (120→121→122→...→146→147→148→149; active migrations in `DatabaseMigrations.ALL`, policy in `DatabaseSchemaPolicy.kt`)
+✅ Version 150 with current migration chain (120→121→122→...→146→147→148→149→150; active migrations in `DatabaseMigrations.ALL`, policy in `DatabaseSchemaPolicy.kt`)
 ✅ Export schema enabled  
 ✅ Type converters defined
 

@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.bank
 
+import com.yourname.expensetracker.BuildConfig
 import androidx.room.withTransaction
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
@@ -367,6 +368,11 @@ class BankApiIntegrationTest {
             pendingReviewDao = pendingReviewDao,
             database = database
         )
+        if (!BuildConfig.DEBUG) {
+            assertDemoApiDenied { testIntegration.completeConnection("revolut", "auth-code-123") }
+            coVerify(exactly = 0) { bankConnectionDao.insert(any()) }
+            return@runTest
+        }
         val result = testIntegration.completeConnection("revolut", "auth-code-123")
         assertNotNull(result)
         assertEquals(999L, result!!.id)
@@ -422,6 +428,11 @@ class BankApiIntegrationTest {
         coEvery {
             bankConnectionDao.updateTokenIfConnected(any(), any(), any(), any(), any())
         } returns 1
+        if (!BuildConfig.DEBUG) {
+            assertDemoApiDenied { testIntegration.syncTransactions(conn, since = 0L) }
+            coVerify(exactly = 0) { bankConnectionDao.updateTokenIfConnected(any(), any(), any(), any(), any()) }
+            return@runTest
+        }
         val syncOutcome = testIntegration.syncTransactions(conn, since = 0L)
         assertTrue(
             "expected a terminal success/partial outcome, got $syncOutcome",
@@ -464,6 +475,11 @@ class BankApiIntegrationTest {
             bankConnectionDao.updateTokenIfConnected(any(), any(), any(), any(), any())
         } returns 0
 
+        if (!BuildConfig.DEBUG) {
+            assertDemoApiDenied { testIntegration.syncTransactions(conn, since = 0L) }
+            coVerify(exactly = 0) { bankConnectionDao.updateTokenIfConnected(any(), any(), any(), any(), any()) }
+            return@runTest
+        }
         val syncOutcome = testIntegration.syncTransactions(conn, since = 0L)
 
         assertTrue("expected Blocked, got $syncOutcome", syncOutcome is BankSyncOutcome.Blocked)
@@ -475,6 +491,10 @@ class BankApiIntegrationTest {
 
     @Test
     fun `bank sync rethrows cancellation and does not continue importing`() = runTest {
+        if (!BuildConfig.DEBUG) {
+            assertDemoApiDenied { integration.syncTransactions(connection, since = 0L) }
+            return@runTest
+        }
         // P10-CURRENT-018: a CancellationException raised while importing one transaction
         // must propagate out of syncTransactions, not be captured as a SyncResult error.
         coEvery { coordinator.createExpenseStandaloneV2(any()) } throws CancellationException("cancelled mid-import")
@@ -485,5 +505,9 @@ class BankApiIntegrationTest {
         } catch (e: CancellationException) {
             assertEquals("cancelled mid-import", e.message)
         }
+    }
+    private suspend fun assertDemoApiDenied(block: suspend () -> Any?) {
+        assertTrue(runCatching { block() }.exceptionOrNull() is IllegalStateException)
+        coVerify(exactly = 0) { coordinator.createExpenseStandaloneV2(any()) }
     }
 }

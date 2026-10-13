@@ -25,7 +25,7 @@ import java.io.File
  *   BOTH sections (a cross-section duplicate fails closed), and no
  *   duplicate/wildcard/raw/write tuples.
      * - **Ownership policy:** The active `db_ownership_policy.yml` is the
-     *   activated v2 document (`schemaVersion: 2`, 424 entries — one entry per
+     *   activated v2 document (`schemaVersion: 2`, 428 entries — one entry per
      *   canonical mutation key, with `ownerFqcn` / `daoAccessor` / `barrierMode`
      *   fields). The fixture parser accepts the v2 document header and entry
      *   schema and maps v2 fields onto the shared [ParsedEntry] model; legacy
@@ -1068,9 +1068,9 @@ class DbGuardPolicyFixtureTest {
     // ══════════════════════════════════════════════════════════════════
 
     @Test
-    fun `manifest — ownership policy has exactly 424 entries`() {
+    fun `manifest — ownership policy has exactly 428 entries`() {
         val entries = parseEntries(ownershipPolicyFile)
-        assertEquals("Ownership policy must have exactly 424 entries", 424, entries.size)
+        assertEquals("Ownership policy must have exactly 428 entries", 428, entries.size)
     }
 
     @Test

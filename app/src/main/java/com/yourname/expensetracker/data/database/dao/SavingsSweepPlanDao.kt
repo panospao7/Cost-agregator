@@ -53,6 +53,9 @@ interface SavingsSweepPlanDao {
     @Query("SELECT * FROM savings_sweep_plan WHERE monthEnd = :monthEnd")
     suspend fun getPlansForMonth(monthEnd: Long): List<SavingsSweepPlan>
 
+    @Query("SELECT * FROM savings_sweep_plan WHERE acceptanceKey = :acceptanceKey LIMIT 1")
+    suspend fun getByAcceptanceKey(acceptanceKey: String): SavingsSweepPlan?
+
     /**
      * Get all sweep plans for a specific month end as Flow.
      */
@@ -106,6 +109,9 @@ interface SavingsSweepPlanDao {
      */
     @Query("UPDATE savings_sweep_plan SET status = 'ACCEPTED', actionedAt = :timestamp WHERE id = :planId")
     suspend fun acceptPlan(planId: Long, timestamp: Long)
+
+    @Query("UPDATE savings_sweep_plan SET status = 'ACCEPTED', actionedAt = :timestamp WHERE id = :planId AND status = 'PENDING'")
+    suspend fun acceptPendingPlan(planId: Long, timestamp: Long): Int
 
     /**
      * Dismiss a sweep plan.
