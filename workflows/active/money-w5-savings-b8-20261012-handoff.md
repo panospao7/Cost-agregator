@@ -360,3 +360,24 @@ Commit preparation found trailing whitespace/extra EOF blank lines in the new le
 
 
 Commit-preparation compile vr-20261013-121642-ff0b5a65: PASS/0, physical marker, actual Kotlin/KSP execution (two tasks executed), matching start/end fingerprint 97c729976e4093aa6c4bc244d4baf31f32e45619ac4e4fff55d1d877feaa3666. Command and logs: build/validation-runs/vr-20261013-121642-ff0b5a65/result.json and stdout.log. This evidence append is documentation-only after that run; it does not assert a rerun of the full suite or independent acceptance.
+
+
+## Recorded source checkpoint - 2026-10-13
+
+Source candidate commit: `
+d5d4d97e014078d651a841b8309c748ed93d9944
+`.
+Branch: `bug-fixes`. Commit: `wip: checkpoint Wave 5 savings persistence and validation repairs`.
+The commit contains exactly the 56 selected continuation paths; committed path
+membership was checked against the selection manifest. No unrelated local agent
+configuration, Claude files, release-assurance work or generated logs were included.
+The Git index was empty after the source commit; the remaining worktree changes
+are the explicitly excluded unrelated files. This updates the earlier prerequisite
+audit: a source checkpoint is now committed and recorded, but it is NOT a
+final independently accepted candidate. Wave 5 remains PARTIAL.
+
+The broad automated evidence remains attached to its original snapshot; the
+post-whitespace compile passed as recorded above. No full-suite rerun on the
+new commit and no independent reviewer/guardian acceptance is claimed.
+This documentation-only follow-up records the source SHA without modifying code.
+Authorized push target: `origin/bug-fixes`; push success must be separately verified.
