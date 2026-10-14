@@ -8,7 +8,11 @@ param(
         "runner-smoke",
         "runner-progress-smoke",
         "runner-stall-smoke",
+        "runner-protocol-tests",
         "compile",
+        "benchmark-compile",
+        "benchmark-test-shard",
+        "benchmark-app-check",
         "assemble-debug",
         "targeted-unit-test",
         "targeted-release-unit-test",
@@ -42,6 +46,17 @@ param(
     # NOTE: on a timeout kill the daemon may survive holding locks; if subsequent
     # runs report lock errors, stop it with: gradlew.bat --stop
     [switch]$GradleDaemon,
+    # Local opt-ins only. Parallel presets 4 workers / 2 test JVMs; explicit
+    # counts win. These never permit overlapping validation invocations.
+    [ValidateRange(1, 16)]
+    [int]$MaxWorkers = 1,
+    [ValidateRange(1, 8)]
+    [int]$TestForks = 1,
+    [ValidateRange(0, 1000)]
+    [int]$ForkEvery = 50,
+    [switch]$Parallel,
+    [ValidateSet("project", "daemon", "in-process")]
+    [string]$KotlinCompilerStrategy = "project",
     [ValidateRange(1, 30)]
     [int]$PollSeconds = 3,
     [ValidateRange(1, 300)]
@@ -59,6 +74,7 @@ $script:ShardConfigPath = Join-Path $script:RepoRoot "config\validation\test-sha
 $script:HangingLedgerPath = Join-Path $script:RepoRoot "config\validation\known-hanging-tests.json"
 $script:TerminalStatuses = @("PASS", "FAIL", "TIMEOUT", "STALE_RESULT", "INFRA_FAILURE")
 $script:SchemaVersion = 1
+$script:InvocationParameters = $PSBoundParameters
 
 function Get-UtcTimestamp {
     return [DateTime]::UtcNow.ToString("o")
@@ -387,21 +403,107 @@ function New-TestArguments {
     return @($arguments)
 }
 
+function Test-GradleProfile {
+    param([string]$Name)
+    return $Name -notin @(
+        "runner-smoke", "runner-progress-smoke", "runner-stall-smoke",
+        "runner-protocol-tests", "static-guards", "registered-guard"
+    )
+}
+
+function New-GradleSettings {
+    param(
+        [ValidateRange(1, 16)][int]$Workers = 1,
+        [ValidateRange(1, 8)][int]$Forks = 1,
+        [ValidateRange(0, 1000)][int]$RecycleAfter = 50,
+        [bool]$UseParallel = $false,
+        [bool]$UseDaemon = $false,
+        [ValidateSet("project", "daemon", "in-process")]
+        [string]$CompilerStrategy = "project"
+    )
+    if ($Forks -gt $Workers) { throw "E_TEST_FORKS_EXCEED_WORKERS" }
+    return @{
+        max_workers = $Workers
+        test_forks = $Forks
+        fork_every = $RecycleAfter
+        parallel = $UseParallel
+        gradle_daemon = $UseDaemon
+        kotlin_compiler_strategy = $CompilerStrategy.ToLowerInvariant()
+    }
+}
+
+function Resolve-InvocationGradleSettings {
+    if (-not (Test-GradleProfile -Name $Profile)) {
+        foreach ($key in @("MaxWorkers", "TestForks", "ForkEvery", "Parallel", "GradleDaemon", "KotlinCompilerStrategy")) {
+            if ($script:InvocationParameters.ContainsKey($key)) { throw "E_GRADLE_OPTIONS_NOT_APPLICABLE" }
+        }
+        return $null
+    }
+    $workers = $MaxWorkers
+    $forks = $TestForks
+    if ($Parallel) {
+        if (-not $script:InvocationParameters.ContainsKey("MaxWorkers")) { $workers = 4 }
+        if (-not $script:InvocationParameters.ContainsKey("TestForks")) { $forks = 2 }
+    }
+    return New-GradleSettings -Workers $workers -Forks $forks -RecycleAfter $ForkEvery `
+        -UseParallel ([bool]$Parallel) -UseDaemon ([bool]$GradleDaemon) -CompilerStrategy $KotlinCompilerStrategy
+}
+
+function Resolve-RequestGradleSettings {
+    param([Parameter(Mandatory = $true)]$Request)
+    $property = $Request.PSObject.Properties["gradle_settings"]
+    if (-not (Test-GradleProfile -Name $Request.profile)) {
+        if ($null -ne $property -and $null -ne $property.Value) { throw "E_GRADLE_OPTIONS_NOT_APPLICABLE" }
+        return $null
+    }
+    # Schema-1 requests created before tuning controls retain serial defaults.
+    if ($null -eq $property) { return New-GradleSettings }
+    $settings = $property.Value
+    if ($null -eq $settings) { throw "E_GRADLE_SETTINGS_INVALID" }
+    foreach ($key in @("max_workers", "test_forks", "fork_every", "parallel", "gradle_daemon", "kotlin_compiler_strategy")) {
+        if ($null -eq $settings.PSObject.Properties[$key] -or $null -eq $settings.$key) {
+            throw "E_GRADLE_SETTINGS_INVALID"
+        }
+    }
+    if ($settings.parallel -isnot [bool] -or $settings.gradle_daemon -isnot [bool]) {
+        throw "E_GRADLE_SETTINGS_INVALID"
+    }
+    foreach ($key in @("max_workers", "test_forks", "fork_every")) {
+        if ($settings.$key -isnot [int] -and $settings.$key -isnot [long]) {
+            throw "E_GRADLE_SETTINGS_INVALID"
+        }
+    }
+    if ($settings.kotlin_compiler_strategy -isnot [string]) { throw "E_GRADLE_SETTINGS_INVALID" }
+    return New-GradleSettings -Workers $settings.max_workers -Forks $settings.test_forks `
+        -RecycleAfter $settings.fork_every -UseParallel $settings.parallel `
+        -UseDaemon $settings.gradle_daemon -CompilerStrategy $settings.kotlin_compiler_strategy
+}
+
 function Get-ProfileSpec {
     param(
         [Parameter(Mandatory = $true)][string]$Name,
         [string]$Filter,
         [string]$ShardName,
         [string]$SelectedGuard,
-        [string]$RequestedPython
+        [string]$RequestedPython,
+        $GradleSettings = $null
     )
 
     $gradle = Join-Path $script:RepoRoot "gradlew.bat"
-    $gradleTail = @(
-        "--console=plain", "--no-parallel", "--max-workers=1",
-        "-PvalidationMaxParallelForks=1", "-PvalidationForkEvery=50"
-    )
-    if (-not $GradleDaemon) { $gradleTail += "--no-daemon" }
+    $gradleTail = @()
+    if (Test-GradleProfile -Name $Name) {
+        if ($null -eq $GradleSettings) { $GradleSettings = New-GradleSettings }
+        $parallelFlag = if ($GradleSettings.parallel) { "--parallel" } else { "--no-parallel" }
+        $gradleTail = @(
+            "--console=plain", $parallelFlag, "--max-workers=$($GradleSettings.max_workers)",
+            "-PvalidationMaxParallelForks=$($GradleSettings.test_forks)",
+            "-PvalidationForkEvery=$($GradleSettings.fork_every)"
+        )
+        $gradleTail += if ($GradleSettings.gradle_daemon) { "--daemon" } else { "--no-daemon" }
+        if ($GradleSettings.kotlin_compiler_strategy -ne "project") {
+            $gradleTail += "-Pkotlin.compiler.execution.strategy=$($GradleSettings.kotlin_compiler_strategy)"
+        }
+    }
     switch ($Name) {
         "runner-smoke" {
             return @{ executable = "$env:SystemRoot\System32\cmd.exe"; arguments = @("/d", "/c", "exit", "0"); timeout = 60; no_output_timeout = 30 }
@@ -412,7 +514,26 @@ function Get-ProfileSpec {
         "runner-stall-smoke" {
             return @{ executable = "$env:SystemRoot\System32\cmd.exe"; arguments = @("/d", "/c", "ping", "127.0.0.1", "-n", "31", ">nul"); timeout = 60; no_output_timeout = 10 }
         }
+        "runner-protocol-tests" {
+            $python = Resolve-PythonCommand -Requested $RequestedPython
+            return @{
+                executable = $python
+                arguments = @("-m", "pytest", "scripts/ci/test_validation_runner_protocol.py", "-q", "-p", "no:cacheprovider")
+                timeout = 600
+                no_output_timeout = 180
+            }
+        }
         "compile" { return @{ executable = $gradle; arguments = @(":app:compileDebugKotlin") + $gradleTail; timeout = 1800; no_output_timeout = 600 } }
+        "benchmark-compile" {
+            return @{ executable = $gradle; arguments = @(":app:compileDebugKotlin", "--rerun", "--no-build-cache", "-Pkotlin.incremental=false", "-Pkotlin.build.report.output=file", "--profile") + $gradleTail; timeout = 1800; no_output_timeout = 600 }
+        }
+        "benchmark-test-shard" {
+            $arguments = New-TestArguments -Filters (Get-ShardFilters -Name $ShardName)
+            return @{ executable = $gradle; arguments = @($arguments[0], "--rerun") + @($arguments | Select-Object -Skip 1) + @("--no-build-cache", "--profile") + $gradleTail; timeout = 3600; no_output_timeout = 900 }
+        }
+        "benchmark-app-check" {
+            return @{ executable = $gradle; arguments = @(":app:testDebugUnitTest", "--rerun", ":app:testReleaseUnitTest", "--rerun", ":app:check", "--no-build-cache", "--profile") + $gradleTail; timeout = 7200; no_output_timeout = 1200 }
+        }
         "assemble-debug" { return @{ executable = $gradle; arguments = @(":app:assembleDebug") + $gradleTail; timeout = 3600; no_output_timeout = 900 } }
         "targeted-unit-test" {
             if (-not $Filter -or $Filter -notmatch '^[A-Za-z0-9_.$*?\-]+$') { throw "E_INVALID_TEST_FILTER" }
@@ -522,8 +643,9 @@ function Start-ValidationRun {
     if ($Profile -ne "runner-smoke" -and (Test-ExternalGradleClient)) { throw "E_EXTERNAL_GRADLE_ACTIVE" }
 
     # Resolve and validate every profile input before claiming the global lock.
-    if ($Profile -eq "unit-test-shard" -and -not $Shard) { throw "E_SHARD_REQUIRED" }
-    $spec = Get-ProfileSpec -Name $Profile -Filter $TestFilter -ShardName $Shard -SelectedGuard $GuardId -RequestedPython $PythonExecutable
+    if ($Profile -in @("unit-test-shard", "benchmark-test-shard") -and -not $Shard) { throw "E_SHARD_REQUIRED" }
+    $gradleSettings = Resolve-InvocationGradleSettings
+    $spec = Get-ProfileSpec -Name $Profile -Filter $TestFilter -ShardName $Shard -SelectedGuard $GuardId -RequestedPython $PythonExecutable -GradleSettings $gradleSettings
     $effectiveTimeout = if ($TimeoutSeconds -gt 0) { $TimeoutSeconds } else { [int]$spec.timeout }
     $effectiveNoOutputTimeout = if ($NoOutputTimeoutSeconds -gt 0) { $NoOutputTimeoutSeconds } else { [int]$spec.no_output_timeout }
     if ($effectiveNoOutputTimeout -ge $effectiveTimeout) { throw "E_NO_OUTPUT_TIMEOUT_INVALID" }
@@ -549,6 +671,8 @@ function Start-ValidationRun {
         no_output_timeout_seconds = $effectiveNoOutputTimeout
         allow_overlap = [bool]$AllowOverlap
         overlap_reason_code = $OverlapReasonCode
+        gradle_settings = $gradleSettings
+        command = Get-SafeCommandDisplay -Spec $spec
     }
     Write-JsonAtomic -Path (Join-Path $runDirectory "request.json") -Value $settings
 
@@ -563,6 +687,7 @@ function Start-ValidationRun {
         finished_at = $null
         timeout_seconds = $effectiveTimeout
         command = Get-SafeCommandDisplay -Spec $spec
+        gradle_settings = $gradleSettings
         git_revision = Get-GitRevision
         worktree_fingerprint_start = $startFingerprint
         worktree_fingerprint_end = $null
@@ -621,8 +746,9 @@ function Start-ValidationRun {
 
 function Show-ValidationPlan {
     if (-not $Profile) { throw "E_PROFILE_REQUIRED" }
-    if ($Profile -eq "unit-test-shard" -and -not $Shard) { throw "E_SHARD_REQUIRED" }
-    $spec = Get-ProfileSpec -Name $Profile -Filter $TestFilter -ShardName $Shard -SelectedGuard $GuardId -RequestedPython $PythonExecutable
+    if ($Profile -in @("unit-test-shard", "benchmark-test-shard") -and -not $Shard) { throw "E_SHARD_REQUIRED" }
+    $gradleSettings = Resolve-InvocationGradleSettings
+    $spec = Get-ProfileSpec -Name $Profile -Filter $TestFilter -ShardName $Shard -SelectedGuard $GuardId -RequestedPython $PythonExecutable -GradleSettings $gradleSettings
     $effectiveTimeout = if ($TimeoutSeconds -gt 0) { $TimeoutSeconds } else { [int]$spec.timeout }
     $effectiveNoOutputTimeout = if ($NoOutputTimeoutSeconds -gt 0) { $NoOutputTimeoutSeconds } else { [int]$spec.no_output_timeout }
     if ($effectiveNoOutputTimeout -ge $effectiveTimeout) { throw "E_NO_OUTPUT_TIMEOUT_INVALID" }
@@ -630,6 +756,7 @@ function Show-ValidationPlan {
         profile = $Profile
         shard = $Shard
         command = Get-SafeCommandDisplay -Spec $spec
+        gradle_settings = $gradleSettings
         timeout_seconds = $effectiveTimeout
         no_output_timeout_seconds = $effectiveNoOutputTimeout
     } | ConvertTo-Json -Depth 5
@@ -664,7 +791,19 @@ function Invoke-ValidationWorker {
         $record.worker_pid = $PID
         $record.status = "RUNNING"
         Write-JsonAtomic -Path $recordPath -Value $record
-        $spec = Get-ProfileSpec -Name $request.profile -Filter $request.test_filter -ShardName $request.shard -SelectedGuard $request.guard_id -RequestedPython $request.python_executable
+        $gradleSettings = Resolve-RequestGradleSettings -Request $request
+        $spec = Get-ProfileSpec -Name $request.profile -Filter $request.test_filter -ShardName $request.shard -SelectedGuard $request.guard_id -RequestedPython $request.python_executable -GradleSettings $gradleSettings
+        $actualCommand = Get-SafeCommandDisplay -Spec $spec
+        $record | Add-Member -NotePropertyName command -NotePropertyValue $actualCommand -Force
+        $record | Add-Member -NotePropertyName gradle_settings -NotePropertyValue $gradleSettings -Force
+        Write-JsonAtomic -Path $recordPath -Value $record
+        if ($request.PSObject.Properties["command"] -and $request.command -cne $actualCommand) {
+            throw "E_COMMAND_MISMATCH"
+        }
+        if ($request.PSObject.Properties["gradle_settings"] -and
+            (-not $request.PSObject.Properties["command"] -or $request.command -isnot [string] -or -not $request.command)) {
+            throw "E_COMMAND_MISMATCH"
+        }
         $stdout = Join-Path $runDirectory "stdout.log"
         $stderr = Join-Path $runDirectory "stderr.log"
         $startInfo = New-Object System.Diagnostics.ProcessStartInfo
@@ -870,7 +1009,11 @@ function Show-Profiles {
         @{ name = "runner-smoke"; purpose = "Exercise only the detached runner protocol" },
         @{ name = "runner-progress-smoke"; purpose = "Exercise heartbeat/output progress detection" },
         @{ name = "runner-stall-smoke"; purpose = "Exercise no-output timeout handling; expected TIMEOUT" },
+        @{ name = "runner-protocol-tests"; purpose = "Run isolated Windows runner protocol regression tests" },
         @{ name = "compile"; purpose = "Compile debug Kotlin" },
+        @{ name = "benchmark-compile"; purpose = "Force full debug Kotlin compilation without build-cache reuse; local benchmark only" },
+        @{ name = "benchmark-test-shard"; purpose = "Force one unchanged named shard to execute; local benchmark only" },
+        @{ name = "benchmark-app-check"; purpose = "Force both full unit suites and run app-check with unchanged checks" },
         @{ name = "assemble-debug"; purpose = "Build the debug APK" },
         @{ name = "targeted-unit-test"; purpose = "Run one allowlisted Gradle test filter" },
         @{ name = "targeted-release-unit-test"; purpose = "Run one allowlisted release Gradle test filter" },

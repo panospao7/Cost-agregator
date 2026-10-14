@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "description": "Named serial unit-test shards. Every shard uses one Gradle worker and bounded fork recycling.",
+  "description": "Named unit-test shards. Serial execution with one Gradle worker and bounded fork recycling is the default; optional local concurrency is scoped to one validation-runner invocation.",
   "shards": {
     "architecture-contracts": {
       "filters": [
