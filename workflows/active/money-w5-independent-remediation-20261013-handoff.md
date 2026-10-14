@@ -1,14 +1,15 @@
 # Wave 5 independent-review remediation - 2026-10-13
 
-Status: OWNER ACCEPTED; source commit and push pending. The original independent
+Status: CLOSED under owner acceptance. The original independent
 review was FAIL; separate remediation re-review was not run and the user has
 accepted/waived it. Source base:
 3e8377e42083c92990f32f4e46fdcb481c29cc3a.
+Final source commit: ea44631647e69a0dabacdc179dd094b292378b7e, pushed and
+verified on origin/bug-fixes on 2026-10-14.
 Review: money-w5-independent-review-handoff.md. No subagents.
-Current status: OWNER ACCEPTED, pending commit/push. The moved workspace is recovered. Candidate-only
+Current status: CLOSED. The moved workspace is recovered. Candidate-only
 compile, migration tests, app-check, 25/25 static guards and device migrations
-all PASS. G1 approval and F9 retention are confirmed below; source commit and
-push must be recorded before closure.
+all PASS. G1 approval, F9 retention and source publication are confirmed below.
 The earlier F2 deletion bypass was reproduced
 and corrected by the approved marker batch below. The separate independent
 re-review requirement is owner-waived, not an independently executed PASS.
@@ -603,3 +604,39 @@ verified. Earlier OPEN/PARTIAL statements in this chronological record are
 superseded by this owner decision and the subsequent closure entry. No source,
 test, schema, guard or policy bytes changed after the candidate-only PASS runs;
 only handoff/approval documentation follows those runs.
+
+## Final closure and published source - 2026-10-14
+
+Wave 5 is CLOSED under explicit owner acceptance and the documented independent
+re-review waiver. All required implementation/automation gates are satisfied;
+no mandatory Wave 5 gate remains open. The original independent FAIL is
+preserved, not misrepresented as an independently executed PASS. G1's exact
+five cancellation removals/four earlier writer grants are owner-confirmed; F9
+is resolved by retaining the already committed transcript, with future
+transcripts ignored. No force-push or history rewrite occurred.
+
+Published implementation source:
+ea44631647e69a0dabacdc179dd094b292378b7e
+(`fix(money): complete Wave 5 review remediation and v151 sweep safety`).
+Parent/base: 3e8377e42083c92990f32f4e46fdcb481c29cc3a.
+Normal push to origin/bug-fixes returned exit 0; git ls-remote independently
+confirmed this exact SHA. Exactly 51 Wave 5 paths were committed, each committed
+blob matching the staged preflight manifest. Implementation, test, schema and
+policy blobs are matched to the clean validated candidate under Git's normal
+line-ending normalization. Only handoff/approval documentation changed after
+the six candidate-only PASS runs; tests were not rerun on the commit ID itself.
+
+The completion documentation is published separately from the source commit.
+Its purpose is to record the source SHA, verified push, acceptance decisions and
+closed status; it changes no app/test/schema/policy files. All 41 excluded local
+paths, including the performance patch, remain outside the source and closure
+commits and retain their recorded precommit hashes. Unrelated dirty work is
+deliberately preserved, so the overall workspace is not claimed clean.
+
+Evidence: build/validation-runs/wave5-20261014-candidate-only-evidence.json,
+with the frozen 51-path hashes, six PASS records, per-run archived logs/markers,
+committed-blob crosswalk, excluded-file hashes and publication verification.
+This packet and build logs are local/ignored; the tracked handoff records the
+source SHA and run IDs for cross-session use. Closure does not claim a measured
+performance speedup, a new independent review, or post-push remote CI success.
+Earlier pending/OPEN statements are chronological history superseded here.
