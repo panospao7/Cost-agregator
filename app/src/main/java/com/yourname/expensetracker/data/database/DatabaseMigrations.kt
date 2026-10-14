@@ -2,6 +2,9 @@ package com.yourname.expensetracker.data.database
 
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import com.yourname.expensetracker.data.database.entity.SavingsSweepMonthAcceptance
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.domain.util.TimeProvider
 
 /**
  * Registry of supported Room migrations.
@@ -142,12 +145,40 @@ object DatabaseMigrations {
         }
     }
 
+    /** F2: goal-independent monthly acceptance survives goal cascade deletion. */
+    val MIGRATION_150_151 = SavingsSweepMonthMigration(
+        com.yourname.expensetracker.domain.util.SystemTimeProvider()
+    )
+
+    /** Keeps schema SQL in the canonical migration owner, with a testable clock. */
+    internal fun MIGRATION_150_151(database: SupportSQLiteDatabase, timeProvider: TimeProvider) {
+        val now = timeProvider.now()
+        check(now > 0L) { "SAVINGS_SWEEP_TIME_UNAVAILABLE" }
+        val start = TimePeriodUtils.getStartOfMonth(now)
+        val end = TimePeriodUtils.getEndOfMonth(now)
+        database.execSQL(
+            "CREATE TABLE IF NOT EXISTS `savings_sweep_month_acceptance` (" +
+                "`monthStart` INTEGER NOT NULL, `monthEndExclusive` INTEGER NOT NULL, " +
+                "`actionedAt` INTEGER NOT NULL, `reasonCode` TEXT NOT NULL, " +
+                "PRIMARY KEY(`monthStart`))"
+        )
+        // v150 cascade deletion may already have erased all acceptance history.
+        // Absence is not proof of an unused month. Seed exactly one marker, even
+        // for an empty legacy DB; fresh v151 installs do not run this migration.
+        database.execSQL(
+            "INSERT INTO `savings_sweep_month_acceptance` " +
+                "(`monthStart`, `monthEndExclusive`, `actionedAt`, `reasonCode`) VALUES (?, ?, ?, ?)",
+            arrayOf(start, end, now, SavingsSweepMonthAcceptance.LEGACY_HISTORY_UNKNOWN)
+        )
+    }
+
     /** All registered migrations, starting from v145 baseline. */
     val ALL: Array<Migration> = arrayOf(
         MIGRATION_145_146,
         MIGRATION_146_147,
         MIGRATION_147_148,
         MIGRATION_148_149,
-        MIGRATION_149_150
+        MIGRATION_149_150,
+        MIGRATION_150_151
     )
 }

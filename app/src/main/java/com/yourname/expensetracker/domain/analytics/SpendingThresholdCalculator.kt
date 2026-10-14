@@ -177,6 +177,19 @@ class SpendingThresholdCalculator @Inject constructor(
     suspend fun getThreshold(): Double {
         return calculateHighAmountThreshold(DEFAULT_USER_ID)
     }
+
+    /**
+     * Calculate the adaptive cap from amounts already normalized into the
+     * user's home currency. This deliberately has no DAO access: callers must
+     * establish currency completeness before supplying the values.
+     */
+    fun calculateHighAmountThresholdFromNormalizedAmounts(amounts: List<Double>): Double {
+        require(amounts.all { it.isFinite() && it >= 0.0 }) {
+            "Normalized threshold input must contain finite non-negative amounts"
+        }
+        if (amounts.size < MIN_SAMPLE_SIZE) return MIN_THRESHOLD
+        return maxOf(percentile(amounts.sorted(), 0.90), MIN_THRESHOLD)
+    }
     
     /**
      * Convenience method: Refresh threshold for default user (single-user app).

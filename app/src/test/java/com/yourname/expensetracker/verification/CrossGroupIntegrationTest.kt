@@ -319,7 +319,9 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
                 percentUsed = it.percentUsed.toDouble(),
                 healthStatus = it.healthStatus,
                 periodStart = it.periodStart,
-                periodEnd = it.periodEnd
+                periodEnd = it.periodEnd,
+                currency = it.currency, currencyAssumption = it.currencyAssumption,
+                isPartial = it.isPartial, conversionWarning = it.conversionWarning, percentKnown = it.percentKnown
             )
         }
 

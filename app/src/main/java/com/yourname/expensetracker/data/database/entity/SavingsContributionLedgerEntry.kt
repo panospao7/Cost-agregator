@@ -35,8 +35,10 @@
      val idempotencyKey: String,
      val goalId: Long,
      val amount: Double,
+     // The migration retains its SQL default for existing-schema compatibility;
+     // all Kotlin writers must provide the currency explicitly.
      @ColumnInfo(defaultValue = "'EUR'")
-     val currency: String = "EUR",
+     val currency: String,
      val timestamp: Long,
      val source: String,
      val sweepPlanId: Long? = null

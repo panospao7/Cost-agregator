@@ -362,6 +362,9 @@ class SavingsContributionHistoryRepositoryTest {
             entries.firstOrNull { it.idempotencyKey == idempotencyKey }
 
         override suspend fun getAll(): List<SavingsContributionLedgerEntry> = entries
+
+        override suspend fun hasSweepBetween(startInclusive: Long, endExclusive: Long): Boolean =
+            entries.any { it.source == "sweep" && it.timestamp in startInclusive until endExclusive }
     }
 
     private data class RepositoryHandle(

@@ -281,7 +281,8 @@ class SmartSavingsEngine @Inject constructor(
             spendingPace = spendingPace,
             monteCarloResult = monteCarloResult,
             timeHorizon = timeHorizon,
-            homeCurrency = homeCurrency
+            homeCurrency = homeCurrency,
+            quality = quality
         )
 
         if (!safeAmount.isFinite()) quality.fail(MoneyDisplayUnavailableReasonCode.INVALID_AMOUNT)
@@ -538,10 +539,27 @@ class SmartSavingsEngine @Inject constructor(
         return if (remaining > 0.0) remaining * simulationConfig.safeToSaveRatio else 0.0
     }
     
-    private suspend fun computeDynamicCap(timeHorizon: TimeHorizon, homeCurrency: String): Double {
-        // AIML-30: Use SpendingThresholdCalculator for adaptive caps based on user's
-        // actual spending distribution (P90 percentile) instead of hardcoded currencyless values.
-        val p90 = spendingThresholdCalculator.getThreshold()
+    private suspend fun computeDynamicCap(
+        timeHorizon: TimeHorizon,
+        homeCurrency: String,
+        quality: SavingsDecisionQuality
+    ): Double {
+        // AIML-30: Calculate the adaptive cap only from complete, home-currency
+        // normalized purchases. Sparse histories use the calculator's documented
+        // conservative minimum; no raw, currency-mixed DAO percentile is used.
+        val now = timeProvider.now()
+        val lookbackStart = now - (90L * DAY_IN_MILLIS)
+        val rawHistory = expenseRepository.getExpenseSnapshotsBetween(lookbackStart, now)
+        val normalized = analyticsCurrencyNormalizer.normalizeSnapshots(rawHistory, homeCurrency)
+        quality.requireComplete(SavingsInputStage.SAVINGS_CAP_HISTORY, normalized)
+        val normalizedPurchaseAmounts = normalized.includedExpenses
+            .asSequence()
+            .filter { it.transactionType == DomainTransactionType.PURCHASE && !it.isNotMine }
+            .map { it.effectiveAmount }
+            .toList()
+        val p90 = spendingThresholdCalculator.calculateHighAmountThresholdFromNormalizedAmounts(
+            normalizedPurchaseAmounts
+        )
         return when (timeHorizon) {
             TimeHorizon.WEEK -> (p90 * 0.15).coerceAtLeast(10.0)   // ~15% of P90 single-txn cap
             TimeHorizon.MONTH -> (p90 * 0.40).coerceAtLeast(25.0)  // ~40% of P90
@@ -554,11 +572,12 @@ class SmartSavingsEngine @Inject constructor(
         spendingPace: Double,
         monteCarloResult: Double,
         timeHorizon: TimeHorizon,
-        homeCurrency: String
+        homeCurrency: String,
+        quality: SavingsDecisionQuality
     ): Double {
         // Weighted combination adjusted by time horizon
         // AIML-30: Use SpendingThresholdCalculator for adaptive caps instead of hardcoded values.
-        val cap = computeDynamicCap(timeHorizon, homeCurrency)
+        val cap = computeDynamicCap(timeHorizon, homeCurrency, quality)
         val (budgetWeight, paceWeight, monteCarloWeight) = when (timeHorizon) {
             TimeHorizon.WEEK -> Triple(0.30, 0.45, 0.25)
             TimeHorizon.MONTH -> Triple(0.40, 0.30, 0.30)

@@ -27,6 +27,7 @@ class BackupVerifierManifestTest {
     fun pre_ledger_database_backups_do_not_require_the_new_ledger_count() {
         val required = BackupVerifier.requiredManifestTables(databaseVersion = 149)
         assertFalse(required.contains("savings_contribution_ledger"))
+        assertFalse(required.contains("savings_sweep_month_acceptance"))
         BackupVerifier.validateManifestCompleteness(
             required.associateWith { 0 },
             databaseVersion = 149
@@ -37,7 +38,7 @@ class BackupVerifierManifestTest {
     fun pre_ledger_counts_gain_an_exact_empty_ledger_expectation_after_migration() {
         val legacyCounts = mapOf("expenses" to 2)
         assertEquals(
-            mapOf("expenses" to 2, "savings_contribution_ledger" to 0),
+            mapOf("expenses" to 2, "savings_contribution_ledger" to 0, "savings_sweep_month_acceptance" to 1),
             BackupVerifier.expectedCountsAfterMigration(legacyCounts, 149)
         )
     }
@@ -47,8 +48,21 @@ class BackupVerifierManifestTest {
         val currentCounts = mapOf("savings_contribution_ledger" to 3)
         assertEquals(
             currentCounts,
-            BackupVerifier.expectedCountsAfterMigration(currentCounts, 150)
+            BackupVerifier.expectedCountsAfterMigration(currentCounts, 151)
         )
+    }
+
+    @Test
+    fun v150_backup_counts_gain_exact_one_month_marker_and_v151_requires_the_marker_count() {
+        val oldCounts = mapOf("savings_contribution_ledger" to 3)
+        assertFalse(BackupVerifier.requiredManifestTables(databaseVersion = 150).contains("savings_sweep_month_acceptance"))
+        assertEquals(oldCounts + ("savings_sweep_month_acceptance" to 1),
+            BackupVerifier.expectedCountsAfterMigration(oldCounts, 150))
+        val incomplete = BackupVerifier.requiredManifestTables(databaseVersion = 151)
+            .filter { it != "savings_sweep_month_acceptance" }.associateWith { 0 }
+        assertThrows(BackupVerifier.IncompleteManifestException::class.java) {
+            BackupVerifier.validateManifestCompleteness(incomplete, databaseVersion = 151)
+        }
     }
 
     // ── P7-CURRENT-014: required manifest tables ──────────────────
@@ -59,6 +73,9 @@ class BackupVerifierManifestTest {
         assertTrue("expenses must be required", required.contains("expenses"))
         assertTrue("budgets must be required", required.contains("budgets"))
         assertTrue("savings contribution ledger must be required", required.contains("savings_contribution_ledger"))
+        assertTrue(required.contains("savings_sweep_month_acceptance"))
+        assertEquals(BackupVerifier.VerificationTier.TIER_1_EXACT,
+            BackupVerifier.tableTier("savings_sweep_month_acceptance"))
         assertEquals(
             BackupVerifier.VerificationTier.TIER_1_EXACT,
             BackupVerifier.tableTier("savings_contribution_ledger")

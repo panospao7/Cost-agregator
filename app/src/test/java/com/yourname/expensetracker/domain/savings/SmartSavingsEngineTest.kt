@@ -5,6 +5,7 @@ import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.Category
+import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.domain.model.SavingsGoal
 import com.yourname.expensetracker.domain.model.GoalProtectionLevel
 import com.yourname.expensetracker.data.database.entity.TransactionType
@@ -16,6 +17,11 @@ import com.yourname.expensetracker.domain.analytics.AnalyticsNormalizationResult
 import com.yourname.expensetracker.domain.analytics.AnalyticsConversionWarning
 import com.yourname.expensetracker.domain.analytics.AnalyticsConversionWarningType
 import com.yourname.expensetracker.domain.core.money.ConversionQuality
+import com.yourname.expensetracker.domain.core.money.ConversionOutcome
+import com.yourname.expensetracker.domain.core.money.ConversionFailureType
+import com.yourname.expensetracker.domain.core.money.ConversionPath
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.core.money.RateBasis
 import com.yourname.expensetracker.domain.forecasting.HistoricalMoneyQuality
 import com.yourname.expensetracker.domain.budget.BudgetCalculator
@@ -29,9 +35,7 @@ import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulato
 import com.yourname.expensetracker.domain.forecasting.SimulationConfidence
 import com.yourname.expensetracker.domain.forecasting.SimulationMetadata
 import com.yourname.expensetracker.toExpenseSnapshot
-import io.mockk.coEvery
-import io.mockk.coVerify
-import io.mockk.mockk
+import io.mockk.*
 import kotlinx.coroutines.flow.flowOf
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -91,7 +95,9 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
 
         cashFlowCalculator = mockk<CashFlowCalculator>(relaxed = true)
         spendingThresholdCalculator = mockk<SpendingThresholdCalculator>(relaxed = true)
-        coEvery { spendingThresholdCalculator.getThreshold() } returns 500.0
+        every {
+            spendingThresholdCalculator.calculateHighAmountThresholdFromNormalizedAmounts(any())
+        } returns 500.0
 
         engine = SmartSavingsEngine(
             expenseRepository = expenseRepository,
@@ -517,6 +523,107 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
 
         assertApproxEquals(80.0, result.safeAmount, 0.01)
     }
+
+    @Test
+    fun adaptiveCapUsesRealNormalizedMixedCurrencyPercentileAndSparseMinimum() = runTest {
+        for (homeCurrency in listOf("EUR", "USD", "GBP")) {
+            for (sampleCount in listOf(1, 10)) {
+                val dao = mockk<ExpenseDao>()
+                val converter = mockk<CurrencyConverter>()
+                coEvery { converter.convertOutcome(any(), any(), any(), any(), any(), any()) } answers {
+                    val amount = firstArg<Double>()
+                    val source = secondArg<String>()
+                    val target = thirdArg<String>()
+                    ConversionOutcome.Converted(
+                        originalAmount = amount, originalCurrency = CurrencyCode.parse(source)!!,
+                        convertedAmount = amount / 100.0, targetCurrency = CurrencyCode.parse(target)!!,
+                        rateUsed = 0.01, rateBasis = RateBasis.TRANSACTION_DATE,
+                        rateValidDate = arg<Long?>(4), rateLastUpdated = now,
+                        rateSource = "test", conversionPath = ConversionPath.DIRECT
+                    )
+                }
+                val history = (1..sampleCount).map { index ->
+                    com.yourname.expensetracker.data.database.entity.Expense(
+                        id = index.toLong(), amount = if (index % 2 == 1) 10000.0 else 100.0,
+                        currency = if (index % 2 == 1) "JPY" else homeCurrency,
+                        merchant = "Fixture", transactionType = TransactionType.PURCHASE,
+                        date = now - 60L * 24 * 60 * 60 * 1000
+                    ).toExpenseSnapshot()
+                }
+                coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } answers {
+                    val start = firstArg<Long>()
+                    val end = secondArg<Long>()
+                    history.filter { it.date >= start && it.date < end }
+                }
+                val status = budgetStatus(10000.0)
+                every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(
+                    status.copy(currency = homeCurrency, budget = status.budget.copy(currency = homeCurrency))
+                ))
+                coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns null
+                val result = realCapEngine(converter, dao).calculatePortfolioRecommendationsResult(
+                    listOf(typedGoal().copy(currency = homeCurrency)),
+                    timeHorizon = SmartSavingsEngine.TimeHorizon.WEEK, homeCurrency = homeCurrency
+                ) as SmartSavingsComputationResult.Available
+
+                assertApproxEquals(if (sampleCount == 1) 10.0 else 15.0,
+                    result.recommendations.single().recommendation.safeAmount)
+                val capQuality = result.metadata.inputs.single { it.stage == SavingsInputStage.SAVINGS_CAP_HISTORY }
+                assertEquals(sampleCount, capQuality.includedInputCount)
+                assertEquals(0, capQuality.excludedInputCount)
+                assertEquals(RateBasis.TRANSACTION_DATE, capQuality.actualRateBasis)
+                coVerify(exactly = 0) { dao.getAmountsForPercentileCalc(any(), any()) }
+            }
+        }
+    }
+
+    @Test
+    fun adaptiveCapFailsClosedOnMissingOrStaleRateEvenWhenOtherWindowsAreEmpty() = runTest {
+        for (staleRate in listOf(false, true)) {
+            val dao = mockk<ExpenseDao>()
+            val converter = mockk<CurrencyConverter>()
+            val history = listOf(com.yourname.expensetracker.data.database.entity.Expense(
+                id = 1L, amount = 10000.0, currency = "JPY", merchant = "Fixture",
+                transactionType = TransactionType.PURCHASE, date = now - 60L * 24 * 60 * 60 * 1000
+            ).toExpenseSnapshot())
+            coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } answers {
+                val start = firstArg<Long>()
+                val end = secondArg<Long>()
+                history.filter { it.date >= start && it.date < end }
+            }
+            coEvery { converter.convertOutcome(any(), any(), any(), any(), any(), any()) } answers {
+                if (staleRate) ConversionOutcome.Converted(
+                    originalAmount = 10000.0, originalCurrency = CurrencyCode.parse("JPY")!!,
+                    convertedAmount = 100.0, targetCurrency = CurrencyCode.parse("EUR")!!, rateUsed = 0.01,
+                    rateBasis = RateBasis.TRANSACTION_DATE,
+                    rateValidDate = history.single().date - 30L * 24 * 60 * 60 * 1000,
+                    rateLastUpdated = now, rateSource = "test", conversionPath = ConversionPath.DIRECT
+                ) else ConversionOutcome.Failed(
+                    originalAmount = 10000.0, originalCurrency = "JPY", targetCurrency = "EUR",
+                    rateBasis = RateBasis.TRANSACTION_DATE, failureType = ConversionFailureType.MISSING_RATE,
+                    message = "SECRET fixture"
+                )
+            }
+            every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(budgetStatus(10000.0)))
+            coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns null
+            val result = realCapEngine(converter, dao).calculatePortfolioRecommendationsResult(
+                listOf(typedGoal()), timeHorizon = SmartSavingsEngine.TimeHorizon.WEEK, homeCurrency = "EUR"
+            ) as SmartSavingsComputationResult.Unavailable
+
+            assertEquals("DISPLAY_CONVERSION_UNAVAILABLE", result.reasonCode)
+            assertTrue(!result.toString().contains("SECRET"))
+            val capQuality = result.metadata.inputs.single { it.stage == SavingsInputStage.SAVINGS_CAP_HISTORY }
+            assertEquals(1, capQuality.totalInputCount)
+            assertEquals(if (staleRate) 0 else 1, capQuality.excludedInputCount)
+            assertTrue((if (staleRate) "STALE_EXCHANGE_RATE" else "MISSING_EXCHANGE_RATE") in capQuality.warningCodes)
+            coVerify(exactly = 0) { dao.getAmountsForPercentileCalc(any(), any()) }
+        }
+    }
+
+    private fun realCapEngine(converter: CurrencyConverter, dao: ExpenseDao) = SmartSavingsEngine(
+        expenseRepository, categoryRepository, budgetRepository, budgetCalculator, monteCarloSimulator,
+        timeProvider, AnalyticsCurrencyNormalizer(converter), cashFlowCalculator,
+        SpendingThresholdCalculator(dao, timeProvider, testDispatcher)
+    )
 
     private fun budgetStatus(remaining: Double, categoryId: Long? = null): BudgetStatus {
         val budgetAmount = if (remaining > 0) remaining + 100 else 100.0

@@ -16,4 +16,7 @@
 
      @Query("SELECT * FROM savings_contribution_ledger ORDER BY timestamp ASC, id ASC")
      suspend fun getAll(): List<SavingsContributionLedgerEntry>
+
+     @Query("SELECT EXISTS(SELECT 1 FROM savings_contribution_ledger WHERE source = 'sweep' AND timestamp >= :startInclusive AND timestamp < :endExclusive)")
+     suspend fun hasSweepBetween(startInclusive: Long, endExclusive: Long): Boolean
  }

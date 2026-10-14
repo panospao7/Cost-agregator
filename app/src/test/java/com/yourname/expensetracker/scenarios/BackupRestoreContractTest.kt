@@ -480,14 +480,14 @@ class BackupRestoreContractTest {
     // ─────────────────────────────────────────────────────────────────────
 
     @Test
-    fun `backupVerifier reports 58 table names`() {
+    fun `backupVerifier reports 59 table names`() {
         // GIVEN: the BackupVerifier table registry
         val tableNames = BackupVerifier.allTableNames()
 
-        // THEN: it contains exactly 58 tables
+        // THEN: it contains exactly 59 tables
         assertEquals(
-            "BackupVerifier should track exactly 58 tables",
-            58, tableNames.size
+            "BackupVerifier should track exactly 59 tables",
+            59, tableNames.size
         )
     }
 

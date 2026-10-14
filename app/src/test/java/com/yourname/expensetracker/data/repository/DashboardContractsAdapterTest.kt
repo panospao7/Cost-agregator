@@ -125,6 +125,9 @@ class DashboardContractsAdapterTest {
         assertEquals(true, result[0].isPartial)
         assertEquals("Budget limit could not be converted from USD to EUR", result[0].conversionWarning)
         assertEquals(com.yourname.expensetracker.domain.budget.BudgetHealthStatus.UNKNOWN, result[0].healthStatus)
+        assertEquals(status.currency, result[0].currency)
+        assertEquals(status.currencyAssumption, result[0].currencyAssumption)
+        assertEquals(status.percentKnown, result[0].percentKnown)
     }
 
     @Test

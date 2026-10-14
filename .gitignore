@@ -46,6 +46,7 @@ repomix-output.*
 
 # Session dumps
 session-*.md
+codex-session-*.md
 
 # Local JSON data files (may contain user data)
 data.json

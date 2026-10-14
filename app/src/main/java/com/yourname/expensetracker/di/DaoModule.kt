@@ -252,6 +252,11 @@ object DaoModule {
 
     @Provides
     @Singleton
+    fun provideSavingsSweepMonthAcceptanceDao(database: AppDatabase): SavingsSweepMonthAcceptanceDao =
+        database.savingsSweepMonthAcceptanceDao()
+
+    @Provides
+    @Singleton
     fun provideSpendingChallengeDao(database: AppDatabase): SpendingChallengeDao =
         database.spendingChallengeDao()
 

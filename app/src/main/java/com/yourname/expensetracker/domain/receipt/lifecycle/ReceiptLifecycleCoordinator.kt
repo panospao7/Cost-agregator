@@ -1016,7 +1016,9 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
         // duration and deadlock/flakiness risk). The resolved value is read-only inside the
         // transaction below, so moving it out is behavior-preserving.
         val homeResolution = currencySettingsRepository.resolveHomeCurrency()
-        val homeCurrency = homeResolution.currencyOrNull?.code ?: "XXX" // explicit unknown currency as last resort
+        val sourceCurrency = emailData.currency?.let(com.yourname.expensetracker.domain.core.money.CurrencyCode::parse)
+            ?.takeIf { it in com.yourname.expensetracker.domain.core.money.CurrencyCode.ALL_SUPPORTED }
+            ?.code ?: "XXX"
 
         try {
         // GR-14s: canonical direct scope — the mutations' proof is local
@@ -1044,11 +1046,11 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
                 // "[REDACTED_ITEMS]" marker), restricted modes persist nothing.
                 parsedItems = ReceiptStructuredDataPolicy.persistedItemsFromParserJson(
                     fullItemsJson = emailData.items,
-                    currency = emailData.currency ?: homeCurrency,
+                    currency = sourceCurrency,
                     mode = emailStorageMode
                 ),
                 parsedTaxAmount = null,
-                currency = emailData.currency ?: homeCurrency,
+                currency = sourceCurrency,
                 // P11-CURRENT-009: persist real parser confidence (was hardcoded)
                 confidence = emailData.confidence.coerceIn(0.0, 1.0).toFloat(),
                 sourceType = ReceiptSourceType.EMAIL.name,
@@ -1150,7 +1152,11 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
             // Confirmed 2026-06-01: the confidence check below (<= 0.75) prevents silent
             // auto-approval of uncertain parses. The receipt IS persisted; only expense
             // creation is skipped. The caller receives EmailReceiptProcessResult.NeedsReview.
-            if (emailData.amount != null && emailData.amount > 0 &&
+            if (sourceCurrency == "XXX") {
+                needsReviewReason = "currency_unknown"
+            } else if (homeResolution.currencyOrNull == null) {
+                needsReviewReason = "home_currency_unavailable"
+            } else if (emailData.amount != null && emailData.amount > 0 &&
                 !emailData.merchant.isNullOrBlank() &&
                 emailData.date != null && emailData.date > 0
             ) {
@@ -1168,7 +1174,7 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
                     val request = CreateExpenseRequest(
                         merchant = emailData.merchant!!,
                         amount = emailData.amount,
-                        currency = emailData.currency ?: homeCurrency,
+                        currency = sourceCurrency,
                         date = emailData.date,
                         transactionType = TransactionType.PURCHASE,
                         source = ExpenseSource.EMAIL_RECEIPT,
@@ -1282,7 +1288,7 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
                     scannedReceiptId = savedId,
                     suggestedMerchant = emailData.merchant ?: "Unknown",
                     suggestedAmount = emailData.amount ?: 0.0,
-                    suggestedCurrency = emailData.currency ?: homeCurrency,
+                    suggestedCurrency = sourceCurrency,
                     suggestedDate = emailData.date ?: now,
                     confidence = emailData.confidence.toFloat(),
                     suggestedType = TransactionType.PURCHASE.name,

@@ -3033,6 +3033,20 @@ entries:
   reason: 'W5-R16 EXACT_POLICY: pending-to-accepted transition is conditional and remains in the coordinator Room transaction so accepted UI state implies the ledger and balance commit'
   owner: '@panospao7'
   linkedIssue: MIT-DB-W5-R16
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/SavingsSweepAcceptanceCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.SavingsSweepAcceptanceCoordinator
+  kind: function
+  method: accept
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.domain.usecase.savings.SavingsSweepRecommendation
+  daoAccessor: monthAcceptanceDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SavingsSweepMonthAcceptanceDao
+  operation: insert
+  barrierMode: helper
+  reason: 'W5-R16 F2 EXACT_POLICY: human-approved 2026-10-13 goal-independent month consumption is inserted only inside the existing coordinator Room acceptance transaction, after the write barrier; no update/delete/blanket grants'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-W5-R16
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/SharedExpenseDataPortAdapter.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.SharedExpenseDataPortAdapter
   kind: function

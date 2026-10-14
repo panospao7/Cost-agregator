@@ -415,6 +415,9 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
         advanceUntilIdle()
         coVerify(exactly = 0) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
         coVerify(exactly = 0) { savingsContributionHistoryRepository.recordContribution(any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { savingsSweepAcceptanceCoordinator.accept(any()) }
+        assertNull(viewModel.state.value.sweepRecommendation)
+        assertEquals("SAVINGS_SWEEP_STALE_RECOMMENDATION", viewModel.state.value.sweepUnavailableReason)
     }
 
     @Test
@@ -683,12 +686,21 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
         viewModel.acceptSweepRecommendation()
         advanceUntilIdle()
         every { currencyRepo.homeCurrency() } returns currencyFlow
+        coEvery { monthlySavingsSweepUseCase.computeSweepRecommendationResult() } returns
+            SavingsSweepComputationResult.Available(sweep)
+        viewModel.computeSweepRecommendation()
+        advanceUntilIdle()
         changeRate = true
+        coEvery { monthlySavingsSweepUseCase.computeSweepRecommendationResult() } coAnswers {
+            every { currencyRepo.lastRateUpdate() } returns flowOf(1L)
+            SavingsSweepComputationResult.Available(sweep)
+        }
         viewModel.acceptSweepRecommendation()
         advanceUntilIdle()
         coVerify(exactly = 0) { savingsSweepAcceptanceCoordinator.accept(any()) }
         assertEquals(200.0, goalsFlow.value.single().currentAmount, 0.0)
-        assertEquals(sweep, viewModel.state.value.sweepRecommendation)
+        assertNull(viewModel.state.value.sweepRecommendation)
+        assertEquals("SAVINGS_SWEEP_STALE_RECOMMENDATION", viewModel.state.value.sweepUnavailableReason)
     }
 
     @Test

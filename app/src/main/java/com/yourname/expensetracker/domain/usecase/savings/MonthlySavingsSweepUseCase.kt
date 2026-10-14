@@ -455,6 +455,14 @@ class MonthlySavingsSweepUseCase @Inject constructor(
         } while (madeProgress)
 
         return states
+            .map { state ->
+                // A rounded subtraction can produce a gap whose addition exceeds
+                // the target. Keep the persistence cap exact at the producer.
+                while (state.goal.currentAmount + state.allocated > state.goal.targetAmount) {
+                    state.allocated = Math.nextDown(state.allocated)
+                }
+                state
+            }
             .filter { it.allocated > 0.0 }
             .map { state ->
                 GoalAllocation(

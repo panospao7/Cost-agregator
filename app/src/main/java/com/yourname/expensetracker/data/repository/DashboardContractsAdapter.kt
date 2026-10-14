@@ -92,7 +92,10 @@ class DashboardContractsAdapter @Inject constructor(
                     periodStart = status.periodStart,
                     periodEnd = status.periodEnd,
                     isPartial = status.isPartial,
-                    conversionWarning = status.conversionWarning
+                    conversionWarning = status.conversionWarning,
+                    currency = status.currency,
+                    currencyAssumption = status.currencyAssumption,
+                    percentKnown = status.percentKnown
                 )
             }
         }

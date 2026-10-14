@@ -40,7 +40,7 @@ import com.yourname.expensetracker.data.security.BankTokenCipher
  * specifically validates that a v5 database is correctly handled by
  * [fallbackToDestructiveMigration].
  */
-const val APP_DATABASE_SCHEMA_VERSION = 150
+const val APP_DATABASE_SCHEMA_VERSION = 151
 
 @Database(
     entities = [
@@ -58,6 +58,7 @@ const val APP_DATABASE_SCHEMA_VERSION = 150
         PlannedExpense::class,
         SavingsGoal::class,
         SavingsContributionLedgerEntry::class,
+        SavingsSweepMonthAcceptance::class,
         MerchantCanonical::class,
         MerchantAlias::class,
         MerchantLocation::class,
@@ -137,6 +138,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun plannedExpenseDao(): PlannedExpenseDao
     abstract fun savingsGoalDao(): SavingsGoalDao
     abstract fun savingsContributionLedgerDao(): SavingsContributionLedgerDao
+    abstract fun savingsSweepMonthAcceptanceDao(): SavingsSweepMonthAcceptanceDao
     abstract fun merchantNormalizationDao(): MerchantNormalizationDao
     abstract fun merchantLocationDao(): MerchantLocationDao
     abstract fun aiArtifactDao(): AiArtifactDao

@@ -651,6 +651,14 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             }
         }
 
+        if (ctx.overallBudget?.hasCompleteAmountIn(normalized.homeCurrency.code) == false) {
+            return RunwayResult.Unavailable(
+                reason = MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE.name,
+                purchasesThisMonth = purchasesThisMonth,
+                currencyQuality = CurrencyQualityUi.unavailable(MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE.name)
+            )
+        }
+
         // Build pastSumDaily from normalized expenses (already in home currency)
         val now = timeProvider.now()
         val monthStart = TimePeriodUtils.getStartOfMonth(now)
@@ -1291,7 +1299,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
                         // Budget remaining not yet normalized — show unavailable with partial quality
                         DashboardWidget.SafeToSpend(
                             amount = null,
-                            totalBudget = ctx.overallBudget?.budgetAmount, // G-MONEY-ALLOW[CURR-587-05][G-MONEY-15]: legacy budget display until budget normalization
+                            totalBudget = ctx.overallBudget?.takeIf { it.hasCompleteAmountIn(normalized.input.homeCurrency.code) }?.budgetAmount,
                             daysRemaining = ctx.daysRemaining,
                             isPartial = normalized.input.dataQuality.isPartial,
                             isUnavailable = true,

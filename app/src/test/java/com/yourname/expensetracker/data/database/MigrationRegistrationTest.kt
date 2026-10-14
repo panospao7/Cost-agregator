@@ -65,7 +65,7 @@ class MigrationRegistrationTest {
         // deliberately NOT registered; upgrades from retired versions
         // (< 145) are not supported.
         val migrations = AppDatabase.ALL_MIGRATIONS
-        val expected = listOf(145 to 146, 146 to 147, 147 to 148, 148 to 149, 149 to 150)
+        val expected = listOf(145 to 146, 146 to 147, 147 to 148, 148 to 149, 149 to 150, 150 to 151)
         val actual = migrations.map { it.startVersion to it.endVersion }
         assertEquals(
             "ALL_MIGRATIONS must be exactly the post-baseline chain",

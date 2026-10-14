@@ -1,7 +1,7 @@
 # ExpenseTracker Android Codebase - Ground-Truth Inventory
 
 **Generated:** 2026-10-02 (verified snapshot; re-verified against source)
-**Database Version:** v150
+**Database Version:** v151
 **Architecture:** Clean Architecture + MVVM + Jetpack Compose + Room + Hilt DI
 
 ---
@@ -12,7 +12,7 @@ Snapshot summary only: this inventory tracks the current UI, domain, data, and D
 
 ### Drift Sync (2026-10-02 / Verification Pass)
 
-Verified against production source (`app/src/main/java`): 69 DAO files, 40 ViewModel files, 29 `*Worker*`-named files (including `domain/workers/` infrastructure), DB **v150** with **71** registered entities, 15 registered retention targets. Schema/DAO delta verified 2026-10-12.
+Verified against production source (`app/src/main/java`): 70 DAO files, 40 ViewModel files, 29 `*Worker*`-named files (including `domain/workers/` infrastructure), DB **v151** with **72** registered entities, 15 registered retention targets. Schema/DAO delta verified 2026-10-13.
 
 - **DB v149 to v150** — Wave 5: additive `savings_contribution_ledger` and unique nullable `savings_sweep_plan.acceptanceKey`; sweep acceptance commits balance, ledger, and plan status atomically through `SavingsSweepAcceptanceCoordinator`.
 

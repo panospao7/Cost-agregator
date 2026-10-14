@@ -87,6 +87,7 @@ class ReceiptLifecycleCoordinatorTest {
     private lateinit var receiptExpenseLinkDao: ReceiptExpenseLinkDao
     private lateinit var receiptEventDao: ReceiptEventDao
     private lateinit var emailReceiptDao: EmailReceiptDao
+    private lateinit var pendingReviewDao: PendingReviewDao
     private lateinit var timeProvider: TimeProvider
     private lateinit var bankStatementLifecycleProcessor: BankStatementLifecycleProcessor
     private lateinit var sideEffectDispatcher: ReceiptSideEffectDispatcher
@@ -120,6 +121,7 @@ class ReceiptLifecycleCoordinatorTest {
         receiptExpenseLinkDao = mockk(relaxed = true)
         receiptEventDao = mockk(relaxed = true)
         emailReceiptDao = mockk(relaxed = true)
+        pendingReviewDao = mockk(relaxed = true)
         timeProvider = mockk(relaxed = true)
         bankStatementLifecycleProcessor = mockk(relaxed = true)
         sideEffectDispatcher = mockk(relaxed = true)
@@ -206,7 +208,7 @@ class ReceiptLifecycleCoordinatorTest {
             diagnosticEventWriter = diagnosticEventWriter,
             sourceLinkWriter = mockk(relaxed = true),
             receiptSideEffectPlanner = receiptSideEffectPlanner,
-            pendingReviewDao = mockk(relaxed = true),
+            pendingReviewDao = pendingReviewDao,
             pendingReviewSourceLinkService = mockk(relaxed = true),
             receiptInsertResolver = receiptInsertResolver,
             // RP-12 12b (P3-007) conditional remainder: email ephemeral item parsing.
@@ -933,6 +935,44 @@ class ReceiptLifecycleCoordinatorTest {
         // receipt IS persisted and its id is surfaced even though no expense was created.
         kotlin.test.assertEquals(1L, needsReview.receiptId)
         kotlin.test.assertEquals(0.2, needsReview.confidence!!, 1e-9)
+    }
+
+    @Test
+    fun missing_or_unsupported_email_currency_is_reviewed_without_expense_creation() = runTest {
+        for (currency in listOf(null, "", "XYZ", "SECRET invalid")) {
+            val emailData = EmailReceiptData(
+                messageId = "", from = "sender@example.com", subject = "Receipt",
+                body = "Your receipt", receivedAt = now,
+                amount = 25.0, merchant = "Test Shop", currency = currency,
+                date = now, items = null, confidence = 0.99
+            )
+            coEvery { emailReceiptDao.insertOrIgnore(any()) } returns 1L
+            val result = coordinator.processEmailReceipt(
+                emailData, "", "Your receipt", "sender@example.com", "Receipt", "", "unknown"
+            ) as EmailReceiptProcessResult.NeedsReview
+            assertEquals("currency_unknown", result.reason)
+        }
+        coVerify(exactly = 0) { transactionLifecycleCoordinator.createExpenseDbOnlyV2(any()) }
+        coVerify(exactly = 4) { receiptInsertResolver.insertOrResolve(match { it.currency == "XXX" }) }
+        coVerify(exactly = 4) { pendingReviewDao.insert(match { it.suggestedCurrency == "XXX" }) }
+    }
+
+    @Test
+    fun explicit_email_currency_is_preserved_when_home_currency_is_unavailable() = runTest {
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns HomeCurrencyResolution.Failed("SECRET settings")
+        coEvery { emailReceiptDao.insertOrIgnore(any()) } returns 1L
+        val emailData = EmailReceiptData(
+            messageId = "", from = "sender@example.com", subject = "Receipt",
+            body = "Your receipt", receivedAt = now, amount = 25.0, merchant = "Test Shop",
+            currency = "USD", date = now, items = null, confidence = 0.99
+        )
+        val result = coordinator.processEmailReceipt(
+            emailData, "", "Your receipt", "sender@example.com", "Receipt", "", "unknown"
+        ) as EmailReceiptProcessResult.NeedsReview
+        assertEquals("home_currency_unavailable", result.reason)
+        coVerify(exactly = 0) { transactionLifecycleCoordinator.createExpenseDbOnlyV2(any()) }
+        coVerify(exactly = 1) { receiptInsertResolver.insertOrResolve(match { it.currency == "USD" }) }
+        coVerify(exactly = 1) { pendingReviewDao.insert(match { it.suggestedCurrency == "USD" }) }
     }
 
     // P11-CURRENT-011: when the parse is incomplete (here, amount is null so the outer

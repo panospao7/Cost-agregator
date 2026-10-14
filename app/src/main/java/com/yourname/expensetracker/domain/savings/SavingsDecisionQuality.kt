@@ -40,7 +40,8 @@ data class SavingsInputQuality(
 
 enum class SavingsInputStage {
     CURRENT_SPENDING, PACE_HISTORY, FORECAST_CURRENT, FORECAST_HISTORY,
-    RANGE_SPENDING, RECURRING_UPCOMING, PLANNED_UPCOMING, SIMULATOR_HISTORY
+    RANGE_SPENDING, RECURRING_UPCOMING, PLANNED_UPCOMING, SIMULATOR_HISTORY,
+    SAVINGS_CAP_HISTORY
 }
 
 /** Request-local collector: no financial amounts, payloads or exception messages. */

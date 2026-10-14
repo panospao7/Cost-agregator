@@ -1,6 +1,6 @@
 # Legal Paths — Architecture Law
 
-> **Last updated:** 2026-10-12 (schema/savings delta verified against code: DB v150; prior guarded-worker/CI verification retained)
+> **Last updated:** 2026-10-13 (schema/savings delta verified against code: DB v151; prior guarded-worker/CI verification retained)
 >
 > **Purpose:** Define the ONE allowed implementation path for each major operation.  
 > **Rule:** Any code that uses a different path is a bug, regardless of whether it "works."  
@@ -14,7 +14,9 @@
 
 The durable ledger is the idempotency authority, including after optional plan cleanup. Sweep success must not dual-write authoritative history to DataStore. Validated legacy DataStore events remain read-only on history reads; existing manual contribution recording is unchanged. The ledger is exact-tier backup data. Pre-v150 backups acquire an exact zero-ledger expectation after migration, before staged and live verification.
 
-Direct writes outside the four exact coordinator callable/DAO contracts in `config/guards/db_ownership_policy.yml` are forbidden. No blanket owner allowance.
+The goal-independent `savings_sweep_month_acceptance` marker is the monthly consumption authority. The coordinator inserts it in the same Room transaction as the balances, plans and ledger. It has no goal foreign key and survives deletion of all goals. Both ledger and marker are exact-tier backup data. The v150→151 migration conservatively consumes the upgrade/restore month because missing legacy history cannot prove that month was unused; older supported backups gain an exact one-marker expectation after migration. Fresh installs have no migration marker.
+
+Direct writes outside the five exact coordinator callable/DAO contracts in `config/guards/db_ownership_policy.yml` are forbidden. No blanket owner allowance.
 
 ## Expense Mutations
 

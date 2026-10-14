@@ -210,7 +210,12 @@ class ForecastInputAssembler @Inject constructor(
                 percentUsed = status.percentUsed.toDouble(),
                 healthStatus = status.healthStatus,
                 periodStart = status.periodStart,
-                periodEnd = status.periodEnd
+                periodEnd = status.periodEnd,
+                isPartial = status.isPartial,
+                conversionWarning = status.conversionWarning,
+                currency = status.currency,
+                currencyAssumption = status.currencyAssumption,
+                percentKnown = status.percentKnown
             )
         }
 

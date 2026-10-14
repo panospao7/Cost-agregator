@@ -127,7 +127,10 @@ class SavingsGoalsViewModel @Inject constructor(
                         isLoading = true, homeCurrency = homeCurrency, totalSaved = null,
                         totalSavedResult = null, userLevel = null, levelTitle = "Unavailable",
                         smartRecommendations = emptyList(), smartComputationResult = null,
-                        sweepRecommendation = null, sweepUnavailableReason = null, sweepComputationResult = null,
+                        sweepRecommendation = null,
+                        sweepUnavailableReason = if (it.sweepRecommendation != null)
+                            "SAVINGS_SWEEP_STALE_RECOMMENDATION" else it.sweepUnavailableReason,
+                        sweepComputationResult = null,
                         achievements = emptyList()
                     ) }
                     val totalSavedResult = gamificationEngine.aggregateGoalBalances(goals, homeCurrency)
@@ -241,10 +244,16 @@ class SavingsGoalsViewModel @Inject constructor(
             if (_state.value.contributionHistoryWriteFailure != null) return@launch
             val recommendation = _state.value.sweepRecommendation ?: return@launch
             val homeCurrency = currencySettingsRepository.homeCurrency().first()
-            if (recommendation.currency != homeCurrency || recommendation.rateTimestamp != currencySettingsRepository.lastRateUpdate().first()) return@launch
+            if (recommendation.currency != homeCurrency || recommendation.rateTimestamp != currencySettingsRepository.lastRateUpdate().first()) {
+                rejectStaleSweep()
+                return@launch
+            }
             val refreshed = (monthlySavingsSweepUseCase.computeSweepRecommendationResult()
-                as? SavingsSweepComputationResult.Available)?.recommendation ?: return@launch
-            if (refreshed.copy(computedAt = recommendation.computedAt) != recommendation) return@launch
+                as? SavingsSweepComputationResult.Available)?.recommendation
+            if (refreshed == null || refreshed.copy(computedAt = recommendation.computedAt) != recommendation) {
+                rejectStaleSweep()
+                return@launch
+            }
             val goalsById = savingsGoalRepository.observeSavingsGoals().first().associateBy { it.id }
             if (recommendation.goalAllocations.any { allocation ->
                 val goal = goalsById[allocation.goalId]
@@ -252,10 +261,16 @@ class SavingsGoalsViewModel @Inject constructor(
                     SavingsGoalCurrencyPolicy.knownCurrencyOrNull(goal) == null ||
                     goal.currency != homeCurrency || allocation.moneySuggestedAllocation?.currency != CurrencyCode.parse(goal.currency) || goal.currentAmount != allocation.currentProgress ||
                     goal.targetAmount != allocation.targetAmount
-            }) return@launch
+            }) {
+                rejectStaleSweep()
+                return@launch
+            }
 
             if (currencySettingsRepository.homeCurrency().first() != homeCurrency ||
-                recommendation.rateTimestamp != currencySettingsRepository.lastRateUpdate().first()) return@launch
+                recommendation.rateTimestamp != currencySettingsRepository.lastRateUpdate().first()) {
+                rejectStaleSweep()
+                return@launch
+            }
 
             when (val acceptance = savingsSweepAcceptanceCoordinator.accept(recommendation)) {
                 SavingsSweepAcceptanceResult.Accepted,
@@ -271,6 +286,12 @@ class SavingsGoalsViewModel @Inject constructor(
             
             // Refresh gamification
             loadGamification()
+        }
+    }
+
+    private fun rejectStaleSweep() {
+        _state.update {
+            it.copy(sweepRecommendation = null, sweepUnavailableReason = "SAVINGS_SWEEP_STALE_RECOMMENDATION")
         }
     }
 

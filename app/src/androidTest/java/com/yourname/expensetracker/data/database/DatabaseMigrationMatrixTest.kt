@@ -270,6 +270,28 @@ class DatabaseMigrationMatrixTest {
         )
     }
 
+    @Test
+    fun migrate_150_to_151_adds_goal_independent_month_marker() {
+        val name = "matrix-150-151"
+        val referenceTime = 1710000000000L
+        val before = helper.createDatabase(name, 150)
+        before.close()
+        val upgraded = helper.runMigrationsAndValidate(name, 151, true,
+            SavingsSweepMonthMigration(object : com.yourname.expensetracker.domain.util.TimeProvider {
+                override fun now() = referenceTime
+            }))
+        try {
+            upgraded.query("SELECT monthStart, monthEndExclusive, reasonCode FROM savings_sweep_month_acceptance").use { row ->
+                assertTrue(row.moveToFirst())
+                assertEquals(com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfMonth(referenceTime), row.getLong(0))
+                assertEquals(com.yourname.expensetracker.domain.util.TimePeriodUtils.getEndOfMonth(referenceTime), row.getLong(1))
+                assertEquals("SAVINGS_SWEEP_LEGACY_MONTH_UNKNOWN", row.getString(2))
+                assertFalse(row.moveToNext())
+            }
+            upgraded.query("PRAGMA foreign_key_list(savings_sweep_month_acceptance)").use { assertFalse(it.moveToFirst()) }
+        } finally { upgraded.close() }
+    }
+
     // Unsupported databases must fail closed, not be silently reset.
 
     /**

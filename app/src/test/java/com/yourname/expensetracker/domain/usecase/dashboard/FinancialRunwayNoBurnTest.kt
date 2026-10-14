@@ -367,7 +367,8 @@ class FinancialRunwayNoBurnTest {
         percentUsed = 0.0,
         healthStatus = BudgetHealthStatus.ON_TRACK,
         periodStart = fixedNowMs,
-        periodEnd = fixedNowMs + 86_400_000L
+        periodEnd = fixedNowMs + 86_400_000L,
+        currency = "EUR", currencyAssumption = "EXPLICIT"
     )
 
     private fun purchase(amount: Double, date: Long): DashboardExpense = DashboardExpense(

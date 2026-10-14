@@ -1,6 +1,6 @@
 # Engine Interaction Map
 
-> **Last updated:** 2026-10-12 (schema/savings delta verified against code: DB v150; prior guarded-worker/guard verification retained)
+> **Last updated:** 2026-10-13 (schema/savings delta verified against code: DB v151; prior guarded-worker/guard verification retained)
 >
 > **Purpose:** Before fixing any engine, check this map to know which pipelines will be affected.  
 > **Rule:** Any engine change requires verifying ALL affected pipelines still work.

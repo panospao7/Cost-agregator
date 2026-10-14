@@ -5,20 +5,27 @@ import androidx.test.core.app.ApplicationProvider
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.SavingsContributionLedgerDao
+import com.yourname.expensetracker.data.database.dao.SavingsSweepMonthAcceptanceDao
+import com.yourname.expensetracker.data.database.entity.SavingsSweepMonthAcceptance
 import com.yourname.expensetracker.data.database.entity.SavingsContributionLedgerEntry
 import com.yourname.expensetracker.data.database.entity.SweepPlanStatus
 import com.yourname.expensetracker.data.database.entity.SavingsGoal as SavingsGoalEntity
 import com.yourname.expensetracker.data.database.entity.GoalProtectionLevel
 import com.yourname.expensetracker.domain.usecase.savings.GoalAllocation
 import com.yourname.expensetracker.domain.usecase.savings.SavingsSweepRecommendation
+import com.yourname.expensetracker.domain.usecase.savings.MonthlySavingsSweepUseCase
+import com.yourname.expensetracker.domain.usecase.savings.SavingsSweepComputationResult
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.every
+import io.mockk.coEvery
 import io.mockk.just
 import io.mockk.mockk
 import io.mockk.runs
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.flow.flowOf
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -48,6 +55,7 @@ class SavingsSweepAcceptanceCoordinatorTest {
             savingsGoalDao = database.savingsGoalDao(),
             savingsSweepPlanDao = database.savingsSweepPlanDao(),
             contributionLedgerDao = database.savingsContributionLedgerDao(),
+            monthAcceptanceDao = database.savingsSweepMonthAcceptanceDao(),
             writeBarrier = writeBarrier,
             timeProvider = timeProvider
         )
@@ -70,6 +78,31 @@ class SavingsSweepAcceptanceCoordinatorTest {
         assertEquals(240.0, database.savingsGoalDao().getById(1L)!!.currentAmount, 0.0)
         assertEquals(1, database.savingsContributionLedgerDao().getAll().size)
         assertEquals(1, database.savingsSweepPlanDao().getPlansForMonth(recommendation.monthEnd).size)
+        assertEquals(1, database.savingsSweepMonthAcceptanceDao().getAll().size)
+    }
+
+    @Test
+    fun deleting_all_accepted_goals_does_not_reopen_the_same_month_sweep() = runTest {
+        database.savingsGoalDao().insertGoal(goal(1L, 200.0))
+        val first = recommendation(allocation(1L, 200.0, 40.0))
+        assertEquals(SavingsSweepAcceptanceResult.Accepted, coordinator.accept(first))
+        database.savingsGoalDao().deleteGoal(database.savingsGoalDao().getById(1L)!!)
+        assertTrue(database.savingsContributionLedgerDao().getAll().isEmpty())
+        assertTrue(database.savingsSweepPlanDao().getPlansForMonth(first.monthEnd).isEmpty())
+        assertEquals(1, database.savingsSweepMonthAcceptanceDao().getAll().size)
+
+        database.savingsGoalDao().insertGoal(goal(2L, 200.0))
+        val recomputed = recommendation(allocation(2L, 200.0, 40.0)).copy(computedAt = first.computedAt + 1L)
+        assertEquals(
+            SavingsSweepAcceptanceResult.Rejected("SAVINGS_SWEEP_MONTH_ALREADY_ACCEPTED"),
+            coordinator.accept(recomputed)
+        )
+        assertEquals(200.0, database.savingsGoalDao().getById(2L)!!.currentAmount, 0.0)
+        assertTrue(database.savingsContributionLedgerDao().getAll().isEmpty())
+        timeProvider.setTime(TimePeriodUtils.getEndOfMonth(timeProvider.now()) + 1_000L)
+        assertEquals(SavingsSweepAcceptanceResult.Accepted,
+            coordinator.accept(recommendation(allocation(2L, 200.0, 40.0))))
+        assertEquals(2, database.savingsSweepMonthAcceptanceDao().getAll().size)
     }
 
     @Test
@@ -91,6 +124,7 @@ class SavingsSweepAcceptanceCoordinatorTest {
         assertEquals(100.0, database.savingsGoalDao().getById(2L)!!.currentAmount, 0.0)
         assertTrue(database.savingsContributionLedgerDao().getAll().isEmpty())
         assertTrue(database.savingsSweepPlanDao().getPlansForMonth(recommendation.monthEnd).isEmpty())
+        assertTrue(database.savingsSweepMonthAcceptanceDao().getAll().isEmpty())
     }
 
     @Test
@@ -102,6 +136,7 @@ class SavingsSweepAcceptanceCoordinatorTest {
             savingsGoalDao = database.savingsGoalDao(),
             savingsSweepPlanDao = database.savingsSweepPlanDao(),
             contributionLedgerDao = database.savingsContributionLedgerDao(),
+            monthAcceptanceDao = database.savingsSweepMonthAcceptanceDao(),
             writeBarrier = writeBarrier,
             timeProvider = cancellingTimeProvider
         )
@@ -230,12 +265,56 @@ class SavingsSweepAcceptanceCoordinatorTest {
         }
     }
 
-    private fun newCoordinator(ledgerDao: SavingsContributionLedgerDao) =
+    @Test
+    fun marker_insert_conflict_rolls_back_all_writes_and_does_not_burn_month() = runTest {
+        database.savingsGoalDao().insertGoal(goal(1L, 200.0))
+        val markerDao = mockk<SavingsSweepMonthAcceptanceDao>()
+        coEvery { markerDao.hasAcceptanceBetween(any(), any()) } returns false
+        coEvery { markerDao.insert(any()) } returns -1L
+        val candidate = recommendation(allocation(1L, 200.0, 40.0))
+        assertEquals(SavingsSweepAcceptanceResult.Rejected("SAVINGS_SWEEP_IDEMPOTENCY_CONFLICT"),
+            newCoordinator(database.savingsContributionLedgerDao(), markerDao).accept(candidate))
+        assertEquals(200.0, database.savingsGoalDao().getById(1L)!!.currentAmount, 0.0)
+        assertTrue(database.savingsContributionLedgerDao().getAll().isEmpty())
+        assertTrue(database.savingsSweepPlanDao().getAllPlans().isEmpty())
+        assertTrue(database.savingsSweepMonthAcceptanceDao().getAll().isEmpty())
+        assertEquals(SavingsSweepAcceptanceResult.Accepted, coordinator.accept(candidate))
+    }
+
+    @Test
+    fun cancellation_after_marker_insert_rolls_back_marker_and_every_goal_write() = runTest {
+        database.savingsGoalDao().insertGoal(goal(1L, 200.0))
+        val realDao = database.savingsSweepMonthAcceptanceDao()
+        val markerDao = object : SavingsSweepMonthAcceptanceDao by realDao {
+            override suspend fun insert(acceptance: SavingsSweepMonthAcceptance): Long {
+                realDao.insert(acceptance)
+                throw InjectedCancellation("month_marker")
+            }
+        }
+        val candidate = recommendation(allocation(1L, 200.0, 40.0))
+        try {
+            newCoordinator(database.savingsContributionLedgerDao(), markerDao).accept(candidate)
+            throw AssertionError("Cancellation was swallowed")
+        } catch (error: InjectedCancellation) {
+            assertEquals("month_marker", error.checkpoint)
+        }
+        assertEquals(200.0, database.savingsGoalDao().getById(1L)!!.currentAmount, 0.0)
+        assertTrue(database.savingsContributionLedgerDao().getAll().isEmpty())
+        assertTrue(database.savingsSweepPlanDao().getAllPlans().isEmpty())
+        assertTrue(realDao.getAll().isEmpty())
+        assertEquals(SavingsSweepAcceptanceResult.Accepted, coordinator.accept(candidate))
+    }
+
+    private fun newCoordinator(
+        ledgerDao: SavingsContributionLedgerDao,
+        markerDao: SavingsSweepMonthAcceptanceDao = database.savingsSweepMonthAcceptanceDao()
+    ) =
         SavingsSweepAcceptanceCoordinator(
             database,
             database.savingsGoalDao(),
             database.savingsSweepPlanDao(),
             ledgerDao,
+            markerDao,
             writeBarrier,
             timeProvider
         )
@@ -371,6 +450,119 @@ class SavingsSweepAcceptanceCoordinatorTest {
         assertEquals(2, database.savingsContributionLedgerDao().getAll().size)
     }
 
+    @Test
+    fun producer_goal_completion_with_decimal_roundoff_commits_without_exceeding_target() = runTest {
+        timeProvider.setTime(TimePeriodUtils.getEndOfMonth(timeProvider.now()) - 2 * 86_400_000L)
+        database.savingsGoalDao().insertGoal(goal(1L, 592.09).copy(targetAmount = 1975.95))
+        val producer = sweepProducer(1892.71)
+        val candidate = (producer.computeSweepRecommendationResult() as SavingsSweepComputationResult.Available)
+            .recommendation
+
+        val resultingAmount = 592.09 + candidate.goalAllocations.single().suggestedAllocation
+        assertTrue(resultingAmount <= 1975.95)
+        assertEquals(1975.95, resultingAmount, Math.ulp(1975.95))
+        assertEquals(SavingsSweepAcceptanceResult.Accepted, coordinator.accept(candidate))
+        assertEquals(resultingAmount, database.savingsGoalDao().getById(1L)!!.currentAmount, 0.0)
+        assertEquals(candidate.goalAllocations.single().suggestedAllocation,
+            database.savingsContributionLedgerDao().getAll().single().amount, 0.0)
+    }
+
+    @Test
+    fun recomputed_sweep_is_rejected_in_same_month_even_after_plan_cleanup_but_next_month_is_allowed() = runTest {
+        timeProvider.setTime(TimePeriodUtils.getEndOfMonth(timeProvider.now()) - 2 * 86_400_000L)
+        database.savingsGoalDao().insertGoal(goal(1L, 200.0))
+        val producer = sweepProducer(40.0)
+        val first = (producer.computeSweepRecommendationResult() as SavingsSweepComputationResult.Available).recommendation
+        assertEquals(SavingsSweepAcceptanceResult.Accepted, coordinator.accept(first))
+        database.savingsSweepPlanDao().deleteOldPlans(timeProvider.now() + 1L)
+        timeProvider.advanceTime(1_000L)
+        val recomputed = (producer.computeSweepRecommendationResult() as SavingsSweepComputationResult.Available).recommendation
+        assertTrue(first != recomputed)
+        assertEquals(
+            SavingsSweepAcceptanceResult.Rejected("SAVINGS_SWEEP_MONTH_ALREADY_ACCEPTED"),
+            coordinator.accept(recomputed)
+        )
+        assertEquals(232.0, database.savingsGoalDao().getById(1L)!!.currentAmount, 0.0)
+        assertEquals(1, database.savingsContributionLedgerDao().getAll().size)
+        assertTrue(database.savingsSweepPlanDao().getAllPlans().isEmpty())
+
+        val nextMonth = TimePeriodUtils.getEndOfMonth(timeProvider.now())
+        timeProvider.setTime(TimePeriodUtils.getEndOfMonth(nextMonth) - 2 * 86_400_000L)
+        val next = (producer.computeSweepRecommendationResult() as SavingsSweepComputationResult.Available).recommendation
+        assertEquals(SavingsSweepAcceptanceResult.Accepted, coordinator.accept(next))
+        assertEquals(264.0, database.savingsGoalDao().getById(1L)!!.currentAmount, 0.0)
+        assertEquals(2, database.savingsContributionLedgerDao().getAll().size)
+    }
+
+    @Test
+    fun safe_pool_above_underspend_after_buffer_is_rejected_without_writes() = runTest {
+        database.savingsGoalDao().insertGoal(goal(1L, 200.0))
+        val candidate = recommendation(allocation(1L, 200.0, 40.0))
+            .copy(totalUnderspend = 49.0, riskBuffer = 10.0, safeSweepAmount = 40.0)
+        assertEquals(SavingsSweepAcceptanceResult.Rejected("SAVINGS_SWEEP_INVALID_RECOMMENDATION"),
+            coordinator.accept(candidate))
+        assertEquals(200.0, database.savingsGoalDao().getById(1L)!!.currentAmount, 0.0)
+        assertTrue(database.savingsSweepPlanDao().getAllPlans().isEmpty())
+        assertTrue(database.savingsContributionLedgerDao().getAll().isEmpty())
+    }
+
+    private fun sweepProducer(safeAmount: Double): MonthlySavingsSweepUseCase {
+        val budgets = mockk<BudgetRepository>()
+        val goals = mockk<com.yourname.expensetracker.domain.savings.SavingsGoalRepository>()
+        val expenses = mockk<ExpenseRepository>()
+        val recurring = mockk<RecurringExpenseRepository>()
+        val planned = mockk<PlannedExpenseRepository>()
+        val simulator = mockk<com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator>()
+        val normalizer = mockk<com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer>()
+        val settings = mockk<com.yourname.expensetracker.domain.currency.CurrencySettingsRepository>()
+        val converter = mockk<com.yourname.expensetracker.domain.currency.CurrencyConverter>()
+        val occurrences = mockk<com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao>()
+        every { budgets.getBudgetStatuses() } returns flowOf(listOf(
+            com.yourname.expensetracker.domain.budget.BudgetStatus(
+                budget = com.yourname.expensetracker.data.database.entity.Budget(
+                    id = 1L, categoryId = null, amount = safeAmount,
+                    period = com.yourname.expensetracker.data.database.entity.BudgetPeriod.MONTHLY,
+                    startDate = timeProvider.now(), currency = "EUR", currencyAssumption = "EXPLICIT"
+                ), category = null, spentAmount = 0.0, remainingAmount = safeAmount,
+                percentUsed = 0f, healthStatus = com.yourname.expensetracker.domain.budget.BudgetHealthStatus.ON_TRACK,
+                periodStart = 0L, periodEnd = Long.MAX_VALUE, effectiveLimit = safeAmount
+            )
+        ))
+        every { goals.observeSavingsGoals() } answers {
+            kotlinx.coroutines.flow.flow {
+                val row = database.savingsGoalDao().getById(1L)!!
+                emit(listOf(com.yourname.expensetracker.domain.model.SavingsGoal(
+                    row.id, row.name, row.targetAmount, row.currentAmount, null,
+                    com.yourname.expensetracker.domain.model.GoalProtectionLevel.WARNING,
+                    row.currency, row.currencyAssumption, row.createdAt
+                )))
+            }
+        }
+        every { settings.homeCurrency() } returns flowOf("EUR")
+        every { settings.lastRateUpdate() } returns flowOf(0L)
+        every { recurring.getAllFlow() } returns flowOf(emptyList())
+        every { planned.getAllPlannedExpenses() } returns flowOf(emptyList())
+        coEvery { expenses.getExpenseSnapshotsBetween(any(), any()) } returns emptyList()
+        coEvery { normalizer.normalizeSnapshots(any(), "EUR") } returns
+            com.yourname.expensetracker.domain.analytics.AnalyticsNormalizationResult(
+                "EUR", emptyList(), emptyList(), emptyList(), null, totalInputCount = 0
+            )
+        coEvery { occurrences.getByDateRange(any(), any()) } returns emptyList()
+        coEvery { converter.convertMultiple(any(), "EUR") } returns
+            com.yourname.expensetracker.domain.currency.MultiConversionAggregate(0.0, "EUR", emptyList())
+        coEvery { simulator.simulate(any(), any(), any(), "EUR", any()) } returns
+            com.yourname.expensetracker.domain.forecasting.MonteCarloResult(
+                0.0, 0.0, 0.0, 0.0, 0.0, 1.0, safeAmount, 0.0, 0.0,
+                com.yourname.expensetracker.domain.forecasting.SimulationConfidence(
+                    0.9, com.yourname.expensetracker.domain.forecasting.ConfidenceLevel.HIGH, "TEST"
+                ), com.yourname.expensetracker.domain.forecasting.SimulationMetadata(
+                    10, 10, 1000, 0.0, 0.0, 1, timeProvider.now()
+                ), "EUR"
+            )
+        return MonthlySavingsSweepUseCase(budgets, goals, expenses, recurring, planned, simulator,
+            timeProvider, normalizer, settings, converter, occurrences)
+    }
+
     private fun ledgerDao(
         insertResult: Long = 1L,
         insertError: CancellationException? = null
@@ -386,6 +578,9 @@ class SavingsSweepAcceptanceCoordinatorTest {
                 realDao.getByIdempotencyKey(idempotencyKey)
 
             override suspend fun getAll() = realDao.getAll()
+
+            override suspend fun hasSweepBetween(startInclusive: Long, endExclusive: Long) =
+                realDao.hasSweepBetween(startInclusive, endExclusive)
         }
     }
 
@@ -418,7 +613,7 @@ class SavingsSweepAcceptanceCoordinatorTest {
     )
 
     private fun recommendation(vararg allocations: GoalAllocation) = SavingsSweepRecommendation(
-        totalUnderspend = 50.0,
+        totalUnderspend = maxOf(60.0, allocations.sumOf { it.suggestedAllocation } + 10.0),
         riskBuffer = 10.0,
         safeSweepAmount = allocations.sumOf { it.suggestedAllocation },
         goalAllocations = allocations.toList(),

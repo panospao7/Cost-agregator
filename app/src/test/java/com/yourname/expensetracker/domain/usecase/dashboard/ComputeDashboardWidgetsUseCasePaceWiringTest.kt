@@ -418,6 +418,52 @@ class ComputeDashboardWidgetsUseCasePaceWiringTest {
         assertEquals(CurrencyQualityUi.unavailable(reason.name), widget.currencyQuality)
     }
 
+    @Test
+    fun uncertain_or_mismatched_budget_cannot_drive_runway_or_monte_carlo() = runTest {
+        fixedNowMs = toEpochMs(2026, 6, 15, 12, 0)
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
+            HomeCurrencyResolution.Resolved(CurrencyCode("USD"))
+        val explicit = budgetSnapshot("USD")
+        for (budget in listOf(
+            explicit.copy(currency = "EUR"),
+            explicit.copy(currency = null),
+            explicit.copy(currencyAssumption = "LEGACY_DEFAULT"),
+            explicit.copy(isPartial = true),
+            explicit.copy(percentKnown = false),
+            explicit.copy(conversionWarning = "SECRET conversion payload"),
+            explicit.copy(budgetAmount = Double.NaN)
+        )) {
+            val data = createProcessedData(emptyList())
+            val result = computeUseCase.compute(data.copy(data = data.data.copy(budgetStatuses = listOf(budget))))
+            assertMonteCarloUnavailable(result, MoneyDisplayUnavailableReasonCode.DISPLAY_CONVERSION_UNAVAILABLE)
+            val runway = result.allWidgets.filterIsInstance<DashboardWidget.FinancialRunway>().single()
+            assertTrue(runway.isUnavailable)
+            assertEquals(CurrencyQualityUi.unavailable("DISPLAY_CONVERSION_UNAVAILABLE"), runway.currencyQuality)
+            org.junit.Assert.assertNull(result.allWidgets.filterIsInstance<DashboardWidget.SafeToSpend>().single().totalBudget)
+        }
+        coVerify(exactly = 0) { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) }
+        org.junit.Assert.assertNull(lastForecastInput)
+    }
+
+    @Test
+    fun complete_budget_in_current_home_currency_preserves_its_normalized_amount() = runTest {
+        fixedNowMs = toEpochMs(2026, 6, 15, 12, 0)
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
+            HomeCurrencyResolution.Resolved(CurrencyCode("USD"))
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), "USD", any()) } returns monteCarloResult("USD")
+        val data = createProcessedData(emptyList())
+        val result = computeUseCase.compute(data.copy(data = data.data.copy(budgetStatuses = listOf(budgetSnapshot("USD")))))
+        coVerify(exactly = 1) { monteCarloSimulator.simulate(0.0, 0.0, 1234.5, "USD", 0.0) }
+        assertTrue(!result.allWidgets.filterIsInstance<DashboardWidget.FinancialRunway>().single().isUnavailable)
+        assertEquals(1234.5, result.allWidgets.filterIsInstance<DashboardWidget.SafeToSpend>().single().totalBudget!!, 0.0)
+    }
+
+    private fun budgetSnapshot(currency: String) = com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot(
+        null, 1234.5, null, 0.0, 1234.5, 0.0,
+        com.yourname.expensetracker.domain.budget.BudgetHealthStatus.ON_TRACK,
+        fixedNowMs, fixedNowMs + DAY_MS, currency = currency, currencyAssumption = "USER_CONFIRMED"
+    )
+
     private fun monteCarloResult(currency: String) = MonteCarloResult(
         percentile10 = 100.0, percentile25 = 125.0, percentile50 = 150.0,
         percentile75 = 175.0, percentile90 = 200.0,

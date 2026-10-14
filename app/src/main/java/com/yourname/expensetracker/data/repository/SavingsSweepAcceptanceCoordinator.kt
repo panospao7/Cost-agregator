@@ -5,9 +5,11 @@ import androidx.room.withTransaction
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.SavingsContributionLedgerDao
+import com.yourname.expensetracker.data.database.dao.SavingsSweepMonthAcceptanceDao
 import com.yourname.expensetracker.data.database.dao.SavingsGoalDao
 import com.yourname.expensetracker.data.database.dao.SavingsSweepPlanDao
 import com.yourname.expensetracker.data.database.entity.SavingsContributionLedgerEntry
+import com.yourname.expensetracker.data.database.entity.SavingsSweepMonthAcceptance
 import com.yourname.expensetracker.data.database.entity.SavingsGoal
 import com.yourname.expensetracker.data.database.entity.SavingsSweepPlan
 import com.yourname.expensetracker.data.database.entity.SweepPlanStatus
@@ -16,6 +18,7 @@ import com.yourname.expensetracker.domain.savings.SavingsGoalCurrencyPolicy
 import com.yourname.expensetracker.domain.usecase.savings.GoalAllocation
 import com.yourname.expensetracker.domain.usecase.savings.SavingsSweepRecommendation
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import java.math.BigDecimal
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
@@ -37,6 +40,7 @@ class SavingsSweepAcceptanceCoordinator @Inject constructor(
     private val savingsGoalDao: SavingsGoalDao,
     private val savingsSweepPlanDao: SavingsSweepPlanDao,
     private val contributionLedgerDao: SavingsContributionLedgerDao,
+    private val monthAcceptanceDao: SavingsSweepMonthAcceptanceDao,
     private val writeBarrier: DatabaseWriteBarrier,
     private val timeProvider: TimeProvider
 ) {
@@ -53,6 +57,14 @@ class SavingsSweepAcceptanceCoordinator @Inject constructor(
             database.withTransaction {
                 val actionedAt = timeProvider.now()
                 rejectUnless(actionedAt > 0L, TIME_UNAVAILABLE)
+                val monthStart = TimePeriodUtils.getStartOfMonth(recommendation.monthEnd)
+                val nextMonthStart = TimePeriodUtils.getEndOfMonth(recommendation.monthEnd)
+                // The independent month marker survives deletion of every goal.
+                // Retain legacy plan/ledger evidence for defensive compatibility.
+                val monthAlreadyAccepted = monthAcceptanceDao.hasAcceptanceBetween(monthStart, nextMonthStart) ||
+                    savingsSweepPlanDao.getPlansForMonth(recommendation.monthEnd)
+                    .any { it.status == SweepPlanStatus.ACCEPTED } ||
+                    contributionLedgerDao.hasSweepBetween(monthStart, nextMonthStart)
                 var newlyAccepted = false
 
                 recommendation.goalAllocations.forEach { allocation ->
@@ -80,6 +92,13 @@ class SavingsSweepAcceptanceCoordinator @Inject constructor(
                         }
                         return@forEach
                     }
+
+                    rejectUnless(!monthAlreadyAccepted, MONTH_ALREADY_ACCEPTED)
+                    rejectUnless(
+                        actionedAt in monthStart until nextMonthStart &&
+                            recommendation.computedAt in monthStart until nextMonthStart,
+                        SNAPSHOT_MISMATCH
+                    )
 
                     if (existingPlan != null) {
                         rejectUnless(
@@ -142,6 +161,15 @@ class SavingsSweepAcceptanceCoordinator @Inject constructor(
                 }
 
                 if (newlyAccepted) {
+                    val markerId = monthAcceptanceDao.insert(
+                        SavingsSweepMonthAcceptance(
+                            monthStart = monthStart,
+                            monthEndExclusive = nextMonthStart,
+                            actionedAt = actionedAt,
+                            reasonCode = SavingsSweepMonthAcceptance.ACCEPTED
+                        )
+                    )
+                    rejectUnless(markerId > 0L, IDEMPOTENCY_CONFLICT)
                     SavingsSweepAcceptanceResult.Accepted
                 } else {
                     SavingsSweepAcceptanceResult.AlreadyAccepted
@@ -173,6 +201,11 @@ class SavingsSweepAcceptanceCoordinator @Inject constructor(
                 recommendation.computedAt > 0L &&
                 recommendation.monthEnd > 0L &&
                 recommendation.rateTimestamp >= 0L,
+            INVALID_RECOMMENDATION
+        )
+
+        rejectUnless(
+            recommendation.safeSweepAmount <= recommendation.totalUnderspend - recommendation.riskBuffer,
             INVALID_RECOMMENDATION
         )
 
@@ -309,6 +342,7 @@ class SavingsSweepAcceptanceCoordinator @Inject constructor(
         const val INCOMPLETE_STATE = "SAVINGS_SWEEP_INCOMPLETE_STATE"
         const val PLAN_ALREADY_ACTIONED = "SAVINGS_SWEEP_PLAN_ALREADY_ACTIONED"
         const val PLAN_STATE_CONFLICT = "SAVINGS_SWEEP_PLAN_STATE_CONFLICT"
+        const val MONTH_ALREADY_ACCEPTED = "SAVINGS_SWEEP_MONTH_ALREADY_ACCEPTED"
         const val ACCEPTANCE_UNAVAILABLE = "SAVINGS_SWEEP_ACCEPTANCE_UNAVAILABLE"
     }
 }

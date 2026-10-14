@@ -199,7 +199,8 @@ class DashboardWidgetConsistencyTest {
             percentUsed = 10.0,
             healthStatus = BudgetHealthStatus.ON_TRACK,
             periodStart = monthStart,
-            periodEnd = monthStart + 30 * 86400000L
+            periodEnd = monthStart + 30 * 86400000L,
+            currency = "EUR", currencyAssumption = "EXPLICIT"
         )
 
         val processedData = createProcessedData(
@@ -239,7 +240,8 @@ class DashboardWidgetConsistencyTest {
             percentUsed = 50.0,
             healthStatus = BudgetHealthStatus.ON_TRACK,
             periodStart = 0,
-            periodEnd = 0
+            periodEnd = 0,
+            currency = "EUR", currencyAssumption = "EXPLICIT"
         )
 
         val processedData = createProcessedData(

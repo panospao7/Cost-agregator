@@ -98,6 +98,25 @@ class SpendingThresholdCalculatorTest {
     }
 
     @Test
+    fun normalizedThresholdUsesMinimumForSparseInput() {
+        val threshold = calculator.calculateHighAmountThresholdFromNormalizedAmounts(
+            listOf(10.0, 20.0, 30.0)
+        )
+
+        assertEquals(50.0, threshold, 0.01)
+    }
+
+    @Test
+    fun normalizedThresholdComputesP90WithoutRawDao() {
+        val amounts = (1..10).map { it.toDouble() * 100.0 }
+
+        val threshold = calculator.calculateHighAmountThresholdFromNormalizedAmounts(amounts)
+
+        assertEquals(910.0, threshold, 0.01)
+        coVerify(exactly = 0) { expenseDao.getAmountsForPercentileCalc(any(), any()) }
+    }
+
+    @Test
     fun `refreshThreshold clears cache for default user`() = runTest(testDispatcher) {
         val now = System.currentTimeMillis()
         every { timeProvider.now() } returns now

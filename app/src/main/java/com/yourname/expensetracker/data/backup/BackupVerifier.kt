@@ -35,11 +35,12 @@ import timber.log.Timber
 object BackupVerifier {
 
     private const val SAVINGS_CONTRIBUTION_LEDGER_SCHEMA_VERSION = 150
+    private const val SAVINGS_SWEEP_MONTH_SCHEMA_VERSION = 151
 
-    // ── Verification tier assignment for all 58 tables ──────────
+    // ── Verification tier assignment for all 59 tables ──────────
 
     /**
-     * All 58 tracked table names with their verification tier.
+     * All 59 tracked table names with their verification tier.
      */
     private val TABLE_TIERS: Map<String, VerificationTier> = mapOf(
         // ── Tier 1: Exact row count required (39 total) ──
@@ -62,6 +63,7 @@ object BackupVerifier {
         "planned_expenses"               to VerificationTier.TIER_1_EXACT,
         "savings_goals"                  to VerificationTier.TIER_1_EXACT,
         "savings_contribution_ledger"    to VerificationTier.TIER_1_EXACT,
+        "savings_sweep_month_acceptance" to VerificationTier.TIER_1_EXACT,
         "warranties"                     to VerificationTier.TIER_1_EXACT,
         "return_windows"                 to VerificationTier.TIER_1_EXACT,
         "mileage_tracking"               to VerificationTier.TIER_1_EXACT,
@@ -196,9 +198,13 @@ object BackupVerifier {
         .filterValues { it == VerificationTier.TIER_1_EXACT }
         .keys
         .filterTo(mutableSetOf()) { tableName ->
-            tableName != "savings_contribution_ledger" ||
-                databaseVersion == null ||
-                databaseVersion >= SAVINGS_CONTRIBUTION_LEDGER_SCHEMA_VERSION
+            when (tableName) {
+                "savings_contribution_ledger" -> databaseVersion == null ||
+                    databaseVersion >= SAVINGS_CONTRIBUTION_LEDGER_SCHEMA_VERSION
+                "savings_sweep_month_acceptance" -> databaseVersion == null ||
+                    databaseVersion >= SAVINGS_SWEEP_MONTH_SCHEMA_VERSION
+                else -> true
+            }
         }
 
     /**
@@ -221,24 +227,31 @@ object BackupVerifier {
     }
 
     /**
-     * Adds exact zero-count expectations for tables created by a Room migration.
+     * Adds exact count expectations for tables created by a Room migration.
      *
      * A pre-150 backup legitimately has no ledger count. The staged database is
      * migrated before the second quick verification and before live full
      * verification, so the newly created ledger must be verified as an empty
      * exact table rather than silently omitted from those checks.
+     * Pre-151 restores create exactly one conservative migration-month marker.
      */
     fun expectedCountsAfterMigration(
         expectedCounts: Map<String, Int>,
         sourceDatabaseVersion: Int?
     ): Map<String, Int> {
+        val migrated = expectedCounts.toMutableMap()
         if (sourceDatabaseVersion != null &&
             sourceDatabaseVersion < SAVINGS_CONTRIBUTION_LEDGER_SCHEMA_VERSION &&
             "savings_contribution_ledger" !in expectedCounts
         ) {
-            return expectedCounts + ("savings_contribution_ledger" to 0)
+            migrated["savings_contribution_ledger"] = 0
         }
-        return expectedCounts
+        if (sourceDatabaseVersion != null && sourceDatabaseVersion < SAVINGS_SWEEP_MONTH_SCHEMA_VERSION &&
+            "savings_sweep_month_acceptance" !in expectedCounts
+        ) {
+            migrated["savings_sweep_month_acceptance"] = 1
+        }
+        return migrated
     }
 
     // ── Strict count collection for backup creation (P7-CURRENT-015) ──

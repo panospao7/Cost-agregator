@@ -2,7 +2,7 @@
 
 Canonical guide for segment ownership and AI analysis.
 
-**Last updated:** 2026-10-12 (schema/savings delta verified against source). Database schema version: v150 (`data/database/AppDatabase.kt`).
+**Last updated:** 2026-10-13 (schema/savings delta verified against source). Database schema version: v151 (`data/database/AppDatabase.kt`).
 
 ## Rules
 - One segment list, one ascending order, one owning section per segment.

@@ -5602,21 +5602,23 @@ def test_checked_in_structural_only_manifest_contract_via_production_apis():
     (two coordinator-owned grants replace one repository grant), yielding
     424. The Wave-2 recovery exact-identity tests pin those four grants.
     Wave-5 R16 adds four human-approved coordinator transaction identities,
-    yielding 428; their exact callable/DAO contracts are pinned below.
+    yielding 428. The human-approved F2 month marker adds one exact insert
+    identity (2026-10-13), yielding 429; all five contracts are pinned below.
     Re-derive this pin after every policy promotion.
     """
     from scripts.db_guard.source_roots import load_source_root_manifest
 
     entries = load_db_ownership_policy()
-    assert len(entries) == 428
+    assert len(entries) == 429
     sweep_path = (
         "app/src/main/java/com/yourname/expensetracker/data/repository/"
         "SavingsSweepAcceptanceCoordinator.kt"
     )
     sweep_entries = [entry for entry in entries if entry.path == sweep_path]
-    assert len(sweep_entries) == 4
+    assert len(sweep_entries) == 5
     assert {(entry.dao_accessor, entry.dao_fqcn, entry.operation) for entry in sweep_entries} == {
         ("contributionLedgerDao", "com.yourname.expensetracker.data.database.dao.SavingsContributionLedgerDao", "insert"),
+        ("monthAcceptanceDao", "com.yourname.expensetracker.data.database.dao.SavingsSweepMonthAcceptanceDao", "insert"),
         ("savingsGoalDao", "com.yourname.expensetracker.data.database.dao.SavingsGoalDao", "addToGoalAmountIfSnapshot"),
         ("savingsSweepPlanDao", "com.yourname.expensetracker.data.database.dao.SavingsSweepPlanDao", "insert"),
         ("savingsSweepPlanDao", "com.yourname.expensetracker.data.database.dao.SavingsSweepPlanDao", "acceptPendingPlan"),
@@ -6074,9 +6076,10 @@ def test_current_db_gate_activated_policy_real_config_pipeline(tmp_path, monkeyp
     # plus seven net exact-owner reconciliation entries, plus the Wave-2
     # recovery reconciliation (restore update -> CAS 1:1, three new exact
     # recovery rows): 420 - 1 + 1 + 3 = 423; CA-I-05-001 adds one net row;
-    # Wave-5 R16 adds four approved coordinator identities, yielding 428.
+    # Wave-5 R16 adds four approved coordinator identities, and the approved
+    # F2 month-marker insert adds one, yielding 429.
     # Re-derived per the checked-in-manifest contract pin above.
-    assert len(entries) == 428
+    assert len(entries) == 429
 
     # The structural gate really ran (post-activation it is no longer
     # short-circuited by a loader block) and stayed clean.
