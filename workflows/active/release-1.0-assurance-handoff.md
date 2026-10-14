@@ -1,75 +1,89 @@
-# Release 1.0 assurance setup handoff - 2026-10-13
+# Release 1.0 assurance handoff
 
-Status: SETUP ONLY. Prompts and profiles authored; no assurance phase, independent
-review, application validation, device test or release acceptance executed here.
+```text
+Status: PENDING (Phase 0 PARTIAL; coverage plan awaiting human approval)
+Current source/artifact: local HEAD 84d819be6e288b82649a1c125fbcaa10f026d0d9 (pushed;
+  origin/bug-fixes = 84d819be). The owner committed 14a2e6ce (perf runner), 73a22f44
+  (agent guidance) and 84d819be (kit) DURING Phase 0. app/ == ea446316 (verified).
+  Runner/build inputs are those of 14a2e6ce. No release artifact.
+Current approved phase/scope: Phase 0 + coverage planning ONLY (2026-10-14). Nothing beyond.
+Mode: delegated. User authorized named release subagent profiles for this lane
+  on 2026-10-14. Limits: at most 2 read-only workers, 1 writer, 1 validation owner, no
+  nested delegation. Historical Wave 5 and performance-lane no-subagent
+  constraints are unchanged for those lanes.
+Decisions / historical constraints: Wave 5 CLOSED under owner acceptance with
+  independent remediation re-review WAIVED (original independent FAIL preserved).
+  Release lane treats that delta as not independently reviewed (R-1).
+Changed paths (this session, artifacts only):
+  docs/releases/release-1.0-assurance/release-1.0-baseline.md (new)
+  docs/releases/release-1.0-assurance/release-1.0-coverage-matrix.md (new)
+  docs/releases/release-1.0-assurance/release-1.0-regression-ledger.md (new, seed)
+  workflows/active/release-1.0-assurance-handoff.md (this file)
+Confirmed/refuted/open findings: none (no audit run). Seeded closure claims are UNVERIFIED.
+Review/guardian verdicts: none in this lane.
+Current vs historical validation: Wave 5 candidate-only runs (6x PASS, isolated
+  clone, content-equivalent to ea446316) are baseline evidence only. No validation
+  was run in this lane. Remote CI: no runs on bug-fixes since 2026-06-18.
+```
 
-## Intent
+## Approval log
 
-After Wave 5, establish a stable 1.0 app with evidence from campaign fix closure,
-whole-app pipeline/engine/infrastructure reviews, end-to-end user journeys,
-runtime/device tests and a controlled optimized-artifact stabilization window.
-Do not limit this to Wave 5 diff checking or claim no possible bugs.
+- 2026-10-14: the user replied "proceed" to the Phase 0/coverage report. Recorded as approval
+  of the coverage/dispatch plan and of slice RG-01 ONLY (discovery + independent
+  refutation + persistence, then stop). It is NOT approval of remediation, validation,
+  commit/push, later slices, or answers to B-1..B-3/H-1..H-4 (still open).
+- RG-01 discovery dispatched: release-regression-auditor, requested Opus 5.5/xhigh.
 
-## Resume
+## Next action (requires human approval)
 
-1. `docs/prompts/release-1.0-assurance/README.md`
-2. `docs/prompts/release-1.0-assurance/00-master-orchestrator.md`
-3. `docs/prompts/release-1.0-assurance/01-baseline-freeze.md`
-   Also read coverage-plan.md, evidence-map.md and copy-paste-starts.md there.
-4. Current Wave 5 packet: `workflows/active/money-w5-savings-b8-20261012-handoff.md`
-5. Current architecture signposts and candidate source; old snapshots are not truth.
+Approve or amend the coverage plan, then dispatch slice RG-01 only:
 
-At setup: branch bug-fixes, HEAD 4137afdf, active mixed/uncommitted Wave 5 work.
-This is not the accepted release pin. Preserve all unrelated changes. No commits,
-staging, push, schema/source/guard edits, or subagents were performed for this kit.
-Other sessions may change Wave 5 paths; re-inspect before beginning the lane.
+- Slice: RG-01, CL-19 restore/backup fail-closed state machine (P07-003/004/005
+  P0, P10-001 P1, I01-001) plus classification of RP-03 S2 asset-recovery gaps.
+- Discovery: `release-regression-auditor` with explicit Opus 5.5/xhigh request
+  (T1 override of the Sonnet/high pin; record actual model/effort).
+- Refutation: fresh `release-finding-verifier` (Opus 5.5/xhigh), not the auditor.
+- Write scope for agents: NONE. The lead persists results to the regression ledger,
+  `release-1.0-verification-ledger.md` and this handoff.
+- Pin check before/after: `git diff --quiet ea446316 -- app` and no untracked app files;
+  record `git rev-parse HEAD`.
+- Stop after RG-01: no remediation, no validation, no later slices.
 
-## Models/effort
+## Human prerequisites (from baseline dossier)
 
-Full 5.5 IDs and `effort` are set in .claude/agents. Haiku/medium indexing;
-Sonnet/high normal audits/coding/tests; Opus/xhigh risk analysis/verification/
-guardians; Opus/max bounded final acceptance; Haiku/low validation execution.
-Main release-orchestrator uses Opus/high. Actual profile loading/model requests
-are NOT RUN; local CLI --version/--help showed 2.1.296 and effort support.
+- B-1: performance lane (gradle.properties, scripts/validation-runner.ps1,
+  test-shards.json) is now committed locally in 14a2e6ce. Owner must confirm it
+  belongs on the release line and state the review status of its later changes.
+  A runner self-check at the pin comes before any release queue. Not needed for static slices.
+- H-4: RESOLVED — the three Phase 0 commits were owner-requested and are pushed on origin/bug-fixes.
+- B-2: no runner release APK/AAB profile; CI release-check not running. Approve
+  a narrow profile or restore CI before the artifact gate.
+- B-3: production signing/distribution process (release is debug-signed).
+- H-1: shipped 1.0 feature scope (bank sync appears debug-only in code; demo tax
+  and static negotiation providers bound in release; debug screen reachability).
+- H-2: supported upgrade/backup policy and device/API matrix, stabilization length.
+- H-3: PUBLIC repo tracks an expense .db backup, 28 receipt photos and session
+  transcripts. Owner decides whether they contain real personal data. This lane
+  does not read them.
 
-Historical no-subagent amendments remain active for the old Wave 5 lane. The
-kit provides a future delegated release mode requiring explicit authorization,
-and a solo mode with separate fresh independent reviewer sessions. No global
-Claude settings or model override environment variables were changed.
+## Resume protocol
 
-## Release-specific planning gaps
+1. Read this file, then `docs/prompts/release-1.0-assurance/README.md`.
+2. Verify `git rev-parse HEAD` (last recorded 84d819be) and that app/ is unchanged
+   vs ea446316. If app/ changed, re-run Phase 0 for the delta before continuing.
+   If only HEAD moved, record the new commits and their paths.
+3. Read `docs/releases/release-1.0-assurance/release-1.0-baseline.md` and
+   `release-1.0-coverage-matrix.md` (section 6 queue). Do not exceed the recorded
+   approved scope.
+4. Kit drift: README/earlier handoff name `money-w5-savings-b8-20261012-handoff.md`
+   as the latest Wave 5 packet. The actual latest is
+   `workflows/active/money-w5-independent-remediation-20261013-handoff.md`.
 
-- Final Wave 5 candidate/review/runtime gates still need reconciliation from its
-  latest packet; do not borrow earlier PASS records as current proof.
-- Existing release build is minified/resource-shrunk but debug-signed for CI
-  verification in app/build.gradle.kts. Production signing/protected distribution
-  process must be proven without exposing credentials; no signing change here.
-- scripts/validation-runner.ps1 currently lacks a release APK/AAB profile.
-  Reuse verified CI release-check evidence or plan an approved narrow durable
-  integration before local optimized-artifact execution. Existing release_artifact
-  guard is external to the static suite/registered-guard bridge. Never bypass
-  the runner, invent a task/profile, or reimplement an existing verifier blindly.
-- Confirm shipped features, supported upgrade/data policy, device/API matrix,
-  performance bounds and stabilization duration with the human owner.
+## Setup history (2026-10-13)
 
-## Next action
-
-Run Phase 0 evidence reconciliation and coverage planning only, using the master
-prompt. Return prerequisites and bounded slices for approval before spawning a
-campaign or executing expensive validation. All report/gate statuses are pending.
-
-## Setup evidence and limitations
-
-Read architecture signposts, previous campaign ownership/defect lenses, registry
-execution metadata, shard manifests and representative source/test boundaries.
-The evidence-map records dispatch seeds and proof limitations, not app verdicts.
-
-Local prompt/profile review is not independent acceptance. Actual Claude profile
-loading/model requests and app builds/tests/guards remain NOT RUN. An earlier
-generic ASCII check rejected existing UTF-8 punctuation in CLAUDE.md and the
-three old profiles; that was an inappropriate text check, not an app failure.
-Existing UTF-8 contents were preserved, not broadly reformatted.
-
-Finish kit/profile/handoff edits before any final validation queue. Current
-runner fingerprints include dirty/untracked files and do not encode the base
-commit SHA; record source SHA separately. No edits during live validation.
+The kit and profiles were authored at HEAD 4137afdf on mixed Wave 5 WIP. No phase
+or validation was run at setup, and actual profile loading was NOT RUN.
+In this session (2026-10-14) two `scout` read-only indexing tasks ran. The profile
+pin requests Haiku 5.5/medium, but the actual model/effort was not independently
+confirmed from /tasks. Their reports are summarized
+in the coverage matrix and regression ledger seed.
