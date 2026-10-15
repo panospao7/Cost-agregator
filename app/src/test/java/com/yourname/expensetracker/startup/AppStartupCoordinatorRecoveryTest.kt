@@ -7,7 +7,9 @@ import android.content.SharedPreferences
 import androidx.test.core.app.ApplicationProvider
 import androidx.work.Configuration
 import androidx.work.testing.WorkManagerTestInitHelper
+import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import com.google.common.util.concurrent.SettableFuture
 import com.yourname.expensetracker.domain.workers.PendingWorkerTestFactory
 import com.yourname.expensetracker.domain.workers.WorkerLeaseRegistry
 import com.yourname.expensetracker.domain.workers.WorkerRegistry
@@ -24,7 +26,9 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkObject
+import io.mockk.mockkStatic
 import io.mockk.unmockkObject
+import io.mockk.unmockkStatic
 import io.mockk.verify
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -1257,14 +1261,16 @@ class AppStartupCoordinatorRecoveryTest {
         }
 
         assertEquals(
-            RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED,
+            RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED,
             mode.currentMode()
         )
-        assertTrue(
-            mode.operationalStateFlow.value is
-                com.yourname.expensetracker.data.backup.AppOperationalState.CriticalRecoveryRequired
+        assertEquals(
+            com.yourname.expensetracker.data.backup.AppOperationalState.RestartRequiredAfterRestore,
+            mode.operationalStateFlow.value
         )
         assertFalse(mode.isWritesAllowed())
+        val prefs = context.getSharedPreferences("restore_maintenance_mode", Context.MODE_PRIVATE)
+        assertTrue(prefs.getBoolean("worker_resume_pending", false))
     }
 
     @Test
@@ -1593,14 +1599,111 @@ class AppStartupCoordinatorRecoveryTest {
         }
 
         assertEquals(
-            RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED,
+            RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED,
             mode.currentMode()
         )
-        assertTrue(
-            mode.operationalStateFlow.value is
-                com.yourname.expensetracker.data.backup.AppOperationalState.CriticalRecoveryRequired
+        assertEquals(
+            com.yourname.expensetracker.data.backup.AppOperationalState.RestartRequiredAfterRestore,
+            mode.operationalStateFlow.value
         )
         assertFalse(mode.isWritesAllowed())
+        val prefs = context.getSharedPreferences("restore_maintenance_mode", Context.MODE_PRIVATE)
+        assertTrue(prefs.getBoolean("worker_resume_pending", false))
+    }
+
+    /** RG01A-2: positive control. A successful checked resume at startup reaches NORMAL. */
+    @Test
+    fun initialize_recovers_restart_required_state_to_normal_when_checked_resume_succeeds() = runTest {
+        val mode = RestoreMaintenanceMode(
+            context,
+            com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L)
+        )
+        mode.exit(forceRestartRequired = true)
+        val journal = RestoreJournal(
+            context,
+            com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L)
+        )
+        val startupScope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        val coordinator = newCoordinator(mode, journal, resumeScope = startupScope)
+        val application = ApplicationProvider.getApplicationContext<Application>()
+        val activeWork = mockk<WorkInfo>()
+        every { activeWork.state } returns WorkInfo.State.ENQUEUED
+        val manager = mockk<WorkManager>(relaxed = true)
+        every { manager.getWorkInfosForUniqueWork(any()) } answers {
+            SettableFuture.create<List<WorkInfo>>().apply { set(listOf(activeWork)) }
+        }
+
+        mockkObject(WorkerRegistry)
+        mockkStatic(WorkManager::class)
+        try {
+            every { WorkerRegistry.scheduleAll(any(), any(), null) } returns
+                WorkerRegistry.ScheduleAllResult(
+                    WorkerSpec.DEFAULTS.keys.map { name ->
+                        com.yourname.expensetracker.domain.workers.ScheduleResult(
+                            name, scheduled = true, policyUsed = "TEST", versionChanged = false
+                        )
+                    }
+                )
+            every { WorkManager.getInstance(any<Context>()) } returns manager
+
+            coordinator.initialize(application)
+            advanceUntilIdle()
+        } finally {
+            unmockkStatic(WorkManager::class)
+            unmockkObject(WorkerRegistry)
+            startupScope.cancel()
+        }
+
+        assertEquals(RestoreMaintenanceMode.Mode.NORMAL, mode.currentMode())
+        assertTrue(mode.isWritesAllowed())
+        val prefs = context.getSharedPreferences("restore_maintenance_mode", Context.MODE_PRIVATE)
+        assertFalse(prefs.contains("worker_resume_pending"))
+    }
+
+    /**
+     * RG01A-2: direct resetCancellable() on a restart-required state whose reschedule fails
+     * retains NORMAL + worker_resume_pending (no CRITICAL latch) and throws the typed exception.
+     */
+    @Test
+    fun resetCancellable_reschedule_failure_retains_resume_pending_restart_required() = runTest {
+        val mode = RestoreMaintenanceMode(
+            context,
+            com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L)
+        )
+        mode.exit(forceRestartRequired = true)
+        val failedResults = WorkerSpec.DEFAULTS.keys.mapIndexed { index, workerName ->
+            com.yourname.expensetracker.domain.workers.ScheduleResult(
+                workerName = workerName,
+                scheduled = index != 0,
+                policyUsed = "TEST",
+                versionChanged = false,
+                error = if (index == 0) "TEST_SCHEDULE_FAILURE" else null
+            )
+        }
+
+        mockkObject(WorkerRegistry)
+        try {
+            every { WorkerRegistry.scheduleAll(any(), any(), null) } returns
+                WorkerRegistry.ScheduleAllResult(failedResults)
+
+            try {
+                mode.resetCancellable()
+                org.junit.Assert.fail("resetCancellable must throw WorkerRescheduleException")
+            } catch (_: RestoreMaintenanceMode.WorkerRescheduleException) {
+                // expected
+            }
+        } finally {
+            unmockkObject(WorkerRegistry)
+        }
+
+        assertEquals(
+            RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED,
+            mode.currentMode()
+        )
+        assertFalse(mode.isWritesAllowed())
+        val prefs = context.getSharedPreferences("restore_maintenance_mode", Context.MODE_PRIVATE)
+        assertTrue(prefs.getBoolean("worker_resume_pending", false))
+        assertFalse(prefs.contains("critical_recovery_reason"))
     }
 
     /**

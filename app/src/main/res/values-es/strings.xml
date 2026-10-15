@@ -276,4 +276,10 @@
     <string name="debug_database_stats_unavailable">Las estadísticas de la base de datos no están disponibles temporalmente</string>
     <string name="money_radar_unavailable">Money Radar no está disponible temporalmente. No se pudieron evaluar algunas señales financieras.</string>
     <string name="stress_forecast_unavailable">La previsión de estrés financiero no está disponible temporalmente. No hay ninguna estimación de riesgo disponible.</string>
+    <string name="receipt_reopened_existing_notice">Este recibo ya fue escaneado. Se muestra el recibo guardado.</string>
+    <string name="budget_currency_display_format">Moneda: %1$s</string>
+    <string name="budget_confirm_currency_action">Confirmar moneda</string>
+    <string name="financial_runway_review_budget">Revisar presupuesto</string>
+    <string name="backup_restore_receipt_images_skipped_format">No se pudieron restaurar %1$d imágenes de recibos.</string>
+    <string name="restart_required_database_operation">La aplicación debe reiniciarse para terminar una operación de la base de datos. Los cambios están en pausa hasta que se reinicie.</string>
 </resources>

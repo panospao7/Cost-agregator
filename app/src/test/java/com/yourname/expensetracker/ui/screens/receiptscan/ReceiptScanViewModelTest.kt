@@ -335,6 +335,65 @@ class ReceiptScanViewModelTest : ViewModelTestUtils() {
         assertFalse(model.state.value.hasUnverifiedOcrCoverage)
     }
 
+    private fun stubReopened(uri: Uri, receipt: ScannedReceipt) {
+        coEvery { coordinator.processReceiptInput(uri, any()) } returns Result.success(
+            ReceiptLifecycleCoordinator.ReceiptProcessOutcome(receipt, false, null)
+        )
+        coEvery { links.checkCanLinkReceipt(receipt.id) } returns true
+    }
+
+    @Test fun newlyInsertedReceiptDoesNotSetReopenedFlag() = runTest(testDispatcher) {
+        val uri = Uri.parse("content://test/fresh.jpg")
+        stubScan(uri, receipt())
+        model.processGalleryImage(uri)
+        advanceUntilIdle()
+
+        assertEquals(ScanStep.REVIEW, model.state.value.step)
+        assertFalse(model.state.value.reopenedExistingReceipt)
+    }
+
+    @Test fun reopenedExistingReceiptSetsFlagInReview() = runTest(testDispatcher) {
+        val uri = Uri.parse("content://test/reopened.jpg")
+        stubReopened(uri, receipt())
+        model.processGalleryImage(uri)
+        advanceUntilIdle()
+
+        assertEquals(ScanStep.REVIEW, model.state.value.step)
+        assertEquals(17L, model.state.value.receiptId)
+        assertTrue(model.state.value.reopenedExistingReceipt)
+    }
+
+    @Test fun reopenedOcrFailedReceiptSetsFlagInReview() = runTest(testDispatcher) {
+        val uri = Uri.parse("content://test/reopened-ocr-failed.jpg")
+        stubReopened(uri, receipt(status = "OCR_FAILED"))
+        model.processGalleryImage(uri)
+        advanceUntilIdle()
+
+        assertEquals(ScanStep.REVIEW, model.state.value.step)
+        assertTrue(model.state.value.reopenedExistingReceipt)
+    }
+
+    @Test fun reopenedFlagIsClearedByNextScanAndByReset() = runTest(testDispatcher) {
+        val reopenedUri = Uri.parse("content://test/reopened-first.jpg")
+        val freshUri = Uri.parse("content://test/fresh-second.jpg")
+        stubReopened(reopenedUri, receipt())
+        stubScan(freshUri, receipt(id = 18L))
+        model.processGalleryImage(reopenedUri)
+        advanceUntilIdle()
+        assertTrue(model.state.value.reopenedExistingReceipt)
+
+        model.processGalleryImage(freshUri)
+        advanceUntilIdle()
+        assertEquals(18L, model.state.value.receiptId)
+        assertFalse(model.state.value.reopenedExistingReceipt)
+
+        model.processGalleryImage(reopenedUri)
+        advanceUntilIdle()
+        assertTrue(model.state.value.reopenedExistingReceipt)
+        model.reset()
+        assertFalse(model.state.value.reopenedExistingReceipt)
+    }
+
     private fun receipt(id: Long = 17L, status: String = "PARSED") = ScannedReceipt(
         id = id, imagePath = null, rawOcrText = "SQL /private/receipt content://private/918 merchant 1234.56",
         parsedTotal = 10.0, parsedMerchant = "Merchant", parsedDate = 1_700_000_000_000L,

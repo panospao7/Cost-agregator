@@ -772,7 +772,8 @@ fun HomeScreen(
                 status = widget.status,
                 isUnavailable = widget.isUnavailable,
                 currencyQuality = widget.currencyQuality,
-                currency = homeCurrency ?: ""
+                currency = homeCurrency ?: "",
+                onReviewBudget = { onNavigateToBudgetDetail("OVERALL") }
             )
                             }
                             is DashboardWidget.MonteCarloForecast -> {

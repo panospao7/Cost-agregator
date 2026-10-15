@@ -41,9 +41,25 @@ interface ExpenseCategoryAssignmentPort {
     )
 }
 
+/**
+ * Outcome of [ExpenseCategoryAssignmentPort.assignCategoryIfUnset].
+ *
+ * RG11-H2: [Failed] means the assignment did not happen and, when the failure
+ * occurred inside the nested transaction, the enclosing transaction is already
+ * rollback-only (the outermost commit would silently roll back every write of
+ * the enclosing block). In all cases a transactional caller MUST abort by
+ * throwing (never ignore [Failed]).
+ */
 sealed interface CategoryAssignmentOutcome {
     data object Assigned : CategoryAssignmentOutcome
     data object SkippedAlreadySet : CategoryAssignmentOutcome
     data object SkippedExpenseMissing : CategoryAssignmentOutcome
+
+    /**
+     * RG11-H2: the target category no longer exists (merged/deleted/stale id).
+     * Nothing was written; the expense stays uncategorized and the caller's
+     * transaction is unaffected.
+     */
+    data object SkippedCategoryMissing : CategoryAssignmentOutcome
     data class Failed(val reason: String) : CategoryAssignmentOutcome
 }

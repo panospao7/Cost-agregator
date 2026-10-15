@@ -892,6 +892,22 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         RestoreMaintenanceMode.PersistenceException()
     }
 
+    /**
+     * D-23: exit used ONLY at restore/reset abort sites where nothing destructive has happened
+     * (live DB untouched, terminal failure journal already written). A worker reschedule/confirmation
+     * failure leaves the durable NORMAL + worker_resume_pending state (restart-required, writes denied;
+     * the next launch retries the checked resume), so it must not latch CRITICAL and must not skip the
+     * staging/extraction cleanup that follows. PersistenceException, JournalDurabilityException and
+     * cancellation still propagate unchanged.
+     */
+    private fun exitAfterPreDestructiveAbort() {
+        try {
+            restoreMaintenanceMode.exit(forceRestartRequired = false)
+        } catch (_: RestoreMaintenanceMode.WorkerRescheduleException) {
+            Timber.w("Restore: RESTORE_ABORT_WORKER_RESUME_DEFERRED")
+        }
+    }
+
     private suspend fun finishCancelledRestore(
         cancellation: kotlinx.coroutines.CancellationException,
         cleanup: suspend () -> Unit
@@ -982,7 +998,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                         exception = error as? Exception, isTerminal = true)
                     restoreEvents.finalizeRunFailed("BUNDLE_EXTRACTION_FAILED", error as? Exception)
                     restoreJournal.failJournal(journalEntry, "BUNDLE_EXTRACTION_FAILED")
-                    restoreMaintenanceMode.exit(forceRestartRequired = false)
+                    exitAfterPreDestructiveAbort()
                     tempDir.deleteRecursively()
                     return@withContext when (error) {
                         is CostbackupBundle.WrongBackupPasswordException ->
@@ -1013,7 +1029,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.VALIDATION_FAILED, isTerminal = true)
                 restoreEvents.finalizeRunFailed("Backup contains no data")
                 restoreJournal.failJournal(journalEntry, "BACKUP_EMPTY")
-                restoreMaintenanceMode.exit(forceRestartRequired = false)
+                exitAfterPreDestructiveAbort()
                 tempDir.deleteRecursively()
                 return@withContext Result.failure(
                     Exception("Backup contains no data. Restore blocked.")
@@ -1036,7 +1052,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.VALIDATION_FAILED, isTerminal = true)
                 restoreEvents.finalizeRunFailed("Incomplete backup manifest", e)
                 restoreJournal.failJournal(journalEntry, "MANIFEST_INCOMPLETE")
-                restoreMaintenanceMode.exit(forceRestartRequired = false)
+                exitAfterPreDestructiveAbort()
                 tempDir.deleteRecursively()
                 return@withContext Result.failure(e)
             }
@@ -1061,7 +1077,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.ERROR, exception = e, isTerminal = true)
                 restoreEvents.finalizeRunFailed("Staged verification failed", e)
                 restoreJournal.failJournal(journalEntry, "STAGED_VERIFICATION_FAILED")
-                restoreMaintenanceMode.exit(forceRestartRequired = false)
+                exitAfterPreDestructiveAbort()
                 cleanupRestoreStaging(stagedDbPath, tempDir)
                 return@withContext Result.failure(
                     Exception("STAGED_VERIFICATION_FAILED")
@@ -1093,7 +1109,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                             exception = error as? Exception, isTerminal = true)
                         restoreEvents.finalizeRunFailed("Post-migration verification failed", error as? Exception)
                         restoreJournal.failJournal(journalEntry, "POST_MIGRATION_VERIFICATION_FAILED")
-                        restoreMaintenanceMode.exit(forceRestartRequired = false)
+                        exitAfterPreDestructiveAbort()
                         cleanupRestoreStaging(stagedDbPath, tempDir)
                         return@withContext Result.failure(
                             Exception("POST_MIGRATION_VERIFICATION_FAILED")
@@ -1113,7 +1129,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     exception = e, isTerminal = true)
                 restoreEvents.finalizeRunFailed("Staged migration failed", e)
                 restoreJournal.failJournal(journalEntry, "STAGED_MIGRATION_FAILED")
-                restoreMaintenanceMode.exit(forceRestartRequired = false)
+                exitAfterPreDestructiveAbort()
                 // Delete any migrated WAL/SHM files Room may have created
                 cleanupRestoreStaging(stagedDbPath, tempDir)
                 return@withContext Result.failure(
@@ -1133,7 +1149,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     exception = safetyBackupResult.exceptionOrNull(), isTerminal = true)
                 restoreEvents.finalizeRunFailed("Safety backup failed: $reason", safetyBackupResult.exceptionOrNull())
                 restoreJournal.failJournal(journalEntry, "SAFETY_BACKUP_FAILED")
-                restoreMaintenanceMode.exit(forceRestartRequired = false)
+                exitAfterPreDestructiveAbort()
                 cleanupRestoreStaging(stagedDbPath, tempDir)
                 return@withContext Result.failure(
                     Exception("Restore cancelled because safety backup failed: $reason")
@@ -1384,7 +1400,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 cleanupStagedDbTrio(stagedDbPath)
             } else {
                 restoreJournal.failJournal(journalEntry, "RESTORE_FAILED")
-                restoreMaintenanceMode.exit(forceRestartRequired = false)
+                exitAfterPreDestructiveAbort()
                 // P7-006: the outer failure path previously cleaned nothing - staged trio
                 // and extraction workspace leaked. (.pre_restore is kept as a recovery
                 // source for the startup path.)
@@ -2837,7 +2853,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     isTerminal = true)
                 resetEvents.finalizeRunFailed(reason, null)
                 restoreJournal.failJournal(journalEntry, "RESET_SAFETY_BACKUP_FAILED")
-                restoreMaintenanceMode.exit(forceRestartRequired = false)
+                exitAfterPreDestructiveAbort()
                 return@withContext Result.failure(
                     Exception(
                         "Reset cancelled because safety backup failed. " +
@@ -2935,7 +2951,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             val failureCode = restoreFailureReasonCode(e)
             Timber.e("Reset: %s stage=enter_or_drain class=%s", failureCode, e::class.java.simpleName)
             com.yourname.expensetracker.domain.util.CancellationSafe.runCatchingCancellable { resetEvents.finalizeRunFailed(failureCode.name, null) }
-            restoreMaintenanceMode.exit(forceRestartRequired = false)
+            exitAfterPreDestructiveAbort()
             Result.failure(e)
         }
         }

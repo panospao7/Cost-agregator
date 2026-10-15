@@ -34,7 +34,9 @@ fun FinancialRunwayCard(
     currencyQuality: CurrencyQualityUi? = null,
     modifier: Modifier = Modifier,
     /** Placeholder default. Production callers should pass explicit currency. */
-    currency: String = "EUR"
+    currency: String = "EUR",
+    /** R3: optional generic "review budget" link shown only in the unavailable branch. */
+    onReviewBudget: (() -> Unit)? = null
 ) {
     // P5-010 (RP-07): daysRemaining is nullable — null means no runway number may
     // be honestly stated (NO_BURN). Null with a non-NO_BURN status is NOT exhausted.
@@ -107,6 +109,12 @@ fun FinancialRunwayCard(
                 if (currencyQuality?.isPartial == true) {
                     Spacer(modifier = Modifier.height(8.dp))
                     DataQualityWarningChip()
+                }
+                if (onReviewBudget != null) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    TextButton(onClick = onReviewBudget) {
+                        Text(stringResource(R.string.financial_runway_review_budget))
+                    }
                 }
             }
         }

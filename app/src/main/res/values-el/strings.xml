@@ -32,4 +32,10 @@
     <string name="debug_database_stats_unavailable">Τα στατιστικά της βάσης δεδομένων δεν είναι προσωρινά διαθέσιμα</string>
     <string name="money_radar_unavailable">Το Money Radar δεν είναι προσωρινά διαθέσιμο. Δεν ήταν δυνατό να αξιολογηθούν ορισμένες οικονομικές ενδείξεις.</string>
     <string name="stress_forecast_unavailable">Η πρόβλεψη οικονομικής πίεσης δεν είναι προσωρινά διαθέσιμη. Δεν υπάρχει διαθέσιμη εκτίμηση κινδύνου.</string>
+    <string name="receipt_reopened_existing_notice">Αυτή η απόδειξη έχει ήδη σαρωθεί. Εμφανίζεται η αποθηκευμένη απόδειξη.</string>
+    <string name="budget_currency_display_format">Νόμισμα: %1$s</string>
+    <string name="budget_confirm_currency_action">Επιβεβαίωση νομίσματος</string>
+    <string name="financial_runway_review_budget">Έλεγχος προϋπολογισμού</string>
+    <string name="backup_restore_receipt_images_skipped_format">Δεν ήταν δυνατή η επαναφορά %1$d εικόνων αποδείξεων.</string>
+    <string name="restart_required_database_operation">Η εφαρμογή πρέπει να επανεκκινηθεί για να ολοκληρωθεί μια λειτουργία της βάσης δεδομένων. Οι αλλαγές είναι σε παύση μέχρι την επανεκκίνηση.</string>
 </resources>

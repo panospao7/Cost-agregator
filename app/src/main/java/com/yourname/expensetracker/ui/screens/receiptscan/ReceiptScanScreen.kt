@@ -247,7 +247,6 @@ fun ReceiptScanScreen(
 
                 // S7-66F-004: Dedicated duplicate state — hides direct Save
                 ScanStep.DUPLICATE -> {
-                    val dupResult = state.saveResult as? SaveReceiptResult.DuplicateReceipt
                     androidx.compose.foundation.layout.Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -275,15 +274,6 @@ fun ReceiptScanScreen(
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onErrorContainer
                                 )
-                            }
-                        }
-                        if (dupResult?.linkedExpenseId != null) {
-                            Button(onClick = { /* navigate to transaction — host handles */ }) {
-                                Text(stringResource(R.string.receipt_duplicate_view_transaction))
-                            }
-                        } else {
-                            Button(onClick = { /* navigate to receipt matching */ }) {
-                                Text(stringResource(R.string.receipt_duplicate_match_existing))
                             }
                         }
                         OutlinedButton(onClick = { viewModel.reset() }) {
@@ -1168,6 +1158,24 @@ private fun ReviewStep(
     }
 
     ReceiptOcrCoverageWarning(state, modifier = Modifier.padding(top = 8.dp))
+
+    // RG12-01 / V12-NEW-B: the scan resolved to an already-saved receipt
+    if (state.reopenedExistingReceipt) {
+        Spacer(modifier = Modifier.height(8.dp))
+        Card(
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.secondaryContainer
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                text = stringResource(R.string.receipt_reopened_existing_notice),
+                modifier = Modifier.padding(12.dp),
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+    }
 
     // Error messages
     state.errorMessage?.let { error ->

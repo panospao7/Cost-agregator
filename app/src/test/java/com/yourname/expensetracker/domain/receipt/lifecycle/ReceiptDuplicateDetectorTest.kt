@@ -61,6 +61,8 @@ class ReceiptDuplicateDetectorTest {
 
         assertFalse(result.isDuplicate)
         assertEquals("NONE", result.matchType)
+        assertEquals(0.0f, result.confidence, 0.0f)
+        assertEquals(7L, result.existingReceiptId)
     }
 
     @Test
@@ -75,23 +77,60 @@ class ReceiptDuplicateDetectorTest {
     }
 
     @Test
-    fun `text hit is kept when incoming semantic fingerprint is unknown`() = runTest {
+    fun `text hit is unconfirmed not duplicate when incoming semantic fingerprint is unknown`() = runTest {
         coEvery { scannedReceiptDao.getByTextFingerprint(TEXT_FP) } returns receipt(7L, "sem-a")
 
         val result = detector.checkDuplicate(null, TEXT_FP, null, null)
 
-        assertTrue(result.isDuplicate)
-        assertEquals("TEXT_FINGERPRINT", result.matchType)
+        assertFalse(result.isDuplicate)
+        assertEquals(0.0f, result.confidence, 0.0f)
+        assertEquals(7L, result.existingReceiptId)
+        assertEquals("TEXT_FINGERPRINT_UNCONFIRMED", result.matchType)
     }
 
     @Test
-    fun `text hit is kept when existing semantic fingerprint is unknown`() = runTest {
+    fun `text hit is unconfirmed not duplicate when existing semantic fingerprint is unknown`() = runTest {
         coEvery { scannedReceiptDao.getByTextFingerprint(TEXT_FP) } returns receipt(7L, null)
 
         val result = detector.checkDuplicate(null, TEXT_FP, "sem-b", null)
 
+        assertFalse(result.isDuplicate)
+        assertEquals(0.0f, result.confidence, 0.0f)
+        assertEquals(7L, result.existingReceiptId)
+        assertEquals("TEXT_FINGERPRINT_UNCONFIRMED", result.matchType)
+    }
+
+    @Test
+    fun `text hit with both semantic fingerprints missing is unconfirmed not duplicate`() = runTest {
+        coEvery { scannedReceiptDao.getByTextFingerprint(TEXT_FP) } returns receipt(7L, null)
+
+        val result = detector.checkDuplicate(null, TEXT_FP, null, null)
+
+        assertFalse(result.isDuplicate)
+        assertEquals(7L, result.existingReceiptId)
+        assertEquals("TEXT_FINGERPRINT_UNCONFIRMED", result.matchType)
+    }
+
+    @Test
+    fun `text hit with blank semantic fingerprints is not treated as equal`() = runTest {
+        coEvery { scannedReceiptDao.getByTextFingerprint(TEXT_FP) } returns receipt(7L, "")
+
+        val result = detector.checkDuplicate(null, TEXT_FP, "", null)
+
+        assertFalse(result.isDuplicate)
+        assertEquals("TEXT_FINGERPRINT_UNCONFIRMED", result.matchType)
+    }
+
+    @Test
+    fun `unconfirmed text hit falls through to external id match`() = runTest {
+        coEvery { scannedReceiptDao.getByTextFingerprint(TEXT_FP) } returns receipt(7L, null)
+        coEvery { scannedReceiptDao.getBySourceFingerprint("msg-1") } returns receipt(11L, null)
+
+        val result = detector.checkDuplicate(null, TEXT_FP, null, "msg-1")
+
         assertTrue(result.isDuplicate)
-        assertEquals("TEXT_FINGERPRINT", result.matchType)
+        assertEquals("EXTERNAL_ID", result.matchType)
+        assertEquals(11L, result.existingReceiptId)
     }
 
     @Test

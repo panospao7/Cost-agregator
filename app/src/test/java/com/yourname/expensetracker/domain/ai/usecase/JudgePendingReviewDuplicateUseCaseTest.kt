@@ -32,6 +32,8 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
+import kotlin.coroutines.cancellation.CancellationException
 import org.junit.Before
 import org.junit.Test
 
@@ -246,6 +248,48 @@ class JudgePendingReviewDuplicateUseCaseTest {
         assertTrue(result is DedupeJudgeGenerationResult.Success)
         assertTrue((result as DedupeJudgeGenerationResult.Success).fromCache.not())
         coVerify(exactly = 1) { dedupeJudgeService.judge(any()) }
+    }
+
+    @Test
+    fun `invoke propagates CancellationException without persisting FAILED artifact`() = runTest {
+        every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, dedupeJudgeEnabled = true))
+        coEvery { inputBuilder.build(any(), any()) } returns DedupeJudgeBuildResult.Ready(makeInput())
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
+        coEvery { dedupeJudgeService.judge(any()) } throws CancellationException("cancelled")
+        val captured = mutableListOf<AiArtifactRecord>()
+        coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
+
+        try {
+            useCase(makeItem())
+            fail("Expected CancellationException to propagate")
+        } catch (_: CancellationException) {
+            // expected
+        }
+
+        assertEquals(1, captured.size)
+        assertEquals(AiArtifactStatus.RUNNING, captured.single().status)
+        assertTrue(captured.none { it.status == AiArtifactStatus.FAILED })
+    }
+
+    @Test
+    fun `invoke persists bounded UNKNOWN_ERROR and fixed message when judge throws sentinel`() = runTest {
+        val sentinel = "R6SENTINEL_9f2c"
+        every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, dedupeJudgeEnabled = true))
+        coEvery { inputBuilder.build(any(), any()) } returns DedupeJudgeBuildResult.Ready(makeInput())
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
+        coEvery { dedupeJudgeService.judge(any()) } throws RuntimeException("leak $sentinel")
+        val captured = mutableListOf<AiArtifactRecord>()
+        coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
+
+        val result = useCase(makeItem())
+
+        assertTrue(result is DedupeJudgeGenerationResult.Error)
+        assertEquals("AI duplicate assist failed.", (result as DedupeJudgeGenerationResult.Error).reason)
+        val failed = captured.last()
+        assertEquals(AiArtifactStatus.FAILED, failed.status)
+        assertTrue(failed.errorMessage?.startsWith("UNKNOWN_ERROR ") == true)
+        assertTrue(captured.none { record -> listOf(record.errorMessage, record.summaryText, record.explanationText).any { it?.contains(sentinel) == true } })
+        assertTrue(result.toString().contains(sentinel).not())
     }
 
     private fun makeItem() = PendingReviewWithReceipt(

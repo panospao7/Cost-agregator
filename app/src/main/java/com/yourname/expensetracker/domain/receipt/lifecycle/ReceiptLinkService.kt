@@ -37,6 +37,25 @@ class ReceiptAlreadyClaimedException(receiptId: Long) : IllegalStateException(
 )
 
 /**
+ * RG11-H2: bounded failure codes for an aborted receipt link. Only the code name
+ * ever leaves the service — never a SQL/exception message, path or payload.
+ */
+enum class ReceiptLinkFailureCode {
+    CATEGORY_ASSIGNMENT_FAILED
+}
+
+/**
+ * RG11-H2: thrown INSIDE the link transaction when a nested step reported failure
+ * (its own nested transaction is already rollback-only), so the whole link is
+ * rolled back loudly instead of being silently rolled back at the outermost
+ * commit while still reporting success. [linkReceiptToExpense] converts it to
+ * [Result.failure]; callers already inside an outer transaction must treat that
+ * failure as an abort of their own transaction (they throw). The message is the
+ * code name only (no cause, no SQL text).
+ */
+class ReceiptLinkAbortedException(val code: ReceiptLinkFailureCode) : IllegalStateException(code.name)
+
+/**
  * Central service responsible for linking receipts to expenses and managing
  * the lifecycle of receipt-expense associations.
  *
@@ -146,6 +165,12 @@ class ReceiptLinkService @Inject constructor(
      *   that are themselves inside a larger transaction. The caller must dispatch
      *   the captured expense ID after its outer transaction commits.
      * @return [Result.success] with the link on success, [Result.failure] on error.
+     *   RG11-H2: a failed category assignment (outcome
+     *   [CategoryAssignmentOutcome.Failed]) aborts and rolls back the whole link and
+     *   returns [Result.failure] wrapping a [ReceiptLinkAbortedException]
+     *   ([ReceiptLinkFailureCode.CATEGORY_ASSIGNMENT_FAILED]); a stale/missing
+     *   category id is skipped ([CategoryAssignmentOutcome.SkippedCategoryMissing])
+     *   and the link still commits with the expense left uncategorized.
      */
     suspend fun linkReceiptToExpense(
         receiptId: Long,
@@ -293,13 +318,18 @@ class ReceiptLinkService @Inject constructor(
             )
 
             // RCP-30: Propagate item majority category to expense if the expense
-            // currently has no categoryId. Failures are logged but do not break linking.
+            // currently has no categoryId. Read failures are logged and skipped; a
+            // Failed assignment outcome aborts the link (RG11-H2, see below).
             // RP-11 FIX 4: the port call commits the assignment + event only;
             // the side-effect dispatch is deferred to AFTER this transaction
             // commits (see below) — Room transactions are re-entrant, so a
             // dispatch made in here would join the outer transaction. The
             // assignedCategoryId write targets the function-scope var declared
             // above so the post-commit block can see it.
+            // RG11-H2: this try/catch covers ONLY the read-only majority derivation and
+            // the log. The port call is made outside it so a Failed outcome (its nested
+            // transaction is already rollback-only) is never swallowed here.
+            var categoryIdToAssign: Long? = null
             try {
                 val categorizations = receiptItemCategorizationDao.getByReceiptId(receiptId)
                 if (categorizations.isNotEmpty()) {
@@ -310,14 +340,7 @@ class ReceiptLinkService @Inject constructor(
                     if (bestCategoryId != null) {
                         val existingExpense = expenseDao.getById(expenseId)
                         if (existingExpense != null && existingExpense.categoryId == null) {
-                            val outcome = categoryAssignmentPort.assignCategoryIfUnset(
-                                expenseId = expenseId,
-                                categoryId = bestCategoryId,
-                                source = "RECEIPT_ITEM_MAJORITY"
-                            )
-                            if (outcome is CategoryAssignmentOutcome.Assigned) {
-                                assignedCategoryId = bestCategoryId
-                            }
+                            categoryIdToAssign = bestCategoryId
                         }
                     }
                     val categoryFrequencies = categorizations
@@ -337,6 +360,33 @@ class ReceiptLinkService @Inject constructor(
                 throw e
             } catch (e: Exception) {
                 Timber.w(e, "RCP-30: Failed to propagate item category for receipt %d", receiptId)
+            }
+
+            val categoryIdForAssignment = categoryIdToAssign
+            if (categoryIdForAssignment != null) {
+                val outcome = categoryAssignmentPort.assignCategoryIfUnset(
+                    expenseId = expenseId,
+                    categoryId = categoryIdForAssignment,
+                    source = "RECEIPT_ITEM_MAJORITY"
+                )
+                when (outcome) {
+                    is CategoryAssignmentOutcome.Assigned -> {
+                        assignedCategoryId = categoryIdForAssignment
+                    }
+                    is CategoryAssignmentOutcome.SkippedAlreadySet,
+                    is CategoryAssignmentOutcome.SkippedExpenseMissing,
+                    is CategoryAssignmentOutcome.SkippedCategoryMissing -> Unit
+                    is CategoryAssignmentOutcome.Failed -> {
+                        // Bounded log only: the failure reason may carry SQL text.
+                        Timber.w(
+                            "RCP-30: Category assignment failed for receipt %d expense %d; aborting link",
+                            receiptId, expenseId
+                        )
+                        throw ReceiptLinkAbortedException(
+                            ReceiptLinkFailureCode.CATEGORY_ASSIGNMENT_FAILED
+                        )
+                    }
+                }
             }
 
             // 5. Write lifecycle event
@@ -388,6 +438,12 @@ class ReceiptLinkService @Inject constructor(
             // S6: concurrent run already resolved the receipt; the inserted link
             // was rolled back with the transaction. Surface as a failure the worker
             // can recognise (and treat as a no-op) rather than a false success.
+            Result.failure(e)
+        } catch (e: ReceiptLinkAbortedException) {
+            // RG11-H2: a nested step failed (its nested transaction is rollback-only);
+            // the whole link transaction was rolled back. Report a bounded failure
+            // (code name only) instead of a false success. CancellationException is
+            // never caught here.
             Result.failure(e)
         }
     }

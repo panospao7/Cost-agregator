@@ -109,8 +109,9 @@ enum class OwnershipFilter {
  * - `updateMerchantKey` — MerchantKeyBackfillWorker (merchantKey column only)
  *
  * ### DESIGN CONSTRAINTS (no coordinator routing possible)
- * - **ReceiptLinkService.linkReceiptToExpense() (RCP-30)** — best-effort category
- *   propagation inside runCatching. Cannot use coordinator.updateCategory()
+ * - **ReceiptLinkService.linkReceiptToExpense() (RCP-30)** — category propagation via
+ *   ExpenseCategoryAssignmentPort: a missing category is skipped, a Failed outcome
+ *   aborts the link (RG11-H2). Cannot use coordinator.updateCategory()
  *   due to circular dependency (TransactionLifecycleCoordinator → ReceiptLinkService
  *   via side effects, so ReceiptLinkService → Coordinator would create a cycle).
  * - **GroupTransactionCoordinator.clearSharedExpenseFlags** — post-commit cleanup

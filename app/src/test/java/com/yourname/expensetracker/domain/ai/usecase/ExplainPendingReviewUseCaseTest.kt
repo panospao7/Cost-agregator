@@ -335,8 +335,29 @@ class ExplainPendingReviewUseCaseTest {
         coVerify(exactly = 2) { aiArtifactRepository.upsert(any()) }
         val failedArtifact = captured.last()
         assertEquals(AiArtifactStatus.FAILED, failedArtifact.status)
-        assertTrue(failedArtifact.errorMessage?.contains("Network timeout") == true)
+        // R6/HD-2: bounded UNKNOWN_ERROR code is persisted; raw throwable text must not leak.
+        assertTrue(failedArtifact.errorMessage?.startsWith("UNKNOWN_ERROR ") == true)
+        assertTrue(failedArtifact.errorMessage?.contains("Network timeout") == false)
         assertTrue(failedArtifact.errorMessage?.contains("Route: CLOUD") == true)
+    }
+
+    @Test
+    fun `invoke never persists sentinel exception text in FAILED artifact`() = runTest {
+        val sentinel = "R6SENTINEL_9f2c"
+        every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
+        coEvery { inputBuilder.build(any(), any()) } returns makeInput()
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
+        coEvery { reviewExplanationService.generate(any()) } throws RuntimeException("leak $sentinel")
+
+        val captured = mutableListOf<AiArtifactRecord>()
+        coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
+
+        useCase(review = makePendingReview())
+
+        val failedArtifact = captured.last()
+        assertEquals(AiArtifactStatus.FAILED, failedArtifact.status)
+        assertTrue(failedArtifact.errorMessage?.startsWith("UNKNOWN_ERROR ") == true)
+        assertTrue(captured.none { record -> listOf(record.errorMessage, record.summaryText, record.explanationText).any { it?.contains(sentinel) == true } })
     }
 
     // ── cancellation propagation ──────────────────────────────────────────────

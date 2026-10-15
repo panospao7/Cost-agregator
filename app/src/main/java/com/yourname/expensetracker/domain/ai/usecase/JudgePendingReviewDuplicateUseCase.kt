@@ -123,17 +123,19 @@ class JudgePendingReviewDuplicateUseCase @Inject constructor(
                     DedupeJudgeGenerationResult.Error(readableError)
                 }
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // R6 cancellation: never persist a FAILED artifact for a cancelled run.
+            throw e
         } catch (e: Exception) {
+            // R6 privacy (HD-2): persist a bounded code only; never e.message (may echo user text).
             aiArtifactRepository.upsert(
                 baseEntity.copy(
                     status = AiArtifactStatus.FAILED,
-                    errorMessage = failureMessage(e.message, routeDecision),
+                    errorMessage = failureMessage(UNKNOWN_ERROR_CODE, routeDecision),
                     updatedAt = timeProvider.now()
                 )
             )
-            DedupeJudgeGenerationResult.Error(
-                e.message?.take(200) ?: "AI duplicate assist failed."
-            )
+            DedupeJudgeGenerationResult.Error("AI duplicate assist failed.")
         }
     }
 }
@@ -213,6 +215,9 @@ private fun String?.withRouteDiagnostics(routeDecision: AiRouteDecision): String
     val combined = listOfNotNull(this?.takeIf { it.isNotBlank() }, diagnostic).joinToString("\n")
     return combined.take(AppConfig.Ai.MAX_CAPTURE_SUPPORTING_TEXT_CHARS)
 }
+
+/** Bounded reason code (DiagnosticReasonCode precedent) persisted instead of raw throwable text. */
+private const val UNKNOWN_ERROR_CODE = "UNKNOWN_ERROR"
 
 private fun failureMessage(message: String?, routeDecision: AiRouteDecision): String {
     val base = message?.takeIf { it.isNotBlank() } ?: "AI generation failed."

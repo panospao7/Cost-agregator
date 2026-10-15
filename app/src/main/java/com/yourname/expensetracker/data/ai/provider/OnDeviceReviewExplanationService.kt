@@ -40,11 +40,13 @@ class OnDeviceReviewExplanationService @Inject constructor() : ReviewExplanation
                 ?: return AiServiceResult.Failure(AiServiceError.ParseError("No usable explanation in response"))
             AiServiceResult.Success(parsed)
         } catch (e: GenAiException) {
-            Timber.w(e, "OnDeviceReviewExplanationService: GenAI error (code=%d)", e.errorCode)
+            Timber.w("OnDeviceReviewExplanationService: GenAI error class=%s (code=%d)", e::class.java.simpleName, e.errorCode)
             AiServiceResult.Failure(AiServiceError.Unknown("GenAI error code=${e.errorCode}"))
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
-            Timber.w(e, "OnDeviceReviewExplanationService: unexpected error")
-            AiServiceResult.Failure(AiServiceError.Unknown(e.message))
+            Timber.w("OnDeviceReviewExplanationService: UNKNOWN_ERROR class=%s", e::class.java.simpleName)
+            AiServiceResult.Failure(AiServiceError.Unknown("UNKNOWN_ERROR"))
         }
     }
 
@@ -94,8 +96,10 @@ class OnDeviceReviewExplanationService @Inject constructor() : ReviewExplanation
                     .ifBlank { null }
                     ?.take(AppConfig.Ai.MAX_REVIEW_EXPLANATION_CAUTION_CHARS)
             )
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
-            Timber.w(e, "OnDeviceReviewExplanationService: JSON parse failure")
+            Timber.w("OnDeviceReviewExplanationService: PARSER_FAILED class=%s", e::class.java.simpleName)
             null
         }
     }

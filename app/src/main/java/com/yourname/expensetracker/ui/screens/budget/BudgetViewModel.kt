@@ -13,8 +13,11 @@ import com.yourname.expensetracker.domain.budget.BudgetAutopilotRecommendations
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.budget.BudgetSuggestion
 import com.yourname.expensetracker.domain.budget.CategoryBudgetRecommendation
+import com.yourname.expensetracker.domain.core.money.CurrencyAssumption
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.groups.SharedExpenseBudgetOffsetEngine
+import com.yourname.expensetracker.domain.savings.SavingsGoalCurrencyPolicy
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
 import timber.log.Timber
@@ -84,6 +87,10 @@ class BudgetViewModel @Inject constructor(
         const val ERROR_AUTOPILOT_APPLY_ALL_FAILED = "AUTOPILOT_APPLY_ALL_FAILED: Apply all failed and was rolled back."
         const val ERROR_AUTOPILOT_NOT_ACTIONABLE = "AUTOPILOT_NOT_ACTIONABLE: This recommendation cannot be applied."
         const val ERROR_AUTOPILOT_REGENERATE_REQUIRED = "AUTOPILOT_REGENERATE_REQUIRED: Budget currency changed; regenerate recommendations."
+        /** R3: bounded error — budget currency could not be confirmed against the home currency. */
+        const val ERROR_BUDGET_CURRENCY_UNCONFIRMED = "BUDGET_CURRENCY_UNCONFIRMED: Budget currency could not be confirmed."
+        /** Same string precedent as SavingsGoalsViewModel / BudgetStatusSnapshot; not an enum value. */
+        const val ASSUMPTION_EXPLICIT_HOME_CURRENCY = "EXPLICIT_HOME_CURRENCY"
     }
 
     private sealed class ManualState {
@@ -182,13 +189,24 @@ class BudgetViewModel @Inject constructor(
         initialValue = emptyList()
     )
 
-    fun addBudget(budget: Budget) {
+    /**
+     * R3 (RG06A-1/4): sole stamping point for budget currency provenance. The caller supplies
+     * the currency the user saw ([confirmedCurrency]); a new budget is always denominated in
+     * the current home currency and stamped EXPLICIT_HOME_CURRENCY (entity defaults such as
+     * "EUR"/LEGACY_DEFAULT are never persisted from this path).
+     */
+    fun addBudget(budget: Budget, confirmedCurrency: String) {
         // S8-007: Idempotency guard
         if (_manualState.value is ManualState.Loading) return
         if (!validateThresholds(budget)) return
         viewModelScope.launch {
             _manualState.value = ManualState.Loading
-            val result = budgetRepository.addBudget(budget)
+            val stamped = resolveBudgetForWrite(budget, confirmedCurrency, isCreate = true)
+            if (stamped == null) {
+                _manualState.value = ManualState.Error(ERROR_BUDGET_CURRENCY_UNCONFIRMED)
+                return@launch
+            }
+            val result = budgetRepository.addBudget(stamped)
             when (result) {
                 is com.yourname.expensetracker.domain.model.Result.Success -> {
                     _manualState.value = ManualState.Idle
@@ -203,12 +221,17 @@ class BudgetViewModel @Inject constructor(
         }
     }
 
-    fun updateBudget(budget: Budget) {
+    fun updateBudget(budget: Budget, confirmedCurrency: String) {
         if (_manualState.value is ManualState.Loading) return
         if (!validateThresholds(budget)) return
         viewModelScope.launch {
             _manualState.value = ManualState.Loading
-            val result = budgetRepository.updateBudget(budget)
+            val stamped = resolveBudgetForWrite(budget, confirmedCurrency, isCreate = false)
+            if (stamped == null) {
+                _manualState.value = ManualState.Error(ERROR_BUDGET_CURRENCY_UNCONFIRMED)
+                return@launch
+            }
+            val result = budgetRepository.updateBudget(stamped)
             when (result) {
                 is com.yourname.expensetracker.domain.model.Result.Success -> {
                     _manualState.value = ManualState.Idle
@@ -219,6 +242,50 @@ class BudgetViewModel @Inject constructor(
                 }
                 else -> { _manualState.value = ManualState.Idle }
             }
+        }
+    }
+
+    /**
+     * Validates [confirmedCurrency] (parse + supported set) against the current home currency and
+     * returns the budget with its currency/provenance stamped, or null (fail closed, no write).
+     *
+     * - create: confirmed must equal home; currency = home, EXPLICIT_HOME_CURRENCY.
+     * - edit: budget.currency must equal confirmed (no silent relabel); currency == home ->
+     *   EXPLICIT_HOME_CURRENCY; non-home on a known-provenance row -> USER_CONFIRMED;
+     *   non-home on a legacy/uncertain row keeps its existing assumption unchanged (D-05b open).
+     */
+    private suspend fun resolveBudgetForWrite(
+        budget: Budget,
+        confirmedCurrency: String,
+        isCreate: Boolean
+    ): Budget? {
+        val confirmed = CurrencyCode.parse(confirmedCurrency)
+            ?.takeIf { it in CurrencyCode.ALL_SUPPORTED } ?: return null
+        val homeOrNull: CurrencyCode? = try {
+            CurrencyCode.parse(currencySettingsRepository.homeCurrency().first())
+                ?.takeIf { it in CurrencyCode.ALL_SUPPORTED }
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            null
+        }
+        val home = homeOrNull ?: return null
+        if (isCreate) {
+            if (confirmed != home) return null
+            return budget.copy(currency = home.code, currencyAssumption = ASSUMPTION_EXPLICIT_HOME_CURRENCY)
+        }
+        val stored = CurrencyCode.parse(budget.currency)
+            ?.takeIf { it in CurrencyCode.ALL_SUPPORTED } ?: return null
+        if (stored != confirmed) return null
+        return when {
+            stored == home -> budget.copy(
+                currency = stored.code,
+                currencyAssumption = ASSUMPTION_EXPLICIT_HOME_CURRENCY
+            )
+            SavingsGoalCurrencyPolicy.knownCurrencyOrNull(budget.currency, budget.currencyAssumption) == null -> budget
+            else -> budget.copy(
+                currency = stored.code,
+                currencyAssumption = CurrencyAssumption.USER_CONFIRMED.serializedName
+            )
         }
     }
 

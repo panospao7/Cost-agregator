@@ -4,6 +4,8 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
+import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.security.MessageDigest
 
 /**
@@ -22,15 +24,23 @@ import java.security.MessageDigest
  * - publish is a no-replace move, so a foreign final file is never overwritten;
  * - a crash after publish (TEMP_WRITTEN, temp gone, final matches) is adopted, not
  *   reported as a collision;
+ * - a PENDING task whose final file already exists (for example a repeat restore of the same
+ *   backup) adopts it only when the journal proof (SHA-256 + size) matches; it then goes
+ *   through the normal pointer CAS without any copy or move. No proof, a mismatch, an
+ *   unreadable file or a non-regular file stays a TARGET_COLLISION;
  * - a crash after the CAS (FINAL_DURABLE, pointer already final) replays without a CAS;
  * - COMPLETED tasks are re-verified (proof, bytes, pointer) and never touch files or DB.
  *
  * Only operation-owned files are deleted: the temp, or a proof-matching final that this
- * operation published and the database does not reference.
+ * operation published and the database does not reference. A final file adopted from an
+ * earlier operation ([Step.NeedsPointer.adoptedExisting]) is never deleted by this engine.
  *
  * Known residuals: no directory fsync after publish; TOCTOU between the collision check
  * and the move is bounded by the no-replace move; stale temps from other operations are
- * not swept (no receipt-asset orphan cleanup job exists).
+ * not swept (no receipt-asset orphan cleanup job exists); the adoptedExisting flag is not
+ * journaled, so after process death between FINAL_DURABLE and the pointer CAS a NOT_APPLIED
+ * outcome on resume could delete an adopted (byte-identical) file; NOT_APPLIED is practically
+ * unreachable under the restore barrier.
  */
 internal class ReceiptAssetRecovery(
     private val journal: RestoreJournal,
@@ -52,7 +62,9 @@ internal class ReceiptAssetRecovery(
         /** Caller must read the receipt row and pass it to [admit]. */
         data class NeedsPointer(
             override val entry: RestoreJournal.JournalEntry,
-            override val task: RestoreJournal.AssetRestoreTask
+            override val task: RestoreJournal.AssetRestoreTask,
+            /** True when the final file pre-existed and was adopted on journal-proof match. */
+            val adoptedExisting: Boolean = false
         ) : Step
 
         /** Caller must CAS `expected -> target` inside its restore write scope, then call [afterCas]. */
@@ -60,7 +72,9 @@ internal class ReceiptAssetRecovery(
             override val entry: RestoreJournal.JournalEntry,
             override val task: RestoreJournal.AssetRestoreTask,
             val expected: String?,
-            val target: String
+            val target: String,
+            /** True when [target] pre-existed (adopted); it must never be deleted by this engine. */
+            val adoptedExisting: Boolean = false
         ) : Step
     }
 
@@ -93,8 +107,11 @@ internal class ReceiptAssetRecovery(
             if (!sourceFile(task).isUsableSource()) {
                 return fail(entry, task, RestoreJournal.ASSET_REASON_SOURCE_MISSING)
             }
-            // A PENDING task has not published yet: any final file is foreign.
-            if (finalFile.exists()) return fail(entry, task, RestoreJournal.ASSET_REASON_TARGET_COLLISION)
+            // A PENDING task has not published yet: an existing final file is foreign unless the
+            // journal proof (SHA-256 + size) matches it; stage() re-checks before adopting.
+            if (finalFile.exists() && !(hasProof(task) && matchesProof(finalFile, task))) {
+                return fail(entry, task, RestoreJournal.ASSET_REASON_TARGET_COLLISION)
+            }
         }
         // A pre-CAS task without its original pointer cannot authorize a replay.
         val preCas = task.status == RestoreJournal.AssetRestoreStatus.PENDING ||
@@ -118,6 +135,7 @@ internal class ReceiptAssetRecovery(
         val tempFile = tempFor(entry, finalFile)
         val expected = task.expectedImagePath
         val finalPath = finalFile.absolutePath
+        var adoptedExisting = false
 
         if (!rowExists) {
             if (task.status == RestoreJournal.AssetRestoreStatus.PENDING ||
@@ -155,6 +173,7 @@ internal class ReceiptAssetRecovery(
                     else -> {
                         entry = staged.entry
                         task = staged.task
+                        adoptedExisting = (staged as? Step.NeedsPointer)?.adoptedExisting == true
                     }
                 }
             }
@@ -175,7 +194,7 @@ internal class ReceiptAssetRecovery(
                 val done = persist(updated.first, updated.second, RestoreJournal.AssetRestoreStatus.COMPLETED)
                 Step.Done(done.first, done.second)
             }
-            expected -> Step.NeedsCas(entry, task, expected, finalPath)
+            expected -> Step.NeedsCas(entry, task, expected, finalPath, adoptedExisting)
             else -> fail(entry, task, RestoreJournal.ASSET_REASON_IMAGE_PATH_CONFLICT)
         }
     }
@@ -189,8 +208,9 @@ internal class ReceiptAssetRecovery(
                 Step.Done(done.first, done.second, restoredNow = true)
             }
             CasOutcome.NOT_APPLIED -> {
-                // The row provably does not reference the file this operation published.
-                deleteOwned(File(step.target))
+                // The row provably does not reference the file this operation published; an
+                // adopted pre-existing file is not ours to delete.
+                if (!step.adoptedExisting) deleteOwned(File(step.target))
                 fail(step.entry, step.task, RestoreJournal.ASSET_REASON_IMAGE_PATH_CONFLICT)
             }
             // Pointer state is untrustworthy: keep the file, the database may reference it.
@@ -245,7 +265,15 @@ internal class ReceiptAssetRecovery(
                 copyFailure(task, tempFile)?.let { return fail(entry, task, it) }
             }
         } else {
-            if (finalFile.exists()) return fail(entry, task, RestoreJournal.ASSET_REASON_TARGET_COLLISION)
+            if (finalFile.exists()) {
+                // Adopt only a proof-matching pre-existing file (no copy, no move, no overwrite).
+                if (!(hasProof(task) && matchesProof(finalFile, task))) {
+                    return fail(entry, task, RestoreJournal.ASSET_REASON_TARGET_COLLISION)
+                }
+                deleteOwned(tempFile)
+                val adopted = persist(entry, task, RestoreJournal.AssetRestoreStatus.FINAL_DURABLE)
+                return Step.NeedsPointer(adopted.first, adopted.second, adoptedExisting = true)
+            }
             deleteOwned(tempFile)
             copyFailure(task, tempFile)?.let { return fail(entry, task, it) }
             val written = try {
@@ -341,7 +369,8 @@ internal class ReceiptAssetRecovery(
         task.expectedSha256 != null && task.expectedSize != null
 
     private fun matchesProof(file: File, task: RestoreJournal.AssetRestoreTask): Boolean = try {
-        file.isFile && file.length() == task.expectedSize &&
+        // Regular file without following links: a symlink never counts as proof-matching.
+        Files.isRegularFile(file.toPath(), LinkOption.NOFOLLOW_LINKS) && file.length() == task.expectedSize &&
             CostbackupBundle.sha256Hex(file) == task.expectedSha256
     } catch (_: IOException) {
         false

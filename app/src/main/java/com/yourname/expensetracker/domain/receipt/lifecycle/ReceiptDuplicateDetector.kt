@@ -56,7 +56,8 @@ class ReceiptDuplicateDetector @Inject constructor(
      * @property existingReceiptId The ID of the matched receipt, if any.
      * @property reason Human-readable explanation of the match.
      * @property matchType The strategy that produced the match:
-     *            "EXACT_HASH", "TEXT_FINGERPRINT", "SEMANTIC", "EXTERNAL_ID", or "NONE".
+     *            "EXACT_HASH", "TEXT_FINGERPRINT", "SEMANTIC", "EXTERNAL_ID", "NONE", or
+     *            "TEXT_FINGERPRINT_UNCONFIRMED" (never a duplicate; consumers must gate on [isDuplicate]).
      */
     data class DuplicateResult(
         val isDuplicate: Boolean,
@@ -73,8 +74,12 @@ class ReceiptDuplicateDetector @Inject constructor(
      * 1. **EXACT_HASH** — If [imageHash] is non-null and matches an existing row,
      *    returns immediately with 1.0 confidence.
      * 2. **TEXT_FINGERPRINT** — If [textFingerprint] is non-null and matches,
-     *    returns with 0.95 confidence — unless both the incoming and the existing
-     *    semantic fingerprints are known and differ (CA-P-03-004).
+     *    returns with 0.95 confidence ONLY when both the incoming and the existing
+     *    semantic fingerprints are present and equal (CA-P-03-004, RG12-01). Any other
+     *    text hit is remembered and evaluation continues; if nothing else matches the
+     *    result is not a duplicate, carries the text-hit id in [DuplicateResult.existingReceiptId],
+     *    and has matchType "TEXT_FINGERPRINT_UNCONFIRMED" (a semantic side missing) or "NONE"
+     *    (both present and different).
      * 3. **SEMANTIC** — If [semanticFingerprint] is non-null and matches,
      *    returns with 0.8 confidence.
      * 4. **EXTERNAL_ID** — If [externalSourceId] is non-null and matches the
@@ -111,20 +116,27 @@ class ReceiptDuplicateDetector @Inject constructor(
         }
 
         // 2. Text fingerprint match — high confidence
-        // CA-P-03-004: the text fingerprint strips amounts and dates, so two
+        // CA-P-03-004 / RG12-01: the text fingerprint strips amounts and dates, so two
         // receipts from the same merchant template (e.g. TOTAL 3.50 vs 4.50)
-        // collide. When both sides carry a semantic fingerprint and they
-        // disagree, the text hit is not a duplicate — fall through.
+        // collide. A text hit is an automatic duplicate only when both semantic
+        // fingerprints are known and equal; otherwise remember the hit and fall through.
+        var textHitId: Long? = null
+        var textHitSemanticsDiffer = false
         if (textFingerprint != null) {
             val existing = scannedReceiptDao.getByTextFingerprint(textFingerprint)
-            if (existing != null && !semanticFingerprintsConflict(semanticFingerprint, existing.semanticFingerprint)) {
-                return DuplicateResult(
-                    isDuplicate = true,
-                    confidence = 0.95f,
-                    existingReceiptId = existing.id,
-                    reason = "Text fingerprint match",
-                    matchType = "TEXT_FINGERPRINT"
-                )
+            if (existing != null) {
+                if (semanticFingerprintsEqual(semanticFingerprint, existing.semanticFingerprint)) {
+                    return DuplicateResult(
+                        isDuplicate = true,
+                        confidence = 0.95f,
+                        existingReceiptId = existing.id,
+                        reason = "Text fingerprint match",
+                        matchType = "TEXT_FINGERPRINT"
+                    )
+                }
+                textHitId = existing.id
+                textHitSemanticsDiffer =
+                    !semanticFingerprint.isNullOrBlank() && !existing.semanticFingerprint.isNullOrBlank()
             }
         }
 
@@ -156,7 +168,21 @@ class ReceiptDuplicateDetector @Inject constructor(
             }
         }
 
-        // 5. No match
+        // 5. No automatic match. An unconfirmed text-fingerprint hit is surfaced as
+        // non-duplicate context only (callers gate on isDuplicate).
+        if (textHitId != null) {
+            return DuplicateResult(
+                isDuplicate = false,
+                confidence = 0.0f,
+                existingReceiptId = textHitId,
+                reason = if (textHitSemanticsDiffer) {
+                    "Text fingerprint hit rejected: semantic fingerprints differ"
+                } else {
+                    "Text fingerprint hit unconfirmed: semantic fingerprint missing"
+                },
+                matchType = if (textHitSemanticsDiffer) "NONE" else "TEXT_FINGERPRINT_UNCONFIRMED"
+            )
+        }
         return DuplicateResult(
             isDuplicate = false,
             confidence = 0.0f,
@@ -166,9 +192,9 @@ class ReceiptDuplicateDetector @Inject constructor(
         )
     }
 
-    /** True only when both semantic fingerprints are known and differ. */
-    private fun semanticFingerprintsConflict(incoming: String?, existing: String?): Boolean =
-        !incoming.isNullOrBlank() && !existing.isNullOrBlank() && incoming != existing
+    /** True only when both semantic fingerprints are known (non-blank) and equal. */
+    private fun semanticFingerprintsEqual(incoming: String?, existing: String?): Boolean =
+        !incoming.isNullOrBlank() && !existing.isNullOrBlank() && incoming == existing
 
     /**
      * Computes a normalized text fingerprint from raw OCR text.

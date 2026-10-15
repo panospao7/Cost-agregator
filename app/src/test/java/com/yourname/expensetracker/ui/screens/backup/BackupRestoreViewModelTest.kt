@@ -186,6 +186,50 @@ class BackupRestoreViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
+    fun `restoreBackup exposes receipt asset warning count only`() = runTest(testDispatcher) {
+        val uri = destinationUri()
+        val sentinelWarnings = listOf(
+            "Receipt asset task rejected: TARGET_COLLISION",
+            "Receipt asset task rejected: SOURCE_MISSING"
+        )
+        coEvery { databaseBackupRepository.restoreCostBackup(any(), any()) } returns
+            Result.success(DatabaseImportResult.SuccessNeedsRestart(
+                com.yourname.expensetracker.domain.backup.DatabaseImportSummary(
+                    transactionCount = 1,
+                    categoryCount = 0,
+                    merchantCount = 0,
+                    pendingReviewCount = 0,
+                    budgetCount = 0,
+                    allTableCounts = emptyMap(),
+                    receiptAssetWarnings = sentinelWarnings
+                )
+            ))
+        every { context.contentResolver.openInputStream(uri) } returns bundleInputStream()
+
+        val vm = createViewModel()
+        advanceUntilIdle()
+        assertEquals(0, vm.uiState.value.receiptAssetWarningCount)
+        vm.restoreBackup(uri, "test-password")
+        advanceUntilIdle()
+
+        val state = vm.uiState.value
+        assertTrue(state.restartRequired)
+        assertEquals(sentinelWarnings.size, state.receiptAssetWarningCount)
+        assertFalse(
+            "warning text must never reach UI state",
+            state.toString().contains("TARGET_COLLISION")
+        )
+
+        // A new restore attempt resets the count at start.
+        coEvery { databaseBackupRepository.restoreCostBackup(any(), any()) } returns
+            Result.success(DatabaseImportResult.Loading)
+        every { context.contentResolver.openInputStream(uri) } returns bundleInputStream()
+        vm.restoreBackup(uri, "test-password")
+        advanceUntilIdle()
+        assertEquals(0, vm.uiState.value.receiptAssetWarningCount)
+    }
+
+    @Test
     fun `clearError resets error message`() = runTest(testDispatcher) {
         val destination = destinationUri()
         coEvery {

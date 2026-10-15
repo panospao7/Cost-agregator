@@ -193,7 +193,10 @@ class RestoreMaintenanceMode @Inject constructor(
         Timber.d("Maintenance mode: entered %s", mode.label)
     }
 
-    /** Enters the absorbing fail-closed recovery state. */
+    /**
+     * Enters the absorbing fail-closed recovery state. Worker reschedule/confirmation failures
+     * do not use this; they retain NORMAL + worker_resume_pending instead (see [exit]).
+     */
     fun enterCriticalRecoveryRequired(reason: String) {
         Timber.e("Maintenance mode: entering CRITICAL_RECOVERY_REQUIRED — %s", reason)
         val committed = latchCritical(reason, persist = true)
@@ -203,6 +206,11 @@ class RestoreMaintenanceMode @Inject constructor(
     /**
      * Exits maintenance mode. A normal exit verifies all worker schedules before
      * publishing a writable state; a restart-required exit remains blocked.
+     *
+     * A worker reschedule/confirmation failure throws [WorkerRescheduleException] and retains
+     * the durable NORMAL + worker_resume_pending state (effective
+     * [Mode.RESTORE_COMPLETE_RESTART_REQUIRED], writes denied, stop flag not reset); the next
+     * launch retries the checked resume once. Only [PersistenceException] latches CRITICAL.
      */
     fun exit(forceRestartRequired: Boolean = false) {
         if (forceRestartRequired) {
@@ -289,10 +297,12 @@ class RestoreMaintenanceMode @Inject constructor(
             // fresh process will retry this gate through reset().
             throw e
         } catch (e: Exception) {
-            enterCriticalRecoveryRequired(
-                if (e is PersistenceException) MODE_PERSISTENCE_FAILURE else WORKER_RESCHEDULE_FAILURE
-            )
-            if (e is PersistenceException) throw e
+            if (e is PersistenceException) {
+                enterCriticalRecoveryRequired(MODE_PERSISTENCE_FAILURE)
+                throw e
+            }
+            // Reschedule/confirmation failure: keep NORMAL + resumePending durable.
+            retainDurableResumePending()
             throw WorkerRescheduleException()
         }
     }
@@ -317,11 +327,46 @@ class RestoreMaintenanceMode @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            enterCriticalRecoveryRequired(
-                if (e is PersistenceException) MODE_PERSISTENCE_FAILURE else WORKER_RESCHEDULE_FAILURE
-            )
-            if (e is PersistenceException) throw e
+            if (e is PersistenceException) {
+                enterCriticalRecoveryRequired(MODE_PERSISTENCE_FAILURE)
+                throw e
+            }
+            // Reschedule/confirmation failure: keep NORMAL + resumePending durable.
+            retainDurableResumePending()
             throw WorkerRescheduleException()
+        }
+    }
+
+    /**
+     * Retains the durable NORMAL + worker_resume_pending state after a worker reschedule or
+     * confirmation failure, so the next launch retries the checked resume. Publishes
+     * [Mode.RESTORE_COMPLETE_RESTART_REQUIRED] (writes stay denied). Never pauses workers, never
+     * resets the worker stop flag and never retries in-process. If the persisted state cannot be
+     * proven (read failure, stored CRITICAL, or CRITICAL already latched in memory), fails closed
+     * to CRITICAL via [PersistenceException]; the in-memory CRITICAL case re-attempts the durable
+     * CRITICAL write instead of returning silently.
+     */
+    private fun retainDurableResumePending() {
+        synchronized(stateLock) {
+            if (_modeFlow.value == Mode.CRITICAL_RECOVERY_REQUIRED) {
+                enterCriticalRecoveryRequired(MODE_PERSISTENCE_FAILURE)
+                throw PersistenceException()
+            }
+            val read = readPersistedStateLocked()
+            val failureReason = read.failureReason
+            if (failureReason != null) {
+                latchCriticalFromReadFailure(failureReason)
+                throw PersistenceException()
+            }
+            val state = read.state!!
+            if (state.effectiveMode == Mode.CRITICAL_RECOVERY_REQUIRED) {
+                latchPersistedCritical()
+                throw PersistenceException()
+            }
+            if (state.rawMode == Mode.NORMAL && state.resumePending) {
+                publishMode(Mode.RESTORE_COMPLETE_RESTART_REQUIRED)
+                Timber.w("Maintenance mode: %s", WORKER_RESCHEDULE_FAILURE)
+            }
         }
     }
 

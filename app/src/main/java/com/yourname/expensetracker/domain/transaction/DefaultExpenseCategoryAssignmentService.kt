@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.transaction
 import androidx.room.withTransaction
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.data.database.dao.CategoryDao
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.TransactionEventDao
 import com.yourname.expensetracker.data.database.entity.TransactionEvent
@@ -16,6 +17,7 @@ import javax.inject.Singleton
 class DefaultExpenseCategoryAssignmentService @Inject constructor(
     private val database: AppDatabase,
     private val expenseDao: ExpenseDao,
+    private val categoryDao: CategoryDao,
     private val writeBarrier: DatabaseWriteBarrier,
     private val timeProvider: TimeProvider,
     private val transactionEventDao: TransactionEventDao,
@@ -33,6 +35,12 @@ class DefaultExpenseCategoryAssignmentService @Inject constructor(
                     ?: return@withTransaction CategoryAssignmentOutcome.SkippedExpenseMissing
                 if (expense.categoryId != null && expense.categoryId > 0L)
                     return@withTransaction CategoryAssignmentOutcome.SkippedAlreadySet
+                // RG11-H2: the id may be stale (merged/deleted category, cloud id,
+                // migration leftovers). An FK-violating UPDATE inside this nested
+                // transaction would mark the enclosing transaction rollback-only,
+                // so check existence first (read only) and skip instead.
+                if (categoryDao.getById(categoryId) == null)
+                    return@withTransaction CategoryAssignmentOutcome.SkippedCategoryMissing
 
                 expenseDao.updateCategory(expenseId, categoryId)
                 transactionEventDao.insert(TransactionEvent(

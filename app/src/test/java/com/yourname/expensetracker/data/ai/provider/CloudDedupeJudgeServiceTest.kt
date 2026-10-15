@@ -17,9 +17,11 @@ import okhttp3.Protocol
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import timber.log.Timber
 import java.io.IOException
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -254,5 +256,114 @@ class CloudDedupeJudgeServiceTest {
         val success = result as AiServiceResult.Success<com.yourname.expensetracker.domain.ai.model.DedupeJudgeSuggestion>
         assertNull(success.value.matchedTargetType)
         assertNull(success.value.matchedTargetId)
+    }
+
+    // ---- R6 (RG02B-1 / RG02B-4): bounded codes, no leaked text, CancellationException propagates ----
+
+    private fun r6Service(client: OkHttpClient): CloudDedupeJudgeService {
+        val mockKeyStorage = mockk<SecureKeyStorage>(relaxed = true)
+        every { mockKeyStorage.getKey(SecureKeyStorage.KEY_GEMINI) } returns "fake-api-key"
+        return CloudDedupeJudgeService(
+            secureKeyStorage = mockKeyStorage,
+            client = client,
+            aiSettingsRepository = null,
+            privacyGate = mockk(relaxed = true),
+            cloudPayloadPolicy = com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy(
+                com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver.failClosedNoAi(),
+                com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor()
+            )
+        )
+    }
+
+    private inline fun <T> withPlantedLogs(block: (MutableList<Pair<Throwable?, String>>) -> T): T {
+        val logs = mutableListOf<Pair<Throwable?, String>>()
+        val tree = object : Timber.Tree() {
+            override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+                logs += t to message
+            }
+        }
+        Timber.plant(tree)
+        try {
+            return block(logs)
+        } finally {
+            Timber.uproot(tree)
+        }
+    }
+
+    @Test
+    fun `judge maps malformed response to bounded PARSER_FAILED without leaking sentinel`() = runTest {
+        val client = OkHttpClient.Builder()
+            .addInterceptor { chain ->
+                Response.Builder()
+                    .request(chain.request())
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(200)
+                    .message("OK")
+                    .body("{ R6SENTINEL_9f2c".toResponseBody("application/json".toMediaType()))
+                    .build()
+            }
+            .build()
+
+        withPlantedLogs { logs ->
+            val result = r6Service(client).judge(sampleInput())
+
+            assertEquals(
+                AiServiceResult.Failure(AiServiceError.ParseError("PARSER_FAILED")),
+                result
+            )
+            assertFalse(result.toString().contains("R6SENTINEL_9f2c"))
+            assertTrue(logs.isNotEmpty())
+            assertTrue(logs.all { it.first == null && !it.second.contains("R6SENTINEL_9f2c") })
+        }
+    }
+
+    @Test
+    fun `judge maps unexpected exception to bounded UNKNOWN_ERROR without leaking sentinel`() = runTest {
+        val client = OkHttpClient.Builder()
+            .addInterceptor { throw IllegalStateException("R6SENTINEL_9f2c") }
+            .build()
+
+        withPlantedLogs { logs ->
+            val result = r6Service(client).judge(sampleInput())
+
+            assertEquals(
+                AiServiceResult.Failure(AiServiceError.Unknown("UNKNOWN_ERROR")),
+                result
+            )
+            assertFalse(result.toString().contains("R6SENTINEL_9f2c"))
+            assertTrue(logs.isNotEmpty())
+            assertTrue(logs.all { it.first == null && !it.second.contains("R6SENTINEL_9f2c") })
+        }
+    }
+
+    @Test
+    fun `judge does not log IO or timeout throwables`() = runTest {
+        withPlantedLogs { logs ->
+            listOf<Exception>(
+                java.net.SocketTimeoutException("R6SENTINEL_9f2c"),
+                javax.net.ssl.SSLException("R6SENTINEL_9f2c"),
+                IOException("R6SENTINEL_9f2c")
+            ).forEach { failure ->
+                val client = OkHttpClient.Builder().addInterceptor { throw failure }.build()
+                val result = r6Service(client).judge(sampleInput())
+                assertTrue(result is AiServiceResult.Failure)
+            }
+            assertTrue(logs.isNotEmpty())
+            assertTrue(logs.all { it.first == null && !it.second.contains("R6SENTINEL_9f2c") })
+        }
+    }
+
+    @Test
+    fun `judge propagates CancellationException instead of mapping to Unknown`() {
+        val client = OkHttpClient.Builder()
+            .addInterceptor { throw kotlinx.coroutines.CancellationException("R6SENTINEL_9f2c") }
+            .build()
+
+        withPlantedLogs { logs ->
+            org.junit.Assert.assertThrows(kotlinx.coroutines.CancellationException::class.java) {
+                kotlinx.coroutines.runBlocking { r6Service(client).judge(sampleInput()) }
+            }
+            assertTrue(logs.none { it.second.contains("UNKNOWN_ERROR") })
+        }
     }
 }

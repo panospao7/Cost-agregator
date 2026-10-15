@@ -82,9 +82,12 @@ class HybridDedupeJudgeService @Inject constructor(
     ): AiServiceResult<DedupeJudgeSuggestion> {
         return try {
             block()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
-            Timber.e(e, "HybridDedupeJudge: $label threw unexpected exception")
-            AiServiceResult.Failure(AiServiceError.Unknown(e.message))
+            // R6 privacy: bounded code + class name only; never the throwable or e.message.
+            Timber.e("HybridDedupeJudge: %s threw unexpected exception class=%s", label, e::class.java.simpleName)
+            AiServiceResult.Failure(AiServiceError.Unknown("UNKNOWN_ERROR"))
         }
     }
 

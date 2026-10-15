@@ -42,11 +42,13 @@ class OnDeviceDedupeJudgeService @Inject constructor() : DedupeJudgeService {
                 ?: return AiServiceResult.Failure(AiServiceError.ParseError("No usable dedupe verdict in response"))
             AiServiceResult.Success(parsed)
         } catch (e: GenAiException) {
-            Timber.w(e, "OnDeviceDedupeJudgeService: GenAI error (code=%d)", e.errorCode)
+            Timber.w("OnDeviceDedupeJudgeService: GenAI error class=%s (code=%d)", e::class.java.simpleName, e.errorCode)
             AiServiceResult.Failure(AiServiceError.Unknown("GenAI error code=${e.errorCode}"))
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
-            Timber.w(e, "OnDeviceDedupeJudgeService: unexpected error")
-            AiServiceResult.Failure(AiServiceError.Unknown(e.message))
+            Timber.w("OnDeviceDedupeJudgeService: UNKNOWN_ERROR class=%s", e::class.java.simpleName)
+            AiServiceResult.Failure(AiServiceError.Unknown("UNKNOWN_ERROR"))
         }
     }
 
@@ -113,8 +115,10 @@ class OnDeviceDedupeJudgeService @Inject constructor() : DedupeJudgeService {
                 },
                 rationale = suggestion.optString("rationale").trim().ifBlank { null }
             )
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
-            Timber.w(e, "OnDeviceDedupeJudgeService: JSON parse failure")
+            Timber.w("OnDeviceDedupeJudgeService: PARSER_FAILED class=%s", e::class.java.simpleName)
             null
         }
     }

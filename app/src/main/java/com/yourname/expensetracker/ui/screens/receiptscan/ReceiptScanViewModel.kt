@@ -124,7 +124,9 @@ data class ReceiptScanState(
     /** Surviving OCR data is usable, but the original document needs manual verification. */
     val hasPartialOcr: Boolean = false,
     /** A saved parse failure has no trustworthy retained page-coverage evidence. */
-    val hasUnverifiedOcrCoverage: Boolean = false
+    val hasUnverifiedOcrCoverage: Boolean = false,
+    /** RG12-01 / V12-NEW-B: the scan resolved to an already-saved receipt (outcome.inserted == false). */
+    val reopenedExistingReceipt: Boolean = false
 )
 
 data class ReceiptQuickSavePreview(
@@ -277,6 +279,7 @@ class ReceiptScanViewModel @Inject constructor(
                 errorMessage = null,
                 hasPartialOcr = false,
                 hasUnverifiedOcrCoverage = false,
+                reopenedExistingReceipt = false,
                 pendingAppliedAiCapabilities = emptySet(),
                 receiptAssistState = AiLoadState.Idle,
                 receiptAssistMessage = null,
@@ -362,6 +365,7 @@ class ReceiptScanViewModel @Inject constructor(
                                 date = now, currency = homeCurrency.orEmpty(), lineItems = emptyList(), confidence = 0f
                             ),
                             receiptId = receipt.id,
+                            reopenedExistingReceipt = !outcome.inserted,
                             rawOcrText = "",
                             showRawText = false,
                             editMerchant = "",
@@ -444,6 +448,7 @@ class ReceiptScanViewModel @Inject constructor(
                             imageUri = receipt.imagePath?.let { p -> Uri.fromFile(java.io.File(p)) } ?: uri,
                             parsedReceipt = parsed,
                             receiptId = receipt.id,
+                            reopenedExistingReceipt = !outcome.inserted,
                             hasPartialOcr = outcome.isPartial,
                             hasUnverifiedOcrCoverage = outcome.ocrCoverageUnavailable,
                             rawOcrText = receipt.rawOcrText,

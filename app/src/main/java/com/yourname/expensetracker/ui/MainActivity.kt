@@ -428,7 +428,7 @@ fun MainScreen(
         is AppOperationalState.RestartRequiredAfterRestore -> {
             AppOperationalLockScreen(
                 title = "Restart Required",
-                message = "A database restore completed. The app must restart to load the restored data.",
+                message = stringResource(R.string.restart_required_database_operation),
                 actionLabel = "Restart Now",
                 onAction = { Runtime.getRuntime().exit(0) }
             )

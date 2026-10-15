@@ -169,37 +169,40 @@ class CloudDedupeJudgeService @Inject constructor(
                 } catch (e: SocketTimeoutException) {
                     if (attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
                         Timber.w(
-                            e,
-                            "CloudDedupeJudgeService: timeout, retrying (%d/%d)",
+                            "CloudDedupeJudgeService: timeout class=%s, retrying (%d/%d)",
+                            e::class.java.simpleName,
                             attempt,
                             CloudRetryPolicy.MAX_RETRY_ATTEMPTS
                         )
                     } else {
-                        Timber.w(e, "CloudDedupeJudgeService: timeout")
+                        Timber.w("CloudDedupeJudgeService: timeout class=%s", e::class.java.simpleName)
                         return@withContext AiServiceResult.Failure(AiServiceError.Timeout)
                     }
                 } catch (e: SSLException) {
-                    Timber.w(e, "CloudDedupeJudgeService: SSL failure")
+                    Timber.w("CloudDedupeJudgeService: SSL failure class=%s", e::class.java.simpleName)
                     return@withContext AiServiceResult.Failure(AiServiceError.SslError)
                 } catch (e: IOException) {
                     val retryable = CloudRetryPolicy.isRetryableIoException(e)
                     if (retryable && attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
                         Timber.w(
-                            e,
-                            "CloudDedupeJudgeService: connection reset, retrying (%d/%d)",
+                            "CloudDedupeJudgeService: connection reset class=%s, retrying (%d/%d)",
+                            e::class.java.simpleName,
                             attempt,
                             CloudRetryPolicy.MAX_RETRY_ATTEMPTS
                         )
                     } else {
-                        Timber.w(e, "CloudDedupeJudgeService: network failure")
+                        Timber.w("CloudDedupeJudgeService: network failure class=%s", e::class.java.simpleName)
                         return@withContext AiServiceResult.Failure(AiServiceError.Offline)
                     }
                 } catch (e: JSONException) {
-                    Timber.w(e, "CloudDedupeJudgeService: parse failure")
-                    return@withContext AiServiceResult.Failure(AiServiceError.ParseError(e.message))
+                    // R6 privacy: bounded code + class name only; never e.message (may echo response text).
+                    Timber.w("CloudDedupeJudgeService: PARSER_FAILED class=%s", e::class.java.simpleName)
+                    return@withContext AiServiceResult.Failure(AiServiceError.ParseError("PARSER_FAILED"))
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
                 } catch (e: Exception) {
-                    Timber.w(e, "CloudDedupeJudgeService: parse failure")
-                    return@withContext AiServiceResult.Failure(AiServiceError.Unknown(e.message))
+                    Timber.w("CloudDedupeJudgeService: UNKNOWN_ERROR class=%s", e::class.java.simpleName)
+                    return@withContext AiServiceResult.Failure(AiServiceError.Unknown("UNKNOWN_ERROR"))
                 }
 
                 if (attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {

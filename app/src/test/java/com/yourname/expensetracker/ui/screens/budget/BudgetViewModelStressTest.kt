@@ -57,7 +57,10 @@ class BudgetViewModelStressTest {
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
         every { categoryRepository.allCategories } returns flowOf(emptyList())
         
-        viewModel = BudgetViewModel(budgetRepository, categoryRepository, offsetEngine, autopilotEngine, timeProvider, currencySettingsRepository = mockk(), database = mockk())
+        val currencySettingsRepository = mockk<com.yourname.expensetracker.domain.currency.CurrencySettingsRepository>()
+        every { currencySettingsRepository.homeCurrency() } returns flowOf("USD")
+
+        viewModel = BudgetViewModel(budgetRepository, categoryRepository, offsetEngine, autopilotEngine, timeProvider, currencySettingsRepository = currencySettingsRepository, database = mockk())
     }
 
     @After
@@ -98,10 +101,10 @@ class BudgetViewModelStressTest {
             notifyAtCritical = 0.9f
         )
 
-        coEvery { budgetRepository.addBudget(budget) } returns Result.Success(1L)
-        
-        viewModel.addBudget(budget)
-        
+        coEvery { budgetRepository.addBudget(any()) } returns Result.Success(1L)
+
+        viewModel.addBudget(budget, "USD")
+
         testDispatcher.scheduler.advanceUntilIdle()
         // Should not have error with valid thresholds
         assertNull(viewModel.uiState.value.error)
@@ -123,9 +126,9 @@ class BudgetViewModelStressTest {
             notifyAtCritical = 0.9f
         )
 
-        coEvery { budgetRepository.updateBudget(budget) } returns Result.Success(Unit)
-        
-        viewModel.updateBudget(budget)
+        coEvery { budgetRepository.updateBudget(any()) } returns Result.Success(Unit)
+
+        viewModel.updateBudget(budget, "EUR")
         
         testDispatcher.scheduler.advanceUntilIdle()
         assertNull(viewModel.uiState.value.error)
@@ -204,10 +207,10 @@ class BudgetViewModelStressTest {
             notifyAtCritical = 0.9f
         )
 
-        coEvery { budgetRepository.addBudget(budget) } returns Result.Success(1L)
-        
-        viewModel.addBudget(budget)
-        
+        coEvery { budgetRepository.addBudget(any()) } returns Result.Success(1L)
+
+        viewModel.addBudget(budget, "USD")
+
         testDispatcher.scheduler.advanceUntilIdle()
     }
 
@@ -223,10 +226,10 @@ class BudgetViewModelStressTest {
             notifyAtCritical = 0.9f
         )
 
-        coEvery { budgetRepository.addBudget(budget) } returns Result.Success(1L)
-        
-        viewModel.addBudget(budget)
-        
+        coEvery { budgetRepository.addBudget(any()) } returns Result.Success(1L)
+
+        viewModel.addBudget(budget, "USD")
+
         testDispatcher.scheduler.advanceUntilIdle()
     }
 
@@ -250,8 +253,8 @@ class BudgetViewModelStressTest {
                 notifyAtCritical = 0.9f
             )
 
-            coEvery { budgetRepository.addBudget(budget) } returns Result.Success(1L)
-            viewModel.addBudget(budget)
+            coEvery { budgetRepository.addBudget(any()) } returns Result.Success(1L)
+            viewModel.addBudget(budget, "USD")
             testDispatcher.scheduler.advanceUntilIdle()
         }
     }

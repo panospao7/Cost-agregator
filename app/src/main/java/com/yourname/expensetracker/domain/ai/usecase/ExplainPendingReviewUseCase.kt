@@ -123,11 +123,12 @@ class ExplainPendingReviewUseCase @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Timber.e(e, "ExplainPendingReviewUseCase: generation failed for review ${review.id}")
+            // R6 privacy (HD-2): bounded code + class name only; never e.message or the throwable.
+            Timber.e("ExplainPendingReviewUseCase: UNKNOWN_ERROR class=%s for review %d", e::class.java.simpleName, review.id)
             aiArtifactRepository.upsert(
                 baseEntity.copy(
                     status       = AiArtifactStatus.FAILED,
-                    errorMessage = failureMessage(e.message, routeDecision),
+                    errorMessage = failureMessage(UNKNOWN_ERROR_CODE, routeDecision),
                     updatedAt    = timeProvider.now()
                 )
             )
@@ -151,6 +152,9 @@ private fun String?.withRouteDiagnostics(routeDecision: AiRouteDecision): String
     val combined = listOfNotNull(this?.takeIf { it.isNotBlank() }, diagnostic).joinToString("\n")
     return combined.take(AppConfig.Ai.MAX_REVIEW_EXPLANATION_BODY_CHARS)
 }
+
+/** Bounded reason code (DiagnosticReasonCode precedent) persisted instead of raw throwable text. */
+private const val UNKNOWN_ERROR_CODE = "UNKNOWN_ERROR"
 
 private fun failureMessage(message: String?, routeDecision: AiRouteDecision): String {
     val base = message?.takeIf { it.isNotBlank() } ?: "AI generation failed."

@@ -37,6 +37,8 @@ data class BackupRestoreUiState(
     val errorMessage: String? = null,
     val successMessage: String? = null,
     val restartRequired: Boolean = false,
+    /** RG01-N1: number of receipt images skipped during restore (count only, never paths/names). */
+    val receiptAssetWarningCount: Int = 0,
     /** RP-15 (15-D): typed privacy-denied state — rendered via PrivacyBlockedCard. */
     val privacyBlocked: com.yourname.expensetracker.ui.components.PrivacyBlockedUiState? = null
 )
@@ -174,6 +176,7 @@ class BackupRestoreViewModel @Inject constructor(
                 errorMessage = null,
                 successMessage = null,
                 restartRequired = false,
+                receiptAssetWarningCount = 0,
                 privacyBlocked = null
             )
 
@@ -236,9 +239,19 @@ class BackupRestoreViewModel @Inject constructor(
                     Timber.d("Restore completed: %s", importResult)
                     when (importResult) {
                         is DatabaseImportResult.SuccessNeedsRestart ->
-                            _uiState.value = _uiState.value.copy(isRestoring = false, successMessage = "Restore completed successfully!", restartRequired = true)
+                            _uiState.value = _uiState.value.copy(
+                                isRestoring = false,
+                                successMessage = "Restore completed successfully!",
+                                restartRequired = true,
+                                // RG01-N1: count only; warning strings are never surfaced.
+                                receiptAssetWarningCount = importResult.summary.receiptAssetWarnings.size
+                            )
                         is DatabaseImportResult.Success ->
-                            _uiState.value = _uiState.value.copy(isRestoring = false, successMessage = "Restore completed successfully!")
+                            _uiState.value = _uiState.value.copy(
+                                isRestoring = false,
+                                successMessage = "Restore completed successfully!",
+                                receiptAssetWarningCount = importResult.summary.receiptAssetWarnings.size
+                            )
                         is DatabaseImportResult.Loading ->
                             _uiState.value = _uiState.value.copy(isRestoring = false)
                         is DatabaseImportResult.Error ->

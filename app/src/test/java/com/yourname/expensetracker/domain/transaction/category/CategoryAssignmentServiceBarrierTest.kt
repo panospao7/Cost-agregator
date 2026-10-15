@@ -3,7 +3,9 @@ package com.yourname.expensetracker.domain.transaction.category
 import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.data.database.dao.CategoryDao
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
+import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.dao.TransactionEventDao
 import com.yourname.expensetracker.domain.transaction.CategoryAssignmentOutcome
 import com.yourname.expensetracker.data.database.entity.TransactionEvent
@@ -43,6 +45,7 @@ class CategoryAssignmentServiceBarrierTest {
 
     private val writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
     private val expenseDao = mockk<ExpenseDao>(relaxed = true)
+    private val categoryDao = mockk<CategoryDao>()
     private val transactionEventDao = mockk<TransactionEventDao>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
     private val database = mockk<AppDatabase>(relaxed = true)
@@ -52,6 +55,10 @@ class CategoryAssignmentServiceBarrierTest {
     fun setup() {
         every { timeProvider.now() } returns 1_000_000L
         every { database.transactionEventDao() } returns transactionEventDao
+        // RG11-H2: explicit existence stubs (strict mock — an unstubbed id fails loudly).
+        coEvery { categoryDao.getById(42L) } returns
+            Category(id = 42L, name = "Synthetic", icon = "S", color = "#102030")
+        coEvery { categoryDao.getById(99L) } returns null
         // NEW-P2-005: withTransaction compiles to the top-level static facade
         // androidx.room.RoomDatabaseKt.withTransaction (Room 2.7.2); without
         // this stub the real Room body runs against the relaxed AppDatabase
@@ -84,6 +91,7 @@ class CategoryAssignmentServiceBarrierTest {
         val service = DefaultExpenseCategoryAssignmentService(
             database = database,
             expenseDao = expenseDao,
+            categoryDao = categoryDao,
             writeBarrier = writeBarrier,
             timeProvider = timeProvider,
             transactionEventDao = transactionEventDao,
@@ -185,6 +193,7 @@ class CategoryAssignmentServiceBarrierTest {
     private fun newService() = DefaultExpenseCategoryAssignmentService(
         database = database,
         expenseDao = expenseDao,
+        categoryDao = categoryDao,
         writeBarrier = writeBarrier,
         timeProvider = timeProvider,
         transactionEventDao = transactionEventDao,
@@ -262,6 +271,34 @@ class CategoryAssignmentServiceBarrierTest {
         )
 
         assertTrue("Expected SkippedExpenseMissing, got $outcome", outcome is CategoryAssignmentOutcome.SkippedExpenseMissing)
+        coVerify(exactly = 0) { expenseDao.updateCategory(any(), any()) }
+        coVerify(exactly = 0) { transactionEventDao.insert(any()) }
+        coVerify(exactly = 0) {
+            transactionLifecycleCoordinator.dispatchCategoryAssignmentSideEffects(any(), any(), any())
+        }
+    }
+
+    /**
+     * RG11-H2: a stale/missing category id is skipped before any write — the FK
+     * violation (which would mark an enclosing transaction rollback-only) can
+     * never be provoked. Oracle: outcome SkippedCategoryMissing, no update, no
+     * event, no dispatch.
+     */
+    @Test
+    fun `category_assignment missing category skips without update event or dispatch`() = runTest {
+        val uncategorized = Expense(
+            id = 6L, amount = 10.0, merchant = "Test",
+            transactionType = TransactionType.PURCHASE, date = 1_000_000L,
+            categoryId = null
+        )
+        coEvery { expenseDao.getById(6L) } returns uncategorized
+
+        val outcome = newService().assignCategoryIfUnset(
+            expenseId = 6L, categoryId = 99L, source = "RECEIPT_ITEM_MAJORITY", correlationId = null
+        )
+
+        assertTrue("Expected SkippedCategoryMissing, got $outcome", outcome is CategoryAssignmentOutcome.SkippedCategoryMissing)
+        coVerify(exactly = 1) { categoryDao.getById(99L) }
         coVerify(exactly = 0) { expenseDao.updateCategory(any(), any()) }
         coVerify(exactly = 0) { transactionEventDao.insert(any()) }
         coVerify(exactly = 0) {

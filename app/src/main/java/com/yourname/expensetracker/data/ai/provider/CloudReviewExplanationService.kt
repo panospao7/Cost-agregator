@@ -181,37 +181,40 @@ class CloudReviewExplanationService @Inject constructor(
                 } catch (e: SocketTimeoutException) {
                     if (attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
                         Timber.w(
-                            e,
-                            "CloudReviewExplanationService: timeout, retrying (%d/%d)",
+                            "CloudReviewExplanationService: timeout class=%s, retrying (%d/%d)",
+                            e::class.java.simpleName,
                             attempt,
                             CloudRetryPolicy.MAX_RETRY_ATTEMPTS
                         )
                     } else {
-                        Timber.w(e, "CloudReviewExplanationService: timeout")
+                        Timber.w("CloudReviewExplanationService: timeout class=%s", e::class.java.simpleName)
                         return@withContext AiServiceResult.Failure(AiServiceError.Timeout)
                     }
                 } catch (e: SSLException) {
-                    Timber.w(e, "CloudReviewExplanationService: SSL failure")
+                    Timber.w("CloudReviewExplanationService: SSL failure class=%s", e::class.java.simpleName)
                     return@withContext AiServiceResult.Failure(AiServiceError.SslError)
                 } catch (e: IOException) {
                     val retryable = CloudRetryPolicy.isRetryableIoException(e)
                     if (retryable && attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
                         Timber.w(
-                            e,
-                            "CloudReviewExplanationService: connection reset, retrying (%d/%d)",
+                            "CloudReviewExplanationService: connection reset class=%s, retrying (%d/%d)",
+                            e::class.java.simpleName,
                             attempt,
                             CloudRetryPolicy.MAX_RETRY_ATTEMPTS
                         )
                     } else {
-                        Timber.w(e, "CloudReviewExplanationService: network failure")
+                        Timber.w("CloudReviewExplanationService: network failure class=%s", e::class.java.simpleName)
                         return@withContext AiServiceResult.Failure(AiServiceError.Offline)
                     }
                 } catch (e: JSONException) {
-                    Timber.w(e, "CloudReviewExplanationService: parse failure")
-                    return@withContext AiServiceResult.Failure(AiServiceError.ParseError(e.message))
+                    // R6 privacy: bounded code + class name only; never e.message (may echo response text).
+                    Timber.w("CloudReviewExplanationService: PARSER_FAILED class=%s", e::class.java.simpleName)
+                    return@withContext AiServiceResult.Failure(AiServiceError.ParseError("PARSER_FAILED"))
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
                 } catch (e: Exception) {
-                    Timber.w(e, "CloudReviewExplanationService: parse failure")
-                    return@withContext AiServiceResult.Failure(AiServiceError.Unknown(e.message))
+                    Timber.w("CloudReviewExplanationService: UNKNOWN_ERROR class=%s", e::class.java.simpleName)
+                    return@withContext AiServiceResult.Failure(AiServiceError.Unknown("UNKNOWN_ERROR"))
                 }
 
                 if (attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {

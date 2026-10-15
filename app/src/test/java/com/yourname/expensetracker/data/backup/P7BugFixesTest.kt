@@ -697,7 +697,7 @@ class P7BugFixesTest {
     }
 
     @Test
-    fun worker_scheduling_failure_latches_critical_before_NORMAL_is_published() {
+    fun worker_scheduling_failure_retains_resume_pending_restart_required_before_NORMAL_is_published() {
         val leaseRegistry = mockk<WorkerLeaseRegistry>(relaxed = true)
         val mode = RestoreMaintenanceMode(
             context,
@@ -721,15 +721,16 @@ class P7BugFixesTest {
             unmockkObject(WorkerRegistry)
         }
 
-        assertEquals(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED, mode.currentMode())
+        assertEquals(RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED, mode.currentMode())
+        assertEquals(AppOperationalState.RestartRequiredAfterRestore, mode.operationalStateFlow.value)
         assertFalse(mode.isWritesAllowed())
         val prefs = context.getSharedPreferences("restore_maintenance_mode", Context.MODE_PRIVATE)
-        assertFalse(prefs.contains("worker_resume_pending"))
+        assertTrue(prefs.getBoolean("worker_resume_pending", false))
         verify(exactly = 0) { leaseRegistry.resetStopFlag() }
     }
 
     @Test
-    fun successful_registry_summary_without_active_work_latches_critical() {
+    fun successful_registry_summary_without_active_work_retains_resume_pending_restart_required() {
         val leaseRegistry = mockk<WorkerLeaseRegistry>(relaxed = true)
         val mode = RestoreMaintenanceMode(
             context,
@@ -756,13 +757,16 @@ class P7BugFixesTest {
             unmockkObject(WorkerRegistry)
         }
 
-        assertEquals(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED, mode.currentMode())
+        assertEquals(RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED, mode.currentMode())
+        assertEquals(AppOperationalState.RestartRequiredAfterRestore, mode.operationalStateFlow.value)
         assertFalse(mode.isWritesAllowed())
+        val prefs = context.getSharedPreferences("restore_maintenance_mode", Context.MODE_PRIVATE)
+        assertTrue(prefs.getBoolean("worker_resume_pending", false))
         verify(exactly = 0) { leaseRegistry.resetStopFlag() }
     }
 
     @Test
-    fun confirmation_future_failure_latches_critical_without_resetting_stop_flag() {
+    fun confirmation_future_failure_retains_resume_pending_without_resetting_stop_flag() {
         val leaseRegistry = mockk<WorkerLeaseRegistry>(relaxed = true)
         val mode = RestoreMaintenanceMode(
             context,
@@ -790,8 +794,11 @@ class P7BugFixesTest {
             unmockkObject(WorkerRegistry)
         }
 
-        assertEquals(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED, mode.currentMode())
+        assertEquals(RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED, mode.currentMode())
+        assertEquals(AppOperationalState.RestartRequiredAfterRestore, mode.operationalStateFlow.value)
         assertFalse(mode.isWritesAllowed())
+        val prefs = context.getSharedPreferences("restore_maintenance_mode", Context.MODE_PRIVATE)
+        assertTrue(prefs.getBoolean("worker_resume_pending", false))
         verify(exactly = 0) { leaseRegistry.resetStopFlag() }
     }
 

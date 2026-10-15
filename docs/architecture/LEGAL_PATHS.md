@@ -437,6 +437,7 @@ RESTORE:
   → Delete WAL/SHM before installing restored DB
   → On rollback failure: enter CRITICAL_RECOVERY_REQUIRED (fail-closed, persists across restarts)
   → On startup crash-recovery failure: enter CRITICAL_RECOVERY_REQUIRED (NOT reset on later restarts)
+  → On worker reschedule/confirmation failure in RestoreMaintenanceMode resume (startup checked resume, export cleanup): keep NORMAL + worker_resume_pending (restart required, writes denied), retried on the next launch; only a persistence failure goes to CRITICAL_RECOVERY_REQUIRED. Pre-destructive restore/reset aborts (live DB untouched, failure journal written) defer a worker-resume failure to restart-required via exitAfterPreDestructiveAbort (D-23); import aborts still lock CRITICAL via containRestoreOperation/lockCriticalForFailure and cancel-cleanup aborts via finishCancelledRestore
   → Forced restart after success (RESTORE_COMPLETE_RESTART_REQUIRED; auto-reset to NORMAL on next clean start)
   → DatabaseReadBarrier / DatabaseWriteBarrier gate all reads and writes during backup/restore
   → Barrier violations throw DatabaseAccessBlockedException (typed access type,
@@ -1193,9 +1194,10 @@ FORBIDDEN:
 ASSIGN default category to expense:
   → DefaultExpenseCategoryAssignmentService.assignCategoryIfUnset(expenseId, categoryId, source, correlationId)
       [implements ExpenseCategoryAssignmentPort; returns CategoryAssignmentOutcome:
-       Assigned / SkippedAlreadySet / SkippedExpenseMissing / Failed]
+       Assigned / SkippedAlreadySet / SkippedExpenseMissing / SkippedCategoryMissing / Failed]
   → DatabaseWriteBarrier check
   → Guard: skips if expense already has a category set
+  → Guard: skips (SkippedCategoryMissing) if the category row does not exist (CategoryDao.getById, read only)
   → database.withTransaction {
       ExpenseDao.updateCategory(expenseId, categoryId)
       TransactionEventDao.insert with eventType "EXPENSE_CATEGORY_ASSIGNED" + correlationId

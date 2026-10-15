@@ -341,6 +341,17 @@ fun BackupRestoreScreen(
                             color = MaterialTheme.colorScheme.onErrorContainer,
                             fontWeight = FontWeight.Bold
                         )
+                        if (uiState.receiptAssetWarningCount > 0) {
+                            // RG01-N1: bounded count only; never skipped file names or paths.
+                            Text(
+                                text = stringResource(
+                                    R.string.backup_restore_receipt_images_skipped_format,
+                                    uiState.receiptAssetWarningCount
+                                ),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                        }
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.End,

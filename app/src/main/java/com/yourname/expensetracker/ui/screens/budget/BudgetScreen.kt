@@ -237,7 +237,15 @@ fun BudgetScreen(
                     item { BudgetSummaryCard(uiState.budgets) }
 
                     if (uiState.suggestions.isNotEmpty()) {
-                        item { SuggestionsBanner(uiState.suggestions, categories, uiState.referenceNowMillis, onAdd = { viewModel.addBudget(it) }) }
+                        item {
+                            SuggestionsBanner(
+                                uiState.suggestions,
+                                categories,
+                                uiState.referenceNowMillis,
+                                homeCurrency = uiState.homeCurrency,
+                                onAdd = { budget, currency -> viewModel.addBudget(budget, currency) }
+                            )
+                        }
                     }
 
                     // F9: AI Budget Autopilot Banner
@@ -266,6 +274,7 @@ fun BudgetScreen(
                             BudgetCard(
                                 status = budgetStatus,
                                 referenceNowMillis = uiState.referenceNowMillis,
+                                homeCurrency = uiState.homeCurrency,
                                 onEdit = { editingBudget = budgetStatus },
                                 onToggle = { isActive -> viewModel.toggleBudget(budgetStatus.budget.id, isActive) },
                                 onDelete = { viewModel.deleteBudget(it) },
@@ -290,8 +299,8 @@ fun BudgetScreen(
                     showAddDialog = false
                     preselectedCategoryIdForAdd = null
                 },
-                onConfirm = {
-                    viewModel.addBudget(it)
+                onConfirm = { budget, currency ->
+                    viewModel.addBudget(budget, currency)
                     preselectedCategoryIdForAdd = null
                 },
                 categories = categories
@@ -305,7 +314,7 @@ fun BudgetScreen(
                 homeCurrency = uiState.homeCurrency,
                 isSubmitting = uiState.isLoading,
                 onDismiss = { editingBudget = null },
-                onConfirm = { viewModel.updateBudget(it) },
+                onConfirm = { budget, currency -> viewModel.updateBudget(budget, currency) },
                 categories = categories
             )
         }
@@ -452,7 +461,9 @@ fun BudgetCard(
     onEdit: () -> Unit,
     onToggle: (Boolean) -> Unit,
     onDelete: (Budget) -> Unit,
-    onViewForecast: (() -> Unit)? = null
+    onViewForecast: (() -> Unit)? = null,
+    /** R3: home currency; the "Confirm currency" action is offered only for home-currency rows. */
+    homeCurrency: String? = null
 ) {
     val context = LocalContext.current
     val budgetActiveString = stringResource(R.string.budget_status_active)
@@ -684,6 +695,27 @@ fun BudgetCard(
                 }
             }
             
+            // R3: offer currency confirmation only when the dashboard provenance policy rejects
+            // this budget AND it is already denominated in the home currency (non-home legacy
+            // rows need a separate owner decision and are not relabelled here).
+            val homeCode = com.yourname.expensetracker.domain.core.money.CurrencyCode.parse(homeCurrency)
+            val budgetCode = com.yourname.expensetracker.domain.core.money.CurrencyCode.parse(status.budget.currency)
+            if (homeCode != null &&
+                homeCode == budgetCode &&
+                com.yourname.expensetracker.domain.savings.SavingsGoalCurrencyPolicy.knownCurrencyOrNull(
+                    status.budget.currency,
+                    status.budget.currencyAssumption
+                ) == null
+            ) {
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = onEdit,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(stringResource(R.string.budget_confirm_currency_action))
+                }
+            }
+
             // AI Forecast Button
             if (onViewForecast != null) {
                 Spacer(Modifier.height(12.dp))
@@ -746,7 +778,9 @@ fun SuggestionsBanner(
     suggestions: List<BudgetSuggestion>,
     categories: List<Category>,
     referenceNowMillis: Long,
-    onAdd: (Budget) -> Unit
+    /** R3: null until home currency loads — Create is disabled until set. */
+    homeCurrency: String? = null,
+    onAdd: (Budget, String) -> Unit
 ) {
     var currentIndex by remember { mutableIntStateOf(0) }
     val suggestion = suggestions.getOrNull(currentIndex) ?: return
@@ -801,13 +835,19 @@ fun SuggestionsBanner(
                 val createCd = stringResource(R.string.budget_suggestion_create_cd_format, suggestion.categoryName)
                 Button(
                     onClick = {
-                        onAdd(Budget(
-                            categoryId = suggestion.categoryId,
-                            amount = suggestion.suggestedAmount,
-                            period = BudgetPeriod.MONTHLY,
-                            startDate = referenceNowMillis
-                        ))
+                        val resolvedCurrency = homeCurrency ?: return@Button
+                        onAdd(
+                            Budget(
+                                categoryId = suggestion.categoryId,
+                                amount = suggestion.suggestedAmount,
+                                period = BudgetPeriod.MONTHLY,
+                                startDate = referenceNowMillis,
+                                currency = resolvedCurrency
+                            ),
+                            resolvedCurrency
+                        )
                     },
+                    enabled = homeCurrency != null,
                     modifier = Modifier.semantics { 
                         contentDescription = createCd
                     }
@@ -861,8 +901,11 @@ fun AddEditBudgetDialog(
     /** S8-009: true while save is in progress — prevents double-submit */
     isSubmitting: Boolean = false,
     onDismiss: () -> Unit,
-    onConfirm: (Budget) -> Unit
+    /** R3: second argument is the currency shown read-only to the user (the confirmed currency). */
+    onConfirm: (Budget, String) -> Unit
 ) {
+    // R3: displayed currency is read-only; edit shows the stored currency, create shows home.
+    val displayedCurrency = initialBudget?.currency ?: homeCurrency
     var amount by remember { mutableStateOf(initialBudget?.amount?.toString() ?: "") }
     var selectedCategory by remember { mutableStateOf(initialBudget?.categoryId ?: initialCategoryId) }
     var period by remember { mutableStateOf(initialBudget?.period ?: BudgetPeriod.MONTHLY) }
@@ -895,6 +938,13 @@ fun AddEditBudgetDialog(
                     },
                     keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
                 )
+
+                if (displayedCurrency != null) {
+                    Text(
+                        stringResource(R.string.budget_currency_display_format, displayedCurrency),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
 
                 Text(stringResource(R.string.budget_category_label), style = MaterialTheme.typography.labelMedium)
                 CategorySelector(
@@ -956,7 +1006,7 @@ fun AddEditBudgetDialog(
                             // S8-002: Use resolved home currency, not entity default "EUR"
                             currency = resolvedCurrency
                         )
-                        onConfirm(budgetToSave)
+                        onConfirm(budgetToSave, initialBudget?.currency ?: resolvedCurrency)
                         // S8-001: Do NOT call onDismiss() here — dialog closes via BudgetSaved event
                     }
                 },

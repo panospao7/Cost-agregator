@@ -2540,4 +2540,11 @@
     <string name="status_pending">Pending</string>
     <string name="status_completed">Completed</string>
 
+    <string name="receipt_reopened_existing_notice">This receipt was already scanned. Showing the saved receipt.</string>
+    <string name="budget_currency_display_format">Currency: %1$s</string>
+    <string name="budget_confirm_currency_action">Confirm currency</string>
+    <string name="financial_runway_review_budget">Review budget</string>
+    <string name="backup_restore_receipt_images_skipped_format">%1$d receipt images could not be restored.</string>
+    <string name="restart_required_database_operation">The app must restart to finish a database operation. Changes are paused until it restarts.</string>
+
 </resources>
