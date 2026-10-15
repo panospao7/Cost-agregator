@@ -1,0 +1,330 @@
+# Release 1.0 remediation plan (PLAN ONLY — nothing approved for execution)
+
+```text
+Workflow / phase: release-1.0-assurance / remediation planning (approved 2026-10-15: planning only)
+Source candidate: HEAD 279b7c92; app/ == ea446316 (pin verified by lead before and after)
+Author: release-planner, requested Opus 5.5/xhigh; self-reported Opus 5.5 (effort not observable); read-only.
+Persisted by: release-orchestrator (lead). The plan is a planner draft: it is NOT independently reviewed and NOT an
+  approval. Every R0 test authoring, every batch, every runner queue, every guard/allowlist/policy edit and every
+  owner decision (D-xx) needs its own explicit human approval.
+Evidence basis: release-1.0-verification-ledger.md (static, independently verified findings), regression ledger,
+  handoff. No runtime evidence exists for any finding yet.
+Status: PENDING human review
+```
+
+Lead notes:
+- Fail-first R0 tests are planned to stay uncommitted until their fix batch lands. While present in the worktree they
+  change app/ (re-pin required) and would make broad suites (app-check/unit-tests) fail; run them only through
+  targeted-unit-test until their batch lands.
+- Robolectric fidelity for R0-1 (nested SQLite transaction semantics) is uncertain; the device twin (R0-1b) is the
+  stronger evidence and needs D-22.
+- The "Findings" severities used here are those after independent static verification (2 P1, 12 P2).
+
+## 1. Principles and constraints
+
+- One legal path per operation (LEGAL_PATHS): expense writes only via TransactionLifecycleCoordinator -> insertAtomic();
+  receipt mutations via ReceiptLinkService / ReceiptLifecycleCoordinator; group expenses via GroupTransactionCoordinator.
+  No new direct-DAO writes from VM/UI; no duplicated business rule (share predicates, never copy).
+- Room: no schema/version change planned in any batch. If any fix needs one: stop -> version bump + migration +
+  snapshot + migration tests (FG-21) + explicit approval; no destructive migration; no backfill migration without approval.
+- Guards: no weakening, no allowlist/baseline growth (FG-06/FG-07). Every edit to config/guards/db_ownership_policy.yml
+  or scripts/allowlists/*.yml requires human approval (shrinks and rationale corrections included). Gates by ID only:
+  FG-10 cancellation, FG-11 worker, FG-12 UI/DAO ownership, FG-13 write barrier, FG-14 transaction ownership,
+  FG-15 receipt links, FG-16 privacy, FG-17 money, FG-19 ignored tests, FG-20 build/test, FG-26 docs.
+- Privacy/cancellation: fail closed; bounded reason codes only (no e.message/paths/SQL/model output in persisted or
+  displayed diagnostics); always rethrow CancellationException; metrics only after real success.
+- Tests: real Room (Robolectric in-memory or androidTest) for DB/lifecycle/money; hand-derived oracles; no MockK
+  suspend-extension mocking on lifecycle paths; never @Ignore/delete/relax (FG-19). Changing a test that pins the
+  defective behavior is a spec change needing explicit approval (RG01A-1, RG05A-1).
+- Process: one approved batch at a time; 1 writer, <=2 read-only workers, 1 validation owner. Implementer Sonnet/high;
+  reviewer-strict (Opus/xhigh) for every batch (all T1). Max 2 review + 2 debug iterations then PARTIAL/BLOCKED.
+  Orchestrator is the sole ledger writer.
+- Validation only via validation-runner, serially:
+  `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/validation-runner.ps1 -Action Start -Profile <p> [-TestFilter <one pattern>]`.
+  -TestFilter takes one pattern per run (regex `^[A-Za-z0-9_.$*?\-]+$`): multiple filters = multiple serial runs or a named
+  unit-test-shard (shard names from test-shards.json, not yet read). connected-tests runs the WHOLE androidTest suite
+  (no class filter, 2 h timeout, device required) -> needs human approval or an approved narrow runner addition with
+  independent review (D-22). Missing/stale/RUNNING/errored results are never PASS.
+
+## 2. Phase R0 — deciding runtime tests (authoring: release-test-author Sonnet/high; execution: validation-runner)
+
+R0 tests assert the intended behavior (fail-first: fail now, pass after the fix), except R0-1 which permanently
+characterizes framework semantics. Record runner run ID + deciding observation (counts/result types only). Adding tests
+changes app/ -> lead records a new pin (Phase 0 delta). reviewer-strict for R0-1/R0-2; cheap review for the rest.
+
+| # | Finding | Test file (new) | Fixture | Deciding observation -> severity | Profile |
+| --- | --- | --- | --- | --- | --- |
+| R0-1 | RG11-H2 Room semantics | (a) app/src/test/java/com/yourname/expensetracker/data/database/NestedTransactionSemanticsTest.kt (Robolectric); (b) twin app/src/androidTest/.../data/database/NestedTransactionSemanticsInstrumentedTest.kt | In-memory AppDatabase with the production builder config/callbacks; record PRAGMA foreign_keys. T1 `withTransaction { insert A; runCatching { withTransaction { error("x") } } }`; T2 control (exception caught inside nested block); T3 nested FK-violating `UPDATE expenses SET categoryId=<missing>` swallowed outside the nested block | A absent + outer returns normally -> mechanism CONFIRMED (silent rollback). A present -> REFUTED (RG11-H2 closes; swallow becomes P3 hygiene). Outer throws -> loud, downgrade P2/P3. T2 present -> control valid | (a) targeted-unit-test `*NestedTransactionSemanticsTest`; (b) connected-tests (D-22 + device) before final acceptance |
+| R0-2 | RG11-H2 end-to-end + V11-NEW-1 trigger | app/src/test/.../data/repository/ReviewQueueRepositoryNestedRollbackTest.kt | Real Room; real ReviewQueueRepository + ReceiptLinkService + DefaultExpenseCategoryAssignmentService + DAOs; fakes only for non-DB ports. Categories C, D; receipt R with majority userCorrectedCategoryId=C; CategoryDao.mergeCategories(C->D) (variant: delete C); pending review scannedReceiptId=R, no category. Variants: createExpenseAndLinkReceipt; standalone linkReceiptToExpense | Success + review PENDING + 0 expenses + 0 links + post-commit ran -> P1 CONFIRMED and V11-NEW-1 confirmed as trigger. Failure result, rows absent -> contained, P2 (approval permanently blocked; still fix). Success with rows present -> trigger refuted, RG11-H2 -> P2 (I/O-class triggers only) | targeted-unit-test `*ReviewQueueRepositoryNestedRollbackTest` |
+| R0-3 | RG12-01 | app/src/test/.../domain/receipt/lifecycle/ReceiptDuplicateFingerprintCollisionTest.kt | Coordinator-level real Room, real detector + DAO; "ACME FUEL / UNLEADED / TOTAL 12.50 EUR" vs 13.75, parsedDate null, different image bytes; control with date + currency; VM variants (first receipt linked / unlinked) | Second inserted=false with first id, 1 row, POST_OCR_DUPLICATE_DRAFT cleanup, image deleted -> P1 kept; control 2 rows -> valid; VM variants decide branch A (Save hidden) vs B (old receiptId prefill; V12-NEW-B) | targeted-unit-test (one run per filter) |
+| R0-4 | RG01A-1 frequency/fault | app/src/test/.../data/backup/RestoreMaintenanceModeConfirmationFaultTest.kt | Robolectric + WorkManagerTestInitHelper, real mode persistence in temp filesDir. (a) 200 cold-start exit(false)/resetCancellable() runs recording confirmation latency/failures; (b) injected failed getWorkInfosForUniqueWork future + clock > 10 s, then rebuilt coordinator | (b) CRITICAL persists, writes denied, startup BLOCKED -> permanence proven; (a) zero failures & p99 << 10 s -> frequency P3-leaning; failures -> P2; frequent -> P1. Robolectric timing != device (device frequency is a runtime RT item). Recommend fixing regardless (CL-19 spec requires a recovery path) | targeted-unit-test |
+| R0-5 | RG01-N1 | app/src/test/.../data/backup/ReceiptAssetRepeatRestoreTest.kt | Real Room + real filesDir: restore receipt 5 -> restored_5.jpg; reset row to absent original path; restore again with a new journal | FAILED(TARGET_COLLISION) + missing pointer + unreferenced restored_5.jpg -> CONFIRMED (optional: next image export fails RECEIPT_ASSET_COLLECTION_FAILED); completes pointing at restored_5.jpg -> REFUTED | targeted-unit-test |
+| R0-6 | RG06A-1 | app/src/test/.../domain/usecase/dashboard/DashboardBudgetProvenanceChainTest.kt | In-memory Room, home USD; overall budget USD 1000 created exactly as BudgetScreen :949 builds it (or via BudgetViewModel.addBudget), not hand-stamped; one USD 100 purchase on day 1; now = day 15 of 30; ComputeDashboardWidgetsUseCase | Runway "unavailable", no pace/Block Party -> CONFIRMED (becomes R3 fail-first regression). Intended: remaining 900, burn 6.667/day, runwayDays 135 HEALTHY, simulate(100.0, 0.0, 1000.0, "USD", 0.0) | targeted-unit-test |
+| R0-7 (optional) | RG02A-1 sanitizer probe | JVM test per ledger (path with spaces/amount; SQLite "while compiling"; require() decimal) | — | user text survives -> raise to P2 and add a batch | targeted-unit-test |
+
+Other ledger tests (RG04A-1, RG05A-1, RG07A-1, RG02B-1 device) do not change severity; they are authored inside their
+fix batches as regression tests.
+
+## 3. Remediation batches (root-cause groups; write sets disjoint unless sequenced)
+
+Shared-file sequencing: app/src/main/res/values/strings.xml is touched by R2 (optional), R3 (optional), R5, R12 -> strict
+plan order, distinct appended keys only. config/guards/db_ownership_policy.yml by R1b and R7 only if a grant is needed;
+R1b before R7.
+
+| Batch | Findings | Fix shape (smallest) | Write set | Re-check (no edit expected) | Implications / approvals | Review | Effort / risk |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| R1 | RG11-H2 (P1; gated on R0-1/R0-2) | (1) Inside the assignment transaction read the target category; if missing return a non-throwing outcome (e.g. SkippedCategoryMissing), removing the deterministic FK trigger. (2) ReceiptLinkService: best-effort only for the read-only part (categorization read/majority); an assignment Failed or exception aborts the link transaction with a typed bounded-code exception -> Result.failure at the linkReceiptToExpense boundary (cancellation rethrown; ReceiptAlreadyClaimedException kept). (3) Correct KDoc ExpenseRepository :112-114 | domain/transaction/DefaultExpenseCategoryAssignmentService.kt; domain/transaction/ExpenseCategoryAssignmentPort.kt; domain/receipt/lifecycle/ReceiptLinkService.kt; data/repository/ExpenseRepository.kt (comment); tests R0-1, R0-2 + new ReceiptLinkServiceNestedFailureTest.kt (real Room) | ReviewQueueRepository :309-323; ReceiptLifecycleCoordinator :1193/:1210/:1607; ReceiptMatchingViewModel :158/:202/:272/:335; ReceiptMatchingWorker :86 (terminal vs retry classification, no endless retry, FG-11); ReceiptSideEffectPlanner :396; exhaustive `when` over CategoryAssignmentOutcome; Review UI error path | no schema; DI adds CategoryDao (confirm no FG-12 grant needed); FG-14/15/10; D-02 | reviewer-strict + architecture-guardian | M / medium (silent rollbacks become visible failures — intended). Follow-up: nested-transaction swallow sweep (HZ-02/HZ-04); a new detector guard needs approval (FG-02/FG-08) |
+| R1b | V11-NEW-1 stale category refs (conditional on R0-2 or a refutation pass) | CategoryDao.mergeCategories (:187; existing UPDATE :150 covers only suggestedCategoryId) also reassigns userCorrectedCategoryId; delete (:59) per D-03; existing stale rows not repaired (would be a migration) — R1 makes them harmless | CategoryDao.kt; CategoryDaoTest (androidTest) or Robolectric DAO test; db_ownership_policy.yml only if a grant is needed (human) | — | FG-12/FG-13; D-03 | reviewer-strict | S |
+| R2 | RG12-01 (P1) | D-04 option A: text hit is an automatic duplicate only when both semantic fingerprints are present and equal; otherwise isDuplicate=false (insert + keep image) with advisory matchType (e.g. TEXT_FINGERPRINT_UNCONFIRMED). Option B (digit-preserving fingerprint v2) changes persisted semantics/backup comparability — not for 1.0. Optional with approval: duplicate notice instead of silent prefill when inserted=false (V12-NEW-B); hide/wire no-op buttons (V12-NEW-A) | ReceiptDuplicateDetector.kt; ReceiptDuplicateDetectorTest.kt; R0-3 promoted; optional ReceiptScanViewModel.kt + strings.xml | coordinator duplicate branch (image deletion only when isDuplicate); S1-REV-01 duplicateOutcome; email path (externalSourceId decisive); bank-statement detector use | FG-15; D-04. Oracles: 12.50 vs 13.75 null date -> 2 rows + both images; equal semantics -> 1 row; one side null -> 2 rows | reviewer-strict | S (M with VM) / low-medium (true rescan with unparsed fields creates a second deletable receipt) |
+| R3 | RG06A-1 + RG06A-4 (P2; release-blocker candidate) | D-05 option a: dialog create/edit stores the displayed currency with USER_CONFIRMED (or EXPLICIT_HOME_CURRENCY); suggestion create stores currency=home with EXPLICIT_HOME_CURRENCY; stamp in one place (BudgetViewModel addBudget :185 / updateBudget :206 with explicit currency from the screen). Legacy rows: no migration; the "conversion unavailable" state links to the edit dialog; saving re-stamps. Gate not relaxed | ui/screens/budget/BudgetScreen.kt; ui/screens/budget/BudgetViewModel.kt; R0-6 promoted; BudgetViewModel provenance test; optional runway-card affordance file (not yet identified) + strings.xml | BudgetRepository :648/:689/:740 (autopilot preserves provenance via copy); LegacyDataMigrationService :358 (debug); ComputeDashboardWidgetsUseCase :654/:1302; MonthlySavingsSweepUseCase :264; FinancialHealthCalculator :466; budget backup/restore keeps the column; do NOT gate Money Radar (RG06A-3) until R3 lands | FG-17; D-05 | reviewer-strict | S-M / existing users stay gated until they confirm (D-05) |
+| R4 | RG01A-1 (+RG01A-2 tests) | D-01 option a: on WorkerRescheduleException keep the durable NORMAL+resumePending write-blocked state (mirror cancellation branch :287-290) and retry next launch via reset(); CRITICAL stays for PersistenceException; optional one bounded in-process retry; optional reviewed one-time downgrade of existing WORKER_RESCHEDULE_FAILURE sentinels only if H-2 requires | data/backup/RestoreMaintenanceMode.kt; AppStartupCoordinator only if its BLOCKED mapping must change (:284-427 unread); AppStartupCoordinatorRecoveryTest.kt (pinned test initialize_contains_checked_resume_failure_and_keeps_recovery_UI_available changes expectation, D-06); R0-4 promoted; new initialize()/resetCancellable() positive-path tests; CL-19 spec doc | triggers DBRI :495/:796 (exit(false) in finally), MaintenanceOperationRunner, :985 wrong password, :471 asset rollback; MainActivity :437-449 dialog text | FG-11/13/10; D-01, D-06 | reviewer-strict + architecture-guardian | M / medium-high (state machine; barrier must stay closed while resume pending) |
+| R5 | RG01-N1 | ReceiptAssetRecovery :92-97: a PENDING task whose existing restored_<id> matches the verified bundle proof (checksum, not name) adopts via the normal pointer CAS (like TEMP_WRITTEN adopt :225-234); non-matching stays TARGET_COLLISION. BackupRestoreViewModel :238-239 surfaces the receiptAssetWarnings count (no names/paths) | data/backup/ReceiptAssetRecovery.kt; ui/screens/backup/BackupRestoreViewModel.kt; strings.xml (sequenced); R0-5 promoted | DBRI :1265, :1446-1457, :1568-1598; generateBackupManifest :228-233 (stays fail-closed); 6-code reason allowlist; RG01B-1 untouched | FG-13/16 | reviewer-strict + privacy-security-guardian | M |
+| R6 | RG02B-1 | CloudDedupeJudgeService :197-202 and CloudReviewExplanationService :209-214 return ParseError/Unknown with fixed codes (mirror CloudDashboardBriefingService); check HybridDedupeJudgeService and OnDeviceReviewExplanationService (unread). Optional coupling: RG02B-4 cancellation rethrow in HybridDedupe.safeExecute | those provider files; JVM sentinel tests + androidTest MockWebServer (Android org.json differs, V02B-N4; needs connected-tests/device) | — | FG-16; existing rows per D-07 (bounded SQL scrub needs a new DAO write + grant + approval, else accept retention + ExportAnonymizer) | privacy-security-guardian + reviewer-strict | S |
+| R7 | RG07A-1 (after R1) | ReceiptSideEffectPlanner Suggested branch (:444-446): replace the full-row update with the existing conditional updateMatchSuggestion; require 1 row; 0 rows -> no write/no event | ReceiptSideEffectPlanner.kt; new real-Room interleave test (claimForAutoMatch lands between snapshot read and write -> stays linked). Guard files with approval: scripts/allowlists/receipt_link_allowlist.yml (planner G-RCPT-LINK-01 rationale false: correct or remove; must not grow); db_ownership_policy.yml only if a grant is needed | — | FG-15/12 | reviewer-strict | S |
+| R8 | RG05A-1 | Producer (MonthlySavingsSweepUseCase :88-109) declines a consumed month via ONE shared read-only predicate equal to the coordinator check (SavingsSweepAcceptanceCoordinator :96: marker overlap OR accepted plan OR 'sweep' ledger row); SavingsGoalsViewModel (:223, :292) treats MONTH_ALREADY_ACCEPTED as terminal and clears the card | those three files (coordinator only to expose the predicate); SavingsGoalsViewModelTest (pinned "card stays" changes, D-06); MonthlySavingsSweepUseCaseTest; ledger Room test + v150-migrated variant | — | FG-17/14; D-06, D-08 (upgrade month shows no card); RG05A-2 not included unless approved | reviewer-strict | S-M |
+| R9 | RG16A-2 | SynthesisEngine :365-382 applies SavingsGoalCurrencyPolicy (read-only) and converts the remaining amount using the engine's rate input; policy-unknown/unconvertible goal -> AVAILABLE partial/unavailable (D-09), never silently excluded | SynthesisEngine.kt + new test (EUR 1000 goal, home JPY at rate r; legacy goal -> unavailable) | if no rate input/partial flag exists, the result model and dashboard consumers join the write set (re-plan) | FG-17; D-09 | reviewer-strict | M |
+| R10 | RG12-03 (+ optional RG12-02) | ExportOptionsViewModel.setDateRange (:169) invalidates the completed result (generation bump + clear, as on format switch) and snapshots the range at job start; privacy block :262-279 untouched | ExportOptionsViewModel.kt; ExportOptionsViewModelTest | — | FG-16 | privacy-security-guardian + cheap review | S |
+| R11 | RG04A-1 | GroupsRepositoryImpl.validateActiveMembersAndCustomSplit uses a date-aware member set (joinedAt <= expense date, not left) with the same date passed to the coordinator; fail closed with a bounded error. No coordinator/SplitCalculator change unless D-10 approves WI-6 rejection (separate batch) | GroupsRepositoryImpl.kt; ledger Room test (EUR 90, A10/B80, Bob joinedAt > date -> Error, 0 rows); GroupsRepositoryImplTest boundary | — | FG-17; D-10 | reviewer-strict | S |
+| R12 | RG04B-1 (product, D-11) | Option a (recommended): relabel to read-only "suggested transfers" in SharedExpenseGroupsScreen (SettlementPlanSection) + strings.xml; correct CHANGELOG :74 and ARCHITECTURE :1709; optionally RG04A-2 LEGAL_PATHS :664-670 drift. Option b (legal settlement writer via GroupTransactionCoordinator) is planner-first, outside 1.0 | ui/screens/groups/SharedExpenseGroupsScreen.kt; strings.xml; docs | — | FG-26 (edit docs before the fingerprint freeze); D-11 | cheap review + doc check | S |
+| R13 | RG17B-1 (test-only) | New app/src/test/.../domain/notification/capture/NotificationIntakeEnqueueFailureRoomTest.kt: Robolectric real Room + throwing fake enqueuer; covers markEnqueueFailed and the service EnqueueFailed branch (status, attempts, terminalAt per V17B-N1, payload purge). Do not un-ignore NotificationIntakeEnqueueFailureTest (RP-21 harness); new defects found go to a verifier, not a silent fix | test file only | — | FG-19/11 | reviewer-strict (light) | S |
+| G1 | FG-06 governance (D-19 first) | RG17A2-1 cloud_payload matcher (exact path, enforced rule + symbol) or explicit waiver; RG17A2-3 remove 53 orphan entries (shrink, approval); human DECISION line for the 24 agent-approved additions; plan the 2027-01-01 expiry of all 77 entries (extension is an FG-06/FG-07 decision) | matcher script (file not yet located) + its tests + cancellation/cloud_payload allowlists (no overlap with R7's receipt_link_allowlist.yml) | — | registered-guard / static-guards validation | reviewer-strict + guard owner | — |
+
+## 4. Owner decisions
+
+| ID | Decision | Options | Planner recommendation | Blocks |
+| --- | --- | --- | --- | --- |
+| D-01 | RG01A-1 policy | a) NORMAL+resumePending for reschedule failures; b) explicit reviewed recovery action; c) keep CRITICAL | a (+ sentinel downgrade only if H-2 requires) | R4 |
+| D-02 | RG11-H2 failure semantics | a) link/approval fails visibly; b) move category propagation post-commit (changes atomicity) | a | R1 |
+| D-03 | V11-NEW-1 category merge/delete refs | reassign on merge; on delete null vs leave | reassign on merge; leave on delete (R1 neutralizes) | R1b |
+| D-04 | RG12-01 shape | A rule change / B fingerprint v2; branch-B notice; V12-NEW-A buttons | A + notice; hide no-op buttons | R2 |
+| D-05 | RG06A-1 provenance | a) stamp on create/edit + legacy confirm affordance; b) accept LEGACY when currency==home; c) migration backfill | a (b conflicts with B4 savings policy and RG06A-4; c needs a schema version bump) | R3 |
+| D-06 | Change tests pinning defective behavior | approve / reject | approve, named tests only | R4, R8 |
+| D-07 | Scrub existing ai_artifacts.errorMessage | SQL scrub (grant) / accept retention | accept unless a device test shows real user text, then scrub | R6 closure |
+| D-08 | No sweep card in the upgrade month | accept / special-case | accept (F2 design) | R8 |
+| D-09 | RG16A-2 fail direction/severity | unavailable/partial vs exclude; P2 vs P3 | unavailable; keep P2 | R9 |
+| D-10 | CL-29 WI-6 | reject vs equal fallback in coordinator | reject (separate batch after R11) | R11 extension |
+| D-11 | RG04B-1 1.0 scope | relabel / build writer | relabel | R12 |
+| D-12 | RG02B-2 capture-toggle worker mapping | toggle cancels reminders/warranty vs capture-only | capture-only workers | future batch |
+| D-13 | RG02B-3 briefing vs proactive flag | gate generation / delivery only | gate generation | future batch |
+| D-14 | RG03-H1 raw text before filter under STORE_RAW | breach (P2) / accepted | filter or encrypted-transient-only before persist; rule P2 | future privacy batch |
+| D-15 | OBS-REVOKE purge on consent revoke | purge / retention | purge via existing cleanup path (cleanup not gated on the capability) | future privacy batch |
+| D-16 | RG16A-1 goal-delete history asymmetry | accept / align | accept for 1.0, document | none |
+| D-17 | RG15C-2 redacted backup diagnostic tables | extend sanitizer / accept + runtime check of legacy rows | runtime check first | future |
+| D-18 | M0 legacy contribution attribution | record the fail-closed default | record | FG-26 traceability |
+| D-19 | FG-06 items (matcher, 53 orphans, 24 agent-approved additions, 2027-01-01 expiry) | fix/waive, remove, confirm, expiry plan | fix matcher; remove orphans; confirm 24; plan expiry | G1, FG-06 sign-off |
+| D-20 | H-3 public repo .db + receipt photos + transcripts | owner assessment / purge history | owner decides before release | release |
+| D-21 | P3 couplings (RG01A-2, RG12-02, RG02B-4, V12-NEW-A, RG04A-2 doc) | include / defer | include in their batches | R2, R4, R6, R10, R12 |
+| D-22 | Device + connected-tests, or narrow class-filter runner addition | approve / defer | narrow runner addition with independent review | R0-1b, R6 device test |
+
+## 5. Ordering rationale and first batch
+
+Order: B-1 -> R0-1 -> R0-2 (decide the only provisional P1; confirm V11-NEW-1) -> R0-3..R0-6 (fail-first regressions) ->
+R1 (+R1b) -> R2 (the P1s) -> R3 (deterministic broad user loss; release-blocker candidate) -> R4 (unrecoverable state) ->
+R5 (same restore area, after R4) -> R6 (privacy) -> R7 (after R1) -> R8 -> R9 -> R10 -> R11 -> R12 -> R13 ->
+G1 (after D-19, before FG-06 sign-off, well before 2027-01-01). strings.xml edits in batch order; R1b before R7 for
+db_ownership_policy.yml; RG06A-3 only after R3.
+
+Recommended first batch after R0: R1 (RG11-H2), if R0-1/R0-2 confirm. If R0-1 refutes the mechanism, start with R2
+(RG12-01). If the owner prefers the fastest broad user-visible restoration, R3 is the smallest alternative but leaves a
+P1 open.
+
+## 6. Blockers
+
+- B-1: the performance runner commit (14a2e6ce: gradle.properties, scripts/validation-runner.ps1, test-shards.json) must be
+  settled/reviewed and a runner self-check run at the pin before ANY R0 or batch validation.
+- Approvals: each R0 authoring, batch, runner queue and guard/allowlist/grant edit requires its own approval; none granted.
+- connected-tests needs a device and has no class filter (D-22); blocks only R0-1b and the R6 device proof.
+- B-2/B-3 (release artifact profile, signing) block final acceptance, not remediation.
+- D-01..D-11 block their named batches.
+
+## 7. Out of plan and evidence invalidation
+
+Out of plan: Phase 1 indexing (IX-01/02); Phase 3 horizontal (HZ-01..08 incl. the nested-transaction sweep); Phase 4
+journeys; runtime/device RT gates (RG03A-1 cold-start drop rate, device WorkManager latency, org.json device behavior,
+upgrade/restore matrix H-2); all P3s and unverified candidates (V16-NEW-1, V03B-NEW-A, V07B-N1, ...); re-verification of
+discovery-only closures (RG-08b, RG-09 consumers, RG-13, RG-14, RG-15a/c).
+
+Invalidation: any app/ change ends content-equivalence with ea446316 -> Wave 5 runs become historical; Phase 0 re-pin;
+final unit-tests, app-check, static-guards (FG-05), lint and connected-tests must run on the final candidate
+(migration-tests only if a schema change is ever approved). Static re-verification per batch:
+R1 -> CA-P-02-002 sink deferral, CL-07/08, review/receipt-link journeys, FG-15 guard; R2 -> CA-P-03-004, S1-REV-01;
+R3 -> F4, CA-E-02-001, CA-P-06-001, SafeToSpend; R4 -> CL-19 P07-003/004/005, S2 R1-R6; R5 -> S2 asset recovery,
+CA-P-07-007, RG01B-1; R6 -> CA-P08-003/002/004; R7 -> CA-P-03-001; R8 -> F2/F3, RG05A-2; R9 -> B4, RG14-1 refutation
+basis, CA-E-02-004; R10 -> CA-P-12-002, CA-P-07-001 export gate; R11 -> CA-E-04-002, CL-29 WI-1..4; R12 -> A7, E-04;
+R13 -> CL-01/02/03 worker evidence.
+
+## 8. Planner uncertainty (fix shape not fully determined)
+
+R0-1/R1: Robolectric vs device fidelity; production PRAGMA foreign_keys; ReceiptMatchingWorker failure classification
+(unread); whether a domain CategoryDao read needs a grant. R2: ~1150 ReceiptScanViewModel lines unread. R3: dashboard
+affordance file not identified; whether the dialog has a currency picker. R4: AppStartupCoordinator :284-427 unread.
+R6: hybrid/on-device providers unread. R9: SynthesisEngine rate input/partial flag unconfirmed (may widen write set).
+R11: exact function lines unread. G1: matcher file not located. Validation: shard names unread.
+
+## 9. Batch R1 detailed plan (release-planner, read-only, 2026-10-15) and lead scope decision
+
+Basis: R0-1/R0-2 runtime results + independent test review (verification ledger, "Phase R0" section).
+Lead scope decision: R1b DEFERRED (approval made it conditional on the merge trigger; the review found
+CategoryRepository.mergeCategories has no production caller -> V11-NEW-1 P3; a DAO change for dead code is not a
+minimal diff). R1 alone neutralizes any stale category id (merge, cloud ids, MIGRATION_112_113).
+
+Production edits (paths under app/src/main/java/com/yourname/expensetracker/):
+- domain/transaction/ExpenseCategoryAssignmentPort.kt: add outcome `SkippedCategoryMissing`; KDoc: a Failed outcome
+  inside an enclosing transaction means it is already rollback-only -> caller must abort by throwing.
+- domain/transaction/DefaultExpenseCategoryAssignmentService.kt: inject CategoryDao (read only); inside the existing
+  withTransaction, before updateCategory (:37), return SkippedCategoryMissing when the category does not exist. Keep the
+  CE-first catch at :48-52 unchanged; no new catches.
+- domain/receipt/lifecycle/ReceiptLinkService.kt: bounded `ReceiptLinkFailureCode.CATEGORY_ASSIGNMENT_FAILED` +
+  `ReceiptLinkAbortedException(code)` (message = code name, no cause/SQL text). Restrict the try/catch at :303-340 to the
+  read-only categorization read/majority + log; call the port outside it with an exhaustive `when` (no else):
+  Assigned -> record; Skipped* -> nothing; Failed -> throw ReceiptLinkAbortedException inside the transaction.
+  At the boundary (:387-392) add `catch (e: ReceiptLinkAbortedException) -> Result.failure(e)`; CancellationException
+  never caught; other exceptions unchanged. KDoc :145-148 updated.
+- data/repository/ExpenseRepository.kt :112-114: comment-only correction.
+- docs/architecture/LEGAL_PATHS.md :1195-1199: add SkippedCategoryMissing + existence check line.
+Callers re-check only (no edits expected): ReviewQueueRepository :309-323 (throws -> rollback -> Result.Error),
+ReceiptLifecycleCoordinator :1193/:1210/:1607/:1635, ReceiptMatchingViewModel, ReceiptMatchingWorker :86/:253 (bounded
+code + class name; no WorkManager retry), ReceiptSideEffectPlanner :396.
+Grants: none expected (CategoryDao read; db_access.json :16 already keys this class). Any new guard key / baseline /
+policy row -> BLOCKED-ON-HUMAN.
+Tests:
+- R0-2: replace @Suppress with @OptIn(RestrictedExpenseDaoMutation::class); neutral failure token "SILENT_ROLLBACK";
+  assert the assignment outcome via a delegating recorder; add a non-merge stale-id seed (nonexistent category id) and
+  run the three path tests on both seeds; on failure assert the post-commit runner did not run. After R1 the three
+  path tests must PASS with Success + rows present + expense uncategorized (SkippedCategoryMissing). The merge-based
+  V11-NEW-1 test stays as-is (documents the latent P3).
+- R0-1: @OptIn fix only; characterization unchanged.
+- New ReceiptLinkServiceNestedFailureTest (Robolectric, real Room; fake port doing a real failing nested write and
+  returning Failed): standalone link and createExpenseAndLinkReceipt -> Result failure with CATEGORY_ASSIGNMENT_FAILED,
+  0 links / 0 new expenses, message == code; port throwing CancellationException propagates.
+- CategoryAssignmentServiceBarrierTest: mechanical constructor update (categoryDao fake/mock with explicit getById stub);
+  add a SkippedCategoryMissing test (no update, no event).
+Validation (serial, validation-runner, B-1 conditions): targeted-unit-test per class (CategoryAssignmentServiceBarrierTest,
+ReceiptLinkServiceNestedFailureTest, ReviewQueueRepositoryNestedRollbackTest, ReceiptLinkServiceColumnScopeTest,
+NestedTransactionSemanticsTest) -> unit-tests -> static-guards. app-check deferred to the final candidate.
+Stop if: any guard/baseline/policy/schema change; a caller needs an edit; the approve path still loses rows; a test
+would need deletion/@Ignore; >2 review or >2 debug iterations.
+Follow-ups (not in R1): HZ-02 sweep incl. email path ReceiptLifecycleCoordinator :1238-1245 and
+promotePendingReviewLinksToExpense; validate cloud categorization ids (CloudReceiptItemCategorizationService.kt:351);
+R1b/V11-NEW-1 P3; R0-1b device twin (D-22).
+
+## 10. Batch R3 detailed plan (release-planner, read-only, 2026-10-15) and lead adjustments
+
+Facts: the budget dialog has no currency picker and shows no currency; create uses home currency (BudgetScreen.kt :941/:957);
+edit keeps the stored currency (:943-948); suggestion create keeps entity defaults "EUR"/LEGACY_DEFAULT (:804-809,
+Budget.kt :67-68). EXPLICIT_HOME_CURRENCY is an accepted string (SavingsGoalsViewModel :331 precedent;
+BudgetStatusSnapshot :28; SavingsGoalCurrencyPolicy :14), not an enum value — do not edit the enum.
+Edits (one writer; paths under app/src/main/java/com/yourname/expensetracker/):
+- ui/screens/budget/BudgetViewModel.kt (sole stamping point): addBudget(budget, confirmedCurrency) / updateBudget(budget,
+  confirmedCurrency); private suspend helper parses the currency (CurrencyCode.parse, supported set), reads home via
+  currencySettingsRepository.homeCurrency().first(); edit requires budget.currency == confirmed (no silent relabel);
+  create/suggestion -> currency = home + EXPLICIT_HOME_CURRENCY; edit with currency == home -> EXPLICIT_HOME_CURRENCY;
+  edit of a non-legacy row with currency != home -> USER_CONFIRMED. Helper null -> bounded
+  ERROR_BUDGET_CURRENCY_UNCONFIRMED, no write. Autopilot paths (:339/:399) unchanged (copy keeps the stamp).
+- LEAD ADJUSTMENT (fail closed, avoids D-05b): editing a LEGACY row whose currency != home keeps its existing assumption
+  (no confirmation stamp, no relabel); the "Confirm currency" affordance is shown only for budgets whose currency == home.
+  D-05b (relabel/picker for legacy non-home rows) is recorded as a new owner decision, not decided here.
+- ui/screens/budget/BudgetScreen.kt: dialog onConfirm(Budget, String) with a read-only currency Text (displayed currency =
+  initialBudget?.currency ?: homeCurrency); wire :293-294/:308; SuggestionsBanner onAdd passes home currency, Create
+  disabled while home is null; budget card "Confirm currency" button (policy knownCurrencyOrNull == null AND currency ==
+  home) calling the existing onEdit.
+- ui/components/FinancialRunwayCard.kt: optional onReviewBudget callback + button in the unavailable branch;
+  ui/screens/home/HomeScreen.kt :764-776 passes onNavigateToBudgetDetail("OVERALL") (note: the reason code is shared with
+  FX failures, so the link is generic "review budget").
+- strings.xml: append budget_currency_display_format, budget_confirm_currency_action, financial_runway_review_budget AFTER
+  R2's keys.
+Consumers (re-check only): BudgetRepository copies keep the stamp (:653-655, :694, :743); DashboardContractsAdapter :97
+hasCompleteAmountIn -> runway (:654), SafeToSpend (:1302), Monte Carlo (:971), Block Party (:855), pace; MonthlySavingsSweep
+:162-163/:264 and FinancialHealthCalculator :462-467 unaffected; backup copies the column; ForecastInputAssembler :217; do
+not gate Money Radar. Legal write path VM -> BudgetRepository (barrier :650/:691, validate :761). No DAO/schema/guard change.
+Tests: R0-6 DashboardBudgetProvenanceChainTest (fail-first; oracles remaining 900, burn 100/15, runwayDays 135 HEALTHY,
+simulate(100.0, 0.0, 1000.0, "USD", 0.0), totalCommitted 0); new BudgetViewModelCurrencyProvenanceTest (create, suggestion,
+edit EUR-confirmed row, edit legacy home row, legacy non-home row keeps assumption, mismatch/unsupported -> no write +
+error, autopilot keeps stamp); BudgetViewModelStressTest mechanical signature/stub update; PaceWiringTest LEGACY-gate test
+unchanged and must pass. Targeted filters: DashboardBudgetProvenanceChainTest, BudgetViewModelCurrencyProvenanceTest,
+BudgetViewModelStressTest, ComputeDashboardWidgetsUseCasePaceWiringTest, NotificationExpenseDashboardPipelineTest,
+BudgetViewModelAutopilotQualityTest; shared unit-tests + static-guards after R6.
+Stop if: BudgetStatusSnapshot/enum/DAO/schema/guards/use case would change; a picker/relabel is needed; >2 review/debug
+iterations. Compose tests using AddEditBudgetDialog were not checked by the planner (writer must grep androidTest).
+
+## 11. Batch R2 detailed plan (release-planner, read-only, 2026-10-15) and lead notes
+
+NEW-R2-A (static, planner; lead confirmed the SQL): MIGRATION_125_126 (AppDatabase.kt ~:7968-7973, idx_fresh_*_u) and
+MIGRATION_137_138 (:8325-8344, idx_scanned_receipts_*_u) create UNIQUE partial indexes on scanned_receipts
+imageHash/sourceFingerprint/textFingerprint/semanticFingerprint; the ScannedReceipt entity does not declare them, so
+entity-built (fresh/Robolectric) DBs lack them while DBs upgraded through those migrations have them. With the index,
+ScannedReceiptDao.insert (IGNORE) silently skips a second row with the same textFingerprint -> ReceiptInsertResolver
+:52-54 reports Duplicate -> INSERT_ROLLBACK_DUPLICATE cleanup deletes the image (ReceiptLifecycleCoordinator :713-728).
+So detector rule A alone does not fix upgraded installs. Fix inside R2: never store a textFingerprint already claimed by
+another row (same approach as MIGRATION_137_138 nulling collisions); no index/schema change.
+Separate candidate (NOT in R2; to verify): NEW-R2-B — whether Room schema validation on DBs carrying these undeclared
+indexes behaves as intended for supported upgrade paths (H-2). Routed to room-migration-guardian (read-only).
+Edits (paths under app/src/main/java/com/yourname/expensetracker/):
+- ReceiptDuplicateDetector.kt: DuplicateResult gains textFingerprintClaimed (default false). Text hit: both semantic
+  fingerprints present (non-blank) and equal -> TEXT_FINGERPRINT duplicate (0.95, unchanged); otherwise remember
+  textHitId and continue to semantic/external-id steps; if nothing else hits -> isDuplicate=false, confidence 0,
+  existingReceiptId=textHitId, textFingerprintClaimed=true, matchType TEXT_FINGERPRINT_UNCONFIRMED (one/both semantics
+  null) or NONE (both present and different). semanticFingerprintsConflict -> semanticFingerprintsEqual; KDoc.
+- ReceiptLifecycleCoordinator.kt: track textFingerprintClaimed from the post-OCR duplicate result (both branches ~:513 /
+  ~:557); store textFingerprint.takeUnless { claimed } (~:595); email path ~:1062 same (lead: in scope, same defect
+  class). Residual (not fixed): legacy id>0 update path ~:523.
+- V12-NEW-B: ReceiptScanViewModel.kt reopenedExistingReceipt flag (set = !outcome.inserted in both REVIEW updates; reset
+  at ~:279); ReceiptScanScreen.kt notice card (~:1170); strings.xml receipt_reopened_existing_notice (R2 first in the
+  strings.xml order).
+- V12-NEW-A: remove the two no-op Button blocks (ReceiptScanScreen.kt ~:280-288); keep "Scan New"; keep string keys.
+Lead approval reading: D-04 covers changing the two detector tests that pin the defect ("text hit is kept when
+incoming/existing semantic fingerprint is unknown"), the coordinator/email lines and the new string key.
+Tests: R0-3 ReceiptDuplicateFingerprintCollisionTest (fail-first; harness from ReceiptPartialOcrPipelineTest :84-195;
+real detector; each case plain + with the exact migration index SQL): T1 12.50 vs 13.75 date null -> 2 rows, second
+inserted, no duplicate cleanup, second textFingerprint null; T2 identical parsed fields + date, different image -> 1 row,
+POST_OCR_DUPLICATE_DRAFT; T3 one side date null -> 2 rows; T4 identical image -> EXACT_HASH, 1 row; T5 different totals
+with date -> 2 rows; precondition asserts. ReceiptDuplicateDetectorTest: two pinned tests changed, others kept, three
+added. ReceiptScanViewModelTest: flag tests.
+Targeted filters: ReceiptDuplicateFingerprintCollisionTest, ReceiptDuplicateDetectorTest, ReceiptLifecycleCoordinatorTest,
+ReceiptPartialOcrPipelineTest, ReceiptScanViewModelTest, ReceiptScanViewModelStressTest, BankStatementSourceBoundaryTest.
+Stop if: index/schema change needed; T1 precondition fails; tests beyond the two named need semantic change; >2 iterations.
+Section 11 amendment (2026-10-15): NEW-R2-A premise refuted by NEW-R2-B verification -> R2 write set no longer includes
+the ReceiptLifecycleCoordinator textFingerprint/email lines; DuplicateResult.textFingerprintClaimed is not added. R0-3
+keeps plain-schema cases only.
+
+## 12. Batch R4 plan summary (release-planner, 2026-10-15)
+RestoreMaintenanceMode.kt only: split catch (CE first; PersistenceException -> CRITICAL unchanged; other ->
+retainDurableResumePending() then throw WorkerRescheduleException); retainDurableResumePending under stateLock re-reads
+persisted state, keeps NORMAL+resumePending (publish RESTORE_COMPLETE_RESTART_REQUIRED), never pauses workers/resets the
+stop flag; barrier stays closed; next launch retries via checkRestoreJournalState -> resetCancellable (one per launch, 10 s
+bounded); no AppStartupCoordinator/MainActivity/DBRI edit; CL-19 WI-5 doc line. Residual -> D-23/R4b: DBRI
+isRestoreDurabilityFailure (:876-879) still routes WRE to lockCriticalForFailure (:881) on pre-destructive aborts.
+R0-4 RestoreMaintenanceModeConfirmationFaultTest (b1 sync exit with jumping clock; b2 exitCancellable with failed
+confirmation future via mockkStatic(WorkManager) — plain Java methods; c next-launch recovery; d bounded). Pinned tests
+changed (approved): ASCRT initialize_contains_checked_resume_failure..., initialize_contains_asset_rollback_worker_resume_
+failure..., P7BugFixesTest :724-727, :759, :793. Unchanged and must pass: :799 PersistenceException, :851/:894/:938
+cancellation. Filters: RestoreMaintenanceModeConfirmationFaultTest, P7BugFixesTest, AppStartupCoordinatorRecoveryTest,
+WorkerRestoreRegressionTest, BackupRestoreContractTest.
+
+## 13. Batch R5 plan summary (release-planner, 2026-10-15)
+ReceiptAssetRecovery.kt: PENDING task with an existing final file adopts it only when hasProof && matchesProof (journal
+expectedSha256 + expectedSize, recorded before any file work); re-check in stage() PENDING branch, persist FINAL_DURABLE,
+NeedsPointer(adoptedExisting=true) without copy/move; normal CAS (updateImagePathIfUnchanged + read-back in
+restoreInternalWriteScope); afterCas NOT_APPLIED never deletes an adopted file; mismatch/unreadable/no-proof stays
+TARGET_COLLISION. BackupRestoreViewModel receiptAssetWarningCount (count only) + BackupRestoreScreen text +
+backup_restore_receipt_images_skipped_format (en/es/el). No journal/schema/reason-code change. Residual: adopted flag not
+journaled (process death after FINAL_DURABLE then NOT_APPLIED could delete an adopted file; NOT_APPLIED practically
+unreachable under the barrier) — journal field would be a format change (owner decision, not in R5); already-broken rows
+not repaired. R0-5 ReceiptAssetRepeatRestoreTest (a adopt, b non-matching control, c engine NOT_APPLIED keeps file,
+d no-proof collision) + VM count test. Pinned tests expected unchanged: DatabaseBackupRepositoryImplTest :1303, :1357,
+:1617, :1631; ASCRT :1018; BackupRestoreViewModelTest :157. Filters: ReceiptAssetRepeatRestoreTest,
+DatabaseBackupRepositoryImplTest, AppStartupCoordinatorRecoveryTest, BackupRestoreViewModelTest. Order: after R4.
+
+## 14. Batch R6 plan summary (release-planner, 2026-10-15) — BLOCKED on owner HD-1 (HD-2/HD-3 optional)
+Reuse bounded codes PARSER_FAILED / UNKNOWN_ERROR (DiagnosticReasonCode.kt :15/:28; CloudDashboardBriefingService
+precedent). W1 CloudDedupeJudgeService :197-202 ParseError/Unknown fixed codes + CE rethrow before catch(Exception) +
+class-name-only logs (:172/:178/:182/:188/:194); W2 CloudReviewExplanationService :209-214 same + logs :184-206; W3
+HybridDedupeJudgeService.safeExecute :83-88 CE rethrow + Unknown("UNKNOWN_ERROR") (RG02B-4); W4
+OnDeviceReviewExplanationService :43-47, :98; W5 (HD-3) OnDeviceDedupeJudgeService :44-49, :116; W6
+JudgePendingReviewDuplicateUseCase CE rethrow before :126; HD-2 bound e.message at JudgePendingReviewDuplicateUseCase
+:130/:135 and ExplainPendingReviewUseCase :130. Persisted at AiArtifactEntity.errorMessage (:59) via
+AiArtifactRepositoryImpl :85/:107; shown ReviewViewModel :369/:731; ExportAnonymizer nulls it. Guard: FG-10 cancellation
+ratchet baseline entry for HybridDedupeJudgeService (config/baselines/cancellation.json :6/:57) resolves and the ratchet
+fails on resolved entries -> HD-1 owner approval to delete that baseline entry (guard-config edit). Tests with sentinel
+R6SENTINEL_9f2c per provider + CE tests + new HybridDedupeJudgeServiceTest. Residuals: V02B-N4 device org.json proof;
+D-07 existing rows; successful rationale stored by design.
