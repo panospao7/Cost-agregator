@@ -294,11 +294,22 @@ GRADLE_PROFILE_ARGUMENTS = {
     "lint": [":app:lintDebug"],
     "app-check": [":app:check"],
     "connected-tests": [":app:connectedDebugAndroidTest"],
+    "connected-test-class": [
+        ":app:connectedDebugAndroidTest",
+        "-Pandroid.testInstrumentationRunnerArguments.class=com.yourname.expensetracker.ProtocolCase",
+    ],
+    "assemble-release": [":app:assembleRelease"],
 }
 NON_GRADLE_PROFILES = (
     "runner-smoke", "runner-progress-smoke", "runner-stall-smoke",
     "runner-protocol-tests", "static-guards", "registered-guard",
+    "release-artifact-evidence",
 )
+CLASS_FILTER = "com.yourname.expensetracker.ProtocolCase"
+# Profiles whose -TestFilter must be a fully qualified class name.
+PROFILE_FILTERS = {"connected-test-class": CLASS_FILTER}
+CONNECTED_PROFILES = ("connected-tests", "connected-test-class")
+SERIAL = "emulator-5554"
 
 
 def _settings(**overrides):
@@ -378,7 +389,8 @@ def _gradle_fixture(tmp_path):
     source = _functions(
         "Read-JsonFile", "Read-ValidationConfig", "Assert-SafeTestFilters",
         "Get-ShardFilters", "Get-TrustedFilters", "Get-LegacyFilters",
-        "New-TestArguments", "Test-GradleProfile", "New-GradleSettings",
+        "New-TestArguments", "Test-GradleProfile", "Resolve-InvocationDeviceSerial",
+        "New-GradleSettings",
         "Resolve-InvocationGradleSettings", "Resolve-RequestGradleSettings",
         "Get-ProfileSpec", "Get-SafeCommandDisplay",
     )
@@ -419,11 +431,12 @@ def _command_display(executable, arguments):
 @pytest.mark.parametrize("profile", GRADLE_PROFILE_ARGUMENTS)
 def test_all_gradle_profiles_retain_exact_historical_default_argv(tmp_path, profile):
     root, source = _gradle_fixture(tmp_path)
-    result = _powershell_json(tmp_path, source + _invocation_setup({}, profile) + """
+    selected_filter = _ps_quote(PROFILE_FILTERS.get(profile, "*ProtocolCase*"))
+    result = _powershell_json(tmp_path, source + _invocation_setup({}, profile) + f"""
 $settings = Resolve-InvocationGradleSettings
-$implicit = Get-ProfileSpec -Name $Profile -Filter '*ProtocolCase*' -ShardName 'protocol-shard'
-$explicit = Get-ProfileSpec -Name $Profile -Filter '*ProtocolCase*' -ShardName 'protocol-shard' -GradleSettings $settings
-@{ settings = $settings; implicit = $implicit; explicit = $explicit } | ConvertTo-Json -Depth 8
+$implicit = Get-ProfileSpec -Name $Profile -Filter {selected_filter} -ShardName 'protocol-shard'
+$explicit = Get-ProfileSpec -Name $Profile -Filter {selected_filter} -ShardName 'protocol-shard' -GradleSettings $settings
+@{{ settings = $settings; implicit = $implicit; explicit = $explicit }} | ConvertTo-Json -Depth 8
 """)
     assert result["settings"] == DEFAULT_GRADLE_SETTINGS
     expected = GRADLE_PROFILE_ARGUMENTS[profile] + [
@@ -630,7 +643,10 @@ $match = Find-OverlappingSuccessfulRun -RequestedProfile $Profile -RequestedComm
     assert result == {"duplicate": duplicate}
 
 
-def _detached_worker_case(tmp_path, options=None, request_patch="", profile="compile", record_patch=""):
+def _detached_worker_case(
+    tmp_path, options=None, request_patch="", profile="compile", record_patch="",
+    test_filter="*ProtocolCase*",
+):
     root, source = _gradle_fixture(tmp_path)
     capture = root / "capture argv.py"
     capture.write_text("""import json
@@ -650,6 +666,7 @@ else:
     raise RuntimeError("fixture launch metadata unreadable")
 (run / "executed.json").write_text(json.dumps({
     "argv": sys.argv[1:], "cwd": os.getcwd(), "pid": os.getpid(),
+    "android_serial": os.environ.get("ANDROID_SERIAL"),
     "worker_pid": int(os.environ["PROTOCOL_WORKER_PID"]),
     "record_at_launch": record,
 }), encoding="utf-8")
@@ -666,7 +683,7 @@ print("harmless argv capture; no Gradle")
     source += f"""
 $script:OriginalProfileSpec = ${{function:Get-ProfileSpec}}
 function Get-ProfileSpec {{
-    param($Name, $Filter, $ShardName, $SelectedGuard, $RequestedPython, $GradleSettings = $null)
+    param($Name, $Filter, $ShardName, $SelectedGuard, $RequestedPython, $GradleSettings = $null, $SelectedSerial)
     $spec = & $script:OriginalProfileSpec @PSBoundParameters
     $spec.executable = {_ps_quote(sys.executable)}
     $spec.arguments = @({_ps_quote(capture)}) + @($spec.arguments)
@@ -680,7 +697,7 @@ function Resolve-ActiveLock {{ return Read-JsonFile -Path $script:LockPath }}
 $script:ScriptPath = $PSCommandPath
 if ($Action -eq 'Start') {{
 {_invocation_setup(options or {}, profile)}
-    $TestFilter = '*ProtocolCase*'
+    $TestFilter = {_ps_quote(test_filter)}
     $Shard = 'protocol-shard'
     $GuardId = 'protocol_guard'
     $PythonExecutable = ''
@@ -874,3 +891,346 @@ def test_detached_worker_finalizes_malformed_settings_as_infra_without_launch(tm
     assert result["finished_at"]
     assert result["worktree_fingerprint_end"] == "isolated-fingerprint"
     assert "exit_code=2" in (run / "complete.marker").read_text(encoding="utf-8-sig")
+
+
+# --- D-22 / B-2: connected-test-class, -DeviceSerial, assemble-release, evidence ---
+
+def _serial_arguments(serial):
+    return [f"-PvalidationDeviceSerial={serial}"] if serial else []
+
+
+def _spec_outcome(tmp_path, profile, filter_value=None, serial=None):
+    _, source = _gradle_fixture(tmp_path)
+    options = {} if serial is None else {"DeviceSerial": serial}
+    return _powershell_json(tmp_path, source + _invocation_setup(options, profile) + f"""
+function Resolve-PythonCommand {{ param($Requested) return 'C:\\fake\\python.exe' }}
+try {{
+    $settings = Resolve-InvocationGradleSettings
+    $serial = Resolve-InvocationDeviceSerial
+    $spec = Get-ProfileSpec -Name $Profile -Filter {_ps_value(filter_value)} -ShardName 'protocol-shard' -GradleSettings $settings -SelectedSerial $serial
+    @{{ outcome = 'accepted'; arguments = $spec.arguments; timeout = $spec.timeout; no_output_timeout = $spec.no_output_timeout }} | ConvertTo-Json -Depth 8
+}} catch {{ @{{ outcome = $_.Exception.Message }} | ConvertTo-Json }}
+""")
+
+
+def test_connected_test_class_exact_argv_and_timeouts(tmp_path):
+    result = _spec_outcome(tmp_path, "connected-test-class", CLASS_FILTER)
+    assert result["outcome"] == "accepted"
+    assert result["arguments"] == [
+        ":app:connectedDebugAndroidTest",
+        "-Pandroid.testInstrumentationRunnerArguments.class=com.yourname.expensetracker.ProtocolCase",
+        "--console=plain", "--no-parallel", "--max-workers=1",
+        "-PvalidationMaxParallelForks=1", "-PvalidationForkEvery=50", "--no-daemon",
+    ]
+    assert (result["timeout"], result["no_output_timeout"]) == (3600, 900)
+
+
+@pytest.mark.parametrize("filter_value", [
+    "com.yourname.expensetracker.feature.Case",
+    "com.yourname.expensetracker.A1_b.Case_2",
+    "com.yourname.expensetracker._Case",
+])
+def test_connected_test_class_accepts_package_qualified_classes(tmp_path, filter_value):
+    result = _spec_outcome(tmp_path, "connected-test-class", filter_value)
+    assert result["outcome"] == "accepted"
+    assert result["arguments"][1] == f"-Pandroid.testInstrumentationRunnerArguments.class={filter_value}"
+
+
+@pytest.mark.parametrize("filter_value", [
+    "com.yourname.expensetracker.*",
+    "com.yourname.expensetracker.A*",
+    "*ProtocolCase*",
+    "com.yourname.expensetracker.A,com.yourname.expensetracker.B",
+    "com.yourname.expensetracker.A#method",
+    "com.yourname.expensetracker.A=b",
+    "com.yourname.expensetracker.A B",
+    "com.yourname.expensetracker.A'",
+    'com.yourname.expensetracker.A"',
+    "com.yourname.expensetracker.A$Inner",
+    "com.yourname.expensetracker.A\n",
+    "com.yourname.expensetracker",
+    "com.yourname.expensetracker.",
+    "com.yourname.expensetracker..A",
+    "com.yourname.expensetracker.1A",
+    "com.yourname.expensetrackerX.A",
+    "com.other.expensetracker.A",
+    "Com.yourname.expensetracker.A",
+    "ProtocolCase",
+])
+def test_connected_test_class_rejects_unsafe_or_foreign_filters(tmp_path, filter_value):
+    assert _spec_outcome(tmp_path, "connected-test-class", filter_value) == {"outcome": "E_INVALID_TEST_FILTER"}
+
+
+@pytest.mark.parametrize("filter_value", [None, ""])
+def test_connected_test_class_requires_a_filter(tmp_path, filter_value):
+    assert _spec_outcome(tmp_path, "connected-test-class", filter_value) == {"outcome": "E_TEST_FILTER_REQUIRED"}
+
+
+def test_connected_tests_default_argv_is_byte_identical_without_device_serial(tmp_path):
+    result = _spec_outcome(tmp_path, "connected-tests")
+    assert result["arguments"] == [
+        ":app:connectedDebugAndroidTest", "--console=plain", "--no-parallel",
+        "--max-workers=1", "-PvalidationMaxParallelForks=1", "-PvalidationForkEvery=50",
+        "--no-daemon",
+    ]
+    assert (result["timeout"], result["no_output_timeout"]) == (7200, 1200)
+
+
+def test_assemble_release_argv_and_timeouts(tmp_path):
+    result = _spec_outcome(tmp_path, "assemble-release", "ignored-filter")
+    assert result["arguments"] == [
+        ":app:assembleRelease", "--console=plain", "--no-parallel", "--max-workers=1",
+        "-PvalidationMaxParallelForks=1", "-PvalidationForkEvery=50", "--no-daemon",
+    ]
+    assert (result["timeout"], result["no_output_timeout"]) == (3600, 900)
+    assert "--tests" not in result["arguments"]
+
+
+def test_release_artifact_evidence_uses_fixed_python_argv_without_free_inputs(tmp_path):
+    result = _spec_outcome(tmp_path, "release-artifact-evidence", "ignored-filter")
+    assert result["arguments"] == ["scripts/ci/release_artifact_evidence.py"]
+    assert (result["timeout"], result["no_output_timeout"]) == (600, 300)
+
+
+@pytest.mark.parametrize("profile", CONNECTED_PROFILES)
+@pytest.mark.parametrize("serial", [
+    "emulator-5554", "R5CT1234ABC", "192.168.1.5:5555", "a.b_c-d:e", "A" * 64,
+])
+def test_device_serial_is_accepted_on_both_connected_profiles(tmp_path, profile, serial):
+    result = _spec_outcome(tmp_path, profile, PROFILE_FILTERS.get(profile), serial)
+    assert result["outcome"] == "accepted"
+    # Inert recorded property follows the standard Gradle tail.
+    assert result["arguments"][-1] == f"-PvalidationDeviceSerial={serial}"
+    assert result["arguments"][:-1] == _gradle_arguments(profile, DEFAULT_GRADLE_SETTINGS)
+
+
+@pytest.mark.parametrize("profile", [
+    "compile", "assemble-debug", "assemble-release", "targeted-unit-test",
+    "unit-tests", "app-check", "lint", "runner-smoke", "static-guards",
+    "registered-guard", "release-artifact-evidence",
+])
+def test_device_serial_is_rejected_on_every_other_profile(tmp_path, profile):
+    assert _spec_outcome(tmp_path, profile, "*ProtocolCase*", SERIAL) == {
+        "outcome": "E_DEVICE_SERIAL_NOT_APPLICABLE",
+    }
+
+
+@pytest.mark.parametrize("serial", [
+    "", " ", "bad serial", "a;b", "a'b", 'a"b', "a/b", "a\\b", "a&b", "a$b",
+    "a=b", "a,b", "A" * 65, "emulator-5554\n", "-Pevil=1 x",
+])
+@pytest.mark.parametrize("profile", CONNECTED_PROFILES)
+def test_invalid_device_serial_is_rejected_on_connected_profiles(tmp_path, profile, serial):
+    result = _spec_outcome(tmp_path, profile, PROFILE_FILTERS.get(profile), serial)
+    assert result == {"outcome": "E_INVALID_DEVICE_SERIAL"}
+
+
+def test_omitted_device_serial_is_not_recorded_or_validated(tmp_path):
+    _, source = _gradle_fixture(tmp_path)
+    result = _powershell_json(tmp_path, source + _invocation_setup({}, "compile") + """
+@{ serial = (Resolve-InvocationDeviceSerial) } | ConvertTo-Json
+""")
+    assert result == {"serial": None}
+
+
+def test_start_validates_inputs_before_claiming_the_lock():
+    start = _functions("Start-ValidationRun")
+    assert (start.index("Resolve-InvocationDeviceSerial") < start.index("Get-ProfileSpec")
+            < start.index("New-LockFile"))
+    assert "-SelectedSerial $requestedSerial" in start
+    worker = _functions("Invoke-ValidationWorker")
+    assert 'EnvironmentVariables["ANDROID_SERIAL"] = $requestSerial' in worker
+
+
+@pytest.mark.parametrize("profile,filter_value,serial,duplicate", [
+    ("connected-test-class", CLASS_FILTER, SERIAL, True),
+    ("connected-test-class", CLASS_FILTER, None, False),
+    ("connected-test-class", CLASS_FILTER, "emulator-5556", False),
+    ("connected-test-class", "com.yourname.expensetracker.OtherCase", SERIAL, False),
+    ("connected-tests", None, SERIAL, True),
+    ("connected-tests", None, None, False),
+    ("connected-tests", None, "emulator-5556", False),
+])
+def test_dedup_distinguishes_connected_class_and_device_serial(
+    tmp_path, profile, filter_value, serial, duplicate,
+):
+    root, source = _gradle_fixture(tmp_path)
+    run = root / "build" / "validation-runs" / "vr-20260101-000000-deadbeef"
+    run.mkdir()
+    baseline = _command_display(
+        "gradlew.bat", _gradle_arguments(profile, DEFAULT_GRADLE_SETTINGS) + _serial_arguments(SERIAL),
+    )
+    (run / "result.json").write_text(json.dumps({
+        "profile": profile, "status": "PASS", "exit_code": 0, "command": baseline,
+        "worktree_fingerprint_start": "fingerprint", "worktree_fingerprint_end": "fingerprint",
+    }), encoding="utf-8")
+    (run / "complete.marker").write_text("complete", encoding="utf-8")
+    options = {} if serial is None else {"DeviceSerial": serial}
+    source += _functions("Find-OverlappingSuccessfulRun") + "\n" + _invocation_setup(options, profile)
+    result = _powershell_json(tmp_path, source + f"""
+$settings = Resolve-InvocationGradleSettings
+$serial = Resolve-InvocationDeviceSerial
+$spec = Get-ProfileSpec -Name $Profile -Filter {_ps_value(filter_value)} -GradleSettings $settings -SelectedSerial $serial
+$command = Get-SafeCommandDisplay -Spec $spec
+$match = Find-OverlappingSuccessfulRun -RequestedProfile $Profile -RequestedCommand $command -Fingerprint 'fingerprint'
+@{{ duplicate = $null -ne $match }} | ConvertTo-Json
+""")
+    assert result == {"duplicate": duplicate}
+
+
+@pytest.mark.parametrize("profile,filter_value,serial,command_arguments,timeouts,settings", [
+    ("connected-test-class", CLASS_FILTER, SERIAL,
+     _gradle_arguments("connected-test-class", DEFAULT_GRADLE_SETTINGS) + [f"-PvalidationDeviceSerial={SERIAL}"],
+     (3600, 900), DEFAULT_GRADLE_SETTINGS),
+    ("connected-tests", None, "R5CT1234ABC",
+     _gradle_arguments("connected-tests", DEFAULT_GRADLE_SETTINGS) + ["-PvalidationDeviceSerial=R5CT1234ABC"],
+     (7200, 1200), DEFAULT_GRADLE_SETTINGS),
+    ("assemble-release", None, None,
+     _gradle_arguments("assemble-release", DEFAULT_GRADLE_SETTINGS), (3600, 900), DEFAULT_GRADLE_SETTINGS),
+    ("release-artifact-evidence", None, None,
+     ["scripts/ci/release_artifact_evidence.py"], (600, 300), None),
+])
+def test_plan_output_for_new_profiles(
+    tmp_path, profile, filter_value, serial, command_arguments, timeouts, settings,
+):
+    _, source = _gradle_fixture(tmp_path)
+    options = {} if serial is None else {"DeviceSerial": serial}
+    source += _functions("Show-ValidationPlan") + "\n" + _invocation_setup(options, profile)
+    result = _powershell_json(tmp_path, source + f"""
+function Resolve-PythonCommand {{ param($Requested) return 'C:\\fake\\python.exe' }}
+$TestFilter = {_ps_value(filter_value)}
+$Shard = ''
+$GuardId = ''
+$PythonExecutable = ''
+$TimeoutSeconds = 0
+$NoOutputTimeoutSeconds = 0
+Show-ValidationPlan
+""")
+    executable = "python.exe" if profile == "release-artifact-evidence" else "gradlew.bat"
+    assert result["profile"] == profile
+    assert result["command"] == _command_display(executable, command_arguments)
+    assert (result["timeout_seconds"], result["no_output_timeout_seconds"]) == timeouts
+    assert result["gradle_settings"] == settings
+    assert result["device_serial"] == serial
+
+
+def test_profiles_listing_names_every_profile_accepted_by_the_validate_set():
+    source = RUNNER.read_text(encoding="utf-8-sig")
+    declared = re.search(r'(?s)\[ValidateSet\(\s*("runner-smoke".*?)\)\]\s*\[string\]\$Profile', source)
+    assert declared is not None
+    names = re.findall(r'"([a-z0-9-]+)"', declared.group(1))
+    for new_profile in ("connected-test-class", "assemble-release", "release-artifact-evidence"):
+        assert new_profile in names
+    listing = _powershell_listing()
+    assert sorted(entry["name"] for entry in listing) == sorted(names)
+    assert all(entry["purpose"] for entry in listing)
+
+
+def _powershell_listing():
+    completed = _powershell(_functions("Show-Profiles") + "\nShow-Profiles")
+    assert completed.returncode == 0, (completed.stdout, completed.stderr)
+    return json.loads(completed.stdout)
+
+
+@pytest.mark.parametrize("profile", [
+    "connected-test-class", "assemble-release", "release-artifact-evidence",
+])
+@pytest.mark.parametrize("patch", [
+    "$request.command += ' --unexpected'",
+    "$request.command = $request.command.ToUpperInvariant()",
+    "$request.PSObject.Properties.Remove('command')",
+])
+def test_detached_worker_rejects_tampered_request_for_new_profiles(tmp_path, patch, profile):
+    _, run, capture, _, records = _detached_worker_case(
+        tmp_path, request_patch=patch, profile=profile,
+        test_filter=PROFILE_FILTERS.get(profile, "*ProtocolCase*"),
+    )
+    result = records["result"]
+    assert (result["status"], result["exit_code"], result["failure_code"]) == ("INFRA_FAILURE", 2, "E_COMMAND_MISMATCH")
+    assert result["child_pid"] is None
+    assert records["executed"] is None
+    arguments = (["scripts/ci/release_artifact_evidence.py"] if profile == "release-artifact-evidence"
+                 else _gradle_arguments(profile, DEFAULT_GRADLE_SETTINGS))
+    assert result["command"] == _command_display(sys.executable, [str(capture), *arguments])
+    assert "status=INFRA_FAILURE" in (run / "complete.marker").read_text(encoding="utf-8-sig")
+
+
+@pytest.mark.parametrize("patch,profile,code", [
+    ("$request.device_serial = 'emulator-9999'", "connected-tests", "E_COMMAND_MISMATCH"),
+    ("$request.device_serial = $null", "connected-tests", "E_COMMAND_MISMATCH"),
+    ("$request.device_serial = 'bad serial;'", "connected-tests", "E_INVALID_DEVICE_SERIAL"),
+    ("$request.device_serial = 'bad serial;'", "connected-test-class", "E_INVALID_DEVICE_SERIAL"),
+    ("$request.device_serial = 'emulator-5554'", "compile", "E_DEVICE_SERIAL_NOT_APPLICABLE"),
+    ("$request.device_serial = 'emulator-5554'", "release-artifact-evidence", "E_DEVICE_SERIAL_NOT_APPLICABLE"),
+    ("$request.test_filter = 'com.yourname.expensetracker.*'", "connected-test-class", "E_INVALID_TEST_FILTER"),
+    ("$request.test_filter = $null", "connected-test-class", "E_TEST_FILTER_REQUIRED"),
+])
+def test_detached_worker_revalidates_serial_and_class_filter_without_launch(tmp_path, patch, profile, code):
+    options = {"DeviceSerial": SERIAL} if profile in CONNECTED_PROFILES else {}
+    _, run, _, _, records = _detached_worker_case(
+        tmp_path, options, request_patch=patch, profile=profile,
+        test_filter=PROFILE_FILTERS.get(profile, "*ProtocolCase*"),
+    )
+    result = records["result"]
+    assert (result["status"], result["exit_code"], result["failure_code"]) == ("INFRA_FAILURE", 2, code)
+    assert result["child_pid"] is None
+    assert records["executed"] is None
+    assert "exit_code=2" in (run / "complete.marker").read_text(encoding="utf-8-sig")
+
+
+@pytest.mark.parametrize("profile", CONNECTED_PROFILES)
+def test_device_serial_reaches_argv_environment_and_records(tmp_path, monkeypatch, profile):
+    monkeypatch.delenv("ANDROID_SERIAL", raising=False)
+    root, run, capture, _, records = _detached_worker_case(
+        tmp_path, {"DeviceSerial": SERIAL}, profile=profile,
+        test_filter=PROFILE_FILTERS.get(profile, "*ProtocolCase*"),
+    )
+    arguments = _gradle_arguments(profile, DEFAULT_GRADLE_SETTINGS) + [f"-PvalidationDeviceSerial={SERIAL}"]
+    command = _command_display(sys.executable, [str(capture), *arguments])
+    for name in ("start-request", "request", "start-result", "result"):
+        assert records[name]["device_serial"] == SERIAL
+        assert records[name]["command"] == command
+    assert records["result"]["status"] == "PASS"
+    assert records["executed"]["argv"] == arguments
+    assert records["executed"]["android_serial"] == SERIAL
+    assert records["executed"]["record_at_launch"]["device_serial"] == SERIAL
+
+
+@pytest.mark.parametrize("profile", ["connected-tests", "connected-test-class", "assemble-release"])
+def test_profiles_without_device_serial_record_null_and_keep_default_argv(tmp_path, monkeypatch, profile):
+    monkeypatch.delenv("ANDROID_SERIAL", raising=False)
+    _, _, _, _, records = _detached_worker_case(
+        tmp_path, profile=profile, test_filter=PROFILE_FILTERS.get(profile, "*ProtocolCase*"),
+    )
+    arguments = _gradle_arguments(profile, DEFAULT_GRADLE_SETTINGS)
+    for name in ("start-request", "request", "start-result", "result"):
+        assert records[name]["device_serial"] is None
+    assert records["result"]["status"] == "PASS"
+    assert records["executed"]["argv"] == arguments
+    assert records["executed"]["android_serial"] is None
+
+
+def test_legacy_request_without_device_serial_still_runs(tmp_path):
+    _, _, _, _, records = _detached_worker_case(
+        tmp_path, profile="connected-tests",
+        request_patch="$request.PSObject.Properties.Remove('device_serial')",
+    )
+    assert "device_serial" not in records["request"]
+    assert records["result"]["status"] == "PASS"
+    assert records["executed"]["argv"] == _gradle_arguments("connected-tests", DEFAULT_GRADLE_SETTINGS)
+
+
+def test_detached_release_artifact_evidence_runs_only_the_fixed_script_with_null_settings(tmp_path):
+    _, _, capture, _, records = _detached_worker_case(tmp_path, profile="release-artifact-evidence")
+    arguments = ["scripts/ci/release_artifact_evidence.py"]
+    for name in ("start-request", "start-result", "result"):
+        assert records[name]["gradle_settings"] is None
+        assert records[name]["command"] == _command_display(sys.executable, [str(capture), *arguments])
+    assert records["result"]["status"] == "PASS"
+    assert records["executed"]["argv"] == arguments
+
+
+def test_detached_assemble_release_runs_release_task_only(tmp_path):
+    _, _, _, _, records = _detached_worker_case(tmp_path, profile="assemble-release")
+    assert records["executed"]["argv"] == _gradle_arguments("assemble-release", DEFAULT_GRADLE_SETTINGS)
+    assert records["executed"]["argv"][0] == ":app:assembleRelease"

@@ -110,13 +110,16 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 | `static-guards` | Run the canonical static guard suite |
 | `registered-guard` | Run one `-GuardId` through the canonical CI-mode bridge |
 | `app-check` | Run `:app:check` |
-| `connected-tests` | Run connected debug Android tests |
+| `connected-tests` | Run connected debug Android tests; optional `-DeviceSerial` |
+| `connected-test-class` | Run one connected test class: `-TestFilter <fully qualified class>` required; optional `-DeviceSerial` |
+| `assemble-release` | Build the release APK (`:app:assembleRelease`) |
+| `release-artifact-evidence` | Read-only release APK verification and `build/ci/release-artifact/evidence.json` (Python, no inputs) |
 
 Gradle profiles default to `--console=plain --no-parallel --max-workers=1
 --no-daemon`, one test fork at a time, and fork recycling after 50 **test
 classes**, not test methods. Optional local settings are described below.
 
-Guard profiles and `runner-protocol-tests` require a working Python interpreter.
+Guard profiles, `runner-protocol-tests`, and `release-artifact-evidence` require a working Python interpreter.
 Resolution tries `-PythonExecutable`, `VALIDATION_PYTHON`, then `python3` and
 `python` on PATH. The runner never installs Python or pytest. The protocol-test
 profile requires pytest already installed in that interpreter and executes
@@ -137,6 +140,59 @@ isolated workspaces. Shard filters are unchanged by tuning settings.
 The hanging-test ledger is `config/validation/known-hanging-tests.json`; see
 `docs/testing/KNOWN_HANGING_TESTS.md`. It changes routing only and never weakens
 the ignored-test guard.
+
+## Release assurance profiles
+
+WARNING: connected tests reinstall the app and clear its data. Run them only on
+an emulator or a wiped spare device, never on a device holding real data.
+
+`connected-test-class` runs
+`:app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=<class>`
+plus the standard Gradle tail (3600 s total, 900 s no output). `-TestFilter` is
+required and must be one fully qualified class matching
+`^com\.yourname\.expensetracker(\.[A-Za-z_][A-Za-z0-9_]*)+$`; wildcards, commas,
+`#`, `=`, spaces, quotes, `$` and other packages are rejected with
+`E_INVALID_TEST_FILTER` (missing: `E_TEST_FILTER_REQUIRED`) before the lock is
+taken. Methods and multiple classes are not selectable.
+
+`-DeviceSerial <serial>` is accepted only by `connected-tests` and
+`connected-test-class` (`E_DEVICE_SERIAL_NOT_APPLICABLE` elsewhere) and must
+match `^[A-Za-z0-9._:\-]{1,64}$` (`E_INVALID_DEVICE_SERIAL`). The detached worker
+sets `ANDROID_SERIAL` in the child environment only; an inert
+`-PvalidationDeviceSerial=<serial>` is appended to the argv so the recorded
+command (and duplicate detection) distinguishes devices, and `device_serial` is
+recorded in `Plan`, `request.json`, and `result.json` (`null` when absent).
+Without `-DeviceSerial` the argv is unchanged and an `ANDROID_SERIAL` already in
+the caller's environment is inherited as before. The worker revalidates the
+request, so a tampered serial, class, or command fails closed
+(`E_COMMAND_MISMATCH`, `E_INVALID_DEVICE_SERIAL`, ...) before launch.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File scripts/validation-runner.ps1 -Action Start -Profile connected-test-class `
+  -TestFilter com.yourname.expensetracker.SomeInstrumentedTest -DeviceSerial emulator-5554
+```
+
+`assemble-release` runs `:app:assembleRelease` with the standard tail (3600 s /
+900 s, no `-TestFilter`). `release-artifact-evidence` (600 s / 300 s) runs
+`python scripts/ci/release_artifact_evidence.py` with no free inputs; Gradle
+options and `-DeviceSerial` are rejected. It requires exactly
+`app/build/outputs/apk/release/app-release.apk` with a matching
+`output-metadata.json` and `mapping/release/mapping.txt`, locates `aapt2` and
+`apksigner` (highest build-tools under `ANDROID_HOME`, `ANDROID_SDK_ROOT`, then
+`%LOCALAPPDATA%\Android\Sdk`), runs the unchanged
+`scripts/verify_release_artifact.py --fail-on-violation --apk <apk>`, and writes
+`build/ci/release-artifact/evidence.json` atomically (APK sha256/size, metadata,
+badging min/target SDK, debuggable, permissions, signing certificate digest,
+DN and schemes with `debug_certificate`, mapping sha256). Exit 0 requires verifier
+success and complete, consistent evidence; 1 is a verifier violation or incomplete
+evidence; 2 is infrastructure (missing APK, metadata, mapping, or tools). A
+debuggable APK (`E_DEBUGGABLE_APK`) or an `output-metadata.json` variant other than
+`release` (`E_VARIANT_NOT_RELEASE`) is recorded in `problems` and fails the run
+(exit 1), independent of the verifier. A debug
+certificate is recorded, not failed: production signing is owner-held. The script
+never reads keystores or signing properties, and removes any previous
+`evidence.json` before running so stale evidence cannot be mistaken for a result.
 
 ## Per-run Gradle settings
 
@@ -170,7 +226,8 @@ The Kotlin compiler strategy is independent of Gradle daemon selection.
 serialized with the other settings; none of these options edit project files.
 
 Explicit Gradle-only options are rejected on non-Gradle profiles, including
-smoke profiles, `runner-protocol-tests`, and guard profiles, with
+smoke profiles, `runner-protocol-tests`, guard profiles, and
+`release-artifact-evidence`, with
 `E_GRADLE_OPTIONS_NOT_APPLICABLE`. This includes explicitly passing a default
 value such as `-MaxWorkers 1` or `-KotlinCompilerStrategy project`.
 

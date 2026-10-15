@@ -569,6 +569,7 @@ One DAO per entity (mostly 1-to-1 mapping)
   - Type: NotificationListenerService
   - Foreground: dataSync (FOREGROUND_SERVICE_LOCATION permission declared separately)
   - Exported: true
+- **DataSyncFgsTimeoutGuard** (`service/`) - Android 15 dataSync FGS timeout budget guard; stores an elapsed-realtime timestamp, cleared on boot by BootReceiver
 
 ### Activities (2)
 - **MainActivity** (`ui/`) - Launcher activity; deep-link host (`expensetracker://`)

@@ -387,3 +387,53 @@ Tests: new SynthesisEngineGoalReserveCurrencyTest T1-T5, T8; FinancialWeatherRep
 T7 (legacy goal keeps Monte Carlo available); fixtures SynthesisEngineTest :600-608 and SynthesisEngineGoldenTest :118-126 ->
 currencyAssumption "EXPLICIT". Money guards: money.json fingerprints must stay []; no G-MONEY-ALLOW; avoid sumOf { it.amount }.
 Residuals: AI briefing input and BlockParty/Narrative show no partial marker.
+
+## 19. Phase 6 runtime/release evidence plan (release-planner, read-only, 2026-10-15) — PENDING owner decisions
+Facts: runner fingerprint hashes only dirty/untracked bytes (evidence identity = git_revision + fingerprint); no existing run is
+final evidence for the frozen candidate. HD-P6-1: final candidate C* = 2ec50671 + one prep commit (runner D-22/B-2 additions +
+protocol tests + evidence script + R0-1b and V02B-N4 device tests + handoff), with proof that shipped inputs are unchanged
+(git diff --quiet 2ec50671 C* -- app/src/main app/build.gradle.kts app/proguard-rules.pro app/schemas); alternative: keep
+2ec50671 and disclose R0-1b/V02B-N4 as gaps.
+Gates on C*: runner-smoke + runner-protocol-tests; unit-tests; app-check (= :app:check incl. debug+release unit tests, lint debug
+with baseline, Gradle-wired guards); static-guards; migration-tests not separately needed (no schema change; *Migration* tests in
+unit-tests, connected migration tests in connected suite); connected-tests whole suite per AVD; assemble-release +
+release-artifact-evidence.
+D-22: profile connected-test-class (-TestFilter one FQCN, strict regex) + optional -DeviceSerial (ANDROID_SERIAL; recorded inert
+-PvalidationDeviceSerial) on connected profiles; protocol tests; reviewer-strict; lead checks device XML (device/API in name,
+tests > 0, class present). R0-1b NestedTransactionSemanticsInstrumentedTest (new); V02B-N4 device org.json sentinel test (new;
+OkHttp interceptor fake preferred; MockWebServer would add androidTestImplementation = build-input change needing approval).
+B-2: profiles assemble-release (:app:assembleRelease) + release-artifact-evidence (new read-only script
+scripts/ci/release_artifact_evidence.py wrapping unchanged verify_release_artifact.py --fail-on-violation; evidence.json with APK
+sha256/size, variant/version/appId, aapt2 sdk/debuggable/permissions, apksigner cert digest + debug_certificate flag, mapping.txt
+sha256; no keystore access). B-3: owner states production signing/distribution (Play App Signing AAB vs APK).
+WARNING: connected tests reinstall and clear app data — never on a device with real data.
+Device matrix: D1 AVD API 26 google_apis (create); D2 AVD API 33 (recommended, create); D3 wave5-api35 (exists); P1 spare/wiped
+physical API 34/35 (smoke + beta). Minimum D1 + D3 + P1.
+Runtime candidates (unverified, verifier dispatched): RT-C1 NotificationCaptureService dataSync FGS without onTimeout (Android 15
+6 h limit); RT-C2 BootReceiver/ServiceRestartReceiver startForegroundService with swallowed startForeground failure; RT-C3 Gson
+reflection without keep rules under R8 (AutomatedSavingsRuleState, SavingsContributionHistory, split-template TypeToken, worker
+diagnostics); RT-C4 Android 15 edge-to-edge insets.
+Manual scenarios per remediated batch on the optimized APK; synthetic datasets only (never the tracked .db or receits/);
+performance bounds set before testing; 3-7 day beta on the same APK. Serial queue and stop rules as in the plan report.
+
+## 20. Batches R14 (RT-C1) and R15 (RT-C3) — owner-approved release blockers (plan by release-planner, 2026-10-15)
+R14: new service/DataSyncFgsTimeoutGuard.kt (SharedPreferences "notification_capture_fgs_guard", key data_sync_timeout_elapsed_ms;
+isPromotionBlocked = stored && 0 <= now-stored < 24 h (reboot unblocks); recordTimeout apply(); no catch blocks).
+NotificationCaptureService: startForegroundWithNotification (:304) returns early when blocked (bounded Timber.i
+FGS_PROMOTION_SKIPPED); override onTimeout(startId, fgsType): stopForeground(STOP_FOREGROUND_REMOVE) + recordTimeout + bounded
+log; no super call, no stopSelf, listener stays bound. ServiceRestartReceiver :13 / BootReceiver :30: skip startForegroundService
+when blocked; DebugViewModel :324-325 startService when blocked. Tests: DataSyncFgsTimeoutGuardTest; NotificationCaptureService
+FgsTimeoutTest (Robolectric sdk 34, onTimeout -> stopped, no re-promotion, re-promotes after 24 h); receiver stress tests blocked
+cases. Device check on API 35 (device_config data_sync_fgs_timeout_duration 60000; logcat -b crash empty over 2 alarm cycles;
+listener still captures). Stop if stopForeground alone does not stop the crash (stopSelf = owner decision).
+R15: app/proguard-rules.pro after :21 — TypeToken keep (allowobfuscation, allowshrinking) + package-scoped
+`com.yourname.expensetracker.** extends TypeToken` (lead decision: this option); exact -keepclassmembers {<fields>} for
+SavingsContributionEvent, SavingsContributionHistoryRepository$PersistedState, AutomatedSavingsRuleStateRepository$PersistedState
+(+<init>()), $WeeklyRewardReservation, $MonthlyCapUsage, SplitShare, ui.PersistedVisualSplit, SplitTemplate$SplitType (enum fields).
+No broad/dontwarn rules (FINAL gate §34). Optional GsonR8KeepRulesContractTest (fail closed on new Gson consumers). Proof:
+assemble-release -> mapping.txt shows identity field mapping + kept <init>() + TypeToken subclasses with Signature; device
+smoke on the release APK (contributions persist; CUSTOM_AMOUNT expense; split template; visual split; automated rules twice).
+No pre-1.0 minified data exists (first release) -> no migration concern.
+Device-test review notes folded in: CloudProviderAndroidOrgJsonSentinelInstrumentedTest log list synchronized (N2); runner doc
+codes E_DEBUGGABLE_APK/E_VARIANT_NOT_RELEASE (N4). API 26 device scope: mockk-android inline mocking needs API 28+, so on
+release-api26 run only mock-free classes (R0-1b, migration/fresh-install) + manual smoke; full suite on wave5-api35.

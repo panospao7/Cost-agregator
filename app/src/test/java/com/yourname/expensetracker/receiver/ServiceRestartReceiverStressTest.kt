@@ -3,6 +3,7 @@ package com.yourname.expensetracker.receiver
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import com.yourname.expensetracker.service.DataSyncFgsTimeoutGuard
 import com.yourname.expensetracker.service.NotificationCaptureService
 import io.mockk.every
 import io.mockk.mockk
@@ -10,6 +11,7 @@ import io.mockk.verify
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
@@ -47,5 +49,20 @@ class ServiceRestartReceiverStressTest {
         every { context.startForegroundService(any()) } throws RuntimeException("boom")
 
         receiver.onReceive(context, Intent(NotificationCaptureService.ACTION_RESTART_SERVICE))
+    }
+
+    @Test
+    fun `skips startForegroundService while dataSync fgs timeout guard is active`() {
+        val realPrefs = RuntimeEnvironment.getApplication()
+            .getSharedPreferences(DataSyncFgsTimeoutGuard.PREFS_NAME, Context.MODE_PRIVATE)
+        realPrefs.edit().clear().commit()
+        DataSyncFgsTimeoutGuard(realPrefs).recordTimeout()
+        val context = mockk<Context>(relaxed = true)
+        every { context.getSharedPreferences(DataSyncFgsTimeoutGuard.PREFS_NAME, any()) } returns realPrefs
+
+        receiver.onReceive(context, Intent(NotificationCaptureService.ACTION_RESTART_SERVICE))
+
+        verify(exactly = 0) { context.startForegroundService(any()) }
+        realPrefs.edit().clear().commit()
     }
 }

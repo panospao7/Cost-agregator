@@ -3,6 +3,7 @@ package com.yourname.expensetracker.receiver
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import com.yourname.expensetracker.service.DataSyncFgsTimeoutGuard
 import com.yourname.expensetracker.service.NotificationCaptureService
 import timber.log.Timber
 
@@ -28,6 +29,18 @@ class BootReceiver : BroadcastReceiver() {
             // The system will bind to NotificationListenerService when the user grants permission
             // and opens any app from the developer
             try {
+                val guard = DataSyncFgsTimeoutGuard.from(context)
+                // A fresh boot restarts the elapsed-realtime clock; drop the stale timestamp
+                // so it cannot re-block once the new uptime passes it. Not done on
+                // package replacement, which keeps the same boot.
+                if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
+                    guard.clear()
+                }
+                // RT-C1: skip promotion while a recorded dataSync FGS timeout is active.
+                if (guard.isPromotionBlocked()) {
+                    Timber.i("FGS_PROMOTION_SKIPPED")
+                    return
+                }
                 val serviceIntent = Intent(context, NotificationCaptureService::class.java)
                 context.startForegroundService(serviceIntent)
             } catch (e: Exception) {

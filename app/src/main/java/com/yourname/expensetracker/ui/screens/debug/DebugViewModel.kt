@@ -321,7 +321,11 @@ class DebugViewModel @Inject constructor(
         val intent = android.content.Intent(context, com.yourname.expensetracker.service.NotificationCaptureService::class.java).apply {
             action = com.yourname.expensetracker.service.NotificationCaptureService.ACTION_REFRESH_NOTIFICATIONS
         }
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+        // RT-C1: while a dataSync FGS timeout is recorded, never promote; the service
+        // is already running as a bound listener, so a plain startService suffices.
+        val promotionBlocked = com.yourname.expensetracker.service.DataSyncFgsTimeoutGuard
+            .from(context).isPromotionBlocked()
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O && !promotionBlocked) {
             context.startForegroundService(intent)
         } else {
             context.startService(intent)

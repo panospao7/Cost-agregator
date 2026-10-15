@@ -25,12 +25,17 @@ param(
         "static-guards",
         "registered-guard",
         "app-check",
-        "connected-tests"
+        "connected-tests",
+        "connected-test-class",
+        "assemble-release",
+        "release-artifact-evidence"
     )]
     [string]$Profile,
 
     [string]$RunId,
     [string]$TestFilter,
+    # Optional adb serial; accepted only by connected-tests and connected-test-class.
+    [string]$DeviceSerial,
     [string]$Shard,
     [string]$GuardId,
     [string]$PythonExecutable,
@@ -407,8 +412,16 @@ function Test-GradleProfile {
     param([string]$Name)
     return $Name -notin @(
         "runner-smoke", "runner-progress-smoke", "runner-stall-smoke",
-        "runner-protocol-tests", "static-guards", "registered-guard"
+        "runner-protocol-tests", "static-guards", "registered-guard",
+        "release-artifact-evidence"
     )
+}
+
+function Resolve-InvocationDeviceSerial {
+    # An explicit -DeviceSerial (even empty) is validated; absence yields $null.
+    if (-not $script:InvocationParameters.ContainsKey("DeviceSerial")) { return $null }
+    if (-not $DeviceSerial) { throw "E_INVALID_DEVICE_SERIAL" }
+    return [string]$DeviceSerial
 }
 
 function New-GradleSettings {
@@ -486,8 +499,19 @@ function Get-ProfileSpec {
         [string]$ShardName,
         [string]$SelectedGuard,
         [string]$RequestedPython,
-        $GradleSettings = $null
+        $GradleSettings = $null,
+        [string]$SelectedSerial
     )
+
+    # Device selection is validated here so Start, Plan and the detached worker
+    # all reject the same inputs (Start resolves the spec before taking the lock).
+    $serialArguments = @()
+    if ($SelectedSerial) {
+        if ($Name -notin @("connected-tests", "connected-test-class")) { throw "E_DEVICE_SERIAL_NOT_APPLICABLE" }
+        if ($SelectedSerial -cnotmatch '^[A-Za-z0-9._:\-]{1,64}\z') { throw "E_INVALID_DEVICE_SERIAL" }
+        # Inert Gradle property: recorded in the command so dedup distinguishes devices.
+        $serialArguments = @("-PvalidationDeviceSerial=$SelectedSerial")
+    }
 
     $gradle = Join-Path $script:RepoRoot "gradlew.bat"
     $gradleTail = @()
@@ -550,7 +574,27 @@ function Get-ProfileSpec {
         "migration-tests" { return @{ executable = $gradle; arguments = @(":app:testDebugUnitTest", "--tests", "*Migration*") + $gradleTail; timeout = 3600; no_output_timeout = 900 } }
         "lint" { return @{ executable = $gradle; arguments = @(":app:lintDebug") + $gradleTail; timeout = 3600; no_output_timeout = 900 } }
         "app-check" { return @{ executable = $gradle; arguments = @(":app:check") + $gradleTail; timeout = 7200; no_output_timeout = 1200 } }
-        "connected-tests" { return @{ executable = $gradle; arguments = @(":app:connectedDebugAndroidTest") + $gradleTail; timeout = 7200; no_output_timeout = 1200 } }
+        "connected-tests" { return @{ executable = $gradle; arguments = @(":app:connectedDebugAndroidTest") + $gradleTail + $serialArguments; timeout = 7200; no_output_timeout = 1200 } }
+        "connected-test-class" {
+            if (-not $Filter) { throw "E_TEST_FILTER_REQUIRED" }
+            if ($Filter -cnotmatch '^com\.yourname\.expensetracker(\.[A-Za-z_][A-Za-z0-9_]*)+\z') { throw "E_INVALID_TEST_FILTER" }
+            return @{
+                executable = $gradle
+                arguments = @(":app:connectedDebugAndroidTest", "-Pandroid.testInstrumentationRunnerArguments.class=$Filter") + $gradleTail + $serialArguments
+                timeout = 3600
+                no_output_timeout = 900
+            }
+        }
+        "assemble-release" { return @{ executable = $gradle; arguments = @(":app:assembleRelease") + $gradleTail; timeout = 3600; no_output_timeout = 900 } }
+        "release-artifact-evidence" {
+            $python = Resolve-PythonCommand -Requested $RequestedPython
+            return @{
+                executable = $python
+                arguments = @("scripts/ci/release_artifact_evidence.py")
+                timeout = 600
+                no_output_timeout = 300
+            }
+        }
         "static-guards" {
             $python = Resolve-PythonCommand -Requested $RequestedPython
             return @{
@@ -645,7 +689,8 @@ function Start-ValidationRun {
     # Resolve and validate every profile input before claiming the global lock.
     if ($Profile -in @("unit-test-shard", "benchmark-test-shard") -and -not $Shard) { throw "E_SHARD_REQUIRED" }
     $gradleSettings = Resolve-InvocationGradleSettings
-    $spec = Get-ProfileSpec -Name $Profile -Filter $TestFilter -ShardName $Shard -SelectedGuard $GuardId -RequestedPython $PythonExecutable -GradleSettings $gradleSettings
+    $requestedSerial = Resolve-InvocationDeviceSerial
+    $spec = Get-ProfileSpec -Name $Profile -Filter $TestFilter -ShardName $Shard -SelectedGuard $GuardId -RequestedPython $PythonExecutable -GradleSettings $gradleSettings -SelectedSerial $requestedSerial
     $effectiveTimeout = if ($TimeoutSeconds -gt 0) { $TimeoutSeconds } else { [int]$spec.timeout }
     $effectiveNoOutputTimeout = if ($NoOutputTimeoutSeconds -gt 0) { $NoOutputTimeoutSeconds } else { [int]$spec.no_output_timeout }
     if ($effectiveNoOutputTimeout -ge $effectiveTimeout) { throw "E_NO_OUTPUT_TIMEOUT_INVALID" }
@@ -664,6 +709,7 @@ function Start-ValidationRun {
         run_id = $id
         profile = $Profile
         test_filter = $TestFilter
+        device_serial = $requestedSerial
         shard = $Shard
         guard_id = $GuardId
         python_executable = $PythonExecutable
@@ -687,6 +733,7 @@ function Start-ValidationRun {
         finished_at = $null
         timeout_seconds = $effectiveTimeout
         command = Get-SafeCommandDisplay -Spec $spec
+        device_serial = $requestedSerial
         gradle_settings = $gradleSettings
         git_revision = Get-GitRevision
         worktree_fingerprint_start = $startFingerprint
@@ -748,13 +795,15 @@ function Show-ValidationPlan {
     if (-not $Profile) { throw "E_PROFILE_REQUIRED" }
     if ($Profile -in @("unit-test-shard", "benchmark-test-shard") -and -not $Shard) { throw "E_SHARD_REQUIRED" }
     $gradleSettings = Resolve-InvocationGradleSettings
-    $spec = Get-ProfileSpec -Name $Profile -Filter $TestFilter -ShardName $Shard -SelectedGuard $GuardId -RequestedPython $PythonExecutable -GradleSettings $gradleSettings
+    $requestedSerial = Resolve-InvocationDeviceSerial
+    $spec = Get-ProfileSpec -Name $Profile -Filter $TestFilter -ShardName $Shard -SelectedGuard $GuardId -RequestedPython $PythonExecutable -GradleSettings $gradleSettings -SelectedSerial $requestedSerial
     $effectiveTimeout = if ($TimeoutSeconds -gt 0) { $TimeoutSeconds } else { [int]$spec.timeout }
     $effectiveNoOutputTimeout = if ($NoOutputTimeoutSeconds -gt 0) { $NoOutputTimeoutSeconds } else { [int]$spec.no_output_timeout }
     if ($effectiveNoOutputTimeout -ge $effectiveTimeout) { throw "E_NO_OUTPUT_TIMEOUT_INVALID" }
     [PSCustomObject]@{
         profile = $Profile
         shard = $Shard
+        device_serial = $requestedSerial
         command = Get-SafeCommandDisplay -Spec $spec
         gradle_settings = $gradleSettings
         timeout_seconds = $effectiveTimeout
@@ -792,7 +841,13 @@ function Invoke-ValidationWorker {
         $record.status = "RUNNING"
         Write-JsonAtomic -Path $recordPath -Value $record
         $gradleSettings = Resolve-RequestGradleSettings -Request $request
-        $spec = Get-ProfileSpec -Name $request.profile -Filter $request.test_filter -ShardName $request.shard -SelectedGuard $request.guard_id -RequestedPython $request.python_executable -GradleSettings $gradleSettings
+        # Older requests have no device_serial; a present value is revalidated by
+        # Get-ProfileSpec (applicability + format) before anything is launched.
+        $requestSerial = $null
+        if ($request.PSObject.Properties["device_serial"] -and $request.device_serial) {
+            $requestSerial = [string]$request.device_serial
+        }
+        $spec = Get-ProfileSpec -Name $request.profile -Filter $request.test_filter -ShardName $request.shard -SelectedGuard $request.guard_id -RequestedPython $request.python_executable -GradleSettings $gradleSettings -SelectedSerial $requestSerial
         $actualCommand = Get-SafeCommandDisplay -Spec $spec
         $record | Add-Member -NotePropertyName command -NotePropertyValue $actualCommand -Force
         $record | Add-Member -NotePropertyName gradle_settings -NotePropertyValue $gradleSettings -Force
@@ -815,6 +870,8 @@ function Invoke-ValidationWorker {
         $startInfo.RedirectStandardOutput = $true
         $startInfo.RedirectStandardError = $true
         $startInfo.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8"
+        # Device selection for connected profiles; the serial was validated above.
+        if ($requestSerial) { $startInfo.EnvironmentVariables["ANDROID_SERIAL"] = $requestSerial }
 
         $process = New-Object System.Diagnostics.Process
         $process.StartInfo = $startInfo
@@ -1026,7 +1083,10 @@ function Show-Profiles {
         @{ name = "static-guards"; purpose = "Run the canonical fail-closed static guard suite" },
         @{ name = "registered-guard"; purpose = "Run one canonical registered guard in CI mode" },
         @{ name = "app-check"; purpose = "Run :app:check" },
-        @{ name = "connected-tests"; purpose = "Run connected debug Android tests" }
+        @{ name = "connected-tests"; purpose = "Run connected debug Android tests; optional -DeviceSerial selects the device" },
+        @{ name = "connected-test-class"; purpose = "Run one connected test class with required -TestFilter <fully qualified class>; optional -DeviceSerial" },
+        @{ name = "assemble-release"; purpose = "Build the release APK (:app:assembleRelease)" },
+        @{ name = "release-artifact-evidence"; purpose = "Verify the assembled release APK and write build/ci/release-artifact/evidence.json (read-only)" }
     ) | ConvertTo-Json -Depth 5
 }
 

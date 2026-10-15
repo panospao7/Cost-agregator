@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.service
 
 import android.app.AlarmManager
+import android.app.Service
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -302,6 +303,13 @@ class NotificationCaptureService : NotificationListenerService() {
     }
     
     private fun startForegroundWithNotification() {
+        // RT-C1: after the OS delivered a dataSync FGS timeout, re-promoting would
+        // crash the process (ForegroundServiceDidNotStopInTimeException). Stay a
+        // plain bound listener until the guard window expires.
+        if (DataSyncFgsTimeoutGuard.from(this).isPromotionBlocked()) {
+            Timber.i("FGS_PROMOTION_SKIPPED")
+            return
+        }
         try {
             val notification = NotificationCompat.Builder(this, CHANNEL_ID)
                 .setContentTitle("Expense Tracker Active")
@@ -328,6 +336,20 @@ class NotificationCaptureService : NotificationListenerService() {
         } catch (e: Exception) {
             Timber.e(e, "CRITICAL: Failed to start foreground service")
         }
+    }
+
+    /**
+     * Android 15+ delivers this when the dataSync foreground-service budget is
+     * exhausted. The service must leave the foreground state promptly or the
+     * platform raises ForegroundServiceDidNotStopInTimeException. We only demote
+     * (the listener stays bound and keeps capturing), remember the timeout so no
+     * restart path re-promotes, and deliberately do not call stopSelf() or super
+     * (the super method is absent from older platform jars).
+     */
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        stopForeground(Service.STOP_FOREGROUND_REMOVE)
+        DataSyncFgsTimeoutGuard.from(this).recordTimeout()
+        Timber.w("FGS_TIMEOUT_DEMOTED fgsType=%d", fgsType)
     }
 
     override fun onListenerDisconnected() {

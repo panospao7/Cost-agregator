@@ -1438,3 +1438,66 @@ confidence); RG13-3 updateRule reads `old` outside its transaction (pre-existing
   start == end. Unit-tests evidence for app code: vr-20261015-174137-443d2e41 (R7 Kotlin unchanged since).
 - SECOND SEQUENCE STATUS: R6b, R7, R8, R9, R10, R11, R12, R13, R13b, G1 + stale exemption cleanup = PASS at batch gate
   (reviews + targeted + shared unit-tests + final static-guards). Not final acceptance.
+
+## Phase 6 runtime-risk verification (release-finding-verifier, read-only, 2026-10-15, candidate 2ec50671)
+- RT-C1 CONFIRMED (static), P1 proposed: NotificationCaptureService (NotificationListenerService, :123) calls startForeground(...,
+  FOREGROUND_SERVICE_TYPE_DATA_SYNC) from onStartCommand :270 / onListenerConnected :286 / onListenerDisconnected :346 (:319-323);
+  manifest foregroundServiceType dataSync (:93); targetSdk 35; runs indefinitely (15-min alarm :242-247; stopForeground only in
+  onDestroy :1010-1015); no onTimeout anywhere -> Android 15 dataSync 6 h limit -> expected crash. Deciding device check:
+  device_config data_sync_fgs_timeout_duration 60000 + logcat -b crash.
+- RT-C2 NEEDS_RUNTIME (crash claim likely wrong; P3 if no crash): receivers catch startForegroundService failures (BootReceiver
+  :30-35, ServiceRestartReceiver :16-21); service swallows startForeground failures (:321, :328; fallback also dataSync).
+- RT-C3 CONFIRMED (static) for SavingsContributionHistory (Gson reflective write :211 vs hard-coded-name read :125-185 under R8 full
+  mode -> corruption path :150-151, getAllContributions throws :76, recordContribution refuses :61/:207, UI clears streak/
+  achievements SavingsGoalsViewModel :404-421); NEEDS_RUNTIME for TypeToken generic-signature stripping (CustomSplitJsonCodec :10
+  -> ExceptionInInitializerError on non-EQUAL group expenses / split templates) and AutomatedSavingsRuleState (:220/:230 —
+  ClassCastException / cross-update state reset -> double reward); worker diagnostics REFUTED; visual split JSON P3.
+  proguard-rules.pro has no Gson rules; AGP 8.10.1 full mode; Gson 2.10.1. Unit tests run unminified -> cannot catch.
+- Proposed batches (owner approval pending): R14 RT-C1 onTimeout -> stopForeground (minimal); R15 RT-C3 Gson keep rules
+  (+ release-artifact mapping check + device smoke).
+
+## Phase 6 prep — runner additions D-22 + B-2 (writer + reviewer-strict, 2026-10-15)
+- Implemented: profiles connected-test-class (one FQCN, strict regex before lock), assemble-release, release-artifact-evidence
+  (scripts/ci/release_artifact_evidence.py wrapping the unchanged verifier with --fail-on-violation); optional -DeviceSerial on
+  connected profiles (ANDROID_SERIAL in child only, inert -PvalidationDeviceSerial recorded, dedup distinguishes); new error
+  codes; ~45 protocol tests + 19 evidence-script tests; VALIDATION_RUNNER.md updated.
+- reviewer-strict ACCEPT-WITH-NOTES: no false-PASS path; existing profile argv/timeouts/lock/dedup unchanged (only additive
+  device_serial: null field in request/result json). BINDING CONDITIONS for the lead:
+  N1 release evidence counts only if run immediately after an assemble-release PASS at the same git_revision + fingerprints with
+  no run in between and apk.mtime <= that build's finished_at (nothing ties the APK to the commit otherwise).
+  N2 connected runs: verify stdout "Starting N tests on <device>" with N > 0 and exactly one fresh
+  app/build/outputs/androidTest-results/connected/debug/TEST-<device>*.xml with tests > 0, failures/errors 0, class present;
+  copy XML before the next connected run; inherited ANDROID_SERIAL when -DeviceSerial absent is a known gap (follow-up: record
+  effective serial).
+  Notes: N3 script should itself fail on debuggable/non-release variant (fix queued); N4 no-output timeout may false-FAIL;
+  N5 verifier crashes on non-numeric build-tools dir (false FAIL); N6 owner-signed APK needs its own cert evidence (B-3);
+  other agent docs (.agents/.opencode/.codex) list old profiles.
+- First device-test writer attempt died on an API error (nothing written); re-dispatched with N3.
+
+## Phase 6 prep — device tests, R14, R15 (2026-10-15)
+- Device tests (writer): NestedTransactionSemanticsInstrumentedTest (R0-1b) and CloudProviderAndroidOrgJsonSentinelInstrumentedTest
+  (V02B-N4, OkHttp interceptor fake; no new deps). reviewer-strict ACCEPT-WITH-NOTES (oracles mirror JVM test; sentinel test would
+  catch raw-text regression; N1 the sentinel test mocks final classes -> mockk-android needs API 28+ -> run on API 35 only;
+  N2 log list made synchronized (done); N4 doc codes (done)). Evidence script tightened: E_DEBUGGABLE_APK / E_VARIANT_NOT_RELEASE fail.
+- Environment: AVD release-api26 created (pixel, android-26 google_apis x86_64; owner-approved download + SDK license accepted for
+  that image). wave5-api35 = Pixel 6 API 35.
+- R14 (writer): DataSyncFgsTimeoutGuard; NotificationCaptureService onTimeout(startId, fgsType) -> stopForeground(REMOVE) +
+  recordTimeout; guarded startForegroundWithNotification; ServiceRestartReceiver/BootReceiver skip startForegroundService when
+  blocked; DebugViewModel startService when blocked. R15: proguard-rules.pro TypeToken + 8 exact -keepclassmembers rules;
+  GsonR8KeepRulesContractTest. reviewer-strict ACCEPT-WITH-NOTES (all promotion paths guarded; onTimeout correct; 8 binary names
+  verified; coverage complete; TerminalDiagnosticEvent reader not in production; notes: clear guard on BOOT_COMPLETED, commit()
+  instead of apply(), contract test file-level only, no DebugViewModel blocked test; device + mapping proof owed).
+- Targeted (EXECUTED, fingerprint 7a0c4588…): DataSyncFgsTimeoutGuardTest vr-20261015-194446-ae4a28e4 7/7;
+  NotificationCaptureServiceFgsTimeoutTest vr-20261015-195155-53c86ad4 4/4; NotificationCaptureServiceFallbackTest
+  vr-20261015-195247-956bfa84 10/10; ServiceRestartReceiverStressTest vr-20261015-195331-0d0b981f 4/4; BootReceiverStressTest
+  vr-20261015-195416-a1805dcc 5/5; GsonR8KeepRulesContractTest vr-20261015-195457-7a69488b 5/5; CancellationSafetyArchitectureGuardTest
+  vr-20261015-195537-7f8cc619 22/22; CancellationPropagationContractTest vr-20261015-195616-645bf104 4/4; runner-protocol-tests
+  vr-20261015-195659-4759e278 330 passed (modified runner self-check).
+- R14 iteration 1 (writer): BootReceiver clears the guard on BOOT_COMPLETED only; commit() persistence; KDoc; inventory line;
+  tests. Confirmation (architecture-guardian): fix correct but the iteration-0 blocked test sent BOOT_COMPLETED first (now clears)
+  -> predicted failure; run vr-20261015-201245-0ea1fc6c confirmed (BootReceiverStressTest 6/7). Lead test-only fix (debug
+  iteration 1): blocked case exercised via MY_PACKAGE_REPLACED only. Re-run vr-20261015-201426-80dc68b9 PASS 7/7.
+  DataSyncFgsTimeoutGuardTest vr-20261015-200900-fcacc087 9/9; NotificationCaptureServiceFgsTimeoutTest vr-20261015-201321-5c643821 4/4.
+  Residual (low): platform dataSync budget is in-memory and resets on reboot; boot-time start is disallowed on API 35 and caught.
+- Final candidate C* = this prep commit (2ec50671 + runner D-22/B-2 + device tests + R14 + R15 + records). Shipped inputs DO change
+  (R14/R15 approved), so all final gates run fresh on C*.

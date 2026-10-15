@@ -206,6 +206,27 @@ Current vs historical validation: Wave 5 candidate-only runs (6x PASS, isolated
   docs/ci/db-findings/GR-08-seeds.yml + config/guards/db_ownership_policy.yml one line each, scratch preview to build/,
   migrate_db_policy_signatures.py --generate --seed-rows ..., then --verify; promotion.json untouched; every
   sourceMutations change must be accounted for, else stop).
+- 2026-10-15: the user chose option (a): build the D-22 device-test runner addition and start final acceptance.
+  Recorded: FINAL CANDIDATE FREEZE = branch release-1.0-remediation @ 2ec50671 (clean tree). Any app/ change after this
+  invalidates final evidence. Next: Phase 6 runtime/release evidence PLAN (read-only) -> owner approves device matrix +
+  runner additions (D-22 connected-test class filter; B-2 release artifact profile) -> strict review -> execution via
+  validation-runner -> Phase 7 independent final review. Environment: no device attached; AVD wave5-api35 available.
+- 2026-10-15: the user wrote "do 1 2 and 7 and for the rest directly install apk seems good". Recorded: HD-P6-1 = final
+  candidate C* = 2ec50671 + one prep commit (runner D-22 connected-test-class + -DeviceSerial, B-2 assemble-release +
+  release-artifact-evidence profiles, protocol tests, scripts/ci/release_artifact_evidence.py, R0-1b and V02B-N4 device
+  tests, handoff), with proof that shipped inputs are unchanged; B-2 approved; item 7 = MockWebServer
+  androidTestImplementation allowed ONLY if an OkHttp interceptor fake cannot work; B-3 = production distribution by
+  directly installed (sideloaded) APK signed with an owner-held release key (key never handled by agents; key continuity
+  for updates). STILL OPEN (owner): device matrix / AVD creation (D1 API 26, D2 API 33) and physical device; H-1 scope;
+  H-2 upgrade/old-backup support; H-3 public-repo personal data; performance bounds.
+- 2026-10-15: the user wrote "i approve yes and i havbe aspare phone". Recorded: R14 (RT-C1 Android 15 dataSync FGS
+  onTimeout) and R15 (RT-C3 Gson/R8 keep rules) APPROVED as release blockers to include in the final candidate C*;
+  download system image + create AVD for API 26 (D1) APPROVED (API 33 not explicitly approved); spare physical phone
+  available for release smoke + beta (P1). AVD wave5-api35 = Pixel 6 API 35 google_apis (D3), used in Wave 5 as
+  emulator-5554.
+- 2026-10-15: FINAL CANDIDATE C* = the prep commit on release-1.0-remediation containing runner D-22/B-2 additions,
+  R0-1b + V02B-N4 device tests, R14 (Android 15 dataSync FGS timeout) and R15 (Gson R8 keep rules) - supersedes the
+  2ec50671 freeze; any later fingerprinted change invalidates final evidence.
 - Observed: artifacts were committed by the owner during the run (279b7c92, CRLF
   normalization). The owner marked H-4 resolved (commits pushed).
 
