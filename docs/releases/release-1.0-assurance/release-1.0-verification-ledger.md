@@ -1425,3 +1425,16 @@ confidence); RG13-3 updateRule reads `old` outside its transaction (pre-existing
 - Next: commit all batches except R7's three files (ReceiptSideEffectPlanner.kt, ReceiptSideEffectPlannerSuggestionRaceTest.kt,
   receipt_link_allowlist.yml), then R7 regeneration on a tree where only R7 is uncommitted, then full static-guards
   (which also validates the G1 fix; if it fails, fix forward in a new commit).
+- R7-REGEN executed by lead (owner-approved route): one-line operation change in docs/ci/db-findings/GR-08-seeds.yml and
+  config/guards/db_ownership_policy.yml; guard test scripts/test_migrate_db_policy_seed_rows.py gains the planner move (pin added,
+  10 -> 11, new field-exact test vs frozen GR-08o seed). Scratch preview in build/guard-debug/r7/ diff: candidate 1 line;
+  accounting candidateSha256, seedRecords[259] key+operation, sourceMutations[222] operation, sourceTreeSha only. Real
+  `--generate` output byte/JSON-identical to the preview; `--verify` exit 0, match:true, distribution 55/38/45; promotion.json
+  untouched. architecture-guardian ACCEPT-WITH-NOTES (only that row changed; shas pinned nowhere else; test only adds a pin;
+  notes: stale "ten moves" comment :7464, near-miss list lacks dao_fqcn/kind cases -> follow-up).
+- FINAL static-guards vr-20261015-181743-1773c8b7 (HEAD fd6eb490 + R7 only): PASS, exit 0, 25/25 blocking guards PASS incl.
+  db_access, db_artifact_sync, guard_tests (validates G1 matcher fix + R7 guard test), cancellation, cloud_payload, pii_logging,
+  allowlist_compliance; known_good_state rows 1-6 PASS (active_db_gate findings=0), row 7 SKIP (stamp missing). Fingerprints
+  start == end. Unit-tests evidence for app code: vr-20261015-174137-443d2e41 (R7 Kotlin unchanged since).
+- SECOND SEQUENCE STATUS: R6b, R7, R8, R9, R10, R11, R12, R13, R13b, G1 + stale exemption cleanup = PASS at batch gate
+  (reviews + targeted + shared unit-tests + final static-guards). Not final acceptance.

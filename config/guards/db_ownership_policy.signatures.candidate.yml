@@ -4958,7 +4958,7 @@ entries:
   - com.yourname.expensetracker.data.database.entity.ScannedReceipt
   daoAccessor: scannedReceiptDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
-  operation: update
+  operation: updateMatchSuggestion
   barrierMode: helper
   reason: 'GR-08o EXACT_POLICY: barrier-checked Suggested-branch match-status update
     -- persists suggestedExpenseId/matchStatus=SUGGESTED/matchConfidence atomically

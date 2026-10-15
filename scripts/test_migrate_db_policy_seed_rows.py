@@ -1406,7 +1406,32 @@ _RETENTION_SIGNATURE_MOVES = frozenset(
 )
 
 
+# Release 1.0 R7 (RG07A-1, owner-approved R7-REGEN / R7-GT 2026-10-15): the ReceiptSideEffectPlanner
+# Suggested branch now uses the conditional ScannedReceiptDao.updateMatchSuggestion instead of a full-row
+# update. Exactly one reviewed seed row changes its operation; every other field is preserved verbatim.
+_PLANNER_SUGGESTION_OPERATION_MOVE = (
+    "scannedReceiptDao",
+    "com.yourname.expensetracker.data.database.dao.ScannedReceiptDao",
+    "update",
+)
+_PLANNER_SUGGESTION_NEW_OPERATION = "updateMatchSuggestion"
+_PLANNER_PARAMETERS = (
+    "com.yourname.expensetracker.domain.receiptmatching.MatchResult",
+    "com.yourname.expensetracker.data.database.entity.ScannedReceipt",
+)
+
+
 def _after_reviewed_seed_signature_move(entry):
+    if (
+        entry.path == "app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptSideEffectPlanner.kt"
+        and entry.owner_fqcn == "com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptSideEffectPlanner"
+        and entry.kind == CallableKind.FUNCTION
+        and entry.method == "processMatchResult"
+        and entry.receiver is None
+        and tuple(entry.parameter_types) == _PLANNER_PARAMETERS
+        and (entry.dao_accessor, entry.dao_fqcn, entry.operation) == _PLANNER_SUGGESTION_OPERATION_MOVE
+    ):
+        return replace(entry, operation=_PLANNER_SUGGESTION_NEW_OPERATION)
     if (
         entry.path == "app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt"
         and entry.owner_fqcn == "com.yourname.expensetracker.di.RetentionModule"
@@ -1446,6 +1471,31 @@ def test_reviewed_retention_seed_signature_move_is_field_exact():
         ):
             near_miss = replace(entry, **change)
             assert _after_reviewed_seed_signature_move(near_miss) == near_miss
+
+
+def test_reviewed_planner_seed_operation_move_is_field_exact():
+    entries = [
+        entry for entry in _load_seed_entries(GR08O_SEED_FILE)
+        if entry.method == "processMatchResult"
+        and (entry.dao_accessor, entry.dao_fqcn, entry.operation) == _PLANNER_SUGGESTION_OPERATION_MOVE
+    ]
+    assert len(entries) == 1
+    entry = entries[0]
+    moved = _after_reviewed_seed_signature_move(entry)
+    assert moved.operation == _PLANNER_SUGGESTION_NEW_OPERATION
+    # Every authorization and provenance field is preserved verbatim.
+    assert replace(moved, operation="update") == entry
+    for change in (
+        {"path": "app/src/main/java/example/Other.kt"},
+        {"owner_fqcn": "example.Other"},
+        {"method": "other"},
+        {"receiver": "example.Receiver"},
+        {"parameter_types": _PLANNER_PARAMETERS + ("Long",)},
+        {"dao_accessor": "otherDao"},
+        {"operation": "insert"},
+    ):
+        near_miss = replace(entry, **change)
+        assert _after_reviewed_seed_signature_move(near_miss) == near_miss
 
 
 def test_real_tracked_gr08b_seed_file_loads_with_exactly_thirteen_rows():
@@ -7440,11 +7490,11 @@ def test_combined_seed_file_concatenates_all_twenty_seven_batch_seed_files():
         entry for entry in batch_all
         if _after_reviewed_seed_signature_move(entry) != entry
     ]
-    assert len(moved_entries) == 10
+    assert len(moved_entries) == 11
     assert {
         (entry.dao_accessor, entry.dao_fqcn, entry.operation)
         for entry in moved_entries
-    } == _RETENTION_SIGNATURE_MOVES
+    } == _RETENTION_SIGNATURE_MOVES | {_PLANNER_SUGGESTION_OPERATION_MOVE}
     batch_fields = sorted(
         _entry_fields(_after_reviewed_seed_signature_move(entry))
         for entry in batch_all

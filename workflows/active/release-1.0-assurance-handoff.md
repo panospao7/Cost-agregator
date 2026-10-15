@@ -211,6 +211,14 @@ Current vs historical validation: Wave 5 candidate-only runs (6x PASS, isolated
 
 ## Next action (requires human approval)
 
+STATUS 2026-10-15 (end of second sequence): ALL remediation batches R1..R13 + R4b, R6b, R13b, G1 PASS at batch gate on
+branch release-1.0-remediation (commits d908405d, b9e98347, fd6eb490, + R7 commit). Final static-guards
+vr-20261015-181743-1773c8b7 25/25; unit-tests vr-20261015-174137-443d2e41 8067/0 failed. Remaining before release
+acceptance: final-candidate app-check + lint, connected-tests (D-22 runner addition / device), independent final
+review (release-final-reviewer), B-2 release artifact profile, B-3 signing, H-1 scope, H-3 public repo data. Open
+follow-ups listed in the verification ledger (guard hardening deferred to 2026-12-01 owner review; data repair for
+stuck FAILED_FINAL rows; D-05b; D-10 WI-6; orphan export file; residual stale full-row write; etc.).
+
 STATUS 2026-10-15 (end of R2..R6 sequence): R1, R2, R3, R4, R4b, R5, R6 all PASS at batch gate on the UNCOMMITTED
 worktree (HEAD 279b7c92; 59 changed/untracked paths). Shared gate: unit-tests vr-20261015-135135-1be3c8c9 (8009/7733/0/276)
 + static-guards vr-20261015-140235-da3782f3 (25/25; freshness row SKIP). Fixed: P1 RG11-H2, P1 RG12-01, P2 RG06A-1/RG06A-4,

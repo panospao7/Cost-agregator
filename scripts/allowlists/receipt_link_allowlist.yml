@@ -97,7 +97,7 @@
 - rule: G-RCPT-LINK-01
   path: ReceiptSideEffectPlanner
   symbol: "direct_dao_mutation"
-  reason: "Receipt lifecycle side-effect planning. Updates suggestedExpenseId and matchStatus (NOT expenseId) via scannedReceiptDao.update. Uses writeBarrier for all writes."
+  reason: "Receipt side-effect planner. Suggested branch writes only suggestedExpenseId/matchStatus=SUGGESTED/matchConfidence/updatedAt via conditional scannedReceiptDao.updateMatchSuggestion (expenseId IS NULL, status UNMATCHED/SUGGESTED); MATCH_SUGGESTED event only on 1 row. AutoMatch links only via ReceiptLinkService (requireUnmatchedClaim). Never writes expenseId; barrier-checked."
   owner: "@receipt-team"
   expires: "2027-01-01"
   linked_issue: "MIT-003"

@@ -442,34 +442,44 @@ class ReceiptSideEffectPlanner @Inject constructor(
             is MatchResult.Suggested -> {
                 writeBarrier.checkWritesAllowed("ReceiptSideEffectPlanner.suggestedMatch")
                 val now = timeProvider.now()
-                database.withTransaction {
-                    scannedReceiptDao.update(
-                        receipt.copy(
-                            suggestedExpenseId = matchResult.transaction.id,
-                            matchStatus = MatchStatus.SUGGESTED,
-                            matchConfidence = matchResult.score.toFloat(),
-                            updatedAt = now
-                        )
+                // RG07A-1: conditional column-scoped write (expenseId IS NULL,
+                // status UNMATCHED/SUGGESTED, not an identical retry). A stale
+                // full-row copy can no longer overwrite a concurrently resolved
+                // link, and the event is emitted only when a row was written.
+                val updatedRows = database.withTransaction {
+                    val n = scannedReceiptDao.updateMatchSuggestion(
+                        receiptId = receipt.id,
+                        suggestedExpenseId = matchResult.transaction.id,
+                        confidence = matchResult.score.toFloat(),
+                        now = now
                     )
-                    receiptEventDao.insert(
-                        ReceiptEvent(
-                            receiptId = receipt.id,
-                            sourceType = receipt.sourceType,
-                            documentType = receipt.documentType,
-                            eventType = "MATCH_SUGGESTED",
-                            occurredAt = now,
-                            oldStatus = receipt.processingStatus,
-                            newStatus = null,
-                            actor = "system:receipt_matcher",
-                            message = "Suggested match to expense ${matchResult.transaction.id} (score=${"%.3f".format(matchResult.score)})",
-                            metadata = "{\"suggestedExpenseId\":${matchResult.transaction.id},\"score\":${matchResult.score}}",
-                            errorDetails = null
+                    if (n == 1) {
+                        receiptEventDao.insert(
+                            ReceiptEvent(
+                                receiptId = receipt.id,
+                                sourceType = receipt.sourceType,
+                                documentType = receipt.documentType,
+                                eventType = "MATCH_SUGGESTED",
+                                occurredAt = now,
+                                oldStatus = receipt.processingStatus,
+                                newStatus = null,
+                                actor = "system:receipt_matcher",
+                                message = "Suggested match to expense ${matchResult.transaction.id} (score=${"%.3f".format(matchResult.score)})",
+                                metadata = "{\"suggestedExpenseId\":${matchResult.transaction.id},\"score\":${matchResult.score}}",
+                                errorDetails = null
+                            )
                         )
-                    )
+                    }
+                    n
                 }
-                Timber.d("Suggested match for receipt %d → expense %d (score=%.3f)",
-                    receipt.id, matchResult.transaction.id, matchResult.score)
-                SideEffectOutcome.Completed
+                if (updatedRows != 1) {
+                    Timber.d("Suggested match skipped for receipt %d: already resolved or identical suggestion", receipt.id)
+                    SideEffectOutcome.Skipped(SideEffectSkipReason.ALREADY_PROCESSED)
+                } else {
+                    Timber.d("Suggested match for receipt %d → expense %d (score=%.3f)",
+                        receipt.id, matchResult.transaction.id, matchResult.score)
+                    SideEffectOutcome.Completed
+                }
             }
 
             is MatchResult.NoMatch -> {
