@@ -135,7 +135,8 @@ class CategorizationAssistInputBuilder @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Timber.w(e, "CategorizationAssistInputBuilder: failed to fetch recent transaction hints for merchant=%s", merchantKey)
+            // R6b privacy: class name only; never the merchant key or the throwable.
+            Timber.w("CategorizationAssistInputBuilder: failed to fetch recent transaction hints class=%s", e::class.java.simpleName)
             emptyList()
         }
     }

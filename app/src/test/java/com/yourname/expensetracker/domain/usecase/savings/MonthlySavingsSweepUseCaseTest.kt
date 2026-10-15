@@ -12,6 +12,7 @@ import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.PlannedExpenseRepository
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
+import com.yourname.expensetracker.data.repository.SavingsSweepMonthConsumption
 import com.yourname.expensetracker.data.repository.SavingsGoalRepository
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.analytics.AnalyticsNormalizationResult
@@ -38,6 +39,7 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.verify
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -61,6 +63,7 @@ class MonthlySavingsSweepUseCaseTest {
     private lateinit var currencySettingsRepository: CurrencySettingsRepository
     private lateinit var currencyConverter: CurrencyConverter
     private lateinit var recurringOccurrenceDao: RecurringOccurrenceDao
+    private lateinit var sweepMonthConsumption: SavingsSweepMonthConsumption
 
     private lateinit var useCase: MonthlySavingsSweepUseCase
 
@@ -95,6 +98,8 @@ class MonthlySavingsSweepUseCaseTest {
             MultiConversionAggregate(amounts.sumOf { it.first }, "EUR", emptyList())
         }
         recurringOccurrenceDao = mockk()
+        sweepMonthConsumption = mockk()
+        coEvery { sweepMonthConsumption.isMonthConsumed(any()) } returns false
         coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns emptyList()
 
         analyticsCurrencyNormalizer = mockk()
@@ -119,7 +124,20 @@ class MonthlySavingsSweepUseCaseTest {
             currencySettingsRepository = currencySettingsRepository,
             currencyConverter = currencyConverter,
             recurringOccurrenceDao = recurringOccurrenceDao,
+            sweepMonthConsumption = sweepMonthConsumption,
         )
+    }
+
+    @Test
+    fun `consumedMonthReturnsNoRecommendationWithoutBudgetReads`() = runTest {
+        coEvery { sweepMonthConsumption.isMonthConsumed(any()) } returns true
+
+        val result = useCase.computeSweepRecommendationResult()
+
+        assertTrue(result is SavingsSweepComputationResult.NoRecommendation)
+        coVerify(exactly = 1) { sweepMonthConsumption.isMonthConsumed(any()) }
+        verify(exactly = 0) { budgetRepository.getBudgetStatuses() }
+        verify(exactly = 0) { savingsGoalRepository.observeSavingsGoals() }
     }
 
     @Test

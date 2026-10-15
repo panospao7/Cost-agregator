@@ -189,57 +189,150 @@ enum class CloudPayloadPurpose { GENERAL }
 
 # ── Test 4: Allowlisted file PASSES ──────────────────────────────────────
 
-def test_allowlisted_file_passes(tmp_path):
-    """An allowlisted file with RequestBody.create() should be filtered out."""
-    subdir = "domain/privacy"
-    _write_kt(tmp_path, subdir, "CloudPayloadPolicy.kt", """\
+_POLICY_KT = """\
 package com.yourname.expensetracker.domain.privacy
 
 import okhttp3.RequestBody
 
-// This file is the canonical policy — allowlisted in cloud_payload_allowlist.yml
 interface CloudPayloadPolicy {
     fun prepareText(rawText: String): PreparedCloudPayload
     fun demonstrateCreatePattern() {
-        // Demonstration only — this would normally be flagged but is allowlisted
         RequestBody.create(null, "")
     }
 }
-""")
+"""
 
-    allowlist_content = f"""\
+_POLICY_REL = "domain/privacy/CloudPayloadPolicy.kt"
+_LEGACY_REL = "data/sync/LegacyCloudPayloadPolicy.kt"
+
+
+def _entry(path=_POLICY_REL, symbol=_mod.SYMBOL_R1_RAW_REQUEST_BODY, rule=None):
+    return {
+        "rule": RULE_ID if rule is None else rule,
+        "path": path,
+        "symbol": symbol,
+        "reason": "test",
+        "owner": "test",
+        "expires": "2027-01-01",
+    }
+
+
+def _surviving(tmp_path, rel_path, allowlist, content=_POLICY_KT):
+    """Scan rel_path content and return violations that survive the allowlist,
+    mirroring the filtering main() applies (rel_path + finding symbol)."""
+    subdir, filename = os.path.split(rel_path)
+    full = _write_kt(tmp_path, subdir, filename, content)
+    findings = _mod.scan_file_findings(full, rel_path)
+    assert findings, "fixture must produce at least one finding"
+    return [v for _rule, symbol, v in findings
+            if not is_allowlisted(rel_path, symbol, allowlist)]
+
+
+def test_scan_file_findings_reports_rule_symbol_and_violation(tmp_path):
+    full = _write_kt(tmp_path, "domain/privacy", "CloudPayloadPolicy.kt", _POLICY_KT)
+    findings = _mod.scan_file_findings(full, _POLICY_REL)
+    assert [(r, s) for r, s, _v in findings] == [(RULE_ID, "raw_RequestBody")]
+    assert scan_file(full, _POLICY_REL) == [v for _r, _s, v in findings]
+
+
+def test_allowlisted_file_passes(tmp_path):
+    """An exact rule + path + symbol entry filters the finding out."""
+    allowlist_path = _yaml(tmp_path, f"""\
 - rule: {RULE_ID}
-  path: CloudPayloadPolicy.kt
-  symbol: "*"
+  path: {_POLICY_REL}
+  symbol: "raw_RequestBody"
   reason: "Central fail-closed policy — canonical cloud payload construction"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-003"
-"""
-    allowlist_path = _yaml(tmp_path, allowlist_content)
+""")
     allowlist = load_allowlist(allowlist_path)
+    assert _surviving(tmp_path, _POLICY_REL, allowlist) == []
 
-    rel_path = os.path.join(subdir, "CloudPayloadPolicy.kt").replace("\\", "/")
-    violations = scan_file(
-        os.path.join(str(tmp_path), subdir, "CloudPayloadPolicy.kt"),
-        rel_path
-    )
 
-    # Filter violations through allowlist
-    filtered = []
-    for v in violations:
-        parts = v.split(" ", 2)
-        if len(parts) >= 2:
-            fpath_part = parts[1]
-            fpath = fpath_part.rsplit(":", 1)[0] if ":" in fpath_part else fpath_part
-            if not is_allowlisted(fpath, "", allowlist):
-                filtered.append(v)
-        else:
-            filtered.append(v)
+def test_suffix_entry_does_not_exempt_similarly_named_file(tmp_path):
+    """Fixture A: R1 in data/sync/LegacyCloudPayloadPolicy.kt stays a
+    violation although the entry path CloudPayloadPolicy.kt is a string suffix."""
+    allowlist = [_entry(path="CloudPayloadPolicy.kt")]
+    assert _LEGACY_REL.endswith("CloudPayloadPolicy.kt")
+    surviving = _surviving(tmp_path, _LEGACY_REL, allowlist)
+    assert len(surviving) == 1
+    assert "RequestBody.create()" in surviving[0]
 
-    assert len(filtered) == 0, (
-        f"Expected no filtered violations for allowlisted file, got: {filtered}"
-    )
+
+def test_basename_only_entry_path_does_not_match_nested_file():
+    assert not is_allowlisted(_POLICY_REL, "raw_RequestBody",
+                              [_entry(path="CloudPayloadPolicy.kt")])
+
+
+def test_exact_path_symbol_and_rule_matches():
+    assert is_allowlisted(_POLICY_REL, "raw_RequestBody", [_entry()])
+
+
+@pytest.mark.parametrize("entry_symbol", ["*", "", None])
+def test_wildcard_or_empty_entry_symbol_never_matches(entry_symbol):
+    entry = _entry()
+    if entry_symbol is None:
+        del entry["symbol"]
+    else:
+        entry["symbol"] = entry_symbol
+    assert not is_allowlisted(_POLICY_REL, "raw_RequestBody", [entry])
+
+
+@pytest.mark.parametrize("finding_symbol", ["", "*"])
+def test_empty_or_wildcard_finding_symbol_never_matches(finding_symbol):
+    assert not is_allowlisted(_POLICY_REL, finding_symbol, [_entry()])
+    assert not is_allowlisted(_POLICY_REL, finding_symbol, [_entry(symbol="*")])
+
+
+@pytest.mark.parametrize("rule", ["", None, "G-CANCEL-01", "g-cloud-01"])
+def test_empty_or_wrong_rule_never_matches(rule):
+    entry = _entry()
+    if rule is None:
+        del entry["rule"]
+    else:
+        entry["rule"] = rule
+    assert not is_allowlisted(_POLICY_REL, "raw_RequestBody", [entry])
+
+
+def test_r1_entry_does_not_exempt_r2_finding():
+    r1_entry = _entry(symbol=_mod.SYMBOL_R1_RAW_REQUEST_BODY)
+    assert _mod.SYMBOL_R1_RAW_REQUEST_BODY == "raw_RequestBody"
+    assert _mod.SYMBOL_R2_UNPROVED_POST_BODY == "unproved_post_body"
+    provider = "data/ai/provider/ExampleProvider.kt"
+    assert not is_allowlisted(provider, _mod.SYMBOL_R2_UNPROVED_POST_BODY,
+                              [_entry(path=provider, symbol=_mod.SYMBOL_R1_RAW_REQUEST_BODY)])
+    assert is_allowlisted(provider, _mod.SYMBOL_R2_UNPROVED_POST_BODY,
+                          [_entry(path=provider, symbol=_mod.SYMBOL_R2_UNPROVED_POST_BODY)])
+    assert not is_allowlisted(_POLICY_REL, _mod.SYMBOL_R2_UNPROVED_POST_BODY, [r1_entry])
+
+
+@pytest.mark.parametrize("entry_path", [
+    "/domain/privacy/CloudPayloadPolicy.kt",
+    "C:/domain/privacy/CloudPayloadPolicy.kt",
+    "C:\\domain\\privacy\\CloudPayloadPolicy.kt",
+    "../domain/privacy/CloudPayloadPolicy.kt",
+    "domain/../domain/privacy/CloudPayloadPolicy.kt",
+    "domain/privacy/*.kt",
+    "domain/*/CloudPayloadPolicy.kt",
+    "*",
+    "",
+    "domain//privacy/CloudPayloadPolicy.kt",
+])
+def test_unsafe_entry_paths_never_match(entry_path):
+    assert not is_allowlisted(_POLICY_REL, "raw_RequestBody", [_entry(path=entry_path)])
+    assert not is_allowlisted(entry_path, "raw_RequestBody", [_entry(path=entry_path)])
+
+
+def test_backslash_separators_are_normalised_on_both_sides():
+    assert is_allowlisted("domain\\privacy\\CloudPayloadPolicy.kt", "raw_RequestBody", [_entry()])
+    assert is_allowlisted(_POLICY_REL, "raw_RequestBody",
+                          [_entry(path="domain\\privacy\\CloudPayloadPolicy.kt")])
+
+
+def test_non_dict_and_non_string_entries_are_ignored():
+    assert not is_allowlisted(_POLICY_REL, "raw_RequestBody",
+                              ["x", None, _entry(path=7)])
 
 
 # ── PR-GR-10B source-scope contract ─────────────────────────────────────────

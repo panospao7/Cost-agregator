@@ -38,4 +38,5 @@
     <string name="financial_runway_review_budget">Έλεγχος προϋπολογισμού</string>
     <string name="backup_restore_receipt_images_skipped_format">Δεν ήταν δυνατή η επαναφορά %1$d εικόνων αποδείξεων.</string>
     <string name="restart_required_database_operation">Η εφαρμογή πρέπει να επανεκκινηθεί για να ολοκληρωθεί μια λειτουργία της βάσης δεδομένων. Οι αλλαγές είναι σε παύση μέχρι την επανεκκίνηση.</string>
+    <string name="groups_suggested_transfers_hint">Προτεινόμενες πληρωμές για την εξισορρόπηση των υπολοίπων. Οι πληρωμές δεν καταγράφονται στην εφαρμογή.</string>
 </resources>

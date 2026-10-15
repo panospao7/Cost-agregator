@@ -707,6 +707,7 @@ fun HomeScreen(
             referenceNowMillis = state.referenceNowMillis,
             totalRecurringCount = widget.weather.totalRecurringCount,
             details = widget.weather.details,
+            availablePartial = widget.weather.goalReservesPartial,
             currency = homeCurrency ?: "",
             onManageClick = onNavigateToRecurring,
             onPlanClick = { showAddPlannedExpenseDialog = true }

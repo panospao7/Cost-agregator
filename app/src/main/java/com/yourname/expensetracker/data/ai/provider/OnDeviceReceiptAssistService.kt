@@ -48,12 +48,14 @@ class OnDeviceReceiptAssistService @Inject constructor() : ReceiptAssistService 
                 ?: return AiServiceResult.Failure(AiServiceError.ParseError("No usable suggestion in response"))
             AiServiceResult.Success(parsed.copy(usedImageInput = request.image != null))
         } catch (e: GenAiException) {
-            Timber.w(e, "OnDeviceReceiptAssistService: GenAI error (code=%d)", e.errorCode)
+            Timber.w("OnDeviceReceiptAssistService: GenAI error class=%s (code=%d)", e::class.java.simpleName, e.errorCode)
             AiServiceResult.Failure(AiServiceError.Unknown("GenAI error code=${e.errorCode}"))
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-            Timber.w(e, "OnDeviceReceiptAssistService: unexpected error")
-            AiServiceResult.Failure(AiServiceError.Unknown(e.message))
+            // R6b privacy: bounded code + class name only; never e.message or the throwable.
+            Timber.w("OnDeviceReceiptAssistService: UNKNOWN_ERROR class=%s", e::class.java.simpleName)
+            AiServiceResult.Failure(AiServiceError.Unknown("UNKNOWN_ERROR"))
         }
     }
 
@@ -88,12 +90,14 @@ class OnDeviceReceiptAssistService @Inject constructor() : ReceiptAssistService 
                 ?: return AiServiceResult.Failure(AiServiceError.ParseError("Empty response"))
             AiServiceResult.Success(text)
         } catch (e: GenAiException) {
-            Timber.w(e, "OnDeviceReceiptAssistService: suggestFromText GenAI error (code=%d)", e.errorCode)
+            Timber.w("OnDeviceReceiptAssistService: suggestFromText GenAI error class=%s (code=%d)", e::class.java.simpleName, e.errorCode)
             AiServiceResult.Failure(AiServiceError.Unknown("GenAI error code=${e.errorCode}"))
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-            Timber.w(e, "OnDeviceReceiptAssistService: suggestFromText error")
-            AiServiceResult.Failure(AiServiceError.Unknown(e.message))
+            // R6b privacy: bounded code + class name only; never e.message or the throwable.
+            Timber.w("OnDeviceReceiptAssistService: suggestFromText UNKNOWN_ERROR class=%s", e::class.java.simpleName)
+            AiServiceResult.Failure(AiServiceError.Unknown("UNKNOWN_ERROR"))
         }
     }
 
@@ -151,7 +155,7 @@ class OnDeviceReceiptAssistService @Inject constructor() : ReceiptAssistService 
     private fun buildImagePart(input: ReceiptAssistInput): ImagePart? {
         val bytes = readImageBytes(input) ?: return null
         return runCatching { ImagePart(bytes) }
-            .onFailure { Timber.w(it, "OnDeviceReceiptAssistService: unable to attach receipt image") }
+            .onFailure { Timber.w("OnDeviceReceiptAssistService: unable to attach receipt image class=%s", it::class.java.simpleName) }
             .getOrNull()
     }
 
@@ -181,8 +185,10 @@ class OnDeviceReceiptAssistService @Inject constructor() : ReceiptAssistService 
                 taxAmount = suggestion.optJSONObject("taxAmount")?.toSuggestedDoubleOrNull(),
                 notes = suggestion.optJSONArray("notes").toStringList()
             )
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
-            Timber.w(e, "OnDeviceReceiptAssistService: JSON parse failure")
+            Timber.w("OnDeviceReceiptAssistService: PARSER_FAILED class=%s", e::class.java.simpleName)
             null
         }
     }

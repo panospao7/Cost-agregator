@@ -604,6 +604,7 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
         currentAmount = current,
         targetDate = targetDate,
         protectionLevel = protection,
+        currencyAssumption = "EXPLICIT",
         createdAt = 0L,
     )
 

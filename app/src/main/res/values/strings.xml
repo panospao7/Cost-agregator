@@ -609,8 +609,8 @@
     <string name="groups_expense_amount_label">Amount</string>
     <string name="groups_paid_by_label">Paid By</string>
     <string name="groups_split_type_label">Split Type</string>
-    <string name="groups_settlement_plan_title">Settlement Plan</string>
-    <string name="groups_settle_action">Settle</string>
+    <string name="groups_settlement_plan_title">Suggested transfers</string>
+    <string name="groups_suggested_transfers_hint">Suggested payments to even out balances. Payments are not recorded in the app.</string>
     <string name="groups_member_fallback_format">Member #%1$d</string>
     <string name="groups_split_hint_enter_percent">Enter each member\'s percentage</string>
     <string name="groups_split_hint_enter_amount">Enter each member\'s amount</string>

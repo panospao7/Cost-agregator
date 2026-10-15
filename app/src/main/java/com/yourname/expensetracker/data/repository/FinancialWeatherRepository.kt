@@ -112,7 +112,8 @@ class FinancialWeatherRepository @Inject constructor(
             details = narrative.details,
             isPartial = forecast.isPartial,
             qualityWarnings = forecast.qualityWarnings,
-            excludedCount = forecast.excludedCount
+            excludedCount = forecast.excludedCount,
+            goalReservesPartial = forecast.components.goalReservesPartial
         )
     }.catch { e ->
         Timber.e(e, "Error generating weather")

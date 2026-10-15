@@ -662,7 +662,16 @@ REMOVE member:
   → Validates: member exists, no paid expenses, no split references
   → GroupMemberDao leftAt update via SharedExpenseDataPortAdapter.removeMember()
 
-ADD expense to group (standalone — no system link):
+ADD expense to group (live path, RG04A-2):
+  → GroupsRepositoryImpl.addExpenseWithLink() / createSystemExpenseAndLinkToGroup()
+    (reached via AddGroupExpenseUseCase)
+  → validateActiveMembersAndCustomSplit() (date-aware since R11)
+  → GroupTransactionCoordinator.addExpenseWithLink() / createSystemExpenseAndLinkToGroup()
+    (the two sections below describe the coordinator steps)
+
+ADD expense to group (standalone — no system link) — DORMANT: no production
+caller of this SharedExpenseManager path was found (RG04A-2); do not extend it
+without re-establishing a caller and the date-aware validation above:
   → SharedExpenseManager.addExpense(groupId, expenseId, ...)
   → Validates: description/amount, payer is member, split payload valid (SHR-17)
   → SharedExpenseDataPort.addExpense() → GroupTransactionCoordinator.addExpenseToGroup()

@@ -128,6 +128,21 @@ Recommended first batch after R0: R1 (RG11-H2), if R0-1/R0-2 confirm. If R0-1 re
 (RG12-01). If the owner prefers the fastest broad user-visible restoration, R3 is the smallest alternative but leaves a
 P1 open.
 
+## 5a. G1 expiry plan
+
+- scripts/verify_allowlist_compliance flags allowlist entries with expiry < today. The 2027-01-01 entries become violations
+  from 2027-01-02 and then block static-guards (FG-06), so they must be resolved before that date.
+- Owner review on 2026-12-01 of the remaining exact-symbol entries in scripts/allowlists/cancellation_allowlist.yml (24
+  confirmed by D-19; 19 after the 2026-10-15 stale removals) and of the Kotlin KNOWN_VIOLATIONS list
+  (CancellationSafetyArchitectureGuardTest, entries expire 2026-12-31): for each, either fix the site or record an
+  explicit FG-06/FG-07 extension decision. No silent date bumps.
+- Deferred (approved, D-19 item 6): Kotlin guard expiry/basename/stale-entry gaps (the Kotlin guard matches by basename
+  and lacks the Python guard's exact path/symbol, expiry and stale-entry enforcement).
+
+Note (G1 review, 2026-10-15): the 12 RAW_RUN_CATCHING_ALLOWLIST entries in CancellationSafetyArchitectureGuardTest
+(~:198-209) passed their 2026-10-01 expiry; the Kotlin guard checks expiry against a fixed GUARD_TODAY_VALID date, so this
+is not detected. Include them explicitly in the 2026-12-01 owner review (deferred Kotlin guard expiry enforcement).
+
 ## 6. Blockers
 
 - B-1: the performance runner commit (14a2e6ce: gradle.properties, scripts/validation-runner.ps1, test-shards.json) must be
@@ -328,3 +343,47 @@ ratchet baseline entry for HybridDedupeJudgeService (config/baselines/cancellati
 fails on resolved entries -> HD-1 owner approval to delete that baseline entry (guard-config edit). Tests with sentinel
 R6SENTINEL_9f2c per provider + CE tests + new HybridDedupeJudgeServiceTest. Residuals: V02B-N4 device org.json proof;
 D-07 existing rows; successful rationale stored by design.
+
+## 15. Batch R6b plan summary (release-planner, 2026-10-15) — privacy sweep, owner-approved scope
+Dropped after verification: InterpretFinancialQueryUseCase :50 (error text discarded, local fallback), CloudRetryPolicy :23,
+GetAiRuntimeStatusUseCase :50. Edits: E1 GenerateDashboardBriefingUseCase :121/:125 (UNKNOWN_ERROR_CODE; shown on Home
+HomeViewModel :317); E2 SuggestReceiptExtractionUseCase :161/:165/:170 (fixed "AI receipt assist failed."); E3
+SuggestCategoryFallbackUseCase :214/:218/:223 (fixed "AI category assist failed."); E4 CategorizeReceiptItemsUseCase :216/
+:225-226 (persist class simple name in both modes; CE part = HD-R6b-1 owner decision: catch CE, reset ANALYZING->PENDING in
+NonCancellable, rethrow); E5 OnDeviceDashboardBriefingService :46-50 (CE rethrow; UNKNOWN_ERROR); E6 OnDeviceReceiptAssistService
+logs :51/:55/:91/:95/:154/:185 + :56/:96 UNKNOWN_ERROR; E7 SmartReceiptAssistService :373/:374 fixed codes (payloadJson
+:276/:309); E8 ReviewViewModel AI-assist catches :375/:602/:684/:734 CE rethrow + bounded logs; optional (lead: include)
+CategorizationAssistInputBuilder :138 merchant + throwable log. Pinned leak assertion to change (owner approval covers):
+GenerateDashboardBriefingUseCaseTest :261-276. No cancellation baseline entry resolved; non-failing stale allowlist entries
+(cancellation_allowlist.yml :291-297, :484-491; KNOWN_VIOLATIONS :83) -> cleanup proposal. Follow-ups (owner approval):
+F1 pii_logging guard extension; F2 cancellation scanner misses `suspend operator fun invoke` (baseline would grow);
+F3 ~15 raw-throwable log sites in other AI files; F4 ReviewViewModel non-AI catches. HD-R6b-2: Home shows "UNKNOWN_ERROR
+Route: ..." (accept; localized follow-up).
+
+## 16. Batch R7 plan summary (2026-10-15) — owner-approved incl. policy edit
+ReceiptSideEffectPlanner Suggested branch :442-473: scannedReceiptDao.updateMatchSuggestion (existing, ScannedReceiptDao :128-143)
+instead of full-row update; MATCH_SUGGESTED event only when 1 row; else Skipped(ALREADY_PROCESSED) (mirror :418). Guard edits
+(approved): db_ownership_policy.yml :5305 operation update -> updateMatchSuggestion (+reason :5307-5310); accounting JSON 2 rows;
+receipt_link_allowlist.yml :100 rationale corrected (guard reads path only). event_writers counts unchanged. Test:
+ReceiptSideEffectPlannerSuggestionRaceTest (interleave, control, identical retry).
+
+## 17. Batch R8 plan summary (2026-10-15) — owner-approved incl. D-06 for the coordinator test
+NEW data/repository/SavingsSweepMonthConsumption (read-only; existing DAO queries; coordinator check :60-67 moved verbatim);
+coordinator builds it from its own DAOs (stays in transaction) + public const SAVINGS_SWEEP_MONTH_ALREADY_ACCEPTED;
+MonthlySavingsSweepUseCase injects it and returns NoRecommendation for a consumed month before budget reads; SavingsGoalsViewModel
+:278-281 clears card + reason on MONTH_ALREADY_ACCEPTED. Tests: coordinator real-Room cases (marker / ACCEPTED plan / sweep ledger
+row / negative controls / accept-then-new-producer), v150-migrated variant in SavingsSweepMonthMigrationTest, use-case test,
+VM terminal test; changed: SavingsSweepAcceptanceCoordinatorTest :471/:479 (approved). No DAO/schema/guard change.
+
+## 18. Batch R9 plan (option B, owner H-R9-1 = B; 2026-10-15)
+No change to ComputeDashboardWidgetsUseCase :964 (Monte Carlo reads forecast.isPartial/excludedCount, which stay
+recurring + planned + input quality; MC never uses goalReserves). Edits: FinancialForecast.ForecastComponents
+goalReserveExclusions: Int = 0 (+require >= 0, derived goalReservesPartial); SynthesisEngine :362-382 STRICT unfinished goals,
+SavingsGoalCurrencyPolicy.knownCurrencyOrNull -> unknown => exclusion++; pro-rate in goal currency; convertAmount to display
+currency, failure => exclusion++; count-only log; components :512-524. FinancialWeather.goalReservesPartial (default false);
+FinancialWeatherRepository :115 mapping; FinancialWeatherCard availablePartial -> DataQualityWarningChip (existing string);
+HomeScreen :696-713. Lead decision on H-R9-2: chip for goal-only partial (other partial causes unchanged; follow-up).
+Tests: new SynthesisEngineGoalReserveCurrencyTest T1-T5, T8; FinancialWeatherRepositoryTest T6; DashboardBudgetProvenanceChainTest
+T7 (legacy goal keeps Monte Carlo available); fixtures SynthesisEngineTest :600-608 and SynthesisEngineGoldenTest :118-126 ->
+currencyAssumption "EXPLICIT". Money guards: money.json fingerprints must stay []; no G-MONEY-ALLOW; avoid sumOf { it.amount }.
+Residuals: AI briefing input and BlockParty/Narrative show no partial marker.

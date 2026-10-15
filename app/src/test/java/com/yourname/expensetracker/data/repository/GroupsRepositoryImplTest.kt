@@ -526,6 +526,103 @@ class GroupsRepositoryImplTest {
         coVerify(exactly = 20) { memberDao.getActiveMembersForGroup(groupId) }
     }
 
+    // RG04A-1: a member who joined AFTER the expense date did not participate in it, so a custom
+    // split that references that member must be rejected at the repository boundary (before the
+    // coordinator is reached), for both entry points and every custom split type.
+    @Test
+    fun `RG04A-1 custom split referencing member who joined after expense date is rejected before coordinator`() =
+        runTest(testDispatcher) {
+            val groupId = 9L
+            val date = 1_700_000_100_000L
+            val alice = GroupMember(id = 10L, groupId = groupId, name = "Alice", isCurrentUser = true, joinedAt = date - 10_000L)
+            val bob = GroupMember(id = 20L, groupId = groupId, name = "Bob", joinedAt = date + 1L)
+            coEvery { groupDao.getById(groupId) } returns ExpenseGroup(id = groupId, name = "Trip", defaultCurrency = "EUR")
+            coEvery { memberDao.getActiveMembersForGroup(groupId) } returns listOf(alice, bob)
+            val amountJson = CustomSplitJsonCodec.toCanonicalJson(mapOf(alice.id to 10.0, bob.id to 80.0))
+            val percentJson = CustomSplitJsonCodec.toCanonicalJson(mapOf(alice.id to 25.0, bob.id to 75.0))
+            val cases = listOf(
+                SplitType.UNEQUAL to amountJson,
+                SplitType.CUSTOM_AMOUNT to amountJson,
+                SplitType.CUSTOM_PERCENT to percentJson
+            )
+            // Control for the harness: if the guard is missing the coordinator would answer Success.
+            coEvery {
+                coordinator.createSystemExpenseAndLinkToGroup(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+            } returns GroupExpenseCreationResult.Success(700L, 701L)
+            coEvery {
+                coordinator.addExpenseWithLink(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+            } returns GroupExpenseCreationResult.Success(700L, 701L)
+
+            cases.forEach { (type, json) ->
+                val created = repository.createSystemExpenseAndLinkToGroup(
+                    groupId, "Dinner", 90.0, alice.id, "EUR", type, json, date,
+                    com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE, "note"
+                )
+                val linked = repository.addExpenseWithLink(groupId, 701L, "Dinner", 90.0, alice.id, type, json, date)
+                listOf("createSystemExpenseAndLinkToGroup" to created, "addExpenseWithLink" to linked).forEach { (entry, result) ->
+                    assertTrue("RG04A-1: $entry/$type must return Error, was $result", result is GroupExpenseCreationResult.Error)
+                    assertEquals(
+                        "RG04A-1: $entry/$type bounded message",
+                        // INVALID_CUSTOM_SPLIT_MESSAGE is private to GroupsRepositoryImpl; literal pinned here.
+                        "Invalid custom split for active members",
+                        (result as GroupExpenseCreationResult.Error).message
+                    )
+                }
+            }
+            coVerify(exactly = 0) {
+                coordinator.createSystemExpenseAndLinkToGroup(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+            }
+            coVerify(exactly = 0) {
+                coordinator.addExpenseWithLink(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+            }
+        }
+
+    @Test
+    fun `RG04A-1 boundary member who joined exactly at expense date is eligible`() = runTest(testDispatcher) {
+        val groupId = 9L
+        val date = 1_700_000_100_000L
+        val alice = GroupMember(id = 10L, groupId = groupId, name = "Alice", isCurrentUser = true, joinedAt = date - 10_000L)
+        val bob = GroupMember(id = 20L, groupId = groupId, name = "Bob", joinedAt = date)
+        coEvery { groupDao.getById(groupId) } returns ExpenseGroup(id = groupId, name = "Trip", defaultCurrency = "EUR")
+        coEvery { memberDao.getActiveMembersForGroup(groupId) } returns listOf(alice, bob)
+        val amountJson = CustomSplitJsonCodec.toCanonicalJson(mapOf(alice.id to 10.0, bob.id to 80.0))
+        val percentJson = CustomSplitJsonCodec.toCanonicalJson(mapOf(alice.id to 25.0, bob.id to 75.0))
+        val cases = listOf(
+            SplitType.UNEQUAL to amountJson,
+            SplitType.CUSTOM_AMOUNT to amountJson,
+            SplitType.CUSTOM_PERCENT to percentJson
+        )
+        val expected = GroupExpenseCreationResult.Success(700L, 701L)
+        coEvery {
+            coordinator.createSystemExpenseAndLinkToGroup(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        } returns expected
+        coEvery {
+            coordinator.addExpenseWithLink(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        } returns expected
+
+        cases.forEach { (type, json) ->
+            assertEquals(expected, repository.createSystemExpenseAndLinkToGroup(
+                groupId, "Dinner", 90.0, alice.id, "EUR", type, json, date,
+                com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE, "note"
+            ))
+            assertEquals(expected, repository.addExpenseWithLink(groupId, 701L, "Dinner", 90.0, alice.id, type, json, date))
+        }
+
+        cases.forEach { (type, json) ->
+            coVerify(exactly = 1) {
+                coordinator.createSystemExpenseAndLinkToGroup(
+                    groupId, "Dinner", 90.0, alice.id, "EUR", type, json, date,
+                    com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE, "note", null
+                )
+            }
+            coVerify(exactly = 1) {
+                coordinator.addExpenseWithLink(
+                    groupId, 701L, "Dinner", 90.0, alice.id, "EUR", type, json, date, null
+                )
+            }
+        }
+    }
+
     @Test
     fun `history includes departed members and barrier blocks delegation`() = runTest(testDispatcher) {
         val groupId = 10L

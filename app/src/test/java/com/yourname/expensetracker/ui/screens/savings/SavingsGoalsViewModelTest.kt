@@ -794,6 +794,47 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
+    fun month_already_accepted_rejection_clears_sweep_card_terminally() = runTest(testDispatcher) {
+        // RG05A-1: this reason means the month is permanently consumed, so (unlike a transient
+        // rejection) the card must not stay retryable. The literal is the coordinator's current
+        // private MONTH_ALREADY_ACCEPTED value; the public constant does not exist yet.
+        val monthAlreadyAccepted = "SAVINGS_SWEEP_MONTH_ALREADY_ACCEPTED"
+        val goal = createGoal(1L, "Known", 1000.0, 200.0)
+        configureRepositoryWithGoals(listOf(goal))
+        val sweep = com.yourname.expensetracker.domain.usecase.savings.SavingsSweepRecommendation(
+            50.0, 10.0, 40.0, listOf(com.yourname.expensetracker.domain.usecase.savings.GoalAllocation(
+                goal.id, goal.name, goal.currentAmount, goal.targetAmount, 40.0, 1.0, "EUR"
+            )), timeProvider.now(), timeProvider.now() + 1000L, 0.9, "EUR", 0L
+        )
+        coEvery { monthlySavingsSweepUseCase.computeSweepRecommendationResult() } returns
+            SavingsSweepComputationResult.Available(sweep)
+        coEvery { savingsSweepAcceptanceCoordinator.accept(sweep) } returns
+            SavingsSweepAcceptanceResult.Rejected(monthAlreadyAccepted)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+        viewModel.computeSweepRecommendation()
+        advanceUntilIdle()
+        assertEquals(sweep, viewModel.state.value.sweepRecommendation)
+
+        viewModel.acceptSweepRecommendation()
+        advanceUntilIdle()
+
+        assertNull("RG05A-1 consumed-month rejection must clear the card",
+            viewModel.state.value.sweepRecommendation)
+        assertNull("RG05A-1 consumed-month rejection must not leave a retry reason",
+            viewModel.state.value.sweepUnavailableReason)
+        assertEquals(200.0, goalsFlow.value.single().currentAmount, 0.0)
+
+        viewModel.acceptSweepRecommendation()
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { savingsSweepAcceptanceCoordinator.accept(sweep) }
+        coVerify(exactly = 0) { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) }
+        coVerify(exactly = 0) { savingsContributionHistoryRepository.recordContribution(any(), any(), any(), any(), any()) }
+        assertEquals(200.0, goalsFlow.value.single().currentAmount, 0.0)
+    }
+
+    @Test
     fun historyStorageFailureUsesOnlyControlledReasonWithoutPayload() = runTest(testDispatcher) {
         val goal = createGoal(1L, "Known", 1000.0, 200.0)
         configureRepositoryWithGoals(listOf(goal))

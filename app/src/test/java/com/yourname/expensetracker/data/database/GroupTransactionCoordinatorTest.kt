@@ -986,6 +986,60 @@ class GroupTransactionCoordinatorTest {
     }
 
     @Test
+    fun `RG04A-1 repository rejects split referencing member who joined after expense date before any row appears`() = runTest {
+        val groupId = coordinator.createGroupWithMembersAtomic(
+            group = ExpenseGroup(name = "Late Joiner Group", defaultCurrency = "EUR"),
+            members = listOf(
+                GroupMember(groupId = 0, name = "Alice", isCurrentUser = true, joinedAt = TEST_DATE - 10_000L),
+                GroupMember(groupId = 0, name = "Bob", joinedAt = TEST_DATE + 5_000L)
+            )
+        )
+        val members = memberDao.getMembersForGroup(groupId).first()
+        val aliceId = members.first { it.name == "Alice" }.id
+        val bobId = members.first { it.name == "Bob" }.id
+        val json = CustomSplitJsonCodec.toCanonicalJson(mapOf(aliceId to 10.0, bobId to 80.0))
+
+        val result = groupsRepository.createSystemExpenseAndLinkToGroup(
+            groupId = groupId, description = "Dinner", amount = 90.0,
+            paidById = aliceId, currency = "EUR", splitType = SplitType.UNEQUAL,
+            customSplitsJson = json, date = TEST_DATE, transactionType = TransactionType.PURCHASE
+        )
+
+        assertThat(result).isInstanceOf(GroupExpenseCreationResult.Error::class.java)
+        // INVALID_CUSTOM_SPLIT_MESSAGE is private to GroupsRepositoryImpl; the bounded literal is pinned here.
+        assertThat((result as GroupExpenseCreationResult.Error).message).isEqualTo("Invalid custom split for active members")
+        assertThat(expenseDao.getAllUncapped()).isEmpty()
+        assertThat(groupExpenseDao.getExpensesForGroup(groupId).first()).isEmpty()
+    }
+
+    @Test
+    fun `RG04A-1 boundary member who joined exactly at expense date is a valid split participant`() = runTest {
+        val groupId = coordinator.createGroupWithMembersAtomic(
+            group = ExpenseGroup(name = "Boundary Joiner Group", defaultCurrency = "EUR"),
+            members = listOf(
+                GroupMember(groupId = 0, name = "Alice", isCurrentUser = true, joinedAt = TEST_DATE - 10_000L),
+                GroupMember(groupId = 0, name = "Bob", joinedAt = TEST_DATE)
+            )
+        )
+        val members = memberDao.getMembersForGroup(groupId).first()
+        val aliceId = members.first { it.name == "Alice" }.id
+        val bobId = members.first { it.name == "Bob" }.id
+        val requestedJson = CustomSplitJsonCodec.toCanonicalJson(mapOf(aliceId to 10.0, bobId to 80.0))
+
+        val result = groupsRepository.createSystemExpenseAndLinkToGroup(
+            groupId = groupId, description = "Dinner", amount = 90.0,
+            paidById = aliceId, currency = "EUR", splitType = SplitType.UNEQUAL,
+            customSplitsJson = requestedJson, date = TEST_DATE, transactionType = TransactionType.PURCHASE
+        )
+
+        val success = result as GroupExpenseCreationResult.Success
+        val storedGroupExpense = groupExpenseDao.getById(success.groupExpenseId)
+        assertThat(storedGroupExpense).isNotNull()
+        assertThat(storedGroupExpense!!.customSplitsJson).isEqualTo(requestedJson)
+        assertThat(expenseDao.getById(success.expenseId)!!.myShareAmount).isEqualTo(10.0)
+    }
+
+    @Test
     fun `repository persists valid active unequal split and current user share`() = runTest {
         val groupId = coordinator.createGroupWithMembersAtomic(
             group = ExpenseGroup(name = "Split Group", defaultCurrency = "EUR"),

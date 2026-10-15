@@ -73,6 +73,61 @@ def test_privacy_frontend_rejects_unparseable_provider_source():
         )
 
 
+def _fixture_a_root(tmp_path, entry_path):
+    """Fixture A: raw RequestBody.create() in data/sync/LegacyCloudPayloadPolicy.kt
+    with an allowlist entry whose path is only a string suffix of that file."""
+    manifest = tmp_path / "config" / "guards" / "production_source_roots.yml"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        "schemaVersion: 1\nroots:\n  - module: ':app'\n    sourceSet: main\n"
+        "    path: app/src/main/java\n",
+        encoding="utf-8",
+    )
+    legacy = (tmp_path / "app" / "src" / "main" / "java" / "com" / "example"
+              / "data" / "sync" / "LegacyCloudPayloadPolicy.kt")
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(
+        "package com.example.data.sync\n"
+        "import okhttp3.RequestBody\n"
+        "class LegacyCloudPayloadPolicy {\n"
+        "    fun f() { RequestBody.create(null, \"\") }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    allowlist = tmp_path / "allowlist.yml"
+    allowlist.write_text(
+        f"- rule: G-CLOUD-01\n  path: {entry_path}\n  symbol: raw_RequestBody\n"
+        "  reason: test\n  owner: test\n  expires: '2027-01-01'\n",
+        encoding="utf-8",
+    )
+    return allowlist
+
+
+def _run_main(monkeypatch, capsys, root, allowlist):
+    monkeypatch.setattr(sys, "argv", [
+        "guard", "--root", str(root), "--allowlist", str(allowlist), "--fail-on-violation",
+    ])
+    with pytest.raises(SystemExit) as error:
+        cloud.main()
+    return error.value.code, capsys.readouterr()
+
+
+def test_main_fails_for_suffix_only_allowlist_entry_fixture_a(tmp_path, monkeypatch, capsys):
+    allowlist = _fixture_a_root(tmp_path, "CloudPayloadPolicy.kt")
+    code, captured = _run_main(monkeypatch, capsys, tmp_path, allowlist)
+    assert code == 1
+    assert "LegacyCloudPayloadPolicy.kt" in captured.out
+    assert "PASS" not in captured.out
+
+
+def test_main_passes_only_for_exact_path_and_symbol_entry(tmp_path, monkeypatch, capsys):
+    allowlist = _fixture_a_root(
+        tmp_path, "app/src/main/java/com/example/data/sync/LegacyCloudPayloadPolicy.kt")
+    code, captured = _run_main(monkeypatch, capsys, tmp_path, allowlist)
+    assert code == 0
+    assert "PASS" in captured.out
+
+
 @pytest.mark.parametrize("failure", ["missing", "invalid_utf8", "malformed"])
 @pytest.mark.parametrize("fail_on_violation", [False, True])
 def test_cloud_cli_source_failure_exits_two_and_never_prints_pass(

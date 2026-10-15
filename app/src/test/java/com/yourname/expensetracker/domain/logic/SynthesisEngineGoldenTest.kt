@@ -122,6 +122,7 @@ class SynthesisEngineGoldenTest : AnalyticsEngineTestBase() {
                     currentAmount = 900.0,
                     targetDate = null,
                     protectionLevel = GoalProtectionLevel.STRICT,
+                    currencyAssumption = "EXPLICIT",
                     createdAt = 0L,
                 )
             ),

@@ -35,6 +35,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
+import timber.log.Timber
 import kotlin.coroutines.cancellation.CancellationException
 
 class SuggestCategoryFallbackUseCaseTest {
@@ -370,6 +371,40 @@ class SuggestCategoryFallbackUseCaseTest {
         // Only the RUNNING tombstone should have been written, no FAILED artifact
         assertTrue(captured.size == 1)
         assertEquals(AiArtifactStatus.RUNNING, captured.first().status)
+    }
+
+    @Test
+    fun `invoke does not persist return or log raw exception text when provider throws`() = runTest {
+        val sentinel = "R6BSENTINEL_7d41"
+        val item = makeItem()
+        val input = makeInput()
+        every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, categorizationFallbackEnabled = true))
+        coEvery { inputBuilder.build(item, any()) } returns input
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
+        coEvery { categorizationAssistService.suggest(input) } throws IllegalStateException(sentinel)
+
+        val captured = mutableListOf<AiArtifactRecord>()
+        coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
+
+        val logs = mutableListOf<Pair<Throwable?, String>>()
+        val tree = object : Timber.Tree() {
+            override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+                logs += t to message
+            }
+        }
+        Timber.plant(tree)
+        val result = try {
+            useCase(item)
+        } finally {
+            Timber.uproot(tree)
+        }
+
+        assertEquals(CategoryAssistGenerationResult.Error("AI category assist failed."), result)
+        assertEquals(AiArtifactStatus.FAILED, captured.last().status)
+        assertTrue(captured.last().errorMessage?.startsWith("AI category assist failed.") == true)
+        assertTrue(captured.none { it.errorMessage?.contains(sentinel) == true })
+        assertTrue(logs.isNotEmpty())
+        assertTrue(logs.all { it.first == null && !it.second.contains(sentinel) })
     }
 
     private fun makeItem() = PendingReviewWithReceipt(

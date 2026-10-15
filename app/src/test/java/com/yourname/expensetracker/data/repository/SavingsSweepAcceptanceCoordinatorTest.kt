@@ -8,6 +8,7 @@ import com.yourname.expensetracker.data.database.dao.SavingsContributionLedgerDa
 import com.yourname.expensetracker.data.database.dao.SavingsSweepMonthAcceptanceDao
 import com.yourname.expensetracker.data.database.entity.SavingsSweepMonthAcceptance
 import com.yourname.expensetracker.data.database.entity.SavingsContributionLedgerEntry
+import com.yourname.expensetracker.data.database.entity.SavingsSweepPlan
 import com.yourname.expensetracker.data.database.entity.SweepPlanStatus
 import com.yourname.expensetracker.data.database.entity.SavingsGoal as SavingsGoalEntity
 import com.yourname.expensetracker.data.database.entity.GoalProtectionLevel
@@ -476,7 +477,14 @@ class SavingsSweepAcceptanceCoordinatorTest {
         assertEquals(SavingsSweepAcceptanceResult.Accepted, coordinator.accept(first))
         database.savingsSweepPlanDao().deleteOldPlans(timeProvider.now() + 1L)
         timeProvider.advanceTime(1_000L)
-        val recomputed = (producer.computeSweepRecommendationResult() as SavingsSweepComputationResult.Available).recommendation
+        // RG05A-1 (owner D-06 approval): the producer must not offer a card for a month that
+        // already consumed its sweep, even after optional plan cleanup.
+        assertNoRecommendation(
+            "RG05A-1 producer must not re-offer a consumed month after plan cleanup",
+            producer.computeSweepRecommendationResult()
+        )
+        // The coordinator remains the authoritative last line of defence for a stale card.
+        val recomputed = first.copy(computedAt = first.computedAt + 1_000L)
         assertTrue(first != recomputed)
         assertEquals(
             SavingsSweepAcceptanceResult.Rejected("SAVINGS_SWEEP_MONTH_ALREADY_ACCEPTED"),
@@ -495,6 +503,125 @@ class SavingsSweepAcceptanceCoordinatorTest {
     }
 
     @Test
+    fun rg05a1_month_marker_alone_suppresses_producer_card() = runTest {
+        val (monthStart, monthEndExclusive) = enterSweepWindowOfCurrentMonth()
+        database.savingsGoalDao().insertGoal(goal(1L, 200.0))
+        database.savingsSweepMonthAcceptanceDao().insert(
+            SavingsSweepMonthAcceptance(
+                monthStart = monthStart,
+                monthEndExclusive = monthEndExclusive,
+                actionedAt = timeProvider.now(),
+                reasonCode = SavingsSweepMonthAcceptance.ACCEPTED
+            )
+        )
+
+        assertNoRecommendation(
+            "RG05A-1 marker covering month M must suppress the producer card",
+            sweepProducer(40.0).computeSweepRecommendationResult()
+        )
+        assertTrue(database.savingsContributionLedgerDao().getAll().isEmpty())
+        assertTrue(database.savingsSweepPlanDao().getAllPlans().isEmpty())
+        assertEquals(200.0, database.savingsGoalDao().getById(1L)!!.currentAmount, 0.0)
+    }
+
+    @Test
+    fun rg05a1_accepted_plan_alone_suppresses_producer_card() = runTest {
+        val (_, monthEndExclusive) = enterSweepWindowOfCurrentMonth()
+        database.savingsGoalDao().insertGoal(goal(1L, 200.0))
+        database.savingsSweepPlanDao().insert(
+            sweepPlan(monthEndExclusive - 1L, SweepPlanStatus.ACCEPTED, "rg05a1-accepted-plan")
+        )
+
+        assertNoRecommendation(
+            "RG05A-1 ACCEPTED plan for month M must suppress the producer card",
+            sweepProducer(40.0).computeSweepRecommendationResult()
+        )
+        assertTrue(database.savingsSweepMonthAcceptanceDao().getAll().isEmpty())
+        assertTrue(database.savingsContributionLedgerDao().getAll().isEmpty())
+    }
+
+    @Test
+    fun rg05a1_sweep_ledger_row_alone_suppresses_producer_card() = runTest {
+        val (monthStart, _) = enterSweepWindowOfCurrentMonth()
+        database.savingsGoalDao().insertGoal(goal(1L, 200.0))
+        database.savingsContributionLedgerDao().insert(
+            ledgerRow("rg05a1-sweep-row", "sweep", monthStart + 1_000L)
+        )
+
+        assertNoRecommendation(
+            "RG05A-1 sweep ledger row inside month M must suppress the producer card",
+            sweepProducer(40.0).computeSweepRecommendationResult()
+        )
+        assertTrue(database.savingsSweepMonthAcceptanceDao().getAll().isEmpty())
+        assertTrue(database.savingsSweepPlanDao().getAllPlans().isEmpty())
+    }
+
+    @Test
+    fun rg05a1_previous_month_marker_does_not_suppress_producer_card() = runTest {
+        val (monthStart, _) = enterSweepWindowOfCurrentMonth()
+        database.savingsGoalDao().insertGoal(goal(1L, 200.0))
+        val previousStart = TimePeriodUtils.getStartOfMonth(monthStart - 1L)
+        database.savingsSweepMonthAcceptanceDao().insert(
+            SavingsSweepMonthAcceptance(previousStart, monthStart, previousStart + 1_000L,
+                SavingsSweepMonthAcceptance.ACCEPTED)
+        )
+
+        val result = sweepProducer(40.0).computeSweepRecommendationResult()
+
+        assertTrue("RG05A-1 control: M-1 marker must leave month M available: $result",
+            result is SavingsSweepComputationResult.Available)
+    }
+
+    @Test
+    fun rg05a1_manual_ledger_row_does_not_suppress_producer_card() = runTest {
+        val (monthStart, _) = enterSweepWindowOfCurrentMonth()
+        database.savingsGoalDao().insertGoal(goal(1L, 200.0))
+        database.savingsContributionLedgerDao().insert(
+            ledgerRow("rg05a1-manual-row", "manual", monthStart + 1_000L)
+        )
+
+        val result = sweepProducer(40.0).computeSweepRecommendationResult()
+
+        assertTrue("RG05A-1 control: manual ledger row must leave month M available: $result",
+            result is SavingsSweepComputationResult.Available)
+    }
+
+    @Test
+    fun rg05a1_pending_plan_does_not_suppress_producer_card() = runTest {
+        val (_, monthEndExclusive) = enterSweepWindowOfCurrentMonth()
+        database.savingsGoalDao().insertGoal(goal(1L, 200.0))
+        database.savingsSweepPlanDao().insert(
+            sweepPlan(monthEndExclusive - 1L, SweepPlanStatus.PENDING, "rg05a1-pending-plan")
+        )
+
+        val result = sweepProducer(40.0).computeSweepRecommendationResult()
+
+        assertTrue("RG05A-1 control: PENDING plan must leave month M available: $result",
+            result is SavingsSweepComputationResult.Available)
+    }
+
+    @Test
+    fun rg05a1_accept_then_new_producer_one_minute_later_offers_no_card() = runTest {
+        enterSweepWindowOfCurrentMonth()
+        database.savingsGoalDao().insertGoal(goal(1L, 200.0))
+        val first = (sweepProducer(40.0).computeSweepRecommendationResult()
+            as SavingsSweepComputationResult.Available).recommendation
+        assertEquals(SavingsSweepAcceptanceResult.Accepted, coordinator.accept(first))
+
+        timeProvider.advanceTime(60_000L)
+        val laterProducer = sweepProducer(40.0)
+
+        assertNoRecommendation(
+            "RG05A-1 a fresh producer after acceptance in the same month must offer no card",
+            laterProducer.computeSweepRecommendationResult()
+        )
+        assertEquals(1, database.savingsContributionLedgerDao().getAll().size)
+        assertEquals(1, database.savingsSweepMonthAcceptanceDao().getAll().size)
+        assertEquals(200.0 + first.goalAllocations.single().suggestedAllocation,
+            database.savingsGoalDao().getById(1L)!!.currentAmount, 0.0)
+    }
+
+    @Test
     fun safe_pool_above_underspend_after_buffer_is_rejected_without_writes() = runTest {
         database.savingsGoalDao().insertGoal(goal(1L, 200.0))
         val candidate = recommendation(allocation(1L, 200.0, 40.0))
@@ -505,6 +632,43 @@ class SavingsSweepAcceptanceCoordinatorTest {
         assertTrue(database.savingsSweepPlanDao().getAllPlans().isEmpty())
         assertTrue(database.savingsContributionLedgerDao().getAll().isEmpty())
     }
+
+    /** Moves the clock into the last days of its month; returns [start, endExclusive) of that month. */
+    private fun enterSweepWindowOfCurrentMonth(): Pair<Long, Long> {
+        timeProvider.setTime(TimePeriodUtils.getEndOfMonth(timeProvider.now()) - 2 * 86_400_000L)
+        return TimePeriodUtils.getStartOfMonth(timeProvider.now()) to
+            TimePeriodUtils.getEndOfMonth(timeProvider.now())
+    }
+
+    private fun assertNoRecommendation(message: String, result: SavingsSweepComputationResult) {
+        assertTrue("$message but was $result", result is SavingsSweepComputationResult.NoRecommendation)
+    }
+
+    private fun sweepPlan(monthEndInclusive: Long, status: SweepPlanStatus, key: String) = SavingsSweepPlan(
+        goalId = 1L,
+        monthEnd = monthEndInclusive,
+        totalUnderspend = 60.0,
+        riskBuffer = 10.0,
+        safeSweepAmount = 40.0,
+        allocatedAmount = 40.0,
+        allocationPercentage = 1.0,
+        status = status,
+        actionedAt = if (status == SweepPlanStatus.PENDING) null else timeProvider.now(),
+        confidence = 0.9,
+        currency = "EUR",
+        computedAt = timeProvider.now(),
+        acceptanceKey = key
+    )
+
+    private fun ledgerRow(key: String, source: String, timestamp: Long) = SavingsContributionLedgerEntry(
+        idempotencyKey = key,
+        goalId = 1L,
+        amount = 40.0,
+        currency = "EUR",
+        timestamp = timestamp,
+        source = source,
+        sweepPlanId = null
+    )
 
     private fun sweepProducer(safeAmount: Double): MonthlySavingsSweepUseCase {
         val budgets = mockk<BudgetRepository>()
@@ -560,7 +724,12 @@ class SavingsSweepAcceptanceCoordinatorTest {
                 ), "EUR"
             )
         return MonthlySavingsSweepUseCase(budgets, goals, expenses, recurring, planned, simulator,
-            timeProvider, normalizer, settings, converter, occurrences)
+            timeProvider, normalizer, settings, converter, occurrences,
+            SavingsSweepMonthConsumption(
+                database.savingsSweepMonthAcceptanceDao(),
+                database.savingsSweepPlanDao(),
+                database.savingsContributionLedgerDao()
+            ))
     }
 
     private fun ledgerDao(

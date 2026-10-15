@@ -33,6 +33,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
+import timber.log.Timber
 import kotlin.coroutines.cancellation.CancellationException
 
 class GenerateDashboardBriefingUseCaseTest {
@@ -262,17 +263,32 @@ class GenerateDashboardBriefingUseCaseTest {
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
         every { inputBuilder.build(any()) } returns fakeInput()
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
-        coEvery { dashboardBriefingService.generate(any()) } throws RuntimeException("Timeout")
+        coEvery { dashboardBriefingService.generate(any()) } throws RuntimeException("R6BSENTINEL_7d41")
 
         val captured = mutableListOf<AiArtifactRecord>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
 
-        useCase(processedData)
+        val logs = mutableListOf<Pair<Throwable?, String>>()
+        val tree = object : Timber.Tree() {
+            override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+                logs += t to message
+            }
+        }
+        Timber.plant(tree)
+        try {
+            useCase(processedData)
+        } finally {
+            Timber.uproot(tree)
+        }
 
         coVerify(exactly = 2) { aiArtifactRepository.upsert(any()) }
         val failedArtifact = captured.last()
         assertEquals(AiArtifactStatus.FAILED, failedArtifact.status)
-        assertTrue(failedArtifact.errorMessage?.contains("Timeout") == true)
+        // R6b: bounded code persisted; raw exception text never stored or logged.
+        assertTrue(failedArtifact.errorMessage?.startsWith("UNKNOWN_ERROR") == true)
+        assertFalse(failedArtifact.errorMessage?.contains("R6BSENTINEL_7d41") == true)
+        assertTrue(logs.any { it.second.contains("UNKNOWN_ERROR") })
+        assertTrue(logs.all { it.first == null && !it.second.contains("R6BSENTINEL_7d41") })
     }
 
     // ── cancellation propagation ──────────────────────────────────────────────

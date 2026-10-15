@@ -282,4 +282,5 @@
     <string name="financial_runway_review_budget">Revisar presupuesto</string>
     <string name="backup_restore_receipt_images_skipped_format">No se pudieron restaurar %1$d imágenes de recibos.</string>
     <string name="restart_required_database_operation">La aplicación debe reiniciarse para terminar una operación de la base de datos. Los cambios están en pausa hasta que se reinicie.</string>
+    <string name="groups_suggested_transfers_hint">Pagos sugeridos para equilibrar los saldos. Los pagos no se registran en la aplicación.</string>
 </resources>

@@ -2,6 +2,7 @@ package com.yourname.expensetracker.ui.screens.savings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.yourname.expensetracker.data.repository.SAVINGS_SWEEP_MONTH_ALREADY_ACCEPTED
 import com.yourname.expensetracker.data.repository.SavingsContributionHistoryRepository
 import com.yourname.expensetracker.data.repository.SavingsSweepAcceptanceCoordinator
 import com.yourname.expensetracker.data.repository.SavingsSweepAcceptanceResult
@@ -276,6 +277,11 @@ class SavingsGoalsViewModel @Inject constructor(
                 SavingsSweepAcceptanceResult.Accepted,
                 SavingsSweepAcceptanceResult.AlreadyAccepted -> Unit
                 is SavingsSweepAcceptanceResult.Rejected -> {
+                    if (acceptance.reasonCode == SAVINGS_SWEEP_MONTH_ALREADY_ACCEPTED) {
+                        // Terminal: the month is consumed, so the card must not stay actionable.
+                        _state.update { it.copy(sweepRecommendation = null, sweepUnavailableReason = null) }
+                        return@launch
+                    }
                     _state.update { it.copy(sweepUnavailableReason = acceptance.reasonCode) }
                     return@launch
                 }

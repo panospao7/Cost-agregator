@@ -51,6 +51,7 @@ fun FinancialWeatherCard(
  referenceNowMillis: Long,
  details: List<com.yourname.expensetracker.domain.model.NarrativeSection> = emptyList(),
  totalRecurringCount: Int = 0,
+ availablePartial: Boolean = false,
  onManageClick: () -> Unit = {},
  onPlanClick: () -> Unit = {},
  modifier: Modifier = Modifier,
@@ -168,6 +169,12 @@ fun FinancialWeatherCard(
             ForecastMetric("COMMITTED", totalCommitted, SemanticColors.TextSecondary, currency = currency)
             ForecastMetric("LIKELY", totalLikely, SemanticColors.TextSecondary, currency = currency)
             ForecastMetric("AVAILABLE", discretionaryBudget, textColor, currency = currency)
+            }
+
+            // R9 (RG16A-2): AVAILABLE excludes STRICT goal reserves with unknown/unconvertible currency.
+            if (availablePartial) {
+                Spacer(modifier = Modifier.height(8.dp))
+                DataQualityWarningChip()
             }
 
             Spacer(modifier = Modifier.height(24.dp))

@@ -1,11 +1,23 @@
 package com.yourname.expensetracker.data.database
 
+import androidx.room.Room
 import androidx.room.testing.MigrationTestHelper
 import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
+import androidx.test.core.app.ApplicationProvider
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.entity.SavingsSweepMonthAcceptance
+import com.yourname.expensetracker.data.repository.SavingsSweepAcceptanceCoordinator
+import com.yourname.expensetracker.data.repository.SavingsSweepAcceptanceResult
+import com.yourname.expensetracker.domain.usecase.savings.GoalAllocation
+import com.yourname.expensetracker.domain.usecase.savings.SavingsSweepRecommendation
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import io.mockk.every
+import io.mockk.just
+import io.mockk.mockk
+import io.mockk.runs
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -95,6 +107,65 @@ class SavingsSweepMonthMigrationTest {
                 assertTrue(row.moveToFirst())
                 assertEquals(150, row.getInt(0))
             }
+        }
+    }
+
+    /**
+     * RG05A-1 persistence boundary: the migration-created upgrade-month marker, read back through a
+     * reopened production Room database, must keep the upgrade month consumed while leaving the next
+     * month open. The sweep producer cannot be wired to a database without the production fix (its
+     * constructor has no DAO/consumption dependency yet), so this asserts the coordinator's public
+     * behaviour over the reopened DAOs; the producer-level NoRecommendation check for the same month
+     * is covered by the real-Room producer tests in SavingsSweepAcceptanceCoordinatorTest.
+     */
+    @Test
+    fun rg05a1_v150_upgrade_month_stays_consumed_after_reopen_and_next_month_is_open() = runTest {
+        val name = "sweep-month-reopen-rg05a1"
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        helper.createDatabase(name, 150).use { old ->
+            old.execSQL("INSERT INTO savings_goals (id, name, targetAmount, currentAmount, protectionLevel, currency, currencyAssumption, createdAt) VALUES (1, 'Savings', 1000.0, 200.0, 'WARNING', 'EUR', 'EXPLICIT', 1710000000000)")
+        }
+        helper.runMigrationsAndValidate(name, 151, true, SavingsSweepMonthMigration(FakeTimeProvider(now))).close()
+        val database = Room.databaseBuilder(context, AppDatabase::class.java, name)
+            .allowMainThreadQueries().build()
+        try {
+            val writeBarrier = mockk<DatabaseWriteBarrier>()
+            every { writeBarrier.checkWritesAllowed(any<String>()) } just runs
+            val inUpgradeMonth = TimePeriodUtils.getEndOfMonth(now) - 2 * 86_400_000L
+            val clock = FakeTimeProvider(inUpgradeMonth)
+            val coordinator = SavingsSweepAcceptanceCoordinator(
+                database, database.savingsGoalDao(), database.savingsSweepPlanDao(),
+                database.savingsContributionLedgerDao(), database.savingsSweepMonthAcceptanceDao(),
+                writeBarrier, clock
+            )
+            fun recommendation(at: Long) = SavingsSweepRecommendation(
+                totalUnderspend = 60.0, riskBuffer = 10.0, safeSweepAmount = 40.0,
+                goalAllocations = listOf(GoalAllocation(1L, "Savings", 200.0, 1_000.0, 40.0, 0.5, "EUR")),
+                computedAt = at, monthEnd = at + 1_000L, confidence = 0.9, currency = "EUR", rateTimestamp = 0L
+            )
+
+            assertEquals(
+                "RG05A-1 migrated upgrade month must stay consumed after reopen",
+                SavingsSweepAcceptanceResult.Rejected("SAVINGS_SWEEP_MONTH_ALREADY_ACCEPTED"),
+                coordinator.accept(recommendation(inUpgradeMonth))
+            )
+            assertEquals(200.0, database.savingsGoalDao().getById(1L)!!.currentAmount, 0.0)
+            assertEquals(0, database.savingsContributionLedgerDao().getAll().size)
+            assertEquals(0, database.savingsSweepPlanDao().getAllPlans().size)
+            assertEquals(1, database.savingsSweepMonthAcceptanceDao().getAll().size)
+
+            val inNextMonth = TimePeriodUtils.getEndOfMonth(TimePeriodUtils.getEndOfMonth(now)) - 2 * 86_400_000L
+            clock.setTime(inNextMonth)
+            assertEquals(
+                "RG05A-1 control: the month after the upgrade month must remain open",
+                SavingsSweepAcceptanceResult.Accepted,
+                coordinator.accept(recommendation(inNextMonth))
+            )
+            assertEquals(1, database.savingsContributionLedgerDao().getAll().size)
+            assertEquals(2, database.savingsSweepMonthAcceptanceDao().getAll().size)
+        } finally {
+            database.close()
+            context.deleteDatabase(name)
         }
     }
 

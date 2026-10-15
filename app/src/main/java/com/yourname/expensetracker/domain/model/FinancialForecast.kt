@@ -128,9 +128,21 @@ data class ForecastComponents(
     val confirmedOccurrences: List<ConfirmedOccurrence> = emptyList(),
 
     /** @suppress Currency code these components are denominated in (e.g. "EUR", "USD"). */
-    val displayCurrency: String = ""
+    val displayCurrency: String = "",
+
+    /**
+     * Count of STRICT unfinished savings goals excluded from [goalReserves] because their
+     * currency is unknown or could not be converted to the display currency. Deliberately
+     * kept OUT of [FinancialForecast.isPartial]/[FinancialForecast.excludedCount] (those
+     * feed Monte Carlo availability, which never reads goal reserves).
+     */
+    val goalReserveExclusions: Int = 0
 ) {
+    /** True when at least one STRICT goal reserve was excluded (unknown/unconvertible currency). */
+    val goalReservesPartial: Boolean get() = goalReserveExclusions > 0
+
     init {
+        require(goalReserveExclusions >= 0) { "goalReserveExclusions must be non-negative" }
         require(goalReserves.isFinite() && goalReserves >= 0.0) { "goalReserves must be a non-negative finite number" }
         require(pastSpendingPoints.all { it.isFinite() }) { "pastSpendingPoints must contain only finite values" }
         require(projectedSpendingPoints.all { it.isFinite() }) { "projectedSpendingPoints must contain only finite values" }

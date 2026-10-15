@@ -1706,7 +1706,7 @@ Use the database file and migration chain as the source of truth for the exact t
 - H30: Price protection "File claim" is no-op — wired to URL launcher, implemented deals from receipts
 - H31: Protected items tab is read-only — added Track/Remove actions with confirmation + undo
 - H32: VisualSplitEditor crashes on invalid colors — wrapped with runCatching, validate on save/load
-- H33: No settlement plan in group detail — added transfer pairs section with one-tap settle
+- H33: No settlement plan in group detail — added a read-only suggested transfers section (1.0 records no settlements)
 - H34: Subscription cards missing renewal dates — display on cards, require date picker in add dialog
 - H35: Bank disconnect has no confirmation — added modal with consequences + undo snackbar
 

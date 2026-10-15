@@ -383,6 +383,58 @@ class SmartReceiptAssistServiceTest {
     }
 
     @Test
+    fun `attempt details persist only fixed bounded codes for failed attempts then success`() = runTest {
+        val sentinel = "R6BSENTINEL_7d41"
+        val cloudReceiptAssistService = mockk<CloudReceiptAssistService>()
+        val onDeviceReceiptAssistService = mockk<OnDeviceReceiptAssistService>()
+        val noOpReceiptAssistService = mockk<NoOpReceiptAssistService>()
+        val aiCapabilityRouter = mockk<AiCapabilityRouter>()
+        val aiSettingsRepository = mockk<AiSettingsRepository>()
+        val aiPolicy = mockk<AiPolicy>()
+        val privacyGate = mockk<PrivacyGate>()
+        coEvery { privacyGate.check(any(), any()) } returns PrivacyDecision.Allowed
+
+        val settings = defaultSettings()
+        every { aiSettingsRepository.settings() } returns flowOf(settings)
+        coEvery { aiCapabilityRouter.decide(AiCapability.RECEIPT_EXTRACTION, match { it.preferredMode == settings.preferredMode }, any()) } returns AiRouteDecision(
+            route = AiRoute.ON_DEVICE,
+            reason = "On-device preferred"
+        )
+        coEvery { aiCapabilityRouter.decide(AiCapability.RECEIPT_EXTRACTION, match { it.preferredMode.name == "CLOUD" }, any()) } returns AiRouteDecision(
+            route = AiRoute.DETERMINISTIC_FALLBACK,
+            reason = "Cloud unavailable"
+        )
+        // Attempt 1 (on-device vision) fails with sentinel text, attempt 3 (on-device text) fails too,
+        // then the deterministic fallback succeeds.
+        coEvery { onDeviceReceiptAssistService.suggest(any()) } returnsMany listOf(
+            AiServiceResult.Failure(AiServiceError.Unknown(sentinel)),
+            AiServiceResult.Failure(AiServiceError.ParseError(sentinel))
+        )
+        coEvery { noOpReceiptAssistService.suggest(any()) } returns successfulSuggestionResult()
+
+        val service = SmartReceiptAssistService(
+            cloudReceiptAssistService,
+            onDeviceReceiptAssistService,
+            noOpReceiptAssistService,
+            aiCapabilityRouter,
+            aiSettingsRepository,
+            aiPolicy,
+            privacyGate = privacyGate,
+        )
+
+        val result = service.suggest(defaultInput())
+
+        assertTrue(result is AiServiceResult.Success)
+        val details = (result as AiServiceResult.Success).value.attemptDetails
+        assertEquals("UNKNOWN_ERROR", details[0].errorMessage)
+        assertEquals("PARSER_FAILED", details[1].errorMessage)
+        assertTrue(details.none { it.errorMessage?.contains(sentinel) == true })
+        assertTrue(details.none { it.toString().contains(sentinel) })
+        assertTrue(details.last().success)
+        assertEquals(null, details.last().errorMessage)
+    }
+
+    @Test
     fun `usedImageInput reflects the selected execution result`() {
         val cloudReceiptAssistService = mockk<CloudReceiptAssistService>()
         val onDeviceReceiptAssistService = mockk<OnDeviceReceiptAssistService>()

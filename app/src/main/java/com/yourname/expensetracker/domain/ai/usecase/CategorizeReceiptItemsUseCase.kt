@@ -212,9 +212,25 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
             updateArtifactReady(baseEntity, result, persistItemTextAllowed)
 
             CategorizationResult.Success(result)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // R6b HD-R6b-1: the receipt was set to ANALYZING before this try;
+            // reset it to PENDING (status only, no FAILED artifact — the
+            // cancellation is not a categorization failure) before
+            // propagating. Cancellation is never swallowed.
+            // N1: a failing reset must never replace the original
+            // CancellationException (class name only in the log).
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                try {
+                    receiptRepository.updateCategorizationStatus(receiptId, CategorizationStatus.PENDING)
+                } catch (resetError: Exception) {
+                    Timber.w("CategorizeReceiptItems: CANCEL_STATUS_RESET_FAILED class=%s", resetError::class.java.simpleName)
+                }
+            }
+            throw e
         } catch (e: Exception) {
-            Timber.e(e, "Error categorizing receipt items for $receiptId")
-            // RP-12 12b (P3-007) OUTPUT gate: restricted modes never persist
+            // R6b privacy: class name + id only in logs; never e.message or the throwable.
+            Timber.e("Error categorizing receipt items class=%s for %d", e::class.java.simpleName, receiptId)
+            // RP-12 12b (P3-007) / R6b OUTPUT gate: no mode persists
             // uncontrolled exception text (framework messages can embed
             // item-derived input); the exception class name is the permitted
             // bounded diagnostic. validateResult reasons are controlled
@@ -222,8 +238,7 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
             failCategorization(
                 receiptId,
                 baseEntity,
-                if (persistItemTextAllowed) (e.message ?: "Unknown error")
-                else e::class.java.simpleName
+                e::class.java.simpleName
             )
         }
     }

@@ -30,5 +30,7 @@ data class FinancialWeather(
     val details: List<NarrativeSection> = emptyList(),
     val isPartial: Boolean = false,
     val qualityWarnings: List<String> = emptyList(),
-    val excludedCount: Int = 0
+    val excludedCount: Int = 0,
+    /** True when a STRICT goal reserve was excluded (unknown/unconvertible goal currency). */
+    val goalReservesPartial: Boolean = false
 )

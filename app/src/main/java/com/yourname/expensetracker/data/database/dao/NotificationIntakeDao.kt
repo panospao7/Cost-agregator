@@ -141,15 +141,18 @@ interface NotificationIntakeDao {
     /**
      * RP-10 10b (P1-003): ONE atomic, idempotent transition for enqueue failure.
      * Increments attempts exactly once, moves to FAILED_FINAL when maxAttempts is
-     * reached (nextAttemptAt cleared) or FAILED_RETRYABLE otherwise, stores only
-     * the controlled failure code/hash, clears the locks, and is conditional on
-     * the enqueue-attempt state so repeated failure handling cannot double-count.
+     * reached (nextAttemptAt cleared and terminalAt stamped with [nowMs], so the
+     * terminal-payload repairer can purge the raw payload) or FAILED_RETRYABLE
+     * otherwise (terminalAt left unchanged), stores only the controlled failure
+     * code/hash, clears the locks, and is conditional on the enqueue-attempt state
+     * so repeated failure handling cannot double-count.
      */
     @Query("""
         UPDATE notification_intake
         SET attempts = attempts + 1,
             status = CASE WHEN attempts + 1 >= maxAttempts THEN 'FAILED_FINAL' ELSE 'FAILED_RETRYABLE' END,
             nextAttemptAt = CASE WHEN attempts + 1 >= maxAttempts THEN NULL ELSE :nextAttemptAt END,
+            terminalAt = CASE WHEN attempts + 1 >= maxAttempts THEN :nowMs ELSE terminalAt END,
             lastFailureCode = :failureCode,
             lastFailureMessageHash = :failureHash,
             updatedAt = :nowMs,

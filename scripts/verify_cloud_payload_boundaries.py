@@ -67,6 +67,10 @@ ALLOWLIST_PATH = os.path.join(SCRIPT_DIR, "allowlists", "cloud_payload_allowlist
 FILE_PATTERNS = ["*.kt"]
 SKIP_DIRS = {"test", "androidTest", "migration", "generated", "build"}
 
+# Allowlist symbols: exactly one per detection pattern (no wildcard, no empty).
+SYMBOL_R1_RAW_REQUEST_BODY = "raw_RequestBody"
+SYMBOL_R2_UNPROVED_POST_BODY = "unproved_post_body"
+
 # Package path for cloud AI providers (normalised forward-slash suffix)
 CLOUD_PROVIDER_PKG = "data/ai/provider"
 
@@ -117,24 +121,40 @@ def load_allowlist(path: str) -> List[dict]:
     return allowlist
 
 
-def is_allowlisted(filepath: str, symbol: str, allowlist: List[dict]) -> bool:
-    """Check if a file:symbol is in the allowlist.
+def _matches_allowlist_path(filepath: str, entry_path: object) -> bool:
+    """Exact repository-relative path match after separator normalisation.
 
-    Supports partial path matching: the allowlist path is matched as a suffix
-    on the full project-relative filepath, and vice versa.
+    Absolute, drive-letter, ``..``, ``.``, empty-segment and ``*`` entry paths
+    never match. A basename or suffix never authorises another directory.
     """
+    if not isinstance(entry_path, str) or not entry_path:
+        return False
+    expected = entry_path.replace("\\", "/")
+    if (expected.startswith("/") or re.match(r"^[A-Za-z]:", expected)
+            or any(part in {"", ".", ".."} or "*" in part for part in expected.split("/"))):
+        return False
+    return filepath.replace("\\", "/") == expected
+
+
+def is_allowlisted(filepath: str, symbol: str, allowlist: List[dict]) -> bool:
+    """Exact match on rule id, repository-relative path and finding symbol.
+
+    The entry rule must equal RULE_ID, the entry path must equal ``filepath``
+    after separator normalisation, and the entry symbol must equal the
+    finding symbol (SYMBOL_R1_RAW_REQUEST_BODY / SYMBOL_R2_UNPROVED_POST_BODY).
+    Empty and ``*`` symbols never match; an empty finding symbol never matches.
+    """
+    if not symbol or symbol == "*":
+        return False
     for entry in allowlist:
-        entry_rule = entry.get("rule", "")
-        if entry_rule and entry_rule != RULE_ID:
+        if not isinstance(entry, dict):
             continue
-        entry_path = entry.get("path", "")
-        if not entry_path:
+        entry_symbol = entry.get("symbol")
+        if not isinstance(entry_symbol, str) or not entry_symbol or entry_symbol == "*":
             continue
-        # Only match if the allowlisted path is a suffix of the actual file path
-        if filepath.endswith(entry_path):
-            entry_symbol = entry.get("symbol", "")
-            if not symbol or not entry_symbol or entry_symbol == symbol or entry_symbol == "*":
-                return True
+        if (entry.get("rule") == RULE_ID and entry_symbol == symbol
+                and _matches_allowlist_path(filepath, entry.get("path", ""))):
+            return True
     return False
 
 
@@ -145,7 +165,17 @@ def scan_file(filepath: str, rel_path: str) -> List[str]:
 
     Returns a list of formatted violation strings.
     """
-    violations: List[str] = []
+    return [violation_text for _rule, _symbol, violation_text
+            in scan_file_findings(filepath, rel_path)]
+
+
+def scan_file_findings(filepath: str, rel_path: str) -> List[Tuple[str, str, str]]:
+    """Scan a single Kotlin file for G-CLOUD-01 findings.
+
+    Returns (rule, symbol, violation) tuples. The symbol is one constant per
+    detection pattern and is what an allowlist entry must name exactly.
+    """
+    violations: List[Tuple[str, str, str]] = []
 
     try:
         with open(filepath, "r", encoding="utf-8") as f:
@@ -163,19 +193,23 @@ def scan_file(filepath: str, rel_path: str) -> List[str]:
         if stripped.startswith("//") or stripped.startswith("*") or stripped.startswith("/*"):
             continue
         if REQUEST_BODY_CREATE_RE.search(line):
-            violations.append(
+            violations.append((
+                RULE_ID, SYMBOL_R1_RAW_REQUEST_BODY,
                 violation(rel_path, i,
                           f"RequestBody.create() used directly — route through "
-                          f"CloudPayloadPolicy instead of building raw OkHttp bodies")
-            )
+                          f"CloudPayloadPolicy instead of building raw OkHttp bodies"),
+            ))
 
     # ── R2: Every posted body must have proved policy provenance ────────
     if CLOUD_PROVIDER_PKG in norm_path:
         for lineno in unproved_post_lines(content):
-            violations.append(violation(
-                rel_path, lineno,
-                "Cloud provider POST body has unproved CloudPayloadPolicy provenance — "
-                "serialize the actual PreparedCloudPayload; markers and unused results are insufficient",
+            violations.append((
+                RULE_ID, SYMBOL_R2_UNPROVED_POST_BODY,
+                violation(
+                    rel_path, lineno,
+                    "Cloud provider POST body has unproved CloudPayloadPolicy provenance — "
+                    "serialize the actual PreparedCloudPayload; markers and unused results are insufficient",
+                ),
             ))
 
     return violations
@@ -229,21 +263,14 @@ def main():
         rel_path = source_file.repository_relative_path
 
         try:
-            file_violations = scan_file(filepath, rel_path)
+            file_findings = scan_file_findings(filepath, rel_path)
         except (ProductionSourceScopeError, ParserError, CloudProofError):
             print("ERROR: CLOUD_PAYLOAD_SOURCE_UNREADABLE_OR_UNPARSEABLE", file=sys.stderr)
             sys.exit(2)
 
-        # Filter out allowlisted entries
-        for v in file_violations:
-            # Violation format: RULE_ID rel_path:line message
-            parts = v.split(" ", 2)
-            if len(parts) >= 2:
-                fpath_part = parts[1]
-                fpath = fpath_part.rsplit(":", 1)[0] if ":" in fpath_part else fpath_part
-                if not is_allowlisted(fpath, "", allowlist):
-                    all_violations.append(v)
-            else:
+        # Filter out exactly allowlisted findings (rule + exact path + symbol)
+        for _rule, symbol, v in file_findings:
+            if not is_allowlisted(rel_path, symbol, allowlist):
                 all_violations.append(v)
 
     if all_violations:

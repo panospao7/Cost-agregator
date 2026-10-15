@@ -372,8 +372,11 @@ class ReviewViewModel @Inject constructor(
 
                 _aiExplanationStates.update { it + (reviewId to newState) }
 
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
-                Timber.e(e, "loadAiExplanation: unexpected error for review $reviewId")
+                // R6b privacy: class name + id only; never e.message or the throwable.
+                Timber.e("loadAiExplanation: unexpected error class=%s for review %d", e::class.java.simpleName, reviewId)
                 _aiExplanationStates.update {
                     it + (reviewId to AiLoadState.Error("AI explanation unavailable. Please try again."))
                 }
@@ -599,8 +602,11 @@ class ReviewViewModel @Inject constructor(
                         updateCategoryAssistState(reviewId, AiLoadState.Error(result.reason), diagnostics = diagnostics)
                     }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
-                Timber.e(e, "Category assist failed for review $reviewId")
+                // R6b privacy: class name + id only; never e.message or the throwable.
+                Timber.e("Category assist failed class=%s for review %d", e::class.java.simpleName, reviewId)
                 // RP-15: bounded message only — exception text is never rendered.
                 updateCategoryAssistState(reviewId, AiLoadState.Error("AI assist failed"))
             } finally {
@@ -681,8 +687,11 @@ class ReviewViewModel @Inject constructor(
                     )
                 }
             }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
-                Timber.e(e, "Receipt assist failed for review $reviewId")
+                // R6b privacy: class name + id only; never e.message or the throwable.
+                Timber.e("Receipt assist failed class=%s for review %d", e::class.java.simpleName, reviewId)
                 // RP-15: bounded message only — exception text is never rendered.
                 updateReceiptAssistState(reviewId, AiLoadState.Error("AI assist failed"), diagnostics = null, message = null)
             } finally {
@@ -731,8 +740,11 @@ class ReviewViewModel @Inject constructor(
                     updateDedupeAssistState(reviewId, AiLoadState.Error(result.reason), diagnostics = diagnostics)
                 }
             }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
-                Timber.e(e, "Dedupe assist failed for review $reviewId")
+                // R6b privacy: class name + id only; never e.message or the throwable.
+                Timber.e("Dedupe assist failed class=%s for review %d", e::class.java.simpleName, reviewId)
                 // RP-15: bounded message only — exception text is never rendered.
                 updateDedupeAssistState(reviewId, AiLoadState.Error("AI assist failed"), diagnostics = null)
             } finally {

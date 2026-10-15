@@ -142,28 +142,32 @@ class ExportOptionsViewModel @Inject constructor(
         }
     }
 
-    fun selectFormat(formatId: String) {
-        val current = _uiState.value
-        if (formatId == current.selectedFormat) return
+    /**
+     * RG12-02 / RG12-03: any change to the export inputs (format, date range)
+     * invalidates a completed result and cancels an in-flight run. Bumping
+     * [exportGeneration] makes the cancelled run's publication paths no-ops;
+     * the run's own cancellation cleanup removes its output files. The
+     * `error` and `privacyBlocked` fields are intentionally left untouched.
+     */
+    private fun invalidateExportResult(current: ExportOptionsUiState): ExportOptionsUiState {
+        exportGeneration++
         if (current.isLoading) {
             exportJobSerializer.cancelActive()
             exportJob = null
         }
-        exportGeneration++
-        val hasCompletedResult = current.exportSuccess ||
-            current.exportFilePath != null ||
-            current.exportPreview != null
-        _uiState.value = if (hasCompletedResult) {
-            current.copy(
-                selectedFormat = formatId,
-                exportPreview = null,
-                exportPreviewTruncated = false,
-                exportFilePath = null,
-                exportSuccess = false
-            )
-        } else {
-            current.copy(selectedFormat = formatId, isLoading = false)
-        }
+        return current.copy(
+            isLoading = false,
+            exportPreview = null,
+            exportPreviewTruncated = false,
+            exportFilePath = null,
+            exportSuccess = false
+        )
+    }
+
+    fun selectFormat(formatId: String) {
+        val current = _uiState.value
+        if (formatId == current.selectedFormat) return
+        _uiState.value = invalidateExportResult(current).copy(selectedFormat = formatId)
     }
 
     fun setDateRange(startDate: Long, endDate: Long) {
@@ -182,7 +186,17 @@ class ExportOptionsViewModel @Inject constructor(
             )
             return
         }
-        _uiState.value = _uiState.value.copy(startDate = startDate, endDate = endDate, error = null)
+        val current = _uiState.value
+        if (startDate == current.startDate && endDate == current.endDate) {
+            // Unchanged range: keep any completed/in-flight export intact.
+            _uiState.value = current.copy(error = null)
+            return
+        }
+        _uiState.value = invalidateExportResult(current).copy(
+            startDate = startDate,
+            endDate = endDate,
+            error = null
+        )
         loadExpenseCount()
     }
 
@@ -232,6 +246,8 @@ class ExportOptionsViewModel @Inject constructor(
         exportJob = exportJobSerializer.launch(viewModelScope) {
             val generation = ++exportGeneration
             val selectedFormatAtStart = _uiState.value.selectedFormat
+            val startDateAtStart = _uiState.value.startDate
+            val endDateAtStart = _uiState.value.endDate
             _uiState.value = _uiState.value.copy(
                 isLoading = true,
                 exportPreview = null,
@@ -293,8 +309,8 @@ class ExportOptionsViewModel @Inject constructor(
 
             try {
                 val format = selectedFormatAtStart
-                val startDate = _uiState.value.startDate
-                val endDate = _uiState.value.endDate
+                val startDate = startDateAtStart
+                val endDate = endDateAtStart
                 Timber.i("Export started: format=%s, startDate=%d, endDate=%d", format, startDate, endDate)
 
                 val categories = withContext(ioDispatcher) { exportDataRepository.getCategoryNameMap() }

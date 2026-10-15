@@ -370,8 +370,10 @@ class SmartReceiptAssistService @Inject constructor(
                     is AiServiceError.HttpError -> "HTTP ${err.code}"
                     is AiServiceError.Disabled -> err.reason
                     is AiServiceError.PrivacyDenied -> err.blocked.reason
-                    is AiServiceError.ParseError -> err.message
-                    is AiServiceError.Unknown -> err.message
+                    // R6b privacy: fixed bounded codes only; provider error text is never persisted
+                    // (attempt details flow into AiArtifactEntity.payloadJson).
+                    is AiServiceError.ParseError -> "PARSER_FAILED"
+                    is AiServiceError.Unknown -> "UNKNOWN_ERROR"
                     AiServiceError.Timeout -> "timeout"
                     AiServiceError.Offline -> "offline"
                     AiServiceError.SslError -> "ssl"

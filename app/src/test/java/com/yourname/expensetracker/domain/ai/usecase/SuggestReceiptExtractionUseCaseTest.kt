@@ -33,6 +33,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
+import timber.log.Timber
 import kotlin.coroutines.cancellation.CancellationException
 import java.security.MessageDigest
 
@@ -286,6 +287,41 @@ class SuggestReceiptExtractionUseCaseTest {
         // Only the RUNNING tombstone should have been written, no FAILED artifact
         assertTrue(captured.size == 1)
         assertEquals(AiArtifactStatus.RUNNING, captured.first().status)
+    }
+
+    @Test
+    fun `invoke does not persist return or log raw exception text when provider throws`() = runTest {
+        val sentinel = "R6BSENTINEL_7d41"
+        val receipt = makeReceipt(confidence = 0.2f)
+        val input = makeInput()
+        every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
+        coEvery { receiptRepository.getReceiptById(1L) } returns receipt
+        coEvery { inputBuilder.build(receipt, any()) } returns input
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
+        coEvery { receiptAssistService.suggest(input) } throws IllegalStateException(sentinel)
+
+        val captured = mutableListOf<AiArtifactRecord>()
+        coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
+
+        val logs = mutableListOf<Pair<Throwable?, String>>()
+        val tree = object : Timber.Tree() {
+            override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+                logs += t to message
+            }
+        }
+        Timber.plant(tree)
+        val result = try {
+            useCase(receiptId = 1L)
+        } finally {
+            Timber.uproot(tree)
+        }
+
+        assertEquals(ReceiptAssistGenerationResult.Error("AI receipt assist failed."), result)
+        assertEquals(AiArtifactStatus.FAILED, captured.last().status)
+        assertTrue(captured.last().errorMessage?.startsWith("AI receipt assist failed.") == true)
+        assertTrue(captured.none { it.errorMessage?.contains(sentinel) == true })
+        assertTrue(logs.isNotEmpty())
+        assertTrue(logs.all { it.first == null && !it.second.contains(sentinel) })
     }
 
     private fun enabledSettings() = AiSettings(

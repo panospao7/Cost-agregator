@@ -118,11 +118,12 @@ class GenerateDashboardBriefingUseCase @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Timber.e(e, "GenerateDashboardBriefingUseCase: generation failed")
+            // R6b privacy: bounded code + class name only; never e.message or the throwable.
+            Timber.e("GenerateDashboardBriefingUseCase: UNKNOWN_ERROR class=%s", e::class.java.simpleName)
             aiArtifactRepository.upsert(
                 baseEntity.copy(
                     status       = AiArtifactStatus.FAILED,
-                    errorMessage = failureMessage(e.message, routeDecision),
+                    errorMessage = failureMessage(UNKNOWN_ERROR_CODE, routeDecision),
                     updatedAt    = timeProvider.now()
                 )
             )
@@ -147,6 +148,9 @@ private fun AiRoute.toArtifactMode(): AiMode = when (this) {
     AiRoute.DETERMINISTIC_FALLBACK,
     AiRoute.DISABLED -> AiMode.AUTO
 }
+
+/** Bounded reason code (DiagnosticReasonCode precedent) persisted instead of raw throwable text. */
+private const val UNKNOWN_ERROR_CODE = "UNKNOWN_ERROR"
 
 private fun failureMessage(message: String?, routeDecision: AiRouteDecision): String {
     val base = message?.takeIf { it.isNotBlank() } ?: "AI generation failed."

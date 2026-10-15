@@ -164,6 +164,48 @@ Current vs historical validation: Wave 5 candidate-only runs (6x PASS, isolated
   restore + reset pre-destructive abort sites only (helper exitAfterPreDestructiveAbort in DBRI; isRestoreDurabilityFailure
   unchanged as fallback); neutral restart-screen wording + es/el translations APPROVED; checkRestoreJournal unchanged;
   debug-only import and cancel-cleanup sites stay CRITICAL (documented). Order: after R5 iteration and R6.
+- 2026-10-15: the user wrote "do all your recommendations . first with the commit". Recorded: (1) commit done on NEW
+  branch release-1.0-remediation (bug-fixes untouched; no push): d908405d fixes, b9e98347 records; author identity taken
+  from repo history via per-command -c (git config untouched). New app pin: app/ == d908405d. (2) Approved to execute,
+  with the same per-batch gates (plan, fail-first where planned, writer, independent review(s), targeted tests; one shared
+  unit-tests + static-guards at the end; stop on first failed/blocked gate): R6b privacy sweep (same-class e.message leaks
+  found by the R6 privacy review), R7..R13, and G1 per the planner recommendations D-08, D-09, D-10 (WI-6 reject as a
+  separate batch after R11), D-11 (relabel), D-19 (fix cloud_payload matcher, remove 53 orphan entries, record owner
+  confirmation of the 24 agent-approved additions, plan the 2027-01-01 expiry), D-21 couplings, D-06 for the named R8
+  pinned test, and the R7 receipt_link_allowlist rationale correction. Guard/allowlist edits are limited to those named;
+  any other guard/baseline/policy/schema change still stops for approval. Stale cancellation exemptions cleanup: NOT
+  explicitly recommended earlier -> will be proposed, not done.
+- 2026-10-15: the user wrote "follow your recommendations" to the four pending items. Recorded as approved: (1) R7
+  guard-policy edit: config/guards/db_ownership_policy.yml planner entry operation update -> updateMatchSuggestion
+  (+reason text) and the 2 matching rows in db_ownership_policy.signatures.accounting.json, 1:1, no growth (stop if
+  regeneration touches other entries); (2) HD-R6b-1: CategorizeReceiptItemsUseCase CE -> reset ANALYZING to PENDING in
+  NonCancellable, rethrow, no FAILED artifact; (3) HD-R6b-2: Home briefing shows bounded "UNKNOWN_ERROR Route: ..."
+  (localized follow-up later); (4) D-06 for SavingsSweepAcceptanceCoordinatorTest.recomputed_sweep_is_rejected_in_same_
+  month_even_after_plan_cleanup_but_next_month_is_allowed (:479 expectation -> producer NoRecommendation). The R8 row's
+  originally named VM test needs no change.
+- PROCESS DEVIATION (2026-10-15, second): the lead dispatched the R6b privacy review and the R12/R13/G1 planner while
+  the R6b strict review was still running -> three read-only workers in flight (cap two). All read-only, no write
+  conflict. Disclosed to the user; no further read-only dispatch until back under the cap.
+- 2026-10-15: the user wrote "do your recommendations" to the six-item list. Recorded as approved: (1) H-R9-1 = B
+  (goal-only partial flag; Monte Carlo unaffected; re-plan required; shared model + ComputeDashboardWidgetsUseCase gate
+  edit allowed; any money-guard allowlist/baseline need -> stop); (2) R13b: DAO SQL fix so the enqueue-failure
+  FAILED_FINAL transition sets terminalAt (no schema change; stop if a migration is needed); (3) G1 cloud_payload entry:
+  rewrite to the exact path if it still suppresses a real finding, else remove; (4) G1: lead writes a dated owner
+  DECISION line for the 24 additions citing the 2026-10-15 approvals (no invented handle); (5) stale exemption cleanup
+  for files fixed by R6/R6b (cancellation_allowlist.yml entries + CancellationSafetyArchitectureGuardTest
+  KNOWN_VIOLATIONS), each proven unused by a targeted run first; (6) DEFER guard hardening (Kotlin guard expiry
+  enforcement, basename matching, stale-entry check, pii_logging e.message-in-results extension, cancellation scanner
+  `suspend operator fun invoke` gap) to a post-1.0 guard batch; owner review on 2026-12-01 before the 2027-01-01 expiry.
+- 2026-10-15: the user wrote "do your reccomendation" to R7-REGEN. Recorded: approved to regenerate the DB-ownership
+  policy artifacts with the repo's official tools for the single ReceiptSideEffectPlanner update -> updateMatchSuggestion
+  rename; diff must be limited to that entry + derived hashes/counts, else stop. Lead first obtains the sanctioned
+  post-promotion amendment procedure (architecture-guardian, read-only) before running anything.
+- 2026-10-15: the user wrote "i aprrove them" to (a) R7-GT: add the planner row to the closed move set pinned in
+  scripts/test_migrate_db_policy_seed_rows.py (_after_reviewed_seed_signature_move, 10 -> 11; adds a pin) and (b) doing
+  R7 policy regeneration LAST on a tree where only R7 is uncommitted (sanctioned route per GR-14 Pattern E: edit
+  docs/ci/db-findings/GR-08-seeds.yml + config/guards/db_ownership_policy.yml one line each, scratch preview to build/,
+  migrate_db_policy_signatures.py --generate --seed-rows ..., then --verify; promotion.json untouched; every
+  sourceMutations change must be accounted for, else stop).
 - Observed: artifacts were committed by the owner during the run (279b7c92, CRLF
   normalization). The owner marked H-4 resolved (commits pushed).
 

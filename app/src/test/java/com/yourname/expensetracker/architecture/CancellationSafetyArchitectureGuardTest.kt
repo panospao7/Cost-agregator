@@ -75,17 +75,11 @@ class CancellationSafetyArchitectureGuardTest {
             // ── AI service providers ──────────────────────────────────────
             ArchitectureAllowlistEntry("CloudCategorizationAssistService.kt", "CATCH_WITHOUT_CE_RETHROW", category = "AI", owner = "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("CloudDashboardBriefingService.kt", "CATCH_WITHOUT_CE_RETHROW", category = "AI", owner = "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("CloudDedupeJudgeService.kt", "CATCH_WITHOUT_CE_RETHROW", category = "AI", owner = "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("CloudReceiptItemCategorizationService.kt", "CATCH_WITHOUT_CE_RETHROW", category = "AI", owner = "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("CloudReviewExplanationService.kt", "CATCH_WITHOUT_CE_RETHROW", category = "AI", owner = "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("DefaultAiEnvironmentMonitor.kt", "CATCH_WITHOUT_CE_RETHROW", category = "AI", owner = "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("HybridDedupeJudgeService.kt", "CATCH_WITHOUT_CE_RETHROW", category = "AI", owner = "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("OnDeviceDashboardBriefingService.kt", "CATCH_WITHOUT_CE_RETHROW", category = "AI", owner = "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("OnDeviceDedupeJudgeService.kt", "CATCH_WITHOUT_CE_RETHROW", category = "AI", owner = "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("OnDeviceNotificationParser.kt", "CATCH_WITHOUT_CE_RETHROW", category = "AI", owner = "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("OnDeviceQueryInterpretationService.kt", "CATCH_WITHOUT_CE_RETHROW", category = "AI", owner = "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("OnDeviceReceiptItemCategorizationService.kt", "CATCH_WITHOUT_CE_RETHROW", category = "AI", owner = "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("OnDeviceReviewExplanationService.kt", "CATCH_WITHOUT_CE_RETHROW", category = "AI", owner = "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
             // ── Backup / data infrastructure ──────────────────────────────
             ArchitectureAllowlistEntry("DataStoreMaintenanceSafeDiagnosticSink.kt", "CATCH_WITHOUT_CE_RETHROW", category = "BACKUP_DATA", owner = "BackupData", "Backup infrastructure with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("AndroidForegroundLocationProvider.kt", "CATCH_WITHOUT_CE_RETHROW", category = "BACKUP_DATA", owner = "BackupData", "Location provider with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
@@ -100,7 +94,6 @@ class CancellationSafetyArchitectureGuardTest {
             // ── Domain / use-cases ────────────────────────────────────────
             ArchitectureAllowlistEntry("CategorizationAssistInputBuilder.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "Domain", "Domain use-case with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("DedupeJudgeInputBuilder.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "Domain", "Domain use-case with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("SuggestCategoryFallbackUseCase.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "Domain", "Domain use-case with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("AnomalyAlertOrchestrator.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "Domain", "Domain orchestrator with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("CurrencySettingsRepository.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "Domain", "Domain interface with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("ReceiptDebugExporter.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "Domain", "Domain exporter with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),

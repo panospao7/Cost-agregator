@@ -26,12 +26,16 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import timber.log.Timber
 
 class CategorizeReceiptItemsUseCaseTest {
 
@@ -131,6 +135,227 @@ class CategorizeReceiptItemsUseCaseTest {
         )
         assertEquals(listOf(AiArtifactStatus.RUNNING, AiArtifactStatus.FAILED), artifacts.map { it.status })
         assertTrue(artifacts.last().errorMessage?.contains("Service returned null") == true)
+        coVerify(exactly = 0) { cloudService.categorizeItems(any()) }
+    }
+
+    @Test
+    fun `invoke persists only exception class name and logs no raw text when service throws`() = runTest {
+        val sentinel = "R6BSENTINEL_7d41"
+        val receiptId = 42L
+        val statuses = mutableListOf<CategorizationStatus>()
+        val artifacts = mutableListOf<com.yourname.expensetracker.domain.dto.AiArtifactRecord>()
+        val receipt = ScannedReceipt(
+            id = receiptId,
+            imagePath = null,
+            rawOcrText = "milk",
+            parsedTotal = 3.5,
+            parsedMerchant = "Store",
+            parsedDate = null,
+            parsedItems = "[{\"description\":\"milk\",\"totalPrice\":3.5}]",
+            parsedTaxAmount = null,
+            currency = "EUR",
+            confidence = 0.9f
+        )
+        val input = ReceiptItemCategorizationInput(
+            receiptId = receiptId,
+            merchant = "Store",
+            lineItems = listOf(
+                ReceiptParser.LineItem(
+                    description = "milk",
+                    quantity = 1.0,
+                    unitPrice = 3.5,
+                    totalPrice = 3.5
+                )
+            ),
+            userCategories = listOf(CategoryRef(id = 1L, name = "Food")),
+            totalTax = null,
+            currency = "EUR"
+        )
+
+        every { aiSettingsRepository.settings() } returns flowOf(
+            AiSettings(aiEnabled = true, receiptItemCategorizationEnabled = true)
+        )
+        coEvery { receiptItemCategorizationRepository.getByReceiptIdAsSnapshots(receiptId) } returns emptyList()
+        coEvery { receiptRepository.getReceiptById(receiptId) } returns receipt
+        coEvery { inputBuilder.build(receipt, any()) } returns input
+        coEvery {
+            aiCapabilityRouter.decide(AiCapability.RECEIPT_ITEM_CATEGORIZATION, any(), any())
+        } returns AiRouteDecision(
+            route = AiRoute.ON_DEVICE,
+            reason = "local model available",
+            providerName = "on-device",
+            modelName = "nano"
+        )
+        coEvery { receiptRepository.updateCategorizationStatus(receiptId, capture(statuses)) } returns Unit
+        coEvery { aiArtifactRepository.upsert(capture(artifacts)) } returns 1L
+        coEvery { onDeviceService.categorizeItems(input) } throws IllegalStateException(sentinel)
+
+        val logs = mutableListOf<Pair<Throwable?, String>>()
+        val tree = object : Timber.Tree() {
+            override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+                logs += t to message
+            }
+        }
+        Timber.plant(tree)
+        val result = try {
+            useCase(receiptId)
+        } finally {
+            Timber.uproot(tree)
+        }
+
+        assertEquals(CategorizationResult.Error, result)
+        assertEquals(
+            listOf(CategorizationStatus.ANALYZING, CategorizationStatus.PENDING),
+            statuses
+        )
+        assertEquals(listOf(AiArtifactStatus.RUNNING, AiArtifactStatus.FAILED), artifacts.map { it.status })
+        assertEquals("IllegalStateException", artifacts.last().errorMessage)
+        assertTrue(logs.isNotEmpty())
+        assertTrue(logs.all { it.first == null && !it.second.contains(sentinel) })
+    }
+
+    @Test
+    fun `invoke rethrows CancellationException and resets ANALYZING to PENDING without FAILED artifact`() = runTest {
+        val receiptId = 42L
+        val statuses = mutableListOf<CategorizationStatus>()
+        val artifacts = mutableListOf<com.yourname.expensetracker.domain.dto.AiArtifactRecord>()
+        val receipt = ScannedReceipt(
+            id = receiptId,
+            imagePath = null,
+            rawOcrText = "milk",
+            parsedTotal = 3.5,
+            parsedMerchant = "Store",
+            parsedDate = null,
+            parsedItems = "[{\"description\":\"milk\",\"totalPrice\":3.5}]",
+            parsedTaxAmount = null,
+            currency = "EUR",
+            confidence = 0.9f
+        )
+        val input = ReceiptItemCategorizationInput(
+            receiptId = receiptId,
+            merchant = "Store",
+            lineItems = listOf(
+                ReceiptParser.LineItem(
+                    description = "milk",
+                    quantity = 1.0,
+                    unitPrice = 3.5,
+                    totalPrice = 3.5
+                )
+            ),
+            userCategories = listOf(CategoryRef(id = 1L, name = "Food")),
+            totalTax = null,
+            currency = "EUR"
+        )
+
+        every { aiSettingsRepository.settings() } returns flowOf(
+            AiSettings(aiEnabled = true, receiptItemCategorizationEnabled = true)
+        )
+        coEvery { receiptItemCategorizationRepository.getByReceiptIdAsSnapshots(receiptId) } returns emptyList()
+        coEvery { receiptRepository.getReceiptById(receiptId) } returns receipt
+        coEvery { inputBuilder.build(receipt, any()) } returns input
+        coEvery {
+            aiCapabilityRouter.decide(AiCapability.RECEIPT_ITEM_CATEGORIZATION, any(), any())
+        } returns AiRouteDecision(
+            route = AiRoute.ON_DEVICE,
+            reason = "local model available",
+            providerName = "on-device",
+            modelName = "nano"
+        )
+        coEvery { receiptRepository.updateCategorizationStatus(receiptId, capture(statuses)) } returns Unit
+        coEvery { aiArtifactRepository.upsert(capture(artifacts)) } returns 1L
+        coEvery { onDeviceService.categorizeItems(input) } throws kotlinx.coroutines.CancellationException("cancelled")
+
+        assertThrows(kotlinx.coroutines.CancellationException::class.java) {
+            kotlinx.coroutines.runBlocking { useCase(receiptId) }
+        }
+
+        assertEquals(
+            listOf(CategorizationStatus.ANALYZING, CategorizationStatus.PENDING),
+            statuses
+        )
+        coVerify(exactly = 0) {
+            aiArtifactRepository.upsert(match { it.status == AiArtifactStatus.FAILED })
+        }
+        assertTrue(artifacts.none { it.status == AiArtifactStatus.FAILED })
+        coVerify(exactly = 0) { cloudService.categorizeItems(any()) }
+    }
+
+    @Test
+    fun `real cancellation resets ANALYZING to PENDING under NonCancellable without FAILED artifact`() = runTest {
+        val receiptId = 43L
+        val statuses = mutableListOf<CategorizationStatus>()
+        val artifacts = mutableListOf<com.yourname.expensetracker.domain.dto.AiArtifactRecord>()
+        val receipt = ScannedReceipt(
+            id = receiptId,
+            imagePath = null,
+            rawOcrText = "milk",
+            parsedTotal = 3.5,
+            parsedMerchant = "Store",
+            parsedDate = null,
+            parsedItems = "[{\"description\":\"milk\",\"totalPrice\":3.5}]",
+            parsedTaxAmount = null,
+            currency = "EUR",
+            confidence = 0.9f
+        )
+        val input = ReceiptItemCategorizationInput(
+            receiptId = receiptId,
+            merchant = "Store",
+            lineItems = listOf(
+                ReceiptParser.LineItem(
+                    description = "milk",
+                    quantity = 1.0,
+                    unitPrice = 3.5,
+                    totalPrice = 3.5
+                )
+            ),
+            userCategories = listOf(CategoryRef(id = 1L, name = "Food")),
+            totalTax = null,
+            currency = "EUR"
+        )
+        val serviceStarted = kotlinx.coroutines.CompletableDeferred<Unit>()
+
+        every { aiSettingsRepository.settings() } returns flowOf(
+            AiSettings(aiEnabled = true, receiptItemCategorizationEnabled = true)
+        )
+        coEvery { receiptItemCategorizationRepository.getByReceiptIdAsSnapshots(receiptId) } returns emptyList()
+        coEvery { receiptRepository.getReceiptById(receiptId) } returns receipt
+        coEvery { inputBuilder.build(receipt, any()) } returns input
+        coEvery {
+            aiCapabilityRouter.decide(AiCapability.RECEIPT_ITEM_CATEGORIZATION, any(), any())
+        } returns AiRouteDecision(
+            route = AiRoute.ON_DEVICE,
+            reason = "local model available",
+            providerName = "on-device",
+            modelName = "nano"
+        )
+        // The status write fails with CancellationException whenever the calling
+        // coroutine is cancelled, so the PENDING reset is only recorded when the
+        // use case performs it under NonCancellable.
+        coEvery { receiptRepository.updateCategorizationStatus(receiptId, any()) } coAnswers {
+            kotlin.coroutines.coroutineContext.ensureActive()
+            statuses.add(secondArg<CategorizationStatus>())
+            Unit
+        }
+        coEvery { aiArtifactRepository.upsert(capture(artifacts)) } returns 1L
+        coEvery { onDeviceService.categorizeItems(input) } coAnswers {
+            serviceStarted.complete(Unit)
+            kotlinx.coroutines.awaitCancellation()
+        }
+
+        val job = launch { useCase(receiptId) }
+        serviceStarted.await()
+        job.cancel()
+        job.join()
+
+        assertTrue(job.isCancelled)
+        assertEquals(
+            listOf(CategorizationStatus.ANALYZING, CategorizationStatus.PENDING),
+            statuses
+        )
+        coVerify(exactly = 0) {
+            aiArtifactRepository.upsert(match { it.status == AiArtifactStatus.FAILED })
+        }
+        assertTrue(artifacts.none { it.status == AiArtifactStatus.FAILED })
         coVerify(exactly = 0) { cloudService.categorizeItems(any()) }
     }
 

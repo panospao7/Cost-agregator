@@ -158,17 +158,20 @@ class SuggestReceiptExtractionUseCase @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Timber.e(e, "SuggestReceiptExtractionUseCase: provider call failed for receipt $receiptId")
+            // R6b privacy: fixed message + class name only; never e.message or the throwable.
+            Timber.e(
+                "SuggestReceiptExtractionUseCase: provider call failed class=%s for receipt %d",
+                e::class.java.simpleName,
+                receiptId
+            )
             aiArtifactRepository.upsert(
                 baseEntity.copy(
                     status = AiArtifactStatus.FAILED,
-                    errorMessage = failureMessage(e.message, routeDecision),
+                    errorMessage = failureMessage(PROVIDER_FAILED_MESSAGE, routeDecision),
                     updatedAt = timeProvider.now()
                 )
             )
-            ReceiptAssistGenerationResult.Error(
-                e.message?.take(200) ?: "AI receipt assist failed."
-            )
+            ReceiptAssistGenerationResult.Error(PROVIDER_FAILED_MESSAGE)
         }
     }
 
@@ -253,6 +256,9 @@ private fun String?.withRouteDiagnostics(routeDecision: AiRouteDecision): String
     val combined = listOfNotNull(this?.takeIf { it.isNotBlank() }, diagnostic).joinToString("\n")
     return combined.take(AppConfig.Ai.MAX_CAPTURE_SUPPORTING_TEXT_CHARS)
 }
+
+/** Fixed user-visible/persisted text used instead of raw throwable text. */
+private const val PROVIDER_FAILED_MESSAGE = "AI receipt assist failed."
 
 private fun failureMessage(message: String?, routeDecision: AiRouteDecision): String {
     val base = message?.takeIf { it.isNotBlank() } ?: "AI generation failed."

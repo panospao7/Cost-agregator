@@ -7,6 +7,7 @@ import com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
 import com.yourname.expensetracker.data.database.dao.GroupExpenseDao
 import com.yourname.expensetracker.data.database.dao.GroupMemberDao
 import com.yourname.expensetracker.data.database.dao.GroupSettlementDao
+import com.yourname.expensetracker.data.database.entity.GroupExpense
 import com.yourname.expensetracker.data.database.entity.GroupMember
 import com.yourname.expensetracker.data.database.entity.SplitType
 import com.yourname.expensetracker.data.database.entity.TransactionType
@@ -17,6 +18,7 @@ import com.yourname.expensetracker.domain.logic.CustomSplitMode
 import com.yourname.expensetracker.domain.logic.CustomSplitParseResult
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.logic.CustomSplitParser
+import com.yourname.expensetracker.domain.logic.SplitCalculator
 import com.yourname.expensetracker.domain.logic.CustomSplitJsonCodec
 import com.yourname.expensetracker.domain.groups.GroupValidationError
 import com.yourname.expensetracker.domain.groups.GroupCreationResult
@@ -154,10 +156,12 @@ class GroupsRepositoryImpl @Inject constructor(
         val groupCurrency = groupDao.getById(groupId)?.defaultCurrency ?: homeCurrency
         val activeMembers = memberDao.getActiveMembersForGroup(groupId)
         validateActiveMembersAndCustomSplit(
+            groupId = groupId,
             paidById = paidById,
             splitType = splitType,
             customSplitsJson = customSplitsJson,
             amount = amount,
+            date = date,
             activeMembers = activeMembers
         )?.let { return@withContext it }
 
@@ -195,10 +199,12 @@ class GroupsRepositoryImpl @Inject constructor(
         return withContext(ioDispatcher) {
         val activeMembers = memberDao.getActiveMembersForGroup(groupId)
         validateActiveMembersAndCustomSplit(
+            groupId = groupId,
             paidById = paidById,
             splitType = splitType,
             customSplitsJson = customSplitsJson,
             amount = amount,
+            date = date,
             activeMembers = activeMembers
         )?.let { return@withContext it }
 
@@ -328,10 +334,12 @@ class GroupsRepositoryImpl @Inject constructor(
     }
 
     private fun validateActiveMembersAndCustomSplit(
+        groupId: Long,
         paidById: Long,
         splitType: SplitType,
         customSplitsJson: String?,
         amount: Double,
+        date: Long,
         activeMembers: List<GroupMember>
     ): GroupExpenseCreationResult.Error? {
         if (activeMembers.none { it.id == paidById }) {
@@ -346,12 +354,29 @@ class GroupsRepositoryImpl @Inject constructor(
             return GroupExpenseCreationResult.Error(INVALID_CUSTOM_SPLIT_MESSAGE)
         }
 
+        // RG04A-1: custom-split participants must be members present at the
+        // expense date (same rule the coordinator applies), not merely members
+        // active today. No extra DAO query: filters the already-loaded list.
+        val participantsAtDate = SplitCalculator.getSplitParticipants(
+            GroupExpense(
+                groupId = groupId,
+                expenseId = null,
+                paidById = paidById,
+                date = date,
+                description = "",
+                totalAmount = amount,
+                splitType = splitType,
+                customSplitsJson = customSplitsJson
+            ),
+            activeMembers
+        )
+
         return try {
             when (CustomSplitParser.parseAndValidate(
                 splitsString = customSplitsJson,
                 splitType = splitType.toCustomSplitMode(),
                 totalAmount = amount,
-                groupMemberIds = activeMembers.map { it.id }.toSet()
+                groupMemberIds = participantsAtDate.map { it.id }.toSet()
             )) {
                 is CustomSplitParseResult.Valid -> null
                 is CustomSplitParseResult.Invalid -> GroupExpenseCreationResult.Error(INVALID_CUSTOM_SPLIT_MESSAGE)

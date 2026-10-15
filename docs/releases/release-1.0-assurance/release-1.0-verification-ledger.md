@@ -1285,3 +1285,143 @@ confidence); RG13-3 updateRule reads `old` outside its transaction (pre-existing
   ScannedReceipt TODO wording; R3 N1 "€" suggestion string, BudgetStatusSnapshot inline set, Loading-on-CE; R5 symlink test,
   TOCTOU KDoc; R6 test-strength notes; R4b N1 extra deferral tests, N5 lock-screen title/button English; V11-NEW-1/R1b P3;
   D-05b; MainActivity CRITICAL screen still has no in-app recovery for genuinely uncertain states.
+
+## Remediation lane — second sequence (R6b, R7..R13, G1; approved 2026-10-15 "do all your recommendations")
+- Commit: branch release-1.0-remediation, d908405d (fixes R1..R6+R4b) + b9e98347 (records); bug-fixes untouched; no push.
+- R6b writer: E1-E8 + CategorizationAssistInputBuilder log + HD-R6b-1 (CE -> PENDING reset in NonCancellable, rethrow).
+  reviewer-strict ACCEPT-WITH-NOTES (all catches CE-first; only bounded text; behaviour unchanged; notes N1 reset failure
+  masks CE -> wrap; N2 CE test uses mock CE, add real-cancellation variant; N3-N5 minor). privacy-security-guardian
+  ACCEPT-WITH-NOTES (no leak to persistence/UI/logs on changed paths; F3 undercount: 34 raw-throwable log sites in 14 AI
+  files, debug-only logging; NEW privacy follow-up: CategorizeReceiptItemsUseCase.validateResult writes item amount (:417)
+  and AI category name (:428) into errorMessage even in STORE_REDACTED mode).
+- R6b targeted (EXECUTED; fingerprint ff06bb7d…): GenerateDashboardBriefingUseCaseTest vr-20261015-145526-f2bb5f94 10/10;
+  SuggestReceiptExtractionUseCaseTest vr-20261015-145727-ecc64457 10/10; SuggestCategoryFallbackUseCaseTest
+  vr-20261015-145933-3d8ee450 11/11; CategorizeReceiptItemsUseCaseTest vr-20261015-150127-483e8ba5 8/8;
+  OnDeviceDashboardBriefingServiceTest vr-20261015-150324-dcf5049a 7/7; OnDeviceReceiptAssistServiceTest
+  vr-20261015-150517-a5e722e0 FAIL 12/13 (parseResponse malformed-JSON test expected a PARSER_FAILED log; lead diagnosis:
+  CloudJsonParser.extractFirstJsonObject pre-validates JSON and returns null, so the catch is unreachable for syntax errors;
+  test-only fix: drop that one positive-log expectation, keep null + no-throwable/no-sentinel oracle; debug iteration 1);
+  SmartReceiptAssistServiceTest vr-20261015-150721-8eeaac8e 9/9; ReviewViewModelAiAssistCancellationTest
+  vr-20261015-150918-93bb4cb7 8/8; ReviewViewModelPrivacyDenialTest vr-20261015-151115-1df4e0c4 6/6;
+  CancellationSafetyArchitectureGuardTest vr-20261015-151315-985f2716 22/22.
+- R7 fail-first ReceiptSideEffectPlannerSuggestionRaceTest (first run vr-20261015-143538-a337f044 compile error: invalid
+  `import io.mockk.coAnswers` — lead removed it) vr-20261015-144358-9874ae7d: EXECUTED 3 run / 1 passed / 2 failed —
+  interleave "RG07A-1: concurrent claim link was reverted by stale suggestion write"; identical retry "RG07A-1: identical
+  retry must not add a second MATCH_SUGGESTED event"; control PASS. => RG07A-1 RUNTIME-CONFIRMED.
+- Plans received: R8 (owner D-06 for coordinator test), R9 (H-R9-1 pending: A shared partial flag vs B goal-only flag),
+  R10+R11 (no new decisions), R12/R13/G1 (decisions listed in the handoff). R13 planner: V17B-N1 CONFIRMED by reading —
+  NotificationIntakeDao enqueue-failure path sets FAILED_FINAL without terminalAt, NotificationIntakePayloadRepairer purges
+  only terminalAt != null -> payload retained (privacy); fix = DAO SQL change (owner decision R13b). New V-R13-1 (P3):
+  coordinator reports FAILED_RETRYABLE on the transition that just became FAILED_FINAL.
+- R6b iteration (writer): N1 reset failure no longer masks CE (try/catch inside NonCancellable, bounded log); N2 real-
+  cancellation test added. R6b re-runs: CategorizeReceiptItemsUseCaseTest vr-20261015-153503-e4b1ee4a 9/9;
+  OnDeviceReceiptAssistServiceTest vr-20261015-153658-7f692768 13/13. R6b STATUS: targeted gate PASS; PARTIAL pending
+  shared gate.
+- R7 writer: ReceiptSideEffectPlanner Suggested branch -> conditional updateMatchSuggestion, event only on 1 row, else
+  Skipped(ALREADY_PROCESSED); receipt_link_allowlist.yml :100 rationale corrected. STOPPED (correctly) on the
+  db_ownership_policy edit: the policy is pinned by sha256 in db_ownership_policy.signatures.accounting.json
+  (sourcePolicySha256/candidateSha256/sourceTreeSha, counts, coverage records) and db_ownership_policy.promotion.json
+  (active/candidate/accounting/evidence/tree sha) + candidate.yml -> requires regeneration via
+  scripts/migrate_db_policy_signatures.py + scripts/ci/promote_db_policy_v2.py (beyond the approved 1:1 hand edit) ->
+  owner decision R7-REGEN pending. R7 targeted (EXECUTED, fingerprint dcc34d6b…): ReceiptSideEffectPlannerSuggestionRaceTest
+  vr-20261015-153859-4c294550 3/3; ReceiptSideEffectPlanner*Test vr-20261015-154100-908d566f 17/17;
+  ReceiptMatchLifecycleServiceTest vr-20261015-154304-6087f72a 18/18; ReceiptMatchingWorkerTest vr-20261015-154504-d80cc0ca
+  27/27. R7 STATUS: BLOCKED-ON-HUMAN (static-guards db_access expected to fail until R7-REGEN).
+- R8 fail-first (EXECUTED, same fingerprint): SavingsSweepAcceptanceCoordinatorTest vr-20261015-152243-06e71943 29 run / 24 / 5
+  failed — the 4 rg05a1 suppression tests + the approved changed recomputed_sweep... test ("... but was Available(...)");
+  negative controls PASS. SavingsGoalsViewModelTest vr-20261015-153101-01312d61 34 / 33 / 1 failed (terminal clear).
+  SavingsSweepMonthMigrationTest vr-20261015-153303-d3644ea9 5/5 (new v150 test is a guard, not fail-first).
+  => RG05A-1 RUNTIME-CONFIRMED.
+- R7 reviewer-strict: ACCEPT-WITH-NOTES (no code defects; WHERE clause prevents clobbering claim/match/reject; event only on
+  1 row; Skipped not treated as failure/retry; event_writers counts unchanged; allowlist rationale now truthful). Notes: policy
+  rename still required (R7-REGEN, owner-approved 2026-10-15); REJECTED/MANUALLY_MATCHED receipts no longer re-suggested on
+  re-save (intended); residual stale full-row write ReceiptLifecycleCoordinator :517-526 (follow-up).
+- R8 writer: NEW SavingsSweepMonthConsumption (coordinator check moved verbatim); coordinator uses it in-transaction + public
+  const; MonthlySavingsSweepUseCase returns NoRecommendation for consumed month before goal/budget reads; VM terminal clear.
+  reviewer-strict ACCEPT-WITH-NOTES (exact same predicate; month-end identical incl. boundaries/DST; fail-closed; Hilt OK; notes:
+  stale test comments; no 1st-of-month/DST test). Targeted (EXECUTED, fingerprint afe1f8bd…): SavingsSweepAcceptanceCoordinatorTest
+  vr-20261015-154955-90f3f636 29/29; MonthlySavingsSweepUseCaseTest vr-20261015-155608-412da8e1 28/28; SavingsGoalsViewModelTest
+  vr-20261015-155808-b34e74f0 34/34; SavingsSweepMonthMigrationTest vr-20261015-160003-d9c97102 5/5. R8 STATUS: targeted gate PASS;
+  PARTIAL pending shared gate.
+- R7-REGEN procedure (architecture-guardian, read-only): sanctioned route from precedent (GR-14_HANDOFF Pattern E, GR-14h.yml,
+  ffe0a69b/e9d3839b): edit generation input docs/ci/db-findings/GR-08-seeds.yml + active policy line; regenerate candidate +
+  accounting via `migrate_db_policy_signatures.py --generate --seed-rows docs/ci/db-findings/GR-08-seeds.yml`; `--verify` exit 0;
+  NOT --force-repromote (would drop 22 active-only rows; archive check refuses); promotion.json untouched; candidate stays 407.
+  Drift risk: accounting sourceMutations rescans the whole tree -> regenerate last with only R7 uncommitted. Guard pytest suites
+  have no dedicated runner profile (guard_tests guard in static-guards to be checked).
+- R9 writer (option B) + reviewer-strict ACCEPT-WITH-NOTES (same-currency goals bit-identical; reuse convertAmount/policy; MC gate
+  untouched; key new tests fail on HEAD; notes N1 shared helper feeds legacy goal to all DashboardBudgetProvenanceChainTest
+  tests; N2 SynthesisEngineStressTest goal helper defaults LEGACY -> fixture to EXPLICIT; NaN goal now skipped). Targeted
+  (EXECUTED, fingerprint 4fc98592…): SynthesisEngineGoalReserveCurrencyTest vr-20261015-160717-76577966 8/8 (stdout count);
+  SynthesisEngineTest vr-20261015-161400-4772285e 13/13; SynthesisEngineGoldenTest vr-20261015-161616-a45e54ba 3/3;
+  SynthesisEngineStressTest vr-20261015-161830-43b5bac9 56/56; SynthesisEngineRatePolicyPinTest vr-20261015-162030-688926dc 8/8;
+  FinancialWeatherRepositoryTest vr-20261015-162231-d5f8c63a 13/13; DashboardBudgetProvenanceChainTest vr-20261015-162431-0e2f21a7
+  4/4; CalculateFinancialForecastUseCaseTest vr-20261015-162632-4983f691 6/6; ForecastRunwayIntegrationTest
+  vr-20261015-162832-0d60f73a 4/4; DashboardCurrencyIntegrationTest vr-20261015-163033-b2a13352 7/7; CrossGroupIntegrationTest
+  vr-20261015-163233-6ed08213 9/9; GoldenMasterVerificationTest vr-20261015-163437-943f9f12 22/22. Iteration (N1/N2 fixtures) queued.
+- R9 iteration (test hygiene N1/N2): DashboardBudgetProvenanceChainTest vr-20261015-164034-b121c1f1 4/4 (legacy goal only in the
+  MC test; asserts the goal reached forecast input); SynthesisEngineStressTest vr-20261015-164449-3147cd62 56/56 (EXPLICIT
+  fixtures). R9 STATUS: targeted gate PASS; PARTIAL pending shared gate.
+- R10 fail-first ExportOptionsViewModelTest vr-20261015-164646-b8558768: 25 run / 22 / 3 failed — "RG12-03: stale success must not
+  survive a range change", "RG12-03: stale run must not publish success", "RG12-02: format switch must not leave loading stuck"
+  (all three planned fail-first tests; runner mislabelled the RG12-02 one as unexpected). => RG12-03 and RG12-02 RUNTIME-CONFIRMED.
+- R11 fail-first: GroupTransactionCoordinatorTest vr-20261015-164853-dfb8a430 39 / 38 / 1 failed (RG04A-1 Room test: Success
+  instead of Error); GroupsRepositoryImplTest vr-20261015-165106-21752155 16 / 15 / 1 failed ("RG04A-1:
+  createSystemExpenseAndLinkToGroup/UNEQUAL must return Error, was Success"); boundary pins PASS. => RG04A-1 RUNTIME-CONFIRMED.
+- R10 + R11 writer; reviewer-strict ACCEPT-WITH-NOTES for both (R10: generation bump before cancel prevents stale publication;
+  range snapshot; privacy block untouched; notes: PRE-EXISTING orphan final export file (possibly plaintext) when cancellation
+  lands after file work but before main-thread resume (ExportOptionsViewModel :386 vs cleanup :444-451; sweep keeps final files)
+  -> follow-up; cancelActive nulls job so runs may overlap briefly (RP-19); RG12-02 test does not assert secondOut deleted.
+  R11: same SplitCalculator rule; same date to coordinator; residuals: CUSTOM_AMOUNT/PERCENT fail closed when any member joined
+  after the date (D-10 batch), payer check not date-aware, no positive test for UNEQUAL naming only earlier members).
+- Targeted (EXECUTED, fingerprint d512937d…): ExportOptionsViewModelTest vr-20261015-165508-a43d8cda 25/25;
+  ExportOptionsViewModelPrivacyDenialTest vr-20261015-170243-32103b04 5/5; ExportJobSerializerTest vr-20261015-170444-c9b2eece 4/4;
+  GroupsRepositoryImplTest vr-20261015-170645-e2eb6628 16/16; GroupTransactionCoordinatorTest vr-20261015-170841-737bebba 39/39;
+  SplitCalculatorTest vr-20261015-171044-36e962c5 12/12; CustomSplitParserTest vr-20261015-171247-ebec1b6b 12/12.
+  R10, R11 STATUS: targeted gate PASS; PARTIAL pending shared gate.
+- R13b plan (planner): one SQL line in NotificationIntakeDao.markEnqueueFailed (terminalAt = CASE WHEN attempts + 1 >= maxAttempts
+  THEN :nowMs ELSE terminalAt END); no signature/schema/policy change (policy keyed on caller, not SQL). Existing stuck rows NOT
+  repaired (data repair = owner decision). V-R13-1 coordinator status mismatch and FAILED_RETRYABLE double-count = separate.
+- G1 cloud_payload entry: suppresses nothing (read-only scan of 1110 production files: 0 raw R1/R2 findings) -> replace with
+  explicit empty list `[]` (a comments-only file is rejected by allowlist_compliance); matcher fix still required (RG17A2-1);
+  symbol constants to be defined by the matcher fix.
+- R12/R13/R13b writer + reviewer-strict ACCEPT-WITH-NOTES (R12: Settle fully removed; SharedExpenseManager dormant confirmed
+  (never injected); follow-up doc drift LEGAL_PATHS :643-663/:697-703 + GroupTransactionCoordinator :64 still describe the dormant
+  manager; es/el title untranslated (baselined). R13b: SQL correct; other FAILED_FINAL writers already set terminalAt;
+  RECALIBRATION: the enqueue-failure FINAL branch is currently UNREACHABLE (markEnqueueFailed only on freshly inserted rows,
+  attempts 0 of 5) -> V17B-N1 latent (P3), fix is preventive; NEW follow-up: encrypted (ciphertext) payloads of FAILED_FINAL rows
+  are not purged by any terminalAt-keyed path (retention purgeRawPayload clears plaintext only) — pre-existing, unreachable via
+  enqueue today. R13: harness avoids hang; T5a fails on HEAD; T5b cannot distinguish ELSE terminalAt vs ELSE NULL (seed non-null).)
+- Targeted (EXECUTED, fingerprint a16c1981…): NotificationIntakeEnqueueFailureRoomTest vr-20261015-171931-7ad054a0 6/6;
+  NotificationIntakeCoordinatorTest vr-20261015-172709-62160ebf 19/19; NotificationIntakeRestoreBarrierTest
+  vr-20261015-172911-349fc05e 6/6; ui.screens.groups.* vr-20261015-173114-7cb00df0 21/21.
+  R12, R13, R13b STATUS: targeted gate PASS; PARTIAL pending shared gate.
+- G1 + stale exemptions (writer): cloud_payload matcher exact rule+path+symbol (SYMBOL_R1_RAW_REQUEST_BODY / SYMBOL_R2_UNPROVED_POST_BODY,
+  scan_file_findings), tests rewritten/added; cloud_payload_allowlist.yml -> `[]`; cancellation_allowlist.yml 77 -> 19 (53 class-only
+  orphans + 5 stale exact entries for R6/R6b-fixed providers); owner DECISION line (D-19); expiry plan §5a (+ expired
+  RAW_RUN_CATCHING note); CancellationSafetyArchitectureGuardTest KNOWN_VIOLATIONS -7 (Cloud/OnDevice dedupe/review/briefing,
+  Hybrid, SuggestCategoryFallbackUseCase).
+- reviewer-strict ACCEPT-WITH-NOTES (no weakening; matcher strictly stronger; detection unchanged; remaining 19 byte-identical;
+  53 could never match; commit coupling: R6b CE fix must be committed with/before the exemption removals). architecture-guardian
+  ACCEPT-WITH-NOTES (read-only scan of 1110 files: cancellation findings identical with HEAD (77) vs new (19) allowlist — 111
+  violations, ratchet NEW=0 RESOLVED=0; cloud_payload 0 findings; allowlist_compliance clean; no guard test pins counts).
+- CancellationSafetyArchitectureGuardTest vr-20261015-173647-b931b800 PASS 22/22 (EXECUTED; fingerprint db7ea268…) — the 7 removed
+  KNOWN_VIOLATIONS are proven unused.
+
+### Shared gate (second sequence; tree = HEAD b9e98347 + R6b, R7 code, R8..R13b, G1 uncommitted)
+- unit-tests vr-20261015-174137-443d2e41: PASS, exit 0, EXECUTED, default settings, fingerprint a20ac298…; 8067 run / 7791 passed /
+  0 failed / 276 skipped (skip count unchanged).
+- static-guards vr-20261015-175559-2cec18ef: FAIL, exit 2. 22/25 PASS; guard_tests VIOLATION (4 failed / 4961 passed / 28 skipped):
+  (1) test_verify_cloud_payload_boundaries.py::test_unsafe_entry_paths_never_match["domain/privacy/*.kt"] — G1 matcher accepts a
+  segment CONTAINING "*" (rejects only a segment equal to "*") -> G1 defect, fix required; (2-4) db_access tests with
+  DB_POLICY_SOURCE_EVIDENCE_INVALID / INVALID_SOURCE_IDENTITY; db_access INFRA (exit 2, empty log); known_good_state active_db_gate
+  gate_exit=2 (INFRA). Status: shared gate FAILED -> no commit; diagnosis dispatched (architecture-guardian, read-only).
+- Diagnosis (architecture-guardian, read-only reproduction of db_access stages): exactly ONE untrusted evidence group — the R7
+  planner row (ReceiptSideEffectPlanner.processMatchResult scannedReceiptDao `update` vs code `updateMatchSuggestion`,
+  DB_V2_POLICY_MUTATION_NOT_FOUND; scan finding DB_UNAUTHORIZED_MUTATION :450). No other batch affects any policy row
+  (R11/R8/R13b/R6b/R9/R10/R12/R13/G1 verified; sourceMutations 269 vs 269, only the R7 pair differs). cloud_payload test failure =
+  G1 matcher accepted a segment containing "*". Lead fix (G1 debug iteration 1): reject any segment containing "*"
+  (scripts/verify_cloud_payload_boundaries.py :134); read-only sanity check: "domain/privacy/*.kt" -> False, exact path -> True.
+- Next: commit all batches except R7's three files (ReceiptSideEffectPlanner.kt, ReceiptSideEffectPlannerSuggestionRaceTest.kt,
+  receipt_link_allowlist.yml), then R7 regeneration on a tree where only R7 is uncommitted, then full static-guards
+  (which also validates the G1 fix; if it fails, fix forward in a new commit).

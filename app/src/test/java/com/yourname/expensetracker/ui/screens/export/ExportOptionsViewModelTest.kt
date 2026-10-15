@@ -465,6 +465,124 @@ class ExportOptionsViewModelTest {
         assertEquals(null, state.exportFilePath)
     }
 
+    // ── RG12-03: date-range change must invalidate a completed/in-flight export ──
+
+    @Test
+    fun `changing date range clears a completed export result`() = runBlocking {
+        val expense = createExpense(merchant = "Coffee")
+        viewModel.setDateRange(1_000_000L, 2_000_000L)
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns 1
+        stubPagedExpenses(listOf(expense))
+        val firstOut = createTempFile(prefix = "export_range_first_", suffix = ".csv")
+        every { exportDataRepository.createExportFile(any(), any()) } returns firstOut
+
+        viewModel.generateExport()
+        val completed = viewModel.uiState.value
+        assertTrue("SETUP: first export must complete", completed.exportSuccess)
+        assertEquals(firstOut.absolutePath, completed.exportFilePath)
+
+        viewModel.setDateRange(1_500_000L, 2_000_000L)
+
+        val cleared = viewModel.uiState.value
+        assertEquals(1_500_000L, cleared.startDate)
+        assertEquals(2_000_000L, cleared.endDate)
+        assertFalse("RG12-03: stale success must not survive a range change", cleared.exportSuccess)
+        assertEquals("RG12-03: stale file path must be cleared", null, cleared.exportFilePath)
+        assertEquals("RG12-03: stale preview must be cleared", null, cleared.exportPreview)
+        assertFalse(cleared.isLoading)
+
+        // Generating again must use the NEW range (recorded calls from the range-change count reload are dropped).
+        io.mockk.clearMocks(exportDataRepository, answers = false)
+        stubPagedExpenses(listOf(expense))
+        val secondOut = createTempFile(prefix = "export_range_second_", suffix = ".csv")
+        every { exportDataRepository.createExportFile(any(), any()) } returns secondOut
+
+        viewModel.generateExport()
+
+        assertTrue(viewModel.uiState.value.exportSuccess)
+        io.mockk.coVerify(exactly = 1) { exportDataRepository.countExpensesBetween(1_500_000L, 2_000_000L) }
+        io.mockk.coVerify(exactly = 0) { exportDataRepository.countExpensesBetween(1_000_000L, 2_000_000L) }
+        io.mockk.coVerify(atLeast = 1) {
+            exportDataRepository.getExpensesPage(1_500_000L, 2_000_000L, any(), any(), any())
+        }
+        io.mockk.coVerify(exactly = 0) {
+            exportDataRepository.getExpensesPage(1_000_000L, any(), any(), any(), any())
+        }
+    }
+
+    @Test
+    fun `changing date range while export is running cancels stale publication`() = runBlocking {
+        val out = createTempFile(prefix = "export_range_race_", suffix = ".csv")
+        every { exportDataRepository.createExportFile(any(), any()) } returns out
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns 1
+
+        val started = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+        coEvery {
+            exportDataRepository.getExpensesPage(any(), any(), any(), any(), any())
+        } coAnswers {
+            started.complete(Unit)
+            release.await()
+            emptyList<Expense>()
+        }
+
+        viewModel.setDateRange(1_000_000L, 2_000_000L)
+        viewModel.generateExport()
+        started.await()
+        assertTrue("SETUP: export must be running", viewModel.uiState.value.isLoading)
+
+        viewModel.setDateRange(1_500_000L, 2_000_000L)
+        release.complete(Unit)
+
+        val state = viewModel.uiState.value
+        assertEquals(1_500_000L, state.startDate)
+        assertFalse("RG12-03: stale run must not publish success", state.exportSuccess)
+        assertEquals("RG12-03: stale run must not publish a path", null, state.exportFilePath)
+        assertEquals(null, state.exportPreview)
+        assertFalse("RG12-03: range change must not leave loading stuck", state.isLoading)
+        assertFalse("RG12-03: stale output file must be removed", out.exists())
+    }
+
+    // ── RG12-02: re-export followed by a format switch must not strand isLoading ──
+
+    @Test
+    fun `re-export then format switch does not leave loading stuck`() = runBlocking {
+        val expense = createExpense(merchant = "Coffee")
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns 1
+        stubPagedExpenses(listOf(expense))
+        val firstOut = createTempFile(prefix = "export_reexport_first_", suffix = ".csv")
+        every { exportDataRepository.createExportFile(any(), any()) } returns firstOut
+
+        viewModel.generateExport()
+        assertTrue("SETUP: first export must complete", viewModel.uiState.value.exportSuccess)
+        assertEquals(firstOut.absolutePath, viewModel.uiState.value.exportFilePath)
+
+        val secondOut = createTempFile(prefix = "export_reexport_second_", suffix = ".csv")
+        every { exportDataRepository.createExportFile(any(), any()) } returns secondOut
+        val started = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+        coEvery {
+            exportDataRepository.getExpensesPage(any(), any(), any(), any(), any())
+        } coAnswers {
+            started.complete(Unit)
+            release.await()
+            emptyList<Expense>()
+        }
+
+        viewModel.generateExport()
+        started.await()
+        assertTrue("SETUP: second export must be running", viewModel.uiState.value.isLoading)
+
+        viewModel.selectFormat("json")
+        release.complete(Unit)
+
+        val state = viewModel.uiState.value
+        assertEquals("json", state.selectedFormat)
+        assertFalse("RG12-02: format switch must not leave loading stuck", state.isLoading)
+        assertEquals("RG12-02: no stale path after format switch", null, state.exportFilePath)
+        assertFalse(state.exportSuccess)
+    }
+
     @Test
     fun `fx rate columns serialize without scientific notation or truncation`() = runBlocking {
         // RP-19 (19-C): rates use the dedicated formatter in both CSV and JSON.

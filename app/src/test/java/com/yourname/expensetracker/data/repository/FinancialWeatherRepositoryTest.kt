@@ -558,6 +558,53 @@ class FinancialWeatherRepositoryTest {
         verify(exactly = 0) { narrativeGenerator.generate(any(), any(), any()) }
     }
 
+    // =========================================================================
+    // R9 (RG16A-2) T6: goal-reserve exclusions surface as goalReservesPartial on the
+    // weather model WITHOUT leaking into the Monte Carlo gating fields
+    // (isPartial / excludedCount stay driven by recurring + planned + input quality).
+    // =========================================================================
+
+    private fun stubEmptyWeatherInputs() {
+        every { timeProvider.now() } returns 1705320000000L
+        every { expenseRepository.getAllExpenses() } returns flowOf(emptyList())
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+        every { recurringExpenseRepository.getAllFlow() } returns flowOf(emptyList())
+        every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(emptyList())
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(emptyList())
+        coEvery { mergedRecurringPatternsProvider.getPatternsFromSnapshots(any(), any()) } returns emptyList()
+        every { narrativeGenerator.generate(any(), any(), any()) } returns createMockNarrative()
+    }
+
+    private fun forecastWithGoalReserveExclusions(exclusions: Int) = createMockForecast().let { base ->
+        base.copy(components = base.components.copy(goalReserveExclusions = exclusions))
+    }
+
+    @Test
+    fun `T6 goal reserve exclusions map to goalReservesPartial without touching isPartial`() = runTest {
+        stubEmptyWeatherInputs()
+        coEvery {
+            synthesisEngine.synthesize(any<ForecastInputAssembler.ForecastInput>())
+        } returns forecastWithGoalReserveExclusions(2)
+
+        val result = repository.getFinancialWeather().first()
+
+        assertTrue(result.goalReservesPartial)
+        assertEquals(false, result.isPartial)
+        assertEquals(0, result.excludedCount)
+    }
+
+    @Test
+    fun `T6 no goal reserve exclusions leaves goalReservesPartial false`() = runTest {
+        stubEmptyWeatherInputs()
+        coEvery {
+            synthesisEngine.synthesize(any<ForecastInputAssembler.ForecastInput>())
+        } returns forecastWithGoalReserveExclusions(0)
+
+        val result = repository.getFinancialWeather().first()
+
+        assertEquals(false, result.goalReservesPartial)
+    }
+
     private fun createExpense(amount: Double, date: Long, type: TransactionType): Expense {
         return Expense(
             amount = amount,

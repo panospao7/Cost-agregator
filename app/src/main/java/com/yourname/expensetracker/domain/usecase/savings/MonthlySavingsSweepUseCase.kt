@@ -5,6 +5,7 @@ import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.PlannedExpenseRepository
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
+import com.yourname.expensetracker.data.repository.SavingsSweepMonthConsumption
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.analytics.completeMoneyAggregateForRows
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
@@ -65,7 +66,8 @@ class MonthlySavingsSweepUseCase @Inject constructor(
     private val analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer,
     private val currencySettingsRepository: CurrencySettingsRepository,
     private val currencyConverter: CurrencyConverter,
-    private val recurringOccurrenceDao: RecurringOccurrenceDao
+    private val recurringOccurrenceDao: RecurringOccurrenceDao,
+    private val sweepMonthConsumption: SavingsSweepMonthConsumption
 ) {
     companion object {
         /** Minimum safe sweep amount to show recommendation (in home currency) */
@@ -135,6 +137,14 @@ class MonthlySavingsSweepUseCase @Inject constructor(
         // Check if we're within the recommendation window (last N days of month)
         if (!isWithinSweepWindow(today)) {
             Timber.d("Not within sweep window, skipping")
+            return null
+        }
+
+        // A month whose sweep was already accepted must not offer a new card. The
+        // same rule the acceptance coordinator enforces; checked before budget reads.
+        val sweepMonthEnd = today.withDayOfMonth(1).plusMonths(1).atStartOfDay(zone).toInstant().toEpochMilli() - 1L
+        if (sweepMonthConsumption.isMonthConsumed(sweepMonthEnd)) {
+            Timber.d("SAVINGS_SWEEP_MONTH_CONSUMED")
             return null
         }
 

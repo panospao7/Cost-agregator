@@ -1,14 +1,24 @@
 package com.yourname.expensetracker.data.ai.provider
 
 import android.graphics.Bitmap
+import com.google.mlkit.genai.prompt.GenerateContentRequest
+import com.google.mlkit.genai.prompt.GenerativeModel
+import com.yourname.expensetracker.domain.ai.model.AiServiceError
+import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistInput
+import io.mockk.coEvery
+import io.mockk.mockk
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import timber.log.Timber
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
@@ -153,6 +163,112 @@ class OnDeviceReceiptAssistServiceTest {
         assertNull(result.total)
         assertNull(result.date)
         assertNull(result.taxAmount)
+    }
+
+    // ---- R6b: bounded UNKNOWN_ERROR / PARSER_FAILED, no leaked text, CancellationException propagates ----
+
+    private inline fun <T> withPlantedLogs(block: (MutableList<Pair<Throwable?, String>>) -> T): T {
+        val logs = mutableListOf<Pair<Throwable?, String>>()
+        val tree = object : Timber.Tree() {
+            override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+                logs += t to message
+            }
+        }
+        Timber.plant(tree)
+        try {
+            return block(logs)
+        } finally {
+            Timber.uproot(tree)
+        }
+    }
+
+    /** Seeds the production model cache (no production change; avoids Generation.getClient()). */
+    private fun serviceWithModel(model: GenerativeModel): OnDeviceReceiptAssistService {
+        val target = OnDeviceReceiptAssistService()
+        val field = OnDeviceReceiptAssistService::class.java.getDeclaredField("cachedModel")
+        field.isAccessible = true
+        field.set(target, model)
+        return target
+    }
+
+    @Test
+    fun `suggest maps unexpected exception to bounded UNKNOWN_ERROR without leaking sentinel`() {
+        val model = mockk<GenerativeModel>()
+        coEvery { model.generateContent(any<GenerateContentRequest>()) } throws
+            IllegalStateException("R6BSENTINEL_7d41")
+
+        withPlantedLogs { logs ->
+            val result = runBlocking { serviceWithModel(model).suggest(sampleInput) }
+
+            assertEquals(
+                AiServiceResult.Failure(AiServiceError.Unknown("UNKNOWN_ERROR")),
+                result
+            )
+            assertFalse(result.toString().contains("R6BSENTINEL_7d41"))
+            assertTrue(logs.any { it.second.contains("UNKNOWN_ERROR") })
+            assertTrue(logs.all { it.first == null && !it.second.contains("R6BSENTINEL_7d41") })
+        }
+    }
+
+    @Test
+    fun `suggestFromText maps unexpected exception to bounded UNKNOWN_ERROR without leaking sentinel`() {
+        val model = mockk<GenerativeModel>()
+        coEvery { model.generateContent(any<GenerateContentRequest>()) } throws
+            IllegalStateException("R6BSENTINEL_7d41")
+
+        withPlantedLogs { logs ->
+            val result = runBlocking { serviceWithModel(model).suggestFromText("prompt") }
+
+            assertEquals(
+                AiServiceResult.Failure(AiServiceError.Unknown("UNKNOWN_ERROR")),
+                result
+            )
+            assertFalse(result.toString().contains("R6BSENTINEL_7d41"))
+            assertTrue(logs.any { it.second.contains("UNKNOWN_ERROR") })
+            assertTrue(logs.all { it.first == null && !it.second.contains("R6BSENTINEL_7d41") })
+        }
+    }
+
+    @Test
+    fun `suggest and suggestFromText propagate CancellationException instead of mapping to Unknown`() {
+        val model = mockk<GenerativeModel>()
+        coEvery { model.generateContent(any<GenerateContentRequest>()) } throws
+            CancellationException("R6BSENTINEL_7d41")
+
+        withPlantedLogs { logs ->
+            assertThrows(CancellationException::class.java) {
+                runBlocking { serviceWithModel(model).suggest(sampleInput) }
+            }
+            assertThrows(CancellationException::class.java) {
+                runBlocking { serviceWithModel(model).suggestFromText("prompt") }
+            }
+            assertTrue(logs.none { it.second.contains("UNKNOWN_ERROR") })
+        }
+    }
+
+    @Test
+    fun `parseResponse logs bounded PARSER_FAILED without throwable or sentinel on malformed JSON`() {
+        withPlantedLogs { logs ->
+            // Malformed value: org.json syntax errors embed the raw input in the exception message.
+            val result = service.parseResponse("{\"R6BSENTINEL_7d41\":}")
+
+            assertNull(result)
+            // CloudJsonParser.extractFirstJsonObject pre-validates candidates with JSONObject and returns null for
+            // syntactically invalid JSON, so parseResponse returns before its catch: no PARSER_FAILED line is
+            // expected here. The privacy oracle is that nothing logged carries a throwable or the sentinel.
+            assertTrue(logs.all { it.first == null && !it.second.contains("R6BSENTINEL_7d41") })
+        }
+    }
+
+    @Test
+    fun `parseResponse never logs throwable or sentinel for duplicate-key payload`() {
+        withPlantedLogs { logs ->
+            // json.org rejects duplicate keys with a message that names the key; Android org.json
+            // tolerates them. Either way no log may carry the key or the throwable.
+            service.parseResponse("{\"R6BSENTINEL_7d41\":1,\"R6BSENTINEL_7d41\":2}")
+
+            assertTrue(logs.all { it.first == null && !it.second.contains("R6BSENTINEL_7d41") })
+        }
     }
 
 }

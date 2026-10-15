@@ -211,17 +211,20 @@ class SuggestCategoryFallbackUseCase @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Timber.e(e, "SuggestCategoryFallbackUseCase: provider call failed for $targetKey")
+            // R6b privacy: fixed message + class name only; never e.message or the throwable.
+            Timber.e(
+                "SuggestCategoryFallbackUseCase: provider call failed class=%s for %s",
+                e::class.java.simpleName,
+                targetKey
+            )
             aiArtifactRepository.upsert(
                 baseEntity.copy(
                     status = AiArtifactStatus.FAILED,
-                    errorMessage = failureMessage(e.message, routeDecision),
+                    errorMessage = failureMessage(PROVIDER_FAILED_MESSAGE, routeDecision),
                     updatedAt = timeProvider.now()
                 )
             )
-            CategoryAssistGenerationResult.Error(
-                e.message?.take(200) ?: "AI category assist failed."
-            )
+            CategoryAssistGenerationResult.Error(PROVIDER_FAILED_MESSAGE)
         }
     }
 
@@ -281,6 +284,9 @@ private fun String?.withRouteDiagnostics(routeDecision: AiRouteDecision): String
     val combined = listOfNotNull(this?.takeIf { it.isNotBlank() }, diagnostic).joinToString("\n")
     return combined.take(AppConfig.Ai.MAX_CAPTURE_SUPPORTING_TEXT_CHARS)
 }
+
+/** Fixed user-visible/persisted text used instead of raw throwable text. */
+private const val PROVIDER_FAILED_MESSAGE = "AI category assist failed."
 
 private fun failureMessage(message: String?, routeDecision: AiRouteDecision): String {
     val base = message?.takeIf { it.isNotBlank() } ?: "AI generation failed."

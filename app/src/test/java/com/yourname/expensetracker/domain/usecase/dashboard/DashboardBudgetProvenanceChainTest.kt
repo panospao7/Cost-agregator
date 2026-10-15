@@ -44,6 +44,8 @@ import com.yourname.expensetracker.domain.health.FinancialHealthScoreV2
 import com.yourname.expensetracker.domain.health.HealthScoreOutcome
 import com.yourname.expensetracker.domain.health.HealthTrend
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
+import com.yourname.expensetracker.domain.model.GoalProtectionLevel
+import com.yourname.expensetracker.domain.model.SavingsGoal
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.model.dashboard.DashboardExpense
 import com.yourname.expensetracker.domain.model.dashboard.DashboardTransactionType
@@ -130,6 +132,8 @@ class DashboardBudgetProvenanceChainTest {
     private lateinit var adapter: DashboardContractsAdapter
     private lateinit var monteCarloSimulator: MonteCarloSpendingSimulator
     private lateinit var computeUseCase: ComputeDashboardWidgetsUseCase
+    private var assembledGoalIds: List<Long> = emptyList()
+    private var assembledGoalAssumptions: List<String> = emptyList()
     private var seededExpenseId: Long = 0L
 
     @Before
@@ -237,6 +241,8 @@ class DashboardBudgetProvenanceChainTest {
         val assembler = mockk<ForecastInputAssembler>(relaxed = true)
         coEvery { assembler.assembleNormalized(any()) } answers {
             val input = arg<NormalizedForecastInput>(0)
+            assembledGoalIds = input.savingsGoals.map { it.id }
+            assembledGoalAssumptions = input.savingsGoals.map { it.currencyAssumption }
             ForecastInputAssembler.ForecastInput(
                 pastSumDaily = input.pastSumDaily,
                 recurringPatterns = input.recurringPatterns,
@@ -365,8 +371,52 @@ class DashboardBudgetProvenanceChainTest {
     }
 
     // ---------------------------------------------------------------------------------------
+    // R9 T7: a legacy-provenance STRICT goal (excluded from goal reserves) must NOT make the
+    // forecast partial for Monte Carlo gating (ComputeDashboardWidgetsUseCase :964 reads
+    // forecast.isPartial/excludedCount, which goal exclusions never touch).
+    // ---------------------------------------------------------------------------------------
+    @Test
+    fun legacy_strict_goal_keeps_monte_carlo_available() = runTest {
+        seedDayOnePurchase()
+        database.budgetDao().insertAndActivateOverall(
+            screenBuiltOverallBudget().copy(currencyAssumption = "USER_CONFIRMED", createdAt = nowMs)
+        )
+
+        val result = computeDashboard(goals = listOf(legacyStrictGoal()))
+
+        // Same oracle as the control above: the goal changes none of runway/budget/MC inputs.
+        val runway = result.allWidgets.filterIsInstance<DashboardWidget.FinancialRunway>().single()
+        assertFalse("R9: legacy STRICT goal must not make runway unavailable", runway.isUnavailable)
+        assertEquals("remaining", 900.0, runway.discretionaryRemaining, 0.001)
+        // The computed result does not expose goalReservesPartial (the forecast stays internal to
+        // the use case; goal reserves feed only predictedDiscretionary, never runway/MC). What is
+        // observable here: the legacy STRICT goal really reached the forecast engine input, so the
+        // unchanged runway/MC values above are not vacuous. The exclusion count itself is pinned
+        // at engine level (SynthesisEngine goal-provenance tests).
+        assertEquals("R9: the legacy STRICT goal reached the forecast input", listOf(1L), assembledGoalIds)
+        assertEquals("R9: goal carries unconfirmed provenance", listOf("LEGACY_DEFAULT"), assembledGoalAssumptions)
+        assertEquals("committed unaffected by goal", 0.0, runway.committedExpenses, 0.0)
+        val monteCarlo = result.allWidgets.filterIsInstance<DashboardWidget.MonteCarloForecast>().single()
+        assertEquals("monte carlo display currency", "USD", monteCarlo.result.displayCurrency)
+        coVerify(exactly = 1) { monteCarloSimulator.simulate(100.0, 0.0, 1000.0, "USD", 0.0) }
+    }
+
+    // ---------------------------------------------------------------------------------------
     // Helpers
     // ---------------------------------------------------------------------------------------
+
+    /** STRICT, unfinished goal whose currency provenance is the unconfirmed LEGACY_DEFAULT. */
+    private fun legacyStrictGoal() = SavingsGoal(
+        id = 1L,
+        name = "Legacy strict goal",
+        targetAmount = 1000.0,
+        currentAmount = 0.0,
+        targetDate = null,
+        protectionLevel = GoalProtectionLevel.STRICT,
+        currency = "USD",
+        currencyAssumption = "LEGACY_DEFAULT",
+        createdAt = 0L
+    )
 
     /**
      * The overall budget exactly as BudgetScreen.AddEditBudgetDialog builds it for a new budget
@@ -433,7 +483,7 @@ class DashboardBudgetProvenanceChainTest {
     }
 
     /** Dashboard input built from persisted rows; budget statuses come from the real repository + adapter projection. */
-    private suspend fun computeDashboard(): CompiledDashboardData {
+    private suspend fun computeDashboard(goals: List<SavingsGoal> = emptyList()): CompiledDashboardData {
         val persisted = requireNotNull(database.expenseDao().getById(seededExpenseId)) { "SETUP: expense row missing" }
         // Off the runTest scheduler: the day-boundary ticker inside getBudgetStatuses() would otherwise be advanced
         // by virtual time and keep restarting the real Room queries via flatMapLatest (livelock).
@@ -472,7 +522,7 @@ class DashboardBudgetProvenanceChainTest {
             ),
             recurringPatterns = emptyList(),
             plannedExpenses = emptyList(),
-            goals = emptyList()
+            goals = goals
         )
         val summary = SpendingSummary(
             totalSpent = 0.0,

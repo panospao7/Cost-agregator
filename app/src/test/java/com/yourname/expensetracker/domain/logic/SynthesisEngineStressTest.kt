@@ -88,6 +88,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
         currentAmount = current,
         targetDate = targetDate,
         protectionLevel = protection,
+        currencyAssumption = "EXPLICIT", // fixture: confirmed provenance so STRICT pro-rating is exercised
         createdAt = 0L,
     )
 
@@ -841,6 +842,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
                     currentAmount = 0.0,
                     targetDate = null, // NULL!
                     protectionLevel = GoalProtectionLevel.STRICT,
+                    currencyAssumption = "EXPLICIT",
                     createdAt = 0L,
                 )
             ),

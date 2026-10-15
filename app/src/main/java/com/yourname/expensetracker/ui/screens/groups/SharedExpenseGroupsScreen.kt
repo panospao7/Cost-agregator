@@ -426,14 +426,9 @@ private fun SettlementPlanSection(
     groupCurrency: String
 ) {
     val memberNames = remember(members) { members.associate { it.id to it.name } }
-    var settledTransferKeys by remember(memberBalances) { mutableStateOf(setOf<String>()) }
 
     val settlementTransfers = remember(memberBalances) {
         SplitCalculator.simplifyBalances(memberBalances)
-    }
-
-    val pendingTransfers = settlementTransfers.filterNot { (fromId, toId, amount) ->
-        buildSettlementKey(fromId, toId, amount) in settledTransferKeys
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -444,15 +439,20 @@ private fun SettlementPlanSection(
             fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(top = 8.dp)
         )
+        Text(
+            text = stringResource(R.string.groups_suggested_transfers_hint),
+            style = MaterialTheme.typography.bodySmall,
+            color = SemanticColors.TextSecondary
+        )
 
-        if (pendingTransfers.isEmpty()) {
+        if (settlementTransfers.isEmpty()) {
             Text(
                 text = stringResource(R.string.label_settled_up),
                 style = MaterialTheme.typography.bodyMedium,
                 color = SemanticColors.TextSecondary
             )
         } else {
-            pendingTransfers.forEach { (fromId, toId, amount) ->
+            settlementTransfers.forEach { (fromId, toId, amount) ->
                 val fromName = memberNames[fromId] ?: stringResource(R.string.groups_member_fallback_format, fromId)
                 val toName = memberNames[toId] ?: stringResource(R.string.groups_member_fallback_format, toId)
 
@@ -476,23 +476,11 @@ private fun SettlementPlanSection(
                             color = SemanticColors.TextPrimary,
                             modifier = Modifier.weight(1f)
                         )
-
-                        TextButton(
-                            onClick = {
-                                settledTransferKeys = settledTransferKeys + buildSettlementKey(fromId, toId, amount)
-                            }
-                        ) {
-                            Text(stringResource(R.string.groups_settle_action))
-                        }
                     }
                 }
             }
         }
     }
-}
-
-private fun buildSettlementKey(fromId: Long, toId: Long, amount: Double): String {
-    return "$fromId-$toId-${"%.2f".format(Locale.US, amount)}"
 }
 
 internal fun roundedBalanceForDisplay(

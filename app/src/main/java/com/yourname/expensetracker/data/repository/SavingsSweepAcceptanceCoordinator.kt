@@ -25,6 +25,9 @@ import java.security.MessageDigest
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 
+/** Terminal rejection reason: the calendar month's sweep was already consumed. */
+const val SAVINGS_SWEEP_MONTH_ALREADY_ACCEPTED = "SAVINGS_SWEEP_MONTH_ALREADY_ACCEPTED"
+
 sealed interface SavingsSweepAcceptanceResult {
     data object Accepted : SavingsSweepAcceptanceResult
     data object AlreadyAccepted : SavingsSweepAcceptanceResult
@@ -44,6 +47,12 @@ class SavingsSweepAcceptanceCoordinator @Inject constructor(
     private val writeBarrier: DatabaseWriteBarrier,
     private val timeProvider: TimeProvider
 ) {
+    private val monthConsumption = SavingsSweepMonthConsumption(
+        monthAcceptanceDao,
+        savingsSweepPlanDao,
+        contributionLedgerDao
+    )
+
     suspend fun accept(
         recommendation: SavingsSweepRecommendation
     ): SavingsSweepAcceptanceResult {
@@ -59,12 +68,8 @@ class SavingsSweepAcceptanceCoordinator @Inject constructor(
                 rejectUnless(actionedAt > 0L, TIME_UNAVAILABLE)
                 val monthStart = TimePeriodUtils.getStartOfMonth(recommendation.monthEnd)
                 val nextMonthStart = TimePeriodUtils.getEndOfMonth(recommendation.monthEnd)
-                // The independent month marker survives deletion of every goal.
-                // Retain legacy plan/ledger evidence for defensive compatibility.
-                val monthAlreadyAccepted = monthAcceptanceDao.hasAcceptanceBetween(monthStart, nextMonthStart) ||
-                    savingsSweepPlanDao.getPlansForMonth(recommendation.monthEnd)
-                    .any { it.status == SweepPlanStatus.ACCEPTED } ||
-                    contributionLedgerDao.hasSweepBetween(monthStart, nextMonthStart)
+                // Shared with the sweep producer so both apply one month-consumption rule.
+                val monthAlreadyAccepted = monthConsumption.isMonthConsumed(recommendation.monthEnd)
                 var newlyAccepted = false
 
                 recommendation.goalAllocations.forEach { allocation ->
@@ -342,7 +347,7 @@ class SavingsSweepAcceptanceCoordinator @Inject constructor(
         const val INCOMPLETE_STATE = "SAVINGS_SWEEP_INCOMPLETE_STATE"
         const val PLAN_ALREADY_ACTIONED = "SAVINGS_SWEEP_PLAN_ALREADY_ACTIONED"
         const val PLAN_STATE_CONFLICT = "SAVINGS_SWEEP_PLAN_STATE_CONFLICT"
-        const val MONTH_ALREADY_ACCEPTED = "SAVINGS_SWEEP_MONTH_ALREADY_ACCEPTED"
+        const val MONTH_ALREADY_ACCEPTED = SAVINGS_SWEEP_MONTH_ALREADY_ACCEPTED
         const val ACCEPTANCE_UNAVAILABLE = "SAVINGS_SWEEP_ACCEPTANCE_UNAVAILABLE"
     }
 }

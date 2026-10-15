@@ -18,6 +18,7 @@ import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
 import com.yourname.expensetracker.domain.core.money.RateBasis
 import com.yourname.expensetracker.domain.core.money.StaleRatePolicy
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.savings.SavingsGoalCurrencyPolicy
 import com.yourname.expensetracker.domain.util.TimeProvider
 
 import timber.log.Timber
@@ -362,24 +363,44 @@ class SynthesisEngine @Inject constructor(
         // 3. Goal Reserves
         // Strict goals are subtracted from "Available"
         // 3. Goal Reserves (Pro-rated for strict goals - LOG-019)
+        //
+        // R9 (RG16A-2): a goal whose currency is unknown (legacy/assumed provenance) is EXCLUDED
+        // (never treated as display currency), the monthly reserve is pro-rated in the GOAL's own
+        // currency and then converted to the display currency; a conversion failure also excludes
+        // the goal. Exclusions are counted in goalReserveExclusions only (kept out of
+        // isPartial/excludedCount, which gate Monte Carlo and never read goal reserves).
+        var goalReserveExclusions = 0
         val goalReserves = savingsGoals
-            .filter { it.protectionLevel == GoalProtectionLevel.STRICT }
-            .sumOf { goal ->
-                 val remaining = (goal.targetAmount - goal.currentAmount).coerceAtLeast(0.0)
-                 if (remaining <= 0) 0.0
-                 else {
-                     val targetDate = goal.targetDate
-                      if (targetDate == null || targetDate <= now) remaining // Due now or past due
-                      else {
-                          val msRemaining = targetDate - now
-                          val daysRemainingInGoal = (msRemaining.toDouble() / TimeUnit.DAYS.toMillis(1).toDouble()).coerceAtLeast(1.0)
-                          val targetMonthsRemaining = (daysRemainingInGoal / daysInMonth.toDouble()).coerceAtLeast(1.0)
-                          val remainingMonthly = remaining / targetMonthsRemaining
-                          // For this month specifically
-                         remainingMonthly
-                     }
-                 }
+            .filter {
+                it.protectionLevel == GoalProtectionLevel.STRICT &&
+                    SavingsGoalCurrencyPolicy.isUnfinished(it)
             }
+            .mapNotNull { goal ->
+                val goalCurrency = SavingsGoalCurrencyPolicy.knownCurrencyOrNull(goal)
+                if (goalCurrency == null) {
+                    goalReserveExclusions++
+                    return@mapNotNull null
+                }
+                val remaining = (goal.targetAmount - goal.currentAmount).coerceAtLeast(0.0)
+                val monthlyReserve = if (remaining <= 0) 0.0
+                else {
+                    val targetDate = goal.targetDate
+                    if (targetDate == null || targetDate <= now) remaining // Due now or past due
+                    else {
+                        val msRemaining = targetDate - now
+                        val daysRemainingInGoal = (msRemaining.toDouble() / TimeUnit.DAYS.toMillis(1).toDouble()).coerceAtLeast(1.0)
+                        val targetMonthsRemaining = (daysRemainingInGoal / daysInMonth.toDouble()).coerceAtLeast(1.0)
+                        // For this month specifically (goal currency)
+                        remaining / targetMonthsRemaining
+                    }
+                }
+                if (displayCurrency.isBlank()) monthlyReserve
+                else convertAmount(monthlyReserve, goalCurrency.code, displayCurrency)
+                    ?: run { goalReserveExclusions++; null }
+            }.sum()
+        if (goalReserveExclusions > 0) {
+            Timber.w("$TAG: %d strict goal reserve(s) excluded due to unknown or unconvertible currency", goalReserveExclusions)
+        }
 
         // 4. Calculate Projected Timeline Points with date-based spikes
         val lastKnownTotal = sanitizedPastSumDaily.lastOrNull() ?: 0.0
@@ -520,7 +541,8 @@ class SynthesisEngine @Inject constructor(
                 predictedDiscretionary = predictedDiscretionary,
                 discretionaryBudget = discretionaryBudget,
                 riskLevel = riskLevel,
-                confirmedOccurrences = confirmedOccurrences
+                confirmedOccurrences = confirmedOccurrences,
+                goalReserveExclusions = goalReserveExclusions
             ),
             actionableInsights = buildInsights(riskLevel, budgetStatuses, spendingPace, filteredPlannedExpenses, savingsGoals),
             // RP-06 6b slice 2: planned-expense projection day-map conversion failures now
