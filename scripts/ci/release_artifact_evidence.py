@@ -134,7 +134,8 @@ def read_metadata(root):
 def parse_badging(text):
     package = re.search(
         r"^package: name='([^']*)' versionCode='([^']*)' versionName='([^']*)'", text, re.M)
-    min_sdk = re.search(r"^sdkVersion:'(\d+)'", text, re.M)
+    # aapt2 prints minSdkVersion:'N'; legacy aapt printed sdkVersion:'N'. Accept both.
+    min_sdk = re.search(r"^(?:minSdkVersion|sdkVersion):'(\d+)'", text, re.M)
     target_sdk = re.search(r"^targetSdkVersion:'(\d+)'", text, re.M)
     if package is None or min_sdk is None or target_sdk is None:
         raise EvidenceError("E_BADGING_INCOMPLETE", EXIT_INCOMPLETE)

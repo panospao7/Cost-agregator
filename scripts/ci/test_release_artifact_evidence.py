@@ -355,3 +355,29 @@ def test_evidence_write_is_atomic_and_leaves_no_temporary_file(fixture):
     assert _run(fixture) == 0
     directory = fixture.root / "build" / "ci" / "release-artifact"
     assert sorted(path.name for path in directory.iterdir()) == ["evidence.json"]
+
+
+def test_parse_badging_accepts_real_aapt2_min_sdk_format():
+    """Regression: aapt2 (build-tools 36) prints minSdkVersion:'N', not the legacy sdkVersion:'N'."""
+    text = "\n".join([
+        "package: name='com.yourname.expensetracker' versionCode='1' versionName='1.0' "
+        "platformBuildVersionName='15' platformBuildVersionCode='35' compileSdkVersion='35'",
+        "minSdkVersion:'26'",
+        "targetSdkVersion:'35'",
+        "uses-permission: name='android.permission.INTERNET'",
+        "",
+    ])
+    parsed = evidence.parse_badging(text)
+    assert parsed["min_sdk"] == 26
+    assert parsed["target_sdk"] == 35
+    assert parsed["package_name"] == "com.yourname.expensetracker"
+
+
+def test_parse_badging_still_accepts_legacy_sdk_version_format():
+    text = "\n".join([
+        "package: name='com.yourname.expensetracker' versionCode='1' versionName='1.0'",
+        "sdkVersion:'26'",
+        "targetSdkVersion:'35'",
+        "",
+    ])
+    assert evidence.parse_badging(text)["min_sdk"] == 26
