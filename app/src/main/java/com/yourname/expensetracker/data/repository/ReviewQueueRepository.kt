@@ -34,7 +34,10 @@ import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.provenance.PendingReviewSourceLinkPromoter
 import com.yourname.expensetracker.domain.provenance.PendingReviewSourceLinkService
-import org.json.JSONObject
+import com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
+import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEvent
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEventWriter
 
 @Singleton
 class ReviewQueueRepository @Inject constructor(
@@ -56,7 +59,8 @@ class ReviewQueueRepository @Inject constructor(
     private val transactionLifecycleCoordinator: TransactionLifecycleCoordinator,
     private val pendingReviewSourceLinkService: PendingReviewSourceLinkService,
     private val pendingReviewSourceLinkPromoter: PendingReviewSourceLinkPromoter,
-    private val transactionEventDao: TransactionEventDao,
+    private val transactionRunner: DomainTransactionRunner,
+    private val transactionLifecycleEventWriter: TransactionLifecycleEventWriter,
     private val postCommitActionRunner: PostCommitActionRunner
 ) {
     private companion object {
@@ -278,28 +282,30 @@ class ReviewQueueRepository @Inject constructor(
 
                         // Write SOURCE_LINKED event for promotion
                         if (promotion.inserted > 0) {
-                            transactionEventDao.insert(
-                                com.yourname.expensetracker.data.database.entity.TransactionEvent(
-                                    expenseId = id,
-                                    eventType = LifecycleEventType.SOURCE_LINKED.name,
-                                    source = ExpenseSource.REVIEW_APPROVAL.name,
-                                    actor = null,
-                                    occurredAt = timeProvider.now(),
-                                    dedupeKey = null,
-                                    duplicateExpenseId = null,
-                                    beforeSnapshot = null,
-                                    afterSnapshot = null,
-                                    metadata = JSONObject().apply {
-                                        put("operation", "PENDING_REVIEW_SOURCE_PROMOTION")
-                                        put("pendingReviewId", reviewId)
-                                        put("attempted", promotion.attempted)
-                                        put("inserted", promotion.inserted)
-                                        put("alreadyExists", promotion.alreadyExists)
-                                    }.toString(),
-                                    reason = "Source links promoted from pending review",
-                                    correlationId = null
+                            // Nested runner joins the outer Room transaction; a writer
+                            // failure propagates and rolls back the whole approval.
+                            transactionRunner.runInTransaction(
+                                correlationId = java.util.UUID.randomUUID().toString(),
+                                operationId = "review.approve.source_linked",
+                                source = "ReviewQueueRepository.approveReview"
+                            ) { ctx ->
+                                transactionLifecycleEventWriter.write(
+                                    ctx,
+                                    TransactionLifecycleEvent(
+                                        expenseId = id,
+                                        eventType = LifecycleEventType.SOURCE_LINKED.name,
+                                        source = ExpenseSource.REVIEW_APPROVAL.name,
+                                        metadata = SafeEventMetadata.builder()
+                                            .put("operation", "PENDING_REVIEW_SOURCE_PROMOTION")
+                                            .put("pendingReviewId", reviewId)
+                                            .put("attempted", promotion.attempted)
+                                            .put("inserted", promotion.inserted)
+                                            .put("alreadyExists", promotion.alreadyExists)
+                                            .build(),
+                                        reason = "Source links promoted from pending review"
+                                    )
                                 )
-                            )
+                            }
                         }
 
                         review.rawNotificationId?.let { rawNotificationDao.markRelevance(it, true) }

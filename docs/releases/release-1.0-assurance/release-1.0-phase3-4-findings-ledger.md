@@ -877,3 +877,135 @@
   19/0, RetentionModuleBatchedPurgeTest 7/0 inside it). Batch gate PASS. Debug iterations 0; review iteration 1 (LOW fixture fix only).
   HL-1: HANG-001..003 stay "suspected" (owner rule: resolve only after a clean run on the FINAL candidate; legacy run 154702 is clean
   run #2 but not on the final candidate). Decision: commit R28+HL-1 on release-1.0-wt. Next: G3 part 2 (S4-S6, before 2026-11-20).
+- 2026-10-16 OWNER: "Go" -> G3 part 2 (S4-S6) started on release-1.0-wt @ 8671b844.
+- G3 part 2 discovery: verifier S4 + scout S5 (plan section 28 in lead notes; corrections: no regeneration of generated policy files;
+  DirectEventDao LEGACY entries expire 2026-11-20; new categories WARRANTY_OWNER/DEBUG_ONLY for the Q-G3-2 2027-01-01 entries).
+- S4 coder done: NotificationRepository.deleteAllNotifications + ReviewQueueRepository.approveReview SOURCE_LINKED now via
+  DomainTransactionRunner + TransactionLifecycleEventWriter (no try/catch; ctx.copy(occurredAt = now) keeps G-TIME-01); constructors
+  swap TransactionEventDao for runner + writer (no Hilt change); 5 test constructor fixes; NestedRollbackTest +3 (SOURCE_LINKED written
+  once, none when inserted=0, writer failure rolls back approval). Shrink: event_writers.json 4 fingerprints + 4 counts; policy 2
+  transactionEventDao|insert rows deleted. Accepted audit-content delta: actor "system", correlationId UUID, + tx* metadata.
+  Lead check: no other construction sites in app/src. S5 coder dispatched.
+- S5 coder done: DirectEventDaoInsertGuardTest 5 entries removed (0 LEGACY_REPOSITORY left), Warranty -> WARRANTY_OWNER, Bank ->
+  DEBUG_ONLY (2027-01-01), new cap/whitelist test + stale-entry test; WarrantyTrackerRepository discard barrier (best-effort) + AID-9
+  catch rethrows DatabaseAccessBlockedException (S1-N1); :135/:164 unchanged (plain DAO insert, barrier at entry; existing test pins
+  best-effort). WarrantyTrackerRepositoryTest +3. Dispatched: targeted queue (7 classes), reviewer-strict (S4), architecture-guardian (S5).
+- S5 review: architecture-guardian ACCEPT-WITH-NOTES (guard strictly stronger; warranty rethrow correct, callers bounded:
+  AutoCreateWarrantyFromReceiptUseCase :148-153 Failure, ReceiptSideEffectPlanner :212-228 FailedRetryable; :135/:164 decision sound).
+  P3 to apply (review iteration 1): reverse-direction category check (Warranty must stay WARRANTY_OWNER, Bank DEBUG_ONLY) in the cap
+  test; fix "7 entries" comment :61-65. P3 kept/tracked: vacuous 75-day LEGACY test kept; basename exemption + stale check scope (F3-F8).
+  NEW FINDING R29 (P2, pre-existing, needs owner decision): inside WarrantyTrackerRepository withTransaction, any exception from a
+  nested transaction (runner audit or suspend @Insert of lifecycle events :128/:157/:266/:294) that is caught and swallowed marks the
+  Android SQLite transaction as child-failed -> outer endTransaction silently rolls back while the method returns the warranty id
+  (unsaved warranty reported as saved). Mock tests (addWarranty_lifecycleEventFailure_doesNotFailPrimaryTransaction, new "still returns
+  id when AID-9 audit fails for other reasons") pin mock-only behaviour - not evidence. TRANSACTIONAL_EVENT_POLICY.md :498-500 claim is
+  wrong for in-transaction event writes. Fix options: fail closed (rethrow non-CE from in-tx audits) or move audits after commit.
+  Needs a real-Room test first to confirm. Not fixed in G3.
+- S4 review: reviewer-strict ACCEPT-WITH-NOTES (no CRITICAL/MAJOR). Notes: N1 drop leftover TransactionEvent import + KDoc ref in
+  NotificationRepository (apply); N2 stress test assertion-free (optional); N3 ctx.copy requires occurredAt > 0 (no prod caller);
+  N4 candidate.yml :1955/:2649 still hold removed rows -> debt for next sanctioned --generate (with F-R28-a); N5 SOURCE_LINKED
+  correlationId not shared with coordinator events; N6 optional barrier-denial test.
+- G3 part 2 targeted PASS (fingerprint 3bf32bf1..., start=end): ReviewQueueRepositoryNestedRollbackTest 15 vr-20261016-170407-62f8244e,
+  ReviewQueueRepositoryTest 12 vr-...171029-162c5950, NotificationRepositoryDeleteAllNotificationsClockTest 2 vr-...171100-9ebc760a,
+  WarrantyTrackerRepositoryTest 33 vr-...171128-9875d1a0, DirectEventDaoInsertGuardTest 8 vr-...171159-8116da15,
+  WriteBarrierArchitectureGuardTest 32 vr-...171224-c50af450, TransactionContextProvenanceGuardTest 5 vr-...171351-3afa2525 (all 0 failed).
+- Lead review-iteration-1 fixes (after targeted, before gate): S5 P3 reverse-direction category assertion in the cap test + G3 S5
+  history comment in APPROVED_ENTRIES; S4 N1 removed unused TransactionEvent import + KDoc reference in NotificationRepository.
+  Gate queue dispatched: targeted DirectEventDaoInsertGuardTest + ClockTest -> registered-guard db_access -> known_good_state ->
+  static-guards; then app-check -> legacy-tests.
+- 2026-10-16 OWNER: speed-up approved -> "Do 1-4 and also the second copy of the branch if you will be careful with it". Protocol:
+  (1) full static-guards + app-check once per GROUP of small batches (each batch keeps targeted tests + independent review); HIGH-risk
+  batches (workers/DB/privacy-lifecycle cross-layer) keep their own full gate; (2) discovery/verification/planning of the next batch
+  overlaps a running gate (read-only); (3) lead watches long runs via complete.marker (background file watch, no waiting agents);
+  (4) no targeted rerun after comment-only/test-data fixes (covered by the full gate); registered-guard db_access/known_good_state
+  only when db_ownership_policy/baselines change.
+  Second worktree B: C:\Users\panos\Desktop\Cost-agregator-release-b, branch release-1.0-wt-b, created from 8671b844 (local.properties
+  copied file-to-file, not read). Rules: B batches must have write sets disjoint from A's in-flight batch; ONE validation at a time
+  across A and B (lead sequences; runner overlap lock is per worktree); campaign docs (ledger/handoff/plan) edited only in the
+  integrating commit; integration = after A's commit, rebase release-1.0-wt-b onto release-1.0-wt (stop on any conflict), run the
+  group's full gate on the rebased B tree, then fast-forward release-1.0-wt (git -C A merge --ff-only release-1.0-wt-b) with A clean.
+  Owner main folder (now on feature/ai-evolution @ 1b026317) untouched.
+- First B group: R26-D + R26-V (plan section 25; owner decisions Q-D1 {NOTIFICATION_CAPTURE}, Q-V1 yes, Q-V2/Q-D2 yes). Disjoint from
+  G3 part 2 write set. Discovery refresh dispatched on B.
+- R26-D refresh (scout, B): plan holds. PrivacyAuditLoggerImpl @Singleton (dao, timeProvider, writeBarrier); all NOTIFICATION_CAPTURE
+  callers pass empty context -> constant key; no count column -> coalescedCount in context JSON after sanitizeContext; keep inserts +
+  barrier inside logDecision (policy row identity :419-432); constructor unchanged (2 test sites); docs are 7 lines in
+  docs/reference/backend-domain-map.md :610, backend-data-map.md :189/:350, docs/architecture/DEPENDENCY_MAP.md :700, ARCHITECTURE.md
+  :514/:1181/:1564. Lead design: barrier first on every call; Mutex held across inserts; flush rows on non-coalescible decision and LRU(32)
+  eviction; insert failure keeps window/pending state; no new catch. R26-D coder dispatched in worktree B.
+- R26-V refresh (scout, B): plan holds with corrections: dedupe outcome is DUPLICATE (not DROPPED) -> predicate per stage:
+  (INFO, no exception) and ((RECEIVED, non-terminal, no reason, stage listener|refresh) or (terminal, stage filter, DROPPED,
+  FILTER_REJECTED) or (terminal, stage dedupe, DUPLICATE, DUPLICATE)); emitNonCancellable/emitOrdered* call public emit -> route via a
+  private raw path; metadata key must be "count" (sanitizer allowlist); CE fix at :46/:92 = G-CANCEL-01 shrink 2 -> 0/1 (cancellation.json
+  :67 + CancellationSafetyArchitectureGuardTest :100 entry; pre-approved shrink); import-graph.json :1019/:1287 may need regeneration if a
+  new dep is added; decide maintenance-mode behaviour explicitly (bypass coalescing when mode != NORMAL).
+- G3 part 2 gate agent hit its turn limit; lead read results: targeted DirectEventDaoInsertGuardTest PASS vr-20261016-171503-c087c75a,
+  ClockTest PASS vr-...172029-9ad6429a (counts not captured; covered by app-check), registered-guard db_access PASS
+  vr-...172058-b3c40164, known_good_state PASS vr-...172341-a70cdcaf (fingerprint 3c677629... start=end); static-guards
+  vr-...172633-cb6eb1e1 RUNNING (lead watching complete.marker).
+- R26-D coder done in B (single dao.insert via local lambda inside logDecision; constructor unchanged; 14 coalescing tests; golden test
+  unchanged - Location only; 7 doc lines). Uncertain: coalescedCount stored as string; clock going backwards keeps suppression.
+  Dispatched in B: R26-V coder (writer) + privacy-security-guardian on R26-D (read-only).
+- G3 part 2 static-guards FAIL 24/25 vr-20261016-172633-cb6eb1e1 (fingerprint 3c677629...): guard_tests 2 failed / 5135 passed:
+  test_verify_db_access_boundaries.py :5608 and :6078 pin len(active policy entries) == 429; S4 removed 2 rows -> 427. All other
+  guards PASS (event_writers 38/38, cancellation 109/109, db_access 0, db_artifact_sync match). Lead fix (debug iteration 1 of 2,
+  shrink-only count pin, Q-G3-1): both pins 429 -> 427 with re-derivation comment. Rerun queue: static-guards -> legacy-tests -> app-check.
+- R26-V coder done in B (emitRaw split, predicate exact, Mutex plan-only, CE rethrow at both catches; cancellation.json G-CANCEL-01
+  emitter entry + CancellationSafety allowlist entry removed; 11 tests). reviewer-strict on R26-V dispatched.
+- R26-D privacy review: privacy-security-guardian ACCEPT-WITH-NOTES. MEDIUM F1 resumed capture hidden after DENIED (clear capture
+  windows after non-coalescible capture decision); MEDIUM F2 flush rows look like decisions (+coalescedFlush, coalescedSinceMs); LOW
+  F3 barrier recheck inside lock; F4 clock backwards; F5 over-count by one on cancel-after-commit (document); F6 D10 not concurrent;
+  F7 docs precision + stale ALLOWED/DENIED wording; residual: insert inside lambda may hit GR13_SITE_INSIDE_UNRESOLVED_LAMBDA ->
+  lead adds G1: single dao.insert in a plain for-loop in logDecision. Review iteration 1 fix coder dispatched in B.
+- R26-D review-iteration-1 fixes applied in B (F1-F7 + G1 plain for-loop single dao.insert; tests D4c, D4d, D12, D13 added; D10 truly concurrent). Pending: reviewer-strict R26-V; then targeted queue in B after A's gate finishes (one validation at a time).
+- R26-V review: reviewer-strict ACCEPT-WITH-NOTES (no CRITICAL/MAJOR; predicate exact; privacy PASS; CE + guard baseline consistent 47/47). MINOR: ISSUE-1 bookkeeping rows lost on caller cancel (write under NonCancellable); ISSUE-2 terminal coalesced drop should clear its LRU slot; ISSUE-3 4 untested branches; ISSUE-4 timestamp doc note. import-graph.json deps list already incomplete; no guard reads it. Review-iteration-1 fix coder dispatched in B.
+- R26-V review-iteration-1 fixes applied in B (whole plan written under NonCancellable; terminal coalesced drop frees LRU slot; KDoc timestamps; tests V11-V16). B now waits for A's gate (static-guards rerun vr-20261016-174947-b765a3d0 RUNNING, fingerprint 8bbe7fcc...).
+- G3 part 2 rerun (fingerprint 8bbe7fcc..., start=end): static-guards 25/25 PASS vr-20261016-174947-b765a3d0; legacy-tests PASS vr-20261016-181139-c9c498b6 (22 suites / 253 / 0 failed); app-check vr-20261016-181240-9d1e90c9 RUNNING (lead watching).
+- G3 part 2 app-check FAIL vr-20261016-181240-9d1e90c9 (fingerprint 8bbe7fcc..., start=end): debug 8261 run / 1 failed
+  (DbGuardPolicyFixtureTest "manifest - ownership policy has exactly 429 entries" expected 429 was 427, :1073), release 8253 / 0.
+  Same root cause as the pytest pins (third copy of the policy-count pin, Kotlin side). Lead fix = DEBUG ITERATION 2 of 2 (cap):
+  DbGuardPolicyFixtureTest pin + KDoc 429 -> 427 (shrink-only, Q-G3-1). Repo grep: no other policy-count 429 pins. Earlier static-guards
+  / legacy-tests PASS are now stale by fingerprint (test-only change) -> full rerun: A targeted DbGuardPolicyFixtureTest, then B targeted
+  queue (8 classes, interleaved while A is idle), then A app-check -> static-guards -> legacy-tests. If anything fails again -> PARTIAL
+  to owner.
+- A: DbGuardPolicyFixtureTest PASS 73/0 vr-20261016-182859-0427d90b (fingerprint 4a1e5647..., start=end).
+- B targeted PASS (rev 8671b844 + R26-D/R26-V diff, start=end each): PrivacyAuditLoggerImplCoalescingTest 18 vr-20261016-183107-f12b8de5,
+  NotificationDiagnosticEmitterCoalescingTest 17 vr-...183642-a9d5e2a1, PrivacyAuditLoggerImplWriteBarrierTest 3 vr-...183710-e0a81664,
+  PrivacyGateEnforcementGoldenTest 1 vr-...183738-e7a688a2, CompositePrivacyGateTest 7 vr-...183809-2991a393,
+  NotificationIntakeRestoreBarrierTest 6 vr-...183836-755fa330, CancellationSafetyArchitectureGuardTest 22 vr-...183904-36493895,
+  diagnostics.* 5 classes / 102 vr-...183928-59f7a0e1 (all 0 failed). R26-D + R26-V full gate after rebase onto the G3 part 2 commit.
+- R17 refresh (scout): plan holds; anchors unchanged. Corrections: Robolectric 4.11.1 -> sdk 26/29/30/34 (not 35); ReceiptScanScreen
+  intent has no ActivityNotFoundException catch (launcher adds one); template AndroidNotificationPermissionChecker; new VM -> doc counts
+  41 -> 42 (ARCHITECTURE.md :38, COMPREHENSIVE_UI_MAP.md :5/:1165, route-viewmodel-map.md :149, VIEWMODEL_INJECTION_MAP.md :4,
+  DEPENDENCY_MAP.md :1305) + CODEBASE_SEGMENTS.md :281; VM reads PrivacySettingsRepository load-state flow. Overlaps R19 (HomeScreen,
+  strings) and R23 (PrivacySettingsScreen, strings) -> serialize; order R21 -> R23 -> R17 (or R17 before R23, never parallel).
+- R27 analysis (release-finding-verifier, read-only): CONFIRMED - enterAndDrain waits for WORKER leases only (WorkerLeaseRegistryImpl
+  :36-81); runWrite (DatabaseWriteBarrier :33-39) = check-only, no lease/counter; all non-worker writers are check-then-write (345 barrier
+  sites / 82 files); RoomDomainTransactionRunner :43 no check. Scenarios: export missing a concurrent write (cosmetic); torn FILE copy
+  (safety backup always file copy :2830-2841; fallback/raw paths) HIGH sev / very low likelihood; write after safety-backup checkpoint
+  :2814 then rollback -> lost (very low); in-flight tx at closeLiveDatabaseForFileSwap :2292-2297 (NEEDS_RUNTIME); closed Hilt Room
+  singleton re-open by late access during swap (:1233-:1241 rename/copy; :1274 only repo field reassigned) -> possible corruption
+  (NEEDS_RUNTIME). BankStatementLifecycleProcessor :969/:1006-1043 writes FAILED during maintenance (runInTransaction no barrier),
+  inconsistent with DeferredRunTerminal; low severity. Fix options: F1 in-flight counter in runWrite + drain waits (reentrancy guard;
+  scope main paths vs all 82 files), F2 gate RoomDomainTransactionRunner + bank finalize deferral, F3 safety backup via VACUUM INTO,
+  F4 staged swap applied at next process start (owner decision; larger lifecycle change). Next: independent refutation + runtime probe
+  on emulator (owner DB copy restore step) before planning; owner decisions F1 scope / F4.
+- R27 independent refutation (room-migration-guardian): could NOT refute. C1 CONFIRMED (low impact; safety-backup TRUNCATE checkpoint
+  :2814 waits/aborts busy); C2 PARTIAL (copy not torn after TRUNCATE; real loss: write after :2814 + rollback -> lost, .pre_restore deleted);
+  C3 CONFIRMED P2 NEEDS_RUNTIME: Room 2.7.2 compat after close(): suspend DAO outside tx -> CancellationException; withTransaction/
+  runInTransaction/blocking/openHelper -> SupportSQLiteOpenHelper silently REOPENS at the live path (sqlite-framework 2.5.1) -> possible
+  empty DB + stale WAL replay between rename :1233 and copy :1241 (verification likely fails -> rollback -> C2 loss); restart is NOT
+  automatic (MainActivity :428-433 "Restart Now"), window unbounded; NEW DEFECTS: restore banner restart button not wired
+  (BackupRestoreScreen :38 default {}; MainActivity :874-876), BackupRestoreViewModel.dismissRestartRequired :358-361 returns NORMAL
+  without restart (no callers). C4 CONFIRMED consistent (VACUUM INTO). C5 CONFIRMED P3 (bank FAILED writes without barrier; UI flow
+  ReviewViewModel :1080, no lease).
+  Fix set proposal for 1.0: (1) runWrite in-flight counter + drains wait for zero; coordinator/intake check-only -> runWrite (owner:
+  barrier semantics change); (2) bank finalize skip/defer on DatabaseAccessBlockedException; (3) after SuccessNeedsRestart: automatic
+  restart (b) and/or gating open-helper factory (a) refusing the live path when not NORMAL (fits R25 GatedOpenHelperFactory); wire
+  banner button; remove/guard dismissRestartRequired (owner: UX/architecture). Post-1.0: atomic rename swap, WAL-consistent
+  .pre_restore fallback. Emulator probes C3a/C3b/C2/C1 defined. -> OWNER DECISIONS pending (D-R27-1 counter, D-R27-2 restart/gating).
+- G3 part 2 app-check PASS vr-20261016-184020-8290b11e (fingerprint 4a1e5647... start=end; BUILD SUCCESSFUL 30m02s; debug 8261/0 failed/276 skipped, release 8261/0/277). Final static-guards + legacy-tests on the same fingerprint dispatched.
+- G3 part 2 BATCH GATE PASS (fingerprint 4a1e5647..., start=end, rev 8671b844 + diff): app-check vr-20261016-184020-8290b11e (8261/0),
+  static-guards 25/25 vr-20261016-191101-00e18025, legacy-tests vr-20261016-193438-d072e47e (253/0); DbGuardPolicyFixtureTest 73/0
+  vr-20261016-182859-0427d90b. Debug iterations 2 of 2 (count pins 429 -> 427 in pytest x2 and Kotlin); review iterations 1.
+  Decision: commit G3 part 2 on release-1.0-wt. Then integrate B (R26-D + R26-V): rebase release-1.0-wt-b onto it, full gate on B.

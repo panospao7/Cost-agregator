@@ -1960,23 +1960,6 @@ entries:
   receiver: null
   parameterTypes:
   - Long
-  daoAccessor: transactionEventDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08e1 EXACT_POLICY: BULK_DELETED TransactionEvent audit write (expenseId
-    null, provider-derived occurredAt, bounded metadata) before the bulk mutation,
-    inside the deleteAllNotifications transaction; accessor normalized to the injected
-    transactionEventDao constructor property by the GR-08e source change (was database-chained)'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08E
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
-  kind: function
-  method: deleteAllNotifications
-  receiver: null
-  parameterTypes:
-  - Long
   daoAccessor: userCorrectionDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.UserCorrectionDao
   operation: deleteAll
@@ -2632,35 +2615,6 @@ entries:
   barrierMode: helper
   reason: 'GR-08d EXACT_POLICY: per-source duplicate counter increment on the duplicate-skipped
     and insert-conflict branches inside the approval transaction'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08D
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.ReviewQueueRepository
-  kind: function
-  method: approveReview
-  receiver: null
-  parameterTypes:
-  - Long
-  - Double?
-  - String?
-  - String?
-  - Long?
-  - Long?
-  - com.yourname.expensetracker.data.database.entity.TransactionType?
-  - com.yourname.expensetracker.data.database.entity.TransferDirection?
-  - String?
-  - Boolean
-  - Double?
-  - Double?
-  - String?
-  - String?
-  daoAccessor: transactionEventDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08d EXACT_POLICY: SOURCE_LINKED provenance event for pending-review
-    source-link promotion, written only when promotion inserted links, inside the
-    approval transaction'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08D
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt

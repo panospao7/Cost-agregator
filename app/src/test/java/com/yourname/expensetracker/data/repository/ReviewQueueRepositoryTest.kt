@@ -110,7 +110,8 @@ class ReviewQueueRepositoryTest {
             transactionLifecycleCoordinator = transactionLifecycleCoordinator,
             pendingReviewSourceLinkService = mockk(relaxed = true),
             pendingReviewSourceLinkPromoter = mockk(relaxed = true),
-            transactionEventDao = database.transactionEventDao(),
+            transactionRunner = mockk(relaxed = true),
+            transactionLifecycleEventWriter = mockk(relaxed = true),
             postCommitActionRunner = mockk(relaxed = true),
         )
     }

@@ -11,7 +11,10 @@ import com.yourname.expensetracker.data.database.dao.SourceStatsDao
 import com.yourname.expensetracker.data.database.dao.TransactionEventDao
 import com.yourname.expensetracker.data.database.dao.UserCorrectionDao
 import com.yourname.expensetracker.data.database.entity.TransactionEvent
+import com.yourname.expensetracker.data.database.RoomDomainTransactionRunner
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
+import com.yourname.expensetracker.domain.diagnostics.EventMetadataSanitizer
+import com.yourname.expensetracker.domain.transaction.lifecycle.RoomTransactionLifecycleEventWriter
 import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.transaction.LifecycleEventType
@@ -92,7 +95,12 @@ class NotificationRepositoryDeleteAllNotificationsClockTest {
         pendingReviewDao = pendingReviewDao,
         userCorrectionDao = userCorrectionDao,
         sourceStatsDao = sourceStatsDao,
-        transactionEventDao = transactionEventDao,
+        // Runner clock deliberately differs from the injected `now`: the event must carry
+        // the caller-supplied value (ctx.copy(occurredAt = now)), not the runner's clock.
+        transactionRunner = RoomDomainTransactionRunner(database, FakeTimeProvider(fixedNow + 98_765L)),
+        transactionLifecycleEventWriter = RoomTransactionLifecycleEventWriter(
+            transactionEventDao, EventMetadataSanitizer(), fakeTimeProvider, writeBarrier
+        ),
         classifier = classifier,
         pipeline = pipeline,
         writeBarrier = writeBarrier,

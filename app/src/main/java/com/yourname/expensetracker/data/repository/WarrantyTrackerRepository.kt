@@ -2,6 +2,7 @@ package com.yourname.expensetracker.data.repository
 
 import androidx.room.withTransaction
 import com.yourname.expensetracker.data.ai.provider.CloudWarrantyExtractionService
+import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ReturnWindowDao
@@ -200,6 +201,9 @@ class WarrantyTrackerRepository @Inject constructor(
                     }
                 } catch (e: Exception) {
                     if (e is CancellationException) throw e
+                    // A barrier-blocked audit write must roll back the warranty insert
+                    // instead of returning the id of an unsaved warranty.
+                    if (e is DatabaseAccessBlockedException) throw e
                     Timber.w(e, "AID-9: Failed to write AI_WARRANTY_CREATED audit event for warrantyId=$id")
                 }
             }
@@ -478,7 +482,10 @@ class WarrantyTrackerRepository @Inject constructor(
             Timber.d("Cloud warranty extraction discarded: confidence $confidence below review threshold $REVIEW_CLOUD_CONFIDENCE for receiptId=${receipt.id}")
             // PR4-FINALGATE: Write discard diagnostic to warranty lifecycle events.
             // We use warrantyId = -1 as a sentinel to indicate this is not tied to a specific warranty.
+            // Best-effort: if the write barrier denies the audit, nothing is written and the
+            // extraction result is unchanged, so the catch below may swallow the denial.
             try {
+                writeBarrier.checkWritesAllowed("WarrantyTrackerRepository.extractWarrantyFromReceipt.discard")
                 warrantyLifecycleEventDao.insert(
                     WarrantyLifecycleEvent(
                         warrantyId = -1L,

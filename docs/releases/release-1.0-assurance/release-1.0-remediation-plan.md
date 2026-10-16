@@ -740,3 +740,26 @@ Validation: targeted RetentionTargetPurgeTest, NotificationIntakeWorkerTimeoutTe
 Out of scope (new finding R28-X, triage later): ExportAnonymizer.sanitizeNotificationIntake (:267-293) keeps ciphertext in the
 export copy.
 
+
+## 28. G3 part 2 refresh (base 8671b844; lead, from verifier S4 + scout S5 discovery)
+Corrections to section 26: generated policy files (signatures.candidate.yml/.accounting.json, GR-08-seeds.yml) are NOT regenerated
+(pinned at 407 candidate entries / seed counts); only the active db_ownership_policy.yml and config/baselines/event_writers.json shrink.
+DirectEventDaoInsertGuardTest LEGACY_REPOSITORY entries expire 2026-11-20 (hard deadline); 75-day cap test :390 -> the two 2027-01-01
+entries need their own categories (WARRANTY_OWNER, DEBUG_ONLY) implementing owner decision Q-G3-2.
+S4 (HIGH, reviewer-strict): NotificationRepository.deleteAllNotifications (:200-203, no prod caller; kept) raw withTransaction ->
+  transactionRunner.runInTransaction + transactionLifecycleEventWriter.write(ctx.copy(occurredAt = now), BULK_DELETED); ReviewQueueRepository
+  approve :281-302 SOURCE_LINKED -> nested runner + writer (no try/catch; joins outer :224 tx; raw tx :224/:457/:634 unchanged).
+  Constructors: + DomainTransactionRunner, + TransactionLifecycleEventWriter, - TransactionEventDao (keep writeBarrier/database).
+  Tests: 5 constructor sites + new SOURCE_LINKED inserted>0 test + writer-failure rollback test. Guard shrink (Q-G3-1): event_writers.json
+  DAO/ENTITY lines for both files; db_ownership_policy.yml delete the two transactionEventDao|insert rows (:1956-1972, :2637-2665).
+  Accepted audit-content change: actor null -> "system", correlationId -> UUID, + tx* metadata keys (reviewer checks consumers).
+S5 (architecture-guardian): DirectEventDaoInsertGuardTest remove Receipt/RecurringExpense/ManualRecurring/ReviewQueue/Notification
+  entries; Warranty -> WARRANTY_OWNER, BankApiIntegration -> DEBUG_ONLY, expiry 2027-01-01; stale-entry test (LEGACY_REPOSITORY +
+  DEBUG_ONLY + WARRANTY_OWNER must still contain a guarded insert); category-aware expiry cap (legacy 75 d; the two new categories
+  max 2027-01-01). WarrantyTrackerRepository: barrier check inside try :481 before discard insert :482; catches that sit in the same
+  transaction as the warranty insert rethrow DatabaseAccessBlockedException (S1-N1 :201; also :135/:164 if same pattern) so no id of an
+  unsaved warranty is returned; :490 discard catch may stay best-effort. Tests in WarrantyTrackerRepositoryTest.
+S6: ratchet/baseline sync (shrink-only) at batch end, driven by guard results.
+Order: S4 coder -> S5 coder -> targeted queue (+ reviews in parallel, read-only) -> registered-guard db_access + known_good_state ->
+  static-guards -> app-check -> legacy-tests.
+

@@ -7,15 +7,16 @@ import com.yourname.expensetracker.data.database.dao.BlockedPackageDao
 import com.yourname.expensetracker.data.database.dao.PendingReviewDao
 import com.yourname.expensetracker.data.database.dao.RawNotificationDao
 import com.yourname.expensetracker.data.database.dao.SourceStatsDao
-import com.yourname.expensetracker.data.database.dao.TransactionEventDao
 import com.yourname.expensetracker.data.database.dao.UserCorrectionDao
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.BlockedPackage
 import com.yourname.expensetracker.data.database.entity.PendingReviewStatus
 import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.data.database.entity.SourceStats
-import com.yourname.expensetracker.data.database.entity.TransactionEvent
+import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
 import com.yourname.expensetracker.domain.transaction.LifecycleEventType
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEvent
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEventWriter
 import com.yourname.expensetracker.domain.intelligence.ClassifierStats
 import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import com.yourname.expensetracker.domain.notification.NotificationPersistenceContext
@@ -43,7 +44,8 @@ class NotificationRepository @Inject constructor(
     private val pendingReviewDao: PendingReviewDao,
     private val userCorrectionDao: UserCorrectionDao,
     private val sourceStatsDao: SourceStatsDao,
-    private val transactionEventDao: TransactionEventDao,
+    private val transactionRunner: DomainTransactionRunner,
+    private val transactionLifecycleEventWriter: TransactionLifecycleEventWriter,
     private val classifier: TransactionClassifier,
     private val pipeline: NotificationProcessingPipeline,
     private val writeBarrier: DatabaseWriteBarrier,
@@ -192,28 +194,31 @@ class NotificationRepository @Inject constructor(
      * safe for notification-specific cleanup without losing imported expense records.
      *
      * @param now Current time in epoch milliseconds (G-TIME-01). Used as the
-     *   [TransactionEvent.occurredAt] for the BULK_DELETED audit event. Callers
+     *   occurredAt of the BULK_DELETED lifecycle event (via `ctx.copy(occurredAt = now)`). Callers
      *   must pass the injected [com.yourname.expensetracker.domain.util.TimeProvider]
      *   value — this method intentionally has no hidden clock.
      */
     suspend fun deleteAllNotifications(now: Long) {
         writeBarrier.checkWritesAllowed("NotificationRepository.deleteAllNotifications")
-        database.withTransaction {
+        transactionRunner.runInTransaction(
+            correlationId = java.util.UUID.randomUUID().toString(),
+            operationId = "notification.delete_all",
+            source = "NotificationRepository.deleteAllNotifications"
+        ) { ctx ->
             // P2-PR2 (NEW-P2-006): Write BULK_DELETED TransactionEvent before mutation
-            transactionEventDao.insert(TransactionEvent(
-                expenseId = null,
-                eventType = LifecycleEventType.BULK_DELETED.name,
-                source = "SYSTEM",
-                actor = null,
-                occurredAt = now,
-                dedupeKey = null,
-                duplicateExpenseId = null,
-                beforeSnapshot = null,
-                afterSnapshot = null,
-                metadata = """{"operation":"deleteAllNotifications"}""",
-                reason = "Bulk delete all notifications, reviews, corrections, and stats",
-                correlationId = null
-            ))
+            // via the legal lifecycle writer; occurredAt stays the injected [now] (G-TIME-01).
+            transactionLifecycleEventWriter.write(
+                ctx.copy(occurredAt = now),
+                TransactionLifecycleEvent(
+                    expenseId = null,
+                    eventType = LifecycleEventType.BULK_DELETED.name,
+                    source = "SYSTEM",
+                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                        .put("operation", "deleteAllNotifications")
+                        .build(),
+                    reason = "Bulk delete all notifications, reviews, corrections, and stats"
+                )
+            )
 
             dao.deleteAll()
             pendingReviewDao.deleteAll()

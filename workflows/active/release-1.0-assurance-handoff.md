@@ -418,3 +418,13 @@ in the coverage matrix and regression ledger seed.
   vr-20261016-154702-3e58036a (253/0, no hang), static-guards 25/25 vr-20261016-154758-9c85e96c, app-check vr-20261016-160928-351117e4
   (8253 run / 0 failed). Review: privacy-security-guardian ACCEPT-WITH-NOTES (LOW fixture values fixed). Committed on release-1.0-wt.
   Follow-ups: F-R28-a..d and R28-X (export copy keeps intake ciphertext) in the findings ledger. Next: G3 part 2 (S4-S6, before 2026-11-20).
+- 2026-10-16: G3 part 2 (S4-S6) PASS at batch gate (fingerprint 4a1e5647..., rev 8671b844 + diff). S4: NotificationRepository.
+  deleteAllNotifications and ReviewQueueRepository.approveReview SOURCE_LINKED now write through DomainTransactionRunner +
+  TransactionLifecycleEventWriter (no direct TransactionEventDao.insert); event_writers baseline and 2 active db_ownership_policy rows
+  removed (count pins 429 -> 427). S5: DirectEventDaoInsertGuardTest has no LEGACY_REPOSITORY entries left; Warranty -> WARRANTY_OWNER and
+  BankApiIntegration -> DEBUG_ONLY (expiry 2027-01-01, capped, category-locked, stale-entry checked); WarrantyTrackerRepository rethrows
+  DatabaseAccessBlockedException from the AID-9 audit (no id for an unsaved warranty) and barrier-checks the discard audit. Gate:
+  app-check vr-20261016-184020-8290b11e (8261/0), static-guards 25/25 vr-20261016-191101-00e18025, legacy-tests vr-20261016-193438-d072e47e.
+  Reviews: reviewer-strict (S4) and architecture-guardian (S5) ACCEPT-WITH-NOTES. Debug cap reached (count pins). The 2026-11-20
+  DirectEventDao expiry is resolved. New finding R29 (warranty in-transaction audit failure silently rolls back while returning an id)
+  awaits owner. Speed-up protocol approved by owner (grouped gates; second worktree release-1.0-wt-b). Next: integrate B (R26-D + R26-V).

@@ -16,7 +16,11 @@ import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.data.repository.ReceiptRepository
+import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
+import com.yourname.expensetracker.data.backup.DatabaseAccessType
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleEvent
@@ -837,5 +841,142 @@ class WarrantyTrackerRepositoryTest {
         repository.updateWarranty(testWarranty)
 
         coVerify { warrantyDao.updateWarranty(testWarranty) }
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // G3 S5 — write-barrier handling for discard audit and AID-9 audit
+    // ──────────────────────────────────────────────────────────────────────────
+
+    private fun repositoryWith(
+        barrier: DatabaseWriteBarrier,
+        runner: DomainTransactionRunner
+    ) = WarrantyTrackerRepository(
+        database = database,
+        warrantyDao = warrantyDao,
+        returnWindowDao = returnWindowDao,
+        warrantyLifecycleEventDao = warrantyLifecycleEventDao,
+        receiptRepository = object : Lazy<ReceiptRepository> {
+            override fun get() = receiptRepository
+        },
+        cloudExtractionService = cloudExtractionService,
+        aiSettingsRepository = aiSettingsRepository,
+        aiPolicy = aiPolicy,
+        aiCapabilityRouter = aiCapabilityRouter,
+        timeProvider = timeProvider,
+        currencyConverter = mockk(relaxed = true),
+        currencySettingsRepository = currencySettingsRepository,
+        writeBarrier = barrier,
+        receiptLifecycleEventWriter = mockk(relaxed = true),
+        transactionRunner = runner
+    )
+
+    private fun blockedException(operation: String) = DatabaseAccessBlockedException(
+        accessType = DatabaseAccessType.WRITE,
+        operation = DatabaseAccessOperation(operation),
+        mode = RestoreMaintenanceMode.Mode.RESTORE_STAGING
+    )
+
+    private fun lowConfidenceReceiptAndResult(): Pair<ScannedReceipt, WarrantyExtractionResult> {
+        val receipt = ScannedReceipt(
+            id = 21,
+            imagePath = "/path/to/image.jpg",
+            rawOcrText = "Synthetic receipt text",
+            parsedTotal = 100.0,
+            parsedMerchant = "Synthetic Store",
+            parsedDate = 1000,
+            parsedItems = null,
+            parsedTaxAmount = null,
+            confidence = 0.95f
+        )
+        val result = WarrantyExtractionResult(
+            productName = "Synthetic Phone",
+            warrantyMonths = 12,
+            warrantyType = "MANUFACTURER",
+            supportPhone = null,
+            supportEmail = null,
+            returnDays = null,
+            returnConditions = null,
+            confidence = 0.1f
+        )
+        return receipt to result
+    }
+
+    @Test
+    fun `discard audit is skipped when write barrier denies and result is unchanged`() = runTest(timeout = 60.seconds) {
+        val (receipt, extractionResult) = lowConfidenceReceiptAndResult()
+        coEvery { cloudExtractionService.extractWarranty(any()) } returns extractionResult
+
+        // Barrier open: audit is written, result is null.
+        val openResult = repository.extractWarrantyFromReceipt(receipt)
+        assertNull(openResult)
+        coVerify(exactly = 1) {
+            warrantyLifecycleEventDao.insert(match {
+                it.eventType == WarrantyLifecycleEventTypes.AI_EXTRACTION_DISCARDED
+            })
+        }
+        clearMocks(warrantyLifecycleEventDao, answers = false)
+
+        // Barrier denied for the discard operation: no insert, same result, no exception.
+        val barrier = mockk<DatabaseWriteBarrier>(relaxed = true)
+        val discardOp = "WarrantyTrackerRepository.extractWarrantyFromReceipt.discard"
+        every { barrier.checkWritesAllowed(discardOp) } throws blockedException(discardOp)
+        val deniedRepository = repositoryWith(barrier, mockk(relaxed = true))
+
+        val deniedResult = deniedRepository.extractWarrantyFromReceipt(receipt)
+
+        assertEquals(openResult, deniedResult)
+        verify { barrier.checkWritesAllowed(discardOp) }
+        coVerify(exactly = 0) { warrantyLifecycleEventDao.insert(any()) }
+    }
+
+    @Test
+    fun `addWarrantyIgnoreConflicts propagates blocked AID-9 audit write`() = runTest(timeout = 60.seconds) {
+        val warranty = Warranty(
+            receiptId = 22,
+            productName = "Synthetic Product",
+            merchantName = "Synthetic Merchant",
+            purchaseDate = 1000,
+            warrantyDurationMonths = 12,
+            warrantyEndDate = 2000,
+            autoDetected = true,
+            createdAt = 0L,
+            updatedAt = 0L
+        )
+        coEvery { warrantyDao.insertWarrantyIgnore(any()) } returns 22L
+        val runner = mockk<DomainTransactionRunner>()
+        coEvery {
+            runner.runInTransaction<Any?>(any(), any(), any(), any(), any(), any())
+        } throws blockedException("warranty.ai_warranty_created")
+        val blockedRepository = repositoryWith(mockk(relaxed = true), runner)
+
+        val thrown = runCatching { blockedRepository.addWarrantyIgnoreConflicts(warranty) }
+
+        assertTrue(
+            "Blocked audit write must propagate instead of returning an id",
+            thrown.exceptionOrNull() is DatabaseAccessBlockedException
+        )
+    }
+
+    @Test
+    fun `addWarrantyIgnoreConflicts still returns id when AID-9 audit fails for other reasons`() = runTest(timeout = 60.seconds) {
+        val warranty = Warranty(
+            receiptId = 23,
+            productName = "Synthetic Product",
+            merchantName = "Synthetic Merchant",
+            purchaseDate = 1000,
+            warrantyDurationMonths = 12,
+            warrantyEndDate = 2000,
+            autoDetected = true,
+            createdAt = 0L,
+            updatedAt = 0L
+        )
+        coEvery { warrantyDao.insertWarrantyIgnore(any()) } returns 23L
+        val runner = mockk<DomainTransactionRunner>()
+        coEvery {
+            runner.runInTransaction<Any?>(any(), any(), any(), any(), any(), any())
+        } throws RuntimeException("Simulated audit failure")
+        val resilientRepository = repositoryWith(mockk(relaxed = true), runner)
+
+        assertEquals(23L, resilientRepository.addWarrantyIgnoreConflicts(warranty))
     }
 }
