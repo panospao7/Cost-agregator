@@ -4498,8 +4498,8 @@ class FooRepo(private val expenseDao: ExpenseDao) {
 #   * exact tuple-set equivalence between the manifest's `expected` + `fixtures`
 #     tuple set and the current structural-exception tuple set (missing/extra
 #     tuples and duplicates all fail);
-#   * the pinned structural entry count (65 — the human-authorized
-#     2026-09-28 cleanup helper adds one to the GR-08j 64) via the manifest's
+#   * the pinned structural entry count (64 — the GR-08j count; the
+#     2026-09-28 cleanup-helper +1 was reverted by R26) via the manifest's
 #     `counts` section — the manifest governs structural exceptions ONLY, so a
 #     legacy `ownership_entries` counts key is unknown-count-key metadata
 #     that fails closed as MANIFEST_INVALID (GR-04 decoupling);
@@ -4642,12 +4642,6 @@ def test_manifest_exact_tuple_equality_against_structural_yaml_passes(tmp_path, 
 def test_manifest_missing_tuple_fails_closed(tmp_path, monkeypatch):
     """A manifest tuple with no EXACT structural exception entry fails with the
     controlled MISSING_TUPLE code — and no other code fires."""
-    # The authorized cleanup helper raises the canonical count from 64 to 65:
-    # the pinned structural count is 65 (64 -> 65), and the canonical-mode
-    # count stage requires counts.structural_entries == 65 AND exactly 65
-    # current entries.  The fixture therefore carries 66 manifest tuples over
-    # a 65-entry current set, leaving exactly one manifest tuple (m65)
-    # uncovered.
     # R26: the pinned structural count is now 64; 65 manifest tuples over a
     # 64-entry current set leave exactly one tuple (m64) uncovered.
     src, path = _manifest_source_file_fixture(tmp_path, monkeypatch, n=65)
@@ -4671,9 +4665,6 @@ def test_manifest_extra_tuple_fails_closed(tmp_path, monkeypatch):
     """A structural exception tuple with no manifest coverage fails with the
     controlled EXTRA_TUPLE code — an entry added without a manifest update can
     never silently pass."""
-    # The authorized cleanup helper requires the pinned 65-entry contract
-    # (see test_manifest_missing_tuple_fails_closed): 65 current entries over
-    # a 64-tuple manifest leaves exactly one uncovered exception tuple (m64).
     # R26: 64 current entries over a 63-tuple manifest leave exactly one
     # uncovered exception tuple (m63) against the 64-pin.
     src, path = _manifest_source_file_fixture(tmp_path, monkeypatch, n=64)
@@ -4772,7 +4763,7 @@ def test_manifest_malformed_entry_fails_closed(tmp_path):
 
 
 def test_manifest_structural_count_mismatch_fails_closed(tmp_path, monkeypatch):
-    """A manifest whose counts.structural_entries drifts from the pinned 65
+    """A manifest whose counts.structural_entries drifts from the pinned 64
     contract fails with the controlled COUNT_MISMATCH code — on both the
     manifest side and the current-structural side.  Ownership cardinality is
     never part of this contract (GR-04 decoupling)."""
@@ -5023,7 +5014,7 @@ class FooRepo(private val expenseDao: ExpenseDao) {
 # ── 21. Immutable manifest classification contract ────────────────────────────
 # The structural expected-methods manifest's ``expected`` and ``fixtures``
 # sections must EXACTLY equal the immutable checked-in tuple contracts
-# (60 expected / 5 fixtures).  Moving a tuple between sections, inventing a
+# (59 expected / 5 fixtures).  Moving a tuple between sections, inventing a
 # new fixture tuple, or dropping a pinned tuple all fail with
 # MANIFEST_CLASSIFICATION_MISMATCH — a reclassified ``expected`` tuple can
 # never escape its mandatory operation evidence through the declaration-only
@@ -5031,8 +5022,8 @@ class FooRepo(private val expenseDao: ExpenseDao) {
 #
 # The checked-in contract tests below load the REAL production files through
 # the production loaders (no synthetic temp fixtures): the pinned structural
-# count (65 — one human-authorized cleanup helper added; no ownership
-# count), the exact tuple classification, and the full structural-manifest
+# count (64 — the 65 from the 2026-09-28 cleanup helper was reduced by R26;
+# no ownership count), the exact tuple classification, and the full structural-manifest
 # gate must all pass on the actual repo state.
 
 def _manifest_dict_from_tuples(expected_tuples, fixture_tuples=()):
@@ -5057,7 +5048,7 @@ def _manifest_dict_from_tuples(expected_tuples, fixture_tuples=()):
 
 
 def test_manifest_immutable_contracts_pin_exact_counts():
-    """The immutable contracts pin EXACTLY 60 expected and 5 fixture tuples,
+    """The immutable contracts pin EXACTLY 59 expected and 5 fixture tuples,
     every tuple is canonical, and the two contracts are disjoint."""
     assert MANIFEST_IMMUTABLE_EXPECTED_COUNT == 59
     assert MANIFEST_IMMUTABLE_FIXTURE_COUNT == 5
@@ -5151,7 +5142,7 @@ def test_manifest_classification_checked_in_manifest_accepted():
 def test_manifest_current_structural_yaml_tuple_set_remains_exact():
     """The CURRENT structural exceptions YAML tuple set must EXACTLY equal the
     checked-in manifest's expected+fixtures tuple set — no missing, no extra,
-    no duplicates, and exactly the pinned 65 entries."""
+    no duplicates, and exactly the pinned 64 entries."""
     structural = load_db_structural_exceptions()
     manifest = load_db_structural_expected_methods()
     current_tuples = [
@@ -5556,7 +5547,7 @@ def test_checked_in_structural_only_manifest_contract_via_production_apis():
     synthetic temp fixtures).
 
     GR-04: the manifest pins the structural count ONLY — its counts block is
-    exactly ``{structural_entries: 65}`` with no ownership cardinality.
+    exactly ``{structural_entries: 64}`` with no ownership cardinality.
 
     Activated truth (PR-GR-07 wave 2): the ACTIVE ownership policy IS the
     promoted schemaVersion-2 document.  It loads cleanly through the
@@ -6204,9 +6195,8 @@ def test_changed_operation_on_same_pattern_fails_closed(tmp_path, monkeypatch):
     swapped tuple as MISSING_TUPLE and the original tuple as EXTRA_TUPLE — an
     operation change on the same (path, class, method_pattern) is never
     silently accepted as clean."""
-    # The authorized cleanup helper requires the pinned 65-entry contract
-    # (see test_manifest_missing_tuple_fails_closed): 65 current entries and
-    # counts.structural_entries=65 keep the count stage clean so the
+    # The pinned 64-entry contract (see test_manifest_missing_tuple_fails_closed):
+    # 64 current entries and counts.structural_entries=64 keep the count stage clean so the
     # tuple-set stage is what rejects the changed operation.
     src, path = _manifest_source_file_fixture(tmp_path, monkeypatch, n=64)
     class_name = "SomeClass"

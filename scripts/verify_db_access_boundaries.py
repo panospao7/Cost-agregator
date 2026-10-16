@@ -916,7 +916,7 @@ MANIFEST_IMMUTABLE_FIXTURE_TUPLES = frozenset([
     (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "cleanupRestoreStaging", "deleteRecursively"),
 ])
 
-# Derived contract counts (60 expected / 5 fixtures).
+# Derived contract counts (59 expected / 5 fixtures).
 MANIFEST_IMMUTABLE_EXPECTED_COUNT = len(MANIFEST_IMMUTABLE_EXPECTED_TUPLES)
 MANIFEST_IMMUTABLE_FIXTURE_COUNT = len(MANIFEST_IMMUTABLE_FIXTURE_TUPLES)
 

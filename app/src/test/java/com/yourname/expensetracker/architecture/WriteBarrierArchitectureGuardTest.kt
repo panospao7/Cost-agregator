@@ -125,34 +125,18 @@ class WriteBarrierArchitectureGuardTest {
             // | Class                               | Proposed owner | Domain                        |
             // |-------------------------------------|----------------|-------------------------------|
             // | WorkerRunLogger                     | RP-16          | worker observability          |
-            // | OperationRunRecorder                | RP-16          | worker observability          |
             // | WarrantyExpirationWorker            | RP-16 area     | worker lifecycle writes       |
-            // | DiagnosticEventWriter               | RP-14 / RP-15  | privacy/diagnostics           |
             // | PrivacyAuditLoggerImpl              | RP-14 / RP-15  | privacy/diagnostics           |
-            // | RestoreJournalImporter              | RP-03          | restore journal               |
             // | ReceiptInsertResolver               | RP-12          | receipt lifecycle             |
             // | ReceiptLifecycleEventWriter         | RP-12          | receipt lifecycle             |
-            // | CsvExpenseImporter                  | RP-19          | import pipelines              |
-            // | JsonExpenseImporter                 | RP-19          | import pipelines              |
-            // | LegacyDataMigrationService          | RP-20 candidate| legacy migration              |
             // | NotificationIntakeWorker            | RP-10          | notification intake workers   |
-            // | NotificationIntakePayloadRepairer   | RP-10          | notification intake workers   |
-            // | NotificationIntakeRecoveryScheduler | RP-10          | notification intake workers   |
             // | TransactionLifecycleEventWriter     | RP-11 area     | transaction lifecycle events  |
             // | DebugExpenseAuditWriter             | RP-11 area     | transaction event audit       |
-            "LegacyDataMigrationService" to "owner=UNASSIGNED issue=U-004 expiry=2026-10-31 pre-existing debt: categoryDao.insert without barrier; triage owner required",
-            "CsvExpenseImporter" to "owner=UNASSIGNED issue=U-004 expiry=2026-10-31 pre-existing debt: categoryDao.insert without barrier; triage owner required",
-            "JsonExpenseImporter" to "owner=UNASSIGNED issue=U-004 expiry=2026-10-31 pre-existing debt: categoryDao.insert without barrier; triage owner required",
-            "RestoreJournalImporter" to "owner=UNASSIGNED issue=U-004 expiry=2026-10-31 pre-existing debt: operationRunDao/operationRunEventDao inserts without barrier (restore-path journal); triage owner required",
             "ReceiptInsertResolver" to "owner=UNASSIGNED issue=U-004 expiry=2026-10-31 pre-existing debt: scannedReceiptDao.insert without barrier; triage owner required",
             "DebugExpenseAuditWriter" to "owner=UNASSIGNED issue=U-004 expiry=2026-10-31 pre-existing debt: transactionEventDao.insert without barrier; triage owner required",
             "NotificationIntakeWorker" to "owner=UNASSIGNED issue=U-004 expiry=2026-10-31 alias-detected: intakeDao claim/mark/purge state writes without barrier; triage owner required",
-            "NotificationIntakePayloadRepairer" to "owner=UNASSIGNED issue=U-004 expiry=2026-10-31 alias-detected: intakeDao payload purge/encrypt writes without barrier; triage owner required",
-            "NotificationIntakeRecoveryScheduler" to "owner=UNASSIGNED issue=U-004 expiry=2026-10-31 alias-detected: intakeDao.releaseStaleProcessing without barrier; triage owner required",
             "WarrantyExpirationWorker" to "owner=UNASSIGNED issue=U-004 expiry=2026-10-31 alias-detected: deliveryDao delivery lifecycle writes without barrier; triage owner required",
             "WorkerRunLogger" to "owner=UNASSIGNED issue=U-004 expiry=2026-10-31 alias-detected: backgroundJobRunDao insert/terminal writes without barrier; triage owner required",
-            "DiagnosticEventWriter" to "owner=UNASSIGNED issue=U-004 expiry=2026-10-31 alias-detected: RoomDiagnosticEventWriter pipelineDiagnosticEventDao.insert without barrier; triage owner required",
-            "OperationRunRecorder" to "owner=UNASSIGNED issue=U-004 expiry=2026-10-31 alias-detected: runDao/eventDao operation-run writes without barrier; triage owner required",
             "PrivacyAuditLoggerImpl" to "owner=UNASSIGNED issue=U-004 expiry=2026-10-31 alias-detected: privacyAuditDao.insert without barrier; triage owner required",
             "ReceiptLifecycleEventWriter" to "owner=UNASSIGNED issue=U-004 expiry=2026-10-31 alias-detected: receiptEventDao.insert event boundary without barrier; triage owner required",
             "TransactionLifecycleEventWriter" to "owner=UNASSIGNED issue=U-004 expiry=2026-10-31 alias-detected: transactionEventDao.insert event boundary without barrier; triage owner required"

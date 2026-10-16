@@ -672,3 +672,38 @@ removal in manifest; privacy settings in backups.
   catch(Throwable) :46 swallows CE (follow-up).
 - Lead reading of owner approval: Q-D1 = {NOTIFICATION_CAPTURE} only (as described to owner). Q-V1 and process-death loss -> asked.
 
+
+## 26. G3 + G2b plan (release-planner, read-only, 2026-10-16; base 88382c4c + G2 diff)
+Decision: no new reason code; CompositePrivacyGate :72-85 maps any audit-write exception (incl. DatabaseAccessBlockedException) to
+FailClosed(PRIVACY_AUDIT_WRITE_FAILED); WorkerExecutionGuard :169/:356 retries; NotificationCaptureGate :163 blocks before :233 in
+maintenance. PRIVACY_AUDIT_WRITE_BLOCKED dropped.
+S1 (before 10-31) barrier: ReceiptInsertResolver :18-19/:32, DebugExpenseAuditWriter :20-23/:29/:58, ReceiptLifecycleEventWriter
+  :42/:49, TransactionLifecycleEventWriter :41/:48; post-commit path no change (CompositeSideEffectEventWriter :57-63 swallows non-CE).
+  Tests: new LifecycleWritersWriteBarrierTest; TransactionSideEffectFailureEventWriterTest case; constructor fixes
+  ReceiptDuplicateFingerprintCollisionTest, ReceiptPartialOcrPipelineTest. Risk M: callers in non-NORMAL mode (startup recovery) —
+  coder greps first.
+S2 (before 10-31) PrivacyAuditLoggerImpl barrier :14-17/:51; DBRI exportDatabase: settings read :408-409 + privacy checks :413-433
+  moved before enterAndDrain :391. G2b: restore pre-swap abort finalizeRunFailed after exitAfterPreDestructiveAbort() at :1023, :1054,
+  :1077, :1102, :1134, :1154, :1174, :1187; reset :2878, :2977; legacy import swap failedFinal/exit(false) at :1874, 1880, 1886, 1898,
+  1906, 1920, 1957, 1968, :2120 (:2093 only if destinationFilesMutated provably false). Post-swap: keep journal + safe sink, never write
+  old run id; no non-bank stale sweep for 1.0 (R27/post-1.0). Tests: CompositePrivacyGateTest, PrivacyGateEnforcementGoldenTest
+  constructor, DatabaseBackupRepositoryImplTest (privacy before maintenance; finalize-after-exit restore/import/reset).
+S3 (before 10-31) COVERED_BY_CALLER category in WriteBarrierArchitectureGuardTest: remove 8 U-004 entries + table; map with mechanism
+  (WORKER_CHECKPOINT / SOLE_CALLER_GUARDED), justification, evidence; hygiene (cap 3, no overlap, non-blank, evidence exists);
+  fixtures; KDoc :36-38. WarrantyExpirationWorker ctx.checkpoint before :138. NotificationIntakeWorker only if gap found.
+  Test WarrantyExpirationWorkerTest. Reviewer architecture-guardian.
+S4 (before 11-20, HIGH) NotificationRepository :201 withTransaction -> DomainTransactionRunner; ReviewQueueRepository.approveReview
+  :281 event write in nested runner call inside the raw :224 transaction. Tests: NotificationRepositoryDeleteAllNotificationsClockTest,
+  NotificationRepositoryStressTest, ReviewQueueRepositoryTest, ReviewQueueRepositoryNestedRollbackTest, ReviewQueueRepositoryStressTest.
+  Guard effects: event_writers.json stale keys; db_ownership_policy.signatures.accounting.json TransactionEventDao|insert keys ->
+  regenerate. Reviewer reviewer-strict.
+S5 (before 11-20, after S4) DirectEventDaoInsertGuardTest: remove ReceiptRepository, RecurringExpenseRepository,
+  ManualRecurringExpenseRepository, ReviewQueueRepository, NotificationRepository; reclassify WarrantyTrackerRepository (warranty owner,
+  LEGAL_PATHS :564) and BankApiIntegration (DEBUG_ONLY; requireStubMode :874-875; barrier :369 before :377); stale-entry test (legacy +
+  debug-only only). Warranty :432 cannot be private (6 test callers) -> barrier inside try :481 before :482 + test.
+S6 ratchet sync (shrink-only) at batch end.
+Validation: targeted per slice + WorkerExecutionGuardTest, PrivacyGateContractTest, WorkerRunLoggerTest,
+  NotificationIntakeWorkerTimeoutTest, TransactionContextProvenanceGuardTest, WriteBarrierArchitectureGuardTest,
+  DirectEventDaoInsertGuardTest; after S4 registered-guard db_access + known_good_state; batch end static-guards, app-check, legacy-tests.
+Owner questions: (Q-G3-1) pre-approve shrink-only guard/baseline edits (event_writers keys, db_ownership_policy regeneration for the
+  2 removed writes + count pins, cancellation.json decreases); (Q-G3-2) expiry for the 2 reclassified DirectEventDao entries.

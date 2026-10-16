@@ -54,7 +54,8 @@ class BankSyncStartupRecoveryTest {
             sanitizer = mockk(relaxed = true),
             timeProvider = timeProvider,
             safeSink = mockk(relaxed = true),
-            restoreMaintenanceMode = mockk(relaxed = true)
+            restoreMaintenanceMode = mockk(relaxed = true),
+            writeBarrier = writeBarrier
         )
         coEvery { bankStatementImportRunDao.markStaleFailed(any(), any(), any(), any()) } returns 1
         recovery = BankSyncStartupRecovery(

@@ -654,6 +654,10 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             )
         }
 
+        // G2: the write barrier blocks Room run finalization while BACKUP_EXPORTING is active, so
+        // terminal run calls made inside the maintenance window are captured here and replayed
+        // after restoreMaintenanceMode.exit() in the finally below.
+        val deferredTerminal = DeferredRunTerminal()
         try {
             // P1-05: Enter backup maintenance mode + drain workers for point-in-time consistency
             maintenanceOperationRunner.enterAndDrain(RestoreMaintenanceMode.Mode.BACKUP_EXPORTING,
@@ -668,7 +672,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 // DDL-512-12: finalize operation run for early failures
                 run.event("WAL_CHECKPOINTED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
                     reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.UNKNOWN_ERROR)
-                run.failedFinal("WAL checkpoint failed", checkpointResult.exceptionOrNull())
+                deferredTerminal.defer { run.failedFinal("WAL checkpoint failed", checkpointResult.exceptionOrNull()) }
                 return@withContext Result.failure(
                     checkpointResult.exceptionOrNull() ?: Exception("Failed to checkpoint WAL")
                 )
@@ -699,7 +703,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 // DDL-512-12: finalize operation run
                 run.event("DATABASE_FILE_FOUND", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
                     reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.UNKNOWN_ERROR)
-                run.failedFinal("Database file not found")
+                deferredTerminal.defer { run.failedFinal("Database file not found") }
                 return@withContext Result.failure(Exception("Database file not found"))
             }
 
@@ -752,7 +756,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     // snapshotDb is closed by the finally below.
                     run.event("SNAPSHOT_VERIFIED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
                         reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.VALIDATION_FAILED)
-                    run.failedFinal("Required table count query failed", e)
+                    deferredTerminal.defer { run.failedFinal("Required table count query failed", e) }
                     return@withContext Result.failure(e)
                 } finally {
                     runCatching { snapshotDb.close() }
@@ -764,7 +768,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     // DDL-512-12: finalize operation run for snapshot verification failure
                     run.event("SNAPSHOT_VERIFIED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
                         reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.VALIDATION_FAILED)
-                    run.failedFinal("Backup snapshot verification failed")
+                    deferredTerminal.defer { run.failedFinal("Backup snapshot verification failed") }
                     return@withContext Result.failure(
                         Exception("Backup snapshot verification failed: ${snapshotVerification.errors.joinToString("; ")}")
                     )
@@ -790,7 +794,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 val result = writeBundle(snapshot)
 
                 if (result.isFailure) {
-                    run.failedFinal("Bundle creation failed", result.exceptionOrNull())
+                    deferredTerminal.defer { run.failedFinal("Bundle creation failed", result.exceptionOrNull()) }
                     return@withContext Result.failure(
                         result.exceptionOrNull() ?: Exception("Failed to create .costbackup bundle")
                     )
@@ -799,7 +803,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 run.event("ENCRYPTED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED)
                 Timber.d("Created .costbackup bundle")
                 Timber.d("BackupOperationEvent.BACKUP_COMPLETED: backup finished successfully")
-                run.success()
+                deferredTerminal.defer { run.success() }
                 result
             } finally {
                 tempDb.delete()
@@ -807,10 +811,13 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e("Backup: UNKNOWN_ERROR stage=bundle_export class=%s", e::class.java.simpleName)
-            run.failedFinal("BACKUP_EXPORT_FAILED", e)
+            deferredTerminal.defer { run.failedFinal("BACKUP_EXPORT_FAILED", e) }
             Result.failure(e)
         } finally {
             runCatching { restoreMaintenanceMode.exit(forceRestartRequired = false) }
+            // G2: the barrier is released; now finalize the run row. Runs even if exit() failed
+            // (runCatching above) and on cancellation (flush is NonCancellable and never throws).
+            deferredTerminal.flush()
         }
     }
 
@@ -3063,6 +3070,27 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         }
 
         return Result.failure(Exception("Failed to checkpoint WAL"))
+    }
+}
+
+/**
+ * G2: captures the first terminal run call made inside the BACKUP_EXPORTING maintenance
+ * window (where the write barrier blocks Room finalization) and replays it once via [flush]
+ * after the window is exited. If nothing was captured (e.g. cancellation) [flush] is a no-op.
+ */
+private class DeferredRunTerminal {
+    private var pending: (suspend () -> Unit)? = null
+
+    fun defer(terminal: suspend () -> Unit) {
+        if (pending == null) pending = terminal
+    }
+
+    suspend fun flush() {
+        val terminal = pending ?: return
+        pending = null
+        withContext(kotlinx.coroutines.NonCancellable) {
+            com.yourname.expensetracker.domain.util.CancellationSafe.runCatchingCancellable { terminal() }
+        }
     }
 }
 

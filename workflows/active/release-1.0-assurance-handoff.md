@@ -390,3 +390,11 @@ in the coverage matrix and regression ledger seed.
   R26 reached the 2-debug-iteration cap. Committed on release-1.0-wt. Next: G2 (deadline 2026-10-31).
   Branch note: release-1.0-remediation in the main folder gained owner commits e5a2f0e7 and 7da9fcae, so the final move to
   release-1.0-wt is not a fast-forward any more; the owner decides merge vs rebase at the end.
+- 2026-10-16: G2 PASS at batch gate (fingerprint ab8993a6..., rev 88382c4c + diff): 8 U-004 WriteBarrier allowlist entries removed
+  (6 already fixed + RoomDiagnosticEventWriter and RoomOperationRunRecorder now check the barrier); backup export finalizes its run
+  after maintenance exit (DeferredRunTerminal); blocked finalize -> bounded safe-sink terminal record; owner-approved cancellation
+  baseline shrink (OperationRunRecorder G-CANCEL-03 3 -> 1). Gate: static-guards 25/25 vr-20261016-115803-6d009c7e, app-check
+  vr-20261016-122027-364680e6 (0 failed), legacy-tests vr-20261016-125302-b26c6ac6 (253/0). Reviews: architecture-guardian REJECT
+  then ACCEPT-WITH-NOTES. Debug cap reached (compile fix; baseline shrink by owner decision). Committed on release-1.0-wt.
+  Open: restore/import/reset run rows stay RUNNING (fixed in G3 S2); legacy-tests does not exercise HANG-001..003, so the
+  2026-11-01 hanging-ledger review deadline is still open. Next: G3 (plan section 26; owner decisions Q-G3-1/2 recorded).

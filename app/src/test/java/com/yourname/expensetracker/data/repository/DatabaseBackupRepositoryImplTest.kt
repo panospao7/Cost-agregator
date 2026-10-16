@@ -414,6 +414,63 @@ class DatabaseBackupRepositoryImplTest {
         )
     }
 
+    @Test
+    fun `successful export finalizes the run only after maintenance exit`() = runTest(testDispatcher) {
+        createFullSchemaDatabase(file = dbFile)
+        every { context.cacheDir } returns File(tempDir, "cache").apply { mkdirs() }
+        val callLog = mutableListOf<String>()
+        val operationRun = mockk<OperationRunHandle>(relaxed = true)
+        coEvery { operationRun.success() } coAnswers { callLog.add("success"); Unit }
+        val operationRecorder = mockk<OperationRunRecorder>(relaxed = true)
+        coEvery { operationRecorder.start(any(), any(), any()) } returns operationRun
+        every { mockRestoreMaintenanceMode.exit(forceRestartRequired = false) } answers { callLog.add("exit"); Unit }
+
+        val repo = createRepository(
+            encryptionService = BackupEncryptionService(),
+            operationRunRecorder = operationRecorder
+        )
+        val result = repo.createCostBackup(
+            password = "deferred_success_password",
+            includeReceiptImages = false,
+            redacted = true,
+            privacyMode = null
+        )
+
+        assertTrue(result.isSuccess)
+        assertEquals(listOf("exit", "success"), callLog)
+        coVerify(exactly = 1) { operationRun.success() }
+        coVerify(exactly = 0) { operationRun.failedFinal(any(), any()) }
+    }
+
+    @Test
+    fun `in window failure finalizes the run as failed only after maintenance exit`() = runTest(testDispatcher) {
+        createFullSchemaDatabase(file = dbFile)
+        every { context.cacheDir } returns File(tempDir, "cache").apply { mkdirs() }
+        every { supportDb.query("PRAGMA wal_checkpoint(TRUNCATE)") } answers { checkpointCursor(busyCode = 1) }
+        val callLog = mutableListOf<String>()
+        val operationRun = mockk<OperationRunHandle>(relaxed = true)
+        coEvery { operationRun.failedFinal(any(), any()) } coAnswers { callLog.add("failedFinal"); Unit }
+        val operationRecorder = mockk<OperationRunRecorder>(relaxed = true)
+        coEvery { operationRecorder.start(any(), any(), any()) } returns operationRun
+        every { mockRestoreMaintenanceMode.exit(forceRestartRequired = false) } answers { callLog.add("exit"); Unit }
+
+        val repo = createRepository(
+            encryptionService = BackupEncryptionService(),
+            operationRunRecorder = operationRecorder
+        )
+        val result = repo.createCostBackup(
+            password = "deferred_failure_password",
+            includeReceiptImages = false,
+            redacted = true,
+            privacyMode = null
+        )
+
+        assertTrue(result.isFailure)
+        assertEquals(listOf("exit", "failedFinal"), callLog)
+        coVerify(exactly = 1) { operationRun.failedFinal("WAL checkpoint failed", any()) }
+        coVerify(exactly = 0) { operationRun.success() }
+    }
+
     private fun assertNoExportSideEffects(resolver: ContentResolver, cacheDir: File) {
         verify(exactly = 0) { mockRestoreMaintenanceMode.enter(any()) }
         verify(exactly = 0) { mockRestoreMaintenanceMode.exit(any()) }

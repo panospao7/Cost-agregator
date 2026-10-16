@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.diagnostics
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.PipelineDiagnosticEventDao
 import com.yourname.expensetracker.data.database.entity.PipelineDiagnosticEvent
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -35,10 +36,14 @@ interface DiagnosticEventWriter {
 class RoomDiagnosticEventWriter @Inject constructor(
     private val dao: PipelineDiagnosticEventDao,
     private val sanitizer: EventMetadataSanitizer,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val writeBarrier: DatabaseWriteBarrier
 ) : DiagnosticEventWriter {
 
     override suspend fun emit(event: DiagnosticEvent) {
+        // U-004: Room diagnostics are a regular DB write. When the barrier denies, this throws
+        // DatabaseAccessBlockedException; CompositeDiagnosticEventWriter routes that to the safe sink.
+        writeBarrier.checkWritesAllowed("DiagnosticEventWriter.emit")
         val safeMetadataJson = sanitizer.sanitizeJsonString(
             if (event.metadata.isEmpty()) null else event.metadata.toJson()
         )

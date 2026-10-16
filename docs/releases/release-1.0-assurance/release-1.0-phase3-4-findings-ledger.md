@@ -663,3 +663,72 @@
   scripts/test_verify_db_access_boundaries.py (:4501, 4646-4649, 4674, 4775, 5026, 5060, 5154, 5559, 6207-6209) and
   scripts/verify_db_access_boundaries.py:919.
 - R26 core COMMITTED on release-1.0-wt.
+## G2 (owner-approved; deadline 2026-10-31)
+- Coder (release-remediation-coder, ~69 tool uses vs budget 45 — overrun, disclosed; reported complete): RoomDiagnosticEventWriter +
+  RoomOperationRunRecorder (start/event/increment/finalize) check DatabaseWriteBarrier; 8 U-004 entries removed (6 already fixed,
+  confirmed by file:line, + 2 fixed now); 8 G3 entries untouched; BankSyncStartupRecoveryTest constructor; new
+  DiagnosticWritersWriteBarrierTest; comment-only 64/59 sync in the two db-access scripts. Behaviour note: blocked finalize during
+  maintenance leaves a Room run row RUNNING (was: write landed during maintenance). P3: allowlist comment table (:125-142) still lists
+  removed classes.
+- Dispatched in parallel: architecture-guardian review (read-only) + validation-runner targeted queue (5 filters).
+- G2 review (architecture-guardian): REJECT as-is. (1) coverage PASS for all 8 removed entries (file:line listed in its report);
+  (2) barrier-failure handling PASS (composites rethrow CE, safe sink/handle fallback; runCatchingCancellable rethrows CE
+  CancellationSafe.kt:34; only constructors: BankSyncStartupRecoveryTest :51 + new test; DiagnosticsModule :57 @Binds);
+  (3) REGRESSION: DBRI :802 run.success() (and failedFinal :671/:702/:755/:767/:793/:810) execute inside BACKUP_EXPORTING (exit at
+  :813) -> with the new finalize barrier check every backup leaves its operation_runs row RUNNING forever (stale sweep bank-only
+  :103; retention skips RUNNING OperationRunDao :96/:105; terminal outcome only in Timber :305). Visible only in debug lookup.
+  In-window events now go to the safe sink as WARNING operation_event_write_failed. (4) Python comment-only PASS. (5) new test
+  likely compiles but :229-239 locks in the lost terminal outcome. (6) comment table :125-142 should be updated.
+- Lead decision (debug iteration 1 of 2, within approved G2 scope): fix in-batch rather than accept the residual:
+  (a) Handle.finalizeNonCancellable: blocked finalize -> terminal record to the safe sink (bounded fields); (b) DBRI export defers
+  terminal run calls until after maintenance exit; (c) test asserts the safe-sink terminal record; (d) comment table update.
+  Edits wait for the running targeted queue (vr-20261016-110045-ba53b8dd ...) to finish.
+- G2 targeted queue (fingerprint 3df69f75..., pre-fix): DiagnosticWritersWriteBarrierTest PASS 13 (vr-20261016-110045-ba53b8dd),
+  WriteBarrierArchitectureGuardTest PASS 16 (vr-...111132-a0ba6e20), BankSyncStartupRecoveryTest PASS 10 (vr-...111413-394c88e7);
+  *CompositeDiagnosticEventWriter* (vr-...111455-42200882) and *OperationRunRecorder* (vr-...111536-c1dc9b78) = NO_TESTS (lead
+  filter error: no such test classes exist) -> not PASS, not counted. Superseded by the review fix anyway.
+- G2 fix (coder, 32 calls, complete): (a) finalize failure -> safe-sink terminal record operation_finalize_failed (operationType +
+  terminalStatus only); (b) DBRI DeferredRunTerminal: 7 in-window terminal calls deferred, flushed after exit in finally; preflight
+  calls direct; (c) DatabaseBackupRepositoryImplTest +2 ordering tests, DiagnosticWritersWriteBarrierTest asserts safe-sink record;
+  (d) guard comment table rows removed. Lead edit: flush uses CancellationSafe.runCatchingCancellable instead of bare runCatching
+  (cancellation-guard ratchet safety).
+- Dispatched: architecture-guardian re-review (iteration 2 of 2, final) + validation queue: 4 targeted -> static-guards -> app-check
+  -> legacy-tests.
+- G2 re-review (architecture-guardian, iteration 2, final): ACCEPT-WITH-NOTES. Regression closed (all 7 in-window terminal calls
+  deferred, flush once after exit incl. exit failure; CE unchanged; safe-sink record bounded, DataStoreMaintenanceSafeDiagnosticSink
+  :127-130 stores class simple name + sanitized message as existing event() fallback; guards not tripped: runCatchingCancellable not
+  matched by CancellationSafetyArchitectureGuardTest :282, verify_db_access_boundaries :866-867 untouched; ordering tests meaningful).
+  Notes: (N1) restore :1023-1187, legacy import :1874-1969/:2093/:2120, reset :2878/:2977 FAILED_FINAL finalizes inside maintenance
+  are now blocked -> Room row stays RUNNING (outcome kept in safe sink via (a)); previously they wrote during maintenance (and, for
+  restore, possibly against the swapped DB). Lead: accepted as known residual (debug lookup only); follow-up G2b = same deferral in
+  those paths or a non-bank stale-run sweep, bundled with G3/R27. (N2) DiagnosticWritersWriteBarrierTest :252 JSONObject.keySet()
+  compile risk (android.jar org.json) -> fix only if the run fails. (N3) first-deferred-wins after success + tempDb.delete throw
+  (negligible). (N4) exit()-throws and catch-all paths untested (P3).
+- G2 queue run 1 STOPPED: *DiagnosticWritersWriteBarrierTest FAIL vr-20261016-111905-31f02de5 (compile: :252 Unresolved reference
+  keySet, as review N2 predicted; 0 tests executed). DEBUG ITERATION 2 of 2 (lead, test-only): json.keySet() ->
+  json.keys().asSequence().toSet() (repo pattern). Full queue re-dispatched. A further failure -> G2 PARTIAL to owner.
+- G2 queue run 2 (fingerprint 7c54e440..., start=end): targeted DiagnosticWritersWriteBarrierTest PASS 13 (vr-20261016-112319-8f2787c6),
+  DatabaseBackupRepositoryImplTest PASS 83 (vr-...112559-4b702047), WriteBarrierArchitectureGuardTest PASS 16 (vr-...112709-40996cd3),
+  BankSyncStartupRecoveryTest PASS 10 (vr-...112951-e47bc389); static-guards FAIL 24/25 (vr-20261016-113033-7c2ff311): cancellation
+  ratchet "DECREASED -- 2 findings resolved" (G-CANCEL-03 OperationRunRecorder.kt; config/baselines/cancellation.json :101 count 3,
+  current 1); the ratchet exits 1 on stale/resolved baseline entries (guard_ratchet.py :9-10). Cause: G-CANCEL-03 heuristic
+  (verify_cancellation_boundaries.py :410-441, 15-line safe-pattern window) now sees the new CancellationSafe.runCatchingCancellable
+  fallback near the finalize .onFailure lines; those plain runCatching blocks run under withContext(NonCancellable), so no real
+  cancellation swallow is hidden. app-check + legacy-tests NOT run.
+- G2 at 2-debug-iteration cap -> HANDED BACK PARTIAL to owner. Recommendation: shrink config/baselines/cancellation.json
+  occurrence count for "G-CANCEL-03 .../OperationRunRecorder.kt" 3 -> 1 (tightening only; no growth, no logic/date change),
+  then rerun static-guards -> app-check -> legacy-tests.
+- 2026-10-16 OWNER: "i say yes continue" -> APPROVED: cancellation baseline shrink. Applied: config/baselines/cancellation.json :101
+  "G-CANCEL-03 .../OperationRunRecorder.kt" 3 -> 1 (no other change; no test pins the total). Queue: static-guards -> app-check ->
+  legacy-tests.
+- G3 plan persisted (plan section 26, release-planner read-only). 2026-10-16 OWNER: "do your reccomendations" -> APPROVED:
+  (Q-G3-1) shrink-only guard/baseline edits pre-approved for G3 (remove entries, lower counts, regenerate
+  db_ownership_policy signatures to match code); any addition/loosening/date change still goes to the owner.
+  (Q-G3-2) the 2 reclassified DirectEventDao entries (WarrantyTrackerRepository, BankApiIntegration) get expiry 2027-01-01 in line
+  with the existing owner entries. PRIVACY_AUDIT_WRITE_BLOCKED dropped (existing PRIVACY_AUDIT_WRITE_FAILED covers it).
+- G2 BATCH GATE (fingerprint ab8993a6..., start=end, rev 88382c4c + G2 diff): static-guards PASS 25/25 (vr-20261016-115803-6d009c7e);
+  app-check PASS (vr-20261016-122027-364680e6, 1919 s; debug+release 15847 passed / 0 failed / 555 skipped total = 16402, +32 vs R26
+  i.e. 16 new tests per variant; lint via baseline, 1 stale baseline entry); legacy-tests PASS (vr-20261016-125302-b26c6ac6, 253/0/1).
+  NOTE: the legacy-tests profile does NOT run HANG-001..003, so it gives no HANG ledger evidence; the 2026-11-01 runner
+  E_HANGING_LEDGER_REVIEW_OVERDUE (legacy-tests profile only) remains open -> needs a ledger review decision before 11-01 (follow-up).
+- G2 COMMITTED on release-1.0-wt.
