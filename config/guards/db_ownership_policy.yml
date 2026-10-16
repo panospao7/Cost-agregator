@@ -3187,7 +3187,7 @@ entries:
   operation: insert
   barrierMode: helper
   reason: 'GR-08e2 EXACT_POLICY: WARRANTY_CREATED provenance event after the insert,
-    inside the addWarranty transaction (cancellation-safe best-effort write); accessor
+    inside the addWarranty transaction (fail-closed in-transaction write, R29); accessor
     normalized to the injected warrantyLifecycleEventDao constructor property by the
     GR-08e source change (was database-chained)'
   owner: '@panospao7'
@@ -3221,7 +3221,7 @@ entries:
   barrierMode: helper
   reason: 'GR-08e2 EXACT_POLICY: WARRANTY_CREATED provenance event written only when
     the conflict-safe insert actually inserted a row, inside the addWarrantyIgnoreConflicts
-    transaction (cancellation-safe best-effort write); accessor normalized to the
+    transaction (fail-closed in-transaction write, R29); accessor normalized to the
     injected warrantyLifecycleEventDao constructor property by the GR-08e source change
     (was database-chained)'
   owner: '@panospao7'
@@ -3284,7 +3284,7 @@ entries:
   operation: insert
   barrierMode: helper
   reason: 'GR-08e2 EXACT_POLICY: CLAIMED provenance event after the status update,
-    inside the markWarrantyAsClaimed transaction (cancellation-safe best-effort write);
+    inside the markWarrantyAsClaimed transaction (fail-closed in-transaction write, R29);
     accessor normalized to the injected warrantyLifecycleEventDao constructor property
     by the GR-08e source change (was database-chained)'
   owner: '@panospao7'
@@ -3378,7 +3378,7 @@ entries:
   operation: insert
   barrierMode: helper
   reason: 'GR-08e2 EXACT_POLICY: AI_EXTRACTION_DISCARDED provenance event inside the
-    S12-009 atomic-reject transaction (cancellation-safe best-effort write); accessor
+    S12-009 atomic-reject transaction (fail-closed in-transaction write, R29); accessor
     normalized to the injected warrantyLifecycleEventDao constructor property by the
     GR-08e source change (was database-chained)'
   owner: '@panospao7'

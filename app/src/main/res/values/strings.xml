@@ -1522,6 +1522,7 @@
     
     <!-- Warranty Tracker -->
     <string name="screen_warranty_tracker">Warranty Tracker</string>
+    <string name="warranty_mutation_failed">Couldn\'t save the change. Please try again.</string>
     <string name="warranty_summary_active">Active</string>
     <string name="warranty_summary_expiring">Expiring Soon</string>
     <string name="warranty_summary_protected_value">Protected Value</string>

@@ -438,3 +438,10 @@ in the coverage matrix and regression ledger seed.
   vr-20261016-204120-e7c93afc (8296/0), static-guards 25/25 vr-20261016-212445-c9eeb61f, legacy-tests vr-20261016-214738-79bca026.
   Reviews: privacy-security-guardian (R26-D) and reviewer-strict (R26-V) ACCEPT-WITH-NOTES, notes fixed. Owner: standing approval for
   lead recommendations (limits in ledger); R27 decisions Q-R27-1..5 and R29 approved. Next: R29 gate (worktree A), R27 (worktree B), R21.
+- 2026-10-17: R29 PASS (fingerprint 0113c26c..., rev e008470c + diff). WarrantyTrackerRepository in-transaction event/audit writes fail
+  closed (addWarranty, addWarrantyIgnoreConflicts incl. AID-9, rejectAutoDetectedWarranty, markWarrantyAsClaimed): a failed nested
+  transaction no longer silently rolls back while returning success; background callers map it to bounded failure/retry;
+  WarrantyTrackerViewModel catches mutation failures (CancellationException rethrown) and shows a bounded string (en/el/es) via a new
+  snackbar; real-Room WarrantyTrackerRepositoryTransactionTest. Gate: static-guards 25/25 vr-20261016-214931-8093c15b, app-check
+  vr-20261016-221153-1c7cc08b (8316/0), legacy-tests vr-20261016-224514-bf121686. Review: reviewer-strict ACCEPT-WITH-NOTES (fixed).
+  Next: R27 group (worktree B) incl. R30 (pipeline auto-accept event fail-closed).

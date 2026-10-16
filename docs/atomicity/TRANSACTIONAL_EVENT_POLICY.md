@@ -495,10 +495,16 @@ The following are accepted as non-blocking for MIT closure:
    reminder delivery regeneration is non-critical; skipped windows are logged.
    Full all-or-nothing atomicity is deferred to MIT-043B (post MIT-033).
 
-3. **Warranty lifecycle events** — WarrantyTrackerRepository writes warranty events
-   as best-effort (try/catch with CE rethrow, Timber on failure). Warranty events
-   are classified as non-critical lifecycle events — state correctness is preserved
-   even if an event write fails. This is accepted product policy.
+3. **Warranty lifecycle events** — WarrantyTrackerRepository event/audit writes made
+   INSIDE a `database.withTransaction` (addWarranty, addWarrantyIgnoreConflicts incl.
+   the AID-9 audit, rejectAutoDetectedWarranty, markWarrantyAsClaimed) fail closed (R29):
+   a failure rolls back the whole operation and surfaces to the caller as a failure
+   (background callers map it to a bounded failure / retryable result; the warranty UI shows a bounded error message). Swallowing such a failure
+   is unsafe on Android because a failed nested transaction marks the outer
+   transaction as failed, so the outer `withTransaction` silently rolls back while the
+   method would still return the warranty id. Event/audit writes OUTSIDE any
+   transaction (updateWarranty, deleteWarranty, reconcileExpiredItems, the discard audit
+   in extraction) remain best-effort (try/catch with CE rethrow, Timber on failure).
 
 4. **MIT-043 DB uniqueness** — `linkedExpenseId` uniqueness depends on MIT-033 
    (schema constraints). Until MIT-033 lands, duplicate fulfillment remains 

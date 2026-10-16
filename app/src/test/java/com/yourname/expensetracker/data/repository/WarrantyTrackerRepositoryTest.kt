@@ -804,7 +804,7 @@ class WarrantyTrackerRepositoryTest {
     // ──────────────────────────────────────────────────────────────────────────
 
     @Test
-    fun `addWarranty_lifecycleEventFailure_doesNotFailPrimaryTransaction`() = runTest(timeout = 60.seconds) {
+    fun `addWarranty_lifecycleEventFailure_propagatesAndFailsTransaction`() = runTest(timeout = 60.seconds) {
         val testWarranty = Warranty(
             receiptId = 4,
             productName = "Test Product",
@@ -818,10 +818,16 @@ class WarrantyTrackerRepositoryTest {
         coEvery { warrantyDao.insertWarranty(any()) } returns 4L
         coEvery { warrantyLifecycleEventDao.insert(any()) } throws RuntimeException("Simulated DB failure")
 
-        val result = repository.addWarranty(testWarranty)
+        // R29: fail closed. An in-transaction event failure must not be swallowed
+        // (Android nested-transaction semantics would silently roll back the warranty).
+        val thrown = runCatching { repository.addWarranty(testWarranty) }
 
         coVerify { warrantyDao.insertWarranty(any()) }
-        assertEquals(4L, result)
+        assertEquals(
+            "Event write failure must propagate",
+            "Simulated DB failure",
+            thrown.exceptionOrNull()?.message
+        )
     }
 
     @Test
@@ -958,7 +964,7 @@ class WarrantyTrackerRepositoryTest {
     }
 
     @Test
-    fun `addWarrantyIgnoreConflicts still returns id when AID-9 audit fails for other reasons`() = runTest(timeout = 60.seconds) {
+    fun `addWarrantyIgnoreConflicts propagates AID-9 audit failure for other reasons`() = runTest(timeout = 60.seconds) {
         val warranty = Warranty(
             receiptId = 23,
             productName = "Synthetic Product",
@@ -975,8 +981,36 @@ class WarrantyTrackerRepositoryTest {
         coEvery {
             runner.runInTransaction<Any?>(any(), any(), any(), any(), any(), any())
         } throws RuntimeException("Simulated audit failure")
-        val resilientRepository = repositoryWith(mockk(relaxed = true), runner)
+        val failClosedRepository = repositoryWith(mockk(relaxed = true), runner)
 
-        assertEquals(23L, resilientRepository.addWarrantyIgnoreConflicts(warranty))
+        // R29: fail closed. The audit failure must surface (and roll back the insert),
+        // not return the id of an unsaved warranty.
+        val thrown = runCatching { failClosedRepository.addWarrantyIgnoreConflicts(warranty) }
+
+        assertEquals(
+            "AID-9 audit failure must propagate instead of returning an id",
+            "Simulated audit failure",
+            thrown.exceptionOrNull()?.message
+        )
+    }
+
+    @Test
+    fun `addWarrantyIgnoreConflicts propagates CREATED event failure`() = runTest(timeout = 60.seconds) {
+        val warranty = Warranty(
+            receiptId = 24,
+            productName = "Synthetic Product",
+            merchantName = "Synthetic Merchant",
+            purchaseDate = 1000,
+            warrantyDurationMonths = 12,
+            warrantyEndDate = 2000,
+            createdAt = 0L,
+            updatedAt = 0L
+        )
+        coEvery { warrantyDao.insertWarrantyIgnore(any()) } returns 24L
+        coEvery { warrantyLifecycleEventDao.insert(any()) } throws RuntimeException("Simulated DB failure")
+
+        val thrown = runCatching { repository.addWarrantyIgnoreConflicts(warranty) }
+
+        assertEquals("Simulated DB failure", thrown.exceptionOrNull()?.message)
     }
 }
