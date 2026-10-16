@@ -271,6 +271,86 @@ class NotificationIntakeWorkerTimeoutTest {
     }
 
     @Test
+    fun `transient row with null ciphertext is marked payload unavailable and purged`() = runBlocking {
+        val context = mockk<Context>(relaxed = true)
+        val params = mockk<WorkerParameters>(relaxed = true)
+        val intakeDao = mockk<NotificationIntakeDao>(relaxed = true)
+        val repository = mockk<NotificationRepository>(relaxed = true)
+        val timeProvider = mockk<TimeProvider>(relaxed = true)
+        val crypto = mockk<NotificationTransientPayloadCrypto>(relaxed = true)
+        val restoreMode = mockk<RestoreMaintenanceMode>(relaxed = true)
+        val runLogger = mockk<WorkerRunLogger>(relaxed = true)
+        val privacyGate = mockk<PrivacyGate>(relaxed = true)
+        val leaseRegistry = mockk<WorkerLeaseRegistry>(relaxed = true)
+
+        every { restoreMode.currentMode() } returns RestoreMaintenanceMode.Mode.NORMAL
+        coEvery { leaseRegistry.acquire(any()) } returns mockk(relaxed = true)
+        coEvery { runLogger.start(any()) } returns mockWorkerRunHandle()
+        coEvery { privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE) } returns PrivacyDecision.Allowed
+
+        val executionGuard = buildGuard(
+            restoreMode = restoreMode,
+            runLogger = runLogger,
+            privacyGate = privacyGate,
+            leaseRegistry = leaseRegistry,
+            timeProvider = timeProvider
+        )
+        val intakeId = 42L
+        val now = 1_700_000_000_000L
+        // Non-raw (transient) storage mode with a payload row whose ciphertext is NULL.
+        val metaRow = processingMetadata(
+            id = intakeId,
+            attempts = 1,
+            maxAttempts = 5,
+            now = now,
+            rawStorageMode = "STORE_REDACTED"
+        )
+        val payloadRow = payloadForProcessing(
+            id = intakeId,
+            payloadMode = "TRANSIENT",
+            title = null,
+            text = null,
+            transientPayloadCiphertext = null,
+            transientPayloadNonce = null,
+            transientPayloadVersion = null
+        )
+
+        every { params.inputData } returns Data.Builder().putLong("intakeId", intakeId).build()
+        every { timeProvider.now() } returns now
+        coEvery { intakeDao.getProcessingMetadataById(intakeId) } returns metaRow
+        coEvery { intakeDao.claimForProcessing(intakeId, now, any()) } returns 1
+        coEvery { intakeDao.getPayloadForProcessing(intakeId) } returns payloadRow
+        coEvery { intakeDao.markTerminal(any(), any(), any(), any(), any(), any(), any()) } returns 1
+        coEvery { intakeDao.purgeAllPayload(intakeId, now) } returns 1
+
+        val worker = NotificationIntakeWorker(
+            appContext = context,
+            params = params,
+            intakeDao = intakeDao,
+            repository = repository,
+            timeProvider = timeProvider,
+            crypto = crypto,
+            executionGuard = executionGuard,
+            privacyGate = privacyGate
+        )
+
+        // The worker returns normally after the terminal mark, so the guard yields success().
+        assertEquals(WorkResult.success(), worker.doWork())
+        coVerify(exactly = 1) {
+            intakeDao.markTerminal(
+                id = intakeId,
+                status = NotificationIntakeStatus.PAYLOAD_UNAVAILABLE_PRIVACY.name,
+                rawId = null, expenseId = null, reviewId = null,
+                finalOutcome = "PAYLOAD_UNAVAILABLE_PRIVACY",
+                nowMs = now
+            )
+        }
+        coVerify(exactly = 1) { intakeDao.purgeAllPayload(intakeId, now) }
+        coVerify(exactly = 0) { crypto.decrypt(any(), any(), any()) }
+        coVerify(exactly = 0) { repository.processAndSave(any(), any(), any(), any()) }
+    }
+
+    @Test
     fun `max_attempts_exceeded_on_timeout_returns_failure_not_retry`() = runBlocking {
         val context = mockk<Context>(relaxed = true)
         val params = mockk<WorkerParameters>(relaxed = true)

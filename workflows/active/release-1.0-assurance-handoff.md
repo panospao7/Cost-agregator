@@ -410,3 +410,11 @@ in the coverage matrix and regression ledger seed.
   Owner approved R28 (retention also purges encrypted intake payloads) and HL-1 (hanging-ledger owner/evidence/review_by
   2026-12-01). Correction: G2 legacy-tests run did exercise HANG-001..003 (no hang). Next: batch R28+HL-1, then G3 part 2
   (S4-S6, before 2026-11-20).
+- 2026-10-16: R28+HL-1 PASS at batch gate (fingerprint a5646bd5..., rev e6727b2b + diff). R28: the notification_intake retention
+  sweep now also clears the encrypted transient payload (selection capturedAt < cutoff AND (rawPayloadPurgedAt IS NULL OR
+  transientPayloadCiphertext IS NOT NULL), status-agnostic, -> purgeAllPayload); active db_ownership_policy row operation swapped
+  (same site/accessor/barrier; generated candidate/seed files untouched, follow-up F-R28-a). HL-1: HANG-001..003 owner @panospao7,
+  review_by 2026-12-01, evidence += clean legacy run; status stays suspected until a clean run on the final candidate. Gate: legacy-tests
+  vr-20261016-154702-3e58036a (253/0, no hang), static-guards 25/25 vr-20261016-154758-9c85e96c, app-check vr-20261016-160928-351117e4
+  (8253 run / 0 failed). Review: privacy-security-guardian ACCEPT-WITH-NOTES (LOW fixture values fixed). Committed on release-1.0-wt.
+  Follow-ups: F-R28-a..d and R28-X (export copy keeps intake ciphertext) in the findings ledger. Next: G3 part 2 (S4-S6, before 2026-11-20).

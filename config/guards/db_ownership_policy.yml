@@ -3609,11 +3609,12 @@ entries:
   - com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
   daoAccessor: notificationIntakeDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.NotificationIntakeDao
-  operation: purgeRawPayload
+  operation: purgeAllPayload
   barrierMode: helper
   reason: 'GR-08k1 EXACT_POLICY: notification_intake retention target nulls the captured
-    raw payload (title/text/bigText/subText/extrasJson) on unpurged intake rows past
-    the notification cutoff (P8F-01, batched loop)'
+    raw payload (title/text/bigText/subText/extrasJson) and the encrypted transient
+    payload (ciphertext/nonce/version) on intake rows past the notification cutoff
+    (P8F-01, R28, batched loop)'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08K
 - path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt

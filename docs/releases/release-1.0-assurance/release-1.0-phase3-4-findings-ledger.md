@@ -847,3 +847,33 @@
   maintenance), S3 G2-G4 (low), known_good_state freshness stamp SKIP. Correction to the G2 handoff note: legacy-tests
   vr-20261016-125302-b26c6ac6 did run the HANG-001..003 filters (no hang) -> used as HL-1 evidence.
   Decision: commit G3 part 1 (S1-S3 + policy identity fix) on release-1.0-wt. Next: batch R28+HL-1.
+- 2026-10-16 OWNER: "I approve" (reply to the G3 part-1 report asking to confirm that "I approve." covered both R28 and HL-1) -> confirmed: R28 + HL-1 both approved. Batch R28+HL-1 started on release-1.0-wt @ e6727b2b.
+- R28+HL-1 discovery: first verifier hit its turn limit with no report (no evidence). Re-split: verifier R28 CONFIRMED (status-agnostic
+  predicate recommended; loop terminates; single caller of getUnpurgedIntakeOlderThan; only RetentionTargetPurgeTest covers it; no
+  test for PAYLOAD_UNAVAILABLE_PRIVACY). Scout: active policy row :3601-3618 must swap operation; candidate/accounting/seeds generated,
+  leave untouched; HL-1 values pass Get-LegacyFilters rules (validation-runner.ps1 :371-398; evidence unvalidated; file is in the
+  worktree fingerprint). Lead decision: the policy row swap is covered by the owner's R28 approval (same site/DAO/barrier/count).
+  New finding R28-X (unverified): ExportAnonymizer.sanitizeNotificationIntake :267-293 keeps intake ciphertext in the export copy.
+  Owner note: retention 0 days -> unprocessed TRANSIENT capture ends PAYLOAD_UNAVAILABLE_PRIVACY (STORE_RAW already loses text today).
+  Plan: section 27. Coder dispatched.
+- R28+HL-1 coder done (6 files). Targeted PASS (fingerprint 1be82d28..., start=end): RetentionTargetPurgeTest 10/0/0
+  vr-20261016-153131-68e18aa7, NotificationIntakeWorkerTimeoutTest 19/0/0 vr-20261016-154305-54b0ea17, RetentionModuleBatchedPurgeTest
+  7/0/0 vr-20261016-154335-4ad29cb4; runner accepted the edited hanging ledger. Review: privacy-security-guardian ACCEPT-WITH-NOTES
+  (privacy PASS). LOW applied by lead (test-only): new fixtures payloadMode "ENCRYPTED" -> "TRANSIENT", helper default status
+  "DONE" -> "PROCESSED" (real enum values; pre-existing worker test :233 "ENCRYPTED" left as is). Follow-ups (not in batch):
+  F-R28-a GR-08-seeds.yml :3162 / signatures.candidate.yml :3549 still purgeRawPayload -> update at the next approved regeneration
+  (latent: candidate promotion would revert the row); F-R28-b encryptAndClearVisiblePayload should refuse purged rows (own slice);
+  F-R28-c purgeRawPayload now unused (remove later); F-R28-d optional retention slider text for 0 days. Review iteration 1 of 2.
+  Gate queue: targeted x2 (fixture rerun) -> legacy-tests -> static-guards -> app-check.
+- R28+HL-1 gate (fingerprint a5646bd5..., start=end, rev e6727b2b + diff). Gate agent hit its turn limit without a report; lead read
+  result.json/complete.marker directly: targeted RetentionTargetPurgeTest PASS vr-20261016-154457-43ad8fb8 (test task executed after
+  test recompile; XML overwritten by the next run, so count not captured - covered again by app-check), NotificationIntakeWorkerTimeoutTest
+  PASS vr-20261016-154640-dab856b5 (same caveat); legacy-tests PASS vr-20261016-154702-3e58036a (22 suites / 253 tests / 0 failed /
+  0 skipped, all three HANG filters in the command, no hang, 39 s) = SECOND clean legacy run, now on rev e6727b2b + R28 diff;
+  static-guards 25/25 PASS vr-20261016-154758-9c85e96c (0 warn, 0 infra). app-check vr-20261016-160928-351117e4 RUNNING; wait-only
+  runner dispatched.
+- R28+HL-1 app-check PASS vr-20261016-160928-351117e4 (fingerprint a5646bd5... start=end, BUILD SUCCESSFUL 28m13s; debug 8253 run / 0
+  failed / 276 skipped, release 8253 / 0 / 277 = +7 new tests vs G3 part 1; RetentionTargetPurgeTest 10/0, NotificationIntakeWorkerTimeoutTest
+  19/0, RetentionModuleBatchedPurgeTest 7/0 inside it). Batch gate PASS. Debug iterations 0; review iteration 1 (LOW fixture fix only).
+  HL-1: HANG-001..003 stay "suspected" (owner rule: resolve only after a clean run on the FINAL candidate; legacy run 154702 is clean
+  run #2 but not on the final candidate). Decision: commit R28+HL-1 on release-1.0-wt. Next: G3 part 2 (S4-S6, before 2026-11-20).

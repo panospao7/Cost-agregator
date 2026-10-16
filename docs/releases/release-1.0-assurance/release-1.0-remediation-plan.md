@@ -707,3 +707,36 @@ Validation: targeted per slice + WorkerExecutionGuardTest, PrivacyGateContractTe
   DirectEventDaoInsertGuardTest; after S4 registered-guard db_access + known_good_state; batch end static-guards, app-check, legacy-tests.
 Owner questions: (Q-G3-1) pre-approve shrink-only guard/baseline edits (event_writers keys, db_ownership_policy regeneration for the
   2 removed writes + count pins, cancellation.json decreases); (Q-G3-2) expiry for the 2 reclassified DirectEventDao entries.
+
+## 27. Batch R28+HL-1 (owner approved 2026-10-16, confirmed "I approve")
+
+Discovery: verifier (release-finding-verifier) R28 CONFIRMED - no production path removes old intake ciphertext once the worker's
+best-effort purge is skipped (no DELETE on notification_intake; only worker callers of purgeAllPayload). Scout: active policy row
+db_ownership_policy.yml :3601-3618 (RetentionModule.provideRetentionTargets, notificationIntakeDao, purgeRawPayload, helper).
+Candidate/accounting/seeds are generated historical inputs (db_artifact_sync regenerates from legacy.yml + GR-08 seeds) -> untouched,
+as in G3 part 1.
+
+Decisions (lead):
+- Selection stays status-agnostic (current code already nulls plaintext on non-terminal rows; a status filter would keep ciphertext
+  on stuck rows forever; a PROCESSING row holds its payload in memory; a TRANSIENT row without ciphertext ends as bounded
+  PAYLOAD_UNAVAILABLE_PRIVACY).
+- Predicate (in place, single caller): capturedAt < :cutoffMs AND (rawPayloadPurgedAt IS NULL OR transientPayloadCiphertext IS NOT NULL).
+- Active policy row: operation purgeRawPayload -> purgeAllPayload, reason reworded. Same site, accessor, DAO, barrierMode and row
+  count; it authorizes exactly the owner-approved R28 call. Treated as covered by the R28 approval (not a new writer site).
+- purgeRawPayload DAO method kept (seed tests reference it).
+
+Write set (release-remediation-coder):
+1. NotificationIntakeDao.kt :302-310 predicate + comment.
+2. RetentionModule.kt :258-261 comment, :287 purgeAllPayload.
+3. config/guards/db_ownership_policy.yml :3612 operation + :3614-3616 reason.
+4. RetentionTargetPurgeTest: transientPayloadPurgedAt assertion on the existing case + 6 cases (old TRANSIENT ciphertext purged;
+   rawPayloadPurgedAt set + ciphertext present purged; recent row untouched; fully purged row not reselected / idempotent; 205 rows
+   across batch boundary; old RECEIVED row purged = status-agnostic pin).
+5. NotificationIntakeWorkerTimeoutTest: TRANSIENT row with null ciphertext -> markTerminal PAYLOAD_UNAVAILABLE_PRIVACY + purgeAllPayload.
+6. config/validation/known-hanging-tests.json HANG-001..003: owner @panospao7, evidence += clean legacy-tests run
+   vr-20261016-125302-b26c6ac6 (no hang), review_by 2026-12-01, status suspected.
+Validation: targeted RetentionTargetPurgeTest, NotificationIntakeWorkerTimeoutTest, RetentionModuleBatchedPurgeTest -> review
+(privacy-security-guardian) -> legacy-tests -> static-guards -> app-check. Stop on any guard failure (debug cap 2).
+Out of scope (new finding R28-X, triage later): ExportAnonymizer.sanitizeNotificationIntake (:267-293) keeps ciphertext in the
+export copy.
+

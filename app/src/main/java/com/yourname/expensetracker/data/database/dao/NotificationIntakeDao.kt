@@ -301,10 +301,13 @@ interface NotificationIntakeDao {
 
     // ── Data retention worker support (P8F-01) ─────────────────────────────────
 
+    // R28: selects rows past the cutoff that still hold visible plaintext (never raw-purged)
+    // OR leftover encrypted transient payload ciphertext (best-effort worker purge skipped),
+    // so the retention sweep can clear both. Fully purged rows are never reselected.
     @Query("""
         SELECT * FROM notification_intake
         WHERE capturedAt < :cutoffMs
-          AND rawPayloadPurgedAt IS NULL
+          AND (rawPayloadPurgedAt IS NULL OR transientPayloadCiphertext IS NOT NULL)
         LIMIT :limit
     """)
     suspend fun getUnpurgedIntakeOlderThan(cutoffMs: Long, limit: Int): List<NotificationIntakeEntity>

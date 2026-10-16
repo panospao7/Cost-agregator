@@ -257,7 +257,8 @@ object RetentionModule {
             override val name = "notification_intake"
             // P8F-01: Null out raw payload text (title/text/bigText/subText/extrasJson) past
             // the retention window — mirrors the raw_notifications target since intake carries
-            // the same captured notification content. cutoffMs is the notification cutoff,
+            // the same captured notification content. R28: also clears the encrypted transient
+            // payload (ciphertext/nonce/version). cutoffMs is the notification cutoff,
             // passed by DataRetentionWorker.
             override suspend fun purge(cutoffMs: Long): RetentionPurgeResult {
                 // GR-14u51b: canonical write-barrier admission before the
@@ -284,7 +285,7 @@ object RetentionModule {
                     while (true) {
                         val batch = notificationIntakeDao.getUnpurgedIntakeOlderThan(cutoffMs, 100)
                         if (batch.isEmpty()) break
-                        for (n in batch) notificationIntakeDao.purgeRawPayload(n.id, now)
+                        for (n in batch) notificationIntakeDao.purgeAllPayload(n.id, now)
                         total += batch.size
                     }
                     RetentionPurgeResult(name, total, true)
