@@ -1008,7 +1008,7 @@ class WorkerExecutionGuardTest {
     /** Helper: creates a real [TimeoutCancellationException] via [withTimeout]. */
     private fun createTimeoutCancellationException(): TimeoutCancellationException = runBlocking {
         try {
-            withTimeout(1) { delay(10) }
+            withTimeout(1) { kotlinx.coroutines.awaitCancellation() } // deterministic: timeout always wins
             throw IllegalStateException("Expected TimeoutCancellationException")
         } catch (e: TimeoutCancellationException) {
             return@runBlocking e

@@ -2021,7 +2021,10 @@ fun EditOwnershipDialog(
     var isSharedExpense by remember { mutableStateOf(expense.isSharedExpense) }
     var sharedWithName by remember { mutableStateOf(expense.sharedWithName ?: "") }
     var mySharePercentage by remember { mutableStateOf(expense.mySharePercentage?.toString() ?: "") }
-    var myShareAmount by remember { mutableStateOf(expense.myShareAmount?.toString() ?: "") }
+    // R16: Locale.US "%.2f" round-trips through the locale-aware parser and never yields "1.0E7".
+    var myShareAmount by remember {
+        mutableStateOf(expense.myShareAmount?.let { java.lang.String.format(java.util.Locale.US, "%.2f", it) } ?: "")
+    }
     val canOpenVisualSplit = expense.id > 0L
     val parsedSharePercentage = mySharePercentage.toIntOrNull()
     val isSharePercentageInvalid = isSharedExpense && mySharePercentage.isNotBlank() &&
@@ -2128,7 +2131,10 @@ fun EditOwnershipDialog(
                         )
                         OutlinedTextField(
                             value = myShareAmount,
-                            onValueChange = { myShareAmount = it.filter { c -> c.isDigit() || c == '.' } },
+                            onValueChange = {
+                        // R16: never delete the comma decimal separator ("12,5" must not become "125").
+                        myShareAmount = com.yourname.expensetracker.ui.util.AmountInputSanitizer.sanitize(it)
+                    },
                             label = { Text(stringResource(R.string.transactions_or_amount_label)) },
                             modifier = Modifier.weight(1f),
                             singleLine = true

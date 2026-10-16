@@ -60,7 +60,7 @@ class DailyBriefingWorkerTest {
     private fun fakeTimeoutCancellationException(): TimeoutCancellationException {
         return try {
             kotlinx.coroutines.runBlocking {
-                kotlinx.coroutines.withTimeout(1L) { kotlinx.coroutines.delay(10L) }
+                kotlinx.coroutines.withTimeout(1L) { kotlinx.coroutines.awaitCancellation() } // deterministic: timeout always wins
             }
             throw IllegalStateException("Expected TimeoutCancellationException")
         } catch (e: TimeoutCancellationException) {
@@ -249,7 +249,7 @@ class DailyBriefingWorkerTest {
         val processed = sampleProcessedData()
         val timeoutEx = kotlinx.coroutines.runBlocking {
             try {
-                kotlinx.coroutines.withTimeout(1L) { kotlinx.coroutines.delay(10L) }
+                kotlinx.coroutines.withTimeout(1L) { kotlinx.coroutines.awaitCancellation() } // deterministic: timeout always wins
                 throw IllegalStateException("Expected TimeoutCancellationException")
             } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
                 e

@@ -552,11 +552,12 @@ private fun AddRecurringExpenseDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    amount.toDoubleOrNull()?.let { amt ->
+                    com.yourname.expensetracker.ui.util.AmountInputSanitizer.parseOrNull(amount)?.let { amt ->
                         onAdd(merchant, amt, frequency, nextDate, note.takeIf { it.isNotBlank() })
                     }
                 },
-                enabled = merchant.isNotBlank() && amount.toDoubleOrNull() != null
+                enabled = merchant.isNotBlank() &&
+                    com.yourname.expensetracker.ui.util.AmountInputSanitizer.parseOrNull(amount) != null
             ) {
                 Text(stringResource(R.string.action_add))
             }

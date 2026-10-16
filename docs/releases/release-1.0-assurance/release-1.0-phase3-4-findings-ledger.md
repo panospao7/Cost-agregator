@@ -395,3 +395,188 @@
   onListenerConnected (:287); bounded log code. Deciding device test: API 35 emulator reboot with listener granted and revoked,
   logcat ForegroundServiceStartNotAllowed / DidNotStartInTime, dumpsys activity services; repeat adb install -r.
 - V-I-8 CONFIRMED P3 (string reuse FeatureConfig :237/:241). V-I-5 CONFIRMED P3 (no permanent-denial handling; precedent ReceiptScanScreen :211).
+## R25 plan (room-migration-guardian, read-only @ 2ca932a9) — VERDICT FAIL (no data-preserving path for < v145)
+- History: versionCode 1 / "1.0" unchanged since 35be8b26; no tags; release builds debug-signed (app/build.gradle.kts :167).
+  Schema v5 (02-07) .. v143 (05-31), v144 90242a82, v145 345c8562, transient v146 1d8eddc5, v145 88813919, MIGRATION_144_145
+  rewritten f462c9bd/0e92dc44/6e4be942; cut 27ca3bd8 (2026-06-02 23:55) removed 140 migrations ("rescue/import tool").
+  Shipped device version UNKNOWN (v5..v146 possible; likely v125-v144).
+- Legacy chain AppDatabase.kt companion :224-:8886 (6_7..144_145, 96_100 jump); dead nested duplicate 144_145 :6076; not proven
+  correct (policy doc: drift, 20+ validation failures); MIGRATION_144_145 :8826 DROPs pending_reviews (data loss). Schema JSONs v33..v151.
+  androidTest DatabaseMigrationTest starts at v1/v6-10 without JSONs (cannot pass). Robolectric MigrationTestHelper works (MigrationRegistrationTest).
+- Options: A full chain high risk; A-narrow (new non-destructive bridge for confirmed version(s) only, MIGRATION_BASELINE = N);
+  B FinancialRescueCoordinator prototype unusable (raw INSERT OR REPLACE bypasses insertAtomic, 6 tables, logs abs path :66,
+  plaintext JSON); C destructive (owner approval, not recommended); D fail-safe DatabaseOpenGate (PRAGMA user_version probe before
+  Room; <145, >151 or open failure -> unsupported-database screen with SAF export of untouched db/-wal/-shm, bounded code; workers,
+  capture service, receivers must honour gate). Recommendation: D now + A-narrow once version confirmed (<~v113 or no in-place
+  update -> D only, B post-1.0).
+- F2: MIN_SUPPORTED_SCHEMA_VERSION = MIGRATION_BASELINE (:152); raw .db import :2193 early BACKUP_SCHEMA_UNSUPPORTED_LEGACY;
+  .costbackup manifest.databaseVersion check near :1043 before extract.
+- Write set/tests/profiles/stop conditions: see guardian report (DatabaseOpenGate.kt, DatabaseModule :36, MainApplication/
+  AppStartupDelegate, WorkerExecutionGuard + capture checks, UnsupportedDatabaseActivity + manifest, DatabaseBackupRepositoryImpl,
+  KDoc DatabaseSchemaPolicy :19 / AppDatabase :15-42, docs; LegacyBridgeMigrationTest, parity, DatabaseOpenGateTest, crash-loop
+  guard, backup early reject). Reviewers reviewer-strict + fresh guardian.
+- LEAD NOTE: B-3 = 1.0 signed with an owner-held release key; old builds debug-signed -> in-place update over the old install is
+  rejected by Android (signature mismatch). So F3 crash loop is reachable only for debug-key installs; the real H-2 path is
+  old backup/export -> restore into 1.0 (F2 + A-narrow via staged restore). Severity of F3 -> P2 (D still in R25); P1 = old-data
+  restore path. Needs owner: device schema version (python user_version on the extracted .db), backup format.
+## R16-S1 strict review (reviewer-strict, read-only): ACCEPT-WITH-NOTES (S1 must not ship without S2)
+- parseAmount body hash identical (md5 a180f617...); only appended tests; hand traces match plan; statement path never newly null.
+- F1 MAJOR (binding for S2): clipboard prefill el_GR "1,234" (ClipboardAmountParser :8 accepts as 1234) -> sanitizer truncates
+  to "1,23" -> 1.23. Fix in S2 at AddExpenseViewModel :480: parseAmount -> String.format(Locale.US,"%.2f") -> sanitize (as :144);
+  test el_GR clipboard "1,234" prefills 1234.
+- F2 minor: parseStatementAmount leading-zero tokens "0,123" -> 123 vs "0.123" -> 0.123; comment BankStatementParser :904-905 overclaims; add test.
+- F3 minor: sanitizer KDoc :13 + test name "never deletes a comma" contradict ("1,,5" -> "1,5"); reword "never joins digit runs".
+- F4 minor: isValid ignores custom maxFractionDigits; add parameter.
+- Shipping S1 alone harmful: el_GR "1.234" valid as 1234 but save :291 parseAmount -> 1.234; BudgetScreen/OwnershipValidator
+  toDoubleOrNull refuse commas. FormComponents.kt :64 FormAmountField has no callers (optional).
+## R16-S2 implementation (release-remediation-coder; cap 60, USED 113 tool calls — overrun, disclosed)
+- Helpers AmountInputSanitizer.parse/parseOrNull/isValid(maxFractionDigits); all S2 sites use parseOrNull; F1 clipboard
+  parseAmount -> Locale.US %.2f -> sanitize; F2 statement "0,123"/"0.123" -> 0.123 (explicit rule; parseAmount untouched);
+  F3 KDoc + test rename; F4 isValid param. Prefills BudgetScreen/ReviewScreen -> Locale.US %.2f. Groups "-5" now error_invalid_amount.
+- Tests: new OwnershipValidatorTest (6); AddExpenseViewModelTest +9; ReceiptScanViewModelTest +4; TransactionsViewModelTest +3;
+  AmountUtilsUserAmountTest +1; AmountInputSanitizerTest +1 / rename. Not compiled.
+- Coder blocker (outside list): TransactionsScreen EditOwnershipDialog :2131 filter deleted comma ("12,5" -> 125) and :2024
+  Double.toString prefill. LEAD EDIT (in approved R16 scope): sanitize filter + Locale.US "%.2f" prefill. Also SavingsGoalsScreen
+  :414 regex rejecting commas -> sanitize (R16c item done early). Both untested Compose edits; under strict review.
+- Worktree note: owner's other session added untracked .claude/agents/* (9), docs/features/loan-installments/,
+  workflows/active/loan-installments-handoff.md -> R16-S1 run vr-20261016-062342-4ce563bf STALE_RESULT (E_WORKTREE_CHANGED;
+  BUILD SUCCESSFUL, AmountUtilsUserAmountTest PASSED in log, not evidence). Validation paused until the owner pauses or moves that work.
+- 2026-10-16 OWNER: "i say opk to them all" -> APPROVED: R21 new guarded RecurringHorizonWorker; R23 exchange-rate download
+  default OFF (fail-closed); R25 plaintext untouched-file export exception (user-started, SAF picker only); and "go" for
+  validation (owner keeps the feature session idle during runs). Still open: old DB schema version for R25 part 3.
+## R16-S2 strict review (reviewer-strict, fresh, 44 tool uses vs cap 35): ACCEPT-WITH-NOTES, no critical/major
+- Q1 no new comma-deleting/non-helper sites; R16c list confirmed (+ SpendingChallengesScreen :504 regex filter; challenges hidden by R19).
+- Q2 validation == save at all sites; AddExpenseViewModel :361 `!!` safe. Q3 all prefills Locale.US "%.2f", round-trip el/en/fr/de-CH.
+- Q4 behaviour changes acceptable (groups negative never saveable; statement 0,123 fixed; savings paste truncation).
+- Findings fixed by LEAD before validation: F1 ReviewScreen amount isError via parseOrNull (no new strings); F3 AddExpenseViewModelTest
+  split + new en_US "12,50" -> 12.50 test; F4 AmountInputSanitizerTest Locale.US prefill round-trip for el-GR/en-US/fr-FR/de-CH.
+  F2 ACCEPTED: TransactionsScreen :2026 "%.2f" prefill is cent normalization; SplitCalculator works in cents (toCents/fromCents :112-119).
+- Validation queue started (owner "go"): 9 targeted + app-check.
+## H-2 resolved from the owner's phone (2026-10-16; owner consented: adb on 62d5f6f9, Android API 36; header/identity only, no rows read)
+- Installed app: versionCode 1 / 1.0, DEBUGGABLE, lastUpdateTime 2026-06-03 00:26:19 (after cut 27ca3bd8 2026-06-02 23:55:19 +0300),
+  signing cert digest 441af6cc (debug key).
+- Live databases/expense_tracker_db: SQLite header user_version = 145, 233,033,728 bytes, empty WAL; contains the identityHash of
+  app/schemas/.../145.json (6f54382ef28356b2333be481737f88c6) -> final baseline v145, migratable by the registered 145->151 chain.
+- databases/expense_tracker_db.legacy.1780389713534: user_version 113, 3 MB, 2026-06-01 (set aside by the 2026-06-02 rescue).
+- Consequences: no live DB < 145 on the shipped device -> R25 part 3 (A-narrow bridge) NOT needed; HZ-02 F3 back to P3 latent
+  (D + F2 still approved and planned). New owner decision: 1.0 signing key vs this install (debug cert) -> in-place update
+  possible only with the same debug key; with the owner release key (B-3) the path is uninstall + install + restore backup.
+  Deciding test either way: real-data 145->151 on a copy (emulator) / restore of the owner's extracted backup into C* on the emulator.
+- SAFETY: phone 62d5f6f9 holds real data; never target it with connected tests (they wipe app data).
+## Release worktree + R16 validation (2026-10-16)
+- Owner "do the recommended thing" -> (A) release work moved to worktree C:\Users\panos\Desktop\Cost-agregator-release, branch
+  release-1.0-wt @ 2ca932a9; 20 R16 files copied, SHA-256 identical; local.properties copied unread; main-folder app/ restored to HEAD
+  (own R16 edits only; patch kept in scratchpad r16.patch). Signing = option 1 (owner release key; old app -> backup, uninstall,
+  install 1.0, restore); emulator restore test of the owner's backup pending (backup location not found on phone/PC yet).
+- R16 run batch 1 (worktree, fingerprint 17a81e36..., no drift): *AmountInputSanitizerTest PASS 17 (vr-20261016-070116-3e01b1c9);
+  *AmountUtils* PASS 103 (vr-...070251-b11ced94); *SharedUtilityConsistencyTest PASS 15 (vr-...070340-0ecfbaef);
+  *ClipboardAmountParserTest PASS 3 (vr-...070416-349409ef); *BankStatementParser* FAIL 36/1 (vr-...070452-c15f46e4):
+  new test "EUR1,234,567" -> ParsedTransaction require(amount <= 1_000_000) threw (AppParserRegistry :69) from extractTransactionFromRow.
+- DEBUG ITERATION 1 (lead): parser correct, fixture over cap; real edge: one over-cap row throws and fails the whole statement
+  (pre-existing for "1500000.00", slightly more reachable now). Fix: BankStatementParser GENERIC_ROW_MAX_AMOUNT = 1_000_000.0,
+  generic row over cap -> return null; test fixture -> "EUR123,456" = 123456 + new test over-cap row skipped (0 results).
+  Needs reviewer confirmation at the R16 final review. Validation resumed (BankStatementParser, AmountUtils, then items 6-10).
+## Owner phone diagnostics (2026-10-16; owner consent "you are free to find anything you need")
+- Crash buffer: 10-16 10:06:12 FATAL SQLiteDatabaseLockedException (SQLITE_BUSY) in Room withTransaction (beginTransactionNonExclusive)
+  on a StandaloneCoroutine (Dispatchers.Main.immediate, uncaught) ~2.5 s after a tap ("Long db operation" logged) = the owner's
+  backup attempt (old build, 2026-06-03). Also ForegroundServiceDidNotStopInTimeException (dataSync timeout) 10-15 12:29 and
+  10-16 10:06:23 = RT-C1, fixed in C* by R14 (real-device confirmation of the bug). Many libc FORTIFY destroyed-mutex aborts (pid not attributed).
+- Safety copy (owner data; outside repo): %USERPROFILE%\Desktop\expense-db-copy-2026-10-16\ (db sha256 matches device; -wal/-shm
+  changed on device after copy because the listener restarted the process). Copy check: integrity ok, 0 FK violations,
+  user_version 145, expenses 1188, categories 20, pending_reviews 300.
+- DB 233 MB (56,894 pages, freelist 0): privacy_audit_events 363,161 rows; pipeline_diagnostic_events 388,175; background_job_runs 2,787.
+  C* RetentionModule covers both (pipeline diagnostics cutoff; privacy audit 180 d COMPLIANCE-FLAGGED) but ~2,700 audit rows/day
+  -> ~490k rows at 180 d steady state -> bloat persists. Candidate batch R26: diagnostic/audit volume + backup SQLITE_BUSY crash (verify in C*).
+- Migration path for the owner (signing option 1): restore this raw v145 copy into 1.0 via raw .db import (>= baseline) — test on emulator first.
+## Debugger (opus, read-only) on backup SQLITE_BUSY — C* AFFECTED (~70% confidence, needs deciding test A)
+- Root cause: DatabaseBackupRepositoryImpl :678 `PRAGMA locking_mode = EXCLUSIVE` via openHelper.writableDatabase.query (comment
+  claims no-op; prepared -> applies to Room's writer connection for the rest of the process). Next Room write needs EXCLUSIVE file
+  lock while pool readers / raw count connection :702 / VACUUM INTO connection (SqliteSnapshotCreator :43-46 OPEN_READWRITE) hold
+  SHARED -> busy handler 2500 ms -> SQLITE_BUSY (matches device crash ~2.5 s after tap); later writes in the process can also fail.
+- Uncaught paths: DBRI :613 operationRunRecorder.start outside try; BackupRestoreViewModel :106-114 launch without catch;
+  CompositePrivacyGate :69 auditLogger.logDecision outside per-gate try (callers e.g. SpendingMapViewModel :808-810 Main launch).
+- Proposed R26: (1) delete :678; (2) SqliteSnapshotCreator open OPEN_READONLY; (3) recorder.start inside try, no-op handle on
+  failure; (4) BackupRestoreViewModel catch(Exception) + CE rethrow + bounded message; (5) CompositePrivacyGate audit-write failure
+  -> FailClosed (PRIVACY SEMANTICS, owner approval); (6) no busy-timeout increase / barrier widening.
+  Audit volume: one row per privacyGate.check, no dedup (NotificationCaptureService :617/:480, NotificationIntakeWorker :476,
+  WorkerExecutionGuard :163/:347, geocoding chains, ReviewViewModel :275) -> ~486k rows at 180 d (~100-190 MB). Pipeline
+  diagnostics 30-d cutoff (DataRetentionWorker :121) yet 388k rows (13k/day or retention not running). Purges are single unbounded
+  DELETEs (PrivacyAuditDao :36, RetentionModule :635/:322) -> batch 5k rowids/tx.
+- Deciding tests: A instrumented WAL (locking_mode exclusive + SHARED holder -> insert throws ~2.5 s; after fix succeeds);
+  B recorder fake throws -> Result.failure + VM error state; C audit volume; D batched purge 20k rows.
+- LEAD severity: P1 (in-app backup = data-safety feature; crash reproduced on owner device; after :678 any write can crash).
+- 2026-10-16 OWNER: "i approve" -> R26 APPROVED (backup lock crash + audit/diagnostic volume + batched purges), including item 5:
+  CompositePrivacyGate audit-write failure -> FailClosed decision instead of throwing. Runs after R16 commit (single writer).
+- 2026-10-16 OWNER: "approved" -> R26-V (coalesce routine per-notification listener/filter/dedupe pass diagnostics; always record
+  problems/drops/captures) and R26-D (coalesce identical local NOTIFICATION_CAPTURE ALLOWED audit decisions once per hour with a count;
+  always record DENIED/FAIL_CLOSED and cloud/export/backup/location decisions; update backend-domain-map.md :610) APPROVED.
+  Sequencing: R16 commit -> R26 core -> R26-V/R26-D (planned after core) -> R17 ...
+## R16 validation in worktree (rev 2ca932a9 + R16 diff, fingerprint 2594779b... start=end)
+- PASS: *BankStatementParser* 37 (vr-20261016-070650-e555bbaa); *AmountUtils* 99 (vr-...071132-1cd4d640); *OwnershipValidatorTest* 6
+  (vr-...071207-79c6711c); *AddExpenseViewModel* 15 (+8 pre-existing @Ignore stress) (vr-...071245-5eed6bf9); *ReceiptScanViewModel* 52
+  (vr-...071328-6e0e435f); *TransactionsViewModel* 12 (+16 pre-existing @Ignore stress) (vr-...071414-576aab00). Earlier same-diff-minus-
+  BankStatement-fix: Sanitizer 17, SharedUtilityConsistency 15, Clipboard 3 (fingerprint 17a81e36..., superseded for Sanitizer? no: Sanitizer
+  unchanged since; counted as evidence for unchanged files only).
+- app-check vr-20261016-071454-f84cdbb8 FAIL: :app:testReleaseUnitTest DailyBriefingWorkerTest "pipeline timeout wraps in
+  RetryableWorkerException with cause" IllegalStateException Expected TimeoutCancellationException (:253) — not an R16 file.
+  Lint 0 new errors (2222 baseline-filtered). stderr "Python was not found" x2 (new worktree environment?) -> debugger dispatched.
+- Debugger (read-only) on app-check FAIL: test-side real-time race (~85%): DailyBriefingWorkerTest :250-257 runBlocking withTimeout(1)
+  { delay(10) } — delay can win on a loaded machine; PASSED in testDebugUnitTest same run (line 1265), FAILED in testReleaseUnitTest
+  (line 35695); worker code not reached; not in known-hanging list; R16 not implicated. "Python was not found" = python3 Store alias
+  probe in app/build.gradle.kts pythonInterpreter(); falls back to python; guards ran under Python 3.15.0 (G-TIME-01 PASS,
+  G-MONEY-RAW PASS) -> not a false PASS.
+- DEBUG ITERATION (lead, test-only): same pattern fixed deterministically (withTimeout(1) { awaitCancellation() }) in
+  DailyBriefingWorkerTest (2 sites), NotificationIntakeWorkerTimeoutTest :56, WorkerExecutionGuardTest :1011. Re-validation queued.
+- 2026-10-16 OWNER: "do your reccomndations" -> Q-V1 YES (coalesce INFO FILTER_REJECTED and DUPLICATE terminal drops into
+  hourly per-stage counts; V8 test in scope; problems/failures/WARNING+/exceptions/captures always written); Q-V2/Q-D2 YES
+  (accept < 1 h pending-count loss on process death, documented as lower bound); Q-D1 = {NOTIFICATION_CAPTURE} only.
+## Expiry triage (release-planner, read-only, 33 calls) — RELEASE GATE TIME BOMB
+- 2026-11-01: WriteBarrierArchitectureGuardTest :654/:666 (LocalDate.now) fails -> unit-tests/app-check red; validation-runner :392
+  E_HANGING_LEDGER_REVIEW_OVERDUE for legacy-tests profile only (no un-skip, no timeout). 2026-11-21: DirectEventDaoInsertGuardTest
+  :370 (7 LEGACY_REPOSITORY entries 2026-11-20; renewal capped today+75 d :392). 2027-01-01: DirectEventDao 26 more,
+  TransactionContextProvenanceGuardTest :174 (6), SourceScanningArchitectureGuardTest :500 (6).
+- U-004 16 entries (:143-158): 6 FIXED already (LegacyDataMigrationService, CsvExpenseImporter, JsonExpenseImporter,
+  RestoreJournalImporter, NotificationIntakePayloadRepairer, NotificationIntakeRecoveryScheduler) -> remove entries;
+  DiagnosticEventWriter + OperationRunRecorder Room writers -> inject barrier (~0.5 h each; composites already check + safe sink);
+  ReceiptInsertResolver, DebugExpenseAuditWriter, ReceiptLifecycleEventWriter, TransactionLifecycleEventWriter (in-tx lifecycle) and
+  WorkerRunLogger, WarrantyExpirationWorker, NotificationIntakeWorker (workers) unfixed (M..L); PrivacyAuditLoggerImpl owner decision.
+- HANG-001..003 suspected (43ca2228); resolve only with run evidence (KNOWN_HANGING_TESTS.md :16).
+- Unenforced dates (existing gaps): SourceScanning broadCatchAllowlist (2026-09-30), CancellationSafety fixed GUARD_TODAY_VALID
+  2026-09-15 (:230; 13 RAW entries already past), YAML expires (51 entries 2027-01-01; verifiers do not read them; 77 vs 51 unreconciled).
+- Proposed G2 (no guard logic/date changes): delete 6 fixed entries; barrier in RoomDiagnosticEventWriter + Room OperationRunRecorder
+  writer; tests; legacy-tests run before 10-31 for ledger evidence. Reviewer architecture-guardian.
+- 2026-10-16 OWNER: "i approve" -> G2 APPROVED (delete 6 fixed U-004 entries; barrier in RoomDiagnosticEventWriter + Room
+  OperationRunRecorder writer; legacy-tests run for HANG ledger evidence; no guard logic/date changes); G3 APPROVED (per-writer
+  architecture review of the 8 unfixed U-004 writers + 7 DirectEventDao 2026-11-20 entries: fix where safe; "covered by caller"
+  permanent exemptions only after the owner sees the list); PrivacyAuditLoggerImpl honours the write barrier (fail-closed with R26).
+  Unenforced expiry dates + 77/51 reconcile -> post-1.0 guard hardening (2026-12-01 review). Deadline: G2 before 2026-10-31.
+## G3 analysis (architecture-guardian, read-only, 39 calls): VERDICT FAIL (pre-G3 gap + R26 conflict)
+- Barrier = entry check only (DatabaseWriteBarrier :15-24); enterAndDrain persists mode then drains WORKER leases only
+  (RestoreMaintenanceMode :177-194, WorkerLeaseRegistryImpl :36-81); >5 s -> NORMAL + abort (MaintenanceOperationRunner :27-41).
+  OPEN GAP (outside G3): in-flight non-worker Room transactions are never awaited -> check-to-write window everywhere.
+- FIX: ReceiptInsertResolver :32, DebugExpenseAuditWriter :29/:58, RoomReceiptLifecycleEventWriter :49 (callers covered; in-tx
+  throw = rollback OK); RoomTransactionLifecycleEventWriter :48 REQUIRED: post-commit path PostCommitActionRunnerImpl :59/:95/:103 ->
+  CompositeSideEffectEventWriter :57 -> TransactionSideEffectFailureEventWriter :36 has NO check (mirror event dropped during
+  maintenance after fix, owner to accept); PrivacyAuditLoggerImpl :51 FIX + CompositePrivacyGate :69 DatabaseAccessBlockedException
+  -> FailClosed(PRIVACY_AUDIT_WRITE_BLOCKED new code), CE rethrow.
+- COVERED-BY-CALLER (needs new guard category, owner): WorkerRunLogger (:116/:226; only WorkerExecutionGuard, start checked :576,
+  terminal writes under lease), WarrantyExpirationWorker (+ add ctx.checkpoint before :138), NotificationIntakeWorker (checkpoint before
+  each write). Guard KDoc :36-38 says worker-guard usage does not count -> override. Proposed COVERED_BY_CALLER map (mechanism,
+  justification, evidence files) with hygiene checks, cap 3, fixtures.
+- R26 CONFLICT: DBRI :413/:424 privacyGate.check after entering BACKUP_EXPORTING (:391) -> with barrier-honouring audit, raw export
+  fails closed; today those checks write audit rows into the DB being copied. Fix: move both checks before :391 (as :378).
+- DirectEventDao LEGACY_REPOSITORY (:97-208): ReceiptRepository, RecurringExpenseRepository, ManualRecurringExpenseRepository -> REMOVE
+  (no inserts left) + stale-entry test; NotificationRepository :203, ReviewQueueRepository :281 -> route via TransactionLifecycleEventWriter
+  (approveReview tx context unverified); WarrantyTrackerRepository -> reclassify as warranty-lifecycle owner (LEGAL_PATHS :564) + barrier
+  at :432 (extractWarrantyFromReceipt, no prod callers) or private; BankApiIntegration :377 pendingReviewDao.insert -> owner (LEGAL_PATHS
+  :826 names only BankStatementLifecycleProcessor; BankApiIntegration is debug-only via requireStubMode).
+- Timeout-test fix validation (fingerprint 57d1c5dc...): *DailyBriefingWorkerTest PASS (vr-20261016-074353-d6ba9121),
+  *NotificationIntakeWorkerTimeoutTest PASS (vr-...074558-94ff5803), *WorkerExecutionGuardTest PASS (vr-...074637-a9139c62),
+  targeted-release-unit-test *DailyBriefingWorkerTest PASS (vr-...074717-c3e09e26). app-check vr-20261016-074919-4c734c1d RUNNING
+  (first runner agent hit its 60-turn limit while polling; a fresh agent is waiting on the same run, no new start).
+- 2026-10-16 OWNER: "yes to all reccomended" -> G3 decisions APPROVED: (1) new COVERED_BY_CALLER guard category (mechanism,
+  justification, evidence files; hygiene checks; cap 3) for WorkerRunLogger, WarrantyExpirationWorker (+ ctx.checkpoint before :138),
+  NotificationIntakeWorker (overrides guard KDoc :36-38); (2) accept dropped post-commit side-effect-failure mirror events during
+  maintenance; (3) move DBRI :413/:424 privacy checks before entering BACKUP_EXPORTING (:391); (4) reclassify warranty events under the
+  warranty-lifecycle owner + barrier/private for :432; (5) BankApiIntegration :377 -> debug-only owner classification.
+  R27 (non-worker in-flight transactions not awaited by enterAndDrain) -> read-only analysis after G3.

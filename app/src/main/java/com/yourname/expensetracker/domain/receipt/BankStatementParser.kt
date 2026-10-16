@@ -32,6 +32,8 @@ class BankStatementParser @Inject constructor(
     companion object {
         // ParsedTransaction requires a three-letter code; XXX is never supported money.
         private const val UNKNOWN_CURRENCY = "XXX"
+        // Mirrors the ParsedTransaction amount invariant (amount <= 1_000_000).
+        private const val GENERIC_ROW_MAX_AMOUNT = 1_000_000.0
         // ── Header / footer pre-filter constants ─────────────────────────────
         /** Minimum line length (characters) to be considered a real transaction row. */
         const val MIN_LINE_LENGTH: Int = 15
@@ -901,24 +903,19 @@ class BankStatementParser @Inject constructor(
             candidates.first()
         }
         
-        // Robust European & US decimal parsing
+        // R16: statement amounts are 2-decimal currencies, so a single separator kind with
+        // exactly 3 trailing digits is thousands grouping ("1,234" -> 1234), except a leading-zero
+        // token ("0,123" / "0.123"), which both separators read as the decimal 0.123.
         val rawAmount = bestCandidate.rawToken
-        
-        val lastSep = rawAmount.findLastAnyOf(listOf(".", ","))
-        
-        val amountStr = if (lastSep != null) {
-            val (sepIndex, sepChar) = lastSep
-            val integerPart = rawAmount.substring(0, sepIndex).replace(".", "").replace(",", "")
-            val decimalPart = rawAmount.substring(sepIndex + 1)
-            "$integerPart.$decimalPart"
-        } else {
-            rawAmount
-        }
-        
-        val absAmount = kotlin.math.abs(amountStr.toDoubleOrNull() ?: return null)
+        val amountStr = rawAmount
+
+        val absAmount = kotlin.math.abs(AmountUtils.parseStatementAmount(rawAmount) ?: return null)
         
         if (absAmount <= 0.0 || !absAmount.isFinite()) return null
-        
+        // R16: ParsedTransaction rejects amounts above 1,000,000 by throwing; skip such a row
+        // instead of failing the whole statement import.
+        if (absAmount > GENERIC_ROW_MAX_AMOUNT) return null
+
         // Use more specific currency check.
         // RP-13 Gate B: explicit token/symbol → PARSED_FROM_SOURCE; home default
         // stays an assumption so downstream policy never treats it as known.

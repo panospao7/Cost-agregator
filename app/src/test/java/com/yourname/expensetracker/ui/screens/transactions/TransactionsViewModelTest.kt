@@ -71,6 +71,47 @@ class TransactionsViewModelTest : ViewModelTestUtils() {
         )
     }
 
+    private val originalLocale: java.util.Locale = java.util.Locale.getDefault()
+
+    @After fun restoreDefaultLocale() {
+        java.util.Locale.setDefault(originalLocale)
+    }
+
+    @Test fun `el_GR comma share amount is saved as 12_50 by updateOwnership`() = runTest(testDispatcher) {
+        java.util.Locale.setDefault(java.util.Locale("el", "GR"))
+        val expense = mockk<Expense>(relaxed = true)
+        model.updateOwnership(expense, false, "", true, "Anna", "", "12,50")
+        advanceUntilIdle()
+        io.mockk.coVerify(exactly = 1) {
+            expenses.updateOwnership(expense, false, null, true, "Anna", null, 12.5)
+        }
+    }
+
+    @Test fun `el_GR ambiguous comma grouping share amount is rejected and never saved`() = runTest(testDispatcher) {
+        java.util.Locale.setDefault(java.util.Locale("el", "GR"))
+        val expense = mockk<Expense>(relaxed = true)
+        val received = mutableListOf<UiText>()
+        val collection = backgroundScope.launch { model.error.collect { received += it } }
+        runCurrent()
+        model.updateOwnership(expense, false, "", true, "Anna", "", "1,234")
+        advanceUntilIdle()
+        assertEquals("Share amount must be greater than 0", (received.single() as UiText.DynamicString).value)
+        io.mockk.coVerify(exactly = 0) {
+            expenses.updateOwnership(any(), any(), any(), any(), any(), any(), any())
+        }
+        collection.cancel()
+    }
+
+    @Test fun `en_US comma grouping share amount 1,234 is saved as 1234`() = runTest(testDispatcher) {
+        java.util.Locale.setDefault(java.util.Locale.US)
+        val expense = mockk<Expense>(relaxed = true)
+        model.updateOwnership(expense, false, "", true, "Anna", "", "1,234")
+        advanceUntilIdle()
+        io.mockk.coVerify(exactly = 1) {
+            expenses.updateOwnership(expense, false, null, true, "Anna", null, 1234.0)
+        }
+    }
+
     @Test fun `provenance failure is bounded`() = runTest(testDispatcher) {
         coEvery { sourceLinks.getLinksForExpense(any()) } throws hostile
         model.loadProvenanceForExpense(1)

@@ -5,6 +5,7 @@ import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.ManualExpenseRepository
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
@@ -20,8 +21,10 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.After
 import org.junit.Before
 import org.junit.Test
+import java.util.Locale
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AddExpenseViewModelTest : ViewModelTestUtils() {
@@ -125,5 +128,171 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
         viewModel.setInitialValuesIfBlank(amount = "25.50", merchant = "Second Merchant")
         assertEquals("25.50", viewModel.state.value.amount)
         assertEquals("Second Merchant", viewModel.state.value.merchant)
+    }
+
+    // ---- R16 S2: locale-aware amount parsing (validation and save share one parser) ----
+
+    private val originalLocale: Locale = Locale.getDefault()
+
+    @After
+    fun restoreDefaultLocale() {
+        Locale.setDefault(originalLocale)
+    }
+
+    private fun useGreek() = Locale.setDefault(Locale("el", "GR"))
+    private fun useUs() = Locale.setDefault(Locale.US)
+
+    private fun stubAddManualExpense() {
+        coEvery {
+            manualExpenseRepository.addManualExpense(
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+            )
+        } returns Result.Success(1L)
+    }
+
+    private fun verifySavedAmount(expected: Double, times: Int = 1) {
+        coVerify(exactly = times) {
+            manualExpenseRepository.addManualExpense(
+                merchant = any(),
+                amount = eq(expected),
+                currency = any(),
+                categoryId = any(),
+                transactionType = any(),
+                paymentMethod = any(),
+                date = any(),
+                notes = any(),
+                transferDirection = any(),
+                transferAccountName = any(),
+                isNotMine = any(),
+                ownerName = any(),
+                isSharedExpense = any(),
+                sharedWithName = any(),
+                mySharePercentage = any(),
+                myShareAmount = any(),
+                latitude = any(),
+                longitude = any(),
+                locationSource = any(),
+                recurrenceFrequency = any(),
+                recurringNote = any()
+            )
+        }
+    }
+
+    private fun saveWithAmount(typed: String) {
+        stubAddManualExpense()
+        testDispatcher.scheduler.advanceUntilIdle() // home currency load
+        viewModel.reset()
+        viewModel.updateMerchant("Shop")
+        viewModel.updateAmount(typed)
+        testDispatcher.scheduler.advanceUntilIdle()
+        viewModel.save()
+        testDispatcher.scheduler.advanceUntilIdle()
+    }
+
+    @Test
+    fun `el_GR comma decimal 12,50 saves 12_50`() {
+        useGreek()
+        saveWithAmount("12,50")
+        assertEquals(SaveResult.Success, viewModel.state.value.saveResult)
+        verifySavedAmount(12.50)
+    }
+
+    @Test
+    fun `el_GR dot grouping with comma decimal saves 1234_56`() {
+        useGreek()
+        saveWithAmount("1.234,56")
+        assertEquals(SaveResult.Success, viewModel.state.value.saveResult)
+        verifySavedAmount(1234.56)
+    }
+
+    @Test
+    fun `el_GR dot grouping without decimals saves 1234 not 1_234`() {
+        useGreek()
+        saveWithAmount("1.234")
+        verifySavedAmount(1234.0)
+    }
+
+    @Test
+    fun `en_US comma grouping saves 1234_56`() {
+        useUs()
+        saveWithAmount("1,234.56")
+        verifySavedAmount(1234.56)
+    }
+
+    @Test
+    fun `en_US comma decimal 12,50 saves 12_50 not 1250`() {
+        useUs()
+        saveWithAmount("12,50")
+        assertEquals(SaveResult.Success, viewModel.state.value.saveResult)
+        verifySavedAmount(12.50)
+    }
+
+    @Test
+    fun `mixed separators with invalid grouping are rejected with the existing error and never saved`() {
+        useGreek()
+        saveWithAmount("1,23.4")
+        assertEquals("Enter a valid amount", viewModel.state.value.amountError)
+        verifySavedAmount(1.234, times = 0)
+        coVerify(exactly = 0) {
+            manualExpenseRepository.addManualExpense(
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+            )
+        }
+    }
+
+    @Test
+    fun `el_GR typed 1,234 is truncated by the sanitizer to 1,23 and never read as 1234`() {
+        useGreek()
+        viewModel.updateAmount("1,234")
+        assertEquals("1,23", viewModel.state.value.amount)
+    }
+
+    @Test
+    fun `clipboard el_GR 1,234 prefills 1234_00 not 1_23`() {
+        useGreek()
+        viewModel.setInitialValuesIfBlank(amount = "1,234", merchant = "Clip")
+        assertEquals("1234.00", viewModel.state.value.amount)
+    }
+
+    @Test
+    fun `clipboard en_US 1,234 prefills 1234_00`() {
+        useUs()
+        viewModel.setInitialValuesIfBlank(amount = "1,234", merchant = "Clip")
+        assertEquals("1234.00", viewModel.state.value.amount)
+    }
+
+    @Test
+    fun `unparseable clipboard amount keeps the current amount`() {
+        useGreek()
+        viewModel.setInitialValuesIfBlank(amount = "abc", merchant = "Clip")
+        assertEquals("", viewModel.state.value.amount)
+    }
+
+    @Test
+    fun `existing amount loaded into the field round-trips through sanitize and save in el_GR and en_US`() {
+        for (locale in listOf(Locale("el", "GR"), Locale.US)) {
+            Locale.setDefault(locale)
+            viewModel.reset()
+            viewModel.selectSuggestion(
+                MerchantSuggestion(merchant = "Edit", categoryId = null, avgAmount = 1234.5, txCount = 2)
+            )
+            assertEquals(locale.toString(), "1234.50", viewModel.state.value.amount)
+            assertTrue(
+                locale.toString(),
+                com.yourname.expensetracker.ui.util.AmountInputSanitizer.isValid(viewModel.state.value.amount)
+            )
+        }
+        useGreek()
+        viewModel.reset()
+        viewModel.selectSuggestion(
+            MerchantSuggestion(merchant = "Edit", categoryId = null, avgAmount = 1234.5, txCount = 2)
+        )
+        stubAddManualExpense()
+        testDispatcher.scheduler.advanceUntilIdle()
+        viewModel.save()
+        testDispatcher.scheduler.advanceUntilIdle()
+        verifySavedAmount(1234.5)
     }
 }

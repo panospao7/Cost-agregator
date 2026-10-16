@@ -794,7 +794,7 @@ private fun AddExpenseDialog(
         mutableStateOf(members.associate { it.id to "" })
     }
 
-    val totalAmount = amount.toDoubleOrNull()
+    val totalAmount = com.yourname.expensetracker.ui.util.AmountInputSanitizer.parseOrNull(amount)
     val amountErrorRes = when {
         amount.isBlank() -> null
         totalAmount == null -> R.string.error_invalid_amount
@@ -802,7 +802,9 @@ private fun AddExpenseDialog(
         else -> null
     }
 
-    val parsedMemberSplits = memberSplitInputs.mapValues { it.value.trim().toDoubleOrNull() }
+    val parsedMemberSplits = memberSplitInputs.mapValues {
+        com.yourname.expensetracker.ui.util.AmountInputSanitizer.parseOrNull(it.value.trim())
+    }
     val splitTotal = parsedMemberSplits.values.sumOf { it ?: 0.0 }
     val isNonEqualSplit = splitType != SplitType.EQUAL
     val memberSplitErrors: Map<Long, Int?> = if (isNonEqualSplit) {
@@ -938,7 +940,8 @@ private fun AddExpenseDialog(
                                                 100.0 / members.size.coerceAtLeast(1)
                                             )
                                             SplitType.CUSTOM_AMOUNT, SplitType.UNEQUAL -> {
-                                                val amt = amount.toDoubleOrNull()?.div(members.size.coerceAtLeast(1)) ?: 0.0
+                                                val amt = com.yourname.expensetracker.ui.util.AmountInputSanitizer.parseOrNull(amount)
+                                                    ?.div(members.size.coerceAtLeast(1)) ?: 0.0
                                                 String.format(Locale.US, "%.2f", amt)
                                             }
                                         }
@@ -1029,7 +1032,7 @@ private fun AddExpenseDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    amount.toDoubleOrNull()?.let { amt ->
+                    com.yourname.expensetracker.ui.util.AmountInputSanitizer.parseOrNull(amount)?.let { amt ->
                         val customSplits = when (splitType) {
                             SplitType.EQUAL -> null
                             else -> parsedMemberSplits.mapValues { it.value ?: 0.0 }

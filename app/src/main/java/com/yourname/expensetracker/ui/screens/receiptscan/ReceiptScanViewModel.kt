@@ -40,7 +40,6 @@ import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifie
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptStructuredDataPolicy
-import com.yourname.expensetracker.domain.util.AmountUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.ui.screens.debug.DebugData
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -603,7 +602,7 @@ class ReceiptScanViewModel @Inject constructor(
 
         val receiptSuggestion = (currentState.receiptAssistState as? AiLoadState.Ready)?.value
         val hasMerchant = currentState.editMerchant.isNotBlank() || !receiptSuggestion?.merchant?.value.isNullOrBlank()
-        val hasAmount = AmountUtils.parseAmount(currentState.editAmount)?.let { it > 0 } == true ||
+        val hasAmount = com.yourname.expensetracker.ui.util.AmountInputSanitizer.parseOrNull(currentState.editAmount)?.let { it > 0 } == true ||
             (receiptSuggestion?.total?.value?.let { it > 0 } == true)
 
         return when {
@@ -743,7 +742,7 @@ class ReceiptScanViewModel @Inject constructor(
                 when (val result = suggestCategoryFallbackUseCase(
                     receipt = receipt,
                     draftMerchant = currentState.editMerchant,
-                    draftAmount = AmountUtils.parseAmount(currentState.editAmount),
+                    draftAmount = com.yourname.expensetracker.ui.util.AmountInputSanitizer.parseOrNull(currentState.editAmount),
                     draftDate = currentState.editDate.takeIf { it > 0L },
                     currentCategoryId = currentState.selectedCategoryId,
                     force = force
@@ -1053,7 +1052,8 @@ class ReceiptScanViewModel @Inject constructor(
             return null
         }
 
-        val amount = AmountUtils.parseAmount(currentState.editAmount)
+        // R16: strict locale-aware parser shared with the sanitizer (ambiguous -> existing error).
+        val amount = com.yourname.expensetracker.ui.util.AmountInputSanitizer.parseOrNull(currentState.editAmount)
         if (amount == null || amount <= 0) {
             _state.update { it.copy(errorMessage = "Enter a valid amount") }
             return null
@@ -1105,7 +1105,7 @@ class ReceiptScanViewModel @Inject constructor(
         if (currentState.ocrConfidence < QUICK_SAVE_MIN_CONFIDENCE) return null
 
         var merchant = currentState.editMerchant.trim()
-        var amount = AmountUtils.parseAmount(currentState.editAmount)
+        var amount = com.yourname.expensetracker.ui.util.AmountInputSanitizer.parseOrNull(currentState.editAmount)
         var date = currentState.editDate
         var categoryId = currentState.selectedCategoryId
         var categoryName: String? = categoryId?.let { selectedId ->

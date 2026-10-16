@@ -1,7 +1,16 @@
 package com.yourname.expensetracker.domain.util
 
 import timber.log.Timber
+import java.math.BigDecimal
 import java.util.Locale
+
+/** Result of [AmountUtils.parseUserAmount]. Ambiguous input is rejected, never guessed. */
+sealed interface UserAmountResult {
+    data class Valid(val value: Double) : UserAmountResult
+    object Empty : UserAmountResult
+    object Ambiguous : UserAmountResult
+    object Invalid : UserAmountResult
+}
 
 /**
  * AmountUtils - Utility for parsing and validating monetary amounts.
@@ -35,6 +44,10 @@ object AmountUtils {
     private const val TAG = "AmountUtils"
     private val NON_DIGIT_REGEX = Regex("""[^0-9.\-,]""")
     private val SUPPORTED_MINUS_SIGNS = setOf('-', '−', '‑', '–', '—')
+    private const val MAX_USER_INTEGER_DIGITS = 10
+    private val STATEMENT_WHITESPACE_REGEX = Regex("""[\s   　]+""")
+    private val STATEMENT_NUMBER_REGEX = Regex("""[0-9]+(?:[.,][0-9]+)*""")
+    private val STATEMENT_LEADING_ZERO_FRACTION_REGEX = Regex("""0[.,][0-9]{3}""")
 
     fun parseAmount(amountStr: String): Double? {
         if (amountStr.isBlank()) return null
@@ -156,6 +169,137 @@ object AmountUtils {
 
     fun formatAmount(amount: Double, currency: String = "€"): String {
         return String.format(Locale.US, "%s%.2f", currency, amount)
+    }
+
+    /**
+     * Strict parser for amounts typed by the user in a money field.
+     *
+     * Unlike [parseAmount] (machine/OCR text, unchanged) this never guesses and never
+     * silently drops a separator:
+     * 1. Both '.' and ',' present: the last one is the decimal separator; every earlier
+     *    separator must be the other character forming strict 3-digit groups, else Invalid.
+     * 2. One separator kind repeated: must be strict 3-digit groups (integer), else Invalid.
+     * 3. One separator followed by 1..maxFractionDigits digits is a decimal in every locale.
+     * 4. One separator followed by exactly 3 digits is grouping only when it is
+     *    [groupingSep]; otherwise Ambiguous (rejected, no guess).
+     * 5. More than [maxFractionDigits] fraction digits (other than the grouping case) or more
+     *    than 10 integer digits is Invalid.
+     * 6. Callers map Ambiguous to their existing invalid-amount error.
+     *
+     * Only ASCII digits, '.' and ',' are accepted. No sign, currency or whitespace inside.
+     */
+    fun parseUserAmount(
+        text: String,
+        decimalSep: Char,
+        groupingSep: Char,
+        maxFractionDigits: Int = 2
+    ): UserAmountResult {
+        val input = text.trim()
+        if (input.isEmpty()) return UserAmountResult.Empty
+        if (maxFractionDigits < 0 || decimalSep == groupingSep) return UserAmountResult.Invalid
+        if (input.any { it !in '0'..'9' && it != '.' && it != ',' }) return UserAmountResult.Invalid
+        if (input.none { it in '0'..'9' }) return UserAmountResult.Invalid
+
+        val dotCount = input.count { it == '.' }
+        val commaCount = input.count { it == ',' }
+        val separatorCount = dotCount + commaCount
+
+        val integerDigits: String
+        val fractionDigits: String
+        when {
+            dotCount > 0 && commaCount > 0 -> {
+                val decimalIndex = input.lastIndexOfAny(charArrayOf('.', ','))
+                val decimalChar = input[decimalIndex]
+                val groupChar = if (decimalChar == '.') ',' else '.'
+                val integerText = input.substring(0, decimalIndex)
+                if (integerText.contains(decimalChar)) return UserAmountResult.Invalid
+                if (!hasStrictUserGrouping(integerText, groupChar)) return UserAmountResult.Invalid
+                integerDigits = integerText.replace(groupChar.toString(), "")
+                fractionDigits = input.substring(decimalIndex + 1)
+            }
+            separatorCount >= 2 -> {
+                val sep = if (dotCount > 0) '.' else ','
+                if (!hasStrictUserGrouping(input, sep)) return UserAmountResult.Invalid
+                integerDigits = input.replace(sep.toString(), "")
+                fractionDigits = ""
+            }
+            separatorCount == 1 -> {
+                val sepIndex = input.indexOfFirst { it == '.' || it == ',' }
+                val sep = input[sepIndex]
+                val integerText = input.substring(0, sepIndex)
+                val fractionText = input.substring(sepIndex + 1)
+                when {
+                    fractionText.length <= maxFractionDigits -> {
+                        integerDigits = integerText
+                        fractionDigits = fractionText
+                    }
+                    fractionText.length == 3 -> {
+                        if (sep != groupingSep) return UserAmountResult.Ambiguous
+                        if (!hasStrictUserGrouping(input, sep)) return UserAmountResult.Invalid
+                        integerDigits = integerText
+                        fractionDigits = fractionText
+                    }
+                    else -> return UserAmountResult.Invalid
+                }
+            }
+            else -> {
+                integerDigits = input
+                fractionDigits = ""
+            }
+        }
+
+        // The grouping interpretation of rule 4 keeps the three digits in the integer part.
+        val groupingInterpretation = separatorCount == 1 &&
+            fractionDigits.length == 3 && fractionDigits.length > maxFractionDigits
+        val wholeDigits = if (groupingInterpretation) integerDigits + fractionDigits else integerDigits
+        val fractionForValue = if (groupingInterpretation) "" else fractionDigits
+
+        if (wholeDigits.trimStart('0').length > MAX_USER_INTEGER_DIGITS) return UserAmountResult.Invalid
+        val normalized = buildString {
+            append(wholeDigits.ifEmpty { "0" })
+            if (fractionForValue.isNotEmpty()) append('.').append(fractionForValue)
+        }
+        val decimal = try {
+            BigDecimal(normalized)
+        } catch (e: NumberFormatException) {
+            return UserAmountResult.Invalid
+        }
+        if (decimal.scale() > maxFractionDigits) return UserAmountResult.Invalid
+        val value = decimal.toDouble()
+        if (!value.isFinite()) return UserAmountResult.Invalid
+        return UserAmountResult.Valid(value)
+    }
+
+    /**
+     * Statement amount token (sign + digits + optional separators) from a bank statement row.
+     * The statement path only accepts 2-decimal currencies (EUR/USD/GBP), so a single separator
+     * kind followed by exactly 3 trailing digits is thousands grouping ("1,234" and "1.234" are
+     * 1234; "1,234,567" is 1234567). A leading-zero token with one separator and exactly 3
+     * digits ("0,123" / "0.123") can never be grouping, so BOTH separators read it as the
+     * decimal 0.123 (consistent; the old comma form silently became 123). Everything else is
+     * delegated to [parseAmount] unchanged and returns the signed value exactly as it would.
+     */
+    fun parseStatementAmount(token: String): Double? {
+        val compact = token.replace(STATEMENT_WHITESPACE_REGEX, "")
+        val numeric = STATEMENT_NUMBER_REGEX.find(compact)?.value
+        if (numeric != null && STATEMENT_LEADING_ZERO_FRACTION_REGEX.matches(numeric)) {
+            return parseAmount(compact.replaceFirst(numeric, numeric.replace(',', '.')))
+        }
+        if (numeric != null) {
+            val separators = numeric.filter { it == '.' || it == ',' }.toSet()
+            if (separators.size == 1) {
+                val sep = separators.first()
+                if (hasStrictUserGrouping(numeric, sep)) {
+                    return parseAmount(compact.replaceFirst(numeric, numeric.replace(sep.toString(), "")))
+                }
+            }
+        }
+        return parseAmount(token)
+    }
+
+    private fun hasStrictUserGrouping(text: String, separator: Char): Boolean {
+        if (text.startsWith('0')) return false
+        return hasStrictThousandsGrouping(text, separator)
     }
 
     private fun hasStrictThousandsGrouping(rawIntegerPart: String, separator: Char): Boolean {

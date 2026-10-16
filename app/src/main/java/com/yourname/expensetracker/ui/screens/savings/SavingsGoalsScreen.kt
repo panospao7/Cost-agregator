@@ -383,7 +383,7 @@ private fun AddGoalDialog(
     var showDatePicker by remember { mutableStateOf(false) }
     var protectionLevel by remember { mutableStateOf(GoalProtectionLevel.WARNING) }
 
-    val parsedAmount = targetAmountInput.toDoubleOrNull()
+    val parsedAmount = com.yourname.expensetracker.ui.util.AmountInputSanitizer.parseOrNull(targetAmountInput)
     val isNameValid = goalName.trim().isNotEmpty()
     val isAmountValid = parsedAmount != null && parsedAmount > 0.0
     val dateLabel = remember(targetDateMillis) {
@@ -411,9 +411,8 @@ private fun AddGoalDialog(
                 OutlinedTextField(
                     value = targetAmountInput,
                     onValueChange = { value ->
-                        if (value.isEmpty() || value.matches(Regex("^\\d*\\.?\\d{0,2}$"))) {
-                            targetAmountInput = value
-                        }
+                        // R16: locale-aware; keeps the comma decimal separator instead of rejecting it.
+                        targetAmountInput = com.yourname.expensetracker.ui.util.AmountInputSanitizer.sanitize(value)
                     },
                     label = { Text(stringResource(R.string.savings_target_amount_label)) },
                     singleLine = true,

@@ -660,7 +660,7 @@ class TransactionsViewModel @Inject constructor(
                     isSharedExpense = isSharedExpense,
                     sharedWithName = sharedWithName.takeIf { it.isNotBlank() },
                     mySharePercentage = parsedSharePercentage,
-                    myShareAmount = com.yourname.expensetracker.domain.util.AmountUtils.parseAmount(myShareAmount.trim())
+                    myShareAmount = com.yourname.expensetracker.ui.util.AmountInputSanitizer.parseOrNull(myShareAmount.trim())
                 )
                 val message = when {
                     isNotMine -> "Marked as not mine"

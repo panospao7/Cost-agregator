@@ -53,7 +53,7 @@ class NotificationIntakeWorkerTimeoutTest {
     /** Helper: creates a real [TimeoutCancellationException] via [withTimeout]. */
     private fun createTimeoutCancellationException(): TimeoutCancellationException = runBlocking {
         try {
-            withTimeout(1) { delay(100) }
+            withTimeout(1) { kotlinx.coroutines.awaitCancellation() } // deterministic: timeout always wins
         } catch (e: TimeoutCancellationException) {
             return@runBlocking e
         }

@@ -575,6 +575,57 @@ class ReceiptScanViewModelTest : ViewModelTestUtils() {
         }) }
     }
 
+    private val originalLocale: java.util.Locale = java.util.Locale.getDefault()
+
+    @After fun restoreDefaultLocale() {
+        java.util.Locale.setDefault(originalLocale)
+    }
+
+    private fun saveWithEditAmount(typed: String) = runTest(testDispatcher) {
+        coEvery { links.checkCanLinkReceipt(17L) } returns true
+        coEvery { coordinator.createExpenseAndLinkReceipt(any()) } returns
+            Result.failure(ReceiptLifecycleCoordinator.DuplicateTransactionException())
+        setState(ReceiptScanState(
+            step = ScanStep.REVIEW, receiptId = 17L, editMerchant = "Merchant",
+            editAmount = typed, editCurrency = "EUR", editDate = 1_700_000_000_000L
+        ))
+        model.saveExpense()
+        advanceUntilIdle()
+    }
+
+    @Test
+    fun `el_GR comma total 12,50 is saved as 12_50`() {
+        java.util.Locale.setDefault(java.util.Locale("el", "GR"))
+        saveWithEditAmount("12,50")
+        coVerify(exactly = 1) { coordinator.createExpenseAndLinkReceipt(match { it.amount == 12.5 }) }
+    }
+
+    @Test
+    fun `el_GR grouped total 1_234,56 is saved as 1234_56`() {
+        java.util.Locale.setDefault(java.util.Locale("el", "GR"))
+        saveWithEditAmount("1.234,56")
+        coVerify(exactly = 1) { coordinator.createExpenseAndLinkReceipt(match { it.amount == 1234.56 }) }
+    }
+
+    @Test
+    fun `el_GR ambiguous comma grouped total is rejected with the existing error and never saved`() {
+        java.util.Locale.setDefault(java.util.Locale("el", "GR"))
+        saveWithEditAmount("1,234")
+        assertEquals("Enter a valid amount", model.state.value.errorMessage)
+        coVerify(exactly = 0) { coordinator.createExpenseAndLinkReceipt(any()) }
+    }
+
+    @Test
+    fun `OCR total prefill round-trips through the strict parser in el_GR and en_US`() {
+        for (locale in listOf(java.util.Locale("el", "GR"), java.util.Locale.US)) {
+            java.util.Locale.setDefault(locale)
+            val prefill = String.format(java.util.Locale.US, "%.2f", 1234.5)
+            val sanitized = com.yourname.expensetracker.ui.util.AmountInputSanitizer.sanitize(prefill)
+            assertEquals(locale.toString(), 1234.5,
+                com.yourname.expensetracker.ui.util.AmountInputSanitizer.parseOrNull(sanitized)!!, 0.0)
+        }
+    }
+
     private fun setState(state: ReceiptScanState) {
         val field = ReceiptScanViewModel::class.java.getDeclaredField("_state")
         field.isAccessible = true

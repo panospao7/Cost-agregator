@@ -366,3 +366,17 @@ In this session (2026-10-14) two `scout` read-only indexing tasks ran. The profi
 pin requests Haiku 5.5/medium, but the actual model/effort was not independently
 confirmed from /tasks. Their reports are summarized
 in the coverage matrix and regression ledger seed.
+
+- 2026-10-16: release work moved to worktree C:\Users\panos\Desktop\Cost-agregator-release (branch release-1.0-wt from 2ca932a9)
+  because the owner's loan-installments feature session writes into the main folder (two STALE_RESULT runs). Owner phone (62d5f6f9):
+  live DB = final v145 (identity 6f54382e...), so R25 part 3 dropped; signing option 1 (owner release key + backup/restore). Safety
+  copy of the owner DB at %USERPROFILE%\Desktop\expense-db-copy-2026-10-16 (integrity ok). Real-device crashes: backup SQLITE_BUSY
+  (root cause DBRI :678 locking_mode EXCLUSIVE -> R26 P1, approved) and dataSync FGS timeout (fixed by R14).
+- 2026-10-16: owner approvals: R21 worker, R23 default OFF, R25 plaintext untouched-file export, R26 core + R26-V + R26-D (Q-V1 yes,
+  lost-count yes, NOTIFICATION_CAPTURE only), G2 + G3 (+ COVERED_BY_CALLER category for 3 workers, dropped mirror events during
+  maintenance, DBRI privacy checks before :391, warranty reclassification, bank stub debug-only owner). Plan sections 22-25 recorded.
+  Deadline: G2 before 2026-10-31 (WriteBarrierArchitectureGuardTest expiry). R27 (non-worker in-flight tx vs enterAndDrain) queued.
+- 2026-10-16: R16 PASS at batch gate (worktree, fingerprint 57d1c5dc..., rev 2ca932a9 + diff): targeted runs listed in the findings
+  ledger; app-check vr-20261016-074919-4c734c1d PASS (testDebugUnitTest 8164/0 failed/276 skipped, testReleaseUnitTest 8164/0/277,
+  lint no new errors). Reviews: S1 + S2 reviewer-strict ACCEPT-WITH-NOTES (findings fixed). Debug iterations: over-cap statement row
+  skip; deterministic TimeoutCancellationException in 3 tests. Committed on release-1.0-wt.
