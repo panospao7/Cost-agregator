@@ -396,6 +396,107 @@ class BackupRestoreViewModelTest : ViewModelTestUtils() {
         )
     }
 
+    // ── R26: unexpected throws must reset busy flags; cancellation propagates ──
+
+    @Test
+    fun `createBackup repository throw resets isBackingUp and shows bounded message`() = runTest(testDispatcher) {
+        val destination = destinationUri()
+        coEvery {
+            databaseBackupRepository.createCostBackup(destination, "test-password", any(), any(), any())
+        } throws IllegalStateException("database is locked /data/secret-path")
+
+        val vm = createViewModel()
+        advanceUntilIdle()
+        vm.createBackup(destination, "test-password")
+        advanceUntilIdle()
+
+        val state = vm.uiState.value
+        assertFalse(state.isBackingUp)
+        assertNull(state.successMessage)
+        assertEquals("Backup failed. Please try again.", state.errorMessage)
+    }
+
+    @Test
+    fun `createBackup cancellation resets isBackingUp without an error message and propagates`() = runTest(testDispatcher) {
+        val destination = destinationUri()
+        val cancellation = kotlinx.coroutines.CancellationException("cancelled")
+        var thrownFromRepository: Throwable? = null
+        coEvery {
+            databaseBackupRepository.createCostBackup(destination, "test-password", any(), any(), any())
+        } coAnswers {
+            thrownFromRepository = cancellation
+            throw cancellation
+        }
+
+        val vm = createViewModel()
+        advanceUntilIdle()
+        vm.createBackup(destination, "test-password")
+        advanceUntilIdle()
+
+        assertTrue(thrownFromRepository === cancellation)
+        val state = vm.uiState.value
+        assertFalse(state.isBackingUp)
+        assertNull("cancellation must not surface as a failure message", state.errorMessage)
+        assertNull(state.successMessage)
+    }
+
+    @Test
+    fun `restoreBackup repository throw resets isRestoring and shows bounded message`() = runTest(testDispatcher) {
+        val uri = destinationUri()
+        every { context.contentResolver.openInputStream(uri) } returns bundleInputStream()
+        coEvery { databaseBackupRepository.restoreCostBackup(any(), any()) } throws
+            IllegalStateException("database is locked /data/secret-path")
+
+        val vm = createViewModel()
+        advanceUntilIdle()
+        vm.restoreBackup(uri, "test-password")
+        advanceUntilIdle()
+
+        val state = vm.uiState.value
+        assertFalse(state.isRestoring)
+        assertFalse(state.restartRequired)
+        assertEquals("Restore failed. Please try again.", state.errorMessage)
+    }
+
+    @Test
+    fun `restoreBackup temp file creation failure resets isRestoring and shows bounded message`() = runTest(testDispatcher) {
+        val uri = destinationUri()
+        // createTempFile resolves context.cacheDir inside the guarded region.
+        every { context.cacheDir } throws IllegalStateException("cache unavailable")
+
+        val vm = createViewModel()
+        advanceUntilIdle()
+        vm.restoreBackup(uri, "test-password")
+        advanceUntilIdle()
+
+        val state = vm.uiState.value
+        assertFalse(state.isRestoring)
+        assertEquals("Restore failed. Please try again.", state.errorMessage)
+    }
+
+    @Test
+    fun `restoreBackup cancellation resets isRestoring without an error message and propagates`() = runTest(testDispatcher) {
+        val uri = destinationUri()
+        val cancellation = kotlinx.coroutines.CancellationException("cancelled")
+        var thrownFromRepository: Throwable? = null
+        every { context.contentResolver.openInputStream(uri) } returns bundleInputStream()
+        coEvery { databaseBackupRepository.restoreCostBackup(any(), any()) } coAnswers {
+            thrownFromRepository = cancellation
+            throw cancellation
+        }
+
+        val vm = createViewModel()
+        advanceUntilIdle()
+        vm.restoreBackup(uri, "test-password")
+        advanceUntilIdle()
+
+        assertTrue(thrownFromRepository === cancellation)
+        val state = vm.uiState.value
+        assertFalse(state.isRestoring)
+        assertNull("cancellation must not surface as a failure message", state.errorMessage)
+        assertNull(state.successMessage)
+    }
+
     // ── RP-03A (P7-003): SAF destination create-backup failure matrix ──
     // Each SAF failure the repository can produce (null openOutputStream, open
     // exception, write exception, close exception, failed delete-cleanup) must

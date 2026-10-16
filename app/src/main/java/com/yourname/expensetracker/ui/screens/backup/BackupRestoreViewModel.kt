@@ -13,6 +13,8 @@ import com.yourname.expensetracker.domain.backup.DatabaseImportResult
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import com.yourname.expensetracker.domain.util.CancellationSafe
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -111,7 +113,17 @@ class BackupRestoreViewModel @Inject constructor(
                 privacyBlocked = null
             )
 
-            val result = databaseBackupRepository.createCostBackup(destination, password)
+            // R26: an unexpected repository throw must never leave isBackingUp stuck.
+            // Cancellation resets the flag and is rethrown; any other exception maps
+            // to the bounded generic failure message below (no raw exception text).
+            val result = try {
+                databaseBackupRepository.createCostBackup(destination, password)
+            } catch (e: CancellationException) {
+                _uiState.value = _uiState.value.copy(isBackingUp = false)
+                throw e
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
 
             result.fold(
                 onSuccess = {
@@ -180,58 +192,65 @@ class BackupRestoreViewModel @Inject constructor(
                 privacyBlocked = null
             )
 
-            // P7-CURRENT-017: cheap size precheck from provider metadata before opening a stream.
-            val declaredSize = queryUriSize(uri)
-            if (declaredSize != null && declaredSize > MAX_BACKUP_BUNDLE_BYTES) {
-                _uiState.value = _uiState.value.copy(
-                    isRestoring = false,
-                    errorMessage = "Backup file is too large (max ${MAX_BACKUP_BUNDLE_BYTES / (1024 * 1024)} MB)"
-                )
-                return@launch
-            }
-
-            val tempFile = File.createTempFile("restore_", ".costbackup", context.cacheDir)
-            val copyResult = runCatching {
-                val input = context.contentResolver.openInputStream(uri)
-                    ?: error("Could not open selected backup file")
-                input.use { src -> copyBackupWithPreflight(src, tempFile) }
-            }
-            copyResult.getOrElse { error ->
-                tempFile.delete()
-                // RP-15 (15-D): a SecurityException on the SAF stream is a security
-                // denial — converge on the typed state instead of a raw message.
-                if (error is SecurityException) {
+            // R26: queryUriSize/createTempFile are inside the guarded region so an
+            // unexpected throw can never leave isRestoring stuck. Cancellation resets
+            // the flag and is rethrown; other failures use bounded messages only.
+            var tempFile: File? = null
+            // S3-006: try/finally ensures isRestoring resets and temp file is deleted even on throw
+            val result = try {
+                // P7-CURRENT-017: cheap size precheck from provider metadata before opening a stream.
+                val declaredSize = queryUriSize(uri)
+                if (declaredSize != null && declaredSize > MAX_BACKUP_BUNDLE_BYTES) {
                     _uiState.value = _uiState.value.copy(
                         isRestoring = false,
-                        errorMessage = null,
-                        privacyBlocked = com.yourname.expensetracker.ui.components.PrivacyBlockedUiState(
-                            capability = com.yourname.expensetracker.domain.privacy.PrivacyCapability.ENCRYPTED_BACKUP,
-                            messageResId = com.yourname.expensetracker.R.string.privacy_blocked_generic,
-                            reasonCode = com.yourname.expensetracker.domain.privacy.PrivacyGateReasonCodes.PRIVACY_GATE_FAILURE
-                        )
+                        errorMessage = "Backup file is too large (max ${MAX_BACKUP_BUNDLE_BYTES / (1024 * 1024)} MB)"
                     )
                     return@launch
                 }
-                val message = when (error) {
-                    is CostbackupBundle.InvalidBackupFormatException ->
-                        "Not a valid .costbackup file"
-                    is CostbackupBundle.UnsupportedBackupVersionException ->
-                        "Unsupported backup version"
-                    is CostbackupBundle.BackupTooLargeException ->
-                        "Backup file is too large (max ${MAX_BACKUP_BUNDLE_BYTES / (1024 * 1024)} MB)"
-                    else -> "Failed to read backup file"
-                }
-                _uiState.value = _uiState.value.copy(isRestoring = false, errorMessage = message)
-                return@launch
-            }
 
-            // S3-006: try/finally ensures isRestoring resets and temp file is deleted even on throw
-            val result = try {
-                databaseBackupRepository.restoreCostBackup(tempFile, password)
+                val stagedFile = File.createTempFile("restore_", ".costbackup", context.cacheDir)
+                tempFile = stagedFile
+                val copyResult = CancellationSafe.runCatchingCancellable {
+                    val input = context.contentResolver.openInputStream(uri)
+                        ?: error("Could not open selected backup file")
+                    input.use { src -> copyBackupWithPreflight(src, stagedFile) }
+                }
+                copyResult.getOrElse { error ->
+                    // RP-15 (15-D): a SecurityException on the SAF stream is a security
+                    // denial — converge on the typed state instead of a raw message.
+                    if (error is SecurityException) {
+                        _uiState.value = _uiState.value.copy(
+                            isRestoring = false,
+                            errorMessage = null,
+                            privacyBlocked = com.yourname.expensetracker.ui.components.PrivacyBlockedUiState(
+                                capability = com.yourname.expensetracker.domain.privacy.PrivacyCapability.ENCRYPTED_BACKUP,
+                                messageResId = com.yourname.expensetracker.R.string.privacy_blocked_generic,
+                                reasonCode = com.yourname.expensetracker.domain.privacy.PrivacyGateReasonCodes.PRIVACY_GATE_FAILURE
+                            )
+                        )
+                        return@launch
+                    }
+                    val message = when (error) {
+                        is CostbackupBundle.InvalidBackupFormatException ->
+                            "Not a valid .costbackup file"
+                        is CostbackupBundle.UnsupportedBackupVersionException ->
+                            "Unsupported backup version"
+                        is CostbackupBundle.BackupTooLargeException ->
+                            "Backup file is too large (max ${MAX_BACKUP_BUNDLE_BYTES / (1024 * 1024)} MB)"
+                        else -> "Failed to read backup file"
+                    }
+                    _uiState.value = _uiState.value.copy(isRestoring = false, errorMessage = message)
+                    return@launch
+                }
+
+                databaseBackupRepository.restoreCostBackup(stagedFile, password)
+            } catch (e: CancellationException) {
+                _uiState.value = _uiState.value.copy(isRestoring = false)
+                throw e
             } catch (t: Throwable) {
                 Result.failure(t)
             } finally {
-                tempFile.delete()
+                tempFile?.delete()
             }
 
             result.fold(

@@ -834,6 +834,22 @@ class WorkerExecutionGuardTest {
     }
 
     @Test
+    fun `R26 audit write failure retries even under skip_success privacy policy`() = runTest {
+        coEvery { privacyGate.check(any<PrivacyCapability>()) } returns PrivacyDecision.FailClosed(
+            com.yourname.expensetracker.domain.privacy.PrivacyGateReasonCodes.PRIVACY_AUDIT_WRITE_FAILED
+        )
+        var blockRan = false
+
+        val result = guard.runGuarded(privacyRequest(PrivacyPolicy.SKIP_SUCCESS)) { blockRan = true }
+
+        assertTrue(result is WorkerGuardResult.Retry)
+        assertEquals(DiagnosticReasonCode.WORKER_TRANSIENT_ERROR.name, (result as WorkerGuardResult.Retry).reason)
+        assertFalse("block must not run when the audit write failed", blockRan)
+        coVerify(exactly = 1) { runHandle.retry(DiagnosticReasonCode.WORKER_TRANSIENT_ERROR.name, null, any()) }
+        coVerify(exactly = 0) { runHandle.skipped(any(), any()) }
+    }
+
+    @Test
     fun `notification_permission_denied_skip_policy_returns_success`() = runTest {
         permissionChecker.enabled = false
         var blockRan = false
@@ -945,6 +961,21 @@ class WorkerExecutionGuardTest {
         assertEquals(DiagnosticReasonCode.WORKER_PRIVACY_FAIL_CLOSED.name, (result as WorkerGuardResult.Retry).reason)
         assertFalse("block must not run when privacy fail-closed", blockRan)
         coVerify(exactly = 1) { runHandle.retry(DiagnosticReasonCode.WORKER_PRIVACY_FAIL_CLOSED.name, null, any()) }
+    }
+
+    @Test
+    fun `runGuardedWithContext R26 audit write failure retries even under skip_success privacy policy`() = runTest {
+        coEvery { privacyGate.check(any<PrivacyCapability>()) } returns PrivacyDecision.FailClosed(
+            com.yourname.expensetracker.domain.privacy.PrivacyGateReasonCodes.PRIVACY_AUDIT_WRITE_FAILED
+        )
+        var blockRan = false
+
+        val result = guard.runGuardedWithContext(privacyRequest(PrivacyPolicy.SKIP_SUCCESS)) { blockRan = true }
+
+        assertTrue(result is WorkerGuardResult.Retry)
+        assertEquals(DiagnosticReasonCode.WORKER_TRANSIENT_ERROR.name, (result as WorkerGuardResult.Retry).reason)
+        assertFalse("block must not run when the audit write failed", blockRan)
+        coVerify(exactly = 1) { runHandle.retry(DiagnosticReasonCode.WORKER_TRANSIENT_ERROR.name, null, any()) }
     }
 
     @Test

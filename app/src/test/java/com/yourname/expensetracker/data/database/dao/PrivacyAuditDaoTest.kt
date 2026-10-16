@@ -138,7 +138,7 @@ class PrivacyAuditDaoTest {
         dao.insert(createEvent(timestampMs = cutoff)) // exactly at cutoff — kept
         dao.insert(createEvent(timestampMs = FIXED_NOW))
 
-        val deleted = dao.deleteOlderThan(cutoff)
+        val deleted = dao.deleteOlderThan(cutoff, 5000)
 
         assertEquals(1, deleted)
         assertEquals(2, dao.getRecent(10).size)
@@ -149,7 +149,27 @@ class PrivacyAuditDaoTest {
         val cutoff = FIXED_NOW - 180L * 24 * 60 * 60 * 1000
         dao.insert(createEvent(timestampMs = cutoff - 1))
 
-        assertEquals(1, dao.deleteOlderThan(cutoff))
-        assertEquals(0, dao.deleteOlderThan(cutoff))
+        assertEquals(1, dao.deleteOlderThan(cutoff, 5000))
+        assertEquals(0, dao.deleteOlderThan(cutoff, 5000))
+    }
+
+    @Test
+    fun `deleteOlderThan deletes at most limit rows per call and keeps newer rows`() = runTest {
+        val cutoff = FIXED_NOW - 180L * 24 * 60 * 60 * 1000
+        repeat(5) { dao.insert(createEvent(timestampMs = cutoff - 1 - it)) }
+        repeat(2) { dao.insert(createEvent(timestampMs = FIXED_NOW + it)) }
+
+        // 5 old + 2 new = 7 rows.
+        assertEquals(2, dao.deleteOlderThan(cutoff, 2))
+        assertEquals(5, dao.getRecent(100).size)
+        assertEquals(2, dao.deleteOlderThan(cutoff, 2))
+        assertEquals(3, dao.getRecent(100).size)
+        // Final partial batch is smaller than the limit and signals completion.
+        assertEquals(1, dao.deleteOlderThan(cutoff, 2))
+        assertEquals(0, dao.deleteOlderThan(cutoff, 2))
+
+        val remaining = dao.getRecent(100)
+        assertEquals(2, remaining.size)
+        assertTrue(remaining.all { it.timestampMs >= FIXED_NOW })
     }
 }

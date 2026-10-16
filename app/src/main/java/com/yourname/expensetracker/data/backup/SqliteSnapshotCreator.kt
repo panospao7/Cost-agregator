@@ -40,8 +40,12 @@ class SqliteSnapshotCreator @Inject constructor() {
 
     private fun tryVacuumInto(source: File, target: File): Boolean {
         return try {
+            // R26: VACUUM INTO only reads the source, so open it read-only. This avoids
+            // taking a write-capable connection on the live WAL database. The deciding
+            // instrumented test A2 (BackupWalLockInstrumentedTest) confirms VACUUM INTO
+            // works on a read-only handle; if it throws, the existing fallback below applies.
             val db = SQLiteDatabase.openDatabase(
-                source.absolutePath, null, SQLiteDatabase.OPEN_READWRITE
+                source.absolutePath, null, SQLiteDatabase.OPEN_READONLY
             )
             db.use { it.execSQL("VACUUM INTO ?", arrayOf(target.absolutePath)) }
             Timber.d("SqliteSnapshotCreator: VACUUM INTO succeeded")

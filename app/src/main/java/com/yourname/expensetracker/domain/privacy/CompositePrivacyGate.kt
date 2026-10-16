@@ -66,7 +66,23 @@ class CompositePrivacyGate(
                 Timber.w("No privacy gate handled capability %s — defaulting to Allowed (local-only)", capability)
             }
         }
-        auditLogger.logDecision(capability, finalDecision, context)
+        // R26 (owner-approved): an audit-write failure (e.g. SQLITE_BUSY, write barrier) must never
+        // escape to the caller and crash it. A decision that already blocks is returned unchanged;
+        // otherwise the gate fails closed, because an unaudited allow is not permitted. No retry.
+        try {
+            auditLogger.logDecision(capability, finalDecision, context)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.e(
+                "Privacy audit write failed with %s for capability %s — failing closed",
+                e::class.java.name, capability.name
+            )
+            if (finalDecision is PrivacyDecision.Denied || finalDecision is PrivacyDecision.FailClosed) {
+                return finalDecision
+            }
+            return PrivacyDecision.FailClosed(PrivacyGateReasonCodes.PRIVACY_AUDIT_WRITE_FAILED)
+        }
         return finalDecision
     }
 }

@@ -13,14 +13,14 @@ import java.io.File
  *
  * ## Coverage
  * - **Structural exceptions:** Exact class, method_pattern, operation, and path
- *   matching for the 65-entry structural policy (migrations, rescue,
+ *   matching for the 64-entry structural policy (migrations, rescue,
  *   backup/restore, diagnostics, privacy export, restore verification).
  * - **Structural manifest:** The checked-in
  *   `config/guards/db_structural_exceptions_expected_methods.yml` is loaded and
- *   validated directly — counts block (`structural_entries: 65` ONLY; ownership
+ *   validated directly — counts block (`structural_entries: 64` ONLY; ownership
  *   cardinality is not manifest metadata and an `ownership_entries` counts key
  *   fails closed), expected
- *   60 + fixtures 4, exact union equality with the structural YAML tuple set,
+ *   59 + fixtures 4, exact union equality with the structural YAML tuple set,
  *   expected/fixtures disjointness, a single global tuple-identity set across
  *   BOTH sections (a cross-section duplicate fails closed), and no
  *   duplicate/wildcard/raw/write tuples.
@@ -1074,19 +1074,19 @@ class DbGuardPolicyFixtureTest {
     }
 
     @Test
-    fun `manifest — structural exceptions has exactly 65 entries`() {
+    fun `manifest — structural exceptions has exactly 64 entries`() {
         val entries = parseEntries(structuralExceptionsFile)
-        assertEquals("Structural exceptions must have exactly 65 entries", 65, entries.size)
+        assertEquals("Structural exceptions must have exactly 64 entries", 64, entries.size)
     }
 
     @Test
-    fun `manifest — counts block pins structural 65 only`() {
+    fun `manifest — counts block pins structural 64 only`() {
         // GR-04 decoupling: the manifest governs structural exceptions ONLY.
         // Its counts block carries structural_entries and nothing else; the
         // ownership policy's own 99-entry size is an independent property of
         // the policy file, never manifest metadata.
         val manifest = parseStructuralManifest(structuralManifestFile)
-        assertEquals("Manifest structural_entries count", 65, manifest.structuralEntries)
+        assertEquals("Manifest structural_entries count", 64, manifest.structuralEntries)
         assertEquals(
             "Manifest structural count must match the checked-in structural YAML",
             parseEntries(structuralExceptionsFile).size, manifest.structuralEntries
@@ -1124,13 +1124,13 @@ class DbGuardPolicyFixtureTest {
     }
 
     @Test
-    fun `manifest — expected has exactly 60 tuples and fixtures exactly 5`() {
+    fun `manifest — expected has exactly 59 tuples and fixtures exactly 5`() {
         val manifest = parseStructuralManifest(structuralManifestFile)
-        assertEquals("Manifest expected tuples", 60, manifest.expected.size)
+        assertEquals("Manifest expected tuples", 59, manifest.expected.size)
         assertEquals("Manifest fixture tuples", 5, manifest.fixtures.size)
         assertEquals(
-            "expected + fixtures must total the structural 65",
-            65, manifest.expected.size + manifest.fixtures.size
+            "expected + fixtures must total the structural 64",
+            64, manifest.expected.size + manifest.fixtures.size
         )
     }
 
@@ -1141,7 +1141,7 @@ class DbGuardPolicyFixtureTest {
             .map { it.toManifestTuple() }
             .toSet()
         val union = (manifest.expected + manifest.fixtures).toSet()
-        assertEquals("Expected+fixtures union must have exactly 65 distinct tuples", 65, union.size)
+        assertEquals("Expected+fixtures union must have exactly 64 distinct tuples", 64, union.size)
         assertEquals(
             "Expected+fixtures union must EXACTLY equal the structural YAML tuple set",
             structuralTuples, union
@@ -1162,7 +1162,7 @@ class DbGuardPolicyFixtureTest {
     @Test
     fun `manifest — expected has no duplicate, wildcard, raw, or write tuples`() {
         val manifest = parseStructuralManifest(structuralManifestFile)
-        assertEquals("expected must have 60 distinct tuples", 60, manifest.expected.toSet().size)
+        assertEquals("expected must have 59 distinct tuples", 59, manifest.expected.toSet().size)
         for (tuple in manifest.expected) {
             assertValidStructuralTuple(
                 tuple,
@@ -1187,7 +1187,7 @@ class DbGuardPolicyFixtureTest {
     fun `structural exceptions — no duplicate tuples, wildcard, raw, or write operations`() {
         val entries = parseEntries(structuralExceptionsFile)
         val tuples = entries.map { it.toManifestTuple() }
-        assertEquals("Structural YAML must have 65 distinct tuples", 65, tuples.toSet().size)
+        assertEquals("Structural YAML must have 64 distinct tuples", 64, tuples.toSet().size)
         for (tuple in tuples) {
             assertValidStructuralTuple(
                 tuple,

@@ -217,14 +217,6 @@ entries:
   - path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
     class: DatabaseBackupRepositoryImpl
     method_pattern: "runCostBackupExport"
-    operation: writableDatabase
-    reason: "File-level backup/restore — writable DB access for WAL checkpoint before snapshot"
-    owner: "@panospao7"
-    linked_issue: "MIT-003"
-
-  - path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
-    class: DatabaseBackupRepositoryImpl
-    method_pattern: "runCostBackupExport"
     operation: getDatabasePath
     reason: "File-level backup/restore — resolves live DB path for backup source"
     owner: "@panospao7"

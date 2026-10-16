@@ -768,7 +768,9 @@ MANIFEST_COUNT_KEYS = frozenset({"structural_entries"})
 # GR-08j: 62 -> 64 (two exact named-object Room-migration tuples,
 # MIGRATION_16_17/migrate and MIGRATION_41_42/migrate on AppDatabase.kt).
 # Human-authorized 2026-09-28: one exact cleanupRestoreStaging fixture, 64 -> 65.
-PINNED_STRUCTURAL_ENTRY_COUNT = 65
+# R26 (owner-approved guard tightening): removed the stale runCostBackupExport/
+# writableDatabase exception (the PRAGMA statement was removed), 65 -> 64.
+PINNED_STRUCTURAL_ENTRY_COUNT = 64
 
 # ── Immutable checked-in tuple contracts (expected/fixtures classification) ────
 # The manifest's ``expected`` and ``fixtures`` sections must EXACTLY equal these
@@ -861,7 +863,6 @@ MANIFEST_IMMUTABLE_EXPECTED_TUPLES = frozenset([
     (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "exportDatabase", "getDatabasePath"),
     # RP-03A (0835b5c7f, 2026-09-14) moved the existing export pipeline into
     # this shared helper. One-for-one identity moves; exact evidence required.
-    (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "runCostBackupExport", "writableDatabase"),
     (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "runCostBackupExport", "getDatabasePath"),
     (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "runCostBackupExport", "openDatabase"),
     (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "restoreCostBackup", "getDatabasePath"),

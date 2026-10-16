@@ -380,3 +380,13 @@ in the coverage matrix and regression ledger seed.
   ledger; app-check vr-20261016-074919-4c734c1d PASS (testDebugUnitTest 8164/0 failed/276 skipped, testReleaseUnitTest 8164/0/277,
   lint no new errors). Reviews: S1 + S2 reviewer-strict ACCEPT-WITH-NOTES (findings fixed). Debug iterations: over-cap statement row
   skip; deterministic TimeoutCancellationException in 3 tests. Committed on release-1.0-wt.
+- 2026-10-16: R26 core PASS at batch gate (worktree, fingerprint ce730c77..., rev c3fc8947 + diff): backup lock fix (locking_mode
+  pragma removed, read-only snapshot, recorder fallback, VM catch), audit-write failure fails closed with PRIVACY_AUDIT_WRITE_FAILED
+  (workers retry), batched purges, stale runCostBackupExport/writableDatabase structural exception removed (owner-approved guard
+  tightening, counts 65->64 / 60->59). Root cause confirmed on emulator API 35 (connected BackupWalLockInstrumentedTest 3/3,
+  vr-20261016-085112-48dff99a). Final gate: DbGuardPolicyFixtureTest vr-20261016-095638-3b4af43f, static-guards 25/25
+  vr-20261016-095903-03674f6b, app-check vr-20261016-102123-064fc003 (8185/0 failed/276 and 277 skipped; lint via baseline).
+  Reviews: reviewer-strict ACCEPT-WITH-NOTES (F1-F4 addressed); architecture-guardian on the guard edit (see findings ledger).
+  R26 reached the 2-debug-iteration cap. Committed on release-1.0-wt. Next: G2 (deadline 2026-10-31).
+  Branch note: release-1.0-remediation in the main folder gained owner commits e5a2f0e7 and 7da9fcae, so the final move to
+  release-1.0-wt is not a fast-forward any more; the owner decides merge vs rebase at the end.

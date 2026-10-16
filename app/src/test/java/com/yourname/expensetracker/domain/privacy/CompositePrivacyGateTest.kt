@@ -43,6 +43,55 @@ class CompositePrivacyGateTest {
         assertTrue(auditLogger.decisions.isEmpty())
     }
 
+    private class ThrowingAuditLogger(private val error: Exception) : PrivacyAuditLogger {
+        override suspend fun logDecision(
+            capability: PrivacyCapability,
+            decision: PrivacyDecision,
+            context: Map<String, String>
+        ) {
+            throw error
+        }
+    }
+
+    @Test
+    fun `R26 audit write failure on an allowed decision fails closed instead of throwing`() = runTest {
+        val composite = CompositePrivacyGate(
+            listOf(gateReturning(PrivacyDecision.Allowed)),
+            ThrowingAuditLogger(IllegalStateException("database is locked"))
+        )
+
+        val decision = composite.check(PrivacyCapability.NOTIFICATION_CAPTURE)
+
+        assertEquals(PrivacyDecision.FailClosed(PrivacyGateReasonCodes.PRIVACY_AUDIT_WRITE_FAILED), decision)
+    }
+
+    @Test
+    fun `R26 audit write failure preserves an already blocking decision`() = runTest {
+        val denied = PrivacyDecision.Denied("DENIED_REASON")
+        val composite = CompositePrivacyGate(
+            listOf(gateReturning(denied)),
+            ThrowingAuditLogger(IllegalStateException("audit failure"))
+        )
+
+        assertEquals(denied, composite.check(PrivacyCapability.CLOUD_AI_GENERAL))
+    }
+
+    @Test
+    fun `R26 audit write cancellation propagates the exact exception`() = runTest {
+        val cancellation = CancellationException("audit cancelled")
+        val composite = CompositePrivacyGate(
+            listOf(gateReturning(PrivacyDecision.Allowed)),
+            ThrowingAuditLogger(cancellation)
+        )
+
+        try {
+            composite.check(PrivacyCapability.NOTIFICATION_CAPTURE)
+            throw AssertionError("cancellation must propagate")
+        } catch (thrown: CancellationException) {
+            assertSame(cancellation, thrown)
+        }
+    }
+
     @Test
     fun `ordinary delegate exception fails closed with controlled reason and is audited`() = runTest {
         val auditLogger = RecordingAuditLogger()

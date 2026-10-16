@@ -69,7 +69,7 @@ baseline:
 # only; ownership cardinality is an observational migration metric and is not
 # pinned here.
 counts:
-  structural_entries: 65
+  structural_entries: 64
 
 expected:
 
@@ -237,13 +237,6 @@ expected:
     method_pattern: "exportDatabase"
     operation: getDatabasePath
     reason: "File-level backup/restore — resolves live DB path for export"
-    owner: "@panospao7"
-    linked_issue: "MIT-003"
-  - path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
-    class: DatabaseBackupRepositoryImpl
-    method_pattern: "runCostBackupExport"
-    operation: writableDatabase
-    reason: "File-level backup/restore — writable DB access for WAL checkpoint before snapshot"
     owner: "@panospao7"
     linked_issue: "MIT-003"
   - path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt

@@ -332,13 +332,86 @@ class DatabaseBackupRepositoryImplTest {
             password = "password", includeReceiptImages = false, redacted = true, privacyMode = null
         )
 
-        assertSame(failure, fileResult.exceptionOrNull())
-        assertSame(failure, safResult.exceptionOrNull())
+        // R26 (owner-approved): the composite gate no longer propagates the audit exception; it
+        // fails closed; the repository surfaces any fail-closed gate decision as the generic bounded
+        // PRIVACY_GATE_FAILURE denial (DatabaseBackupRepositoryImpl :419) and never leaks the audit message.
+        for (result in listOf(fileResult, safResult)) {
+            val denial = result.exceptionOrNull() as PrivacyDeniedException
+            assertEquals(PrivacyCapability.ENCRYPTED_BACKUP, denial.capability)
+            assertEquals(PrivacyGateReasonCodes.PRIVACY_GATE_FAILURE, denial.reasonCode)
+            assertFalse(denial.toString().contains(failure.message!!))
+        }
         coVerify(exactly = 2) { operationRun.failedFinal(DiagnosticReasonCode.PRIVACY_FAIL_CLOSED.name, null) }
         coVerify(exactly = 2) { operationRun.failedFinal(any(), any()) }
         coVerify(exactly = 0) { operationRun.success() }
         assertEquals(recoveryMode, mockRestoreMaintenanceMode.currentMode())
         assertNoExportSideEffects(resolver, cacheDir)
+    }
+
+    @Test
+    fun `operation recorder start failure does not break the export and no locking mode pragma is issued`() = runTest(testDispatcher) {
+        createFullSchemaDatabase(file = dbFile)
+        every { context.cacheDir } returns File(tempDir, "cache").apply { mkdirs() }
+        val operationRecorder = mockk<OperationRunRecorder>()
+        coEvery { operationRecorder.start(any(), any(), any()) } throws
+            IllegalStateException("database is locked /data/secret-path")
+
+        val repo = createRepository(
+            encryptionService = BackupEncryptionService(),
+            operationRunRecorder = operationRecorder
+        )
+        val result = repo.createCostBackup(
+            password = "recorder_failure_password",
+            includeReceiptImages = false,
+            redacted = true,
+            privacyMode = null
+        )
+
+        assertTrue(
+            "recorder failure must fall back to the no-op handle, got ${result.exceptionOrNull()}",
+            result.isSuccess
+        )
+        coVerify(exactly = 1) { operationRecorder.start(any(), any(), any()) }
+        // R26: connection-level locking-mode changes blocked later writes (SQLITE_BUSY).
+        // Any spelling, via query or execSQL.
+        verify(exactly = 0) { supportDb.query(match<String> { it.contains("locking_mode", ignoreCase = true) }) }
+        verify(exactly = 0) { supportDb.execSQL(match<String> { it.contains("locking_mode", ignoreCase = true) }) }
+    }
+
+    @Test
+    fun `operation recorder start cancellation propagates from the export`() = runTest(testDispatcher) {
+        val cancellation = IdentityCancellationException("recorder start cancelled")
+        val operationRecorder = mockk<OperationRunRecorder>()
+        coEvery { operationRecorder.start(any(), any(), any()) } throws cancellation
+        every { context.cacheDir } returns File(tempDir, "cache").apply { mkdirs() }
+
+        val repo = createRepository(operationRunRecorder = operationRecorder)
+
+        assertCancellationFromBothExports(repo, cancellation)
+    }
+
+    @Test
+    fun `failing wal checkpoint returns failure without creating a snapshot`() = runTest(testDispatcher) {
+        createFullSchemaDatabase(file = dbFile)
+        val cacheDir = File(tempDir, "cache").apply { mkdirs() }
+        every { context.cacheDir } returns cacheDir
+        // Checkpoint stays busy on every attempt.
+        every { supportDb.query("PRAGMA wal_checkpoint(TRUNCATE)") } answers { checkpointCursor(busyCode = 1) }
+
+        val repo = createRepository(encryptionService = BackupEncryptionService())
+        val result = repo.createCostBackup(
+            password = "checkpoint_failure_password",
+            includeReceiptImages = false,
+            redacted = true,
+            privacyMode = null
+        )
+
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull()?.message?.contains("busy", ignoreCase = true) == true)
+        assertTrue(
+            "no snapshot file may remain after a failed checkpoint",
+            cacheDir.listFiles().orEmpty().none { it.name.startsWith("costbackup_snapshot_") }
+        )
     }
 
     private fun assertNoExportSideEffects(resolver: ContentResolver, cacheDir: File) {

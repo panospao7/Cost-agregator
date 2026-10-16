@@ -610,7 +610,14 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         privacyMode: BackupPrivacyMode?,
         writeBundle: (CostBackupSnapshot) -> Result<T>
     ): Result<T> = withContext(ioDispatcher) {
-        val run = operationRunRecorder.start("BACKUP_EXPORT", actor = "user")
+        // R26: diagnostics must never break the export. A failing recorder start
+        // falls back to the no-op handle; cancellation still propagates.
+        val run = com.yourname.expensetracker.domain.util.CancellationSafe.runCatchingCancellable {
+            operationRunRecorder.start("BACKUP_EXPORT", actor = "user")
+        }.getOrElse {
+            Timber.w("BACKUP_RUN_RECORDER_START_FAILED")
+            NoOpOperationRunHandle
+        }
 
         // Privacy is a non-blocking preflight. Rejected exports must not enter
         // the maintenance cleanup scope because they never acquired it.
@@ -671,11 +678,14 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             // 1. BACKUP_EXPORTING maintenance mode (write barrier + worker drain)
             // 2. WAL checkpoint before snapshot
             // 3. Write barrier double-check right before snapshot
-            // 4. PRAGMA locking_mode = EXCLUSIVE (no-op on Android, documents intent)
-
-            // Set exclusive locking mode — no-op on Android (SQLite always uses
-            // exclusive mode for on-device DBs), but documents the intent.
-            database.openHelper.writableDatabase.query("PRAGMA locking_mode = EXCLUSIVE").use { /* consume cursor */ }
+            // 4. VACUUM INTO (API 30+), which reads the whole snapshot in a single read transaction.
+            //    On API 26-29 (or if VACUUM INTO fails) the drained whole-file copy runs right after
+            //    the TRUNCATE checkpoint: later commits by writers outside the barrier land in the WAL,
+            //    not the main file, so the copy reflects the checkpoint state (a tear would need an
+            //    auto-checkpoint during the copy). The method used is recorded on SNAPSHOT_CREATED.
+            // R26: no connection-level locking-mode change is applied; on a WAL database it
+            // persists on the pooled writer connection and blocks later writes
+            // (SQLITE_BUSY) while any reader holds a shared lock.
 
             // Double-check: verify write barrier is still active (mode wasn't exited
             // between checkpoint and snapshot). If somehow the mode was exited, this
@@ -715,7 +725,14 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 // Use VACUUM INTO if supported, otherwise drained file-copy
                 val snapshotResult = snapshotCreator.createSnapshot(dbFile, tempDb, liveCountsBeforeCopy)
                 Timber.d("Snapshot created via %s", snapshotResult.method)
-                run.event("SNAPSHOT_CREATED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED)
+                run.event(
+                    "SNAPSHOT_CREATED",
+                    com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED,
+                    // R26: bounded enum name (VACUUM_INTO / drained copy) so a silent fallback is visible.
+                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                        .put("snapshotMethod", snapshotResult.method.name)
+                        .build()
+                )
 
                 // Sanitize if redacted
                 if (resolvedRedacted) {

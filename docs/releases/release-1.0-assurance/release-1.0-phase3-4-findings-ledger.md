@@ -580,3 +580,86 @@
   maintenance; (3) move DBRI :413/:424 privacy checks before entering BACKUP_EXPORTING (:391); (4) reclassify warranty events under the
   warranty-lifecycle owner + barrier/private for :432; (5) BankApiIntegration :377 -> debug-only owner classification.
   R27 (non-worker in-flight transactions not awaited by enterAndDrain) -> read-only analysis after G3.
+## R26 core implementation (release-remediation-coder: items 1-4, 8 + tests; ~74 tool uses vs cap 60 — overrun, disclosed)
+- Coder STOPPED on item 5: DatabaseBackupRepositoryImplTest "audit failure returns failure for both export overloads..." asserted
+  propagation of the audit exception (plan wrongly said none). LEAD implemented item 5 (owner-approved): CompositePrivacyGate wraps
+  logDecision; CE rethrow; class-name log; blocking decision kept else FailClosed(PRIVACY_GATE_FAILURE); changed that test's assertion
+  to PrivacyDeniedException(ENCRYPTED_BACKUP, PRIVACY_GATE_FAILURE) without leaking the audit message; added 3 CompositePrivacyGateTest cases.
+- Coder notes: locking_mode string remains only in tests; A1 uses beginTransactionReadOnly (API 35 only, Assume skip below);
+  A2 decides OPEN_READONLY (revert to OPEN_READWRITE if it fails); RetentionModule rowsPurged on non-success = partial total.
+- Emulator wave5-api35 started on port 5554 (synthetic data only). Review (reviewer-strict) + validation queue (7 targeted +
+  connected A1/A2 on emulator-5554 only + static-guards + app-check) dispatched.
+## R26 core strict review (reviewer-strict): ACCEPT-WITH-NOTES (F1 owner sign-off)
+- F1 MAJOR: CompositePrivacyGate FailClosed on audit failure -> WorkerExecutionGuard applyPrivacyPolicy default SKIP_SUCCESS
+  (:48, :163-169, :347-353) instead of previous transient Retry (classifyTransient :661 SQLITE_BUSY) -> NotificationIntakeWorker
+  (:57-62) intake skipped until next cold-start recovery (AppStartupCoordinator :120); delayed not lost. Proposed: distinct bounded
+  reason PRIVACY_AUDIT_WRITE_FAILED mapped to Retry in WorkerExecutionGuard (lead recommendation).
+- F2 minor: record snapshot method (VACUUM_INTO / DRAINED_FILE_COPY) as bounded code (SqliteSnapshotCreator :53-57, DBRI :723-724).
+- F3 minor: A1 Assume SDK>=35 (skip = NOT PROVEN); a1_production... passes pre-fix too; unit verify should match any locking_mode
+  query/execSQL. F4 docs: DBRI :681 comment, fallback path protection stated separately.
+- Answers: Q1 pre-existing low risk (fallback copy after checkpoint; tear only on auto-checkpoint during copy); Q2 read-only VACUUM INTO
+  sound (SQLite 3.28 / API 30); Q3 gate change correct/minimal, logCloudCall unaffected; Q4 batched DELETE correct; Q5 VM correct; Q7 guards likely OK.
+- 2026-10-16 OWNER: "do your reccomendations" -> R26 F1: new bounded reason PRIVACY_AUDIT_WRITE_FAILED for audit-write failure;
+  WorkerExecutionGuard maps it to Retry (screens still get a FailClosed refusal). F2-F4 fixes in the same follow-up.
+  Edits wait until the running R26 validation queue finishes (fingerprint rule).
+- R26 validation queue 1: DatabaseBackupRepositoryImplTest PASS (vr-20261016-081949-678ff8ce), BackupRestoreViewModelTest PASS 23
+  (vr-...083244-fed7399d), CompositePrivacyGateTest PASS 6 (vr-...083327-0e9dc129), PrivacyAuditDaoTest FAIL (vr-...083402-2a639e8a):
+  new test arithmetic (7 rows, delete 2 -> expected 5, test said 4). DEBUG ITERATION (lead, test-only): corrected to 5/3.
+- LEAD follow-up edits (owner "do your recommendations"): PrivacyGateReasonCodes.PRIVACY_AUDIT_WRITE_FAILED (+ ALL);
+  CompositePrivacyGate returns FailClosed(PRIVACY_AUDIT_WRITE_FAILED); WorkerExecutionGuard both FailClosed sites -> retryAuditWriteFailure
+  (WORKER_TRANSIENT_ERROR Retry regardless of privacyPolicy); DBRI SNAPSHOT_CREATED metadata snapshotMethod + comment on fallback path;
+  tests updated (DBRI audit test code, CompositePrivacyGateTest code, locking_mode verify for query+execSQL any spelling) and 2 new
+  WorkerExecutionGuardTest cases. Full queue re-run dispatched (12 items incl. connected A1/A2 on emulator-5554 only).
+- R26 rerun 2: DatabaseBackupRepositoryImplTest FAIL (vr-20261016-083649-af762491) at :340 expected PRIVACY_AUDIT_WRITE_FAILED, got
+  PRIVACY_GATE_FAILURE: DBRI :419 maps any FailClosed to PrivacyDeniedException(ENCRYPTED_BACKUP) with the default generic code
+  (pre-existing contract). DEBUG ITERATION 2 (lead, test-only): assertion restored to PRIVACY_GATE_FAILURE with explanation.
+  R26 now at the 2-debug-iteration cap; a further failure -> hand back PARTIAL. Third full queue dispatched.
+- R26 run 3 (fingerprint 910db93f... no drift): PASS DatabaseBackupRepositoryImplTest (vr-20261016-084310-b2ff725a),
+  BackupRestoreViewModelTest 23 (vr-...084600-fe26f8a3), CompositePrivacyGateTest 6 (vr-...084639-28aa08c5), PrivacyAuditDaoTest 9
+  (vr-...084713-8a72decf), RetentionModuleBatchedPurgeTest 7 (vr-...084749-c366e5cd), DataRetentionWorkerTest 26 (vr-...084834-5611bd32),
+  PrivacyGateContractTest 10 (vr-...084915-1ce56d1b), WorkerExecutionGuardTest 51 (vr-...084954-53bec9f2), PrivacyDeniedExceptionTest 3
+  (vr-...085029-151a3edc); connected BackupWalLockInstrumentedTest on emulator-5554 API 35: 3 executed / 0 skipped PASS
+  (vr-...085112-48dff99a) -> ROOT CAUSE CONFIRMED on framework SQLite (EXCLUSIVE + SHARED reader -> SQLiteDatabaseLockedException) and
+  read-only VACUUM INTO works on API 35.
+- static-guards vr-20261016-085334-6b0a4269 FAIL 22/25: known_good_state INFRA_ERROR, db_access INFRA_ERROR, guard_tests VIOLATION
+  (700 s). First static-guards in the worktree -> environment suspected; debugger dispatched. app-check not run.
+- Debugger on static-guards (read-only): ONE cause, R26 code (not worktree): removal of writableDatabase pragma in
+  DBRI.runCostBackupExport leaves a STALE structural exception requiring exact source evidence:
+  config/guards/db_structural_exceptions.yml :217-223, db_structural_exceptions_expected_methods.yml ~:244,
+  scripts/verify_db_access_boundaries.py :864 tuple -> db_access/known_good_state active_db_gate INFRA (DB_POLICY_SOURCE_EVIDENCE_INVALID)
+  + guard_tests 4 failures (test_verify_db_access_boundaries x2, test_verify_db_access_v2 x2). freshness SKIP (no stamp in worktree).
+  No ownership-policy regeneration needed (findingCount 0). Fix = remove the stale exception (guard TIGHTENING) in 3 places +
+  dependent counts/fixtures (structural_manifest 65/60/65 -> likely 64/59/64; test around :5246). Needs owner approval (guard files).
+  R26 at debug cap -> PARTIAL pending owner decision.
+- 2026-10-16 OWNER: "do the reccomendation" -> APPROVED: remove the stale runCostBackupExport/writableDatabase structural exception
+  (guard tightening) in the 3 guard files + dependent counts/fixtures; architecture-guardian review; then re-run.
+- Guard tightening applied (coder 37 calls, PARTIAL; lead finished): removed tuple from db_structural_exceptions.yml,
+  db_structural_exceptions_expected_methods.yml (counts.structural_entries 65->64), verify_db_access_boundaries.py
+  (MANIFEST_IMMUTABLE_EXPECTED_TUPLES; PINNED_STRUCTURAL_ENTRY_COUNT 65->64), verify_known_good_state.py (_STRUCTURAL_ENTRIES 64,
+  _STRUCTURAL_EXPECTED 59, docstring); tests: test_verify_db_access_boundaries.py count pins (+ duplicate-tuple test n=63/structural=64 by lead),
+  test_verify_known_good_state.py pins 64/59 and drift probe expected 59->58 (lead). No dates/logic/other entries. Reviewer
+  architecture-guardian + queue (registered-guard db_access, known_good_state, static-guards, app-check) dispatched.
+- Guard-edit review (architecture-guardian): REJECT (incomplete): (1)-(4) PASS (one tuple removed; no weakening; counts consistent;
+  runCostBackupExport :606-826 has no writableDatabase). (5) missed functional pin: app/src/test/.../guard/DbGuardPolicyFixtureTest.kt
+  reads real files and asserts 65/60 at :1077-1079, :1083-1089, :1127-1133, :1165 (+ KDoc :16/:20/:23) -> app-check would fail.
+  Optional: parametrized (64,4) -> (63,4). Fix after the running queue finishes (no edits during fingerprinted runs).
+- Validation after guard edit (fingerprint 2ce73b47...): registered-guard db_access PASS (vr-20261016-092641-2cc7683b),
+  known_good_state PASS (vr-...092915-2448cda6), static-guards PASS 25/25 (vr-...093204-cf81112a; freshness SKIP stamp=missing).
+- Lead fixed review finding (5): DbGuardPolicyFixtureTest.kt count pins 65->64 / 60->59 (lines 1077-1190 + KDoc 16/20/23; take(60)
+  string truncations untouched) and optional drift probe parametrize (64,4),(66,6) -> (63,4),(65,6). Final batch gate queued:
+  targeted DbGuardPolicyFixtureTest, static-guards, app-check.
+- R26 FINAL BATCH GATE (fingerprint ce730c77... start=end, HEAD c3fc8947 + R26 diff): ALL PASS, exit 0, complete.marker, no lock left.
+  targeted *DbGuardPolicyFixtureTest PASS (vr-20261016-095638-3b4af43f, 131 s); static-guards PASS 25/25 (vr-20261016-095903-03674f6b,
+  1329 s); app-check PASS (vr-20261016-102123-064fc003, 1951 s): testDebugUnitTest 8185 run / 0 fail / 276 skipped, testReleaseUnitTest
+  8185 / 0 / 277 skipped; lint passes via lint-baseline.xml (804 warnings, 2222 baselined errors; not a clean-lint claim).
+  Notes (open, P3): debug vs release skip 276 vs 277 not investigated; "Python was not found" stderr = Store alias, Gradle falls back.
+- Branch risk (new): main folder branch release-1.0-remediation gained owner commits e5a2f0e7 (agents/turn limits) and 7da9fcae
+  (loan-installments docs) on top of 2ca932a9 -> moving it to release-1.0-wt is no longer a fast-forward; needs a merge/rebase
+  decision by the owner at the end. Not touched.
+- Guard-edit re-review (architecture-guardian, iteration 2): ACCEPT-WITH-NOTES. 64 = 59 expected + 5 fixtures consistent across all
+  7 files; whole-repo grep found no other pin; strictly tightening (net -13 lines, no exception added/widened/re-dated); no unlisted
+  writableDatabase in runCostBackupExport (:606-826; checkpointWal :3030 keeps its own exception, structural yml :308).
+  Notes (non-blocking, deferred to G2 so they ride its static-guards run): stale 65/60 comments/docstrings in
+  scripts/test_verify_db_access_boundaries.py (:4501, 4646-4649, 4674, 4775, 5026, 5060, 5154, 5559, 6207-6209) and
+  scripts/verify_db_access_boundaries.py:919.
+- R26 core COMMITTED on release-1.0-wt.

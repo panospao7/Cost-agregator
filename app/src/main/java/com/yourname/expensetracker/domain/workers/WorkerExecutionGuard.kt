@@ -14,6 +14,7 @@ import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
+import com.yourname.expensetracker.domain.privacy.PrivacyGateReasonCodes
 import com.yourname.expensetracker.domain.util.CancellationSafe
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.CancellationException
@@ -165,6 +166,9 @@ class WorkerExecutionGuard @Inject constructor(
                             return applyPrivacyPolicy(request, run, DiagnosticReasonCode.WORKER_PRIVACY_DENIED.name)
                         }
                         is PrivacyDecision.FailClosed -> {
+                            if (decision.reason == PrivacyGateReasonCodes.PRIVACY_AUDIT_WRITE_FAILED) {
+                                return retryAuditWriteFailure(run)
+                            }
                             return applyPrivacyPolicy(request, run, DiagnosticReasonCode.WORKER_PRIVACY_FAIL_CLOSED.name)
                         }
                         else -> { }
@@ -349,6 +353,9 @@ class WorkerExecutionGuard @Inject constructor(
                             return applyPrivacyPolicy(request, run, DiagnosticReasonCode.WORKER_PRIVACY_DENIED.name, ctx)
                         }
                         is PrivacyDecision.FailClosed -> {
+                            if (decision.reason == PrivacyGateReasonCodes.PRIVACY_AUDIT_WRITE_FAILED) {
+                                return retryAuditWriteFailure(run, ctx)
+                            }
                             return applyPrivacyPolicy(request, run, DiagnosticReasonCode.WORKER_PRIVACY_FAIL_CLOSED.name, ctx)
                         }
                         else -> { }
@@ -516,6 +523,20 @@ class WorkerExecutionGuard @Inject constructor(
     /** RP-16 16-B: provider that captures the context snapshot under the terminal mutex. */
     private fun WorkerRunContext?.snapshotProvider(): (() -> WorkerRunCounters?)? =
         this?.let { ctx -> { ctx.snapshot() } }
+
+    /**
+     * R26 (owner-approved): the privacy gate failed closed only because its audit write failed
+     * (e.g. SQLITE_BUSY). That is a transient storage condition, not a privacy denial, so the
+     * worker retries instead of applying [WorkerGuardRequest.privacyPolicy] (default SKIP_SUCCESS).
+     */
+    private suspend fun retryAuditWriteFailure(
+        run: WorkerRunHandle,
+        ctx: WorkerRunContext? = null
+    ): WorkerGuardResult<Nothing> {
+        val code = DiagnosticReasonCode.WORKER_TRANSIENT_ERROR.name
+        guardTerminal(run, "RETRY", code) { run.retry(code, snapshotProvider = ctx.snapshotProvider()) }
+        return WorkerGuardResult.Retry(code)
+    }
 
     private suspend fun applyPrivacyPolicy(
         request: WorkerGuardRequest,
