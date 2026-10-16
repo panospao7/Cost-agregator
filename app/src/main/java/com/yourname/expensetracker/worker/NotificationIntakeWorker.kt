@@ -462,10 +462,14 @@ class NotificationIntakeWorker @AssistedInject constructor(
         }
     }
 
-    private suspend fun purgePayloadBestEffort(id: Long, now: Long, ctx: WorkerRunContext? = null) {
+    private suspend fun purgePayloadBestEffort(id: Long, now: Long, ctx: WorkerRunContext) {
         try {
+            // Write-barrier checkpoint inside the best-effort scope: a blocked checkpoint
+            // (maintenance/restore) skips the purge instead of writing, like any other
+            // best-effort purge failure. CancellationException is rethrown below.
+            ctx.checkpoint("intake:purgePayload")
             intakeDao.purgeAllPayload(id = id, nowMs = now)
-            ctx?.addRowsUpdated() // PR12I-3: payload purge
+            ctx.addRowsUpdated() // PR12I-3: payload purge
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             Timber.w(e, "IntakeWorker: purgePayload failed for intakeId=$id")

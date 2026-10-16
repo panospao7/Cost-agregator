@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.golden
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.privacy.PrivacyAuditLoggerImpl
 import com.yourname.expensetracker.domain.privacy.CompositePrivacyGate
 import com.yourname.expensetracker.domain.privacy.LocationPrivacyGate
@@ -45,7 +46,12 @@ class PrivacyGateEnforcementGoldenTest : GoldenTestBase() {
     @Before
     override fun setUp() {
         super.setUp()
-        auditLogger = PrivacyAuditLoggerImpl(database.privacyAuditDao(), timeProvider)
+        // G3-S2: the audit logger honours the write barrier; NORMAL mode (relaxed no-op) allows writes.
+        auditLogger = PrivacyAuditLoggerImpl(
+            database.privacyAuditDao(),
+            timeProvider,
+            mockk<DatabaseWriteBarrier>(relaxed = true)
+        )
     }
 
     @Test

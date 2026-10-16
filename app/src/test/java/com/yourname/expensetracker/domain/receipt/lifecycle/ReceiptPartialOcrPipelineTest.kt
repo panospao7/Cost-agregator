@@ -98,8 +98,8 @@ class ReceiptPartialOcrPipelineTest {
         every { clock.now() } returns now
         val barrier = mockk<DatabaseWriteBarrier>(relaxed = true)
         val transactions = RoomDomainTransactionRunner(db, clock)
-        insertResolver = spyk(ReceiptInsertResolver(db.scannedReceiptDao()))
-        events = spyk(RoomReceiptLifecycleEventWriter(db.receiptEventDao(), EventMetadataSanitizer(), clock))
+        insertResolver = spyk(ReceiptInsertResolver(db.scannedReceiptDao(), barrier))
+        events = spyk(RoomReceiptLifecycleEventWriter(db.receiptEventDao(), EventMetadataSanitizer(), clock, barrier))
 
         val currency = mockk<CurrencySettingsRepository>()
         every { currency.homeCurrency() } returns flowOf("EUR")

@@ -732,3 +732,118 @@
   NOTE: the legacy-tests profile does NOT run HANG-001..003, so it gives no HANG ledger evidence; the 2026-11-01 runner
   E_HANGING_LEDGER_REVIEW_OVERDUE (legacy-tests profile only) remains open -> needs a ledger review decision before 11-01 (follow-up).
 - G2 COMMITTED on release-1.0-wt.
+- CORRECTION (lead, read-only check): the legacy-tests run vr-20261016-125302-b26c6ac6 DID run all three ledger filters
+  (config/validation/known-hanging-tests.json: HANG-001 domain.receipt.lifecycle.*, HANG-002 domain.transaction.lifecycle.*,
+  HANG-003 data.backup.ExportReadBarrierTest) -> 253 passed / 0 failed / 1 skipped, no hang, 49 s. The runner agent's "not in this
+  filter" remark was wrong. Deadline: validation-runner.ps1 :391-392 throws E_HANGING_LEDGER_REVIEW_OVERDUE for legacy-routed
+  suspected/confirmed entries after review_by 2026-10-31 (all 3, owner "unassigned"). Policy (docs/testing/KNOWN_HANGING_TESTS.md):
+  resolve = status resolved + validating run ID. Caveat: if all 3 are resolved, Get-LegacyFilters returns no filters -> behaviour of
+  New-TestArguments with an empty list unverified (could run everything or fail). OWNER DECISION pending (HL-1).
+## G3 (owner-approved; plan section 26)
+- S1 coder (52 calls vs 45 budget, overrun disclosed; complete): barrier before DAO writes in ReceiptInsertResolver,
+  DebugExpenseAuditWriter (2 inserts), RoomReceiptLifecycleEventWriter, RoomTransactionLifecycleEventWriter. Caller analysis: no
+  caller in non-NORMAL mode (nothing in data/backup or startup references them); callers check the barrier at entry
+  (ReceiptRepository :506/:518, ReceiptRecordWriter :27, ReceiptLifecycleCoordinator :807/:854/:1026, ExpenseRepository :717/:747,
+  GroupTransactionCoordinator :967); WarrantyTrackerRepository :185 / NotificationProcessingPipeline :1373 drop blocked audit events
+  (CE rethrown). Tests: new domain.LifecycleWritersWriteBarrierTest; TransactionSideEffectFailureEventWriterTest +2; constructor
+  fixes ReceiptDuplicateFingerprintCollisionTest, ReceiptPartialOcrPipelineTest. Dispatched: reviewer-strict + 9 targeted runs.
+- S1 review (reviewer-strict): ACCEPT-WITH-NOTES, no critical/major. All callers check the barrier before their tx (defence in
+  depth); TransactionLifecycleCoordinator/insertAtomic paths not affected except via the accepted post-commit mirror drop;
+  TransactionContextProvenanceGuardTest scans src/main only (:12, :73-76); WriteBarrier stale check (:601-608) checks file existence
+  only, so S1 passes before S3. Notes: N1 WarrantyTrackerRepository :179-204 catch swallows a blocked event write inside nested tx ->
+  outer tx silently rolled back but method returns id of an unsaved warranty (pre-S1 the same window wrote during maintenance) ->
+  FOLD INTO S5 (warranty file): rethrow DatabaseAccessBlockedException there + test. N2 BankStatementLifecycleProcessor :1006-1043
+  failed-run finalize rolled back during maintenance (stale-run recovery assumed, unverified) -> check in R27. N3 cosmetic.
+- S1 targeted (fingerprint f796ab8a..., start=end): LifecycleWritersWriteBarrierTest 15 (vr-20261016-125735-a183ae07),
+  TransactionSideEffectFailureEventWriterTest 6 (vr-...130652-0a6c18fa), ReceiptDuplicateFingerprintCollisionTest 7
+  (vr-...130759-db56885d), ReceiptPartialOcrPipelineTest 22 (vr-...130906-52550a13), ReceiptLifecycleCoordinatorTest 37
+  (vr-...131012-1197d2de), WriteBarrierArchitectureGuardTest 16 (vr-...131119-c2c2b5ad), DirectEventDaoInsertGuardTest 6
+  (vr-...131325-82965c56), CancellationSafetyArchitectureGuardTest 22 (vr-...131402-b71a8412), TransactionContextProvenanceGuardTest 5
+  (vr-...131508-7b7571ff): ALL PASS, 136/0/0. S1 slice-level PASS (batch gate at G3 end). Next: S2 coder.
+- S2 coder (81 calls vs 50 budget — overrun, disclosed; complete): PrivacyAuditLoggerImpl barrier; exportDatabase settings read +
+  privacy checks before enterAndDrain (denial now precedes "Database file not found"); G2b reorders: restore 7 sites, reset 2, legacy
+  import 9 + outer catch (incl. ~:2093, flag provably false). Not changed: restore "Safety backup path unavailable" (~:1197) never
+  exits maintenance (pre-existing; reachability to be confirmed by review). Residual: finalize skipped if exit throws a
+  non-WorkerReschedule exception. Tests: DatabaseBackupRepositoryImplTest +5, CompositePrivacyGateTest +1, new
+  PrivacyAuditLoggerImplWriteBarrierTest (Robolectric), PrivacyGateEnforcementGoldenTest constructor. Dispatched reviewer-strict +
+  8 targeted runs.
+- S2 review (reviewer-strict): ACCEPT-WITH-NOTES, no critical/major. No fail-open (CompositePrivacyGate :72-85; barrier blocks in
+  any non-NORMAL mode :17); workers check maintenance (:108) before privacy (:164), retry on PRIVACY_AUDIT_WRITE_FAILED (:169-170);
+  exportDatabase equivalent for all decisions, enter/exit paired once (:429-438, finally :505); all G2b reorders correct, none after a
+  swap (swaps :1224/:1995/:2922); :2106 claim verified; exit-throws skipping finalize is not a regression (barrier rejected it before
+  S2). Restore "Safety backup path unavailable" DBRI :1194-1205 UNREACHABLE (success value never null :2845; failure handled :1179)
+  but would leak maintenance (no outer finally) — deviation from plan site :1187 recorded; follow-up P3: getOrThrow() or exit+reorder
+  (bundle with a later DBRI batch). Notes: N1 privacy-gated features (cloud AI, geocoding, currency, export) show a privacy error
+  instead of a maintenance message in non-NORMAL modes (safe direction; UX P3); N2 barrier check-then-insert race (R27). Test gaps
+  (P3): ENCRYPTED_BACKUP/gate-throws/settings-throw export branches, reset outer catch :2994, no real-barrier end-to-end test.
+- S2 targeted (fingerprint c53e57d7..., start=end): PrivacyAuditLoggerImplWriteBarrierTest 3 (vr-20261016-132045-186cac92),
+  CompositePrivacyGateTest 7 (vr-...132606-07c5b414), PrivacyGateEnforcementGoldenTest 1 (vr-...132713-e4a03f2f),
+  DatabaseBackupRepositoryImplTest 88 (vr-...132820-cf662f54), PrivacyGateContractTest 10 (vr-...132957-a35736b8),
+  WorkerExecutionGuardTest 51 (vr-...133034-5d565a22), WriteBarrierArchitectureGuardTest 16 (vr-...133141-c520c02c),
+  CancellationSafetyArchitectureGuardTest 22 (vr-...133348-0f7e1d59): ALL PASS 198/0/0. S2 slice-level PASS. Next: S3 coder.
+- S3 coder (71 calls vs 50 budget — overrun, disclosed; complete, uncompiled): all 8 U-004 entries removed (5 fixed confirmed by
+  file:line; 3 -> COVERED_BY_CALLER map, cap 3, WORKER_CHECKPOINT 1500-char window within enclosing fun, SOLE_CALLER_GUARDED reference
+  scan + 300-char window, checkpoint-implementation evidence check; hygiene + 12 fixture tests; KDoc). WarrantyExpirationWorker
+  checkpoints before recoverStaleClaimed, deleteOlderThan, seed, after-claim, record-outcome; NotificationIntakeWorker checkpoint
+  added in purgePayloadBestEffort. Tests: WarrantyExpirationWorkerTest +3, NotificationIntakeWorkerTimeoutTest +1. Disclosed risks:
+  (a) blocked outcome write -> row CLAIMED -> recoverStaleClaimed after >1 h may re-send the reminder; (b) blocked purge leaves the
+  encrypted payload unpurged on a terminal row (privacy retention question); WorkerRunLogger terminal writes have no own check.
+  Dispatched architecture-guardian (incl. (a)/(b) judgement) + 7 targeted runs.
+- S3 review (architecture-guardian): ACCEPT-WITH-NOTES. COVERED_BY_CALLER is a real per-write-site proof (stricter than the
+  class-level rule :404-410); skip only on zero violations (:747-749); unlocatable sites fail closed (:599-600); no other guard change.
+  G1 MEDIUM (latent): SOLE_CALLER scan \bWorkerRunLogger\b misses WorkerRunLoggerImpl (@Inject, WorkerRunLogger.kt:67) -> fix: match
+  WorkerRunLogger\w* and WorkerRunHandle + fixture. G2-G4 LOW (window ignores control flow; any .checkpoint( counts incl. no-op
+  PostCommitActionRunnerImpl :146-148; read-only ctx WorkerExecutionGuard :303-309). WorkerRunLogger terminal writes are protected by
+  lease + failing drain (WorkerExecutionGuard :333-448, :242-244; DBRI drains :430/:673/:2786/:974 fail on timeout), not by
+  checkWritesAllowed -> reword justification. 4a duplicate warranty reminder LOW acceptable (fixed notification id :232 replaces).
+  4b MEDIUM PRE-EXISTING PRIVACY RETENTION GAP (new trigger in S3): encrypted intake payloads (transientPayloadCiphertext/Nonce/
+  Version) are never purged once a best-effort purge fails: RetentionModule :285-287 calls purgeRawPayload (NotificationIntakeDao
+  :195-202) which leaves ciphertext; purgeTransientPayload :246-255 has no prod caller; no row deletion. Minimal fix: retention sweep
+  selects capturedAt < cutoff AND (rawPayloadPurgedAt IS NULL OR transientPayloadCiphertext IS NOT NULL) -> purgeAllPayload.
+  OWNER DECISION needed (out of S3 scope) -> proposed R28.
+- Lead: S3 review iteration 1 fix (in scope, guard strengthening): G1 regex + fixture + justification reword; after the running
+  targeted queue finishes.
+- S3 targeted (fingerprint 19a5f47e..., start=end): WriteBarrierArchitectureGuardTest 31 (vr-20261016-134245-54c56ec4),
+  WarrantyExpirationWorkerTest 18 (vr-...135032-d3d3372c), NotificationIntakeWorkerTimeoutTest 18 (vr-...135139-d88b282d),
+  WorkerExecutionGuardTest 51 (vr-...135246-23e5fb76), WorkerRunLoggerTest 60 (vr-...135353-0b31d691), DirectEventDaoInsertGuardTest 6
+  (vr-...135637-6a5325db) PASS; *NotificationIntakeWorkerTest vr-...135500-daac3e19 NO_TESTS (lead filter error; class does not
+  exist) -> not counted.
+- Lead review-iteration-1 fix (S3, test-only guard strengthening): SOLE_CALLER reference regex \b<class>\w*\b (catches
+  WorkerRunLoggerImpl); new fixture "sole caller guarded fails on an extra production reference to the Impl class"; WorkerRunLogger
+  justification reworded (start checked; terminal writes under lease before lease.close(); drains fail rather than proceed).
+  Real-source check: WorkerRunLogger\w* in src/main only in WorkerRunLogger.kt, WorkerExecutionGuard.kt, DiagnosticsModule.kt (+ a
+  KDoc mention in WorkerTerminalDiagnosticSink, stripped by the sanitizer).
+- Decision: commit G3 part 1 (S1-S3, the 2026-10-31-critical part) after its own batch gate; S4-S6 (before 11-20) follow as part 2.
+  Gate queue dispatched: targeted WriteBarrierArchitectureGuardTest -> static-guards -> app-check.
+- G3 part-1 gate: targeted WriteBarrierArchitectureGuardTest PASS 32 (vr-20261016-135802-2e110838, fingerprint 22f6175d...);
+  static-guards FAIL 22/25 (vr-20261016-140147-4dc0d2a4): known_good_state INFRA, db_access INFRA (exit 2,
+  DB_POLICY_SOURCE_EVIDENCE_INVALID / INVALID_SOURCE_IDENTITY), guard_tests 5 failures (db_access_boundaries real-config pipeline,
+  db_access_v2 x2, wave2_db_ownership_reconciliation x2 incl. [9-markFailedByKey]). app-check not run. Same failure class as R26
+  (source evidence pin no longer matches source). Debugger (Opus, read-only) dispatched. G3 part 1 debug iteration 1.
+- Debugger (Opus, read-only): root cause = G3 signature changes left 6 active v2 policy rows with old parameter lists ->
+  stage 4 verify_v2_policy_source_evidence (verify_db_access_boundaries.py :3693-3703) SIGNATURE_UNSUPPORTED
+  (policy_v2_evidence.py :876-902) -> DB_POLICY_SOURCE_EVIDENCE_INVALID: WarrantyExpirationWorker.deliverReminder now takes ctx first
+  (5 rows: claim, insertOrIgnore, markFailed, markFailedByKey, markSentFromClaimed) and NotificationIntakeWorker.purgePayloadBestEffort
+  ctx now non-null (1 row). Not a structural-exception issue; known_good_state INFRA is a consequence (active_db_gate only).
+  No regeneration; candidate/promotion/accounting files are historical inputs, leave untouched.
+- Lead fix (identity/evidence only, owner pre-approval Q-G3-1; no DAO/operation/barrierMode/row-count change): db_ownership_policy.yml
+  5 deliverReminder rows + WorkerRunContext first param; purgePayloadBestEffort WorkerRunContext? -> WorkerRunContext;
+  test_wave2_db_ownership_reconciliation.py :106 tuple + PKG WorkerRunContext. Debug iteration 1 of 2 for G3 part 1.
+  Queue: registered-guard db_access -> known_good_state -> static-guards -> app-check.
+- 2026-10-16 OWNER: "I approve." (reply to the pending R28 + HL-1 recommendations) -> APPROVED:
+  R28: retention sweep also purges encrypted intake payloads (transientPayloadCiphertext/Nonce/Version) on old rows
+  (capturedAt < cutoff AND (rawPayloadPurgedAt IS NULL OR transientPayloadCiphertext IS NOT NULL) -> purgeAllPayload), with tests.
+  HL-1: config/validation/known-hanging-tests.json HANG-001..003 owner "unassigned" -> "@panospao7", evidence += clean legacy-tests
+  run vr-20261016-125302-b26c6ac6 (253/0/1, no hang), review_by 2026-10-31 -> 2026-12-01; status stays suspected; resolve only after
+  a second clean run on the final candidate.
+  Sequencing: after the G3 part-1 commit (no edits during the running gate), as small batch "R28+HL-1".
+- G3 part-1 gate PASS after debug iteration 1 (worktree fingerprint f63a1e57...0f654c65, start=end on every run, rev cd3b8d71 + diff):
+  registered-guard db_access PASS vr-20261016-141844-d113db06 (baseline 0 / current 0); registered-guard known_good_state PASS
+  vr-20261016-142126-4a324b97 (rows 7: pass 6, fail 0, skip 1 = test_result_freshness stamp=missing, not verified);
+  static-guards 25/25 PASS vr-20261016-142437-9e43c10b (guard_tests PASS; ratchet rows zero-delta);
+  app-check PASS vr-20261016-144626-142c1426 (testDebugUnitTest 8246 run / 0 failed / 276 skipped; testReleaseUnitTest 8246 / 0 /
+  277; lint via lint-baseline.xml). Lead verified result.json status/exit/fingerprints + complete.marker for all 4.
+  Open notes carried: S1-N1 (Warranty catch -> fold into S5), S2-P3 (unreachable restore safety-path branch never exits
+  maintenance), S3 G2-G4 (low), known_good_state freshness stamp SKIP. Correction to the G2 handoff note: legacy-tests
+  vr-20261016-125302-b26c6ac6 did run the HANG-001..003 filters (no hang) -> used as HL-1 evidence.
+  Decision: commit G3 part 1 (S1-S3 + policy identity fix) on release-1.0-wt. Next: batch R28+HL-1.

@@ -398,3 +398,15 @@ in the coverage matrix and regression ledger seed.
   then ACCEPT-WITH-NOTES. Debug cap reached (compile fix; baseline shrink by owner decision). Committed on release-1.0-wt.
   Open: restore/import/reset run rows stay RUNNING (fixed in G3 S2); legacy-tests does not exercise HANG-001..003, so the
   2026-11-01 hanging-ledger review deadline is still open. Next: G3 (plan section 26; owner decisions Q-G3-1/2 recorded).
+- 2026-10-16: G3 part 1 (S1-S3) PASS at batch gate (fingerprint f63a1e57..., rev cd3b8d71 + diff). S1: write barrier in
+  ReceiptInsertResolver, DebugExpenseAuditWriter, Room receipt/transaction lifecycle event writers. S2: PrivacyAuditLoggerImpl
+  barrier; backup export privacy checks before enterAndDrain; restore/reset/legacy-import finalize their run after maintenance
+  exit (G2b). S3: all remaining U-004 allowlist entries removed; COVERED_BY_CALLER guard category (cap 3; WORKER_CHECKPOINT,
+  SOLE_CALLER_GUARDED) with fixtures; WarrantyExpirationWorker and NotificationIntakeWorker purge checkpoints. Debug iteration 1:
+  6 db_ownership_policy rows synced to the new signatures (identity only, owner pre-approval Q-G3-1). Gate: registered-guard
+  db_access vr-20261016-141844-d113db06, known_good_state vr-20261016-142126-4a324b97 (freshness stamp SKIP), static-guards 25/25
+  vr-20261016-142437-9e43c10b, app-check vr-20261016-144626-142c1426 (8246 run / 0 failed). Reviews: reviewer-strict
+  ACCEPT-WITH-NOTES (S1, S2), architecture-guardian ACCEPT-WITH-NOTES (S3). Committed on release-1.0-wt.
+  Owner approved R28 (retention also purges encrypted intake payloads) and HL-1 (hanging-ledger owner/evidence/review_by
+  2026-12-01). Correction: G2 legacy-tests run did exercise HANG-001..003 (no hang). Next: batch R28+HL-1, then G3 part 2
+  (S4-S6, before 2026-11-20).

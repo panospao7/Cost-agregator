@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.transaction.lifecycle
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.TransactionEventDao
 import com.yourname.expensetracker.data.database.entity.TransactionEvent
 import com.yourname.expensetracker.domain.diagnostics.AppPipeline
@@ -20,12 +21,14 @@ import javax.inject.Singleton
 class DebugExpenseAuditWriter @Inject constructor(
     private val transactionEventDao: TransactionEventDao,
     private val diagnosticEventWriter: DiagnosticEventWriter,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val writeBarrier: DatabaseWriteBarrier
 ) {
     suspend fun writeDeleteAllEvent(
         affectedCount: Int,
         correlationId: String?
     ) {
+        writeBarrier.checkWritesAllowed("DebugExpenseAuditWriter.writeDeleteAllEvent")
         transactionEventDao.insert(
             TransactionEvent(
                 expenseId = null,
@@ -55,6 +58,7 @@ class DebugExpenseAuditWriter @Inject constructor(
         restoredCount: Int,
         correlationId: String?
     ) {
+        writeBarrier.checkWritesAllowed("DebugExpenseAuditWriter.writeRestoreSnapshotEvent")
         transactionEventDao.insert(
             TransactionEvent(
                 expenseId = null,

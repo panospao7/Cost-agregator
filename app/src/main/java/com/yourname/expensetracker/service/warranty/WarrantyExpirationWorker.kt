@@ -13,6 +13,7 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.workers.BlockedPolicy
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
+import com.yourname.expensetracker.domain.workers.WorkerRunContext
 import com.yourname.expensetracker.domain.workers.WorkerSpec
 import com.yourname.expensetracker.domain.workers.WorkerSpecScheduler
 import com.yourname.expensetracker.domain.workers.toWorkerResult
@@ -90,6 +91,7 @@ class WarrantyExpirationWorker @AssistedInject constructor(
                 val now = timeProvider.now()
                 val oneDayMs = 86_400_000L
 
+                ctx.checkpoint("warranty_recover_stale")
                 deliveryDao.recoverStaleClaimed(
                     staleClaimThreshold = now - STALE_CLAIM_MS,
                     now = now
@@ -101,6 +103,7 @@ class WarrantyExpirationWorker @AssistedInject constructor(
                 expiringIn7Days.forEach { warranty ->
                     ctx.checkpoint("warranty_notify_7d")
                     val sent = deliverReminder(
+                        ctx = ctx,
                         warranty = warranty,
                         windowDays = 7,
                         now = now,
@@ -122,6 +125,7 @@ class WarrantyExpirationWorker @AssistedInject constructor(
                 expiringIn30Days.forEach { warranty ->
                     ctx.checkpoint("warranty_notify_30d")
                     val sent = deliverReminder(
+                        ctx = ctx,
                         warranty = warranty,
                         windowDays = 30,
                         now = now,
@@ -135,6 +139,7 @@ class WarrantyExpirationWorker @AssistedInject constructor(
                 }
 
                 // Prune deliveries whose expiry is older than 90 days
+                ctx.checkpoint("warranty_prune_deliveries")
                 deliveryDao.deleteOlderThan(now - 90L * oneDayMs)
 
                 Timber.d(
@@ -159,8 +164,15 @@ class WarrantyExpirationWorker @AssistedInject constructor(
      *
      * - A row already SENT in a previous run is skipped (claim returns 0) — durable dedup.
      * - DELIVERED → SENT (persists notificationId). NOT_DELIVERED → FAILED (re-claimable).
+     *
+     * Every delivery-state write is preceded by a [WorkerRunContext.checkpoint]
+     * (write-barrier + stop-request check) in this function, as required by the
+     * WORKER_CHECKPOINT mechanism of the write-barrier architecture guard. A blocked
+     * checkpoint throws before the write; a CLAIMED row is recovered by
+     * [WarrantyReminderDeliveryDao.recoverStaleClaimed] on a later run.
      */
     private suspend fun deliverReminder(
+        ctx: WorkerRunContext,
         warranty: com.yourname.expensetracker.data.database.entity.Warranty,
         windowDays: Int,
         now: Long,
@@ -170,6 +182,7 @@ class WarrantyExpirationWorker @AssistedInject constructor(
         val expiryDate = warranty.warrantyEndDate
 
         // 1. Seed a SCHEDULED row idempotently (no-op if it already exists).
+        ctx.checkpoint("warranty_delivery_seed")
         deliveryDao.insertOrIgnore(
             WarrantyReminderDelivery(
                 warrantyId = warranty.id,
@@ -191,6 +204,8 @@ class WarrantyExpirationWorker @AssistedInject constructor(
             now = now
         )
         if (claimed != 1) return false
+
+        ctx.checkpoint("warranty_delivery_after_claim")
 
         // RP-16 16-D: the claim succeeded, so the row must exist. If it is
         // unexpectedly absent on re-read, return the claim to a retryable FAILED
@@ -221,6 +236,7 @@ class WarrantyExpirationWorker @AssistedInject constructor(
             message = message
         )
 
+        ctx.checkpoint("warranty_delivery_record_outcome")
         if (deliveryResult == NotificationService.DeliveryResult.DELIVERED) {
             deliveryDao.markSentFromClaimed(row.id, notificationId, now)
             return true

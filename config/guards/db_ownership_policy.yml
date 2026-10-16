@@ -7314,6 +7314,7 @@ entries:
   method: deliverReminder
   receiver: null
   parameterTypes:
+  - com.yourname.expensetracker.domain.workers.WorkerRunContext
   - com.yourname.expensetracker.data.database.entity.Warranty
   - Int
   - Long
@@ -7335,6 +7336,7 @@ entries:
   method: deliverReminder
   receiver: null
   parameterTypes:
+  - com.yourname.expensetracker.domain.workers.WorkerRunContext
   - com.yourname.expensetracker.data.database.entity.Warranty
   - Int
   - Long
@@ -7355,6 +7357,7 @@ entries:
   method: deliverReminder
   receiver: null
   parameterTypes:
+  - com.yourname.expensetracker.domain.workers.WorkerRunContext
   - com.yourname.expensetracker.data.database.entity.Warranty
   - Int
   - Long
@@ -7373,6 +7376,7 @@ entries:
   method: deliverReminder
   receiver: null
   parameterTypes:
+  - com.yourname.expensetracker.domain.workers.WorkerRunContext
   - com.yourname.expensetracker.data.database.entity.Warranty
   - Int
   - Long
@@ -7391,6 +7395,7 @@ entries:
   method: deliverReminder
   receiver: null
   parameterTypes:
+  - com.yourname.expensetracker.domain.workers.WorkerRunContext
   - com.yourname.expensetracker.data.database.entity.Warranty
   - Int
   - Long
@@ -7583,7 +7588,7 @@ entries:
   parameterTypes:
   - Long
   - Long
-  - com.yourname.expensetracker.domain.workers.WorkerRunContext?
+  - com.yourname.expensetracker.domain.workers.WorkerRunContext
   daoAccessor: intakeDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.NotificationIntakeDao
   operation: purgeAllPayload

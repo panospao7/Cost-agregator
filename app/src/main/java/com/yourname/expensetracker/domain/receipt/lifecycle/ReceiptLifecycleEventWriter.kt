@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.receipt.lifecycle
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.ReceiptEventDao
 import com.yourname.expensetracker.data.database.entity.ReceiptEvent
 import com.yourname.expensetracker.domain.diagnostics.EventMetadataSanitizer
@@ -42,10 +43,12 @@ interface ReceiptLifecycleEventWriter : TransactionalEventWriter {
 class RoomReceiptLifecycleEventWriter @Inject constructor(
     private val dao: ReceiptEventDao,
     private val sanitizer: EventMetadataSanitizer,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val writeBarrier: DatabaseWriteBarrier
 ) : ReceiptLifecycleEventWriter {
 
     override suspend fun write(context: TransactionContext, event: ReceiptLifecycleEvent) {
+        writeBarrier.checkWritesAllowed("ReceiptLifecycleEventWriter.write")
         dao.insert(
             ReceiptEvent(
                 receiptId = event.receiptId,

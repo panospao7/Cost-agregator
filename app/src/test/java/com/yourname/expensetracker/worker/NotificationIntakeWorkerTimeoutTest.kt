@@ -744,6 +744,67 @@ class NotificationIntakeWorkerTimeoutTest {
     }
 
     @Test
+    fun `purge_payload_is_skipped_when_write_barrier_denies_purge_checkpoint`() = runBlocking {
+        val context = mockk<Context>(relaxed = true)
+        val params = mockk<WorkerParameters>(relaxed = true)
+        val intakeDao = mockk<NotificationIntakeDao>(relaxed = true)
+        val repository = mockk<NotificationRepository>(relaxed = true)
+        val timeProvider = mockk<TimeProvider>(relaxed = true)
+        val crypto = mockk<NotificationTransientPayloadCrypto>(relaxed = true)
+
+        val writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
+        val restoreMode = mockk<RestoreMaintenanceMode>(relaxed = true)
+        val runLogger = mockk<WorkerRunLogger>(relaxed = true)
+        val privacyGate = mockk<PrivacyGate>(relaxed = true)
+        val leaseRegistry = mockk<WorkerLeaseRegistry>(relaxed = true)
+        val permissionChecker = mockk<NotificationPermissionChecker>(relaxed = true)
+
+        every { restoreMode.currentMode() } returns RestoreMaintenanceMode.Mode.NORMAL
+        coEvery { leaseRegistry.acquire(any()) } returns mockk(relaxed = true)
+        coEvery { runLogger.start(any()) } returns mockWorkerRunHandle()
+        every { permissionChecker.areNotificationsEnabled() } returns true
+        coEvery { privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE) } returns PrivacyDecision.Allowed
+
+        val executionGuard = buildGuard(
+            writeBarrier = writeBarrier,
+            restoreMode = restoreMode,
+            runLogger = runLogger,
+            privacyGate = privacyGate,
+            leaseRegistry = leaseRegistry,
+            permissionChecker = permissionChecker,
+            timeProvider = timeProvider
+        )
+
+        val intakeId = 42L
+        val now = 1_700_000_000_000L
+        // attempts >= maxAttempts: markFinalFailure then purgePayloadBestEffort.
+        val metaRow = processingMetadata(
+            id = intakeId, packageName = "com.test.app",
+            attempts = 5, maxAttempts = 5, now = now
+        )
+
+        every { params.inputData } returns Data.Builder().putLong("intakeId", intakeId).build()
+        every { timeProvider.now() } returns now
+        coEvery { intakeDao.getProcessingMetadataById(intakeId) } returns metaRow
+        // Only the purge checkpoint is denied (e.g. maintenance entered after the terminal mark).
+        every { writeBarrier.checkWritesAllowed("intake:purgePayload") } throws RuntimeException("Blocked")
+
+        val worker = NotificationIntakeWorker(
+            appContext = context, params = params,
+            intakeDao = intakeDao, repository = repository,
+            timeProvider = timeProvider, crypto = crypto,
+            executionGuard = executionGuard,
+            privacyGate = privacyGate
+        )
+
+        val result = worker.doWork()
+
+        assertEquals("MAX_ATTEMPTS still fails the run", WorkResult.failure(), result)
+        coVerify(exactly = 1) { intakeDao.markFinalFailure(intakeId, "MAX_ATTEMPTS_EXCEEDED", null, now) }
+        coVerify(exactly = 0) { intakeDao.purgeAllPayload(any(), any()) }
+    }
+
+    @Test
     fun `privacy_disabled_before_payload_load_does_not_call_getPayloadForProcessing`() = runBlocking {
         val context = mockk<Context>(relaxed = true)
         val params = mockk<WorkerParameters>(relaxed = true)

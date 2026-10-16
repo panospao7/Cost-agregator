@@ -1,8 +1,14 @@
 package com.yourname.expensetracker.domain.sideeffect
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.data.database.dao.TransactionEventDao
+import com.yourname.expensetracker.data.database.entity.TransactionEvent
 import com.yourname.expensetracker.domain.diagnostics.AppPipeline
+import com.yourname.expensetracker.domain.diagnostics.EventMetadataSanitizer
 import com.yourname.expensetracker.domain.transaction.LifecycleEventType
 import com.yourname.expensetracker.domain.transaction.TransactionContext
+import com.yourname.expensetracker.domain.transaction.lifecycle.RoomTransactionLifecycleEventWriter
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEvent
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEventWriter
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
@@ -113,6 +119,57 @@ class TransactionSideEffectFailureEventWriterTest {
             fail("CancellationException must propagate out of failed()")
         } catch (e: CancellationException) {
             // Expected: the failure event writer must not swallow system cancellation.
+        }
+    }
+
+    // U-004 (G3/S1): the mirror event goes through the barrier-guarded Room writer. During
+    // maintenance the blocked mirror event is dropped by the composite (owner-accepted), while
+    // cancellation still propagates.
+
+    @Test
+    fun `composite drops a barrier-blocked mirror event and does not propagate`() = runTest {
+        var mode = RestoreMaintenanceMode.Mode.RESTORE_SWAPPING
+        val maintenanceMode = mockk<RestoreMaintenanceMode>()
+        every { maintenanceMode.currentMode() } answers { mode }
+        val dao = mockk<TransactionEventDao>(relaxed = true)
+        val roomWriter = RoomTransactionLifecycleEventWriter(
+            dao = dao,
+            sanitizer = EventMetadataSanitizer(),
+            timeProvider = FakeTimeProvider(fixedNow),
+            writeBarrier = DatabaseWriteBarrier(maintenanceMode)
+        )
+        val composite = CompositeSideEffectEventWriter(
+            diagnosticWriter = mockk(relaxed = true),
+            transactionFailureWriter = TransactionSideEffectFailureEventWriter(roomWriter, FakeTimeProvider(fixedNow))
+        )
+
+        composite.failed(expenseAction, retryable = true, reason = "x", error = null)
+
+        coVerify(exactly = 0) { dao.insert(any<TransactionEvent>()) }
+
+        mode = RestoreMaintenanceMode.Mode.NORMAL
+        composite.failed(expenseAction, retryable = true, reason = "x", error = null)
+
+        coVerify(exactly = 1) { dao.insert(any<TransactionEvent>()) }
+    }
+
+    @Test
+    fun `composite still propagates CancellationException from the mirror writer`() = runTest {
+        val throwingWriter = mockk<TransactionLifecycleEventWriter>(relaxed = true)
+        coEvery { throwingWriter.write(any(), any()) } throws CancellationException("cancelled downstream")
+        val composite = CompositeSideEffectEventWriter(
+            diagnosticWriter = mockk(relaxed = true),
+            transactionFailureWriter = TransactionSideEffectFailureEventWriter(
+                throwingWriter,
+                FakeTimeProvider(fixedNow)
+            )
+        )
+
+        try {
+            composite.failed(expenseAction, retryable = true, reason = "x", error = null)
+            fail("CancellationException must propagate out of the composite")
+        } catch (e: CancellationException) {
+            // Expected.
         }
     }
 }

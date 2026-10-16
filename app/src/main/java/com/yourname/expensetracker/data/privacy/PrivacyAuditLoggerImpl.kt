@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.privacy
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.PrivacyAuditDao
 import com.yourname.expensetracker.data.database.entity.PrivacyAuditEvent
 import com.yourname.expensetracker.domain.privacy.PrivacyAuditLogger
@@ -13,7 +14,8 @@ import javax.inject.Singleton
 @Singleton
 class PrivacyAuditLoggerImpl @Inject constructor(
     private val dao: PrivacyAuditDao,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val writeBarrier: DatabaseWriteBarrier
 ) : PrivacyAuditLogger {
 
     private val allowedContextKeys = setOf(
@@ -48,6 +50,9 @@ class PrivacyAuditLoggerImpl @Inject constructor(
         val sanitizedContext = sanitizeContext(context).toMutableMap().apply {
             put("capabilityDescription", capabilityDescription(capability))
         }
+        // G3-S2: audit rows are DB writes; during a maintenance window the barrier rejects them.
+        // CompositePrivacyGate maps the resulting exception to FailClosed(PRIVACY_AUDIT_WRITE_FAILED).
+        writeBarrier.checkWritesAllowed("PrivacyAuditLoggerImpl.logDecision")
         dao.insert(
             PrivacyAuditEvent(
                 capability = capability.name,

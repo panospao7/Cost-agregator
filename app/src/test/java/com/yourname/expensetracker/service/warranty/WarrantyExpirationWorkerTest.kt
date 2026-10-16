@@ -20,6 +20,7 @@ import com.yourname.expensetracker.domain.service.NotificationService
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.workers.RetryableWorkerException
+import com.yourname.expensetracker.domain.workers.WorkerCheckpointBlockedException
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.domain.workers.WorkerGuardResult
 import com.yourname.expensetracker.domain.workers.WorkerRunContext
@@ -59,6 +60,7 @@ class WarrantyExpirationWorkerTest {
     private lateinit var executionGuard: WorkerExecutionGuard
     private lateinit var timeProvider: FakeTimeProvider
     private lateinit var lastRunContext: WorkerRunContext
+    private val blockedCheckpointLabels = mutableSetOf<String>()
 
     @Before
     fun setup() {
@@ -84,11 +86,25 @@ class WarrantyExpirationWorkerTest {
         } coAnswers {
             val block = secondArg<suspend (WorkerRunContext) -> Any>()
             val ctx = mockk<WorkerRunContext>(relaxed = true)
+            // Models WorkerExecutionGuard.checkpoint: a denied write barrier surfaces as
+            // WorkerCheckpointBlockedException before the guarded write happens.
+            coEvery { ctx.checkpoint(any()) } coAnswers {
+                val label = firstArg<String>()
+                if (label in blockedCheckpointLabels) {
+                    throw WorkerCheckpointBlockedException(
+                        reasonCode = DiagnosticReasonCode.WORKER_WRITE_BARRIER_DENIED.name,
+                        message = "Worker checkpoint blocked by write barrier at '$label'"
+                    )
+                }
+            }
             lastRunContext = ctx
             try {
                 WorkerGuardResult.Success(block.invoke(ctx))
             } catch (e: CancellationException) {
                 throw e
+            } catch (e: WorkerCheckpointBlockedException) {
+                // Real guard: BlockedPolicy.RETRY (this worker) -> BlockedRetry -> Result.retry().
+                WorkerGuardResult.BlockedRetry(e.reasonCode, e.reasonCode)
             } catch (e: Exception) {
                 val msg = e.message ?: ""
                 val transient = listOf("timeout", "interrupted", "deadlock", "SQLITE_BUSY", "database is locked")
@@ -398,6 +414,66 @@ class WarrantyExpirationWorkerTest {
 
         assertEquals(Result.success(), result)
         verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
+    }
+
+    // -------------------------------------------------------------------------
+    // G3-S3: write-barrier checkpoint before every delivery-state write
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `blocked checkpoint before seed performs no delivery write and retries`() = runTest {
+        val warranty = seedWarranty()
+        coEvery { warrantyRepository.getWarrantiesExpiringSoon(7) } returns listOf(warranty)
+        coEvery { warrantyRepository.getWarrantiesExpiringSoon(30) } returns emptyList()
+        blockedCheckpointLabels += "warranty_delivery_seed"
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.retry(), result)
+        verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        verify(exactly = 0) { lastRunContext.addNotificationsSent() }
+        assertThat(deliveryDao.getByKey(warranty.id, 7, warranty.warrantyEndDate)).isNull()
+    }
+
+    @Test
+    fun `blocked checkpoint before recording the outcome does not mark SENT`() = runTest {
+        val warranty = seedWarranty()
+        coEvery { warrantyRepository.getWarrantiesExpiringSoon(7) } returns listOf(warranty)
+        coEvery { warrantyRepository.getWarrantiesExpiringSoon(30) } returns emptyList()
+        blockedCheckpointLabels += "warranty_delivery_record_outcome"
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.retry(), result)
+        verify(exactly = 0) { lastRunContext.addNotificationsSent() }
+        val row = requireNotNull(deliveryDao.getByKey(warranty.id, 7, warranty.warrantyEndDate))
+        // The outcome write was denied: the row stays CLAIMED (recovered by recoverStaleClaimed).
+        assertThat(row.status).isEqualTo("CLAIMED")
+        assertThat(row.notificationId).isNull()
+    }
+
+    @Test
+    fun `blocked checkpoint before pruning skips the prune write and retries`() = runTest {
+        val fixedNow = 1_800_000_000_000L
+        timeProvider.setTime(fixedNow)
+        // Expiry far older than the 90-day prune horizon; no expiring warranties this run.
+        val stale = seedWarranty(endDate = fixedNow - 200L * 86_400_000L)
+        deliveryDao.insertOrIgnore(
+            WarrantyReminderDelivery(
+                warrantyId = stale.id,
+                windowDays = 7,
+                expiryDate = stale.warrantyEndDate,
+                status = "SENT",
+                createdAt = fixedNow,
+                updatedAt = fixedNow
+            )
+        )
+        blockedCheckpointLabels += "warranty_prune_deliveries"
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.retry(), result)
+        assertThat(deliveryDao.getByKey(stale.id, 7, stale.warrantyEndDate)).isNotNull()
     }
 
     // -------------------------------------------------------------------------

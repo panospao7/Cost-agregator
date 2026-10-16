@@ -33,9 +33,26 @@ import java.time.LocalDate
  * Method-level caller regexes ([buildCallerRegexes]) are retained as a
  * secondary check for accessor forms not captured by the class contract.
  *
- * WorkerExecutionGuard entry/checkpoint usage is deliberately NOT accepted as
- * ownership evidence: RP-02 requires the check at the writer, not only at a
+ * WorkerExecutionGuard entry/checkpoint usage is NOT accepted as ownership
+ * evidence by default: RP-02 requires the check at the writer, not only at a
  * worker entry wrapper (see the DataRetentionWriter row of the RP-02 plan).
+ *
+ * ## COVERED_BY_CALLER (owner-approved narrow exception, G3-S3)
+ *
+ * A class may instead be listed in [COVERED_BY_CALLER] (HARD CAP of
+ * [COVERED_BY_CALLER_CAP] entries, no overlap with [EXEMPT_CLASSES]) with a
+ * mechanism, a non-blank justification and existing evidence files. The class
+ * is then skipped by the main scan ONLY after its mechanism is mechanically
+ * proven by its own test:
+ *  - `WORKER_CHECKPOINT`: every detected DAO write is preceded, in the same
+ *    function and within [CHECKPOINT_WINDOW_CHARS] characters of sanitized
+ *    source, by a `.checkpoint(` call; the evidence files must implement
+ *    `checkpoint` by calling `checkWritesAllowed` (WorkerExecutionGuard binds
+ *    `WorkerRunContext` to it; the lease checkpoint does the same).
+ *  - `SOLE_CALLER_GUARDED`: no production file outside the evidence files
+ *    references the class, and the first evidence file (the guarded caller)
+ *    calls `checkWritesAllowed` shortly before every use of it.
+ * Comment/string-only evidence never counts (sanitized text).
  *
  * Detection runs over text sanitized by [SourceTextSanitizer], so neither a
  * violation nor protection can be inferred from comments or string literals.
@@ -115,31 +132,67 @@ class WriteBarrierArchitectureGuardTest {
             "DatabaseBackupRepositoryImpl" to "orchestrates backup/restore within maintenance mode",
             "AppDatabase" to "Room database class; migrations use raw SQL, not DAO write calls",
             "AppStartupCoordinator" to "startup recovery — runs before barrier is available",
-            "MaintenanceOperationRunner" to "maintenance mode itself — enters/drains, does not call DAO writes",
-            // ── TEMPORARY surfaced by RP-02 alias-proof detection ──
-            //
-            // PROPOSED OWNERS — coordinator to confirm (RP-02 batch 2 triage).
-            // These owner=UNASSIGNED entries are NOT remediated by RP-02 batch 2;
-            // each RP must register barrier ownership for its writers:
-            //
-            // | Class                               | Proposed owner | Domain                        |
-            // |-------------------------------------|----------------|-------------------------------|
-            // | WorkerRunLogger                     | RP-16          | worker observability          |
-            // | WarrantyExpirationWorker            | RP-16 area     | worker lifecycle writes       |
-            // | PrivacyAuditLoggerImpl              | RP-14 / RP-15  | privacy/diagnostics           |
-            // | ReceiptInsertResolver               | RP-12          | receipt lifecycle             |
-            // | ReceiptLifecycleEventWriter         | RP-12          | receipt lifecycle             |
-            // | NotificationIntakeWorker            | RP-10          | notification intake workers   |
-            // | TransactionLifecycleEventWriter     | RP-11 area     | transaction lifecycle events  |
-            // | DebugExpenseAuditWriter             | RP-11 area     | transaction event audit       |
-            "ReceiptInsertResolver" to "owner=UNASSIGNED issue=U-004 expiry=2026-10-31 pre-existing debt: scannedReceiptDao.insert without barrier; triage owner required",
-            "DebugExpenseAuditWriter" to "owner=UNASSIGNED issue=U-004 expiry=2026-10-31 pre-existing debt: transactionEventDao.insert without barrier; triage owner required",
-            "NotificationIntakeWorker" to "owner=UNASSIGNED issue=U-004 expiry=2026-10-31 alias-detected: intakeDao claim/mark/purge state writes without barrier; triage owner required",
-            "WarrantyExpirationWorker" to "owner=UNASSIGNED issue=U-004 expiry=2026-10-31 alias-detected: deliveryDao delivery lifecycle writes without barrier; triage owner required",
-            "WorkerRunLogger" to "owner=UNASSIGNED issue=U-004 expiry=2026-10-31 alias-detected: backgroundJobRunDao insert/terminal writes without barrier; triage owner required",
-            "PrivacyAuditLoggerImpl" to "owner=UNASSIGNED issue=U-004 expiry=2026-10-31 alias-detected: privacyAuditDao.insert without barrier; triage owner required",
-            "ReceiptLifecycleEventWriter" to "owner=UNASSIGNED issue=U-004 expiry=2026-10-31 alias-detected: receiptEventDao.insert event boundary without barrier; triage owner required",
-            "TransactionLifecycleEventWriter" to "owner=UNASSIGNED issue=U-004 expiry=2026-10-31 alias-detected: transactionEventDao.insert event boundary without barrier; triage owner required"
+            "MaintenanceOperationRunner" to "maintenance mode itself — enters/drains, does not call DAO writes"
+        )
+
+        // ── COVERED_BY_CALLER (owner-approved, G3-S3; HARD CAP) ─────────────
+        const val MECH_WORKER_CHECKPOINT = "WORKER_CHECKPOINT"
+        const val MECH_SOLE_CALLER_GUARDED = "SOLE_CALLER_GUARDED"
+        val KNOWN_MECHANISMS: Set<String> = setOf(MECH_WORKER_CHECKPOINT, MECH_SOLE_CALLER_GUARDED)
+
+        /** Hard cap on [COVERED_BY_CALLER]; raising it requires an owner decision. */
+        const val COVERED_BY_CALLER_CAP = 3
+
+        /** Max sanitized-source distance from a `.checkpoint(` call to the DAO write it covers. */
+        const val CHECKPOINT_WINDOW_CHARS = 1500
+
+        /** Max sanitized-source distance from `checkWritesAllowed(` to a guarded use of the class. */
+        const val SOLE_CALLER_CHECK_WINDOW_CHARS = 300
+
+        /**
+         * @property mechanism one of [KNOWN_MECHANISMS]
+         * @property justification non-blank reason this class needs no own barrier
+         * @property evidenceFiles paths relative to the production source root. For
+         *   SOLE_CALLER_GUARDED the FIRST file is the guarded caller and ALL files are the
+         *   only production files allowed to reference the class. For WORKER_CHECKPOINT
+         *   they are the files implementing the barrier-calling checkpoint.
+         */
+        data class CoveredByCaller(
+            val mechanism: String,
+            val justification: String,
+            val evidenceFiles: List<String>
+        )
+
+        private const val WORKERS_DIR = "com/yourname/expensetracker/domain/workers"
+        private val CHECKPOINT_EVIDENCE = listOf(
+            "$WORKERS_DIR/WorkerExecutionGuard.kt",
+            "$WORKERS_DIR/WorkerLeaseRegistryImpl.kt"
+        )
+
+        val COVERED_BY_CALLER: Map<String, CoveredByCaller> = mapOf(
+            "WorkerRunLogger" to CoveredByCaller(
+                mechanism = MECH_SOLE_CALLER_GUARDED,
+                justification = "run-log writes are reachable only through WorkerExecutionGuard: the start write is " +
+                    "preceded by checkWritesAllowed; terminal writes run under the worker lease before lease.close(), " +
+                    "and every maintenance drain fails rather than proceeding while a lease is held; " +
+                    "DiagnosticsModule only binds it",
+                evidenceFiles = listOf(
+                    "$WORKERS_DIR/WorkerExecutionGuard.kt",
+                    "com/yourname/expensetracker/di/DiagnosticsModule.kt"
+                )
+            ),
+            "WarrantyExpirationWorker" to CoveredByCaller(
+                mechanism = MECH_WORKER_CHECKPOINT,
+                justification = "every delivery-state DAO write is preceded by ctx.checkpoint, which calls " +
+                    "writeBarrier.checkWritesAllowed via WorkerExecutionGuard.checkpoint",
+                evidenceFiles = CHECKPOINT_EVIDENCE
+            ),
+            "NotificationIntakeWorker" to CoveredByCaller(
+                mechanism = MECH_WORKER_CHECKPOINT,
+                justification = "every intake-state DAO write is preceded by ctx.checkpoint, which calls " +
+                    "writeBarrier.checkWritesAllowed via WorkerExecutionGuard.checkpoint",
+                evidenceFiles = CHECKPOINT_EVIDENCE
+            )
         )
     }
 
@@ -456,6 +509,210 @@ class WriteBarrierArchitectureGuardTest {
         return found.values.sortedWith(compareBy({ it.daoInterface }, { it.methodName }, { it.receiver }))
     }
 
+    // ── COVERED_BY_CALLER mechanisms (G3-S3) ────────────────────────────────
+
+    /** Sanitized production sources keyed by source-root-relative path (forward slashes). */
+    private val sanitizedMainSources: Map<String, String> by lazy {
+        allKotlinFiles().associate { file ->
+            file.relativeTo(sourceRoot).invariantSeparatorsPath to
+                SourceTextSanitizer.stripCommentsAndStringBodies(file.readText())
+        }
+    }
+
+    /** Mechanism violations per COVERED_BY_CALLER class (empty list = mechanism proven). */
+    private val coveredByCallerMechanismResults: Map<String, List<String>> by lazy {
+        val registry = buildDaoRegistry()
+        COVERED_BY_CALLER.mapValues { (className, entry) ->
+            coveredByCallerMechanismViolations(className, entry, registry, sanitizedMainSources)
+        }
+    }
+
+    private fun baseNameOf(relativePath: String): String =
+        relativePath.substringAfterLast('/').removeSuffix(".kt")
+
+    private fun coveredByCallerHygieneViolations(
+        covered: Map<String, CoveredByCaller>,
+        exemptClassNames: Set<String>,
+        evidenceExists: (String) -> Boolean,
+        cap: Int = COVERED_BY_CALLER_CAP
+    ): List<String> {
+        val violations = mutableListOf<String>()
+        if (covered.size > cap) {
+            violations.add("COVERED_BY_CALLER has ${covered.size} entries; the hard cap is $cap")
+        }
+        for ((className, entry) in covered) {
+            if (className in exemptClassNames) {
+                violations.add("$className: listed in both COVERED_BY_CALLER and the permanent exemption list")
+            }
+            when {
+                entry.mechanism.isBlank() -> violations.add("$className: blank mechanism")
+                entry.mechanism !in KNOWN_MECHANISMS ->
+                    violations.add("$className: unknown mechanism '${entry.mechanism}'")
+            }
+            if (entry.justification.isBlank()) violations.add("$className: blank justification")
+            if (entry.evidenceFiles.isEmpty()) violations.add("$className: no evidence files")
+            for (evidence in entry.evidenceFiles) {
+                if (!evidenceExists(evidence)) violations.add("$className: evidence file does not exist: $evidence")
+            }
+        }
+        return violations
+    }
+
+    private fun funDeclarationStarts(sanitized: String): List<Int> =
+        Regex("""\bfun\s+(?:<[^>]*>\s*)?(?:[A-Za-z_][\w.]*\.)?[A-Za-z_]\w*\s*\(""")
+            .findAll(sanitized).map { it.range.first }.toList()
+
+    /** Start offsets of every textual occurrence of the detected [call] in [sanitized]. */
+    private fun writeCallSites(sanitized: String, call: DaoWriteCall): List<Int> {
+        val method = Regex.escape(call.methodName)
+        val pattern = when {
+            call.receiver == "regex" -> Regex("""\.\s*${method}\s*\(""")
+            call.receiver.contains('(') -> {
+                val parts = call.receiver.removeSuffix("()").split('.', limit = 2)
+                Regex(
+                    """\b${Regex.escape(parts[0])}\s*\.\s*${Regex.escape(parts.getOrElse(1) { "" })}""" +
+                        """\s*\(\s*\)\s*\.\s*${method}\s*\("""
+                )
+            }
+            else -> Regex("""\b${Regex.escape(call.receiver)}\s*\.\s*${method}\s*\(""")
+        }
+        return pattern.findAll(sanitized).map { it.range.first }.toList()
+    }
+
+    /**
+     * WORKER_CHECKPOINT: every detected DAO write must be preceded, inside the same
+     * function and within [windowChars] sanitized characters, by a `.checkpoint(` call.
+     */
+    private fun workerCheckpointViolations(
+        sanitized: String,
+        registry: Map<String, Set<String>>,
+        windowChars: Int = CHECKPOINT_WINDOW_CHARS
+    ): List<String> {
+        val calls = detectDaoWriteCalls(sanitized, registry)
+        if (calls.isEmpty()) {
+            return listOf("no DAO write calls detected: a WORKER_CHECKPOINT entry must cover at least one write")
+        }
+        val funStarts = funDeclarationStarts(sanitized)
+        val checkpointEnds = Regex("""\.\s*checkpoint\s*\(""").findAll(sanitized).map { it.range.last }.toList()
+        val violations = mutableListOf<String>()
+        val seenSites = mutableSetOf<Int>()
+        for (call in calls) {
+            val sites = writeCallSites(sanitized, call)
+            if (sites.isEmpty()) {
+                violations.add("${call.receiver}.${call.methodName}(): detected write site could not be located")
+            }
+            for (site in sites) {
+                if (!seenSites.add(site)) continue
+                val line = sanitized.substring(0, site).count { it == '\n' } + 1
+                val funStart = funStarts.lastOrNull { it < site } ?: 0
+                val nearest = checkpointEnds.lastOrNull { it in funStart until site }
+                when {
+                    nearest == null -> violations.add(
+                        "line $line: ${call.receiver}.${call.methodName}() has no preceding " +
+                            "checkpoint( call in the same function"
+                    )
+                    site - nearest > windowChars -> violations.add(
+                        "line $line: ${call.receiver}.${call.methodName}() is ${site - nearest} chars after " +
+                            "the nearest checkpoint( (window $windowChars)"
+                    )
+                }
+            }
+        }
+        return violations
+    }
+
+    /**
+     * The evidence files of a WORKER_CHECKPOINT entry must implement `checkpoint` by calling
+     * `checkWritesAllowed`, and at least one must bind WorkerRunContext to that checkpoint.
+     */
+    private fun checkpointImplementationViolations(evidence: Map<String, String?>): List<String> {
+        if (evidence.isEmpty()) return listOf("no checkpoint evidence files")
+        val violations = mutableListOf<String>()
+        var bound = false
+        for ((path, text) in evidence) {
+            if (text == null) {
+                violations.add("$path: evidence file missing")
+                continue
+            }
+            val start = Regex("""\bfun\s+checkpoint\s*\(""").find(text)
+            if (start == null) {
+                violations.add("$path: no 'fun checkpoint(' implementation")
+                continue
+            }
+            val next = Regex("""\bfun\s+\w""").find(text, start.range.last)
+            val slice = text.substring(start.range.first, next?.range?.first ?: text.length)
+            if (!Regex("""\bcheckWritesAllowed\s*\(""").containsMatchIn(slice)) {
+                violations.add("$path: checkpoint implementation does not call checkWritesAllowed")
+            }
+            if (Regex("""WorkerRunContext\s*\(\s*checkpointDelegate\s*=\s*::checkpoint\s*\)""").containsMatchIn(text)) {
+                bound = true
+            }
+        }
+        if (!bound) violations.add("no evidence file binds WorkerRunContext(checkpointDelegate = ::checkpoint)")
+        return violations
+    }
+
+    /**
+     * SOLE_CALLER_GUARDED: no production file outside [evidenceFiles] (and the class's own
+     * file) may reference [className], and the first evidence file (the guarded caller) must
+     * call `checkWritesAllowed` shortly before every use of the class instance.
+     */
+    private fun soleCallerGuardedViolations(
+        className: String,
+        evidenceFiles: List<String>,
+        sanitizedSources: Map<String, String>
+    ): List<String> {
+        val violations = mutableListOf<String>()
+        val allowed = evidenceFiles.toSet()
+        // G3 review G1: also match derived names (e.g. the injectable `<className>Impl`), so a
+        // rogue file cannot bypass the scan by depending on the implementation class.
+        val reference = Regex("""\b${Regex.escape(className)}\w*\b""")
+        for ((path, text) in sanitizedSources) {
+            if (baseNameOf(path) == className || path in allowed) continue
+            if (reference.containsMatchIn(text)) {
+                violations.add("$path references $className but is not an allowed evidence file")
+            }
+        }
+        val guardedCaller = evidenceFiles.firstOrNull() ?: return violations + "no evidence files"
+        val callerText = sanitizedSources[guardedCaller]
+            ?: return violations + "guarded caller evidence file missing: $guardedCaller"
+        val instance = className.replaceFirstChar { it.lowercaseChar() }
+        val uses = Regex("""\b${Regex.escape(instance)}\s*\.\s*\w+\s*\(""").findAll(callerText).toList()
+        if (uses.isEmpty()) violations.add("$guardedCaller never calls $instance.<method>(")
+        val check = Regex("""\bcheckWritesAllowed\s*\(""")
+        for (use in uses) {
+            val from = (use.range.first - SOLE_CALLER_CHECK_WINDOW_CHARS).coerceAtLeast(0)
+            if (!check.containsMatchIn(callerText.substring(from, use.range.first))) {
+                val line = callerText.substring(0, use.range.first).count { it == '\n' } + 1
+                violations.add(
+                    "$guardedCaller line $line: $instance use has no checkWritesAllowed( within " +
+                        "$SOLE_CALLER_CHECK_WINDOW_CHARS chars before it"
+                )
+            }
+        }
+        return violations
+    }
+
+    private fun coveredByCallerMechanismViolations(
+        className: String,
+        entry: CoveredByCaller,
+        registry: Map<String, Set<String>>,
+        sanitizedSources: Map<String, String>
+    ): List<String> = when (entry.mechanism) {
+        MECH_WORKER_CHECKPOINT -> {
+            val own = sanitizedSources.entries.filter { baseNameOf(it.key) == className }
+            if (own.size != 1) {
+                listOf("expected exactly one source file for $className, found ${own.size}")
+            } else {
+                workerCheckpointViolations(own.single().value, registry) +
+                    checkpointImplementationViolations(entry.evidenceFiles.associateWith { sanitizedSources[it] })
+            }
+        }
+        MECH_SOLE_CALLER_GUARDED ->
+            soleCallerGuardedViolations(className, entry.evidenceFiles, sanitizedSources)
+        else -> listOf("unknown mechanism '${entry.mechanism}'")
+    }
+
     // ── Tests ────────────────────────────────────────────────────────────────
 
     @Test
@@ -489,6 +746,11 @@ class WriteBarrierArchitectureGuardTest {
             }.getOrNull() ?: continue
 
             if (callerClassName in EXEMPT_CLASSES.keys) continue
+            // COVERED_BY_CALLER is honoured only while its mechanism check passes; a failing
+            // mechanism falls through to the normal scan (and fails its own dedicated test).
+            if (callerClassName in COVERED_BY_CALLER.keys &&
+                coveredByCallerMechanismResults[callerClassName].orEmpty().isEmpty()
+            ) continue
             if (isClassLevelBarrierProtected(sanitized)) continue
 
             val calls = detectDaoWriteCalls(sanitized, registry)
@@ -827,5 +1089,296 @@ class WriteBarrierArchitectureGuardTest {
             "An expired temporary exemption must fail the hygiene check.",
             violations.isNotEmpty()
         )
+    }
+
+    // ── COVERED_BY_CALLER: real-source tests (G3-S3) ────────────────────────
+
+    @Test
+    fun `covered-by-caller map is capped disjoint from exemptions and fully described`() {
+        val violations = coveredByCallerHygieneViolations(
+            covered = COVERED_BY_CALLER,
+            exemptClassNames = EXEMPT_CLASSES.keys,
+            evidenceExists = { File(sourceRoot, it).isFile }
+        )
+        assertTrue(
+            "COVERED_BY_CALLER hygiene violations:\n${violations.joinToString("\n")}",
+            violations.isEmpty()
+        )
+        assertTrue(
+            "COVERED_BY_CALLER hard cap is $COVERED_BY_CALLER_CAP, found ${COVERED_BY_CALLER.size}.",
+            COVERED_BY_CALLER.size <= COVERED_BY_CALLER_CAP
+        )
+    }
+
+    @Test
+    fun `covered-by-caller mechanisms hold for every entry`() {
+        val failures = coveredByCallerMechanismResults.filterValues { it.isNotEmpty() }
+        assertTrue(
+            "COVERED_BY_CALLER mechanism checks failed:\n" +
+                failures.entries.joinToString("\n") { (cls, v) -> "$cls:\n  " + v.joinToString("\n  ") },
+            failures.isEmpty()
+        )
+        assertEquals(COVERED_BY_CALLER.keys, coveredByCallerMechanismResults.keys)
+    }
+
+    @Test
+    fun `covered-by-caller classes still perform detected DAO writes - entries are not vacuous`() {
+        val registry = buildDaoRegistry()
+        for ((className, _) in COVERED_BY_CALLER) {
+            val own = sanitizedMainSources.entries.filter { baseNameOf(it.key) == className }
+            assertEquals("Exactly one source file expected for $className", 1, own.size)
+            assertTrue(
+                "$className is listed in COVERED_BY_CALLER but has no detected DAO writes; remove the entry.",
+                detectDaoWriteCalls(own.single().value, registry).isNotEmpty()
+            )
+        }
+    }
+
+    // ── COVERED_BY_CALLER: fixtures ─────────────────────────────────────────
+
+    private val fixtureRegistry = mapOf("NotificationIntakeDao" to setOf("markTerminal", "purgeAllPayload"))
+
+    @Test
+    fun `fixture - worker checkpoint before every write passes`() {
+        val source = """
+            class FxWorker(private val intakeDao: NotificationIntakeDao) {
+                suspend fun run(ctx: WorkerRunContext) {
+                    ctx.checkpoint("terminal")
+                    intakeDao.markTerminal(1L)
+                    ctx.checkpoint("purge")
+                    intakeDao.purgeAllPayload(1L)
+                }
+            }
+        """.trimIndent()
+        val violations = workerCheckpointViolations(
+            SourceTextSanitizer.stripCommentsAndStringBodies(source), fixtureRegistry
+        )
+        assertTrue("Expected no violations: $violations", violations.isEmpty())
+    }
+
+    @Test
+    fun `fixture - worker write without preceding checkpoint fails`() {
+        val source = """
+            class FxWorker(private val intakeDao: NotificationIntakeDao) {
+                suspend fun run(ctx: WorkerRunContext) {
+                    ctx.checkpoint("terminal")
+                    intakeDao.markTerminal(1L)
+                    intakeDao.purgeAllPayload(1L)
+                }
+            }
+        """.trimIndent()
+        // purgeAllPayload is still within the window of the first checkpoint, so tighten the
+        // window to prove the distance rule, and separately prove the missing-checkpoint rule.
+        val tight = workerCheckpointViolations(
+            SourceTextSanitizer.stripCommentsAndStringBodies(source), fixtureRegistry, windowChars = 10
+        )
+        assertTrue("Write beyond the window must fail: $tight", tight.any { it.contains("purgeAllPayload") })
+
+        val noCheckpoint = """
+            class FxWorker(private val intakeDao: NotificationIntakeDao) {
+                suspend fun run() {
+                    intakeDao.markTerminal(1L)
+                }
+            }
+        """.trimIndent()
+        val violations = workerCheckpointViolations(
+            SourceTextSanitizer.stripCommentsAndStringBodies(noCheckpoint), fixtureRegistry
+        )
+        assertTrue("A write with no checkpoint must fail: $violations", violations.isNotEmpty())
+    }
+
+    @Test
+    fun `fixture - checkpoint in another function or after the write does not cover it`() {
+        val otherFunction = """
+            class FxWorker(private val intakeDao: NotificationIntakeDao) {
+                suspend fun first(ctx: WorkerRunContext) {
+                    ctx.checkpoint("a")
+                }
+                suspend fun second() {
+                    intakeDao.markTerminal(1L)
+                }
+            }
+        """.trimIndent()
+        assertTrue(
+            "A checkpoint in a different function must not cover the write.",
+            workerCheckpointViolations(
+                SourceTextSanitizer.stripCommentsAndStringBodies(otherFunction), fixtureRegistry
+            ).isNotEmpty()
+        )
+
+        val checkpointAfter = """
+            class FxWorker(private val intakeDao: NotificationIntakeDao) {
+                suspend fun run(ctx: WorkerRunContext) {
+                    intakeDao.markTerminal(1L)
+                    ctx.checkpoint("late")
+                }
+            }
+        """.trimIndent()
+        assertTrue(
+            "A checkpoint AFTER the write must not cover it.",
+            workerCheckpointViolations(
+                SourceTextSanitizer.stripCommentsAndStringBodies(checkpointAfter), fixtureRegistry
+            ).isNotEmpty()
+        )
+
+        val commentOnly = """
+            class FxWorker(private val intakeDao: NotificationIntakeDao) {
+                suspend fun run() {
+                    // ctx.checkpoint("not real")
+                    intakeDao.markTerminal(1L)
+                }
+            }
+        """.trimIndent()
+        assertTrue(
+            "A checkpoint mentioned only in a comment must not count.",
+            workerCheckpointViolations(
+                SourceTextSanitizer.stripCommentsAndStringBodies(commentOnly), fixtureRegistry
+            ).isNotEmpty()
+        )
+    }
+
+    @Test
+    fun `fixture - checkpoint implementation must call checkWritesAllowed`() {
+        val good = SourceTextSanitizer.stripCommentsAndStringBodies(
+            """
+            class G {
+                val ctx = WorkerRunContext(checkpointDelegate = ::checkpoint)
+                suspend fun checkpoint(operation: String) {
+                    writeBarrier.checkWritesAllowed(operation)
+                }
+                fun other() {}
+            }
+            """.trimIndent()
+        )
+        assertTrue(checkpointImplementationViolations(mapOf("G.kt" to good)).isEmpty())
+
+        val noBarrier = SourceTextSanitizer.stripCommentsAndStringBodies(
+            """
+            class G {
+                val ctx = WorkerRunContext(checkpointDelegate = ::checkpoint)
+                suspend fun checkpoint(operation: String) {
+                    yield()
+                }
+                fun other() { writeBarrier.checkWritesAllowed("x") }
+            }
+            """.trimIndent()
+        )
+        assertTrue(
+            "A checkpoint that never calls checkWritesAllowed must fail.",
+            checkpointImplementationViolations(mapOf("G.kt" to noBarrier)).isNotEmpty()
+        )
+        assertTrue(
+            "A missing evidence file must fail.",
+            checkpointImplementationViolations(mapOf("Missing.kt" to null)).isNotEmpty()
+        )
+    }
+
+    private fun soleCallerSources(guardBody: String, extra: Map<String, String> = emptyMap()): Map<String, String> =
+        (mapOf(
+            "pkg/FxLogger.kt" to "interface FxLogger { suspend fun start() }",
+            "pkg/Guard.kt" to guardBody,
+            "pkg/Module.kt" to "abstract class Module { abstract fun bind(impl: FxLoggerImpl): FxLogger }"
+        ) + extra).mapValues { SourceTextSanitizer.stripCommentsAndStringBodies(it.value) }
+
+    private val soleCallerEvidence = listOf("pkg/Guard.kt", "pkg/Module.kt")
+
+    private val guardedCallerSource = """
+        class Guard(private val fxLogger: FxLogger) {
+            suspend fun go() {
+                writeBarrier.checkWritesAllowed("FxLogger.start")
+                fxLogger.start()
+            }
+        }
+    """.trimIndent()
+
+    @Test
+    fun `fixture - sole caller guarded passes when only evidence files reference the class`() {
+        val violations = soleCallerGuardedViolations("FxLogger", soleCallerEvidence, soleCallerSources(guardedCallerSource))
+        assertTrue("Expected no violations: $violations", violations.isEmpty())
+    }
+
+    @Test
+    fun `fixture - sole caller guarded fails on an extra production reference`() {
+        val sources = soleCallerSources(
+            guardedCallerSource,
+            extra = mapOf("pkg/Rogue.kt" to "class Rogue(private val logger: FxLogger) { suspend fun x() = logger.start() }")
+        )
+        val violations = soleCallerGuardedViolations("FxLogger", soleCallerEvidence, sources)
+        assertTrue(
+            "A production file outside the evidence list referencing the class must fail: $violations",
+            violations.any { it.contains("pkg/Rogue.kt") }
+        )
+    }
+
+    @Test
+    fun `fixture - sole caller guarded fails on an extra production reference to the Impl class`() {
+        val sources = soleCallerSources(
+            guardedCallerSource,
+            extra = mapOf("pkg/RogueImpl.kt" to "class RogueImpl(private val logger: FxLoggerImpl) { suspend fun x() = logger.start() }")
+        )
+        val violations = soleCallerGuardedViolations("FxLogger", soleCallerEvidence, sources)
+        assertTrue(
+            "A production file depending on the implementation class must fail too: $violations",
+            violations.any { it.contains("pkg/RogueImpl.kt") }
+        )
+    }
+
+    @Test
+    fun `fixture - sole caller guarded fails when the guarded caller has no barrier check`() {
+        val unguarded = """
+            class Guard(private val fxLogger: FxLogger) {
+                suspend fun go() {
+                    fxLogger.start()
+                }
+            }
+        """.trimIndent()
+        val violations = soleCallerGuardedViolations("FxLogger", soleCallerEvidence, soleCallerSources(unguarded))
+        assertTrue("A guarded caller without checkWritesAllowed must fail: $violations", violations.isNotEmpty())
+
+        val missingCaller = soleCallerGuardedViolations(
+            "FxLogger", listOf("pkg/DoesNotExist.kt"), soleCallerSources(guardedCallerSource)
+        )
+        assertTrue("A missing guarded-caller evidence file must fail: $missingCaller", missingCaller.isNotEmpty())
+    }
+
+    @Test
+    fun `fixture - covered-by-caller over the hard cap fails hygiene`() {
+        val entry = CoveredByCaller(MECH_WORKER_CHECKPOINT, "justified", listOf("a.kt"))
+        val covered = (1..4).associate { "Worker$it" to entry }
+        val violations = coveredByCallerHygieneViolations(covered, emptySet(), { true })
+        assertTrue("4 entries must exceed the cap of 3: $violations", violations.any { it.contains("hard cap") })
+    }
+
+    @Test
+    fun `fixture - covered-by-caller blank justification fails hygiene`() {
+        val covered = mapOf("W" to CoveredByCaller(MECH_WORKER_CHECKPOINT, "   ", listOf("a.kt")))
+        val violations = coveredByCallerHygieneViolations(covered, emptySet(), { true })
+        assertTrue("Blank justification must fail: $violations", violations.any { it.contains("blank justification") })
+    }
+
+    @Test
+    fun `fixture - covered-by-caller missing evidence file fails hygiene`() {
+        val covered = mapOf("W" to CoveredByCaller(MECH_WORKER_CHECKPOINT, "justified", listOf("missing.kt")))
+        val violations = coveredByCallerHygieneViolations(covered, emptySet(), { false })
+        assertTrue("A missing evidence file must fail: $violations", violations.any { it.contains("does not exist") })
+    }
+
+    @Test
+    fun `fixture - covered-by-caller unknown or blank mechanism fails hygiene`() {
+        val unknown = mapOf("W" to CoveredByCaller("TRUST_ME", "justified", listOf("a.kt")))
+        assertTrue(coveredByCallerHygieneViolations(unknown, emptySet(), { true }).any { it.contains("unknown mechanism") })
+        val blank = mapOf("W" to CoveredByCaller(" ", "justified", listOf("a.kt")))
+        assertTrue(coveredByCallerHygieneViolations(blank, emptySet(), { true }).any { it.contains("blank mechanism") })
+        val mechanism = coveredByCallerMechanismViolations(
+            "W", unknown.getValue("W"), emptyMap(), emptyMap()
+        )
+        assertTrue("An unknown mechanism must fail the mechanism check: $mechanism", mechanism.isNotEmpty())
+    }
+
+    @Test
+    fun `fixture - covered-by-caller overlapping the permanent exemption list fails hygiene`() {
+        val covered = mapOf("W" to CoveredByCaller(MECH_WORKER_CHECKPOINT, "justified", listOf("a.kt")))
+        val violations = coveredByCallerHygieneViolations(covered, setOf("W"), { true })
+        assertTrue("Overlap with EXEMPT_CLASSES must fail: $violations", violations.any { it.contains("both") })
     }
 }

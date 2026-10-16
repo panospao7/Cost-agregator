@@ -66,6 +66,23 @@ class CompositePrivacyGateTest {
     }
 
     @Test
+    fun `G3 barrier blocked audit write on an allowed decision fails closed with the audit reason`() = runTest {
+        val blocked = com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException(
+            accessType = com.yourname.expensetracker.data.backup.DatabaseAccessType.WRITE,
+            operation = com.yourname.expensetracker.data.backup.DatabaseAccessOperation("PrivacyAuditLoggerImpl.logDecision"),
+            mode = com.yourname.expensetracker.data.backup.RestoreMaintenanceMode.Mode.BACKUP_EXPORTING
+        )
+        val composite = CompositePrivacyGate(
+            listOf(gateReturning(PrivacyDecision.Allowed)),
+            ThrowingAuditLogger(blocked)
+        )
+
+        val decision = composite.check(PrivacyCapability.RAWBACKUP_EXPORT)
+
+        assertEquals(PrivacyDecision.FailClosed(PrivacyGateReasonCodes.PRIVACY_AUDIT_WRITE_FAILED), decision)
+    }
+
+    @Test
     fun `R26 audit write failure preserves an already blocking decision`() = runTest {
         val denied = PrivacyDecision.Denied("DENIED_REASON")
         val composite = CompositePrivacyGate(

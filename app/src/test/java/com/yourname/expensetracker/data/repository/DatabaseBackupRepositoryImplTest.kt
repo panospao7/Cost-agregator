@@ -471,6 +471,111 @@ class DatabaseBackupRepositoryImplTest {
         coVerify(exactly = 0) { operationRun.success() }
     }
 
+    // G3-S2: the privacy audit logger honours the write barrier, so the debug raw export must run
+    // both privacy checks before the BACKUP_EXPORTING window is entered.
+    @Test
+    fun `exportDatabase runs both privacy checks before entering maintenance`() = runTest(testDispatcher) {
+        if (!BuildConfig.DEBUG) {
+            assertRawExportDeniedInRelease()
+            return@runTest
+        }
+        createFullSchemaDatabase(file = dbFile)
+
+        repository.exportDatabase()
+
+        io.mockk.coVerifyOrder {
+            privacyGate.check(PrivacyCapability.RAW_DATABASE_EXPORT, any())
+            privacyGate.check(PrivacyCapability.RAWBACKUP_EXPORT, any())
+            mockRestoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.BACKUP_EXPORTING)
+        }
+    }
+
+    @Test
+    fun `exportDatabase denied privacy check never enters maintenance`() = runTest(testDispatcher) {
+        if (!BuildConfig.DEBUG) {
+            assertRawExportDeniedInRelease()
+            return@runTest
+        }
+        createFullSchemaDatabase(file = dbFile)
+        coEvery { privacyGate.check(PrivacyCapability.RAWBACKUP_EXPORT, any()) } returns PrivacyDecision.Denied("ignored")
+
+        val result = repository.exportDatabase()
+
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull() is PrivacyDeniedException)
+        verify(exactly = 0) { mockRestoreMaintenanceMode.enter(any()) }
+        verify(exactly = 0) { mockRestoreMaintenanceMode.exit(any()) }
+    }
+
+    // G2b: terminal run calls must be replayed after the maintenance exit, because the write
+    // barrier blocks Room run finalization while the window is active.
+    @Test
+    fun `restore pre-swap abort finalizes the run only after maintenance exit`() = runTest(testDispatcher) {
+        stubCacheDir()
+        val callLog = mutableListOf<String>()
+        val operationRun = mockk<OperationRunHandle>(relaxed = true)
+        coEvery { operationRun.failedFinal(any(), any()) } coAnswers { callLog.add("failedFinal"); Unit }
+        val operationRecorder = mockk<OperationRunRecorder>(relaxed = true)
+        coEvery { operationRecorder.start(any(), any(), any()) } returns operationRun
+        every { mockRestoreMaintenanceMode.exit(forceRestartRequired = false) } answers { callLog.add("exit"); Unit }
+        val repo = createRepository(journal = newRealJournal(), operationRunRecorder = operationRecorder)
+        val garbageDb = File(tempDir, "garbage_extracted.sqlite").apply { writeText("not a database") }
+        stubExtractionResult(
+            tier1Manifest(BackupVerifier.requiredManifestTables(1).associateWith { 1 }),
+            dbFile = garbageDb
+        )
+
+        try {
+            val result = repo.restoreCostBackup(File(tempDir, "bundle.costbackup"), "pw")
+
+            assertTrue(result.isFailure)
+            assertEquals(listOf("exit", "failedFinal"), callLog)
+            coVerify(exactly = 1) { operationRun.failedFinal("Staged verification failed", any()) }
+        } finally {
+            unmockkObject(CostbackupBundle)
+        }
+    }
+
+    @Test
+    fun `legacy import abort finalizes the run only after maintenance exit`() = runTest(testDispatcher) {
+        if (!BuildConfig.DEBUG) {
+            assertLegacyImportDeniedInRelease()
+            return@runTest
+        }
+        val callLog = mutableListOf<String>()
+        val operationRun = mockk<OperationRunHandle>(relaxed = true)
+        coEvery { operationRun.failedFinal(any(), any()) } coAnswers { callLog.add("failedFinal"); Unit }
+        val operationRecorder = mockk<OperationRunRecorder>(relaxed = true)
+        coEvery { operationRecorder.start(any(), any(), any()) } returns operationRun
+        every { mockRestoreMaintenanceMode.exit(forceRestartRequired = false) } answers { callLog.add("exit"); Unit }
+        val repo = createRepository(operationRunRecorder = operationRecorder)
+        val emptySource = File(tempDir, "empty_source.db").apply { writeBytes(ByteArray(0)) }
+
+        val result = repo.importDatabase(emptySource)
+
+        assertTrue(result.isFailure)
+        assertEquals(listOf("exit", "failedFinal"), callLog)
+        coVerify(exactly = 1) { operationRun.failedFinal("Source database file is empty", any()) }
+    }
+
+    @Test
+    fun `reset abort finalizes the run only after maintenance exit`() = runTest(testDispatcher) {
+        // No live database file exists, so the pre-destructive safety backup fails and the reset aborts.
+        val callLog = mutableListOf<String>()
+        val operationRun = mockk<OperationRunHandle>(relaxed = true)
+        coEvery { operationRun.failedFinal(any(), any()) } coAnswers { callLog.add("failedFinal"); Unit }
+        val operationRecorder = mockk<OperationRunRecorder>(relaxed = true)
+        coEvery { operationRecorder.start(any(), any(), any()) } returns operationRun
+        every { mockRestoreMaintenanceMode.exit(forceRestartRequired = false) } answers { callLog.add("exit"); Unit }
+        val repo = createRepository(journal = newRealJournal(), operationRunRecorder = operationRecorder)
+
+        val result = repo.resetDatabase()
+
+        assertTrue(result.isFailure)
+        assertEquals(listOf("exit", "failedFinal"), callLog)
+        coVerify(exactly = 1) { operationRun.failedFinal(DiagnosticReasonCode.UNKNOWN_ERROR.name, any()) }
+    }
+
     private fun assertNoExportSideEffects(resolver: ContentResolver, cacheDir: File) {
         verify(exactly = 0) { mockRestoreMaintenanceMode.enter(any()) }
         verify(exactly = 0) { mockRestoreMaintenanceMode.exit(any()) }

@@ -107,8 +107,8 @@ class ReceiptDuplicateFingerprintCollisionTest {
         every { clock.now() } returns now
         val barrier = mockk<DatabaseWriteBarrier>(relaxed = true)
         val transactions = RoomDomainTransactionRunner(db, clock)
-        val insertResolver = ReceiptInsertResolver(db.scannedReceiptDao())
-        val events = RoomReceiptLifecycleEventWriter(db.receiptEventDao(), EventMetadataSanitizer(), clock)
+        val insertResolver = ReceiptInsertResolver(db.scannedReceiptDao(), barrier)
+        val events = RoomReceiptLifecycleEventWriter(db.receiptEventDao(), EventMetadataSanitizer(), clock, barrier)
 
         val currency = mockk<CurrencySettingsRepository>()
         every { currency.homeCurrency() } returns flowOf("EUR")
