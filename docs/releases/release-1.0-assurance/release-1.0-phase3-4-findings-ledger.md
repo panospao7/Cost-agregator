@@ -1,0 +1,397 @@
+- PROCESS DEVIATION (2026-10-15, third): the lead edited workflows/active/release-1.0-assurance-handoff.md (Phase 3/4 approval)
+  while app-check vr-20261015-202901-15748bbe was running on C* 53824bcd -> runner correctly returned STALE_RESULT
+  (E_WORKTREE_CHANGED; Gradle BUILD SUCCESSFUL; lintDebug + testReleaseUnitTest 8089/7812/0/277 executed; verifyNoIgnoredGrowth
+  printed G-IGNORE-01 on MainViewModelStressTest.kt:20 without failing; lint 805 warnings, baseline-filtered errors, one stale
+  baseline entry). Remedy: handoff edit saved to build/release-lead-notes/handoff-pending.patch, file restored to C*, app-check
+  re-run; all record edits held in build/release-lead-notes/ until the final gates finish. Disclosed to the user.
+- Final gates part 1 on C* 53824bcd (clean): runner-smoke vr-20261015-201711-d6fde58f PASS; runner-protocol-tests
+  vr-20261015-201724-9141811b PASS 330/330; unit-tests vr-20261015-202020-3c98a895 PASS, EXECUTED, 8089 run / 7813 passed /
+  0 failed / 276 skipped.
+## Phase 3 HZ-02 (release-horizontal-auditor, read-only, C* 53824bcd): PARTIAL
+- F1 P2 (RG11-H2 class): RecurringLifecycleCoordinator.unlinkExpenseFromOccurrenceDetailed withTransaction :801 ->
+  regenerateReminderDeliveriesForOccurrence :823 swallows nested runWrite{withTransaction} failures (:639/:666/:706, catches
+  ~:658/:694/:740) -> silent outer rollback, returns Unlinked (:853) -> TransactionSideEffectPlanner :406-413 Completed. Occurrence
+  stays PAID linked to deleted expense; low likelihood (constraint/FK/IO triggers).
+- F2 P3: DatabaseBackupRepositoryImpl :152 MIN_SUPPORTED_SCHEMA_VERSION = 6 vs MIGRATION_BASELINE 145 -> v6-v144 backups fail
+  late with generic error. F3 P3 (P1 if any shipped build < v145): docs claim destructive migration for < 145, actual = Room
+  IllegalStateException on open, DatabaseModule :36 uncaught, rescue disabled -> crash loop (data preserved); ~8,600 lines dead
+  legacy migrations. F4 P3: tracked app/src/main/java/.../data/database/_schema_tmp.json unreferenced.
+- Nested-swallow sweep 42 sites: 3 unsafe (F1), rest safe/outermost; limits: helpers with plain DAO writes, @Transaction DAO
+  defaults. Refuted: snapshot/migration parity 145-151, new unique indices safe, MIGRATION_150_151 consistent, no destructive
+  fallback. Unresolved: shipped schema history < 145 (owner H-2); ExpenseRepository.insertAll/deleteAll, NotificationRepository
+  .deleteAll direct writers. Runtime proof owed: MigrationTestHelper chain + TableInfo parity, F1 fault injection, < v145 open.
+## Phase 3 HZ-03 (release-horizontal-auditor, read-only, C* 53824bcd): PARTIAL
+- F1 P2 release-blocker candidate: restore runs in viewModelScope (BackupRestoreViewModel :173 -> :230), no BackHandler; Back during
+  post-swap asset phase (DBRI :1585/:1649 suspension) -> CE rethrown :1330 -> enterCriticalRecoveryRequired("RESTORE_CANCELLED_AFTER_SWAP")
+  :1371-1373; journal left VERIFYING/ASSETS_RESTORING; ASC :170-171 returns BLOCKED before recoverRestoreJournalState -> asset resume
+  (:196-204) and rollback (:212-247) never run -> absorbing lock; only exit = clear data (also deletes safety backup/.pre_restore).
+- F2 P3: cancellation cleanup DBRI :1377 / :2942 calls exit(false) directly (not exitAfterPreDestructiveAbort) -> finishCancelledRestore
+  :919-923 latches CRITICAL RESTORE_CANCELLED_CLEANUP_FAILED on CE + WRE coincidence.
+- F3 P3 privacy: decrypted cacheDir/costbackup_extract_* not cleaned by crash recovery (RJ cleanStagingFiles :892-903; ASC :244-246,
+  :472-474, :516-517); no sweep.
+- F4 P3 privacy retention (P2 if a delete-all flow uses resetDatabase): filesDir/safety_backups plaintext DB copies (keep-last-3) incl.
+  pre-reset copy; no retention/erase path.
+- F5 P3: VM :229-232 catch(Throwable) swallows CE. F6 P3 misleading checkpointWal comment.
+- Refuted: WAL/SHM deletion at swap, zip-slip, checksum scope (AES-GCM), newer-schema bundles fail before destructive step,
+  v145-v151 staged migration, bank tokens encrypted, rescue disabled, torn journal, R5 adoption, legacy .db import DEBUG-only.
+## Phase 3 HZ-01 (release-horizontal-auditor, read-only, C* 53824bcd): PARTIAL (no P0/P1)
+- P2 SubscriptionManagementViewModel :136-147 legacy convert() 24 h stale -> `?.convertedAmount ?: rawMonthly` sums raw foreign
+  amounts into home total (and raw sum when home null); no partial flag; test uses relaxed converter mock (lens 14).
+- P2 FinancialStressForecastEngine :362-371/:427-429 failed convert() only logged -> foreign recurring outflows silently dropped;
+  isPartial (:172) ignores them; runCatching :362 swallows CE; blank display currency sums raw.
+- P3: Analytics budget limits rate basis flips with freshness (BudgetRepository :111-121/:506 vs AnalyticsViewModel :1232-1245/
+  :1303/:651); WarrantyTrackerViewModel :86-88 runCatching swallows CE + unavailable -> 0.0; ExpenseRepository :55-72 amount sort
+  mixes currencies; MoneyAggregateBuilder :281 unknown currency labelled EUR + MultiCurrencyRepository :1102-1105 unknown bucket ->
+  zero; InvestmentTracker :236 vs :391 mixed rate bases; legacy convert() (24 h, maxOf leg) vs convertOutcome (7 d, minOf leg)
+  inconsistency across remaining legacy callers.
+- Refuted: convertOutcome call sites all pass explicit policy; no wall-clock bypass in money/period logic; TimePeriodUtils/SQL month
+  keys consistent; dashboard 0.0 fallback flagged partial; sweep fails closed; historical convertOutcome never falls back to latest.
+- Unresolved: MonthlySavingsSweepUseCase :312-313 weekly/biweekly recurring counted once (possible P2 over-sweep);
+  TotalsAggregationEngine :281 unavailable -> 0.0; storeRate UTC validDate; CSV baseAmount unrounded Double (scientific notation).
+- PENDING cells (not read): MoneyNormalizationEngine, AnalyticsCurrencyNormalizer, budget autopilot/forecasting internals,
+  health/tax/export/groups VMs, ExecuteFinancialQueryUseCase, SpendingMapViewModel, NL search, rate-refresh worker -> HZ-01b.
+## Phase 3 verification batch 1 (release-finding-verifier, read-only, C* 53824bcd)
+- HZ03-F1 RECALIBRATED, P2 kept, not a release blocker as worded: single Back does NOT cancel (custom NavigationController; BackupRestore
+  hiltViewModel is Activity-scoped, MainActivity :873-876). Real trigger: Activity destroyed (non-config) post-swap — API 26-30 Back from
+  Home finishes the root Activity (NavigationController :328), or "Don't keep activities" -> viewModelScope cancelled ->
+  finishCancelledRestore -> CRITICAL RESTORE_CANCELLED_AFTER_SWAP -> startup BLOCKED before journal recovery -> permanent lock (harsher
+  than a process kill, which recovers via journal). No test. Deciding test: API 30 instrumented, finish Activity during ASSETS_RESTORING.
+- HZ02-F1 RECALIBRATED P2 -> P3 latent: mechanism real (runWrite joins the outer transaction; nested failure silently rolls back) but no
+  realistic trigger (IGNORE inserts, pre-checked unique index, FK parent present; disk-full/IO would surface on the outer insert).
+## Phase 3 HZ-04 (release-horizontal-auditor, read-only, C* 53824bcd): PARTIAL (no P0/P1)
+- F1 P2: TransactionSideEffectPlanner recurring_unlink :409-414 maps Error/NoMatch -> Completed; recurring_reconcile :370-377 and
+  recurring_occurrence_matching :333-336 map Error -> Skipped(NOT_APPLICABLE); FailedRetryable is never retried (label only,
+  PostCommitSideEffectEvidenceService :143).
+- F2 P3 RecurringRuleLifecycleCoordinator.updateRule stale snapshot (:340 read outside tx; full-row update :374/:490) can re-activate a
+  concurrently deactivated rule; deactivateRule (:67-98) no existence/state check, hard-coded oldStatus. F3 P3 recurring rule events via
+  lifecycleEventDao.insert (:86,:127,:195,:256,:280) instead of RecurringLifecycleEventWriter (LEGAL_PATHS). F4 P3 TLC.updateExpense
+  full-row update from caller object (:1146). F5 P3 ReceiptLifecycleCoordinator :517-526 legacy dedup full-row update (CAS race ms).
+  F6 P3 resolveHomeCurrency DataStore read inside outer receipt tx (:538 via :1187/:1604). F7 P3 ReceiptLinkService ignores
+  sourceLinkWriter Failed for AUTO_MATCH (~:399-402) vs TLC treats Failed as fatal (:715-716).
+- Refuted: side effects inside tx; side effects for rolled-back rows; duplicate events on retry; delete snapshot; business patch merge;
+  runWrite equivalence; runner CE handling.
+- Unresolved: ReceiptRepository.deleteReceipt/clearAllScannedReceipts direct DAO deletes without events (callers?); FailedRetryable raw
+  e.message (privacy); bestEffortEvent catches :765/:811 inside outer receipt tx (possible RG11-H2-class silent rollback) -> verifier.
+## Phase 3 HZ-05 (release-horizontal-auditor, read-only, C* 53824bcd): PARTIAL (no P0/P1)
+- Inventory: 10 workers (retention, location backfill, bill reminder, receipt matching, warranty, daily briefing, merchant key backfill,
+  notification intake, snooze/dismiss); no setForeground/expedited/exact alarms; Configuration.Provider OK.
+- F1 P2: daily briefing oneShotPolicy REPLACE (WorkerSpec :94) + unconditional enqueue to next midnight (WorkerSpecScheduler
+  :246-293) on every Application.onCreate (AppStartupCoordinator :51,:79-84,:712-720; WorkerRegistry :110-111; AiWorkSchedulerImpl
+  :29-35) -> pending/running briefing replaced when WorkManager wakes the process -> briefing indefinitely postponed (no data harm);
+  regression from U-WORKER-04; tests only check the policy argument.
+- F2 P3 merchant_key_backfill REPLACE on every process start. F3 P3 intake unique names differ ("$intakeId" vs
+  "notification-intake-$id") -> KEEP dedupe fails (claim likely protects). F4 P3 Dismiss/SnoozeReminderReceiver plain enqueue (double
+  tap = two workers) vs LEGAL_PATHS :524. F5 P3 WorkerSpecScheduler :170/:308 raw e.message in diagnostic metadata (check
+  SafeEventMetadata sanitizer). F6 P3 WorkerExecutionGuard :589-594 run-logger start failure always Retry, unbounded.
+- Refuted: FGS type for SystemForegroundService (no foreground workers); exact alarms/expedited; swallowed CE in workers; lease race;
+  premature SUCCESS; MAX_ATTEMPTS semantics; BootReceiver.
+## Final gates part 2 (C* 53824bcd)
+- app-check vr-20261015-205206-9a2e9034 PASS (lintDebug 0 errors / 805 warnings / baseline-filtered; G-TIME-01, G-MONEY-RAW-01..07,
+  DB access, G-IGNORE-01 PASS; test tasks UP-TO-DATE after unit-tests -> release unit-test evidence from the earlier stale app-check run
+  only). static-guards vr-20261015-205525-95e5e818 PASS 25/25 (freshness SKIP). assemble-release vr-20261015-211329-5587f60d PASS
+  (minifyReleaseWithR8 + lintVitalRelease executed). release-artifact-evidence vr-20261015-211552-feb84df9 FAIL E_BADGING_INCOMPLETE:
+  script regex expected legacy aapt "sdkVersion:" while aapt2 36 prints "minSdkVersion:" (tests used fabricated legacy output).
+  Lead fix (debug iteration 1): regex accepts both + 2 regression tests calling parse_badging; committed as the new C*
+  (scripts only; app sources identical to 53824bcd). Re-run static-guards + assemble-release + evidence on the new C*.
+## Final gates part 3 BLOCKED (C* 0a9cab1c): static-guards Start -> E_DUPLICATE_OR_OVERLAPPING_VALIDATION (dedup ignores git_revision;
+   clean trees share fingerprint e3b0c442… = sha256("")). Runner refused correctly; owner decision pending: REQUIRED_FINAL_GATE
+   override vs runner fix (dedup compares git_revision).
+## Phase 3 HZ-06 (release-horizontal-auditor, read-only, C* 53824bcd): PARTIAL (no P0/P1)
+- F1 P3 NEEDS_RUNTIME: no android:dataExtractionRules (manifest :32 allowBackup=false only; targetSdk 35) -> device-to-device transfer
+  on API 31+ copies unencrypted Room DB (raw notification/OCR tables) + secure_api_keys prefs (keystore key does not move).
+- F2 P3: SecureKeyStorage (getKey/hasKey/storeKey) no exception handling; lazy EncryptedSharedPreferences.create can throw on
+  keyset mismatch; provider apiKey getters evaluated before the privacy gate (e.g. CloudReceiptAssistService :107/:114).
+- F3 P3: no -assumenosideeffects for android.util.Log -> ~34 files log throwables/stack traces in release (geocoding providers,
+  SpendingMapViewModel :241/:797/:847, MerchantKeyBackfillWorker :75/:114, DataRetentionWorker :252/:324/:447,
+  FinancialRescueCoordinator :914, AndroidSpeechInputGateway :123; Nominatim :163 server error text; DatabaseIntegrityScanner :407-409).
+- F4 P3 latent: CloudAiPrivacyGate allows CLOUD_AI_RECEIPT_OCR without receiptImageUploadAllowed (no production use).
+- F5 P3: CloudReceiptAssistService.suggest gate check (:125) vs allowImage (:138) — consent toggle race; prepareReceiptAssist does not
+  re-check cloudAllowed/receiptImageUploadAllowed.
+- Design note: no FLAG_SECURE anywhere (product decision).
+- Refuted: Timber planted only in debug; API keys in headers; no cleartext; no analytics/crash SDKs or logging interceptor; exported
+  components minimal; debug screens gated; privacy settings fail closed; 15 retention targets registered; sampled metadata bounded.
+- PENDING: redactor patterns, 7 provider prepare paths, PrivacyAuditLoggerImpl, DiagnosticSideEffectEventWriter, Backup/AtRest
+  encryption, ExportAnonymizer, clipboard listener, receipt image retention.
+## Phase 3 verification batch 2 (release-finding-verifier)
+- HZ01-A CONFIRMED P2: subscription screen shipped/reachable (FeatureConfig :181-189 -> MainActivity :857; TotalCostCard labelled home
+  currency); convert() null for unsupported/stale -> raw foreign sum; no partial flag; test gap.
+- HZ01-B CONFIRMED P2 (CE part P3): Dashboard F8 Financial Stress Forecast widget (ComputeDashboardWidgetsUseCase :1229/:1264) understates
+  foreign recurring obligations; isPartial/recurringObligationsPartial false.
+- HZ04-F1 RECALIBRATED P3: else->Completed effectively unreachable; Error only from an impossible-state race; diagnostics-only.
+- HZ04-Q NEEDS_RUNTIME (potential P1, RG11-H2 class): bestEffortEvent is TransactionLifecycleCoordinator :335, called :384/:406/:600/
+  :765/:811 — whether its swallowed event inserts run inside an outer transaction (silent rollback with success) not yet settled ->
+  focused verifier dispatched.
+- HZ04-Q RECALIBRATED -> latent P3 (RG11-H2 class): TLC bestEffortEvent :335-341 swallows non-CE exceptions from plain
+  transactionEventDao.insert at :384 (CREATE_ATTEMPTED, every create), :406/:600 (validation failed), :765 (duplicate skipped), :811
+  (insert conflict); also TLC :435-458 and writeDuplicateEvent :2591-2620. Nested under outer tx for ReceiptLifecycleCoordinator :1187,
+  ReviewQueueRepository :261/:668, ManualExpenseRepository :163. transaction_events has no unique/FK/CHECK/trigger -> only transient
+  environmental failures; persistent ones fail the next unswallowed insert loudly. No test. Fix direction: rethrow inside outer tx or
+  SAVEPOINT per best-effort insert, together with HZ02-F1 (R0-1 class). Deciding test: RAISE(ABORT) trigger on transaction_events.
+## Phase 3 HZ-07 (release-horizontal-auditor, read-only, C* 0a9cab1c): FAIL
+- P1 (candidate, verifier dispatched): release binds DemoTaxRateProvider (TaxModule :25) returning PERCENT (GR 24.0, unknown 20.0 :25/:30)
+  while TaxConfiguration.getVatRate() is a FRACTION (0.24, :39); TaxEstimator :127-133 prefers provider rate when > 0 -> vatPaid =
+  deductible*24/25 (:136) -> shown TaxConfigurationScreen :423 and subtracted from net income :446; provider uses settings country (:128)
+  vs screen-selected config (VM :107); tests use relaxed mock (TaxGoldenScenarioTest :61) / fraction (TaxEstimatorTest :476).
+- P2: SmartBillNegotiationEngine :98-99 hard-coded region GR/EUR; StaticMarketRateProvider seed lastUpdatedAt 0 (:35); UI presents
+  "Potential Savings … per year" / "already at competitive rates" with no estimate/source/staleness label.
+- P3: FeatureConfig :236-241 privacy entry mislabeled as Backup & Restore; test-only no-op constructors in RestoreMaintenanceMode :51-70 /
+  DBRI :108-137 (no prod callers); TaxConfigurationViewModel :76-79/~:117-120 render ${e.message} + swallow CE; TaxEstimator :130;
+  SmartBillNegotiationEngine merchant names in Timber (debug-only planting).
+- Refuted: bank gated (requireStubMode, FeatureConfig, deep links); review debug menu gated; Rescue not exported/disabled;
+  LegacyDataMigrationService only via gated Debug route; investments user-entered prices; DebugExpenseAuditWriter is production audit.
+- H-1 owner questions: ship Tax with demo VAT data? negotiation GR-only static benchmarks? "Voice search (Coming soon)" visible?
+  isNew flags on tax/export/recurring/groups/backup/subscriptions? carbon + price protection data sources unchecked.
+- Verifier: HZ07-P1 RECALIBRATED -> P2 (defect CONFIRMED; display-only, labelled Estimated): TaxModule :25 always DemoTaxRateProvider;
+  no /100 normalization; TaxEstimator :136 vatPaid = deductible*(24/25); tax screen reachable in release (FeatureConfig :190-198,
+  MainActivity :863-867; TaxEstimator :28-34 "contained, NOT exposed" comment false). Worked: GR, EUR 1,000 deductible -> shows
+  EUR 960 instead of ~193.55, subtracted from net income; provider uses saved country (always GR; setTaxCountry never called) so a US
+  selection still shows 960. Lead view: must-fix or hide Tax for 1.0 (owner H-1).
+- Verifier: HZ07-P2 RECALIBRATED -> P3: negotiation reachable; non-EUR subscriptions skipped (currency amounts refuted) but savings
+  labelled in home-currency symbol; GR hard-coded; fallback to cheapest quote of service type; no estimate/source label; invented
+  savings (Netflix 13.99 -> "Save EUR 5/month"); advisory only.
+## Phase 3 HZ-08 (release-horizontal-auditor, read-only, C* 0a9cab1c): PARTIAL (no P0/P1)
+- Invariant -> guard -> blind spot table recorded (expense writer opt-in WARNING only; event writer basename allowlists/name matching;
+  no enqueue legal-path rule; cancellation guard blind to swallow-inside-withTransaction; PII guard misses trailing Throwable in
+  android.util.Log / Log.wtf; money guard misses `normalized ?: raw`; no destructive-migration check; ignored baseline 29 vs 26 actual,
+  assume*() skips uncounted).
+- F1 P2: 32 android.util.Log throwable calls in 15 files reach release logcat (no -assumenosideeffects); LocationBackfillWorker :111 also
+  logs expenseId + merchantToken; PII guard rules miss it (verify_pii_logging_boundaries.py :97/:137). (HZ06-F3 class)
+- F2 P2: RecurringArchitectureGuardTest :240 REQUIRES workManager.enqueue in reminder receivers, contradicting LEGAL_PATHS :524
+  (HZ05-F4); unguarded enqueueUniqueWork outside WorkerSpecScheduler (intake coordinator :216/:487, recovery scheduler :71,
+  ReceiptMatchingWorker :324).
+- F3-F8 P3: DefaultExpenseCategoryAssignmentService :45 no opt-in (warning only); DirectEventDaoInsertGuardTest basename exemption +
+  label drift (recurring/warranty event inserts invisible); bestEffortEvent swallow invisible (HZ04-Q); CarbonFootprintCalculator
+  :152/:466 raw effectiveAmount fallback into CO2 totals; no destructive-migration guard; ignored baseline slack.
+- Proposed guard additions 1-8 (owner approval; fold into deferred guard hardening).
+## Phase 4 V-A (release-vertical-auditor, read-only, C* 0a9cab1c): VJ-01 PARTIAL, VJ-02 PARTIAL
+- P1 candidate (verifier dispatched): ui/util/AmountInputSanitizer.sanitize keeps only digits and '.', deleting ',' -> "12,50" -> "1250"
+  saved as Success (KeyboardType.Decimal can emit ',' in comma locales); also share amount.
+- P1 candidate (verifier dispatched): no release-visible way to detect/enable Notification Listener access (ACTION_NOTIFICATION_
+  LISTENER_SETTINGS only in DebugScreen :143, debug-gated); no isNotificationServiceEnabled check -> intake silently empty.
+- P2: ReviewViewModel.handleResult :423-425 drops Result.Error.message ("Failed to approve" only). P2: POST_NOTIFICATIONS denial
+  dialog re-prompts every launch (MainActivity ~:473-494), no settings fallback.
+- P3: AddExpenseViewModel save catch ~:432 no CE rethrow + raw e.message to UI; ManualExpenseRepository ~:189 exception message;
+  recurring rule insert bypasses recurring coordinator (TODO ~:156); AUTO_REJECT rawId=null; approveReview e.message fallback;
+  live capture encrypt without local try/catch.
+- Good: VJ-01 double tap/validation/duplicate controlled; VJ-02 dedupe, bounded retries, stale recovery, no double expense after
+  process death (canonical duplicate), missing currency blocked at approve. Missing runtime: real-Room/WorkManager e2e, listener device.
+- Verifier V-A: (A) comma decimal CONFIRMED P1: AmountInputSanitizer :36 digits+'.' only; "12,50" -> 1250 saved (limit only > 1M,
+  AddExpenseViewModel :297); "1.234,56" -> 1.23; callers AddExpenseViewModel :157/:266/:480, OwnershipValidator :52,
+  ReceiptScanViewModel :549, BudgetScreen :929; ReviewScreen/TransactionsViewModel use parseAmount (comma-safe); SavingsGoalsScreen
+  :386, ManualRecurringExpenseScreen :555/:559, SharedExpenseGroupsScreen :797/:805/:1032 toDoubleOrNull (refuse comma); no sanitizer
+  test. Keyboard emission NEEDS_RUNTIME (el_GR Gboard). (B) notification listener access CONFIRMED P1: no release-reachable check/
+  prompt/status (ACTION_NOTIFICATION_LISTENER_SETTINGS only in debug-gated DebugScreen :143); never-granted access -> silent empty capture.
+- Proposed batches (owner approval pending): R16 shared locale-aware amount parsing for all amount inputs; R17 listener-access status +
+  settings intent + "capture inactive" state.
+## Phase 4 V-B (release-vertical-auditor, read-only, C* 0a9cab1c): VJ-03 PARTIAL, VJ-19 PARTIAL
+- F1 P2 NEEDS_RUNTIME: ReceiptScanViewModel :461 blank OCR currency silently defaulted to home currency (vs coordinator rule :640-643);
+  no "currency unverified" indicator.
+- F2 P2 (potential double expense; verify): ReceiptLifecycleCoordinator :643-662 inserts PendingReview for low-confidence/blank
+  currency/null total even when createReview=false; createExpenseAndLinkReceipt (:1599-1633)/ReceiptLinkService never resolve it ->
+  stale review may be approved later -> second expense?
+- F3 P3 orphan temp camera file on cancel + generic catch :740-744 skips cleanupUncommittedAsset. F4 P3 cancelled picker / process-death
+  scan loss without feedback. F5 P2 WarrantyTrackerViewModel :194-195 catch(Exception) swallows CE + raw e.message in UI. F6 P2
+  WarrantyTrackerViewModel :147-169/:203-223 unguarded writes, no error state.
+- Good: atomic create+link, all duplicate paths, CE + NonCancellable cleanup, tax allocation conservation, stale scan seq, isSaving;
+  WarrantyExpirationWorker durable deliveries + guard + permission SKIPPED.
+## Phase 4 V-C (release-vertical-auditor, read-only, C* 0a9cab1c): PARTIAL
+- V-C1 P1 candidate: ManualRecurringExpenseViewModel :162-174 "mark paid" only advances rule.nextDate (advanceNextDate :275): no
+  expense, occurrence stays PLANNED, reminders still fire, forecasts unpaid; RecurrenceCalculator drift (31 -> 28).
+- V-C2 P1 candidate: occurrences generated only at create/activate/update with 12-month window (coordinator :164-168/:226-230/:421-422);
+  RecurringLifecycleCoordinator.generateOccurrences has no production caller -> after ~12 months no occurrences/reminders; missed
+  periods while closed silently dropped.
+- V-C3 P2: BillReminderWorker default notification policy SKIP_SUCCESS -> deliveries stay SCHEDULED; on grant, all past windows burst.
+- V-C4 P2: addRecurringExpense (:99) no currency/category -> entity default EUR -> never auto-matches for non-EUR users.
+- V-C5 P3 disabled channel marked SENT; V-C6 P3 e.message in UI; V-C7 P3 FAILED_TRANSIENT uncapped.
+- Good: transactional create/update, idempotent materializer/deliveries, terminal never downgraded, fixed month anchor, atomic claim,
+  durable snooze/dismiss, paid suppression.
+- Verifier V-C/V-B: V-C1 CONFIRMED, RECALIBRATED P1 -> P2 ("Mark as Paid" strings :669, screen :427-440 -> advanceNextDate :275-294
+  only updateNextDate + event; contradicts BillReminderManager :145-164 removal of markBillPaid; reminders keep firing via
+  BillReminderWorker :95). V-C2 CONFIRMED for reminders/planned rows/auto-link, RECALIBRATED P1 -> P2 (forecast/cashflow/stress use
+  projectOccurrences, unaffected): materialization only at create :180 / activate :242 / update :517; generateOccurrences only via
+  DeprecationLevel.ERROR path; no worker extends the window -> after 12 months reminders/planned rows stop (P1 if reminders are a 1.0
+  headline feature — owner). V-B F2 double expense REFUTED (ReceiptLinkService :233-243 rejects re-link; approve rolls back);
+  P3 residual: un-approvable PENDING review inflates the queue.
+## Phase 3 HZ-01b1 (release-horizontal-auditor, read-only, C* 0a9cab1c): PARTIAL
+- SETTLED: weekly/biweekly counted once is REFUTED (sweep window <= 5 days; shortest frequency WEEKLY).
+- F1 P2 money: MonthlySavingsSweepUseCase :216 safeSweepAmount = underspend - riskBuffer; knownUpcoming only feeds the buffer (fallback
+  15% of upcoming; Monte Carlo p75-p50 cancels the constant, MonteCarloSpendingSimulator :137) -> worked: budget 1000, spent 700, rent
+  80 due tomorrow -> sweep 270, leaves 30 for 80 rent; MonthlySavingsSweepUseCaseTest :300-336 pins 270 (test locks the defect).
+- F2 P3 latent: FinancialHealthCalculator :56-60 currency-agnostic default targets; runBlocking :75/:85; requireCompleteMoneyInput :95 all-or-
+  nothing; calculateHealthScores has no production caller (no health VM).
+- Clean: MoneyNormalizationEngine, AnalyticsCurrencyNormalizer, BudgetAutopilotEngine (fail closed), sweep CE rethrow.
+- Unresolved: overdue unprocessed rules excluded from upcoming and spent (P3?); simulate without estimatedWeeklyRecurring (FCST-4);
+  MoneyNormalizationEngine :303 effectiveAmount*rateUsed vs convertedAmount on cross-rate path; autopilot :440-480,
+  BudgetForecastingEngine unread.
+## Phase 4 V-D (release-vertical-auditor, read-only, C* 0a9cab1c): PARTIAL
+- F-1 P1 candidate: home-currency change does not re-normalize persisted baseAmount/baseCurrency (CurrencySettingsRepositoryImpl
+  :56-65, CurrencyManagementViewModel :165-189, "callers MUST trigger a full re-normalization", no caller) -> persisted-snapshot
+  consumers (Expense.normalizedEffectiveAmount :176-185, sort ExpenseRepository :55-72, amount filter TransactionsViewModel :898-903,
+  date-header totals TransactionsScreen :522-541) read old-currency base as new currency; live analytics path correct -> disagreement.
+- Offline first-install foreign entry: conversion failure only logged (TLC :572-577), baseAmount 0.0 with baseCurrency default "EUR"
+  (not the "" sentinel), never backfilled when rates arrive.
+- F-2 P2: CalculateFinancialForecastUseCase :30-48 not reactive to home-currency change or rate refresh -> forecast/runway/budget cards
+  stale/mislabelled up to 24 h.
+- F-3 P3 budget anchor shifts after timezone change; F-4 P3 latest-basis budget conversion returns raw on failure (analytics family);
+  F-5 P3 repeat alerts per cooldown; F-6 P3 partial-data alert under-count (disclosed). Good: BudgetRepository period-end basis,
+  unavailable -> UNKNOWN, bounded rollover, DST-safe period math, HomeViewModel unavailable-not-zero.
+## Verifier on V-D (release-finding-verifier, read-only)
+- F-1 RECALIBRATED P1 -> P2, pre-existing + documented deferral (docs/development/FUTURE-WORK.md:141 CURR-6). Wrong: AMOUNT sort
+  (ExpenseRepository :55-72) and amount filter (TransactionsViewModel :898-903) mix base currencies after a home switch. REFUTED: header
+  totals (TransactionsScreen :526-540 single-currency raw sum or hidden), dashboard/analytics/MoneyRadar/forecast (AnalyticsCurrencyNormalizer
+  :146-153 re-converts at read time). Minor: export per-row base columns (ExpenseExportMapper :44-46). Reachable via currency tile, no warning.
+  Deciding test: EUR home + USD100; switch USD + USD95; AMOUNT_DESC 100 first / min-95 filter keeps both (expected FAIL), dashboard 195 USD (PASS).
+- Offline create: CONFIRMED P3 pre-existing. baseAmount 0/baseCurrency "EUR" defaults (TLC :572-578, Expense.kt :146-148) vs "" sentinel
+  elsewhere (:544-548, :1121-1125); no backfill; sort/filter use raw foreign amount; headers hidden; analytics excludes then recovers.
+## Phase 3 HZ-01b2 (release-horizontal-auditor, read-only): PARTIAL (22/22 calls)
+- F1 P2: ECB rate refresh gated on PrivacyCapability.CLOUD_AI_GENERAL (CurrencyRatesRepositoryImpl :48) -> with cloud AI off (default)
+  refresh returns 0, generic CURRENCY_RATE_REFRESH_UNAVAILABLE (CurrencyManagementViewModel :244); no rate worker; conversions degrade
+  to manual rates/unavailable. Needs verification (intentional network-egress policy?).
+- F2 P3: generic CSV/JSON amounts via raw Double.toString (ExportOptionsViewModel :679/:680/:691) -> 1.25E7, float artefacts;
+  regression vs deprecated formatForExport; non-finite baseAmount -> 0.0 (ExpenseExportMapper :45).
+- F3 P3: TotalsAggregationEngine :281 Unavailable -> 0.0, :296 drops zero past years without marker.
+- F4 P3 (if tax reachable): TaxEstimator :121/:138 subtracts EUR deductions from country-currency income without conversion.
+- Refuted: CSV decimal locale, settlement math (integer cents, single currency), NL query totals, spending map markers, tax year fraction,
+  validDate basis. Residual: ECB publication-day timing P3; GroupSettlementBalancePolicy :32 latent; SpendingMapViewModel :593 Timber.w
+  merchant+amount (privacy, depends on release tree). Pending: accounting exporters, ExecuteFinancialQueryUseCase >:300,
+  SharedExpenseGroupsViewModel :111 sumOf totalSpent, KWD 3-decimal rounding.
+## Verifier on HZ-01b2 (release-finding-verifier, read-only)
+- F1 CONFIRMED P2: CurrencyRatesRepositoryImpl :48-51 gates ECB fetch on CLOUD_AI_GENERAL, undocumented as policy (LEGAL_PATHS :379 and
+  EffectiveCloudAiPolicy :21 = AI only); no network capability, no worker. UI shows raw code "CURRENCY_RATE_REFRESH_UNAVAILABLE"
+  (CurrencyManagementScreen :63/:148, not a string resource) and "Offline Mode ... Connect to internet" (strings.xml :1299-1301), misleading.
+  Fresh-install default for cloud AI not confirmed off. Proposed fix candidate (owner decision): own network capability or explicit consent copy.
+- Timber merchant/amount: REFUTED for release (only DebugTree, AppStartupCoordinator :681-684 behind !DEBUG return).
+- Accounting exporters: REFUTED as defect (formatForExport %.2f Locale.US, CsvCellSanitizer formula guard, sanitizeIif); nit 3-decimal.
+- Group total: data model allows per-row currency (GroupExpense :111) vs summing to defaultCurrency (SharedExpenseGroupsViewModel :111/:116);
+  write-path enforcement unverified -> P2 if reachable else P3 (fold into V-G).
+- 3-decimal currencies: RECALIBRATED P3, no KWD/BHD/JOD literals; catalog unverified (fold into V-G).
+- F2 CONFIRMED P3; introduced by 87234e48 (2026-05-10, in bug-fixes history) -> pre-campaign, not a campaign regression.
+## Phase 4 V-F (release-vertical-auditor, read-only): PARTIAL (34/35)
+- V-F-1 P2 candidate (possible crash class): SavingsGoalsViewModel :327-343/:351-397/:432-436 bare viewModelScope.launch -> repository
+  DatabaseWriteBarrier.checkWritesAllowed throws DatabaseAccessBlockedException during BACKUP_EXPORTING (MainActivity :460 app continues)
+  -> uncaught -> process death; "created" snackbar before write. Possibly shared by other VMs -> verify cross-app.
+- V-F-2 P2: manual contribution non-atomic (increment :385 then ledger :387-393, comment :399-403 admits), no target cap (105/100).
+- V-F-3 P2/P3(product): default backup redacted=true -> receipt images dropped (DatabaseBackupRepositoryImpl :617-619), not disclosed.
+- V-F-4 P3 zero-byte .costbackup on pre-write failure; V-F-5 P3 no password policy; V-F-6 P3 Restart Now = exit(0) no relaunch,
+  unwired onRestartRequired, dead dismissRestartRequired; V-F-7 P3 Timber.w(e) (debug-only in release per HZ-01b2 verifier).
+- Clean: sweep acceptance coordinator (single tx, barrier, 3-layer idempotence), crash rerun, goal-delete cascade, restore ordering
+  and failure/rollback paths, bounded UI messages, SAF location. No scheduled backup worker.
+## Phase 4 V-E (release-vertical-auditor, read-only): PARTIAL (24/35), no P0/P1 — UNVERIFIED
+- V-E-1 P2 challenges raw-sum mixed currencies via DEPRECATION_ERROR DAO sums (SpendingChallengeManager :60/:214-226). Tile live.
+- V-E-2 P2 challenge completion/failure never shown; challenges vanish (Manager :29-41).
+- V-E-3 P3 no-spend streak DST misalignment (:68-74); V-E-4 P3 REDUCE_SPENDING zero baseline fails on first purchase.
+- V-E-5 P3 raw e.message to UI (SpendingChallengesViewModel :104, TaxConfigurationViewModel :79/:123 -> Screen :82-84).
+- V-E-6 P2 investment tile dead end: Add button navigateBack (MainActivity :732-736), no addHolding caller; "0.00" portfolio.
+- V-E-7 P2 investment ignores error/loading/data quality; failed conversion shows 0.00 home.
+- V-E-8 P3 latent InvestmentTracker history/allocation issues (no UI caller).
+- V-E-9 P2 US tax brackets end at 95,375 -> income above untaxed (TaxConfiguration UsTaxConfiguration; TaxEstimator :209-221).
+- V-E-10 P2 tax country selection in-memory only; persisted GR/EUR; USD income minus EUR deductibles labelled USD; VAT uses GR.
+- V-E-11 P3 tax notes/isPartial/warnings never rendered; netIncome double-subtracts VAT; tile ships (FeatureConfig :191) despite
+  "not exposed" comment (TaxEstimator :28-34). -> strengthens H-1 "hide tax" option.
+- V-E-12 P2 analytics % change compares month-to-date vs full prior N days (AnalyticsViewModel :358/:430-432/:497); YoY YTD vs full year.
+- V-E-13 P3 analytics partial data handling.
+- Fine: analytics unavailable-vs-zero typed, CE rethrown, split-share SQL parity, zone-aware ranges, addHolding atomic, challenge writes barriered.
+## Verifier on V-F (release-finding-verifier, read-only, 26 calls)
+- V-F-1 CONFIRMED P2 (not P1): reachable (MainActivity :460 no lock, Activity-scoped VMs, export continues off-screen,
+  DatabaseBackupRepositoryImpl :652-770 window); no CoroutineExceptionHandler/default handler; Savings VM :328-342/:352-385/:433-435
+  crash. Expense entry SAFE (TLC :355-357/:2453-2454, AddExpenseViewModel :439). Additional site HomeViewModel :557-567 ->
+  PlannedExpenseRepository :61. Not exhaustive -> fix batch needs a sweep. Pre-existing (barrier dbfb3170 2026-05-10).
+- V-F-2 RECALIBRATED P3: balance correct, DataStore history may miss; +10 hidden on completed goals; overshoot < 10/tap.
+- V-F-3 CONFIRMED P2: default backup redacted (no images + sanitizeExport :721-722), undisclosed; docs/reference/domain-quick-reference.md
+  :48 claims images included. NEEDS_RUNTIME: what sanitizeExport strips on restore.
+- V-F-6 CONFIRMED P3: exit(0) no relaunch; in-screen button unwired (BackupRestoreScreen :38/:360, MainActivity :874).
+## Phase 4 V-G (release-vertical-auditor, read-only): PARTIAL (32/35)
+- Scope: CSV/JSON file import is debug-only (DebugScreen :1447-1454, BuildConfig.DEBUG gate); release import = bank statement via
+  ReviewViewModel :1080 -> processBankStatement (NOT audited).
+- V-G-1 P2 (unverified): export date range uses DatePicker UTC-midnight millis with exclusive end (ExportOptionsScreen :323-338,
+  ExportOptionsViewModel :195-200) -> picked end day excluded; UTC+ start-day rows dropped.
+- V-G-2 P2 (unverified, possible data loss): GroupExpense FK CASCADE on expenseId (GroupExpense.kt :79-85); deleting the linked
+  personal expense may silently delete the group expense for all members.
+- V-G-3 P3 zero-byte/partial export file, text/plain MIME (.csv.txt), catch Throwable swallows CE, raw t.message (ExportOptionsScreen :57-84/:220/:271).
+- V-G-4 P3 clipboard copy File.readText whole export (:212-218).
+- V-G-5 P3 retired HRK offered in group currency picker (SharedExpenseGroupsScreen :674).
+- V-G-6 P3 settlement suggestions only, deprecated greedy simplifyBalances; SettlementCalculator dead; 0-decimal split display sums wrong.
+- V-G-7 P3 dormant debug importer issues.
+- Answers: mixed-currency group rows NOT writable (5 coordinator rejection sites) -> SharedExpenseGroupsViewModel :111 P3 latent;
+  no 3-decimal currencies in SupportedCurrency; group expenses create personal expense atomically (createExpenseDbOnlyV2).
+- Extra sites: SharedExpenseGroupsViewModel :178/:207/:326 catch Exception w/o CE rethrow, e.message to UI.
+- Clean: paged export, cancel cleanup, read barrier + privacy gate, encrypted export fail-closed, group create atomic via coordinator.
+## Verifier on V-G (release-finding-verifier, read-only)
+- V-G-2 CONFIRMED P2 (data loss): delete offered for every row (TransactionsScreen :559, dialog :1545-1567 no group warning);
+  hard delete TransactionsViewModel :476-480 -> ExpenseRepository :418-419 -> TLC :2444-2492 expenseDao.delete; no isSharedExpense
+  guard; GroupExpense FK CASCADE (:81-85) deletes group_expenses row (payer/total/split) -> group balances change silently.
+  Edit desync of totalAmount NEEDS_RUNTIME.
+- V-G-1 CONFIRMED P2: ExpenseDao :1404/:1460 `date >= start AND date < end` with raw UTC-midnight picker values; Athens end=today
+  excludes everything after 03:00 local; same-day range rejected (:176); chip shows previous day west of UTC (:426).
+- V-G-8 P3 bank-statement exact duplicate shown as "Failed to parse statement" (Duplicate branch unreachable, ReviewViewModel :1097).
+- V-G-9 P3 amount/currency in PendingReview.notificationText/event metadata; Timber.e debug-only in release.
+- V-G-10 P3 NEEDS_RUNTIME partial success reported as failure, retry blocked by hash.
+- V-G-11 P3 NEEDS_RUNTIME identical rows within one statement collapse.
+- Refuted: import writes only PendingReviews (no direct expense writes), write barrier checks (minor gap :917-950), CURRENCY_UNKNOWN
+  rows skipped, CE rethrown. Unverified: BankStatementParser comma/thousands decimals (-> V-I / R16 scope).
+## Verifier on V-E (release-finding-verifier, read-only) — all pre-existing (no diff since campaign kit 84d819be except unrelated string)
+- Visibility: investment/challenges/analytics/tax tiles all in FeatureConfig.allFeatures; availableFeatures removes only bank-connections.
+- V-E-1 CONFIRMED P2 (EFFECTIVE_AMOUNT_SQL raw amount; JPY 5000 fails EUR 100 challenge). V-E-2 CONFIRMED P2 (outcome lost).
+- V-E-6 CONFIRMED P2 (investment Add = navigateBack, addHolding no caller). V-E-7 RECALIBRATED P3 (no holdings creatable).
+- V-E-9 CONFIRMED P2: USD 200,000 -> 16,290 (8.1%) vs correct 42,832 (21.4%).
+- V-E-10 CONFIRMED P2: country/currency not persisted; TaxEstimator :28-34 "NOT exposed" comment false.
+- V-E-12 CONFIRMED P2: steady 30/day on 2026-10-16 shows "-48.4% vs last period"; same for week/quarter/year/today.
+## Phase 4 V-H (release-vertical-auditor, read-only): PARTIAL (cap) — UNVERIFIED
+- V-H-1 P2: OperationRunRecorder :156 / CompositeOperationRunRecorder :69 failedFinal(e.message) -> :276 summary non-null skips
+  sanitizer -> raw exception text in operation_runs.errorSummary (90 d, in backups); callers BankApiIntegration, DatabaseBackupRepositoryImpl.
+- V-H-2 P2: ReceiptLifecycleCoordinator :1486/:1526 raw e.message (take 500) in ReceiptEvent.errorDetails beside "[REDACTED]" message.
+- V-H-3 P2: OCR retention blanks rawOcrText only (RetentionModule :96); receipt image files never aged (15 targets).
+- V-H-4 P3 (P2 if promised): no release delete-all/purge-now (DebugScreen only).
+- V-H-5 P3 retention target failures not marked transient; V-H-6 P3 wifiOnlyForCloud enforced only in router (:164/:240);
+  V-H-7 P3 hard-coded English block reasons (AiSettingsViewModel :107-112/:254/:264).
+- Clean: cloud AI OFF by default (PrivacySettings :5-6, AiModels :89), dual-toggle consent fail-closed, all 9 cloud services gate +
+  payload policy, redaction default on, key user-supplied in header (no BuildConfig key, no HTTP logging), CE rethrown, chat history
+  off by default, retention worker barrier/checkpoint/audit, allowBackup=false, no exported providers, no crash reporter, no
+  shareable diagnostics, debug surfaces gated.
+- Process note: V-H auditor overran its 35-call cap (54 tool uses); scope stayed read-only. Disclosed.
+## Verifier on V-H (privacy-security-guardian, read-only)
+- V-H-1 RECALIBRATED P3 latent: only runOperation caller BankApiIntegration :220 is behind requireStubMode (DEBUG only); other
+  failedFinal callers pass literals/codes. operation_runs not in ExportAnonymizer, 90 d retention. Pre-existing.
+- V-H-2 RECALIBRATED P3 dead path (ReceiptAssetStore.deleteAsset :158-171 catches all). Should use RoomReceiptLifecycleEventWriter.
+- V-H-3 RECALIBRATED P3: UI promises text purge only (strings :850/:852); doc gap in raw-storage-policy.md about images.
+- V-H-6 CONFIRMED P3 (P2 if Wi-Fi-only is a privacy control): bank-statement path ValidateBankStatementTransactionsUseCase :250 ->
+  SmartReceiptAssistService :121-130 -> CloudReceiptAssistService :272 bypasses router Wi-Fi check; consent + redaction hold.
+  Follow-up: provider mode (on-device only) honoured on that path?
+## Phase 4 V-I (release-vertical-auditor, read-only): PARTIAL (35/35, 36 uses)
+- Bank connections hidden in release (3 gates). Location: no background, double-gated, not in cloud AI, anonymized in export.
+- V-I-1 P1 candidate: BankStatementParser :849-918 generic rows re-derive amount with "last separator = decimal": "1,234" -> 1.234,
+  "1.234" -> 1.234, "1,234,567" -> 1234.567 (1000x). Release-reachable via ReviewViewModel :1080 (pending reviews, user approves).
+- V-I-2 P2 abs() + keyword typing: unsigned-keyword credit "+1.500,00" imported as expense (:918, :944-949).
+- V-I-3 P2 dd/MM only; US dates dropped silently; ambiguous dates no flag (:1005-1022).
+- V-I-4 P3 FOREGROUND_SERVICE_LOCATION declared, unused (manifest :9) — Play declaration risk.
+- V-I-5 P2 map permission: no permanently-denied/settings redirect; rationale on every entry (SpendingMapScreen :100-106/:133-137).
+- V-I-6 P1 candidate NEEDS_RUNTIME: BootReceiver :45 startForegroundService on dataSync service at BOOT_COMPLETED; Android 15
+  forbids dataSync FGS from BOOT_COMPLETED. Lead read: BootReceiver catches Exception around the call; NotificationCaptureService
+  :305-338 startForeground(DATA_SYNC) catch -> fallback untyped startForeground (same manifest type) catch -> logs only; no stopSelf.
+  Risk: service started via startForegroundService never reaches foreground -> ForegroundServiceDidNotStartInTimeException
+  (uncatchable process crash) after every boot on API 35 with listener enabled. Not covered by R14 instrumentation (synthetic
+  broadcast lacks real boot context). Deciding test: real reboot of wave5-api35 emulator with listener granted + logcat.
+- V-I-7 P2 no onboarding (straight to Home; POST_NOTIFICATIONS each start known).
+- V-I-8 P2 privacy tile mislabeled as "Backup & Restore" (FeatureConfig :236-241).
+- V-I-9 P3 dead ends (CategoryBreakdownSheet :95 Show all no-op; SmartSearch drops id; deep-link highlight inverted; ReceiptAssistCard :115).
+- V-I-10 P3 unauthenticated deep links (PRV-16 TODO), URI-only data.
+- Clean: allowBackup=false, no exact alarms, PendingIntents FLAG_IMMUTABLE, receivers not exported, nav state rememberSaveable.
+## Verifier on V-I bank parser (release-finding-verifier, read-only, 19 calls) — all pre-existing
+- V-I-1 RECALIBRATED P1 -> P2: BSP :851 gate, :907-918 last-separator decimal; "€1,234" -> 1.234, "€1,234,567" -> 1234.567;
+  "1.234 €" ambiguous also in AmountUtils :137. OCR image/PDF only (BLP :200), needs explicit currency token, always PendingReview
+  with visible amount (never auto-approved); shrink 1000x plausibly noticed. Side effect: dedupe misses, approval duplicates.
+  No tests for bare thousands on generic path. Origin a6815998.
+- V-I-2 CONFIRMED P2: sign dropped (:918), :944-948 PURCHASE both branches; "VISA CREDIT CARD 45,00" -> DEPOSIT; AI merge keeps type (BLP :338).
+- V-I-3 RECALIBRATED P2: unparseable US dates -> date null -> BLP :593 `tx.date ?: now` (dated at import, not dropped); ambiguous
+  dd/MM silent.
+- New candidates (unverified): N1 BSP :1002 2-digit-year pattern matches "15/03/2025" as 2020 on single-date rows with SECOND order;
+  N2 generic parser no break (:208-212) -> possible duplicate rows from Greek/Revolut parser.
+## Verifier on V-I-6/-8/-5 (architecture-guardian, read-only, 22 calls)
+- V-I-6 RECALIBRATED P1 -> P2 NEEDS_RUNTIME (~70% no crash): exception thrown inside startForeground(DATA_SYNC) :328, caught; untyped
+  fallback :331 dead on targetSdk 34+; start-deadline timer believed cancelled before the throwing check (AOSP from memory, unverified).
+  Likely effect: no FGS notification after boot + Timber.e. MY_PACKAGE_REPLACED fine. ServiceRestartReceiver :24 throws+caught.
+  R14 does not address boot (BootReceiver :36-38 clears guard). CORRECTION to lead notes: no BootReceiver androidTest exists; only JVM
+  BootReceiverStressTest (mocked Context). Fix shape: skip startForegroundService on BOOT_COMPLETED for SDK >= 35, rely on
+  onListenerConnected (:287); bounded log code. Deciding device test: API 35 emulator reboot with listener granted and revoked,
+  logcat ForegroundServiceStartNotAllowed / DidNotStartInTime, dumpsys activity services; repeat adb install -r.
+- V-I-8 CONFIRMED P3 (string reuse FeatureConfig :237/:241). V-I-5 CONFIRMED P3 (no permanent-denial handling; precedent ReceiptScanScreen :211).

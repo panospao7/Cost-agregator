@@ -437,3 +437,77 @@ No pre-1.0 minified data exists (first release) -> no migration concern.
 Device-test review notes folded in: CloudProviderAndroidOrgJsonSentinelInstrumentedTest log list synchronized (N2); runner doc
 codes E_DEBUGGABLE_APK/E_VARIANT_NOT_RELEASE (N4). API 26 device scope: mockk-android inline mocking needs API 28+, so on
 release-api26 run only mock-free classes (R0-1b, migration/fresh-install) + manual smoke; full suite on wave5-api35.
+
+(Planner output for remediation plan section 21 — R16 S1/S2 + R16c, R17. Saved by lead while runner-protocol-tests runs; to be
+appended to docs/releases/release-1.0-assurance/release-1.0-remediation-plan.md after the run completes.)
+Lead decisions on planner owner questions:
+- R16c (remaining toDoubleOrNull amount fields: SpendingChallenges :431, BillNegotiation :663, VisualSplitEditor :65,
+  TaxConfiguration :133, Home :1423, CashFlowCalendar :122, CurrencyManagement :38/:777, SubscriptionManagement :838/:844) is
+  INSIDE the owner-approved R16 scope ("locale-aware parsing for all amount inputs"); runs after R17 (HomeScreen overlap).
+  Tax/Challenges fields are skipped if R19 hides those screens first.
+- Non-dismissable Home "Capture inactive" card while access is off: accepted (planner default; hiding = turn consent off).
+- Single-writer rule kept: R16-S1 -> R16-S2 -> R17 -> R16c sequential (planner allowed parallel; lead overrides).
+
+## 21. R16 + R17 plan (release-planner, read-only @ 0a9cab1c, 2026-10-16)
+No Room/schema/guard/baseline/allowlist change; stop if one appears. Runner targeted-unit-test = ONE --tests pattern per run.
+M/ = app/src/main/java/com/yourname/expensetracker/, T/ = app/src/test/java/com/yourname/expensetracker/.
+
+### R16 (V-A(A) P1 + V-I-1 generic path)
+Policy owner M/domain/util/AmountUtils.kt: parseAmount UNCHANGED (~20 machine parsers). Add
+parseUserAmount(text, decimalSep, groupingSep, maxFractionDigits = 2) -> Valid(Double) | Empty | Ambiguous | Invalid, BigDecimal
+scale check before toDouble, reuse hasStrictThousandsGrouping; add parseStatementAmount(token).
+User rules: (1) both . and , -> last is decimal, earlier must be strict 3-digit groups of the other char else Invalid; (2) one
+separator kind repeated -> valid strict groups = integer else Invalid; (3) one separator + 1-2 digits = decimal in every locale;
+(4) one separator + exactly 3 digits = grouping if locale grouping sep, else Ambiguous (rejected, no guess); (5) >2 fraction or
+>10 integer digits Invalid; (6) Ambiguous uses each site's existing invalid-amount error (no new strings).
+Statement rule: path only accepts EUR/USD/GBP (2-decimal) -> exactly 3 trailing digits = grouping; otherwise equals parseAmount.
+Sanitizer M/ui/util/AmountInputSanitizer.kt: keep digits . , ; leading sep -> "0,"/"0."; trim leading zeros; cap fraction 2 after
+locale decimal sep, 3 after the other; isValid delegates to parseUserAmount; separators from DecimalFormatSymbols(Locale.getDefault()) at call time.
+S1 prod: AmountUtils.kt, AmountInputSanitizer.kt, M/domain/receipt/BankStatementParser.kt (:904-918 -> abs(parseStatementAmount(rawToken)); abs + keyword typing byte-identical).
+S2 prod: M/ui/util/OwnershipValidator.kt :52; M/ui/screens/addexpense/AddExpenseViewModel.kt :157/:266/:291/:358/:480;
+M/ui/screens/receiptscan/ReceiptScanViewModel.kt :549/:606/:746/:1056/:1108; M/ui/screens/budget/BudgetScreen.kt :929/:933/:935/:990;
+M/ui/screens/savings/SavingsGoalsScreen.kt :386; M/ui/screens/recurringmanual/ManualRecurringExpenseScreen.kt :555/:559;
+M/ui/screens/groups/SharedExpenseGroupsScreen.kt :797/:805/:941/:1032; M/ui/screens/review/ReviewScreen.kt :1961;
+M/ui/screens/transactions/TransactionsViewModel.kt :663.
+Tests new: T/ui/util/AmountInputSanitizerTest.kt, T/domain/util/AmountUtilsUserAmountTest.kt, T/ui/util/OwnershipValidatorTest.kt;
+extend: T/domain/receipt/BankStatementParserTest.kt, AddExpenseViewModelTest, ReceiptScanViewModelTest, TransactionsViewModelTest
+(Locale.setDefault + restore in @After).
+Worked inputs: el_GR 12,50->12.50; 1.234,56->1234.56; 1.234->1234; 12.5->12.5; 1,234->Ambiguous. en_US 1,234.56->1234.56;
+1,234->1234; 12,50->12.50; 1.234->Ambiguous. any: 1.234.567,89->1234567.89; 1,23.4->Invalid; ,5->0.5. statement: EUR1,234->1234;
+EUR1,234,567->1234567; "1.234 EUR"->1234; "1.234,56 EUR"->1234.56; existing sign/type fixtures unchanged.
+Filters (serial): *AmountInputSanitizerTest, *AmountUtils*, *SharedUtilityConsistencyTest, *ClipboardAmountParserTest,
+*BankStatementParser*, *OwnershipValidatorTest, *AddExpenseViewModel*, *ReceiptScanViewModel*, *TransactionsViewModel*.
+Reviewer: reviewer-strict (money). Out of R16: R22b (V-I-2 sign, V-I-3 dates, N1, N2; after R16, same function);
+R16c (toDoubleOrNull fields listed in lead decisions; after R17).
+Stop if: any existing parseAmount/AmountUtils/bank-statement assertion must change; sign/type/ParsedTransaction change;
+currency-specific fraction digits needed; schema/guard/allowlist change; file outside write set.
+Acceptance: worked inputs pass; *AmountUtils*, *SharedUtilityConsistencyTest, *ClipboardAmountParserTest, *BankStatementParser*
+pass with zero assertion edits; no path deletes a comma; validation and save cannot disagree. Device: el_GR Gboard keypad smoke.
+
+### R17 (V-A(B) P1)
+Check NotificationManagerCompat.getEnabledListenerPackages(ctx).contains(packageName); RuntimeException -> false (fail closed);
+only a boolean leaves the checker; log code NOTIFICATION_LISTENER_ACCESS_CHECK_FAILED + exception class only.
+States: ACTIVE (consent on + access), ACCESS_OFF (consent on, no access), CONSENT_OFF (notificationCaptureEnabled false or
+CorruptedFailClosed; consent wins). VM read-only, never writes privacy settings, never bypasses NotificationCaptureGate/PrivacyGate.
+Home card only in ACCESS_OFF (S4-022 pattern HomeScreen :278-294); Privacy screen always shows OS access + "Manage access";
+re-check on resume (DisposableEffect + LifecycleEventObserver as MainActivity :947). Intent chain: API 30+
+ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS with component extra -> ACTION_NOTIFICATION_LISTENER_SETTINGS ->
+ACTION_APPLICATION_DETAILS_SETTINGS (as ReceiptScanScreen :211); each catches ActivityNotFoundException; final fallback string.
+Hint string for sideloaded Android 13+ restricted settings.
+Prod: new M/domain/notification/capture/NotificationListenerAccessChecker.kt, NotificationCaptureStatus.kt;
+new M/data/service/AndroidNotificationListenerAccessChecker.kt; M/di/PrivacyModule.kt (one @Binds); new
+M/ui/screens/privacysettings/NotificationCaptureStatusViewModel.kt; new M/ui/components/NotificationCaptureStatusCard.kt; new
+M/ui/util/NotificationListenerSettingsLauncher.kt; M/ui/screens/home/HomeScreen.kt; M/ui/screens/privacysettings/PrivacySettingsScreen.kt;
+res values/, values-el/, values-es/ strings.xml (all three; lint MissingTranslation).
+Tests new: T/domain/notification/capture/NotificationCaptureStatusTest.kt; T/ui/screens/privacysettings/NotificationCaptureStatusViewModelTest.kt;
+T/data/service/AndroidNotificationListenerAccessCheckerTest.kt (Robolectric Settings.Secure enabled_notification_listeners);
+T/ui/util/NotificationListenerSettingsLauncherTest.kt (@Config sdk 26,29,30,35). No Compose UI test infra; none added.
+Filters: *NotificationCaptureStatus*, *AndroidNotificationListenerAccessChecker*, *NotificationListenerSettingsLauncher*,
+*PrivacySettings*, + targeted-release-unit-test *NotificationCaptureStatus*. Reviewer: privacy-security-guardian (fresh).
+Stop if: NotificationCaptureService/BootReceiver/manifest change; new permission; PrivacySettings/DataStore change; launch-time
+prompt/onboarding; G-DI-01/PII/privacy guards flag. Acceptance: matrix; grant/revoke updates on return; no crash API 26-35; no new
+log/stored fields; strings in 3 languages. Device: API 35 release grant/revoke/resume + sideload restricted settings.
+
+### Gates
+Targeted runs -> app-check once -> static-guards once -> unit-tests; documentor updates VM count in inventory. Max 2 review + 2 debug per slice.
+

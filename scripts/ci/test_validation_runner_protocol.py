@@ -230,6 +230,7 @@ def test_duplicate_detection_requires_the_same_validation_command(
     (run / "result.json").write_text(json.dumps({
         "status": "PASS", "exit_code": 0, "profile": profile,
         "command": stored_command,
+        "git_revision": "revision-a",
         "worktree_fingerprint_start": "fingerprint",
         "worktree_fingerprint_end": "fingerprint",
     }), encoding="utf-8")
@@ -238,7 +239,48 @@ def test_duplicate_detection_requires_the_same_validation_command(
     setup = f"""
 $ErrorActionPreference = 'Stop'
 $script:RunsRoot = '{str(tmp_path).replace(chr(39), chr(39) * 2)}'
-$match = Find-OverlappingSuccessfulRun -RequestedProfile '{profile}' -RequestedCommand '{requested_command}' -Fingerprint 'fingerprint'
+$match = Find-OverlappingSuccessfulRun -RequestedProfile '{profile}' -RequestedCommand '{requested_command}' -Fingerprint 'fingerprint' -Revision 'revision-a'
+@{{ duplicate = $null -ne $match }} | ConvertTo-Json
+"""
+    completed = _powershell(functions + setup)
+    assert completed.returncode == 0, (completed.stdout, completed.stderr)
+    assert json.loads(completed.stdout) == {"duplicate": expected}
+
+
+@pytest.mark.parametrize("stored_revision,requested_revision,expected", [
+    ("revision-a", "revision-a", True),
+    ("revision-a", "revision-b", False),
+    ("revision-a", "REVISION-A", False),
+    ("UNKNOWN", "UNKNOWN", False),
+    ("revision-a", "UNKNOWN", False),
+    ("revision-a", "", False),
+    ("", "", False),
+    ("UNKNOWN", "revision-a", False),
+    (None, "revision-a", False),
+    (None, "UNKNOWN", False),
+])
+def test_duplicate_detection_requires_the_same_known_git_revision(
+    tmp_path, stored_revision, requested_revision, expected,
+):
+    # A clean tree always has the same fingerprint, so a new commit must never
+    # be rejected as a duplicate of a PASS recorded at another revision.
+    run = tmp_path / "vr-20260101-000000-deadbeef"
+    run.mkdir()
+    record = {
+        "status": "PASS", "exit_code": 0, "profile": "compile",
+        "command": "gradle :app:compileDebugKotlin",
+        "worktree_fingerprint_start": "fingerprint",
+        "worktree_fingerprint_end": "fingerprint",
+    }
+    if stored_revision is not None:
+        record["git_revision"] = stored_revision
+    (run / "result.json").write_text(json.dumps(record), encoding="utf-8")
+    (run / "complete.marker").write_text("complete", encoding="utf-8")
+    functions = _functions("Read-JsonFile", "Find-OverlappingSuccessfulRun")
+    setup = f"""
+$ErrorActionPreference = 'Stop'
+$script:RunsRoot = '{str(tmp_path).replace(chr(39), chr(39) * 2)}'
+$match = Find-OverlappingSuccessfulRun -RequestedProfile 'compile' -RequestedCommand 'gradle :app:compileDebugKotlin' -Fingerprint 'fingerprint' -Revision {_ps_quote(requested_revision)}
 @{{ duplicate = $null -ne $match }} | ConvertTo-Json
 """
     completed = _powershell(functions + setup)
@@ -628,7 +670,8 @@ def test_dedup_uses_commands_that_distinguish_every_effective_gradle_setting(tmp
     baseline = _command_display("gradlew.bat", _gradle_arguments("compile", _settings(max_workers=4)))
     (run / "result.json").write_text(json.dumps({
         "profile": "compile", "status": "PASS", "exit_code": 0,
-        "command": baseline, "worktree_fingerprint_start": "fingerprint",
+        "command": baseline, "git_revision": "revision-a",
+        "worktree_fingerprint_start": "fingerprint",
         "worktree_fingerprint_end": "fingerprint",
     }), encoding="utf-8")
     (run / "complete.marker").write_text("complete", encoding="utf-8")
@@ -637,7 +680,7 @@ def test_dedup_uses_commands_that_distinguish_every_effective_gradle_setting(tmp
 $settings = Resolve-InvocationGradleSettings
 $spec = Get-ProfileSpec -Name $Profile -GradleSettings $settings
 $command = Get-SafeCommandDisplay -Spec $spec
-$match = Find-OverlappingSuccessfulRun -RequestedProfile $Profile -RequestedCommand $command -Fingerprint 'fingerprint'
+$match = Find-OverlappingSuccessfulRun -RequestedProfile $Profile -RequestedCommand $command -Fingerprint 'fingerprint' -Revision 'revision-a'
 @{ duplicate = $null -ne $match } | ConvertTo-Json
 """)
     assert result == {"duplicate": duplicate}
@@ -1062,6 +1105,7 @@ def test_dedup_distinguishes_connected_class_and_device_serial(
     )
     (run / "result.json").write_text(json.dumps({
         "profile": profile, "status": "PASS", "exit_code": 0, "command": baseline,
+        "git_revision": "revision-a",
         "worktree_fingerprint_start": "fingerprint", "worktree_fingerprint_end": "fingerprint",
     }), encoding="utf-8")
     (run / "complete.marker").write_text("complete", encoding="utf-8")
@@ -1072,7 +1116,7 @@ $settings = Resolve-InvocationGradleSettings
 $serial = Resolve-InvocationDeviceSerial
 $spec = Get-ProfileSpec -Name $Profile -Filter {_ps_value(filter_value)} -GradleSettings $settings -SelectedSerial $serial
 $command = Get-SafeCommandDisplay -Spec $spec
-$match = Find-OverlappingSuccessfulRun -RequestedProfile $Profile -RequestedCommand $command -Fingerprint 'fingerprint'
+$match = Find-OverlappingSuccessfulRun -RequestedProfile $Profile -RequestedCommand $command -Fingerprint 'fingerprint' -Revision 'revision-a'
 @{{ duplicate = $null -ne $match }} | ConvertTo-Json
 """)
     assert result == {"duplicate": duplicate}

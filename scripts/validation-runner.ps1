@@ -660,13 +660,19 @@ function Find-OverlappingSuccessfulRun {
     param(
         [Parameter(Mandatory = $true)][string]$RequestedProfile,
         [Parameter(Mandatory = $true)][string]$RequestedCommand,
-        [Parameter(Mandatory = $true)][string]$Fingerprint
+        [Parameter(Mandatory = $true)][string]$Fingerprint,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Revision
     )
+    # A clean tree always has the same fingerprint, so a previous PASS only
+    # satisfies the gate for the exact same known git revision.
+    if ([string]::IsNullOrEmpty($Revision) -or $Revision -ceq "UNKNOWN") { return $null }
     if (-not (Test-Path -LiteralPath $script:RunsRoot -PathType Container)) { return $null }
     foreach ($directory in @(Get-ChildItem -LiteralPath $script:RunsRoot -Directory -Filter "vr-*" |
         Sort-Object Name -Descending | Select-Object -First 50)) {
         $record = Read-JsonFile -Path (Join-Path $directory.FullName "result.json")
         if ($null -eq $record -or $record.status -ne "PASS") { continue }
+        if (-not $record.PSObject.Properties["git_revision"] -or $record.git_revision -isnot [string] -or
+            $record.git_revision -cne $Revision) { continue }
         if ($record.exit_code -ne 0 -or $record.worktree_fingerprint_start -ne $Fingerprint) { continue }
         if ($record.worktree_fingerprint_end -ne $Fingerprint) { continue }
         if (-not (Test-Path -LiteralPath (Join-Path $directory.FullName "complete.marker") -PathType Leaf)) { continue }
@@ -697,7 +703,7 @@ function Start-ValidationRun {
     $startFingerprint = Get-WorktreeFingerprint
     if ($startFingerprint -eq "UNKNOWN") { throw "E_WORKTREE_FINGERPRINT_UNAVAILABLE" }
     if (-not $AllowOverlap) {
-        $overlap = Find-OverlappingSuccessfulRun -RequestedProfile $Profile -RequestedCommand (Get-SafeCommandDisplay -Spec $spec) -Fingerprint $startFingerprint
+        $overlap = Find-OverlappingSuccessfulRun -RequestedProfile $Profile -RequestedCommand (Get-SafeCommandDisplay -Spec $spec) -Fingerprint $startFingerprint -Revision (Get-GitRevision)
         if ($null -ne $overlap) { throw "E_DUPLICATE_OR_OVERLAPPING_VALIDATION" }
     }
     $id = "vr-{0}-{1}" -f ([DateTime]::UtcNow.ToString("yyyyMMdd-HHmmss")), ([Guid]::NewGuid().ToString("N").Substring(0, 8))

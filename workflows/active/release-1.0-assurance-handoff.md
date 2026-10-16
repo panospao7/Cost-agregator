@@ -227,6 +227,33 @@ Current vs historical validation: Wave 5 candidate-only runs (6x PASS, isolated
 - 2026-10-15: FINAL CANDIDATE C* = the prep commit on release-1.0-remediation containing runner D-22/B-2 additions,
   R0-1b + V02B-N4 device tests, R14 (Android 15 dataSync FGS timeout) and R15 (Gson R8 keep rules) - supersedes the
   2ec50671 freeze; any later fingerprinted change invalidates final evidence.
+- 2026-10-15: the user wrote "I want phase 3 and phase 4 to be done also." Recorded: Phase 3 horizontal audit (HZ-*) and
+  Phase 4 vertical journey audit (VJ-*) APPROVED, read-only discovery + independent refutation per batch, max 2 read-only
+  workers, against C* 53824bcd; runs in parallel with final-gate validation (no edits). Confirmed findings need separate
+  remediation approval; any fix changes C* and re-triggers affected final gates.
+- 2026-10-16: Phase 3 + Phase 4 COMPLETE (static, all slices PARTIAL; residual cells listed). Records:
+  docs/releases/release-1.0-assurance/release-1.0-phase3-4-findings-ledger.md (evidence) and
+  release-1.0-phase3-4-consolidated.md (P1/P2 list, proposed batches R16..R24). Confirmed P1: comma decimal (R16),
+  no listener-access status (R17). Final gates part 3 on 0a9cab1c were blocked by runner dedup and are now moot.
+- 2026-10-16: the user wrote "i approve them all" to the lead's list. Recorded as APPROVED: (1) runner dedup fix
+  (option 2: duplicate detection also requires the same git_revision); (2) fix batches R16..R24 (full set, including
+  R20 and R24; P3s deferred to 1.0.x unless bundled); (3) H-1: HIDE Tax, Investment and Challenges for 1.0 (R19), bill
+  reminders treated as a headline feature (R21 V-C1 + V-C2 required); (5) exchange-rate download gets its own
+  network setting, separate from cloud-AI consent (R23 part 1); (6) reboot of the wave5-api35 emulator (synthetic data
+  only) for the V-I-6 boot check. NOT answerable by approval, still OPEN: H-2 (any shipped build with DB schema < 145?),
+  R23 part 2 (backups include receipt images vs disclose the omission), H-3. Execution: one batch at a time, plan ->
+  coder -> targeted tests -> strict review -> batch gate; consolidated final-gate cycle on the new C* afterwards.
+- 2026-10-16: runner dedup fix (git_revision must match; UNKNOWN never dedups) PASS: runner-protocol-tests
+  vr-20261016-061023-9cfa9263, 340 passed / 0 failed (330 + 10 new), fingerprint start = end, rev 0a9cab1c + dirty tree.
+- 2026-10-16: the user answered: "for h2 the answer is yes . for backups you can exclude images for now . dont worry about
+  h3". Recorded: H-2 = YES, a build with DB schema < 145 has shipped -> HZ-02 F3 (open of a < v145 database = Room
+  IllegalStateException, DatabaseModule :36 uncaught, rescue disabled -> crash loop) is now P1, and HZ-02 F2 (backups
+  v6..v144 rejected late with a generic error) is raised for planning as batch R25 (upgrade path); exact shipped
+  version(s) still to establish. R23 part 2 = keep excluding receipt images from backups and DISCLOSE it (backup screen
+  copy + fix docs/reference/domain-quick-reference.md :48). H-3 = owner accepts, no action.
+- 2026-10-16: R16/R17 plan recorded as remediation plan section 21 (release-planner). Lead decisions: R16c (remaining
+  toDoubleOrNull amount fields) is inside the approved R16 scope; non-dismissable "capture inactive" Home card accepted;
+  single writer, order R16-S1 -> R16-S2 -> R17 -> R16c.
 - Observed: artifacts were committed by the owner during the run (279b7c92, CRLF
   normalization). The owner marked H-4 resolved (commits pushed).
 
