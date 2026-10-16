@@ -763,3 +763,49 @@ S6: ratchet/baseline sync (shrink-only) at batch end, driven by guard results.
 Order: S4 coder -> S5 coder -> targeted queue (+ reviews in parallel, read-only) -> registered-guard db_access + known_good_state ->
   static-guards -> app-check -> legacy-tests.
 
+
+## 29. R27 plan (release-planner, read-only @ 6f706c29) - summary
+S1 barrier counter + drains: DatabaseWriteBarrier.runWrite counts in-flight writes (MutableStateFlow<Int>; increment, check, withContext
+  (InFlightWriteElement) block, decrement in finally; nested = check only); awaitNoInFlightWrites(timeoutMs) (withTimeoutOrNull, suspend);
+  reentrant drain -> MAINTENANCE_DRAIN_REENTRANT; order enter -> worker drain -> write drain; enterAndDrain timeout -> exit(false) +
+  WriteDrainTimeoutException (MAINTENANCE_WRITE_DRAIN_TIMEOUT); enterRestoreAndDrain -> RESTORE_WRITE_DRAIN_TIMEOUT keeps barrier closed.
+  Files DatabaseWriteBarrier.kt, MaintenanceOperationRunner.kt :27-41, DatabaseBackupRepositoryImpl.kt :970-977 + tests (9 cases).
+S2 caller migration (check-only -> runWrite wrapping the existing tx in the same method; no renames): S2a TransactionLifecycleCoordinator
+  :1296/:1350/:1458/:1552+/:1595/:1912/:2215/:2467; S2b ReceiptLifecycleCoordinator :425/:503/:611/:823/:868/:1443/:1513/:1599;
+  S2c NotificationRepository 9 sites + leftovers in intake/pipeline; S2d OperationRunRecorder :122/:192/:243/:280 + DiagnosticEventWriter
+  :46; S2e PrivacyAuditLoggerImpl insert loop after B merges. Risk: relaxed barrier mocks no longer run blocks -> fix per slice.
+S3 restart wiring: BackupRestoreViewModel one-shot restart event on in-process SuccessNeedsRestart (never from persisted mode -> no loop);
+  BackupRestoreScreen -> onRestartRequired; MainActivity :874-876 passes restartProcess() (:433); delete dismissRestartRequired + test;
+  mode persisted with commit() before exit.
+S4 bank finalize: BankStatementLifecycleProcessor :873/:917/:974-990/:1006/:1049 in runWrite; blocked finalize skipped by existing
+  catches; BankSyncStartupRecovery.recoverStaleRuns :72-81 -> STALE_FAILED (confirm threshold + PARSED receipt recovery).
+Guards: no WriteBarrierArchitectureGuardTest/db_ownership_policy/cancellation count changes expected. Reviewers reviewer-strict
+  (S1+S2+S4) + room-migration-guardian (S1+S3). Emulator probes C3a/C3b/C2/C1/P5 after the batch.
+Owner questions: Q-R27-1 central RoomDomainTransactionRunner wrap (rec: no, R27b later); Q-R27-2 write-drain timeout + fail closed;
+  Q-R27-3 restart = exit(0) only or relaunch + exit; Q-R27-4 ~60 other check-only classes accepted for 1.0 (rely on R25) or follow-up;
+  Q-R27-5 optional new tightening guard pinning runWrite coverage for R27 classes.
+
+
+## 30. R21 plan (release-planner, read-only @ 6f706c29) - summary
+Repositories (ManualRecurringExpenseRepository :27-45, RecurringExpenseRepository :116-130) already delegate to the rule coordinator
+(no bypass). Order: R27 -> R29 commit -> S1 -> {S2, S3b, S4}; S3a independent.
+S1 RecurringLifecycleCoordinator: private claimLinkSuppressInWrite(expenseId, selectTarget) (runWrite + tx; already-linked guard);
+  linkExpenseToOccurrence keeps matching; new linkExpenseToSpecificOccurrence (Linked/AlreadyLinkedToThis/AlreadyLinkedElsewhere/NotOpen);
+  findEarliestOpenOccurrence; collapseStaleDueDeliveries(now) (STALE_WINDOW_SUPERSEDED / STALE_WINDOW_EXPIRED; CLAIMED untouched; new DAO
+  cancelOpenDueDeliveriesByIds chunked 900); RecurringRuleLifecycleCoordinator.topUpHorizon(ruleId, now) (free slots only, catch-up
+  >= now-12 months, allowPastDueReminderDeliveries=false, RULE_HORIZON_TOPPED_UP only when inserted); resolveAnchorDay = max
+  day-of-month of latest 12 occurrences.
+S2 MarkRecurringBillPaidUseCase (@Singleton, Mutex per rule, seenNextDate double-tap guard, TLC createExpenseDbOnlyV2 STRICT_EXTERNAL_ID
+  recurring_paid:<occurrenceKey>, link specific, dispatchPostCreationSideEffects, advanceNextDate); VM currency via resolveHomeCurrency()
+  (Failed -> refuse), bounded string errors; screen dialog "Already recorded" -> skipOccurrence; strings x3.
+S3a HZ-05: WorkerSpec oneShotPolicy KEEP; scheduleAtMidnight policyOverride; DailyBriefingWorker APPEND_OR_REPLACE; WorkerIdempotencyTest
+  REPLACE -> KEEP (approved behaviour change).
+S3b RecurringHorizonWorker (guarded, coordinators only, ctx.checkpoint per rule) + registrations; counts 7->8 / 10->11 in contract tests;
+  worker docs + LEGAL_PATHS Recurring.
+S4 BillReminderWorker :71 collapseStaleDueDeliveries before recoverAndGetDueReminders.
+Policy: +1 row collapseStaleDueDeliveries/reminderDeliveryDao/cancelOpenDueDeliveriesByIds/helper; 3 rows re-keyed to
+  claimLinkSuppressInWrite (net 0); generated files untouched (precedent) unless a guard proves otherwise; stop on new GR-13 UNPROVEN.
+LEAD-DECISION (standing approval) on planner questions: (1) anchor drift after payment accepted for 1.0, documented known limitation;
+  (2) horizon worker not privacy-gated (local data only); (3) RULE_HORIZON_TOPPED_UP event + HORIZON_TOP_UP generation source approved;
+  (4) 3-row policy re-key (net 0) + 1 added row approved as part of the owner-approved R21 batch (no loosening).
+

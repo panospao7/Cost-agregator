@@ -428,3 +428,13 @@ in the coverage matrix and regression ledger seed.
   Reviews: reviewer-strict (S4) and architecture-guardian (S5) ACCEPT-WITH-NOTES. Debug cap reached (count pins). The 2026-11-20
   DirectEventDao expiry is resolved. New finding R29 (warranty in-transaction audit failure silently rolls back while returning an id)
   awaits owner. Speed-up protocol approved by owner (grouped gates; second worktree release-1.0-wt-b). Next: integrate B (R26-D + R26-V).
+- 2026-10-17: R26-D + R26-V group PASS (worktree B, fingerprint 499d0979..., rev 6f706c29 + diff). R26-D: repeated ALLOWED
+  NOTIFICATION_CAPTURE privacy-audit decisions coalesce to one row per 60-minute window (coalescedCount / coalescedFlush /
+  coalescedSinceMs added after sanitizing; DENIED/FAIL_CLOSED/NOT_APPLICABLE and all other capabilities always individual rows; barrier
+  checked before and inside the lock; counts are a lower bound across process death). R26-V: routine listener/refresh RECEIVED and
+  INFO filter/dedupe terminal drops coalesce into hourly per-stage summaries (metadata count only); problems always written with their
+  RECEIVED row; CancellationException now rethrown in NotificationDiagnosticEmitter (G-CANCEL-01 baseline + CancellationSafety
+  allowlist entry removed). StatisticsUtilsStressTest timing flake made deterministic (warm-up). Gate: app-check
+  vr-20261016-204120-e7c93afc (8296/0), static-guards 25/25 vr-20261016-212445-c9eeb61f, legacy-tests vr-20261016-214738-79bca026.
+  Reviews: privacy-security-guardian (R26-D) and reviewer-strict (R26-V) ACCEPT-WITH-NOTES, notes fixed. Owner: standing approval for
+  lead recommendations (limits in ledger); R27 decisions Q-R27-1..5 and R29 approved. Next: R29 gate (worktree A), R27 (worktree B), R21.

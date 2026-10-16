@@ -1009,3 +1009,61 @@
   static-guards 25/25 vr-20261016-191101-00e18025, legacy-tests vr-20261016-193438-d072e47e (253/0); DbGuardPolicyFixtureTest 73/0
   vr-20261016-182859-0427d90b. Debug iterations 2 of 2 (count pins 429 -> 427 in pytest x2 and Kotlin); review iterations 1.
   Decision: commit G3 part 2 on release-1.0-wt. Then integrate B (R26-D + R26-V): rebase release-1.0-wt-b onto it, full gate on B.
+- G3 part 2 COMMITTED 6f706c29 on release-1.0-wt. B fast-forwarded to 6f706c29 (no overlap) with R26-D/R26-V diff; B group gate:
+  static-guards vr-20261016-193622-5e503da8 RUNNING (fingerprint f7d82ac7...).
+- 2026-10-16 OWNER: "I approve." (reply to the R27/R29 recommendations) -> lead reading: APPROVED all recommendations:
+  D-R27-1 runWrite in-flight counter + enterAndDrain/enterRestoreAndDrain wait for zero; main non-worker write paths (expense,
+  receipts, notification capture/intake, bank statement, privacy audit, run recorder) move to runWrite (barrier semantics change);
+  D-R27-2 automatic app restart right after a successful restore + wire the banner restart button + remove/guard
+  dismissRestartRequired; second safeguard: R25 GatedOpenHelperFactory also refuses opening while maintenance is not NORMAL;
+  D-R27-3 bank-statement FAILED finalize deferred / skipped during maintenance (DeferredRunTerminal pattern);
+  post-1.0: atomic rename swap, WAL-consistent .pre_restore fallback.
+  R29 APPROVED: warranty in-transaction audit/event failures fail the save visibly (rethrow non-CE), so ReceiptSideEffectPlanner retries;
+  prove first with a real-Room test.
+  Plan: R29 small batch in worktree A (disjoint from B's R26 group); R27 -> release-planner plan first (HIGH risk, own full gate).
+- R29 coder done in A: 5 in-transaction swallowing catches removed in WarrantyTrackerRepository (addWarranty CREATED, addWarrantyIgnoreConflicts CREATED, AID-9 audit, rejectAutoDetectedWarranty discard event, markWarrantyAsClaimed CLAIMED); best-effort kept outside tx (update/delete/reconcile/discard audit); new real-Room WarrantyTrackerRepositoryTransactionTest (5 failure + success cases); 3 mock tests flipped; docs/atomicity/TRANSACTIONAL_EVENT_POLICY.md updated; no guard change. reviewer-strict on R29 dispatched (caller crash check).
+- B group (R26-D + R26-V on 6f706c29) static-guards 25/25 PASS vr-20261016-193622-5e503da8 (fingerprint f7d82ac7... start=end; cancellation baseline shrink accepted). app-check on B dispatched.
+- R27 plan (release-planner) recorded as lead-notes plan section 29; owner asked Q-R27-1..5 with recommendations (no central runner
+  wrap; 10 s write-drain timeout fail-closed; relaunch + exit; accept ~60 check-only classes for 1.0 as known limitation; yes to a
+  tightening runWrite-coverage guard). Existing restart = MainActivity :433 Runtime.exit(0) only.
+- R29 review: reviewer-strict ACCEPT-WITH-NOTES. Repo fix correct; real-Room test distinguishes old/new via "throws". MAJOR (pre-existing,
+  widened): WarrantyTrackerViewModel addManualWarranty/rejectAutoDetectedWarranty/markAsClaimed/deleteWarranty launches have no
+  handling -> crash on repository failure; confirmWarranty shows raw e.message + swallows CE. MINOR: weak test assertions; stale
+  policy reason text "(cancellation-safe best-effort write)" x4; docs callers wording. Review-iteration-1 fix coder dispatched in A
+  (bounded string resource in 3 locales; CE rethrow; VM tests).
+- R29 review fixes applied in A: WarrantyTrackerViewModel 5 mutations try/CE-rethrow/catch -> bounded UiText warranty_mutation_failed (en/el/es); confirmWarranty no raw e.message; mutationError String? -> UiText?; WarrantyTrackerScreen now shows mutationError via snackbar (previously unconsumed); 11 VM tests; repo test assertions exact; policy reason text x4; docs wording. Pending: R29 targeted after B gate.
+- B group app-check FAIL vr-20261016-200123-22a67dd9 (fingerprint f7d82ac7..., start=end): testDebugUnitTest 8296 run / 1 failed:
+  StatisticsUtilsStressTest "stress - performance with increasing size" :369 "Size 10 should complete quickly" (wall-clock 100 us bound
+  on the first, un-warmed call; unrelated to R26; testReleaseUnitTest did not run). Lead fix = B group DEBUG ITERATION 1 (test-only,
+  deterministic, thresholds unchanged): 3 warm-up calls before the timed loop (precedent: DailyBriefingWorkerTest flake fix). Static-guards
+  PASS now stale by fingerprint -> B gate rerun: targeted StatisticsUtilsStressTest, then app-check, static-guards, legacy-tests.
+  Interleaved: R29 targeted queue in A.
+- 2026-10-16 OWNER: "do your reccomendations" (reply to Q-R27-1..5) -> APPROVED: Q-R27-1 no central RoomDomainTransactionRunner wrap
+  (R27b post-1.0 candidate); Q-R27-2 write-drain timeout 10 s, always fail closed (bounded abort, no partial state); Q-R27-3 restart =
+  relaunch launcher activity (new task) then exit the old process; Q-R27-4 accept the ~60 other check-only classes for 1.0 as a documented
+  known limitation (R25 gated open helper as second safeguard; follow-up post-1.0); Q-R27-5 YES to a new tightening guard pinning
+  runWrite coverage for the R27-migrated classes (addition of a stricter check, owner-approved).
+- R21 refresh (scout): plan holds with corrections: generateOccurrences/anchorDayOfMonth in RecurringLifecycleCoordinator :103/:129-140
+  (not Rule coordinator); claim/fulfil/suppress inside linkExpenseToOccurrence :312-424 (runWrite+tx :334-415; matching :339-355 must be
+  skipped by the specific-occurrence helper); activateRule :218-270 uses checkWritesAllowed+withTransaction; WorkerSpec :94 REPLACE with
+  U-WORKER-04 comment; scheduleAtMidnight :213 has no policyOverride; ManualRecurringExpenseViewModel.markAsPaid :162-174 creates no
+  expense (bug) and add path :99-125 has no currency + leaks e.message; recurring repository path may bypass the Rule coordinator
+  (NEEDS CONFIRM). New-worker pins: WorkerGuardVerifier :34-45/:104-117, WorkerSpecScheduler.listAllWorkerNames :341-352,
+  WorkerRegistry :91-113, WorkerSpec DEFAULTS, PrivacyRuntimeWorkerPolicy :57-65 (gated or exempt decision), WorkerContractTest :30/:72
+  (7 -> 8), WorkerGuardStaticVerificationTest KNOWN_WORKER_FQNS :44-52, docs/workers 3 inventories; COVERED_BY_CALLER full (worker must
+  call coordinators only + ctx.checkpoint); db_ownership_policy ADDITIONS for new write methods (owner-approved batch, flag in plan).
+  Overlap: R27 TLC/runWrite line numbers must be re-derived; strings.xml serial with R17/R19/R23/R29. Risk HIGH -> release-planner
+  full plan before coding; after R27.
+- 2026-10-16 OWNER: "from now on i let you do what you recommend without need my personal approval" -> STANDING APPROVAL for lead
+  recommendations (scope decisions, fix options, shrink/tightening guard edits, test fixes, batch ordering). Lead self-limits (still
+  ask the owner): destructive migrations or any user-data deletion; guard/baseline LOOSENING or expiry extensions; push / merge into
+  the owner's branches / merge-vs-rebase; anything on the owner's phone; new permissions or privacy-default changes beyond approved
+  plans. Every decision under standing approval is recorded in this ledger with "LEAD-DECISION (standing approval)".
+- B: StatisticsUtilsStressTest PASS 35/0 vr-20261016-202117-b2b1d8ee (fingerprint 499d0979... start=end). A (R29): WarrantyTrackerRepositoryTransactionTest PASS 8/0 vr-20261016-202326-5cc30f78 (fingerprint 0113c26c...). Queue: A2-A6 R29 targeted, then B app-check rerun.
+- R29 targeted PASS (fingerprint 0113c26c..., start=end): WarrantyTrackerRepositoryTest 34 vr-20261016-203459-29db9e0a, WarrantyTrackerViewModelTest 17 vr-...203546-7772cafe, *AutoCreateWarrantyFromReceiptUseCase* 12 vr-...203632-7de7068c, *ReceiptSideEffectPlanner* 5 classes/17 vr-...203831-7a2492e8, DirectEventDaoInsertGuardTest 8 vr-...204036-74549270 (all 0 failed). B app-check rerun vr-20261016-204120-e7c93afc RUNNING (fingerprint 499d0979...).
+- R21 plan recorded (lead-notes section 30). LEAD-DECISION (standing approval): anchor drift accepted for 1.0 (documented); horizon worker not privacy-gated; new event/source names approved; policy re-key (3 rows, net 0) + 1 added row approved within the R21 batch. Scheduled after R27 and R29.
+- 2026-10-17: lead background watcher killed by Claude Code under low system memory (not a run failure); owner said continue. B group app-check rerun PASS vr-20261016-204120-e7c93afc (fingerprint 499d0979... start=end; BUILD SUCCESSFUL 33m09s; debug 8296/0/276, release 8296/0/277). Static-guards (stale by fingerprint after the flake fix) rerun dispatched on B, then legacy-tests.
+- B group (R26-D + R26-V) GATE PASS on 6f706c29 + diff (fingerprint 499d0979..., start=end): app-check vr-20261016-204120-e7c93afc
+  (8296/0), static-guards 25/25 vr-20261016-212445-c9eeb61f, legacy-tests vr-20261016-214738-79bca026 (253/0; first Start attempt
+  refused E_EXTERNAL_GRADLE_ACTIVE by transient Gradle JVMs that were gone seconds later; no process killed). Debug iterations 1
+  (StatisticsUtilsStressTest warm-up); review iterations 1 each. Decision: commit on release-1.0-wt-b and fast-forward release-1.0-wt.

@@ -111,7 +111,8 @@ class NotificationIntakeEnqueueFailureTest {
             mockk(relaxed = true),
             mockk(relaxed = true),
             mode,
-            Dispatchers.Unconfined
+            Dispatchers.Unconfined,
+            timeProvider
         )
         return NotificationIntakeCoordinator(
             intakeDao = intakeDao,

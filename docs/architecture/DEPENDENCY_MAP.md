@@ -697,7 +697,7 @@ CompositePrivacyGate                      [domain/privacy/CompositePrivacyGate.k
 
 PrivacyAuditLogger                        [domain/privacy/PrivacyAuditLogger.kt]
   │  Interface + impl (PrivacyAuditLoggerImpl in data/privacy/)
-  │  (logs every gate check → PrivacyAuditEvent entity → PrivacyAuditDao)
+  │  (logs every gate decision → PrivacyAuditEvent entity → PrivacyAuditDao; every decision is recorded individually except repeated ALLOWED NOTIFICATION_CAPTURE decisions: the first in a 60-minute window is written; repeats are counted and reported as coalescedCount on the next window's first row or on a flush row (marked coalescedFlush) written before any other decision or on eviction; DENIED, FAIL_CLOSED (stored DENIED_FAIL_CLOSED), NOT_APPLICABLE and all other capabilities are always individual rows; counts are approximate (lower bound across process death))
   │  (now logs PrivacyBlocked subclass type via `privacyBlockedType: String`)
   │
   ▼
