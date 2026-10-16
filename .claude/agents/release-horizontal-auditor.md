@@ -6,7 +6,7 @@ model: claude-opus-5-5
 effort: xhigh
 permissionMode: plan
 disallowedTools: Agent, Edit, Write
-maxTurns: 50
+maxTurns: 80
 ---
 
 # Release horizontal auditor

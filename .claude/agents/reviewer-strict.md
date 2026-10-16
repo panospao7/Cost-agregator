@@ -4,6 +4,7 @@ description: Strict independent final gate for risky architecture, privacy, work
 tools: Read, Glob, Grep, Bash
 model: claude-opus-5-5
 effort: xhigh
+maxTurns: 80
 permissionMode: plan
 disallowedTools: Agent, Edit, Write
 ---
