@@ -73,6 +73,10 @@ assurance batches. Technical evidence lives in `release-1.0-phase3-4-findings-le
 - **Receipt review errors (R24).** Approval errors show short, specific messages instead of a generic
   failure or raw error text.
 
+- **Home notices (R31).** The notification-access, currency and partial-data notices on Home are shown
+  above the dashboard instead of being hidden behind it. The Safe-to-spend card no longer shows a false
+  "could not be converted" warning; it asks you to set a budget only when you have none.
+
 ## Known limitations (1.0)
 
 - About 60 smaller screens (budgets, categories, savings, groups, importers) are not awaited by the
@@ -98,3 +102,7 @@ assurance batches. Technical evidence lives in `release-1.0-phase3-4-findings-le
   differ from the Analytics month percentage.
 - Bank-statement import skips a real row whose description contains a summary word such as "limit"
   (for example an "OVER LIMIT FEE").
+- Privacy settings (notification capture, cloud AI, exchange-rate downloads) is reached from the Features
+  menu on Home (grid icon) and is the last entry in that list; it is not in the Settings menu yet.
+- The Safe-to-spend amount is not calculated yet in 1.0; the card shows a placeholder.
+- After a phone restart on Android 14+, captured notifications get no location until the app is opened once.

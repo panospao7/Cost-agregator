@@ -293,64 +293,84 @@ fun HomeScreen(
             }
             }
             else -> {
-                // S4-004R: Show currency loading/error state
-                when (val cs = homeCurrencyState) {
-                    is HomeCurrencyUiState.Loading -> androidx.compose.material3.LinearProgressIndicator(
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    is HomeCurrencyUiState.Error -> androidx.compose.material3.Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 4.dp),
-                        colors = androidx.compose.material3.CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f)
-                        )
-                    ) {
-                        Text(
-                            text = cs.message.asString(LocalContext.current),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onErrorContainer,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                        )
-                    }
-                    is HomeCurrencyUiState.Ready -> Unit
-                }
-                // S4-022: Show data-quality warning when some currencies could not be converted
-                if (state.isPartial) {
-                    androidx.compose.material3.Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 4.dp),
-                        colors = androidx.compose.material3.CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f)
-                        )
-                    ) {
-                        Text(
-                            text = stringResource(R.string.dashboard_partial_currency_warning),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onErrorContainer,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                        )
-                    }
-                }
-                // R17: prompt only when consent is on but OS listener access is off
-                if (notificationCaptureStatus == NotificationCaptureStatus.ACCESS_OFF) {
-                    NotificationCaptureStatusCard(
-                        status = notificationCaptureStatus,
-                        onManageAccess = onManageNotificationAccess,
-                        openFailed = notificationAccessOpenFailed,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-                    )
-                }
                 LazyVerticalGrid(
                 columns = GridCells.Fixed(2),
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding),
-                contentPadding = PaddingValues(16.dp),
+                // R31: top inset is 0 because the always-present banner item below plus the 16dp
+                // grid spacing supply it (see banner item).
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 0.dp, bottom = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
+                // F-DEV-1: the Scaffold content slot is Box-like, so banners emitted as siblings of
+                // the grid were drawn on top of each other at the top-left. They are rendered inside
+                // ONE full-span grid item instead (they scroll with content).
+                // R31: the item is ALWAYS present with a stable key so that banners appearing after
+                // first composition (R17 card on resume, isPartial flip, currency Ready->Error) grow
+                // this item in place rather than being inserted above the scroll-anchored keyed
+                // widgets (which would leave them off-screen). When no banner applies it has zero
+                // height; the 16dp grid spacing then gives the 16dp top inset (same as before). When
+                // banners show, the Column adds its own 16dp top padding and the spacing separates
+                // it from the first widget.
+                item(key = "home_status_banners", span = { GridItemSpan(maxLineSpan) }) {
+                    val hasStatusBanner = homeCurrencyState !is HomeCurrencyUiState.Ready ||
+                        state.isPartial ||
+                        notificationCaptureStatus == NotificationCaptureStatus.ACCESS_OFF
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = if (hasStatusBanner) 16.dp else 0.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        // S4-004R: Show currency loading/error state
+                        when (val cs = homeCurrencyState) {
+                            is HomeCurrencyUiState.Loading -> androidx.compose.material3.LinearProgressIndicator(
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            is HomeCurrencyUiState.Error -> androidx.compose.material3.Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = androidx.compose.material3.CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f)
+                                )
+                            ) {
+                                Text(
+                                    text = cs.message.asString(LocalContext.current),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                )
+                            }
+                            is HomeCurrencyUiState.Ready -> Unit
+                        }
+                        // S4-022: Show data-quality warning when some currencies could not be converted
+                        if (state.isPartial) {
+                            androidx.compose.material3.Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = androidx.compose.material3.CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f)
+                                )
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.dashboard_partial_currency_warning),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                )
+                            }
+                        }
+                        // R17: prompt only when consent is on but OS listener access is off
+                        if (notificationCaptureStatus == NotificationCaptureStatus.ACCESS_OFF) {
+                            NotificationCaptureStatusCard(
+                                status = notificationCaptureStatus,
+                                onManageAccess = onManageNotificationAccess,
+                                openFailed = notificationAccessOpenFailed,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
+                }
                 if (state.widgets.isEmpty()) {
                     item(span = { GridItemSpan(2) }) {
                         BentoCard {
@@ -406,14 +426,21 @@ fun HomeScreen(
                                             letterSpacing = 1.sp
                                         )
                                         Spacer(modifier = Modifier.height(8.dp))
+                                        // F-DEV-2: only claim a conversion problem when one exists.
+                                        widget.currencyQuality?.warningMessage?.let { quality ->
+                                            Text(
+                                                text = quality,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = SemanticColors.TextSecondary
+                                            )
+                                            Spacer(modifier = Modifier.height(8.dp))
+                                        }
+                                        // R31: only prompt for a budget when none exists.
                                         Text(
-                                            text = widget.currencyQuality?.warningMessage ?: "Budget data unavailable",
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = SemanticColors.TextSecondary
-                                        )
-                                        Spacer(modifier = Modifier.height(8.dp))
-                                        Text(
-                                            text = stringResource(R.string.widget_set_budget_cta),
+                                            text = stringResource(
+                                                if (widget.hasBudget) R.string.widget_safe_to_spend_unavailable
+                                                else R.string.widget_set_budget_cta
+                                            ),
                                             style = MaterialTheme.typography.labelSmall,
                                             color = SemanticColors.TextSecondary,
                                             letterSpacing = 0.5.sp

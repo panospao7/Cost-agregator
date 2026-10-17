@@ -288,6 +288,8 @@
     <string name="financial_runway_no_remaining_period">No queda ningún período</string>
     <string name="backup_restore_info_unavailable">La información de las copias de seguridad no está disponible temporalmente</string>
     <string name="debug_database_stats_unavailable">Las estadísticas de la base de datos no están disponibles temporalmente</string>
+    <!-- R31 -->
+    <string name="widget_safe_to_spend_unavailable">El disponible para gastar aún no está disponible.</string>
     <!-- R17 -->
     <string name="notification_access_title">Captura de notificaciones</string>
     <string name="notification_access_off_body">La captura de notificaciones está activada en la aplicación, pero el acceso a las notificaciones de Android está desactivado, por lo que no se pueden leer las notificaciones del banco. Actívalo en los ajustes del sistema para usar esta función.</string>

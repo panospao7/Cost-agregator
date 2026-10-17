@@ -41,6 +41,8 @@
     <string name="financial_runway_no_remaining_period">Δεν απομένει χρονικό διάστημα</string>
     <string name="backup_restore_info_unavailable">Οι πληροφορίες αντιγράφων ασφαλείας δεν είναι προσωρινά διαθέσιμες</string>
     <string name="debug_database_stats_unavailable">Τα στατιστικά της βάσης δεδομένων δεν είναι προσωρινά διαθέσιμα</string>
+    <!-- R31 -->
+    <string name="widget_safe_to_spend_unavailable">Το διαθέσιμο προς ξόδεμα δεν είναι ακόμη διαθέσιμο.</string>
     <!-- R17 -->
     <string name="notification_access_title">Καταγραφή ειδοποιήσεων</string>
     <string name="notification_access_off_body">Η καταγραφή ειδοποιήσεων είναι ενεργοποιημένη στην εφαρμογή, αλλά η πρόσβαση στις ειδοποιήσεις του Android είναι απενεργοποιημένη, οπότε δεν μπορούν να διαβαστούν ειδοποιήσεις τράπεζας. Ενεργοποιήστε την στις ρυθμίσεις συστήματος για να χρησιμοποιήσετε αυτή τη λειτουργία.</string>
