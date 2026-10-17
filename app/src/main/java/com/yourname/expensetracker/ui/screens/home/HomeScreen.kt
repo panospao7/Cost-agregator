@@ -177,7 +177,17 @@ fun HomeScreen(
     var showCategoryBreakdown by remember { mutableStateOf(false) }
     var showFeaturesMenu by remember { mutableStateOf(false) }
 
+    // R18b: bounded "changes paused during backup/restore" message for user-started writes.
+    val writeBlockedSnackbarHostState = remember { SnackbarHostState() }
+    val writeBlockedContext = LocalContext.current
+    LaunchedEffect(viewModel) {
+        viewModel.writeBlockedMessages.collect { message ->
+            writeBlockedSnackbarHostState.showSnackbar(message.asString(writeBlockedContext))
+        }
+    }
+
     Scaffold(
+        snackbarHost = { SnackbarHost(writeBlockedSnackbarHostState) },
         containerColor = SemanticColors.BaseNavy,
         topBar = {
             TopAppBar(

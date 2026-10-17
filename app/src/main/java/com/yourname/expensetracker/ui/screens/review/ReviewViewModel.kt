@@ -30,6 +30,7 @@ import com.yourname.expensetracker.domain.ai.usecase.SuggestCategoryFallbackUseC
 import com.yourname.expensetracker.domain.ai.usecase.SuggestReceiptExtractionUseCase
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.domain.model.Result
+import com.yourname.expensetracker.ui.util.guardedWrite
 import com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementResult
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
 import timber.log.Timber
@@ -1145,7 +1146,17 @@ class ReviewViewModel @Inject constructor(
     @Suppress("DEPRECATION")
     fun clearScannedData() {
         viewModelScope.launch {
-            receiptRepository.clearAllScannedReceipts()
+            // R18b: blocked by a backup/restore write barrier -> bounded message, nothing cleared.
+            // This VM has no Context, so its existing String errorMessage channel gets the same
+            // retry-later wording as ui_write_blocked_maintenance (debug-only action).
+            guardedWrite(
+                onBlocked = {
+                    _errorMessage.value = "Changes are paused while a backup or restore is running. " +
+                        "Please try again in a moment."
+                }
+            ) {
+                receiptRepository.clearAllScannedReceipts()
+            } ?: return@launch
             _errorMessage.value = "All scanned debug data cleared."
         }
     }

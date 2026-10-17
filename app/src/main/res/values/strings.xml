@@ -864,6 +864,9 @@
     <string name="privacy_toggle_device_gps">Device GPS location</string>
     <string name="privacy_toggle_encrypted_backup">Encrypted backups</string>
     <string name="privacy_toggle_debug_persist">Persist debug data</string>
+    <!-- R18: group-linked expense guard -->
+    <string name="expense_delete_blocked_group_linked">This expense is part of a shared group, so it can\'t be deleted. Deleting it would change the group\'s balances.</string>
+    <string name="expense_edit_blocked_group_linked">This expense is part of a shared group, so its amount, currency, type and sharing can\'t be changed. You can still edit other details, such as category or merchant.</string>
     <!-- R23 -->
     <string name="privacy_section_network">Network</string>
     <string name="privacy_toggle_exchange_rate_download">Download exchange rates (ECB)</string>
@@ -2587,5 +2590,7 @@
     <string name="financial_runway_review_budget">Review budget</string>
     <string name="backup_restore_receipt_images_skipped_format">%1$d receipt images could not be restored.</string>
     <string name="restart_required_database_operation">The app must restart to finish a database operation. Changes are paused until it restarts.</string>
+    <!-- R18b: user-started write attempted while backup/restore/reset holds the write barrier -->
+    <string name="ui_write_blocked_maintenance">Changes are paused while a backup or restore is running. Please try again in a moment.</string>
 
 </resources>

@@ -6,6 +6,8 @@ import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.Warranty
 import com.yourname.expensetracker.data.database.entity.WarrantyStatus
 import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
+import com.yourname.expensetracker.ui.util.UI_WRITE_BLOCKED_MESSAGE
 import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
@@ -186,7 +188,14 @@ class WarrantyTrackerViewModel @Inject constructor(
      */
     private fun reportMutationFailure(e: Exception) {
         Timber.w("warranty mutation failed (%s)", e::class.simpleName)
-        _state.update { it.copy(mutationError = UiText.StringResource(R.string.warranty_mutation_failed)) }
+        // R18b: a write rejected by the backup/restore/reset write barrier gets the shared,
+        // retry-later maintenance message instead of the generic failure message.
+        val message = if (e is DatabaseAccessBlockedException) {
+            UI_WRITE_BLOCKED_MESSAGE
+        } else {
+            UiText.StringResource(R.string.warranty_mutation_failed)
+        }
+        _state.update { it.copy(mutationError = message) }
     }
 
     fun clearAddWarrantySuccess() {

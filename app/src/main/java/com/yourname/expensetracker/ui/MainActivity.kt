@@ -88,6 +88,8 @@ import com.yourname.expensetracker.ui.util.HapticType
 import com.yourname.expensetracker.ui.util.rememberHapticFeedback
 import com.yourname.expensetracker.ui.util.restartApp
 import dagger.hilt.android.AndroidEntryPoint
+import com.yourname.expensetracker.domain.transaction.lifecycle.GroupLinkedExpenseException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
@@ -854,10 +856,13 @@ fun MainScreen(
                         onSplitComplete = { shares, splitType ->
                             val targetExpenseId = currentDestination.resolvedExpenseId
                             coroutineScope.launch {
+                                // R18: a group-linked expense's share split is a money edit and is
+                                // blocked by the lifecycle coordinator; show the bounded guidance.
+                                var blockedGroupLinked = false
                                 val applied = if (targetExpenseId == null) {
                                     true
                                 } else {
-                                runCatching {
+                                    try {
                                         applyVisualSplitToExpense(
                                             expenseRepository = expenseRepository,
                                             gson = gson,
@@ -866,12 +871,25 @@ fun MainScreen(
                                             splitType = splitType,
                                             templateId = currentDestination.templateId
                                         )
-                                    }.onFailure { error ->
+                                    } catch (e: CancellationException) {
+                                        throw e
+                                    } catch (error: GroupLinkedExpenseException) {
+                                        blockedGroupLinked = true
+                                        Timber.w("Visual split blocked code=%s", error.code)
+                                        false
+                                    } catch (error: Exception) {
                                         Timber.e(error, "Failed to apply visual split for expenseId=%s", targetExpenseId)
-                                    }.getOrDefault(false)
+                                        false
+                                    }
                                 }
 
                                 if (!applied) {
+                                    if (blockedGroupLinked) {
+                                        snackbarHostState.showSnackbar(
+                                            context.getString(R.string.expense_edit_blocked_group_linked)
+                                        )
+                                        return@launch
+                                    }
                                     snackbarHostState.showSnackbar("Unable to apply split")
                                     return@launch
                                 }

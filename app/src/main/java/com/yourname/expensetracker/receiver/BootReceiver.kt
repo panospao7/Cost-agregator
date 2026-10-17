@@ -3,6 +3,7 @@ package com.yourname.expensetracker.receiver
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import com.yourname.expensetracker.data.database.DatabaseOpenGate
 import com.yourname.expensetracker.service.DataSyncFgsTimeoutGuard
 import com.yourname.expensetracker.service.NotificationCaptureService
@@ -29,8 +30,6 @@ class BootReceiver : BroadcastReceiver() {
             return
         }
         if (intent.action == Intent.ACTION_BOOT_COMPLETED || intent.action == Intent.ACTION_MY_PACKAGE_REPLACED) {
-            Timber.d("Boot completed - attempting to start NotificationCaptureService")
-            
             // Try to start the service
             // Note: On Android 8+, this may fail silently if the app hasn't been opened yet
             // The system will bind to NotificationListenerService when the user grants permission
@@ -39,20 +38,42 @@ class BootReceiver : BroadcastReceiver() {
                 val guard = DataSyncFgsTimeoutGuard.from(context)
                 // A fresh boot restarts the elapsed-realtime clock; drop the stale timestamp
                 // so it cannot re-block once the new uptime passes it. Not done on
-                // package replacement, which keeps the same boot.
+                // package replacement, which keeps the same boot. Also done when the start
+                // is skipped below, so a stale timestamp cannot block a later foreground start.
                 if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
                     guard.clear()
+                }
+                // R18c (V-I-6): Android 15 (API 35) forbids starting a dataSync foreground
+                // service from BOOT_COMPLETED; attempting it throws, so skip it deliberately.
+                if (!shouldStartOnBoot(intent.action, Build.VERSION.SDK_INT)) {
+                    Timber.i("BOOT_FGS_START_SKIPPED_API35")
+                    return
                 }
                 // RT-C1: skip promotion while a recorded dataSync FGS timeout is active.
                 if (guard.isPromotionBlocked()) {
                     Timber.i("FGS_PROMOTION_SKIPPED")
                     return
                 }
+                // Logged only once the start is actually attempted (not on the skip paths above).
+                Timber.d("Boot completed - attempting to start NotificationCaptureService")
                 val serviceIntent = Intent(context, NotificationCaptureService::class.java)
                 context.startForegroundService(serviceIntent)
             } catch (e: Exception) {
-                Timber.w(e, "Could not start service on boot - may need user interaction first")
+                // Bounded diagnostic only: class name, never the exception object or message.
+                Timber.w("BOOT_FGS_START_FAILED class=%s", e::class.java.simpleName)
             }
         }
+    }
+
+    internal companion object {
+        /** First API level that forbids starting a dataSync FGS from BOOT_COMPLETED (Android 15). */
+        const val BOOT_FGS_RESTRICTED_FROM_SDK = 35
+
+        /**
+         * False only for BOOT_COMPLETED on API 35+. MY_PACKAGE_REPLACED is not restricted, and
+         * lower API levels still start the service as before.
+         */
+        internal fun shouldStartOnBoot(action: String?, sdkInt: Int): Boolean =
+            !(action == Intent.ACTION_BOOT_COMPLETED && sdkInt >= BOOT_FGS_RESTRICTED_FROM_SDK)
     }
 }

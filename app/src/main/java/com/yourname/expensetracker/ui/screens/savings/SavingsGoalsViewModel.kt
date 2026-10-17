@@ -8,6 +8,8 @@ import com.yourname.expensetracker.data.repository.SavingsSweepAcceptanceCoordin
 import com.yourname.expensetracker.data.repository.SavingsSweepAcceptanceResult
 import com.yourname.expensetracker.domain.model.GoalProtectionLevel
 import com.yourname.expensetracker.domain.model.SavingsGoal
+import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.ui.util.guardedWrite
 import com.yourname.expensetracker.domain.savings.*
 import com.yourname.expensetracker.domain.usecase.savings.LifestyleSavingsPromptUseCase
 import com.yourname.expensetracker.domain.usecase.savings.LifestyleSavingsRecommendation
@@ -23,6 +25,7 @@ import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -73,6 +76,15 @@ data class SavingsGoalsState(
      }
 }
 
+/** One-shot events emitted by [SavingsGoalsViewModel] (R18b). */
+sealed interface SavingsGoalsEvent {
+    /** Emitted only after the goal write completed successfully. */
+    object GoalCreated : SavingsGoalsEvent
+
+    /** Emitted when a write was rejected because backup/restore/reset holds the write barrier. */
+    data class WriteBlocked(val message: UiText) : SavingsGoalsEvent
+}
+
 data class SmartRecommendation(
     val goal: SavingsGoal,
     val recommendedAmount: Double,
@@ -105,6 +117,10 @@ class SavingsGoalsViewModel @Inject constructor(
     val state: StateFlow<SavingsGoalsState> = _state.asStateFlow()
     private var goalsCollectionJob: Job? = null
     private var recommendationComputationId = 0L
+
+    private val _events = Channel<SavingsGoalsEvent>(Channel.BUFFERED)
+    /** One-shot UI events (R18b): goal created after the write succeeded, or write blocked. */
+    val events: Flow<SavingsGoalsEvent> = _events.receiveAsFlow()
 
  init {
  loadGoals()
@@ -312,16 +328,25 @@ class SavingsGoalsViewModel @Inject constructor(
     
     fun acceptLifestyleRecommendation(goalId: Long?) {
         viewModelScope.launch {
-            lifestyleSavingsPromptUseCase.recordAcceptance(goalId)
+            guardedWrite(::emitWriteBlocked) {
+                lifestyleSavingsPromptUseCase.recordAcceptance(goalId)
+            } ?: return@launch
             _state.update { it.copy(lifestyleRecommendation = null) }
         }
     }
-    
+
     fun dismissLifestyleRecommendation(reason: String? = null) {
         viewModelScope.launch {
-            lifestyleSavingsPromptUseCase.recordDismissal(reason)
+            guardedWrite(::emitWriteBlocked) {
+                lifestyleSavingsPromptUseCase.recordDismissal(reason)
+            } ?: return@launch
             _state.update { it.copy(lifestyleRecommendation = null) }
         }
+    }
+
+    /** R18b: surfaces the bounded maintenance message through the one-shot [events] channel. */
+    private fun emitWriteBlocked(message: UiText) {
+        _events.trySend(SavingsGoalsEvent.WriteBlocked(message))
     }
 
     fun addGoal(name: String, targetAmount: Double, targetDate: Long?, protectionLevel: GoalProtectionLevel) {
@@ -337,8 +362,13 @@ class SavingsGoalsViewModel @Inject constructor(
                 currencyAssumption = "EXPLICIT_HOME_CURRENCY",
                 createdAt = timeProvider.now()
             )
-            savingsGoalRepository.createSavingsGoal(goal)
+            // R18b: the success event is emitted only after the write completed; a blocked write
+            // emits the maintenance message instead and never reports "created".
+            guardedWrite(::emitWriteBlocked) {
+                savingsGoalRepository.createSavingsGoal(goal)
+            } ?: return@launch
             loadGamification() // Refresh level/achievements
+            _events.trySend(SavingsGoalsEvent.GoalCreated)
         }
     }
 
@@ -382,7 +412,9 @@ class SavingsGoalsViewModel @Inject constructor(
             if (savingsGoalRepository.observeSavingsGoals().first().firstOrNull { it.id == goalId } != goal) return@launch
             if (recommendation != null && (recommendation.currency != currencySettingsRepository.homeCurrency().first() ||
                     recommendation.rateTimestamp != currencySettingsRepository.lastRateUpdate().first())) return@launch
-            val wasAdded = savingsGoalRepository.incrementSavingsGoalAmount(goalId, amount)
+            val wasAdded = guardedWrite(::emitWriteBlocked) {
+                savingsGoalRepository.incrementSavingsGoalAmount(goalId, amount)
+            } ?: return@launch
             if (wasAdded) {
                 val recorded = recordContributionHistory(
                     goalId = goalId,
@@ -431,7 +463,9 @@ class SavingsGoalsViewModel @Inject constructor(
 
     fun deleteGoal(goal: SavingsGoal) {
         viewModelScope.launch {
-            savingsGoalRepository.deleteSavingsGoal(goal)
+            guardedWrite(::emitWriteBlocked) {
+                savingsGoalRepository.deleteSavingsGoal(goal)
+            }
         }
     }
 

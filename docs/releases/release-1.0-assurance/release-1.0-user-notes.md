@@ -41,6 +41,15 @@ assurance batches. Technical evidence lives in `release-1.0-phase3-4-findings-le
   savings suggestion now keeps upcoming bills inside the "Buffer" figure, so it no longer suggests
   moving money you need for bills.
 
+- **Shared-group expenses (R18).** An expense that belongs to a shared group can no longer be deleted
+  from the transaction screens, and its amount, currency, type and sharing can't be changed there
+  (this would silently break the group's balances). Category, merchant, notes and date can still be
+  edited.
+- **Saving during backup or restore (R18).** Saves on screens such as savings goals, home, categories,
+  recurring expenses, the spending map, warranties, the assistant and split templates now show
+  "Changes are paused while a backup or restore is running" instead of crashing or failing silently.
+  "Savings goal created" appears only after the goal is saved.
+
 ## Known limitations (1.0)
 
 - About 60 smaller screens (budgets, categories, savings, groups, importers) are not awaited by the
@@ -54,3 +63,11 @@ assurance batches. Technical evidence lives in `release-1.0-phase3-4-findings-le
   or use "Already recorded".
 - After changing your home currency, sorting or filtering transactions by amount may use the previous
   currency's values for older entries; totals, the dashboard and analytics are unaffected (planned for 1.0.1).
+- An expense that is part of a shared group can't be deleted or have its amount changed anywhere in the
+  app: there is no way yet to remove a single expense from a group, and "Delete group" archives the
+  group (its expenses stay linked). A "remove from group" option is planned after 1.0.
+- Android 15 and later: after the phone restarts, the ongoing "Expense Tracker Active" notification
+  appears only once the app is opened (Android no longer lets apps start it at boot). Notification
+  capture itself keeps working.
+- Split templates: if a template save is blocked by a running backup, the editor closes without a
+  message and the template is not saved; save it again afterwards.

@@ -21,6 +21,7 @@ import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.util.MonotonicTimeProvider
 import com.yourname.expensetracker.ui.components.asString
+import com.yourname.expensetracker.ui.util.guardedWrite
 import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
 import com.yourname.expensetracker.ui.mappers.toUi
 import com.yourname.expensetracker.R
@@ -396,8 +397,12 @@ class AssistantViewModel @Inject constructor(
     fun clearSession() {
         cancelCurrentQuery()
         viewModelScope.launch {
-            _uiState.value.currentSessionId?.let { sessionId ->
-                aiChatRepository.clearSession(sessionId)
+            val sessionToClear = _uiState.value.currentSessionId
+            if (sessionToClear != null) {
+                // R18b: blocked by backup/restore -> keep the session visible and show the message.
+                guardedWrite(::showWriteBlocked) {
+                    aiChatRepository.clearSession(sessionToClear)
+                } ?: return@launch
             }
             _uiState.value = _uiState.value.copy(
                 messages = emptyList(),
@@ -422,9 +427,16 @@ class AssistantViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(showClearHistoryConfirm = false)
         cancelCurrentQuery()
         viewModelScope.launch {
-            aiChatRepository.clearAllHistory()
+            guardedWrite(::showWriteBlocked) {
+                aiChatRepository.clearAllHistory()
+            } ?: return@launch
             clearSession()
         }
+    }
+
+    /** R18b: surfaces the bounded maintenance message through the existing errorMessage channel. */
+    private fun showWriteBlocked(message: UiText) {
+        _uiState.value = _uiState.value.copy(errorMessage = message.asString(application))
     }
 
     private suspend fun ensureSessionIfNeeded(): Long? {

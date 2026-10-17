@@ -1033,6 +1033,20 @@ class TransactionLifecycleCoordinator @Inject constructor(
             database.withTransaction {
             val existing = expenseDao.getById(expense.id)
                 ?: throw IllegalArgumentException("Expense not found: ${expense.id}")
+
+            // R18: money / ownership-share edits are blocked for a group-linked expense;
+            // non-money edits (note, merchant, category, ...) stay allowed. Thrown before
+            // any write or event, so nothing is persisted.
+            val moneyOrShareChanged = existing.amount != expense.amount ||
+                existing.currency != expense.currency ||
+                existing.transactionType != expense.transactionType ||
+                existing.isNotMine != expense.isNotMine ||
+                existing.isSharedExpense != expense.isSharedExpense ||
+                existing.mySharePercentage != expense.mySharePercentage ||
+                existing.myShareAmount != expense.myShareAmount
+            if (moneyOrShareChanged) {
+                failIfGroupLinkedForEdit(expense.id)
+            }
             val beforeSnapshot = expenseToSnapshot(existing)
 
             // Recompute dedupeKey if key fields changed
@@ -1730,6 +1744,9 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     return@withTransaction
                 }
 
+                // R18: the type actually changes — block on a group-linked expense.
+                failIfGroupLinkedForEdit(expenseId)
+
                 val beforeSnapshot = expenseToSnapshot(existing)
                 val newDedupeKey = dedupeKeyForUpdate(
                     existing.dedupeKey, existing.amount, existing.merchant, existing.date, existing.currency, newType
@@ -1939,6 +1956,12 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 return@withTransaction
             }
 
+            // R18: a type change on a group-linked expense is blocked (transfer-detail-only
+            // edits with an unchanged type are not money edits and stay allowed).
+            if (existing.transactionType != newType) {
+                failIfGroupLinkedForEdit(expenseId)
+            }
+
             val beforeSnapshot = expenseToSnapshot(existing)
 
             val newDedupeKey = dedupeKeyForUpdate(
@@ -2076,6 +2099,36 @@ class TransactionLifecycleCoordinator @Inject constructor(
         reason: String? = null,
         source: String = "USER_EDIT"
     ) {
+        // R18: ownership/share edits change group-relevant money fields. The group
+        // coordinator uses updateOwnershipDbOnlyV2 (unchanged) and never this wrapper,
+        // so the block lives only here. Restore barrier first (fail-closed, same label
+        // family as V2), then plain reads before delegating: reads are not writes, so
+        // no runWrite scope is needed; V2 keeps its own barrier + transaction.
+        // Only a real change (same normalized comparison as V2) on a linked expense is
+        // blocked; unchanged values delegate so V2 returns its NoOp. The residual
+        // check-then-delegate window is accepted: group links are created only by the
+        // group coordinator, never concurrently with a user ownership edit.
+        writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.updateOwnership")
+        val current = expenseDao.getById(expenseId)
+        if (current != null) {
+            val normalized = current.copy(
+                isNotMine = isNotMine,
+                ownerName = ownerName,
+                isSharedExpense = isSharedExpense,
+                sharedWithName = sharedWithName,
+                mySharePercentage = mySharePercentage,
+                myShareAmount = myShareAmount
+            ).normalizeOwnership()
+            val ownershipChanged = current.isNotMine != normalized.isNotMine ||
+                current.ownerName != normalized.ownerName ||
+                current.isSharedExpense != normalized.isSharedExpense ||
+                current.sharedWithName != normalized.sharedWithName ||
+                current.mySharePercentage != normalized.mySharePercentage ||
+                current.myShareAmount != normalized.myShareAmount
+            if (ownershipChanged) {
+                failIfGroupLinkedForEdit(expenseId)
+            }
+        }
         val mutation = updateOwnershipDbOnlyV2(
             expenseId = expenseId,
             isNotMine = isNotMine,
@@ -2460,6 +2513,19 @@ class TransactionLifecycleCoordinator @Inject constructor(
     }
 
     /**
+     * R18: read-only group-link probe. Throws [GroupLinkedExpenseException] with the
+     * bounded edit code when the expense is linked to a shared group. Callers inside a
+     * write transaction run this before any write/event so nothing is persisted.
+     */
+    private suspend fun failIfGroupLinkedForEdit(expenseId: Long) {
+        if (database.groupExpenseDao().existsForExpense(expenseId)) {
+            throw GroupLinkedExpenseException(
+                GroupLinkedExpenseException.EXPENSE_EDIT_BLOCKED_GROUP_LINKED
+            )
+        }
+    }
+
+    /**
      * Deletes an expense with full lifecycle handling:
      * write DELETED event → delete.
      *
@@ -2501,6 +2567,13 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     outcome = ExpenseDeleteOutcome.NotFound
                     return@withTransaction
                 }
+                // R18: no single-group-expense delete/sync path exists, so a group-linked
+                // expense must not be deleted here (the FK CASCADE would silently drop
+                // the group_expenses row and corrupt group balances). No event, no delete.
+                if (database.groupExpenseDao().existsForExpense(fresh.id)) {
+                    outcome = ExpenseDeleteOutcome.LinkedToGroup
+                    return@withTransaction
+                }
                 val snapshot = expenseToSnapshot(fresh)
 
                 transactionEventDao.insert(
@@ -2528,6 +2601,13 @@ class TransactionLifecycleCoordinator @Inject constructor(
             if (outcome == ExpenseDeleteOutcome.NotFound) {
                 return Result.failure(
                     IllegalArgumentException("Expense not found: ${expense.id}")
+                )
+            }
+            if (outcome == ExpenseDeleteOutcome.LinkedToGroup) {
+                return Result.failure(
+                    GroupLinkedExpenseException(
+                        GroupLinkedExpenseException.EXPENSE_DELETE_BLOCKED_GROUP_LINKED
+                    )
                 )
             }
 
@@ -2708,7 +2788,10 @@ private enum class ExpenseUpdateOutcome {
  */
 private enum class ExpenseDeleteOutcome {
     Deleted,
-    NotFound
+    NotFound,
+
+    /** R18: the expense is linked to a shared group — no event, no delete. */
+    LinkedToGroup
 }
 
 /**

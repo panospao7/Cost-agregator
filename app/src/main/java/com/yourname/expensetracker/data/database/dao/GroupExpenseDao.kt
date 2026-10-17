@@ -33,6 +33,13 @@ interface GroupExpenseDao {
     @Query("SELECT * FROM group_expenses WHERE expenseId = :expenseId LIMIT 1")
     suspend fun getGroupExpenseForExpense(expenseId: Long): GroupExpense?
     
+    /**
+     * R18: read-only link probe used by the transaction lifecycle coordinator to
+     * block delete / money edits of an expense that is linked to a shared group.
+     */
+    @Query("SELECT EXISTS(SELECT 1 FROM group_expenses WHERE expenseId = :expenseId)")
+    suspend fun existsForExpense(expenseId: Long): Boolean
+
     @Query("SELECT * FROM group_expenses WHERE id = :id LIMIT 1")
     suspend fun getById(id: Long): GroupExpense?
     

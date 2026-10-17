@@ -298,6 +298,9 @@
     <string name="notification_access_open_failed">No se pudo abrir la pantalla de ajustes. Abre Ajustes y busca \"Acceso a notificaciones\".</string>
     <string name="money_radar_unavailable">Money Radar no está disponible temporalmente. No se pudieron evaluar algunas señales financieras.</string>
     <string name="stress_forecast_unavailable">La previsión de estrés financiero no está disponible temporalmente. No hay ninguna estimación de riesgo disponible.</string>
+    <!-- R18: group-linked expense guard -->
+    <string name="expense_delete_blocked_group_linked">Este gasto forma parte de un grupo compartido y no se puede eliminar, porque cambiaría los saldos del grupo.</string>
+    <string name="expense_edit_blocked_group_linked">Este gasto forma parte de un grupo compartido, así que no se pueden cambiar su importe, moneda, tipo ni reparto. Puedes seguir editando otros datos, como la categoría o el comercio.</string>
     <!-- R23 -->
     <string name="privacy_section_network">Red</string>
     <string name="privacy_toggle_exchange_rate_download">Descargar tipos de cambio (BCE)</string>
@@ -315,6 +318,8 @@
     <string name="financial_runway_review_budget">Revisar presupuesto</string>
     <string name="backup_restore_receipt_images_skipped_format">No se pudieron restaurar %1$d imágenes de recibos.</string>
     <string name="restart_required_database_operation">La aplicación debe reiniciarse para terminar una operación de la base de datos. Los cambios están en pausa hasta que se reinicie.</string>
+    <!-- R18b: user-started write attempted while backup/restore/reset holds the write barrier -->
+    <string name="ui_write_blocked_maintenance">Los cambios están en pausa mientras se realiza una copia de seguridad o una restauración. Inténtalo de nuevo en un momento.</string>
     <string name="groups_suggested_transfers_hint">Pagos sugeridos para equilibrar los saldos. Los pagos no se registran en la aplicación.</string>
     <string name="warranty_mutation_failed">No se pudo guardar el cambio. Inténtalo de nuevo.</string>
     <string name="recurring_mark_paid_dialog_title">Marcar factura como pagada</string>

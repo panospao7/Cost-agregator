@@ -28,6 +28,7 @@ import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
+import com.yourname.expensetracker.ui.util.guardedWrite
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -86,6 +87,8 @@ data class SpendingMapState(
  val totalUnlocatedExpenses: Int = 0,
  val isResolvingLocation: Boolean = false,
  val snackbarMessage: String? = null,
+ /** R18b: resource-backed message shown when a write hits the backup/restore write barrier. */
+ val snackbarUiText: com.yourname.expensetracker.domain.model.UiText? = null,
  val unlocatedExpenses: List<Expense> = emptyList(),
  val expenseToPin: Expense? = null,
  val selectedCategories: Set<String> = emptySet(),
@@ -229,7 +232,7 @@ class SpendingMapViewModel @Inject constructor(
     }
 
     fun onResolveLocationForMarker(marker: MapExpenseMarker) {
-        viewModelScope.launch(Dispatchers.IO) {
+        val job = viewModelScope.launch(Dispatchers.IO) {
             _state.update { it.copy(isResolvingLocation = true) }
             val result = try {
                 locationResolver.resolve(
@@ -237,8 +240,10 @@ class SpendingMapViewModel @Inject constructor(
                     transactionDateMs = marker.date,
                     forceRefresh = true
                 )
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
-                Log.w(TAG, "Temporary location resolution failure for expenseId=${marker.expenseId}", e)
+                Log.w(TAG, "op=resolve_location_temporary_failure error=${e.javaClass.simpleName}")
                 _state.update { it.copy(
                     isResolvingLocation = false,
                     snackbarMessage = TEMPORARY_LOCATION_FAILURE_MESSAGE
@@ -247,14 +252,20 @@ class SpendingMapViewModel @Inject constructor(
             }
             when (result) {
                 is LocationResolutionResult.Resolved -> {
-                    expenseRepository.updateExpenseLocation(
-                        expenseId = marker.expenseId,
-                        latitude = result.latitude,
-                        longitude = result.longitude,
-                        source = result.source,
-                        placeId = result.osmId,
-                        address = result.displayAddress
-                    )
+                    // R18 review: user-started write -> guarded. On a block, surface the bounded
+                    // message AND reset isResolvingLocation so the spinner never sticks.
+                    guardedWrite({ message ->
+                        _state.update { it.copy(isResolvingLocation = false, snackbarUiText = message) }
+                    }) {
+                        expenseRepository.updateExpenseLocation(
+                            expenseId = marker.expenseId,
+                            latitude = result.latitude,
+                            longitude = result.longitude,
+                            source = result.source,
+                            placeId = result.osmId,
+                            address = result.displayAddress
+                        )
+                    } ?: return@launch
                     _state.update { it.copy(
                         isResolvingLocation = false,
                         snackbarMessage = "Location resolved for ${marker.merchant}"
@@ -282,18 +293,22 @@ class SpendingMapViewModel @Inject constructor(
                 }
             }
         }
+        // Every exit path (success, block, cancellation, unexpected failure) clears the spinner.
+        job.invokeOnCompletion { _state.update { it.copy(isResolvingLocation = false) } }
     }
 
     fun onPoiSelected(poi: NearbyPoi, forMarker: MapExpenseMarker) {
         viewModelScope.launch(Dispatchers.IO) {
-            expenseRepository.updateExpenseLocation(
-                expenseId = forMarker.expenseId,
-                latitude = poi.latitude,
-                longitude = poi.longitude,
-                source = com.yourname.expensetracker.domain.config.AppConfig.Location.SOURCE_USER_CONFIRMED_POI,
-                placeId = poi.osmId,
-                address = poi.displayAddress
-            )
+            guardedWrite(::showWriteBlocked) {
+                expenseRepository.updateExpenseLocation(
+                    expenseId = forMarker.expenseId,
+                    latitude = poi.latitude,
+                    longitude = poi.longitude,
+                    source = com.yourname.expensetracker.domain.config.AppConfig.Location.SOURCE_USER_CONFIRMED_POI,
+                    placeId = poi.osmId,
+                    address = poi.displayAddress
+                )
+            } ?: return@launch
             val resolved = LocationResolutionResult.Resolved(
                 latitude = poi.latitude,
                 longitude = poi.longitude,
@@ -302,7 +317,11 @@ class SpendingMapViewModel @Inject constructor(
                 displayAddress = poi.displayAddress,
                 confidence = 0.9f
             )
-            merchantLocationRepository.saveLocation(forMarker.merchant, resolved)
+            // R18 review: a barrier raised between the two writes must surface the bounded
+            // message instead of crashing (the expense write above already succeeded).
+            guardedWrite(::showWriteBlocked) {
+                merchantLocationRepository.saveLocation(forMarker.merchant, resolved)
+            } ?: return@launch
             _state.update { it.copy(
                 overpassCandidates = emptyList(),
                 snackbarMessage = "Location set to ${poi.name}"
@@ -389,8 +408,18 @@ class SpendingMapViewModel @Inject constructor(
         }
     }
 
-    fun onSnackbarDismissed() {
+    /** Clears only the plain snackbar message; a pending [SpendingMapState.snackbarUiText] is kept. */
+    fun onSnackbarMessageDismissed() {
         _state.update { it.copy(snackbarMessage = null) }
+    }
+
+    /** Clears only the UiText snackbar message; a pending [SpendingMapState.snackbarMessage] is kept. */
+    fun onSnackbarUiTextDismissed() {
+        _state.update { it.copy(snackbarUiText = null) }
+    }
+
+    private fun showWriteBlocked(message: com.yourname.expensetracker.domain.model.UiText) {
+        _state.update { it.copy(snackbarUiText = message) }
     }
 
     fun dismissGpsPrivacyBlocked() {
@@ -525,14 +554,16 @@ class SpendingMapViewModel @Inject constructor(
 
     fun assignLocationToExpense(expense: Expense, lat: Double, lon: Double, address: String?, osmId: String?) {
         viewModelScope.launch(Dispatchers.IO) {
-            expenseRepository.updateExpenseLocation(
-                expenseId = expense.id,
-                latitude = lat,
-                longitude = lon,
-                source = com.yourname.expensetracker.domain.config.AppConfig.Location.SOURCE_USER_MANUAL,
-                placeId = osmId,
-                address = address
-            )
+            guardedWrite(::showWriteBlocked) {
+                expenseRepository.updateExpenseLocation(
+                    expenseId = expense.id,
+                    latitude = lat,
+                    longitude = lon,
+                    source = com.yourname.expensetracker.domain.config.AppConfig.Location.SOURCE_USER_MANUAL,
+                    placeId = osmId,
+                    address = address
+                )
+            } ?: return@launch
             _state.update { it.copy(
                 expenseToPin = null,
                 snackbarMessage = "Location saved for ${expense.merchant}"
