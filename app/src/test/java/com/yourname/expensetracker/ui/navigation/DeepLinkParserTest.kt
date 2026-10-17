@@ -83,6 +83,17 @@ class DeepLinkParserTest {
     }
 
     @Test
+    fun `deferred feature hosts are not deep-link routable`() {
+        listOf(
+            "tax", "tax_configuration", "investment", "investment_portfolio",
+            "challenges", "spending_challenges"
+        ).forEach { host ->
+            val decision = parseDeepLink(Uri.parse("expensetracker://$host"))
+            assertTrue("Host '$host' must be rejected", decision is DeepLinkDecision.Reject)
+        }
+    }
+
+    @Test
     fun `wrong scheme rejects`() {
         val decision = parseDeepLink(Uri.parse("https://expensetracker.app/home"))
         assertTrue(decision is DeepLinkDecision.Reject)

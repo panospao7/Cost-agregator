@@ -78,4 +78,6 @@
     <string name="recurring_advanced_only_info">Δεν προστέθηκε νέο έξοδο. Η επόμενη ημερομηνία μετακινήθηκε μπροστά.</string>
     <string name="recurring_error_currency_unavailable">Δεν ήταν δυνατή η ανάγνωση του βασικού σας νομίσματος, γι\' αυτό το επαναλαμβανόμενο έξοδο δεν αποθηκεύτηκε. Δοκιμάστε ξανά.</string>
     <string name="recurring_error_generic">Κάτι πήγε στραβά. Δοκιμάστε ξανά.</string>
+    <string name="feature_privacy_settings">Ρυθμίσεις απορρήτου</string>
+    <string name="feature_privacy_settings_desc">Ελέγξτε πώς χρησιμοποιούνται τα δεδομένα σας</string>
 </resources>

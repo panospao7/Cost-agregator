@@ -66,6 +66,54 @@ class FeatureConfigNavigationContractTest {
     }
 
     @Test
+    fun `deferred features are hidden from the menu when not available`() {
+        val ids = FeatureConfig.availableFeatures(
+            bankSyncAvailable = true,
+            deferredAvailable = false
+        ).map { it.id }
+        DeferredFeatureGate.DEFERRED_FEATURE_IDS.forEach { id ->
+            assertFalse("Deferred feature '$id' must be hidden", id in ids)
+        }
+        assertTrue("savings must remain", "savings" in ids)
+        assertTrue("privacy must remain", "privacy" in ids)
+    }
+
+    @Test
+    fun `deferred features are shown in the menu when available`() {
+        val ids = FeatureConfig.availableFeatures(
+            bankSyncAvailable = true,
+            deferredAvailable = true
+        ).map { it.id }
+        DeferredFeatureGate.DEFERRED_FEATURE_IDS.forEach { id ->
+            assertTrue("Deferred feature '$id' must be shown", id in ids)
+        }
+    }
+
+    @Test
+    fun `bank and deferred gates are independent`() {
+        val ids = FeatureConfig.availableFeatures(
+            bankSyncAvailable = false,
+            deferredAvailable = true
+        ).map { it.id }
+        assertFalse(FeatureConfig.BANK_CONNECTIONS_FEATURE_ID in ids)
+        assertTrue("tax" in ids)
+    }
+
+    @Test
+    fun `deferred feature ids all exist in feature config`() {
+        DeferredFeatureGate.DEFERRED_FEATURE_IDS.forEach { id ->
+            assertNotNull("Unknown deferred id '$id'", FeatureConfig.getById(id))
+        }
+    }
+
+    @Test
+    fun `privacy feature uses dedicated strings`() {
+        val privacy = FeatureConfig.getById("privacy")!!
+        assertNotEquals(FeatureConfig.getById("backup-restore")!!.titleRes, privacy.titleRes)
+        assertNotEquals(FeatureConfig.getById("backup-restore")!!.descriptionRes, privacy.descriptionRes)
+    }
+
+    @Test
     fun `main tabs are not in feature config`() {
         val mainTabClasses = setOf(
             NavigationDestination.Home::class,

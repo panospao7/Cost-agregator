@@ -377,6 +377,59 @@ class NavigationRouteContractTest {
         assertNull(restored.templateId)
     }
 
+    // ── R19: deferred destinations are not restorable when unavailable ──────────
+
+    @Test
+    fun `deferred destinations do not restore when deferred surface unavailable`() {
+        listOf(
+            NavigationDestination.TaxConfiguration,
+            NavigationDestination.InvestmentPortfolio,
+            NavigationDestination.SpendingChallenges(),
+            NavigationDestination.SpendingChallenges(showCreateDialog = true)
+        ).forEach { destination ->
+            val token = destination.toSaveToken()
+            assertNull(
+                "Token '$token' must not restore when deferred unavailable",
+                destinationFromSaveToken(token, deferredAvailable = false)
+            )
+            assertNotNull(
+                "Token '$token' must restore when deferred available",
+                destinationFromSaveToken(token, deferredAvailable = true)
+            )
+        }
+    }
+
+    @Test
+    fun `non-deferred destinations still restore when deferred surface unavailable`() {
+        listOf(
+            NavigationDestination.Home,
+            NavigationDestination.SavingsGoals,
+            NavigationDestination.PrivacySettings,
+            NavigationDestination.BackupRestore
+        ).forEach { destination ->
+            assertEquals(
+                destination,
+                destinationFromSaveToken(destination.toSaveToken(), deferredAvailable = false)
+            )
+        }
+    }
+
+    @Test
+    fun `restored back stack drops deferred entries and falls back when deferred unavailable`() {
+        val tokens = listOf("home", "tax_configuration", "savings_goals", "spending_challenges?create=true")
+        val restoredStack = tokens.mapNotNull {
+            destinationFromSaveToken(it, bankSyncAvailable = true, deferredAvailable = false)
+        }
+        assertEquals(
+            listOf(NavigationDestination.Home, NavigationDestination.SavingsGoals),
+            restoredStack
+        )
+        // Process-death restore of a deferred current destination: null -> caller uses Home.
+        val current = destinationFromSaveToken("investment_portfolio", deferredAvailable = false)
+            ?: NavigationDestination.Home
+        assertEquals(NavigationDestination.Home, current)
+    }
+
     // ── Test 11: Route token format contract (no accidental changes) ────────────
 
     @Test

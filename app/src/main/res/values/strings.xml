@@ -589,6 +589,8 @@
     <string name="feature_shared_groups_desc">Split expenses with others</string>
     <string name="feature_backup_restore">Backup &amp; Restore</string>
     <string name="feature_backup_restore_desc">Create and restore backups</string>
+    <string name="feature_privacy_settings">Privacy Settings</string>
+    <string name="feature_privacy_settings_desc">Control how your data is used</string>
     
     <!-- Groups -->
     <string name="groups_title">Shared Expense Groups</string>
@@ -1786,7 +1788,6 @@
     <string name="nlp_search_title">Smart Search</string>
     <string name="nlp_search_label">Ask about your spending…</string>
     <string name="nlp_search_placeholder">e.g., "How much did I spend at restaurants last month?"</string>
-    <string name="nlp_search_voice_cd">Voice search (Coming soon)</string>
     <string name="nlp_try_asking">Try asking:</string>
     <string name="nlp_example_total_week">Total spent this week</string>
     <string name="nlp_example_restaurants">Restaurants over €50</string>

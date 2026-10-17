@@ -335,6 +335,8 @@ fun MainScreen(
     // NavigationController/HomeScreen) — the Activity's injected instance is
     // not in scope inside this top-level composable.
     val bankSyncAvailable = remember { com.yourname.expensetracker.domain.bank.BankFeatureAvailability().isBankSyncAvailable }
+    // R19 (H-1 hide): Tax / Investment / Challenges are hidden in release builds.
+    val deferredFeaturesAvailable = com.yourname.expensetracker.ui.navigation.DeferredFeatureGate.available
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
 
     val transactionFilterSaver = remember {
@@ -757,13 +759,20 @@ fun MainScreen(
                     )
                 }
                 is NavigationDestination.InvestmentPortfolio -> {
-                    InvestmentPortfolioScreen(
-                        onNavigateBack = { navigation.navigateBack() },
-                        onAddInvestment = { 
-                            // Show "Coming soon" since add investment flow not implemented
-                            navigation.navigateBack()
+                    // R19 (H-1 hide): deferred feature is never rendered in release.
+                    if (deferredFeaturesAvailable) {
+                        InvestmentPortfolioScreen(
+                            onNavigateBack = { navigation.navigateBack() },
+                            onAddInvestment = {
+                                // Show "Coming soon" since add investment flow not implemented
+                                navigation.navigateBack()
+                            }
+                        )
+                    } else {
+                        androidx.compose.runtime.LaunchedEffect(Unit) {
+                            navigation.navigateHome()
                         }
-                    )
+                    }
                 }
                 is NavigationDestination.BankConnections -> {
                     // RP-17 17-A: release builds never render the bank screen, never
@@ -790,14 +799,21 @@ fun MainScreen(
                     )
                 }
                 is NavigationDestination.SpendingChallenges -> {
-                    SpendingChallengesScreen(
-                        initialShowCreateDialog = currentDestination.showCreateDialog,
-                        onNavigateBack = { navigation.navigateBack() },
-                        onCreateChallenge = { 
-                            navigation.navigateTo(NavigationDestination.SpendingChallenges(showCreateDialog = true))
-                        },
-                        actionRegistry = actionRegistry
-                    )
+                    // R19 (H-1 hide): deferred feature is never rendered in release.
+                    if (deferredFeaturesAvailable) {
+                        SpendingChallengesScreen(
+                            initialShowCreateDialog = currentDestination.showCreateDialog,
+                            onNavigateBack = { navigation.navigateBack() },
+                            onCreateChallenge = {
+                                navigation.navigateTo(NavigationDestination.SpendingChallenges(showCreateDialog = true))
+                            },
+                            actionRegistry = actionRegistry
+                        )
+                    } else {
+                        androidx.compose.runtime.LaunchedEffect(Unit) {
+                            navigation.navigateHome()
+                        }
+                    }
                 }
                 is NavigationDestination.AdvancedAnalytics -> {
                     AdvancedAnalyticsScreen(
@@ -891,9 +907,16 @@ fun MainScreen(
                     )
                 }
                 is NavigationDestination.TaxConfiguration -> {
-                    TaxConfigurationScreen(
-                        onNavigateBack = { navigation.navigateBack() }
-                    )
+                    // R19 (H-1 hide): deferred feature is never rendered in release.
+                    if (deferredFeaturesAvailable) {
+                        TaxConfigurationScreen(
+                            onNavigateBack = { navigation.navigateBack() }
+                        )
+                    } else {
+                        androidx.compose.runtime.LaunchedEffect(Unit) {
+                            navigation.navigateHome()
+                        }
+                    }
                 }
                 is NavigationDestination.ExportOptions -> {
                     ExportOptionsScreen(

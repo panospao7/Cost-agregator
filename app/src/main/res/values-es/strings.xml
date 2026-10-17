@@ -212,6 +212,8 @@
     <string name="feature_export_options_desc">Exporta a CSV, Xero, QB</string>
     <string name="feature_shared_groups">Grupos de Gastos Compartidos</string>
     <string name="feature_shared_groups_desc">Divide gastos con otros</string>
+    <string name="feature_privacy_settings">Configuración de Privacidad</string>
+    <string name="feature_privacy_settings_desc">Controla cómo se usan tus datos</string>
 
     <!-- Screen Titles -->
     <string name="ai_settings_title">Configuración de IA</string>

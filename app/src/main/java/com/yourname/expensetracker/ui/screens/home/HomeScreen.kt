@@ -1588,7 +1588,8 @@ private fun FeaturesMenu(
                     // bank-sync surface is unavailable (release builds).
                     val menuFeatures = androidx.compose.runtime.remember {
                         FeatureConfig.availableFeatures(
-                            com.yourname.expensetracker.domain.bank.BankFeatureAvailability().isBankSyncAvailable
+                            com.yourname.expensetracker.domain.bank.BankFeatureAvailability().isBankSyncAvailable,
+                            com.yourname.expensetracker.ui.navigation.DeferredFeatureGate.available
                         )
                     }
                     menuFeatures.forEach { feature ->

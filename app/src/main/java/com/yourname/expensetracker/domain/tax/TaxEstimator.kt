@@ -28,7 +28,7 @@ import javax.inject.Singleton
  * TAX CONTAINMENT NOTICE (2026-05-08):
  * The entire Tax feature is ⏭ DEFERRED_DESIGN. The code below works for basic
  * single-currency EUR cases but has known gaps (T01-T10). The feature is
- * contained behind a feature flag and NOT exposed in the production UI.
+ * hidden in release by DeferredFeatureGate and NOT exposed in the production UI.
  *
  * No new tax features should be added without a full design review.
  * The existing implementation is kept for demo/testing purposes only.

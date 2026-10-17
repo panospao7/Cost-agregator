@@ -26,6 +26,14 @@ assurance batches. Technical evidence lives in `release-1.0-phase3-4-findings-le
   count.
 - **Retention (R28).** The retention clean-up also deletes the encrypted copy of old captured
   notification text.
+- **Notification access (R17).** If notification capture is on but Android has not given the app notification access, Home shows a card with "Manage access"; Privacy settings always shows the current access state.
+- **Database safety (R25).** If the app finds a database it cannot safely open (from a much older or
+  newer app version, or unreadable), it does not touch it: a dedicated screen lets you export a copy of
+  the untouched file. Backups older than schema v145 or from a newer app are rejected with a specific
+  message.
+- **Unfinished features hidden (R19).** Tax configuration, investment portfolio and spending
+  challenges are not part of 1.0 and are hidden from Home, the feature list and links; a saved screen
+  pointing to them opens Home instead.
 
 ## Known limitations (1.0)
 
@@ -38,4 +46,3 @@ assurance batches. Technical evidence lives in `release-1.0-phase3-4-findings-le
 - Paying a bill due on the 31st can move later due dates to the 28th/30th in some cases.
 - In rare races an unlinked recurring expense may remain after "Mark paid" reports an error; delete it
   or use "Already recorded".
-- **Notification access (R17).** If notification capture is on but Android has not given the app notification access, Home shows a card with "Manage access"; Privacy settings always shows the current access state.
