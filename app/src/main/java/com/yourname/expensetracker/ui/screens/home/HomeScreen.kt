@@ -70,6 +70,12 @@ import com.yourname.expensetracker.service.NavigationAction
 import com.yourname.expensetracker.ui.mappers.toUi
 import com.yourname.expensetracker.ui.navigation.NavigationDestination
 import com.yourname.expensetracker.ui.navigation.FeatureConfig
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.yourname.expensetracker.domain.notification.capture.NotificationCaptureStatus
+import com.yourname.expensetracker.ui.screens.privacysettings.NotificationCaptureStatusViewModel
+import com.yourname.expensetracker.ui.util.NotificationListenerSettingsLauncher
 
 /**
  * S4-016R: Route entry point — owns Hilt injection, state collection, and navigation effects.
@@ -84,8 +90,24 @@ fun HomeRoute(
     onNavigateToMap: (String?) -> Unit = {},
     onNavigateToBudgetDetail: (String) -> Unit = {},
     onNavigateToFeature: (NavigationDestination) -> Unit = {},
-    viewModel: HomeViewModel = hiltViewModel()
+    viewModel: HomeViewModel = hiltViewModel(),
+    notificationStatusViewModel: NotificationCaptureStatusViewModel = hiltViewModel()
 ) {
+    // R17: read-only notification-listener access status; re-checked on resume.
+    val notificationCaptureStatus by notificationStatusViewModel.status.collectAsState()
+    var notificationAccessOpenFailed by remember { mutableStateOf(false) }
+    val notificationContext = LocalContext.current
+    val notificationLifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(notificationLifecycleOwner, notificationStatusViewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                notificationStatusViewModel.refresh()
+            }
+        }
+        notificationLifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { notificationLifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     val state by viewModel.dashboard.collectAsState()
     val categories by viewModel.categories.collectAsState()
     val recommendations by viewModel.recommendations.collectAsState()
@@ -118,6 +140,11 @@ fun HomeRoute(
         onNavigateToMap = onNavigateToMap,
         onNavigateToBudgetDetail = onNavigateToBudgetDetail,
         onNavigateToFeature = onNavigateToFeature,
+        notificationCaptureStatus = notificationCaptureStatus,
+        notificationAccessOpenFailed = notificationAccessOpenFailed,
+        onManageNotificationAccess = {
+            notificationAccessOpenFailed = !NotificationListenerSettingsLauncher.open(notificationContext)
+        },
     )
 }
 
@@ -137,6 +164,9 @@ fun HomeScreen(
     onNavigateToMap: (String?) -> Unit = {},
     onNavigateToBudgetDetail: (String) -> Unit = {},
     onNavigateToFeature: (NavigationDestination) -> Unit = {},
+    notificationCaptureStatus: NotificationCaptureStatus = NotificationCaptureStatus.CONSENT_OFF,
+    notificationAccessOpenFailed: Boolean = false,
+    onManageNotificationAccess: () -> Unit = {},
 ) {
 
     var showQuickSettings by remember { mutableStateOf(false) }
@@ -291,6 +321,15 @@ fun HomeScreen(
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                         )
                     }
+                }
+                // R17: prompt only when consent is on but OS listener access is off
+                if (notificationCaptureStatus == NotificationCaptureStatus.ACCESS_OFF) {
+                    NotificationCaptureStatusCard(
+                        status = notificationCaptureStatus,
+                        onManageAccess = onManageNotificationAccess,
+                        openFailed = notificationAccessOpenFailed,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                    )
                 }
                 LazyVerticalGrid(
                 columns = GridCells.Fixed(2),

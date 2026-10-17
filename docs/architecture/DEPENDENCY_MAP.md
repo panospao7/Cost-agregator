@@ -1302,7 +1302,7 @@ All Hybrid services use:
 ---
 
 > **Generated:** Manual analysis of 1100+ source files across 3 layers (UI/Domain/Data),  
-> 33 Hilt @Module files (32 in `di/` + 1 `EmptyStatePresentationModule.kt`), 41 @HiltViewModel (40 files + 1 inline), 46+ repositories, ~68 DAOs, 70 entities.  
+> 33 Hilt @Module files (32 in `di/` + 1 `EmptyStatePresentationModule.kt`), 42 @HiltViewModel (41 files + 1 inline), 46+ repositories, ~68 DAOs, 70 entities.  
 > DB schema version: v148 (via `DatabaseSchemaPolicy.CURRENT_VERSION`)  
 > **Last updated:** 2026-09-21  
 > **Next update:** Regenerate when significant architectural changes occur (new module, major refactor).

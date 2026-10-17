@@ -30,6 +30,14 @@
     <string name="financial_runway_no_remaining_period">Δεν απομένει χρονικό διάστημα</string>
     <string name="backup_restore_info_unavailable">Οι πληροφορίες αντιγράφων ασφαλείας δεν είναι προσωρινά διαθέσιμες</string>
     <string name="debug_database_stats_unavailable">Τα στατιστικά της βάσης δεδομένων δεν είναι προσωρινά διαθέσιμα</string>
+    <!-- R17 -->
+    <string name="notification_access_title">Καταγραφή ειδοποιήσεων</string>
+    <string name="notification_access_off_body">Η καταγραφή ειδοποιήσεων είναι ενεργοποιημένη στην εφαρμογή, αλλά η πρόσβαση στις ειδοποιήσεις του Android είναι απενεργοποιημένη, οπότε δεν μπορούν να διαβαστούν ειδοποιήσεις τράπεζας. Ενεργοποιήστε την στις ρυθμίσεις συστήματος για να χρησιμοποιήσετε αυτή τη λειτουργία.</string>
+    <string name="notification_access_manage">Διαχείριση πρόσβασης</string>
+    <string name="notification_access_active">Η πρόσβαση στις ειδοποιήσεις του Android είναι ενεργή.</string>
+    <string name="notification_access_consent_off">Η καταγραφή ειδοποιήσεων είναι απενεργοποιημένη στην εφαρμογή. Δεν διαβάζονται ειδοποιήσεις.</string>
+    <string name="notification_access_restricted_hint">Αν ο διακόπτης είναι γκρίζος, ανοίξτε πρώτα Πληροφορίες εφαρμογής &gt; ⋮ &gt; Να επιτρέπονται οι περιορισμένες ρυθμίσεις.</string>
+    <string name="notification_access_open_failed">Δεν ήταν δυνατό το άνοιγμα των ρυθμίσεων. Ανοίξτε τις Ρυθμίσεις και αναζητήστε \"Πρόσβαση ειδοποιήσεων\".</string>
     <string name="money_radar_unavailable">Το Money Radar δεν είναι προσωρινά διαθέσιμο. Δεν ήταν δυνατό να αξιολογηθούν ορισμένες οικονομικές ενδείξεις.</string>
     <string name="stress_forecast_unavailable">Η πρόβλεψη οικονομικής πίεσης δεν είναι προσωρινά διαθέσιμη. Δεν υπάρχει διαθέσιμη εκτίμηση κινδύνου.</string>
     <!-- R23 -->

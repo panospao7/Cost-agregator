@@ -1,7 +1,7 @@
 # ExpenseTracker ViewModel Injection Reference
 
 **Generated:** June 1, 2026 · **Last updated:** September 21, 2026 (verified against constructors)  
-**Total ViewModels:** 41 (40 @HiltViewModel files + 1 inline RecurringExpensesViewModel)  
+**Total ViewModels:** 42 (41 @HiltViewModel files + 1 inline RecurringExpensesViewModel)  
 **Architecture:** Hilt @HiltViewModel with constructor injection
 
 ---

@@ -274,6 +274,14 @@
     <string name="financial_runway_no_remaining_period">No queda ningún período</string>
     <string name="backup_restore_info_unavailable">La información de las copias de seguridad no está disponible temporalmente</string>
     <string name="debug_database_stats_unavailable">Las estadísticas de la base de datos no están disponibles temporalmente</string>
+    <!-- R17 -->
+    <string name="notification_access_title">Captura de notificaciones</string>
+    <string name="notification_access_off_body">La captura de notificaciones está activada en la aplicación, pero el acceso a las notificaciones de Android está desactivado, por lo que no se pueden leer las notificaciones del banco. Actívalo en los ajustes del sistema para usar esta función.</string>
+    <string name="notification_access_manage">Gestionar acceso</string>
+    <string name="notification_access_active">El acceso a las notificaciones de Android está activado.</string>
+    <string name="notification_access_consent_off">La captura de notificaciones está desactivada en la aplicación. No se lee ninguna notificación.</string>
+    <string name="notification_access_restricted_hint">Si el interruptor aparece en gris, abre primero Información de la aplicación &gt; ⋮ &gt; Permitir ajustes restringidos.</string>
+    <string name="notification_access_open_failed">No se pudo abrir la pantalla de ajustes. Abre Ajustes y busca \"Acceso a notificaciones\".</string>
     <string name="money_radar_unavailable">Money Radar no está disponible temporalmente. No se pudieron evaluar algunas señales financieras.</string>
     <string name="stress_forecast_unavailable">La previsión de estrés financiero no está disponible temporalmente. No hay ninguna estimación de riesgo disponible.</string>
     <!-- R23 -->

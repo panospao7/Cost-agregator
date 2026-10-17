@@ -1,6 +1,8 @@
 package com.yourname.expensetracker.di
 
 import com.yourname.expensetracker.data.privacy.AndroidKeystoreInstallationSecretKeyProvider
+import com.yourname.expensetracker.data.service.AndroidNotificationListenerAccessChecker
+import com.yourname.expensetracker.domain.notification.capture.NotificationListenerAccessChecker
 import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy
 import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
 import com.yourname.expensetracker.data.privacy.DefaultSensitiveHashingService
@@ -70,6 +72,13 @@ abstract class PrivacyModule {
     abstract fun bindInstallationSecretKeyProvider(
         impl: AndroidKeystoreInstallationSecretKeyProvider
     ): InstallationSecretKeyProvider
+
+    /** R17: read-only OS notification-listener access probe (display-only status). */
+    @Binds
+    @Singleton
+    abstract fun bindNotificationListenerAccessChecker(
+        impl: AndroidNotificationListenerAccessChecker
+    ): NotificationListenerAccessChecker
 
     companion object {
 

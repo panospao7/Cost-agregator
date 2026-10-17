@@ -12,7 +12,7 @@ Snapshot summary only: this inventory tracks the current UI, domain, data, and D
 
 ### Drift Sync (2026-10-02 / Verification Pass)
 
-Verified against production source (`app/src/main/java`): 70 DAO files, 40 ViewModel files, 29 `*Worker*`-named files (including `domain/workers/` infrastructure), DB **v151** with **72** registered entities, 15 registered retention targets. Schema/DAO delta verified 2026-10-13.
+Verified against production source (`app/src/main/java`): 70 DAO files, 41 ViewModel files, 29 `*Worker*`-named files (including `domain/workers/` infrastructure), DB **v151** with **72** registered entities, 15 registered retention targets. Schema/DAO delta verified 2026-10-13.
 
 - **DB v149 to v150** — Wave 5: additive `savings_contribution_ledger` and unique nullable `savings_sweep_plan.acceptanceKey`; sweep acceptance commits balance, ledger, and plan status atomically through `SavingsSweepAcceptanceCoordinator`.
 

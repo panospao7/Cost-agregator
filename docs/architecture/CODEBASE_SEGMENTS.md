@@ -105,6 +105,7 @@ Owns notification capture, parser routing, structured transaction extraction, an
 - `data/repository/NotificationRepository.kt`
 - `data/repository/NotificationProcessingPipeline.kt`
 - `data/repository/ReviewQueueRepository.kt`
+- `data/service/AndroidNotificationListenerAccessChecker.kt` (R17: read-only OS listener-access probe, bound in `PrivacyModule`)
 - `ui/screens/review/ReviewScreen.kt`
 
 **Boundary note:** this segment stops at parsed/reviewable transactions; OCR belongs to Segment 4 and receipt-item AI belongs to Segment 5.

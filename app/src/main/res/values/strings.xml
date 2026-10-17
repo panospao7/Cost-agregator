@@ -808,6 +808,14 @@
     <string name="financial_weather_planned">Planned</string>
     <string name="dashboard_partial_currency_warning">Some amounts could not be converted — totals may be incomplete</string>
     <string name="home_error_currency_unavailable">Currency settings unavailable</string>
+    <!-- R17 -->
+    <string name="notification_access_title">Notification capture</string>
+    <string name="notification_access_off_body">Notification capture is turned on in the app, but Android notification access is off, so no bank notifications can be read. Turn it on in system settings to use this feature.</string>
+    <string name="notification_access_manage">Manage access</string>
+    <string name="notification_access_active">Android notification access is on.</string>
+    <string name="notification_access_consent_off">Notification capture is turned off in the app. No notifications are read.</string>
+    <string name="notification_access_restricted_hint">If the switch is greyed out, open App info &gt; ⋮ &gt; Allow restricted settings first.</string>
+    <string name="notification_access_open_failed">Couldn\'t open the settings screen. Open Settings and search for \"Notification access\".</string>
     <string name="widget_savings_sweep_title">End-of-month savings sweep</string>
     <string name="widget_savings_sweep_safe_to_sweep">Safe to sweep %s</string>
     <string name="widget_savings_sweep_detail">Underspend %1$s • Buffer %2$s</string>

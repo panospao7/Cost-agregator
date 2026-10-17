@@ -2,7 +2,7 @@
 
 **Refreshed**: September 21, 2026  
 **Scope**: Current frontend inventory including screens, components, navigation, integration, and theming  
-**Total Files**: 166 UI source files (41 ViewModels — 40 in dedicated files incl. MainViewModel + 1 inline, 59 components, 83 screens files, 5 nav, 3 mappers, 2 theme, 4 model, 7 util, 1 integration, 2 root)
+**Total Files**: 173 UI source files (42 ViewModels — 41 in dedicated files incl. MainViewModel + 1 inline, 61 components, 86 screens files, 5 nav, 3 mappers, 2 theme, 4 model, 9 util, 1 integration, 2 root)
 
 ---
 
@@ -1159,16 +1159,16 @@ Every screen/overlay is reachable through a `NavigationDestination`, with these 
 | **Management Screens** | 3 (AiSettings, CategoryManagement, PrivacySettings — all routed) |
 | **Debug Screens** | 4 (DebugScreen + CategorizationDebug, DebugViewer, SourceLinkDebug sub-screens) |
 | **Screen/Sheet Files** (`*Screen.kt` / `*Sheet.kt`) | 42 |
-| **Total `ui/screens/` Files** | 83 |
-| **Component Files** | 59 |
-| **Total UI Files** | 166 |
-| **ViewModels** | 41 `@HiltViewModel` classes (40 in dedicated files incl. MainViewModel + 1 inline in RecurringExpensesScreen.kt) |
+| **Total `ui/screens/` Files** | 86 |
+| **Component Files** | 61 |
+| **Total UI Files** | 173 |
+| **ViewModels** | 42 `@HiltViewModel` classes (41 in dedicated files incl. MainViewModel + 1 inline in RecurringExpensesScreen.kt) |
 | **Navigation Files** | 5 |
 | **Deep Link Hosts** | 8 |
 | **UI Mapper Files** | 3 |
 | **UI Theme Files** | 2 |
 | **UI Model Files** | 4 |
-| **UI Utility Files** | 7 |
+| **UI Utility Files** | 9 |
 | **Screens/Sheets** | 3 (AddExpenseSheet, AssistantSheet, TransactionFilterSheet) |
 
 ---

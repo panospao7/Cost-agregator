@@ -26,7 +26,17 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.yourname.expensetracker.ui.components.NotificationCaptureStatusCard
+import com.yourname.expensetracker.ui.util.NotificationListenerSettingsLauncher
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -49,8 +59,24 @@ import com.yourname.expensetracker.ui.theme.SemanticColors
 @Composable
 fun PrivacySettingsScreen(
     onDismiss: () -> Unit,
-    viewModel: PrivacySettingsViewModel = hiltViewModel()
+    viewModel: PrivacySettingsViewModel = hiltViewModel(),
+    notificationStatusViewModel: NotificationCaptureStatusViewModel = hiltViewModel()
 ) {
+    // R17: read-only OS listener access status; re-checked on resume.
+    val notificationCaptureStatus by notificationStatusViewModel.status.collectAsStateWithLifecycle()
+    var notificationAccessOpenFailed by remember { mutableStateOf(false) }
+    val notificationContext = LocalContext.current
+    val notificationLifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(notificationLifecycleOwner, notificationStatusViewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                notificationStatusViewModel.refresh()
+            }
+        }
+        notificationLifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { notificationLifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val settings = uiState.settings
     val isSaving = uiState.isSaving
@@ -124,6 +150,19 @@ fun PrivacySettingsScreen(
                     checked = settings.notificationCaptureEnabled,
                     onCheckedChange = viewModel::setNotificationCaptureEnabled,
                     enabled = !isSaving
+                )
+            }
+            // R17: OS notification-listener access status (display + deep link only)
+            item {
+                NotificationCaptureStatusCard(
+                    status = notificationCaptureStatus,
+                    onManageAccess = {
+                        notificationAccessOpenFailed =
+                            !NotificationListenerSettingsLauncher.open(notificationContext)
+                    },
+                    modifier = Modifier.padding(vertical = 4.dp),
+                    alwaysShowManage = true,
+                    openFailed = notificationAccessOpenFailed
                 )
             }
 
