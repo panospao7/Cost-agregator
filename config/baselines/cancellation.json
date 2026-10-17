@@ -88,7 +88,7 @@
     "G-CANCEL-02 app/src/main/java/com/yourname/expensetracker/domain/debug/DiagnosticsRepository.kt": 11,
     "G-CANCEL-02 app/src/main/java/com/yourname/expensetracker/domain/diagnostics/CompositeOperationRunRecorder.kt": 3,
     "G-CANCEL-02 app/src/main/java/com/yourname/expensetracker/domain/diagnostics/OperationRunRecorder.kt": 6,
-    "G-CANCEL-02 app/src/main/java/com/yourname/expensetracker/domain/forecasting/FinancialStressForecastEngine.kt": 5,
+    "G-CANCEL-02 app/src/main/java/com/yourname/expensetracker/domain/forecasting/FinancialStressForecastEngine.kt": 4,
     "G-CANCEL-02 app/src/main/java/com/yourname/expensetracker/domain/forecasting/NetCashflowBalanceProvider.kt": 2,
     "G-CANCEL-02 app/src/main/java/com/yourname/expensetracker/domain/investment/InvestmentTracker.kt": 4,
     "G-CANCEL-02 app/src/main/java/com/yourname/expensetracker/domain/subscription/SubscriptionManagerEngine.kt": 1,

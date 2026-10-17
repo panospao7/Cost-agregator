@@ -35,6 +35,12 @@ assurance batches. Technical evidence lives in `release-1.0-phase3-4-findings-le
   challenges are not part of 1.0 and are hidden from Home, the feature list and links; a saved screen
   pointing to them opens Home instead.
 
+- **Money totals (R20).** The subscriptions total and the financial-stress forecast no longer add up
+  amounts in different currencies as if they were your home currency: amounts that can't be converted
+  are left out and a "partial" warning is shown, or the total is shown as unavailable. The monthly
+  savings suggestion now keeps upcoming bills inside the "Buffer" figure, so it no longer suggests
+  moving money you need for bills.
+
 ## Known limitations (1.0)
 
 - About 60 smaller screens (budgets, categories, savings, groups, importers) are not awaited by the
@@ -46,3 +52,5 @@ assurance batches. Technical evidence lives in `release-1.0-phase3-4-findings-le
 - Paying a bill due on the 31st can move later due dates to the 28th/30th in some cases.
 - In rare races an unlinked recurring expense may remain after "Mark paid" reports an error; delete it
   or use "Already recorded".
+- After changing your home currency, sorting or filtering transactions by amount may use the previous
+  currency's values for older entries; totals, the dashboard and analytics are unaffected (planned for 1.0.1).

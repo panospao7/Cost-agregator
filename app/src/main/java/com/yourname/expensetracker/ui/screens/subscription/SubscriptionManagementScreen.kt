@@ -172,7 +172,8 @@ fun SubscriptionManagementScreen(
                             TotalCostCard(
                                 monthlyTotal = uiState.totalMonthlyCost,
                                 annualTotal = uiState.totalAnnualCost,
-                                homeCurrency = homeCurrency
+                                totalCurrency = uiState.totalCurrency,
+                                totalStatus = uiState.totalStatus
                             )
                         }
                         
@@ -373,8 +374,13 @@ private fun SummaryCard(
 }
 
 @Composable
-private fun TotalCostCard(monthlyTotal: Double, annualTotal: Double, homeCurrency: String) {
-    
+private fun TotalCostCard(
+    monthlyTotal: Double,
+    annualTotal: Double,
+    totalCurrency: String?,
+    totalStatus: SubscriptionTotalStatus
+) {
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -395,34 +401,52 @@ private fun TotalCostCard(monthlyTotal: Double, annualTotal: Double, homeCurrenc
             )
             
             Spacer(modifier = Modifier.height(16.dp))
-            
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column {
+
+            // HZ01-A: an unavailable total is never rendered as an amount (no 0, no raw sum).
+            if (totalStatus == SubscriptionTotalStatus.UNAVAILABLE || totalCurrency == null) {
                 Text(
-                    text = CurrencyFormatter.formatMoney(monthlyTotal, homeCurrency),
-                    style = MaterialTheme.typography.headlineSmall,
-                    color = SemanticColors.TextPrimary,
-                    fontWeight = FontWeight.Bold
+                    text = stringResource(R.string.currency_error_conversion_unavailable),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = SemanticColors.TextSecondary
                 )
-                    Text(
-                        text = stringResource(R.string.label_per_month),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = SemanticColors.TextSecondary
-                    )
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column {
+                        Text(
+                            text = CurrencyFormatter.formatMoney(monthlyTotal, totalCurrency),
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = SemanticColors.TextPrimary,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = stringResource(R.string.label_per_month),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = SemanticColors.TextSecondary
+                        )
+                    }
+
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text(
+                            text = CurrencyFormatter.formatMoney(annualTotal, totalCurrency),
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = SemanticColors.PrimaryIndigo,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = stringResource(R.string.label_per_year),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = SemanticColors.TextSecondary
+                        )
+                    }
                 }
-                
-                Column(horizontalAlignment = Alignment.End) {
-                Text(
-                    text = CurrencyFormatter.formatMoney(annualTotal, homeCurrency),
-                    style = MaterialTheme.typography.headlineSmall,
-                    color = SemanticColors.PrimaryIndigo,
-                    fontWeight = FontWeight.Bold
-                )
+
+                if (totalStatus == SubscriptionTotalStatus.PARTIAL) {
+                    Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = stringResource(R.string.label_per_year),
+                        text = stringResource(R.string.dashboard_partial_currency_warning),
                         style = MaterialTheme.typography.bodySmall,
                         color = SemanticColors.TextSecondary
                     )
@@ -543,7 +567,7 @@ private fun SubscriptionCard(
                     )
                     
                     Text(
-                        text = stringResource(R.string.label_per_use_format, CurrencyFormatter.formatMoney(subscription.costPerUse, homeCurrency)),
+                        text = stringResource(R.string.label_per_use_format, CurrencyFormatter.formatMoney(subscription.costPerUse, subscription.subscription.currency)),
                         style = MaterialTheme.typography.bodySmall,
                         color = SemanticColors.PrimaryIndigo,
                         fontWeight = FontWeight.Medium
@@ -669,7 +693,7 @@ private fun SubscriptionCandidateCard(
                 )
                 
                 Text(
-                    text = stringResource(R.string.label_estimated_annual, CurrencyFormatter.formatMoney(candidate.estimatedAnnualCost, homeCurrency)),
+                    text = stringResource(R.string.label_estimated_annual, CurrencyFormatter.formatMoney(candidate.estimatedAnnualCost, candidate.currency)),
                     style = MaterialTheme.typography.bodySmall,
                     color = SemanticColors.TextSecondary
                 )

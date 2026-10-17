@@ -298,7 +298,7 @@ class MonthlySavingsSweepUseCaseTest {
     }
 
     @Test
-    fun `computeSweepRecommendation derives deterministic fallback risk buffer when Monte Carlo unavailable`() = runTest {
+    fun `computeSweepRecommendation fallback buffer includes upcoming bills when Monte Carlo unavailable`() = runTest {
         every { budgetRepository.getBudgetStatuses() } returns flowOf(
             listOf(budgetStatus(budgetId = 1L, categoryId = null, amount = 1000.0, spent = 700.0))
         )
@@ -332,8 +332,96 @@ class MonthlySavingsSweepUseCaseTest {
         val result = useCase.computeSweepRecommendation()
 
         assertNotNull(result)
-        assertApproxEquals(30.0, result!!.riskBuffer, 0.01)
-        assertApproxEquals(270.0, result.safeSweepAmount, 0.01)
+        // HZ01b1-F1: underspend 300 (1000 - 700); upcoming bills 80 (Rent); deterministic
+        // uncertainty fallback = max(80*0.15, 0, 1000*0.03) = 30. The displayed Buffer is
+        // bills + uncertainty = 110 (previously 30, which swept the 80 of bills as "safe"),
+        // so safe sweep = 300 - 110 = 190 (previously 270).
+        assertApproxEquals(300.0, result!!.totalUnderspend, 0.01)
+        assertApproxEquals(110.0, result.riskBuffer, 0.01)
+        assertApproxEquals(190.0, result.safeSweepAmount, 0.01)
+        assertApproxEquals(result.totalUnderspend - result.riskBuffer, result.safeSweepAmount, 0.01)
+    }
+
+    @Test
+    fun `computeSweepRecommendation subtracts upcoming bills and uncertainty so displayed buffer reconciles`() = runTest {
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(
+            listOf(budgetStatus(budgetId = 1L, categoryId = null, amount = 1000.0, spent = 700.0)) // underspend 300
+        )
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(listOf(goal(1L, "Emergency", 1000.0, 100.0)))
+        every { recurringExpenseRepository.getAllFlow() } returns flowOf(
+            listOf(
+                ManualRecurringExpense(
+                    id = 1L, merchant = "Rent", amount = 120.0, currency = "EUR",
+                    frequency = RecurrenceFrequency.MONTHLY, nextDate = withinWindowNow + dayMs, note = null
+                )
+            )
+        )
+        every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(
+            listOf(
+                PlannedExpense(
+                    id = 2L, description = "Insurance", amount = 80.0, date = withinWindowNow + 2 * dayMs,
+                    categoryId = null, isRecurring = false,
+                    priority = com.yourname.expensetracker.data.database.entity.PlannedExpensePriority.MUST
+                )
+            )
+        )
+        // MC uncertainty = p75 - p50 = 20 (under the 30% cap). Bills = 120 + 80 = 200.
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns
+            monteCarlo(p50 = 100.0, p75 = 120.0, confidence = 0.9)
+
+        val result = useCase.computeSweepRecommendation()
+
+        assertNotNull(result)
+        assertApproxEquals(300.0, result!!.totalUnderspend, 0.01)
+        assertApproxEquals(220.0, result.riskBuffer, 0.01) // 200 bills + 20 uncertainty
+        assertApproxEquals(80.0, result.safeSweepAmount, 0.01)
+        assertApproxEquals(result.totalUnderspend - result.riskBuffer, result.safeSweepAmount, 0.01)
+    }
+
+    @Test
+    fun `computeSweepRecommendation declines sweep when upcoming bills consume the underspend`() = runTest {
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(
+            listOf(budgetStatus(budgetId = 1L, categoryId = null, amount = 1000.0, spent = 900.0)) // underspend 100
+        )
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(listOf(goal(1L, "Emergency", 1000.0, 100.0)))
+        every { recurringExpenseRepository.getAllFlow() } returns flowOf(
+            listOf(
+                ManualRecurringExpense(
+                    id = 1L, merchant = "Rent", amount = 100.0, currency = "EUR", // bills == underspend
+                    frequency = RecurrenceFrequency.MONTHLY, nextDate = withinWindowNow + dayMs, note = null
+                )
+            )
+        )
+        // Zero uncertainty (p75 == p50) so only the bills decide: safe = 100 - (100 + 0) = 0.
+        // Previously the bills never reduced the sweep and 100 of committed money was offered.
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns
+            monteCarlo(p50 = 100.0, p75 = 100.0, confidence = 0.9)
+
+        val result = useCase.computeSweepRecommendationResult()
+
+        assertTrue(result is SavingsSweepComputationResult.NoRecommendation)
+    }
+
+    @Test
+    fun `computeSweepRecommendation declines sweep when upcoming bills exceed the underspend`() = runTest {
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(
+            listOf(budgetStatus(budgetId = 1L, categoryId = null, amount = 1000.0, spent = 900.0)) // underspend 100
+        )
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(listOf(goal(1L, "Emergency", 1000.0, 100.0)))
+        every { recurringExpenseRepository.getAllFlow() } returns flowOf(
+            listOf(
+                ManualRecurringExpense(
+                    id = 1L, merchant = "Rent", amount = 250.0, currency = "EUR", // bills > underspend
+                    frequency = RecurrenceFrequency.MONTHLY, nextDate = withinWindowNow + dayMs, note = null
+                )
+            )
+        )
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns
+            monteCarlo(p50 = 100.0, p75 = 120.0, confidence = 0.9)
+
+        val result = useCase.computeSweepRecommendationResult()
+
+        assertTrue(result is SavingsSweepComputationResult.NoRecommendation)
     }
 
     @Test

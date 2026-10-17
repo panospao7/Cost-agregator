@@ -115,8 +115,21 @@ fun FinancialStressForecastCard(
                 color = SemanticColors.TextSecondary
             )
 
+            // HZ01-B: recurring obligations (or other inputs) were excluded because their
+            // currency could not be converted — the figures below are incomplete.
+            // Gated on excludedCount (not isPartial): isPartial also covers the DBG-06
+            // restore-barrier case, which is not a currency-conversion problem.
+            if (result.excludedCount > 0) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = androidx.compose.ui.res.stringResource(com.yourname.expensetracker.R.string.dashboard_partial_currency_warning),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SemanticColors.TextSecondary
+                )
+            }
+
             Spacer(modifier = Modifier.height(16.dp))
-            
+
             // Horizon tabs
             Row(
                 modifier = Modifier.fillMaxWidth(),

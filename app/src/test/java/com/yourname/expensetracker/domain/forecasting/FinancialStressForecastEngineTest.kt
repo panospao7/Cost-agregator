@@ -179,26 +179,9 @@ class FinancialStressForecastEngineTest {
         currencyConverter = mockk(relaxed = true)
         accountBalanceProvider = mockk(relaxed = true)
         // Identity conversion is explicit so confirmed EUR obligations are not
-        // silently discarded by a relaxed mock returning null.
-        coEvery {
-            currencyConverter.convert(any<Double>(), any<String>(), any<String>())
-        } answers {
-            val amount = firstArg<Double>()
-            val source = secondArg<String>()
-            val target = thirdArg<String>()
-            if (!source.equals(target, ignoreCase = true)) {
-                null
-            } else {
-                com.yourname.expensetracker.domain.currency.ConversionResult(
-                    originalAmount = amount,
-                    originalCurrency = source,
-                    convertedAmount = amount,
-                    targetCurrency = target,
-                    rateUsed = 1.0,
-                    timestamp = now
-                )
-            }
-        }
+        // silently discarded by a relaxed mock (HZ01-B: the engine converts through
+        // convertOutcome with StaleRatePolicy.forBasis, not the legacy convert()).
+        stubConvertOutcome()
 
         engine = FinancialStressForecastEngine(
             synthesisEngine = synthesisEngine,
@@ -616,17 +599,8 @@ class FinancialStressForecastEngineTest {
                 )
             } else emptyList()
         }
-        // EUR→EUR passthrough so amounts actually sum (relaxed mock returns null otherwise).
-        coEvery { currencyConverter.convert(any<Double>(), any<String>(), any<String>()) } answers {
-            com.yourname.expensetracker.domain.currency.ConversionResult(
-                originalAmount = firstArg(),
-                originalCurrency = secondArg(),
-                convertedAmount = firstArg(),
-                targetCurrency = thirdArg(),
-                rateUsed = 1.0,
-                timestamp = now
-            )
-        }
+        // EUR→EUR passthrough so amounts actually sum (see stubConvertOutcome).
+        stubConvertOutcome()
 
         val result = engine.computeStressForecast()
 
@@ -673,13 +647,261 @@ class FinancialStressForecastEngineTest {
         assertTrue(result.horizons.all { it.recurringObligationsPartial })
     }
 
+    // ── HZ01-B: failed conversions are excluded, counted and flagged partial ──
+
+    @Test
+    fun `HZ01-B missing USD rate excludes occurrence marks partial and counts it`() = runTest {
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+        val due = now + dayMs
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            recurringPattern("Rent", 800.0, due, RecurrenceFrequency.MONTHLY, 1.0f, id = 2L),
+            recurringPattern("US Streaming", 15.0, due, RecurrenceFrequency.MONTHLY, 1.0f, id = 3L)
+        )
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(2L, any(), any()) } returns listOf(
+            occurrenceRow(ruleId = 2L, dueDate = due, amount = 800.0, merchant = "Rent")
+        )
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(3L, any(), any()) } returns listOf(
+            occurrenceRow(ruleId = 3L, dueDate = due, amount = 15.0, merchant = "US Streaming", currency = "USD")
+        )
+        // No USD rate configured (default rate table is empty).
+
+        val result = engine.computeStressForecast()
+
+        val h30 = result.horizons.first { it.daysAhead == 30 }
+        // The USD row is excluded, never added raw into the EUR total.
+        assertApproxEquals(800.0, h30.recurringObligations, 0.0001)
+        assertTrue(h30.recurringObligationsPartial)
+        assertEquals(1, h30.recurringExcludedConversionCount)
+        assertTrue(result.isPartial)
+        assertEquals(1, result.excludedCount)
+    }
+
+    @Test
+    fun `HZ01-B excludedCount is the 90 day horizon count not the sum across horizons`() = runTest {
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+        val dueNear = now + dayMs
+        val dueMid = now + 45 * dayMs
+        val dueFar = now + 75 * dayMs
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            recurringPattern("US Streaming", 15.0, dueNear, RecurrenceFrequency.MONTHLY, 1.0f, id = 3L)
+        )
+        val usdRows = listOf(dueNear, dueMid, dueFar).map {
+            occurrenceRow(ruleId = 3L, dueDate = it, amount = 15.0, merchant = "US Streaming", currency = "USD")
+        }
+        // Honor the requested window so each horizon sees only its own occurrences:
+        // 30d -> 1, 60d -> 2, 90d -> 3 (no USD rate configured, so all are excluded).
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(3L, any(), any()) } answers {
+            val start = secondArg<Long>()
+            val end = thirdArg<Long>()
+            usdRows.filter { it.dueDate >= start && it.dueDate < end }
+        }
+
+        val result = engine.computeStressForecast()
+
+        val h30 = result.horizons.first { it.daysAhead == 30 }
+        val h60 = result.horizons.first { it.daysAhead == 60 }
+        val h90 = result.horizons.first { it.daysAhead == 90 }
+        assertEquals(1, h30.recurringExcludedConversionCount)
+        assertEquals(2, h60.recurringExcludedConversionCount)
+        assertEquals(3, h90.recurringExcludedConversionCount)
+        // Max across horizons (90d is a superset), not the sum (6).
+        assertEquals(3, result.excludedCount)
+        assertTrue(result.isPartial)
+    }
+
+    @Test
+    fun `HZ01-B blank display currency never sums detected patterns raw`() = runTest {
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+        val due = now + dayMs
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            RecurringPattern(
+                id = null,
+                merchantName = "Detected EUR",
+                averageAmount = 40.0,
+                currency = "EUR",
+                frequency = RecurrenceFrequency.MONTHLY,
+                periodVarianceDays = 0,
+                amountVariancePercent = 0.0,
+                nextExpectedDate = due,
+                confidence = 1.0f,
+                previousDates = emptyList()
+            )
+        )
+
+        val result = engine.computeStressForecast(displayCurrency = "")
+
+        // A blank target is an invalid target: the forecast fails closed instead of adding
+        // the pattern's raw averageAmount into an unlabeled total.
+        assertEquals(StressForecastFailure.CALCULATION_UNAVAILABLE, result.failure)
+        assertTrue(result.horizons.isEmpty())
+        assertTrue(result.isPartial)
+    }
+
+    @Test
+    fun `HZ01-B detected pattern without rate is excluded counted and partial`() = runTest {
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+        val due = now + dayMs
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            RecurringPattern(
+                id = null,
+                merchantName = "Detected USD",
+                averageAmount = 40.0,
+                currency = "USD",
+                frequency = RecurrenceFrequency.MONTHLY,
+                periodVarianceDays = 0,
+                amountVariancePercent = 0.0,
+                nextExpectedDate = due,
+                confidence = 1.0f,
+                previousDates = emptyList()
+            )
+        )
+
+        val result = engine.computeStressForecast()
+
+        val h30 = result.horizons.first { it.daysAhead == 30 }
+        assertApproxEquals(0.0, h30.recurringObligations, 0.0001)
+        assertTrue(h30.recurringObligationsPartial)
+        assertEquals(1, h30.recurringExcludedConversionCount)
+        assertTrue(result.isPartial)
+    }
+
+    @Test
+    fun `HZ01-B three day old rate is accepted under latest stale policy`() = runTest {
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+        val due = now + dayMs
+        // A 3-day-old USD rate is older than StaleRatePolicy.Default (24h) but inside
+        // StaleRatePolicy.forBasis(LATEST_AVAILABLE) (7d); the fake enforces the passed policy.
+        rates = mapOf("USD" to (0.5 to now - 3 * dayMs))
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            recurringPattern("US Streaming", 20.0, due, RecurrenceFrequency.MONTHLY, 1.0f, id = 3L)
+        )
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(3L, any(), any()) } returns listOf(
+            occurrenceRow(ruleId = 3L, dueDate = due, amount = 20.0, merchant = "US Streaming", currency = "USD")
+        )
+
+        val result = engine.computeStressForecast()
+
+        val h30 = result.horizons.first { it.daysAhead == 30 }
+        assertApproxEquals(10.0, h30.recurringObligations, 0.0001)
+        assertEquals(false, h30.recurringObligationsPartial)
+        assertEquals(0, h30.recurringExcludedConversionCount)
+        assertEquals(false, result.isPartial)
+        assertEquals(
+            com.yourname.expensetracker.domain.core.money.StaleRatePolicy.forBasis(
+                com.yourname.expensetracker.domain.core.money.RateBasis.LATEST_AVAILABLE
+            ),
+            lastStalePolicy
+        )
+    }
+
+    @Test
+    fun `HZ01-B rate older than latest stale window is excluded as partial`() = runTest {
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+        val due = now + dayMs
+        rates = mapOf("USD" to (0.5 to now - 10 * dayMs))
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            recurringPattern("US Streaming", 20.0, due, RecurrenceFrequency.MONTHLY, 1.0f, id = 3L)
+        )
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(3L, any(), any()) } returns listOf(
+            occurrenceRow(ruleId = 3L, dueDate = due, amount = 20.0, merchant = "US Streaming", currency = "USD")
+        )
+
+        val result = engine.computeStressForecast()
+
+        val h30 = result.horizons.first { it.daysAhead == 30 }
+        assertApproxEquals(0.0, h30.recurringObligations, 0.0001)
+        assertTrue(h30.recurringObligationsPartial)
+        assertTrue(result.isPartial)
+    }
+
+    @Test
+    fun `HZ01-B cancellation during occurrence conversion propagates`() = runTest {
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+        val due = now + dayMs
+        val cancellation = kotlinx.coroutines.CancellationException("test cancellation")
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            recurringPattern("Rent", 800.0, due, RecurrenceFrequency.MONTHLY, 1.0f, id = 2L)
+        )
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(2L, any(), any()) } returns listOf(
+            occurrenceRow(ruleId = 2L, dueDate = due, amount = 800.0, merchant = "Rent")
+        )
+        coEvery {
+            currencyConverter.convertOutcome(any(), any(), any(), any(), any(), any())
+        } throws cancellation
+
+        org.junit.Assert.assertSame(cancellation, runCatching { engine.computeStressForecast() }.exceptionOrNull())
+    }
+
+    /** Per-currency rate table for [stubConvertOutcome]: currency -> (rate to EUR, rate lastUpdated). */
+    private var rates: Map<String, Pair<Double, Long>> = emptyMap()
+    private var lastStalePolicy: com.yourname.expensetracker.domain.core.money.StaleRatePolicy? = null
+
+    /**
+     * Fake [CurrencyConverter.convertOutcome]: identity for same currency, table lookup otherwise
+     * (missing -> MISSING_RATE), and it enforces the stale policy actually passed by the engine.
+     */
+    private fun stubConvertOutcome() {
+        coEvery {
+            currencyConverter.convertOutcome(any(), any(), any(), any(), any(), any())
+        } answers {
+            val amount = firstArg<Double>()
+            val source = secondArg<String>()
+            val target = thirdArg<String>()
+            val basis = arg<com.yourname.expensetracker.domain.core.money.RateBasis>(3)
+            val policy = arg<com.yourname.expensetracker.domain.core.money.StaleRatePolicy>(5)
+            lastStalePolicy = policy
+            fun failed(type: com.yourname.expensetracker.domain.core.money.ConversionFailureType) =
+                com.yourname.expensetracker.domain.core.money.ConversionOutcome.Failed(
+                    originalAmount = amount,
+                    originalCurrency = source,
+                    targetCurrency = target,
+                    rateBasis = basis,
+                    failureType = type,
+                    message = type.name
+                )
+            fun converted(rate: Double, updated: Long?, path: com.yourname.expensetracker.domain.core.money.ConversionPath) =
+                com.yourname.expensetracker.domain.core.money.ConversionOutcome.Converted(
+                    originalAmount = amount,
+                    originalCurrency = CurrencyCode(source),
+                    convertedAmount = amount * rate,
+                    targetCurrency = CurrencyCode(target),
+                    rateUsed = rate,
+                    rateBasis = basis,
+                    rateValidDate = null,
+                    rateLastUpdated = updated,
+                    rateSource = null,
+                    conversionPath = path
+                )
+            if (source.equals(target, ignoreCase = true)) {
+                converted(1.0, null, com.yourname.expensetracker.domain.core.money.ConversionPath.IDENTITY)
+            } else {
+                val entry = rates[source.uppercase()]
+                when {
+                    entry == null ->
+                        failed(com.yourname.expensetracker.domain.core.money.ConversionFailureType.MISSING_RATE)
+                    policy.maxAgeMs != null && now - entry.second > policy.maxAgeMs!! ->
+                        failed(com.yourname.expensetracker.domain.core.money.ConversionFailureType.STALE_RATE)
+                    else -> converted(entry.first, entry.second, com.yourname.expensetracker.domain.core.money.ConversionPath.DIRECT)
+                }
+            }
+        }
+    }
+
     private fun occurrenceRow(
         ruleId: Long,
         dueDate: Long,
         amount: Double,
         merchant: String,
         status: String = "PLANNED",
-        frequency: RecurrenceFrequency = RecurrenceFrequency.MONTHLY
+        frequency: RecurrenceFrequency = RecurrenceFrequency.MONTHLY,
+        currency: String = "EUR"
     ): RecurringOccurrence = RecurringOccurrence(
         sourceType = RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE,
         sourceId = ruleId,
@@ -687,7 +909,7 @@ class FinancialStressForecastEngineTest {
         dueDate = dueDate,
         status = status,
         expectedAmount = amount,
-        expectedCurrency = "EUR",
+        expectedCurrency = currency,
         frequency = frequency.name,
         merchant = merchant,
         categoryId = null

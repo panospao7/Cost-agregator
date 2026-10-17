@@ -6,8 +6,12 @@ import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.data.database.entity.SubscriptionCandidate
 import com.yourname.expensetracker.data.database.entity.SubscriptionPriceHistory
 import com.yourname.expensetracker.data.database.entity.SubscriptionUsage
+import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
 import com.yourname.expensetracker.data.repository.SubscriptionManagementRepository
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateResult
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.SupportedCurrency
+import kotlinx.coroutines.CancellationException
 import com.yourname.expensetracker.domain.logic.RecurrenceCalculator
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.subscription.CreateSubscriptionRequest
@@ -36,6 +40,10 @@ data class SubscriptionManagementUiState(
     val error: String? = null,
     val totalMonthlyCost: Double = 0.0,
     val totalAnnualCost: Double = 0.0,
+    /** Currency of [totalMonthlyCost]/[totalAnnualCost]; null when the total is unavailable. */
+    val totalCurrency: String? = null,
+    /** HZ01-A: conversion state of the totals; UNAVAILABLE totals must never be rendered as amounts. */
+    val totalStatus: SubscriptionTotalStatus = SubscriptionTotalStatus.AVAILABLE,
     val activeCount: Int = 0,
     val inactiveCount: Int = 0,
     val detectedCount: Int = 0,
@@ -54,6 +62,8 @@ data class SubscriptionManagementUiState(
             else -> com.yourname.expensetracker.ui.model.LoadableUiState.Data(subscriptions)
         }
 }
+
+enum class SubscriptionTotalStatus { AVAILABLE, PARTIAL, UNAVAILABLE }
 
 data class SubscriptionInfo(
     val subscription: ManualRecurringExpense,
@@ -77,7 +87,7 @@ class SubscriptionManagementViewModel @Inject constructor(
     private val timeProvider: TimeProvider,
     private val subscriptionManagerEngine: SubscriptionManagerEngine,
     private val currencySettingsRepository: CurrencySettingsRepository,
-    private val currencyConverter: com.yourname.expensetracker.domain.currency.CurrencyConverter
+    private val multiCurrencyRepository: MultiCurrencyRepository
 ) : ViewModel() {
 
     val homeCurrency: Flow<String> = currencySettingsRepository.homeCurrency()
@@ -129,25 +139,16 @@ class SubscriptionManagementViewModel @Inject constructor(
                     val subscriptionInfos = subscriptionsDeferred.await()
                     val candidates = candidatesDeferred.await()
                     
-                    // S12-011: Normalize subscription amounts to home currency before summing
-                    val hc = runCatching { currencySettingsRepository.homeCurrency().first() }.getOrNull()
-                    val totalMonthly = if (hc != null) {
-                        subscriptionInfos.filter { it.subscription.isActive }.sumOf { info ->
-                            val rawMonthly = calculateMonthlyCost(info.subscription)
-                            val subCurrency = info.subscription.currency
-                            if (subCurrency.equals(hc, ignoreCase = true)) {
-                                rawMonthly
-                            } else {
-                                currencyConverter.convert(rawMonthly, subCurrency, hc)
-                                    ?.convertedAmount ?: rawMonthly // best-effort fallback to raw
-                            }
-                        }
-                    } else {
+                    // S12-011 / HZ01-A: Normalize subscription amounts to home currency through
+                    // the canonical aggregate. Rows that cannot convert are excluded (partial);
+                    // when nothing converts or the home currency is unreadable the total is
+                    // Unavailable. Never a raw sum labelled as home currency.
+                    val monthlyTotal = computeMonthlyTotal(
                         subscriptionInfos.filter { it.subscription.isActive }
-                            .sumOf { calculateMonthlyCost(it.subscription) }
-                    }
+                    )
+                    val totalMonthly = monthlyTotal.monthly
                     val totalAnnual = totalMonthly * 12
-                    
+
                     _uiState.value = SubscriptionManagementUiState(
                         subscriptions = subscriptionInfos,
                         detectedCandidates = candidates,
@@ -155,12 +156,16 @@ class SubscriptionManagementViewModel @Inject constructor(
                         error = null,
                         totalMonthlyCost = totalMonthly,
                         totalAnnualCost = totalAnnual,
+                        totalCurrency = monthlyTotal.currency,
+                        totalStatus = monthlyTotal.status,
                         activeCount = subscriptionInfos.count { it.subscription.isActive },
                         inactiveCount = subscriptionInfos.count { !it.subscription.isActive },
                         detectedCount = candidates.size,
                         referenceNowMillis = timeProvider.now()
                     )
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
@@ -169,7 +174,54 @@ class SubscriptionManagementViewModel @Inject constructor(
             }
         }
     }
-    
+
+    private data class MonthlyTotal(
+        val monthly: Double,
+        val currency: String?,
+        val status: SubscriptionTotalStatus
+    )
+
+    private suspend fun computeMonthlyTotal(activeInfos: List<SubscriptionInfo>): MonthlyTotal {
+        if (activeInfos.isEmpty()) {
+            return MonthlyTotal(0.0, null, SubscriptionTotalStatus.AVAILABLE)
+        }
+        val targetCurrency = resolveHomeCurrencyCode()
+            ?: return MonthlyTotal(0.0, null, SubscriptionTotalStatus.UNAVAILABLE)
+        val amounts = activeInfos.map { info ->
+            calculateMonthlyCost(info.subscription) to info.subscription.currency
+        }
+        return when (
+            val result = multiCurrencyRepository.aggregateDisplayAmounts(
+                amounts = amounts,
+                transactionCounts = List(amounts.size) { 1 },
+                targetCurrency = targetCurrency
+            )
+        ) {
+            is MoneyAggregateResult.Available -> MonthlyTotal(
+                monthly = result.aggregate.displayAmount,
+                currency = result.aggregate.displayCurrency.code,
+                status = if (result.aggregate.isPartial) {
+                    SubscriptionTotalStatus.PARTIAL
+                } else {
+                    SubscriptionTotalStatus.AVAILABLE
+                }
+            )
+            is MoneyAggregateResult.Unavailable ->
+                MonthlyTotal(0.0, null, SubscriptionTotalStatus.UNAVAILABLE)
+        }
+    }
+
+    private suspend fun resolveHomeCurrencyCode(): String? {
+        val resolved = try {
+            currencySettingsRepository.resolveHomeCurrency().currencyOrNull?.code
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        }
+        return resolved?.let { SupportedCurrency.fromActiveCode(it)?.code }
+    }
+
     private suspend fun calculateUsageAndCostPerUse(
         subscription: ManualRecurringExpense
     ): Pair<Int, Double> {
