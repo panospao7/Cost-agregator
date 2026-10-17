@@ -6,8 +6,14 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -17,13 +23,169 @@ class MaintenanceOperationRunnerTest {
 
     private val maintenanceMode = mockk<RestoreMaintenanceMode>(relaxed = true)
     private val workerDrain = mockk<WorkerDrainController>()
+    private val writeBarrier = DatabaseWriteBarrier(maintenanceMode)
     private lateinit var runner: MaintenanceOperationRunner
 
     @Before
     fun setup() {
         every { maintenanceMode.currentMode() } returns RestoreMaintenanceMode.Mode.NORMAL
         coEvery { workerDrain.requestStopAndAwaitDrain(any(), any()) } returns true
-        runner = MaintenanceOperationRunner(maintenanceMode, workerDrain)
+        runner = MaintenanceOperationRunner(maintenanceMode, workerDrain, writeBarrier)
+    }
+
+    // ── enterAndDrain write drain (R27-S1) ───────────────────────
+
+    @Test
+    fun enterAndDrain_waits_for_in_flight_write_then_returns() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val writerStarted = CompletableDeferred<Unit>()
+        val writer = launch {
+            writeBarrier.runWrite(DatabaseAccessOperation("test_write")) {
+                writerStarted.complete(Unit)
+                gate.await()
+            }
+        }
+        writerStarted.await()
+
+        var returned = false
+        val drain = launch {
+            runner.enterAndDrain(RestoreMaintenanceMode.Mode.BACKUP_EXPORTING, "op")
+            returned = true
+        }
+        advanceTimeBy(5_000)
+        runCurrent()
+        assertFalse("enterAndDrain must wait for the in-flight write", returned)
+
+        gate.complete(Unit)
+        writer.join()
+        drain.join()
+        assertTrue(returned)
+        verify { maintenanceMode.enter(RestoreMaintenanceMode.Mode.BACKUP_EXPORTING) }
+        verify(exactly = 0) { maintenanceMode.exit(any()) }
+    }
+
+    @Test
+    fun enterAndDrain_write_drain_timeout_exits_mode_once_and_throws_bounded_exception() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val writerStarted = CompletableDeferred<Unit>()
+        val writer = launch {
+            writeBarrier.runWrite(DatabaseAccessOperation("stuck_write")) {
+                writerStarted.complete(Unit)
+                gate.await()
+            }
+        }
+        writerStarted.await()
+
+        var failure: Throwable? = null
+        val drain = launch {
+            try {
+                // failOnTimeout=false must NOT relax the write drain: always fail closed.
+                runner.enterAndDrain(
+                    RestoreMaintenanceMode.Mode.BACKUP_EXPORTING, "op", failOnTimeout = false
+                )
+            } catch (e: WriteDrainTimeoutException) {
+                failure = e
+            }
+        }
+        advanceTimeBy(DatabaseWriteBarrier.WRITE_DRAIN_TIMEOUT_MS + 1)
+        runCurrent()
+        drain.join()
+
+        assertNotNull(failure)
+        assertEquals("MAINTENANCE_WRITE_DRAIN_TIMEOUT", failure!!.message)
+        verify(exactly = 1) { maintenanceMode.exit(forceRestartRequired = false) }
+
+        gate.complete(Unit)
+        writer.join()
+    }
+
+    @Test
+    fun enterAndDrain_cancellation_during_write_drain_exits_mode_once_and_rethrows() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val writerStarted = CompletableDeferred<Unit>()
+        val writer = launch {
+            writeBarrier.runWrite(DatabaseAccessOperation("stuck_write")) {
+                writerStarted.complete(Unit)
+                gate.await()
+            }
+        }
+        writerStarted.await()
+
+        var cancellation: CancellationException? = null
+        val drain = launch {
+            try {
+                runner.enterAndDrain(RestoreMaintenanceMode.Mode.BACKUP_EXPORTING, "op")
+            } catch (e: CancellationException) {
+                cancellation = e
+                throw e
+            }
+        }
+        runCurrent()
+        verify(exactly = 1) { maintenanceMode.enter(RestoreMaintenanceMode.Mode.BACKUP_EXPORTING) }
+        verify(exactly = 0) { maintenanceMode.exit(any()) }
+
+        drain.cancel()
+        drain.join()
+
+        assertNotNull("cancellation must be rethrown, not swallowed", cancellation)
+        verify(exactly = 1) { maintenanceMode.exit(forceRestartRequired = false) }
+
+        gate.complete(Unit)
+        writer.join()
+    }
+
+    @Test
+    fun enterAndDrain_reentrant_call_inside_counted_write_throws_before_entering_mode() = runTest {
+        var failure: Throwable? = null
+        writeBarrier.runWrite(DatabaseAccessOperation("outer_write")) {
+            try {
+                runner.enterAndDrain(RestoreMaintenanceMode.Mode.BACKUP_EXPORTING, "op")
+            } catch (e: IllegalStateException) {
+                failure = e
+            }
+        }
+
+        assertNotNull(failure)
+        assertEquals("MAINTENANCE_DRAIN_REENTRANT", failure!!.message)
+        verify(exactly = 0) { maintenanceMode.enter(any()) }
+        verify(exactly = 0) { maintenanceMode.exit(any()) }
+        coVerify(exactly = 0) { workerDrain.requestStopAndAwaitDrain(any(), any()) }
+    }
+
+    @Test
+    fun runExclusive_write_drain_timeout_exits_once_and_never_runs_block() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val writerStarted = CompletableDeferred<Unit>()
+        val writer = launch {
+            writeBarrier.runWrite(DatabaseAccessOperation("stuck_write")) {
+                writerStarted.complete(Unit)
+                gate.await()
+            }
+        }
+        writerStarted.await()
+
+        var blockRan = false
+        var failure: Throwable? = null
+        val exclusive = launch {
+            try {
+                runner.runExclusive(
+                    mode = RestoreMaintenanceMode.Mode.RESETTING_DATABASE,
+                    operationName = "op"
+                ) { blockRan = true }
+            } catch (e: WriteDrainTimeoutException) {
+                failure = e
+            }
+        }
+        advanceTimeBy(DatabaseWriteBarrier.WRITE_DRAIN_TIMEOUT_MS + 1)
+        runCurrent()
+        exclusive.join()
+
+        assertNotNull(failure)
+        assertFalse(blockRan)
+        verify(exactly = 1) { maintenanceMode.exit(forceRestartRequired = false) }
+
+        gate.complete(Unit)
+        writer.join()
     }
 
     // ── reset_database_enters_maintenance ────────────────────────

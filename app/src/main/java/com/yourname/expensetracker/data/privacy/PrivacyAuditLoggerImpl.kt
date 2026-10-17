@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.privacy
 
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.PrivacyAuditDao
 import com.yourname.expensetracker.data.database.entity.PrivacyAuditEvent
@@ -150,9 +151,11 @@ class PrivacyAuditLoggerImpl @Inject constructor(
             }
             // Single physical insert site (db_ownership_policy pins logDecision + dao.insert).
             // State changes run only after each successful insert; a failure keeps state and rethrows.
-            for (row in planned) {
-                dao.insert(row.event)
-                row.onInserted()
+            writeBarrier.runWrite(DatabaseAccessOperation("PrivacyAuditLoggerImpl.logDecision")) {
+                for (row in planned) {
+                    dao.insert(row.event)
+                    row.onInserted()
+                }
             }
         }
     }

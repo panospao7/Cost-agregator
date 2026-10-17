@@ -45,8 +45,13 @@ import com.yourname.expensetracker.domain.privacy.PrivacyGateReasonCodes
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CopyableThrowable
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import java.io.ByteArrayOutputStream
 import org.junit.After
@@ -2388,6 +2393,87 @@ class DatabaseBackupRepositoryImplTest {
                 }
             } finally {
                 io.mockk.unmockkConstructor(com.yourname.expensetracker.domain.workers.NoOpWorkerDrainController::class)
+                releaseRestoreFixture()
+            }
+        }
+    }
+
+    @Test
+    fun write_drain_timeout_aborts_every_restore_API_with_bounded_failure_and_exits_after_finalization() = runTest(testDispatcher) {
+        for (operation in supportedRestoreOperations()) {
+            val fixture = restoreFixture()
+            try {
+                val before = dbFile.readBytes()
+                // The repository and the stuck writer share ONE barrier over the same mode mock.
+                val barrier = com.yourname.expensetracker.data.backup.DatabaseWriteBarrier(mockRestoreMaintenanceMode)
+                val repo = DatabaseBackupRepositoryImpl(
+                    context = context,
+                    database = database,
+                    ioDispatcher = testDispatcher,
+                    privacyGate = privacyGate,
+                    privacySettingsRepository = privacySettingsRepository,
+                    backupEncryptionService = backupEncryptionService,
+                    exportAnonymizer = exportAnonymizer,
+                    secureKeyStorage = secureKeyStorage,
+                    receiptAssetStore = mockk(relaxed = true),
+                    restoreMaintenanceMode = mockRestoreMaintenanceMode,
+                    restoreJournal = fixture.journal,
+                    workerDrain = com.yourname.expensetracker.domain.workers.NoOpWorkerDrainController(),
+                    restoreDatabaseOpener = object : com.yourname.expensetracker.data.backup.RestoreDatabaseOpener {
+                        override fun openFreshDatabase() = database
+                    },
+                    maintenanceOperationRunner = com.yourname.expensetracker.data.backup.MaintenanceOperationRunner(
+                        mockRestoreMaintenanceMode,
+                        com.yourname.expensetracker.domain.workers.NoOpWorkerDrainController(),
+                        barrier
+                    ),
+                    snapshotCreator = com.yourname.expensetracker.data.backup.SqliteSnapshotCreator(),
+                    restoreInternalWriteScope =
+                        com.yourname.expensetracker.data.backup.RestoreInternalWriteScope(mockRestoreMaintenanceMode),
+                    operationRunRecorder = mockk(relaxed = true),
+                    diagnosticSink = com.yourname.expensetracker.data.backup.TimberMaintenanceSafeDiagnosticSink(),
+                    timeProvider = FakeTimeProvider(fixedTime),
+                    databaseWriteBarrier = barrier
+                )
+
+                val gate = CompletableDeferred<Unit>()
+                val writerStarted = CompletableDeferred<Unit>()
+                val writer = launch {
+                    barrier.runWrite(com.yourname.expensetracker.data.backup.DatabaseAccessOperation("stuck_write")) {
+                        writerStarted.complete(Unit)
+                        gate.await()
+                    }
+                }
+                writerStarted.await()
+
+                val restore = async { invokeRestore(operation, repo, fixture.source) }
+                runCurrent()
+                advanceTimeBy(com.yourname.expensetracker.data.backup.DatabaseWriteBarrier.WRITE_DRAIN_TIMEOUT_MS + 1)
+                runCurrent()
+                val result = restore.await()
+
+                assertTrue(result.isFailure)
+                assertTrue(
+                    result.exceptionOrNull() is com.yourname.expensetracker.data.backup.WriteDrainTimeoutException
+                )
+                assertEquals("MAINTENANCE_WRITE_DRAIN_TIMEOUT", result.exceptionOrNull()?.message)
+                org.junit.Assert.assertArrayEquals(before, dbFile.readBytes())
+                verify(exactly = 0) { database.close() }
+                assertEquals(RestoreJournal.JournalState.FAILED, fixture.journal.readFailureJournal()?.state)
+                assertEquals(RestoreMaintenanceMode.Mode.NORMAL, mockRestoreMaintenanceMode.currentMode())
+                assertTrue(fixture.trace.indexOf("FINALIZED_FAILURE") in 0 until fixture.trace.indexOf("EXIT_NORMAL"))
+                assertTrue(
+                    fixture.directory.listFiles { f -> f.name.startsWith("expense_tracker_db_import_stage_") }
+                        .orEmpty().isEmpty()
+                )
+                assertTrue(
+                    File(fixture.directory, "cache").listFiles { f -> f.name.startsWith("costbackup_extract_") }
+                        .orEmpty().isEmpty()
+                )
+
+                gate.complete(Unit)
+                writer.join()
+            } finally {
                 releaseRestoreFixture()
             }
         }

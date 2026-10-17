@@ -35,6 +35,8 @@ import com.yourname.expensetracker.domain.ai.service.AiEngagementRepository
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.backup.AppOperationalState
+import com.yourname.expensetracker.data.backup.RestoreRestartSignal
+import kotlinx.coroutines.flow.first
 import com.yourname.expensetracker.data.database.entity.Budget as BudgetEntity
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.database.entity.SplitShare
@@ -82,6 +84,7 @@ import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
 import com.yourname.expensetracker.ui.util.ClipboardAmountParser
 import com.yourname.expensetracker.ui.util.HapticType
 import com.yourname.expensetracker.ui.util.rememberHapticFeedback
+import com.yourname.expensetracker.ui.util.restartApp
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
 import timber.log.Timber
@@ -106,6 +109,10 @@ class MainActivity : ComponentActivity() {
 
     @Inject
     lateinit var gson: Gson
+
+    /** R27-S3: in-memory (non-persisted) automatic-restart request after an in-process restore. */
+    @Inject
+    lateinit var restoreRestartSignal: RestoreRestartSignal
 
     /** RP-17 17-A: central bank-sync availability gate (D1). */
     @Inject
@@ -135,7 +142,8 @@ class MainActivity : ComponentActivity() {
                             mainViewModel = mainViewModel,
                             actionRegistry = actionRegistry,
                             expenseRepository = expenseRepository,
-                            gson = gson
+                            gson = gson,
+                            restoreRestartSignal = restoreRestartSignal
                         )
                     }
                 }
@@ -308,7 +316,8 @@ fun MainScreen(
     mainViewModel: MainViewModel,
     actionRegistry: ContextualActionRegistry,
     expenseRepository: ExpenseRepository,
-    gson: Gson
+    gson: Gson,
+    restoreRestartSignal: RestoreRestartSignal
 ) {
     // RP-17 17-A / D1: availability resolved here (same seam as
     // NavigationController/HomeScreen) — the Activity's injected instance is
@@ -426,11 +435,20 @@ fun MainScreen(
     val operationalState by mainViewModel.operationalState.collectAsState()
     when (val state = operationalState) {
         is AppOperationalState.RestartRequiredAfterRestore -> {
+            // R27-S3: automatic relaunch only for a restore that completed in THIS process
+            // (in-memory signal). A cold start that merely reads the persisted
+            // restart-required mode sees the flag false -> no restart loop. Waiting on the
+            // StateFlow (instead of a one-time check) also covers the lock screen being
+            // composed just before the restore result marks the signal.
+            LaunchedEffect(Unit) {
+                restoreRestartSignal.requested.first { it }
+                restartApp(context)
+            }
             AppOperationalLockScreen(
                 title = "Restart Required",
                 message = stringResource(R.string.restart_required_database_operation),
                 actionLabel = "Restart Now",
-                onAction = { Runtime.getRuntime().exit(0) }
+                onAction = { restartApp(context) }
             )
             return
         }
@@ -872,7 +890,8 @@ fun MainScreen(
                 }
                 is NavigationDestination.BackupRestore -> {
                     BackupRestoreScreen(
-                        onNavigateBack = { navigation.navigateBack() }
+                        onNavigateBack = { navigation.navigateBack() },
+                        onRestartRequired = { restartApp(context) }
                     )
                 }
                 is NavigationDestination.SharedExpenseGroups -> {

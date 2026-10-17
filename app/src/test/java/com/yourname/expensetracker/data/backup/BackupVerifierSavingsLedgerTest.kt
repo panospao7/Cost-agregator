@@ -221,7 +221,7 @@ class BackupVerifierSavingsLedgerTest {
             receiptAssetStore = mockk(relaxed = true), restoreMaintenanceMode = mode,
             restoreJournal = journal, workerDrain = drain,
             restoreDatabaseOpener = RestoreDatabaseOpenerImpl(context),
-            maintenanceOperationRunner = MaintenanceOperationRunner(mode, drain),
+            maintenanceOperationRunner = MaintenanceOperationRunner(mode, drain, DatabaseWriteBarrier(mode)),
             snapshotCreator = SqliteSnapshotCreator(),
             restoreInternalWriteScope = RestoreInternalWriteScope(mode),
             operationRunRecorder = recorder, diagnosticSink = sink,

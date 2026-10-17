@@ -97,7 +97,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
     private val diagnosticSink: MaintenanceSafeDiagnosticSink,
     private val timeProvider: TimeProvider,
     private val databaseReadBarrier: com.yourname.expensetracker.data.backup.DatabaseReadBarrier =
-        com.yourname.expensetracker.data.backup.DatabaseReadBarrier(restoreMaintenanceMode)
+        com.yourname.expensetracker.data.backup.DatabaseReadBarrier(restoreMaintenanceMode),
+    private val databaseWriteBarrier: com.yourname.expensetracker.data.backup.DatabaseWriteBarrier =
+        com.yourname.expensetracker.data.backup.DatabaseWriteBarrier(restoreMaintenanceMode)
 ) : DatabaseBackupRepository {
 
     private var stagedImportVerifier: suspend (Context, String, File, Int, DatabaseImportSummary) -> DatabaseImportSummary =
@@ -130,7 +132,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         object : RestoreDatabaseOpener { override fun openFreshDatabase() = database },
         com.yourname.expensetracker.data.backup.MaintenanceOperationRunner(
             restoreMaintenanceMode,
-            com.yourname.expensetracker.domain.workers.NoOpWorkerDrainController()
+            com.yourname.expensetracker.domain.workers.NoOpWorkerDrainController(),
+            com.yourname.expensetracker.data.backup.DatabaseWriteBarrier(restoreMaintenanceMode)
         ),
         com.yourname.expensetracker.data.backup.SqliteSnapshotCreator(),
         com.yourname.expensetracker.data.backup.RestoreInternalWriteScope(restoreMaintenanceMode),
@@ -968,11 +971,22 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
     }
 
     private suspend fun enterRestoreAndDrain(operation: String) {
+        // Re-entrancy is rejected BEFORE the mode is entered so it can never leave it entered.
+        databaseWriteBarrier.checkNotInsideCountedWrite(kotlinx.coroutines.currentCoroutineContext())
         restoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.RESTORE_PREPARING)
         // Unlike the generic runner, keep the barrier closed on timeout until
         // this restore operation has durably finalized its pre-destructive abort.
+        // Typed timeouts map to DiagnosticReasonCode.TIMEOUT in restoreFailureReasonCode.
         if (!workerDrain.requestStopAndAwaitDrain(operation)) {
-            throw IllegalStateException("RESTORE_WORKER_DRAIN_TIMEOUT")
+            throw WorkerDrainTimeoutException(operation)
+        }
+        // Same fail-closed handling as the worker drain: the barrier stays closed and the
+        // caller's pre-destructive abort path finalizes it. No partial state is started.
+        if (!databaseWriteBarrier.awaitNoInFlightWrites(
+                com.yourname.expensetracker.data.backup.DatabaseWriteBarrier.WRITE_DRAIN_TIMEOUT_MS
+            )
+        ) {
+            throw com.yourname.expensetracker.data.backup.WriteDrainTimeoutException()
         }
     }
 
@@ -3000,6 +3014,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
 
     private fun restoreFailureReasonCode(error: Throwable): DiagnosticReasonCode = when (error) {
         is WorkerDrainTimeoutException -> DiagnosticReasonCode.TIMEOUT
+        is com.yourname.expensetracker.data.backup.WriteDrainTimeoutException -> DiagnosticReasonCode.TIMEOUT
         is DatabaseAccessBlockedException -> when (error.accessType) {
             DatabaseAccessType.WRITE -> DiagnosticReasonCode.WRITE_BARRIER_DENIED
             DatabaseAccessType.READ -> DiagnosticReasonCode.READ_BARRIER_DENIED

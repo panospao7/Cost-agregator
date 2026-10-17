@@ -22,7 +22,6 @@ import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -373,7 +372,11 @@ class PrivacyAuditLoggerImplCoalescingTest {
 
         val thrown = runCatching { allowedCapture() }.exceptionOrNull()
 
-        assertSame(cancellation, thrown)
+        // R27: the insert now runs inside DatabaseWriteBarrier.runWrite (withContext), and
+        // coroutine stack-trace recovery may rethrow a copy of the exception across that
+        // boundary, so assert the type and message rather than identity.
+        assertTrue("expected CancellationException, got $thrown", thrown is CancellationException)
+        assertEquals("audit cancelled", thrown?.message)
         assertFalse(rows.isNotEmpty())
 
         daoFailure = null

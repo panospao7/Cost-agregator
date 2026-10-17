@@ -1364,30 +1364,33 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                     put("amount", preDb.parsed.amount)
                     put("merchant", preDb.correctedMerchant)
                 }.toString()
-                try {
-                    transactionRunner.runInTransaction(
-                        operationId = "notification.auto_accept",
-                        correlationId = java.util.UUID.randomUUID().toString(),
-                        source = "NotificationProcessingPipeline"
-                    ) { ctx ->
-                        transactionLifecycleEventWriter.write(
-                            ctx,
-                            com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEvent(
-                                expenseId = expenseId,
-                                eventType = "AI_AUTO_ACCEPT",
-                                source = ExpenseSource.NOTIFICATION_AUTO_ACCEPT.name,
-                                actor = "system:ai_auto_accept",
-                                correlationId = correlationId,  // DDL-512-05
-                                dedupeKey = preDb.dedupeKey,
-                                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                                    .putHashed("packageName", notification.packageName)
-                                    .build()
-                            )
+                // R30: fail closed. The audit event is written inside the outer
+                // withTransaction; a failure here must propagate so the whole
+                // transaction (expense included) rolls back visibly instead of
+                // reporting Created for an expense that was never saved.
+                writeBarrier.runWrite(
+                    DatabaseAccessOperation("NotificationProcessingPipeline.handleAutoAcceptInTransaction")
+                ) {
+                transactionRunner.runInTransaction(
+                    operationId = "notification.auto_accept",
+                    correlationId = java.util.UUID.randomUUID().toString(),
+                    source = "NotificationProcessingPipeline"
+                ) { ctx ->
+                    transactionLifecycleEventWriter.write(
+                        ctx,
+                        com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEvent(
+                            expenseId = expenseId,
+                            eventType = "AI_AUTO_ACCEPT",
+                            source = ExpenseSource.NOTIFICATION_AUTO_ACCEPT.name,
+                            actor = "system:ai_auto_accept",
+                            correlationId = correlationId,  // DDL-512-05
+                            dedupeKey = preDb.dedupeKey,
+                            metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                                .putHashed("packageName", notification.packageName)
+                                .build()
                         )
-                    }
-                } catch (e: Exception) {
-                    if (e is CancellationException) throw e
-                    Timber.w(e, "AID-9: Failed to write AI_AUTO_ACCEPT audit event for expenseId=$expenseId")
+                    )
+                }
                 }
 
                 // AID-9 Gap 3: Notify user via log (visible in debug viewer)

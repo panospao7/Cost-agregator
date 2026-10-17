@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.repository
 
 import androidx.room.withTransaction
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.BlockedPackageDao
@@ -80,6 +81,10 @@ class NotificationRepositoryDeleteAllNotificationsClockTest {
             secondArg<suspend () -> Any>().invoke()
         }
         coEvery { transactionEventDao.insert(capture(eventSlot)) } returns 1L
+        // R27-S2c: runWrite is a pass-through here; a relaxed mock would never invoke the block.
+        coEvery {
+            writeBarrier.runWrite(any<DatabaseAccessOperation>(), any<suspend () -> Any?>())
+        } coAnswers { secondArg<suspend () -> Any?>().invoke() }
     }
 
     @After

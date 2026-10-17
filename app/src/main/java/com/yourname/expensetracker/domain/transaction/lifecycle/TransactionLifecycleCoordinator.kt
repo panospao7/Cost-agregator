@@ -1293,6 +1293,9 @@ class TransactionLifecycleCoordinator @Inject constructor(
         // location-only updates — location does not affect budget/anomaly/
         // merchant/recurring matching logic.
         var outcome = ExpenseUpdateOutcome.NotFound
+        writeBarrier.runWrite(
+            DatabaseAccessOperation("TransactionLifecycleCoordinator.updateLocation")
+        ) {
         database.withTransaction {
             val existing = expenseDao.getById(expenseId)
             if (existing == null) {
@@ -1324,6 +1327,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
             ))
             outcome = ExpenseUpdateOutcome.Updated
         }
+        }
 
         when (outcome) {
             ExpenseUpdateOutcome.Updated, ExpenseUpdateOutcome.NoChange -> Unit
@@ -1347,6 +1351,9 @@ class TransactionLifecycleCoordinator @Inject constructor(
 
         val now = timeProvider.now()
         var outcome = ExpenseUpdateOutcome.NotFound
+        writeBarrier.runWrite(
+            DatabaseAccessOperation("TransactionLifecycleCoordinator.clearLocation")
+        ) {
         database.withTransaction {
             val existing = expenseDao.getById(expenseId)
             if (existing == null) {
@@ -1387,6 +1394,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
             ))
             outcome = ExpenseUpdateOutcome.Updated
         }
+        }
 
         when (outcome) {
             ExpenseUpdateOutcome.Updated, ExpenseUpdateOutcome.NoChange -> Unit
@@ -1425,6 +1433,9 @@ class TransactionLifecycleCoordinator @Inject constructor(
         val unsupported = patch.unsupportedFields()
         if (unsupported.isNotEmpty()) {
             try {
+                writeBarrier.runWrite(
+                    DatabaseAccessOperation("TransactionLifecycleCoordinator.updateBusinessExpensePatch")
+                ) {
                 transactionEventDao.insert(
                     TransactionEvent(
                         expenseId = expenseId,
@@ -1444,6 +1455,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                         correlationId = correlationId
                     )
                 )
+                }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 Timber.w(e, "Failed to write UPDATE_VALIDATION_FAILED for business patch")
@@ -1455,6 +1467,9 @@ class TransactionLifecycleCoordinator @Inject constructor(
         val now = timeProvider.now()
         var updateResult: BusinessExpenseUpdateResult = BusinessExpenseUpdateResult.NoChange
 
+        writeBarrier.runWrite(
+            DatabaseAccessOperation("TransactionLifecycleCoordinator.updateBusinessExpensePatch")
+        ) {
         database.withTransaction {
             val existing = expenseDao.getById(expenseId)
             if (existing == null) {
@@ -1510,6 +1525,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 expenseId = expenseId,
                 changedFields = changedFields
             )
+        }
         }
 
         if (updateResult !is BusinessExpenseUpdateResult.Updated) {
@@ -1592,6 +1608,9 @@ class TransactionLifecycleCoordinator @Inject constructor(
         // missing rows are typed failures. Collision still throws
         // DuplicateUpdateException (rolls back inside the transaction).
         var outcome = ExpenseUpdateOutcome.NotFound
+        writeBarrier.runWrite(
+            DatabaseAccessOperation("TransactionLifecycleCoordinator.updateMerchant")
+        ) {
         database.withTransaction {
             val existing = expenseDao.getById(expenseId)
             if (existing == null) {
@@ -1651,6 +1670,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 )
             )
             outcome = ExpenseUpdateOutcome.Updated
+        }
         }
 
         when (outcome) {
@@ -1909,6 +1929,9 @@ class TransactionLifecycleCoordinator @Inject constructor(
         val now = timeProvider.now()
 
         var outcome = ExpenseUpdateOutcome.NotFound
+        writeBarrier.runWrite(
+            DatabaseAccessOperation("TransactionLifecycleCoordinator.updateTypeAndTransferDetails")
+        ) {
         database.withTransaction {
             val existing = expenseDao.getById(expenseId)
             if (existing == null) {
@@ -2003,6 +2026,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 )
             )
             outcome = ExpenseUpdateOutcome.Updated
+        }
         }
 
         when (outcome) {
@@ -2212,6 +2236,9 @@ class TransactionLifecycleCoordinator @Inject constructor(
         val now = timeProvider.now()
         var affectedCount = 0
 
+        writeBarrier.runWrite(
+            DatabaseAccessOperation("TransactionLifecycleCoordinator.bulkUpdateCategory")
+        ) {
         database.withTransaction {
             affectedCount = expenseDao.updateCategoryForMerchant(merchantKey, newCategoryId)
             // P2-PR1 (NEW-P2-010): Only write event if rows were actually affected,
@@ -2233,6 +2260,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     correlationId = correlationId  // DDL-C67-10
                 ))
             }
+        }
         }
 
         // P2-07: Dispatch single aggregate post-commit recalculation for bulk updates.
@@ -2464,6 +2492,9 @@ class TransactionLifecycleCoordinator @Inject constructor(
             // writes the DELETED event and dispatches post-commit work.
             // P2-08: Re-read inside transaction for TOCTOU-safe snapshot.
             var outcome = ExpenseDeleteOutcome.NotFound
+            writeBarrier.runWrite(
+                DatabaseAccessOperation("TransactionLifecycleCoordinator.deleteExpense")
+            ) {
             database.withTransaction {
                 val fresh = expenseDao.getById(expense.id)
                 if (fresh == null) {
@@ -2491,6 +2522,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
 
                 expenseDao.delete(fresh)
                 outcome = ExpenseDeleteOutcome.Deleted
+            }
             }
 
             if (outcome == ExpenseDeleteOutcome.NotFound) {

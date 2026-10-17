@@ -445,3 +445,13 @@ in the coverage matrix and regression ledger seed.
   snackbar; real-Room WarrantyTrackerRepositoryTransactionTest. Gate: static-guards 25/25 vr-20261016-214931-8093c15b, app-check
   vr-20261016-221153-1c7cc08b (8316/0), legacy-tests vr-20261016-224514-bf121686. Review: reviewer-strict ACCEPT-WITH-NOTES (fixed).
   Next: R27 group (worktree B) incl. R30 (pipeline auto-accept event fail-closed).
+- 2026-10-17: R27 group PASS (worktree B, fingerprint eeb10035..., rev 91f775b0 + diff). DatabaseWriteBarrier.runWrite counts in-flight
+  writes; backup export, safety backup, restore, import and reset wait (10 s, fail closed, bounded TIMEOUT) and never stay in
+  maintenance on cancel; main non-worker writers moved to runWrite (TransactionLifecycleCoordinator, ReceiptLifecycleCoordinator,
+  NotificationRepository, pipeline auto-accept, OperationRunRecorder, RoomDiagnosticEventWriter, PrivacyAuditLoggerImpl,
+  BankStatementLifecycleProcessor incl. finalizers and skip rows); new R27RunWriteCoverageGuardTest pins them; automatic app relaunch
+  after an in-process successful restore (RestoreRestartSignal; banner button wired; dismissRestartRequired removed); R30
+  pipeline auto-accept event failure now fails closed. Known limitations documented in docs/backup-restore-barrier-contract.md.
+  Gate: static-guards 25/25 vr-20261016-230924-4eac6ffd, app-check vr-20261016-233434-13cec8e4 (8361/0), legacy-tests
+  vr-20261017-000241-1066bde0 (262/0). Reviews: room-migration-guardian (S1), reviewer-strict (S2/S4), architecture-guardian
+  (S3/S4b/S5/R30) ACCEPT-WITH-NOTES, notes fixed. Next: R21 gate (worktree A), then R23, R25, R17/R19, R18, R20/R22b/R24/R16c.

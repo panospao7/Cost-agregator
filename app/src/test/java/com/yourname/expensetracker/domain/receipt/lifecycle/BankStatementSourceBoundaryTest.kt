@@ -1,7 +1,10 @@
 package com.yourname.expensetracker.domain.receipt.lifecycle
 
 import android.net.Uri
+import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.data.database.entity.BankStatementImportRun
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.BankStatementImportItemDao
 import com.yourname.expensetracker.data.database.dao.BankStatementImportRunDao
@@ -39,10 +42,14 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -95,6 +102,131 @@ class BankStatementSourceBoundaryTest {
         harness.verifyNoActionableWork()
     }
 
+    // ── R27-S4: terminal writes go through DatabaseWriteBarrier.runWrite ──────────
+
+    @Test
+    fun maintenanceDuringRun_blocksFailureFinalize_andStillReturnsFailure() = runTest {
+        val harness = Harness(null, listOf("10/05 SHOP -12.50"))
+        harness.afterItemInsert = { harness.modeState = RestoreMaintenanceMode.Mode.RESTORE_SWAPPING }
+        val result = harness.process()
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull() is DatabaseAccessBlockedException)
+        assertTrue(harness.finalizeOps.isEmpty())
+        harness.verifyFinalizeCalls(0)
+        assertEquals(0, harness.barrier.inFlightWriteCount())
+    }
+
+    @Test
+    fun maintenanceDuringRun_blocksUnexpectedFailureFinalizeWithReceipt() = runTest {
+        val harness = Harness(null, listOf("10/05 SHOP -12.50"))
+        harness.afterItemInsert = {
+            harness.modeState = RestoreMaintenanceMode.Mode.RESTORE_SWAPPING
+            harness.failNextCount = true
+        }
+        val result = harness.process()
+        assertTrue(result.isFailure)
+        assertEquals("TEST_COUNT_FAILURE", result.exceptionOrNull()?.message)
+        assertTrue(harness.finalizeOps.isEmpty())
+        harness.verifyFinalizeCalls(0)
+        assertEquals(0, harness.barrier.inFlightWriteCount())
+    }
+
+    @Test
+    fun maintenanceDuringRun_blocksLedgerOnlyUnexpectedFailureFinalize() = runTest {
+        val harness = Harness(null, listOf("10/05 SHOP -12.50 USD"))
+        coEvery { harness.validator.validateTransactions(any(), any(), any()) } coAnswers {
+            harness.modeState = RestoreMaintenanceMode.Mode.RESTORE_SWAPPING
+            throw IllegalStateException("TEST_VALIDATOR_FAILURE")
+        }
+        val result = harness.process()
+        assertTrue(result.isFailure)
+        assertEquals("TEST_VALIDATOR_FAILURE", result.exceptionOrNull()?.message)
+        harness.verifyFinalizeCalls(0)
+        assertEquals(0, harness.barrier.inFlightWriteCount())
+    }
+
+    @Test
+    fun maintenanceDuringRun_blocksCancelFinalize_andStillRethrowsCancellation() = runTest {
+        val harness = Harness(null, listOf("10/05 SHOP -12.50 USD"))
+        coEvery { harness.validator.validateTransactions(any(), any(), any()) } coAnswers {
+            harness.modeState = RestoreMaintenanceMode.Mode.RESTORE_SWAPPING
+            throw kotlinx.coroutines.CancellationException("TEST_CANCELLED")
+        }
+        val thrown = try {
+            harness.process()
+            null
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            e
+        }
+        assertEquals("TEST_CANCELLED", thrown?.message)
+        assertTrue(thrown!!.suppressed.any { it is DatabaseAccessBlockedException })
+        harness.verifyFinalizeCalls(0)
+        assertEquals(0, harness.barrier.inFlightWriteCount())
+    }
+
+    @Test
+    fun normalMode_stillWritesTerminalRows() = runTest {
+        val failed = Harness(null, listOf("10/05 SHOP -12.50"))
+        assertTrue(failed.process().isFailure)
+        assertEquals(listOf("bank_statement.finalize_failure"), failed.finalizeOps)
+        failed.verifyFinalizeCalls(1, BankStatementImportRun.STATUS_FAILED)
+
+        val succeeded = Harness(null, listOf("10/05 SHOP -12.50 USD"))
+        assertTrue(succeeded.process().isSuccess)
+        assertEquals(listOf("bank_statement.finalize_success"), succeeded.finalizeOps)
+        succeeded.verifyFinalizeCalls(1, BankStatementImportRun.STATUS_COMPLETED)
+
+        val unexpected = Harness(null, listOf("10/05 SHOP -12.50"))
+        unexpected.afterItemInsert = { unexpected.failNextCount = true }
+        assertTrue(unexpected.process().isFailure)
+        assertEquals(listOf("bank_statement.finalize_unexpected_failure"), unexpected.finalizeOps)
+        unexpected.verifyFinalizeCalls(1, BankStatementImportRun.STATUS_FAILED)
+
+        val ledgerOnly = Harness(null, listOf("10/05 SHOP -12.50 USD"))
+        coEvery { ledgerOnly.validator.validateTransactions(any(), any(), any()) } throws
+            IllegalStateException("TEST_VALIDATOR_FAILURE")
+        assertTrue(ledgerOnly.process().isFailure)
+        ledgerOnly.verifyFinalizeCalls(1, BankStatementImportRun.STATUS_FAILED)
+
+        val cancelled = Harness(null, listOf("10/05 SHOP -12.50 USD"))
+        coEvery { cancelled.validator.validateTransactions(any(), any(), any()) } throws
+            kotlinx.coroutines.CancellationException("TEST_CANCELLED")
+        val thrown = try {
+            cancelled.process()
+            null
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            e
+        }
+        assertEquals("TEST_CANCELLED", thrown?.message)
+        cancelled.verifyFinalizeCalls(1, BankStatementImportRun.STATUS_CANCELLED)
+    }
+
+    @Test
+    fun maintenanceDrain_waitsForInFlightFinalizeTransaction() = runTest {
+        val harness = Harness(null, listOf("10/05 SHOP -12.50"))
+        val gate = CompletableDeferred<Unit>()
+        harness.finalizeGate = gate
+
+        val processing = async { harness.process() }
+        runCurrent()
+        assertTrue(harness.finalizeGateEntered.isCompleted)
+        assertEquals(1, harness.barrier.inFlightWriteCount())
+
+        // Maintenance entry happens AFTER the finalize writer was admitted; the drain must wait for it.
+        harness.modeState = RestoreMaintenanceMode.Mode.RESTORE_SWAPPING
+        val drain = async { harness.barrier.awaitNoInFlightWrites(5_000L) }
+        runCurrent()
+        assertFalse(drain.isCompleted)
+        harness.verifyFinalizeCalls(0)
+
+        gate.complete(Unit)
+        runCurrent()
+        assertTrue(drain.await())
+        assertEquals(0, harness.barrier.inFlightWriteCount())
+        harness.verifyFinalizeCalls(1, BankStatementImportRun.STATUS_FAILED)
+        assertTrue(processing.await().isFailure)
+    }
+
     private class Harness(home: String?, rows: List<String>) {
         val clock = FakeTimeProvider.forDate(2026, 6, 1)
         val items = mutableListOf<BankStatementImportItem>()
@@ -107,7 +239,20 @@ class BankStatementSourceBoundaryTest {
         private val processor: BankStatementLifecycleProcessor
         private val uri = mockk<Uri>(relaxed = true)
 
+        // R27-S4: real barrier over a mutable maintenance mode so terminal writes are really gated/counted.
+        private val maintenanceMode = mockk<RestoreMaintenanceMode>()
+        var modeState = RestoreMaintenanceMode.Mode.NORMAL
+        val barrier = DatabaseWriteBarrier(maintenanceMode)
+        val runs = mockk<BankStatementImportRunDao>(relaxed = true)
+        /** operationIds of finalize transactions whose block actually executed. */
+        val finalizeOps = mutableListOf<String>()
+        var afterItemInsert: (() -> Unit)? = null
+        var failNextCount = false
+        var finalizeGate: CompletableDeferred<Unit>? = null
+        val finalizeGateEntered = CompletableDeferred<Unit>()
+
         init {
+            every { maintenanceMode.currentMode() } answers { modeState }
             val settings = mockk<CurrencySettingsRepository>()
             every { settings.homeCurrency() } returns (home?.let { flowOf(it) } ?: emptyFlow())
             val cleaner = mockk<MerchantCleaner>()
@@ -125,16 +270,26 @@ class BankStatementSourceBoundaryTest {
             val runner = mockk<DomainTransactionRunner>()
             val context = TransactionContext(correlationId = "test", occurredAt = clock.now())
             coEvery { runner.runInTransaction<Any>(any(), any(), any(), any(), any(), any()) } coAnswers {
+                val operationId = arg<String>(2)
+                if (operationId.startsWith("bank_statement.finalize")) {
+                    finalizeGateEntered.complete(Unit)
+                    finalizeGate?.await()
+                    finalizeOps += operationId
+                }
                 arg<suspend (TransactionContext) -> Any>(5)(context)
             }
-            val runs = mockk<BankStatementImportRunDao>(relaxed = true)
             coEvery { runs.insert(any()) } returns 1L
             val itemDao = mockk<BankStatementImportItemDao>()
             coEvery { itemDao.insert(any()) } answers {
                 items += firstArg<BankStatementImportItem>()
+                afterItemInsert?.invoke()
                 items.size.toLong()
             }
             coEvery { itemDao.countByRunAndStatus(any(), any()) } answers {
+                if (failNextCount) {
+                    failNextCount = false
+                    throw IllegalStateException("TEST_COUNT_FAILURE")
+                }
                 items.count { it.status == secondArg<String>() }
             }
             coEvery { pendingDao.insert(any()) } answers {
@@ -177,13 +332,23 @@ class BankStatementSourceBoundaryTest {
                 timeProvider = clock, bankStatementParser = parser, pendingReviewDao = pendingDao,
                 expenseDao = expenseDao, merchantNormalizer = normalizer, hybridClassifier = mockk(relaxed = true),
                 duplicateDetector = mockk(relaxed = true), assetStore = assetStore, transactionValidator = validator,
-                recurringExpenseRepository = mockk(relaxed = true), writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
+                recurringExpenseRepository = mockk(relaxed = true), writeBarrier = barrier,
                 rawPersistencePolicyResolver = policy, bankStatementImportRunDao = runs,
                 bankStatementImportItemDao = itemDao, receiptRecordWriter = writer
             )
         }
 
         suspend fun process() = processor.processBankStatement(uri)
+
+        /** Verifies BankStatementImportRunDao.finalize calls; [status] null means any status. */
+        suspend fun verifyFinalizeCalls(times: Int, status: String? = null) {
+            coVerify(exactly = times) {
+                runs.finalize(
+                    any(), status?.let { eq(it) } ?: any(), any(), any(), any(),
+                    any(), any(), any(), any(), any()
+                )
+            }
+        }
 
         suspend fun verifyNoActionableWork() {
             assertTrue(reviews.isEmpty())
