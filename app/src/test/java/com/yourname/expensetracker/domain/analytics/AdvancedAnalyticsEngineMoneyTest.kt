@@ -61,6 +61,29 @@ class AdvancedAnalyticsEngineMoneyTest {
     }
 
     @Test
+    fun `category change percent ignores current rows after the comparison cutoff but total keeps them`() = runTest {
+        val current = input(listOf(
+            expense(1L, 10.0, "EUR", "2026-03-02"),
+            expense(2L, 30.0, "EUR", "2026-03-20")
+        ))
+        val previous = input(
+            listOf(expense(3L, 20.0, "EUR", "2026-02-02")),
+            start = "2026-02-01", end = "2026-03-01"
+        )
+
+        val full = engine.getCategoryAnalytics(current, previous, categories, emptyList()).first.single()
+        val cut = engine.getCategoryAnalytics(
+            current, previous, categories, emptyList(),
+            comparisonCutoffMillisInclusive = date("2026-03-10")
+        ).first.single()
+
+        assertThat(full.changePercent).isEqualTo(100f)
+        assertThat(cut.changePercent).isEqualTo(-50f)
+        assertThat(cut.totalSpent).isEqualTo(40.0)
+        assertThat(cut.transactionCount).isEqualTo(2)
+    }
+
+    @Test
     fun `category exclusions cannot be assigned to an arbitrary category`() = runTest {
         val current = input(
             listOf(expense(1L, 10.0, "USD", "2026-03-02")),

@@ -35,7 +35,13 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import com.yourname.expensetracker.ui.util.UiTimeUtils
 import java.io.File
+import java.time.Instant
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.ZoneId
+import java.util.TimeZone
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ExportOptionsViewModelTest {
@@ -736,6 +742,120 @@ class ExportOptionsViewModelTest {
         // No plaintext temp and no plaintext final file left behind.
         assertFalse(File(out.parentFile, ".tmp_${out.name}").exists())
         assertFalse(out.exists())
+    }
+
+    // ── V-G-1: picked calendar days -> whole local days, exclusive end ─────────
+
+    private fun <T> withDefaultZone(zoneId: String, block: (ZoneId) -> T): T {
+        val original = TimeZone.getDefault()
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone(zoneId))
+            return block(ZoneId.of(zoneId))
+        } finally {
+            TimeZone.setDefault(original)
+        }
+    }
+
+    private fun localMillis(zone: ZoneId, dateTime: LocalDateTime): Long =
+        dateTime.atZone(zone).toInstant().toEpochMilli()
+
+    private val pickerZones = listOf("America/New_York", "Europe/Athens")
+
+    @Test
+    fun `picked same day range is valid and covers the whole local day`() {
+        pickerZones.forEach { zoneId ->
+            withDefaultZone(zoneId) { zone ->
+                val day = LocalDate.of(2026, 6, 3)
+                val picked = UiTimeUtils.localDateToPickerMillis(day)
+
+                viewModel.setPickedDateRange(picked, picked)
+
+                val state = viewModel.uiState.value
+                assertEquals("$zoneId: same-day range must not be rejected", null, state.error)
+                assertEquals(localMillis(zone, day.atStartOfDay()), state.startDate)
+                assertEquals(localMillis(zone, day.plusDays(1).atStartOfDay()), state.endDate)
+                io.mockk.coVerify {
+                    exportDataRepository.countExpensesBetween(state.startDate, state.endDate)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `picked range on a DST transition day still ends at the next local midnight`() {
+        withDefaultZone("America/New_York") { zone ->
+            val dstDay = LocalDate.of(2026, 3, 8) // 23-hour local day
+            val picked = UiTimeUtils.localDateToPickerMillis(dstDay)
+
+            viewModel.setPickedDateRange(picked, picked)
+
+            val state = viewModel.uiState.value
+            assertEquals(null, state.error)
+            assertEquals(localMillis(zone, LocalDate.of(2026, 3, 9).atStartOfDay()), state.endDate)
+            assertEquals(23L * 60L * 60L * 1000L, state.endDate - state.startDate)
+        }
+    }
+
+    @Test
+    fun `expense at 23_30 local on the end day is inside the exclusive range`() {
+        pickerZones.forEach { zoneId ->
+            withDefaultZone(zoneId) { zone ->
+                val startDay = LocalDate.of(2026, 6, 1)
+                val endDay = LocalDate.of(2026, 6, 3)
+
+                viewModel.setPickedDateRange(
+                    UiTimeUtils.localDateToPickerMillis(startDay),
+                    UiTimeUtils.localDateToPickerMillis(endDay)
+                )
+
+                val state = viewModel.uiState.value
+                val lateOnEndDay = localMillis(zone, endDay.atTime(23, 30))
+                val firstOfNextDay = localMillis(zone, endDay.plusDays(1).atStartOfDay())
+                val lastOfStartEve = localMillis(zone, startDay.minusDays(1).atTime(23, 59))
+                // DAO contract: start inclusive, end exclusive.
+                assertTrue("$zoneId: 23:30 on end day included", lateOnEndDay >= state.startDate && lateOnEndDay < state.endDate)
+                assertFalse("$zoneId: next day midnight excluded", firstOfNextDay >= state.startDate && firstOfNextDay < state.endDate)
+                assertFalse("$zoneId: previous evening excluded", lastOfStartEve >= state.startDate && lastOfStartEve < state.endDate)
+            }
+        }
+    }
+
+    @Test
+    fun `end chip shows the picked day not the day after`() {
+        pickerZones.forEach { zoneId ->
+            withDefaultZone(zoneId) { zone ->
+                val startDay = LocalDate.of(2026, 6, 1)
+                val endDay = LocalDate.of(2026, 6, 3)
+
+                viewModel.setPickedDateRange(
+                    UiTimeUtils.localDateToPickerMillis(startDay),
+                    UiTimeUtils.localDateToPickerMillis(endDay)
+                )
+
+                val state = viewModel.uiState.value
+                val shownStart = Instant.ofEpochMilli(state.startDate).atZone(zone).toLocalDate()
+                val shownEnd = Instant.ofEpochMilli(exportDisplayEndMillis(state.endDate)).atZone(zone).toLocalDate()
+                assertEquals(startDay, shownStart)
+                assertEquals("$zoneId: chip/metadata end must be the picked day", endDay, shownEnd)
+                // Picker initial value round-trips to the same calendar day.
+                assertEquals(
+                    UiTimeUtils.localDateToPickerMillis(endDay),
+                    UiTimeUtils.instantToPickerMillis(exportDisplayEndMillis(state.endDate), zone)
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `picked end day before start day is rejected`() {
+        withDefaultZone("Europe/Athens") {
+            viewModel.setPickedDateRange(
+                UiTimeUtils.localDateToPickerMillis(LocalDate.of(2026, 6, 5)),
+                UiTimeUtils.localDateToPickerMillis(LocalDate.of(2026, 6, 3))
+            )
+
+            assertEquals("Start date must be before end date", viewModel.uiState.value.error)
+        }
     }
 
     private fun stubPagedExpenses(vararg pages: List<Expense>) {

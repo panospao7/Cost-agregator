@@ -50,6 +50,21 @@ assurance batches. Technical evidence lives in `release-1.0-phase3-4-findings-le
   "Changes are paused while a backup or restore is running" instead of crashing or failing silently.
   "Savings goal created" appears only after the goal is saved.
 
+- **Analytics and export (R20).** Percentage changes now compare the same stretch of each period
+  (for example 1-17 October with 1-17 September; year-to-date with the same part of last year); the
+  "All" view shows no comparison. Exports include the chosen end day, a single-day export works, and
+  dates no longer shift with your time zone. The forecast refreshes when your home currency or exchange
+  rates change.
+- **Dates (R20).** Date pickers (add/review expense, receipt scan, manual recurring) keep the day you
+  picked in every time zone.
+- **Bank-statement import (R22).** Statement rows such as credit transfers, direct debits, card payments
+  and transfers to other banks are no longer skipped; "+" amounts are imported as income; card purchases
+  are no longer mistaken for income; US-format and ambiguous dates are read consistently for the whole
+  statement; one row no longer creates two pending reviews; summary lines (totals, balances, credit
+  limits, minimum payments) are still skipped.
+- **Amounts with a decimal comma (R16).** Amounts like "12,50" now work in the planned-expense dialog,
+  bill negotiation, the split editor, the currency calculator and the cash-flow starting balance.
+
 ## Known limitations (1.0)
 
 - About 60 smaller screens (budgets, categories, savings, groups, importers) are not awaited by the
@@ -71,3 +86,7 @@ assurance batches. Technical evidence lives in `release-1.0-phase3-4-findings-le
   capture itself keeps working.
 - Split templates: if a template save is blocked by a running backup, the editor closes without a
   message and the template is not saved; save it again afterwards.
+- The home screen's "vs last period" figure still compares with a block of the same length, so it can
+  differ from the Analytics month percentage.
+- Bank-statement import skips a real row whose description contains a summary word such as "limit"
+  (for example an "OVER LIMIT FEE").

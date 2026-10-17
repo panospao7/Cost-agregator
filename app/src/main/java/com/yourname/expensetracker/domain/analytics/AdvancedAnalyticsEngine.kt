@@ -189,7 +189,8 @@ class AdvancedAnalyticsEngine @Inject constructor(
         input: NormalizedAnalyticsInput,
         previousInput: NormalizedAnalyticsInput?,
         categories: List<Category>,
-        budgets: List<BudgetSnapshot>
+        budgets: List<BudgetSnapshot>,
+        comparisonCutoffMillisInclusive: Long? = null
     ): Pair<List<EnhancedCategoryAnalytics>, List<AnalyticsConversionWarning>> = withContext(defaultDispatcher) {
         val period = AnalyticsPeriodRange(
             period = AnalyticsPeriod.CUSTOM,
@@ -226,7 +227,8 @@ class AdvancedAnalyticsEngine @Inject constructor(
             currentContext = MoneySliceContext(input, input.includedExpenses.associateBy { it.id }),
             previousContext = previousInput?.let {
                 MoneySliceContext(it, it.includedExpenses.associateBy { expense -> expense.id })
-            }
+            },
+            comparisonCutoffMillisInclusive = comparisonCutoffMillisInclusive
         )
     }
 
@@ -285,7 +287,10 @@ class AdvancedAnalyticsEngine @Inject constructor(
         displayCurrency: String,
         allWarnings: List<AnalyticsConversionWarning>,
         currentContext: MoneySliceContext? = null,
-        previousContext: MoneySliceContext? = null
+        previousContext: MoneySliceContext? = null,
+        // Like-for-like delta: when set, only current rows dated at or before this instant are
+        // compared with the (cut) previous window. Displayed totals stay the full period.
+        comparisonCutoffMillisInclusive: Long? = null
     ): Pair<List<EnhancedCategoryAnalytics>, List<AnalyticsConversionWarning>> {
         // Build lookup maps
         val categoryMap = categories.associateBy { it.id }
@@ -318,8 +323,17 @@ class AdvancedAnalyticsEngine @Inject constructor(
                 aggregateMoney(previousExpenses.orEmpty(), displayCurrency, previousContext)
             } else null
             val previousTotal = (previousResult as? MoneyAggregateResult.Available)?.aggregate?.displayAmount
-            val changePercent = if (totalResult is MoneyAggregateResult.Available) {
-                calculateChangePercent(total, previousTotal)
+            val comparisonResult = if (comparisonCutoffMillisInclusive == null) {
+                totalResult
+            } else {
+                aggregateMoney(
+                    expenses.filter { it.date <= comparisonCutoffMillisInclusive },
+                    displayCurrency,
+                    currentContext
+                )
+            }
+            val changePercent = if (comparisonResult is MoneyAggregateResult.Available) {
+                calculateChangePercent(availableAmount(comparisonResult), previousTotal)
             } else null
             
             // Budget context
