@@ -11,6 +11,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.yourname.expensetracker.R
+import com.yourname.expensetracker.ui.util.UiTimeUtils
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -155,14 +156,18 @@ fun FormDateField(
     )
     
     if (showDatePicker) {
-        val datePickerState = rememberDatePickerState(initialSelectedDateMillis = dateMillis)
+        val datePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = UiTimeUtils.instantToPickerMillis(dateMillis)
+        )
         
         DatePickerDialog(
             onDismissRequest = { showDatePicker = false },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        datePickerState.selectedDateMillis?.let { onDateSelected(it) }
+                        datePickerState.selectedDateMillis?.let {
+                            onDateSelected(UiTimeUtils.pickerMillisToLocalStartOfDay(it))
+                        }
                         showDatePicker = false
                     }
                 ) {

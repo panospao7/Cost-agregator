@@ -31,6 +31,7 @@ import com.yourname.expensetracker.ui.components.asString
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
+import com.yourname.expensetracker.ui.util.UiTimeUtils
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -627,13 +628,17 @@ private fun AddRecurringExpenseDialog(
     
     // Date Picker
     if (showDatePicker) {
-        val datePickerState = rememberDatePickerState(initialSelectedDateMillis = nextDate)
+        val datePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = UiTimeUtils.instantToPickerMillis(nextDate)
+        )
         DatePickerDialog(
             onDismissRequest = { showDatePicker = false },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        datePickerState.selectedDateMillis?.let { nextDate = it }
+                        datePickerState.selectedDateMillis?.let {
+                            nextDate = UiTimeUtils.pickerMillisToLocalStartOfDay(it)
+                        }
                         showDatePicker = false
                     }
                 ) {
