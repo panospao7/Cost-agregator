@@ -497,14 +497,20 @@ private fun AddGoalDialog(
 
     if (showDatePicker) {
         val datePickerState = rememberDatePickerState(
-            initialSelectedDateMillis = targetDateMillis
+            // R20c: picker values are UTC-midnight millis; convert to/from the local calendar day.
+            initialSelectedDateMillis = targetDateMillis?.let {
+                com.yourname.expensetracker.ui.util.UiTimeUtils.instantToPickerMillis(it)
+            }
         )
         DatePickerDialog(
             onDismissRequest = { showDatePicker = false },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        targetDateMillis = datePickerState.selectedDateMillis
+                        datePickerState.selectedDateMillis?.let {
+                            targetDateMillis =
+                                com.yourname.expensetracker.ui.util.UiTimeUtils.pickerMillisToLocalStartOfDay(it)
+                        }
                         showDatePicker = false
                     }
                 ) {

@@ -36,6 +36,8 @@ import com.yourname.expensetracker.ui.components.emptystate.EmptyStateFeatureAct
 import com.yourname.expensetracker.ui.components.emptystate.EmptyStateScreenKeys
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.theme.SemanticColors
+import com.yourname.expensetracker.ui.util.AmountInputSanitizer
+import com.yourname.expensetracker.ui.util.UiTimeUtils
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -743,7 +745,8 @@ private fun AddSubscriptionDialog(
     var nextDate by remember { mutableStateOf<Long?>(null) }
     var showDatePicker by remember { mutableStateOf(false) }
     val dateFormat = remember { DateTimeFormatter.ofPattern("MMM dd, yyyy", Locale.getDefault()) }
-    
+    val parsedAmount = AmountInputSanitizer.parseOrNull(amount)
+
     val categories = listOf(
         stringResource(R.string.category_streaming),
         stringResource(R.string.category_software),
@@ -769,7 +772,9 @@ private fun AddSubscriptionDialog(
                 
                 OutlinedTextField(
                     value = amount,
-                    onValueChange = { amount = it },
+                    // R16c: locale-aware; keeps the comma decimal separator (el_GR "9,99").
+                    onValueChange = { amount = AmountInputSanitizer.sanitize(it) },
+                    isError = amount.isNotBlank() && (parsedAmount == null || parsedAmount <= 0.0),
                     label = { Text(stringResource(R.string.label_amount)) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth()
@@ -859,13 +864,13 @@ private fun AddSubscriptionDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    amount.toDoubleOrNull()?.let { amt ->
+                    parsedAmount?.takeIf { it > 0.0 }?.let { amt ->
                         nextDate?.let { chosenDate ->
                             onAdd(merchant, amt, frequency, category.takeIf { it.isNotEmpty() }, chosenDate)
                         }
                     }
                 },
-                enabled = merchant.isNotBlank() && amount.toDoubleOrNull() != null && nextDate != null
+                enabled = merchant.isNotBlank() && parsedAmount != null && parsedAmount > 0.0 && nextDate != null
             ) {
                 Text(stringResource(R.string.action_add))
             }
@@ -879,14 +884,17 @@ private fun AddSubscriptionDialog(
 
     if (showDatePicker) {
         val datePickerState = rememberDatePickerState(
-            initialSelectedDateMillis = nextDate ?: referenceNowMillis
+            // R20c: picker values are UTC-midnight millis of the calendar day.
+            initialSelectedDateMillis = UiTimeUtils.instantToPickerMillis(nextDate ?: referenceNowMillis)
         )
         DatePickerDialog(
             onDismissRequest = { showDatePicker = false },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        nextDate = datePickerState.selectedDateMillis
+                        datePickerState.selectedDateMillis?.let {
+                            nextDate = UiTimeUtils.pickerMillisToLocalStartOfDay(it)
+                        }
                         showDatePicker = false
                     }
                 ) {

@@ -28,6 +28,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import timber.log.Timber
 import javax.inject.Inject
 
 /**
@@ -167,9 +168,10 @@ class SubscriptionManagementViewModel @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                Timber.w("SUBSCRIPTION_LOAD_FAILED class=%s", e::class.java.simpleName)
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
-                    error = "Failed to load subscriptions: ${e.message}"
+                    error = "Failed to load subscriptions"
                 )
             }
         }
@@ -294,9 +296,12 @@ class SubscriptionManagementViewModel @Inject constructor(
                 
                 // Reload to update usage stats
                 loadSubscriptions()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
+                Timber.w("SUBSCRIPTION_RECORD_USAGE_FAILED class=%s", e::class.java.simpleName)
                 _uiState.value = _uiState.value.copy(
-                    error = "Failed to record usage: ${e.message}"
+                    error = "Failed to record usage"
                 )
             }
         }
@@ -315,9 +320,12 @@ class SubscriptionManagementViewModel @Inject constructor(
                     repository.setActive(subscriptionId, !it.isActive)
                     loadSubscriptions()
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
+                Timber.w("SUBSCRIPTION_UPDATE_FAILED class=%s", e::class.java.simpleName)
                 _uiState.value = _uiState.value.copy(
-                    error = "Failed to update subscription: ${e.message}"
+                    error = "Failed to update subscription"
                 )
             }
         }
@@ -331,9 +339,12 @@ class SubscriptionManagementViewModel @Inject constructor(
             try {
                 repository.deleteSubscriptionById(subscriptionId)
                 loadSubscriptions()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
+                Timber.w("SUBSCRIPTION_DELETE_FAILED class=%s", e::class.java.simpleName)
                 _uiState.value = _uiState.value.copy(
-                    error = "Failed to delete subscription: ${e.message}"
+                    error = "Failed to delete subscription"
                 )
             }
         }
@@ -391,9 +402,14 @@ class SubscriptionManagementViewModel @Inject constructor(
                     },
                     onFailure = { error -> throw error }
                 )
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
+                // F-R18-a: bounded UI message and class-name-only log; raw exception text
+                // (operation name / write-barrier mode / validation detail) never reaches the UI.
+                Timber.w("SUBSCRIPTION_ADD_FAILED class=%s", e::class.java.simpleName)
                 _uiState.value = _uiState.value.copy(
-                    error = "Failed to add subscription: ${e.message}"
+                    error = "Failed to add subscription"
                 )
             }
         }
@@ -449,8 +465,11 @@ class SubscriptionManagementViewModel @Inject constructor(
                 )
                 subscriptionManagerEngine.acceptCandidate(candidate, frequency, nextDate)
                 loadSubscriptions()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(error = "Failed to accept candidate: ${e.message}")
+                Timber.w("SUBSCRIPTION_ACCEPT_CANDIDATE_FAILED class=%s", e::class.java.simpleName)
+                _uiState.value = _uiState.value.copy(error = "Failed to accept candidate")
             } finally {
                 _uiState.value = _uiState.value.copy(mutatingIds = _uiState.value.mutatingIds - candidateId)
             }
@@ -465,9 +484,12 @@ class SubscriptionManagementViewModel @Inject constructor(
             try {
                 repository.markCandidateAsRejected(candidateId, timeProvider.now())
                 loadSubscriptions()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
+                Timber.w("SUBSCRIPTION_REJECT_CANDIDATE_FAILED class=%s", e::class.java.simpleName)
                 _uiState.value = _uiState.value.copy(
-                    error = "Failed to reject candidate: ${e.message}"
+                    error = "Failed to reject candidate"
                 )
             }
         }

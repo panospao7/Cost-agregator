@@ -1500,7 +1500,8 @@ fun DateSelector(
 ) {
     var showDatePicker by remember { mutableStateOf(false) }
     val datePickerState = rememberDatePickerState(
-        initialSelectedDateMillis = dateMs
+        // R20c: picker values are UTC-midnight millis of the calendar day, not local instants.
+        initialSelectedDateMillis = com.yourname.expensetracker.ui.util.UiTimeUtils.instantToPickerMillis(dateMs)
     )
 
     Row(
@@ -1538,7 +1539,9 @@ fun DateSelector(
                 TextButton(
                     onClick = {
                         datePickerState.selectedDateMillis?.let { selectedDate ->
-                            onDateSelected(selectedDate)
+                            onDateSelected(
+                                com.yourname.expensetracker.ui.util.UiTimeUtils.pickerMillisKeepingTimeOf(selectedDate, dateMs)
+                            )
                         }
                         showDatePicker = false
                     }
