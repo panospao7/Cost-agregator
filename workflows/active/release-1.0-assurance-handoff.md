@@ -455,3 +455,13 @@ in the coverage matrix and regression ledger seed.
   Gate: static-guards 25/25 vr-20261016-230924-4eac6ffd, app-check vr-20261016-233434-13cec8e4 (8361/0), legacy-tests
   vr-20261017-000241-1066bde0 (262/0). Reviews: room-migration-guardian (S1), reviewer-strict (S2/S4), architecture-guardian
   (S3/S4b/S5/R30) ACCEPT-WITH-NOTES, notes fixed. Next: R21 gate (worktree A), then R23, R25, R17/R19, R18, R20/R22b/R24/R16c.
+- 2026-10-17: R21 PASS (fingerprint 70cada5f..., rev f631d1be + diff). Recurring bills: "Mark paid" creates exactly one expense
+  through TransactionLifecycleCoordinator for the occurrence on the shown due day (dated on that due day, rule currency/amount/category,
+  STRICT idempotency key), links it to that occurrence, runs the full post-commit batch once, and moves nextDate strictly forward;
+  "Already recorded" skips the occurrence and cancels its planned row and reminders; IRREGULAR rules do not offer it; card/dialog show
+  the rule's currency; bounded translated messages. New guarded RecurringHorizonWorker tops up the 12-month horizon daily (catch-up <= 12
+  months, no past-due reminders); BillReminderWorker collapses stale due reminders first; materializer never links an expense twice;
+  month-end-aware anchor; WorkManager one-shot KEEP + DailyBriefing APPEND_OR_REPLACE. Policy +3 rows / 3 re-keyed (pins 427 -> 430).
+  Gate: static-guards 25/25 vr-20261017-002912-c9d2fbae, app-check vr-20261017-004723-9b7a4b4e (8438/0), legacy-tests
+  vr-20261017-030301-5b4bd157 (262/0). Known limitations in LEGAL_PATHS (pre-R21 stale planned rows; LINK_REJECTED race; process-death
+  window for post-commit actions; anchor drift). Next: R25 (worktree B, review fixes + owner Q-R25-G1), R23, R17/R19, R18, rest.

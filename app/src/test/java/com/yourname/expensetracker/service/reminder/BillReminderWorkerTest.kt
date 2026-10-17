@@ -20,6 +20,7 @@ import com.yourname.expensetracker.domain.workers.WorkerGuardResult
 import com.yourname.expensetracker.domain.workers.WorkerRunContext
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.coVerifyOrder
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
@@ -432,5 +433,63 @@ class BillReminderWorkerTest {
             com.yourname.expensetracker.domain.util.NotificationIdGenerator.forBill(7L),
             postedId.captured
         )
+    }
+
+    // ─── R21 S4: stale due deliveries are collapsed before recovery/dispatch ───
+    // The real collapse semantics (3 missed months for one rule -> one live delivery)
+    // are proven against real Room in RecurringHorizonAndLinkR21Test; this test pins
+    // the worker wiring: collapse runs with the injected clock, strictly before
+    // recoverAndGetDueReminders(), and only the one surviving delivery is notified.
+
+    @Test
+    fun `collapses stale due deliveries before recovering due reminders and posts at most one notification`() = runTest {
+        timeProvider = FakeTimeProvider(1_700_000_000_000L)
+        val survivor = testReminder(id = 21L, occurrenceId = 103L)
+        setupNotificationDispatchPath(survivor)
+        coEvery { coordinator.collapseStaleDueDeliveries(any()) } returns 2
+        coEvery { coordinator.markReminderSent(survivor.id, any()) } returns true
+        mockkStatic(NotificationManagerCompat::class)
+        val mockNm = mockk<NotificationManagerCompat>(relaxed = true)
+        every { NotificationManagerCompat.from(any<Context>()) } returns mockNm
+        every { mockNm.notify(any(), any()) } returns Unit
+
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        coVerifyOrder {
+            coordinator.collapseStaleDueDeliveries(1_700_000_000_000L)
+            coordinator.recoverAndGetDueReminders()
+        }
+        coVerify(exactly = 1) { mockNm.notify(any(), any()) }
+    }
+
+    @Test
+    fun `collapse failure does not block reminder dispatch`() = runTest {
+        timeProvider = FakeTimeProvider(1_700_000_000_000L)
+        val reminder = testReminder(id = 22L, occurrenceId = 104L)
+        setupNotificationDispatchPath(reminder)
+        coEvery { coordinator.collapseStaleDueDeliveries(any()) } throws IllegalStateException("collapse-secret-detail")
+        coEvery { coordinator.markReminderSent(reminder.id, any()) } returns true
+        mockkStatic(NotificationManagerCompat::class)
+        val mockNm = mockk<NotificationManagerCompat>(relaxed = true)
+        every { NotificationManagerCompat.from(any<Context>()) } returns mockNm
+        every { mockNm.notify(any(), any()) } returns Unit
+
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        coVerify(exactly = 1) { coordinator.recoverAndGetDueReminders() }
+        coVerify(exactly = 1) { mockNm.notify(any(), any()) }
+    }
+
+    @Test
+    fun `does not collapse when bill reminders are disabled`() = runTest {
+        coEvery { reminderSettingsRepository.getSnapshot() } returns BillReminderSettings(
+            billRemindersEnabled = false,
+            quietHoursEnabled = false
+        )
+
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        coVerify(exactly = 0) { coordinator.collapseStaleDueDeliveries(any()) }
+        coVerify(exactly = 0) { coordinator.recoverAndGetDueReminders() }
     }
 }

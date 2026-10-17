@@ -50,6 +50,7 @@ class WorkerGuardStaticVerificationTest {
         "com.yourname.expensetracker.data.privacy.DataRetentionWorker",
         "com.yourname.expensetracker.data.ai.worker.DailyBriefingWorker",
         "com.yourname.expensetracker.service.reminder.BillReminderWorker",
+        "com.yourname.expensetracker.service.recurring.RecurringHorizonWorker",
         "com.yourname.expensetracker.service.reminder.DismissReminderActionWorker",
         "com.yourname.expensetracker.service.reminder.SnoozeReminderActionWorker"
     )
@@ -155,9 +156,9 @@ class WorkerGuardStaticVerificationTest {
     fun `listAllWorkerNames count matches expected worker total`() {
         val knownNames = WorkerSpecScheduler.listAllWorkerNames()
         assertEquals(
-            "Expected exactly 10 unique work names (7 from WorkerSpec.DEFAULTS + notification_intake + 2 action workers). " +
+            "Expected exactly 11 unique work names (8 from WorkerSpec.DEFAULTS + notification_intake + 2 action workers). " +
                 "If you added a new worker, increment this count and register it in WorkerGuardVerifier.workerRegistry.",
-            10, knownNames.size
+            11, knownNames.size
         )
     }
 }

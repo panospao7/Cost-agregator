@@ -178,6 +178,13 @@ class LegacyDataConsistencyCheckerTest {
         override suspend fun getBySource(sourceType: String, sourceId: Long) = throw NotImplementedError()
         override suspend fun getByDateRange(start: Long, end: Long) = throw NotImplementedError()
         override suspend fun getByLinkedExpenseId(expenseId: Long) = throw NotImplementedError()
+        override suspend fun getByIds(ids: List<Long>): List<RecurringOccurrence> = throw NotImplementedError()
+        override suspend fun findEarliestOpenBySource(
+            sourceType: String,
+            sourceId: Long,
+            dueOnOrBefore: Long?
+        ): RecurringOccurrence? = throw NotImplementedError()
+        override suspend fun getLinkedExpenseIds(expenseIds: List<Long>): List<Long> = throw NotImplementedError()
         override suspend fun updateStatus(ids: List<Long>, newStatus: String, now: Long) {}
         override suspend fun deleteBySource(sourceType: String, sourceId: Long) {}
         override suspend fun getIdsBySource(sourceType: String, sourceId: Long) = throw NotImplementedError()

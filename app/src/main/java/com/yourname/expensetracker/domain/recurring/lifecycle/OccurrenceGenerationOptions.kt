@@ -25,6 +25,8 @@ enum class OccurrenceGenerationSource {
     RULE_CREATE,
     /** Regeneration after a rule update changes amount/date/frequency. */
     RULE_UPDATE_REGENERATION,
+    /** R21 S1: rolling 12-month horizon top-up of an active rule. */
+    HORIZON_TOP_UP,
     /** User opens the recurring screen and triggers a projection. */
     USER_RECURRING_SCREEN,
     /** Reconciliation or report generation — must NOT create reminders. */

@@ -40,4 +40,12 @@
     <string name="restart_required_database_operation">Η εφαρμογή πρέπει να επανεκκινηθεί για να ολοκληρωθεί μια λειτουργία της βάσης δεδομένων. Οι αλλαγές είναι σε παύση μέχρι την επανεκκίνηση.</string>
     <string name="groups_suggested_transfers_hint">Προτεινόμενες πληρωμές για την εξισορρόπηση των υπολοίπων. Οι πληρωμές δεν καταγράφονται στην εφαρμογή.</string>
     <string name="warranty_mutation_failed">Δεν ήταν δυνατή η αποθήκευση της αλλαγής. Δοκιμάστε ξανά.</string>
+    <string name="recurring_mark_paid_dialog_title">Σήμανση λογαριασμού ως πληρωμένου</string>
+    <string name="recurring_mark_paid_dialog_body">Θέλετε να καταγράψετε πληρωμή %2$s για %1$s ή η πληρωμή έχει ήδη καταγραφεί;</string>
+    <string name="recurring_mark_paid_creates_expense">Πληρωμένο (δημιουργεί έξοδο)</string>
+    <string name="recurring_mark_already_recorded">Έχει ήδη καταγραφεί</string>
+    <string name="recurring_mark_paid_no_change_info">Δεν υπάρχει κάτι για σήμανση σε αυτόν τον λογαριασμό αυτή τη στιγμή.</string>
+    <string name="recurring_advanced_only_info">Δεν προστέθηκε νέο έξοδο. Η επόμενη ημερομηνία μετακινήθηκε μπροστά.</string>
+    <string name="recurring_error_currency_unavailable">Δεν ήταν δυνατή η ανάγνωση του βασικού σας νομίσματος, γι\' αυτό το επαναλαμβανόμενο έξοδο δεν αποθηκεύτηκε. Δοκιμάστε ξανά.</string>
+    <string name="recurring_error_generic">Κάτι πήγε στραβά. Δοκιμάστε ξανά.</string>
 </resources>

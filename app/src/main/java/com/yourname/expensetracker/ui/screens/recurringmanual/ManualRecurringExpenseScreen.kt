@@ -27,6 +27,7 @@ import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.ui.components.asString
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
@@ -45,9 +46,22 @@ fun ManualRecurringExpenseScreen(
     val homeCurrency by viewModel.homeCurrency.collectAsState(initial = "")
     var showAddDialog by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf<ManualRecurringExpense?>(null) }
-    
+    var markPaidTarget by remember { mutableStateOf<ManualRecurringExpense?>(null) }
+
+    // Action failures/info (add, toggle, delete, mark paid, already recorded) are transient:
+    // snackbar while the list stays visible. Only load failures use the full-screen ErrorState.
+    val snackbarHostState = remember { SnackbarHostState() }
+    val actionMessageText = uiState.actionMessage?.asString()
+    LaunchedEffect(uiState.actionMessage) {
+        if (actionMessageText != null) {
+            snackbarHostState.showSnackbar(actionMessageText)
+            viewModel.consumeActionMessage()
+        }
+    }
+
     Scaffold(
         containerColor = SemanticColors.BaseNavy,
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { 
@@ -104,9 +118,9 @@ fun ManualRecurringExpenseScreen(
                         CircularProgressIndicator(color = SemanticColors.PrimaryIndigo)
                     }
                 }
-                uiState.error != null -> {
+                uiState.error != null || uiState.errorText != null -> {
                     ErrorState(
-                        message = uiState.error!!,
+                        message = uiState.errorText?.asString() ?: uiState.error.orEmpty(),
                         onRetry = { viewModel.refresh() }
                     )
                 }
@@ -145,7 +159,13 @@ fun ManualRecurringExpenseScreen(
                                     referenceNowMillis = uiState.referenceNowMillis,
                                     onToggleStatus = { viewModel.toggleStatus(it.id, it.isActive) },
                                     onDelete = { showDeleteConfirm = it },
-                                    onMarkPaid = { viewModel.markAsPaid(it) }
+                                    // IRREGULAR rules have no scheduled occurrences: no mark-paid action.
+                                    onMarkPaid = if (supportsMarkPaid(expense)) {
+                                        { markPaidTarget = it }
+                                    } else {
+                                        null
+                                    },
+                                    isMarkPaidInFlight = expense.id in uiState.inFlightRuleIds
                                 )
                             }
                         }
@@ -199,6 +219,39 @@ fun ManualRecurringExpenseScreen(
             )
         }
         
+        // Mark paid choice (R21 S2): create the expense, or just record that it was already recorded.
+        markPaidTarget?.let { expense ->
+            // The expense is created in the RULE's currency, so the dialog shows that currency.
+            val amountText = CurrencyFormatter.formatMoney(expense.amount, expense.currency)
+            AlertDialog(
+                onDismissRequest = { markPaidTarget = null },
+                title = { Text(stringResource(R.string.recurring_mark_paid_dialog_title)) },
+                text = {
+                    Text(stringResource(R.string.recurring_mark_paid_dialog_body, expense.merchant, amountText))
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            viewModel.markAsPaid(expense)
+                            markPaidTarget = null
+                        }
+                    ) {
+                        Text(stringResource(R.string.recurring_mark_paid_creates_expense))
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = {
+                            viewModel.markAlreadyRecorded(expense)
+                            markPaidTarget = null
+                        }
+                    ) {
+                        Text(stringResource(R.string.recurring_mark_already_recorded))
+                    }
+                }
+            )
+        }
+
         // Delete Confirmation
         showDeleteConfirm?.let { expense ->
             AlertDialog(
@@ -338,7 +391,8 @@ private fun RecurringExpenseCard(
     referenceNowMillis: Long,
     onToggleStatus: (ManualRecurringExpense) -> Unit,
     onDelete: (ManualRecurringExpense) -> Unit,
-    onMarkPaid: ((ManualRecurringExpense) -> Unit)?
+    onMarkPaid: ((ManualRecurringExpense) -> Unit)?,
+    isMarkPaidInFlight: Boolean = false
 ) {
     val dateFormat = DateTimeFormatter.ofPattern("MMM dd", Locale.getDefault())
     val isUpcoming = expense.nextDate <= referenceNowMillis + (7 * TimePeriodUtils.DAY_IN_MILLIS)
@@ -403,7 +457,8 @@ private fun RecurringExpenseCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "${CurrencyFormatter.formatMoney(expense.amount, homeCurrency)} ${expense.frequency.name.lowercase().replaceFirstChar { it.uppercase() }}",
+                    // The amount is stored in the RULE's currency (not necessarily the home currency).
+                    text = "${CurrencyFormatter.formatMoney(expense.amount, expense.currency)} ${expense.frequency.name.lowercase().replaceFirstChar { it.uppercase() }}",
                     style = MaterialTheme.typography.bodyLarge,
                     color = SemanticColors.TextPrimary
                 )
@@ -429,6 +484,7 @@ private fun RecurringExpenseCard(
                 
                 OutlinedButton(
                     onClick = { onMarkPaid(expense) },
+                    enabled = !isMarkPaidInFlight,
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.outlinedButtonColors(
                         contentColor = SemanticColors.PrimaryIndigo

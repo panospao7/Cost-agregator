@@ -369,6 +369,24 @@ class DailyBriefingWorkerTest {
     }
 
     @Test
+    fun `self reschedule appends via APPEND_OR_REPLACE`() = runTest {
+        // R21 / HZ-05: the midnight self-reschedule must append behind the running
+        // request rather than REPLACE it.
+        coEvery { dashboardDataProvider.getProcessedDataFlow(analyticsRepository) } returns flowOf(sampleProcessedData())
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.success(), result)
+        verify(exactly = 1) {
+            workManager.enqueueUniqueWork(
+                any<String>(),
+                eq(androidx.work.ExistingWorkPolicy.APPEND_OR_REPLACE),
+                any<androidx.work.OneTimeWorkRequest>()
+            )
+        }
+    }
+
+    @Test
     fun `disabled does not reschedule`() = runTest {
         // The guard surfaces the spec/runtime-disabled skip with this exact reason
         // (mirrors WorkerExecutionGuard). S2's scheduleAtMidnight already cancels the

@@ -376,7 +376,7 @@ class WorkerRestoreRegressionTest {
         val allWorkerNames = listOf(
             "notification_intake", "location_backfill", "merchant_key_backfill",
             "receipt_matching", "warranty_expiration_check", "data_retention",
-            "ai_daily_briefing", "bill_reminder_periodic"
+            "ai_daily_briefing", "bill_reminder_periodic", "recurring_horizon"
         )
 
         for (name in allWorkerNames) {

@@ -809,3 +809,25 @@ LEAD-DECISION (standing approval) on planner questions: (1) anchor drift after p
   (2) horizon worker not privacy-gated (local data only); (3) RULE_HORIZON_TOPPED_UP event + HORIZON_TOP_UP generation source approved;
   (4) 3-row policy re-key (net 0) + 1 added row approved as part of the owner-approved R21 batch (no loosening).
 
+
+## 31. R23 plan (release-planner @ f631d1be) - summary
+NetworkPrivacyGate (new; EXCHANGE_RATE_DOWNLOAD; corrupted -> FailClosed, disabled -> Denied, enabled -> Allowed, else NotApplicable)
+registered in PrivacyModule; S1 capability/settings (default false, FAIL_CLOSED false)/repo key/policy/reason codes/PrivacyBlocked/UI
+state/card/audit description + all strings (contiguous block); S2 CurrencyRatesRepository typed outcome, VM/screen bounded error mapping,
+offline banner suppressed when disabled; S3 privacy settings Network section; S4 backup notice (true: in-app backups redacted, no images),
+KDoc, quick reference, LEGAL_PATHS. Reviewers privacy-security-guardian + reviewer-strict.
+
+
+## 32. R25 parts 1-2 + R27 safeguard plan (release-planner @ f631d1be) - summary
+A core: DatabaseOpenGate (read-only probe, no-op DatabaseErrorHandler, v0 + no tables = fresh, <145 TOO_OLD, >151 TOO_NEW, exception
+OPEN_FAILED; once per process); GatedOpenHelperFactory (fast path when open; refuses when gate blocked or RESTORE_SWAPPING via in-process
+latch or persisted peek; unreadable mode + no latch -> allow); RestoreMaintenanceMode pure decodePersistedState + swap latch;
+RestoreMaintenanceModePeek (no Hilt); DatabaseModule :36 only; exact db_access structural-exception tuples. B1 entry points
+(MainApplication early return, WorkerExecutionGuard Skipped first, NotificationCaptureService, 4 receivers). B2 UnsupportedDatabaseActivity
+(plain, non-exported, SAF export, bounded logs) + MainActivity redirect + manifest + strings. C backup floor = MIGRATION_BASELINE with
+LEGACY/NEWER codes + manifest version check (v86 branch left unreachable). D docs. Reviewers reviewer-strict + room-migration-guardian +
+privacy-security-guardian (B2).
+LEAD-DECISIONS (standing approval): H1 the ~3 exact db_access structural-exception tuples are a direct consequence of the owner-approved
+R25 design (read-only PRAGMA probe) -> approved as exact additions, recorded; H2 export = zip of db + -wal (never -shm); H3 accept refusal
+during the cold-start SWAPPING window; H4 v0 + no tables = fresh install; H5 keep the unreachable v86 branch for 1.0; H6 no extra message.
+

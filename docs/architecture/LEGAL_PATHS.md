@@ -331,6 +331,29 @@ LINK expense to occurrence:
   → Atomic conditional claim (WHERE status=PLANNED AND linkedExpenseId IS NULL)
   → Fulfills planned + suppresses reminders
 
+LINK expense to a SPECIFIC occurrence (R21 S1):
+  → RecurringLifecycleCoordinator.linkExpenseToSpecificOccurrence(occurrenceId, expenseId, source) -> SpecificLinkResult (shares claimLinkSuppressInWrite with the automatic link; bounded `source` code, one occurrence per expense)
+
+MARK-PAID / ALREADY-RECORDED a recurring bill (R21 S2):
+  → ManualRecurringExpenseViewModel → MarkRecurringBillPaidUseCase.invoke(ruleId, seenNextDate) / skip(ruleId, seenNextDate)
+    (per-rule Mutex; seenNextDate re-validated under the lock; target = ONLY the open occurrence due on the seen day, no stale fallback; an on-day occurrence that is not open only advances the date; IRREGULAR rules have no mark-paid action)
+  → MARK-PAID: TransactionLifecycleCoordinator.createExpenseDbOnlyV2() (STRICT_EXTERNAL_ID key `recurring_paid:<occurrenceKey>`, dated on the occurrence due date)
+    → RecurringLifecycleCoordinator.linkExpenseToSpecificOccurrence()
+    → planned post-commit batch (mutation.postCommitActions) run once via PostCommitActionRunner ONLY for a Created expense, AFTER the link
+    → RecurringRuleLifecycleCoordinator.advanceNextDate() (nextDate never decreases)
+  → ALREADY-RECORDED: RecurringLifecycleCoordinator.skipOccurrence() → updateOccurrenceStatus(SKIPPED, USER_SKIPPED)
+    (one transaction: status SKIPPED + projected planned_expenses row CANCELLED + open reminder deliveries suppressed; no expense created)
+    → RecurringRuleLifecycleCoordinator.advanceNextDate()
+  Known limitation: legacy rules keep their stored currency (no data repair); if the process dies between expense commit and the side-effect batch, the idempotent retry resolves to DuplicateSkipped and does not re-run the batch. Narrow LINK_REJECTED-after-Created race: if the occurrence stops being open between the target read and the link, the use case returns Failed(MARK_PAID_LINK_REJECTED) and an unlinked RECURRING_GENERATED expense may remain (the user can delete it). Pre-R21 stale PLANNED occurrences (due before the rule's nextDate) are not paid by mark-paid; they remain as overdue planned rows. After the expense commit the link and the post-commit batch run NonCancellable (the remaining crash window is process death only).
+  Known limitation (a): if no occurrence exists on the seen day (time-zone change after generation, or a nextDate on a day without a scheduled occurrence) even after one horizon top-up, mark-paid returns AdvancedOnly and creates no expense; the original row stays an overdue PLANNED.
+  Known limitation (b): after LINK_REJECTED an unlinked RECURRING_GENERATED expense may remain and the UI shows the generic error. If automatic matching linked that expense to another same-day same-merchant rule, retries keep returning LINK_REJECTED; the user's way out is "Already recorded" (and deleting the extra expense).
+
+COLLAPSE stale due reminder deliveries (R21 S1):
+  → BillReminderWorker → RecurringLifecycleCoordinator.collapseStaleDueDeliveries(now) (single transaction, cancelOpenDueDeliveriesByIds; never touches CLAIMED/upcoming; writes one STALE_DUE_DELIVERIES_COLLAPSED summary event with bounded counts when something was cancelled; a collapse failure does not block dispatch)
+
+TOP UP rolling horizon (R21 S1/S3b):
+  → RecurringHorizonWorker → RecurringRuleLifecycleCoordinator.topUpHorizon(ruleId, now) (idempotent; bounded 12-month catch-up; excludes already-linked expenses; RULE_HORIZON_TOPPED_UP critical event only when rows inserted)
+
 UNLINK expense from occurrence:
   → RecurringLifecycleCoordinator.unlinkExpenseFromOccurrenceDetailed()
   → Returns RecurringExpenseReconcileResult
@@ -356,7 +379,7 @@ DISPATCH reminder:
 FORBIDDEN:
   ❌ ManualRecurringExpenseDao.insert/update/delete outside coordinator
   ❌ RecurringOccurrenceDao.update() outside materializer/coordinator
-  ❌ BillReminderManager.markBillPaid() [REMOVED — use createExpense + linkExpenseToOccurrence]
+  ❌ BillReminderManager.markBillPaid() [REMOVED — use MarkRecurringBillPaidUseCase (createExpenseDbOnlyV2 + linkExpenseToSpecificOccurrence + advanceNextDate)]
   ❌ Raw String status in updateOccurrenceStatus() (must use RecurringOccurrenceStatus)
   ❌ Direct DAO for critical lifecycle events (must use RecurringLifecycleEventWriter)
   ❌ Any recurring rule mutation outside RecurringRuleLifecycleCoordinator

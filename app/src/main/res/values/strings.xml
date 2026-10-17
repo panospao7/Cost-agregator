@@ -671,6 +671,14 @@
     <string name="recurring_delete_confirm_message">Are you sure you want to delete %1$s?</string>
     <string name="recurring_error_load">Failed to load recurring expenses: %1$s</string>
     <string name="recurring_error_add">Failed to add expense: %1$s</string>
+    <string name="recurring_mark_paid_dialog_title">Mark bill as paid</string>
+    <string name="recurring_mark_paid_dialog_body">Do you want to record a payment of %2$s for %1$s, or was this payment already recorded?</string>
+    <string name="recurring_mark_paid_creates_expense">Mark paid (creates expense)</string>
+    <string name="recurring_mark_already_recorded">Already recorded</string>
+    <string name="recurring_mark_paid_no_change_info">Nothing to mark for this bill right now.</string>
+    <string name="recurring_advanced_only_info">No new expense was added. The next date was moved forward.</string>
+    <string name="recurring_error_currency_unavailable">Your home currency could not be read, so the recurring expense was not saved. Please try again.</string>
+    <string name="recurring_error_generic">Something went wrong. Please try again.</string>
     <string name="recurring_error_update">Failed to update status: %1$s</string>
     <string name="recurring_error_delete">Failed to delete: %1$s</string>
     

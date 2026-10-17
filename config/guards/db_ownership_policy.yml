@@ -5354,6 +5354,20 @@ entries:
 - path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
   ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
   kind: function
+  method: collapseStaleDueDeliveries
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: reminderDeliveryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao
+  operation: cancelOpenDueDeliveriesByIds
+  barrierMode: helper
+  reason: 'R21 S1 EXACT_POLICY: stale due-reminder collapse -- cancels superseded windows and expired overdue-occurrence deliveries (SCHEDULED/SNOOZED/FAILED_TRANSIENT only, never CLAIMED) with controlled reason codes in one runWrite+transaction so a long-offline device does not fire a notification storm'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08C
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+  kind: function
   method: dismissReminderDelivery
   receiver: null
   parameterTypes:
@@ -5385,10 +5399,12 @@ entries:
 - path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
   ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
   kind: function
-  method: linkExpenseToOccurrence
+  method: claimLinkSuppressInWrite
   receiver: null
   parameterTypes:
   - Long
+  - String
+  - () -> Long?
   daoAccessor: occurrenceDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
   operation: claimForExpense
@@ -5400,10 +5416,12 @@ entries:
 - path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
   ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
   kind: function
-  method: linkExpenseToOccurrence
+  method: claimLinkSuppressInWrite
   receiver: null
   parameterTypes:
   - Long
+  - String
+  - () -> Long?
   daoAccessor: plannedExpenseDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.PlannedExpenseDao
   operation: linkToActualExpense
@@ -5415,10 +5433,12 @@ entries:
 - path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
   ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
   kind: function
-  method: linkExpenseToOccurrence
+  method: claimLinkSuppressInWrite
   receiver: null
   parameterTypes:
   - Long
+  - String
+  - () -> Long?
   daoAccessor: reminderDeliveryDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao
   operation: suppressOpenDeliveriesForOccurrence
@@ -5736,6 +5756,38 @@ entries:
   reason: 'GR-08c1 EXACT_POLICY: typed SKIPPED/CANCELLED/MISSED status transition
     validated by RecurringOccurrenceTransitionPolicy, inside the status transaction
     (MIT-043)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08C
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+  kind: function
+  method: updateOccurrenceStatus
+  receiver: null
+  parameterTypes:
+  - Long
+  - com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceStatus
+  - com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceTransitionReason
+  daoAccessor: plannedExpenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PlannedExpenseDao
+  operation: updateStatus
+  barrierMode: helper
+  reason: 'R21 review EXACT_POLICY: SKIPPED ("already recorded") occurrence cancels its still-PLANNED planned_expenses projection (status CANCELLED) inside the same status transaction so no open planned row remains'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08C
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+  kind: function
+  method: updateOccurrenceStatus
+  receiver: null
+  parameterTypes:
+  - Long
+  - com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceStatus
+  - com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceTransitionReason
+  daoAccessor: reminderDeliveryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao
+  operation: suppressOpenDeliveriesForOccurrence
+  barrierMode: helper
+  reason: 'R21 review EXACT_POLICY: SKIPPED ("already recorded") occurrence suppresses its open/snoozed/claimed/transient reminder deliveries inside the same status transaction (reason occurrence_skipped) so no reminder fires for an already-recorded bill'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08C
 - path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleEventWriter.kt

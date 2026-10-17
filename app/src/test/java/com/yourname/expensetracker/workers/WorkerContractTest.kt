@@ -10,7 +10,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * Contract tests verifying all 7 default background workers defined in
+ * Contract tests verifying all 8 default background workers defined in
  * [WorkerSpec.DEFAULTS].
  *
  * These tests validate structural invariants — worker definitions, naming
@@ -25,14 +25,15 @@ import org.robolectric.annotation.Config
 class WorkerContractTest {
 
     @Test
-    fun `all 7 default workers have WorkerSpec entries`() {
+    fun `all 8 default workers have WorkerSpec entries`() {
         val defaults = WorkerSpec.DEFAULTS
-        assertEquals("Expected 7 default workers", 7, defaults.size)
+        assertEquals("Expected 8 default workers", 8, defaults.size)
 
         val expected = setOf(
             "data_retention",
             "location_backfill",
             "bill_reminder_periodic",
+            "recurring_horizon",
             "receipt_matching",
             "ai_daily_briefing",
             "warranty_expiration_check",
@@ -69,7 +70,7 @@ class WorkerContractTest {
         // RestoreMaintenanceMode.pauseAllWorkers() iterates WorkerSpec.DEFAULTS.keys
         // and cancels each by name. If a new worker is added without updating
         // the DEFAULTS map (or vice versa), this test catches the mismatch.
-        assertEquals(7, WorkerSpec.DEFAULTS.size)
+        assertEquals(8, WorkerSpec.DEFAULTS.size)
     }
 
     @Test

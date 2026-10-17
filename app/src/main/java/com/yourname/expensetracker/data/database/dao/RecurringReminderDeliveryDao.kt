@@ -47,6 +47,23 @@ interface RecurringReminderDeliveryDao {
     suspend fun suppressOpenDeliveriesForOccurrence(occurrenceId: Long, now: Long, reason: String): Int
 
     /**
+     * R21 S1: cancels the given deliveries ONLY while they are still open AND due
+     * (SCHEDULED / SNOOZED / FAILED_TRANSIENT). CLAIMED (in-flight) and terminal
+     * rows are never touched. Callers chunk ids to <= 900 per call.
+     */
+    @Query("""
+        UPDATE recurring_reminder_deliveries
+        SET status = 'CANCELLED',
+            failureReason = :reason,
+            updatedAt = :now
+        WHERE id IN (:ids)
+          AND ((status = 'SCHEDULED' AND scheduledAt <= :now)
+            OR (status = 'SNOOZED' AND snoozedUntil IS NOT NULL AND snoozedUntil <= :now)
+            OR (status = 'FAILED_TRANSIENT' AND scheduledAt <= :now))
+    """)
+    suspend fun cancelOpenDueDeliveriesByIds(ids: List<Long>, reason: String, now: Long): Int
+
+    /**
      * Returns pending deliveries whose associated occurrence is still PLANNED.
      * Safer than [getPendingDeliveries] because it excludes reminders for
      * occurrences that have been PAID, SKIPPED, or CANCELLED.

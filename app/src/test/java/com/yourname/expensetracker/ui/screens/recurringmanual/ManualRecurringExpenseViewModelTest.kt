@@ -1,9 +1,16 @@
 package com.yourname.expensetracker.ui.screens.recurringmanual
 
 import app.cash.turbine.test
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.data.repository.ManualRecurringExpenseRepository
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
+import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.domain.recurring.usecase.MarkPaidFailureCodes
+import com.yourname.expensetracker.domain.recurring.usecase.MarkPaidResult
+import com.yourname.expensetracker.domain.recurring.usecase.MarkRecurringBillPaidUseCase
+import io.mockk.slot
+import kotlinx.coroutines.CompletableDeferred
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
@@ -28,6 +35,7 @@ class ManualRecurringExpenseViewModelTest : ViewModelTestUtils() {
 
     private val recurringExpenseRepository = mockk<ManualRecurringExpenseRepository>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
+    private val markPaidUseCase = mockk<MarkRecurringBillPaidUseCase>()
 
     private lateinit var viewModel: ManualRecurringExpenseViewModel
 
@@ -38,10 +46,188 @@ class ManualRecurringExpenseViewModelTest : ViewModelTestUtils() {
         super.setup()
         every { timeProvider.now() } returns fixedNow
         coEvery { recurringExpenseRepository.getAll() } returns emptyList()
-        val currencyRepo = mockk<CurrencySettingsRepository>(relaxed = true)
-        every { currencyRepo.homeCurrency() } returns flowOf("EUR")
-        coEvery { currencyRepo.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
-        viewModel = ManualRecurringExpenseViewModel(recurringExpenseRepository, timeProvider, currencySettingsRepository = currencyRepo)
+        viewModel = newViewModel()
+    }
+
+    private fun currencyRepo(resolution: HomeCurrencyResolution): CurrencySettingsRepository {
+        val repo = mockk<CurrencySettingsRepository>(relaxed = true)
+        every { repo.homeCurrency() } returns flowOf("EUR")
+        coEvery { repo.resolveHomeCurrency() } returns resolution
+        return repo
+    }
+
+    private fun newViewModel(
+        resolution: HomeCurrencyResolution = HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
+    ) = ManualRecurringExpenseViewModel(
+        recurringExpenseRepository,
+        timeProvider,
+        currencySettingsRepository = currencyRepo(resolution),
+        markRecurringBillPaid = markPaidUseCase
+    )
+
+    @Test
+    fun `non EUR home currency is saved on the new rule`() = runTest(testDispatcher) {
+        val saved = slot<ManualRecurringExpense>()
+        coEvery { recurringExpenseRepository.insert(capture(saved)) } returns 11L
+        viewModel = newViewModel(HomeCurrencyResolution.Resolved(CurrencyCode("USD")))
+        advanceUntilIdle()
+
+        viewModel.addRecurringExpense("Rent", 500.0, RecurrenceFrequency.MONTHLY, fixedNow + DAY_MS, null)
+        advanceUntilIdle()
+
+        assertEquals("USD", saved.captured.currency)
+        assertEquals(null, viewModel.uiState.value.errorText)
+    }
+
+    @Test
+    fun `unresolved home currency refuses save with a string resource error`() = runTest(testDispatcher) {
+        viewModel = newViewModel(HomeCurrencyResolution.Failed("datastore-secret-detail"))
+        advanceUntilIdle()
+
+        viewModel.addRecurringExpense("Rent", 500.0, RecurrenceFrequency.MONTHLY, fixedNow + DAY_MS, null)
+        advanceUntilIdle()
+
+        coVerify(exactly = 0) { recurringExpenseRepository.insert(any()) }
+        val state = viewModel.uiState.value
+        assertEquals(UiText.StringResource(R.string.recurring_error_currency_unavailable), state.actionMessage)
+        assertEquals(null, state.errorText)
+        assertEquals(null, state.error)
+    }
+
+    @Test
+    fun `mark paid failure never surfaces the exception message`() = runTest(testDispatcher) {
+        val rule = recurringExpense(5L, "Gym", 30.0, RecurrenceFrequency.MONTHLY, fixedNow, true)
+        coEvery { markPaidUseCase.invoke(5L, fixedNow) } throws IllegalStateException("boom-secret-detail")
+        coEvery { markPaidUseCase.skip(5L, fixedNow) } returns MarkPaidResult.Failed(MarkPaidFailureCodes.SKIP_FAILED)
+
+        viewModel.markAsPaid(rule)
+        advanceUntilIdle()
+
+        var state = viewModel.uiState.value
+        assertEquals(UiText.StringResource(R.string.recurring_error_generic), state.actionMessage)
+        assertEquals(null, state.errorText) // action failure must not become a full-screen error
+        assertEquals(null, state.error)
+        assertFalse(state.toString().contains("boom-secret-detail"))
+        assertTrue(state.inFlightRuleIds.isEmpty())
+
+        viewModel.clearError()
+        viewModel.markAlreadyRecorded(rule)
+        advanceUntilIdle()
+        state = viewModel.uiState.value
+        assertEquals(UiText.StringResource(R.string.recurring_error_generic), state.actionMessage)
+        assertEquals(null, state.errorText)
+        assertFalse(state.toString().contains(MarkPaidFailureCodes.SKIP_FAILED))
+    }
+
+    @Test
+    fun `action failure keeps the list visible and only load failure uses the error state`() =
+        runTest(testDispatcher) {
+            val rule = recurringExpense(5L, "Gym", 30.0, RecurrenceFrequency.MONTHLY, fixedNow, true)
+            coEvery { recurringExpenseRepository.getAll() } returns listOf(rule)
+            coEvery { markPaidUseCase.invoke(5L, fixedNow) } returns MarkPaidResult.Failed(MarkPaidFailureCodes.CREATE_FAILED)
+            viewModel = newViewModel()
+            advanceUntilIdle()
+
+            viewModel.markAsPaid(rule)
+            advanceUntilIdle()
+
+            var state = viewModel.uiState.value
+            assertEquals(UiText.StringResource(R.string.recurring_error_generic), state.actionMessage)
+            assertEquals(null, state.errorText)
+            assertEquals(listOf(rule), state.recurringExpenses)
+            assertTrue(state.loadableState is com.yourname.expensetracker.ui.model.LoadableUiState.Data)
+
+            viewModel.consumeActionMessage()
+            assertEquals(null, viewModel.uiState.value.actionMessage)
+
+            coEvery { recurringExpenseRepository.getAll() } throws IllegalStateException("db-secret-detail")
+            viewModel.refresh()
+            advanceUntilIdle()
+            state = viewModel.uiState.value
+            assertEquals(UiText.StringResource(R.string.recurring_error_generic), state.errorText)
+            assertTrue(state.loadableState is com.yourname.expensetracker.ui.model.LoadableUiState.Error)
+        }
+
+    @Test
+    fun `advanced only result shows an info message and no error`() = runTest(testDispatcher) {
+        val rule = recurringExpense(7L, "Water", 10.0, RecurrenceFrequency.MONTHLY, fixedNow, true)
+        coEvery { markPaidUseCase.skip(7L, fixedNow) } returns MarkPaidResult.AdvancedOnly
+
+        viewModel.markAlreadyRecorded(rule)
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertEquals(UiText.StringResource(R.string.recurring_advanced_only_info), state.actionMessage)
+        assertEquals(null, state.errorText)
+    }
+
+    @Test
+    fun `no change result shows the truthful nothing to mark message and not the moved forward one`() =
+        runTest(testDispatcher) {
+            val rule = recurringExpense(8L, "Rent", 400.0, RecurrenceFrequency.MONTHLY, fixedNow, true)
+            coEvery { markPaidUseCase.invoke(8L, fixedNow) } returns MarkPaidResult.NoChange
+
+            viewModel.markAsPaid(rule)
+            advanceUntilIdle()
+
+            val state = viewModel.uiState.value
+            assertEquals(UiText.StringResource(R.string.recurring_mark_paid_no_change_info), state.actionMessage)
+            assertEquals(null, state.errorText)
+            assertTrue(state.inFlightRuleIds.isEmpty())
+        }
+
+    @Test
+    fun `irregular rules do not support mark paid and the view model ignores the actions`() =
+        runTest(testDispatcher) {
+            val irregular = recurringExpense(9L, "Irregular", 10.0, RecurrenceFrequency.IRREGULAR, fixedNow, true)
+            val monthly = recurringExpense(10L, "Gym", 10.0, RecurrenceFrequency.MONTHLY, fixedNow, true)
+
+            assertFalse(supportsMarkPaid(irregular))
+            assertTrue(supportsMarkPaid(monthly))
+
+            viewModel.markAsPaid(irregular)
+            viewModel.markAlreadyRecorded(irregular)
+            advanceUntilIdle()
+
+            coVerify(exactly = 0) { markPaidUseCase.invoke(any(), any()) }
+            coVerify(exactly = 0) { markPaidUseCase.skip(any(), any()) }
+            assertTrue(viewModel.uiState.value.inFlightRuleIds.isEmpty())
+            assertEquals(null, viewModel.uiState.value.actionMessage)
+        }
+
+    @Test
+    fun `in flight flag blocks a second tap and clears afterwards`() = runTest(testDispatcher) {
+        val rule = recurringExpense(5L, "Gym", 30.0, RecurrenceFrequency.MONTHLY, fixedNow, true)
+        val gate = CompletableDeferred<Unit>()
+        coEvery { markPaidUseCase.invoke(5L, fixedNow) } coAnswers {
+            gate.await()
+            MarkPaidResult.Paid(1L)
+        }
+
+        viewModel.markAsPaid(rule)
+        assertTrue(5L in viewModel.uiState.value.inFlightRuleIds)
+        viewModel.markAsPaid(rule) // ignored: still in flight
+        advanceUntilIdle()
+        assertTrue(5L in viewModel.uiState.value.inFlightRuleIds)
+
+        gate.complete(Unit)
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { markPaidUseCase.invoke(5L, fixedNow) }
+        assertTrue(viewModel.uiState.value.inFlightRuleIds.isEmpty())
+        assertEquals(null, viewModel.uiState.value.errorText)
+    }
+
+    @Test
+    fun `already recorded delegates to skip with the seen next date`() = runTest(testDispatcher) {
+        val rule = recurringExpense(6L, "Water", 20.0, RecurrenceFrequency.MONTHLY, fixedNow + DAY_MS, true)
+        coEvery { markPaidUseCase.skip(6L, fixedNow + DAY_MS) } returns MarkPaidResult.Skipped(3L)
+
+        viewModel.markAlreadyRecorded(rule)
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { markPaidUseCase.skip(6L, fixedNow + DAY_MS) }
+        coVerify(exactly = 0) { markPaidUseCase.invoke(any(), any()) }
     }
 
     @Test
@@ -66,7 +252,7 @@ class ManualRecurringExpenseViewModelTest : ViewModelTestUtils() {
         )
         coEvery { recurringExpenseRepository.getAll() } returns expenses
 
-        viewModel = ManualRecurringExpenseViewModel(recurringExpenseRepository, timeProvider, currencySettingsRepository = mockk(relaxed = true))
+        viewModel = newViewModel()
         advanceUntilIdle()
 
         viewModel.uiState.test {
@@ -94,7 +280,7 @@ class ManualRecurringExpenseViewModelTest : ViewModelTestUtils() {
         coEvery { recurringExpenseRepository.getAll() } returnsMany listOf(emptyList(), listOf(added))
         coEvery { recurringExpenseRepository.insert(any()) } returns 10L
 
-        viewModel = ManualRecurringExpenseViewModel(recurringExpenseRepository, timeProvider, currencySettingsRepository = mockk(relaxed = true))
+        viewModel = newViewModel()
         advanceUntilIdle()
 
         viewModel.uiState.test {
@@ -140,7 +326,7 @@ class ManualRecurringExpenseViewModelTest : ViewModelTestUtils() {
             listOf(inactiveExpense)
         )
 
-        viewModel = ManualRecurringExpenseViewModel(recurringExpenseRepository, timeProvider, currencySettingsRepository = mockk(relaxed = true))
+        viewModel = newViewModel()
         advanceUntilIdle()
 
         viewModel.uiState.test {
@@ -187,7 +373,7 @@ class ManualRecurringExpenseViewModelTest : ViewModelTestUtils() {
             listOf(remaining)
         )
 
-        viewModel = ManualRecurringExpenseViewModel(recurringExpenseRepository, timeProvider, currencySettingsRepository = mockk(relaxed = true))
+        viewModel = newViewModel()
         advanceUntilIdle()
 
         viewModel.uiState.test {

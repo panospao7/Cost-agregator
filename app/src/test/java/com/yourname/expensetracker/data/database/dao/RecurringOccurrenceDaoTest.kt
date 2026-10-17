@@ -104,6 +104,31 @@ class RecurringOccurrenceDaoTest {
     }
 
     @Test
+    fun `findEarliestOpenBySource returns earliest unlinked PLANNED row within optional bound`() = runTest {
+        val day = 86_400_000L
+        dao.insert(createOccurrence(occurrenceKey = "paid", dueDate = FIXED_NOW, status = "PAID", linkedExpenseId = 9L))
+        dao.insert(createOccurrence(occurrenceKey = "skipped", dueDate = FIXED_NOW + day, status = "SKIPPED"))
+        val earliestId = dao.insert(createOccurrence(occurrenceKey = "open1", dueDate = FIXED_NOW + 2 * day))
+        dao.insert(createOccurrence(occurrenceKey = "open2", dueDate = FIXED_NOW + 3 * day))
+        dao.insert(createOccurrence(sourceId = 2L, occurrenceKey = "other", dueDate = FIXED_NOW + day))
+
+        assertEquals(earliestId, dao.findEarliestOpenBySource("RECURRING_RULE", 1L, null)!!.id)
+        assertEquals(earliestId, dao.findEarliestOpenBySource("RECURRING_RULE", 1L, FIXED_NOW + 2 * day)!!.id)
+        assertNull(dao.findEarliestOpenBySource("RECURRING_RULE", 1L, FIXED_NOW + day))
+        assertNull(dao.findEarliestOpenBySource("RECURRING_RULE", 404L, null))
+    }
+
+    @Test
+    fun `getByIds returns only requested rows`() = runTest {
+        val a = dao.insert(createOccurrence(occurrenceKey = "a"))
+        dao.insert(createOccurrence(occurrenceKey = "b"))
+        val c = dao.insert(createOccurrence(occurrenceKey = "c"))
+
+        assertEquals(setOf(a, c), dao.getByIds(listOf(a, c)).map { it.id }.toSet())
+        assertTrue(dao.getByIds(listOf(9_999L)).isEmpty())
+    }
+
+    @Test
     fun `query by source returns empty list for unknown source`() = runTest {
         dao.insert(createOccurrence(sourceType = "RECURRING_RULE", sourceId = 1L))
 

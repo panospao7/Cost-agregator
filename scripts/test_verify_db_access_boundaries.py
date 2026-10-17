@@ -5604,12 +5604,20 @@ def test_checked_in_structural_only_manifest_contract_via_production_apis():
     direct transactionEventDao.insert identities (NotificationRepository.
     deleteAllNotifications, ReviewQueueRepository.approveReview) now routed
     through TransactionLifecycleEventWriter, yielding 427.
+    Release 1.0 R21 S1 adds one approved exact identity
+    (RecurringLifecycleCoordinator.collapseStaleDueDeliveries /
+    reminderDeliveryDao.cancelOpenDueDeliveriesByIds), yielding 428.
+    Release 1.0 R21 review adds two approved exact identities
+    (RecurringLifecycleCoordinator.updateOccurrenceStatus /
+    plannedExpenseDao.updateStatus and
+    reminderDeliveryDao.suppressOpenDeliveriesForOccurrence, the SKIPPED
+    "already recorded" cleanup), yielding 430.
     Re-derive this pin after every policy promotion.
     """
     from scripts.db_guard.source_roots import load_source_root_manifest
 
     entries = load_db_ownership_policy()
-    assert len(entries) == 427
+    assert len(entries) == 430
     sweep_path = (
         "app/src/main/java/com/yourname/expensetracker/data/repository/"
         "SavingsSweepAcceptanceCoordinator.kt"
@@ -6078,9 +6086,16 @@ def test_current_db_gate_activated_policy_real_config_pipeline(tmp_path, monkeyp
     # recovery rows): 420 - 1 + 1 + 3 = 423; CA-I-05-001 adds one net row;
     # Wave-5 R16 adds four approved coordinator identities, and the approved
     # F2 month-marker insert adds one, yielding 429; Release 1.0 G3 S4 removes
-    # the two direct transactionEventDao.insert identities, yielding 427.
+    # the two direct transactionEventDao.insert identities, yielding 427;
+    # Release 1.0 R21 S1 adds one approved exact identity
+    # (RecurringLifecycleCoordinator.collapseStaleDueDeliveries /
+    # reminderDeliveryDao.cancelOpenDueDeliveriesByIds), yielding 428;
+    # Release 1.0 R21 review adds two approved exact identities
+    # (RecurringLifecycleCoordinator.updateOccurrenceStatus /
+    # plannedExpenseDao.updateStatus + reminderDeliveryDao.
+    # suppressOpenDeliveriesForOccurrence), yielding 430.
     # Re-derived per the checked-in-manifest contract pin above.
-    assert len(entries) == 427
+    assert len(entries) == 430
 
     # The structural gate really ran (post-activation it is no longer
     # short-circuited by a loader block) and stayed clean.

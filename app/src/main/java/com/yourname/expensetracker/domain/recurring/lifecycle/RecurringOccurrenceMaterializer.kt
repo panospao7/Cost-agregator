@@ -93,7 +93,11 @@ class RecurringOccurrenceMaterializer @Inject constructor(
                 "RecurringOccurrenceMaterializer.materializeInCurrentTransaction"
             )
         ) {
-        for (r in resolved) {
+        // R21 F1: central one-expense-one-occurrence guard. The linkedExpenseId index is not
+        // unique, so every resolver path (create/activate/update/generate/top-up) is
+        // protected here: a PAID resolution whose expense is already linked to ANY
+        // occurrence (or repeats inside this batch) is persisted as plain PLANNED.
+        for (r in dedupeLinkedExpenses(resolved)) {
             val entity = buildEntity(r, now)
             val insertResult = occurrenceDao.insert(entity)
 
@@ -300,6 +304,43 @@ class RecurringOccurrenceMaterializer @Inject constructor(
     }
 
     /**
+     * R21 F1: downgrades PAID resolutions whose linked expense is already linked to an
+     * occurrence in the database (read via [RecurringOccurrenceDao.getLinkedExpenseIds],
+     * chunked) or was already claimed earlier in this batch. A downgraded entry becomes
+     * PLANNED with no link/paid snapshot, so no paid side effects are applied to it.
+     * Read-only; the caller already holds the write barrier and transaction.
+     */
+    private suspend fun dedupeLinkedExpenses(
+        resolved: List<OccurrenceConflictResolver.ResolvedOccurrence>
+    ): List<OccurrenceConflictResolver.ResolvedOccurrence> {
+        val candidateIds = resolved.mapNotNull { r ->
+            r.linkedExpenseId?.takeIf { r.status == "PAID" }
+        }.distinct()
+        if (candidateIds.isEmpty()) return resolved
+
+        val alreadyLinked = candidateIds
+            .chunked(LINKED_EXPENSE_ID_CHUNK)
+            .flatMap { occurrenceDao.getLinkedExpenseIds(it) }
+            .toHashSet()
+        val claimedInBatch = HashSet<Long>()
+        return resolved.map { r ->
+            val expenseId = r.linkedExpenseId
+            if (r.status != "PAID" || expenseId == null) {
+                r
+            } else if (expenseId in alreadyLinked || !claimedInBatch.add(expenseId)) {
+                r.copy(
+                    status = "PLANNED",
+                    linkedExpenseId = null,
+                    paidAmount = null,
+                    paidCurrency = null
+                )
+            } else {
+                r
+            }
+        }
+    }
+
+    /**
      * Builds a [RecurringOccurrence] entity from a resolved occurrence.
      */
     private fun buildEntity(
@@ -354,6 +395,9 @@ class RecurringOccurrenceMaterializer @Inject constructor(
     }
 
     companion object {
+        /** Max ids per IN (...) binding (SQLite variable limit headroom). */
+        private const val LINKED_EXPENSE_ID_CHUNK = 900
+
         /**
          * Terminal occurrence statuses that are never auto-transitioned by the materializer.
          *
