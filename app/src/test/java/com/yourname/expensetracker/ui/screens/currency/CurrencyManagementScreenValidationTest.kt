@@ -3,6 +3,7 @@ package com.yourname.expensetracker.ui.screens.currency
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.Locale
 
 class CurrencyManagementScreenValidationTest {
 
@@ -40,5 +41,40 @@ class CurrencyManagementScreenValidationTest {
         assertFalse(shouldShowAmountError("50.00", interacted = true))
         assertFalse(shouldShowAmountError("0", interacted = false))
         assertTrue(shouldShowAmountError("0", interacted = true))
+    }
+
+    @Test
+    fun `el_GR comma decimal is valid and shows no error`() {
+        withLocale(Locale.forLanguageTag("el-GR")) {
+            assertTrue(isAmountParseableAndPositive("12,50"))
+            assertTrue(isAmountParseableAndPositive("12.5"))
+            assertTrue(isAmountParseableAndPositive("1.234,56"))
+            assertTrue(isConversionInputValid("12,50", "EUR", "USD"))
+            assertFalse(shouldShowAmountError("12,50", interacted = true))
+            assertFalse("ambiguous comma grouping is rejected", isAmountParseableAndPositive("1,234"))
+            assertFalse(isAmountParseableAndPositive("0,00"))
+        }
+    }
+
+    @Test
+    fun `en_US dot decimal and comma decimal are valid`() {
+        withLocale(Locale.US) {
+            assertTrue(isAmountParseableAndPositive("12.50"))
+            assertTrue(isAmountParseableAndPositive("12,50"))
+            assertTrue(isAmountParseableAndPositive("1,234.56"))
+            assertTrue(isAmountParseableAndPositive("1,234"))
+            assertFalse("ambiguous dot grouping is rejected", isAmountParseableAndPositive("1.234"))
+            assertTrue(shouldShowAmountError("1.234", interacted = true))
+        }
+    }
+
+    private fun withLocale(locale: Locale, block: () -> Unit) {
+        val original = Locale.getDefault()
+        Locale.setDefault(locale)
+        try {
+            block()
+        } finally {
+            Locale.setDefault(original)
+        }
     }
 }

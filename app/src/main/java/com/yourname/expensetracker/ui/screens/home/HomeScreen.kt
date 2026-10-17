@@ -75,6 +75,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.yourname.expensetracker.domain.notification.capture.NotificationCaptureStatus
 import com.yourname.expensetracker.ui.screens.privacysettings.NotificationCaptureStatusViewModel
+import com.yourname.expensetracker.ui.util.AmountInputSanitizer
 import com.yourname.expensetracker.ui.util.NotificationListenerSettingsLauncher
 
 /**
@@ -1369,7 +1370,8 @@ fun AddPlannedExpenseDialog(
 
                 OutlinedTextField(
                     value = amount,
-                    onValueChange = { amount = it },
+                    onValueChange = { amount = AmountInputSanitizer.sanitize(it) },
+                    isError = amount.isNotBlank() && AmountInputSanitizer.parseOrNull(amount) == null,
                     label = { Text(stringResource(R.string.dialog_plan_expense_amount_label)) },
                     modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(
@@ -1467,11 +1469,12 @@ fun AddPlannedExpenseDialog(
             }
         },
         confirmButton = {
+            val parsedAmount = AmountInputSanitizer.parseOrNull(amount) ?: 0.0
             Button(
+                enabled = description.isNotBlank() && parsedAmount > 0,
                 onClick = {
-                    val amt = amount.toDoubleOrNull() ?: 0.0
-                    if (description.isNotBlank() && amt > 0) {
-                        onConfirm(description, amt, date, selectedCategoryId, priority)
+                    if (description.isNotBlank() && parsedAmount > 0) {
+                        onConfirm(description, parsedAmount, date, selectedCategoryId, priority)
                     }
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = SemanticColors.PrimaryIndigo)

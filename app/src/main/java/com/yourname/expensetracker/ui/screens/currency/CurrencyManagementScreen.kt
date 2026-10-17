@@ -28,6 +28,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.currency.ConversionResult
 import com.yourname.expensetracker.ui.theme.SemanticColors
+import com.yourname.expensetracker.ui.util.AmountInputSanitizer
 import java.text.NumberFormat
 import java.time.Instant
 import java.time.ZoneId
@@ -35,7 +36,7 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 internal fun isAmountParseableAndPositive(amount: String): Boolean {
-    val parsedAmount = amount.toDoubleOrNull() ?: return false
+    val parsedAmount = AmountInputSanitizer.parseOrNull(amount) ?: return false
     return parsedAmount.isFinite() && parsedAmount > 0
 }
 
@@ -687,7 +688,7 @@ private fun ConversionDialog(
                 OutlinedTextField(
                     value = amount,
                     onValueChange = {
-                        amount = it
+                        amount = AmountInputSanitizer.sanitize(it)
                         amountInteracted = true
                     },
                     label = { Text(stringResource(R.string.label_amount)) },
@@ -779,7 +780,7 @@ private fun ConversionDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    amount.toDoubleOrNull()?.takeIf { it.isFinite() }?.let { amt ->
+                    AmountInputSanitizer.parseOrNull(amount)?.takeIf { it.isFinite() }?.let { amt ->
                         onConvert(amt, fromCurrency, toCurrency)
                     }
                 },

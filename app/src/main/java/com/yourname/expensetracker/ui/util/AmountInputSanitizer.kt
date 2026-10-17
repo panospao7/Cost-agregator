@@ -126,6 +126,22 @@ object AmountInputSanitizer {
         return value > 0
     }
 
+    /**
+     * Text to prefill an editable amount field with: always [maxFractionDigits] decimals, no
+     * grouping, no exponent, ASCII digits, and the decimal mark of the current default locale
+     * (same rule [sanitize] uses). Using the locale mark keeps the text round-tripping through
+     * [sanitize] + [parseOrNull], and typing one more digit is capped by [sanitize] instead of
+     * being read as a thousands group (e.g. "150.005" in el_GR). Non-finite input yields "".
+     */
+    fun formatForInput(value: Double, maxFractionDigits: Int = MAX_FRACTION_DIGITS): String {
+        if (!value.isFinite()) return ""
+        val digits = maxFractionDigits.coerceAtLeast(0)
+        var text = String.format(Locale.US, "%.${digits}f", value)
+        if (text.startsWith("-") && text.none { it in '1'..'9' }) text = text.substring(1)
+        val localeDecimal = if (currentSymbols().decimalSeparator == ',') ',' else '.'
+        return if (localeDecimal == ',') text.replace('.', ',') else text
+    }
+
     private fun currentSymbols(): DecimalFormatSymbols =
         DecimalFormatSymbols.getInstance(Locale.getDefault())
 }
