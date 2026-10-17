@@ -50,7 +50,10 @@ class PrivacyCapabilityHandlingPolicyTest {
         PrivacyCapability.EXPENSE_EXPORT_REDACTED to CapabilityPolicy.GATE_HANDLED,
         PrivacyCapability.EXPENSE_EXPORT_ENCRYPTED to CapabilityPolicy.GATE_HANDLED,
         PrivacyCapability.DEBUG_RAW_EXPORT to CapabilityPolicy.GATE_HANDLED,
-        PrivacyCapability.RAW_DATABASE_EXPORT to CapabilityPolicy.GATE_HANDLED
+        PrivacyCapability.RAW_DATABASE_EXPORT to CapabilityPolicy.GATE_HANDLED,
+
+        // R23: public ECB exchange-rate download — gate-handled by NetworkPrivacyGate
+        PrivacyCapability.EXCHANGE_RATE_DOWNLOAD to CapabilityPolicy.GATE_HANDLED
     )
 
     @Test

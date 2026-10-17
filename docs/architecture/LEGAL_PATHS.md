@@ -414,12 +414,22 @@ RAW DATA storage:
   → Processing uses EPHEMERAL in-memory text; DB stores SANITIZED version per mode
   → DO_NOT_STORE = no raw text persisted, processing still works
 
+EXCHANGE-RATE download (non-AI network call, default OFF):
+  → CurrencyManagementViewModel.refreshRates
+    → CurrencyRatesRepositoryImpl.refresh
+    → repository checks the composite PrivacyGate BEFORE any HTTP call;
+      NetworkPrivacyGate decides PrivacyCapability.EXCHANGE_RATE_DOWNLOAD
+      (PrivacySettings.exchangeRateDownloadEnabled)
+  → Returns CurrencyRateRefreshOutcome (Refreshed / DisabledByPrivacy / PrivacyCheckFailed);
+    UI maps codes via CurrencyErrorMessages (no raw codes shown)
+  → User switch: Privacy settings > Network
+
 PRIVACY BLOCKED states:
   → PrivacyBlocked sealed interface with typed subclasses:
     CloudAiDisabled, ReceiptImageUploadDisabled, ExternalGeocodingDisabled,
     NotificationCaptureDisabled, RawExportDisabled, DeviceGpsDisabled,
     BackgroundLocationDisabled, BankStatementAiDisabled, EncryptedBackupDisabled,
-    OverpassDisabled, DebugDataPersistenceDisabled, Custom
+    OverpassDisabled, DebugDataPersistenceDisabled, ExchangeRateDownloadDisabled, Custom
   → PrivacyDecision.FailClosed: never proceed; blocks execution unconditionally
   → toPrivacyBlocked() maps any denial + capability to a typed PrivacyBlocked
   → 39 call sites across 27 files use blocksExecution() before proceeding
@@ -433,6 +443,7 @@ FORBIDDEN:
   ❌ Parsing from stored (sanitized) text instead of ephemeral
   ❌ Using raw strings instead of typed PrivacyBlocked for UI states
   ❌ Silently proceeding when PrivacyDecision.FailClosed is returned
+  ❌ Gating non-AI network calls by CLOUD_AI_* capabilities
 ```
 
 ---

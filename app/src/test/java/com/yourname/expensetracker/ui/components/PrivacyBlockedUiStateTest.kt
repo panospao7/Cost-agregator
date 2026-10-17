@@ -4,6 +4,7 @@ import com.yourname.expensetracker.domain.privacy.PrivacyBlocked
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGateReasonCodes
+import com.yourname.expensetracker.domain.privacy.toPrivacyBlocked
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -36,7 +37,8 @@ class PrivacyBlockedUiStateTest {
             PrivacyBlocked.BankStatementAiDisabled(),
             PrivacyBlocked.EncryptedBackupDisabled(),
             PrivacyBlocked.OverpassDisabled(),
-            PrivacyBlocked.DebugDataPersistenceDisabled()
+            PrivacyBlocked.DebugDataPersistenceDisabled(),
+            PrivacyBlocked.ExchangeRateDownloadDisabled()
         )
         for (blocked in samples) {
             val state = PrivacyBlockedUiState.fromBlocked(blocked)
@@ -85,6 +87,25 @@ class PrivacyBlockedUiStateTest {
         assertNotNull(state)
         assertEquals(PrivacyCapability.CLOUD_AI_BANK_STATEMENT, state!!.capability)
         assertEquals(PrivacyGateReasonCodes.BANK_STATEMENT_AI_DISABLED, state.reasonCode)
+    }
+
+    @Test
+    fun `denied exchange rate download maps to typed state with dedicated code`() {
+        val state = PrivacyBlockedUiState.fromDecision(
+            PrivacyDecision.Denied(PrivacyGateReasonCodes.EXCHANGE_RATE_DOWNLOAD_DISABLED),
+            PrivacyCapability.EXCHANGE_RATE_DOWNLOAD
+        )
+        assertNotNull(state)
+        assertEquals(PrivacyCapability.EXCHANGE_RATE_DOWNLOAD, state!!.capability)
+        assertEquals(PrivacyGateReasonCodes.EXCHANGE_RATE_DOWNLOAD_DISABLED, state.reasonCode)
+        assertEquals(
+            PrivacyBlocked.ExchangeRateDownloadDisabled(),
+            PrivacyDecision.Denied("x").toPrivacyBlocked(PrivacyCapability.EXCHANGE_RATE_DOWNLOAD)
+        )
+        assertTrue(
+            "EXCHANGE_RATE_DOWNLOAD_DISABLED must be a registered bounded code",
+            PrivacyGateReasonCodes.EXCHANGE_RATE_DOWNLOAD_DISABLED in PrivacyGateReasonCodes.ALL
+        )
     }
 
     @Test

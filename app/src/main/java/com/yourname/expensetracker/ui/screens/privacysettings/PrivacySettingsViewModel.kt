@@ -60,6 +60,7 @@ class PrivacySettingsViewModel @Inject constructor(
         if (!settings.bankStatementAiEnabled) add(PrivacyBlocked.BankStatementAiDisabled())
         if (!settings.backgroundLocationBackfillEnabled) add(PrivacyBlocked.BackgroundLocationDisabled())
         if (!settings.deviceGpsLocationEnabled) add(PrivacyBlocked.DeviceGpsDisabled())
+        if (!settings.exchangeRateDownloadEnabled) add(PrivacyBlocked.ExchangeRateDownloadDisabled())
         if (!settings.encryptedBackupEnabled) add(PrivacyBlocked.EncryptedBackupDisabled())
         if (!settings.debugDataPersistenceEnabled) add(PrivacyBlocked.DebugDataPersistenceDisabled())
     }
@@ -106,6 +107,7 @@ class PrivacySettingsViewModel @Inject constructor(
     fun setExternalGeocodingEnabled(enabled: Boolean) = update { it.copy(externalGeocodingEnabled = enabled) }
     fun setBackgroundLocationBackfillEnabled(enabled: Boolean) = update { it.copy(backgroundLocationBackfillEnabled = enabled) }
     fun setDeviceGpsLocationEnabled(enabled: Boolean) = update { it.copy(deviceGpsLocationEnabled = enabled) }
+    fun setExchangeRateDownloadEnabled(enabled: Boolean) = update { it.copy(exchangeRateDownloadEnabled = enabled) }
     fun setEncryptedBackupEnabled(enabled: Boolean) = update { it.copy(encryptedBackupEnabled = enabled) }
     fun setDebugDataPersistenceEnabled(enabled: Boolean) = update { it.copy(debugDataPersistenceEnabled = enabled) }
 

@@ -32,6 +32,17 @@
     <string name="debug_database_stats_unavailable">Τα στατιστικά της βάσης δεδομένων δεν είναι προσωρινά διαθέσιμα</string>
     <string name="money_radar_unavailable">Το Money Radar δεν είναι προσωρινά διαθέσιμο. Δεν ήταν δυνατό να αξιολογηθούν ορισμένες οικονομικές ενδείξεις.</string>
     <string name="stress_forecast_unavailable">Η πρόβλεψη οικονομικής πίεσης δεν είναι προσωρινά διαθέσιμη. Δεν υπάρχει διαθέσιμη εκτίμηση κινδύνου.</string>
+    <!-- R23 -->
+    <string name="privacy_section_network">Δίκτυο</string>
+    <string name="privacy_toggle_exchange_rate_download">Λήψη συναλλαγματικών ισοτιμιών (ΕΚΤ)</string>
+    <string name="privacy_toggle_exchange_rate_download_desc">Λαμβάνει τις ημερήσιες δημόσιες ισοτιμίες από την Ευρωπαϊκή Κεντρική Τράπεζα. Δεν αποστέλλονται δεδομένα εξόδων· η ΕΚΤ μπορεί να δει τη διεύθυνση IP σας.</string>
+    <string name="privacy_blocked_exchange_rate_download">Η λήψη συναλλαγματικών ισοτιμιών είναι απενεργοποιημένη.</string>
+    <string name="currency_error_download_disabled">Η λήψη ισοτιμιών είναι απενεργοποιημένη. Ενεργοποιήστε την στις Ρυθμίσεις απορρήτου &gt; Δίκτυο.</string>
+    <string name="currency_error_refresh_unavailable">Δεν ήταν δυνατή η ενημέρωση των ισοτιμιών. Δοκιμάστε ξανά αργότερα.</string>
+    <string name="currency_error_conversion_unavailable">Η μετατροπή δεν είναι διαθέσιμη για αυτά τα νομίσματα.</string>
+    <string name="currency_error_data_unavailable">Δεν ήταν δυνατή η φόρτωση των δεδομένων νομισμάτων.</string>
+    <string name="currency_error_unsupported_home">Το βασικό σας νόμισμα δεν υποστηρίζεται.</string>
+    <string name="backup_contents_notice">Οι εικόνες αποδείξεων δεν περιλαμβάνονται στα αντίγραφα ασφαλείας.</string>
     <string name="receipt_reopened_existing_notice">Αυτή η απόδειξη έχει ήδη σαρωθεί. Εμφανίζεται η αποθηκευμένη απόδειξη.</string>
     <string name="budget_currency_display_format">Νόμισμα: %1$s</string>
     <string name="budget_confirm_currency_action">Επιβεβαίωση νομίσματος</string>

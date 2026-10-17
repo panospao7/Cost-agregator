@@ -136,4 +136,5 @@ fun PrivacyCapability.displayLabel(): String = when (this) {
     PrivacyCapability.EXPENSE_EXPORT_ENCRYPTED -> "Encrypted Export"
     PrivacyCapability.DEBUG_RAW_EXPORT -> "Debug Raw Export"
     PrivacyCapability.RAW_DATABASE_EXPORT -> "Raw Database Export"
+    PrivacyCapability.EXCHANGE_RATE_DOWNLOAD -> "Exchange Rate Download"
 }

@@ -59,6 +59,8 @@ data class PrivacyBlockedUiState(
                 PrivacyBlockedUiState(blocked.capability, R.string.privacy_blocked_overpass, PrivacyGateReasonCodes.OVERPASS_DISABLED)
             is PrivacyBlocked.DebugDataPersistenceDisabled ->
                 PrivacyBlockedUiState(blocked.capability, R.string.privacy_blocked_debug_persistence, PrivacyGateReasonCodes.DEBUG_PERSISTENCE_DISABLED)
+            is PrivacyBlocked.ExchangeRateDownloadDisabled ->
+                PrivacyBlockedUiState(blocked.capability, R.string.privacy_blocked_exchange_rate_download, PrivacyGateReasonCodes.EXCHANGE_RATE_DOWNLOAD_DISABLED)
             is PrivacyBlocked.Custom ->
                 // Defense in depth: even if a Custom reason is not a recognized
                 // code, the UI still renders the generic resource and the raw

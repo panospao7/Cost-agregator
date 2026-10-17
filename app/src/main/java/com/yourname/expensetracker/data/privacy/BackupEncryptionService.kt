@@ -153,6 +153,12 @@ class BackupEncryptionService @Inject constructor() {
         val salt = data.copyOfRange(offset, SALT_LENGTH_BYTES).also { offset += SALT_LENGTH_BYTES }
         val iv = data.copyOfRange(offset, offset + IV_LENGTH_BYTES).also { offset += IV_LENGTH_BYTES }
         val ciphertext = data.copyOfRange(offset, data.size)
+        // A GCM ciphertext always carries the full authentication tag. Shorter input is
+        // corrupt/truncated; reject it the same way regardless of JCA provider (SunJCE throws
+        // ProviderException(ShortBufferException) here, other providers AEADBadTagException).
+        if (ciphertext.size < GCM_TAG_LENGTH_BITS / 8) {
+            throw javax.crypto.AEADBadTagException("Encrypted data is truncated")
+        }
 
         val secretKey = deriveKey(password, salt)
         val cipher = Cipher.getInstance(CIPHER_TRANSFORMATION)

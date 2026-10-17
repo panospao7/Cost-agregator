@@ -58,8 +58,11 @@ fun CurrencyManagementScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     var showConversionDialog by remember { mutableStateOf(false) }
 
+    val errorMessageRes = uiState.error?.let { currencyErrorMessageRes(it) }
+    val errorMessageText = errorMessageRes?.let { stringResource(it) }
+
     LaunchedEffect(uiState.error) {
-        uiState.error?.let { message ->
+        errorMessageText?.let { message ->
             snackbarHostState.showSnackbar(message)
         }
     }
@@ -124,7 +127,7 @@ fun CurrencyManagementScreen(
                         .padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                        uiState.error?.let { errorMessage ->
+                        errorMessageText?.let { errorMessage ->
                             item {
                                 Card(
                                     modifier = Modifier.fillMaxWidth(),
@@ -149,8 +152,10 @@ fun CurrencyManagementScreen(
                                             color = MaterialTheme.colorScheme.onErrorContainer,
                                             modifier = Modifier.weight(1f)
                                         )
-                                        TextButton(onClick = { viewModel.refreshRates() }) {
-                                            Text(stringResource(R.string.action_retry))
+                                        if (!uiState.rateDownloadDisabled) {
+                                            TextButton(onClick = { viewModel.refreshRates() }) {
+                                                Text(stringResource(R.string.action_retry))
+                                            }
                                         }
                                         IconButton(onClick = { viewModel.clearError() }) {
                                             Icon(Icons.Rounded.Close, contentDescription = stringResource(R.string.cd_dismiss))
@@ -181,7 +186,7 @@ fun CurrencyManagementScreen(
                         }
                         
                         // Offline/Stale Warning
-                        if (uiState.isOffline || uiState.isRatesStale) {
+                        if (!uiState.rateDownloadDisabled && (uiState.isOffline || uiState.isRatesStale)) {
                             item {
                                 Card(
                                     modifier = Modifier.fillMaxWidth(),

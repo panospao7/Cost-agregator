@@ -5,6 +5,7 @@ import com.yourname.expensetracker.data.database.entity.ExchangeRate
 import com.yourname.expensetracker.data.repository.CurrencyDataRepository
 import com.yourname.expensetracker.domain.currency.ConversionResult
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.CurrencyRateRefreshOutcome
 import com.yourname.expensetracker.domain.currency.CurrencyRatesRepository
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
@@ -15,12 +16,15 @@ import com.yourname.expensetracker.domain.core.money.ConversionPath
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.RateBasis
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
+import com.yourname.expensetracker.domain.privacy.PrivacySettings
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
@@ -37,6 +41,10 @@ class CurrencyManagementViewModelTest : ViewModelTestUtils() {
     private val currencyConverter = mockk<CurrencyConverter>(relaxed = true)
     private val currencyRatesRepository = mockk<CurrencyRatesRepository>(relaxed = true)
     private val settingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
+    private val privacySettingsRepository = mockk<PrivacySettingsRepository>(relaxed = true)
+
+    // Default PrivacySettings() has exchangeRateDownloadEnabled = false (fresh install).
+    private val privacySettings = MutableStateFlow(PrivacySettings())
 
     private lateinit var hybridClassifier: HybridExpenseClassifier
     private lateinit var viewModel: CurrencyManagementViewModel
@@ -50,6 +58,8 @@ class CurrencyManagementViewModelTest : ViewModelTestUtils() {
         every { settingsRepository.lastRateUpdate() } returns flowOf(1_700_000_000_000L)
         coEvery { settingsRepository.areRatesStale(any()) } returns false
         every { currencyDataRepository.getRatesToCurrency("EUR") } returns flowOf(emptyList())
+        every { privacySettingsRepository.observeSettings() } returns privacySettings
+        coEvery { privacySettingsRepository.getSettings() } coAnswers { privacySettings.value }
         hybridClassifier = mockk(relaxed = true)
 
         viewModel = createViewModel()
@@ -200,7 +210,7 @@ class CurrencyManagementViewModelTest : ViewModelTestUtils() {
         every {
             currencyDataRepository.getRatesToCurrency("EUR")
         } returnsMany listOf(flowOf(emptyList()), flowOf(beforeRates), flowOf(afterRates))
-        coEvery { currencyRatesRepository.refresh("EUR") } returns 2
+        coEvery { currencyRatesRepository.refresh("EUR") } returns CurrencyRateRefreshOutcome.Refreshed(2)
 
         viewModel = createViewModel()
         advanceUntilIdle()
@@ -249,13 +259,147 @@ class CurrencyManagementViewModelTest : ViewModelTestUtils() {
         }
     }
 
+    @Test
+    fun `privacy disabled refresh sets download disabled error and is not offline`() = runTest(testDispatcher) {
+        coEvery { currencyRatesRepository.refresh("EUR") } returns CurrencyRateRefreshOutcome.DisabledByPrivacy
+        advanceUntilIdle()
+        // Fresh install: switch off and no rates. That is "download disabled", never "offline".
+        assertTrue(viewModel.uiState.value.rateDownloadDisabled)
+        assertFalse(viewModel.uiState.value.isOffline)
+
+        viewModel.refreshRates()
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertEquals("CURRENCY_RATE_DOWNLOAD_DISABLED", state.error)
+        assertTrue(state.rateDownloadDisabled)
+        assertFalse(state.isOffline)
+        assertFalse(state.isLoading)
+    }
+
+    @Test
+    fun `refresh outcome never writes the download disabled flag - settings flow is the only writer`() = runTest(testDispatcher) {
+        privacySettings.value = PrivacySettings(exchangeRateDownloadEnabled = true)
+        coEvery { currencyRatesRepository.refresh("EUR") } returns CurrencyRateRefreshOutcome.DisabledByPrivacy
+        advanceUntilIdle()
+        assertFalse(viewModel.uiState.value.rateDownloadDisabled)
+
+        viewModel.refreshRates()
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertEquals("CURRENCY_RATE_DOWNLOAD_DISABLED", state.error)
+        // Flag still mirrors the settings flow (switch on); only the flow may flip it.
+        assertFalse(state.rateDownloadDisabled)
+        assertFalse(state.isOffline)
+
+        privacySettings.value = PrivacySettings(exchangeRateDownloadEnabled = false)
+        advanceUntilIdle()
+        assertTrue(viewModel.uiState.value.rateDownloadDisabled)
+    }
+
+    @Test
+    fun `clearing error keeps download disabled flag while switch is off`() = runTest(testDispatcher) {
+        coEvery { currencyRatesRepository.refresh("EUR") } returns CurrencyRateRefreshOutcome.DisabledByPrivacy
+        advanceUntilIdle()
+        viewModel.refreshRates()
+        advanceUntilIdle()
+
+        viewModel.clearError()
+
+        assertEquals(null, viewModel.uiState.value.error)
+        assertTrue(viewModel.uiState.value.rateDownloadDisabled)
+        assertFalse(viewModel.uiState.value.isOffline)
+    }
+
+    @Test
+    fun `switch on with no rates is genuinely offline`() = runTest(testDispatcher) {
+        privacySettings.value = PrivacySettings(exchangeRateDownloadEnabled = true)
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertFalse(state.rateDownloadDisabled)
+        assertTrue(state.isOffline)
+    }
+
+    @Test
+    fun `toggling the privacy switch updates download disabled and offline flags`() = runTest(testDispatcher) {
+        privacySettings.value = PrivacySettings(exchangeRateDownloadEnabled = true)
+        advanceUntilIdle()
+        assertFalse(viewModel.uiState.value.rateDownloadDisabled)
+        assertTrue(viewModel.uiState.value.isOffline)
+
+        privacySettings.value = PrivacySettings(exchangeRateDownloadEnabled = false)
+        advanceUntilIdle()
+        assertTrue(viewModel.uiState.value.rateDownloadDisabled)
+        assertFalse(viewModel.uiState.value.isOffline)
+
+        privacySettings.value = PrivacySettings(exchangeRateDownloadEnabled = true)
+        advanceUntilIdle()
+        assertFalse(viewModel.uiState.value.rateDownloadDisabled)
+        assertTrue(viewModel.uiState.value.isOffline)
+    }
+
+    @Test
+    fun `zero stored pairs maps to generic refresh unavailable error`() = runTest(testDispatcher) {
+        coEvery { currencyRatesRepository.refresh("EUR") } returns CurrencyRateRefreshOutcome.Refreshed(0)
+        privacySettings.value = PrivacySettings(exchangeRateDownloadEnabled = true)
+        advanceUntilIdle()
+
+        viewModel.refreshRates()
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertEquals("CURRENCY_RATE_REFRESH_UNAVAILABLE", state.error)
+        assertFalse(state.rateDownloadDisabled)
+    }
+
+    @Test
+    fun `privacy check failure maps to generic refresh unavailable error`() = runTest(testDispatcher) {
+        coEvery { currencyRatesRepository.refresh("EUR") } returns
+            CurrencyRateRefreshOutcome.PrivacyCheckFailed("PRIVACY_BLOCKED")
+        advanceUntilIdle()
+
+        viewModel.refreshRates()
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertEquals("CURRENCY_RATE_REFRESH_UNAVAILABLE", state.error)
+        assertFalse(state.isLoading)
+        // Switch is off in this setup: the privacy-check failure must not be presented as offline.
+        assertTrue(state.rateDownloadDisabled)
+        assertFalse(state.isOffline)
+    }
+
+    @Test
+    fun `privacy check failure does not mark offline when switch is on and rates exist`() = runTest(testDispatcher) {
+        val rates = listOf(
+            ExchangeRate(fromCurrency = "EUR", toCurrency = "USD", rate = 1.1, lastUpdated = 1_700_000_100_000L)
+        )
+        every { currencyDataRepository.getRatesToCurrency("EUR") } returns flowOf(rates)
+        privacySettings.value = PrivacySettings(exchangeRateDownloadEnabled = true)
+        coEvery { currencyRatesRepository.refresh("EUR") } returns
+            CurrencyRateRefreshOutcome.PrivacyCheckFailed("PRIVACY_BLOCKED")
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.refreshRates()
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertEquals("CURRENCY_RATE_REFRESH_UNAVAILABLE", state.error)
+        assertFalse(state.rateDownloadDisabled)
+        assertFalse(state.isOffline)
+    }
+
     private fun createViewModel(): CurrencyManagementViewModel {
         return CurrencyManagementViewModel(
             currencyDataRepository = currencyDataRepository,
             currencyConverter = currencyConverter,
             currencyRatesRepository = currencyRatesRepository,
             settingsRepository = settingsRepository,
-            hybridClassifier = hybridClassifier
+            hybridClassifier = hybridClassifier,
+            privacySettingsRepository = privacySettingsRepository
         )
     }
 

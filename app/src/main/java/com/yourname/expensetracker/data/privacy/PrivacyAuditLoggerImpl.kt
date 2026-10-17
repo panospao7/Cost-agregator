@@ -229,6 +229,7 @@ class PrivacyAuditLoggerImpl @Inject constructor(
         PrivacyCapability.EXPENSE_EXPORT_ENCRYPTED -> "Encrypted expense export"
         PrivacyCapability.DEBUG_RAW_EXPORT -> "Debug raw export (release-disabled)"
         PrivacyCapability.RAW_DATABASE_EXPORT -> "Raw database export (release-disabled)"
+        PrivacyCapability.EXCHANGE_RATE_DOWNLOAD -> "Public exchange-rate download (no expense data sent)"
     }
 
     private fun sanitizeContext(context: Map<String, String>): Map<String, String> {

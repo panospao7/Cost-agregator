@@ -175,6 +175,12 @@ fun BackupRestoreScreen(
                         fontWeight = FontWeight.Bold
                     )
 
+                    Text(
+                        text = stringResource(R.string.backup_contents_notice),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
                     OutlinedTextField(
                         value = createPassword,
                         onValueChange = { createPassword = it },

@@ -276,6 +276,17 @@
     <string name="debug_database_stats_unavailable">Las estadísticas de la base de datos no están disponibles temporalmente</string>
     <string name="money_radar_unavailable">Money Radar no está disponible temporalmente. No se pudieron evaluar algunas señales financieras.</string>
     <string name="stress_forecast_unavailable">La previsión de estrés financiero no está disponible temporalmente. No hay ninguna estimación de riesgo disponible.</string>
+    <!-- R23 -->
+    <string name="privacy_section_network">Red</string>
+    <string name="privacy_toggle_exchange_rate_download">Descargar tipos de cambio (BCE)</string>
+    <string name="privacy_toggle_exchange_rate_download_desc">Obtiene los tipos diarios públicos del Banco Central Europeo. No se envían datos de gastos; el BCE puede ver tu dirección IP.</string>
+    <string name="privacy_blocked_exchange_rate_download">La descarga de tipos de cambio está desactivada.</string>
+    <string name="currency_error_download_disabled">La descarga de tipos de cambio está desactivada. Actívala en Ajustes de privacidad &gt; Red.</string>
+    <string name="currency_error_refresh_unavailable">No se pudieron actualizar los tipos de cambio. Inténtalo más tarde.</string>
+    <string name="currency_error_conversion_unavailable">La conversión no está disponible para estas monedas.</string>
+    <string name="currency_error_data_unavailable">No se pudieron cargar los datos de monedas.</string>
+    <string name="currency_error_unsupported_home">Tu moneda principal no es compatible.</string>
+    <string name="backup_contents_notice">Las imágenes de los recibos no se incluyen en las copias de seguridad.</string>
     <string name="receipt_reopened_existing_notice">Este recibo ya fue escaneado. Se muestra el recibo guardado.</string>
     <string name="budget_currency_display_format">Moneda: %1$s</string>
     <string name="budget_confirm_currency_action">Confirmar moneda</string>

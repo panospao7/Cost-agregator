@@ -199,6 +199,22 @@ fun PrivacySettingsScreen(
 
             item { HorizontalDivider() }
 
+            // -- Network section --
+            item {
+                SectionHeader(stringResource(R.string.privacy_section_network))
+            }
+            item {
+                ToggleRow(
+                    label = stringResource(R.string.privacy_toggle_exchange_rate_download),
+                    checked = settings.exchangeRateDownloadEnabled,
+                    onCheckedChange = viewModel::setExchangeRateDownloadEnabled,
+                    enabled = !isSaving,
+                    description = stringResource(R.string.privacy_toggle_exchange_rate_download_desc)
+                )
+            }
+
+            item { HorizontalDivider() }
+
             // -- Backup section --
             item {
                 SectionHeader(stringResource(R.string.privacy_section_backup))
@@ -334,7 +350,8 @@ private fun ToggleRow(
     label: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    description: String? = null
 ) {
     Row(
         modifier = Modifier
@@ -343,12 +360,20 @@ private fun ToggleRow(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyMedium,
-            color = if (enabled) SemanticColors.TextPrimary else SemanticColors.TextSecondary,
-            modifier = Modifier.weight(1f)
-        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (enabled) SemanticColors.TextPrimary else SemanticColors.TextSecondary
+            )
+            if (description != null) {
+                Text(
+                    text = description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SemanticColors.TextSecondary
+                )
+            }
+        }
         Switch(
             checked = checked,
             onCheckedChange = onCheckedChange,

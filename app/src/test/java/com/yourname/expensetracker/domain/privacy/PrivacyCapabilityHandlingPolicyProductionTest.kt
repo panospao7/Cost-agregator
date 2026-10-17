@@ -53,6 +53,18 @@ class PrivacyCapabilityHandlingPolicyProductionTest {
     }
 
     @Test
+    fun gate_handled_capabilities_contains_exchange_rate_download() {
+        assertTrue(
+            PrivacyCapabilityHandlingPolicy.gateHandledCapabilities
+                .contains(PrivacyCapability.EXCHANGE_RATE_DOWNLOAD)
+        )
+        assertFalse(
+            PrivacyCapabilityHandlingPolicy.localOnlyCapabilities
+                .contains(PrivacyCapability.EXCHANGE_RATE_DOWNLOAD)
+        )
+    }
+
+    @Test
     fun composite_gate_fails_closed_for_unhandled_gate_handled_capability() = runTest {
         val auditLogger = PrivacyAuditLogger.NO_OP
         // Gate that handles nothing (returns NotApplicable for everything)

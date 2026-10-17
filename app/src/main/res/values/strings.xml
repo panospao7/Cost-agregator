@@ -854,6 +854,17 @@
     <string name="privacy_toggle_device_gps">Device GPS location</string>
     <string name="privacy_toggle_encrypted_backup">Encrypted backups</string>
     <string name="privacy_toggle_debug_persist">Persist debug data</string>
+    <!-- R23 -->
+    <string name="privacy_section_network">Network</string>
+    <string name="privacy_toggle_exchange_rate_download">Download exchange rates (ECB)</string>
+    <string name="privacy_toggle_exchange_rate_download_desc">Fetches daily public rates from the European Central Bank. No expense data is sent; the ECB can see your IP address.</string>
+    <string name="privacy_blocked_exchange_rate_download">Exchange-rate download is disabled.</string>
+    <string name="currency_error_download_disabled">Exchange-rate download is off. Turn it on in Privacy settings &gt; Network.</string>
+    <string name="currency_error_refresh_unavailable">Couldn\'t update exchange rates. Try again later.</string>
+    <string name="currency_error_conversion_unavailable">Conversion is unavailable for these currencies.</string>
+    <string name="currency_error_data_unavailable">Currency data couldn\'t be loaded.</string>
+    <string name="currency_error_unsupported_home">Your home currency isn\'t supported.</string>
+    <string name="backup_contents_notice">Receipt images are not included in backups.</string>
     <string name="privacy_slider_notification_retention">Raw notification retention (days)</string>
     <string name="privacy_slider_ocr_retention">Raw OCR retention (days)</string>
     <string name="privacy_raw_storage_notification_label">Notification raw text storage</string>
