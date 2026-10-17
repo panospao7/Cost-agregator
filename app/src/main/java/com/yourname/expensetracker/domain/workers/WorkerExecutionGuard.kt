@@ -1,6 +1,9 @@
 package com.yourname.expensetracker.domain.workers
 
+import android.content.Context
 import androidx.work.ListenableWorker
+import com.yourname.expensetracker.data.database.DatabaseOpenGate
+import dagger.hilt.android.qualifiers.ApplicationContext
 import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseReadBarrier
 import com.yourname.expensetracker.data.backup.DatabaseReadPolicy
@@ -74,6 +77,8 @@ fun <T> WorkerGuardResult<T>.toWorkerResult(): ListenableWorker.Result = when (t
     is WorkerGuardResult.Failed -> ListenableWorker.Result.failure()
 }
 
+private const val OPEN_GATE_LOG_TAG = "WorkerExecutionGuard"
+
 class LeaseAcquisitionBlockedException(val workerName: String, message: String) : RuntimeException(message)
 
 class WorkerCheckpointBlockedException(
@@ -94,12 +99,24 @@ class WorkerExecutionGuard @Inject constructor(
     private val workerTerminalDiagnosticSink: WorkerTerminalDiagnosticSink,
     private val backgroundJobRunDao: BackgroundJobRunDao,
     private val notificationPermissionChecker: NotificationPermissionChecker,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    @ApplicationContext private val appContext: Context
 ) {
+    /**
+     * R25: when the database open gate blocks the live DB nothing may touch it, so the run is
+     * skipped (maps to Result.success, no retry) before any lease, run logger, DAO or sink call.
+     */
+    private fun openGateSkipOrNull(): WorkerGuardResult.Skipped? {
+        val reason = DatabaseOpenGate.blockedReasonOrNull(appContext) ?: return null
+        Timber.w("%s worker skipped reason=%s", OPEN_GATE_LOG_TAG, reason)
+        return WorkerGuardResult.Skipped(reason)
+    }
+
     suspend fun <T> runGuarded(
         request: WorkerGuardRequest,
         block: suspend () -> T
     ): WorkerGuardResult<T> {
+        openGateSkipOrNull()?.let { return it }
         val mode = restoreMaintenanceMode.currentMode()
         val allowedReadOnly = mode == RestoreMaintenanceMode.Mode.BACKUP_EXPORTING &&
             request.allowDuringBackupExport &&
@@ -281,6 +298,7 @@ class WorkerExecutionGuard @Inject constructor(
         request: WorkerGuardRequest,
         block: suspend (WorkerRunContext) -> T
     ): WorkerGuardResult<T> {
+        openGateSkipOrNull()?.let { return it }
         val mode = restoreMaintenanceMode.currentMode()
         val allowedReadOnly = mode == RestoreMaintenanceMode.Mode.BACKUP_EXPORTING &&
             request.allowDuringBackupExport &&

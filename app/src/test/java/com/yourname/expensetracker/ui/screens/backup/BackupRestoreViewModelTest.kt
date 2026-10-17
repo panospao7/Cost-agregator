@@ -491,6 +491,36 @@ class BackupRestoreViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
+    fun `restoreBackup maps typed backup schema rejection codes to specific localized resources`() = runTest(testDispatcher) {
+        val expected = mapOf(
+            com.yourname.expensetracker.data.repository.BackupSchemaUnsupportedException.LEGACY to
+                com.yourname.expensetracker.R.string.backup_schema_too_old,
+            com.yourname.expensetracker.data.repository.BackupSchemaUnsupportedException.NEWER to
+                com.yourname.expensetracker.R.string.backup_schema_too_new
+        )
+        for ((code, res) in expected) {
+            val uri = destinationUri()
+            every { context.contentResolver.openInputStream(uri) } returns bundleInputStream()
+            coEvery { databaseBackupRepository.restoreCostBackup(any(), any()) } returns Result.failure(
+                com.yourname.expensetracker.data.repository.BackupSchemaUnsupportedException(code)
+            )
+
+            val vm = createViewModel()
+            advanceUntilIdle()
+            vm.restoreBackup(uri, "test-password")
+            advanceUntilIdle()
+
+            val state = vm.uiState.value
+            assertFalse(state.isRestoring)
+            assertEquals("code=$code", res, state.errorMessageRes)
+            assertNull("no raw text for $code", state.errorMessage)
+
+            vm.clearError()
+            assertNull(vm.uiState.value.errorMessageRes)
+        }
+    }
+
+    @Test
     fun `restoreBackup temp file creation failure resets isRestoring and shows bounded message`() = runTest(testDispatcher) {
         val uri = destinationUri()
         // createTempFile resolves context.cacheDir inside the guarded region.

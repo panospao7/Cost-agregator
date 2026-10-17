@@ -146,7 +146,8 @@ class WorkerRestoreRegressionTest {
             workerTerminalDiagnosticSink = mockk(relaxed = true),
             backgroundJobRunDao = mockk(relaxed = true),
             notificationPermissionChecker = mockk(relaxed = true),
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            appContext = mockk<Context>(relaxed = true)
         )
         val manager = mockk<WorkManager>(relaxed = true)
         val active = mockk<WorkInfo>()

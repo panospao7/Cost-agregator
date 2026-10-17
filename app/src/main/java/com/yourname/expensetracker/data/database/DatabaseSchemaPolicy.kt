@@ -13,10 +13,16 @@ object DatabaseSchemaPolicy {
     /** The current latest database schema version. */
     const val CURRENT_VERSION = APP_DATABASE_SCHEMA_VERSION
 
-    /** The minimum version from which supported migration is guaranteed. */
+    /**
+     * The minimum schema version the app opens (and the backup floor). The app
+     * opens only v[MIGRATION_BASELINE]..v[CURRENT_VERSION]; older, newer, or
+     * unreadable databases are refused by DatabaseOpenGate (UnsupportedDatabaseActivity
+     * offers an untouched-file export). Backups outside that range are rejected with
+     * BACKUP_SCHEMA_UNSUPPORTED_*. There is no destructive fallback.
+     */
     const val MIGRATION_BASELINE = 145
 
-    /** Versions below BASELINE use destructive migration. */
+    /** Versions below BASELINE are unsupported: refused at open, never migrated or dropped. */
     val UNSUPPORTED_VERSIONS: IntRange get() = 1..<MIGRATION_BASELINE
 
     /** All registered migrations (delegates to production builder). */

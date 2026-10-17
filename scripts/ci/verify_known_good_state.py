@@ -47,11 +47,12 @@ Rows (fixed order, one check each):
                               407 entries (55 fold-resolved + 352 reviewed
                               GR-08 seeds; post-GR-14u37 truth sync).
 6. structural_manifest     -- the structural expected-methods manifest must
-                               pin counts.structural_entries=64
-                               (expected=59 + fixtures=5; R26 removed the stale
-                               runCostBackupExport/writableDatabase entry) and
+                               pin counts.structural_entries=67
+                               (expected=62 + fixtures=5; R26 removed the stale
+                               runCostBackupExport/writableDatabase entry; R25
+                               added the three core open-gate entries) and
                                config/guards/db_structural_exceptions.yml must
-                               carry exactly 64 entries.
+                               carry exactly 67 entries.
 7. test_result_freshness   -- OPTIONAL (PR-GR-10f).  The test-result
                                freshness stamp at
                                app/build/test-results/.freshness-stamp.json
@@ -209,8 +210,9 @@ _CANDIDATE_SCHEMA_VERSION = 2
 # (55 fold-resolved + 352 reviewed seeds).
 _CANDIDATE_ENTRIES = 407
 # Human-authorized 2026-09-28: only the exact cleanup helper adds one fixture.
-_STRUCTURAL_ENTRIES = 64
-_STRUCTURAL_EXPECTED = 59
+# R25 (owner-approved Q-R25-G1, 2026-10-17): three core open-gate tuples, 64 -> 67.
+_STRUCTURAL_ENTRIES = 67
+_STRUCTURAL_EXPECTED = 62
 _STRUCTURAL_FIXTURES = 5
 
 

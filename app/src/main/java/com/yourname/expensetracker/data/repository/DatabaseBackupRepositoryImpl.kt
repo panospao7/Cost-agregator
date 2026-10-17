@@ -21,6 +21,7 @@ import com.yourname.expensetracker.data.privacy.BackupEncryptionService
 import com.yourname.expensetracker.data.privacy.ExportAnonymizer
 import com.yourname.expensetracker.data.database.APP_DATABASE_SCHEMA_VERSION
 import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.data.database.DatabaseSchemaPolicy
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.di.IoDispatcher
@@ -152,7 +153,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
 
         /** RP-03A (P7-003): app-private home for legacy/test-delegate .costbackup files. */
         private const val COSTBACKUP_SUBDIR = "costbackups"
-        private const val MIN_SUPPORTED_SCHEMA_VERSION = 6
+        /** R25-C: supported backup floor == the only schema floor the app opens. */
+        private const val MIN_SUPPORTED_SCHEMA_VERSION = DatabaseSchemaPolicy.MIGRATION_BASELINE
         private const val BUDGETS_SCHEMA_GUARD_VERSION = 86
         private const val IMPORT_STAGING_PREFIX = "expense_tracker_db_import_stage_"
         private const val CURRENT_SUPPORTED_SCHEMA_VERSION = APP_DATABASE_SCHEMA_VERSION
@@ -1070,6 +1072,25 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             }
             restoreEvents.event("BUNDLE_VALIDATED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED)
 
+            // 3a. R25-C: reject a manifest schema outside [floor, current] BEFORE any
+            // staging/swap, while the live DB is intact (bounded code only).
+            val manifestSchemaCode = BackupSchemaUnsupportedException.codeForVersion(
+                manifest.databaseVersion, MIN_SUPPORTED_SCHEMA_VERSION, CURRENT_SUPPORTED_SCHEMA_VERSION
+            )
+            if (manifestSchemaCode != null) {
+                Timber.w("Restore: manifest schema rejected code=%s", manifestSchemaCode)
+                val schemaError = BackupSchemaUnsupportedException(manifestSchemaCode)
+                restoreEvents.event("BUNDLE_VALIDATED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
+                    severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.ERROR,
+                    reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.VALIDATION_FAILED, isTerminal = true)
+                restoreJournal.failJournal(journalEntry, manifestSchemaCode)
+                exitAfterPreDestructiveAbort()
+                // G2b: finalize the run only after the maintenance window is exited.
+                restoreEvents.finalizeRunFailed(manifestSchemaCode, schemaError)
+                tempDir.deleteRecursively()
+                return@withContext Result.failure(schemaError)
+            }
+
             // 4. Verify manifest has data
             val manifestTableCounts = manifest.tableCounts
             if (manifestTableCounts.values.all { it == 0 }) {
@@ -1835,11 +1856,12 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
      * infrastructure.
      */
     /**
-     * ## RSP-R5A: LegacyDatabaseImporter for pre-v6 schemas (planned)
+     * ## RSP-R5A: LegacyDatabaseImporter for pre-baseline schemas (planned)
      * Currently [importDatabase] requires a source database at schema version
-     * >= [MIN_SUPPORTED_SCHEMA_VERSION] (v6). Databases created by very old app
-     * versions (v1–v5) are rejected because the migration chain does not cover
-     * those versions (see RSP-R2A).
+     * >= [MIN_SUPPORTED_SCHEMA_VERSION] (== [DatabaseSchemaPolicy.MIGRATION_BASELINE])
+     * and <= [APP_DATABASE_SCHEMA_VERSION]. Databases created by older app
+     * versions are rejected early with BACKUP_SCHEMA_UNSUPPORTED_LEGACY because no
+     * data-preserving migration chain covers them (see RSP-R2A).
      *
      * A future `LegacyDatabaseImporter` component should:
      * 1. Open the legacy `.db` file with `SQLiteDatabase.openDatabase()` (bypassing
@@ -1852,9 +1874,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
      *    are applied.
      * 5. Log warnings for any data that could not be mapped (e.g. dropped columns).
      *
-     * Until this importer is built, the [validateSourceDatabase] step will reject
-     * pre-v6 files with a descriptive error message directing the user to export
-     * their data first.
+     * Until this importer is built, the [validateSourceDatabase] step rejects
+     * out-of-range files with a bounded [BackupSchemaUnsupportedException] code.
      */
     override suspend fun importDatabase(sourceFile: File): Result<DatabaseImportSummary> = withContext(ioDispatcher) {
         containRestoreOperation {
@@ -1924,9 +1945,12 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 run.event("SOURCE_VALIDATED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
                     reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.VALIDATION_FAILED)
                 restoreMaintenanceMode.exit(forceRestartRequired = false)
-                run.failedFinal("Invalid backup file", sourceValidation.exceptionOrNull())
+                val validationError = sourceValidation.exceptionOrNull()
+                run.failedFinal("Invalid backup file", validationError)
                 return@withContext Result.failure(
-                    Exception("SOURCE_VALIDATION_FAILED")
+                    // R25-C: the bounded schema-range code is surfaced as-is.
+                    if (validationError is BackupSchemaUnsupportedException) validationError
+                    else Exception("SOURCE_VALIDATION_FAILED")
                 )
             }
             val sourceSummary = sourceValidation.getOrNull() ?: run {
@@ -2243,22 +2267,12 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 
                 // Reject unsupported schema versions before touching destination files.
                 val currentSupportedVersion = CURRENT_SUPPORTED_SCHEMA_VERSION
-                if (schemaVersion < MIN_SUPPORTED_SCHEMA_VERSION || schemaVersion > currentSupportedVersion) {
-                    Timber.e(
-                        "Source database schema version $schemaVersion is unsupported. " +
-                            "Supported range: $MIN_SUPPORTED_SCHEMA_VERSION..$currentSupportedVersion"
-                    )
-                    val message = if (schemaVersion < MIN_SUPPORTED_SCHEMA_VERSION) {
-                        "Backup from old app version (schema $schemaVersion). " +
-                            "Supported schema range is $MIN_SUPPORTED_SCHEMA_VERSION..$currentSupportedVersion. " +
-                            "Migration would destroy data. Please use a newer backup or manually migrate first."
-                    } else {
-                        "Backup uses newer schema $schemaVersion than this app supports ($currentSupportedVersion). " +
-                            "Please update the app or export from a compatible version."
-                    }
-                    return Result.failure(
-                        Exception(message)
-                    )
+                val unsupportedCode = BackupSchemaUnsupportedException.codeForVersion(
+                    schemaVersion, MIN_SUPPORTED_SCHEMA_VERSION, currentSupportedVersion
+                )
+                if (unsupportedCode != null) {
+                    Timber.w("Source database schema rejected code=%s", unsupportedCode)
+                    return Result.failure(BackupSchemaUnsupportedException(unsupportedCode))
                 }
                 
                 var requiresBudgetsRepair = false
@@ -2719,6 +2733,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         dbShmFile: File
     ): Result<Unit> {
         return com.yourname.expensetracker.domain.util.CancellationSafe.runCatchingCancellable {
+            // R25 D-M1: refuse gated DB opens for the whole rollback file replacement.
+            RestoreMaintenanceMode.raiseSwapLatch()
             com.yourname.expensetracker.domain.util.CancellationSafe.runCatchingCancellable { database.close() }
                 .onFailure { Timber.w("Restore: UNKNOWN_ERROR stage=close_room_before_rollback class=%s", it::class.java.simpleName) }
             com.yourname.expensetracker.domain.util.CancellationSafe.runCatchingCancellable { database.openHelper.close() }
@@ -2934,6 +2950,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 journalEntry = restoreJournal.transitionTo(journalEntry, RestoreJournal.JournalState.SWAPPING)
                 restoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.RESETTING_DATABASE)
                 destructiveStarted = true
+                // R25 D-M1: the RESETTING_DATABASE commit cleared the latch; re-raise it so the
+                // gated helper refuses reopening while live files are deleted/replaced.
+                RestoreMaintenanceMode.raiseSwapLatch()
                 closeLiveDatabaseForFileSwap()
                 // DDL-F876-01: destructive point — Room DB is closed; no run.* after this
                 resetEvents.markLiveDbSwapStarted()
@@ -3013,6 +3032,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
     }
 
     private fun restoreFailureReasonCode(error: Throwable): DiagnosticReasonCode = when (error) {
+        is BackupSchemaUnsupportedException -> DiagnosticReasonCode.VALIDATION_FAILED
         is WorkerDrainTimeoutException -> DiagnosticReasonCode.TIMEOUT
         is com.yourname.expensetracker.data.backup.WriteDrainTimeoutException -> DiagnosticReasonCode.TIMEOUT
         is DatabaseAccessBlockedException -> when (error.accessType) {
@@ -3102,6 +3122,25 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         }
 
         return Result.failure(Exception("Failed to checkpoint WAL"))
+    }
+}
+
+/**
+ * R25-C: a backup whose schema version is outside the supported
+ * [DatabaseSchemaPolicy.MIGRATION_BASELINE]..[APP_DATABASE_SCHEMA_VERSION] range.
+ * The message is the bounded [code] only (never paths, SQL, or file contents).
+ */
+class BackupSchemaUnsupportedException(val code: String) : IllegalStateException(code) {
+    companion object {
+        const val LEGACY = "BACKUP_SCHEMA_UNSUPPORTED_LEGACY"
+        const val NEWER = "BACKUP_SCHEMA_UNSUPPORTED_NEWER"
+
+        /** Returns the bounded rejection code for [version], or null when it is in range. */
+        fun codeForVersion(version: Int, floor: Int, current: Int): String? = when {
+            version < floor -> LEGACY
+            version > current -> NEWER
+            else -> null
+        }
     }
 }
 

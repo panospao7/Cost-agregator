@@ -91,7 +91,8 @@ class NotificationIntakeWorkerTimeoutTest {
         writeBarrier, readBarrier, restoreMode, runLogger,
         privacyGate, leaseRegistry, diagnosticSink,
         workerTerminalDiagnosticSink, bgJobRunDao,
-        permissionChecker, timeProvider
+        permissionChecker, timeProvider,
+        mockk<Context>(relaxed = true)
     )
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -1041,7 +1042,8 @@ class NotificationIntakeWorkerTimeoutTest {
             writeBarrier, readBarrier, restoreMode, runLogger,
             privacyGate, leaseRegistry, diagnosticSink,
             workerTerminalDiagnosticSink, bgJobRunDao,
-            permissionChecker, timeProvider
+            permissionChecker, timeProvider,
+            mockk<Context>(relaxed = true)
         )
 
         val intakeId = 42L
@@ -1099,7 +1101,8 @@ class NotificationIntakeWorkerTimeoutTest {
             writeBarrier, readBarrier, restoreMode, runLogger,
             privacyGate, leaseRegistry, diagnosticSink,
             workerTerminalDiagnosticSink, bgJobRunDao,
-            permissionChecker, timeProvider
+            permissionChecker, timeProvider,
+            mockk<Context>(relaxed = true)
         )
         val intakeId = 42L
         val now = 1_700_000_000_000L
@@ -1157,7 +1160,8 @@ class NotificationIntakeWorkerTimeoutTest {
             writeBarrier, readBarrier, restoreMode, runLogger,
             privacyGate, leaseRegistry, diagnosticSink,
             workerTerminalDiagnosticSink, bgJobRunDao,
-            permissionChecker, timeProvider
+            permissionChecker, timeProvider,
+            mockk<Context>(relaxed = true)
         )
 
         val intakeId = 42L

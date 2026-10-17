@@ -1,8 +1,10 @@
 package com.yourname.expensetracker.di
 
 import android.content.Context
+import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.data.database.GatedOpenHelperFactory
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.data.database.GroupTransactionCoordinator
 import com.yourname.expensetracker.data.database.RoomDomainTransactionRunner
@@ -33,7 +35,9 @@ object DatabaseModule {
     fun provideDatabase(
         @ApplicationContext context: Context
     ): AppDatabase {
-        return AppDatabase.fileBuilder(context).build()
+        return AppDatabase.fileBuilder(context)
+            .openHelperFactory(GatedOpenHelperFactory(context, FrameworkSQLiteOpenHelperFactory()))
+            .build()
     }
     
     /**

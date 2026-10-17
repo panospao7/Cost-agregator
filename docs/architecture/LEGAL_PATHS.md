@@ -480,8 +480,33 @@ RESTORE:
     EXPORT_OR_BACKUP_SNAPSHOT_READ (NORMAL or BACKUP_EXPORTING),
     RESTORE_INTERNAL_STAGED_DB_READ (always denied through the app singleton)
 
+DATABASE OPEN GATE (R25):
+  → The app opens ONLY schema v145 (DatabaseSchemaPolicy.MIGRATION_BASELINE) .. v151
+    (APP_DATABASE_SCHEMA_VERSION). Older, newer, or unreadable live DBs are refused by
+    DatabaseOpenGate; the live Room instance is built with GatedOpenHelperFactory, which throws
+    DatabaseOpenBlockedException(<bounded code>) instead of opening. No destructive fallback:
+    the file is never dropped, recreated, or migrated outside the registered chain.
+  → GatedOpenHelperFactory also refuses any (re)open of the live DB while a restore swap is in
+    progress (RESTORE_SWAPPING latch / persisted mode) with DB_OPEN_REFUSED_DURING_SWAP.
+    Staged/fresh instances use the unwrapped AppDatabase.fileBuilder.
+  → UnsupportedDatabaseActivity is the only UI for a refused DB. Its single data exception is an
+    owner-approved export of the UNTOUCHED file, started by the user through the SAF picker
+    (never automatic, never background, never to a non-user-chosen destination).
+
+BACKUP SCHEMA FLOOR (R25-C):
+  → Supported backup schema range == app open range: v145..v151. Both restoreCostBackup
+    (manifest.databaseVersion, checked right after the manifest is parsed) and importDatabase
+    (PRAGMA user_version) reject out-of-range backups BEFORE staging or any swap, via the
+    pre-destructive abort path (live DB untouched, failure journal written, maintenance exited,
+    temp dir deleted), with BackupSchemaUnsupportedException(code):
+      BACKUP_SCHEMA_UNSUPPORTED_LEGACY (< v145), BACKUP_SCHEMA_UNSUPPORTED_NEWER (> v151).
+
 FORBIDDEN:
   ❌ Any DB write outside NORMAL mode (DatabaseWriteBarrier blocks all non-NORMAL modes)
+  ❌ Opening the live DB while the open gate blocks it, or during RESTORE_SWAPPING
+  ❌ Destructive fallback / auto-reset of an unsupported, newer, or unreadable DB
+  ❌ Any raw-file export of a blocked DB other than the user-started SAF export in UnsupportedDatabaseActivity
+  ❌ Restoring a backup below v145 or above v151
   ❌ Any DB read during restore stages (DatabaseReadBarrier denies during restore)
   ❌ Using stale Room instance after DB swap (forced restart)
   ❌ Exiting maintenance to NORMAL after failed rollback

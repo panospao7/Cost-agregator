@@ -4498,8 +4498,9 @@ class FooRepo(private val expenseDao: ExpenseDao) {
 #   * exact tuple-set equivalence between the manifest's `expected` + `fixtures`
 #     tuple set and the current structural-exception tuple set (missing/extra
 #     tuples and duplicates all fail);
-#   * the pinned structural entry count (64 — the GR-08j count; the
-#     2026-09-28 cleanup-helper +1 was reverted by R26) via the manifest's
+#   * the pinned structural entry count (67 — the GR-08j count; the
+#     2026-09-28 cleanup-helper +1 was reverted by R26; R25 added the three
+#     core open-gate tuples) via the manifest's
 #     `counts` section — the manifest governs structural exceptions ONLY, so a
 #     legacy `ownership_entries` counts key is unknown-count-key metadata
 #     that fails closed as MANIFEST_INVALID (GR-04 decoupling);
@@ -4642,21 +4643,21 @@ def test_manifest_exact_tuple_equality_against_structural_yaml_passes(tmp_path, 
 def test_manifest_missing_tuple_fails_closed(tmp_path, monkeypatch):
     """A manifest tuple with no EXACT structural exception entry fails with the
     controlled MISSING_TUPLE code — and no other code fires."""
-    # R26: the pinned structural count is now 64; 65 manifest tuples over a
-    # 64-entry current set leave exactly one tuple (m64) uncovered.
-    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch, n=65)
+    # R25: the pinned structural count is now 67; 68 manifest tuples over a
+    # 67-entry current set leave exactly one tuple (m67) uncovered.
+    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch, n=68)
     class_name = "SomeClass"
-    tuples = _manifest_tuples(path, class_name, n=65)
-    # Current structural exceptions omit m64; the manifest keeps it.
+    tuples = _manifest_tuples(path, class_name, n=68)
+    # Current structural exceptions omit m67; the manifest keeps it.
     current = _sexc_entries_for(tuples[:-1])
-    manifest = _manifest_dict(tuples, structural=64)
+    manifest = _manifest_dict(tuples, structural=67)
 
     errors = verify_structural_exceptions_manifest(
         current, manifest, str(src)
     )
     missing = [e for e in errors if e.startswith("MISSING_TUPLE")]
     assert len(missing) == 1, errors
-    assert "m64" in missing[0], missing
+    assert "m67" in missing[0], missing
     assert all(not e.startswith("EXTRA_TUPLE") for e in errors), errors
     assert all(not e.startswith("COUNT_MISMATCH") for e in errors), errors
 
@@ -4665,21 +4666,21 @@ def test_manifest_extra_tuple_fails_closed(tmp_path, monkeypatch):
     """A structural exception tuple with no manifest coverage fails with the
     controlled EXTRA_TUPLE code — an entry added without a manifest update can
     never silently pass."""
-    # R26: 64 current entries over a 63-tuple manifest leave exactly one
-    # uncovered exception tuple (m63) against the 64-pin.
-    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch, n=64)
+    # R25: 67 current entries over a 66-tuple manifest leave exactly one
+    # uncovered exception tuple (m66) against the 67-pin.
+    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch, n=67)
     class_name = "SomeClass"
-    tuples = _manifest_tuples(path, class_name, n=64)
-    # Current exceptions keep m63; the manifest does not cover it.
+    tuples = _manifest_tuples(path, class_name, n=67)
+    # Current exceptions keep m66; the manifest does not cover it.
     current = _sexc_entries_for(tuples)
-    manifest = _manifest_dict(tuples[:-1], structural=64)
+    manifest = _manifest_dict(tuples[:-1], structural=67)
 
     errors = verify_structural_exceptions_manifest(
         current, manifest, str(src)
     )
     extra = [e for e in errors if e.startswith("EXTRA_TUPLE")]
     assert len(extra) == 1, errors
-    assert "m63" in extra[0], extra
+    assert "m66" in extra[0], extra
     assert all(not e.startswith("MISSING_TUPLE") for e in errors), errors
     assert all(not e.startswith("COUNT_MISMATCH") for e in errors), errors
 
@@ -4687,15 +4688,15 @@ def test_manifest_extra_tuple_fails_closed(tmp_path, monkeypatch):
 def test_manifest_duplicate_tuple_fails_closed(tmp_path, monkeypatch):
     """A duplicated tuple inside the CURRENT structural exceptions fails with
     the controlled DUPLICATE_TUPLE code."""
-    # The authorized cleanup helper requires the pinned 64-entry contract
-    # (R26; see test_manifest_missing_tuple_fails_closed): 63 distinct tuples
-    # plus one duplicate give exactly 64 current entries against the 64-pin.
-    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch, n=63)
+    # The pinned 67-entry contract (R25; see
+    # test_manifest_missing_tuple_fails_closed): 66 distinct tuples plus one
+    # duplicate give exactly 67 current entries against the 67-pin.
+    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch, n=66)
     class_name = "SomeClass"
-    tuples = _manifest_tuples(path, class_name, n=63)
+    tuples = _manifest_tuples(path, class_name, n=66)
     current = _sexc_entries_for(tuples)
     current.append(_sexc(path, class_name, "m0", "execSQL"))  # duplicate m0
-    manifest = _manifest_dict(tuples, structural=64)
+    manifest = _manifest_dict(tuples, structural=67)
 
     errors = verify_structural_exceptions_manifest(
         current, manifest, str(src)
@@ -4763,7 +4764,7 @@ def test_manifest_malformed_entry_fails_closed(tmp_path):
 
 
 def test_manifest_structural_count_mismatch_fails_closed(tmp_path, monkeypatch):
-    """A manifest whose counts.structural_entries drifts from the pinned 64
+    """A manifest whose counts.structural_entries drifts from the pinned 67
     contract fails with the controlled COUNT_MISMATCH code — on both the
     manifest side and the current-structural side.  Ownership cardinality is
     never part of this contract (GR-04 decoupling)."""
@@ -5014,7 +5015,7 @@ class FooRepo(private val expenseDao: ExpenseDao) {
 # ── 21. Immutable manifest classification contract ────────────────────────────
 # The structural expected-methods manifest's ``expected`` and ``fixtures``
 # sections must EXACTLY equal the immutable checked-in tuple contracts
-# (59 expected / 5 fixtures).  Moving a tuple between sections, inventing a
+# (62 expected / 5 fixtures).  Moving a tuple between sections, inventing a
 # new fixture tuple, or dropping a pinned tuple all fail with
 # MANIFEST_CLASSIFICATION_MISMATCH — a reclassified ``expected`` tuple can
 # never escape its mandatory operation evidence through the declaration-only
@@ -5022,8 +5023,8 @@ class FooRepo(private val expenseDao: ExpenseDao) {
 #
 # The checked-in contract tests below load the REAL production files through
 # the production loaders (no synthetic temp fixtures): the pinned structural
-# count (64 — the 65 from the 2026-09-28 cleanup helper was reduced by R26;
-# no ownership count), the exact tuple classification, and the full structural-manifest
+# count (67 — the 65 from the 2026-09-28 cleanup helper was reduced by R26,
+# then R25 added three core open-gate tuples; no ownership count), the exact tuple classification, and the full structural-manifest
 # gate must all pass on the actual repo state.
 
 def _manifest_dict_from_tuples(expected_tuples, fixture_tuples=()):
@@ -5048,11 +5049,11 @@ def _manifest_dict_from_tuples(expected_tuples, fixture_tuples=()):
 
 
 def test_manifest_immutable_contracts_pin_exact_counts():
-    """The immutable contracts pin EXACTLY 59 expected and 5 fixture tuples,
+    """The immutable contracts pin EXACTLY 62 expected and 5 fixture tuples,
     every tuple is canonical, and the two contracts are disjoint."""
-    assert MANIFEST_IMMUTABLE_EXPECTED_COUNT == 59
+    assert MANIFEST_IMMUTABLE_EXPECTED_COUNT == 62
     assert MANIFEST_IMMUTABLE_FIXTURE_COUNT == 5
-    assert len(MANIFEST_IMMUTABLE_EXPECTED_TUPLES) == 59
+    assert len(MANIFEST_IMMUTABLE_EXPECTED_TUPLES) == 62
     assert len(MANIFEST_IMMUTABLE_FIXTURE_TUPLES) == 5
     assert MANIFEST_IMMUTABLE_EXPECTED_TUPLES.isdisjoint(
         MANIFEST_IMMUTABLE_FIXTURE_TUPLES
@@ -5142,7 +5143,7 @@ def test_manifest_classification_checked_in_manifest_accepted():
 def test_manifest_current_structural_yaml_tuple_set_remains_exact():
     """The CURRENT structural exceptions YAML tuple set must EXACTLY equal the
     checked-in manifest's expected+fixtures tuple set — no missing, no extra,
-    no duplicates, and exactly the pinned 64 entries."""
+    no duplicates, and exactly the pinned 67 entries."""
     structural = load_db_structural_exceptions()
     manifest = load_db_structural_expected_methods()
     current_tuples = [
@@ -5156,8 +5157,8 @@ def test_manifest_current_structural_yaml_tuple_set_remains_exact():
     assert len(current_tuples) == len(set(current_tuples)), "duplicates in current YAML"
     assert len(manifest_tuples) == len(set(manifest_tuples)), "duplicates in manifest"
     assert set(current_tuples) == set(manifest_tuples)
-    assert len(current_tuples) == 64
-    assert len(manifest_tuples) == 64
+    assert len(current_tuples) == 67
+    assert len(manifest_tuples) == 67
 
 
 def test_backup_cleanup_structural_approval_is_exact_and_retains_caller():
@@ -5293,7 +5294,7 @@ def test_backup_export_structural_pin_rejects_stale_and_near_miss_names(method_p
     manifest = _manifest_dict_from_tuples(
         replacements, sorted(MANIFEST_IMMUTABLE_FIXTURE_TUPLES)
     )
-    manifest["counts"]["structural_entries"] = 64
+    manifest["counts"]["structural_entries"] = 67
     errors = structural_manifest_classification_errors(manifest)
     assert len(errors) == 1, errors
     assert errors[0].startswith("MANIFEST_CLASSIFICATION_MISMATCH"), errors
@@ -5547,7 +5548,7 @@ def test_checked_in_structural_only_manifest_contract_via_production_apis():
     synthetic temp fixtures).
 
     GR-04: the manifest pins the structural count ONLY — its counts block is
-    exactly ``{structural_entries: 64}`` with no ownership cardinality.
+    exactly ``{structural_entries: 67}`` with no ownership cardinality.
 
     Activated truth (PR-GR-07 wave 2): the ACTIVE ownership policy IS the
     promoted schemaVersion-2 document.  It loads cleanly through the
@@ -5651,9 +5652,9 @@ def test_checked_in_structural_only_manifest_contract_via_production_apis():
     structural = load_db_structural_exceptions()
     manifest = load_db_structural_expected_methods()
 
-    assert len(structural) == 64
+    assert len(structural) == 67
     assert manifest["counts"] == {
-        "structural_entries": 64,
+        "structural_entries": 67,
     }
     assert structural_manifest_classification_errors(manifest) == []
 
@@ -6215,12 +6216,12 @@ def test_changed_operation_on_same_pattern_fails_closed(tmp_path, monkeypatch):
     swapped tuple as MISSING_TUPLE and the original tuple as EXTRA_TUPLE — an
     operation change on the same (path, class, method_pattern) is never
     silently accepted as clean."""
-    # The pinned 64-entry contract (see test_manifest_missing_tuple_fails_closed):
-    # 64 current entries and counts.structural_entries=64 keep the count stage clean so the
+    # The pinned 67-entry contract (see test_manifest_missing_tuple_fails_closed):
+    # 67 current entries and counts.structural_entries=67 keep the count stage clean so the
     # tuple-set stage is what rejects the changed operation.
-    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch, n=64)
+    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch, n=67)
     class_name = "SomeClass"
-    tuples = _manifest_tuples(path, class_name, n=64)
+    tuples = _manifest_tuples(path, class_name, n=67)
     current = _sexc_entries_for(tuples)
 
     # Same canonical path / class / method_pattern, DIFFERENT operation
@@ -6228,7 +6229,7 @@ def test_changed_operation_on_same_pattern_fails_closed(tmp_path, monkeypatch):
     # tuple-set stage is what rejects it).
     changed = [dict(t) for t in tuples]
     changed[0]["operation"] = "openDatabase"
-    manifest = _manifest_dict(changed, structural=64)
+    manifest = _manifest_dict(changed, structural=67)
 
     errors = verify_structural_exceptions_manifest(
         current, manifest, str(src)

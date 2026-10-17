@@ -523,6 +523,31 @@ entries:
     owner: "@panospao7"
     linked_issue: "MIT-003"
 
+  # ── R25 core open gate (owner-approved Q-R25-G1, 2026-10-17) ─────
+  - path: app/src/main/java/com/yourname/expensetracker/data/database/DatabaseOpenGate.kt
+    class: DatabaseOpenGate
+    method_pattern: "probe"
+    operation: openDatabase
+    reason: "R25 DatabaseOpenGate read-only version probe (owner-approved Q-R25-G1) — OPEN_READONLY open with a no-op error handler; never writes, repairs or deletes"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/data/database/DatabaseOpenGate.kt
+    class: DatabaseOpenGate
+    method_pattern: "databaseFile"
+    operation: getDatabasePath
+    reason: "R25 DatabaseOpenGate read-only version probe (owner-approved Q-R25-G1) — resolves the live database file path for the probe and export file list"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/data/database/GatedOpenHelper.kt
+    class: GatedOpenHelper
+    method_pattern: "openGated"
+    operation: writableDatabase
+    reason: "R25 GatedOpenHelperFactory gate wrapper (owner-approved Q-R25-G1) — the only delegate writableDatabase access, reached after the open gate and restore-swap checks"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
   # ── Backup restore verification ──────────────────────────────────
   - path: app/src/main/java/com/yourname/expensetracker/data/backup/BackupVerifier.kt
     class: BackupVerifier

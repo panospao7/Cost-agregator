@@ -84,6 +84,13 @@ fun BackupRestoreScreen(
             viewModel.clearError()
         }
     }
+    // R25 P-I2: resource-backed (localized) backup-schema rejection.
+    LaunchedEffect(uiState.errorMessageRes) {
+        uiState.errorMessageRes?.let { res ->
+            snackbarHostState.showSnackbar(context.getString(res))
+            viewModel.clearError()
+        }
+    }
     // RP-15 (15-D): a typed privacy denial must never be silent — render the
     // resource-backed message (never the domain reason string) and clear it.
     LaunchedEffect(uiState.privacyBlocked) {

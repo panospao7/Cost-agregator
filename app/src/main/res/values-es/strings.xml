@@ -8,6 +8,18 @@
     <!-- App Name -->
     <string name="app_name">ExpenseTracker</string>
 
+    <!-- R25: unsupported database screen -->
+    <string name="unsupported_db_title">No se pueden abrir tus datos</string>
+    <string name="unsupported_db_reason_too_old">La base de datos guardada fue creada por una versión de la aplicación demasiado antigua para actualizarla de forma segura. No se ha modificado ni eliminado nada.</string>
+    <string name="unsupported_db_reason_too_new">La base de datos guardada fue creada por una versión más reciente de la aplicación. Instala la última versión de la aplicación para usarla. No se ha modificado ni eliminado nada.</string>
+    <string name="unsupported_db_reason_unreadable">No se pudo leer la base de datos guardada. No se ha modificado ni eliminado nada.</string>
+    <string name="unsupported_db_export_button">Exportar archivo de la base de datos</string>
+    <string name="unsupported_db_close_button">Cerrar la aplicación</string>
+    <string name="unsupported_db_export_success">El archivo de la base de datos se exportó correctamente.</string>
+    <string name="unsupported_db_export_failed">No se pudo exportar el archivo de la base de datos. Prueba con otra ubicación.</string>
+    <string name="backup_schema_too_old">Esta copia de seguridad es de una versión de la app demasiado antigua para restaurarla.</string>
+    <string name="backup_schema_too_new">Esta copia de seguridad se creó con una versión más reciente de la app. Actualiza la app para restaurarla.</string>
+
     <!-- Common Actions (Top Priority) -->
     <string name="action_save">Guardar</string>
     <string name="action_cancel">Cancelar</string>

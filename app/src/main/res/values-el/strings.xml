@@ -16,6 +16,17 @@
     <string name="privacy_blocked_overpass">Τα δεδομένα χάρτη (Overpass API) είναι απενεργοποιημένα.</string>
     <string name="privacy_blocked_debug_persistence">Η αποθήκευση δεδομένων αποσφαλμάτωσης είναι απενεργοποιημένη.</string>
     <string name="privacy_blocked_debug_export">Η εξαγωγή δεδομένων αποσφαλμάτωσης δεν επιτρέπεται με τις τρέχουσες ρυθμίσεις απορρήτου.</string>
+    <!-- R25: unsupported database screen -->
+    <string name="unsupported_db_title">Δεν είναι δυνατό το άνοιγμα των δεδομένων σας</string>
+    <string name="unsupported_db_reason_too_old">Η αποθηκευμένη βάση δεδομένων δημιουργήθηκε από πολύ παλιά έκδοση της εφαρμογής και δεν μπορεί να αναβαθμιστεί με ασφάλεια. Δεν έχει αλλάξει ούτε διαγραφεί τίποτα.</string>
+    <string name="unsupported_db_reason_too_new">Η αποθηκευμένη βάση δεδομένων δημιουργήθηκε από νεότερη έκδοση της εφαρμογής. Εγκαταστήστε την τελευταία έκδοση της εφαρμογής για να τη χρησιμοποιήσετε. Δεν έχει αλλάξει ούτε διαγραφεί τίποτα.</string>
+    <string name="unsupported_db_reason_unreadable">Δεν ήταν δυνατή η ανάγνωση της αποθηκευμένης βάσης δεδομένων. Δεν έχει αλλάξει ούτε διαγραφεί τίποτα.</string>
+    <string name="unsupported_db_export_button">Εξαγωγή αρχείου βάσης δεδομένων</string>
+    <string name="unsupported_db_close_button">Κλείσιμο εφαρμογής</string>
+    <string name="unsupported_db_export_success">Το αρχείο της βάσης δεδομένων εξήχθη.</string>
+    <string name="unsupported_db_export_failed">Δεν ήταν δυνατή η εξαγωγή του αρχείου της βάσης δεδομένων. Δοκιμάστε άλλη τοποθεσία.</string>
+    <string name="backup_schema_too_old">Αυτό το αντίγραφο ασφαλείας προέρχεται από πολύ παλιά έκδοση της εφαρμογής και δεν μπορεί να επαναφερθεί.</string>
+    <string name="backup_schema_too_new">Αυτό το αντίγραφο ασφαλείας δημιουργήθηκε από νεότερη έκδοση της εφαρμογής. Ενημερώστε την εφαρμογή για να το επαναφέρετε.</string>
     <string name="bank_sync_result_success">Ο συγχρονισμός ολοκληρώθηκε</string>
     <string name="bank_sync_result_partial">Ο συγχρονισμός ολοκληρώθηκε — ορισμένα στοιχεία παραλείφθηκαν ή απέτυχαν</string>
     <string name="bank_sync_result_reauth_required">Απαιτείται νέα ταυτοποίηση — συνδέστε ξανά αυτή την τράπεζα</string>

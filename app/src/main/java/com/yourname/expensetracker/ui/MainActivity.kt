@@ -36,6 +36,8 @@ import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.backup.AppOperationalState
 import com.yourname.expensetracker.data.backup.RestoreRestartSignal
+import com.yourname.expensetracker.data.database.DatabaseOpenGate
+import com.yourname.expensetracker.ui.unsupported.UnsupportedDatabaseActivity
 import kotlinx.coroutines.flow.first
 import com.yourname.expensetracker.data.database.entity.Budget as BudgetEntity
 import com.yourname.expensetracker.data.repository.ExpenseRepository
@@ -120,6 +122,16 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // R25 B2: a blocked live database (too old / too new / unreadable) must never reach the
+        // normal UI; redirect to the plain export-only screen before any intent handling.
+        if (DatabaseOpenGate.blockedReasonOrNull(applicationContext) != null) {
+            startActivity(
+                Intent(this, UnsupportedDatabaseActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            )
+            finish()
+            return
+        }
         enableEdgeToEdge()
         if (savedInstanceState == null) {
             val consumed = handleIntent(intent)

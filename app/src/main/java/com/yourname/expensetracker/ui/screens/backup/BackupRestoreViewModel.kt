@@ -38,6 +38,8 @@ data class BackupRestoreUiState(
     val lastBackupDate: String? = null,
     val backupInfoUnavailable: Boolean = false,
     val errorMessage: String? = null,
+    /** R25 P-I2: resource-backed (localized) restore rejection; bounded, never raw text. */
+    @androidx.annotation.StringRes val errorMessageRes: Int? = null,
     val successMessage: String? = null,
     val restartRequired: Boolean = false,
     /** RG01-N1: number of receipt images skipped during restore (count only, never paths/names). */
@@ -292,7 +294,12 @@ class BackupRestoreViewModel @Inject constructor(
                     Timber.e("RESTORE_FAILED class=%s", error.javaClass.simpleName)
                     // RP-15 (15-D): typed privacy denial — no message matching.
                     val denial = denialStateOrNull(error)
+                    // R25 P-I2: typed schema rejection maps to a specific localized message by its
+                    // bounded code; an unknown code falls through to the generic failure.
+                    val schemaRes = (error as? com.yourname.expensetracker.data.repository.BackupSchemaUnsupportedException)
+                        ?.let { schemaRejectionRes(it.code) }
                     val message = when {
+                        schemaRes != null -> null
                         error is com.yourname.expensetracker.data.backup.CostbackupBundle.WrongBackupPasswordException ->
                             "Incorrect password or corrupt backup file"
                         // P7-CURRENT-023: zip-bomb / oversized-bundle rejection from the
@@ -307,6 +314,7 @@ class BackupRestoreViewModel @Inject constructor(
                     _uiState.value = _uiState.value.copy(
                         isRestoring = false,
                         errorMessage = message,
+                        errorMessageRes = schemaRes,
                         privacyBlocked = denial
                     )
                 }
@@ -318,7 +326,16 @@ class BackupRestoreViewModel @Inject constructor(
      * Clears the current error message.
      */
     fun clearError() {
-        _uiState.value = _uiState.value.copy(errorMessage = null, privacyBlocked = null)
+        _uiState.value = _uiState.value.copy(errorMessage = null, errorMessageRes = null, privacyBlocked = null)
+    }
+
+    @androidx.annotation.StringRes
+    private fun schemaRejectionRes(code: String): Int? = when (code) {
+        com.yourname.expensetracker.data.repository.BackupSchemaUnsupportedException.LEGACY ->
+            com.yourname.expensetracker.R.string.backup_schema_too_old
+        com.yourname.expensetracker.data.repository.BackupSchemaUnsupportedException.NEWER ->
+            com.yourname.expensetracker.R.string.backup_schema_too_new
+        else -> null
     }
 
     /**
