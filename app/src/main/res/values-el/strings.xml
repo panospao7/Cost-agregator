@@ -85,4 +85,8 @@
     <string name="recurring_error_generic">Κάτι πήγε στραβά. Δοκιμάστε ξανά.</string>
     <string name="feature_privacy_settings">Ρυθμίσεις απορρήτου</string>
     <string name="feature_privacy_settings_desc">Ελέγξτε πώς χρησιμοποιούνται τα δεδομένα σας</string>
+    <!-- R24b: notification permission dialog button when the system will no longer ask -->
+    <string name="notification_open_settings_button">Άνοιγμα ρυθμίσεων</string>
+    <!-- R24c: shown when the receipt currency could not be read and the home currency was assumed -->
+    <string name="receipt_currency_unverified_warning">Δεν μπορέσαμε να διαβάσουμε το νόμισμα της απόδειξης. Ελέγξτε το πριν την αποθήκευση.</string>
 </resources>

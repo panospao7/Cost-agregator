@@ -26,7 +26,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import com.yourname.expensetracker.ui.permissions.NotificationPromptPolicy
+import com.yourname.expensetracker.ui.permissions.NotificationPromptStore
+import com.yourname.expensetracker.ui.permissions.findHostActivity
+import com.yourname.expensetracker.ui.permissions.openAppNotificationSettings
 import androidx.activity.viewModels
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.lifecycleScope
@@ -494,20 +499,46 @@ fun MainScreen(
         else -> { /* Normal / BackupExporting — app continues */ }
     }
 
+    // R24b: ask once per install (max 2 dialogs, no loop). If the system request is denied and the
+    // system will not (or no longer will) show its dialog, the in-app dialog is shown ONE more time
+    // in "open settings" mode; that mode's button only opens settings and never relaunches the request.
+    var notificationOpenSettings by rememberSaveable { mutableStateOf(false) }
+    var notificationSettingsOfferUsed by rememberSaveable { mutableStateOf(false) }
+    // Default true (conservative): if lost across process death, no settings offer is made.
+    var notificationRationaleBefore by rememberSaveable { mutableStateOf(true) }
+    val notificationPromptStore = remember(context) {
+        NotificationPromptStore(context.applicationContext)
+    }
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
-        if (!isGranted) {
+        val rationaleAfter = notificationRationaleNow(context)
+        if (!notificationSettingsOfferUsed &&
+            NotificationPromptPolicy.shouldOfferSettingsAfterDenial(
+                rationaleBefore = notificationRationaleBefore,
+                rationaleAfter = rationaleAfter,
+                granted = isGranted
+            )
+        ) {
+            notificationSettingsOfferUsed = true
+            notificationOpenSettings = true
             showNotificationPermissionDialog = true
         }
     }
 
     LaunchedEffect(Unit) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != 
-                PackageManager.PERMISSION_GRANTED) {
-                showNotificationPermissionDialog = true
-            }
+        val granted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+        if (NotificationPromptPolicy.shouldAutoPrompt(
+                granted = granted,
+                sdkInt = Build.VERSION.SDK_INT,
+                alreadyAsked = notificationPromptStore.hasPrompted()
+            )
+        ) {
+            // Flag is set when the prompt is shown, so it can never be shown automatically twice.
+            notificationPromptStore.markPrompted()
+            showNotificationPermissionDialog = true
         }
     }
 
@@ -525,7 +556,15 @@ fun MainScreen(
     NotificationPermissionDialog(
         showDialog = showNotificationPermissionDialog,
         onDismiss = { showNotificationPermissionDialog = false },
-        onEnable = { permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) }
+        onEnable = {
+            if (notificationOpenSettings) {
+                openAppNotificationSettings(context)
+            } else {
+                notificationRationaleBefore = notificationRationaleNow(context)
+                permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        },
+        openSettings = notificationOpenSettings
     )
 
     Scaffold(
@@ -1121,6 +1160,12 @@ fun SmartFAB(
         )
     }
 }
+
+private fun notificationRationaleNow(context: android.content.Context): Boolean =
+    context.findHostActivity()?.let {
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ActivityCompat.shouldShowRequestPermissionRationale(it, Manifest.permission.POST_NOTIFICATIONS)
+    } ?: false
 
 @Composable
 private fun AppOperationalLockScreen(

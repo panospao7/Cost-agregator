@@ -57,13 +57,21 @@ assurance batches. Technical evidence lives in `release-1.0-phase3-4-findings-le
   rates change.
 - **Dates (R20).** Date pickers (add/review expense, receipt scan, manual recurring) keep the day you
   picked in every time zone.
-- **Bank-statement import (R22).** Statement rows such as credit transfers, direct debits, card payments
-  and transfers to other banks are no longer skipped; "+" amounts are imported as income; card purchases
-  are no longer mistaken for income; US-format and ambiguous dates are read consistently for the whole
-  statement; one row no longer creates two pending reviews; summary lines (totals, balances, credit
-  limits, minimum payments) are still skipped.
+- **Bank-statement import (R22).** The statement importer (a developer/test tool in 1.0, not shown in
+  release builds) now keeps credit transfers, direct debits, card payments and transfers to other banks,
+  reads "+" amounts as income, no longer treats card purchases as income, reads US-format and ambiguous
+  dates consistently, never creates two pending reviews for one row, and still skips summary lines.
 - **Amounts with a decimal comma (R16).** Amounts like "12,50" now work in the planned-expense dialog,
   bill negotiation, the split editor, the currency calculator and the cash-flow starting balance.
+
+- **Notification permission (R24).** Android 13+ asks for notification permission once per install and
+  never again automatically; if Android will no longer show its dialog after a denial, the app offers
+  "Open settings" once instead.
+- **Receipts without a currency (R24).** If the currency can't be read from a scanned receipt, the review
+  shows "We couldn't read the currency on this receipt. Check it before saving." and quick-save stays off
+  until you confirm it; normal save still works. "Scan another" keeps your home currency selected.
+- **Receipt review errors (R24).** Approval errors show short, specific messages instead of a generic
+  failure or raw error text.
 
 ## Known limitations (1.0)
 

@@ -2592,5 +2592,9 @@
     <string name="restart_required_database_operation">The app must restart to finish a database operation. Changes are paused until it restarts.</string>
     <!-- R18b: user-started write attempted while backup/restore/reset holds the write barrier -->
     <string name="ui_write_blocked_maintenance">Changes are paused while a backup or restore is running. Please try again in a moment.</string>
+    <!-- R24b: notification permission dialog button when the system will no longer ask -->
+    <string name="notification_open_settings_button">Open settings</string>
+    <!-- R24c: shown when the receipt currency could not be read and the home currency was assumed -->
+    <string name="receipt_currency_unverified_warning">We couldn\'t read the currency on this receipt. Check it before saving.</string>
 
 </resources>

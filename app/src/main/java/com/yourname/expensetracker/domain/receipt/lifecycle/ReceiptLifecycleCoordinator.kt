@@ -135,6 +135,12 @@ class ReceiptLifecycleCoordinator @Inject constructor(
 ) {
 
     companion object {
+        /**
+         * Bounded, sanitized failure reason returned by [processReceiptInput] when input
+         * validation fails. Fixed literal — never embeds URIs or raw validator text.
+         */
+        const val ERROR_INPUT_VALIDATION_FAILED = "Receipt input validation failed"
+
         /** Last-resort fallback currency when no home currency can be resolved. */
         private const val FALLBACK_CURRENCY = "XXX"  // ISO 4217 unknown currency — no longer "EUR"
 
@@ -324,8 +330,8 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         val validation = inputValidator.validate(uri)
         if (!validation.isValid) {
             // P3-BLOCKER-006: Use sanitized message — never embed raw URI
-            val message = "Receipt input validation failed"
-            Timber.w("$message: %s", validation.errors.firstOrNull() ?: "unknown reason")
+            val message = ERROR_INPUT_VALIDATION_FAILED
+            Timber.w("$message: errorCount=%d", validation.errors.size)
             // P3-NEW-08 / P3-BLOCKER-04: Write VALIDATION_FAILED diagnostic
             // Use reason codes extracted from validation errors — never raw URI
             val reasonCode = when {

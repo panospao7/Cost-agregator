@@ -394,6 +394,151 @@ class ReceiptScanViewModelTest : ViewModelTestUtils() {
         assertFalse(model.state.value.reopenedExistingReceipt)
     }
 
+    // R24c: blank OCR currency -> assumed home currency is flagged, quick-save off, manual save allowed.
+    private fun quickSaveReadyState(currencyUnverified: Boolean) = model.state.value.copy(
+        step = ScanStep.REVIEW, receiptId = 17L, receiptQuickSaveEnabled = true, ocrConfidence = 0.8f,
+        editMerchant = "Merchant", editAmount = "10", editCurrency = "EUR", editDate = 0L,
+        receiptAssistState = com.yourname.expensetracker.domain.ai.model.AiLoadState.Ready(
+            com.yourname.expensetracker.domain.ai.model.ReceiptAssistSuggestion(
+                date = com.yourname.expensetracker.domain.ai.model.SuggestedValue(1_700_000_000_000L)
+            )
+        ),
+        currencyUnverified = currencyUnverified
+    )
+
+    @Test fun blankOcrCurrencyFlagsUnverifiedAndDisablesQuickSave() = runTest(testDispatcher) {
+        val uri = Uri.parse("content://test/blank-currency.jpg")
+        stubScan(uri, receipt().copy(currency = ""))
+        model.processGalleryImage(uri)
+        advanceUntilIdle()
+
+        assertEquals(ScanStep.REVIEW, model.state.value.step)
+        assertEquals("EUR", model.state.value.editCurrency)
+        assertTrue(model.state.value.currencyUnverified)
+
+        setState(quickSaveReadyState(currencyUnverified = true))
+        assertFalse(model.canOfferReceiptQuickSave())
+        assertNotNull(model.quickSaveUnavailableReason())
+        model.requestReceiptQuickSaveConfirmation()
+        assertNull(model.state.value.quickSavePreview)
+    }
+
+    @Test fun unverifiedCurrencyBlocksQuickSaveConfirmEvenWithStalePreview() = runTest(testDispatcher) {
+        // Build the stale preview directly: requestReceiptQuickSaveConfirmation() records diagnostics on a
+        // mocked AiRuntimeDiagnostics (null timeProvider) and is not what this test exercises.
+        val stalePreview = ReceiptQuickSavePreview(
+            merchant = "Merchant",
+            amount = 10.0,
+            amountText = "10",
+            date = 1_700_000_000_000L,
+            categoryId = null,
+            categoryName = null,
+            autoAppliedFields = listOf("date"),
+            usedCapabilities = emptySet(),
+            fieldSummaries = emptyList(),
+            diagnostics = emptyList()
+        )
+        setState(quickSaveReadyState(currencyUnverified = true).copy(quickSavePreview = stalePreview))
+        assertNotNull(model.state.value.quickSavePreview)
+
+        model.confirmReceiptQuickSave()
+        advanceUntilIdle()
+
+        assertNull(model.state.value.quickSavePreview)
+        coVerify(exactly = 0) { coordinator.createExpenseAndLinkReceipt(any()) }
+    }
+
+    @Test fun blankOcrCurrencyStillAllowsManualSaveAfterReview() = runTest(testDispatcher) {
+        coEvery { links.checkCanLinkReceipt(17L) } returns true
+        coEvery { coordinator.createExpenseAndLinkReceipt(any()) } returns
+            Result.failure(ReceiptLifecycleCoordinator.DuplicateTransactionException())
+        setState(quickSaveReadyState(currencyUnverified = true).copy(editDate = 1_700_000_000_000L))
+
+        model.saveExpense()
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { coordinator.createExpenseAndLinkReceipt(match { it.currency == "EUR" }) }
+    }
+
+    @Test fun explicitCurrencyPickClearsUnverifiedAndAllowsQuickSave() = runTest(testDispatcher) {
+        setState(quickSaveReadyState(currencyUnverified = true))
+        assertFalse(model.canOfferReceiptQuickSave())
+
+        // Re-selecting the same assumed home currency is an explicit confirmation.
+        model.updateCurrency("EUR")
+
+        assertFalse(model.state.value.currencyUnverified)
+        assertTrue(model.canOfferReceiptQuickSave())
+    }
+
+    @Test fun presentOcrCurrencyIsNotFlaggedUnverified() = runTest(testDispatcher) {
+        val uri = Uri.parse("content://test/known-currency.jpg")
+        stubScan(uri, receipt().copy(currency = "USD"))
+        model.processGalleryImage(uri)
+        advanceUntilIdle()
+
+        assertEquals("USD", model.state.value.editCurrency)
+        assertFalse(model.state.value.currencyUnverified)
+    }
+
+    @Test fun newScanAndResetClearUnverifiedCurrency() = runTest(testDispatcher) {
+        val blankUri = Uri.parse("content://test/blank-first.jpg")
+        val knownUri = Uri.parse("content://test/known-second.jpg")
+        stubScan(blankUri, receipt().copy(currency = ""))
+        stubScan(knownUri, receipt(id = 18L))
+        model.processGalleryImage(blankUri)
+        advanceUntilIdle()
+        assertTrue(model.state.value.currencyUnverified)
+
+        model.processGalleryImage(knownUri)
+        advanceUntilIdle()
+        assertFalse(model.state.value.currencyUnverified)
+
+        model.processGalleryImage(blankUri)
+        advanceUntilIdle()
+        assertTrue(model.state.value.currencyUnverified)
+        model.reset()
+        assertFalse(model.state.value.currencyUnverified)
+    }
+
+    @Test fun resetAndRetryPreserveHomeCurrencyForBlankOcrScanAndManualSave() = runTest(testDispatcher) {
+        advanceUntilIdle()
+        val uri = Uri.parse("content://test/blank-after-reset.jpg")
+        stubScan(uri, receipt().copy(currency = ""))
+        coEvery { coordinator.createExpenseAndLinkReceipt(any()) } returns
+            Result.failure(ReceiptLifecycleCoordinator.DuplicateTransactionException())
+
+        model.reset()
+        assertEquals("EUR", model.state.value.editCurrency)
+        model.retry()
+        assertEquals("EUR", model.state.value.editCurrency)
+        model.reset()
+
+        model.processGalleryImage(uri)
+        advanceUntilIdle()
+        assertEquals("EUR", model.state.value.editCurrency)
+        assertTrue(model.state.value.currencyUnverified)
+
+        setState(model.state.value.copy(editMerchant = "Merchant", editAmount = "10", editDate = 1_700_000_000_000L))
+        model.saveExpense()
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { coordinator.createExpenseAndLinkReceipt(match { it.currency == "EUR" }) }
+    }
+
+    @Test fun ocrFailedFlagsAssumedHomeCurrencyUnverified() = runTest(testDispatcher) {
+        advanceUntilIdle()
+        val uri = Uri.parse("content://test/ocr-failed-currency.jpg")
+        stubScan(uri, receipt(status = "OCR_FAILED"))
+        model.processGalleryImage(uri)
+        advanceUntilIdle()
+
+        assertEquals(ScanStep.REVIEW, model.state.value.step)
+        assertEquals("EUR", model.state.value.editCurrency)
+        assertTrue(model.state.value.currencyUnverified)
+        assertFalse(model.canOfferReceiptQuickSave())
+    }
+
     private fun receipt(id: Long = 17L, status: String = "PARSED") = ScannedReceipt(
         id = id, imagePath = null, rawOcrText = "SQL /private/receipt content://private/918 merchant 1234.56",
         parsedTotal = 10.0, parsedMerchant = "Merchant", parsedDate = 1_700_000_000_000L,

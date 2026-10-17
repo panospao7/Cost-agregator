@@ -330,4 +330,8 @@
     <string name="recurring_advanced_only_info">No se añadió ningún gasto nuevo. La próxima fecha se adelantó.</string>
     <string name="recurring_error_currency_unavailable">No se pudo leer tu moneda principal, por lo que el gasto recurrente no se guardó. Inténtalo de nuevo.</string>
     <string name="recurring_error_generic">Algo salió mal. Inténtalo de nuevo.</string>
+    <!-- R24b: notification permission dialog button when the system will no longer ask -->
+    <string name="notification_open_settings_button">Abrir ajustes</string>
+    <!-- R24c: shown when the receipt currency could not be read and the home currency was assumed -->
+    <string name="receipt_currency_unverified_warning">No pudimos leer la moneda de este recibo. Compruébala antes de guardar.</string>
 </resources>

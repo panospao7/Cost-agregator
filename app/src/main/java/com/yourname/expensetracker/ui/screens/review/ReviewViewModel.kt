@@ -291,7 +291,7 @@ class ReviewViewModel @Inject constructor(
                         } catch (e: kotlinx.coroutines.CancellationException) {
                             throw e
                         } catch (e: Exception) {
-                            Timber.e(e, "Location search failed")
+                            Timber.e("Location search failed class=%s", e::class.java.simpleName)
                             emit(emptyList())
                         }
                     }
@@ -413,6 +413,12 @@ class ReviewViewModel @Inject constructor(
             try {
                 val result = reviewQueueRepository.approveReview(reviewId)
                 handleResult(result, "Failed to approve")
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // R24a: pre-transaction failures (write barrier, DAO read) must not escape the scope.
+                Timber.e("Review approve failed class=%s reviewId=%d", e::class.java.simpleName, reviewId)
+                _errorMessage.value = "Failed to approve"
             } finally {
                 endMutation(reviewId)
             }
@@ -423,7 +429,7 @@ class ReviewViewModel @Inject constructor(
         when (result) {
             is Result.Success -> { /* Handled by UI observing DB change */ }
             is Result.Duplicate -> _errorMessage.value = "Duplicate transaction detected"
-            is Result.Error -> _errorMessage.value = prefix
+            is Result.Error -> _errorMessage.value = reviewApprovalErrorText(result.message, prefix)
             Result.Loading -> { /* No-op or show loading */ }
         }
     }
@@ -434,8 +440,10 @@ class ReviewViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 reviewQueueRepository.rejectReview(reviewId)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
-                Timber.e(e, "Failed to reject review $reviewId")
+                Timber.e("Failed to reject review class=%s reviewId=%d", e::class.java.simpleName, reviewId)
                 _errorMessage.value = "Failed to reject review"
             } finally {
                 endMutation(reviewId)
@@ -513,7 +521,7 @@ class ReviewViewModel @Inject constructor(
                                 reviewQueueRepository.updatePendingReviewMerchantBulk(originalMerchant, finalMerchant)
                             } catch (e: Exception) {
                                 if (e is kotlinx.coroutines.CancellationException) throw e
-                                Timber.e(e, "Bulk merchant rename rejected or failed")
+                                Timber.e("Bulk merchant rename rejected or failed class=%s", e::class.java.simpleName)
                                 // S6-D5-006: bounded conflict message — primary review
                                 // succeeded, but the bulk rename was aborted with no
                                 // partial state. Never echoes raw exception text.
@@ -522,7 +530,8 @@ class ReviewViewModel @Inject constructor(
                             }
                         }
                     } catch (e: Exception) {
-                        Timber.e(e, "Failed to apply bulk category update")
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+                        Timber.e("Failed to apply bulk category update class=%s", e::class.java.simpleName)
                         // S6-D5-006: Surface bulk failure — primary succeeded but bulk partially failed
                         _errorMessage.value = "Primary review approved, but bulk category update failed."
                     }
@@ -558,7 +567,8 @@ class ReviewViewModel @Inject constructor(
                          }
                     }
                     } catch (e: Exception) {
-                        Timber.e(e, "Failed to apply bulk approval")
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+                        Timber.e("Failed to apply bulk approval class=%s", e::class.java.simpleName)
                         bulkFailed++
                     }
                     // S6-D5-006: Surface partial bulk failure
@@ -566,6 +576,12 @@ class ReviewViewModel @Inject constructor(
                         _errorMessage.value = "Primary review approved, but $bulkFailed related review(s) could not be approved."
                     }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // R24a: pre-transaction failures (write barrier, DAO read) must not escape the scope.
+                Timber.e("Review approve with edits failed class=%s reviewId=%d", e::class.java.simpleName, reviewId)
+                _errorMessage.value = "Failed to approve"
             } finally {
                 endMutation(reviewId)
             }
@@ -866,8 +882,10 @@ class ReviewViewModel @Inject constructor(
                     type = "phase4_accept",
                     message = "review quick approve confirmed for ${preview.reviewId}"
                 )
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
-                Timber.e(e, "Quick approve failed for ${preview.reviewId}")
+                Timber.e("Quick approve failed class=%s reviewId=%d", e::class.java.simpleName, preview.reviewId)
                 _errorMessage.value = "Quick approve failed"
             } finally {
                 endMutation(preview.reviewId)
@@ -980,7 +998,10 @@ class ReviewViewModel @Inject constructor(
                         "Approved $successCount, skipped $duplicateCount duplicates, $errorCount failed."
                     else -> "Approved all $successCount pending reviews."
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
+                Timber.e("Approve all failed class=%s", e::class.java.simpleName)
                 _errorMessage.value = "Failed to approve all. Please try again."
             } finally {
                 _operationState.value = null
@@ -999,7 +1020,10 @@ class ReviewViewModel @Inject constructor(
                 _operationState.value = ReviewOperationState(operation = ReviewOperation.REJECT_ALL)
                 reviewQueueRepository.rejectAllReviews()
                 _errorMessage.value = "All pending reviews cleared."
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
+                Timber.e("Reject all failed class=%s", e::class.java.simpleName)
                 _errorMessage.value = "Failed to clear all. Please try again."
             } finally {
                 _operationState.value = null
@@ -1038,16 +1062,19 @@ class ReviewViewModel @Inject constructor(
                         if (result.failureCount > 0) append(" " + result.failureCount + " failed.")
                     }
                 } else if (result.failureCount > 0) {
-                    val firstError = result.errors.firstOrNull()?.let {
-                        if (it.length > 60) it.take(57) + "..." else it
-                    }
-                    if (result.duplicateCount > 0) {
-                        _errorMessage.value =
-                            "Processed ${result.successCount} saved, ${result.duplicateCount} duplicates. " +
-                                "${result.failureCount} failed: $firstError"
-                    } else {
-                        _errorMessage.value = "Processed ${result.successCount} ok. ${result.failureCount} failed: $firstError"
-                    }
+                    // R24a: counts only; per-item error text may carry exception details.
+                    Timber.w(
+                        "Receipt batch had failures failed=%d saved=%d duplicates=%d",
+                        result.failureCount,
+                        result.successCount,
+                        result.duplicateCount
+                    )
+                    _errorMessage.value = receiptBatchFailureMessage(
+                        successCount = result.successCount,
+                        duplicateCount = result.duplicateCount,
+                        failureCount = result.failureCount,
+                        firstError = result.errors.firstOrNull()
+                    )
                 } else if (result.duplicateCount > 0) {
                     _errorMessage.value =
                         "Processed ${result.successCount} saved, ${result.duplicateCount} duplicates."
