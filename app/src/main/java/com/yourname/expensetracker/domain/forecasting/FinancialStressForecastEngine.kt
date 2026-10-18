@@ -21,6 +21,7 @@ import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+import com.yourname.expensetracker.domain.util.CancellationSafe
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -747,7 +748,7 @@ class FinancialStressForecastEngine @Inject constructor(
      */
     private suspend fun resolveStartingBalanceBaseline(displayCurrency: String): Double {
         // P6-P1-13: Delegate to AccountBalanceProvider (currently NetCashflowBalanceProvider)
-        val balance = runCatching { accountBalanceProvider.currentBalance(displayCurrency) }.getOrNull()
+        val balance = CancellationSafe.runCatchingCancellable { accountBalanceProvider.currentBalance(displayCurrency) }.getOrNull()
         if (balance != null) {
             Timber.d("FCST-9: resolveStartingBalanceBaseline via AccountBalanceProvider = %.2f", balance)
             return balance
@@ -756,10 +757,10 @@ class FinancialStressForecastEngine @Inject constructor(
         // Inline fallback if provider fails
         val now = timeProvider.now()
         val ninetyDaysAgo = TimePeriodUtils.addDays(now, -90)
-        val recentDeposits = runCatching {
+        val recentDeposits = CancellationSafe.runCatchingCancellable {
             multiCurrencyRepository.getHomeCurrencyDepositTotal(ninetyDaysAgo, now).displayAmount
         }.getOrDefault(0.0)
-        val recentExpenses = runCatching {
+        val recentExpenses = CancellationSafe.runCatchingCancellable {
             multiCurrencyRepository.getHomeCurrencyPurchaseTotal(ninetyDaysAgo, now).displayAmount
         }.getOrDefault(0.0)
         val netCashflow = recentDeposits - recentExpenses
@@ -772,11 +773,8 @@ class FinancialStressForecastEngine @Inject constructor(
      * Defaults to [DEFAULT_EMERGENCY_BUFFER_FALLBACK] if the setting is unavailable.
      */
     private suspend fun getEmergencyBuffer(): Double {
-        return runCatching { currencySettingsRepository.emergencyBuffer().first() }
-            .getOrElse {
-                if (it is kotlinx.coroutines.CancellationException) throw it
-                DEFAULT_EMERGENCY_BUFFER_FALLBACK
-            }
+        return CancellationSafe.runCatchingCancellable { currencySettingsRepository.emergencyBuffer().first() }
+            .getOrElse { DEFAULT_EMERGENCY_BUFFER_FALLBACK }
     }
 
     /**

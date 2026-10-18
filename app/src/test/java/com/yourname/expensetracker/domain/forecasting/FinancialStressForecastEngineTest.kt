@@ -14,6 +14,7 @@ import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
@@ -72,6 +73,7 @@ class FinancialStressForecastEngineTest {
     private lateinit var databaseReadBarrier: DatabaseReadBarrier
     private lateinit var currencyConverter: com.yourname.expensetracker.domain.currency.CurrencyConverter
     private lateinit var accountBalanceProvider: AccountBalanceProvider
+    private lateinit var multiCurrencyRepository: MultiCurrencyRepository
 
     private lateinit var engine: FinancialStressForecastEngine
 
@@ -131,6 +133,51 @@ class FinancialStressForecastEngineTest {
         coVerify(exactly = 1) { accountBalanceProvider.currentBalance("EUR") }
     }
 
+    @Test
+    fun accountBalanceProviderCancellationPropagatesUnchanged() = runTest {
+        val cancellation = kotlinx.coroutines.CancellationException("balance cancellation")
+        coEvery { accountBalanceProvider.currentBalance(any()) } throws cancellation
+        org.junit.Assert.assertSame(cancellation, runCatching { engine.computeStressForecast() }.exceptionOrNull())
+    }
+
+    @Test
+    fun depositTotalCancellationPropagatesUnchanged() = runTest {
+        val cancellation = kotlinx.coroutines.CancellationException("deposit cancellation")
+        coEvery { accountBalanceProvider.currentBalance(any()) } throws IllegalStateException("provider down")
+        coEvery { multiCurrencyRepository.getHomeCurrencyDepositTotal(any(), any()) } throws cancellation
+        org.junit.Assert.assertSame(cancellation, runCatching { engine.computeStressForecast() }.exceptionOrNull())
+    }
+
+    @Test
+    fun purchaseTotalCancellationPropagatesUnchanged() = runTest {
+        val cancellation = kotlinx.coroutines.CancellationException("purchase cancellation")
+        coEvery { accountBalanceProvider.currentBalance(any()) } throws IllegalStateException("provider down")
+        coEvery { multiCurrencyRepository.getHomeCurrencyPurchaseTotal(any(), any()) } throws cancellation
+        org.junit.Assert.assertSame(cancellation, runCatching { engine.computeStressForecast() }.exceptionOrNull())
+    }
+
+    @Test
+    fun emergencyBufferCancellationPropagatesUnchanged() = runTest {
+        val cancellation = kotlinx.coroutines.CancellationException("buffer cancellation")
+        every { currencySettingsRepository.emergencyBuffer() } returns kotlinx.coroutines.flow.flow { throw cancellation }
+        org.junit.Assert.assertSame(cancellation, runCatching { engine.computeStressForecast() }.exceptionOrNull())
+    }
+
+    @Test
+    fun nonCancellationFailuresStillFallBackInStartingBalanceAndBuffer() = runTest {
+        coEvery { accountBalanceProvider.currentBalance(any()) } throws IllegalStateException("provider down")
+        coEvery { multiCurrencyRepository.getHomeCurrencyDepositTotal(any(), any()) } throws IllegalStateException("deposit down")
+        coEvery { multiCurrencyRepository.getHomeCurrencyPurchaseTotal(any(), any()) } throws IllegalStateException("purchase down")
+        every { currencySettingsRepository.emergencyBuffer() } returns kotlinx.coroutines.flow.flow {
+            throw IllegalStateException("buffer down")
+        }
+
+        val result = engine.computeStressForecast()
+
+        assertNull(result.failure)
+        assertEquals(listOf(30, 60, 90), result.horizons.map { it.daysAhead })
+    }
+
     @Before
     fun setup() {
         synthesisEngine = mockk(relaxed = true)
@@ -178,6 +225,7 @@ class FinancialStressForecastEngineTest {
         databaseReadBarrier = mockk(relaxed = true)
         currencyConverter = mockk(relaxed = true)
         accountBalanceProvider = mockk(relaxed = true)
+        multiCurrencyRepository = mockk(relaxed = true)
         // Identity conversion is explicit so confirmed EUR obligations are not
         // silently discarded by a relaxed mock (HZ01-B: the engine converts through
         // convertOutcome with StaleRatePolicy.forBasis, not the legacy convert()).
@@ -192,7 +240,7 @@ class FinancialStressForecastEngineTest {
             timeProvider = timeProvider,
             analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
             currencySettingsRepository = currencySettingsRepository,
-            multiCurrencyRepository = mockk(relaxed = true),
+            multiCurrencyRepository = multiCurrencyRepository,
             recurringLifecycleCoordinator = recurringLifecycleCoordinator,
             recurringOccurrenceDao = recurringOccurrenceDao,
             currencyConverter = currencyConverter,

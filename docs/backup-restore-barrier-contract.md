@@ -52,6 +52,17 @@ On crash during restore, startup:
 4. If any check fails → `CRITICAL_RECOVERY_REQUIRED`
 5. If all pass → delete journal → reset to `NORMAL`
 
+### Cancellation after the destructive swap (HZ-03 F1, restore only)
+
+A `.costbackup` restore cancelled after the live DB swap (journal in `SWAPPING`, `VERIFYING` or
+`ASSETS_RESTORING`) is treated like a process crash, not as `CRITICAL_RECOVERY_REQUIRED`. The
+cancellation cleanup exits to `RESTORE_COMPLETE_RESTART_REQUIRED` (writes stay blocked, the UI asks
+for a restart), deletes only the staged DB trio and keeps the active journal, the safety backup,
+`.pre_restore` and the extraction workspace. The next start runs the normal journal recovery
+(`SWAPPING`/`VERIFYING` roll back from the safety backup; `ASSETS_RESTORING` resumes assets). If the
+cleanup itself fails, `RESTORE_CANCELLED_CLEANUP_FAILED` latches `CRITICAL_RECOVERY_REQUIRED`.
+Reset and legacy import keep their existing post-destructive cancellation behaviour.
+
 ### Cross-restart fail-closed (P7-CURRENT-003)
 
 If the safety-backup copy itself cannot complete (missing/unreadable backup, copy error),

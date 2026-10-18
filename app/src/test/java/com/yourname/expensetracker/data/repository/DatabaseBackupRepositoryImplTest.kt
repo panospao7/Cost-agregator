@@ -2593,23 +2593,145 @@ class DatabaseBackupRepositoryImplTest {
                 } else {
                     every { mockRestoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.RESTORE_VERIFYING) } throws cancellation
                 }
-                every { mockRestoreMaintenanceMode.enterCriticalRecoveryRequired(any()) } answers {
-                    every { mockRestoreMaintenanceMode.currentMode() } returns RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED
-                    throw RestoreMaintenanceMode.PersistenceException()
+                if (operation != RestoreOperation.COSTBACKUP) {
+                    every { mockRestoreMaintenanceMode.enterCriticalRecoveryRequired(any()) } answers {
+                        every { mockRestoreMaintenanceMode.currentMode() } returns RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED
+                        throw RestoreMaintenanceMode.PersistenceException()
+                    }
                 }
                 var observed: Throwable? = null
                 try { invokeRestore(operation, createRepository(journal = fixture.journal), fixture.source) }
                 catch (e: kotlinx.coroutines.CancellationException) { observed = e }
                 org.junit.Assert.assertSame(cancellation, observed)
-                assertEquals(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED, mockRestoreMaintenanceMode.currentMode())
-                verify(exactly = 0) { mockRestoreMaintenanceMode.exit(any()) }
                 val retained = fixture.journal.readJournal()!!
                 assertTrue(File(retained.safetyBackupPath!!).exists())
+                if (operation == RestoreOperation.COSTBACKUP) {
+                    // HZ-03 F1 (Q-R32-1): post-swap restore cancellation behaves like a crash -
+                    // restart-required exit, no CRITICAL latch, journal kept in its post-swap
+                    // state so the next startup runs journal recovery.
+                    verify(exactly = 1) { mockRestoreMaintenanceMode.exit(true) }
+                    verify(exactly = 0) { mockRestoreMaintenanceMode.exit(false) }
+                    verify(exactly = 0) { mockRestoreMaintenanceMode.enterCriticalRecoveryRequired(any()) }
+                    assertFalse(fixture.trace.contains("CRITICAL"))
+                    assertEquals(
+                        RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED,
+                        mockRestoreMaintenanceMode.currentMode()
+                    )
+                    assertEquals(RestoreJournal.JournalState.VERIFYING, retained.state)
+                    assertFalse(fixture.trace.contains("FINALIZED_FAILURE"))
+                    // The cancellation cleanup removes only the staged DB trio (db/-wal/-shm).
+                    assertTrue(
+                        "staged DB trio leaked: ${fixture.directory.list()?.toList()}",
+                        fixture.directory.listFiles { f -> f.name.startsWith("expense_tracker_db_import_stage_") }
+                            .orEmpty().isEmpty()
+                    )
+                } else {
+                    assertEquals(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED, mockRestoreMaintenanceMode.currentMode())
+                    verify(exactly = 0) { mockRestoreMaintenanceMode.exit(any()) }
+                }
                 if (operation == RestoreOperation.COSTBACKUP) {
                     org.junit.Assert.assertArrayEquals(byteArrayOf(9, 8, 7),
                         File(retained.extractTempDirPath!!, "files/receipts/5_photo.jpg").readBytes())
                     assertTrue(File(dbFile.path + ".pre_restore").exists())
                 }
+            } finally { releaseRestoreFixture() }
+        }
+    }
+
+    @Test
+    fun costbackup_cancellation_during_assets_restoring_exits_restart_required_and_keeps_journal_and_workspace() = runTest(testDispatcher) {
+        val fixture = restoreFixture()
+        try {
+            val cancellation = IdentityCancellationException("TEST_ASSETS_PHASE_CANCELLED")
+            every { mockRestoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.ASSETS_RESTORING) } throws cancellation
+            var observed: Throwable? = null
+            try { invokeRestore(RestoreOperation.COSTBACKUP, createRepository(journal = fixture.journal), fixture.source) }
+            catch (e: kotlinx.coroutines.CancellationException) { observed = e }
+            org.junit.Assert.assertSame(cancellation, observed)
+            verify(exactly = 1) { mockRestoreMaintenanceMode.exit(true) }
+            verify(exactly = 0) { mockRestoreMaintenanceMode.exit(false) }
+            verify(exactly = 0) { mockRestoreMaintenanceMode.enterCriticalRecoveryRequired(any()) }
+            assertEquals(RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED, mockRestoreMaintenanceMode.currentMode())
+            val retained = fixture.journal.readJournal()!!
+            assertEquals(RestoreJournal.JournalState.ASSETS_RESTORING, retained.state)
+            assertTrue(File(retained.safetyBackupPath!!).exists())
+            assertTrue(File(retained.extractTempDirPath!!).exists())
+            assertTrue(File(dbFile.path + ".pre_restore").exists())
+        } finally { releaseRestoreFixture() }
+    }
+
+    @Test
+    fun costbackup_post_swap_cancellation_cleanup_failure_latches_cleanup_failed_and_rethrows_cancellation() = runTest(testDispatcher) {
+        val fixture = restoreFixture()
+        try {
+            val cancellation = IdentityCancellationException("TEST_POST_SWAP_CANCELLED")
+            every { mockRestoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.RESTORE_VERIFYING) } throws cancellation
+            every { mockRestoreMaintenanceMode.exit(any()) } throws RestoreMaintenanceMode.PersistenceException()
+            var observed: Throwable? = null
+            try { invokeRestore(RestoreOperation.COSTBACKUP, createRepository(journal = fixture.journal), fixture.source) }
+            catch (e: kotlinx.coroutines.CancellationException) { observed = e }
+            org.junit.Assert.assertSame(cancellation, observed)
+            verify(exactly = 1) { mockRestoreMaintenanceMode.exit(true) }
+            verify(exactly = 1) { mockRestoreMaintenanceMode.enterCriticalRecoveryRequired("RESTORE_CANCELLED_CLEANUP_FAILED") }
+            assertEquals(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED, mockRestoreMaintenanceMode.currentMode())
+            assertTrue(fixture.journal.hasJournal())
+            assertTrue(File(fixture.journal.readJournal()!!.safetyBackupPath!!).exists())
+        } finally { releaseRestoreFixture() }
+    }
+
+    @Test
+    fun restart_required_mode_blocks_every_restore_API_and_leaves_active_post_swap_journal_untouched() = runTest(testDispatcher) {
+        for (operation in supportedRestoreOperations()) {
+            val fixture = restoreFixture()
+            try {
+                val journal = fixture.journal
+                var entry = journal.beginJournal("src", "", dbFile.absolutePath)
+                entry = journal.transitionTo(entry, RestoreJournal.JournalState.VERIFYING, safetyBackupPath = "safety.db")
+                val journalFile = File(fixture.directory, "restore_journal.json")
+                val journalBytes = journalFile.readBytes()
+                val before = dbFile.readBytes()
+                mockRestoreMaintenanceMode.exit(true) // fixture mode -> RESTORE_COMPLETE_RESTART_REQUIRED
+                io.mockk.clearMocks(mockRestoreMaintenanceMode, answers = false, childMocks = false)
+
+                val result = invokeRestore(operation, createRepository(journal = journal), fixture.source)
+
+                val error = result.exceptionOrNull()
+                assertTrue("$operation: $error", error is com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException)
+                assertEquals(
+                    DiagnosticReasonCode.RESTORE_BLOCKED.name,
+                    (error as com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException).operation.reason
+                )
+                org.junit.Assert.assertArrayEquals(journalBytes, journalFile.readBytes())
+                assertEquals(RestoreJournal.JournalState.VERIFYING, journal.readJournal()?.state)
+                assertEquals(entry.operationId, journal.readJournal()?.operationId)
+                org.junit.Assert.assertArrayEquals(before, dbFile.readBytes())
+                verify(exactly = 0) { mockRestoreMaintenanceMode.enter(any()) }
+                verify(exactly = 0) { mockRestoreMaintenanceMode.exit(any()) }
+                verify(exactly = 0) { mockRestoreMaintenanceMode.enterCriticalRecoveryRequired(any()) }
+                verify(exactly = 0) { database.close() }
+                assertEquals(RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED, mockRestoreMaintenanceMode.currentMode())
+            } finally { releaseRestoreFixture() }
+        }
+    }
+
+    @Test
+    fun active_valid_journal_blocks_every_restore_API_even_in_NORMAL_mode() = runTest(testDispatcher) {
+        for (operation in supportedRestoreOperations()) {
+            val fixture = restoreFixture()
+            try {
+                val journal = fixture.journal
+                val entry = journal.beginJournal("src", "", dbFile.absolutePath)
+                val journalFile = File(fixture.directory, "restore_journal.json")
+                val journalBytes = journalFile.readBytes()
+
+                val result = invokeRestore(operation, createRepository(journal = journal), fixture.source)
+
+                assertTrue("$operation", result.exceptionOrNull() is com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException)
+                org.junit.Assert.assertArrayEquals(journalBytes, journalFile.readBytes())
+                assertEquals(entry.operationId, journal.readJournal()?.operationId)
+                verify(exactly = 0) { mockRestoreMaintenanceMode.enter(any()) }
+                verify(exactly = 0) { database.close() }
+                assertEquals(RestoreMaintenanceMode.Mode.NORMAL, mockRestoreMaintenanceMode.currentMode())
             } finally { releaseRestoreFixture() }
         }
     }

@@ -972,6 +972,32 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         }
     }
 
+    /**
+     * R32 N1: fail-closed entry guard for restore/import/reset. A cancelled post-swap restore
+     * leaves the process in RESTORE_COMPLETE_RESTART_REQUIRED with an ACTIVE post-swap journal that
+     * the next startup recovery must consume; a second operation must never overwrite it
+     * ([RestoreJournal.beginJournal] replaces a valid active journal). Also refuses in the absorbing
+     * CRITICAL_RECOVERY_REQUIRED mode. A corrupt active journal is deliberately NOT handled here:
+     * beginJournal already rejects it with JournalDurabilityException (critical latch).
+     *
+     * Returns the bounded blocked outcome (maps to WRITE_BARRIER_DENIED via
+     * [restoreFailureReasonCode]; operation reason RESTORE_BLOCKED) or null when the entry is clear.
+     * Mutates nothing: no journal, no mode change, no run recorded.
+     */
+    private fun restoreEntryBlockedOrNull(operation: String): DatabaseAccessBlockedException? {
+        val mode = restoreMaintenanceMode.currentMode()
+        val modeBlocks = mode == RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED ||
+            mode == RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED
+        val activeJournal = restoreJournal.readJournalResult() is RestoreJournal.JournalReadResult.Valid
+        if (!modeBlocks && !activeJournal) return null
+        Timber.w("Restore entry blocked code=%s operation=%s mode=%s", DiagnosticReasonCode.RESTORE_BLOCKED.name, operation, mode)
+        return DatabaseAccessBlockedException(
+            DatabaseAccessType.WRITE,
+            com.yourname.expensetracker.data.backup.DatabaseAccessOperation(name = operation, reason = DiagnosticReasonCode.RESTORE_BLOCKED.name),
+            mode
+        )
+    }
+
     private suspend fun enterRestoreAndDrain(operation: String) {
         // Re-entrancy is rejected BEFORE the mode is entered so it can never leave it entered.
         databaseWriteBarrier.checkNotInsideCountedWrite(kotlinx.coroutines.currentCoroutineContext())
@@ -997,6 +1023,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         password: String
     ): Result<DatabaseImportResult> = withContext(ioDispatcher) {
         containRestoreOperation {
+        restoreEntryBlockedOrNull("restoreCostBackup")?.let { return@withContext Result.failure(it) }
         val run = operationRunRecorder.start("RESTORE_COSTBACKUP", actor = "user")
         // DDL-016-01: wrap in RestoreDiagnosticsSink so post-swap events never use Room
 
@@ -1441,7 +1468,15 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         } catch (e: kotlinx.coroutines.CancellationException) {
             finishCancelledRestore(e) {
                 if (destructiveStarted) {
-                    restoreMaintenanceMode.enterCriticalRecoveryRequired("RESTORE_CANCELLED_AFTER_SWAP")
+                    // HZ-03 F1 (Q-R32-1): a post-swap cancellation is treated exactly like a
+                    // process crash. The journal stays in its post-swap state and the safety
+                    // backup, .pre_restore and the extraction workspace are all preserved, so
+                    // the next startup runs RestoreJournal.checkAndRecover (SWAPPING/VERIFYING
+                    // -> rollback, ASSETS_RESTORING -> asset resume). Writes stay blocked
+                    // (restart required); only the staged DB trio is residue. A failure here
+                    // is latched as RESTORE_CANCELLED_CLEANUP_FAILED by finishCancelledRestore.
+                    restoreMaintenanceMode.exit(forceRestartRequired = true)
+                    cleanupStagedDbTrio(stagedDbPath)
                 } else {
                     restoreJournal.failJournal(journalEntry, "RESTORE_CANCELLED")
                     cleanupRestoreStaging(stagedDbPath, tempDir)
@@ -1888,6 +1923,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             )
         }
 
+        restoreEntryBlockedOrNull("importDatabase")?.let { return@withContext Result.failure(it) }
         // DDL-512-13: wrap with operation run recorder for uniform diagnostic trail
         val run = operationRunRecorder.start("RESTORE_LEGACY_DB", actor = "user")
 
@@ -2882,6 +2918,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
     
     override suspend fun resetDatabase(): Result<Unit> = withContext(ioDispatcher) {
         containRestoreOperation {
+        restoreEntryBlockedOrNull("resetDatabase")?.let { return@withContext Result.failure(it) }
         // DDL-512-13: wrap with operation run recorder for uniform diagnostic trail
         val run = operationRunRecorder.start("RESET_DATABASE", actor = "user")
         val liveDbFile = context.getDatabasePath(AppDatabase.DATABASE_NAME)

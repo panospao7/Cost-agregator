@@ -142,3 +142,8 @@ Independently verified (static) in RG-01. Details and evidence:
 
 Per the release policy, confirmed user-impacting P2s are fixed by default unless the
 human explicitly accepts the risk.
+
+## Dispositions recorded 2026-10-18 (release orchestrator, after Phase 7 attempt 1)
+
+- RG11-H2 (P1 provisional): CLOSED — FIXED. Code fixed in R1 (DefaultExpenseCategoryAssignmentService, ReceiptLinkService and callers now throw; JVM proof NestedTransactionSemanticsTest, ReviewQueueRepositoryNestedRollbackTest, ReceiptLinkServiceNestedFailureTest). Device mechanism confirmed on API 35 SQLite by NestedTransactionSemanticsInstrumentedTest 3/0 (vr-20261018-001835-6fa1a3a7); full connected suite 376/0/9 skipped (pre-v145 migration chains, unsupported by design) vr-20261018-001952-74f0d8b5.
+- RG17B-1 (P2 test debt): CLOSED BY R13 — NotificationIntakeEnqueueFailureRoomTest (real Room, throwing operation) covers EnqueueFailed, retryable/final branches, PROCESSING no-op, terminalAt and payload purge; passed R13 targeted and batch gates. Residual P3 test debt: NotificationCaptureService enqueue-failure branch (deduper.remove) has no direct test -> 1.0.1.
