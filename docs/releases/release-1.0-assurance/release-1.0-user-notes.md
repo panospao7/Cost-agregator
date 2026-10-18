@@ -76,6 +76,9 @@ assurance batches. Technical evidence lives in `release-1.0-phase3-4-findings-le
 - **Home notices (R31).** The notification-access, currency and partial-data notices on Home are shown
   above the dashboard instead of being hidden behind it. The Safe-to-spend card no longer shows a false
   "could not be converted" warning; it asks you to set a budget only when you have none.
+- **Interrupted restore (R32).** If a restore is interrupted after your data has already been replaced,
+  the app asks you to restart instead of locking itself permanently; on the next start it finishes or
+  rolls back the restore. Until you restart, a second restore, import or reset is refused.
 
 ## Known limitations (1.0)
 
