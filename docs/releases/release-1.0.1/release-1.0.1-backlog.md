@@ -32,8 +32,14 @@ reachability:
 - Timber is planted only in debug builds.
 - `android.util.Log` is not stripped.
 
-**Result:** no audit finding is a proven P0 or P1 in Release 1.0. One is a conditional P1 (DIAG-01,
-which needs a runtime count check).
+**Result (updated 2026-10-19 after the S0 checks):**
+
+- **MONEY-02 was recalibrated to P1 and fixed as hotfix H1** (b75f309b). GreekBankParser read merchant
+  or time digits as the amount. The fail-first test reproduced it (12.50 became 24.00 or 1432.00), and these
+  amounts are auto-saved at confidence 0.92.
+- **DIAG-01 is not P1.** The owner-approved runtime check on the owner database found 0 raw text in
+  diagnostics (note B2).
+- No other audit finding is P0 or P1.
 
 ## A. Time-critical (dates)
 
@@ -54,12 +60,12 @@ which needs a runtime count check).
 | # | ID | Item | Sev | Source | Notes |
 | --- | --- | --- | --- | --- | --- |
 | 1 | MONEY-01 | Greek receipt `Φ.Π.Α. 24,00%: 9,68 €`: `ReceiptParser` takes the VAT **rate** as the tax amount. Evidence and effects in note B1. | P2 | audit (NEW) | Regex fix. Flip the KNOWN DEFECT pin in `ReceiptParserOcrPatternsTest`. Candidate for a beta hotfix if it stays small. |
-| 2 | DIAG-01 | Diagnostics stores keep pattern-sanitized exception messages. Details in note B2. | P3 → **P1 if the runtime check finds raw text** | audit = RG15C-2 / D-17 | **Runtime check:** on a copy of the owner database, count (counts only) the diagnostic rows that contain `raw_notifications` text fragments. Needs owner approval. Fix: class name + reason code only; scrub in redacted exports. |
+| 2 | DIAG-01 | Diagnostics stores keep pattern-sanitized exception messages. Details in note B2. | P3 (runtime check done: not P1) | audit = RG15C-2 / D-17 | Policy hardening in W3: class name + reason code only; scrub in redacted exports. |
 | 3 | CURR-6 | After a home-currency change, amount sort and filter use the previous currency's values. | P2 | 1.0 deferral (V-D F-1) | Known limitation in the user notes. |
 | 4 | R27 residual | About 60 check-only save paths are not drained by backup/restore. | P2 (accepted) | 1.0 deferral (Q-R27-4) | Known limitation. |
 | 5 | MISC-01 + DIAG-11 | Cancellation guard problems. Details in note B5. | P2 | audit = phase3-4 guard hardening | Narrow the allowlist, use a real clock, fix the two swallows. No baseline loosening. |
-| 6 | FORE-04 | Overdue PLANNED occurrences and unpaid MUST items drop out of "committed" in the forecast. | P3 → P2 candidate | audit (NEW) | More frequent now that 1.0 catches up overdue occurrences. Owner decision on the double-count risk (bill paid by an unlinked expense). |
-| 7 | MONEY-06 | Stored exchange rates are not checked for finite/positive on read. Every in-app write is validated. | P3 (P2 if restore doesn't validate) | audit (NEW) | First check whether restore validates `exchange_rates` values (TIER_3_OPTIONAL). |
+| 6 | FORE-04 | Overdue PLANNED occurrences and unpaid MUST items drop out of "committed" in the forecast. | P3 | audit (NEW) | S0 check: a naive "include overdue" would double count, because auto-linking is strict (same day, merchant, ±10%). Suggested rule: include only if overdue ≤7 days in the current month and no likely unlinked payment exists (same merchant/category, ±20%, same currency); show it separately as "overdue, unconfirmed". |
+| 7 | MONEY-06 | Stored exchange rates are not checked for finite/positive on read. Every in-app write is validated. | P3 | audit (NEW) | S0 check: restore does NOT validate rate values (BackupVerifier only counts `exchange_rates`). It needs a crafted backup plus its password, so it stays P3. Fix: purge invalid rates on the staged database before the swap; `toDomain` returns null for an invalid rate; finite/positive guard before `Converted` and the `baseAmount` write. |
 | 8 | LIFE-05 | Privacy denial poisons the notification dedupe cache for 5 s. | P3 | audit (fixed only on `chore/test-suite-audit`, B2-2c) | Port the fix together with its test `NotificationCaptureServiceBlockedDecisionTest`. |
 
 **Note B1.** Code locations: `ReceiptParser.kt:468` and `:773`.
@@ -77,6 +83,26 @@ which needs a runtime count check).
 
 These tables are in every `.costbackup`. Redacted mode (`ExportAnonymizer.kt:76-84`) does not
 clean them.
+
+**Runtime check, 2026-10-19 (owner-approved).** Run on a scratch copy of the owner database
+(v145), counts only; the copy was deleted afterwards.
+
+| Table | Rows |
+| --- | --- |
+| `pipeline_diagnostic_events` | 388,175 |
+| `privacy_audit_events` | 363,161 |
+| `operation_runs` | 6 |
+| `operation_run_events` | 12 |
+
+- The columns `exceptionMessage`, `message`, `errorSummary`, `exceptionClass` and `dropReason` are
+  empty in every row.
+- 0 diagnostic rows share a 16-character text window with notification, intake, pending-review,
+  receipt or email text (368 source rows checked).
+- No Greek text, currency amounts, e-mail addresses or SQL messages appear.
+- Long numbers appear only in the `postTime`, `packageName`, `notificationKey` and ID metadata keys.
+
+Limitations: this covers one device's history, and retention may have purged older source text.
+**Result: not P1. It stays P3 policy hardening.**
 
 **Note B5.** `CancellationSafetyArchitectureGuardTest.kt:117` allowlists the whole
 `CompositeOperationRunRecorder.kt` and uses a frozen 2026-09-15 clock, so 13 expired entries never
@@ -133,6 +159,20 @@ Review follow-ups (P3 unless noted; detail in the lead log and the phase3-4 find
 - **F-DEV-3:** Privacy settings "Feature disabled" card text contrast.
 - **Groups:** a "remove from group" feature (product).
 - **Records/process:** `runner-protocol-tests` belongs on the final gate (MISC-05).
+- **Hotfix H1 follow-ups (GreekBankParser, from the strict reviews):**
+  - **F-H1-a:** "1.500" without decimals parses as 1.5. `parseAmount` reads a dot-only token as a
+    decimal, which is ambiguous in Greek notation; needs a decision.
+  - **F-H1-b:** a currency written mid-text ("Αγορά 12,50 USD στο SHOP", "Χ 50,00 EUR ΑΤΜ") falls
+    back to the home currency. Pre-existing; PURCHASE[0] and TRANSFER[0] have no currency group.
+  - **F-H1-c:** "Μεταφορά €X σε Y" is typed PURCHASE, because PURCHASE[1] claims it first.
+  - **F-H1-d:** `resolveCurrency` uses the deprecated `normalize`.
+- **CURR-6 scoping (S0 check):** no schema change is needed. `baseAmount`/`baseCurrency` are fixed at
+  save time. Preferred fix: a guarded re-normalisation worker through the TransactionLifecycle
+  coordinator when the home currency changes; rows without a rate stay flagged. Planner-first; money
+  plus lifecycle review.
+- **Tooling:** `targeted-unit-test` accepts one filter pattern (wildcards allowed). Follow-up runs
+  reuse the build and take about 15–20 s, so "one combined run" means one compile plus cheap
+  follow-up runs. A multi-filter profile is optional.
 
 ## D. Test-suite audit reconciliation (all 52 findings)
 
@@ -153,7 +193,7 @@ ID.
 
 | ID | Audit sev | 1.0 status | Match | 1.0.1 sev | Note |
 | --- | --- | --- | --- | --- | --- |
-| DIAG-01 | High | PRESENT | RG15C-2 / D-17 | P3 (cond. P1) | See B2 |
+| DIAG-01 | High | PRESENT | RG15C-2 / D-17 | P3 | Runtime check: 0 raw text (note B2) |
 | DIAG-02 | High | PRESENT | V-H-1 | P3 | Reachable only from debug-only bank sync; release callers pass literals or codes |
 | DIAG-03 | Med | PRESENT | RG15C-2 | P3 | RestoreDiagnosticsSink / DataStore sink |
 | DIAG-04 | Med | PRESENT | V17B-N2 (MIT-035) | P3 | CE swallow in RestoreDiagnosticsSink |
@@ -201,7 +241,7 @@ ID.
 | ID | Audit sev | 1.0 status | Match | 1.0.1 sev | Note |
 | --- | --- | --- | --- | --- | --- |
 | MONEY-01 | High | PRESENT | NEW | **P2** | See B1 |
-| MONEY-02 | High | PRESENT | NEW | P3 | No release caller passes letters; manual entry uses the strict parser (R16c). GreekBank, Revolut and Sms parsers not yet checked. |
+| MONEY-02 | High | **FIXED by hotfix H1** | NEW | **P1** | Recalibrated: GreekBankParser (NBG/Alpha) read merchant or time digits as the amount. Revolut, Sms and GoogleWallet are safe. Follow-ups F-H1-a..d (section C). |
 | MONEY-03 | Low | PRESENT | NEW | P3 | Consumers check `isFinite` |
 | MONEY-04 | Med | PRESENT | HZ07-P1 / V-E-10 | P3 while hidden | Tax hidden in release; fix before enabling tax. The catch also swallows CE. |
 | MONEY-05 | Med | PRESENT | NEW | P3 | One-sided staleness in legacy `convert` |
