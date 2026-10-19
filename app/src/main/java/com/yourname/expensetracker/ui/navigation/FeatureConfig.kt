@@ -234,11 +234,11 @@ data class FeatureConfig(
             ),
             FeatureConfig(
                 id = "privacy",
-                titleRes = R.string.feature_backup_restore,  // reuse existing string temporarily
+                titleRes = R.string.feature_privacy_settings,
                 icon = Icons.Rounded.Security,
                 color = Color(0xFF9C27B0),
                 destination = NavigationDestination.PrivacySettings,
-                descriptionRes = R.string.feature_backup_restore_desc,
+                descriptionRes = R.string.feature_privacy_settings_desc,
                 isNew = false
             )
         )
@@ -248,10 +248,18 @@ data class FeatureConfig(
          * entry is withheld entirely when the central availability policy says
          * the surface is unavailable (release builds) — it is never rendered as
          * a dead/empty destination.
+         *
+         * R19 (H-1 hide): deferred features (see [DeferredFeatureGate]) are also
+         * withheld when [deferredAvailable] is false (release builds).
          */
-        fun availableFeatures(bankSyncAvailable: Boolean): List<FeatureConfig> =
-            if (bankSyncAvailable) allFeatures
-            else allFeatures.filterNot { it.id == BANK_CONNECTIONS_FEATURE_ID }
+        fun availableFeatures(
+            bankSyncAvailable: Boolean,
+            deferredAvailable: Boolean = DeferredFeatureGate.available
+        ): List<FeatureConfig> =
+            allFeatures.filter { feature ->
+                (bankSyncAvailable || feature.id != BANK_CONNECTIONS_FEATURE_ID) &&
+                    (deferredAvailable || !DeferredFeatureGate.isDeferredFeatureId(feature.id))
+            }
 
         /**
          * Get a feature by its ID.

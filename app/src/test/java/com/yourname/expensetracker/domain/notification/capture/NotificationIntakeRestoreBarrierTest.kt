@@ -65,6 +65,7 @@ class NotificationIntakeRestoreBarrierTest {
             mockk(relaxed = true),
             mode,
             Dispatchers.Unconfined,
+            timeProvider,
         )
         coEvery {
             workManager.enqueueUniqueWork(any<String>(), any<ExistingWorkPolicy>(), any<OneTimeWorkRequest>())

@@ -5,6 +5,7 @@ import com.yourname.expensetracker.data.backup.DatabaseReadBarrier
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.MaintenanceSafeDiagnosticSink
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.data.database.DatabaseOpenGate
 import com.yourname.expensetracker.data.database.dao.BackgroundJobRunDao
 import com.yourname.expensetracker.data.database.entity.BackgroundJobRun
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
@@ -14,6 +15,8 @@ import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.confirmVerified
+import io.mockk.verify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkObject
@@ -29,6 +32,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.After
 import org.junit.Before
 import org.junit.Test
 
@@ -103,8 +107,49 @@ class WorkerExecutionGuardTest {
             workerTerminalDiagnosticSink = workerTerminalDiagnosticSink,
             backgroundJobRunDao = backgroundJobRunDao,
             notificationPermissionChecker = permissionChecker,
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            appContext = mockk<android.content.Context>(relaxed = true)
         )
+    }
+
+    @After
+    fun resetOpenGate() {
+        DatabaseOpenGate.resetForTests()
+    }
+
+    @Test
+    fun `open gate blocked runGuarded skips with success mapping and touches nothing`() = runTest {
+        DatabaseOpenGate.overrideForTests(DatabaseOpenGate.REASON_SCHEMA_TOO_NEW)
+        var blockRan = false
+
+        val result = guard.runGuarded(request()) { blockRan = true }
+
+        assertTrue(result is WorkerGuardResult.Skipped)
+        assertEquals(DatabaseOpenGate.REASON_SCHEMA_TOO_NEW, (result as WorkerGuardResult.Skipped).reason)
+        assertTrue(result.toWorkerResult() is androidx.work.ListenableWorker.Result.Success)
+        assertFalse("block must not run when the open gate blocks", blockRan)
+        assertNoDatabaseOrLeaseInteraction()
+    }
+
+    @Test
+    fun `open gate blocked runGuardedWithContext skips with success mapping and touches nothing`() = runTest {
+        DatabaseOpenGate.overrideForTests(DatabaseOpenGate.REASON_OPEN_FAILED)
+        var blockRan = false
+
+        val result = guard.runGuardedWithContext(request()) { blockRan = true }
+
+        assertTrue(result is WorkerGuardResult.Skipped)
+        assertTrue(result.toWorkerResult() is androidx.work.ListenableWorker.Result.Success)
+        assertFalse("block must not run when the open gate blocks", blockRan)
+        assertNoDatabaseOrLeaseInteraction()
+    }
+
+    private fun assertNoDatabaseOrLeaseInteraction() {
+        coVerify(exactly = 0) { leaseRegistry.acquire(any()) }
+        coVerify(exactly = 0) { workerRunLogger.start(any(), any(), any(), any(), any(), any()) }
+        confirmVerified(backgroundJobRunDao, diagnosticSink, workerTerminalDiagnosticSink)
+        verify(exactly = 0) { restoreMaintenanceMode.currentMode() }
+        assertEquals(0, permissionChecker.callCount)
     }
 
     private fun request() = WorkerGuardRequest(

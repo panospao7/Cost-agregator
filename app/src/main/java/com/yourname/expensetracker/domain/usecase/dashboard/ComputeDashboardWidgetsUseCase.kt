@@ -87,7 +87,9 @@ sealed class DashboardWidget {
         val isUnavailable: Boolean = false,
         /** PR3: currency quality metadata when available */
         val currencyQuality: CurrencyQualityUi? = null,
-        val conversionWarningCount: Int = 0
+        val conversionWarningCount: Int = 0,
+        /** R31: true when an overall budget exists (even if not yet normalized); gates the set-budget CTA */
+        val hasBudget: Boolean = false
     ) : DashboardWidget()
 
     data class BudgetBlockParty(
@@ -1296,19 +1298,25 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             add(
                 when (val normalized = ctx.normalizedInputResult) {
                     is DashboardNormalizedInputResult.Available -> {
-                        // Budget remaining not yet normalized — show unavailable with partial quality
+                        // Budget remaining not yet normalized — show unavailable. F-DEV-2: the
+                        // currency-quality flag mirrors the real conversion quality of the
+                        // normalized input; it must not be hardcoded partial, otherwise every
+                        // user sees a "could not be converted" warning with fully converted data.
+                        val inputQuality = normalized.input.dataQuality
+                        val conversionPartial = inputQuality.isPartial || inputQuality.excludedTransactionCount > 0
                         DashboardWidget.SafeToSpend(
                             amount = null,
                             totalBudget = ctx.overallBudget?.takeIf { it.hasCompleteAmountIn(normalized.input.homeCurrency.code) }?.budgetAmount,
                             daysRemaining = ctx.daysRemaining,
-                            isPartial = normalized.input.dataQuality.isPartial,
+                            isPartial = inputQuality.isPartial,
                             isUnavailable = true,
                             currencyQuality = CurrencyQualityUi(
-                                isPartial = true,
-                                quality = com.yourname.expensetracker.domain.core.money.ConversionQuality.PARTIAL,
-                                warningMessage = "Budget remaining not yet normalized"
+                                isPartial = conversionPartial,
+                                quality = inputQuality.conversionQuality,
+                                warningMessage = if (conversionPartial) inputQuality.warningMessage else null
                             ),
-                            conversionWarningCount = normalized.input.dataQuality.excludedTransactionCount
+                            conversionWarningCount = inputQuality.excludedTransactionCount,
+                            hasBudget = ctx.overallBudget != null
                         )
                     }
                     is DashboardNormalizedInputResult.Unavailable -> DashboardWidget.SafeToSpend(
@@ -1318,7 +1326,8 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
                         isPartial = true,
                         isUnavailable = true,
                         currencyQuality = CurrencyQualityUi.unavailable(normalized.reason),
-                        conversionWarningCount = 0
+                        conversionWarningCount = 0,
+                        hasBudget = ctx.overallBudget != null
                     )
                 }
             )

@@ -186,7 +186,7 @@ data/
 
 ### Phase 6 Entity Changes (Privacy & Audit)
 
-- **PrivacyAuditEvent** — new entity for the `privacy_audit_events` table. Append-only log of every privacy gate check. Fields: `id`, `capability`, `decision` (ALLOWED/DENIED), `reason`, `context` (JSON), `timestampMs`, `caller`. Indices on `timestampMs`, `capability`, `caller`.
+- **PrivacyAuditEvent** — new entity for the `privacy_audit_events` table. Append-only log of privacy gate decisions: every decision is recorded individually except repeated ALLOWED `NOTIFICATION_CAPTURE` decisions: the first in a 60-minute window is written; repeats are counted and reported as `coalescedCount` in `context` on the next window's first row or on a flush row (marked `coalescedFlush`) written before any other decision or on eviction; DENIED, FAIL_CLOSED (stored DENIED_FAIL_CLOSED), NOT_APPLICABLE and all other capabilities are always individual rows; counts are approximate (lower bound across process death). Fields: `id`, `capability`, `decision` (ALLOWED/DENIED/DENIED_FAIL_CLOSED/NOT_APPLICABLE), `reason`, `context` (JSON), `timestampMs`, `caller`. Indices on `timestampMs`, `capability`, `caller`.
 - **RawNotification** — 1 new column (migration 103→104):
   - `rawContentPurgedAt` (INTEGER, nullable) — timestamp when raw notification content was purged for data retention compliance.
 - **ScannedReceipt** — 1 new column (migration 103→104):
@@ -347,7 +347,7 @@ data/
 
 | Entity | Table | Purpose | Foreign Keys | Indices |
 |--------|-------|---------|--------------|---------|
-| **PrivacyAuditEvent** | `privacy_audit_events` | Append-only log of every privacy gate decision. Fields: id, capability, decision (ALLOWED/DENIED), reason, context (JSON), timestampMs, caller. | None | timestampMs, capability, caller |
+| **PrivacyAuditEvent** | `privacy_audit_events` | Append-only log of privacy gate decisions: every decision is recorded individually except repeated ALLOWED NOTIFICATION_CAPTURE decisions: the first in a 60-minute window is written; repeats are counted and reported as `coalescedCount` in context on the next window's first row or on a flush row (marked `coalescedFlush`) written before any other decision or on eviction; DENIED, FAIL_CLOSED (stored DENIED_FAIL_CLOSED), NOT_APPLICABLE and all other capabilities are always individual rows; counts are approximate (lower bound across process death). Fields: id, capability, decision (ALLOWED/DENIED/DENIED_FAIL_CLOSED/NOT_APPLICABLE), reason, context (JSON), timestampMs, caller. | None | timestampMs, capability, caller |
 
 ### Misc. Business (4)
 | Entity | Table | Purpose | Foreign Keys | Indices |

@@ -32,9 +32,15 @@ import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
+import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.ui.components.asString
+import com.yourname.expensetracker.ui.util.guardedWrite
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
@@ -153,20 +159,28 @@ class RecurringExpensesViewModel @Inject constructor(
     fun deleteManualRule(pattern: RecurringPattern) {
         viewModelScope.launch {
             try {
-                if (pattern.id != null) {
-                    recurringExpenseRepository.deleteById(pattern.id)
-                    refreshTrigger.value += 1
-                } else {
-                    // Legacy fallback: Delete by merchant name if ID is missing (e.g. old local data)
-                    val rules = recurringExpenseRepository.getAll()
-                    val rule = rules.find { it.merchant == pattern.merchantName }
-                    if (rule != null) {
-                        recurringExpenseRepository.delete(rule)
-                        refreshTrigger.value += 1
+                // R18 review: barrier rejection surfaces the bounded message; refresh only on success.
+                val deleted = guardedWrite(::emitWriteBlocked) {
+                    if (pattern.id != null) {
+                        recurringExpenseRepository.deleteById(pattern.id)
+                        true
+                    } else {
+                        // Legacy fallback: Delete by merchant name if ID is missing (e.g. old local data)
+                        val rules = recurringExpenseRepository.getAll()
+                        val rule = rules.find { it.merchant == pattern.merchantName }
+                        if (rule != null) {
+                            recurringExpenseRepository.delete(rule)
+                            true
+                        } else {
+                            false
+                        }
                     }
                 }
+                if (deleted == true) refreshTrigger.value += 1
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
-                Timber.e(e, "Failed to delete rule")
+                Timber.e("Failed to delete rule class=%s", e::class.java.simpleName)
             }
         }
     }
@@ -181,7 +195,9 @@ class RecurringExpensesViewModel @Inject constructor(
                 nextDate = pattern.nextExpectedDate,
                 note = "Detected and confirmed by user"
             )
-            recurringExpenseRepository.insert(manual)
+            guardedWrite(::emitWriteBlocked) {
+                recurringExpenseRepository.insert(manual)
+            } ?: return@launch
             refreshTrigger.value += 1
         }
     }
@@ -189,9 +205,19 @@ class RecurringExpensesViewModel @Inject constructor(
 
     fun deletePlannedExpense(planned: com.yourname.expensetracker.domain.model.PlannedExpense) {
         viewModelScope.launch {
-            plannedExpenseRepository.deletePlannedExpenseById(planned.id)
+            guardedWrite(::emitWriteBlocked) {
+                plannedExpenseRepository.deletePlannedExpenseById(planned.id)
+            } ?: return@launch
             refreshTrigger.value += 1
         }
+    }
+
+    // R18b: one-shot bounded message when a user-started write hits the maintenance write barrier.
+    private val _writeBlockedMessages = MutableSharedFlow<UiText>(extraBufferCapacity = 1)
+    val writeBlockedMessages: SharedFlow<UiText> = _writeBlockedMessages.asSharedFlow()
+
+    private fun emitWriteBlocked(message: UiText) {
+        _writeBlockedMessages.tryEmit(message)
     }
 }
 
@@ -212,7 +238,17 @@ fun RecurringExpensesScreen(
     val plannedTabTitle = stringResource(R.string.recurring_tab_planned)
     val tabs = listOf(recurringTabTitle, plannedTabTitle)
 
+    // R18b: bounded "changes paused during backup/restore" message for user-started writes.
+    val snackbarHostState = remember { SnackbarHostState() }
+    val writeBlockedContext = LocalContext.current
+    LaunchedEffect(viewModel) {
+        viewModel.writeBlockedMessages.collect { message ->
+            snackbarHostState.showSnackbar(message.asString(writeBlockedContext))
+        }
+    }
+
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         containerColor = SemanticColors.BaseNavy,
         topBar = {
             TopAppBar(

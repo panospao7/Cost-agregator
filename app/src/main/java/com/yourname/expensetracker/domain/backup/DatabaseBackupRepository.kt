@@ -29,10 +29,12 @@ interface DatabaseBackupRepository {
     
     /**
      * Create a .costbackup bundle (encrypted ZIP with manifest, checksums,
-     * database snapshot, and receipt images).
+     * database snapshot, and, only when not redacted, receipt images).
      * @param password The user-provided encryption password
-     * @param includeReceiptImages Whether to include receipt image assets (default: true)
-     * @param redacted Whether to sanitize sensitive data (default: true)
+     * @param includeReceiptImages Whether to include receipt image assets (default: true; has no
+     *   effect while [redacted] is true)
+     * @param redacted Whether to sanitize sensitive data (default: true). The default redacted
+     *   backup does NOT include receipt images.
      * @param privacyMode Explicit privacy mode (overrides includeReceiptImages/redacted when set)
      * @return Result containing the .costbackup File
      */

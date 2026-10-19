@@ -169,6 +169,98 @@ class WorkerSpecSchedulerTest {
         assertTrue("Version bump should flag versionChanged", result.versionChanged)
     }
 
+    // ── R21 / HZ-05: startup scheduling must not replace in-flight one-shot work ──
+
+    @Test
+    fun `two startup schedules with unchanged version both enqueue with KEEP`() {
+        val name = "startup_keep_midnight_worker"
+        val spec = WorkerSpec(
+            name = name,
+            version = 1,
+            enabled = true,
+            repeatIntervalHours = null,
+            oneShotPolicy = ExistingWorkPolicy.KEEP
+        )
+        every { WorkerSpec.DEFAULTS } returns mapOf(name to spec)
+
+        val policies = mutableListOf<ExistingWorkPolicy>()
+        every {
+            workManager.enqueueUniqueWork(eq(name), capture(policies), any<OneTimeWorkRequest>())
+        } returns mockk(relaxed = true)
+
+        // First cold start: no stored version yet, so the version-bump REPLACE is
+        // legitimate. It persists the version after the enqueue.
+        WorkerSpecScheduler.scheduleAtMidnight(context, name, workerClass, timeProvider)
+        // Second and third cold starts: version unchanged, must use KEEP so the
+        // queued unique work (and its work id) is preserved.
+        val second = WorkerSpecScheduler.scheduleAtMidnight(context, name, workerClass, timeProvider)
+        val third = WorkerSpecScheduler.scheduleAtMidnight(context, name, workerClass, timeProvider)
+
+        assertEquals(3, policies.size)
+        assertEquals(ExistingWorkPolicy.KEEP, policies[1])
+        assertEquals(ExistingWorkPolicy.KEEP, policies[2])
+        assertFalse(second.versionChanged)
+        assertFalse(third.versionChanged)
+        assertEquals(ExistingWorkPolicy.KEEP.name, second.policyUsed)
+    }
+
+    @Test
+    fun `ai_daily_briefing startup schedule uses KEEP when version unchanged and REPLACE on version change`() {
+        val name = "ai_daily_briefing"
+        val spec = WorkerSpec.DEFAULTS.getValue(name)
+        val prefs = context.getSharedPreferences("worker_spec_versions", Context.MODE_PRIVATE)
+
+        val policySlot = slot<ExistingWorkPolicy>()
+        every {
+            workManager.enqueueUniqueWork(eq(name), capture(policySlot), any<OneTimeWorkRequest>())
+        } returns mockk(relaxed = true)
+
+        prefs.edit().putInt(name, spec.version).commit()
+        WorkerSpecScheduler.scheduleAtMidnight(context, name, workerClass, timeProvider)
+        assertEquals(ExistingWorkPolicy.KEEP, policySlot.captured)
+
+        prefs.edit().putInt(name, spec.version - 1).commit()
+        val bumped = WorkerSpecScheduler.scheduleAtMidnight(context, name, workerClass, timeProvider)
+        assertEquals(ExistingWorkPolicy.REPLACE, policySlot.captured)
+        assertTrue(bumped.versionChanged)
+    }
+
+    @Test
+    fun `scheduleAtMidnight policyOverride wins over spec policy and version bump`() {
+        val name = "override_midnight_worker"
+        val spec = WorkerSpec(
+            name = name,
+            version = 2,
+            enabled = true,
+            repeatIntervalHours = null,
+            oneShotPolicy = ExistingWorkPolicy.KEEP
+        )
+        every { WorkerSpec.DEFAULTS } returns mapOf(name to spec)
+        val prefs = context.getSharedPreferences("worker_spec_versions", Context.MODE_PRIVATE)
+
+        val policySlot = slot<ExistingWorkPolicy>()
+        every {
+            workManager.enqueueUniqueWork(eq(name), capture(policySlot), any<OneTimeWorkRequest>())
+        } returns mockk(relaxed = true)
+
+        // Unchanged version: override beats the spec's KEEP.
+        prefs.edit().putInt(name, spec.version).commit()
+        val unchanged = WorkerSpecScheduler.scheduleAtMidnight(
+            context, name, workerClass, timeProvider,
+            policyOverride = ExistingWorkPolicy.APPEND_OR_REPLACE
+        )
+        assertEquals(ExistingWorkPolicy.APPEND_OR_REPLACE, policySlot.captured)
+        assertEquals(ExistingWorkPolicy.APPEND_OR_REPLACE.name, unchanged.policyUsed)
+
+        // Version bump: override still beats the forced REPLACE.
+        prefs.edit().putInt(name, 1).commit()
+        WorkerSpecScheduler.scheduleAtMidnight(
+            context, name, workerClass, timeProvider,
+            policyOverride = ExistingWorkPolicy.APPEND_OR_REPLACE
+        )
+        assertEquals(ExistingWorkPolicy.APPEND_OR_REPLACE, policySlot.captured)
+    }
+
     @Test
     fun `scheduleFromSpec merchant_key one-shot enqueues with REPLACE oneShotPolicy`() {
         // Exercises the REAL merchant_key_backfill path, which schedules via

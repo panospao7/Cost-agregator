@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.data.repository
 
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.*
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.entity.*
@@ -28,6 +30,7 @@ class NotificationRepositoryStressTest {
     private val transactionEventDao = mockk<TransactionEventDao>(relaxed = true)
     private val classifier = mockk<TransactionClassifier>(relaxed = true)
     private val pipeline = mockk<NotificationProcessingPipeline>(relaxed = true)
+    private val writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
 
     private lateinit var repository: NotificationRepository
 
@@ -39,6 +42,10 @@ class NotificationRepositoryStressTest {
 
     @Before
     fun setup() {
+        // R27-S2c: runWrite is a pass-through here; a relaxed mock would never invoke the block.
+        coEvery {
+            writeBarrier.runWrite(any<DatabaseAccessOperation>(), any<suspend () -> Any?>())
+        } coAnswers { secondArg<suspend () -> Any?>().invoke() }
         coEvery { dao.getAllFlow() } returns MutableStateFlow(emptyList())
         coEvery { dao.getRecentFlow(any()) } returns MutableStateFlow(emptyList())
         coEvery { dao.getByPackageFlow(any()) } returns MutableStateFlow(emptyList())
@@ -70,10 +77,11 @@ class NotificationRepositoryStressTest {
             pendingReviewDao,
             userCorrectionDao,
             sourceStatsDao,
-            transactionEventDao,
+            mockk(relaxed = true),
+            mockk(relaxed = true),
             classifier,
             pipeline,
-            mockk(relaxed = true),
+            writeBarrier,
             mockk(relaxed = true),
             mockk(relaxed = true)
         )

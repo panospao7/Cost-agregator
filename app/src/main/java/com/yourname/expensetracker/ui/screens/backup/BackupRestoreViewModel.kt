@@ -8,6 +8,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.backup.CostbackupBundle
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.data.backup.RestoreRestartSignal
 import com.yourname.expensetracker.domain.backup.DatabaseBackupRepository
 import com.yourname.expensetracker.domain.backup.DatabaseImportResult
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -37,6 +38,8 @@ data class BackupRestoreUiState(
     val lastBackupDate: String? = null,
     val backupInfoUnavailable: Boolean = false,
     val errorMessage: String? = null,
+    /** R25 P-I2: resource-backed (localized) restore rejection; bounded, never raw text. */
+    @androidx.annotation.StringRes val errorMessageRes: Int? = null,
     val successMessage: String? = null,
     val restartRequired: Boolean = false,
     /** RG01-N1: number of receipt images skipped during restore (count only, never paths/names). */
@@ -50,7 +53,8 @@ class BackupRestoreViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val databaseBackupRepository: DatabaseBackupRepository,
     private val restoreMaintenanceMode: RestoreMaintenanceMode,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val restoreRestartSignal: RestoreRestartSignal
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(BackupRestoreUiState())
@@ -257,7 +261,7 @@ class BackupRestoreViewModel @Inject constructor(
                 onSuccess = { importResult ->
                     Timber.d("Restore completed: %s", importResult)
                     when (importResult) {
-                        is DatabaseImportResult.SuccessNeedsRestart ->
+                        is DatabaseImportResult.SuccessNeedsRestart -> {
                             _uiState.value = _uiState.value.copy(
                                 isRestoring = false,
                                 successMessage = "Restore completed successfully!",
@@ -265,6 +269,15 @@ class BackupRestoreViewModel @Inject constructor(
                                 // RG01-N1: count only; warning strings are never surfaced.
                                 receiptAssetWarningCount = importResult.summary.receiptAssetWarnings.size
                             )
+                            // R27-S3: in-memory restart request, set ONLY from this in-process
+                            // result (never from the persisted mode -> no restart loop). The
+                            // restart-required lock screen in MainActivity consumes it, so the
+                            // relaunch does not depend on this screen still being composed.
+                            // RestoreMaintenanceMode persists the restart-required mode with
+                            // SharedPreferences.commit() (synchronous) before the repository
+                            // returns, so the relaunched process reads it back.
+                            restoreRestartSignal.markRequested()
+                        }
                         is DatabaseImportResult.Success ->
                             _uiState.value = _uiState.value.copy(
                                 isRestoring = false,
@@ -281,7 +294,12 @@ class BackupRestoreViewModel @Inject constructor(
                     Timber.e("RESTORE_FAILED class=%s", error.javaClass.simpleName)
                     // RP-15 (15-D): typed privacy denial — no message matching.
                     val denial = denialStateOrNull(error)
+                    // R25 P-I2: typed schema rejection maps to a specific localized message by its
+                    // bounded code; an unknown code falls through to the generic failure.
+                    val schemaRes = (error as? com.yourname.expensetracker.data.repository.BackupSchemaUnsupportedException)
+                        ?.let { schemaRejectionRes(it.code) }
                     val message = when {
+                        schemaRes != null -> null
                         error is com.yourname.expensetracker.data.backup.CostbackupBundle.WrongBackupPasswordException ->
                             "Incorrect password or corrupt backup file"
                         // P7-CURRENT-023: zip-bomb / oversized-bundle rejection from the
@@ -296,6 +314,7 @@ class BackupRestoreViewModel @Inject constructor(
                     _uiState.value = _uiState.value.copy(
                         isRestoring = false,
                         errorMessage = message,
+                        errorMessageRes = schemaRes,
                         privacyBlocked = denial
                     )
                 }
@@ -307,7 +326,16 @@ class BackupRestoreViewModel @Inject constructor(
      * Clears the current error message.
      */
     fun clearError() {
-        _uiState.value = _uiState.value.copy(errorMessage = null, privacyBlocked = null)
+        _uiState.value = _uiState.value.copy(errorMessage = null, errorMessageRes = null, privacyBlocked = null)
+    }
+
+    @androidx.annotation.StringRes
+    private fun schemaRejectionRes(code: String): Int? = when (code) {
+        com.yourname.expensetracker.data.repository.BackupSchemaUnsupportedException.LEGACY ->
+            com.yourname.expensetracker.R.string.backup_schema_too_old
+        com.yourname.expensetracker.data.repository.BackupSchemaUnsupportedException.NEWER ->
+            com.yourname.expensetracker.R.string.backup_schema_too_new
+        else -> null
     }
 
     /**
@@ -338,26 +366,6 @@ class BackupRestoreViewModel @Inject constructor(
      */
     fun clearSuccess() {
         _uiState.value = _uiState.value.copy(successMessage = null)
-    }
-
-    /**
-     * P7-P1-08: Dismisses the restart-required banner and unblocks writes.
-     *
-     * After a successful restore the app enters
-     * [RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED] which blocks all
-     * database writes. The user can dismiss this warning to resume normal operation
-     * (the restored database is already in place). This call:
-     * 1. Clears the screen-local `restartRequired` banner flag.
-     * 2. Exits maintenance mode to [RestoreMaintenanceMode.Mode.NORMAL], re-enabling
-     *    writes and rescheduling background workers.
-     *
-     * Note: the global app-shell lock ([com.yourname.expensetracker.ui.MainActivity]
-     * observing `operationalStateFlow`) is also cleared by the exit call, so the full-
-     * screen restart barrier is dismissed as well.
-     */
-    fun dismissRestartRequired() {
-        _uiState.value = _uiState.value.copy(restartRequired = false)
-        restoreMaintenanceMode.exit(forceRestartRequired = false)
     }
 
     /**

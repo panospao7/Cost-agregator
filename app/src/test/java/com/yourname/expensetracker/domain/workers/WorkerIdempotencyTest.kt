@@ -100,12 +100,14 @@ class WorkerIdempotencyTest {
         assertEquals("oneShotPolicy should default to KEEP",
             ExistingWorkPolicy.KEEP, defaultSpec.oneShotPolicy)
 
-        // ai_daily_briefing uses REPLACE (U-WORKER-04) so the midnight chain is
-        // always re-armed even if a stale pending request exists.
+        // R21 / HZ-05 (approved behaviour change, supersedes U-WORKER-04): ai_daily_briefing
+        // uses KEEP so cold-start scheduling never replaces queued/running one-shot work.
+        // Version changes still force REPLACE in WorkerSpecScheduler, and the worker's
+        // self-reschedule passes APPEND_OR_REPLACE.
         val briefing = WorkerSpec.DEFAULTS["ai_daily_briefing"]
         assertNotNull("ai_daily_briefing spec must exist", briefing)
-        assertEquals("ai_daily_briefing should use REPLACE one-shot policy",
-            ExistingWorkPolicy.REPLACE, briefing!!.oneShotPolicy)
+        assertEquals("ai_daily_briefing should use KEEP one-shot policy",
+            ExistingWorkPolicy.KEEP, briefing!!.oneShotPolicy)
 
         // merchant_key_backfill overrides to REPLACE.
         val merchantKey = WorkerSpec.DEFAULTS["merchant_key_backfill"]

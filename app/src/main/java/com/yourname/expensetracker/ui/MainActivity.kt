@@ -26,7 +26,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import com.yourname.expensetracker.ui.permissions.NotificationPromptPolicy
+import com.yourname.expensetracker.ui.permissions.NotificationPromptStore
+import com.yourname.expensetracker.ui.permissions.findHostActivity
+import com.yourname.expensetracker.ui.permissions.openAppNotificationSettings
 import androidx.activity.viewModels
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.lifecycleScope
@@ -35,6 +40,10 @@ import com.yourname.expensetracker.domain.ai.service.AiEngagementRepository
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.backup.AppOperationalState
+import com.yourname.expensetracker.data.backup.RestoreRestartSignal
+import com.yourname.expensetracker.data.database.DatabaseOpenGate
+import com.yourname.expensetracker.ui.unsupported.UnsupportedDatabaseActivity
+import kotlinx.coroutines.flow.first
 import com.yourname.expensetracker.data.database.entity.Budget as BudgetEntity
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.database.entity.SplitShare
@@ -82,7 +91,10 @@ import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
 import com.yourname.expensetracker.ui.util.ClipboardAmountParser
 import com.yourname.expensetracker.ui.util.HapticType
 import com.yourname.expensetracker.ui.util.rememberHapticFeedback
+import com.yourname.expensetracker.ui.util.restartApp
 import dagger.hilt.android.AndroidEntryPoint
+import com.yourname.expensetracker.domain.transaction.lifecycle.GroupLinkedExpenseException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
@@ -107,12 +119,26 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var gson: Gson
 
+    /** R27-S3: in-memory (non-persisted) automatic-restart request after an in-process restore. */
+    @Inject
+    lateinit var restoreRestartSignal: RestoreRestartSignal
+
     /** RP-17 17-A: central bank-sync availability gate (D1). */
     @Inject
     lateinit var bankFeatureAvailability: com.yourname.expensetracker.domain.bank.BankFeatureAvailability
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // R25 B2: a blocked live database (too old / too new / unreadable) must never reach the
+        // normal UI; redirect to the plain export-only screen before any intent handling.
+        if (DatabaseOpenGate.blockedReasonOrNull(applicationContext) != null) {
+            startActivity(
+                Intent(this, UnsupportedDatabaseActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            )
+            finish()
+            return
+        }
         enableEdgeToEdge()
         if (savedInstanceState == null) {
             val consumed = handleIntent(intent)
@@ -135,7 +161,8 @@ class MainActivity : ComponentActivity() {
                             mainViewModel = mainViewModel,
                             actionRegistry = actionRegistry,
                             expenseRepository = expenseRepository,
-                            gson = gson
+                            gson = gson,
+                            restoreRestartSignal = restoreRestartSignal
                         )
                     }
                 }
@@ -308,12 +335,15 @@ fun MainScreen(
     mainViewModel: MainViewModel,
     actionRegistry: ContextualActionRegistry,
     expenseRepository: ExpenseRepository,
-    gson: Gson
+    gson: Gson,
+    restoreRestartSignal: RestoreRestartSignal
 ) {
     // RP-17 17-A / D1: availability resolved here (same seam as
     // NavigationController/HomeScreen) — the Activity's injected instance is
     // not in scope inside this top-level composable.
     val bankSyncAvailable = remember { com.yourname.expensetracker.domain.bank.BankFeatureAvailability().isBankSyncAvailable }
+    // R19 (H-1 hide): Tax / Investment / Challenges are hidden in release builds.
+    val deferredFeaturesAvailable = com.yourname.expensetracker.ui.navigation.DeferredFeatureGate.available
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
 
     val transactionFilterSaver = remember {
@@ -426,11 +456,20 @@ fun MainScreen(
     val operationalState by mainViewModel.operationalState.collectAsState()
     when (val state = operationalState) {
         is AppOperationalState.RestartRequiredAfterRestore -> {
+            // R27-S3: automatic relaunch only for a restore that completed in THIS process
+            // (in-memory signal). A cold start that merely reads the persisted
+            // restart-required mode sees the flag false -> no restart loop. Waiting on the
+            // StateFlow (instead of a one-time check) also covers the lock screen being
+            // composed just before the restore result marks the signal.
+            LaunchedEffect(Unit) {
+                restoreRestartSignal.requested.first { it }
+                restartApp(context)
+            }
             AppOperationalLockScreen(
                 title = "Restart Required",
                 message = stringResource(R.string.restart_required_database_operation),
                 actionLabel = "Restart Now",
-                onAction = { Runtime.getRuntime().exit(0) }
+                onAction = { restartApp(context) }
             )
             return
         }
@@ -460,20 +499,46 @@ fun MainScreen(
         else -> { /* Normal / BackupExporting — app continues */ }
     }
 
+    // R24b: ask once per install (max 2 dialogs, no loop). If the system request is denied and the
+    // system will not (or no longer will) show its dialog, the in-app dialog is shown ONE more time
+    // in "open settings" mode; that mode's button only opens settings and never relaunches the request.
+    var notificationOpenSettings by rememberSaveable { mutableStateOf(false) }
+    var notificationSettingsOfferUsed by rememberSaveable { mutableStateOf(false) }
+    // Default true (conservative): if lost across process death, no settings offer is made.
+    var notificationRationaleBefore by rememberSaveable { mutableStateOf(true) }
+    val notificationPromptStore = remember(context) {
+        NotificationPromptStore(context.applicationContext)
+    }
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
-        if (!isGranted) {
+        val rationaleAfter = notificationRationaleNow(context)
+        if (!notificationSettingsOfferUsed &&
+            NotificationPromptPolicy.shouldOfferSettingsAfterDenial(
+                rationaleBefore = notificationRationaleBefore,
+                rationaleAfter = rationaleAfter,
+                granted = isGranted
+            )
+        ) {
+            notificationSettingsOfferUsed = true
+            notificationOpenSettings = true
             showNotificationPermissionDialog = true
         }
     }
 
     LaunchedEffect(Unit) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != 
-                PackageManager.PERMISSION_GRANTED) {
-                showNotificationPermissionDialog = true
-            }
+        val granted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+        if (NotificationPromptPolicy.shouldAutoPrompt(
+                granted = granted,
+                sdkInt = Build.VERSION.SDK_INT,
+                alreadyAsked = notificationPromptStore.hasPrompted()
+            )
+        ) {
+            // Flag is set when the prompt is shown, so it can never be shown automatically twice.
+            notificationPromptStore.markPrompted()
+            showNotificationPermissionDialog = true
         }
     }
 
@@ -491,7 +556,15 @@ fun MainScreen(
     NotificationPermissionDialog(
         showDialog = showNotificationPermissionDialog,
         onDismiss = { showNotificationPermissionDialog = false },
-        onEnable = { permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) }
+        onEnable = {
+            if (notificationOpenSettings) {
+                openAppNotificationSettings(context)
+            } else {
+                notificationRationaleBefore = notificationRationaleNow(context)
+                permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        },
+        openSettings = notificationOpenSettings
     )
 
     Scaffold(
@@ -727,13 +800,20 @@ fun MainScreen(
                     )
                 }
                 is NavigationDestination.InvestmentPortfolio -> {
-                    InvestmentPortfolioScreen(
-                        onNavigateBack = { navigation.navigateBack() },
-                        onAddInvestment = { 
-                            // Show "Coming soon" since add investment flow not implemented
-                            navigation.navigateBack()
+                    // R19 (H-1 hide): deferred feature is never rendered in release.
+                    if (deferredFeaturesAvailable) {
+                        InvestmentPortfolioScreen(
+                            onNavigateBack = { navigation.navigateBack() },
+                            onAddInvestment = {
+                                // Show "Coming soon" since add investment flow not implemented
+                                navigation.navigateBack()
+                            }
+                        )
+                    } else {
+                        androidx.compose.runtime.LaunchedEffect(Unit) {
+                            navigation.navigateHome()
                         }
-                    )
+                    }
                 }
                 is NavigationDestination.BankConnections -> {
                     // RP-17 17-A: release builds never render the bank screen, never
@@ -760,14 +840,21 @@ fun MainScreen(
                     )
                 }
                 is NavigationDestination.SpendingChallenges -> {
-                    SpendingChallengesScreen(
-                        initialShowCreateDialog = currentDestination.showCreateDialog,
-                        onNavigateBack = { navigation.navigateBack() },
-                        onCreateChallenge = { 
-                            navigation.navigateTo(NavigationDestination.SpendingChallenges(showCreateDialog = true))
-                        },
-                        actionRegistry = actionRegistry
-                    )
+                    // R19 (H-1 hide): deferred feature is never rendered in release.
+                    if (deferredFeaturesAvailable) {
+                        SpendingChallengesScreen(
+                            initialShowCreateDialog = currentDestination.showCreateDialog,
+                            onNavigateBack = { navigation.navigateBack() },
+                            onCreateChallenge = {
+                                navigation.navigateTo(NavigationDestination.SpendingChallenges(showCreateDialog = true))
+                            },
+                            actionRegistry = actionRegistry
+                        )
+                    } else {
+                        androidx.compose.runtime.LaunchedEffect(Unit) {
+                            navigation.navigateHome()
+                        }
+                    }
                 }
                 is NavigationDestination.AdvancedAnalytics -> {
                     AdvancedAnalyticsScreen(
@@ -808,10 +895,13 @@ fun MainScreen(
                         onSplitComplete = { shares, splitType ->
                             val targetExpenseId = currentDestination.resolvedExpenseId
                             coroutineScope.launch {
+                                // R18: a group-linked expense's share split is a money edit and is
+                                // blocked by the lifecycle coordinator; show the bounded guidance.
+                                var blockedGroupLinked = false
                                 val applied = if (targetExpenseId == null) {
                                     true
                                 } else {
-                                runCatching {
+                                    try {
                                         applyVisualSplitToExpense(
                                             expenseRepository = expenseRepository,
                                             gson = gson,
@@ -820,12 +910,25 @@ fun MainScreen(
                                             splitType = splitType,
                                             templateId = currentDestination.templateId
                                         )
-                                    }.onFailure { error ->
+                                    } catch (e: CancellationException) {
+                                        throw e
+                                    } catch (error: GroupLinkedExpenseException) {
+                                        blockedGroupLinked = true
+                                        Timber.w("Visual split blocked code=%s", error.code)
+                                        false
+                                    } catch (error: Exception) {
                                         Timber.e(error, "Failed to apply visual split for expenseId=%s", targetExpenseId)
-                                    }.getOrDefault(false)
+                                        false
+                                    }
                                 }
 
                                 if (!applied) {
+                                    if (blockedGroupLinked) {
+                                        snackbarHostState.showSnackbar(
+                                            context.getString(R.string.expense_edit_blocked_group_linked)
+                                        )
+                                        return@launch
+                                    }
                                     snackbarHostState.showSnackbar("Unable to apply split")
                                     return@launch
                                 }
@@ -861,9 +964,16 @@ fun MainScreen(
                     )
                 }
                 is NavigationDestination.TaxConfiguration -> {
-                    TaxConfigurationScreen(
-                        onNavigateBack = { navigation.navigateBack() }
-                    )
+                    // R19 (H-1 hide): deferred feature is never rendered in release.
+                    if (deferredFeaturesAvailable) {
+                        TaxConfigurationScreen(
+                            onNavigateBack = { navigation.navigateBack() }
+                        )
+                    } else {
+                        androidx.compose.runtime.LaunchedEffect(Unit) {
+                            navigation.navigateHome()
+                        }
+                    }
                 }
                 is NavigationDestination.ExportOptions -> {
                     ExportOptionsScreen(
@@ -872,7 +982,8 @@ fun MainScreen(
                 }
                 is NavigationDestination.BackupRestore -> {
                     BackupRestoreScreen(
-                        onNavigateBack = { navigation.navigateBack() }
+                        onNavigateBack = { navigation.navigateBack() },
+                        onRestartRequired = { restartApp(context) }
                     )
                 }
                 is NavigationDestination.SharedExpenseGroups -> {
@@ -1049,6 +1160,12 @@ fun SmartFAB(
         )
     }
 }
+
+private fun notificationRationaleNow(context: android.content.Context): Boolean =
+    context.findHostActivity()?.let {
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ActivityCompat.shouldShowRequestPermissionRationale(it, Manifest.permission.POST_NOTIFICATIONS)
+    } ?: false
 
 @Composable
 private fun AppOperationalLockScreen(

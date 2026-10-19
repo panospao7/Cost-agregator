@@ -28,6 +28,7 @@ import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.di.IoDispatcher
+import com.yourname.expensetracker.ui.util.UiTimeUtils
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Job
@@ -67,6 +68,13 @@ data class ExportOptionsUiState(
     val exportSuccess: Boolean = false,
     val exportFilePath: String? = null
 )
+
+/**
+ * V-G-1: the export range end is exclusive (DAO contract), so the last included
+ * instant - and therefore the last included calendar day shown to the user and
+ * written to export metadata - is one millisecond earlier.
+ */
+internal fun exportDisplayEndMillis(endExclusiveMillis: Long): Long = endExclusiveMillis - 1L
 
 data class ExportFormat(
     val id: String,
@@ -119,6 +127,8 @@ class ExportOptionsViewModel @Inject constructor(
                     _uiState.value.endDate
                 )
                 _uiState.value = _uiState.value.copy(expenseCount = count, error = null)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: DatabaseAccessBlockedException) {
                 Timber.e(
                     "Failed loading expense count — database restore in progress class=%s",
@@ -168,6 +178,27 @@ class ExportOptionsViewModel @Inject constructor(
         val current = _uiState.value
         if (formatId == current.selectedFormat) return
         _uiState.value = invalidateExportResult(current).copy(selectedFormat = formatId)
+    }
+
+    /**
+     * V-G-1: applies a range picked in Material3 date pickers. The picker values are
+     * UTC-midnight millis of the picked calendar day (NOT local instants), so they are
+     * converted to local dates first. The range covers whole local days:
+     * start = start of the first picked day, end = start of the day after the last
+     * picked day (the DAO end bound is exclusive), so a same-day range is valid and an
+     * expense at 23:30 local on the end day is included. Validation is shared with
+     * [setDateRange].
+     */
+    fun setPickedDateRange(
+        startPickerMillis: Long,
+        endPickerMillis: Long,
+        zone: ZoneId = ZoneId.systemDefault()
+    ) {
+        val startDay = UiTimeUtils.pickerMillisToLocalDate(startPickerMillis)
+        val endDay = UiTimeUtils.pickerMillisToLocalDate(endPickerMillis)
+        val startMillis = startDay.atStartOfDay(zone).toInstant().toEpochMilli()
+        val endExclusiveMillis = endDay.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+        setDateRange(startMillis, endExclusiveMillis)
     }
 
     fun setDateRange(startDate: Long, endDate: Long) {
@@ -546,7 +577,7 @@ class ExportOptionsViewModel @Inject constructor(
         val zoneId = ZoneId.systemDefault()
         val generatedAtIso = DateTimeFormatter.ISO_INSTANT.format(Instant.ofEpochMilli(timeProvider.now()))
         val startDate = Instant.ofEpochMilli(_uiState.value.startDate).atZone(zoneId).toLocalDate().format(dateFormatter)
-        val endDate = Instant.ofEpochMilli(_uiState.value.endDate).atZone(zoneId).toLocalDate().format(dateFormatter)
+        val endDate = Instant.ofEpochMilli(exportDisplayEndMillis(_uiState.value.endDate)).atZone(zoneId).toLocalDate().format(dateFormatter)
 
         val prefix = buildString {
             append("{")
@@ -874,7 +905,7 @@ class ExportOptionsViewModel @Inject constructor(
                 val zoneId = ZoneId.systemDefault()
                 val generatedAtIso = DateTimeFormatter.ISO_INSTANT.format(Instant.ofEpochMilli(timeProvider.now()))
                 val sDate = Instant.ofEpochMilli(startDate).atZone(zoneId).toLocalDate().format(dateFormatter)
-                val eDate = Instant.ofEpochMilli(endDate).atZone(zoneId).toLocalDate().format(dateFormatter)
+                val eDate = Instant.ofEpochMilli(exportDisplayEndMillis(endDate)).atZone(zoneId).toLocalDate().format(dateFormatter)
                 val prefix = buildString {
                     append("{")
                     append("\"schemaVersion\":2,")

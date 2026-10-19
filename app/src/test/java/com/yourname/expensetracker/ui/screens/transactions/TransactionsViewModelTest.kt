@@ -141,6 +141,45 @@ class TransactionsViewModelTest : ViewModelTestUtils() {
         collection.cancel()
     }
 
+    @Test fun `R18 group-linked delete block shows bounded resource message`() = runTest(testDispatcher) {
+        val expense = mockk<Expense>(relaxed = true)
+        coEvery { expenses.deleteExpense(expense) } throws com.yourname.expensetracker.domain.transaction.lifecycle.GroupLinkedExpenseException(
+            com.yourname.expensetracker.domain.transaction.lifecycle.GroupLinkedExpenseException.EXPENSE_DELETE_BLOCKED_GROUP_LINKED
+        )
+        val received = mutableListOf<UiText>()
+        val collection = backgroundScope.launch { model.error.collect { received += it } }
+        runCurrent()
+        model.deleteExpense(expense)
+        advanceUntilIdle()
+        assertEquals(
+            UiText.from(com.yourname.expensetracker.R.string.expense_delete_blocked_group_linked),
+            received.single()
+        )
+        assertEquals(
+            listOf(null to "Transactions: TRANSACTION_DELETE_BLOCKED code=EXPENSE_DELETE_BLOCKED_GROUP_LINKED"),
+            logs
+        )
+        collection.cancel()
+    }
+
+    @Test fun `R18 group-linked ownership edit block shows bounded resource message`() = runTest(testDispatcher) {
+        val expense = mockk<Expense>(relaxed = true)
+        coEvery { expenses.updateOwnership(any(), any(), any(), any(), any(), any(), any()) } throws
+            com.yourname.expensetracker.domain.transaction.lifecycle.GroupLinkedExpenseException(
+                com.yourname.expensetracker.domain.transaction.lifecycle.GroupLinkedExpenseException.EXPENSE_EDIT_BLOCKED_GROUP_LINKED
+            )
+        val received = mutableListOf<UiText>()
+        val collection = backgroundScope.launch { model.error.collect { received += it } }
+        runCurrent()
+        model.updateOwnership(expense, false, "", false, "", "", "")
+        advanceUntilIdle()
+        assertEquals(
+            UiText.from(com.yourname.expensetracker.R.string.expense_edit_blocked_group_linked),
+            received.single()
+        )
+        collection.cancel()
+    }
+
     @Test fun `category failure emits bounded error`() = runTest(testDispatcher) {
         val expense = mockk<Expense>(relaxed = true)
         coEvery { expenses.updateExpenseCategory(expense, 2L) } throws hostile

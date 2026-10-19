@@ -37,6 +37,22 @@ sealed interface ReminderActionResult {
 }
 
 /**
+ * R21 S1: outcome of [RecurringLifecycleCoordinator.linkExpenseToSpecificOccurrence].
+ *
+ * - [AlreadyLinkedToThis]: the expense is already linked to the requested occurrence.
+ * - [AlreadyLinkedElsewhere]: the EXPENSE is already linked to a DIFFERENT occurrence.
+ * - [NotOpen]: the requested occurrence cannot accept a link (missing, terminal status,
+ *   or already held by another expense).
+ */
+enum class SpecificLinkResult {
+    Linked,
+    AlreadyLinkedToThis,
+    AlreadyLinkedElsewhere,
+    NotOpen,
+    ExpenseNotEligible
+}
+
+/**
  * Orchestrates the full lifecycle of recurring-expense occurrences:
  * expansion, conflict resolution, materialization, and linkage.
  *
@@ -87,6 +103,29 @@ class RecurringLifecycleCoordinator @Inject constructor(
 
         /** Stale claim threshold in ms (5 minutes). */
         const val STALE_CLAIM_THRESHOLD_MS = 300_000L
+
+        /** R21 S1: provenance source code for the automatic (matching) expense link. */
+        const val SOURCE_DIRECT_EXPENSE_LINK = "direct_expense_link"
+
+        /** R21 S1: controlled cancel reasons used by [collapseStaleDueDeliveries]. */
+        const val REASON_STALE_WINDOW_SUPERSEDED = "STALE_WINDOW_SUPERSEDED"
+        const val REASON_STALE_WINDOW_EXPIRED = "STALE_WINDOW_EXPIRED"
+
+        /** Max ids per IN (...) binding (SQLite variable limit headroom). */
+        private const val DELIVERY_ID_CHUNK = 900
+
+        /** R21 S1: fixed fallback written when a provenance source code is not a bounded code. */
+        const val SOURCE_UNKNOWN = "unknown_source"
+
+        private val BOUNDED_SOURCE_PATTERN = Regex("^[A-Za-z0-9_:.\\-]{1,64}$")
+
+        /**
+         * R21 S1: provenance `source` is persisted into event metadata, so only a bounded
+         * code (letters, digits, `_ : . -`, 1..64 chars, no whitespace) is accepted; anything
+         * else (free text, spaces, blank, oversize) is replaced by [SOURCE_UNKNOWN]. Never throws.
+         */
+        internal fun sanitizeProvenanceSource(source: String): String =
+            if (BOUNDED_SOURCE_PATTERN.matches(source)) source else SOURCE_UNKNOWN
     }
 
     /**
@@ -324,20 +363,11 @@ class RecurringLifecycleCoordinator @Inject constructor(
         val expenseDayEnd = TimePeriodUtils.getEndOfDay(expense.date)
         val expenseMerchantKey = MerchantKeyGenerator.generate(expense.merchant)
 
-        val now = timeProvider.now()
-        var matchId = 0L
-        var matchKey = ""
-        var claimed = false
-
-        // GR-14p: canonical direct scope — the mutations' proof is local
-        // to the legal writer, independent of caller context.
-        writeBarrier.runWrite(
-            DatabaseAccessOperation("RecurringLifecycleCoordinator.linkExpenseToOccurrence")
-        ) {
-            database.withTransaction {
-            // P4-NEW-003: Occurrence lookup INSIDE the transaction — read + write are atomic.
+        // P4-NEW-003: the occurrence lookup runs INSIDE the helper's transaction
+        // (selectTarget is invoked in-transaction) — read + claim are atomic.
+        val result = claimLinkSuppressInWrite(expenseId, SOURCE_DIRECT_EXPENSE_LINK) {
             val occurrences = occurrenceDao.getByDateRange(expenseDayStart, expenseDayEnd)
-            val match = occurrences.firstOrNull { occ ->
+            occurrences.firstOrNull { occ ->
                 if (occ.status != "PLANNED" || occ.linkedExpenseId != null) return@firstOrNull false
 
                 // Merchant key match (case-insensitive)
@@ -352,76 +382,260 @@ class RecurringLifecycleCoordinator @Inject constructor(
                 if (!occ.expectedCurrency.equals(expense.currency, ignoreCase = true)) return@firstOrNull false
 
                 true
-            } ?: return@withTransaction
-
-            matchId = match.id
-            matchKey = match.occurrenceKey
-
-            // P4-CURRENT-001: Use conditional DAO method to atomically claim the occurrence.
-            // If another thread already claimed it, claimForExpense returns 0.
-            val rows = occurrenceDao.claimForExpense(
-                occurrenceId = match.id,
-                expenseId = expenseId,
-                amount = expense.amount,
-                currency = expense.currency,
-                paidAt = now
-            )
-            if (rows == 0) {
-                // Already claimed by another thread — abort without side effects
-                return@withTransaction
-            }
-            claimed = true
-
-            // P4-NEW-009: JSONObject.put() auto-escapes user-provided strings (currency)
-            eventWriter.writeCritical(
-                occurrenceId = match.id,
-                eventType = "OCCURRENCE_PAID",
-                oldStatus = "PLANNED",
-                newStatus = "PAID",
-                metadata = JSONObject().apply {
-                    put("expenseId", expenseId)
-                    put("amount", expense.amount)
-                    put("currency", expense.currency)
-                }.toString()
-            )
-
-            val planned = plannedExpenseDao.getBySourceOccurrenceKey(match.occurrenceKey)
-            if (planned != null) {
-                plannedExpenseDao.linkToActualExpense(planned.id, expenseId, now)
-                // Write PLANNED_FULFILLED event for provenance tracking
-                eventWriter.writeCritical(
-                    occurrenceId = match.id,
-                    eventType = "PLANNED_FULFILLED",
-                    oldStatus = "PLANNED",
-                    newStatus = "FULFILLED",
-                    metadata = JSONObject().apply {
-                        put("plannedExpenseId", planned.id)
-                        put("occurrenceKey", match.occurrenceKey)
-                        put("expenseId", expenseId)
-                        put("source", "direct_expense_link")
-                    }.toString()
-                )
-            }
-
-            val suppressed = reminderDeliveryDao.suppressOpenDeliveriesForOccurrence(match.id, now, "expense_linked:$expenseId")
-            // Write REMINDER_SUPPRESSED_PAID event when reminders are cancelled due to payment
-            eventWriter.writeCritical(
-                occurrenceId = match.id,
-                eventType = if (suppressed > 0) "REMINDER_SUPPRESSED_PAID" else "REMINDER_SUPPRESSION_NOOP",
-                newStatus = if (suppressed > 0) "CANCELLED" else null,
-                metadata = """{"expenseId":$expenseId,"suppressedCount":$suppressed,"source":"direct_expense_link"}"""
-            )
-            }
+            }?.id
         }
 
-        if (!claimed) return false
+        if (result.outcome != ClaimLinkOutcome.CLAIMED) return false
 
         Timber.d(
             "Recurring: expense %d linked to occurrence %d (occurrenceKey=%s) — PAID, planned fulfilled, reminders suppressed",
-            expenseId, matchId, matchKey
+            expenseId, result.occurrenceId, result.occurrenceKey
         )
         return true
     }
+
+    /**
+     * R21 S1: links [expenseId] to one explicitly chosen occurrence (user/UI-driven
+     * "this payment covers that bill"). Shares the exact claim/fulfil/suppress
+     * write path with [linkExpenseToOccurrence] so a specific link followed by an
+     * automatic link can never produce two PAID occurrences for one expense.
+     *
+     * @param source bounded controlled reason code for provenance events (never raw text).
+     */
+    suspend fun linkExpenseToSpecificOccurrence(
+        occurrenceId: Long,
+        expenseId: Long,
+        source: String
+    ): SpecificLinkResult {
+        val result = claimLinkSuppressInWrite(expenseId, source) { occurrenceId }
+        return when (result.outcome) {
+            ClaimLinkOutcome.CLAIMED -> SpecificLinkResult.Linked
+            ClaimLinkOutcome.ALREADY_LINKED_TO_THIS -> SpecificLinkResult.AlreadyLinkedToThis
+            ClaimLinkOutcome.ALREADY_LINKED_ELSEWHERE -> SpecificLinkResult.AlreadyLinkedElsewhere
+            ClaimLinkOutcome.EXPENSE_NOT_ELIGIBLE -> SpecificLinkResult.ExpenseNotEligible
+            ClaimLinkOutcome.NO_TARGET,
+            ClaimLinkOutcome.NOT_OPEN -> SpecificLinkResult.NotOpen
+        }
+    }
+
+    /**
+     * R21 S1: read-only. Earliest open (PLANNED, unlinked) occurrence of the rule,
+     * optionally restricted to `dueDate <= dueOnOrBefore`.
+     */
+    suspend fun findEarliestOpenOccurrence(ruleId: Long, dueOnOrBefore: Long?): RecurringOccurrence? =
+        occurrenceDao.findEarliestOpenBySource(SOURCE_TYPE_RECURRING_RULE, ruleId, dueOnOrBefore)
+
+    /**
+     * R21 S1: collapses stale DUE reminder deliveries so a long-offline device does
+     * not fire one notification per missed window / per missed occurrence.
+     *
+     * Only SCHEDULED / SNOOZED / FAILED_TRANSIENT deliveries of PLANNED occurrences
+     * that are currently due are considered; CLAIMED (in-flight) rows are never
+     * touched (the DAO guard also enforces this). Two passes, one transaction:
+     * 1. per occurrence keep only the latest-scheduled window, cancel the rest with
+     *    [REASON_STALE_WINDOW_SUPERSEDED];
+     * 2. per rule, among occurrences already due (dueDate <= now) keep only the
+     *    newest occurrence's delivery, cancel the rest with [REASON_STALE_WINDOW_EXPIRED].
+     * Upcoming (dueDate > now) occurrences are never collapsed.
+     *
+     * @return number of deliveries cancelled.
+     */
+    suspend fun collapseStaleDueDeliveries(now: Long): Int =
+        writeBarrier.runWrite(
+            DatabaseAccessOperation("RecurringLifecycleCoordinator.collapseStaleDueDeliveries")
+        ) {
+            database.withTransaction {
+                val due = reminderDeliveryDao.getPendingDeliveriesForPlannedOccurrences(now)
+                if (due.isEmpty()) return@withTransaction 0
+
+                // Pass 1: latest window per occurrence wins.
+                val supersededIds = mutableListOf<Long>()
+                val keptPerOccurrence = mutableListOf<RecurringReminderDelivery>()
+                for ((_, group) in due.groupBy { it.occurrenceId }) {
+                    val keep = group.maxWith(
+                        compareBy<RecurringReminderDelivery>({ it.scheduledAt }, { it.id })
+                    )
+                    keptPerOccurrence += keep
+                    group.filter { it.id != keep.id }.mapTo(supersededIds) { it.id }
+                }
+
+                // Pass 2: per rule, only the newest already-due occurrence keeps a delivery.
+                val occurrencesById = keptPerOccurrence.map { it.occurrenceId }.distinct()
+                    .chunked(DELIVERY_ID_CHUNK)
+                    .flatMap { occurrenceDao.getByIds(it) }
+                    .associateBy { it.id }
+                val expiredIds = mutableListOf<Long>()
+                val dueByRule = HashMap<Pair<String, Long>, MutableList<Pair<RecurringOccurrence, RecurringReminderDelivery>>>()
+                for (delivery in keptPerOccurrence) {
+                    val occ = occurrencesById[delivery.occurrenceId] ?: continue
+                    if (occ.dueDate > now) continue
+                    dueByRule.getOrPut(occ.sourceType to occ.sourceId) { mutableListOf() } += (occ to delivery)
+                }
+                for ((_, entries) in dueByRule) {
+                    if (entries.size < 2) continue
+                    val newest = entries.maxWith(
+                        compareBy<Pair<RecurringOccurrence, RecurringReminderDelivery>>(
+                            { it.first.dueDate }, { it.first.id }
+                        )
+                    )
+                    entries.filter { it.second.id != newest.second.id }.mapTo(expiredIds) { it.second.id }
+                }
+
+                var supersededCancelled = 0
+                for (chunk in supersededIds.chunked(DELIVERY_ID_CHUNK)) {
+                    supersededCancelled += reminderDeliveryDao.cancelOpenDueDeliveriesByIds(
+                        chunk, REASON_STALE_WINDOW_SUPERSEDED, now
+                    )
+                }
+                var expiredCancelled = 0
+                for (chunk in expiredIds.chunked(DELIVERY_ID_CHUNK)) {
+                    expiredCancelled += reminderDeliveryDao.cancelOpenDueDeliveriesByIds(
+                        chunk, REASON_STALE_WINDOW_EXPIRED, now
+                    )
+                }
+                val cancelled = supersededCancelled + expiredCancelled
+                if (cancelled > 0) {
+                    // Aggregate provenance event: bounded counts only (no ids, no text).
+                    eventWriter.writeCritical(
+                        occurrenceId = null,
+                        eventType = "STALE_DUE_DELIVERIES_COLLAPSED",
+                        metadata = JSONObject().apply {
+                            put("supersededCount", supersededCancelled)
+                            put("expiredCount", expiredCancelled)
+                        }.toString(),
+                        occurredAt = now
+                    )
+                }
+                cancelled
+            }
+        }
+
+    /**
+     * Single legal claim/fulfil/suppress write path for expense -> occurrence links.
+     * Owns the write scope + transaction; [selectTarget] is invoked INSIDE the
+     * transaction so the target read and the conditional claim are atomic.
+     */
+    private suspend fun claimLinkSuppressInWrite(
+        expenseId: Long,
+        rawSource: String,
+        selectTarget: suspend () -> Long?
+    ): ClaimLinkResult {
+        val now = timeProvider.now()
+        val source = sanitizeProvenanceSource(rawSource)
+        // GR-14p: canonical direct scope — the mutations' proof is local
+        // to the legal writer, independent of caller context.
+        return writeBarrier.runWrite(
+            DatabaseAccessOperation("RecurringLifecycleCoordinator.claimLinkSuppressInWrite")
+        ) {
+            database.withTransaction {
+                val expense = expenseDao.getById(expenseId)
+                if (expense == null || !isExpenseEligibleForRecurring(expense)) {
+                    return@withTransaction ClaimLinkResult(ClaimLinkOutcome.EXPENSE_NOT_ELIGIBLE)
+                }
+
+                val targetId = selectTarget()
+
+                // An expense is linked to at most one occurrence: if one already
+                // references it this call is a no-op (never a second PAID row).
+                val alreadyLinked = occurrenceDao.getByLinkedExpenseId(expenseId)
+                if (alreadyLinked != null) {
+                    return@withTransaction ClaimLinkResult(
+                        if (targetId != null && alreadyLinked.id == targetId) {
+                            ClaimLinkOutcome.ALREADY_LINKED_TO_THIS
+                        } else {
+                            ClaimLinkOutcome.ALREADY_LINKED_ELSEWHERE
+                        }
+                    )
+                }
+
+                if (targetId == null) return@withTransaction ClaimLinkResult(ClaimLinkOutcome.NO_TARGET)
+                val match = occurrenceDao.getById(targetId)
+                    ?: return@withTransaction ClaimLinkResult(ClaimLinkOutcome.NOT_OPEN)
+
+                // P4-CURRENT-001: Use conditional DAO method to atomically claim the occurrence.
+                // If another thread already claimed it, claimForExpense returns 0.
+                val rows = occurrenceDao.claimForExpense(
+                    occurrenceId = match.id,
+                    expenseId = expenseId,
+                    amount = expense.amount,
+                    currency = expense.currency,
+                    paidAt = now
+                )
+                if (rows == 0) {
+                    // Not claimable — abort without side effects, classify why.
+                    val current = occurrenceDao.getById(match.id)
+                    val outcome = when {
+                        current == null -> ClaimLinkOutcome.NOT_OPEN
+                        current.linkedExpenseId == expenseId -> ClaimLinkOutcome.ALREADY_LINKED_TO_THIS
+                        // Held by ANOTHER expense (or terminal/other status): the occurrence is not open.
+                        else -> ClaimLinkOutcome.NOT_OPEN
+                    }
+                    return@withTransaction ClaimLinkResult(outcome)
+                }
+
+                // P4-NEW-009: JSONObject.put() auto-escapes user-provided strings (currency)
+                eventWriter.writeCritical(
+                    occurrenceId = match.id,
+                    eventType = "OCCURRENCE_PAID",
+                    oldStatus = "PLANNED",
+                    newStatus = "PAID",
+                    metadata = JSONObject().apply {
+                        put("expenseId", expenseId)
+                        put("amount", expense.amount)
+                        put("currency", expense.currency)
+                    }.toString()
+                )
+
+                val planned = plannedExpenseDao.getBySourceOccurrenceKey(match.occurrenceKey)
+                if (planned != null) {
+                    plannedExpenseDao.linkToActualExpense(planned.id, expenseId, now)
+                    // Write PLANNED_FULFILLED event for provenance tracking
+                    eventWriter.writeCritical(
+                        occurrenceId = match.id,
+                        eventType = "PLANNED_FULFILLED",
+                        oldStatus = "PLANNED",
+                        newStatus = "FULFILLED",
+                        metadata = JSONObject().apply {
+                            put("plannedExpenseId", planned.id)
+                            put("occurrenceKey", match.occurrenceKey)
+                            put("expenseId", expenseId)
+                            put("source", source)
+                        }.toString()
+                    )
+                }
+
+                val suppressed = reminderDeliveryDao.suppressOpenDeliveriesForOccurrence(match.id, now, "expense_linked:$expenseId")
+                // Write REMINDER_SUPPRESSED_PAID event when reminders are cancelled due to payment
+                eventWriter.writeCritical(
+                    occurrenceId = match.id,
+                    eventType = if (suppressed > 0) "REMINDER_SUPPRESSED_PAID" else "REMINDER_SUPPRESSION_NOOP",
+                    newStatus = if (suppressed > 0) "CANCELLED" else null,
+                    metadata = JSONObject().apply {
+                        put("expenseId", expenseId)
+                        put("suppressedCount", suppressed)
+                        put("source", source)
+                    }.toString()
+                )
+
+                ClaimLinkResult(ClaimLinkOutcome.CLAIMED, match.id, match.occurrenceKey)
+            }
+        }
+    }
+
+    private enum class ClaimLinkOutcome {
+        CLAIMED,
+        NO_TARGET,
+        EXPENSE_NOT_ELIGIBLE,
+        ALREADY_LINKED_TO_THIS,
+        ALREADY_LINKED_ELSEWHERE,
+        NOT_OPEN
+    }
+
+    private class ClaimLinkResult(
+        val outcome: ClaimLinkOutcome,
+        val occurrenceId: Long = 0L,
+        val occurrenceKey: String = ""
+    )
 
     /**
      * Detailed version of [linkExpenseToOccurrence] returning structured result with real ids.
@@ -437,6 +651,11 @@ class RecurringLifecycleCoordinator @Inject constructor(
             if (expense.isNotMine || expense.transactionType == TransactionType.TRANSFER ||
                 expense.transactionType == TransactionType.DEPOSIT)
                 return RecurringExpenseReconcileResult.Skipped(expenseId, "expense_not_eligible")
+            // Distinct bounded reason when the expense already holds an occurrence (it is
+            // never linked twice) so it is not misreported as "no match".
+            if (occurrenceDao.getByLinkedExpenseId(expenseId) != null) {
+                return RecurringExpenseReconcileResult.NoMatch(expenseId, "expense_already_linked")
+            }
             return RecurringExpenseReconcileResult.NoMatch(expenseId, "no_matching_planned_occurrence")
         }
         // Find the linked occurrence to get real ids
@@ -885,32 +1104,49 @@ class RecurringLifecycleCoordinator @Inject constructor(
 
         // MIT-043: Wrap read + status update + event in a single transaction
         // so the occurrence state never diverges from its lifecycle event.
-        database.withTransaction {
-            val occurrence = occurrenceDao.getById(occurrenceId) ?: return@withTransaction
+        // R21 S1: runWrite scope counts this write as in-flight for backup drains.
+        writeBarrier.runWrite(
+            DatabaseAccessOperation("RecurringLifecycleCoordinator.updateOccurrenceStatus")
+        ) {
+            database.withTransaction {
+                val occurrence = occurrenceDao.getById(occurrenceId) ?: return@withTransaction
 
-            val oldStatus = RecurringOccurrenceStatus.fromDb(occurrence.status)
-            RecurringOccurrenceTransitionPolicy.requireAllowed(oldStatus, newStatus, reason)
+                val oldStatus = RecurringOccurrenceStatus.fromDb(occurrence.status)
+                RecurringOccurrenceTransitionPolicy.requireAllowed(oldStatus, newStatus, reason)
 
-            occurrenceDao.updateStatus(listOf(occurrenceId), newStatus.dbValue, now)
+                occurrenceDao.updateStatus(listOf(occurrenceId), newStatus.dbValue, now)
 
-            // Write lifecycle event
-            val eventType = when (newStatus) {
-                RecurringOccurrenceStatus.SKIPPED -> "OCCURRENCE_SKIPPED"
-                RecurringOccurrenceStatus.CANCELLED -> "OCCURRENCE_CANCELLED"
-                RecurringOccurrenceStatus.MISSED -> "OCCURRENCE_MISSED"
-                else -> null
-            }
-            if (eventType != null) {
-                lifecycleEventDao.insert(
-                    RecurringLifecycleEvent(
-                        occurrenceId = occurrenceId,
-                        eventType = eventType,
-                        occurredAt = now,
-                        oldStatus = oldStatus.dbValue,
-                        newStatus = newStatus.dbValue,
-                        metadata = """{"reason":"${reason.name}"}"""
+                if (newStatus == RecurringOccurrenceStatus.SKIPPED) {
+                    // R21 review: a skipped ("already recorded") occurrence must leave no open
+                    // planned projection and no open reminders, atomically with the status change.
+                    val planned = plannedExpenseDao.getBySourceOccurrenceKey(occurrence.occurrenceKey)
+                    if (planned != null && planned.status == "PLANNED") {
+                        plannedExpenseDao.updateStatus(planned.id, "CANCELLED", now)
+                    }
+                    reminderDeliveryDao.suppressOpenDeliveriesForOccurrence(
+                        occurrenceId, now, "occurrence_skipped"
                     )
-                )
+                }
+
+                // Write lifecycle event
+                val eventType = when (newStatus) {
+                    RecurringOccurrenceStatus.SKIPPED -> "OCCURRENCE_SKIPPED"
+                    RecurringOccurrenceStatus.CANCELLED -> "OCCURRENCE_CANCELLED"
+                    RecurringOccurrenceStatus.MISSED -> "OCCURRENCE_MISSED"
+                    else -> null
+                }
+                if (eventType != null) {
+                    lifecycleEventDao.insert(
+                        RecurringLifecycleEvent(
+                            occurrenceId = occurrenceId,
+                            eventType = eventType,
+                            occurredAt = now,
+                            oldStatus = oldStatus.dbValue,
+                            newStatus = newStatus.dbValue,
+                            metadata = """{"reason":"${reason.name}"}"""
+                        )
+                    )
+                }
             }
         }
     }

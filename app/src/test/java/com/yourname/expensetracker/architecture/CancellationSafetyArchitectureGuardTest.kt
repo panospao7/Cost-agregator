@@ -97,7 +97,6 @@ class CancellationSafetyArchitectureGuardTest {
             ArchitectureAllowlistEntry("AnomalyAlertOrchestrator.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "Domain", "Domain orchestrator with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("CurrencySettingsRepository.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "Domain", "Domain interface with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("ReceiptDebugExporter.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "Domain", "Domain exporter with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("NotificationDiagnosticEmitter.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "Domain", "Domain diagnostics with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("OperationRunRecorder.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "Domain", "Domain recorder with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("FinancialHealthScoreV2.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "Domain", "Domain calculator with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("CrossSourceDeduplication.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "Domain", "Domain dedup with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),

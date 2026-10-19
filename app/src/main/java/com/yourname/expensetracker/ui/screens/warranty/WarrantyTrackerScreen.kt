@@ -24,6 +24,7 @@ import com.yourname.expensetracker.data.database.entity.Warranty
 import com.yourname.expensetracker.data.database.entity.WarrantyStatus
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
+import com.yourname.expensetracker.ui.components.asString
 import com.yourname.expensetracker.ui.components.common.EmptyStateType
 import com.yourname.expensetracker.ui.components.common.EnhancedEmptyState
 import com.yourname.expensetracker.ui.components.emptystate.ContextualActionRegistry
@@ -83,7 +84,18 @@ fun WarrantyTrackerScreen(
         }
     }
 
+    // R29: surface bounded mutation-failure messages (string resource only) as a snackbar.
+    val snackbarHostState = remember { SnackbarHostState() }
+    val mutationErrorText = state.mutationError?.asString()
+    LaunchedEffect(mutationErrorText) {
+        if (mutationErrorText != null) {
+            snackbarHostState.showSnackbar(mutationErrorText)
+            viewModel.clearMutationError()
+        }
+    }
+
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.screen_warranty_tracker)) },

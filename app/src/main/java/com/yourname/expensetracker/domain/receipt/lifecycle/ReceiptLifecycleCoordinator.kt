@@ -135,6 +135,12 @@ class ReceiptLifecycleCoordinator @Inject constructor(
 ) {
 
     companion object {
+        /**
+         * Bounded, sanitized failure reason returned by [processReceiptInput] when input
+         * validation fails. Fixed literal — never embeds URIs or raw validator text.
+         */
+        const val ERROR_INPUT_VALIDATION_FAILED = "Receipt input validation failed"
+
         /** Last-resort fallback currency when no home currency can be resolved. */
         private const val FALLBACK_CURRENCY = "XXX"  // ISO 4217 unknown currency — no longer "EUR"
 
@@ -324,8 +330,8 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         val validation = inputValidator.validate(uri)
         if (!validation.isValid) {
             // P3-BLOCKER-006: Use sanitized message — never embed raw URI
-            val message = "Receipt input validation failed"
-            Timber.w("$message: %s", validation.errors.firstOrNull() ?: "unknown reason")
+            val message = ERROR_INPUT_VALIDATION_FAILED
+            Timber.w("$message: errorCount=%d", validation.errors.size)
             // P3-NEW-08 / P3-BLOCKER-04: Write VALIDATION_FAILED diagnostic
             // Use reason codes extracted from validation errors — never raw URI
             val reasonCode = when {
@@ -422,6 +428,9 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                             )
                             Timber.i("Duplicate draft detected by exact hash: existingId=%d", existing.id)
                         } else {
+                            writeBarrier.runWrite(
+                                DatabaseAccessOperation("ReceiptLifecycleCoordinator.processReceiptInput")
+                            ) {
                             transactionRunner.runInTransaction(
                                 correlationId = java.util.UUID.randomUUID().toString(),
                                 operationId = "receipt.dedup_hash_delete",
@@ -441,6 +450,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                                     errorDetails = null
                                 )))
                                 scannedReceiptDao.delete(receipt)
+                            }
                             }
                             assetCleanupCoordinator.cleanupUncommittedAsset(
                                 path = receipt.imagePath,
@@ -500,7 +510,10 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             // The draft path (receipt.id <= 0) does not touch the DB, so its
             // read-only check remains outside the transaction.
             if (receipt.id > 0L) {
-                val existingDuplicate = transactionRunner.runInTransaction(
+                val existingDuplicate = writeBarrier.runWrite(
+                    DatabaseAccessOperation("ReceiptLifecycleCoordinator.processReceiptInput")
+                ) {
+                transactionRunner.runInTransaction(
                     correlationId = java.util.UUID.randomUUID().toString(),
                     operationId = "receipt.dedup_post_ocr",
                     source = "ReceiptLifecycleCoordinator"
@@ -540,6 +553,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                             existing
                         }
                     } else null
+                }
                 }
                 if (existingDuplicate != null) {
                     existingDuplicate.taxInclusive = taxInclusive
@@ -608,7 +622,10 @@ class ReceiptLifecycleCoordinator @Inject constructor(
 
             // P3-BLOCKER-04: Use resolver for fallback insert.
             var receiptPlan: PostCommitActionBatch? = null
-            val savedId = transactionRunner.runInTransaction(
+            val savedId = writeBarrier.runWrite(
+                DatabaseAccessOperation("ReceiptLifecycleCoordinator.processReceiptInput")
+            ) {
+            transactionRunner.runInTransaction(
                 correlationId = java.util.UUID.randomUUID().toString(),
                 operationId = "receipt.save_with_review",
                 source = "ReceiptLifecycleCoordinator"
@@ -690,6 +707,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 }
 
                 insertedId
+            }
             }
 
             // RP-12 12a (P3-001): single post-commit dispatch — the coordinator is the
@@ -820,6 +838,9 @@ suspend fun saveEmailReceiptTyped(receipt: ScannedReceipt): SaveEmailReceiptResu
         rawOcrText = sanitizedOcrText
     ), now)
     return try {
+        writeBarrier.runWrite(
+            DatabaseAccessOperation("ReceiptLifecycleCoordinator.saveEmailReceipt")
+        ) {
         transactionRunner.runInTransaction(
             correlationId = java.util.UUID.randomUUID().toString(),
             operationId = "receipt.save_email_typed",
@@ -843,6 +864,7 @@ suspend fun saveEmailReceiptTyped(receipt: ScannedReceipt): SaveEmailReceiptResu
                 is ReceiptInsertResult.ConflictUnresolved -> SaveEmailReceiptResult.Failed(result.reason)
             }
         }
+        }
     } catch (e: Exception) {
         CancellationSafe.rethrowIfCancellation(e)
         SaveEmailReceiptResult.Failed("EMAIL_RECEIPT_SAVE_FAILED")
@@ -865,7 +887,10 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
             processingStatus = ReceiptProcessingStatus.PARSED.name,
             rawOcrText = sanitizedOcrText
         ), now)
-        val id: Long = transactionRunner.runInTransaction(
+        val id: Long = writeBarrier.runWrite(
+            DatabaseAccessOperation("ReceiptLifecycleCoordinator.saveEmailReceipt")
+        ) {
+        transactionRunner.runInTransaction(
             correlationId = java.util.UUID.randomUUID().toString(),
             operationId = "receipt.save_email_deprecated",
             source = "ReceiptLifecycleCoordinator"
@@ -894,6 +919,7 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
                 }
                 is ReceiptInsertResult.ConflictUnresolved -> throw IllegalStateException(result.reason)
             }
+        }
         }
 
         Timber.d("Email receipt saved via coordinator: id=%d", id)
@@ -1440,6 +1466,9 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
 
         return try {
             // Database operations inside a single transaction
+            writeBarrier.runWrite(
+                DatabaseAccessOperation("ReceiptLifecycleCoordinator.deleteReceipt")
+            ) {
             transactionRunner.runInTransaction(
                 correlationId = java.util.UUID.randomUUID().toString(),
                 operationId = "receipt.delete",
@@ -1473,6 +1502,7 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
 
                 // 4. Delete the database row
                 scannedReceiptDao.delete(receipt)
+            }
             }
 
             // 5. POST-COMMIT: Delete the physical asset file (if one exists)
@@ -1511,6 +1541,9 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
         errorDetails: String?
     ) {
         writeBarrier.checkWritesAllowed("ReceiptLifecycleCoordinator.writeAssetDeleteFailedEvent")
+        writeBarrier.runWrite(
+            DatabaseAccessOperation("ReceiptLifecycleCoordinator.writeAssetDeleteFailedEvent")
+        ) {
         receiptEventDao.insert(
             ReceiptEvent(
                 receiptId = receiptId,
@@ -1526,6 +1559,7 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
                 errorDetails = errorDetails
             )
         )
+        }
     }
 
     /**
@@ -1596,6 +1630,9 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
         // If linking fails and the transaction rolls back, no side effects will have run.
         var categorySideEffectExpenseId: Long? = null
         val txResult: Pair<Result<Long>, PostCommitActionBatch> = try {
+            writeBarrier.runWrite(
+                DatabaseAccessOperation("ReceiptLifecycleCoordinator.createExpenseAndLinkReceipt")
+            ) {
             transactionRunner.runInTransaction(
                 correlationId = java.util.UUID.randomUUID().toString(),
                 operationId = "receipt.create_expense_link",
@@ -1631,6 +1668,7 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
                     else ->
                         Pair(Result.failure(IllegalStateException("Expense creation failed")), PostCommitActionBatch.empty("receipt_link_err"))
                 }
+            }
             }
         } catch (e: Exception) {
             CancellationSafe.rethrowIfCancellation(e)

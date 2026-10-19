@@ -9,8 +9,10 @@ package com.yourname.expensetracker.domain.ai.service
 interface AiWorkScheduler {
     /**
      * Enqueue a periodic daily briefing generation job.
-     * Safe to call repeatedly — implementations use REPLACE policy so the
-     * midnight chain is always re-armed even if a stale request exists.
+     * Safe to call repeatedly — implementations use the spec's KEEP policy (a version bump
+     * forces REPLACE), so an already-armed midnight request is not disturbed. The worker's own
+     * midnight self-reschedule overrides the policy with APPEND_OR_REPLACE so the chain is
+     * always re-armed behind the currently running request.
      */
     fun scheduleDailyBriefing()
 

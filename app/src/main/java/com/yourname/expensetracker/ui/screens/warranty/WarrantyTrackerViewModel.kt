@@ -2,15 +2,21 @@ package com.yourname.expensetracker.ui.screens.warranty
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.Warranty
 import com.yourname.expensetracker.data.database.entity.WarrantyStatus
+import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
+import com.yourname.expensetracker.ui.util.UI_WRITE_BLOCKED_MESSAGE
 import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
+import timber.log.Timber
 import javax.inject.Inject
 
 data class WarrantyTrackerState(
@@ -28,8 +34,8 @@ data class WarrantyTrackerState(
     val referenceNowMillis: Long = 0L,
     /** S12-010: IDs of warranties currently being mutated */
     val mutatingWarrantyIds: Set<Long> = emptySet(),
-    /** S12-010: non-null when a mutation failed */
-    val mutationError: String? = null,
+    /** S12-010: non-null when a mutation failed (bounded string resource, never raw exception text) */
+    val mutationError: UiText? = null,
     /** S12-004: true when add-manual dialog should close (emitted on success) */
     val addWarrantySuccess: Boolean = false
 ) {
@@ -145,28 +151,51 @@ class WarrantyTrackerViewModel @Inject constructor(
         supportPhone: String?
     ) {
         viewModelScope.launch {
-            val purchaseStart = TimePeriodUtils.getStartOfDay(purchaseDate)
-            val endDateMidnight = TimePeriodUtils.addMonths(purchaseStart, warrantyDurationMonths)
-            // Use half-open end-of-day semantics so the warranty survives
-            // through its entire expiration day (matches WarrantyTrackerRepository).
-            val endDate = TimePeriodUtils.getEndOfDay(endDateMidnight)
-            // WRN-4: receiptId is null — no placeholder receipt is created.
-            val manualWarranty = Warranty(
-                receiptId = null,
-                expenseId = null,
-                productName = productName,
-                merchantName = merchantName,
-                purchaseDate = purchaseStart,
-                warrantyDurationMonths = warrantyDurationMonths,
-                warrantyEndDate = endDate,
-                supportPhone = supportPhone?.takeIf { it.isNotBlank() },
-                extractionSource = "manual"
-            )
-            warrantyRepository.addWarranty(manualWarranty)
-            // S12-004: Signal success so dialog can close
-            _state.update { it.copy(addWarrantySuccess = true, mutationError = null) }
-            loadStats()
+            try {
+                val purchaseStart = TimePeriodUtils.getStartOfDay(purchaseDate)
+                val endDateMidnight = TimePeriodUtils.addMonths(purchaseStart, warrantyDurationMonths)
+                // Use half-open end-of-day semantics so the warranty survives
+                // through its entire expiration day (matches WarrantyTrackerRepository).
+                val endDate = TimePeriodUtils.getEndOfDay(endDateMidnight)
+                // WRN-4: receiptId is null — no placeholder receipt is created.
+                val manualWarranty = Warranty(
+                    receiptId = null,
+                    expenseId = null,
+                    productName = productName,
+                    merchantName = merchantName,
+                    purchaseDate = purchaseStart,
+                    warrantyDurationMonths = warrantyDurationMonths,
+                    warrantyEndDate = endDate,
+                    supportPhone = supportPhone?.takeIf { it.isNotBlank() },
+                    extractionSource = "manual"
+                )
+                warrantyRepository.addWarranty(manualWarranty)
+                // S12-004: Signal success so dialog can close
+                _state.update { it.copy(addWarrantySuccess = true, mutationError = null) }
+                loadStats()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                reportMutationFailure(e)
+            }
         }
+    }
+
+    /**
+     * R29: repository writes fail closed, so a failed mutation must surface as a bounded,
+     * localizable message (string resource only; never raw exception text) instead of
+     * crashing the app from the viewModelScope coroutine.
+     */
+    private fun reportMutationFailure(e: Exception) {
+        Timber.w("warranty mutation failed (%s)", e::class.simpleName)
+        // R18b: a write rejected by the backup/restore/reset write barrier gets the shared,
+        // retry-later maintenance message instead of the generic failure message.
+        val message = if (e is DatabaseAccessBlockedException) {
+            UI_WRITE_BLOCKED_MESSAGE
+        } else {
+            UiText.StringResource(R.string.warranty_mutation_failed)
+        }
+        _state.update { it.copy(mutationError = message) }
     }
 
     fun clearAddWarrantySuccess() {
@@ -191,8 +220,10 @@ class WarrantyTrackerViewModel @Inject constructor(
                 )
                 warrantyRepository.updateWarranty(updated)
                 loadStats()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                _state.update { it.copy(mutationError = "Failed to confirm warranty: ${e.message}") }
+                reportMutationFailure(e)
             } finally {
                 _state.update { it.copy(mutatingWarrantyIds = it.mutatingWarrantyIds - warranty.id) }
             }
@@ -202,23 +233,41 @@ class WarrantyTrackerViewModel @Inject constructor(
     // F1: Reject/delete an auto-detected warranty that was incorrect
     fun rejectAutoDetectedWarranty(warranty: Warranty) {
         viewModelScope.launch {
-            // S12-009: Use atomic repository method — warranty + return window deleted together
-            warrantyRepository.rejectAutoDetectedWarranty(warranty)
-            loadStats()
+            try {
+                // S12-009: Use atomic repository method — warranty + return window deleted together
+                warrantyRepository.rejectAutoDetectedWarranty(warranty)
+                loadStats()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                reportMutationFailure(e)
+            }
         }
     }
 
     fun markAsClaimed(warrantyId: Long) {
         viewModelScope.launch {
-            warrantyRepository.markWarrantyAsClaimed(warrantyId)
-            loadStats()
+            try {
+                warrantyRepository.markWarrantyAsClaimed(warrantyId)
+                loadStats()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                reportMutationFailure(e)
+            }
         }
     }
 
     fun deleteWarranty(warranty: Warranty) {
         viewModelScope.launch {
-            warrantyRepository.deleteWarranty(warranty)
-            loadStats()
+            try {
+                warrantyRepository.deleteWarranty(warranty)
+                loadStats()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                reportMutationFailure(e)
+            }
         }
     }
 

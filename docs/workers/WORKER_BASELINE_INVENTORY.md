@@ -14,6 +14,7 @@
 | `MerchantKeyBackfillWorker` | `data/location/MerchantKeyBackfillWorker.kt` | OneShot (REPLACE policy) | `merchant_key_backfill` | Yes (expenses with null merchantKey) | Yes (updateMerchantKey) | No (local computation) | No | No | `runGuardedWithContext` | Yes | Yes | No | `MerchantKeyBackfillWorkerTest.kt` |
 | `DataRetentionWorker` | `data/privacy/DataRetentionWorker.kt` | Periodic (24h) | `data_retention` | Yes (all retention targets) | Yes (purging, audit events) | No | No | No | `runGuardedWithContext` | Yes | Yes | Some direct DAO calls (auditDao, retention purge methods) | `DataRetentionWorkerTest.kt` |
 | `BillReminderWorker` | `service/reminder/BillReminderWorker.kt` | Periodic (6h) | `bill_reminder_periodic` | Yes (due reminders, settings) | Yes (claim, mark sent/failed) | No | Yes (sends notifications via NotificationManagerCompat; catches SecurityException) | No | `runGuardedWithContext` | Yes | Yes | No | `BillReminderWorkerTest.kt` |
+| `RecurringHorizonWorker` | `service/recurring/RecurringHorizonWorker.kt` | Periodic (24h) | `recurring_horizon` | Yes (active recurring rules) | Yes (via `RecurringRuleLifecycleCoordinator.topUpHorizon` only) | No | No | No (local data only; not privacy-gated) | `runGuardedWithContext` | Yes | Yes | No | `RecurringHorizonWorkerTest.kt` |
 | `ReceiptMatchingWorker` | `service/receiptmatching/ReceiptMatchingWorker.kt` | Periodic (2h) + OneShot (run_once) | `receipt_matching` / `receipt_matching_run_once` | Yes (processable receipts) | Yes (link, save suggestions, match events) | No | No (sends budget alert via NotificationService) | No | `runGuardedWithContext` | Yes | Yes | No | `ReceiptMatchingWorkerTest.kt` |
 | `WarrantyExpirationWorker` | `service/warranty/WarrantyExpirationWorker.kt` | Periodic (24h) | `warranty_expiration_check` | Yes (warranties, delivery rows) | Yes (reconcile, seed, claim, mark sent/failed, prune) | No | Yes — `requiresNotificationPermission=true` via guard | No | `runGuardedWithContext` | Yes | Yes | Some direct DAO calls (deliveryDao) | `WarrantyExpirationWorkerTest.kt` |
 | `NotificationIntakeWorker` | `worker/NotificationIntakeWorker.kt` | OneShot (dynamic, per-intake) | `notification-intake-{intakeId}` / `intake_{hash}` | Yes (intake entity, raw notification pipeline) | Yes (mark terminal, purge payload, processAndSave) | No | No | No (privacy gated by NotificationFilter at capture time) | `runGuardedWithContext` (full guard since PR 5) | Yes | Yes | **Yes** (`NotificationIntakeDao` injected directly) | `NotificationIntakeWorkerTest.kt`, `NotificationIntakeWorkerTimeoutTest.kt` |
@@ -27,7 +28,7 @@
 
 ### Registered Workers (in `WorkerRegistry.entries` + `WorkerSpec.DEFAULTS`)
 
-These 7 workers are part of the canonical schedule-and-pause lifecycle:
+These 8 workers are part of the canonical schedule-and-pause lifecycle:
 
 1. **`location_backfill`** — `LocationBackfillWorker`
 2. **`merchant_key_backfill`** — `MerchantKeyBackfillWorker`
@@ -36,6 +37,7 @@ These 7 workers are part of the canonical schedule-and-pause lifecycle:
 5. **`bill_reminder_periodic`** — `BillReminderWorker`
 6. **`receipt_matching`** — `ReceiptMatchingWorker`
 7. **`ai_daily_briefing`** — `DailyBriefingWorker`
+7a. **`recurring_horizon`** — `RecurringHorizonWorker` (R21 S3b; daily top-up of active rules' occurrence horizon)
 
 ### Dynamically Scheduled Workers (not in registry)
 

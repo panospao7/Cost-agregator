@@ -42,17 +42,22 @@ import javax.inject.Singleton
  *
  * Computes end-of-month savings sweep recommendations by analyzing:
  * 1. Budget underspend across all categories
- * 2. Monte Carlo risk buffer for spending uncertainty
- * 3. Safe sweep amount = underspend - riskBuffer
- * 4. Allocation across active savings goals based on urgency
+ * 2. Upcoming bills/obligations still due before month end
+ * 3. Monte Carlo risk buffer for spending uncertainty
+ * 4. Safe sweep amount = underspend - riskBuffer
+ * 5. Allocation across active savings goals based on urgency
  *
  * ## Formula
  * ```
  * safeSweep = max(0, underspend - riskBuffer)
  * where:
  * - underspend = overall remaining (if overall budget exists) OR sum of category remaining
- * - riskBuffer = MC uncertainty buffer (p75 - p50)
+ * - riskBuffer = upcomingBills + uncertaintyBuffer
+ *   - upcomingBills = known recurring + MUST planned obligations due before month end
+ *   - uncertaintyBuffer = MC uncertainty buffer (p75 - p50, or the deterministic fallback)
  * ```
+ * The reported/persisted/displayed `riskBuffer` is the full sum, so the UI line
+ * "Underspend X / Buffer Y" reconciles with the sweep amount.
  */
 @Singleton
 class MonthlySavingsSweepUseCase @Inject constructor(
@@ -202,8 +207,8 @@ class MonthlySavingsSweepUseCase @Inject constructor(
         )
         quality.requireForecast(monteCarloResult)
 
-        // Calculate risk buffer from Monte Carlo uncertainty
-        val riskBuffer = calculateRiskBuffer(
+        // Calculate the uncertainty part of the buffer from Monte Carlo spread
+        val uncertaintyBuffer = calculateRiskBuffer(
             monteCarloResult = monteCarloResult,
             spentToDate = spentToDate,
             knownUpcoming = knownUpcoming,
@@ -211,6 +216,11 @@ class MonthlySavingsSweepUseCase @Inject constructor(
             currentDayOfMonth = dayOfMonth,
             daysRemaining = daysRemaining
         )
+        // HZ01b1-F1: upcoming bills/obligations still due this month are money that is
+        // not safe to sweep. They are part of the displayed "Buffer" so that
+        // "Underspend X - Buffer Y" adds up to the sweep amount (and the acceptance
+        // coordinator invariant safeSweep <= underspend - riskBuffer holds).
+        val riskBuffer = knownUpcoming + uncertaintyBuffer
 
         // Calculate safe sweep amount
         val safeSweepAmount = (underspend - riskBuffer).coerceAtLeast(0.0)
@@ -230,7 +240,8 @@ class MonthlySavingsSweepUseCase @Inject constructor(
         // Calculate confidence score
         val confidence = calculateConfidence(
             underspend = underspend,
-            riskBuffer = riskBuffer,
+            // Confidence keeps measuring forecast uncertainty only (unchanged semantics).
+            riskBuffer = uncertaintyBuffer,
             monteCarloConfidence = monteCarloResult?.confidence?.score ?: 0.5,
             daysRemaining = daysRemaining,
             goalCount = goals.size
@@ -550,7 +561,7 @@ data class SavingsSweepRecommendation(
     /** Total underspend across all budget categories */
     val totalUnderspend: Double,
 
-    /** Risk buffer subtracted for spending uncertainty */
+    /** Buffer subtracted from the underspend: upcoming bills plus the spending-uncertainty buffer */
     val riskBuffer: Double,
 
     /** Safe amount available to sweep to savings (underspend - riskBuffer) */

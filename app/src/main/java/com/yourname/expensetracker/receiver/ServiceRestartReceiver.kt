@@ -3,12 +3,19 @@ package com.yourname.expensetracker.receiver
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import com.yourname.expensetracker.data.database.DatabaseOpenGate
 import com.yourname.expensetracker.service.DataSyncFgsTimeoutGuard
 import com.yourname.expensetracker.service.NotificationCaptureService
 import timber.log.Timber
 
 class ServiceRestartReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        // R25: never restart the capture service while the database open gate blocks the live DB.
+        val gateReason = DatabaseOpenGate.blockedReasonOrNull(context)
+        if (gateReason != null) {
+            Timber.w("ServiceRestartReceiver skipped: open gate blocked reason=%s", gateReason)
+            return
+        }
         if (intent.action == NotificationCaptureService.ACTION_RESTART_SERVICE) {
             Timber.d("Restart alarm triggered")
             

@@ -45,7 +45,7 @@
 | ...make AI recommendations? | Feature-specific input builder → `ExecuteFinancialQueryUseCase` |
 | ...split an expense? | `EnhancedSplitManager` |
 | ...convert currency? | `CurrencyConverter` |
-| ...create an encrypted backup? | `DatabaseBackupRepository.createCostBackup(password)` — produces `.costbackup` bundle (AES-256-GCM, manifest, checksums, receipt images) |
+| ...create an encrypted backup? | `DatabaseBackupRepository.createCostBackup(password)` — produces `.costbackup` bundle (AES-256-GCM, manifest, checksums; receipt images are NOT included in the default redacted backup) |
 | ...restore from a backup? | `DatabaseBackupRepository.restoreCostBackup(bundleFile, password)` — uses `CostbackupBundle.extract()` + `RestoreMaintenanceMode` (pauses workers) + `RestoreJournal` (crash-safe journal) + `BackupVerifier` (56-table verification) |
 | ...check data quality? | `DataQualityReport.fromNormalization(normalization, ...)` — returns `isReliable` and `qualityLabel` for UI |
 

@@ -12,6 +12,9 @@ import com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDa
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.data.database.entity.RecurringLifecycleEvent
 import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
+import com.yourname.expensetracker.domain.model.RecurrenceFrequency
+import com.yourname.expensetracker.domain.recurring.RecurringOccurrenceExpander
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -54,6 +57,18 @@ class RecurringRuleLifecycleCoordinator @Inject constructor(
 
         /** Delivery statuses considered open/retryable by the reconciliation invariants. */
         private val OPEN_DELIVERY_STATUSES = setOf("SCHEDULED", "SNOOZED", "CLAIMED", "FAILED_TRANSIENT")
+
+        /** R21 S1: rolling horizon / catch-up window in months. */
+        private const val HORIZON_MONTHS = 12
+
+        /** R21 S1: how many latest occurrences feed the month-end anchor-day resolution. */
+        private const val ANCHOR_LOOKBACK_OCCURRENCES = 12
+
+        /** Month-end clamping can only affect days at/after this day-of-month. */
+        private const val MONTH_END_CLAMP_DAY = 28
+
+        /** Max ids per IN (...) binding (SQLite variable limit headroom). */
+        private const val LINKED_EXPENSE_ID_CHUNK = 900
     }
 
     /**
@@ -275,22 +290,186 @@ class RecurringRuleLifecycleCoordinator @Inject constructor(
     suspend fun advanceNextDate(ruleId: Long, nextDate: Long) {
         writeBarrier.checkWritesAllowed("RecurringRuleLifecycleCoordinator.advanceNextDate")
         val now = timeProvider.now()
-        database.withTransaction {
-            manualRecurringExpenseDao.updateNextDate(ruleId, nextDate)
-            lifecycleEventDao.insert(
-                RecurringLifecycleEvent(
-                    occurrenceId = null,
-                    eventType = "NEXT_DATE_ADVANCED",
-                    occurredAt = now,
-                    oldStatus = null,
-                    newStatus = null,
-                    metadata = JSONObject().apply {
-                        put("ruleId", ruleId)
-                        put("nextDate", nextDate)
-                    }.toString()
+        // R21 S1: runWrite scope counts this write as in-flight for backup drains.
+        writeBarrier.runWrite(
+            DatabaseAccessOperation("RecurringRuleLifecycleCoordinator.advanceNextDate")
+        ) {
+            database.withTransaction {
+                manualRecurringExpenseDao.updateNextDate(ruleId, nextDate)
+                lifecycleEventDao.insert(
+                    RecurringLifecycleEvent(
+                        occurrenceId = null,
+                        eventType = "NEXT_DATE_ADVANCED",
+                        occurredAt = now,
+                        oldStatus = null,
+                        newStatus = null,
+                        metadata = JSONObject().apply {
+                            put("ruleId", ruleId)
+                            put("nextDate", nextDate)
+                        }.toString()
+                    )
                 )
-            )
+            }
         }
+    }
+
+    /**
+     * R21 S1: rolling-horizon top-up. Extends an ACTIVE, non-IRREGULAR rule's
+     * occurrences to `today + 12 months` from its last existing occurrence (or
+     * `rule.nextDate` when it has none), never reaching earlier than
+     * `today - 12 months` (bounded catch-up). Only logical slots not already
+     * represented (any existing occurrence or open planned row on that due date)
+     * are inserted; past-due reminder deliveries are NOT created.
+     *
+     * Month-end anchor: see [resolveAnchorDay] (latest day < 28 as-is, else the max
+     * day over the trailing run of day >= 28 occurrences; fallback `rule.nextDate`'s
+     * day), so Jan 31 -> Feb 28 -> Mar 31 holds across top-ups and a later
+     * day-of-month change is respected.
+     *
+     * Expenses already linked to any occurrence are excluded from conflict
+     * resolution so a top-up never pays a new slot with an already-linked expense.
+     *
+     * Idempotent: a second call with nothing to add inserts 0 rows and writes no
+     * event. The RULE_HORIZON_TOPPED_UP critical event is written only when rows
+     * were inserted.
+     *
+     * @return number of occurrence rows inserted.
+     */
+    suspend fun topUpHorizon(ruleId: Long, now: Long): Int =
+        writeBarrier.runWrite(
+            DatabaseAccessOperation("RecurringRuleLifecycleCoordinator.topUpHorizon")
+        ) {
+            database.withTransaction {
+                val rule = manualRecurringExpenseDao.getById(ruleId) ?: return@withTransaction 0
+                if (!rule.isActive || rule.frequency == RecurrenceFrequency.IRREGULAR) {
+                    return@withTransaction 0
+                }
+
+                val today = TimePeriodUtils.getStartOfDay(now)
+                val horizonEnd = TimePeriodUtils.addMonths(today, HORIZON_MONTHS)
+                val catchUpFloor = TimePeriodUtils.addMonths(today, -HORIZON_MONTHS)
+
+                val existing = occurrenceDao.getBySource(SOURCE_TYPE, ruleId) // ORDER BY dueDate
+                val anchorDay = resolveAnchorDay(rule, existing.takeLast(ANCHOR_LOOKBACK_OCCURRENCES))
+                val lastDue = existing.lastOrNull()?.dueDate
+                val anchorDate = lastDue ?: rule.nextDate
+                val firstSlot = if (lastDue != null) {
+                    expander.advanceDate(lastDue, rule.frequency, anchorDay)
+                } else {
+                    rule.nextDate
+                }
+                // expand() emits start-of-day due dates, so compare against the slot's
+                // start of day (a nextDate with a time of day must not drop its own slot).
+                // Strictly after the floor so catch-up never exceeds 12 months of slots.
+                val startDate = maxOf(TimePeriodUtils.getStartOfDay(firstSlot), catchUpFloor + 1)
+                if (startDate >= horizonEnd) return@withTransaction 0
+
+                val candidates = expander.expand(
+                    RecurringOccurrenceExpander.ExpandRequest(
+                        merchant = rule.merchant,
+                        amount = rule.amount,
+                        currency = rule.currency,
+                        frequency = rule.frequency,
+                        categoryId = rule.categoryId,
+                        startDate = startDate,
+                        endDate = horizonEnd,
+                        anchorDate = anchorDate,
+                        sourceType = SOURCE_TYPE,
+                        sourceId = ruleId,
+                        anchorDayOfMonth = anchorDay
+                    )
+                )
+
+                // Same "slot already represented" rule as the update reconciler:
+                // ANY existing occurrence or open planned row on the due date.
+                val existingDates = existing.map { it.dueDate }.toSet()
+                val openPlannedRowDates = plannedExpenseDao.getOpenPlannedByRecurringRuleId(ruleId)
+                    .map { it.date }.toSet()
+                val freeCandidates = candidates.filter {
+                    it.dueDate !in existingDates && it.dueDate !in openPlannedRowDates
+                }
+                if (freeCandidates.isEmpty()) return@withTransaction 0
+
+                // An expense already linked to ANY occurrence (e.g. a user-chosen specific
+                // link to an earlier unpaid bill) must never also pay a newly created slot:
+                // the materializer inserts PAID rows with linkedExpenseId directly.
+                val rangeExpenses = expenseDao.getExpensesBetween(startDate, horizonEnd)
+                val alreadyLinkedExpenseIds = rangeExpenses.map { it.id }
+                    .chunked(LINKED_EXPENSE_ID_CHUNK)
+                    .flatMap { occurrenceDao.getLinkedExpenseIds(it) }
+                    .toSet()
+                val actualExpenses = rangeExpenses.filter { it.id !in alreadyLinkedExpenseIds }
+                val resolved = resolver.resolve(freeCandidates, actualExpenses)
+
+                val materialization = materializer.materializeInCurrentTransaction(
+                    resolved = resolved,
+                    options = RecurringOccurrenceMaterializer.MaterializationOptions(
+                        createReminderDeliveries = true,
+                        reminderWindows = RecurringLifecycleCoordinator.DEFAULT_REMINDER_WINDOWS,
+                        generationSource = OccurrenceGenerationSource.HORIZON_TOP_UP.name,
+                        allowPastDueReminderDeliveries = false
+                    )
+                )
+
+                planProjectionService.get().projectFromOccurrencesInCurrentTransaction(
+                    ruleId = ruleId,
+                    startDate = startDate,
+                    endDate = horizonEnd,
+                    now = now
+                )
+
+                val inserted = materialization.created
+                if (inserted > 0) {
+                    eventWriter.writeCritical(
+                        occurrenceId = null,
+                        eventType = "RULE_HORIZON_TOPPED_UP",
+                        metadata = JSONObject().apply {
+                            put("ruleId", ruleId)
+                            put("inserted", inserted)
+                            put("generationSource", OccurrenceGenerationSource.HORIZON_TOP_UP.name)
+                        }.toString(),
+                        occurredAt = now
+                    )
+                }
+                inserted
+            }
+        }
+
+    /**
+     * R21 S1: fixed anchor day of month for month-based advances. Only the
+     * month-end clamp zone (day >= 28) is ambiguous, so:
+     * - latest occurrence's day-of-month < 28 -> used as-is (a day change, e.g. a
+     *   quarterly rule moved from day 31 to day 5, must not resurrect an old anchor);
+     * - otherwise walk backwards over the trailing run of occurrences whose day is
+     *   >= 28 and stop at the first one that is NOT its month's last day (that day is
+     *   the true anchor, e.g. 30 in a 31-day month, so a quarterly 31 -> 30 change is
+     *   respected); the result is max(that day, month-end days seen before it). If
+     *   every row in the run is a month-end day the max of the run is used, which
+     *   restores the intended anchor after clamping (Jan 31 -> Feb 28 -> Mar 31).
+     *   The walk also stops at the first earlier day < 28.
+     * Falls back to [ManualRecurringExpense.nextDate]'s day when the rule has no
+     * occurrences. [occurrencesByDueDate] must be ordered by dueDate ascending.
+     */
+    private fun resolveAnchorDay(
+        rule: ManualRecurringExpense,
+        occurrencesByDueDate: List<RecurringOccurrence>
+    ): Int {
+        fun dayOf(occurrence: RecurringOccurrence): Int =
+            TimePeriodUtils.getDayOfMonth(TimePeriodUtils.getStartOfDay(occurrence.dueDate))
+
+        val latest = occurrencesByDueDate.lastOrNull()
+            ?: return TimePeriodUtils.getDayOfMonth(TimePeriodUtils.getStartOfDay(rule.nextDate))
+        val latestDay = dayOf(latest)
+        if (latestDay < MONTH_END_CLAMP_DAY) return latestDay
+        var maxMonthEndDay = latestDay
+        for (occurrence in occurrencesByDueDate.asReversed()) {
+            val day = dayOf(occurrence)
+            if (day < MONTH_END_CLAMP_DAY) break
+            val isMonthEnd = day == TimePeriodUtils.getDaysInMonth(TimePeriodUtils.getStartOfDay(occurrence.dueDate))
+            if (!isMonthEnd) return maxOf(day, maxMonthEndDay)
+            if (day > maxMonthEndDay) maxMonthEndDay = day
+        }
+        return maxMonthEndDay
     }
 
     /**

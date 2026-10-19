@@ -111,6 +111,23 @@
 | `retryOnPermissionDenied` | No — currently handles via try/catch (not declarative `requiresNotificationPermission`) |
 | `maxAttemptsPolicy` | Spec backoff |
 
+#### `RecurringHorizonWorker`
+
+| Field | Value |
+|---|---|
+| `requiresDatabaseRead` | Yes — active recurring rules |
+| `requiresDatabaseWrite` | Yes — occurrence top-up via `RecurringRuleLifecycleCoordinator.topUpHorizon` only (no DAO access in the worker) |
+| `requiresNetwork` | No |
+| `requiresNotificationPermission` | No |
+| `requiresCloudAllowed` | No |
+| `requiresPrivacyCapability` | None (local data only; not privacy-gated, not in `PrivacyRuntimeWorkerPolicy`) |
+| `blocksDuringMaintenance` | Yes — `allowDuringBackupExport=false`, `blockedPolicy=RETRY` |
+| `allowDuringMaintenanceWithOwner` | None |
+| `requiresForeground` | No |
+| `retryOnMaintenance` | Yes — `BlockedPolicy.RETRY` |
+| `retryOnPermissionDenied` | N/A |
+| `maxAttemptsPolicy` | Spec backoff; any per-rule failure ends the run with `RetryableWorkerException("RECURRING_HORIZON_PARTIAL_FAILURE")` after the remaining rules were processed (top-up is idempotent) |
+
 #### `ReceiptMatchingWorker`
 
 | Field | Value |
@@ -245,6 +262,7 @@
 | `MerchantKeyBackfillWorker` | None |
 | `DataRetentionWorker` | None |
 | `BillReminderWorker` | None |
+| `RecurringHorizonWorker` | None |
 | `ReceiptMatchingWorker` | None |
 | `WarrantyExpirationWorker` | None |
 | `NotificationIntakeWorker` | None (runtime filter only) |

@@ -94,6 +94,7 @@ Backoff is read from `WorkerSpec.DEFAULTS`:
 | `data_retention` | Exponential | 30s (default) |
 | `location_backfill` | Exponential | 15s |
 | `bill_reminder_periodic` | Exponential | 30s (default) |
+| `recurring_horizon` | Exponential | 30s (default) |
 | `receipt_matching` | Exponential | 600s |
 | `ai_daily_briefing` | Exponential | 30s (default) |
 | `warranty_expiration_check` | Exponential | 600s |
@@ -186,7 +187,8 @@ This ensures that a configuration change (constraints, backoff, etc.) takes effe
 - **One-shot**: Version bump → `ExistingWorkPolicy.UPDATE` — **FIXED in PR 1** from the previous incorrect `ExistingWorkPolicy.KEEP`
 
 `WorkerSpecScheduler.scheduleAtMidnight()`:
-- **One-shot**: Version bump → `ExistingWorkPolicy.UPDATE` — **FIXED in PR 1** from the previous incorrect `ExistingWorkPolicy.KEEP`
+- **One-shot**: Version bump → forced replace (`ExistingWorkPolicy.REPLACE` in code) — **FIXED in PR 1** from the previous incorrect `ExistingWorkPolicy.KEEP`
+- **Precedence**: an explicit `policyOverride` argument (R21 / HZ-05, e.g. `APPEND_OR_REPLACE` for the worker's own self-reschedule) takes precedence over the version-bump replace; the bump only applies when no override is given.
 
 ### Why KEEP Was Wrong for Version Bumps
 
@@ -202,8 +204,14 @@ The `WorkerSpec.oneShotPolicy` field controls the **non-bump** policy (used when
 
 | Worker | `oneShotPolicy` | Rationale |
 |---|---|---|
-| `ai_daily_briefing` | `REPLACE` | Midnight chain must always re-arm; KEEP caused silent chain death |
+| `ai_daily_briefing` | `KEEP` | App-start/settings scheduling must not disturb an already-armed midnight request. The worker's own midnight self-reschedule passes `policyOverride = APPEND_OR_REPLACE` (R21 / HZ-05) so the next request is appended behind the currently running one and the chain cannot die; see "Policy precedence" below |
 | `merchant_key_backfill` | `REPLACE` | Must be re-schedulable (e.g., after new merchants are imported) |
+
+### Policy precedence (`WorkerSpecScheduler.scheduleAtMidnight`)
+
+1. `policyOverride` (non-null) — wins over everything, **including** the version-bump `REPLACE`. Used only by a worker's own midnight self-reschedule (`DailyBriefingWorker` passes `ExistingWorkPolicy.APPEND_OR_REPLACE`).
+2. Version bump (`spec.version != stored version`) — forces `REPLACE`.
+3. `WorkerSpec.oneShotPolicy` — the non-bump default from the table above.
 
 ---
 
@@ -261,13 +269,14 @@ This is the correct, safe behaviour — the worker stops promptly when maintenan
 
 Every key in `WorkerSpec.DEFAULTS` must have a matching `Entry` in `WorkerRegistry.entries` with the same `specName`, and vice versa.
 
-**Current parity: 7/7 — PASS** (as of commit `241adee`)
+**Current parity: 8/8 (R21 S3b added `recurring_horizon`; last verified 7/7 at commit `241adee`)**
 
 | `WorkerSpec.DEFAULTS` key | `WorkerRegistry.entries` name | Match |
 |---|---|---|
 | `data_retention` | `data_retention` | ✓ |
 | `location_backfill` | `location_backfill` | ✓ |
 | `bill_reminder_periodic` | `bill_reminder_periodic` | ✓ |
+| `recurring_horizon` | `recurring_horizon` | ✓ |
 | `receipt_matching` | `receipt_matching` | ✓ |
 | `ai_daily_briefing` | `ai_daily_briefing` | ✓ |
 | `warranty_expiration_check` | `warranty_expiration_check` | ✓ |
@@ -297,6 +306,7 @@ Workers that exceed the 10-minute limit:
 | `data_retention` | NOT_REQUIRED | None | None | None | None |
 | `location_backfill` | UNMETERED | None | None | None | None |
 | `bill_reminder_periodic` | NOT_REQUIRED | None | None | None | None |
+| `recurring_horizon` | NOT_REQUIRED | None | None | None | None |
 | `receipt_matching` | NOT_REQUIRED | None | None | None | None |
 | `ai_daily_briefing` | UNMETERED | Battery NOT LOW | Required | None | None |
 | `warranty_expiration_check` | NOT_REQUIRED | None | None | None | None |

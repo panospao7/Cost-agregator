@@ -125,7 +125,13 @@ data class ReceiptScanState(
     /** A saved parse failure has no trustworthy retained page-coverage evidence. */
     val hasUnverifiedOcrCoverage: Boolean = false,
     /** RG12-01 / V12-NEW-B: the scan resolved to an already-saved receipt (outcome.inserted == false). */
-    val reopenedExistingReceipt: Boolean = false
+    val reopenedExistingReceipt: Boolean = false,
+    /**
+     * R24c: the OCR result carried no currency and the home currency was assumed.
+     * Quick-save is disabled until the user explicitly picks/confirms a currency;
+     * manual save after review stays allowed.
+     */
+    val currencyUnverified: Boolean = false
 )
 
 data class ReceiptQuickSavePreview(
@@ -216,10 +222,14 @@ class ReceiptScanViewModel @Inject constructor(
     /** S7-016: In-flight guard for AI assist requests. */
     private val inFlightAssist = mutableSetOf<String>()
 
+    /** Last home currency loaded by the init collector; re-applied by reset()/retry(). */
+    private var homeCurrencyCode: String? = null
+
     init {
         // S7-009: Load home currency on init so editCurrency is never a hardcoded "EUR"
         viewModelScope.launch {
             currencySettingsRepository.homeCurrency().collect { homeCurrency ->
+                homeCurrencyCode = homeCurrency
                 _state.update { current ->
                     current.copy(
                         editCurrency = current.editCurrency ?: homeCurrency
@@ -278,6 +288,7 @@ class ReceiptScanViewModel @Inject constructor(
                 errorMessage = null,
                 hasPartialOcr = false,
                 hasUnverifiedOcrCoverage = false,
+                currencyUnverified = false,
                 reopenedExistingReceipt = false,
                 pendingAppliedAiCapabilities = emptySet(),
                 receiptAssistState = AiLoadState.Idle,
@@ -370,6 +381,8 @@ class ReceiptScanViewModel @Inject constructor(
                             editMerchant = "",
                             editAmount = "",
                             editCurrency = homeCurrency,
+                            // R24c: the home currency is only assumed here (no OCR result)
+                            currencyUnverified = true,
                             editDate = now,
                             selectedCategoryId = null,
                             paymentMethod = PaymentMethod.CARD,
@@ -458,6 +471,8 @@ class ReceiptScanViewModel @Inject constructor(
                             } ?: "",
                             // S7-009: Use OCR currency if present, else keep loaded home currency
                             editCurrency = parsed.currency.takeIf { c -> c.isNotBlank() } ?: it.editCurrency,
+                            // R24c: blank OCR currency means the home currency is only assumed
+                            currencyUnverified = parsed.currency.isBlank(),
                             editDate = parsed.date ?: timeProvider.now(),
                             ocrConfidence = parsed.confidence,
                             selectedCategoryId = null,
@@ -558,7 +573,8 @@ class ReceiptScanViewModel @Inject constructor(
      * before saving. Default is the OCR-detected currency or home currency.
      */
     fun updateCurrency(currency: String) {
-        _state.update { it.copy(editCurrency = currency) }
+        // R24c: any explicit pick (including re-selecting the assumed home currency) confirms it
+        _state.update { it.copy(editCurrency = currency, currencyUnverified = false) }
     }
 
     fun selectCategory(categoryId: Long) {
@@ -606,6 +622,9 @@ class ReceiptScanViewModel @Inject constructor(
             (receiptSuggestion?.total?.value?.let { it > 0 } == true)
 
         return when {
+            currentState.currencyUnverified -> {
+                "Quick save is off until you confirm the receipt currency."
+            }
             currentState.receiptAssistState is AiLoadState.Idle && currentState.categoryAssistState is AiLoadState.Idle -> {
                 "Request AI receipt or category assist first."
             }
@@ -936,6 +955,13 @@ class ReceiptScanViewModel @Inject constructor(
         }
         // S7-004: Idempotency guard
         if (currentState.isSaving) return
+        // R24c: defense in depth — an unverified currency can never be quick-saved
+        if (currentState.currencyUnverified) {
+            _state.update {
+                it.copy(quickSavePreview = null, errorMessage = "Check the receipt currency before saving.")
+            }
+            return
+        }
 
         val request = ReceiptSaveRequest(
             receiptId = currentState.receiptId ?: return,
@@ -1012,6 +1038,7 @@ class ReceiptScanViewModel @Inject constructor(
         _state.update {
             ReceiptScanState(
                 editDate = timeProvider.now(),
+                editCurrency = homeCurrencyCode,
                 receiptQuickSaveEnabled = it.receiptQuickSaveEnabled
             )
         }
@@ -1022,6 +1049,7 @@ class ReceiptScanViewModel @Inject constructor(
         _state.update {
             ReceiptScanState(
                 editDate = timeProvider.now(),
+                editCurrency = homeCurrencyCode,
                 receiptQuickSaveEnabled = it.receiptQuickSaveEnabled
             )
         }
@@ -1099,6 +1127,8 @@ class ReceiptScanViewModel @Inject constructor(
         if (currentState.receiptId == null || currentState.isSaving) return null
         // S7-014: Quick save unavailable until currency is loaded
         if (currentState.editCurrency.isNullOrBlank()) return null
+        // R24c: assumed (unread) currency must be confirmed by the user before quick save
+        if (currentState.currencyUnverified) return null
 
         // RCP-11: Skip quick-save when OCR confidence is too low — the
         // extracted data is unreliable and requires user review.

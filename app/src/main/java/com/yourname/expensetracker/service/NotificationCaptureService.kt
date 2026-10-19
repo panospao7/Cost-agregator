@@ -17,6 +17,7 @@ import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import androidx.core.app.NotificationCompat
 import timber.log.Timber
+import com.yourname.expensetracker.data.database.DatabaseOpenGate
 import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.data.repository.NotificationRepository
 import com.yourname.expensetracker.domain.notification.RawNotificationFingerprint
@@ -211,8 +212,19 @@ class NotificationCaptureService : NotificationListenerService() {
         )
     }
 
+    /**
+     * R25: true when the database open gate blocks the live DB (too old / too new /
+     * unreadable). Cached by [DatabaseOpenGate]; logs only the bounded reason code.
+     */
+    private fun isOpenGateBlocked(): Boolean {
+        val reason = DatabaseOpenGate.blockedReasonOrNull(this) ?: return false
+        Timber.w("OPEN_GATE_BLOCKED reason=%s", reason)
+        return true
+    }
+
     override fun onCreate() {
         super.onCreate()
+        if (isOpenGateBlocked()) return
         isRunning = true
         diagnostics.recordServiceStart()
         createNotificationChannel()
@@ -268,6 +280,10 @@ class NotificationCaptureService : NotificationListenerService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (isOpenGateBlocked()) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
         startForegroundWithNotification()
         if (intent?.action == ACTION_REFRESH_NOTIFICATIONS) {
             Timber.d("Refresh action received")            // If already connected, refresh immediately, otherwise set flag for onListenerConnected
@@ -282,6 +298,7 @@ class NotificationCaptureService : NotificationListenerService() {
 
     override fun onListenerConnected() {
         super.onListenerConnected()
+        if (isOpenGateBlocked()) return
         isListenerConnected = true
         Timber.d("NotificationListener connected! Starting foreground service.")
         startForegroundWithNotification()
@@ -347,6 +364,7 @@ class NotificationCaptureService : NotificationListenerService() {
      * (the super method is absent from older platform jars).
      */
     override fun onTimeout(startId: Int, fgsType: Int) {
+        if (isOpenGateBlocked()) return
         stopForeground(Service.STOP_FOREGROUND_REMOVE)
         DataSyncFgsTimeoutGuard.from(this).recordTimeout()
         Timber.w("FGS_TIMEOUT_DEMOTED fgsType=%d", fgsType)
@@ -354,6 +372,7 @@ class NotificationCaptureService : NotificationListenerService() {
 
     override fun onListenerDisconnected() {
         super.onListenerDisconnected()
+        if (isOpenGateBlocked()) return
         isListenerConnected = false
         diagnostics.recordListenerDisconnected()
         Timber.w("NotificationListener disconnected - attempting rebind")
@@ -371,6 +390,7 @@ class NotificationCaptureService : NotificationListenerService() {
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         sbn ?: return
+        if (isOpenGateBlocked()) return
         captureNotification(sbn, CaptureSource.LISTENER)
     }
 
@@ -1017,7 +1037,10 @@ class NotificationCaptureService : NotificationListenerService() {
         isRunning = false
         isShuttingDown = true
         cancelRestartAlarm()
-        diagnostics.recordServiceKilled()
+        // R25: onCreate skipped initialisation when blocked; keep the symmetric diagnostic skipped.
+        if (!isOpenGateBlocked()) {
+            diagnostics.recordServiceKilled()
+        }
         Timber.d("Service destroyed")
         // Durable intake is active via NotificationIntakeCoordinator + Worker.
         // withContext(NonCancellable) protects the entire path from filter-pass

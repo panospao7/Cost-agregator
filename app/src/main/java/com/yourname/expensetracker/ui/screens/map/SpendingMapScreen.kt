@@ -43,6 +43,7 @@ import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.ui.components.asString
 import com.yourname.expensetracker.ui.components.LocationCorrectionSheet
 import com.yourname.expensetracker.ui.components.LocationPermissionDialog
 import com.yourname.expensetracker.ui.components.LocationSearchPicker
@@ -108,7 +109,12 @@ fun SpendingMapScreen(
     LaunchedEffect(state.snackbarMessage) {
         val msg = state.snackbarMessage ?: return@LaunchedEffect
         snackbarHostState.showSnackbar(msg, duration = SnackbarDuration.Short)
-        viewModel.onSnackbarDismissed()
+        viewModel.onSnackbarMessageDismissed()
+    }
+    LaunchedEffect(state.snackbarUiText) {
+        val text = state.snackbarUiText ?: return@LaunchedEffect
+        snackbarHostState.showSnackbar(text.asString(context), duration = SnackbarDuration.Short)
+        viewModel.onSnackbarUiTextDismissed()
     }
     LaunchedEffect(state.gpsPrivacyBlocked) {
         val blocked = state.gpsPrivacyBlocked ?: return@LaunchedEffect

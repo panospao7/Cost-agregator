@@ -3,6 +3,7 @@ package com.yourname.expensetracker.data.ai.worker
 import android.content.Context
 import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
+import androidx.work.ExistingWorkPolicy
 import androidx.work.WorkerParameters
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
@@ -131,7 +132,10 @@ class DailyBriefingWorker @AssistedInject constructor(
                 AppConfig.Ai.WORK_NAME_DAILY_BRIEFING,
                 DailyBriefingWorker::class.java,
                 timeProvider,
-                diagnosticEventWriter
+                diagnosticEventWriter,
+                // R21 / HZ-05: append behind the currently running request instead of
+                // REPLACE-ing it (which would cancel this very run's chain link).
+                policyOverride = ExistingWorkPolicy.APPEND_OR_REPLACE
             )
             if (!result.scheduled) {
                 Timber.w("DailyBriefingWorker: midnight reschedule failed — ${result.error}")

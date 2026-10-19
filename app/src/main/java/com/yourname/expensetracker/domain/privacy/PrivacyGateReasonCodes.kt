@@ -55,6 +55,7 @@ object PrivacyGateReasonCodes {
     const val ENCRYPTED_BACKUP_DISABLED = "ENCRYPTED_BACKUP_DISABLED"
     const val OVERPASS_DISABLED = "OVERPASS_DISABLED"
     const val DEBUG_PERSISTENCE_DISABLED = "DEBUG_PERSISTENCE_DISABLED"
+    const val EXCHANGE_RATE_DOWNLOAD_DISABLED = "EXCHANGE_RATE_DOWNLOAD_DISABLED"
 
     /** All codes — used by tests to assert boundedness. */
     val ALL: Set<String> = setOf(
@@ -74,6 +75,7 @@ object PrivacyGateReasonCodes {
         BACKGROUND_LOCATION_DISABLED,
         ENCRYPTED_BACKUP_DISABLED,
         OVERPASS_DISABLED,
-        DEBUG_PERSISTENCE_DISABLED
+        DEBUG_PERSISTENCE_DISABLED,
+        EXCHANGE_RATE_DOWNLOAD_DISABLED
     )
 }

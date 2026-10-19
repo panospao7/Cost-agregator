@@ -35,5 +35,7 @@ enum class PrivacyCapability {
     /** PR8: Debug raw export — requires debug build + privacy consent. */
     DEBUG_RAW_EXPORT,
     /** PR8: Raw database export — release-disabled. */
-    RAW_DATABASE_EXPORT
+    RAW_DATABASE_EXPORT,
+    /** R23: Public ECB exchange-rate download (no expense data sent) — opt-in, default OFF. */
+    EXCHANGE_RATE_DOWNLOAD
 }

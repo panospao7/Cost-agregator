@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.cancelAndJoin
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.data.backup.RestoreRestartSignal
 import com.yourname.expensetracker.domain.backup.DatabaseBackupRepository
 import com.yourname.expensetracker.domain.backup.DatabaseImportResult
 import com.yourname.expensetracker.domain.backup.DatabaseStats
@@ -33,6 +34,7 @@ class BackupRestoreViewModelTest : ViewModelTestUtils() {
     val temporaryFolder = org.junit.rules.TemporaryFolder()
     private val viewModels = mutableListOf<BackupRestoreViewModel>()
 
+    private val restoreRestartSignal = RestoreRestartSignal()
     private val context = mockk<Context>(relaxed = true)
     private val databaseBackupRepository = mockk<DatabaseBackupRepository>(relaxed = true)
     private val restoreMaintenanceMode = mockk<RestoreMaintenanceMode>(relaxed = true).also {
@@ -86,7 +88,8 @@ class BackupRestoreViewModelTest : ViewModelTestUtils() {
             context,
             databaseBackupRepository,
             restoreMaintenanceMode,
-            FakeTimeProvider(1_700_000_000_000L)
+            FakeTimeProvider(1_700_000_000_000L),
+            restoreRestartSignal
         ).also { viewModels += it }
     }
 
@@ -246,10 +249,13 @@ class BackupRestoreViewModelTest : ViewModelTestUtils() {
         assertNull(vm.uiState.value.errorMessage)
     }
 
+    // ── R27-S3: automatic restart after a successful restore ───────
+
+    // MainActivity's restart lock-screen LaunchedEffect (consumer of the signal) is a Compose
+    // branch and is not unit-testable here; these tests pin the producer side.
+
     @Test
-    fun `dismissRestartRequired clears the restart-required flag and unblocks writes`() = runTest(testDispatcher) {
-        // P7-P1-08: dismissRestartRequired must clear the screen-local banner AND exit
-        // maintenance mode so writes are unblocked.
+    fun `successful restore marks the restart signal`() = runTest(testDispatcher) {
         val uri = destinationUri()
         coEvery { databaseBackupRepository.restoreCostBackup(any(), any()) } returns
             Result.success(DatabaseImportResult.SuccessNeedsRestart(
@@ -259,40 +265,66 @@ class BackupRestoreViewModelTest : ViewModelTestUtils() {
                     merchantCount = 0,
                     pendingReviewCount = 0,
                     budgetCount = 0,
-                    receiptCount = 0,
-                    warrantyCount = 0,
-                    groupCount = 0,
-                    subscriptionCount = 0,
-                    savingsGoalCount = 0,
                     allTableCounts = emptyMap()
                 )
             ))
         every { context.contentResolver.openInputStream(uri) } returns bundleInputStream()
 
-        // After restore is complete, isWritesAllowed() returns false (restart-required mode)
+        val vm = createViewModel()
+        advanceUntilIdle()
+        assertFalse("no restart request before a restore", restoreRestartSignal.isRequested())
+
+        vm.restoreBackup(uri, "test-password")
+        advanceUntilIdle()
+
+        assertTrue(vm.uiState.value.restartRequired)
+        assertTrue("restart requested after SuccessNeedsRestart", restoreRestartSignal.isRequested())
+    }
+
+    @Test
+    fun `failed or aborted restore does not mark the restart signal`() = runTest(testDispatcher) {
+        val uri = destinationUri()
+        val vm = createViewModel()
+        advanceUntilIdle()
+
+        // Repository failure.
+        coEvery { databaseBackupRepository.restoreCostBackup(any(), any()) } returns
+            Result.failure(RuntimeException("boom"))
+        every { context.contentResolver.openInputStream(uri) } returns bundleInputStream()
+        vm.restoreBackup(uri, "test-password")
+        advanceUntilIdle()
+
+        // Typed domain error result.
+        coEvery { databaseBackupRepository.restoreCostBackup(any(), any()) } returns
+            Result.success(DatabaseImportResult.Error("restore aborted"))
+        every { context.contentResolver.openInputStream(uri) } returns bundleInputStream()
+        vm.restoreBackup(uri, "test-password")
+        advanceUntilIdle()
+
+        // Non-restart success and in-progress results.
+        coEvery { databaseBackupRepository.restoreCostBackup(any(), any()) } returns
+            Result.success(DatabaseImportResult.Loading)
+        every { context.contentResolver.openInputStream(uri) } returns bundleInputStream()
+        vm.restoreBackup(uri, "test-password")
+        advanceUntilIdle()
+
+        assertFalse(vm.uiState.value.restartRequired)
+        assertFalse("no restart request for failed/aborted restores", restoreRestartSignal.isRequested())
+    }
+
+    @Test
+    fun `view model created under persisted restart-required mode does not mark the restart signal`() = runTest(testDispatcher) {
+        // Persisted NORMAL + worker_resume_pending reads back as RESTORE_COMPLETE_RESTART_REQUIRED;
+        // emitting a restart from that state would relaunch-loop forever.
         every { restoreMaintenanceMode.isWritesAllowed() } returns false
+        every { restoreMaintenanceMode.currentMode() } returns
+            RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED
 
         val vm = createViewModel()
         advanceUntilIdle()
-        vm.restoreBackup(uri, "test-password")
-        advanceUntilIdle()
-        assertTrue(vm.uiState.value.restartRequired)
 
-        // When exit is called with forceRestartRequired=false, the mock transitions back to NORMAL
-        every { restoreMaintenanceMode.exit(forceRestartRequired = false) } answers {
-            every { restoreMaintenanceMode.isWritesAllowed() } returns true
-        }
-
-        vm.dismissRestartRequired()
-        assertFalse(
-            "dismissRestartRequired() must clear the screen-local restart-required banner",
-            vm.uiState.value.restartRequired
-        )
-        // Verify maintenance mode was exited (writes unblocked)
-        assertTrue(
-            "dismissRestartRequired() must unblock writes by exiting maintenance mode",
-            restoreMaintenanceMode.isWritesAllowed()
-        )
+        assertFalse("startup under a persisted restart-required mode must not restart", restoreRestartSignal.isRequested())
+        assertFalse(vm.uiState.value.restartRequired)
     }
 
     // ── P7-CURRENT-017: restore URI header + size preflight ───────
@@ -456,6 +488,36 @@ class BackupRestoreViewModelTest : ViewModelTestUtils() {
         assertFalse(state.isRestoring)
         assertFalse(state.restartRequired)
         assertEquals("Restore failed. Please try again.", state.errorMessage)
+    }
+
+    @Test
+    fun `restoreBackup maps typed backup schema rejection codes to specific localized resources`() = runTest(testDispatcher) {
+        val expected = mapOf(
+            com.yourname.expensetracker.data.repository.BackupSchemaUnsupportedException.LEGACY to
+                com.yourname.expensetracker.R.string.backup_schema_too_old,
+            com.yourname.expensetracker.data.repository.BackupSchemaUnsupportedException.NEWER to
+                com.yourname.expensetracker.R.string.backup_schema_too_new
+        )
+        for ((code, res) in expected) {
+            val uri = destinationUri()
+            every { context.contentResolver.openInputStream(uri) } returns bundleInputStream()
+            coEvery { databaseBackupRepository.restoreCostBackup(any(), any()) } returns Result.failure(
+                com.yourname.expensetracker.data.repository.BackupSchemaUnsupportedException(code)
+            )
+
+            val vm = createViewModel()
+            advanceUntilIdle()
+            vm.restoreBackup(uri, "test-password")
+            advanceUntilIdle()
+
+            val state = vm.uiState.value
+            assertFalse(state.isRestoring)
+            assertEquals("code=$code", res, state.errorMessageRes)
+            assertNull("no raw text for $code", state.errorMessage)
+
+            vm.clearError()
+            assertNull(vm.uiState.value.errorMessageRes)
+        }
     }
 
     @Test

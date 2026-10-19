@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.diagnostics
 
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.MaintenanceSafeDiagnosticSink
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
@@ -122,16 +123,17 @@ class RoomOperationRunRecorder @Inject constructor(
         writeBarrier.checkWritesAllowed("OperationRunRecorder.start")
         val correlationId = CorrelationIds.newId()
         val now = timeProvider.now()
-        val id = runDao.insert(
-            OperationRun(
-                correlationId = correlationId,
-                operationType = operationType,
-                status = "RUNNING",
-                startedAt = now,
-                actor = actor,
-                metadataJson = sanitizer.sanitizeJsonString(if (metadata.isEmpty()) null else metadata.toJson())
-            )
+        val runRow = OperationRun(
+            correlationId = correlationId,
+            operationType = operationType,
+            status = "RUNNING",
+            startedAt = now,
+            actor = actor,
+            metadataJson = sanitizer.sanitizeJsonString(if (metadata.isEmpty()) null else metadata.toJson())
         )
+        val id = writeBarrier.runWrite(DatabaseAccessOperation("OperationRunRecorder.start")) {
+            runDao.insert(runRow)
+        }
         val handle = Handle(id, correlationId, operationType, runDao, eventDao, sanitizer, timeProvider, safeSink, restoreMaintenanceMode, writeBarrier)
         // DDL-016-03: STARTED failure must not orphan the RUNNING row — best-effort only
         CancellationSafe.runCatchingCancellable {
@@ -190,26 +192,27 @@ class RoomOperationRunRecorder @Inject constructor(
             // DDL-016-02: event() is best-effort — failure must not fail business operation
             CancellationSafe.runCatchingCancellable {
                 writeBarrier.checkWritesAllowed("OperationRunRecorder.event")
-                eventDao.insert(
-                    OperationRunEvent(
-                        operationRunId = runId,
-                        correlationId = correlationId,
-                        operationType = operationType,
-                        stage = stage,
-                        eventType = "${operationType}_${stage}".uppercase(),
-                        outcome = outcome.name,
-                        severity = severity.name,
-                        reasonCode = reasonCode?.name,
-                        occurredAt = timeProvider.now(),
-                        entityType = entityType,
-                        entityId = entityId,
-                        metadataJson = sanitizer.sanitizeJsonString(if (metadata.isEmpty()) null else metadata.toJson()),
-                        exceptionClass = exception?.javaClass?.simpleName,
-                        exceptionMessage = sanitizer.sanitizeExceptionMessage(exception?.message),
-                        isTerminal = isTerminal,
-                        eventId = CorrelationIds.newId()  // DDL-F876-14: every event gets a stable ID
-                    )
+                val eventRow = OperationRunEvent(
+                    operationRunId = runId,
+                    correlationId = correlationId,
+                    operationType = operationType,
+                    stage = stage,
+                    eventType = "${operationType}_${stage}".uppercase(),
+                    outcome = outcome.name,
+                    severity = severity.name,
+                    reasonCode = reasonCode?.name,
+                    occurredAt = timeProvider.now(),
+                    entityType = entityType,
+                    entityId = entityId,
+                    metadataJson = sanitizer.sanitizeJsonString(if (metadata.isEmpty()) null else metadata.toJson()),
+                    exceptionClass = exception?.javaClass?.simpleName,
+                    exceptionMessage = sanitizer.sanitizeExceptionMessage(exception?.message),
+                    isTerminal = isTerminal,
+                    eventId = CorrelationIds.newId()  // DDL-F876-14: every event gets a stable ID
                 )
+                writeBarrier.runWrite(DatabaseAccessOperation("OperationRunRecorder.event")) {
+                    eventDao.insert(eventRow)
+                }
             }.onFailure { error ->
                 Timber.w(error, "Failed to write operation event (stage=$stage, operation=$operationType)")
                 CancellationSafe.runCatchingCancellable {
@@ -241,7 +244,9 @@ class RoomOperationRunRecorder @Inject constructor(
             // DDL-A8-10 / DDL-F876-06: failure durably recorded to safe sink
             CancellationSafe.runCatchingCancellable {
                 writeBarrier.checkWritesAllowed("OperationRunRecorder.increment")
-                runDao.incrementCounters(runId, processed, succeeded, failed, skipped, warnings, errors)
+                writeBarrier.runWrite(DatabaseAccessOperation("OperationRunRecorder.increment")) {
+                    runDao.incrementCounters(runId, processed, succeeded, failed, skipped, warnings, errors)
+                }
             }.onFailure { error ->
                 Timber.w(error, "Failed to persist operation counters for run $runId")
                 CancellationSafe.runCatchingCancellable {
@@ -278,12 +283,16 @@ class RoomOperationRunRecorder @Inject constructor(
                 // DDL-81-07: best-effort — diagnostic finalization must not fail business success
                 runCatching {
                     writeBarrier.checkWritesAllowed("OperationRunRecorder.finalize")
-                    val updated = runDao.finalizeIfRunning(
-                        id = runId,
-                        status = status,
-                        finishedAt = timeProvider.now(),
-                        errorSummary = summary ?: sanitizer.sanitizeExceptionMessage(error?.message)
-                    )
+                    val finalizedAt = timeProvider.now()
+                    val finalizeSummary = summary ?: sanitizer.sanitizeExceptionMessage(error?.message)
+                    val updated = writeBarrier.runWrite(DatabaseAccessOperation("OperationRunRecorder.finalize")) {
+                        runDao.finalizeIfRunning(
+                            id = runId,
+                            status = status,
+                            finishedAt = finalizedAt,
+                            errorSummary = finalizeSummary
+                        )
+                    }
                     if (updated > 0) {
                         // DDL-C67-03: preserve reasonCode and summary in terminal event
                         val parsedReason = summary?.let { runCatching { DiagnosticReasonCode.valueOf(it) }.getOrNull() }

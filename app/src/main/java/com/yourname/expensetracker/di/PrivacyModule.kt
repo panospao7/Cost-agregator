@@ -1,6 +1,8 @@
 package com.yourname.expensetracker.di
 
 import com.yourname.expensetracker.data.privacy.AndroidKeystoreInstallationSecretKeyProvider
+import com.yourname.expensetracker.data.service.AndroidNotificationListenerAccessChecker
+import com.yourname.expensetracker.domain.notification.capture.NotificationListenerAccessChecker
 import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy
 import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
 import com.yourname.expensetracker.data.privacy.DefaultSensitiveHashingService
@@ -15,6 +17,7 @@ import com.yourname.expensetracker.domain.privacy.CompositePrivacyGate
 import com.yourname.expensetracker.domain.privacy.InstallationSecretHasher
 import com.yourname.expensetracker.data.privacy.InstallationSecretKeyProvider
 import com.yourname.expensetracker.domain.privacy.LocationPrivacyGate
+import com.yourname.expensetracker.domain.privacy.NetworkPrivacyGate
 import com.yourname.expensetracker.domain.privacy.NotificationPrivacyGate
 import com.yourname.expensetracker.domain.privacy.PrivacyAuditLogger
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
@@ -70,6 +73,13 @@ abstract class PrivacyModule {
         impl: AndroidKeystoreInstallationSecretKeyProvider
     ): InstallationSecretKeyProvider
 
+    /** R17: read-only OS notification-listener access probe (display-only status). */
+    @Binds
+    @Singleton
+    abstract fun bindNotificationListenerAccessChecker(
+        impl: AndroidNotificationListenerAccessChecker
+    ): NotificationListenerAccessChecker
+
     companion object {
 
         @Provides
@@ -79,6 +89,7 @@ abstract class PrivacyModule {
             locationGate: LocationPrivacyGate,
             cloudAiGate: CloudAiPrivacyGate,
             backupGate: BackupPrivacyGate,
+            networkGate: NetworkPrivacyGate,
             privacySettingsRepository: PrivacySettingsRepository,
             auditLogger: PrivacyAuditLogger
         ): PrivacyGate {
@@ -89,7 +100,7 @@ abstract class PrivacyModule {
             )
             // PRIV-441-03: Pass gateHandledCapabilities so composite fails closed for unhandled sensitive capabilities
             return CompositePrivacyGate(
-                gates = listOf(notificationGate, locationGate, cloudAiGate, backupGate, exportGate),
+                gates = listOf(notificationGate, locationGate, cloudAiGate, backupGate, exportGate, networkGate),
                 auditLogger = auditLogger,
                 gateHandledCapabilities = PrivacyCapabilityHandlingPolicy.gateHandledCapabilities
             )

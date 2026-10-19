@@ -26,8 +26,35 @@ interface RecurringOccurrenceDao {
     @Query("SELECT * FROM recurring_occurrences WHERE dueDate >= :start AND dueDate < :end ORDER BY dueDate")
     suspend fun getByDateRange(start: Long, end: Long): List<RecurringOccurrence>
 
+    /** R21 S1: bounded by-id read (callers chunk to <= 900 ids). */
+    @Query("SELECT * FROM recurring_occurrences WHERE id IN (:ids)")
+    suspend fun getByIds(ids: List<Long>): List<RecurringOccurrence>
+
+    /**
+     * R21 S1: earliest open (PLANNED, unlinked) occurrence of a source, optionally
+     * restricted to `dueDate <= :dueOnOrBefore` (null = no upper bound). Read-only.
+     */
+    @Query("""
+        SELECT * FROM recurring_occurrences
+        WHERE sourceType = :sourceType
+          AND sourceId = :sourceId
+          AND status = 'PLANNED'
+          AND linkedExpenseId IS NULL
+          AND (:dueOnOrBefore IS NULL OR dueDate <= :dueOnOrBefore)
+        ORDER BY dueDate ASC, id ASC
+        LIMIT 1
+    """)
+    suspend fun findEarliestOpenBySource(sourceType: String, sourceId: Long, dueOnOrBefore: Long?): RecurringOccurrence?
+
     @Query("SELECT * FROM recurring_occurrences WHERE linkedExpenseId = :expenseId LIMIT 1")
     suspend fun getByLinkedExpenseId(expenseId: Long): RecurringOccurrence?
+
+    /**
+     * R21 S1: read-only. Returns those of [expenseIds] that are already linked to ANY
+     * occurrence (callers chunk to <= 900 ids).
+     */
+    @Query("SELECT linkedExpenseId FROM recurring_occurrences WHERE linkedExpenseId IN (:expenseIds)")
+    suspend fun getLinkedExpenseIds(expenseIds: List<Long>): List<Long>
 
     @Query("SELECT * FROM recurring_occurrences WHERE status = :status ORDER BY dueDate")
     suspend fun getByStatus(status: String): List<RecurringOccurrence>

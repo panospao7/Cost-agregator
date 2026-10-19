@@ -770,15 +770,19 @@ MANIFEST_COUNT_KEYS = frozenset({"structural_entries"})
 # Human-authorized 2026-09-28: one exact cleanupRestoreStaging fixture, 64 -> 65.
 # R26 (owner-approved guard tightening): removed the stale runCostBackupExport/
 # writableDatabase exception (the PRAGMA statement was removed), 65 -> 64.
-PINNED_STRUCTURAL_ENTRY_COUNT = 64
+# R25 (owner-approved Q-R25-G1, 2026-10-17): three exact tuples for the core open
+# gate (DatabaseOpenGate probe/databaseFile, GatedOpenHelper openGated),
+# 64 -> 67.
+PINNED_STRUCTURAL_ENTRY_COUNT = 67
 
 # ── Immutable checked-in tuple contracts (expected/fixtures classification) ────
 # The manifest's ``expected`` and ``fixtures`` sections must EXACTLY equal these
 # canonical (path, class, method_pattern, operation) tuple sets.  The sets are
 # IMMUTABLE — they pin the exact identities of the checked-in manifest:
 #
-#   * MANIFEST_IMMUTABLE_EXPECTED_TUPLES — 60 tuples (58 pre-GR-08j + the two
-#     GR-08j named-object Room-migration tuples).  Operation evidence is
+#   * MANIFEST_IMMUTABLE_EXPECTED_TUPLES — 62 tuples (58 pre-GR-08j + the two
+#     GR-08j named-object Room-migration tuples, minus the R26 removal, plus
+#     the three R25 open-gate tuples).  Operation evidence is
 #     REQUIRED for every expected tuple: the operation token must occur in the
 #     exact declaration body.
 #   * MANIFEST_IMMUTABLE_FIXTURE_TUPLES — 5 tuples.  Fixture tuples keep
@@ -817,6 +821,12 @@ _STRUCT_PATH_EXPORT_ANONYMIZER = (
 )
 _STRUCT_PATH_LEGACY_MIGRATION = (
     "app/src/main/java/com/yourname/expensetracker/service/debug/LegacyDataMigrationService.kt"
+)
+_STRUCT_PATH_DATABASE_OPEN_GATE = (
+    "app/src/main/java/com/yourname/expensetracker/data/database/DatabaseOpenGate.kt"
+)
+_STRUCT_PATH_GATED_OPEN_HELPER = (
+    "app/src/main/java/com/yourname/expensetracker/data/database/GatedOpenHelper.kt"
 )
 _STRUCT_PATH_BACKUP_VERIFIER = (
     "app/src/main/java/com/yourname/expensetracker/data/backup/BackupVerifier.kt"
@@ -904,6 +914,11 @@ MANIFEST_IMMUTABLE_EXPECTED_TUPLES = frozenset([
     (_STRUCT_PATH_EXPORT_ANONYMIZER, "ExportAnonymizer", "sanitizeBankStatementImportItems", "execSQL"),
     # ── Legacy data migration (LegacyDataMigrationService.kt) ────────────────
     (_STRUCT_PATH_LEGACY_MIGRATION, "LegacyDataMigrationService", "migrateFromBackup", "openDatabase"),
+    # ── Core open gate (DatabaseOpenGate.kt / GatedOpenHelper.kt) ─────
+    # R25 (owner-approved Q-R25-G1, 2026-10-17).
+    (_STRUCT_PATH_DATABASE_OPEN_GATE, "DatabaseOpenGate", "probe", "openDatabase"),
+    (_STRUCT_PATH_DATABASE_OPEN_GATE, "DatabaseOpenGate", "databaseFile", "getDatabasePath"),
+    (_STRUCT_PATH_GATED_OPEN_HELPER, "GatedOpenHelper", "openGated", "writableDatabase"),
 ])
 
 MANIFEST_IMMUTABLE_FIXTURE_TUPLES = frozenset([
@@ -916,7 +931,7 @@ MANIFEST_IMMUTABLE_FIXTURE_TUPLES = frozenset([
     (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "cleanupRestoreStaging", "deleteRecursively"),
 ])
 
-# Derived contract counts (59 expected / 5 fixtures).
+# Derived contract counts (62 expected / 5 fixtures).
 MANIFEST_IMMUTABLE_EXPECTED_COUNT = len(MANIFEST_IMMUTABLE_EXPECTED_TUPLES)
 MANIFEST_IMMUTABLE_FIXTURE_COUNT = len(MANIFEST_IMMUTABLE_FIXTURE_TUPLES)
 

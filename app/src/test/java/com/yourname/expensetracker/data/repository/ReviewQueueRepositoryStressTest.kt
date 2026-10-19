@@ -97,7 +97,8 @@ class ReviewQueueRepositoryStressTest {
             receiptLinkService = mockk<ReceiptLinkService>(relaxed = true),
             pendingReviewSourceLinkService = mockk(relaxed = true),
             pendingReviewSourceLinkPromoter = mockk(relaxed = true),
-            transactionEventDao = database.transactionEventDao(),
+            transactionRunner = mockk(relaxed = true),
+            transactionLifecycleEventWriter = mockk(relaxed = true),
             postCommitActionRunner = mockk(relaxed = true),
         )
     }

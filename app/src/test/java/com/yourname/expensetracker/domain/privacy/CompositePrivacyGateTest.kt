@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.domain.privacy
 
+import io.mockk.coEvery
+import io.mockk.mockk
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -152,6 +154,44 @@ class CompositePrivacyGateTest {
             PrivacyDecision.FailClosed("FAIL_CLOSED_REASON"),
             CompositePrivacyGate(listOf(failClosed, allowed), auditLogger)
                 .check(PrivacyCapability.CLOUD_AI_GENERAL)
+        )
+    }
+
+    @Test
+    fun `R23 production gate list handles EXCHANGE_RATE_DOWNLOAD and never yields NO_GATE_HANDLER`() = runTest {
+        val notApplicableDecision: PrivacyDecision = PrivacyDecision.NotApplicable
+        val notificationGate = mockk<NotificationPrivacyGate>()
+        val locationGate = mockk<LocationPrivacyGate>()
+        val cloudAiGate = mockk<CloudAiPrivacyGate>()
+        val backupGate = mockk<BackupPrivacyGate>()
+        coEvery { notificationGate.check(any(), any()) } returns notApplicableDecision
+        coEvery { locationGate.check(any(), any()) } returns notApplicableDecision
+        coEvery { cloudAiGate.check(any(), any()) } returns notApplicableDecision
+        coEvery { backupGate.check(any(), any()) } returns notApplicableDecision
+
+        suspend fun decisionFor(enabled: Boolean): PrivacyDecision {
+            val repository = mockk<PrivacySettingsRepository>()
+            val settings = PrivacySettings(exchangeRateDownloadEnabled = enabled)
+            coEvery { repository.getLoadState() } returns PrivacySettingsLoadState.Loaded(settings)
+            // ExportPrivacyGate reads getSettings() for every capability before dispatching.
+            coEvery { repository.getSettings() } returns settings
+            // The real production provider: its gate list and handled-capability policy.
+            val composite = com.yourname.expensetracker.di.PrivacyModule.providePrivacyGate(
+                notificationGate = notificationGate,
+                locationGate = locationGate,
+                cloudAiGate = cloudAiGate,
+                backupGate = backupGate,
+                networkGate = NetworkPrivacyGate(repository),
+                privacySettingsRepository = repository,
+                auditLogger = PrivacyAuditLogger.NO_OP
+            )
+            return composite.check(PrivacyCapability.EXCHANGE_RATE_DOWNLOAD)
+        }
+
+        assertEquals(PrivacyDecision.Allowed, decisionFor(enabled = true))
+        assertEquals(
+            PrivacyDecision.Denied(PrivacyGateReasonCodes.EXCHANGE_RATE_DOWNLOAD_DISABLED),
+            decisionFor(enabled = false)
         )
     }
 

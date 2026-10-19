@@ -22,6 +22,7 @@ import com.yourname.expensetracker.domain.workers.WorkerSpecScheduler
 import com.yourname.expensetracker.domain.workers.toWorkerResult
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
+import kotlinx.coroutines.CancellationException
 
 /**
  * Periodic WorkManager worker that checks for due reminder deliveries
@@ -66,6 +67,19 @@ class BillReminderWorker @AssistedInject constructor(
             if (settings.isWithinQuietHours(now)) {
                 Log.d(TAG, "Bill reminders in quiet hours — skipping")
                 return@runGuardedWithContext
+            }
+
+            // R21 S4: after a long gap (device off / worker starved) several missed
+            // occurrences of the same rule can be due at once. Collapse stale due
+            // deliveries (older than the latest per rule) BEFORE recovery/dispatch so
+            // a rule yields at most one notification instead of a burst. Isolated in its own
+            // try: a persistent collapse failure must not block reminder dispatch.
+            try {
+                coordinator.collapseStaleDueDeliveries(now)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Stale reminder collapse failed (${e::class.simpleName}); dispatching without collapse")
             }
 
             try {

@@ -44,6 +44,7 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.theme.SemanticColors
+import com.yourname.expensetracker.ui.util.UiTimeUtils
 import java.time.format.DateTimeFormatter
 import java.time.Instant
 import java.time.ZoneId
@@ -799,7 +800,7 @@ fun DateSelector(
     val dateFormat = remember { DateTimeFormatter.ofPattern("EEE, dd MMM yyyy, HH:mm", Locale.getDefault()) }
     var showDatePicker by remember { mutableStateOf(false) }
     val datePickerState = rememberDatePickerState(
-        initialSelectedDateMillis = dateMs
+        initialSelectedDateMillis = UiTimeUtils.instantToPickerMillis(dateMs)
     )
 
     val formattedDate = dateFormat.format(Instant.ofEpochMilli(dateMs).atZone(ZoneId.systemDefault()))
@@ -843,16 +844,10 @@ fun DateSelector(
                             // G-TIME-01: pure derivation from the two existing
                             // timestamps (java.time, system default timezone) —
                             // same H/M/S carry-over and zero milliseconds the
-                            // Calendar version produced.
-                            val zone = ZoneId.systemDefault()
-                            val oldTime = Instant.ofEpochMilli(dateMs).atZone(zone)
-                            val newDate = Instant.ofEpochMilli(selectedDate).atZone(zone).toLocalDate()
-                            val newMillis = newDate
-                                .atTime(oldTime.hour, oldTime.minute, oldTime.second)
-                                .atZone(zone)
-                                .toInstant()
-                                .toEpochMilli()
-                            onDateSelected(newMillis)
+                            // Calendar version produced. The picker value is
+                            // UTC-midnight millis of the picked day, so it is
+                            // converted via UiTimeUtils (not read in the system zone).
+                            onDateSelected(UiTimeUtils.pickerMillisKeepingTimeOf(selectedDate, dateMs))
                         }
                         showDatePicker = false
                     }

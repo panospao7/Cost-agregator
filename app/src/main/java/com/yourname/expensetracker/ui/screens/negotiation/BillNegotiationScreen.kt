@@ -26,6 +26,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.negotiation.SmartBillNegotiationEngine
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
+import com.yourname.expensetracker.ui.util.AmountInputSanitizer
 
 enum class NegotiationOutcome(@StringRes val displayNameRes: Int) {
     SUCCESS(R.string.negotiation_outcome_success),
@@ -636,7 +637,10 @@ fun OutcomeRecordingDialog(
                 if (selectedOutcome == NegotiationOutcome.SUCCESS) {
                     OutlinedTextField(
                         value = savingsAmount,
-                        onValueChange = { savingsAmount = it },
+                        onValueChange = { savingsAmount = AmountInputSanitizer.sanitize(it) },
+                        isError = selectedOutcome == NegotiationOutcome.SUCCESS &&
+                            savingsAmount.isNotBlank() &&
+                            AmountInputSanitizer.parseOrNull(savingsAmount) == null,
                         label = { Text(stringResource(R.string.bill_negotiation_actual_savings_label)) },
                         placeholder = { Text(stringResource(R.string.bill_negotiation_savings_placeholder)) },
                         prefix = { Text(CurrencyFormatter.getCurrencySymbol(homeCurrency)) },
@@ -657,10 +661,14 @@ fun OutcomeRecordingDialog(
             }
         },
         confirmButton = {
+            val savingsParsed = AmountInputSanitizer.parseOrNull(savingsAmount)
+            val savingsInvalid = selectedOutcome == NegotiationOutcome.SUCCESS &&
+                savingsAmount.isNotBlank() && savingsParsed == null
             TextButton(
+                enabled = !savingsInvalid,
                 onClick = {
                     val savings = if (selectedOutcome == NegotiationOutcome.SUCCESS) {
-                        savingsAmount.toDoubleOrNull()
+                        savingsParsed
                     } else null
                     onSave(selectedOutcome, savings, notes)
                 }

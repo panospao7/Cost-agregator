@@ -63,6 +63,10 @@ class DirectEventDaoInsertGuardTest {
         // re-checked against GUARDED_DAO_NAMES and its violations remain live, so the
         // entries are renewed to the standard 2026-12-31 horizon rather than dropped.
         // ExpenseRepository's violation is fixed and its entry removed.
+        // G3 S5 (2026-10-16): the remaining LEGACY_REPOSITORY entries are removed (Receipt,
+        // ReviewQueue, RecurringExpense, ManualRecurringExpense, Notification repositories);
+        // WarrantyTrackerRepository -> WARRANTY_OWNER and BankApiIntegration -> DEBUG_ONLY,
+        // both capped at 2027-01-01 (owner decision Q-G3-2).
             // === Transaction events (DIRECT_TRANSACTION_EVENT_DAO_INSERT) ===
             DirectEventAllowlistEntry(
                 "TransactionLifecycleCoordinator.kt", "DIRECT_TRANSACTION_EVENT_DAO_INSERT", "COORDINATOR",
@@ -95,9 +99,10 @@ class DirectEventDaoInsertGuardTest {
                 LocalDate.of(2026, 12, 31)
             ),
             DirectEventAllowlistEntry(
-                "WarrantyTrackerRepository.kt", "DIRECT_TRANSACTION_EVENT_DAO_INSERT", "LEGACY_REPOSITORY",
-                "Transaction", "Warranty tracking writes lifecycle events", "MIT-031",
-                LocalDate.of(2026, 11, 20)
+                "WarrantyTrackerRepository.kt", "DIRECT_TRANSACTION_EVENT_DAO_INSERT", "WARRANTY_OWNER",
+                "Transaction", "Warranty lifecycle owner writes WarrantyLifecycleEvent directly, " +
+                    "barrier-checked, pending a warranty lifecycle writer", "MIT-031",
+                LocalDate.of(2027, 1, 1)
             ),
             DirectEventAllowlistEntry(
                 "TransactionLifecycleEventWriter.kt", "DIRECT_TRANSACTION_EVENT_DAO_INSERT", "WRITER_IMPLEMENTATION",
@@ -130,24 +135,15 @@ class DirectEventDaoInsertGuardTest {
                 LocalDate.of(2026, 12, 31)
             ),
             DirectEventAllowlistEntry(
-                "ReceiptRepository.kt", "DIRECT_RECEIPT_EVENT_DAO_INSERT", "LEGACY_REPOSITORY",
-                "Receipt", "P3 repository (legacy, to be migrated to coordinator)", "MIT-041",
-                LocalDate.of(2026, 11, 20)
-            ),
-            DirectEventAllowlistEntry(
-                "ReviewQueueRepository.kt", "DIRECT_RECEIPT_EVENT_DAO_INSERT", "LEGACY_REPOSITORY",
-                "Receipt", "P3 review queue repository (legacy, to be migrated)", "MIT-041",
-                LocalDate.of(2026, 11, 20)
-            ),
-            DirectEventAllowlistEntry(
                 "ReceiptLifecycleEventWriter.kt", "DIRECT_RECEIPT_EVENT_DAO_INSERT", "WRITER_IMPLEMENTATION",
                 "Receipt", "P3 receipt event writer (contains Room impl)", "MIT-041",
                 LocalDate.of(2026, 12, 31)
             ),
             DirectEventAllowlistEntry(
-                "BankApiIntegration.kt", "DIRECT_RECEIPT_EVENT_DAO_INSERT", "LEGACY_REPOSITORY",
-                "Receipt", "P10 bank integration (legacy, to be migrated to coordinator)", "MIT-041",
-                LocalDate.of(2026, 11, 20)
+                "BankApiIntegration.kt", "DIRECT_RECEIPT_EVENT_DAO_INSERT", "DEBUG_ONLY",
+                "Receipt", "Debug-only stub integration: requireStubMode() blocks release builds; " +
+                    "barrier check before the pendingReview insert", "MIT-041",
+                LocalDate.of(2027, 1, 1)
             ),
 
             // === Recurring lifecycle events (DIRECT_RECURRING_EVENT_DAO_INSERT) ===
@@ -168,16 +164,6 @@ class DirectEventDaoInsertGuardTest {
                 "RecurringLifecycleEventWriter.kt", "DIRECT_RECURRING_EVENT_DAO_INSERT", "WRITER_IMPLEMENTATION",
                 "Recurring", "P4 event writer (contains Room impl)", "MIT-043",
                 LocalDate.of(2026, 12, 31)
-            ),
-            DirectEventAllowlistEntry(
-                "RecurringExpenseRepository.kt", "DIRECT_RECURRING_EVENT_DAO_INSERT", "LEGACY_REPOSITORY",
-                "Recurring", "P4 repository (legacy, to be migrated)", "MIT-043",
-                LocalDate.of(2026, 11, 20)
-            ),
-            DirectEventAllowlistEntry(
-                "ManualRecurringExpenseRepository.kt", "DIRECT_RECURRING_EVENT_DAO_INSERT", "LEGACY_REPOSITORY",
-                "Recurring", "P4 manual recurring repository (legacy, to be migrated)", "MIT-043",
-                LocalDate.of(2026, 11, 20)
             ),
 
             // === Operations, diagnostics, and infrastructure events ===
@@ -200,11 +186,6 @@ class DirectEventDaoInsertGuardTest {
                 "WorkerExecutionGuard.kt", "DIRECT_TRANSACTION_EVENT_DAO_INSERT", "SERVICE",
                 "Operations", "P9 worker guard writes safeguard events", "MIT-031",
                 LocalDate.of(2026, 12, 31)
-            ),
-            DirectEventAllowlistEntry(
-                "NotificationRepository.kt", "DIRECT_TRANSACTION_EVENT_DAO_INSERT", "LEGACY_REPOSITORY",
-                "Operations", "P1 notification repository (legacy, to be migrated)", "MIT-031",
-                LocalDate.of(2026, 11, 20)
             ),
             DirectEventAllowlistEntry(
                 "DataRetentionWorker.kt", "DIRECT_TRANSACTION_EVENT_DAO_INSERT", "SERVICE",
@@ -397,5 +378,68 @@ class DirectEventDaoInsertGuardTest {
             "LEGACY_REPOSITORY entries must expire within 75 days (by $maxExpiry). Long-expiry: ${longExpiry.map { it.fileName }}",
             longExpiry.isEmpty()
         )
+    }
+
+    @Test
+    fun `warranty owner and debug only entries are capped and limited to two files`() {
+        val hardCap = LocalDate.of(2027, 1, 1)
+        val reclassified = APPROVED_ENTRIES.filter {
+            it.category == "WARRANTY_OWNER" || it.category == "DEBUG_ONLY"
+        }
+        val tooLate = reclassified.filter { it.expires.isAfter(hardCap) }
+        assertTrue(
+            "WARRANTY_OWNER/DEBUG_ONLY entries must expire on or before $hardCap. " +
+                "Too late: ${tooLate.map { it.fileName }}",
+            tooLate.isEmpty()
+        )
+        val expectedCategories = mapOf(
+            "WarrantyTrackerRepository.kt" to "WARRANTY_OWNER",
+            "BankApiIntegration.kt" to "DEBUG_ONLY"
+        )
+        val misused = reclassified.filter { expectedCategories[it.fileName] != it.category }
+        assertTrue(
+            "Only WarrantyTrackerRepository.kt (WARRANTY_OWNER) and BankApiIntegration.kt (DEBUG_ONLY) " +
+                "may use these categories (they must not dodge the LEGACY_REPOSITORY 75-day cap). " +
+                "Misused: ${misused.map { it.fileName }}",
+            misused.isEmpty()
+        )
+        // Reverse direction: the two reclassified files must keep exactly their category, so a later
+        // recategorisation (e.g. to SERVICE) cannot silently escape the 2027-01-01 cap and stale check.
+        val recategorised = expectedCategories.flatMap { (file, category) ->
+            APPROVED_ENTRIES.filter { it.fileName == file && it.category != category }
+        }
+        assertTrue(
+            "WarrantyTrackerRepository.kt must stay WARRANTY_OWNER and BankApiIntegration.kt must stay " +
+                "DEBUG_ONLY. Recategorised: ${recategorised.map { it.fileName + ":" + it.category }}",
+            recategorised.isEmpty()
+        )
+    }
+
+    @Test
+    fun `legacy warranty owner and debug only entries still contain a guarded insert`() {
+        val staleCandidates = APPROVED_ENTRIES.filter {
+            it.category == "LEGACY_REPOSITORY" ||
+                it.category == "WARRANTY_OWNER" ||
+                it.category == "DEBUG_ONLY"
+        }
+        val ktFilesByName = sourceRoot.walkTopDown()
+            .filter { it.isFile && it.extension == "kt" }
+            .groupBy { it.name }
+        val stale = staleCandidates.filter { entry ->
+            val files = ktFilesByName[entry.fileName].orEmpty()
+            files.none { containsGuardedInsert(it.readText()) }
+        }
+        assertTrue(
+            "Allowlist entries no longer contain a guarded event DAO insert: ${stale.map { it.fileName }}. " +
+                "Remove these entries from APPROVED_ENTRIES.",
+            stale.isEmpty()
+        )
+    }
+
+    /** Same detection as the main scan: direct `<guardedDao>.insert(` or `database.<x>Dao().insert(`. */
+    private fun containsGuardedInsert(content: String): Boolean {
+        val direct = DIRECT_INSERT_PATTERN.findAll(content).any { it.groupValues[1] in GUARDED_DAO_NAMES }
+        val chained = CHAINED_INSERT_PATTERN.findAll(content).any { "${it.groupValues[1]}Dao" in GUARDED_DAO_NAMES }
+        return direct || chained
     }
 }

@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.diagnostics
 
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.PipelineDiagnosticEventDao
 import com.yourname.expensetracker.data.database.entity.PipelineDiagnosticEvent
@@ -47,28 +48,29 @@ class RoomDiagnosticEventWriter @Inject constructor(
         val safeMetadataJson = sanitizer.sanitizeJsonString(
             if (event.metadata.isEmpty()) null else event.metadata.toJson()
         )
-        dao.insert(
-            PipelineDiagnosticEvent(
-                pipeline = event.pipeline.name,
-                stage = event.stage,
-                outcome = event.outcome.name,
-                timestamp = timeProvider.now(),
-                eventId = event.eventId,
-                correlationId = event.correlationId,
-                causationId = event.causationId,
-                severity = event.severity.name,
-                reasonCode = event.reasonCode?.name,
-                entityType = event.entityType,
-                entityId = event.entityId,
-                sourceType = event.sourceType,
-                sourceIdHash = event.sourceIdHash,
-                isTerminal = event.isTerminal,
-                elapsedMs = event.elapsedMs,
-                exceptionClass = event.exception?.javaClass?.simpleName,
-                exceptionMessage = sanitizer.sanitizeExceptionMessage(event.exception?.message),
-                metadataJson = safeMetadataJson,
-                metadataSchemaVersion = 1
-            )
+        val row = PipelineDiagnosticEvent(
+            pipeline = event.pipeline.name,
+            stage = event.stage,
+            outcome = event.outcome.name,
+            timestamp = timeProvider.now(),
+            eventId = event.eventId,
+            correlationId = event.correlationId,
+            causationId = event.causationId,
+            severity = event.severity.name,
+            reasonCode = event.reasonCode?.name,
+            entityType = event.entityType,
+            entityId = event.entityId,
+            sourceType = event.sourceType,
+            sourceIdHash = event.sourceIdHash,
+            isTerminal = event.isTerminal,
+            elapsedMs = event.elapsedMs,
+            exceptionClass = event.exception?.javaClass?.simpleName,
+            exceptionMessage = sanitizer.sanitizeExceptionMessage(event.exception?.message),
+            metadataJson = safeMetadataJson,
+            metadataSchemaVersion = 1
         )
+        writeBarrier.runWrite(DatabaseAccessOperation("DiagnosticEventWriter.emit")) {
+            dao.insert(row)
+        }
     }
 }

@@ -16,6 +16,9 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
@@ -265,6 +268,50 @@ class DiagnosticWritersWriteBarrierTest {
         coVerify(exactly = 1) { runDao.finalizeIfRunning(7L, "SUCCESS", any(), any()) }
         // STARTED + terminal event.
         coVerify(exactly = 2) { eventDao.insert(any<OperationRunEvent>()) }
+    }
+
+    @Test
+    fun `handle terminal write is counted as in-flight write until finalize completes`() = runTest {
+        coEvery { runDao.insert(any<OperationRun>()) } returns 7L
+        val handle = recorder().start("EXPORT_CSV")
+        val gate = CompletableDeferred<Unit>()
+        coEvery { runDao.finalizeIfRunning(any(), any(), any(), any()) } coAnswers {
+            gate.await()
+            1
+        }
+
+        val finalizing = async { handle.success() }
+        runCurrent()
+
+        assertEquals("finalize is parked inside runWrite", 1, barrier.inFlightWriteCount())
+        assertTrue("success() must not complete while finalize is gated", finalizing.isActive)
+
+        gate.complete(Unit)
+        finalizing.await()
+
+        assertEquals(0, barrier.inFlightWriteCount())
+        coVerify(exactly = 1) { runDao.finalizeIfRunning(7L, "SUCCESS", any(), any()) }
+        // STARTED + terminal event (the event write runs after the finalize write is released).
+        coVerify(exactly = 2) { eventDao.insert(any<OperationRunEvent>()) }
+    }
+
+    @Test
+    fun `diagnostic writer insert is counted as in-flight write until the insert completes`() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        coEvery { diagnosticDao.insert(any<PipelineDiagnosticEvent>()) } coAnswers {
+            gate.await()
+            1L
+        }
+
+        val emitting = async { diagnosticWriter().emit(event()) }
+        runCurrent()
+
+        assertEquals(1, barrier.inFlightWriteCount())
+
+        gate.complete(Unit)
+        emitting.await()
+
+        assertEquals(0, barrier.inFlightWriteCount())
     }
 
     @Test

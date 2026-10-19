@@ -2,6 +2,7 @@ package com.yourname.expensetracker.data.repository
 
 import com.yourname.expensetracker.domain.currency.ConversionResult
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.CurrencyRateRefreshOutcome
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.DomainExchangeRate
 import com.yourname.expensetracker.domain.currency.ExchangeRateStore
@@ -13,6 +14,7 @@ import com.yourname.expensetracker.domain.core.money.StaleRatePolicy
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
+import com.yourname.expensetracker.domain.privacy.PrivacyGateReasonCodes
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -195,13 +197,49 @@ class CurrencyRatesRepositoryImplTest {
     fun `privacy denial performs no network storage or settings work`() = runTest {
         val fixture = fixture(
             now = fetchedNextDayMillis,
-            privacyDecision = PrivacyDecision.Denied("PRIVACY_BLOCKED")
+            privacyDecision = PrivacyDecision.Denied(PrivacyGateReasonCodes.EXCHANGE_RATE_DOWNLOAD_DISABLED)
         )
 
-        val count = fixture.repository.refresh("USD")
+        val outcome = fixture.repository.refresh("USD")
 
-        assertEquals(0, count)
+        assertEquals(CurrencyRateRefreshOutcome.DisabledByPrivacy, outcome)
         assertEquals(1, fixture.privacyGate.checkCount)
+        assertEquals(listOf(PrivacyCapability.EXCHANGE_RATE_DOWNLOAD), fixture.privacyGate.checkedCapabilities)
+        assertTrue(fixture.store.rates.isEmpty())
+        assertTrue(fixture.settings.lastRateUpdates.isEmpty())
+    }
+
+    @Test
+    fun `fail closed privacy decision returns bounded reason code without any work`() = runTest {
+        val fixture = fixture(
+            now = fetchedNextDayMillis,
+            privacyDecision = PrivacyDecision.FailClosed(PrivacyGateReasonCodes.PRIVACY_BLOCKED)
+        )
+
+        val outcome = fixture.repository.refresh("USD")
+
+        assertEquals(
+            CurrencyRateRefreshOutcome.PrivacyCheckFailed(PrivacyGateReasonCodes.PRIVACY_BLOCKED),
+            outcome
+        )
+        assertEquals(listOf(PrivacyCapability.EXCHANGE_RATE_DOWNLOAD), fixture.privacyGate.checkedCapabilities)
+        assertTrue(fixture.store.rates.isEmpty())
+        assertTrue(fixture.settings.lastRateUpdates.isEmpty())
+    }
+
+    @Test
+    fun `fail closed with unbounded reason text is mapped to PRIVACY_BLOCKED`() = runTest {
+        val fixture = fixture(
+            now = fetchedNextDayMillis,
+            privacyDecision = PrivacyDecision.FailClosed("raw /storage/emulated/0/secret path or SQL text")
+        )
+
+        val outcome = fixture.repository.refresh("USD")
+
+        assertEquals(
+            CurrencyRateRefreshOutcome.PrivacyCheckFailed(PrivacyGateReasonCodes.PRIVACY_BLOCKED),
+            outcome
+        )
         assertTrue(fixture.store.rates.isEmpty())
         assertTrue(fixture.settings.lastRateUpdates.isEmpty())
     }
@@ -381,12 +419,14 @@ private class MutableTimeProvider(var currentMillis: Long) : TimeProvider {
 
 private class FixedPrivacyGate(private val decision: PrivacyDecision) : PrivacyGate {
     var checkCount: Int = 0
+    val checkedCapabilities = mutableListOf<PrivacyCapability>()
 
     override suspend fun check(
         capability: PrivacyCapability,
         context: Map<String, String>
     ): PrivacyDecision {
         checkCount += 1
+        checkedCapabilities += capability
         return decision
     }
 }

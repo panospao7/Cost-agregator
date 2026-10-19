@@ -42,6 +42,33 @@ class AmountInputSanitizerTest {
         }
     }
 
+    @Test
+    fun `formatForInput uses two decimals, locale mark, no grouping or exponent`() {
+        useGreek()
+        assertEquals("33,30", AmountInputSanitizer.formatForInput(33.300000000000004))
+        assertEquals("10000000,00", AmountInputSanitizer.formatForInput(1.0E7))
+        assertEquals("1234,50", AmountInputSanitizer.formatForInput(1234.5))
+        assertEquals("0,00", AmountInputSanitizer.formatForInput(-0.001))
+        assertEquals("", AmountInputSanitizer.formatForInput(Double.NaN))
+        useUs()
+        assertEquals("33.30", AmountInputSanitizer.formatForInput(33.300000000000004))
+        assertEquals("10000000.00", AmountInputSanitizer.formatForInput(1.0E7))
+    }
+
+    @Test
+    fun `formatForInput round trips and an extra digit is capped in el_GR en_US de_DE fr_FR`() {
+        for (tag in listOf("el-GR", "en-US", "de-DE", "fr-FR")) {
+            Locale.setDefault(Locale.forLanguageTag(tag))
+            for (amount in listOf(0.5, 12.5, 150.0, 1234.56, 9999999.99)) {
+                val text = AmountInputSanitizer.formatForInput(amount)
+                assertEquals("$tag $amount", text, AmountInputSanitizer.sanitize(text))
+                assertEquals("$tag $amount", amount, AmountInputSanitizer.parseOrNull(text)!!, 0.0)
+            }
+            val capped = AmountInputSanitizer.sanitize(AmountInputSanitizer.formatForInput(150.0) + "5")
+            assertEquals(tag, 150.0, AmountInputSanitizer.parseOrNull(capped)!!, 0.0)
+        }
+    }
+
     // ---- el_GR (decimal ',', grouping '.') ----
 
     @Test

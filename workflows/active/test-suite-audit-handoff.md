@@ -1040,6 +1040,27 @@ Note: B2 corrections from the re-verification are appended at the end of the pla
   - N2 is a redundant order check; harmless, left as-is.
 - **G-B8D ACCEPTED** (B8-2, B8-3, B8-4 device part). **All B8 slices are now accepted.** The emulator I started was shut down afterwards.
 
+- **USER DECISION (2026-10-19): "Go ahead and let's see how merge will go"** → integration started.
+  - Release head is release-1.0-wt e2e134fc, which is f8433f51 plus 2 docs-only commits (release-1.0.1 backlog/strategy).
+  - Preview via a dangling commit + merge-tree showed only 2 textual conflicts.
+  - Audit work committed on chore/test-suite-audit as **fbb3077d** (454 files).
+  - `git merge --no-ff --no-commit release-1.0-wt` is in progress. Conflicts (UU): RecurringReminderDeliveryDaoTest.kt and FinancialStressForecastEngineTest.kt.
+  - Auto-merged on both sides: NotificationCaptureService.kt (production; the audit's B2-4 CE fix plus release changes) and NotificationIntakeWorkerTimeoutTest.kt. These need review.
+  - Next: resolve the 2 conflicts, review the auto-merges, then compile + targeted validation before committing the merge.
+
+- **Auto-merge review: PASS.**
+  - NotificationCaptureService.kt is a clean union. Ours is the 2 `deduper.remove(dedupeKey)` additions in the fail-closed branches, from an earlier slice, not a CE fix. Theirs is the R25 open-gate guards. The release added no catch blocks; CE handling and privacy fail-closed are unchanged.
+  - NotificationIntakeWorkerTimeoutTest.kt is a clean union: ours removed 3 type-check tests; theirs added the Context arg at 4 WorkerExecutionGuard sites.
+  - Noted for release follow-ups, since it predates both sides: NotificationCaptureService.kt :682 builds the STORE_RAW error JSON from raw `e.message`, unescaped.
+
+- **Merge conflicts resolved (union):**
+  - RecurringReminderDeliveryDaoTest has 3 tests: the audit round-trip test plus the release's cancelOpenDueDeliveriesByIds test.
+  - FinancialStressForecastEngineTest has 41 tests: the 3 audit B3-4 replacements plus 7 release HZ01-B tests. Expectations were verified against the release production code.
+  - No markers remain; both files are staged.
+  - Merge-sanity validation launched: targeted-unit-test on the 2 conflict classes + NotificationIntakeWorkerTimeoutTest + NotificationCaptureServiceBlockedDecisionTest. This compiles the whole merged unit-test source set.
+
+- **Merge sanity PASS** (vr-20261019-173132-e3f4611f): the whole merged main + unit-test source set compiled (compileDebugKotlin and compileDebugUnitTestKotlin both executed). RecurringReminderDelivery 3, FinancialStress 41, NotificationCaptureServiceBlockedDecision 14 and NotificationIntakeWorkerTimeout 16 all passed. Merge committed. The runner briefly reported E_EXTERNAL_GRADLE_ACTIVE (likely the user's Gradle elsewhere); it cleared on retry.
+
 ## Next action
 1. WAITING ON USER: release-merge go. All pre-merge work is accepted (B1-B5 non-WAIT, B6 READY, B7-A, B8 all, B9, final nit pass). On merge go: integrate f8433f51 into chore/test-suite-audit (never edit release worktrees), then the WAIT/BLOCKED slices and X1-X9, re-validate the B6/B7-3/B8 (JVM + device)/B9 legs, then the final gate (unit-tests + static-guards).
 2. Then B5 (low-risk table merges), B6, B7/B7-K, B8, B9 per plan; batch validation with multi-filter runs + per-item JUnit counts.

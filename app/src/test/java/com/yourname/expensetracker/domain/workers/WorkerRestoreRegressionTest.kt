@@ -146,7 +146,8 @@ class WorkerRestoreRegressionTest {
             workerTerminalDiagnosticSink = mockk(relaxed = true),
             backgroundJobRunDao = mockk(relaxed = true),
             notificationPermissionChecker = mockk(relaxed = true),
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            appContext = mockk<Context>(relaxed = true)
         )
         val manager = mockk<WorkManager>(relaxed = true)
         val active = mockk<WorkInfo>()
@@ -376,7 +377,7 @@ class WorkerRestoreRegressionTest {
         val allWorkerNames = listOf(
             "notification_intake", "location_backfill", "merchant_key_backfill",
             "receipt_matching", "warranty_expiration_check", "data_retention",
-            "ai_daily_briefing", "bill_reminder_periodic"
+            "ai_daily_briefing", "bill_reminder_periodic", "recurring_horizon"
         )
 
         for (name in allWorkerNames) {

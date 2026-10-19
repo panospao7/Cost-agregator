@@ -687,6 +687,26 @@ class AssistantViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
+    fun `clearSession blocked by write barrier keeps session and sets bounded error message`() = runTest(testDispatcher) {
+        every { application.getString(com.yourname.expensetracker.R.string.ui_write_blocked_maintenance) } returns "maintenance"
+        coEvery { aiChatRepository.clearSession(any()) } throws
+            com.yourname.expensetracker.ui.util.blockedWriteException()
+        setPrivateUiState(
+            AssistantUiState(
+                messages = listOf(AssistantConversationItem.User(id = "u1", text = "hello")),
+                currentSessionId = 77L
+            )
+        )
+
+        viewModel.clearSession()
+        advanceUntilIdle()
+
+        assertEquals(77L, viewModel.uiState.value.currentSessionId)
+        assertEquals(1, viewModel.uiState.value.messages.size)
+        assertEquals("maintenance", viewModel.uiState.value.errorMessage)
+    }
+
+    @Test
     fun `clearSession with null session does not call repository clearSession`() = runTest(testDispatcher) {
         setPrivateUiState(AssistantUiState(currentSessionId = null))
 

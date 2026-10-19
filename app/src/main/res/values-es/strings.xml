@@ -8,6 +8,18 @@
     <!-- App Name -->
     <string name="app_name">ExpenseTracker</string>
 
+    <!-- R25: unsupported database screen -->
+    <string name="unsupported_db_title">No se pueden abrir tus datos</string>
+    <string name="unsupported_db_reason_too_old">La base de datos guardada fue creada por una versión de la aplicación demasiado antigua para actualizarla de forma segura. No se ha modificado ni eliminado nada.</string>
+    <string name="unsupported_db_reason_too_new">La base de datos guardada fue creada por una versión más reciente de la aplicación. Instala la última versión de la aplicación para usarla. No se ha modificado ni eliminado nada.</string>
+    <string name="unsupported_db_reason_unreadable">No se pudo leer la base de datos guardada. No se ha modificado ni eliminado nada.</string>
+    <string name="unsupported_db_export_button">Exportar archivo de la base de datos</string>
+    <string name="unsupported_db_close_button">Cerrar la aplicación</string>
+    <string name="unsupported_db_export_success">El archivo de la base de datos se exportó correctamente.</string>
+    <string name="unsupported_db_export_failed">No se pudo exportar el archivo de la base de datos. Prueba con otra ubicación.</string>
+    <string name="backup_schema_too_old">Esta copia de seguridad es de una versión de la app demasiado antigua para restaurarla.</string>
+    <string name="backup_schema_too_new">Esta copia de seguridad se creó con una versión más reciente de la app. Actualiza la app para restaurarla.</string>
+
     <!-- Common Actions (Top Priority) -->
     <string name="action_save">Guardar</string>
     <string name="action_cancel">Cancelar</string>
@@ -200,6 +212,8 @@
     <string name="feature_export_options_desc">Exporta a CSV, Xero, QB</string>
     <string name="feature_shared_groups">Grupos de Gastos Compartidos</string>
     <string name="feature_shared_groups_desc">Divide gastos con otros</string>
+    <string name="feature_privacy_settings">Configuración de Privacidad</string>
+    <string name="feature_privacy_settings_desc">Controla cómo se usan tus datos</string>
 
     <!-- Screen Titles -->
     <string name="ai_settings_title">Configuración de IA</string>
@@ -274,13 +288,52 @@
     <string name="financial_runway_no_remaining_period">No queda ningún período</string>
     <string name="backup_restore_info_unavailable">La información de las copias de seguridad no está disponible temporalmente</string>
     <string name="debug_database_stats_unavailable">Las estadísticas de la base de datos no están disponibles temporalmente</string>
+    <!-- R31 -->
+    <string name="widget_safe_to_spend_unavailable">El disponible para gastar aún no está disponible.</string>
+    <!-- R17 -->
+    <string name="notification_access_title">Captura de notificaciones</string>
+    <string name="notification_access_off_body">La captura de notificaciones está activada en la aplicación, pero el acceso a las notificaciones de Android está desactivado, por lo que no se pueden leer las notificaciones del banco. Actívalo en los ajustes del sistema para usar esta función.</string>
+    <string name="notification_access_manage">Gestionar acceso</string>
+    <string name="notification_access_active">El acceso a las notificaciones de Android está activado.</string>
+    <string name="notification_access_consent_off">La captura de notificaciones está desactivada en la aplicación. No se lee ninguna notificación.</string>
+    <string name="notification_access_restricted_hint">Si el interruptor aparece en gris, abre primero Información de la aplicación &gt; ⋮ &gt; Permitir ajustes restringidos.</string>
+    <string name="notification_access_open_failed">No se pudo abrir la pantalla de ajustes. Abre Ajustes y busca \"Acceso a notificaciones\".</string>
     <string name="money_radar_unavailable">Money Radar no está disponible temporalmente. No se pudieron evaluar algunas señales financieras.</string>
     <string name="stress_forecast_unavailable">La previsión de estrés financiero no está disponible temporalmente. No hay ninguna estimación de riesgo disponible.</string>
+    <!-- R18: group-linked expense guard -->
+    <string name="expense_delete_blocked_group_linked">Este gasto forma parte de un grupo compartido y no se puede eliminar, porque cambiaría los saldos del grupo.</string>
+    <string name="expense_edit_blocked_group_linked">Este gasto forma parte de un grupo compartido, así que no se pueden cambiar su importe, moneda, tipo ni reparto. Puedes seguir editando otros datos, como la categoría o el comercio.</string>
+    <!-- R23 -->
+    <string name="privacy_section_network">Red</string>
+    <string name="privacy_toggle_exchange_rate_download">Descargar tipos de cambio (BCE)</string>
+    <string name="privacy_toggle_exchange_rate_download_desc">Obtiene los tipos diarios públicos del Banco Central Europeo. No se envían datos de gastos; el BCE puede ver tu dirección IP.</string>
+    <string name="privacy_blocked_exchange_rate_download">La descarga de tipos de cambio está desactivada.</string>
+    <string name="currency_error_download_disabled">La descarga de tipos de cambio está desactivada. Actívala en Ajustes de privacidad &gt; Red.</string>
+    <string name="currency_error_refresh_unavailable">No se pudieron actualizar los tipos de cambio. Inténtalo más tarde.</string>
+    <string name="currency_error_conversion_unavailable">La conversión no está disponible para estas monedas.</string>
+    <string name="currency_error_data_unavailable">No se pudieron cargar los datos de monedas.</string>
+    <string name="currency_error_unsupported_home">Tu moneda principal no es compatible.</string>
+    <string name="backup_contents_notice">Las imágenes de los recibos no se incluyen en las copias de seguridad.</string>
     <string name="receipt_reopened_existing_notice">Este recibo ya fue escaneado. Se muestra el recibo guardado.</string>
     <string name="budget_currency_display_format">Moneda: %1$s</string>
     <string name="budget_confirm_currency_action">Confirmar moneda</string>
     <string name="financial_runway_review_budget">Revisar presupuesto</string>
     <string name="backup_restore_receipt_images_skipped_format">No se pudieron restaurar %1$d imágenes de recibos.</string>
     <string name="restart_required_database_operation">La aplicación debe reiniciarse para terminar una operación de la base de datos. Los cambios están en pausa hasta que se reinicie.</string>
+    <!-- R18b: user-started write attempted while backup/restore/reset holds the write barrier -->
+    <string name="ui_write_blocked_maintenance">Los cambios están en pausa mientras se realiza una copia de seguridad o una restauración. Inténtalo de nuevo en un momento.</string>
     <string name="groups_suggested_transfers_hint">Pagos sugeridos para equilibrar los saldos. Los pagos no se registran en la aplicación.</string>
+    <string name="warranty_mutation_failed">No se pudo guardar el cambio. Inténtalo de nuevo.</string>
+    <string name="recurring_mark_paid_dialog_title">Marcar factura como pagada</string>
+    <string name="recurring_mark_paid_dialog_body">¿Quieres registrar un pago de %2$s para %1$s o este pago ya estaba registrado?</string>
+    <string name="recurring_mark_paid_creates_expense">Marcar como pagada (crea un gasto)</string>
+    <string name="recurring_mark_already_recorded">Ya registrado</string>
+    <string name="recurring_mark_paid_no_change_info">No hay nada que marcar para esta factura ahora mismo.</string>
+    <string name="recurring_advanced_only_info">No se añadió ningún gasto nuevo. La próxima fecha se adelantó.</string>
+    <string name="recurring_error_currency_unavailable">No se pudo leer tu moneda principal, por lo que el gasto recurrente no se guardó. Inténtalo de nuevo.</string>
+    <string name="recurring_error_generic">Algo salió mal. Inténtalo de nuevo.</string>
+    <!-- R24b: notification permission dialog button when the system will no longer ask -->
+    <string name="notification_open_settings_button">Abrir ajustes</string>
+    <!-- R24c: shown when the receipt currency could not be read and the home currency was assumed -->
+    <string name="receipt_currency_unverified_warning">No pudimos leer la moneda de este recibo. Compruébala antes de guardar.</string>
 </resources>

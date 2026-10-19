@@ -41,7 +41,7 @@ data class WorkerSpec(
 ) {
     companion object {
         /**
-         * Default specs for all 7 background workers in the system.
+         * Default specs for all 8 background workers in the system.
          *
          * These values reflect the Phase 8 target configuration:
          * - LocationBackfill: 12h interval, UNMETERED network (up from 6h).
@@ -75,6 +75,17 @@ data class WorkerSpec(
                     .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
                     .build()
             ),
+            // R21 S3b: daily rolling-horizon top-up for ACTIVE recurring rules.
+            // Local data only (no network, not privacy-gated); KEEP so cold-start
+            // scheduling never resets the periodic chain.
+            "recurring_horizon" to WorkerSpec(
+                name = "recurring_horizon",
+                repeatIntervalHours = 24,
+                existingWorkPolicy = ExistingPeriodicWorkPolicy.KEEP,
+                constraints = Constraints.Builder()
+                    .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
+                    .build()
+            ),
             "receipt_matching" to WorkerSpec(
                 name = "receipt_matching",
                 repeatIntervalHours = 2,
@@ -86,12 +97,13 @@ data class WorkerSpec(
             "ai_daily_briefing" to WorkerSpec(
                 name = "ai_daily_briefing",
                 repeatIntervalHours = null, // midnight-aligned one-shot
-                // U-WORKER-04: REPLACE ensures the midnight self-rescheduling chain is
-                // always re-armed. KEEP caused silent chain death when a stale pending
-                // request (from a previous schedule that hadn't fired yet) blocked the
-                // new enqueue. REPLACE is safe because the worker's artifact freshness
-                // check prevents duplicate generation.
-                oneShotPolicy = ExistingWorkPolicy.REPLACE,
+                // R21 / HZ-05 (supersedes U-WORKER-04): KEEP so cold-start scheduling
+                // never replaces queued or running one-shot work (REPLACE changed the
+                // work id and reset chains on every launch). Spec version changes still
+                // force REPLACE via WorkerSpecScheduler's versionChanged logic, and the
+                // worker's own midnight self-reschedule passes APPEND_OR_REPLACE so the
+                // chain is appended safely behind the currently running request.
+                oneShotPolicy = ExistingWorkPolicy.KEEP,
                 constraints = Constraints.Builder()
                     .setRequiredNetworkType(NetworkType.UNMETERED)
                     .setRequiresBatteryNotLow(true)

@@ -357,7 +357,10 @@ class StatisticsUtilsStressTest {
     @Test
     fun `stress - performance with increasing size`() {
         val sizes = listOf(10, 100, 1000, 10000)
-        
+        // Warm-up (class loading / JIT) so the first timed call does not include one-off
+        // startup cost; the per-size thresholds below are unchanged.
+        repeat(3) { StatisticsUtils.calculateStdDev(List(10_000) { it.toDouble() }) }
+
         sizes.forEach { size ->
             val values = List(size) { Math.random() }
             

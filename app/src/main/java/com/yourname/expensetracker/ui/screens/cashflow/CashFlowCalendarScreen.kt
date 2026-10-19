@@ -12,6 +12,7 @@ import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Today
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -27,12 +28,50 @@ import com.yourname.expensetracker.domain.core.money.ConversionQuality
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.theme.SemanticColors
+import com.yourname.expensetracker.ui.util.AmountInputSanitizer
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Date
 import java.util.Locale
 import kotlin.math.abs
+
+/**
+ * Starting balance prefill: 2 decimals with the default locale's decimal mark, so it round-trips
+ * through the sanitizer/parser and an extra typed digit is capped rather than read as grouping.
+ */
+internal fun formatStartingBalanceText(value: Double): String =
+    AmountInputSanitizer.formatForInput(value)
+
+/** Keeps one optional leading '-' (a starting balance may be negative); the rest is sanitized. */
+internal fun sanitizeStartingBalanceInput(raw: String): String {
+    val trimmed = raw.trimStart()
+    return if (trimmed.startsWith("-")) {
+        "-" + AmountInputSanitizer.sanitize(trimmed.substring(1))
+    } else {
+        AmountInputSanitizer.sanitize(trimmed)
+    }
+}
+
+/** Parsed balance, or null for blank / "-" / ambiguous / invalid text (nothing is committed). */
+internal fun parseStartingBalanceOrNull(text: String): Double? {
+    val trimmed = text.trim()
+    val negative = trimmed.startsWith("-")
+    val magnitude = AmountInputSanitizer.parseOrNull(if (negative) trimmed.substring(1) else trimmed)
+        ?: return null
+    return if (negative && magnitude != 0.0) -magnitude else magnitude
+}
+
+/**
+ * Text to show after the external balance changed. The text is kept when it already parses to
+ * the external value (so "12," or "12,5" is not rewritten while typing), otherwise it is reset.
+ */
+internal fun startingBalanceTextAfterExternalChange(currentText: String, externalValue: Double): String =
+    if (parseStartingBalanceOrNull(currentText) == externalValue) {
+        currentText
+    } else {
+        formatStartingBalanceText(externalValue)
+    }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -116,13 +155,27 @@ fun CashFlowCalendarScreen(
             }
             
             // Starting Balance Input
+            var startingBalanceText by rememberSaveable {
+                mutableStateOf(formatStartingBalanceText(state.startingBalance))
+            }
+            LaunchedEffect(state.startingBalance) {
+                startingBalanceText = startingBalanceTextAfterExternalChange(
+                    currentText = startingBalanceText,
+                    externalValue = state.startingBalance
+                )
+            }
             OutlinedTextField(
-                value = state.startingBalance.toString(),
-                onValueChange = { 
-                    it.toDoubleOrNull()?.let { balance ->
+                value = startingBalanceText,
+                onValueChange = { raw ->
+                    val text = sanitizeStartingBalanceInput(raw)
+                    startingBalanceText = text
+                    // Blank or incomplete text commits nothing: the previous value is kept.
+                    parseStartingBalanceOrNull(text)?.let { balance ->
                         viewModel.setStartingBalance(balance)
                     }
                 },
+                isError = startingBalanceText.isNotBlank() &&
+                    parseStartingBalanceOrNull(startingBalanceText) == null,
                 label = { Text(stringResource(R.string.calendar_label_starting_balance)) },
                 modifier = Modifier.fillMaxWidth()
             )

@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.repository.CurrencyDataRepository
 import com.yourname.expensetracker.domain.currency.ConversionResult
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.CurrencyRateRefreshOutcome
 import com.yourname.expensetracker.domain.currency.CurrencyRatesRepository
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.SupportedCurrency
@@ -12,11 +13,15 @@ import com.yourname.expensetracker.domain.core.money.ConversionOutcome
 import com.yourname.expensetracker.domain.core.money.RateBasis
 import com.yourname.expensetracker.domain.core.money.StaleRatePolicy
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -34,6 +39,11 @@ data class CurrencyManagementUiState(
     val isOffline: Boolean = false,
     val isLoading: Boolean = false,
     val error: String? = null,
+    /**
+     * True when the exchange-rate download privacy switch is off (or its state is unknown/corrupted).
+     * Fail-closed placeholder until the privacy settings are read.
+     */
+    val rateDownloadDisabled: Boolean = true,
     val conversionResult: ConversionResult? = null
 )
 
@@ -57,9 +67,15 @@ class CurrencyManagementViewModel @Inject constructor(
     private val currencyConverter: CurrencyConverter,
     private val currencyRatesRepository: CurrencyRatesRepository,
     private val settingsRepository: CurrencySettingsRepository,
-    private val hybridClassifier: HybridExpenseClassifier
+    private val hybridClassifier: HybridExpenseClassifier,
+    private val privacySettingsRepository: PrivacySettingsRepository
 ) : ViewModel() {
     
+    private companion object {
+        const val ERROR_RATE_DOWNLOAD_DISABLED = "CURRENCY_RATE_DOWNLOAD_DISABLED"
+        const val ERROR_RATE_REFRESH_UNAVAILABLE = "CURRENCY_RATE_REFRESH_UNAVAILABLE"
+    }
+
     private val _uiState = MutableStateFlow(CurrencyManagementUiState())
     val uiState: StateFlow<CurrencyManagementUiState> = _uiState.asStateFlow()
     
@@ -71,8 +87,27 @@ class CurrencyManagementViewModel @Inject constructor(
                 loadCurrencyData()
             }
         }
+        viewModelScope.launch {
+            // Mirror the exchange-rate download privacy switch. Corrupted/fail-closed load state
+            // maps to fail-closed defaults (switch off), so the flag then reads as disabled.
+            privacySettingsRepository.observeSettings()
+                .map { settings -> !settings.exchangeRateDownloadEnabled }
+                .distinctUntilChanged()
+                .collect { disabled ->
+                    _uiState.update { state ->
+                        state.copy(
+                            rateDownloadDisabled = disabled,
+                            // Switch off is never "offline". Switch on re-derives offline only once
+                            // a load has completed (currencies populated).
+                            isOffline = !disabled &&
+                                state.supportedCurrencies.isNotEmpty() &&
+                                !hasUsableRates(state.exchangeRates)
+                        )
+                    }
+                }
+        }
     }
-    
+
     private fun loadCurrencyData() {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true)
@@ -109,9 +144,11 @@ class CurrencyManagementViewModel @Inject constructor(
 
                 // Explicit semantics:
                 // - isRatesStale: rates are older than freshness threshold
-                // - isOffline: there are no usable rates for conversions
-                val isOffline = !hasUsableRates(rates)
-                
+                // - isOffline: there are no usable rates for conversions AND downloads are permitted
+                //   (a privacy-switch-off state is reported via rateDownloadDisabled, never as offline)
+                // The settings collector in init is the only writer of rateDownloadDisabled; read it here.
+                val isOffline = !_uiState.value.rateDownloadDisabled && !hasUsableRates(rates)
+
                 _uiState.value = _uiState.value.copy(
                     supportedCurrencies = currencies,
                     exchangeRates = rates,
@@ -136,12 +173,12 @@ class CurrencyManagementViewModel @Inject constructor(
                     isLoading = false,
                     error = "CURRENCY_DATA_UNAVAILABLE",
                     isRatesStale = isRatesStale,
-                    isOffline = !hasUsableRates(currentRates)
+                    isOffline = !_uiState.value.rateDownloadDisabled && !hasUsableRates(currentRates)
                 )
             }
         }
     }
-    
+
     /**
      * Set the home currency.
      *
@@ -240,9 +277,30 @@ class CurrencyManagementViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(isLoading = true)
             
             try {
-                val refreshedCount = currencyRatesRepository.refresh(_uiState.value.homeCurrency)
-                if (refreshedCount <= 0) {
-                    throw IllegalStateException("No rates returned from provider")
+                when (val outcome = currencyRatesRepository.refresh(_uiState.value.homeCurrency)) {
+                    is CurrencyRateRefreshOutcome.DisabledByPrivacy -> {
+                        // Privacy switch is off: not a network problem, so never present as offline or retryable.
+                        _uiState.value = _uiState.value.copy(
+                            isLoading = false,
+                            error = ERROR_RATE_DOWNLOAD_DISABLED,
+                            isOffline = false
+                        )
+                        return@launch
+                    }
+                    is CurrencyRateRefreshOutcome.PrivacyCheckFailed -> {
+                        // Privacy state could not be verified: not a connectivity signal, so do not
+                        // touch isOffline; surface only the generic retryable refresh error.
+                        _uiState.value = _uiState.value.copy(
+                            isLoading = false,
+                            error = ERROR_RATE_REFRESH_UNAVAILABLE
+                        )
+                        return@launch
+                    }
+                    is CurrencyRateRefreshOutcome.Refreshed -> {
+                        if (outcome.storedPairs <= 0) {
+                            throw IllegalStateException("No rates returned from provider")
+                        }
+                    }
                 }
                 loadCurrencyData()
             } catch (e: CancellationException) {
@@ -258,9 +316,9 @@ class CurrencyManagementViewModel @Inject constructor(
                 }
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
-                    error = "CURRENCY_RATE_REFRESH_UNAVAILABLE",
+                    error = ERROR_RATE_REFRESH_UNAVAILABLE,
                     isRatesStale = isRatesStale,
-                    isOffline = !hasUsableRates(currentRates)
+                    isOffline = !_uiState.value.rateDownloadDisabled && !hasUsableRates(currentRates)
                 )
             }
         }
@@ -269,7 +327,8 @@ class CurrencyManagementViewModel @Inject constructor(
     private fun hasUsableRates(rates: List<ExchangeRateInfo>): Boolean = rates.isNotEmpty()
     
     /**
-     * Clear any error state.
+     * Clear any error state. [CurrencyManagementUiState.rateDownloadDisabled] mirrors the privacy
+     * switch and is intentionally not reset here.
      */
     fun clearError() {
         _uiState.value = _uiState.value.copy(error = null)

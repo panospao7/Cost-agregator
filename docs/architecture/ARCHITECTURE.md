@@ -35,7 +35,7 @@
 - `DatabaseSchemaPolicy` (`data/database/DatabaseSchemaPolicy.kt`) is the single source of truth for migration config: `CURRENT_VERSION`, `MIGRATION_BASELINE = 145`, `UNSUPPORTED_VERSIONS` (1..<145, destructive migration), and `ALL_MIGRATIONS` (delegates to `DatabaseMigrations.ALL`). Production code and tests must reference this, not hardcoded values.
 - ~1075 production Kotlin source files (~1758 including unit tests) across domain, data, ui, di, util, service, startup, and worker packages
 - 68 DAOs (64 in DaoModule + 3 in AiModule + 1 unbound), 70 entities registered in AppDatabase
-- 41 @HiltViewModel (40 *ViewModel.kt files + 1 inline in RecurringExpensesScreen.kt)
+- 42 @HiltViewModel (41 *ViewModel.kt files + 1 inline in RecurringExpensesScreen.kt)
 - 33 @Module Hilt modules
 - SimpleDateFormat → DateTimeFormatter: migration **substantially complete but not 100%** — one production usage remains (chart axis day label in `ui/screens/analytics/AnalyticsScreen.kt`); other matches in main source are KDoc/comments only. Residual `java.util.Calendar` usage is concentrated in `domain/util`, UI screens, `domain/logic` (SynthesisEngine), and debug/diagnostics helpers.
 - Time handling seam: `TimeProvider` (`domain/util/TimeProvider.kt`, epoch-millis `now()`) bound via `TimeModule` to `SystemTimeProvider`; `MonotonicTimeProvider` → `SystemMonotonicTimeProvider`. Callers derive `LocalDate`/`Instant` from `timeProvider.now()` (see `TIME_SEMANTICS.md`). The T1–T4C java.time migration series replaced `Calendar`/`SimpleDateFormat` boundary math with java.time + injected `TimeProvider` in analytics, budget, cashflow, and dashboard pipelines; direct wall-clock reads are policed by the G-TIME-01 guard `scripts/verify_time_boundaries.py` with exact-exception policy `config/guards/time_boundary_exceptions.yml` (4 entries).
@@ -511,7 +511,7 @@ domain/
 │   ├── PrivacySettings.kt      # Data class with 10+ privacy toggles + 2 retention settings
 │   ├── PrivacySettingsRepository.kt  # Interface for reading/writing settings
 │   ├── PrivacyAuditContext.kt        # Typed audit context with forCloudCall() factory
-│   ├── PrivacyAuditLogger.kt   # Logs every gate check decision
+│   ├── PrivacyAuditLogger.kt   # Logs gate decisions individually, except repeated ALLOWED NOTIFICATION_CAPTURE (first per 60 min written; repeats counted as coalescedCount on next window row or a coalescedFlush row; approximate)
 │   ├── NotificationPrivacyGate.kt    # Guards notification capture/allowlist
 │   ├── NotificationCaptureGate.kt    # Checks settings + PrivacyGate before extras extraction
 │   ├── CloudAiPrivacyGate.kt         # Guards all CLOUD_AI_* capabilities
@@ -1178,7 +1178,7 @@ backup encryption, and an export anonymizer for the expense tracker database.
 | `PrivacyDecision` | `domain/privacy/PrivacyDecision.kt` | Sealed interface: `Allowed` or `Denied(reason)` |
 | `PrivacySettings` | `domain/privacy/PrivacySettings.kt` | Data class with 10 privacy toggles (notificationCapture, cloudAi, redactBeforeCloud, receiptImageCloud, bankStatementAi, externalGeocoding, backgroundLocationBackfill, deviceGpsLocation, encryptedBackup, debugDataPersistence) + 2 retention day settings |
 | `PrivacySettingsRepository` | `domain/privacy/PrivacySettingsRepository.kt` | Interface for reading/writing settings |
-| `PrivacyAuditLogger` | `domain/privacy/PrivacyAuditLogger.kt` | Logs every gate check decision (capability, decision, reason, context, caller) to the privacy_audit_events table |
+| `PrivacyAuditLogger` | `domain/privacy/PrivacyAuditLogger.kt` | Logs gate decisions (capability, decision, reason, context, caller) to the privacy_audit_events table: every decision is recorded individually except repeated ALLOWED NOTIFICATION_CAPTURE decisions: the first in a 60-minute window is written; repeats are counted and reported as coalescedCount on the next window's first row or on a flush row (marked coalescedFlush) written before any other decision or on eviction; DENIED, FAIL_CLOSED (stored DENIED_FAIL_CLOSED), NOT_APPLICABLE and all other capabilities are always individual rows; counts are approximate (lower bound across process death) |
 | `NotificationPrivacyGate` | `domain/privacy/NotificationPrivacyGate.kt` | Guards NOTIFICATION_CAPTURE and NOTIFICATION_PACKAGE_ALLOWLIST |
 | `LocationPrivacyGate` | `domain/privacy/LocationPrivacyGate.kt` | Guards EXTERNAL_GEOCODING, BACKGROUND_LOCATION_BACKFILL, DEVICE_GPS_LOCATION, OVERPASS_API |
 | `CloudAiPrivacyGate` | `domain/privacy/CloudAiPrivacyGate.kt` | Guards all CLOUD_AI_* capabilities plus RECEIPT_IMAGE_CLOUD_UPLOAD |
@@ -1561,7 +1561,7 @@ The Room schema at v120 (historical reference) included all tables from v106 plu
 
 **Phase 6 additions (migration 102→103→104):**
 
-- **New table:** `privacy_audit_events` — append-only log of every privacy gate decision (capability, decision ALLOWED/DENIED, reason, context JSON, timestampMs, caller).
+- **New table:** `privacy_audit_events` — append-only log of privacy gate decisions: every decision is recorded individually except repeated ALLOWED NOTIFICATION_CAPTURE decisions: the first in a 60-minute window is written; repeats are counted and reported as coalescedCount on the next window's first row or on a flush row (marked coalescedFlush) written before any other decision or on eviction; DENIED, FAIL_CLOSED (stored DENIED_FAIL_CLOSED), NOT_APPLICABLE and all other capabilities are always individual rows; counts are approximate (lower bound across process death) (capability, decision ALLOWED/DENIED/DENIED_FAIL_CLOSED/NOT_APPLICABLE, reason, context JSON, timestampMs, caller).
 - **New columns on `raw_notifications`:** `rawContentPurgedAt` (INTEGER, nullable) — timestamp when raw notification content was purged for data retention.
 - **New columns on `scanned_receipts`:** `rawOcrTextPurgedAt` (INTEGER, nullable) — timestamp when raw OCR text was purged for data retention.
 

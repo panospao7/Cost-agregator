@@ -7,8 +7,13 @@ import com.yourname.expensetracker.data.database.entity.SplitShare
 import com.yourname.expensetracker.data.database.entity.SplitTemplate
 import com.yourname.expensetracker.domain.split.EnhancedSplitManager
 import dagger.hilt.android.lifecycle.HiltViewModel
+import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.ui.util.guardedWrite
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -63,24 +68,44 @@ class VisualSplitViewModel @Inject constructor(
         splitType: SplitTemplate.SplitType
     ) {
         viewModelScope.launch {
-            splitManager.createTemplate(
-                name = name,
-                totalSplits = participants.size,
-                splitType = splitType,
-                shares = participants
-            )
+            guardedWrite(::emitWriteBlocked) {
+                splitManager.createTemplate(
+                    name = name,
+                    totalSplits = participants.size,
+                    splitType = splitType,
+                    shares = participants
+                )
+            } ?: return@launch
+            // Only a persisted template lets the editor close the dialog / clear the name.
+            _templateCreated.tryEmit(Unit)
         }
     }
-    
+
+    // One-shot success event for createTemplate; never emitted when the write was blocked.
+    private val _templateCreated = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val templateCreated: SharedFlow<Unit> = _templateCreated.asSharedFlow()
+
     fun setDefaultTemplate(templateId: Long) {
         viewModelScope.launch {
-            splitManager.setDefaultTemplate(templateId)
+            guardedWrite(::emitWriteBlocked) {
+                splitManager.setDefaultTemplate(templateId)
+            }
         }
     }
-    
+
     fun deleteTemplate(template: SplitTemplate) {
         viewModelScope.launch {
-            splitManager.deleteTemplate(template)
+            guardedWrite(::emitWriteBlocked) {
+                splitManager.deleteTemplate(template)
+            }
         }
+    }
+
+    // R18b: one-shot bounded message when a user-started write hits the maintenance write barrier.
+    private val _writeBlockedMessages = MutableSharedFlow<UiText>(extraBufferCapacity = 1)
+    val writeBlockedMessages: SharedFlow<UiText> = _writeBlockedMessages.asSharedFlow()
+
+    private fun emitWriteBlocked(message: UiText) {
+        _writeBlockedMessages.tryEmit(message)
     }
 }

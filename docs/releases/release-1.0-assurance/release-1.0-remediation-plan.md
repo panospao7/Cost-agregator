@@ -740,3 +740,125 @@ Validation: targeted RetentionTargetPurgeTest, NotificationIntakeWorkerTimeoutTe
 Out of scope (new finding R28-X, triage later): ExportAnonymizer.sanitizeNotificationIntake (:267-293) keeps ciphertext in the
 export copy.
 
+
+## 28. G3 part 2 refresh (base 8671b844; lead, from verifier S4 + scout S5 discovery)
+Corrections to section 26: generated policy files (signatures.candidate.yml/.accounting.json, GR-08-seeds.yml) are NOT regenerated
+(pinned at 407 candidate entries / seed counts); only the active db_ownership_policy.yml and config/baselines/event_writers.json shrink.
+DirectEventDaoInsertGuardTest LEGACY_REPOSITORY entries expire 2026-11-20 (hard deadline); 75-day cap test :390 -> the two 2027-01-01
+entries need their own categories (WARRANTY_OWNER, DEBUG_ONLY) implementing owner decision Q-G3-2.
+S4 (HIGH, reviewer-strict): NotificationRepository.deleteAllNotifications (:200-203, no prod caller; kept) raw withTransaction ->
+  transactionRunner.runInTransaction + transactionLifecycleEventWriter.write(ctx.copy(occurredAt = now), BULK_DELETED); ReviewQueueRepository
+  approve :281-302 SOURCE_LINKED -> nested runner + writer (no try/catch; joins outer :224 tx; raw tx :224/:457/:634 unchanged).
+  Constructors: + DomainTransactionRunner, + TransactionLifecycleEventWriter, - TransactionEventDao (keep writeBarrier/database).
+  Tests: 5 constructor sites + new SOURCE_LINKED inserted>0 test + writer-failure rollback test. Guard shrink (Q-G3-1): event_writers.json
+  DAO/ENTITY lines for both files; db_ownership_policy.yml delete the two transactionEventDao|insert rows (:1956-1972, :2637-2665).
+  Accepted audit-content change: actor null -> "system", correlationId -> UUID, + tx* metadata keys (reviewer checks consumers).
+S5 (architecture-guardian): DirectEventDaoInsertGuardTest remove Receipt/RecurringExpense/ManualRecurring/ReviewQueue/Notification
+  entries; Warranty -> WARRANTY_OWNER, BankApiIntegration -> DEBUG_ONLY, expiry 2027-01-01; stale-entry test (LEGACY_REPOSITORY +
+  DEBUG_ONLY + WARRANTY_OWNER must still contain a guarded insert); category-aware expiry cap (legacy 75 d; the two new categories
+  max 2027-01-01). WarrantyTrackerRepository: barrier check inside try :481 before discard insert :482; catches that sit in the same
+  transaction as the warranty insert rethrow DatabaseAccessBlockedException (S1-N1 :201; also :135/:164 if same pattern) so no id of an
+  unsaved warranty is returned; :490 discard catch may stay best-effort. Tests in WarrantyTrackerRepositoryTest.
+S6: ratchet/baseline sync (shrink-only) at batch end, driven by guard results.
+Order: S4 coder -> S5 coder -> targeted queue (+ reviews in parallel, read-only) -> registered-guard db_access + known_good_state ->
+  static-guards -> app-check -> legacy-tests.
+
+
+## 29. R27 plan (release-planner, read-only @ 6f706c29) - summary
+S1 barrier counter + drains: DatabaseWriteBarrier.runWrite counts in-flight writes (MutableStateFlow<Int>; increment, check, withContext
+  (InFlightWriteElement) block, decrement in finally; nested = check only); awaitNoInFlightWrites(timeoutMs) (withTimeoutOrNull, suspend);
+  reentrant drain -> MAINTENANCE_DRAIN_REENTRANT; order enter -> worker drain -> write drain; enterAndDrain timeout -> exit(false) +
+  WriteDrainTimeoutException (MAINTENANCE_WRITE_DRAIN_TIMEOUT); enterRestoreAndDrain -> RESTORE_WRITE_DRAIN_TIMEOUT keeps barrier closed.
+  Files DatabaseWriteBarrier.kt, MaintenanceOperationRunner.kt :27-41, DatabaseBackupRepositoryImpl.kt :970-977 + tests (9 cases).
+S2 caller migration (check-only -> runWrite wrapping the existing tx in the same method; no renames): S2a TransactionLifecycleCoordinator
+  :1296/:1350/:1458/:1552+/:1595/:1912/:2215/:2467; S2b ReceiptLifecycleCoordinator :425/:503/:611/:823/:868/:1443/:1513/:1599;
+  S2c NotificationRepository 9 sites + leftovers in intake/pipeline; S2d OperationRunRecorder :122/:192/:243/:280 + DiagnosticEventWriter
+  :46; S2e PrivacyAuditLoggerImpl insert loop after B merges. Risk: relaxed barrier mocks no longer run blocks -> fix per slice.
+S3 restart wiring: BackupRestoreViewModel one-shot restart event on in-process SuccessNeedsRestart (never from persisted mode -> no loop);
+  BackupRestoreScreen -> onRestartRequired; MainActivity :874-876 passes restartProcess() (:433); delete dismissRestartRequired + test;
+  mode persisted with commit() before exit.
+S4 bank finalize: BankStatementLifecycleProcessor :873/:917/:974-990/:1006/:1049 in runWrite; blocked finalize skipped by existing
+  catches; BankSyncStartupRecovery.recoverStaleRuns :72-81 -> STALE_FAILED (confirm threshold + PARSED receipt recovery).
+Guards: no WriteBarrierArchitectureGuardTest/db_ownership_policy/cancellation count changes expected. Reviewers reviewer-strict
+  (S1+S2+S4) + room-migration-guardian (S1+S3). Emulator probes C3a/C3b/C2/C1/P5 after the batch.
+Owner questions: Q-R27-1 central RoomDomainTransactionRunner wrap (rec: no, R27b later); Q-R27-2 write-drain timeout + fail closed;
+  Q-R27-3 restart = exit(0) only or relaunch + exit; Q-R27-4 ~60 other check-only classes accepted for 1.0 (rely on R25) or follow-up;
+  Q-R27-5 optional new tightening guard pinning runWrite coverage for R27 classes.
+
+
+## 30. R21 plan (release-planner, read-only @ 6f706c29) - summary
+Repositories (ManualRecurringExpenseRepository :27-45, RecurringExpenseRepository :116-130) already delegate to the rule coordinator
+(no bypass). Order: R27 -> R29 commit -> S1 -> {S2, S3b, S4}; S3a independent.
+S1 RecurringLifecycleCoordinator: private claimLinkSuppressInWrite(expenseId, selectTarget) (runWrite + tx; already-linked guard);
+  linkExpenseToOccurrence keeps matching; new linkExpenseToSpecificOccurrence (Linked/AlreadyLinkedToThis/AlreadyLinkedElsewhere/NotOpen);
+  findEarliestOpenOccurrence; collapseStaleDueDeliveries(now) (STALE_WINDOW_SUPERSEDED / STALE_WINDOW_EXPIRED; CLAIMED untouched; new DAO
+  cancelOpenDueDeliveriesByIds chunked 900); RecurringRuleLifecycleCoordinator.topUpHorizon(ruleId, now) (free slots only, catch-up
+  >= now-12 months, allowPastDueReminderDeliveries=false, RULE_HORIZON_TOPPED_UP only when inserted); resolveAnchorDay = max
+  day-of-month of latest 12 occurrences.
+S2 MarkRecurringBillPaidUseCase (@Singleton, Mutex per rule, seenNextDate double-tap guard, TLC createExpenseDbOnlyV2 STRICT_EXTERNAL_ID
+  recurring_paid:<occurrenceKey>, link specific, dispatchPostCreationSideEffects, advanceNextDate); VM currency via resolveHomeCurrency()
+  (Failed -> refuse), bounded string errors; screen dialog "Already recorded" -> skipOccurrence; strings x3.
+S3a HZ-05: WorkerSpec oneShotPolicy KEEP; scheduleAtMidnight policyOverride; DailyBriefingWorker APPEND_OR_REPLACE; WorkerIdempotencyTest
+  REPLACE -> KEEP (approved behaviour change).
+S3b RecurringHorizonWorker (guarded, coordinators only, ctx.checkpoint per rule) + registrations; counts 7->8 / 10->11 in contract tests;
+  worker docs + LEGAL_PATHS Recurring.
+S4 BillReminderWorker :71 collapseStaleDueDeliveries before recoverAndGetDueReminders.
+Policy: +1 row collapseStaleDueDeliveries/reminderDeliveryDao/cancelOpenDueDeliveriesByIds/helper; 3 rows re-keyed to
+  claimLinkSuppressInWrite (net 0); generated files untouched (precedent) unless a guard proves otherwise; stop on new GR-13 UNPROVEN.
+LEAD-DECISION (standing approval) on planner questions: (1) anchor drift after payment accepted for 1.0, documented known limitation;
+  (2) horizon worker not privacy-gated (local data only); (3) RULE_HORIZON_TOPPED_UP event + HORIZON_TOP_UP generation source approved;
+  (4) 3-row policy re-key (net 0) + 1 added row approved as part of the owner-approved R21 batch (no loosening).
+
+
+## 31. R23 plan (release-planner @ f631d1be) - summary
+NetworkPrivacyGate (new; EXCHANGE_RATE_DOWNLOAD; corrupted -> FailClosed, disabled -> Denied, enabled -> Allowed, else NotApplicable)
+registered in PrivacyModule; S1 capability/settings (default false, FAIL_CLOSED false)/repo key/policy/reason codes/PrivacyBlocked/UI
+state/card/audit description + all strings (contiguous block); S2 CurrencyRatesRepository typed outcome, VM/screen bounded error mapping,
+offline banner suppressed when disabled; S3 privacy settings Network section; S4 backup notice (true: in-app backups redacted, no images),
+KDoc, quick reference, LEGAL_PATHS. Reviewers privacy-security-guardian + reviewer-strict.
+
+
+## 32. R25 parts 1-2 + R27 safeguard plan (release-planner @ f631d1be) - summary
+A core: DatabaseOpenGate (read-only probe, no-op DatabaseErrorHandler, v0 + no tables = fresh, <145 TOO_OLD, >151 TOO_NEW, exception
+OPEN_FAILED; once per process); GatedOpenHelperFactory (fast path when open; refuses when gate blocked or RESTORE_SWAPPING via in-process
+latch or persisted peek; unreadable mode + no latch -> allow); RestoreMaintenanceMode pure decodePersistedState + swap latch;
+RestoreMaintenanceModePeek (no Hilt); DatabaseModule :36 only; exact db_access structural-exception tuples. B1 entry points
+(MainApplication early return, WorkerExecutionGuard Skipped first, NotificationCaptureService, 4 receivers). B2 UnsupportedDatabaseActivity
+(plain, non-exported, SAF export, bounded logs) + MainActivity redirect + manifest + strings. C backup floor = MIGRATION_BASELINE with
+LEGACY/NEWER codes + manifest version check (v86 branch left unreachable). D docs. Reviewers reviewer-strict + room-migration-guardian +
+privacy-security-guardian (B2).
+LEAD-DECISIONS (standing approval): H1 the ~3 exact db_access structural-exception tuples are a direct consequence of the owner-approved
+R25 design (read-only PRAGMA probe) -> approved as exact additions, recorded; H2 export = zip of db + -wal (never -shm); H3 accept refusal
+during the cold-start SWAPPING window; H4 v0 + no tables = fresh install; H5 keep the unreachable v86 branch for 1.0; H6 no extra message.
+
+## 33. R20 plan (release-planner, read-only @ df769791, 2026-10-17)
+
+Canonical path: MultiCurrencyRepository.aggregateDisplayAmounts (:466) -> MoneyAggregateBuilder.fromBuckets (:352), convertOutcome + StaleRatePolicy.forBasis; unconvertible rows excluded + isPartial, all-fail -> Unavailable (precedent BillReminderManager.getMonthlyBillsTotal :173-191). No new convertMultiple callers (G-MONEY-17). R23 (rates default OFF) makes HZ01-A/B more frequent.
+- HZ01-A P2 include: SubscriptionManagementViewModel :141-147 raw fallback/raw sum labelled home currency; cost-per-use :546, candidate annual :672. Fix via aggregateDisplayAmounts; partial -> dashboard_partial_currency_warning; unavailable -> currency_error_conversion_unavailable; per-row own currency; CE rethrow :164.
+- HZ01-B P2 include: FinancialStressForecastEngine :362-371/:427-429 drop failed conversions (runCatching swallows CE), :250/:172 partial only on barrier; card no partial notice. Fix convertOutcome(LATEST_AVAILABLE, forBasis), RecurringOutflowResult.excludedConversionCount, partial flag + card warning. Staleness 24h -> 7d (canonical).
+- HZ01b1-F1 P2 include: MonthlySavingsSweepUseCase :216 underspend - riskBuffer ignores upcoming bills; test :335-336 pins 30/270. Fix: bills + uncertainty into riskBuffer; tests 110/190 + bills>=underspend -> no sweep; KDoc :44-54.
+- V-E-12 P2 include: AnalyticsViewModel prior window = same-length block (:430-432, :497-499); YoY YTD vs full year (:940-951). Fix like-for-like previous calendar period cut at same elapsed point; ALL no %.
+- V-G-1 P2 include: ExportOptionsScreen :333-337 UTC-midnight millis; VM :176 rejects same day; DAO exclusive end. Fix VM/screen only: setPickedDateRange UTC LocalDate -> local start-of-day, end = next local day start; chips/metadata end-1ms.
+- V-D F-2 P3 include: CalculateFinancialForecastUseCase :29-48 add homeCurrency/lastRateUpdate triggers (pattern AnalyticsViewModel :310-317).
+- V-D F-1/CURR-6 P2 DEFER 1.0.1 + Known limitation (sorting/filtering by amount after home-currency change).
+- NEW candidate outside R20: other date pickers interpret UTC picker millis in system zone (AddExpenseSheet :847-849, HomeScreen :1527, ManualRecurringExpenseScreen :636, SavingsGoalsScreen :503, SubscriptionManagementScreen :865) -> triage separately (R20c?).
+Slices: R20a (S1 subscriptions, S2 stress forecast, S3 savings sweep; reviewer-strict) and R20b (S4 analytics, S5 export dates, S6 forecast reactivity; Sonnet reviewer); disjoint write sets; no strings/DAO/schema/worker/guard edits. S7 lead docs at commit. Gate: targeted filters, static-guards (G-MONEY-15/17/19), app-check, legacy.
+Owner decisions (lead adopted planner recommendations under standing approval): Q-R20-1 bills inside existing Buffer figure; Q-R20-2 like-for-like period-to-date %; Q-R20-3 CURR-6 deferred to 1.0.1 with note.
+Pre-existing P3: dashboard_partial_currency_warning lacks el/es translations.
+
+## 34b. R24 + R20c plan (release-planner, read-only @ df769791, 2026-10-17)
+R24: (a) ReviewViewModel :421-425 replaces every Result.Error with a prefix; ReviewQueueRepository :386 returns raw e.message (joined validation errors :374) -> bounded constant; VM shows message only if a known public constant. P2 include (reviewer-strict). (b) POST_NOTIFICATIONS: MainActivity :503-510 dialog every launch, deny callback :497-500 reopens immediately (loop after permanent denial) -> pure shouldAutoPrompt(granted, sdk, alreadyAsked) + prefs flag; no reopen on deny; when !shouldShowRequestPermissionRationale the button opens ACTION_APP_NOTIFICATION_SETTINGS. P2 include. (c) ReceiptScanViewModel :460 blank OCR currency -> home currency silently; add currencyUnverified state (cleared by updateCurrency :560), banner near ReceiptOcrCoverageWarning (ReceiptScanScreen :480), quick-save (:1100) off while unverified. P2 money include (reviewer-strict). Warranty: fixed by R29 + R18b; leftover P3 loadStats :91 runCatching CE swallow -> small fix after R18. V-I-7 onboarding: defer 1.0.x.
+R20c: AddExpenseSheet DateSelector :801-802/:847-849 (shared by AddExpense :274, ReviewScreen :1765, ReceiptScanScreen :891) P2; HomeScreen planned-expense :1489-1490/:1527-1528; ManualRecurringExpenseScreen :630/:636; SavingsGoalsScreen :495-503; SubscriptionManagementScreen :881-889; FormComponents :158/:165 (unused). Shared helpers in ui/util/UiTimeUtils.kt (pickerMillisToLocalDate [UTC read], localDateToPickerMillis, instantToPickerMillis, pickerMillisToLocalStartOfDay, pickerMillisKeepingTimeOf) with injectable zone; R20b reuses pickerMillisToLocalDate.
+Slices/sequence: R20c-1 (UiTimeUtils+test, AddExpenseSheet, ManualRecurringExpenseScreen, FormComponents; reviewer-strict) after R20a commit -> R20b (uses helper) -> R20c-2 (HomeScreen, SavingsGoalsScreen after R18; SubscriptionManagementScreen after R20a; cheap review) -> R24a (after R18) -> R24b (MainActivity, NotificationPermissionDialog, prefs store, strings x3; after R18) -> R24c (ReceiptScan VM/screen, strings x3; reviewer-strict). No schema/guard/baseline change. Device: TZ=America/New_York add expense/recurring/savings goal; notification deny path API 33+.
+Owner Qs (lead adopted recommendations under standing approval): Q-R24-1 ask once per install + Settings link, no auto re-prompts; Q-R24-2 blank OCR currency -> warn + quick-save off (manual save still allowed after review); Q-R24-3 onboarding deferred to 1.0.x.
+
+## 34a. R22b + R16c plan (release-planner, read-only @ df769791, 2026-10-17)
+R22b (all in domain/receipt/BankStatementParser.kt, all P2, include): V-I-2 abs at :912 + type rules :941-946 ("+1.500,00 TRANSFER" -> expense; "VISA CREDIT CARD 45,00" -> DEPOSIT); V-I-3 dd/MM only :996-1035 (US dates null -> BankStatementLifecycleProcessor :512/:537/:562 falls back to now; "03/04/2025" -> 3 April); N1 2-digit-year pattern :999 matches inside 4-digit dates (second-column header :957 -> 2020 dates; /1999 -> 2019); N2 generic branch :210-214 missing break -> duplicate pending reviews/expenses. Fix: N2 break; V-I-2 "+" -> DEPOSIT, deposit keywords matched after removing "CREDIT CARD", else PURCHASE, "-" with deposit keyword unchanged (refunds); N1 positional regex (?<!\d)(\d{1,2})[/.-](\d{1,2})[/.-](20\d{2}|\d{2})(?!\d); V-I-3 statement-wide pre-pass (any first part >12 -> dd/MM; else any second >12 -> MM/dd; else dd/MM). R16 parseStatementAmount unchanged. Tests new BankStatementParserSignDateTest (no edits to BankStatementParserTest). Filter *BankStatement*; reviewer-strict. Stop if an existing assertion must change.
+R16c (AmountInputSanitizer.sanitize on change + parseOrNull for validation and save; Locale.US "%.2f" prefill): HomeScreen AddPlannedExpenseDialog :1362/:1462 P2; BillNegotiationScreen :639/:663 P2 (SUCCESS saved with null savings); SubscriptionManagementScreen :772/:862/:868 P2 (after R20a); VisualSplitEditorScreen :65 P2 (VisualSplitEditorScreenStateTest :51-56 pins the defect -> flip); CurrencyManagementScreen :38/:782 P3; CashFlowCalendarScreen :122 P3 (local text state); SpendingChallenges/TaxConfiguration debug-only since R19 -> defer. Tests: extend CurrencyManagementScreenValidationTest, VisualSplitEditorScreenStateTest (el_GR/en_US); filters *CurrencyManagementScreenValidationTest, *VisualSplitEditorScreenStateTest, *AmountInputSanitizerTest; reviewer-strict; el_GR device smoke.
+Order: after R20a commit: R22b -> R16c-1 (Home, BillNegotiation, Currency, VisualSplit, CashFlow; Home/VisualSplit after R18 commit) -> R16c-2 (Subscription).
+Owner Qs (lead adopted recommendations under standing approval): Q-R22-1 statement-wide date-order detection, dd/MM default; Q-R16c-2 flip the VisualSplit test that pins the comma defect (precedent: R20a sweep test 30/270 re-pinned); Q-R16c-3 fix CashFlow field in 1.0.
+
+## 35. Device verification plan (release-planner x2, read-only @ 1914ee0d, 2026-10-17)
+35a tooling: assemble-debug / assemble-release (debug-signed, minified, non-debuggable; release-artifact-evidence profile); connected-tests need -DeviceSerial (no emulator-only guard; without serial AGP targets all devices) -> procedure guard: phone unplugged, `adb devices` only emulator-5554, ro.kernel.qemu=1, -s on every command, ANDROID_SERIAL=emulator-5554, connected tests before any owner data. Package com.yourname.expensetracker (debug/release same id + signature; install -r swaps keeping data). DB databases/expense_tracker_db (WAL); push via run-as on debug build. Timber only in debug builds -> reason codes read on debug; release uses crash buffer + android.util.Log tags DatabaseOpenGate/UnsupportedDatabase + dumpsys.
+35b probes (blocking unless noted): P1 owner DB copy v145 opens + migrates to v151 (OWNER APPROVAL Q-DEV-1 pending; counts-only host check, no data printed; pm clear after); P2 v144/v152 synthetic fixtures (sqlite user_version + one table) -> unsupported screen, SAF zip (db+wal, no shm, byte-identical), hash unchanged after job/notification; P3 backup/restore with 40 posted notifications + manual add in flight, self-relaunch, second backup OK; P4 group-linked delete/edit blocked; P5 save during backup -> paused message; P6 API35 reboot granted/revoked + install -r: no FGS exceptions, listener rebinds, capture works; P7 R17 access card; P8 R24b prompt once/deny/settings (pm revoke + clear-permission-flags); P9 TZ America/New_York date pickers (7 screens, incl. ~20:30 local); P10 el_GR "12,50" in 7 places; P11 bank statement import with synthetic PDF (debug-only feature, see below); P12 R23 ECB download off by default; P13 R19 hidden features + deep links + install -r from debug; P14 R24c synthetic receipt without currency; P15 API26 smoke on release-api26 (exists).
+Finding: "Import Bank Statement" is behind debugActionsEnabled (ReviewScreen.kt :104/:186) -> not reachable in release builds; lead decision: keep as-is for 1.0 (no product change), correct the user note (R22 item -> applies to the debug/test import only) in the next records commit.

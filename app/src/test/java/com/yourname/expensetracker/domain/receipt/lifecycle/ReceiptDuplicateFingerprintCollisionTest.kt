@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import androidx.test.core.app.ApplicationProvider
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.RoomDomainTransactionRunner
 import com.yourname.expensetracker.data.database.entity.MerchantCanonical
@@ -105,7 +106,11 @@ class ReceiptDuplicateFingerprintCollisionTest {
         db = AppDatabaseTestFactory.create(context)
         val clock = mockk<TimeProvider>()
         every { clock.now() } returns now
-        val barrier = mockk<DatabaseWriteBarrier>(relaxed = true)
+        // R27 S2b: real barrier so the coordinator's runWrite scopes actually execute their blocks.
+        val maintenanceMode = mockk<RestoreMaintenanceMode>()
+        every { maintenanceMode.currentMode() } returns RestoreMaintenanceMode.Mode.NORMAL
+        every { maintenanceMode.isWritesAllowed() } returns true
+        val barrier = DatabaseWriteBarrier(maintenanceMode)
         val transactions = RoomDomainTransactionRunner(db, clock)
         val insertResolver = ReceiptInsertResolver(db.scannedReceiptDao(), barrier)
         val events = RoomReceiptLifecycleEventWriter(db.receiptEventDao(), EventMetadataSanitizer(), clock, barrier)

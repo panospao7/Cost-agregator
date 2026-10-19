@@ -70,6 +70,13 @@ import com.yourname.expensetracker.service.NavigationAction
 import com.yourname.expensetracker.ui.mappers.toUi
 import com.yourname.expensetracker.ui.navigation.NavigationDestination
 import com.yourname.expensetracker.ui.navigation.FeatureConfig
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.yourname.expensetracker.domain.notification.capture.NotificationCaptureStatus
+import com.yourname.expensetracker.ui.screens.privacysettings.NotificationCaptureStatusViewModel
+import com.yourname.expensetracker.ui.util.AmountInputSanitizer
+import com.yourname.expensetracker.ui.util.NotificationListenerSettingsLauncher
 
 /**
  * S4-016R: Route entry point — owns Hilt injection, state collection, and navigation effects.
@@ -84,8 +91,24 @@ fun HomeRoute(
     onNavigateToMap: (String?) -> Unit = {},
     onNavigateToBudgetDetail: (String) -> Unit = {},
     onNavigateToFeature: (NavigationDestination) -> Unit = {},
-    viewModel: HomeViewModel = hiltViewModel()
+    viewModel: HomeViewModel = hiltViewModel(),
+    notificationStatusViewModel: NotificationCaptureStatusViewModel = hiltViewModel()
 ) {
+    // R17: read-only notification-listener access status; re-checked on resume.
+    val notificationCaptureStatus by notificationStatusViewModel.status.collectAsState()
+    var notificationAccessOpenFailed by remember { mutableStateOf(false) }
+    val notificationContext = LocalContext.current
+    val notificationLifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(notificationLifecycleOwner, notificationStatusViewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                notificationStatusViewModel.refresh()
+            }
+        }
+        notificationLifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { notificationLifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     val state by viewModel.dashboard.collectAsState()
     val categories by viewModel.categories.collectAsState()
     val recommendations by viewModel.recommendations.collectAsState()
@@ -118,6 +141,11 @@ fun HomeRoute(
         onNavigateToMap = onNavigateToMap,
         onNavigateToBudgetDetail = onNavigateToBudgetDetail,
         onNavigateToFeature = onNavigateToFeature,
+        notificationCaptureStatus = notificationCaptureStatus,
+        notificationAccessOpenFailed = notificationAccessOpenFailed,
+        onManageNotificationAccess = {
+            notificationAccessOpenFailed = !NotificationListenerSettingsLauncher.open(notificationContext)
+        },
     )
 }
 
@@ -137,6 +165,9 @@ fun HomeScreen(
     onNavigateToMap: (String?) -> Unit = {},
     onNavigateToBudgetDetail: (String) -> Unit = {},
     onNavigateToFeature: (NavigationDestination) -> Unit = {},
+    notificationCaptureStatus: NotificationCaptureStatus = NotificationCaptureStatus.CONSENT_OFF,
+    notificationAccessOpenFailed: Boolean = false,
+    onManageNotificationAccess: () -> Unit = {},
 ) {
 
     var showQuickSettings by remember { mutableStateOf(false) }
@@ -147,7 +178,17 @@ fun HomeScreen(
     var showCategoryBreakdown by remember { mutableStateOf(false) }
     var showFeaturesMenu by remember { mutableStateOf(false) }
 
+    // R18b: bounded "changes paused during backup/restore" message for user-started writes.
+    val writeBlockedSnackbarHostState = remember { SnackbarHostState() }
+    val writeBlockedContext = LocalContext.current
+    LaunchedEffect(viewModel) {
+        viewModel.writeBlockedMessages.collect { message ->
+            writeBlockedSnackbarHostState.showSnackbar(message.asString(writeBlockedContext))
+        }
+    }
+
     Scaffold(
+        snackbarHost = { SnackbarHost(writeBlockedSnackbarHostState) },
         containerColor = SemanticColors.BaseNavy,
         topBar = {
             TopAppBar(
@@ -252,55 +293,84 @@ fun HomeScreen(
             }
             }
             else -> {
-                // S4-004R: Show currency loading/error state
-                when (val cs = homeCurrencyState) {
-                    is HomeCurrencyUiState.Loading -> androidx.compose.material3.LinearProgressIndicator(
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    is HomeCurrencyUiState.Error -> androidx.compose.material3.Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 4.dp),
-                        colors = androidx.compose.material3.CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f)
-                        )
-                    ) {
-                        Text(
-                            text = cs.message.asString(LocalContext.current),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onErrorContainer,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                        )
-                    }
-                    is HomeCurrencyUiState.Ready -> Unit
-                }
-                // S4-022: Show data-quality warning when some currencies could not be converted
-                if (state.isPartial) {
-                    androidx.compose.material3.Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 4.dp),
-                        colors = androidx.compose.material3.CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f)
-                        )
-                    ) {
-                        Text(
-                            text = stringResource(R.string.dashboard_partial_currency_warning),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onErrorContainer,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                        )
-                    }
-                }
                 LazyVerticalGrid(
                 columns = GridCells.Fixed(2),
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding),
-                contentPadding = PaddingValues(16.dp),
+                // R31: top inset is 0 because the always-present banner item below plus the 16dp
+                // grid spacing supply it (see banner item).
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 0.dp, bottom = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
+                // F-DEV-1: the Scaffold content slot is Box-like, so banners emitted as siblings of
+                // the grid were drawn on top of each other at the top-left. They are rendered inside
+                // ONE full-span grid item instead (they scroll with content).
+                // R31: the item is ALWAYS present with a stable key so that banners appearing after
+                // first composition (R17 card on resume, isPartial flip, currency Ready->Error) grow
+                // this item in place rather than being inserted above the scroll-anchored keyed
+                // widgets (which would leave them off-screen). When no banner applies it has zero
+                // height; the 16dp grid spacing then gives the 16dp top inset (same as before). When
+                // banners show, the Column adds its own 16dp top padding and the spacing separates
+                // it from the first widget.
+                item(key = "home_status_banners", span = { GridItemSpan(maxLineSpan) }) {
+                    val hasStatusBanner = homeCurrencyState !is HomeCurrencyUiState.Ready ||
+                        state.isPartial ||
+                        notificationCaptureStatus == NotificationCaptureStatus.ACCESS_OFF
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = if (hasStatusBanner) 16.dp else 0.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        // S4-004R: Show currency loading/error state
+                        when (val cs = homeCurrencyState) {
+                            is HomeCurrencyUiState.Loading -> androidx.compose.material3.LinearProgressIndicator(
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            is HomeCurrencyUiState.Error -> androidx.compose.material3.Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = androidx.compose.material3.CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f)
+                                )
+                            ) {
+                                Text(
+                                    text = cs.message.asString(LocalContext.current),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                )
+                            }
+                            is HomeCurrencyUiState.Ready -> Unit
+                        }
+                        // S4-022: Show data-quality warning when some currencies could not be converted
+                        if (state.isPartial) {
+                            androidx.compose.material3.Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = androidx.compose.material3.CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f)
+                                )
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.dashboard_partial_currency_warning),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                )
+                            }
+                        }
+                        // R17: prompt only when consent is on but OS listener access is off
+                        if (notificationCaptureStatus == NotificationCaptureStatus.ACCESS_OFF) {
+                            NotificationCaptureStatusCard(
+                                status = notificationCaptureStatus,
+                                onManageAccess = onManageNotificationAccess,
+                                openFailed = notificationAccessOpenFailed,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
+                }
                 if (state.widgets.isEmpty()) {
                     item(span = { GridItemSpan(2) }) {
                         BentoCard {
@@ -356,14 +426,21 @@ fun HomeScreen(
                                             letterSpacing = 1.sp
                                         )
                                         Spacer(modifier = Modifier.height(8.dp))
+                                        // F-DEV-2: only claim a conversion problem when one exists.
+                                        widget.currencyQuality?.warningMessage?.let { quality ->
+                                            Text(
+                                                text = quality,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = SemanticColors.TextSecondary
+                                            )
+                                            Spacer(modifier = Modifier.height(8.dp))
+                                        }
+                                        // R31: only prompt for a budget when none exists.
                                         Text(
-                                            text = widget.currencyQuality?.warningMessage ?: "Budget data unavailable",
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = SemanticColors.TextSecondary
-                                        )
-                                        Spacer(modifier = Modifier.height(8.dp))
-                                        Text(
-                                            text = stringResource(R.string.widget_set_budget_cta),
+                                            text = stringResource(
+                                                if (widget.hasBudget) R.string.widget_safe_to_spend_unavailable
+                                                else R.string.widget_set_budget_cta
+                                            ),
                                             style = MaterialTheme.typography.labelSmall,
                                             color = SemanticColors.TextSecondary,
                                             letterSpacing = 0.5.sp
@@ -1320,7 +1397,8 @@ fun AddPlannedExpenseDialog(
 
                 OutlinedTextField(
                     value = amount,
-                    onValueChange = { amount = it },
+                    onValueChange = { amount = AmountInputSanitizer.sanitize(it) },
+                    isError = amount.isNotBlank() && AmountInputSanitizer.parseOrNull(amount) == null,
                     label = { Text(stringResource(R.string.dialog_plan_expense_amount_label)) },
                     modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(
@@ -1418,11 +1496,12 @@ fun AddPlannedExpenseDialog(
             }
         },
         confirmButton = {
+            val parsedAmount = AmountInputSanitizer.parseOrNull(amount) ?: 0.0
             Button(
+                enabled = description.isNotBlank() && parsedAmount > 0,
                 onClick = {
-                    val amt = amount.toDoubleOrNull() ?: 0.0
-                    if (description.isNotBlank() && amt > 0) {
-                        onConfirm(description, amt, date, selectedCategoryId, priority)
+                    if (description.isNotBlank() && parsedAmount > 0) {
+                        onConfirm(description, parsedAmount, date, selectedCategoryId, priority)
                     }
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = SemanticColors.PrimaryIndigo)
@@ -1448,7 +1527,8 @@ fun DateSelector(
 ) {
     var showDatePicker by remember { mutableStateOf(false) }
     val datePickerState = rememberDatePickerState(
-        initialSelectedDateMillis = dateMs
+        // R20c: picker values are UTC-midnight millis of the calendar day, not local instants.
+        initialSelectedDateMillis = com.yourname.expensetracker.ui.util.UiTimeUtils.instantToPickerMillis(dateMs)
     )
 
     Row(
@@ -1486,7 +1566,9 @@ fun DateSelector(
                 TextButton(
                     onClick = {
                         datePickerState.selectedDateMillis?.let { selectedDate ->
-                            onDateSelected(selectedDate)
+                            onDateSelected(
+                                com.yourname.expensetracker.ui.util.UiTimeUtils.pickerMillisKeepingTimeOf(selectedDate, dateMs)
+                            )
                         }
                         showDatePicker = false
                     }
@@ -1549,7 +1631,8 @@ private fun FeaturesMenu(
                     // bank-sync surface is unavailable (release builds).
                     val menuFeatures = androidx.compose.runtime.remember {
                         FeatureConfig.availableFeatures(
-                            com.yourname.expensetracker.domain.bank.BankFeatureAvailability().isBankSyncAvailable
+                            com.yourname.expensetracker.domain.bank.BankFeatureAvailability().isBankSyncAvailable,
+                            com.yourname.expensetracker.ui.navigation.DeferredFeatureGate.available
                         )
                     }
                     menuFeatures.forEach { feature ->

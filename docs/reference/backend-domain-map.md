@@ -607,7 +607,7 @@ interface AiCapabilityRouter {
 | `CloudAiPrivacyGate` | `CloudAiPrivacyGate.kt` | Guards all CLOUD_AI_* capabilities + RECEIPT_IMAGE_CLOUD_UPLOAD. |
 | `BackupPrivacyGate` | `BackupPrivacyGate.kt` | Guards RAWBACKUP_EXPORT and ENCRYPTED_BACKUP. |
 | `PrivacySettingsRepository` | `PrivacySettingsRepository.kt` | Interface for reading/writing 10 privacy toggles + 2 retention settings. |
-| `PrivacyAuditLogger` | `PrivacyAuditLogger.kt` | Records every gate check to `privacy_audit_events` table. |
+| `PrivacyAuditLogger` | `PrivacyAuditLogger.kt` | Records gate decisions to `privacy_audit_events` table: every decision is recorded individually except repeated ALLOWED `NOTIFICATION_CAPTURE` decisions: the first in a 60-minute window is written; repeats are counted and reported as `coalescedCount` on the next window's first row or on a flush row (marked `coalescedFlush`) written before any other decision or on eviction; DENIED, FAIL_CLOSED (stored DENIED_FAIL_CLOSED), NOT_APPLICABLE and all other capabilities are always individual rows; counts are approximate (lower bound across process death). |
 | `RedactionSanitizer` | `RedactionSanitizer.kt` | Merchant name hashing/sanitization before cloud AI calls (only `sanitizeMerchant()` method). |
 
 ### Budget Services

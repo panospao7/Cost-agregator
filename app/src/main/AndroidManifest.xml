@@ -63,6 +63,14 @@
             android:exported="false"
             android:theme="@style/Theme.ExpenseTracker" />
 
+        <!-- R25: export-only screen shown while the database open gate blocks the live DB. -->
+        <activity
+            android:name=".ui.unsupported.UnsupportedDatabaseActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:finishOnTaskLaunch="true"
+            android:theme="@style/Theme.ExpenseTracker" />
+
         <activity
             android:name=".ui.MainActivity"
             android:exported="true"

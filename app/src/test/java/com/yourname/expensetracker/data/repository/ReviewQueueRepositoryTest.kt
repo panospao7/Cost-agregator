@@ -110,7 +110,8 @@ class ReviewQueueRepositoryTest {
             transactionLifecycleCoordinator = transactionLifecycleCoordinator,
             pendingReviewSourceLinkService = mockk(relaxed = true),
             pendingReviewSourceLinkPromoter = mockk(relaxed = true),
-            transactionEventDao = database.transactionEventDao(),
+            transactionRunner = mockk(relaxed = true),
+            transactionLifecycleEventWriter = mockk(relaxed = true),
             postCommitActionRunner = mockk(relaxed = true),
         )
     }
@@ -151,6 +152,65 @@ class ReviewQueueRepositoryTest {
         coVerify(exactly = 0) {
             transactionLifecycleCoordinator.createExpenseDbOnlyV2(any())
         }
+    }
+
+    private fun approvablePendingReview(reviewId: Long) = PendingReview(
+        id = reviewId,
+        rawNotificationId = 10L,
+        suggestedAmount = 50.0,
+        suggestedCurrency = "EUR",
+        suggestedMerchant = "Test Merchant",
+        suggestedType = "PURCHASE",
+        suggestedCategoryId = 1L,
+        confidence = 0.8f,
+        packageName = "com.test.app",
+        notificationTitle = "Test",
+        notificationText = "Spent 50"
+    )
+
+    @Test
+    fun `approveReview validation failure returns bounded code without joined errors`() = runTest {
+        val reviewId = 31L
+        coEvery { pendingReviewDao.getById(reviewId) } returns approvablePendingReview(reviewId)
+        coEvery {
+            pendingReviewDao.transitionStatus(
+                reviewId, PendingReviewStatus.PENDING, PendingReviewStatus.PROCESSING
+            )
+        } returns 1
+        coEvery { transactionLifecycleCoordinator.createExpenseDbOnlyV2(any()) } returns
+            MutationResult(
+                CreateExpenseResult.ValidationFailed(listOf("SENSITIVE_DETAIL_A", "SENSITIVE_DETAIL_B")),
+                PostCommitActionBatch.empty("")
+            )
+
+        val result = repository.approveReview(reviewId)
+
+        assertTrue(result is Result.Error)
+        val message = (result as Result.Error).message
+        assertEquals(ReviewQueueRepository.ERROR_VALIDATION_FAILED, message)
+        assertTrue(message in ReviewQueueRepository.KNOWN_APPROVAL_ERRORS)
+        assertFalse(message!!.contains("SENSITIVE_DETAIL"))
+        coVerify(exactly = 0) { pendingReviewDao.updateStatus(reviewId, PendingReviewStatus.APPROVED) }
+    }
+
+    @Test
+    fun `approveReview unexpected exception returns bounded code without exception text`() = runTest {
+        val reviewId = 32L
+        coEvery { pendingReviewDao.getById(reviewId) } returns approvablePendingReview(reviewId)
+        coEvery {
+            pendingReviewDao.transitionStatus(
+                reviewId, PendingReviewStatus.PENDING, PendingReviewStatus.PROCESSING
+            )
+        } returns 1
+        coEvery { transactionLifecycleCoordinator.createExpenseDbOnlyV2(any()) } throws
+            IllegalStateException("SQLITE_CONSTRAINT raw text Spent 50")
+
+        val result = repository.approveReview(reviewId)
+
+        assertTrue(result is Result.Error)
+        val message = (result as Result.Error).message
+        assertEquals(ReviewQueueRepository.ERROR_APPROVAL_FAILED, message)
+        assertTrue(message in ReviewQueueRepository.KNOWN_APPROVAL_ERRORS)
     }
 
     @Test

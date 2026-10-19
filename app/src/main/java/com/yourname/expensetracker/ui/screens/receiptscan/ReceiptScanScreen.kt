@@ -505,6 +505,37 @@ private fun ReceiptOcrCoverageWarning(
     }
 }
 
+/** R24c: blank OCR currency — home currency was assumed; ask the user to check it. */
+@Composable
+private fun ReceiptCurrencyUnverifiedWarning(
+    state: ReceiptScanState,
+    modifier: Modifier = Modifier
+) {
+    if (state.currencyUnverified) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
+            modifier = modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier.padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onTertiaryContainer
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = stringResource(R.string.receipt_currency_unverified_warning),
+                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ReviewStep(
@@ -1158,6 +1189,7 @@ private fun ReviewStep(
     }
 
     ReceiptOcrCoverageWarning(state, modifier = Modifier.padding(top = 8.dp))
+    ReceiptCurrencyUnverifiedWarning(state, modifier = Modifier.padding(top = 8.dp))
 
     // RG12-01 / V12-NEW-B: the scan resolved to an already-saved receipt
     if (state.reopenedExistingReceipt) {

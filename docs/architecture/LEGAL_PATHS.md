@@ -331,6 +331,29 @@ LINK expense to occurrence:
   → Atomic conditional claim (WHERE status=PLANNED AND linkedExpenseId IS NULL)
   → Fulfills planned + suppresses reminders
 
+LINK expense to a SPECIFIC occurrence (R21 S1):
+  → RecurringLifecycleCoordinator.linkExpenseToSpecificOccurrence(occurrenceId, expenseId, source) -> SpecificLinkResult (shares claimLinkSuppressInWrite with the automatic link; bounded `source` code, one occurrence per expense)
+
+MARK-PAID / ALREADY-RECORDED a recurring bill (R21 S2):
+  → ManualRecurringExpenseViewModel → MarkRecurringBillPaidUseCase.invoke(ruleId, seenNextDate) / skip(ruleId, seenNextDate)
+    (per-rule Mutex; seenNextDate re-validated under the lock; target = ONLY the open occurrence due on the seen day, no stale fallback; an on-day occurrence that is not open only advances the date; IRREGULAR rules have no mark-paid action)
+  → MARK-PAID: TransactionLifecycleCoordinator.createExpenseDbOnlyV2() (STRICT_EXTERNAL_ID key `recurring_paid:<occurrenceKey>`, dated on the occurrence due date)
+    → RecurringLifecycleCoordinator.linkExpenseToSpecificOccurrence()
+    → planned post-commit batch (mutation.postCommitActions) run once via PostCommitActionRunner ONLY for a Created expense, AFTER the link
+    → RecurringRuleLifecycleCoordinator.advanceNextDate() (nextDate never decreases)
+  → ALREADY-RECORDED: RecurringLifecycleCoordinator.skipOccurrence() → updateOccurrenceStatus(SKIPPED, USER_SKIPPED)
+    (one transaction: status SKIPPED + projected planned_expenses row CANCELLED + open reminder deliveries suppressed; no expense created)
+    → RecurringRuleLifecycleCoordinator.advanceNextDate()
+  Known limitation: legacy rules keep their stored currency (no data repair); if the process dies between expense commit and the side-effect batch, the idempotent retry resolves to DuplicateSkipped and does not re-run the batch. Narrow LINK_REJECTED-after-Created race: if the occurrence stops being open between the target read and the link, the use case returns Failed(MARK_PAID_LINK_REJECTED) and an unlinked RECURRING_GENERATED expense may remain (the user can delete it). Pre-R21 stale PLANNED occurrences (due before the rule's nextDate) are not paid by mark-paid; they remain as overdue planned rows. After the expense commit the link and the post-commit batch run NonCancellable (the remaining crash window is process death only).
+  Known limitation (a): if no occurrence exists on the seen day (time-zone change after generation, or a nextDate on a day without a scheduled occurrence) even after one horizon top-up, mark-paid returns AdvancedOnly and creates no expense; the original row stays an overdue PLANNED.
+  Known limitation (b): after LINK_REJECTED an unlinked RECURRING_GENERATED expense may remain and the UI shows the generic error. If automatic matching linked that expense to another same-day same-merchant rule, retries keep returning LINK_REJECTED; the user's way out is "Already recorded" (and deleting the extra expense).
+
+COLLAPSE stale due reminder deliveries (R21 S1):
+  → BillReminderWorker → RecurringLifecycleCoordinator.collapseStaleDueDeliveries(now) (single transaction, cancelOpenDueDeliveriesByIds; never touches CLAIMED/upcoming; writes one STALE_DUE_DELIVERIES_COLLAPSED summary event with bounded counts when something was cancelled; a collapse failure does not block dispatch)
+
+TOP UP rolling horizon (R21 S1/S3b):
+  → RecurringHorizonWorker → RecurringRuleLifecycleCoordinator.topUpHorizon(ruleId, now) (idempotent; bounded 12-month catch-up; excludes already-linked expenses; RULE_HORIZON_TOPPED_UP critical event only when rows inserted)
+
 UNLINK expense from occurrence:
   → RecurringLifecycleCoordinator.unlinkExpenseFromOccurrenceDetailed()
   → Returns RecurringExpenseReconcileResult
@@ -356,7 +379,7 @@ DISPATCH reminder:
 FORBIDDEN:
   ❌ ManualRecurringExpenseDao.insert/update/delete outside coordinator
   ❌ RecurringOccurrenceDao.update() outside materializer/coordinator
-  ❌ BillReminderManager.markBillPaid() [REMOVED — use createExpense + linkExpenseToOccurrence]
+  ❌ BillReminderManager.markBillPaid() [REMOVED — use MarkRecurringBillPaidUseCase (createExpenseDbOnlyV2 + linkExpenseToSpecificOccurrence + advanceNextDate)]
   ❌ Raw String status in updateOccurrenceStatus() (must use RecurringOccurrenceStatus)
   ❌ Direct DAO for critical lifecycle events (must use RecurringLifecycleEventWriter)
   ❌ Any recurring rule mutation outside RecurringRuleLifecycleCoordinator
@@ -391,12 +414,22 @@ RAW DATA storage:
   → Processing uses EPHEMERAL in-memory text; DB stores SANITIZED version per mode
   → DO_NOT_STORE = no raw text persisted, processing still works
 
+EXCHANGE-RATE download (non-AI network call, default OFF):
+  → CurrencyManagementViewModel.refreshRates
+    → CurrencyRatesRepositoryImpl.refresh
+    → repository checks the composite PrivacyGate BEFORE any HTTP call;
+      NetworkPrivacyGate decides PrivacyCapability.EXCHANGE_RATE_DOWNLOAD
+      (PrivacySettings.exchangeRateDownloadEnabled)
+  → Returns CurrencyRateRefreshOutcome (Refreshed / DisabledByPrivacy / PrivacyCheckFailed);
+    UI maps codes via CurrencyErrorMessages (no raw codes shown)
+  → User switch: Privacy settings > Network
+
 PRIVACY BLOCKED states:
   → PrivacyBlocked sealed interface with typed subclasses:
     CloudAiDisabled, ReceiptImageUploadDisabled, ExternalGeocodingDisabled,
     NotificationCaptureDisabled, RawExportDisabled, DeviceGpsDisabled,
     BackgroundLocationDisabled, BankStatementAiDisabled, EncryptedBackupDisabled,
-    OverpassDisabled, DebugDataPersistenceDisabled, Custom
+    OverpassDisabled, DebugDataPersistenceDisabled, ExchangeRateDownloadDisabled, Custom
   → PrivacyDecision.FailClosed: never proceed; blocks execution unconditionally
   → toPrivacyBlocked() maps any denial + capability to a typed PrivacyBlocked
   → 39 call sites across 27 files use blocksExecution() before proceeding
@@ -410,6 +443,7 @@ FORBIDDEN:
   ❌ Parsing from stored (sanitized) text instead of ephemeral
   ❌ Using raw strings instead of typed PrivacyBlocked for UI states
   ❌ Silently proceeding when PrivacyDecision.FailClosed is returned
+  ❌ Gating non-AI network calls by CLOUD_AI_* capabilities
 ```
 
 ---
@@ -446,8 +480,33 @@ RESTORE:
     EXPORT_OR_BACKUP_SNAPSHOT_READ (NORMAL or BACKUP_EXPORTING),
     RESTORE_INTERNAL_STAGED_DB_READ (always denied through the app singleton)
 
+DATABASE OPEN GATE (R25):
+  → The app opens ONLY schema v145 (DatabaseSchemaPolicy.MIGRATION_BASELINE) .. v151
+    (APP_DATABASE_SCHEMA_VERSION). Older, newer, or unreadable live DBs are refused by
+    DatabaseOpenGate; the live Room instance is built with GatedOpenHelperFactory, which throws
+    DatabaseOpenBlockedException(<bounded code>) instead of opening. No destructive fallback:
+    the file is never dropped, recreated, or migrated outside the registered chain.
+  → GatedOpenHelperFactory also refuses any (re)open of the live DB while a restore swap is in
+    progress (RESTORE_SWAPPING latch / persisted mode) with DB_OPEN_REFUSED_DURING_SWAP.
+    Staged/fresh instances use the unwrapped AppDatabase.fileBuilder.
+  → UnsupportedDatabaseActivity is the only UI for a refused DB. Its single data exception is an
+    owner-approved export of the UNTOUCHED file, started by the user through the SAF picker
+    (never automatic, never background, never to a non-user-chosen destination).
+
+BACKUP SCHEMA FLOOR (R25-C):
+  → Supported backup schema range == app open range: v145..v151. Both restoreCostBackup
+    (manifest.databaseVersion, checked right after the manifest is parsed) and importDatabase
+    (PRAGMA user_version) reject out-of-range backups BEFORE staging or any swap, via the
+    pre-destructive abort path (live DB untouched, failure journal written, maintenance exited,
+    temp dir deleted), with BackupSchemaUnsupportedException(code):
+      BACKUP_SCHEMA_UNSUPPORTED_LEGACY (< v145), BACKUP_SCHEMA_UNSUPPORTED_NEWER (> v151).
+
 FORBIDDEN:
   ❌ Any DB write outside NORMAL mode (DatabaseWriteBarrier blocks all non-NORMAL modes)
+  ❌ Opening the live DB while the open gate blocks it, or during RESTORE_SWAPPING
+  ❌ Destructive fallback / auto-reset of an unsupported, newer, or unreadable DB
+  ❌ Any raw-file export of a blocked DB other than the user-started SAF export in UnsupportedDatabaseActivity
+  ❌ Restoring a backup below v145 or above v151
   ❌ Any DB read during restore stages (DatabaseReadBarrier denies during restore)
   ❌ Using stale Room instance after DB swap (forced restart)
   ❌ Exiting maintenance to NORMAL after failed rollback

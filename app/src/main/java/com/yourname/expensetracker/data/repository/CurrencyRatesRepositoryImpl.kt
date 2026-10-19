@@ -1,12 +1,14 @@
 package com.yourname.expensetracker.data.repository
 
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.CurrencyRateRefreshOutcome
 import com.yourname.expensetracker.domain.currency.CurrencyRatesRepository
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.SupportedCurrency
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
+import com.yourname.expensetracker.domain.privacy.PrivacyGateReasonCodes
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.di.IoDispatcher
 import kotlinx.coroutines.CoroutineDispatcher
@@ -43,12 +45,21 @@ class CurrencyRatesRepositoryImpl @Inject constructor(
         private const val ECB_NAMESPACE = "http://www.ecb.int/vocabulary/2002-08-01/eurofxref"
     }
 
-    override suspend fun refresh(homeCurrency: String): Int = withContext(ioDispatcher) {
-        // PRIVACY GATE: Check privacy gate before external HTTP call
-        val gateCheck = privacyGate.check(PrivacyCapability.CLOUD_AI_GENERAL)
+    override suspend fun refresh(homeCurrency: String): CurrencyRateRefreshOutcome = withContext(ioDispatcher) {
+        // PRIVACY GATE: exchange-rate download has its own capability (default OFF); check before any HTTP call.
+        val gateCheck = privacyGate.check(PrivacyCapability.EXCHANGE_RATE_DOWNLOAD)
         if (gateCheck.blocksExecution()) {
-            Timber.w("CurrencyRatesRepository: blocked by privacy gate: ${gateCheck.reason()}")
-            return@withContext 0
+            val blockedOutcome = when (gateCheck) {
+                is PrivacyDecision.Denied -> CurrencyRateRefreshOutcome.DisabledByPrivacy
+                else -> {
+                    val reason = gateCheck.reason()
+                    CurrencyRateRefreshOutcome.PrivacyCheckFailed(
+                        if (reason in PrivacyGateReasonCodes.ALL) reason else PrivacyGateReasonCodes.PRIVACY_BLOCKED
+                    )
+                }
+            }
+            Timber.w("CurrencyRatesRepository: refresh blocked by privacy gate (%s)", blockedOutcome::class.simpleName)
+            return@withContext blockedOutcome
         }
 
         val connection = (URL(ECB_DAILY_RATES_URL).openConnection() as HttpURLConnection).apply {
@@ -63,9 +74,10 @@ class CurrencyRatesRepositoryImpl @Inject constructor(
                 throw IllegalStateException("Rate provider returned HTTP ${connection.responseCode}")
             }
 
-            connection.inputStream.use { stream ->
+            val storedPairs = connection.inputStream.use { stream ->
                 refreshFromStream(homeCurrency, stream)
             }
+            CurrencyRateRefreshOutcome.Refreshed(storedPairs)
         } finally {
             connection.disconnect()
         }

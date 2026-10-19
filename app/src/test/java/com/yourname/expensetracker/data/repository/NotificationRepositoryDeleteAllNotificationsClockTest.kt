@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.repository
 
 import androidx.room.withTransaction
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.BlockedPackageDao
@@ -11,7 +12,10 @@ import com.yourname.expensetracker.data.database.dao.SourceStatsDao
 import com.yourname.expensetracker.data.database.dao.TransactionEventDao
 import com.yourname.expensetracker.data.database.dao.UserCorrectionDao
 import com.yourname.expensetracker.data.database.entity.TransactionEvent
+import com.yourname.expensetracker.data.database.RoomDomainTransactionRunner
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
+import com.yourname.expensetracker.domain.diagnostics.EventMetadataSanitizer
+import com.yourname.expensetracker.domain.transaction.lifecycle.RoomTransactionLifecycleEventWriter
 import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.transaction.LifecycleEventType
@@ -77,6 +81,10 @@ class NotificationRepositoryDeleteAllNotificationsClockTest {
             secondArg<suspend () -> Any>().invoke()
         }
         coEvery { transactionEventDao.insert(capture(eventSlot)) } returns 1L
+        // R27-S2c: runWrite is a pass-through here; a relaxed mock would never invoke the block.
+        coEvery {
+            writeBarrier.runWrite(any<DatabaseAccessOperation>(), any<suspend () -> Any?>())
+        } coAnswers { secondArg<suspend () -> Any?>().invoke() }
     }
 
     @After
@@ -92,7 +100,12 @@ class NotificationRepositoryDeleteAllNotificationsClockTest {
         pendingReviewDao = pendingReviewDao,
         userCorrectionDao = userCorrectionDao,
         sourceStatsDao = sourceStatsDao,
-        transactionEventDao = transactionEventDao,
+        // Runner clock deliberately differs from the injected `now`: the event must carry
+        // the caller-supplied value (ctx.copy(occurredAt = now)), not the runner's clock.
+        transactionRunner = RoomDomainTransactionRunner(database, FakeTimeProvider(fixedNow + 98_765L)),
+        transactionLifecycleEventWriter = RoomTransactionLifecycleEventWriter(
+            transactionEventDao, EventMetadataSanitizer(), fakeTimeProvider, writeBarrier
+        ),
         classifier = classifier,
         pipeline = pipeline,
         writeBarrier = writeBarrier,
