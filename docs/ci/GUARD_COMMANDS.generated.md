@@ -148,7 +148,7 @@ argv as repeated single-token `--command-arg=<value>` entries.
 - engine: python-direct
 - timeout-profile: standard (300s)
 - output-contract: stdout-human;exit:0=pass,1=violation,2=infra
-- command-identity: <resolved-interpreter> scripts/verify_ignored_test_budget.py --fail-on-violation --baseline 29
+- command-identity: <resolved-interpreter> scripts/verify_ignored_test_budget.py --fail-on-violation --baseline 3
 - documentation-anchor: docs/ci/guard-policy.md
 
 ## lint_baseline_policy

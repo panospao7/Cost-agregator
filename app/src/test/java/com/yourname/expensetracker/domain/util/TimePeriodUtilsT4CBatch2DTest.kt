@@ -300,7 +300,7 @@ class TimePeriodUtilsT4CBatch2DTest {
     // ============================================================================
 
     @Test
-    fun `normal year boundaries are exact hardcoded instants per zone`() {
+    fun `normal year boundaries are exact hardcoded instants per zone and match both oracles`() {
         // Year 2024 (leap year, all boundaries in standard time):
         //   UTC              2024-01-01T00:00Z ... 2025-01-01T00:00Z
         //   Asia/Kolkata     2023-12-31T18:30Z ... 2024-12-31T18:30Z  (+05:30)
@@ -313,16 +313,24 @@ class TimePeriodUtilsT4CBatch2DTest {
             YearCase("Europe/Athens", "2023-12-31T22:00:00Z", "2024-12-31T22:00:00Z"),
             YearCase("America/New_York", "2024-01-01T05:00:00Z", "2025-01-01T05:00:00Z")
         )
+        assertEquals("normal year cases size", 4, cases.size)
+        assertEquals("normal year cases cover exactly ZONES", ZONES.toSet(), cases.map { it.zoneId }.toSet())
         for (case in cases) {
             withZone(case.zoneId) {
                 assertEquals("start ${case.zoneId}", Instant.parse(case.startIso).toEpochMilli(), TimePeriodUtils.getStartOfYear(juneNoonUtc))
                 assertEquals("end ${case.zoneId}", Instant.parse(case.endIso).toEpochMilli(), TimePeriodUtils.getEndOfYear(juneNoonUtc))
+                for (ts in listOf(juneNoonUtc, dec31Utc)) {
+                    assertEquals("legacy start ${case.zoneId} ts=$ts", legacyStartOfYear(ts), TimePeriodUtils.getStartOfYear(ts))
+                    assertEquals("explicit start ${case.zoneId} ts=$ts", explicitStartOfYear(ts, case.zoneId), TimePeriodUtils.getStartOfYear(ts))
+                    assertEquals("legacy end ${case.zoneId} ts=$ts", legacyEndOfYear(ts), TimePeriodUtils.getEndOfYear(ts))
+                    assertEquals("explicit end ${case.zoneId} ts=$ts", explicitEndOfYear(ts, case.zoneId), TimePeriodUtils.getEndOfYear(ts))
+                }
             }
         }
     }
 
     @Test
-    fun `normal quarter boundaries are exact hardcoded instants per zone`() {
+    fun `normal quarter boundaries are exact hardcoded instants per zone and match both oracles`() {
         // Quarter Q2 2024 (Apr ... Jun):
         //   UTC              2024-04-01T00:00Z ... 2024-07-01T00:00Z
         //   Asia/Kolkata     2024-03-31T18:30Z ... 2024-06-30T18:30Z  (+05:30)
@@ -335,37 +343,17 @@ class TimePeriodUtilsT4CBatch2DTest {
             QuarterCase("Europe/Athens", "2024-03-31T21:00:00Z", "2024-06-30T21:00:00Z"),
             QuarterCase("America/New_York", "2024-04-01T04:00:00Z", "2024-07-01T04:00:00Z")
         )
+        assertEquals("normal quarter cases size", 4, cases.size)
+        assertEquals("normal quarter cases cover exactly ZONES", ZONES.toSet(), cases.map { it.zoneId }.toSet())
         for (case in cases) {
             withZone(case.zoneId) {
                 assertEquals("start ${case.zoneId}", Instant.parse(case.startIso).toEpochMilli(), TimePeriodUtils.getStartOfQuarter(juneNoonUtc))
                 assertEquals("end ${case.zoneId}", Instant.parse(case.endIso).toEpochMilli(), TimePeriodUtils.getEndOfQuarter(juneNoonUtc))
-            }
-        }
-    }
-
-    @Test
-    fun `normal year boundaries match both oracles`() {
-        for (zoneId in ZONES) {
-            withZone(zoneId) {
                 for (ts in listOf(juneNoonUtc, dec31Utc)) {
-                    assertEquals("legacy start $zoneId ts=$ts", legacyStartOfYear(ts), TimePeriodUtils.getStartOfYear(ts))
-                    assertEquals("explicit start $zoneId ts=$ts", explicitStartOfYear(ts, zoneId), TimePeriodUtils.getStartOfYear(ts))
-                    assertEquals("legacy end $zoneId ts=$ts", legacyEndOfYear(ts), TimePeriodUtils.getEndOfYear(ts))
-                    assertEquals("explicit end $zoneId ts=$ts", explicitEndOfYear(ts, zoneId), TimePeriodUtils.getEndOfYear(ts))
-                }
-            }
-        }
-    }
-
-    @Test
-    fun `normal quarter boundaries match both oracles`() {
-        for (zoneId in ZONES) {
-            withZone(zoneId) {
-                for (ts in listOf(juneNoonUtc, dec31Utc)) {
-                    assertEquals("legacy start $zoneId ts=$ts", legacyStartOfQuarter(ts), TimePeriodUtils.getStartOfQuarter(ts))
-                    assertEquals("explicit start $zoneId ts=$ts", explicitStartOfQuarter(ts, zoneId), TimePeriodUtils.getStartOfQuarter(ts))
-                    assertEquals("legacy end $zoneId ts=$ts", legacyEndOfQuarter(ts), TimePeriodUtils.getEndOfQuarter(ts))
-                    assertEquals("explicit end $zoneId ts=$ts", explicitEndOfQuarter(ts, zoneId), TimePeriodUtils.getEndOfQuarter(ts))
+                    assertEquals("legacy start ${case.zoneId} ts=$ts", legacyStartOfQuarter(ts), TimePeriodUtils.getStartOfQuarter(ts))
+                    assertEquals("explicit start ${case.zoneId} ts=$ts", explicitStartOfQuarter(ts, case.zoneId), TimePeriodUtils.getStartOfQuarter(ts))
+                    assertEquals("legacy end ${case.zoneId} ts=$ts", legacyEndOfQuarter(ts), TimePeriodUtils.getEndOfQuarter(ts))
+                    assertEquals("explicit end ${case.zoneId} ts=$ts", explicitEndOfQuarter(ts, case.zoneId), TimePeriodUtils.getEndOfQuarter(ts))
                 }
             }
         }
@@ -640,36 +628,27 @@ class TimePeriodUtilsT4CBatch2DTest {
     // ============================================================================
 
     @Test
-    fun `year end is exclusive and the last millisecond is included`() {
-        for (zoneId in ZONES) {
-            withZone(zoneId) {
-                for (ts in listOf(juneNoonUtc, dec31Utc, springQuarterUtc, fallQuarterUtc)) {
-                    val start = TimePeriodUtils.getStartOfYear(ts)
-                    val end = TimePeriodUtils.getEndOfYear(ts)
-                    assertTrue("ts=$ts >= start", ts >= start)
-                    assertTrue("ts=$ts < end", ts < end)
-                    assertFalse("end excluded ts=$ts", TimePeriodUtils.isInRange(end, start, end))
-                    assertTrue("end-1 included ts=$ts", TimePeriodUtils.isInRange(end - 1, start, end))
-                    // The exact end instant belongs to the NEXT year.
-                    assertEquals("end maps to next year ts=$ts", end, TimePeriodUtils.getStartOfYear(end))
-                }
-            }
-        }
-    }
-
-    @Test
-    fun `quarter end is exclusive and the last millisecond is included`() {
-        for (zoneId in ZONES) {
-            withZone(zoneId) {
-                for (ts in listOf(juneNoonUtc, dec31Utc, springQuarterUtc, fallQuarterUtc)) {
-                    val start = TimePeriodUtils.getStartOfQuarter(ts)
-                    val end = TimePeriodUtils.getEndOfQuarter(ts)
-                    assertTrue("ts=$ts >= start", ts >= start)
-                    assertTrue("ts=$ts < end", ts < end)
-                    assertFalse("end excluded ts=$ts", TimePeriodUtils.isInRange(end, start, end))
-                    assertTrue("end-1 included ts=$ts", TimePeriodUtils.isInRange(end - 1, start, end))
-                    // The exact end instant belongs to the NEXT quarter.
-                    assertEquals("end maps to next quarter ts=$ts", end, TimePeriodUtils.getStartOfQuarter(end))
+    fun `year and quarter end are exclusive and the last millisecond is included`() {
+        data class PeriodCase(val name: String, val start: (Long) -> Long, val end: (Long) -> Long)
+        val cases = listOf(
+            PeriodCase("year", { ts -> TimePeriodUtils.getStartOfYear(ts) }, { ts -> TimePeriodUtils.getEndOfYear(ts) }),
+            PeriodCase("quarter", { ts -> TimePeriodUtils.getStartOfQuarter(ts) }, { ts -> TimePeriodUtils.getEndOfQuarter(ts) })
+        )
+        assertEquals("exclusive-end cases size", 2, cases.size)
+        for (case in cases) {
+            for (zoneId in ZONES) {
+                withZone(zoneId) {
+                    for (ts in listOf(juneNoonUtc, dec31Utc, springQuarterUtc, fallQuarterUtc)) {
+                        val label = "${case.name} $zoneId ts=$ts"
+                        val start = case.start(ts)
+                        val end = case.end(ts)
+                        assertTrue("$label ts >= start", ts >= start)
+                        assertTrue("$label ts < end", ts < end)
+                        assertFalse("$label end excluded", TimePeriodUtils.isInRange(end, start, end))
+                        assertTrue("$label end-1 included", TimePeriodUtils.isInRange(end - 1, start, end))
+                        // The exact end instant belongs to the NEXT ${case.name}.
+                        assertEquals("$label end maps to next ${case.name}", end, case.start(end))
+                    }
                 }
             }
         }
@@ -1097,26 +1076,26 @@ class TimePeriodUtilsT4CBatch2DTest {
     // ============================================================================
 
     @Test
-    fun `getYearRange is consistent with getStartOfYear and getEndOfYear`() {
-        for (zoneId in ZONES) {
-            withZone(zoneId) {
-                for (ts in listOf(juneNoonUtc, dec31Utc, leapDay2024Utc, springQuarterUtc, fallQuarterUtc, epochZero, preEpoch1950)) {
-                    val (start, end) = TimePeriodUtils.getYearRange(ts, 0)
-                    assertEquals("start $zoneId ts=$ts", TimePeriodUtils.getStartOfYear(ts), start)
-                    assertEquals("end $zoneId ts=$ts", TimePeriodUtils.getEndOfYear(ts), end)
-                }
-            }
-        }
-    }
-
-    @Test
-    fun `getQuarterRange is consistent with getStartOfQuarter and getEndOfQuarter`() {
-        for (zoneId in ZONES) {
-            withZone(zoneId) {
-                for (ts in listOf(juneNoonUtc, dec31Utc, leapDay2024Utc, springQuarterUtc, fallQuarterUtc, epochZero, preEpoch1950)) {
-                    val (start, end) = TimePeriodUtils.getQuarterRange(ts, 0)
-                    assertEquals("start $zoneId ts=$ts", TimePeriodUtils.getStartOfQuarter(ts), start)
-                    assertEquals("end $zoneId ts=$ts", TimePeriodUtils.getEndOfQuarter(ts), end)
+    fun `getYearRange and getQuarterRange are consistent with their start and end helpers`() {
+        data class RangeCase(
+            val name: String,
+            val range: (Long) -> Pair<Long, Long>,
+            val start: (Long) -> Long,
+            val end: (Long) -> Long
+        )
+        val cases = listOf(
+            RangeCase("year", { ts -> TimePeriodUtils.getYearRange(ts, 0) }, { ts -> TimePeriodUtils.getStartOfYear(ts) }, { ts -> TimePeriodUtils.getEndOfYear(ts) }),
+            RangeCase("quarter", { ts -> TimePeriodUtils.getQuarterRange(ts, 0) }, { ts -> TimePeriodUtils.getStartOfQuarter(ts) }, { ts -> TimePeriodUtils.getEndOfQuarter(ts) })
+        )
+        assertEquals("range consistency cases size", 2, cases.size)
+        for (case in cases) {
+            for (zoneId in ZONES) {
+                withZone(zoneId) {
+                    for (ts in listOf(juneNoonUtc, dec31Utc, leapDay2024Utc, springQuarterUtc, fallQuarterUtc, epochZero, preEpoch1950)) {
+                        val (start, end) = case.range(ts)
+                        assertEquals("${case.name} start $zoneId ts=$ts", case.start(ts), start)
+                        assertEquals("${case.name} end $zoneId ts=$ts", case.end(ts), end)
+                    }
                 }
             }
         }
@@ -1165,79 +1144,73 @@ class TimePeriodUtilsT4CBatch2DTest {
     // ============================================================================
 
     @Test
-    fun `migrated year and quarter boundaries match the legacy Calendar oracle across samples and zones`() {
+    fun `migrated year and quarter boundaries match the legacy Calendar and explicit java time oracles across samples and zones`() {
+        // Each row is checked against the legacy Calendar oracle; rows with
+        // explicit = true are also checked against the explicit java.time oracle
+        // (the original explicit-oracle sample list was the first 9 rows).
+        data class Sample(val name: String, val ts: Long, val explicit: Boolean)
         val samples = listOf(
-            epochZero,
-            minusOneSecond,
-            preEpoch1950,
-            juneNoonUtc,
-            leapDay2024Utc,
-            feb2023Utc,
-            dec31Utc,
-            springQuarterUtc,
-            fallQuarterUtc,
-            Instant.parse("2025-01-01T00:00:00Z").toEpochMilli(),
-            Instant.parse("2024-03-10T06:59:59Z").toEpochMilli(), // spring-forward Sunday pre-gap
-            Instant.parse("2024-03-10T07:00:00Z").toEpochMilli(), // spring-forward Sunday post-gap
-            Instant.parse("2024-11-03T05:30:00Z").toEpochMilli(), // fall-back overlap first occurrence
-            Instant.parse("2024-11-03T06:30:00Z").toEpochMilli(), // fall-back overlap second occurrence
-            Instant.parse("2024-12-31T23:59:59Z").toEpochMilli()  // last instant of the year
+            Sample("epochZero", epochZero, true),
+            Sample("minusOneSecond", minusOneSecond, true),
+            Sample("preEpoch1950", preEpoch1950, true),
+            Sample("juneNoonUtc", juneNoonUtc, true),
+            Sample("leapDay2024Utc", leapDay2024Utc, true),
+            Sample("feb2023Utc", feb2023Utc, true),
+            Sample("dec31Utc", dec31Utc, true),
+            Sample("springQuarterUtc", springQuarterUtc, true),
+            Sample("fallQuarterUtc", fallQuarterUtc, true),
+            Sample("2025-01-01T00:00Z", Instant.parse("2025-01-01T00:00:00Z").toEpochMilli(), false),
+            // spring-forward Sunday pre-gap
+            Sample("2024-03-10T06:59:59Z", Instant.parse("2024-03-10T06:59:59Z").toEpochMilli(), false),
+            // spring-forward Sunday post-gap
+            Sample("2024-03-10T07:00:00Z", Instant.parse("2024-03-10T07:00:00Z").toEpochMilli(), false),
+            // fall-back overlap first occurrence
+            Sample("2024-11-03T05:30:00Z", Instant.parse("2024-11-03T05:30:00Z").toEpochMilli(), false),
+            // fall-back overlap second occurrence
+            Sample("2024-11-03T06:30:00Z", Instant.parse("2024-11-03T06:30:00Z").toEpochMilli(), false),
+            // last instant of the year
+            Sample("2024-12-31T23:59:59Z", Instant.parse("2024-12-31T23:59:59Z").toEpochMilli(), false)
         )
+        assertEquals("migrated samples size", 15, samples.size)
+        assertEquals("explicit-oracle samples size", 9, samples.count { it.explicit })
         for (zoneId in ZONES) {
             withZone(zoneId) {
-                for (ts in samples) {
-                    assertEquals("legacy getStartOfYear $zoneId ts=$ts", legacyStartOfYear(ts), TimePeriodUtils.getStartOfYear(ts))
-                    assertEquals("legacy getEndOfYear $zoneId ts=$ts", legacyEndOfYear(ts), TimePeriodUtils.getEndOfYear(ts))
-                    assertEquals("legacy getStartOfQuarter $zoneId ts=$ts", legacyStartOfQuarter(ts), TimePeriodUtils.getStartOfQuarter(ts))
-                    assertEquals("legacy getEndOfQuarter $zoneId ts=$ts", legacyEndOfQuarter(ts), TimePeriodUtils.getEndOfQuarter(ts))
+                for (sample in samples) {
+                    val ts = sample.ts
+                    val row = "$zoneId ${sample.name} ts=$ts"
+                    assertEquals("legacy getStartOfYear $row", legacyStartOfYear(ts), TimePeriodUtils.getStartOfYear(ts))
+                    assertEquals("legacy getEndOfYear $row", legacyEndOfYear(ts), TimePeriodUtils.getEndOfYear(ts))
+                    assertEquals("legacy getStartOfQuarter $row", legacyStartOfQuarter(ts), TimePeriodUtils.getStartOfQuarter(ts))
+                    assertEquals("legacy getEndOfQuarter $row", legacyEndOfQuarter(ts), TimePeriodUtils.getEndOfQuarter(ts))
                     for (offset in listOf(-1, 0, 1)) {
                         assertEquals(
-                            "legacy getYearRange $zoneId ts=$ts offset=$offset",
+                            "legacy getYearRange $row offset=$offset",
                             legacyYearRange(ts, offset),
                             TimePeriodUtils.getYearRange(ts, offset)
                         )
                         assertEquals(
-                            "legacy getQuarterRange $zoneId ts=$ts offset=$offset",
+                            "legacy getQuarterRange $row offset=$offset",
                             legacyQuarterRange(ts, offset),
                             TimePeriodUtils.getQuarterRange(ts, offset)
                         )
                     }
-                }
-            }
-        }
-    }
-
-    @Test
-    fun `migrated year and quarter boundaries match the explicit java time oracle across samples and zones`() {
-        val samples = listOf(
-            epochZero,
-            minusOneSecond,
-            preEpoch1950,
-            juneNoonUtc,
-            leapDay2024Utc,
-            feb2023Utc,
-            dec31Utc,
-            springQuarterUtc,
-            fallQuarterUtc
-        )
-        for (zoneId in ZONES) {
-            withZone(zoneId) {
-                for (ts in samples) {
-                    assertEquals("explicit getStartOfYear $zoneId ts=$ts", explicitStartOfYear(ts, zoneId), TimePeriodUtils.getStartOfYear(ts))
-                    assertEquals("explicit getEndOfYear $zoneId ts=$ts", explicitEndOfYear(ts, zoneId), TimePeriodUtils.getEndOfYear(ts))
-                    assertEquals("explicit getStartOfQuarter $zoneId ts=$ts", explicitStartOfQuarter(ts, zoneId), TimePeriodUtils.getStartOfQuarter(ts))
-                    assertEquals("explicit getEndOfQuarter $zoneId ts=$ts", explicitEndOfQuarter(ts, zoneId), TimePeriodUtils.getEndOfQuarter(ts))
-                    for (offset in listOf(-1, 0, 1)) {
-                        assertEquals(
-                            "explicit getYearRange $zoneId ts=$ts offset=$offset",
-                            explicitYearRange(ts, zoneId, offset),
-                            TimePeriodUtils.getYearRange(ts, offset)
-                        )
-                        assertEquals(
-                            "explicit getQuarterRange $zoneId ts=$ts offset=$offset",
-                            explicitQuarterRange(ts, zoneId, offset),
-                            TimePeriodUtils.getQuarterRange(ts, offset)
-                        )
+                    if (sample.explicit) {
+                        assertEquals("explicit getStartOfYear $row", explicitStartOfYear(ts, zoneId), TimePeriodUtils.getStartOfYear(ts))
+                        assertEquals("explicit getEndOfYear $row", explicitEndOfYear(ts, zoneId), TimePeriodUtils.getEndOfYear(ts))
+                        assertEquals("explicit getStartOfQuarter $row", explicitStartOfQuarter(ts, zoneId), TimePeriodUtils.getStartOfQuarter(ts))
+                        assertEquals("explicit getEndOfQuarter $row", explicitEndOfQuarter(ts, zoneId), TimePeriodUtils.getEndOfQuarter(ts))
+                        for (offset in listOf(-1, 0, 1)) {
+                            assertEquals(
+                                "explicit getYearRange $row offset=$offset",
+                                explicitYearRange(ts, zoneId, offset),
+                                TimePeriodUtils.getYearRange(ts, offset)
+                            )
+                            assertEquals(
+                                "explicit getQuarterRange $row offset=$offset",
+                                explicitQuarterRange(ts, zoneId, offset),
+                                TimePeriodUtils.getQuarterRange(ts, offset)
+                            )
+                        }
                     }
                 }
             }
@@ -1249,7 +1222,7 @@ class TimePeriodUtilsT4CBatch2DTest {
     // ============================================================================
 
     @Test
-    fun `year Int extremes return valid ordered half-open year ranges`() {
+    fun `year Int extremes return valid ordered deterministic half-open year ranges`() {
         // The year overload builds a lenient Calendar from the raw int year, so
         // at the Int extremes the Calendar arithmetic wraps deterministically
         // instead of throwing (verified on the host JDK: neither extreme year
@@ -1264,12 +1237,16 @@ class TimePeriodUtilsT4CBatch2DTest {
         // boundaries are validated independently: the legacy Calendar oracle for
         // pre-cutover wrapped timestamps and the explicit java.time oracle for
         // modern ones — never by re-calling the production year helpers.
+        // Repeatability is also locked on every row: the result depends only on
+        // the year and the default zone, so repeated calls must agree exactly.
         val extremeYears = listOf(Int.MIN_VALUE, Int.MAX_VALUE)
+        assertEquals("extreme years size", 2, extremeYears.size)
         for (zoneId in ZONES) {
             withZone(zoneId) {
                 for (year in extremeYears) {
                     val actual = TimePeriodUtils.getYearRange(year)
                     val label = "year=$year $zoneId"
+                    assertEquals("$label: repeatable", actual, TimePeriodUtils.getYearRange(year))
                     // The year overload hands the lenient Calendar's wrapped
                     // timestamp to the pre-Gregorian compatibility seam, so the
                     // oracle family mirrors that seam: legacy Calendar for
@@ -1314,25 +1291,6 @@ class TimePeriodUtilsT4CBatch2DTest {
                     assertTrue("$label: start inclusive", TimePeriodUtils.isInRange(start, start, end))
                     assertTrue("$label: last millisecond inclusive", TimePeriodUtils.isInRange(end - 1, start, end))
                     assertFalse("$label: end exclusive", TimePeriodUtils.isInRange(end, start, end))
-                }
-            }
-        }
-    }
-
-    @Test
-    fun `year Int extremes are deterministic across repeated calls`() {
-        // Lock repeatability of the lenient Calendar wrap: the result depends only
-        // on the year and the default zone, so every call must agree exactly.
-        val extremeYears = listOf(Int.MIN_VALUE, Int.MAX_VALUE)
-        for (zoneId in ZONES) {
-            withZone(zoneId) {
-                for (year in extremeYears) {
-                    val label = "year=$year $zoneId"
-                    assertEquals(
-                        "$label: repeatable",
-                        TimePeriodUtils.getYearRange(year),
-                        TimePeriodUtils.getYearRange(year)
-                    )
                 }
             }
         }

@@ -10,7 +10,6 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.test.runTest
 import io.mockk.mockk
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -19,7 +18,6 @@ import org.junit.Test
 
 class DiagnosticSideEffectEventWriterTest {
 
-    private lateinit var diagnosticWriter: DiagnosticEventWriter
     private lateinit var sanitizer: EventMetadataSanitizer
     private lateinit var timeProvider: TimeProvider
     private lateinit var writer: DiagnosticSideEffectEventWriter
@@ -43,7 +41,6 @@ class DiagnosticSideEffectEventWriterTest {
     @Before
     fun setup() {
         capturedEvents.clear()
-        diagnosticWriter = mockk(relaxed = true)
         sanitizer = EventMetadataSanitizer()
         timeProvider = mockk(relaxed = true)
 
@@ -55,76 +52,65 @@ class DiagnosticSideEffectEventWriterTest {
     }
 
     @Test
-    fun `started event has correct outcome and isTerminal false`() = runTest {
+    fun `started and completed events have correct outcome terminal flag and stage`() = runTest {
+        // started: not terminal
         writer.started(sampleAction)
-        assertEquals(1, capturedEvents.size)
-        val event = capturedEvents[0]
-        assertEquals(EventOutcome.SIDE_EFFECT_STARTED, event.outcome)
-        assertFalse(event.isTerminal)
-        assertEquals("SIDE_EFFECT", event.stage)
-        assertEquals(AppPipeline.TRANSACTION, event.pipeline)
-    }
+        assertEquals("one event after started", 1, capturedEvents.size)
+        val started = capturedEvents[0]
+        assertEquals("started outcome", EventOutcome.SIDE_EFFECT_STARTED, started.outcome)
+        assertEquals("started isTerminal", false, started.isTerminal)
+        assertEquals("started stage", "SIDE_EFFECT", started.stage)
+        assertEquals("started pipeline", AppPipeline.TRANSACTION, started.pipeline)
 
-    @Test
-    fun `completed event has correct outcome and isTerminal true`() = runTest {
+        // completed: terminal
+        capturedEvents.clear()
         writer.completed(sampleAction)
-        assertEquals(1, capturedEvents.size)
-        val event = capturedEvents[0]
-        assertEquals(EventOutcome.SIDE_EFFECT_COMPLETED, event.outcome)
-        assertTrue(event.isTerminal)
-        assertEquals("SIDE_EFFECT", event.stage)
+        assertEquals("one event after completed", 1, capturedEvents.size)
+        val completed = capturedEvents[0]
+        assertEquals("completed outcome", EventOutcome.SIDE_EFFECT_COMPLETED, completed.outcome)
+        assertTrue("completed isTerminal", completed.isTerminal)
+        assertEquals("completed stage", "SIDE_EFFECT", completed.stage)
     }
 
     @Test
-    fun `skipped event maps reason correctly`() = runTest {
-        writer.skipped(sampleAction, SideEffectSkipReason.NOT_APPLICABLE)
-        assertEquals(1, capturedEvents.size)
-        val event = capturedEvents[0]
-        assertEquals(EventOutcome.SKIPPED, event.outcome)
-        assertTrue(event.isTerminal)
-        assertNull(event.reasonCode)
+    fun `skipped event maps each skip reason to its diagnostic reason code`() = runTest {
+        // rows: skip reason -> expected reason code (null = no mapped code)
+        val rows = listOf(
+            SideEffectSkipReason.NOT_APPLICABLE to null,
+            SideEffectSkipReason.PRIVACY_DENIED to DiagnosticReasonCode.PRIVACY_DENIED,
+            SideEffectSkipReason.DUPLICATE to DiagnosticReasonCode.DUPLICATE,
+            SideEffectSkipReason.PERMISSION_DENIED to DiagnosticReasonCode.PERMISSION_DENIED
+        )
+        rows.forEach { (skipReason, expectedCode) ->
+            capturedEvents.clear()
+            writer.skipped(sampleAction, skipReason)
+            assertEquals("one event for row: $skipReason", 1, capturedEvents.size)
+            val event = capturedEvents[0]
+            assertEquals("outcome for row: $skipReason", EventOutcome.SKIPPED, event.outcome)
+            assertTrue("isTerminal for row: $skipReason", event.isTerminal)
+            if (expectedCode == null) {
+                assertNull("reasonCode for row: $skipReason", event.reasonCode)
+            } else {
+                assertEquals("reasonCode for row: $skipReason", expectedCode, event.reasonCode)
+            }
+        }
     }
 
     @Test
-    fun `skipped with privacy denied maps to reason code`() = runTest {
-        writer.skipped(sampleAction, SideEffectSkipReason.PRIVACY_DENIED)
-        assertEquals(1, capturedEvents.size)
-        val event = capturedEvents[0]
-        assertEquals(DiagnosticReasonCode.PRIVACY_DENIED, event.reasonCode)
-    }
-
-    @Test
-    fun `skipped with duplicate maps to reason code`() = runTest {
-        writer.skipped(sampleAction, SideEffectSkipReason.DUPLICATE)
-        assertEquals(1, capturedEvents.size)
-        val event = capturedEvents[0]
-        assertEquals(DiagnosticReasonCode.DUPLICATE, event.reasonCode)
-    }
-
-    @Test
-    fun `skipped with permission denied maps to reason code`() = runTest {
-        writer.skipped(sampleAction, SideEffectSkipReason.PERMISSION_DENIED)
-        assertEquals(1, capturedEvents.size)
-        val event = capturedEvents[0]
-        assertEquals(DiagnosticReasonCode.PERMISSION_DENIED, event.reasonCode)
-    }
-
-    @Test
-    fun `failed retryable has correct outcome and severity`() = runTest {
-        writer.failed(sampleAction, retryable = true, reason = "Network error", error = null)
-        assertEquals(1, capturedEvents.size)
-        val event = capturedEvents[0]
-        assertEquals(EventOutcome.FAILED_RETRYABLE, event.outcome)
-        assertTrue(event.isTerminal)
-    }
-
-    @Test
-    fun `failed final has correct outcome`() = runTest {
-        writer.failed(sampleAction, retryable = false, reason = "Fatal error", error = null)
-        assertEquals(1, capturedEvents.size)
-        val event = capturedEvents[0]
-        assertEquals(EventOutcome.FAILED_FINAL, event.outcome)
-        assertTrue(event.isTerminal)
+    fun `failed event outcome follows retryable flag and is terminal`() = runTest {
+        // rows: retryable flag, reason -> expected outcome
+        val rows = listOf(
+            Triple(true, "Network error", EventOutcome.FAILED_RETRYABLE),
+            Triple(false, "Fatal error", EventOutcome.FAILED_FINAL)
+        )
+        rows.forEach { (retryable, reason, expectedOutcome) ->
+            capturedEvents.clear()
+            writer.failed(sampleAction, retryable = retryable, reason = reason, error = null)
+            assertEquals("one event for row retryable=$retryable", 1, capturedEvents.size)
+            val event = capturedEvents[0]
+            assertEquals("outcome for row retryable=$retryable", expectedOutcome, event.outcome)
+            assertTrue("isTerminal for row retryable=$retryable", event.isTerminal)
+        }
     }
 
     @Test
@@ -138,55 +124,39 @@ class DiagnosticSideEffectEventWriterTest {
     }
 
     @Test
-    fun `cancelled event has correct outcome`() = runTest {
+    fun `cancelled event is terminal for both provided and null reason`() = runTest {
         writer.cancelled(sampleAction, "User interrupted")
-        assertEquals(1, capturedEvents.size)
-        val event = capturedEvents[0]
-        assertEquals(EventOutcome.CANCELLED, event.outcome)
-        assertTrue(event.isTerminal)
-        assertEquals(DiagnosticReasonCode.CANCELLED_BY_SYSTEM, event.reasonCode)
-    }
+        assertEquals("one event for row: reason provided", 1, capturedEvents.size)
+        val withReason = capturedEvents[0]
+        assertEquals("outcome for row: reason provided", EventOutcome.CANCELLED, withReason.outcome)
+        assertTrue("isTerminal for row: reason provided", withReason.isTerminal)
+        assertEquals(
+            "reasonCode for row: reason provided",
+            DiagnosticReasonCode.CANCELLED_BY_SYSTEM,
+            withReason.reasonCode
+        )
 
-    @Test
-    fun `cancelled event with null reason`() = runTest {
+        capturedEvents.clear()
         writer.cancelled(sampleAction, null)
-        assertEquals(1, capturedEvents.size)
-        val event = capturedEvents[0]
-        assertEquals(EventOutcome.CANCELLED, event.outcome)
-        assertTrue(event.isTerminal)
+        assertEquals("one event for row: null reason", 1, capturedEvents.size)
+        val nullReason = capturedEvents[0]
+        assertEquals("outcome for row: null reason", EventOutcome.CANCELLED, nullReason.outcome)
+        assertTrue("isTerminal for row: null reason", nullReason.isTerminal)
     }
 
     @Test
-    fun `event has correct entity type and id`() = runTest {
+    fun `event carries entity source correlation causation and side effect metadata`() = runTest {
         writer.started(sampleAction)
         val event = capturedEvents[0]
-        assertEquals("expense", event.entityType)
-        assertEquals(42L, event.entityId)
-    }
-
-    @Test
-    fun `event has correct source type`() = runTest {
-        writer.started(sampleAction)
-        val event = capturedEvents[0]
-        assertEquals("test_source", event.sourceType)
-    }
-
-    @Test
-    fun `event has correlation and causation ids`() = runTest {
-        writer.started(sampleAction)
-        val event = capturedEvents[0]
-        assertEquals("corr-123", event.correlationId)
-        assertEquals("caus-456", event.causationId)
-    }
-
-    @Test
-    fun `metadata contains side effect info`() = runTest {
-        writer.started(sampleAction)
-        val event = capturedEvents[0]
+        assertEquals("entityType", "expense", event.entityType)
+        assertEquals("entityId", 42L, event.entityId)
+        assertEquals("sourceType", "test_source", event.sourceType)
+        assertEquals("correlationId", "corr-123", event.correlationId)
+        assertEquals("causationId", "caus-456", event.causationId)
         val metadataJson = event.metadata.toJson()
-        assertTrue(metadataJson.contains("sideEffectName"))
-        assertTrue(metadataJson.contains("test_action"))
-        assertTrue(metadataJson.contains("category"))
+        assertTrue("metadata sideEffectName key", metadataJson.contains("sideEffectName"))
+        assertTrue("metadata action name", metadataJson.contains("test_action"))
+        assertTrue("metadata category key", metadataJson.contains("category"))
     }
 
     /**

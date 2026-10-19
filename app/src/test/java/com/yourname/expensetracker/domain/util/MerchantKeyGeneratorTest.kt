@@ -154,4 +154,63 @@ class MerchantKeyGeneratorTest {
         val key2 = MerchantKeyGenerator.generate("Carrefour")
         assertNotEquals(key1, key2)
     }
+
+    // ── Merged from MerchantKeyGeneratorStressTest ───────────────────────────
+
+    @Test
+    fun `Latin, symbol, whitespace, control and emoji inputs produce exact keys`() {
+        // input -> expected key
+        val rows = listOf(
+            "basic latin lowercase" to ("hello" to "hello"),
+            "basic latin uppercase" to ("HELLO" to "hello"),
+            "mixed case latin" to ("HeLLo" to "hello"),
+            "numbers preserved" to ("Store123" to "store123"),
+            "spaces stripped" to ("Hello World" to "helloworld"),
+            "special symbols stripped" to ("!@#$%test%^&*" to "test"),
+            "lowercase accented latin" to ("café" to "cafe"),
+            "emoji stripped" to ("test👋" to "test"),
+            "multiple emojis incl ZWJ sequence stripped" to
+                ("hello👋🏃‍♂️🎉" to "hello"),
+            "punctuation stripped" to ("test...123..." to "test123"),
+            "tab and newline stripped" to ("te\tst\n" to "test"),
+            "NUL character stripped" to ("te\u0000st" to "test")
+        )
+        assertEquals(12, rows.size)
+        rows.forEach { (label, inputAndExpected) ->
+            val (input, expected) = inputAndExpected
+            assertEquals("row '$label'", expected, MerchantKeyGenerator.generate(input))
+        }
+    }
+
+    @Test
+    fun `Greek inputs produce a non-empty key`() {
+        val rows = listOf(
+            "common merchant" to "Κουλουράκια",
+            "vowel variations" to "Μυδατα",
+            "letter combinations" to "Παϊνι",
+            "omicron iota" to "Σχοινάρ",
+            "greek with accents" to "Καφενείο",
+            "long greek string" to "Σκλαβενίτης ΑΕ Βιομηχανία Τροφίμων Οικιακών Ειδών Μακεδονία Θράκη",
+            "greeklish mixed" to "Μπαρ",
+            "greek uppercase conversion" to "ΑΒΓΔΕΖ",
+            "all greek alphabet lowercase" to "αβγδεζηθικλμνξοπρστυχψω"
+        )
+        assertEquals(9, rows.size)
+        rows.forEach { (label, input) ->
+            val result = MerchantKeyGenerator.generate(input)
+            assertTrue("row '$label' expected non-empty key but was '$result'", result.isNotEmpty())
+        }
+    }
+
+    @Test
+    fun `Very long string keeps full length`() {
+        val result = MerchantKeyGenerator.generate("A".repeat(10000))
+        assertEquals(10000, result.length)
+    }
+
+    @Test
+    fun `generate is deterministic for the same input`() {
+        val input = "Σκλαβενίτης"
+        assertEquals(MerchantKeyGenerator.generate(input), MerchantKeyGenerator.generate(input))
+    }
 }

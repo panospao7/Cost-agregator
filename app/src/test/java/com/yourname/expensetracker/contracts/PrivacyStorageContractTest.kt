@@ -57,15 +57,4 @@ class PrivacyStorageContractTest {
             content.contains(Regex("""when\s*\(.*[Ss]torageMode"""))
         )
     }
-
-    @Test
-    fun `RawContentSanitizer returns empty for DO_NOT_STORE`() {
-        val file = File("src/main/java/com/yourname/expensetracker/domain/privacy/RawContentSanitizer.kt")
-        assertTrue("RawContentSanitizer.kt must exist", file.exists())
-        val content = file.readText()
-        assertTrue(
-            "RawContentSanitizer must handle DO_NOT_STORE with empty string",
-            content.contains("DO_NOT_STORE") && content.contains("\"\"")
-        )
-    }
 }

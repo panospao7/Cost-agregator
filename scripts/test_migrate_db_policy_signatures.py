@@ -1352,18 +1352,69 @@ def _string_leaves(value):
             yield from _string_leaves(item)
 
 
-def test_v2_loader_accepts_generated_candidate(tmp_path):
-    completed, candidate, _ = _write_candidate_artifacts(tmp_path / "tmp")
-    assert completed.returncode in (0, 1)
+# ── Shared read-only real-tree CLI runs (module scope) ───────────────────────
+#
+# Each fixture below runs ONE byte-identical real-tree CLI invocation (same
+# argv, inputs, cwd, environment) into a ``tmp_path_factory`` directory and is
+# shared ONLY by tests that merely READ its results.  A fixture whose CLI run
+# fails unexpectedly raises during setup, so EVERY dependent test errors (the
+# failure is cached and re-raised per test; nothing is ever skipped).  Tests
+# that probe determinism (second run stays a fresh independent invocation),
+# side effects, exit-code variants or mutated inputs keep their own runs.
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture(scope="module")
+def shared_check_report(tmp_path_factory):
+    """``--check --report R`` against the real tree, run once per module."""
+    out_dir = tmp_path_factory.mktemp("shared-check-report")
+    report = out_dir / "report.json"
+    completed = _run_cli("--check", "--report", str(report))
+    assert completed.returncode in (0, 1), completed.stderr
+    assert report.is_file()
+    return {"completed": completed, "report": report}
+
+
+@pytest.fixture(scope="module")
+def shared_write_candidate(tmp_path_factory):
+    """``--write-candidate --output C --report R`` run once per module."""
+    out_dir = tmp_path_factory.mktemp("shared-write-candidate")
+    completed, candidate, report = _write_candidate_artifacts(out_dir)
+    assert completed.returncode in (0, 1), completed.stderr
+    assert candidate.is_file()
+    assert report.is_file()
+    return {"completed": completed, "candidate": candidate, "report": report}
+
+
+@pytest.fixture(scope="module")
+def shared_generate(tmp_path_factory):
+    """Plain ``--generate --output C --accounting-out A`` run once per module.
+
+    No ``--seed-rows``: distinct from the seeded ``tracked_regeneration`` run.
+    """
+    out_dir = tmp_path_factory.mktemp("shared-generate")
+    completed, candidate, accounting = _run_generate(out_dir)
+    assert completed.returncode in (0, 1), completed.stderr
+    assert candidate.is_file()
+    assert accounting.is_file()
+    return {
+        "completed": completed,
+        "candidate": candidate,
+        "accounting": accounting,
+    }
+
+
+def test_v2_loader_accepts_generated_candidate(shared_write_candidate):
+    candidate = shared_write_candidate["candidate"]
     assert candidate.exists()
     document, errors = load_policy_v2(candidate)
     assert errors == []
     assert document
 
 
-def test_output_contains_no_legacy_field_names(tmp_path):
-    completed, candidate, _ = _write_candidate_artifacts(tmp_path / "tmp")
-    assert completed.returncode in (0, 1)
+def test_output_contains_no_legacy_field_names(shared_write_candidate):
+    candidate = shared_write_candidate["candidate"]
     document = yaml.safe_load(candidate.read_text(encoding="utf-8"))
     legacy_fields = {
         "class",
@@ -1376,17 +1427,20 @@ def test_output_contains_no_legacy_field_names(tmp_path):
         assert not legacy_fields & set(entry)
 
 
-def test_report_has_deterministic_ordering(tmp_path):
-    first = tmp_path / "report-one.json"
+def test_report_has_deterministic_ordering(tmp_path, shared_check_report):
+    # The shared fixture run is the FIRST of the pair; the second run below
+    # stays a fresh, independent invocation of the same argv.
+    first = shared_check_report["report"]
     second = tmp_path / "report-two.json"
-    _run_cli("--check", "--report", str(first))
-    _run_cli("--check", "--report", str(second))
+    completed = _run_cli("--check", "--report", str(second))
+    assert completed.returncode in (0, 1), completed.stderr
     assert first.read_bytes() == second.read_bytes()
 
 
-def test_report_contains_no_raw_source_or_exception_text(tmp_path):
-    report = tmp_path / "report.json"
-    _run_cli("--check", "--report", str(report))
+def test_report_contains_no_raw_source_or_exception_text(
+    shared_check_report,
+):
+    report = shared_check_report["report"]
     payload = json.loads(report.read_text(encoding="utf-8"))
     for text in _string_leaves(payload):
         assert "fun " not in text
@@ -1466,12 +1520,11 @@ def test_no_temp_files_remain_after_runs(tmp_path):
     assert not any(name.endswith((".tmp", ".part")) for name in names)
 
 
-def test_no_fixed_result_totals_enforced(tmp_path):
+def test_no_fixed_result_totals_enforced(shared_check_report):
     source = MIGRATION_CLI.read_text(encoding="utf-8")
     # The retired pinned 99-input artifact totals must stay gone from the tool.
     assert "99" not in source
-    report = tmp_path / "report.json"
-    _run_cli("--check", "--report", str(report))
+    report = shared_check_report["report"]
     payload = json.loads(report.read_text(encoding="utf-8"))
     counts = payload["counts"]
     assert counts["resolved"] == len(payload["resolved"])
@@ -1509,7 +1562,9 @@ def test_no_fixed_result_totals_enforced(tmp_path):
     } <= resolved_records
 
 
-def test_real_run_distribution_pinned_and_reproducible(tmp_path):
+def test_real_run_distribution_pinned_and_reproducible(
+    tmp_path, shared_write_candidate
+):
     """Pin the reviewed September 27 unseeded migration truth.
 
     Current fixed contract: 93 legacy inputs, 55 unique candidate keys,
@@ -1623,10 +1678,12 @@ def test_real_run_distribution_pinned_and_reproducible(tmp_path):
       structurally unequal; the standalone accounting artifact's
       reproducibility is pinned by the tracked-artifact regression test).
     """
-    out_dir = tmp_path / "dist"
-    out_dir.mkdir()
-    report = out_dir / "report.json"
-    candidate = out_dir / "candidate.yml"
+    # The shared fixture run (identical argv: --write-candidate --output
+    # --report, no --accounting-out) is the FIRST run of the reproducibility
+    # pair; the second run further below stays a fresh independent
+    # invocation.
+    report = shared_write_candidate["report"]
+    candidate = shared_write_candidate["candidate"]
     # R13: deliberately NO ``--accounting-out`` here.  The report embeds the
     # accounting section either way (records assertions below read it from
     # the report payload), but the standalone artifact path is the ONLY path
@@ -1637,13 +1694,7 @@ def test_real_run_distribution_pinned_and_reproducible(tmp_path):
     # reproducibility.  Both runs now share identical inputs; the standalone
     # accounting artifact's byte-equality is pinned by
     # test_tracked_accounting_artifact_matches_regeneration_bytes.
-    completed = _run_cli(
-        "--write-candidate",
-        "--output",
-        str(candidate),
-        "--report",
-        str(report),
-    )
+    completed = shared_write_candidate["completed"]
     # Visible debt (unresolved rows exist) with candidate writing allowed:
     # Slice 5 folding removed the duplicate-key exit-2 collision.
     assert completed.returncode == 1
@@ -1739,14 +1790,13 @@ def test_real_run_distribution_pinned_and_reproducible(tmp_path):
 def _probe_resolving_legacy_entry(report_path: Path):
     """Rebuild one guaranteed-resolving legacy entry from the real repo.
 
-    Runs ``--check`` once against the active policy, reads the report JSON,
-    and reconstructs a minimal legacy v1 entry from ``resolved[0]``'s identity
-    fields — path, owner simple name, method, DAO accessor hint, operation,
-    and the exact callable signature — so it re-resolves against the same
-    repository state.
+    Reads the report JSON of the shared ``--check --report`` run (the
+    ``shared_check_report`` fixture's ``report`` path; the run happens once
+    per module, never per caller) and reconstructs a minimal legacy v1 entry
+    from ``resolved[0]``'s identity fields — path, owner simple name, method,
+    DAO accessor hint, operation, and the exact callable signature — so it
+    re-resolves against the same repository state.
     """
-    completed = _run_cli("--check", "--report", str(report_path))
-    assert completed.returncode in (0, 1)
     payload = json.loads(report_path.read_text(encoding="utf-8"))
     row = payload["resolved"][0]
     return {
@@ -1766,7 +1816,9 @@ def _probe_resolving_legacy_entry(report_path: Path):
     }
 
 
-def test_identical_duplicate_rows_via_cli_dedupe_and_write(tmp_path):
+def test_identical_duplicate_rows_via_cli_dedupe_and_write(
+    tmp_path, shared_check_report
+):
     """Identical legacy re-authorizations dedupe; the candidate is written.
 
     Before Slice 4 this exact input tripped duplicateMutationKeys=9-style
@@ -1774,7 +1826,7 @@ def test_identical_duplicate_rows_via_cli_dedupe_and_write(tmp_path):
     per unique canonical mutation key, so the run succeeds and the written
     candidate carries exactly ONE entry.
     """
-    entry = _probe_resolving_legacy_entry(tmp_path / "probe-report.json")
+    entry = _probe_resolving_legacy_entry(shared_check_report["report"])
     policy = tmp_path / "duplicate-policy.yml"
     policy.write_text(
         yaml.safe_dump({"entries": [entry, dict(entry)]}, sort_keys=False),
@@ -1796,7 +1848,9 @@ def test_identical_duplicate_rows_via_cli_dedupe_and_write(tmp_path):
     assert len(document) == 1
 
 
-def test_conflicting_metadata_rows_surface_as_conflict_debt_via_cli(tmp_path):
+def test_conflicting_metadata_rows_surface_as_conflict_debt_via_cli(
+    tmp_path, shared_check_report
+):
     """Same canonical key with divergent barrier metadata: conflict debt.
 
     Slice 5 converts genuine metadata conflicts into closed-vocabulary
@@ -1805,7 +1859,7 @@ def test_conflicting_metadata_rows_surface_as_conflict_debt_via_cli(tmp_path):
     resolved rows), so the run exits 1 with visible debt and writes no
     candidate.
     """
-    entry = _probe_resolving_legacy_entry(tmp_path / "probe-report.json")
+    entry = _probe_resolving_legacy_entry(shared_check_report["report"])
     mediated = dict(entry)
     mediated["barrier_required"] = False
     mediated["barrier_via"] = "WorkerExecutionGuard"
@@ -1851,8 +1905,8 @@ def test_malformed_yaml_policy_exits_2_no_write(tmp_path):
     assert not candidate.exists()
 
 
-def test_all_resolved_policy_exits_0_and_writes(tmp_path):
-    entry = _probe_resolving_legacy_entry(tmp_path / "probe-report.json")
+def test_all_resolved_policy_exits_0_and_writes(tmp_path, shared_check_report):
+    entry = _probe_resolving_legacy_entry(shared_check_report["report"])
     policy = tmp_path / "single-entry-policy.yml"
     policy.write_text(
         yaml.safe_dump({"entries": [entry]}, sort_keys=False),
@@ -1940,7 +1994,9 @@ def test_v2_shaped_policy_input_is_refused(tmp_path):
     ]
 
 
-def test_default_policy_input_is_the_archived_legacy_document(tmp_path):
+def test_default_policy_input_is_the_archived_legacy_document(
+    shared_check_report,
+):
     """The default ``--policy`` input is the ARCHIVED legacy v1 document.
 
     Post-activation the report's policy identifier names
@@ -1949,8 +2005,8 @@ def test_default_policy_input_is_the_archived_legacy_document(tmp_path):
     post-GR-14c truth sync removed the 2 dead duplicate-authorization
     rows; see docs/ci/db-mediation/GR-14c.yml).
     """
-    report = tmp_path / "default-report.json"
-    completed = _run_cli("--check", "--report", str(report))
+    report = shared_check_report["report"]
+    completed = shared_check_report["completed"]
     assert completed.returncode == 1
     payload = json.loads(report.read_text(encoding="utf-8"))
     assert payload["policy"] == (
@@ -2452,10 +2508,13 @@ def _run_generate(out_dir: Path):
     return completed, candidate, accounting
 
 
-def _conflict_policy(tmp_path: Path) -> Path:
+def _conflict_policy(tmp_path: Path, check_report: Path) -> Path:
     """A legacy policy whose two rows authorize one mutation with
-    conflicting barrier metadata (workerMediated vs helper)."""
-    entry = _probe_resolving_legacy_entry(tmp_path / "gen-probe-report.json")
+    conflicting barrier metadata (workerMediated vs helper).
+
+    ``check_report`` is the shared ``--check --report`` run's report path.
+    """
+    entry = _probe_resolving_legacy_entry(check_report)
     mediated = dict(entry)
     mediated["barrier_required"] = False
     mediated["barrier_via"] = "WorkerExecutionGuard"
@@ -2470,9 +2529,9 @@ def _conflict_policy(tmp_path: Path) -> Path:
     return policy
 
 
-def test_generate_writes_paired_artifacts_from_one_run(tmp_path):
-    completed, candidate, accounting = _run_generate(tmp_path / "gen")
-    assert completed.returncode in (0, 1)
+def test_generate_writes_paired_artifacts_from_one_run(shared_generate):
+    candidate = shared_generate["candidate"]
+    accounting = shared_generate["accounting"]
     assert candidate.exists()
     assert accounting.exists()
     payload = json.loads(accounting.read_text(encoding="utf-8"))
@@ -2526,10 +2585,12 @@ def test_generate_writes_paired_artifacts_from_one_run(tmp_path):
     assert resolved_indexes | unresolved_indexes == set(range(93))
 
 
-def test_generate_is_byte_deterministic(tmp_path):
-    first_completed, first_candidate, first_accounting = _run_generate(
-        tmp_path / "gen-one"
-    )
+def test_generate_is_byte_deterministic(tmp_path, shared_generate):
+    # The shared fixture run is the FIRST of the pair; the second run stays
+    # a fresh, independent invocation of the same argv.
+    first_completed = shared_generate["completed"]
+    first_candidate = shared_generate["candidate"]
+    first_accounting = shared_generate["accounting"]
     second_completed, second_candidate, second_accounting = _run_generate(
         tmp_path / "gen-two"
     )
@@ -2588,8 +2649,10 @@ def test_generate_rejects_candidate_accounting_path_collision(tmp_path):
     assert list(out_dir.iterdir()) == []
 
 
-def test_generate_conflicting_metadata_writes_neither_artifact(tmp_path):
-    policy = _conflict_policy(tmp_path)
+def test_generate_conflicting_metadata_writes_neither_artifact(
+    tmp_path, shared_check_report
+):
+    policy = _conflict_policy(tmp_path, shared_check_report["report"])
     out_dir = tmp_path / "gen"
     out_dir.mkdir()
     candidate = out_dir / "candidate.yml"

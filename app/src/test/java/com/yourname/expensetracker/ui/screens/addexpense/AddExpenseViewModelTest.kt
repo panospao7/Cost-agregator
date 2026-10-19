@@ -20,6 +20,7 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.After
 import org.junit.Before
@@ -294,5 +295,118 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
         viewModel.save()
         testDispatcher.scheduler.advanceUntilIdle()
         verifySavedAmount(1234.5)
+    }
+
+    // ---- Save validation and reset (revived from the retired stress class; Locale pinned to US) ----
+
+    private fun verifyNoManualExpenseSaved() {
+        coVerify(exactly = 0) {
+            manualExpenseRepository.addManualExpense(
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+            )
+        }
+    }
+
+    @Test
+    fun `save with empty merchant sets merchantError and never saves`() {
+        useUs()
+        stubAddManualExpense()
+        testDispatcher.scheduler.advanceUntilIdle() // home currency load
+        viewModel.updateAmount("10.00")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        viewModel.save()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val state = viewModel.state.value
+        assertEquals("Merchant name is required", state.merchantError)
+        assertNull(state.amountError)
+        assertNull(state.saveResult)
+        verifyNoManualExpenseSaved()
+    }
+
+    @Test
+    fun `save with empty amount sets amountError and never saves`() {
+        useUs()
+        stubAddManualExpense()
+        testDispatcher.scheduler.advanceUntilIdle() // home currency load
+        viewModel.updateMerchant("Test")
+        viewModel.updateAmount("")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        viewModel.save()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val state = viewModel.state.value
+        assertEquals("Enter a valid amount", state.amountError)
+        assertNull(state.merchantError)
+        assertNull(state.saveResult)
+        verifyNoManualExpenseSaved()
+    }
+
+    @Test
+    fun `save with valid merchant and amount returns Success and persists EUR amount once`() {
+        useUs()
+        stubAddManualExpense()
+        testDispatcher.scheduler.advanceUntilIdle() // home currency load
+        viewModel.reset()
+        viewModel.updateMerchant("Valid Merchant")
+        viewModel.updateAmount("50.00")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        viewModel.save()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val state = viewModel.state.value
+        assertEquals(SaveResult.Success, state.saveResult)
+        assertFalse(state.isSaving)
+        assertNull(state.merchantError)
+        assertNull(state.amountError)
+        coVerify(exactly = 1) {
+            manualExpenseRepository.addManualExpense(
+                merchant = eq("Valid Merchant"),
+                amount = eq(50.0),
+                currency = eq("EUR"),
+                categoryId = any(),
+                transactionType = any(),
+                paymentMethod = any(),
+                date = any(),
+                notes = any(),
+                transferDirection = any(),
+                transferAccountName = any(),
+                isNotMine = any(),
+                ownerName = any(),
+                isSharedExpense = any(),
+                sharedWithName = any(),
+                mySharePercentage = any(),
+                myShareAmount = any(),
+                latitude = any(),
+                longitude = any(),
+                locationSource = any(),
+                recurrenceFrequency = any(),
+                recurringNote = any()
+            )
+        }
+    }
+
+    @Test
+    fun `reset clears merchant and amount but keeps loaded home currency and restarts date from clock`() {
+        useUs()
+        testDispatcher.scheduler.advanceUntilIdle() // home currency load
+        viewModel.updateMerchant("Test")
+        viewModel.updateAmount("10")
+        testDispatcher.scheduler.advanceUntilIdle()
+        assertEquals("Test", viewModel.state.value.merchant)
+        assertEquals("10", viewModel.state.value.amount)
+
+        viewModel.reset()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val state = viewModel.state.value
+        assertEquals("", state.merchant)
+        assertEquals("", state.amount)
+        assertEquals("EUR", state.homeCurrency)
+        assertEquals(1_700_000_000_000L, state.date)
     }
 }

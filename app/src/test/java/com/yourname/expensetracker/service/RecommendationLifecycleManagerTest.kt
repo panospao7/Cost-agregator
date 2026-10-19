@@ -7,6 +7,7 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancel
@@ -20,11 +21,17 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 
 /**
  * Unit tests for RecommendationLifecycleManager.
  * Tests expiration checking, cleanup operations, and periodic background tasks.
- * 
+ *
+ * Failure handling is table-driven (one row per failing step and throwable), including the
+ * rule that CancellationException must always propagate while regular exceptions are
+ * logged and swallowed. Each row rebuilds fresh mocks so rows cannot leak state.
+ *
  * Phase 2: AI Follow-Through - Filter & Navigation Integration
  */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -41,6 +48,18 @@ class RecommendationLifecycleManagerTest {
     @Before
     fun setup() {
         Dispatchers.setMain(testDispatcher)
+        buildFixture()
+    }
+
+    @After
+    fun teardown() {
+        applicationScope.cancel()
+        Dispatchers.resetMain()
+    }
+
+    /** Builds fresh mocks + manager. Table-driven tests call this once per row. */
+    private fun buildFixture() {
+        if (this::applicationScope.isInitialized) applicationScope.cancel()
         repository = mockk(relaxed = true)
         stateManager = mockk(relaxed = true)
         cacheService = mockk(relaxed = true)
@@ -68,39 +87,34 @@ class RecommendationLifecycleManagerTest {
         )
     }
 
-    @After
-    fun teardown() {
-        applicationScope.cancel()
-        Dispatchers.resetMain()
+    /** Runs [block] and re-throws any failure with the table row name in the message. */
+    private inline fun <T> row(name: String, block: () -> T): T {
+        try {
+            return block()
+        } catch (e: Throwable) {
+            throw AssertionError("row '$name' failed: ${e.message}", e)
+        }
     }
 
-    // ========== checkAndExpire() Tests ==========
+    // ========== checkAndExpire() ==========
 
     @Test
-    fun `checkAndExpire calls repository expireOld`() = runTest(testDispatcher) {
-        coEvery { repository.expireOld("user123", any()) } returns Unit
+    fun `checkAndExpire runs expireOld, evictExpired and refresh exactly once for each user id`() =
+        runTest(testDispatcher) {
+            // Includes the empty user id, which must still be forwarded unchanged.
+            for (userId in listOf("user123", "user456", "")) {
+                row("userId='$userId'") {
+                    buildFixture()
 
-        lifecycleManager.checkAndExpire("user123")
-        advanceUntilIdle()
+                    lifecycleManager.checkAndExpire(userId)
+                    advanceUntilIdle()
 
-        coVerify(exactly = 1) { repository.expireOld("user123", any()) }
-    }
-
-    @Test
-    fun `checkAndExpire evicts expired items from cache`() = runTest(testDispatcher) {
-        lifecycleManager.checkAndExpire("user123")
-        advanceUntilIdle()
-
-        coVerify(exactly = 1) { cacheService.evictExpired() }
-    }
-
-    @Test
-    fun `checkAndExpire refreshes state manager`() = runTest(testDispatcher) {
-        lifecycleManager.checkAndExpire("user123")
-        advanceUntilIdle()
-
-        coVerify(exactly = 1) { stateManager.refreshForUser("user123") }
-    }
+                    coVerify(exactly = 1) { repository.expireOld(userId, any()) }
+                    coVerify(exactly = 1) { cacheService.evictExpired() }
+                    coVerify(exactly = 1) { stateManager.refreshForUser(userId) }
+                }
+            }
+        }
 
     @Test
     fun `checkAndExpire executes operations in correct order`() = runTest(testDispatcher) {
@@ -119,142 +133,66 @@ class RecommendationLifecycleManagerTest {
         lifecycleManager.checkAndExpire("user123")
         advanceUntilIdle()
 
-        assert(callOrder.size == 3)
-        assert(callOrder[0] == "expireOld")
-        assert(callOrder[1] == "evictExpired")
-        assert(callOrder[2] == "refresh")
+        assertEquals(listOf("expireOld", "evictExpired", "refresh"), callOrder)
     }
 
     @Test
-    fun `checkAndExpire handles repository errors gracefully`() = runTest(testDispatcher) {
-        coEvery { repository.expireOld("user123", any()) } throws RuntimeException("Database error")
-
-        // Should not throw
+    fun `checkAndExpire can be called repeatedly for the same user`() = runTest(testDispatcher) {
+        // Once with idle in between, once back-to-back; both must run every step each time.
         lifecycleManager.checkAndExpire("user123")
         advanceUntilIdle()
-
-        coVerify(exactly = 1) { repository.expireOld("user123", any()) }
-    }
-
-    @Test
-    fun `checkAndExpire handles cache eviction errors gracefully`() = runTest(testDispatcher) {
-        coEvery { cacheService.evictExpired() } throws RuntimeException("Cache error")
-
-        lifecycleManager.checkAndExpire("user123")
-        advanceUntilIdle()
-
-        coVerify(exactly = 1) { cacheService.evictExpired() }
-    }
-
-    @Test
-    fun `checkAndExpire handles state refresh errors gracefully`() = runTest(testDispatcher) {
-        coEvery { stateManager.refreshForUser("user123") } throws RuntimeException("State error")
-
-        lifecycleManager.checkAndExpire("user123")
-        advanceUntilIdle()
-
-        coVerify(exactly = 1) { stateManager.refreshForUser("user123") }
-    }
-
-    @Test
-    fun `checkAndExpire works with different user IDs`() = runTest(testDispatcher) {
-        lifecycleManager.checkAndExpire("user456")
-        advanceUntilIdle()
-
-        coVerify(exactly = 1) { repository.expireOld("user456", any()) }
-        coVerify(exactly = 1) { stateManager.refreshForUser("user456") }
-    }
-
-    @Test
-    fun `checkAndExpire works with empty user ID`() = runTest(testDispatcher) {
-        lifecycleManager.checkAndExpire("")
-        advanceUntilIdle()
-
-        coVerify(exactly = 1) { repository.expireOld("", any()) }
-    }
-
-    @Test
-    fun `checkAndExpire can be called multiple times`() = runTest(testDispatcher) {
-        lifecycleManager.checkAndExpire("user123")
-        advanceUntilIdle()
-
         lifecycleManager.checkAndExpire("user123")
         advanceUntilIdle()
 
         coVerify(exactly = 2) { repository.expireOld("user123", any()) }
         coVerify(exactly = 2) { cacheService.evictExpired() }
         coVerify(exactly = 2) { stateManager.refreshForUser("user123") }
-    }
 
-    // ========== cleanupExpired() Tests ==========
-
-    @Test
-    fun `cleanupExpired calls repository cleanupExpired`() = runTest(testDispatcher) {
-        coEvery { repository.cleanupExpired() } returns 1
-
-        lifecycleManager.cleanupExpired()
+        lifecycleManager.checkAndExpire("user123")
+        lifecycleManager.checkAndExpire("user123")
         advanceUntilIdle()
 
-        coVerify(exactly = 1) { repository.cleanupExpired() }
+        coVerify(exactly = 4) { repository.expireOld("user123", any()) }
     }
 
     @Test
-    fun `cleanupExpired evicts expired cache entries`() = runTest(testDispatcher) {
-        lifecycleManager.cleanupExpired()
+    fun `multiple checkAndExpire calls for different users do not interfere`() = runTest(testDispatcher) {
+        val users = listOf("user1", "user2", "user3", "user4", "user5")
+
+        users.forEach { userId ->
+            lifecycleManager.checkAndExpire(userId)
+        }
         advanceUntilIdle()
 
-        coVerify(exactly = 1) { cacheService.evictExpired() }
+        users.forEach { userId ->
+            coVerify(exactly = 1) { repository.expireOld(userId, any()) }
+            coVerify(exactly = 1) { stateManager.refreshForUser(userId) }
+        }
     }
 
-    @Test
-    fun `cleanupExpired refreshes state when user ID available`() = runTest(testDispatcher) {
-        coEvery { stateManager.getCurrentUserId() } returns "user123"
-
-        lifecycleManager.cleanupExpired()
-        advanceUntilIdle()
-
-        coVerify(exactly = 1) { stateManager.refreshForUser("user123") }
-    }
+    // ========== cleanupExpired() ==========
 
     @Test
-    fun `cleanupExpired does not refresh state when user ID is null`() = runTest(testDispatcher) {
-        coEvery { stateManager.getCurrentUserId() } returns null
+    fun `cleanupExpired refreshes state only when a user id is available`() = runTest(testDispatcher) {
+        // Row: current user id -> expected number of refreshForUser("user123") calls.
+        val rows = listOf<Pair<String?, Int>>("user123" to 1, null to 0)
+        for ((currentUserId, expectedRefreshes) in rows) {
+            row("currentUserId=$currentUserId") {
+                buildFixture()
+                coEvery { repository.cleanupExpired() } returns 1
+                coEvery { stateManager.getCurrentUserId() } returns currentUserId
 
-        lifecycleManager.cleanupExpired()
-        advanceUntilIdle()
+                lifecycleManager.cleanupExpired()
+                advanceUntilIdle()
 
-        coVerify(exactly = 0) { stateManager.refreshForUser(any()) }
-    }
-
-    @Test
-    fun `cleanupExpired handles repository errors gracefully`() = runTest(testDispatcher) {
-        coEvery { repository.cleanupExpired() } throws RuntimeException("Cleanup error")
-
-        lifecycleManager.cleanupExpired()
-        advanceUntilIdle()
-
-        coVerify(exactly = 1) { repository.cleanupExpired() }
-    }
-
-    @Test
-    fun `cleanupExpired handles cache errors gracefully`() = runTest(testDispatcher) {
-        coEvery { cacheService.evictExpired() } throws RuntimeException("Cache error")
-
-        lifecycleManager.cleanupExpired()
-        advanceUntilIdle()
-
-        coVerify(exactly = 1) { cacheService.evictExpired() }
-    }
-
-    @Test
-    fun `cleanupExpired handles getCurrentUserId errors gracefully`() = runTest(testDispatcher) {
-        coEvery { stateManager.getCurrentUserId() } throws RuntimeException("State error")
-
-        lifecycleManager.cleanupExpired()
-        advanceUntilIdle()
-
-        coVerify(exactly = 1) { repository.cleanupExpired() }
-        coVerify(exactly = 1) { cacheService.evictExpired() }
+                coVerify(exactly = 1) { repository.cleanupExpired() }
+                coVerify(exactly = 1) { cacheService.evictExpired() }
+                coVerify(exactly = expectedRefreshes) { stateManager.refreshForUser(any()) }
+                if (currentUserId != null) {
+                    coVerify(exactly = 1) { stateManager.refreshForUser(currentUserId) }
+                }
+            }
+        }
     }
 
     @Test
@@ -276,183 +214,7 @@ class RecommendationLifecycleManagerTest {
         lifecycleManager.cleanupExpired()
         advanceUntilIdle()
 
-        assert(callOrder.size == 3)
-        assert(callOrder[0] == "cleanup")
-        assert(callOrder[1] == "evict")
-        assert(callOrder[2] == "refresh")
-    }
-
-    // ========== startPeriodicExpirationCheck() Tests ==========
-
-    @Test
-    fun `startPeriodicExpirationCheck starts background coroutine`() = runTest(testDispatcher) {
-        lifecycleManager.startPeriodicExpirationCheck()
-        
-        // Advance a small amount — first cleanup runs immediately before first delay
-        advanceTimeBy(1000)
-        
-        // First cleanup runs immediately (before the 6h delay), so exactly 1
-        coVerify(exactly = 1) { repository.cleanupExpired() }
-        applicationScope.cancel()
-    }
-
-    @Test
-    fun `startPeriodicExpirationCheck runs cleanup after 6 hours`() = runTest(testDispatcher) {
-        lifecycleManager.startPeriodicExpirationCheck()
-        
-        // Advance 6 hours + a bit
-        advanceTimeBy(6L * 60 * 60 * 1000 + 100)
-        
-        coVerify(atLeast = 1) { repository.cleanupExpired() }
-        applicationScope.cancel()
-    }
-
-    @Test
-    fun `startPeriodicExpirationCheck runs cleanup multiple times`() = runTest(testDispatcher) {
-        lifecycleManager.startPeriodicExpirationCheck()
-        
-        // Advance 18 hours (should trigger 3 times at 6h intervals)
-        advanceTimeBy(18L * 60 * 60 * 1000 + 100)
-        
-        coVerify(atLeast = 2) { repository.cleanupExpired() }
-        applicationScope.cancel()
-    }
-
-    @Test
-    fun `startPeriodicExpirationCheck can only be started once`() = runTest(testDispatcher) {
-        lifecycleManager.startPeriodicExpirationCheck()
-        lifecycleManager.startPeriodicExpirationCheck()
-        lifecycleManager.startPeriodicExpirationCheck()
-        
-        // Advance past the first immediate cleanup only (not enough for second interval)
-        advanceTimeBy(1000)
-        
-        // Only one periodic loop should be running — one immediate cleanup
-        coVerify(exactly = 1) { repository.cleanupExpired() }
-        applicationScope.cancel()
-    }
-
-    @Test
-    fun `startPeriodicExpirationCheck continues after errors`() = runTest(testDispatcher) {
-        var callCount = 0
-        coEvery { repository.cleanupExpired() } coAnswers {
-            callCount++
-            if (callCount == 1) {
-                throw RuntimeException("First call fails")
-            }
-            1
-        }
-
-        lifecycleManager.startPeriodicExpirationCheck()
-        
-        // First cleanup runs immediately — should fail
-        advanceTimeBy(1000)
-        
-        // Second cleanup after 6h — should succeed
-        advanceTimeBy(6L * 60 * 60 * 1000)
-        
-        // Should have been called at least twice (immediate + after 6h)
-        coVerify(atLeast = 2) { repository.cleanupExpired() }
-        applicationScope.cancel()
-    }
-
-    // ========== Concurrent Operations Tests ==========
-
-    @Test
-    fun `checkAndExpire handles concurrent calls for same user`() = runTest(testDispatcher) {
-        lifecycleManager.checkAndExpire("user123")
-        lifecycleManager.checkAndExpire("user123")
-        advanceUntilIdle()
-
-        coVerify(exactly = 2) { repository.expireOld("user123", any()) }
-    }
-
-    @Test
-    fun `checkAndExpire handles concurrent calls for different users`() = runTest(testDispatcher) {
-        lifecycleManager.checkAndExpire("user123")
-        lifecycleManager.checkAndExpire("user456")
-        advanceUntilIdle()
-
-        coVerify(exactly = 1) { repository.expireOld("user123", any()) }
-        coVerify(exactly = 1) { repository.expireOld("user456", any()) }
-    }
-
-    @Test
-    fun `cleanupExpired can run concurrently with checkAndExpire`() = runTest(testDispatcher) {
-        lifecycleManager.checkAndExpire("user123")
-        lifecycleManager.cleanupExpired()
-        advanceUntilIdle()
-
-        coVerify(exactly = 1) { repository.expireOld("user123", any()) }
-        coVerify(exactly = 1) { repository.cleanupExpired() }
-        coVerify(atLeast = 2) { cacheService.evictExpired() }
-    }
-
-    // ========== Edge Cases ==========
-
-    @Test
-    fun `checkAndExpire handles IOException from repository`() = runTest(testDispatcher) {
-        coEvery { repository.expireOld("user123", any()) } throws java.io.IOException("Network error")
-
-        lifecycleManager.checkAndExpire("user123")
-        advanceUntilIdle()
-
-        coVerify(exactly = 1) { repository.expireOld("user123", any()) }
-    }
-
-    @Test
-    fun `cleanupExpired handles database constraint violation`() = runTest(testDispatcher) {
-        coEvery { repository.cleanupExpired() } throws android.database.sqlite.SQLiteConstraintException()
-
-        lifecycleManager.cleanupExpired()
-        advanceUntilIdle()
-
-        coVerify(exactly = 1) { repository.cleanupExpired() }
-    }
-
-    @Test
-    fun `checkAndExpire handles OutOfMemoryError gracefully`() = runTest(testDispatcher) {
-        coEvery { cacheService.evictExpired() } throws OutOfMemoryError()
-
-        // Should catch all Throwables, not just Exceptions
-        try {
-            lifecycleManager.checkAndExpire("user123")
-            advanceUntilIdle()
-        } catch (e: OutOfMemoryError) {
-            // Expected to be caught internally
-        }
-
-        coVerify(exactly = 1) { repository.expireOld("user123", any()) }
-    }
-
-    @Test
-    fun `periodic check uses 6 hour interval constant`() = runTest(testDispatcher) {
-        lifecycleManager.startPeriodicExpirationCheck()
-        
-        // Test that cleanup runs at 6 hour intervals
-        // First run at 6h
-        advanceTimeBy(6L * 60 * 60 * 1000 + 100)
-        coVerify(atLeast = 1) { repository.cleanupExpired() }
-        
-        // Second run at 12h total
-        advanceTimeBy(6L * 60 * 60 * 1000)
-        coVerify(atLeast = 2) { repository.cleanupExpired() }
-        applicationScope.cancel()
-    }
-
-    @Test
-    fun `multiple checkAndExpire calls do not interfere`() = runTest(testDispatcher) {
-        val users = listOf("user1", "user2", "user3", "user4", "user5")
-        
-        users.forEach { userId ->
-            lifecycleManager.checkAndExpire(userId)
-        }
-        advanceUntilIdle()
-
-        users.forEach { userId ->
-            coVerify(exactly = 1) { repository.expireOld(userId, any()) }
-            coVerify(exactly = 1) { stateManager.refreshForUser(userId) }
-        }
+        assertEquals(listOf("cleanup", "evict", "refresh"), callOrder)
     }
 
     @Test
@@ -469,5 +231,240 @@ class RecommendationLifecycleManagerTest {
 
         coVerify(exactly = 2) { repository.cleanupExpired() }
         coVerify(exactly = 1) { stateManager.refreshForUser("user123") }
+    }
+
+    @Test
+    fun `cleanupExpired can run together with checkAndExpire`() = runTest(testDispatcher) {
+        lifecycleManager.checkAndExpire("user123")
+        lifecycleManager.cleanupExpired()
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { repository.expireOld("user123", any()) }
+        coVerify(exactly = 1) { repository.cleanupExpired() }
+        coVerify(atLeast = 2) { cacheService.evictExpired() }
+    }
+
+    // ========== startPeriodicExpirationCheck() ==========
+
+    @Test
+    fun `periodic check runs immediately then once per 6 hour interval`() = runTest(testDispatcher) {
+        val sixHoursMs = 6L * 60 * 60 * 1000
+
+        lifecycleManager.startPeriodicExpirationCheck()
+
+        // First cleanup runs immediately (before the first delay), not again until 6h.
+        advanceTimeBy(1000)
+        coVerify(exactly = 1) { repository.cleanupExpired() }
+
+        // Second run at the 6h mark.
+        advanceTimeBy(sixHoursMs)
+        coVerify(exactly = 2) { repository.cleanupExpired() }
+
+        // Third run at the 12h mark.
+        advanceTimeBy(sixHoursMs)
+        coVerify(exactly = 3) { repository.cleanupExpired() }
+        applicationScope.cancel()
+    }
+
+    @Test
+    fun `startPeriodicExpirationCheck can only be started once`() = runTest(testDispatcher) {
+        lifecycleManager.startPeriodicExpirationCheck()
+        lifecycleManager.startPeriodicExpirationCheck()
+        lifecycleManager.startPeriodicExpirationCheck()
+
+        // Advance past the first immediate cleanup only (not enough for second interval)
+        advanceTimeBy(1000)
+
+        // Only one periodic loop should be running - one immediate cleanup
+        coVerify(exactly = 1) { repository.cleanupExpired() }
+        applicationScope.cancel()
+    }
+
+    @Test
+    fun `periodic loop outcome after a failing first cleanup`() = runTest(testDispatcher) {
+        // Row: first-call failure -> total cleanup calls after two full 6h periods.
+        // Regular exception: logged, loop continues (immediate + 6h + 12h = 3).
+        // CancellationException: must end the loop instead of being swallowed (1).
+        val rows = listOf<Triple<String, Throwable, Int>>(
+            Triple("RuntimeException keeps looping", RuntimeException("First call fails"), 3),
+            Triple(
+                "CancellationException terminates the loop",
+                CancellationException("cancelled in periodic cleanup"),
+                1
+            )
+        )
+        for ((name, firstFailure, expectedCalls) in rows) {
+            row(name) {
+                buildFixture()
+                var callCount = 0
+                coEvery { repository.cleanupExpired() } coAnswers {
+                    callCount++
+                    if (callCount == 1) throw firstFailure
+                    1
+                }
+
+                lifecycleManager.startPeriodicExpirationCheck()
+                advanceTimeBy(12L * 60 * 60 * 1000 + 100)
+
+                coVerify(exactly = expectedCalls) { repository.cleanupExpired() }
+                applicationScope.cancel()
+            }
+        }
+    }
+
+    // ========== Failure handling table (regular exception swallowed / CancellationException propagates) ==========
+    //
+    // Production: checkAndExpire / cleanupExpired / refreshThreshold each
+    // `catch (e: Exception) { CancellationSafe.rethrowIfCancellation(e); ... }`.
+    // Every propagating row fails if that rethrow is replaced by a swallow; every
+    // non-propagating row fails if regular exceptions start escaping to the caller.
+    // Errors (e.g. OutOfMemoryError) are deliberately not caught by production.
+
+    private enum class Op { CHECK, CLEANUP, THRESHOLD }
+
+    private class FailureRow(
+        val name: String,
+        val op: Op,
+        val propagatesCancellation: Boolean,
+        val arrange: () -> Unit,
+        val verify: () -> Unit
+    )
+
+    private fun failureRows(): List<FailureRow> = listOf(
+        // ---- checkAndExpire: regular exceptions are swallowed, later steps are skipped ----
+        FailureRow("check: repository RuntimeException", Op.CHECK, false,
+            { coEvery { repository.expireOld("user123", any()) } throws RuntimeException("Database error") },
+            {
+                coVerify(exactly = 1) { repository.expireOld("user123", any()) }
+                coVerify(exactly = 0) { cacheService.evictExpired() }
+                coVerify(exactly = 0) { stateManager.refreshForUser(any(), any()) }
+            }),
+        FailureRow("check: repository IOException", Op.CHECK, false,
+            { coEvery { repository.expireOld("user123", any()) } throws java.io.IOException("Network error") },
+            {
+                coVerify(exactly = 1) { repository.expireOld("user123", any()) }
+                coVerify(exactly = 0) { cacheService.evictExpired() }
+            }),
+        FailureRow("check: repository IllegalStateException (control)", Op.CHECK, false,
+            { coEvery { repository.expireOld("user123", any()) } throws IllegalStateException("regular failure") },
+            {
+                coVerify(exactly = 1) { repository.expireOld("user123", any()) }
+                coVerify(exactly = 0) { cacheService.evictExpired() }
+            }),
+        FailureRow("check: cache eviction RuntimeException", Op.CHECK, false,
+            { coEvery { cacheService.evictExpired() } throws RuntimeException("Cache error") },
+            {
+                coVerify(exactly = 1) { repository.expireOld("user123", any()) }
+                coVerify(exactly = 1) { cacheService.evictExpired() }
+                coVerify(exactly = 0) { stateManager.refreshForUser(any(), any()) }
+            }),
+        FailureRow("check: state refresh RuntimeException", Op.CHECK, false,
+            { every { stateManager.refreshForUser("user123", any()) } throws RuntimeException("State error") },
+            {
+                coVerify(exactly = 1) { repository.expireOld("user123", any()) }
+                coVerify(exactly = 1) { cacheService.evictExpired() }
+                coVerify(exactly = 1) { stateManager.refreshForUser("user123", any()) }
+            }),
+        // ---- checkAndExpire: CancellationException propagates and aborts later steps ----
+        FailureRow("check: CancellationException from repository expireOld", Op.CHECK, true,
+            { coEvery { repository.expireOld("user123", any()) } throws CancellationException("cancelled in expireOld") },
+            {
+                coVerify(exactly = 0) { cacheService.evictExpired() }
+                coVerify(exactly = 0) { stateManager.refreshForUser(any(), any()) }
+            }),
+        FailureRow("check: CancellationException from cache evictExpired", Op.CHECK, true,
+            { coEvery { cacheService.evictExpired() } throws CancellationException("cancelled in evictExpired") },
+            { coVerify(exactly = 0) { stateManager.refreshForUser(any(), any()) } }),
+        FailureRow("check: CancellationException from state refresh", Op.CHECK, true,
+            { every { stateManager.refreshForUser("user123", any()) } throws CancellationException("cancelled in refresh") },
+            {}),
+        // ---- cleanupExpired: regular exceptions are swallowed ----
+        FailureRow("cleanup: repository RuntimeException", Op.CLEANUP, false,
+            { coEvery { repository.cleanupExpired() } throws RuntimeException("Cleanup error") },
+            {
+                coVerify(exactly = 1) { repository.cleanupExpired() }
+                coVerify(exactly = 0) { cacheService.evictExpired() }
+            }),
+        FailureRow("cleanup: repository SQLiteConstraintException", Op.CLEANUP, false,
+            { coEvery { repository.cleanupExpired() } throws android.database.sqlite.SQLiteConstraintException() },
+            { coVerify(exactly = 1) { repository.cleanupExpired() } }),
+        FailureRow("cleanup: repository IllegalStateException (control)", Op.CLEANUP, false,
+            { coEvery { repository.cleanupExpired() } throws IllegalStateException("regular failure") },
+            {
+                coVerify(exactly = 1) { repository.cleanupExpired() }
+                coVerify(exactly = 0) { cacheService.evictExpired() }
+            }),
+        FailureRow("cleanup: cache eviction RuntimeException", Op.CLEANUP, false,
+            { coEvery { cacheService.evictExpired() } throws RuntimeException("Cache error") },
+            {
+                coVerify(exactly = 1) { repository.cleanupExpired() }
+                coVerify(exactly = 1) { cacheService.evictExpired() }
+                coVerify(exactly = 0) { stateManager.refreshForUser(any(), any()) }
+            }),
+        FailureRow("cleanup: getCurrentUserId RuntimeException", Op.CLEANUP, false,
+            { every { stateManager.getCurrentUserId() } throws RuntimeException("State error") },
+            {
+                coVerify(exactly = 1) { repository.cleanupExpired() }
+                coVerify(exactly = 1) { cacheService.evictExpired() }
+                coVerify(exactly = 0) { stateManager.refreshForUser(any(), any()) }
+            }),
+        // ---- cleanupExpired: CancellationException propagates ----
+        FailureRow("cleanup: CancellationException from repository cleanupExpired", Op.CLEANUP, true,
+            { coEvery { repository.cleanupExpired() } throws CancellationException("cancelled in cleanupExpired") },
+            { coVerify(exactly = 0) { cacheService.evictExpired() } }),
+        FailureRow("cleanup: CancellationException from cache evictExpired", Op.CLEANUP, true,
+            { coEvery { cacheService.evictExpired() } throws CancellationException("cancelled in evictExpired") },
+            { coVerify(exactly = 0) { stateManager.refreshForUser(any(), any()) } }),
+        FailureRow("cleanup: CancellationException from state refresh", Op.CLEANUP, true,
+            {
+                every { stateManager.getCurrentUserId() } returns "user123"
+                every { stateManager.refreshForUser("user123", any()) } throws CancellationException("cancelled in refresh")
+            },
+            {}),
+        FailureRow("cleanup: CancellationException from getCurrentUserId", Op.CLEANUP, true,
+            { every { stateManager.getCurrentUserId() } throws CancellationException("cancelled in getCurrentUserId") },
+            {}),
+        // ---- refreshThreshold ----
+        FailureRow("threshold: CancellationException", Op.THRESHOLD, true,
+            { coEvery { thresholdCalculator.refreshThreshold() } throws CancellationException("cancelled in refreshThreshold") },
+            {}),
+        FailureRow("threshold: IllegalStateException (control)", Op.THRESHOLD, false,
+            { coEvery { thresholdCalculator.refreshThreshold() } throws IllegalStateException("regular failure") },
+            { coVerify(exactly = 1) { thresholdCalculator.refreshThreshold() } })
+    )
+
+    @Test
+    fun `failure table - regular exceptions are swallowed and CancellationException always propagates`() =
+        runTest(testDispatcher) {
+            val rows = failureRows()
+            assertEquals(19, rows.size, "failure table lost or gained a row")
+
+            for (failure in rows) {
+                row(failure.name) {
+                    buildFixture()
+                    failure.arrange()
+
+                    val invoke: suspend () -> Unit = {
+                        when (failure.op) {
+                            Op.CHECK -> lifecycleManager.checkAndExpire("user123")
+                            Op.CLEANUP -> lifecycleManager.cleanupExpired()
+                            Op.THRESHOLD -> lifecycleManager.refreshThreshold()
+                        }
+                    }
+                    if (failure.propagatesCancellation) {
+                        assertFailsWith<CancellationException>(failure.name) { invoke() }
+                    } else {
+                        invoke() // must not throw
+                    }
+                    failure.verify()
+                }
+            }
+        }
+
+    @Test
+    fun `refreshThreshold success calls calculator exactly once`() = runTest(testDispatcher) {
+        lifecycleManager.refreshThreshold()
+
+        coVerify(exactly = 1) { thresholdCalculator.refreshThreshold() }
     }
 }

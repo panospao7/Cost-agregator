@@ -93,23 +93,24 @@ class EmailReceiptDaoTest {
     // -------------------------------------------------------------------------
 
     @Test
-    fun `insert email receipt source`() = runTest {
-        val email = makeEmailReceipt()
+    fun `insert then read back returns every email receipt field exactly`() = runTest {
+        val receiptId = insertScannedReceipt()
+        val email = makeEmailReceipt(receiptId = receiptId)
         val id = dao.insert(email)
 
         assertTrue(id > 0)
-    }
-
-    @Test
-    fun `query email receipt by id`() = runTest {
-        val email = makeEmailReceipt()
-        val id = dao.insert(email)
 
         val loaded = dao.getById(id)
         assertNotNull(loaded)
+        assertEquals(id, loaded.id)
+        assertEquals(receiptId, loaded.receiptId)
         assertEquals("orders@amazon.com", loaded.emailSender)
         assertEquals("Your Amazon order", loaded.emailSubject)
+        assertEquals("msg_123", loaded.emailMessageId)
+        assertEquals(FIXED_NOW, loaded.parsedAt)
         assertEquals("amazon", loaded.provider)
+        assertEquals(0.95, loaded.confidence, 0.0001)
+        assertEquals("amazon_50.00_20240101", loaded.fingerprint)
     }
 
     @Test

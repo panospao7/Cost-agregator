@@ -92,6 +92,7 @@ class ExchangeRateDaoTest {
         assertNotNull(updated)
         assertEquals(1.18, updated.rate, 0.0001)
         assertEquals("api", updated.source)
+        assertEquals(1, dao.getRateCount(), "upsert for the same pair/validDate must replace, not add a row")
     }
 
     @Test

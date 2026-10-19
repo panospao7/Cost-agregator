@@ -77,24 +77,41 @@ class ReceiptEventDaoTest {
     // -------------------------------------------------------------------------
 
     @Test
-    fun `insert a RECEIPT_CREATED event`() = runTest {
-        val event = createEvent()
-        val id = dao.insert(event)
-
-        assertNotNull(id)
-        assertEquals(1L, id)
-    }
-
-    @Test
-    fun `query events by receiptId returns matching events`() = runTest {
+    fun `insert then read back returns every receipt event field exactly`() = runTest {
         val receiptId = 42L
-        val event = createEvent(receiptId = receiptId)
-        dao.insert(event)
+        val id = dao.insert(
+            createEvent(
+                receiptId = receiptId,
+                sourceType = "EMAIL",
+                documentType = "RECEIPT",
+                eventType = "RECEIPT_CREATED",
+                occurredAt = FIXED_NOW,
+                oldStatus = "OLD",
+                newStatus = "NEW",
+                actor = "test",
+                message = "Receipt created",
+                metadata = "meta-code",
+                errorDetails = "err-code"
+            )
+        )
+        assertEquals(1L, id)
 
         val results = dao.getEventsForReceipt(receiptId)
 
         assertEquals(1, results.size)
-        assertEquals("RECEIPT_CREATED", results[0].eventType)
+        val loaded = results[0]
+        assertEquals(id, loaded.id)
+        assertEquals(receiptId, loaded.receiptId)
+        assertEquals("EMAIL", loaded.sourceType)
+        assertEquals("RECEIPT", loaded.documentType)
+        assertEquals("RECEIPT_CREATED", loaded.eventType)
+        assertEquals(FIXED_NOW, loaded.occurredAt)
+        assertEquals("OLD", loaded.oldStatus)
+        assertEquals("NEW", loaded.newStatus)
+        assertEquals("test", loaded.actor)
+        assertEquals("Receipt created", loaded.message)
+        assertEquals("meta-code", loaded.metadata)
+        assertEquals("err-code", loaded.errorDetails)
     }
 
     @Test
@@ -121,18 +138,6 @@ class ReceiptEventDaoTest {
         // Most recent first
         assertEquals(FIXED_NOW + 2000, results[0].occurredAt)
         assertEquals(FIXED_NOW, results[1].occurredAt)
-    }
-
-    @Test
-    fun `insert multiple events and verify count`() = runTest {
-        val receiptId = 20L
-        dao.insert(createEvent(receiptId = receiptId, eventType = "RECEIPT_CREATED"))
-        dao.insert(createEvent(receiptId = receiptId, eventType = "OCR_COMPLETED"))
-        dao.insert(createEvent(receiptId = receiptId, eventType = "EXPENSE_CREATED"))
-
-        val results = dao.getEventsForReceipt(receiptId)
-
-        assertEquals(3, results.size)
     }
 
     @Test

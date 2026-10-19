@@ -117,7 +117,7 @@ Pri: P0 protects money/lifecycle/privacy/backup/worker invariants · P4 negative
 | Engine5PrimitiveGuardTest.kt | 149 | 3 | E5-001/002/003: no new deprecated `domain.model.PeriodRange` imports; no `System.currentTimeMillis` in domain/core\ | budget\ | analytics; no raw `CurrencyCode(` ctor in domain/core | UNKNOWN | KEEP | **DUP pair (E5-002)**: verify_time_boundaries.py (`time_boundaries`) + orphan scripts/guards/check_direct_time_calls.kts; **partial (E5-003)**: verify_money_boundaries.py |
 | ExpenseDaoMutationAccessTest.kt | 129 | 5 | `RestrictedExpenseDaoMutation` @OptIn discipline: no file/class-level opt-in outside coordinators; mutating ExpenseDao methods annotated | gradle-only (implicit) | KEEP | KEEP |
 | RawDaoArchitectureGuardTest.kt | 94 | 1 | DAO-01 (Engine 3 scope): merchant/category normalization DAO mutators only from repository layer | gradle-only (implicit) | KEEP | KEEP |
-| RecurringArchitectureGuardTest.kt | 324 | 19 | Recurring legal paths: recurring DAO mutation only via coordinators; receivers use WorkManager (no runBlocking/DAO); no legacy `markBillPaid`; eventWriter for critical events; MIGRATION_139_140 content; rule create/activate/deactivate semantics | gradle-only (implicit) | KEEP (flag: 1 silently-skipped test, see Observations) | KEEP |
+| RecurringArchitectureGuardTest.kt | 741 | 25 | Recurring legal paths: recurring DAO mutation only via coordinators; receivers use WorkManager (no runBlocking/DAO); no legacy `markBillPaid`; eventWriter for critical events; MIGRATION_139_140 content; rule create/activate/deactivate semantics | gradle-only (implicit) | KEEP (B2-6: the silently-skipped scans, incl. the golden-dir no-op, now fail closed; B2-7 scanner-anchor work tracked separately; counts = current `@Test` count) | KEEP |
 | SourceScanningArchitectureGuardTest.kt | 686 | 21 | Worker-layer rules: CoroutineWorker guard calls, no DAO/@Inject in workers (allowlist), notification-permission flag + local check (PR12K-3), privacy capabilities, `blockedPolicy=RETRY`, schema version == latest JSON, worker broad-catch CE rule, DataRetention raw-capability ban; comment-stripping + negative fixtures | gradle-only (implicit) | KEEP | KEEP |
 | TransactionContextProvenanceGuardTest.kt | 192 | 5 | PR21-1: `TransactionContext(` constructed only in RoomDomainTransactionRunner / allowlisted files | gradle-only (implicit) | KEEP | KEEP |
 | WorkerGuardArchitectureGuardTest.kt | 138 | 3 | Every CoroutineWorker calls `runGuarded(/WithContext)` (WorkerExecutionGuard) or documented exemption (allowlist currently empty, anti-creep tests) | gradle-only (implicit) | KEEP | KEEP |
@@ -141,7 +141,7 @@ Pri: P0 protects money/lifecycle/privacy/backup/worker invariants · P4 negative
 | test/…/consistency/SharedUtilityConsistencyTest.kt | 233 | 15 | 0 | PURE | AmountUtils, AmountExtractionUtils, CommonPatterns | STRENGTHEN | P2 | MerchantKeyCrossConsumer | Amount agreement unique; merchant-key section dup |
 | test/…/consistency/TemporalConsistencyTest.kt | 190 | 4 | 0 | PURE | BudgetCalculator, SpendingPaceCalculator, TimePeriodUtils | KEEP | P0 | TimePeriodUtilsTest family | DST + leap-year, FakeTimeProvider, TZ pinned/restored |
 | test/…/consistency/TimePeriodAnalyticsAlignmentTest.kt | 72 | 6 | 0 | PURE | TimePeriodUtils | DELETE | P3 | TimePeriodUtilsTest family | Self-comparison tautology; deprecated getLastNDaysRange |
-| test/…/contracts/CancellationPropagationContractTest.kt | 138 | 2 | 0 | SRCTEXT | 12 catch sites (budget/receipt/recurring/forecast) | MERGE | P2 | CancellationSafetyArchitectureGuardTest | Superseded; test 2 tautological; see findings |
+| test/…/contracts/CancellationPropagationContractTest.kt | 397 | 16 | 0 | SRCTEXT | 12 catch sites (budget/receipt/recurring/forecast) | MERGE | P2 | CancellationSafetyArchitectureGuardTest | Superseded as originally audited; B2-6/B2-7: now a method-scoped, comment/string-sanitized leading-guard scan with fail-closed self-tests (16 `@Test` incl. self-tests; missing file/method fails, never skips) - MERGE verdict to be re-evaluated; see findings |
 | test/…/contracts/LifecycleBarrierContractTest.kt | 69 | 2 | 0 | SRCTEXT | DatabaseWriteBarrier usage | MERGE | P2 | WriteBarrierArchitectureGuardTest | Substring-anywhere check weaker than guard; see findings |
 | test/…/contracts/MoneyContractTest.kt | 58 | 1 | 0 | SRCTEXT | effectiveAmount summation sites | MERGE | P2 | check_raw_money_aggregates.kts | `.currency`-anywhere escape hatch too lax; see findings |
 | test/…/contracts/PrivacyStorageContractTest.kt | 67 | 3 | 0 | SRCTEXT | RawStorageMode, RawContentSanitizer | STRENGTHEN | P1 | — | NOT covered by any script; keep as CI guard; test 1 weak |
@@ -309,7 +309,7 @@ Pri: P0 protects money/lifecycle/privacy/backup/worker invariants · P4 negative
 | test/…/data/database/dao/WarrantyReminderDeliveryDaoTest.kt | 258 | 10 | 0 | ROOM | WarrantyReminderDeliveryDao | KEEP | P1 | WarrantyReminderWorker tests | claim-before-notify state machine, stale recovery, FK cascade |
 | test/…/data/database/entity/CategoryTest.kt | 52 | 7 | 0 | PURE | Category | KEEP | P3 | — | init validation (name/color/icon) |
 | test/…/data/database/entity/DedupeKeyTest.kt | 104 | 9 | 0 | PURE | Expense.generateDedupeKey | KEEP | P0 | ExpenseEntityStressTest; DedupeKeyProducerConsistencyTest | currency-required ISSUE-6 regression; bucket boundaries |
-| test/…/data/database/entity/ExpenseEntityStressTest.kt | 600 | 42 | 1 | PURE | Expense (dedupe key, effectiveAmount) | NIGHTLY | P3 | DedupeKeyTest (DUP) | class-level @Ignore; 2 empty-body tests; fuzz unique |
+| test/…/data/database/entity/ExpenseEntityStressTest.kt **[DELETED 2026-10-17, B3]** | 600 | 42 | 1 | PURE | Expense (dedupe key, effectiveAmount) | NIGHTLY | P3 | DedupeKeyTest (DUP) | class-level @Ignore; 2 empty-body tests; fuzz unique |
 | test/…/data/database/entity/MileageTrackingValidationTest.kt | 24 | 1 | 0 | PURE | MileageTracking | DELETE | P4 | — | constructor passthrough tautology; entity has no validation |
 | test/…/data/database/model/ExpenseWithCategoryFormattedAmountTest.kt | 141 | 11 | 0 | PURE | ExpenseWithCategory.formattedAmount | KEEP | P1 | — | polarity/currency placement/effectiveAmount basis |
 | test/…/data/database/model/ExpenseWithCategoryFormattedTimeTest.kt | 79 | 5 | 0 | PURE | ExpenseWithCategory.formattedDate/Time | KEEP | P3 | — | shadowing regression; regex assumes English month locale |
@@ -325,7 +325,7 @@ Pri: P0 protects money/lifecycle/privacy/backup/worker invariants · P4 negative
 | test/…/data/email/provider/EmailReceiptParserTest.kt | 61 | 3 | 0 | PURE | BaseEmailParser | REWRITE | P1 | — | F-21: UTC-zone expected vs systemDefault production parse |
 | test/…/data/email/provider/UberReceiptParserTest.kt | 127 | 6 | 0 | PURE | UberReceiptParser | REWRITE | P1 | — | F-21 tz family; mojibake bodies; assertions contradict names |
 | test/…/data/location/AndroidForegroundLocationProviderTest.kt | 16 | 1 | 0 | PURE | AndroidForegroundLocationProvider | DELETE | P4 | — | Tautology re-confirmed (asserts pair equals itself) |
-| test/…/data/location/CompositeGeocodingServiceStressTest.kt | 174 | 8 | 1 | MOCKED | CompositeGeocodingService | STRENGTHEN | P1 | #9 | @Ignore confirmed (line 26); not stress — dead unique coverage |
+| test/…/data/location/CompositeGeocodingServiceStressTest.kt **[DELETED 2026-10-17; revived as CompositeGeocodingServiceTest, B3b-5]** | 174 | 8 | 1 | MOCKED | CompositeGeocodingService | STRENGTHEN | P1 | #9 | @Ignore confirmed (line 26); not stress — dead unique coverage |
 | test/…/data/location/CompositeGeocodingServiceTest.kt | 52 | 1 | 0 | MOCKED | CompositeGeocodingService | KEEP | P2 | #8 | Fallback-cascade; complementary to #8 |
 | test/…/data/location/GeocodingCancellationTest.kt | 151 | 2 | 0 | MOCKED | executeCancellable, PhotonGeocodingService | KEEP | P1 | CancellationSafetyArchitectureGuardTest | Real OkHttp cancellation; latch flake risk minor |
 | test/…/data/location/GeocodingRetryHttpSemanticsTest.kt | 127 | 5 | 0 | MOCKED | Photon/Nominatim/Geoapify/GooglePlaces | KEEP | P1 | — | Real interceptor 429/503 retry; typed GeocodingError |
@@ -337,7 +337,7 @@ Pri: P0 protects money/lifecycle/privacy/backup/worker invariants · P4 negative
 | test/…/data/privacy/BackupEncryptionServiceTest.kt | 78 | 5 | 0 | PURE | BackupEncryptionService | KEEP | P0 | CostbackupBundleLimitsTest; DatabaseBackupRepositoryImplTest | AES-256-GCM fail-closed: bad tag, tamper, random salt/IV |
 | test/…/data/privacy/DataRetentionWorkerTest.kt | 395 | 16 | 0 | ROBOLECTRIC | DataRetentionWorker | STRENGTHEN | P0 | RetentionTargetPurgeTest; RawStoragePolicyAuditTest; DbGuardPolicyFixtureTest | Strong sanitized-diagnostics; 1 SRCTEXT test; guard stub |
 | test/…/data/privacy/ExportAnonymizerTest.kt | 161 | 4 | 0 | ROBOLECTRIC | ExportAnonymizer | KEEP | P0 | DatabaseBackupRepositoryImplTest | Real SQLite redaction across all PII tables; hashes preserved |
-| test/…/data/privacy/PrivacySettingsRepositoryImplCorruptionTest.kt | 188 | 9 | 0 | ROBOLECTRIC | PrivacySettingsRepositoryImpl, PrivacySettings | STRENGTHEN | P1 | P8PrivacyFixesTest; PrivacySettingsLoadStateTest | Fail-closed defaults asserted; several constant-only tests |
+| test/…/data/privacy/PrivacySettingsRepositoryImplCorruptionTest.kt | ~280 | 5 | 0 | ROBOLECTRIC | PrivacySettingsRepositoryImpl, PrivacySettings | STRENGTHEN | P1 | P8PrivacyFixesTest; PrivacySettingsLoadStateTest | Fail-closed defaults asserted. Status 2026-10-17: reworked by test-suite-audit (was 188 LOC / 9 tests; now ~280 LOC / 5 tests) |
 | test/…/data/privacy/PrivacySettingsRepositoryImplWorkerGatingTest.kt | 153 | 6 | 0 | ROBOLECTRIC | PrivacySettingsRepositoryImpl | KEEP | P1 | WorkerSpecSchedulerTest | Over-cancel + no-reschedule regression guards; data_retention never gated |
 | test/…/data/privacy/RetentionTargetPurgeTest.kt | 135 | 2 | 0 | ROOM | RetentionModule targets | KEEP | P0 | DataRetentionWorkerTest | Real Room + real production targets; nulls raw payload, keeps recent |
 
@@ -357,12 +357,12 @@ Pri: P0 protects money/lifecycle/privacy/backup/worker invariants · P4 negative
 | BudgetRepositoryTruncationTest.kt | 500 | 9 | 0 | MOCKED | BudgetRepository | KEEP | P1 | #8, #11 | Aggregate-not-capped regression; health thresholds real |
 | BudgetRolloverTest.kt | 517 | 12 | 0 | MOCKED | BudgetRepository, BudgetCalculator | KEEP | P1 | #8, #10 | Canonical rollover math, real calculator, ISSUE-3 regression |
 | BusinessExpenseRepositoryTest.kt | 69 | 2 | 0 | MOCKED | BusinessExpenseRepository | KEEP | P2 | — | NaN rejected pre-DAO; small but real |
-| CategoryRepositoryStressTest.kt | 90 | 4 | 4 | MOCKED | CategoryRepository | DELETE | P3 | #14 | Class @Ignore holds; zero assertions; Lazy-wrapper mock |
+| CategoryRepositoryStressTest.kt **[DELETED 2026-10-17, B3]** | 90 | 4 | 4 | MOCKED | CategoryRepository | DELETE | P3 | #14 | Class @Ignore holds; zero assertions; Lazy-wrapper mock |
 | CategoryRepositoryTest.kt | 155 | 9 | 0 | MOCKED | CategoryRepository | STRENGTHEN | P2 | #13 | Overturns 2026-05 DELETE; real case-dedupe/scope contracts |
 | DashboardContractsAdapterTest.kt | 109 | 2 | 0 | MOCKED | DashboardContractsAdapter | KEEP | P2 | FinancialWeatherRepositoryTest | Confirmed-only feed + isPartial propagation |
 | DatabaseBackupRepositoryImplTest.kt | 1237 | 24 | 0 | ROBOLECTRIC | DatabaseBackupRepositoryImpl | KEEP | P0 | P7BugFixesTest, BackupRestoreIntegrityE2ETest | Real SQLite staged import/rollback; 1 SRCTEXT guard; gaps documented |
 | DeterministicExpenseExportPagerTest.kt | 57 | 2 | 0 | MOCKED | DeterministicExpenseExportPager | KEEP | P2 | #1 | Focused pager unit; complementary to #1 e2e |
-| ExpenseRepositoryStressTest.kt | 256 | 13 | 13 | MOCKED | ExpenseRepository | DELETE | P4 | #19, #20 | Class @Ignore; STALE: asserts direct expenseDao.delete (prod routes coordinator, ExpenseRepository.kt:417) |
+| ExpenseRepositoryStressTest.kt **[DELETED 2026-10-17, B3]** | 256 | 13 | 13 | MOCKED | ExpenseRepository | DELETE | P4 | #19, #20 | Class @Ignore; STALE: asserts direct expenseDao.delete (prod routes coordinator, ExpenseRepository.kt:417) |
 | ExpenseRepositoryTest.kt | 330 | 9 | 0 | MOCKED | ExpenseRepository | KEEP | P1 | #18, #20, architecture guards | Legal-path positive (coordinator delegation); SQL-string asserts FRAGILE |
 | ExpenseRepositoryTruncationTest.kt | 215 | 9 | 0 | MOCKED | ExpenseRepository | KEEP | P1 | #19 | Uncapped-read regression (data-loss guard) |
 | ExpenseWriteStoreObservabilityTest.kt | 298 | 6 | 0 | MOCKED | TransactionLifecycleCoordinator, TransactionSideEffectPlanner | STRENGTHEN | P0 | domain lifecycle tests (F-02 area), golden | Real coordinator events/keys; last test = stdlib withTimeoutOrNull (drop) |
@@ -375,7 +375,7 @@ Pri: P0 protects money/lifecycle/privacy/backup/worker invariants · P4 negative
 | NotificationProcessingPipelineOversizedAmountTest.kt | 114 | 8 | 0 | PURE | NotificationProcessingPipeline (static detectors) | KEEP | P1 | #29 (DUP: 2 tests) | Pure detector; PAN/keyword scoring real |
 | NotificationProcessingPipelineReliabilityTest.kt | 847 | 17 | 0 | MOCKED | NotificationProcessingPipeline, DuplicateDetectionPolicy | STRENGTHEN | P0 | #27, #28 (DUP), #30 | Salvage/boundary/concurrency; 2 tests dup of #28; FRAGILE ctor |
 | NotificationProcessingPipelineSourceLinkTest.kt | 183 | 2 | 0 | MOCKED | NotificationProcessingPipeline | KEEP | P1 | #29 | Source-link failure ≠ lost review; post-commit diagnostics |
-| NotificationProcessingPipelineStressTest.kt | 587 | 28 | 28 | MOCKED | (none — test-local simulation) | DELETE | P4 | #27, #29 | Class @Ignore; reimplements pipeline in helpers; `result != null |
+| NotificationProcessingPipelineStressTest.kt **[DELETED 2026-10-17, B3]** | 587 | 28 | 28 | MOCKED | (none — test-local simulation) | DELETE | P4 | #27, #29 | Class @Ignore; reimplements pipeline in helpers; `result != null |
 | NotificationRepositoryDeleteAllNotificationsClockTest.kt | 117 | 2 | 0 | MOCKED | NotificationRepository | KEEP | P1 | NotificationRepositoryStressTest (other batch) | Barrier verified + injected-clock audit event |
 
 ## Batch 14 — data/repository (2/2) + security/service/speech/store
@@ -385,7 +385,7 @@ Pri: P0 protects money/lifecycle/privacy/backup/worker invariants · P4 negative
 | test/…/data/repository/NotificationRepositoryStressTest.kt | 306 | 21 | 21 (class) | MOCKED | NotificationRepository | REWRITE | P3 | NotificationRepositoryDeleteAllNotificationsClockTest; (no live NotificationRepositoryTest exists) | @Ignore class; flow tests tautological; delete/stats-decrement unique but dead |
 | test/…/data/repository/PlannedExpenseRepositoryDiagnosticsTest.kt | 134 | 5 | 0 | MOCKED | PlannedExpenseRepository | KEEP | P1 | DashboardContractsAdapterTest, FinancialWeatherRepositoryTest | Best-effort diagnostics contract; real event assertions |
 | test/…/data/repository/ReceiptRepositoryStatementDuplicateTest.kt | 216 | 1 | 0 | MOCKED | ReceiptRepository | KEEP | P1 | ReceiptRepositoryStressTest, DedupeKeyProducerConsistencyTest | Currency-aware dup lookup; FRAGILE (22 ctor deps); ledger F-21 |
-| test/…/data/repository/ReceiptRepositoryStressTest.kt | 408 | 12 | 12 (class) | MOCKED | ReceiptRepository | REWRITE | P3 | ReceiptLifecycleCoordinatorTest; (no live repo-level test) | @Ignore class; OCR-fallback/text-preserve behavior stranded; FRAGILE |
+| test/…/data/repository/ReceiptRepositoryStressTest.kt **[DELETED 2026-10-17; revived as ReceiptRepositoryOcrFallbackTest + 3 coordinator tests]** | 408 | 12 | 12 (class) | MOCKED | ReceiptRepository | REWRITE | P3 | ReceiptLifecycleCoordinatorTest; (no live repo-level test) | @Ignore class; OCR-fallback/text-preserve behavior stranded; FRAGILE |
 | test/…/data/repository/RecommendationRepositoryTest.kt | 426 | 17 | 0 | MOCKED | RecommendationRepository | KEEP | P2 | RecommendationLifecycleManagerTest, RecommendationStateManagerTest | saveAll cap/priority/merge tests are real; setMain never reset |
 | test/…/data/repository/RecurringExpenseRepositoryTest.kt | 87 | 3 | 0 | MOCKED | RecurringExpenseRepository | KEEP | P1 | CashFlowCalculatorTest (indirect) | Exercises legal path (coordinator.createRule); F-13 fix pattern in place |
 | test/…/data/repository/ReviewQueueRepositoryStressTest.kt | 171 | 8 | 8 (class) | MOCKED | ReviewQueueRepository | MERGE | P4 | ReviewQueueRepositoryTest | @Ignore dead; port 2 bulk-op verifies, then delete |
@@ -449,7 +449,7 @@ Pri: P0 protects money/lifecycle/privacy/backup/worker invariants · P4 negative
 | test/…/domain/analytics/AnomalyDetectorTest.kt | 208 | 4 | 0 | PURE | AnomalyDetector | KEEP | P1 | #1 (complementary: detector vs orchestrator) | effective-amount guard, FP/FN guards |
 | test/…/domain/analytics/CategoryInsightEngineTest.kt | 474 | 11 | 0 | PURE | CategoryInsightEngine | KEEP | P1 | InsightsEngineValidationTest | golden totals; 4th inline copy of March dataset |
 | test/…/domain/analytics/DayOfWeekAnalyzerTest.kt | 238 | 6 | 0 | PURE | DayOfWeekAnalyzer | KEEP | P2 | InsightsEngineValidationTest (DoW section) | DST + monday-zero indexing (bug b17) |
-| test/…/domain/analytics/IncludeDepositsForBehaviorCleanupTest.kt | 25 | 1 | 0 | SRCTEXT | (none — source string scan) | DELETE | P3 | architecture/* guard suite | one-off cleanup guard; string-scan anti-pattern |
+| test/…/domain/analytics/IncludeDepositsForBehaviorCleanupTest.kt | 35 | 1 | 0 | SRCTEXT | (none — source string scan) | DELETE | P3 | architecture/* guard suite | one-off cleanup guard; string-scan anti-pattern; B2-6: was vacuous (scanned a non-existent root), now fail-closed via FailClosedScan (missing root / zero files / unreadable file fails) - DELETE verdict stands, kept until the guard suite supersedes it |
 | test/…/domain/analytics/InsightsEngineDeepTest.kt | 211 | 7 | 0 | MOCKED | InsightsEngine | KEEP | P1 | #16 #17 | real sub-engines; effective-amount math |
 | test/…/domain/analytics/InsightsEngineEdgeCaseTest.kt | 178 | 6 | 0 | MOCKED | InsightsEngine | STRENGTHEN | P2 | #14 #16 #17 | 2 "does not crash" only; runBlocking + real clock |
 | test/…/domain/analytics/InsightsEngineTest.kt | 120 | 4 | 0 | MOCKED | InsightsEngine | KEEP | P2 | #14 #15 #17 | buildDailyTotals real sums; real clock |
@@ -609,13 +609,13 @@ Pri: P0 protects money/lifecycle/privacy/backup/worker invariants · P4 negative
 | test/…/domain/privacy/CloudProviderPreparedPayloadTest.kt | 129 | 8 | 0 | MOCKED | DefaultCloudPayloadPolicy | MERGE | P1 | #16 | dup + CWD-dependent script-existence test |
 | test/…/domain/privacy/EmailRawStorageEnforcementTest.kt | 191 | 10 | 0 | PURE | EmailReceiptPersistencePayload | STRENGTHEN | P0 | #29, #19, #31 | 3 tautologies (ifBlank/correlation locals); rest real |
 | test/…/domain/privacy/ExportPrivacyPolicyTest.kt | 141 | 12 | 0 | MOCKED | ExportPrivacyGate, ExportPrivacyPolicy | KEEP | P0 | golden PrivacyGateEnforcementGoldenTest | fail-closed export matrix; debug-gated raw |
-| test/…/domain/privacy/NotificationPrivacyHardeningTest.kt | 187 | 10 | 0 | PURE | (none — test-owned simulations) | DELETE | P4 | scenarios/PrivacyGateContractTest | all tests assert test's own if/when replicas |
+| test/…/domain/privacy/NotificationPrivacyHardeningTest.kt | 187 | 10 | 0 | PURE | (none — test-owned simulations) | DELETE | P4 | domain/notification/capture/NotificationCaptureGatePrivacyContractTest (real gate; B2-2), service/NotificationCaptureServiceBlockedDecisionTest (service-level ordering and dedupe release; B2-2b, B2-2c) | all tests assert test's own if/when replicas; removed in B2-2. B2-2b found the step-5 dedupe-poisoning gap; B2-2c fixed it in `NotificationCaptureService` (`deduper.remove(dedupeKey)` on both step-5 denial branches) |
 | test/…/domain/privacy/P8PrivacyFixesTest.kt | 409 | 8 | 0 | PURE | RawContentSanitizer, EffectiveCloudAiPolicy, DefaultCloudPayloadRedactor | STRENGTHEN | P0 | #22, #26 | P8-001/006 test own fake/loop; rest real |
 | test/…/domain/privacy/PR5PrivacyContractTest.kt | 324 | 15 | 0 | MOCKED | RawContentSanitizer, BankApiIntegration, RawPersistencePolicyResolver, EffectiveCloudAiPolicyResolver | KEEP | P0 | #34 (DUP), #21 | BankApiIntegration ctor mock-heavy FRAGILE |
 | test/…/domain/privacy/PrivacyBehavioralRegressionTest.kt | 269 | 16 | 0 | PURE | PrivacySettings, DefaultCloudPayloadPolicy | REWRITE | P1 | #27, #16 | half tautologies ("1==1"), half real value |
 | test/…/domain/privacy/PrivacyCapabilityHandlingPolicyProductionTest.kt | 139 | 9 | 0 | MOCKED | PrivacyCapabilityHandlingPolicy, CompositePrivacyGate | STRENGTHEN | P1 | #25 (DUP) | exhaustiveness guard; 3 self-referential tests |
 | test/…/domain/privacy/PrivacyCapabilityHandlingPolicyTest.kt | 84 | 3 | 0 | PURE | (test-owned shadow policyMap) | MERGE | P2 | #24 | shadows production policy in test map |
-| test/…/domain/privacy/PrivacyGuardTest.kt | 383 | 12 | 0 | SRCTEXT | RawContentSanitizer (source), CompositePrivacyGate (source), PrivacySettings | STRENGTHEN | P1 | scripts/verify_privacy_boundaries.py | deliberate static guard; G5/G8 silently skip if file missing |
+| test/…/domain/privacy/PrivacyGuardTest.kt | 379 | 11 | 0 | SRCTEXT | RawContentSanitizer (source), CompositePrivacyGate (source), PrivacySettings | STRENGTHEN | P1 | scripts/verify_privacy_boundaries.py | deliberate static guard; B2-6: G8 deleted (its proof is ExportPrivacyPolicyTest.encrypted_disabled_does_not_allow_rawbackup_export, now over debug build x debug consent), scan roots/files fail closed - no silent skips |
 | test/…/domain/privacy/PrivacySettingsLoadStateTest.kt | 231 | 21 | 0 | PURE | PrivacySettings.FAIL_CLOSED_DEFAULTS, PrivacySettingsLoadState | STRENGTHEN | P0 | #23; data PrivacySettingsRepositoryImplCorruptionTest | fake's corruption mapping tested, not prod impl |
 | test/…/domain/privacy/RawPersistencePolicyTest.kt | 248 | 20 | 0 | PURE | RawPersistencePolicyResolver, DefaultSensitiveHashingService, RawContentSanitizer, SafePrivacyMetadata | KEEP | P0 | #34 | mode×source matrix; HMAC determinism |
 | test/…/domain/privacy/RawStorageEndToEndTest.kt | 311 | 18 | 0 | PURE | Notification/Receipt/Email/Bank PersistencePayload | KEEP | P0 | #30, #31, #18 | sentinel-based; survivor of raw-storage merge |
@@ -659,7 +659,7 @@ Pri: P0 protects money/lifecycle/privacy/backup/worker invariants · P4 negative
 | test/…/domain/sideeffect/TransactionSideEffectFailureEventWriterTest.kt | 118 | 4 | 0 | MOCKED | TransactionSideEffectFailureEventWriter | KEEP | P1 | TransactionContextProvenanceGuardTest | Deterministic clock; cancellation not swallowed |
 | test/…/domain/split/SplitCalculationPrecisionTest.kt | 342 | 22 | 0 | PURE | (Money) — mirror of EnhancedSplitManager | REWRITE | P1 | VisualSplitViewModelTest | Test-local split mirror = tautology; see findings |
 | test/…/domain/subscription/SubscriptionManagerEngineTest.kt | 451 | 21 | 0 | MOCKED | SubscriptionManagerEngine | STRENGTHEN | P1 | SubscriptionManagementViewModelTest | runBlocking-in-runTest hazard; some overlap in recordPriceChange tests |
-| test/…/domain/tax/TaxCalculationTest.kt | 433 | 35 | 1 | PURE | GreeceTaxConfiguration/UsTaxConfiguration/TaxConfigurationFactory | REWRITE | P2 | TaxGoldenScenarioTest | Tax math is test-local mirror; @Ignore hides broken helper |
+| test/…/domain/tax/TaxCalculationTest.kt **[2026-10-17: @Ignore removed; ACTIVE]** | 433 | 35 | 1 | PURE | GreeceTaxConfiguration/UsTaxConfiguration/TaxConfigurationFactory | REWRITE | P2 | TaxGoldenScenarioTest | Tax math is test-local mirror; @Ignore hides broken helper |
 | test/…/domain/tax/TaxEstimatorTest.kt | 425 | 18 | 0 | MOCKED | TaxEstimator | STRENGTHEN | P1 | TaxGoldenScenarioTest (scenarios) | F-05 drift; expected computed by mirrored formula |
 | test/…/domain/transaction/category/CategoryAssignmentServiceBarrierTest.kt | 157 | 3 | 0 | MOCKED | DefaultExpenseCategoryAssignmentService | STRENGTHEN | P1 | CancellationSafetyArchitectureGuardTest | Test 1 real fail-closed; tests 2–3 tautological |
 | test/…/domain/transaction/lifecycle/TransactionLifecycleCoordinatorTest.kt | 267 | 8 | 0 | MOCKED | TransactionLifecycleCoordinator | STRENGTHEN | P0 | batch-08 TransactionLifecycleCoordinatorDbContractTest, CancellationPropagationContractTest, Pipeline4LifecycleGoldenTest | F-02 RED; FRAGILE 15-dep ctor; see findings |
@@ -697,7 +697,7 @@ Pri: P0 protects money/lifecycle/privacy/backup/worker invariants · P4 negative
 | test/…/domain/util/MerchantKeyGeneratorStressTest.kt | 183 | 29 | 0 | PURE | MerchantKeyGenerator | MERGE | P3 | MerchantKeyGeneratorTest | ~Half duplicate w/ weaker asserts (isNotEmpty); port emoji/null-char/perf cases then delete |
 | test/…/domain/util/MerchantKeyGeneratorTest.kt | 157 | 16 | 0 | PURE | MerchantKeyGenerator | KEEP | P0 | CrossParserConsistencyTest, MerchantKeyConsistencyTest | Canonical merchant identity: transliteration, diphthongs, idempotency |
 | test/…/domain/util/MoneyTest.kt | 418 | 31 | 0 | PURE | Money | KEEP | P0 | TaxCalculationTest, MoneyContractTest | BigDecimal exactness, split-sum invariants, HALF_UP rounding — money core |
-| test/…/domain/util/NotificationIdGeneratorTest.kt | 390 | 36 | 1 | PURE | NotificationIdGenerator | KEEP | P2 | DailyBriefingWorkerTest | Range non-overlap + overflow; 1 reasoned @Ignore (negative IDs) |
+| test/…/domain/util/NotificationIdGeneratorTest.kt **[2026-10-17: @Ignore removed; ACTIVE]** | 390 | 36 | 1 | PURE | NotificationIdGenerator | KEEP | P2 | DailyBriefingWorkerTest | Range non-overlap + overflow; 1 reasoned @Ignore (negative IDs) |
 | test/…/domain/util/StatisticsUtilsStressTest.kt | 416 | 35 | 0 | PURE | StatisticsUtils | STRENGTHEN | P2 | (none) | Known-value/sample-vs-population tests solid; 3 tautological "handle gracefully" tests |
 | test/…/domain/util/StringDistanceUtilsStressTest.kt | 198 | 28 | 0 | PURE | StringDistanceUtils | KEEP | P2 | ReceiptTransactionMatcherTest, ReceiptMatchingE2ETest | Exact distances + fuzzy-match semantics; fast |
 | test/…/domain/util/SystemMonotonicTimeProviderTest.kt | 61 | 3 | 0 | PURE | SystemMonotonicTimeProvider, FakeMonotonicTimeProvider | KEEP | P3 | (none) | Correctly asserts only monotonic contract, not platform timing |
@@ -715,17 +715,17 @@ Pri: P0 protects money/lifecycle/privacy/backup/worker invariants · P4 negative
 | File | LOC | Tests | @Ign | Style | Class(es) under test | Verdict | Pri | Overlap | Note |
 |---|---|---|---|---|---|---|---|---|---|
 | test/java/…/domain/widget/WidgetStyleRepositoryTest.kt | 73 | 2 | 0 | MOCKED | WidgetStyleRepository (default toggleWidgetStyle) | REWRITE | P2 | HomeViewModelStressTest (touching) | TAUTOLOGY: fakes re-declare prod logic |
-| test/java/…/domain/workers/FileWorkerTerminalDiagnosticSinkTest.kt | 652 | 22 | 0 | MOCKED | FileWorkerTerminalDiagnosticSink, WorkerTerminalDiagnosticReader | KEEP | P0 | — | real file IO; privacy-negative asserts |
+| test/java/…/domain/workers/FileWorkerTerminalDiagnosticSinkTest.kt | 824 | 24 | 0 | MOCKED | FileWorkerTerminalDiagnosticSink, WorkerTerminalDiagnosticReader | KEEP | P0 | — | real file IO; privacy-negative asserts; B2-5: Timber assertions count only the sink's own ERROR entries (no throwable/exact text pinned), raw-text checks repeated after the recovery write |
 | test/java/…/domain/workers/P9RemainingWorkerFixesTest.kt | 272 | 12 | 0 | MOCKED | WorkerSpec, WorkerRunLoggerImpl, WorkerExecutionGuard | STRENGTHEN | P1 | 12, 8, 13 | 2 stdlib `maxOf` tautologies; dup spec asserts |
 | test/java/…/domain/workers/PrivacyRuntimeWorkerPolicyTest.kt | 144 | 9 | 0 | ROBOLECTRIC | PrivacyRuntimeWorkerPolicy | KEEP | P0 | — | pins data_retention cancel-exemption |
 | test/java/…/domain/workers/WorkerBarrierIntegrationTest.kt | 473 | 23 | 0 | MOCKED | WorkerExecutionGuard + barriers | KEEP | P0 | 6 (partial DUP) | 5 restore modes; fixture dup of #6 |
 | test/java/…/domain/workers/WorkerExecutionGuardTest.kt | 1140 | 48 | 0 | MOCKED | WorkerExecutionGuard (REAL) | KEEP | P0 | 5, 3 | anchor test; FRAGILE 11-mock ctor |
 | test/java/…/domain/workers/WorkerGuardVerifierTest.kt | 101 | 3 | 0 | PURE | WorkerGuardVerifier, WorkerSpecScheduler | KEEP | P2 | 10, 23 | pins exact 10 worker names |
 | test/java/…/domain/workers/WorkerIdempotencyTest.kt | 116 | 5 | 0 | PURE | WorkerSpec.DEFAULTS | KEEP | P2 | 3 | misleading name (spec config, not runtime) |
-| test/java/…/domain/workers/WorkerLeaseRegistryTest.kt | 325 | 18 | 0 | MOCKED | WorkerLeaseRegistryImpl (real) | KEEP | P0 | 10 | real-clock drain waits (minor flake) |
+| test/java/…/domain/workers/WorkerLeaseRegistryTest.kt | 782 | 28 | 0 | MOCKED | WorkerLeaseRegistryImpl (real) | KEEP | P0 | 10 | real-clock drain waits (minor flake); B2-5: real-thread contention tests added incl. restore-race stress (mutant kills probabilistic, correct code deterministic) |
 | test/java/…/domain/workers/WorkerRestoreRegressionTest.kt | 404 | 15 | 0 | MOCKED | WorkerLeaseRegistryImpl, WorkerRunLoggerImpl, WorkerRegistry | STRENGTHEN | P1 | 9, 12 | lease+CAS sections dup 9/12 |
 | test/java/…/domain/workers/WorkerRunContextThreadSafetyTest.kt | 43 | 2 | 0 | STRESS | WorkerRunContext | KEEP | P2 | — | 1000 concurrent increments |
-| test/java/…/domain/workers/WorkerRunLoggerTest.kt | 980 | 58 | 0 | MOCKED | WorkerRunLoggerImpl, WorkerReasonCodes | KEEP | P0 | 3, 10 | terminal CAS + reason-code sanitization |
+| test/java/…/domain/workers/WorkerRunLoggerTest.kt | 1376 | 65 | 0 | MOCKED | WorkerRunLoggerImpl, WorkerReasonCodes | KEEP | P0 | 3, 10 | terminal CAS + reason-code sanitization; B2-5: real-thread terminal-mutex tests + FG-10 CancellationException propagation tests added |
 | test/java/…/domain/workers/WorkerSpecSchedulerTest.kt | 411 | 9 | 0 | ROBOLECTRIC | WorkerSpecScheduler | KEEP | P1 | 8 | FRAGILE: mockkObject + static WorkManager |
 | test/java/…/AnalyticsEngineTestBase.kt | 404 | 0 | 0 | FIXTURE | (42 analytics/budget/e2e subclasses) | KEEP | P1 | 15 | mock layer re-implements SQL math |
 | test/java/…/AnalyticsTestCompat.kt | 293 | 0 | 0 | FIXTURE | analytics engine compat shims (20+ users) | KEEP | P1 | 18 | duplicate currency fakes vs #18 |
@@ -743,13 +743,13 @@ Pri: P0 protects money/lifecycle/privacy/backup/worker invariants · P4 negative
 | File | LOC | Tests | @Ign | Style | Class(es) under test | Verdict | Pri | Overlap | Note |
 |---|---|---|---|---|---|---|---|---|---|
 | test/…/service/NavigationTargetResolverTest.kt | 424 | 32 | 0 | MOCKED | NavigationTargetResolverImpl | KEEP | P2 | HomeViewModelRecommendationTest, HomeViewModelStressTest | Real mapping/period logic asserted |
-| test/…/service/NotificationCaptureServiceCleanupTest.kt | 185 | 7 | 0 | MOCKED | NotificationCaptureService, NotificationServiceWorkTracker | STRENGTHEN | P1 | NotificationPrivacyHardeningTest, PrivacyStorageContractTest | 2 reflection signature tests FRAGILE |
+| test/…/service/NotificationCaptureServiceCleanupTest.kt | 185 | 7 | 0 | MOCKED | NotificationCaptureService, NotificationServiceWorkTracker | STRENGTHEN | P1 | NotificationCaptureGatePrivacyContractTest (replaced NotificationPrivacyHardeningTest, B2-2), NotificationCaptureServiceBlockedDecisionTest (service-level capture ordering, B2-2b/B2-2c), PrivacyStorageContractTest | 2 reflection signature tests FRAGILE |
 | test/…/service/NotificationCaptureServiceFallbackTest.kt | 69 | 5 | 0 | PURE | (none — tautology) | DELETE | P4 | — | Re-implements fallback in test; prior KEEP overturned |
 | test/…/service/NotificationFilterTest.kt | 345 | 25 | 0 | PURE | NotificationFilter | KEEP | P1 | — | Pins NEW-P1-2026-001 "pos" regression |
 | test/…/service/RecommendationCacheServiceTest.kt | 383 | 18 | 0 | MOCKED | RecommendationCacheService | STRENGTHEN | P2 | RecommendationLifecycleManagerTest | No resetMain; TTL test is a no-op |
 | test/…/service/RecommendationDeduplicatorTest.kt | 203 | 11 | 0 | PURE | RecommendationDeduplicator | KEEP | P2 | RecommendationRepositoryTest | Real dedup semantics, real serializer |
 | test/…/service/RecommendationDismissalHandlerTest.kt | 387 | 23 | 0 | MOCKED | RecommendationDismissalHandler | STRENGTHEN | P2 | HomeViewModelRecommendationTest | Verify-heavy; low-value permutations |
-| test/…/service/RecommendationLifecycleManagerTest.kt | 473 | 32 | 0 | MOCKED | RecommendationLifecycleManager | STRENGTHEN | P2 | RecommendationCacheServiceTest | FRAGILE unguarded private-field reflection |
+| test/…/service/RecommendationLifecycleManagerTest.kt | 600 | 45 | 0 | MOCKED | RecommendationLifecycleManager | STRENGTHEN | P2 | RecommendationCacheServiceTest | FRAGILE unguarded private-field reflection; CE-rethrow tests added in B2-5 |
 | test/…/service/RecommendationStateManagerTest.kt | 830 | 30 | 0 | MOCKED | RecommendationStateManager | KEEP | P1 | RecommendationDismissalHandlerTest | Deterministic generation-guard overlap tests |
 | test/…/service/TransactionFilterSerializerTest.kt | 236 | 16 | 0 | PURE | TransactionFilterSerializer | KEEP | P1 | DashboardFollowThroughEngineTest, RecommendationRepositoryTest | Round-trip + malformed-input robustness |
 | test/…/service/receiptmatching/ReceiptMatchingWorkerTest.kt | 686 | 24 | 0 | ROBOLECTRIC | ReceiptMatchingWorker | KEEP | P0 | WorkerGuardStaticVerificationTest | Partial guard mirror; superb diagnostics/privacy pins |
@@ -764,7 +764,7 @@ Pri: P0 protects money/lifecycle/privacy/backup/worker invariants · P4 negative
 
 | File | LOC | Tests | @Ign | Style | Class(es) under test | Verdict | Pri | Overlap | Note |
 |---|---|---|---|---|---|---|---|---|---|
-| test/…/ui/MainViewModelStressTest.kt | 79 | 5 | 5 | VIEWMODEL | MainViewModel | NIGHTLY | P3 | — | class @Ignore; 1 tautology test |
+| test/…/ui/MainViewModelStressTest.kt **[DELETED 2026-10-17; revived as MainViewModelEventsTest, B3b-4]** | 79 | 5 | 5 | VIEWMODEL | MainViewModel | NIGHTLY | P3 | — | class @Ignore; 1 tautology test |
 | test/…/ui/components/emptystate/ContextualActionRegistryTest.kt | 137 | 7 | 0 | PURE | ContextualActionRegistry | KEEP | P2 | EmptyStateRegistryCompletenessTest | real state/Flow assertions |
 | test/…/ui/components/emptystate/EmptyStateRegistryCompletenessTest.kt | 70 | 2 | 0 | PURE | DefaultEmptyStateRegistryInitializer | KEEP | P2 | ContextualActionRegistryTest | completeness contract |
 | test/…/ui/navigation/DeepLinkParserTest.kt | 96 | 12 | 0 | ROBOLECTRIC | parseDeepLink/DeepLinkDecision | KEEP | P1 | — | real parser; confirmation gating |
@@ -772,36 +772,36 @@ Pri: P0 protects money/lifecycle/privacy/backup/worker invariants · P4 negative
 | test/…/ui/navigation/FeatureConfigNavigationContractTest.kt | 94 | 7 | 0 | PURE | FeatureConfig | KEEP | P2 | NavigationRouteContractTest | uniqueness + roundtrip |
 | test/…/ui/navigation/NavigationControllerBehaviorTest.kt | 161 | 12 | 0 | PURE | NavigationController | KEEP | P1 | — | back-stack semantics, no Android |
 | test/…/ui/navigation/NavigationRouteContractTest.kt | 420 | 23 | 0 | PURE | NavigationDestination toSaveToken | KEEP | P0 | DestinationPersistencePolicyTest | full roundtrip + legacy format |
-| test/…/ui/screens/addexpense/AddExpenseViewModelStressTest.kt | 146 | 8 | 8 | VIEWMODEL | AddExpenseViewModel | NIGHTLY | P3 | AddExpenseViewModelTest (partial DUP) | class @Ignore; weaker duplicate |
+| test/…/ui/screens/addexpense/AddExpenseViewModelStressTest.kt **[DELETED 2026-10-17; revived into AddExpenseViewModelTest, B3b-3]** | 146 | 8 | 8 | VIEWMODEL | AddExpenseViewModel | NIGHTLY | P3 | AddExpenseViewModelTest (partial DUP) | class @Ignore; weaker duplicate |
 | test/…/ui/screens/addexpense/AddExpenseViewModelTest.kt | 129 | 4 | 0 | VIEWMODEL | AddExpenseViewModel | KEEP | P1 | #9 | debounce-cancel, prefill-once |
 | test/…/ui/screens/aisettings/AiSettingsViewModelTest.kt | 197 | 7 | 0 | VIEWMODEL | AiSettingsViewModel | KEEP | P0 | — | API key stored only after test OK |
 | test/…/ui/screens/analytics/AdvancedAnalyticsViewModelTest.kt | 79 | 2 | 0 | VIEWMODEL | AdvancedAnalyticsViewModel | KEEP | P1 | #14/#15/#16 | currency-change reload |
 | test/…/ui/screens/analytics/AnalyticsStateMoneySafetyTest.kt | 60 | 5 | 0 | PURE | AnalyticsState money fallback | KEEP | P1 | — | null/invalid currency fail-safe |
 | test/…/ui/screens/analytics/AnalyticsViewModelInsightsTest.kt | 632 | 6 | 0 | VIEWMODEL | AnalyticsViewModel, InsightsEngine | KEEP | P1 | #12,#15,#16; TimePeriodAnalyticsAlignmentTest | FRAGILE 18 ctor args |
-| test/…/ui/screens/analytics/AnalyticsViewModelStressTest.kt | 282 | 8 | 8 | VIEWMODEL | AnalyticsViewModel | NIGHTLY | P3 | #12,#14,#16 | class @Ignore; mostly no-crash |
+| test/…/ui/screens/analytics/AnalyticsViewModelStressTest.kt **[DELETED 2026-10-17; revived as AnalyticsViewModelYearOverYearTest, B3b-4]** | 282 | 8 | 8 | VIEWMODEL | AnalyticsViewModel | NIGHTLY | P3 | #12,#14,#16 | class @Ignore; mostly no-crash |
 | test/…/ui/screens/analytics/BudgetVsActualFxBasisTest.kt | 199 | 1 | 0 | VIEWMODEL | AnalyticsViewModel, CurrencyConverter | KEEP | P0 | #14 | FRAGILE 18 args; convertAsOf contract |
 | test/…/ui/screens/assistant/AssistantViewModelTest.kt | 806 | 26 | 0 | VIEWMODEL | AssistantViewModel | KEEP | P0 | — | FRAGILE: reflection into privates |
 | test/…/ui/screens/backup/BackupRestoreViewModelTest.kt | 315 | 12 | 0 | VIEWMODEL | BackupRestoreViewModel | KEEP | P0 | — | preflight, maintenance-mode exit |
 | test/…/ui/screens/bank/BankConnectionsViewModelTest.kt | 69 | 4 | 0 | MOCKED | BankConnectionsViewModel | STRENGTHEN | P3 | — | likely red: no Main dispatcher |
 | test/…/ui/screens/budget/BudgetForecastingViewModelTest.kt | 289 | 6 | 0 | VIEWMODEL | BudgetForecastingViewModel | KEEP | P1 | — | Turbine state machine |
-| test/…/ui/screens/budget/BudgetViewModelStressTest.kt | 303 | 15 | 15 | VIEWMODEL | BudgetViewModel | NIGHTLY | P3 | — | class @Ignore; many no-assert tests |
+| test/…/ui/screens/budget/BudgetViewModelStressTest.kt **[DELETED 2026-10-17, B3-8]** | 303 | 15 | 15 | VIEWMODEL | BudgetViewModel | NIGHTLY | P3 | — | class @Ignore; many no-assert tests |
 | test/…/ui/screens/carbon/CarbonFootprintScreenTest.kt | 40 | 3 | 0 | PURE | resolveCarbonFootprintContentState | KEEP | P2 | CarbonFootprintViewModelTest | content-state resolver |
 | test/…/ui/screens/carbon/CarbonFootprintViewModelTest.kt | 253 | 8 | 0 | VIEWMODEL | CarbonFootprintViewModel | KEEP | P1 | #22 | stale-result-wins race |
 | test/…/ui/screens/cashflow/CashFlowCalendarViewModelTest.kt | 419 | 10 | 0 | VIEWMODEL | CashFlowCalendarViewModel | KEEP | P0 | — | DBG-01 currency race; partial flag |
 | test/…/ui/screens/challenge/SpendingChallengesViewModelTest.kt | 128 | 3 | 0 | VIEWMODEL | SpendingChallengesViewModel | KEEP | P2 | — | canonical-source availability |
 | test/…/ui/screens/currency/CurrencyManagementScreenValidationTest.kt | 44 | 4 | 0 | PURE | isAmountParseableAndPositive etc | KEEP | P2 | — | input validation helpers |
 | test/…/ui/screens/currency/CurrencyManagementViewModelTest.kt | 185 | 4 | 0 | VIEWMODEL | CurrencyManagementViewModel | KEEP | P1 | — | conversion + refresh states |
-| test/…/ui/screens/debug/DebugViewModelStressTest.kt | 254 | 7 | 7 | VIEWMODEL | DebugViewModel | NIGHTLY | P3 | — | class @Ignore; FRAGILE 16 deps |
+| test/…/ui/screens/debug/DebugViewModelStressTest.kt **[DELETED 2026-10-17; revived as DebugViewModelTest, B3b-4]** | 254 | 7 | 7 | VIEWMODEL | DebugViewModel | NIGHTLY | P3 | — | class @Ignore; FRAGILE 16 deps |
 | test/…/ui/screens/export/ExportOptionsViewModelTest.kt | 465 | 15 | 0 | VIEWMODEL | ExportOptionsViewModel | KEEP | P0 | ExportReadBarrierTest (complementary) | real privacy gate; fail-closed enc |
 | test/…/ui/screens/groups/SharedExpenseGroupsScreenStateTest.kt | 26 | 2 | 0 | PURE | isSettledBalance/rounding helpers | KEEP | P2 | — | money rounding semantics |
 | test/…/ui/screens/groups/SharedExpenseGroupsViewModelTest.kt | 463 | 7 | 0 | VIEWMODEL | SharedExpenseGroupsViewModel | KEEP | P1 | — | asserts atomic use case path |
 | test/…/ui/screens/home/DashboardWidgetMetaContractTest.kt | 41 | 2 | 0 | PURE | HomeViewModel.getWidgetId | STRENGTHEN | P3 | #35; metrics/DashboardWidgetConsistencyTest | hardcoded ID list, 4 widgets only |
 | test/…/ui/screens/home/DashboardWidgetRenderCoverageTest.kt | 79 | 3 | 0 | PURE | DashboardWidget sealed subclasses | KEEP | P2 | metrics/DashboardWidgetConsistencyTest | reflection coverage, not SRCTEXT |
 | test/…/ui/screens/home/HomeViewModelRecommendationTest.kt | 501 | 24 | 0 | MOCKED | (none — mocks only) | REWRITE | P3 | #35 | still never instantiates HomeViewModel |
-| test/…/ui/screens/home/HomeViewModelStressTest.kt | 522 | 19 | 19 | VIEWMODEL | HomeViewModel | NIGHTLY | P3 | #32,#34 | class @Ignore; FRAGILE 20 args |
+| test/…/ui/screens/home/HomeViewModelStressTest.kt **[DELETED 2026-10-17; revived as HomeViewModelWidgetsTest, B3b-1]** | 522 | 19 | 19 | VIEWMODEL | HomeViewModel | NIGHTLY | P3 | #32,#34 | class @Ignore; FRAGILE 20 args |
 | test/…/ui/screens/lifestyle/LifestyleInflationScreenTest.kt | 107 | 6 | 0 | PURE | trend weights/content state | KEEP | P2 | #37 | bar-weight math incl. clamping |
 | test/…/ui/screens/lifestyle/LifestyleInflationViewModelTest.kt | 231 | 7 | 0 | VIEWMODEL | LifestyleInflationViewModel | KEEP | P2 | #36 | stale-result-wins race |
-| test/…/ui/screens/map/SpendingMapViewModelStressTest.kt | 471 | 10 | 3 | VIEWMODEL | SpendingMapViewModel | MERGE | P2 | — | intra-file DUP; unbounded awaitUntil |
+| test/…/ui/screens/map/SpendingMapViewModelStressTest.kt **[DELETED 2026-10-17; renamed/revived as SpendingMapViewModelHeatmapTest, B3b-4]** | 471 | 10 | 3 | VIEWMODEL | SpendingMapViewModel | MERGE | P2 | — | intra-file DUP; unbounded awaitUntil |
 
 ## Batch 28 — ui/util/worker tail (2/2)
 
@@ -809,17 +809,17 @@ Pri: P0 protects money/lifecycle/privacy/backup/worker invariants · P4 negative
 |---|---|---|---|---|---|---|---|---|---|
 | test/…/ui/screens/price/PriceProtectionViewModelTest.kt | 251 | 9 | 0 | VIEWMODEL | PriceProtectionViewModel (S34) | STRENGTHEN | P3 | arch-guards only | 2 verify-only tests; "sorted" test never asserts order |
 | test/…/ui/screens/receiptmatching/ReceiptMatchingViewModelTest.kt | 218 | 4 | 0 | VIEWMODEL | ReceiptMatchingViewModel (S38) | KEEP | P1 | arch-guards only | Real state transitions + repo link/reject verify |
-| test/…/ui/screens/receiptscan/ReceiptScanViewModelStressTest.kt | 853 | 19 | 1 (class) | ROBOLECTRIC | ReceiptScanViewModel (S4) | NIGHTLY | P1 | arch-guards only | FRAGILE; reflection into `_state`; only VM coverage; not actually stress |
+| test/…/ui/screens/receiptscan/ReceiptScanViewModelStressTest.kt **[2026-10-17: class-level @Ignore removed; ACTIVE]** | 853 | 19 | 1 (class) | ROBOLECTRIC | ReceiptScanViewModel (S4) | NIGHTLY | P1 | arch-guards only | FRAGILE; reflection into `_state`; only VM coverage; not actually stress |
 | test/…/ui/screens/recurringmanual/ManualRecurringExpenseViewModelTest.kt | 234 | 4 | 0 | VIEWMODEL | ManualRecurringExpenseViewModel (S7) | KEEP | P2 | arch-guards only | Sort/activeCount/totalMonthly asserted |
 | test/…/ui/screens/reminder/BillRemindersViewModelTest.kt | 130 | 4 | 0 | VIEWMODEL | BillRemindersViewModel (S36) | KEEP | P2 | arch-guards only | Load/refresh/error-empty covered |
 | test/…/ui/screens/review/ReviewScreenTransactionTypeParserTest.kt | 25 | 3 | 0 | PURE | parseTransactionTypeOrNull (S3) | KEEP | P3 | #7 complementary | Tests real `internal` helper in ReviewScreen.kt:1335 |
 | test/…/ui/screens/review/ReviewScreenTransferDirectionParserTest.kt | 25 | 3 | 0 | PURE | parseTransferDirectionOrNull (S3) | KEEP | P3 | #6 complementary | ReviewScreen.kt:1329 |
-| test/…/ui/screens/review/ReviewViewModelStressTest.kt | 1353 | 37 | 1 (class) | MOCKED | ReviewViewModel (S3) | NIGHTLY | P1 | arch-guards only | FRAGILE; reflection into `_reviewCaptureAssistStates`; ~5 assertNotNull-only tests |
+| test/…/ui/screens/review/ReviewViewModelStressTest.kt **[DELETED 2026-10-17; revived as ReviewViewModelAiAssistTest, B3b-2]** | 1353 | 37 | 1 (class) | MOCKED | ReviewViewModel (S3) | NIGHTLY | P1 | arch-guards only | FRAGILE; reflection into `_reviewCaptureAssistStates`; ~5 assertNotNull-only tests |
 | test/…/ui/screens/savings/SavingsGoalsViewModelTest.kt | 303 | 7 | 0 | VIEWMODEL | SavingsGoalsViewModel (S35) | KEEP | P1 | none | Stateful fake repo; atomic-add stacking; legacy per-goal API retired (exactly=0) |
 | test/…/ui/screens/split/VisualSplitEditorScreenStateTest.kt | 112 | 11 | 0 | PURE | SplitTextFieldState (S21) | KEEP | P1 | none | Hidden gem: NaN/Infinity/locale comma/trailing-dot |
 | test/…/ui/screens/split/VisualSplitViewModelTest.kt | 227 | 5 | 0 | VIEWMODEL | VisualSplitViewModel + buildCompletedSplitShares (S21) | STRENGTHEN | P2 | #10 complementary | Tests 1–4 assert mock pass-through; test 5 (dup names by index) real |
 | test/…/ui/screens/subscription/SubscriptionManagementViewModelTest.kt | 184 | 4 | 0 | VIEWMODEL | SubscriptionManagementViewModel (S34) | KEEP | P2 | arch-guards only | Real monthly/annual cost math (20/240) |
-| test/…/ui/screens/transactions/TransactionsViewModelStressTest.kt | 343 | 16 | 1 (class) | MOCKED | TransactionsViewModel (S9) | NIGHTLY | P2 | arch-guards only | @Ignore; pagination stop + filter param threading good; 2 no-crash-only tests |
+| test/…/ui/screens/transactions/TransactionsViewModelStressTest.kt **[DELETED 2026-10-17; revived as TransactionsViewModelPagingTest, B3b-3]** | 343 | 16 | 1 (class) | MOCKED | TransactionsViewModel (S9) | NIGHTLY | P2 | arch-guards only | @Ignore; pagination stop + filter param threading good; 2 no-crash-only tests |
 | test/…/ui/screens/warranty/WarrantyTrackerViewModelTest.kt | 275 | 6 | 0 | VIEWMODEL | WarrantyTrackerViewModel (S34) | STRENGTHEN | P2 | arch-guards only | KDoc self-lists gaps: sort, receipt link, status transitions |
 | test/…/ui/util/ClipboardAmountParserTest.kt | 47 | 3 | 0 | MOCKED | ClipboardAmountParser (S32) | KEEP | P3 | none | Grouped-amount regex behavior; real ClipData on JVM (minor hazard) |
 | test/…/util/CsvExpenseImporterTest.kt | 187 | 12 | 0 | MOCKED | CsvExpenseImporter (S9) | KEEP | P1 | #17 complementary | Goes through legal TransactionLifecycleCoordinator path; 1 trivial instantiation test |
@@ -829,3 +829,37 @@ Pri: P0 protects money/lifecycle/privacy/backup/worker invariants · P4 negative
 | test/…/util/ViewModelTestUtils.kt | 48 | 0 | 0 | FIXTURE | (Main-dispatcher base) | KEEP | P1 | 35 subclassers | Core ViewModel-test foundation |
 | test/…/worker/NotificationIntakeWorkerTimeoutTest.kt | 941 | 15 | 0 | MOCKED | NotificationIntakeWorker + real WorkerExecutionGuard (S3/12) | KEEP | P0 | arch-guards only | Real guard; privacy fail-closed + no raw-payload-load proven; 3 dup type-check tests; dead `intakeEntity` helper (line 738) |
 | test/…/workers/WorkerContractTest.kt | 89 | 5 | 0 | ROBOLECTRIC | WorkerSpec.DEFAULTS + WorkerRegistry (S12) | STRENGTHEN | P1 | none | Registry-parity test valuable; `enabled \ |
+
+## Addendum — classes added by the test-suite-audit programme (2026-10-17)
+
+Rows added after the original batch review; same columns. LOC is not
+recorded for these (see the file itself); Tests = count of `@Test` in the
+file at 2026-10-17; @Ign = 0 for every row unless stated. Verdict/Pri are
+the post-programme intent (KEEP), not a batch-review verdict.
+
+| File | LOC | Tests | @Ign | Style | Class(es) under test | Verdict | Pri | Overlap | Note |
+|---|---|---|---|---|---|---|---|---|---|
+| test/…/data/database/GroupTransactionCoordinatorRollbackTest.kt | — | 22 | 0 | ROOM | GroupTransactionCoordinator | KEEP | P0 | GroupTransactionCoordinatorTest | NEW: real in-memory Room rollback atomicity; replaces deleted simulated TransactionRollbackTest |
+| test/…/domain/diagnostics/SafeSinkOperationRunHandleTest.kt | — | 15 | 0 | PURE | SafeSink operation run handle | KEEP | P0 | — | NEW: diagnostics run-handle contract |
+| test/…/service/NotificationCaptureServiceBlockedDecisionTest.kt | — | 14 | 0 | ROBOLECTRIC | NotificationCaptureService (blocked decision) | KEEP | P0 | NotificationCaptureService{Cleanup,Fallback}Test | NEW: privacy-blocked capture decision |
+| test/…/domain/notification/capture/NotificationCaptureGatePrivacyContractTest.kt | — | 8 | 0 | PURE | Notification capture gate | KEEP | P0 | — | NEW: privacy fail-closed contract for the capture gate |
+| test/…/architecture/ScannerFailClosedSelfTest.kt | — | 26 | 0 | PURE | architecture guard scanner | KEEP | P0 | — | NEW: guard scanner must fail closed (self-test) |
+| test/…/data/backup/RestoreMaintenanceModeOperationalStateTest.kt | — | 6 | 0 | ROBOLECTRIC | restore maintenance mode operational state | KEEP | P0 | — | NEW: restore maintenance-mode state |
+| test/…/domain/core/money/StaleRatePolicyTest.kt | — | 4 | 0 | PURE | StaleRatePolicy | KEEP | P0 | CurrencyRateStalenessTest | NEW: stale-rate policy |
+| test/…/domain/currency/CurrencyRateStalenessTest.kt | — | 3 | 0 | PURE | currency rate staleness | KEEP | P0 | StaleRatePolicyTest | NEW: stale-rate vs unavailable |
+| test/…/data/database/dao/ExpenseDaoDateRangeTest.kt | — | 4 | 0 | ROOM | ExpenseDao date-range queries | KEEP | P1 | — | NEW: real Room date-range boundaries |
+| test/…/domain/notification/capture/NotificationIntakeEnqueueFailureRoomTest.kt | — | 6 | 0 | ROBOLECTRIC | notification intake enqueue failure | KEEP | P1 | NotificationIntakeEnqueueFailureTest (still @Ignore, release-owned) | NEW: live coverage of the ignored class' unique case |
+| test/…/ui/screens/home/HomeViewModelWidgetsTest.kt | — | 16 | 0 | VIEWMODEL | HomeViewModel widgets | KEEP | P2 | — | B3b-1; replaces HomeViewModelStressTest |
+| test/…/ui/screens/home/HomeViewModelCurrencyReloadTest.kt | — | 1 | 0 | VIEWMODEL | HomeViewModel currency reload | KEEP | P1 | — | Revived in place (previously ignored) |
+| test/…/ui/screens/review/ReviewViewModelAiAssistTest.kt | — | 22 | 0 | VIEWMODEL | ReviewViewModel AI assist | KEEP | P2 | — | B3b-2; replaces ReviewViewModelStressTest; cloud stays DISABLED |
+| test/…/ui/screens/transactions/TransactionsViewModelPagingTest.kt | — | 6 | 0 | VIEWMODEL | TransactionsViewModel paging | KEEP | P2 | — | B3b-3; replaces TransactionsViewModelStressTest |
+| test/…/ui/screens/addexpense/AddExpenseViewModelTest.kt | — | 19 | 0 | VIEWMODEL | AddExpenseViewModel | KEEP | P2 | — | B3b-3; validation tests merged in from AddExpenseViewModelStressTest (file pre-existed) |
+| test/…/ui/screens/analytics/AnalyticsViewModelYearOverYearTest.kt | — | 3 | 0 | VIEWMODEL | AnalyticsViewModel year-over-year | KEEP | P2 | — | B3b-4; replaces AnalyticsViewModelStressTest |
+| test/…/ui/MainViewModelEventsTest.kt | — | 5 | 0 | VIEWMODEL | MainViewModel events | KEEP | P3 | — | B3b-4; replaces MainViewModelStressTest |
+| test/…/ui/screens/debug/DebugViewModelTest.kt | — | 5 | 0 | VIEWMODEL | DebugViewModel | KEEP | P3 | — | B3b-4; replaces DebugViewModelStressTest |
+| test/…/ui/screens/map/SpendingMapViewModelHeatmapTest.kt | — | 5 | 0 | VIEWMODEL | SpendingMapViewModel heatmap | KEEP | P2 | — | B3b-4; renamed from SpendingMapViewModelStressTest |
+| test/…/data/location/CompositeGeocodingServiceTest.kt | — | 9 | 0 | MOCKED | CompositeGeocodingService | KEEP | P1 | — | B3b-5; routing/dedupe/cancel merged from CompositeGeocodingServiceStressTest (file pre-existed) |
+| test/…/data/repository/ReceiptRepositoryOcrFallbackTest.kt | — | 16 | 0 | ROBOLECTRIC | ReceiptRepository OCR fallback | KEEP | P1 | ReceiptLifecycleCoordinatorTest | Replaces ReceiptRepositoryStressTest; 3 further coordinator tests added elsewhere |
+
+Test counts for the pre-existing files AddExpenseViewModelTest and
+CompositeGeocodingServiceTest are file totals (not only the merged tests).

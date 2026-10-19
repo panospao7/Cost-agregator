@@ -6,6 +6,7 @@ import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.privacy.*
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import io.mockk.*
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import okhttp3.Call
@@ -21,21 +22,28 @@ import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.Parameterized
+import timber.log.Timber
 import java.util.Base64
+import kotlin.test.assertFailsWith
 
 /** Actual provider invocations; policy-unit tests and file existence are not this evidence. */
 @RunWith(Parameterized::class)
 class CloudProviderTransportPayloadTest(private val entry: Entry) {
-    enum class Entry(val purpose: CloudPayloadPurpose) {
-        CATEGORIZATION(CloudPayloadPurpose.ITEM_CATEGORIZATION),
-        DASHBOARD(CloudPayloadPurpose.DASHBOARD_BRIEFING),
-        DEDUPE(CloudPayloadPurpose.DEDUPE_JUDGE),
-        QUERY(CloudPayloadPurpose.QUERY_INTERPRETATION),
-        RECEIPT(CloudPayloadPurpose.RECEIPT_ASSIST),
-        RECEIPT_ITEMS(CloudPayloadPurpose.ITEM_CATEGORIZATION),
-        REVIEW(CloudPayloadPurpose.REVIEW_EXPLANATION),
-        WARRANTY(CloudPayloadPurpose.WARRANTY_EXTRACTION),
-        BANK_STATEMENT(CloudPayloadPurpose.BANK_STATEMENT_VALIDATION)
+    /**
+     * [expectedAuditCapability] is the capability the provider must pass to the privacy audit logger on
+     * the success path (hard-coded contract; RECEIPT runs in image-analysis mode, so it audits the
+     * image-upload capability). The decision recorded on the success path is always Allowed.
+     */
+    enum class Entry(val purpose: CloudPayloadPurpose, val expectedAuditCapability: PrivacyCapability) {
+        CATEGORIZATION(CloudPayloadPurpose.ITEM_CATEGORIZATION, PrivacyCapability.CLOUD_AI_GENERAL),
+        DASHBOARD(CloudPayloadPurpose.DASHBOARD_BRIEFING, PrivacyCapability.CLOUD_AI_DAILY_BRIEFING),
+        DEDUPE(CloudPayloadPurpose.DEDUPE_JUDGE, PrivacyCapability.CLOUD_AI_GENERAL),
+        QUERY(CloudPayloadPurpose.QUERY_INTERPRETATION, PrivacyCapability.CLOUD_AI_GENERAL),
+        RECEIPT(CloudPayloadPurpose.RECEIPT_ASSIST, PrivacyCapability.RECEIPT_IMAGE_CLOUD_UPLOAD),
+        RECEIPT_ITEMS(CloudPayloadPurpose.ITEM_CATEGORIZATION, PrivacyCapability.CLOUD_AI_ITEM_CATEGORIZATION),
+        REVIEW(CloudPayloadPurpose.REVIEW_EXPLANATION, PrivacyCapability.CLOUD_AI_GENERAL),
+        WARRANTY(CloudPayloadPurpose.WARRANTY_EXTRACTION, PrivacyCapability.CLOUD_AI_WARRANTY_EXTRACTION),
+        BANK_STATEMENT(CloudPayloadPurpose.BANK_STATEMENT_VALIDATION, PrivacyCapability.CLOUD_AI_BANK_STATEMENT)
     }
 
     companion object {
@@ -113,8 +121,8 @@ class CloudProviderTransportPayloadTest(private val entry: Entry) {
             }
         }
 
-        suspend fun invoke() {
-            when (entry) {
+        suspend fun invoke(): Any? {
+            return when (entry) {
                 Entry.CATEGORIZATION -> CloudCategorizationAssistService(
                     keys, client, settings, gate, policy, audit
                 ).suggest(CategorizationAssistInput(
@@ -221,6 +229,10 @@ class CloudProviderTransportPayloadTest(private val entry: Entry) {
             assertEquals(prepared.rawTextIncluded, context.rawTextIncluded)
             assertEquals(prepared.rawImageIncluded, context.rawImageIncluded)
             assertFalse(context.toMap().values.any { it.contains(RAW) })
+            // Pins audit capability + decision per provider (previously pinned for QUERY only).
+            coVerify(exactly = 1) {
+                audit.logCloudCall(entry.expectedAuditCapability, PrivacyDecision.Allowed, any())
+            }
             verify(exactly = 1) { client.newCall(any()) }
         }
     }
@@ -243,7 +255,10 @@ class CloudProviderTransportPayloadTest(private val entry: Entry) {
     fun deniedGateNeverPreparesAuditsOrSends() = runTest {
         val harness = Harness()
         coEvery { harness.gate.check(any(), any()) } returns PrivacyDecision.Denied("test_denied")
-        harness.invoke()
+        val result = harness.invoke()
+        if (entry == Entry.QUERY) {
+            assertEquals("PROVIDER_DISABLED", (result as FinancialQueryInterpretationResult.Unsupported).reason)
+        }
         harness.assertNoPreparationOrTransport()
     }
 
@@ -251,7 +266,10 @@ class CloudProviderTransportPayloadTest(private val entry: Entry) {
     fun failClosedGateNeverPreparesAuditsOrSends() = runTest {
         val harness = Harness()
         coEvery { harness.gate.check(any(), any()) } returns PrivacyDecision.FailClosed("test_failure")
-        harness.invoke()
+        val result = harness.invoke()
+        if (entry == Entry.QUERY) {
+            assertEquals("PROVIDER_DISABLED", (result as FinancialQueryInterpretationResult.Unsupported).reason)
+        }
         harness.assertNoPreparationOrTransport()
     }
 
@@ -259,7 +277,109 @@ class CloudProviderTransportPayloadTest(private val entry: Entry) {
     fun missingKeyNeverPreparesAuditsOrSends() = runTest {
         val harness = Harness()
         every { harness.keys.getKey(SecureKeyStorage.KEY_GEMINI) } returns null
-        harness.invoke()
+        val result = harness.invoke()
+        if (entry == Entry.QUERY) {
+            assertTrue(result is FinancialQueryInterpretationResult.Unsupported)
+        }
         harness.assertNoPreparationOrTransport()
+    }
+
+    /** Makes every policy preparation entry point (text, receipt assist, bank statement) throw [failure]. */
+    private fun Harness.failPolicyWith(failure: Throwable) {
+        coEvery { policy.prepareText(any(), any(), any()) } throws failure
+        coEvery { policy.prepareReceiptAssist(any(), any(), any(), any(), any()) } throws failure
+        coEvery { policy.prepareBankStatementValidation(any(), any()) } throws failure
+    }
+
+    private fun Harness.assertNoAuditOrTransport() {
+        assertTrue(auditContexts.isEmpty())
+        assertTrue(requests.isEmpty())
+        coVerify(exactly = 0) { audit.logCloudCall(any(), any(), any()) }
+        verify(exactly = 0) { client.newCall(any()) }
+    }
+
+    @Test
+    fun policyFailureFailsClosedWithBoundedDiagnostics() = runTest {
+        val pathMarker = "/private/receipt"
+        val financialMarker = "financial_data"
+        val emailMarker = "person@example.test"
+        val sensitiveMessage = "$pathMarker $financialMarker $emailMarker"
+        val harness = Harness()
+        harness.failPolicyWith(IllegalStateException(sensitiveMessage))
+        val logs = mutableListOf<Pair<Throwable?, String>>()
+        val tree = object : Timber.Tree() {
+            override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+                logs += t to message
+            }
+        }
+        Timber.plant(tree)
+        try {
+            val outcome = runCatching { harness.invoke() }
+            if (entry == Entry.QUERY) {
+                val result = outcome.getOrThrow()
+                assertEquals("UNKNOWN_ERROR", (result as FinancialQueryInterpretationResult.Unsupported).reason)
+                assertTrue(logs.any { it.second.contains("stage=payload_policy") })
+            }
+            assertTrue("$entry: no log may carry a throwable", logs.all { it.first == null })
+            assertTrue("$entry: no log may carry the policy failure text",
+                logs.none { it.second.contains(sensitiveMessage) })
+            assertTrue("$entry: no log may carry the '$pathMarker' path marker",
+                logs.none { it.second.contains(pathMarker) })
+            assertTrue("$entry: no log may carry the '$financialMarker' financial marker",
+                logs.none { it.second.contains(financialMarker) })
+            assertTrue("$entry: no log may carry the email marker",
+                logs.none { it.second.contains(emailMarker) })
+        } finally {
+            Timber.uproot(tree)
+        }
+        // The failure must originate in the policy stage: the matching policy entry point was reached
+        // (with the entry's own purpose where it is text-based) before anything was audited or sent.
+        when (entry) {
+            Entry.RECEIPT -> coVerify(atLeast = 1) {
+                harness.policy.prepareReceiptAssist(any(), any(), any(), any(), any())
+            }
+            Entry.BANK_STATEMENT -> coVerify(atLeast = 1) {
+                harness.policy.prepareBankStatementValidation(any(), any())
+            }
+            else -> coVerify(atLeast = 1) {
+                harness.policy.prepareText(entry.purpose, any(), any())
+            }
+        }
+        harness.assertNoAuditOrTransport()
+    }
+
+    @Test
+    fun policyCancellationPropagatesWithoutAuditOrHttp() = runTest {
+        val cancellation = CancellationException("test cancellation")
+        val harness = Harness()
+        harness.failPolicyWith(cancellation)
+        assertSameOrRecovered(cancellation, assertFailsWith<CancellationException> { harness.invoke() }, "$entry: policy cancellation")
+        harness.assertNoAuditOrTransport()
+    }
+
+    @Test
+    fun gateCancellationPropagatesBeforePayloadPreparation() = runTest {
+        val cancellation = CancellationException("test cancellation")
+        val harness = Harness()
+        coEvery { harness.gate.check(any(), any()) } throws cancellation
+        assertSameOrRecovered(cancellation, assertFailsWith<CancellationException> { harness.invoke() }, "$entry: gate cancellation")
+        harness.assertNoPreparationOrTransport()
+    }
+
+    @Test
+    fun failedOrCancelledProvenancePreventsHttpDispatch() = runTest {
+        for (failure in listOf(IllegalStateException("test audit failure"), CancellationException("test cancellation"))) {
+            val harness = Harness()
+            coEvery { harness.audit.logCloudCall(any(), any(), any()) } throws failure
+            assertSameOrRecovered(failure, assertFailsWith<Exception> { harness.invoke() }, "$entry: ${failure::class.java.simpleName}")
+            assertTrue(harness.requests.isEmpty())
+            verify(exactly = 0) { harness.client.newCall(any()) }
+        }
+    }
+
+    private fun assertSameOrRecovered(expected: Throwable, actual: Throwable, label: String = "") {
+        assertTrue("$label: not original or recovered copy", actual === expected || actual.cause === expected)
+        assertEquals(label, expected::class.java, actual::class.java)
+        assertEquals(label, expected.message, actual.message)
     }
 }

@@ -29,7 +29,6 @@ import org.junit.Before
 import org.junit.Test
 import java.time.LocalDateTime
 import java.time.ZoneId
-import java.util.Calendar
 
 /**
  * Boundary tests for [HistoricalSpendingDistribution] verifying correct behaviour
@@ -380,135 +379,10 @@ class HistoricalSpendingDistributionBoundaryTest {
         assertEquals(123456L, unavailable.latestRateTimestamp)
     }
 
-    @Test
-    fun `week bucket key is the Monday of that week not locale-dependent`() {
-        // Verify that expenses on different days of the same week share the same week key
-        val monday = toEpochMs(2026, 4, 13, 10, 0)     // Monday
-        val wednesday = toEpochMs(2026, 4, 15, 14, 0)   // Wednesday
-        val sunday = toEpochMs(2026, 4, 19, 22, 0)      // Sunday
-
-        val mondayKey = TimePeriodUtils.getStartOfWeek(monday)
-        val wednesdayKey = TimePeriodUtils.getStartOfWeek(wednesday)
-        val sundayKey = TimePeriodUtils.getStartOfWeek(sunday)
-
-        assertEquals("Mon and Wed should share week key", mondayKey, wednesdayKey)
-        assertEquals("Mon and Sun should share week key", mondayKey, sundayKey)
-
-        // The key itself should be Monday 00:00:00.000
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = mondayKey
-        assertEquals("Week key should be Monday", Calendar.MONDAY, cal.get(Calendar.DAY_OF_WEEK))
-        assertEquals("Week key hour should be 0", 0, cal.get(Calendar.HOUR_OF_DAY))
-        assertEquals("Week key minute should be 0", 0, cal.get(Calendar.MINUTE))
-        assertEquals("Week key second should be 0", 0, cal.get(Calendar.SECOND))
-        assertEquals("Week key ms should be 0", 0, cal.get(Calendar.MILLISECOND))
-    }
-
-    @Test
-    fun `next Monday belongs to a different week bucket`() {
-        val sunday = toEpochMs(2026, 4, 19, 23, 59)     // Sunday 23:59
-        val nextMonday = toEpochMs(2026, 4, 20, 0, 0)   // Next Monday 00:00
-
-        val sundayKey = TimePeriodUtils.getStartOfWeek(sunday)
-        val nextMondayKey = TimePeriodUtils.getStartOfWeek(nextMonday)
-
-        assertTrue("Sunday and next Monday should be in different weeks",
-            sundayKey != nextMondayKey)
-
-        // Next Monday's key should be exactly 7 days after Sunday's key
-        val daysBetween = TimePeriodUtils.daysBetween(sundayKey, nextMondayKey)
-        assertEquals("Week keys should be 7 days apart", 7, daysBetween)
-    }
-
-    // ========================================================================
-    // Distinct-day counting — uses getStartOfDay (DST-safe)
-    // ========================================================================
-
-    @Test
-    fun `distinct day counting via getStartOfDay groups same-day expenses`() {
-        val morning = toEpochMs(2026, 4, 15, 8, 30)
-        val noon = toEpochMs(2026, 4, 15, 12, 0)
-        val evening = toEpochMs(2026, 4, 15, 21, 45)
-        val nextDay = toEpochMs(2026, 4, 16, 6, 0)
-
-        val morningKey = TimePeriodUtils.getStartOfDay(morning)
-        val noonKey = TimePeriodUtils.getStartOfDay(noon)
-        val eveningKey = TimePeriodUtils.getStartOfDay(evening)
-        val nextDayKey = TimePeriodUtils.getStartOfDay(nextDay)
-
-        assertEquals("Morning and noon same day key", morningKey, noonKey)
-        assertEquals("Morning and evening same day key", morningKey, eveningKey)
-        assertTrue("Next day has different key", morningKey != nextDayKey)
-
-        // Simulate distinct-day counting as done in groupIntoWeeks
-        val expenses = listOf(
-            expense(1L, morning, 10.0),
-            expense(2L, noon, 20.0),
-            expense(3L, evening, 30.0),
-            expense(4L, nextDay, 40.0)
-        )
-
-        val distinctDays = expenses
-            .map { TimePeriodUtils.getStartOfDay(it.date) }
-            .toSet()
-            .size
-
-        assertEquals("Should count 2 distinct days", 2, distinctDays)
-    }
-
-    // ========================================================================
-    // Week enumeration — calendar-aware via addDays(7)
-    // ========================================================================
-
-    @Test
-    fun `week enumeration with addDays 7 produces exactly correct number of weeks`() {
-        val rangeStart = TimePeriodUtils.getStartOfWeek(toEpochMs(2026, 1, 5)) // Mon Jan 5
-        val rangeEnd = TimePeriodUtils.getStartOfWeek(toEpochMs(2026, 4, 13))   // Mon Apr 13
-
-        var cursor = rangeStart
-        val weekStarts = mutableListOf<Long>()
-        while (cursor < rangeEnd) {
-            weekStarts.add(cursor)
-            cursor = TimePeriodUtils.addDays(cursor, 7)
-        }
-
-        // Count expected weeks between Jan 5 and Apr 13
-        val expectedWeeks = TimePeriodUtils.daysBetween(rangeStart, rangeEnd) / 7
-        assertEquals("Week count matches day-based calculation", expectedWeeks, weekStarts.size)
-
-        // Every week start should be a Monday at midnight
-        val cal = Calendar.getInstance()
-        for (weekStart in weekStarts) {
-            cal.timeInMillis = weekStart
-            assertEquals("Each week start must be Monday",
-                Calendar.MONDAY, cal.get(Calendar.DAY_OF_WEEK))
-            assertEquals("Each week start must be at midnight",
-                0, cal.get(Calendar.HOUR_OF_DAY))
-        }
-    }
-
-    // ========================================================================
-    // Lookback window — uses addMonths, not fixed days
-    // ========================================================================
-
-    @Test
-    fun `lookback window uses calendar month subtraction not fixed 540 days`() {
-        val now = toEpochMs(2026, 4, 15, 12, 0)
-        val lookbackRaw = TimePeriodUtils.addMonths(now, -18)
-        val lookbackStart = TimePeriodUtils.getStartOfWeek(lookbackRaw)
-
-        // 18 months before April 15 2026 12:00 = October 15 2024 12:00
-        val expectedRaw = toEpochMs(2024, 10, 15, 12, 0)
-
-        assertEquals("addMonths(-18) should land on Oct 15 2024", expectedRaw, lookbackRaw)
-
-        // The lookback start should be the Monday of the week containing Oct 15 2024
-        // Oct 15 2024 is a Tuesday, so Monday is Oct 14
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = lookbackStart
-        assertEquals("Lookback start should be Monday",
-            Calendar.MONDAY, cal.get(Calendar.DAY_OF_WEEK))
-    }
+    // Pure TimePeriodUtils boundary cases (week key Monday, Sunday/next-Monday bucket, distinct-day
+    // grouping, addDays(7) enumeration, addMonths(-18) lookback) were removed from this class: they
+    // exercise no HistoricalSpendingDistribution code and are covered by TimePeriodUtilsTest and
+    // TimePeriodUtilsT4CBatch*Test.
 
     // ========================================================================
     // Integration: distribution computation with boundary-edge data

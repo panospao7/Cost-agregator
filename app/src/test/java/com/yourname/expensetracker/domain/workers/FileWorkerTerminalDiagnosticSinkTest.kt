@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.workers
 
 import android.content.Context
+import android.util.Log
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.async
@@ -14,8 +15,12 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import timber.log.Timber
 import java.io.File
+import java.io.IOException
 import java.nio.file.Files
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * PR12J-2: Tests for [FileWorkerTerminalDiagnosticSink] with bounded suspend path.
@@ -101,13 +106,74 @@ class FileWorkerTerminalDiagnosticSinkTest {
      */
     private class DelayedDiagnosticSink(
         context: Context,
-        private val delayMs: Long = 2000L
+        private val delayMs: Long = 2000L,
+        /** Only the first [slowCalls] appends are slow; later ones go straight to the real append. */
+        private val slowCalls: Int = Int.MAX_VALUE
     ) : FileWorkerTerminalDiagnosticSink(context) {
+        private val calls = AtomicInteger(0)
+
         override suspend fun appendLineSafely(line: String) {
-            delay(delayMs) // cancellable: allows withTimeout to fire
+            if (calls.incrementAndGet() <= slowCalls) {
+                delay(delayMs) // cancellable: allows withTimeout to fire
+            }
             super.appendLineSafely(line)
         }
     }
+
+    /**
+     * Injected append failure through the `internal open suspend fun appendLineSafely` seam.
+     * The first [failures] appends throw [failure]; later appends use the real file append.
+     */
+    private class FailingAppendSink(
+        context: Context,
+        private val failure: Throwable,
+        private val failures: Int = Int.MAX_VALUE
+    ) : FileWorkerTerminalDiagnosticSink(context) {
+        val attempts = AtomicInteger(0)
+
+        override suspend fun appendLineSafely(line: String) {
+            if (attempts.incrementAndGet() <= failures) throw failure
+            super.appendLineSafely(line)
+        }
+    }
+
+    /** Captures Timber output so the sink's fallback logging can be asserted. */
+    private class CapturingTree : Timber.Tree() {
+        data class Entry(val priority: Int, val message: String, val throwable: Throwable?)
+
+        val entries = CopyOnWriteArrayList<Entry>()
+
+        override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+            entries.add(Entry(priority, message, t))
+        }
+
+        /**
+         * ERROR entries emitted by the sink itself, identified ONLY by the sink's own message
+         * prefixes, so a stray Timber.e from other code cannot inflate a count. The Throwable
+         * handed to Timber and the remainder of the message text are deliberately NOT inspected:
+         * a future privacy hardening may log bounded codes without the throwable.
+         */
+        fun sinkErrors(): List<Entry> = entries.filter { entry ->
+            entry.priority == Log.ERROR && SINK_MESSAGE_PREFIXES.any { entry.message.startsWith(it) }
+        }
+    }
+
+    private inline fun <T> withCapturedTimber(block: (CapturingTree) -> T): T {
+        val tree = CapturingTree()
+        Timber.plant(tree)
+        try {
+            return block(tree)
+        } finally {
+            Timber.uproot(tree)
+        }
+    }
+
+    /** Every regular file below [tempDir], as text (used to prove nothing raw was persisted). */
+    private fun allPersistedText(): String =
+        tempDir.walkTopDown().filter { it.isFile }.joinToString("\n") { it.readText() }
+
+    /** True when no regular file exists anywhere below [tempDir] (directories are allowed). */
+    private fun noRegularFileUnderTempDir(): Boolean = tempDir.walkTopDown().none { it.isFile }
 
     // ------------------------------------------------------------------
     // Existing tests (adapted for suspend)
@@ -277,29 +343,137 @@ class FileWorkerTerminalDiagnosticSinkTest {
         assertEquals(written.toLong() - 1, latestJson.getLong("runId"))
     }
 
+    /**
+     * Injected IOException through the appendLineSafely seam (the previous read-only-directory
+     * variant was a silent no-op on Windows and when running as root). The override REPLACES the
+     * base appendLineSafely, so the base class's inner `catch (IOException)` is bypassed: this
+     * test exercises the OUTER catch in recordWorkerTerminalWriteFailure and is equivalent to
+     * the non-IO variant below. The inner IOException branch is exercised by the directory-target
+     * test. Outcome contract: record() returns normally, exactly one sink ERROR is logged
+     * (the Throwable handed to Timber is deliberately not pinned), nothing is persisted, and
+     * the sink stays usable afterwards (the mutex is released, the next event is written).
+     */
     @Test
     fun `diagnostic_append_failure_does_not_crash_worker`() = runTest {
-        // Create a sink with a context whose filesDir is a READ-ONLY directory.
-        // The sink must NOT throw — it must catch the IOException and fall back
-        // to Timber (which we can't easily assert, but we CAN assert no throw).
-        val readOnlyDir = Files.createTempDirectory("diag_readonly_").toFile()
-        try {
-            readOnlyDir.setReadOnly()
+        val failure = IOException("$LEAK_SENTINEL synthetic append failure at /data/user/0/secret/private.txt")
+        val sink = FailingAppendSink(context, failure, failures = 1)
 
-            val readOnlyContext = mockk<Context> {
-                every { filesDir } returns readOnlyDir
-            }
-            val sink = FileWorkerTerminalDiagnosticSink(readOnlyContext)
+        withCapturedTimber { tree ->
+            record(sink, TestEvent(workerName = "FailingAppendWorker", runId = 1L)) // must NOT throw
 
-            // This must NOT throw:
-            record(sink, TestEvent(workerName = "ReadOnlyTestWorker"))
+            assertEquals("append attempted exactly once", 1, sink.attempts.get())
+            assertTrue("nothing persisted for the failed append", readAll().isEmpty())
+            // No file at all (a text scan of nothing would be vacuous here).
+            assertTrue("no file may exist after the failed append", noRegularFileUnderTempDir())
+            assertEquals("failure logged exactly once by the sink", 1, tree.sinkErrors().size)
 
-            // If we got here without an exception, the test passes.
-            // The sink should have failed gracefully (Timber.e fallback).
-        } finally {
-            // Clean up: make writable again so tearDown can delete it
-            readOnlyDir.setWritable(true)
-            readOnlyDir.deleteRecursively()
+            // Not wedged: the next event is persisted by the same instance.
+            record(sink, TestEvent(workerName = "FailingAppendWorker", runId = 2L))
+            val events = readAll()
+            assertEquals(1, events.size)
+            assertEquals(2L, events.single().getLong("runId"))
+            // Now that a file exists, the raw-text check is meaningful (not vacuous).
+            assertFalse(
+                "raw exception message must not be persisted anywhere",
+                allPersistedText().contains(LEAK_SENTINEL)
+            )
+            assertFalse(
+                "raw exception path must not be persisted anywhere",
+                allPersistedText().contains("secret/private.txt")
+            )
+            assertEquals("no further sink error for the successful write", 1, tree.sinkErrors().size)
+        }
+    }
+
+    @Test
+    fun `diagnostic_non_io_append_failure_does_not_crash_worker`() = runTest {
+        val sink = FailingAppendSink(context, IllegalStateException("$LEAK_SENTINEL synthetic non-IO failure /sdcard/x"), failures = 1)
+
+        withCapturedTimber { tree ->
+            record(sink, TestEvent(runId = 10L)) // must NOT throw
+
+            assertEquals(1, sink.attempts.get())
+            assertTrue(readAll().isEmpty())
+            // No file at all (a text scan of nothing would be vacuous here).
+            assertTrue("no file may exist after the failed append", noRegularFileUnderTempDir())
+            assertEquals("failure logged exactly once by the sink", 1, tree.sinkErrors().size)
+
+            record(sink, TestEvent(runId = 11L))
+            assertEquals(listOf(11L), readAll().map { it.getLong("runId") })
+            // Now that a file exists, the raw-text check is meaningful (not vacuous).
+            assertFalse(allPersistedText().contains(LEAK_SENTINEL))
+            assertFalse(allPersistedText().contains("/sdcard/x"))
+            assertEquals(1, tree.sinkErrors().size)
+        }
+    }
+
+    /**
+     * Real IOException: the sink's target path is an existing DIRECTORY, so
+     * File.appendText() fails with FileNotFoundException on both Windows and POSIX.
+     * The base appendLineSafely must catch it in its own inner IOException branch (which logs
+     * a message distinct from the outer catch in recordWorkerTerminalWriteFailure), log exactly
+     * one sink ERROR, leave the directory untouched, and recover once the path is usable.
+     * Branch identity is asserted through the sink's own inner-branch message prefix, not the
+     * exception class. That prefix is a fixed, non-sensitive literal of the sink and the only
+     * observable that tells the inner branch from the outer one, so pinning it is judged stable
+     * enough; a future hardening that reworded it would have to update this one assertion.
+     */
+    @Test
+    fun `diagnostic_target_path_is_a_directory_real_ioexception_is_contained`() = runTest {
+        val target = File(tempDir, "diagnostics/worker_terminal_diagnostics.jsonl")
+        assertTrue(target.mkdirs())
+        val sink = FileWorkerTerminalDiagnosticSink(context)
+
+        withCapturedTimber { tree ->
+            record(sink, TestEvent(workerName = "DirectoryTargetWorker", runId = 5L)) // must NOT throw
+
+            assertTrue("target must still be the untouched directory", target.isDirectory)
+            assertEquals("no rotation backup or stray file created", listOf("worker_terminal_diagnostics.jsonl"),
+                File(tempDir, "diagnostics").list()!!.toList())
+            assertTrue(
+                "no regular file may exist anywhere under tempDir after the failed write",
+                noRegularFileUnderTempDir()
+            )
+            val sinkErrors = tree.sinkErrors()
+            assertEquals("failure logged exactly once", 1, sinkErrors.size)
+            assertTrue(
+                "the inner IOException branch (not the outer catch) must have handled it, was '${sinkErrors.single().message}'",
+                sinkErrors.single().message.startsWith("$SINK_CLASS_PREFIX I/O error appending diagnostic")
+            )
+
+            // Recovery: once the path is a normal file location the same sink writes again.
+            assertTrue(target.delete())
+            record(sink, TestEvent(workerName = "DirectoryTargetWorker", runId = 6L))
+            val events = readAll()
+            assertEquals(1, events.size)
+            // All 11 recovered values are exactly the ones passed in (TestEvent defaults apart
+            // from workerName/runId), not merely the right keys.
+            val persisted = events.single()
+            assertEquals(1, persisted.getInt("schemaVersion"))
+            assertEquals(1700000000000L, persisted.getLong("timestampMs"))
+            assertEquals("DirectoryTargetWorker", persisted.getString("workerName"))
+            assertEquals(6L, persisted.getLong("runId"))
+            assertEquals("abc-123", persisted.getString("correlationId"))
+            assertEquals("work-123", persisted.getString("workId"))
+            assertEquals(1, persisted.getInt("runAttempt"))
+            assertEquals("RETRY", persisted.getString("intendedStatus"))
+            assertEquals("TIMEOUT", persisted.getString("reasonCode"))
+            assertEquals("TERMINAL_WRITE_TIMEOUT", persisted.getString("failureCode"))
+            assertEquals("TimeoutCancellationException", persisted.getString("errorClass"))
+
+            // Exactly one persisted line; the real FileNotFoundException message carries the
+            // absolute path (which contains tempDir.name) and must never reach the file.
+            val lines = readAllStrings()
+            assertEquals("exactly one persisted line", 1, lines.size)
+            assertFalse(
+                "the exception message/path must not be persisted",
+                allPersistedText().contains(tempDir.name)
+            )
+            assertEquals(
+                "persisted line carries exactly the sink schema keys",
+                SINK_SCHEMA_KEYS,
+                JSONObject(lines.single()).keys().asSequence().toSet()
+            )
         }
     }
 
@@ -474,22 +648,45 @@ class FileWorkerTerminalDiagnosticSinkTest {
         )
     }
 
+    /**
+     * Context.filesDir throws on the first access (lazy directory initialisation fails inside
+     * appendLineSafely, which is NOT an IOException, so the outer catch in
+     * recordWorkerTerminalWriteFailure handles it). Outcome: no throw to the caller, nothing
+     * persisted, the failure logged through Timber.e, and because Kotlin's lazy does not cache
+     * a failed initialiser, the next event on the same sink is written once filesDir works.
+     */
     @Test
-    fun `sink_does_not_throw_when_context_filesDir_is_null`() = runTest {
-        // Simulate a context where filesDir somehow throws (pathological case)
+    fun `sink_does_not_throw_and_recovers_when_context_filesDir_throws`() = runTest {
         val badContext = mockk<Context> {
-            every { filesDir } throws RuntimeException("Simulated filesDir failure")
+            every { filesDir } throws RuntimeException("$LEAK_SENTINEL Simulated filesDir failure /data/user/0/secret") andThen tempDir
         }
         val sink = FileWorkerTerminalDiagnosticSink(badContext)
 
-        // Must not throw — the lazy initialization will fail, but the
-        // record method catches exceptions at the top level.
-        try {
-            record(sink, TestEvent())
-        } catch (e: Exception) {
-            throw AssertionError("Sink must never throw into the worker path", e)
+        withCapturedTimber { tree ->
+            try {
+                record(sink, TestEvent(runId = 1L))
+            } catch (e: Exception) {
+                throw AssertionError("Sink must never throw into the worker path", e)
+            }
+
+            assertTrue("nothing may be persisted when filesDir fails", readAll().isEmpty())
+            // No file at all (a text scan of nothing would be vacuous here).
+            assertTrue("no file may exist when filesDir fails", noRegularFileUnderTempDir())
+            assertEquals(
+                "the failure is logged exactly once by the sink",
+                1,
+                tree.sinkErrors().size
+            )
+
+            record(sink, TestEvent(runId = 2L))
+            val events = readAll()
+            assertEquals(1, events.size)
+            assertEquals(2L, events.single().getLong("runId"))
+            // Now that a file exists, the raw-text check is meaningful (not vacuous).
+            assertFalse(allPersistedText().contains(LEAK_SENTINEL))
+            assertFalse(allPersistedText().contains("secret"))
+            assertEquals(1, tree.sinkErrors().size)
         }
-        // If we reach here, the test passes
     }
 
     // ------------------------------------------------------------------
@@ -523,42 +720,54 @@ class FileWorkerTerminalDiagnosticSinkTest {
         // Use DelayedDiagnosticSink with a delay longer than the
         // FILE_DIAGNOSTIC_WRITE_TIMEOUT_MS (500 ms). The cancellable
         // delay inside appendLineSafely allows withTimeout to fire.
+        // If the timeout did NOT fire, record() would only return after the
+        // 2000 ms delay and the real append would have written the line.
         val sink = DelayedDiagnosticSink(context, delayMs = 2000L)
         val event = TestEvent(
             workerName = "SlowWorker",
             runId = 200L,
             failureCode = "TERMINAL_WRITE_TIMEOUT"
         )
-        // This must not throw — the TimeoutCancellationException is
-        // caught internally and logged via Timber.e.
-        record(sink, event)
 
-        // Since the delay was longer than the timeout, appendLineSafely
-        // should have been cancelled and no file written.
-        val events = readAll()
-        assertTrue(
-            "Slow append should time out before writing — file must be empty or absent",
-            events.isEmpty() || !File(tempDir, "diagnostics/worker_terminal_diagnostics.jsonl").exists()
-        )
+        withCapturedTimber { tree ->
+            // This must not throw — the TimeoutCancellationException is
+            // caught internally and logged via Timber.e.
+            record(sink, event)
+
+            // The append was cancelled before reaching the file: strictly nothing on disk.
+            assertFalse(
+                "Slow append must be cancelled by the timeout before any file is created",
+                File(tempDir, "diagnostics/worker_terminal_diagnostics.jsonl").exists()
+            )
+            assertTrue(readAll().isEmpty())
+            val timeoutErrors = tree.sinkErrors()
+            assertEquals("timeout is logged exactly once by the sink", 1, timeoutErrors.size)
+            assertTrue(
+                "the dedicated timeout catch (not the generic one) must log it, was '${timeoutErrors.single().message}'",
+                timeoutErrors.single().message.startsWith(SINK_TIMEOUT_PREFIX)
+            )
+        }
     }
 
     @Test
     fun `file_sink_timeout_does_not_throw`() = runTest {
         // Verify that even when the timeout fires, the method does NOT
-        // propagate TimeoutCancellationException to the caller.
-        val sink = DelayedDiagnosticSink(context, delayMs = 2000L)
-        val event = TestEvent(workerName = "NoThrowWorker", runId = 300L)
+        // propagate TimeoutCancellationException to the caller, and that the
+        // timeout leaves the sink usable (mutex released, nothing half-written).
+        // Only the first append is slow; the second one is the real fast append.
+        val sink = DelayedDiagnosticSink(context, delayMs = 2000L, slowCalls = 1)
 
-        var threwToCaller = false
         try {
-            record(sink, event)
+            record(sink, TestEvent(workerName = "NoThrowWorker", runId = 300L))
         } catch (e: Exception) {
-            threwToCaller = true
+            throw AssertionError("Timeout must NOT throw to the caller - sink must catch it internally", e)
         }
-        assertFalse(
-            "Timeout must NOT throw to the caller — sink must catch it internally",
-            threwToCaller
-        )
+        assertTrue("timed-out event must not be persisted", readAll().isEmpty())
+
+        record(sink, TestEvent(workerName = "NoThrowWorker", runId = 301L))
+        val events = readAll()
+        assertEquals("sink must still work after a timeout (mutex released)", 1, events.size)
+        assertEquals(301L, events.single().getLong("runId"))
     }
 
     @Test
@@ -650,3 +859,27 @@ class FileWorkerTerminalDiagnosticSinkTest {
         )
     }
 }
+
+/** Message prefix of the sink's two catch-all Timber.e calls (outer catch and inner IOException branch). */
+private const val SINK_CLASS_PREFIX = "FileWorkerTerminalDiagnosticSink:"
+
+/**
+ * Message of the sink's dedicated timeout Timber.e call (the only sink log without the class
+ * prefix). It is distinct from every message that starts with [SINK_CLASS_PREFIX], so the
+ * generic catch cannot satisfy a startsWith check on it.
+ */
+private const val SINK_TIMEOUT_PREFIX = "Worker terminal diagnostic write timed out"
+
+/**
+ * Slash-free marker placed at the START of every injected exception message, so neither
+ * truncation nor '/'-escaping in a persisted line can hide a leak of the raw message.
+ */
+private const val LEAK_SENTINEL = "LEAKSENTINEL7f3a9c"
+
+/** Exact key set of one persisted line, taken from the sink's buildJsonLine. */
+private val SINK_SCHEMA_KEYS = setOf(
+    "schemaVersion", "timestampMs", "workerName", "runId", "correlationId", "workId",
+    "runAttempt", "intendedStatus", "reasonCode", "failureCode", "errorClass"
+)
+
+private val SINK_MESSAGE_PREFIXES = listOf(SINK_CLASS_PREFIX, SINK_TIMEOUT_PREFIX)

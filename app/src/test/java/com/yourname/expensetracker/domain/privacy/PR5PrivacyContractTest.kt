@@ -27,11 +27,7 @@ import org.junit.Test
  * U-PR5-PRIVACY-CONTRACT acceptance tests:
  *
  * ## U-PRIVACY-01: RawStorageMode semantics
- * - sanitizeBankDescription_store_raw_preserves_text
- * - sanitizeBankDescription_store_redacted_replaces_text
- * - sanitizeBankDescription_metadata_only_returns_null
- * - sanitizeBankDescription_do_not_store_returns_null
- * - sanitizeBankDescription_null_input_returns_null_for_all_modes
+ * - (sanitizeBankDescription table: see RawStoragePayloadMatrixTest)
  * - bankApiIntegration_uses_rawBankStatementStorageMode_not_rawOcrStorageMode
  * - rawPersistencePolicyResolver_bank_api_uses_rawBankStatementStorageMode
  * - rawPersistencePolicyResolver_bank_statement_uses_rawBankStatementStorageMode
@@ -47,39 +43,8 @@ import org.junit.Test
  */
 class PR5PrivacyContractTest {
 
-    // ── U-PRIVACY-01: RawContentSanitizer.sanitizeBankDescription ─────────────
-
-    @Test
-    fun sanitizeBankDescription_store_raw_preserves_text() {
-        val result = RawContentSanitizer.sanitizeBankDescription("TRANSFER TO JOHN DOE", RawStorageMode.STORE_RAW)
-        assertEquals("TRANSFER TO JOHN DOE", result)
-    }
-
-    @Test
-    fun sanitizeBankDescription_store_redacted_replaces_text() {
-        val result = RawContentSanitizer.sanitizeBankDescription("TRANSFER TO JOHN DOE", RawStorageMode.STORE_REDACTED)
-        assertEquals("[REDACTED]", result)
-    }
-
-    @Test
-    fun sanitizeBankDescription_metadata_only_returns_null() {
-        val result = RawContentSanitizer.sanitizeBankDescription("TRANSFER TO JOHN DOE", RawStorageMode.STORE_METADATA_ONLY)
-        assertNull(result)
-    }
-
-    @Test
-    fun sanitizeBankDescription_do_not_store_returns_null() {
-        val result = RawContentSanitizer.sanitizeBankDescription("TRANSFER TO JOHN DOE", RawStorageMode.DO_NOT_STORE)
-        assertNull(result)
-    }
-
-    @Test
-    fun sanitizeBankDescription_null_input_returns_null_for_all_modes() {
-        for (mode in RawStorageMode.entries) {
-            val result = RawContentSanitizer.sanitizeBankDescription(null, mode)
-            assertNull("Mode $mode should return null for null input", result)
-        }
-    }
+    // B6-8: the five RawContentSanitizer.sanitizeBankDescription tests moved to
+    // RawStoragePayloadMatrixTest (SANITIZER/* rows).
 
     // ── U-PRIVACY-01: BankApiIntegration uses rawBankStatementStorageMode ─────
 
@@ -180,6 +145,9 @@ class PR5PrivacyContractTest {
         assertNotNull(request.notes)
         assertTrue("Notes must contain [REDACTED]", request.notes!!.contains("[REDACTED]"))
         assertFalse("Notes must NOT contain raw description", request.notes!!.contains("Sensitive description"))
+        // B6 nit (36): exact notes; also proves the raw reference is gone.
+        assertEquals("[REDACTED] (Ref: [REDACTED])", request.notes)
+        assertFalse("Notes must NOT contain raw reference", request.notes!!.contains("REF-456"))
     }
 
     // ── U-PRIVACY-01: RawPersistencePolicyResolver uses rawBankStatementStorageMode ──

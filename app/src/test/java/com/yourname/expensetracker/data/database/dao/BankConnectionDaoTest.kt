@@ -84,74 +84,9 @@ class BankConnectionDaoTest {
     // -------------------------------------------------------------------------
 
     @Test
-    fun `disconnect clears accessToken to null`() = runTest {
-        val id = dao.insert(connectedRow())
-
-        dao.disconnect(id)
-
-        val row = dao.getById(id)
-        assertNotNull(row)
-        assertNull(row.accessToken, "accessToken must be NULL after disconnect")
-    }
-
-    @Test
-    fun `disconnect clears refreshToken to null`() = runTest {
-        val id = dao.insert(connectedRow())
-
-        dao.disconnect(id)
-
-        val row = dao.getById(id)
-        assertNotNull(row)
-        assertNull(row.refreshToken, "refreshToken must be NULL after disconnect")
-    }
-
-    @Test
-    fun `disconnect clears tokenExpiry to null`() = runTest {
-        val id = dao.insert(connectedRow())
-
-        dao.disconnect(id)
-
-        val row = dao.getById(id)
-        assertNotNull(row)
-        assertNull(row.tokenExpiry, "tokenExpiry must be NULL after disconnect")
-    }
-
-    @Test
-    fun `disconnect resets tokenEncryptionVersion to 0`() = runTest {
-        val id = dao.insert(connectedRow(tokenEncryptionVersion = 3))
-
-        dao.disconnect(id)
-
-        val row = dao.getById(id)
-        assertNotNull(row)
-        assertEquals(0, row.tokenEncryptionVersion, "tokenEncryptionVersion must be 0 after disconnect")
-    }
-
-    @Test
-    fun `disconnect sets isConnected to false`() = runTest {
-        val id = dao.insert(connectedRow())
-
-        dao.disconnect(id)
-
-        val row = dao.getById(id)
-        assertNotNull(row)
-        assertEquals(false, row.isConnected, "isConnected must be false after disconnect")
-    }
-
-    @Test
-    fun `disconnect sets isActive to false`() = runTest {
-        val id = dao.insert(connectedRow())
-
-        dao.disconnect(id)
-
-        val row = dao.getById(id)
-        assertNotNull(row)
-        assertEquals(false, row.isActive, "isActive must be false after disconnect")
-    }
-
-    @Test
     fun `disconnect wipes all credential and flag fields in one call`() = runTest {
-        // Single comprehensive assertion covering the full contract in one shot.
+        // Single comprehensive test covering the full contract: insert read-back
+        // proves the credentials were present, disconnect must then wipe each one.
         val id = dao.insert(
             connectedRow(
                 accessToken = "enc:v1:tok:val",
@@ -160,6 +95,14 @@ class BankConnectionDaoTest {
                 tokenEncryptionVersion = 5
             )
         )
+        val before = dao.getById(id)
+        assertNotNull(before)
+        assertEquals("enc:v1:tok:val", before.accessToken)
+        assertEquals("enc:v1:ref:val", before.refreshToken)
+        assertEquals(FIXED_NOW + 7_200_000L, before.tokenExpiry)
+        assertEquals(5, before.tokenEncryptionVersion)
+        assertEquals(true, before.isConnected)
+        assertEquals(true, before.isActive)
 
         dao.disconnect(id)
 

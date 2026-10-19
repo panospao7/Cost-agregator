@@ -153,6 +153,8 @@ PolicyEntryV3
 
 `PolicyEntryV3.mutation_key()` must preserve the existing full exact mutation identity.
 
+Note: the unwired v3 prototype modules (`policy_v3_loader`, `policy_v3_model`) were retired and removed from the tree; this section remains as design history only.
+
 The barrier requirement must be part of validated policy state, but not part of mutation ownership identity/fingerprint unless the current report protocol requires it.
 
 ## Loader behavior

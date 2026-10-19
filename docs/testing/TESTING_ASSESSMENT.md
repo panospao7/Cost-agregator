@@ -65,7 +65,7 @@
 - `NotificationProcessingPipelineStressTest.kt`
 - `MerchantNormalizerStressTest.kt`
 - `CompositeGeocodingServiceStressTest.kt`
-- `StringDistanceUtilsStressTest.kt`
+- `StringDistanceUtilsTest.kt` (merged from the former stress test)
 - `StatisticsUtilsStressTest.kt`
 
 **Stress Scenarios:**
@@ -81,10 +81,8 @@
 - `RecurringExpenseDetectionPipelineIntegrationTest.kt`
 - `AnalyticsPipelineIntegrationTest.kt`
 - `DataExportImportPipelineIntegrationTest.kt`
-- `CategorizationPipelineIntegrationTest.kt`
 - `BudgetCalculationPipelineIntegrationTest.kt`
-- `ExpenseCreationPipelineIntegrationTest.kt`
-- `DuplicateLogicConsistencyIntegrationTest.kt`
+- `MerchantKeyContractTest.kt` (duplicate-logic section; formerly `DuplicateLogicConsistencyIntegrationTest.kt`)
 
 **Integration Coverage:**
 - ✅ End-to-end workflows
@@ -131,7 +129,7 @@
 - `DashboardWidgetConsistencyTest.kt`
 - `EffectiveAmountConsistencyTest.kt`
 - `TimePeriodAlignmentTest.kt`
-- `DuplicateLogicConsistencyIntegrationTest.kt`
+- `MerchantKeyContractTest.kt` (duplicate-logic section; formerly `DuplicateLogicConsistencyIntegrationTest.kt`)
 
 **Consistency Checks:**
 - ✅ Financial calculations match across widgets

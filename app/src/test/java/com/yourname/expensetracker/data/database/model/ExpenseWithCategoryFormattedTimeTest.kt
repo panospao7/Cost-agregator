@@ -21,27 +21,13 @@ class ExpenseWithCategoryFormattedTimeTest {
     private val fixedEpoch = 1_700_000_000_000L // 2023-11-14 ~22:13 UTC
 
     @Test
-    fun `formattedDate (member) returns MMM dd HH-mm format`() {
+    fun `formattedDate (member) is MMM dd HH-mm and formattedTime (extension) is HH-mm only`() {
         val ewc = makeEwc(date = fixedEpoch)
-        val result = ewc.formattedDate
 
-        // Must contain both a month abbreviation and a colon-separated time
-        assertThat(result).containsMatch("[A-Za-z]{3} \\d{2}, \\d{2}:\\d{2}")
-    }
-
-    @Test
-    fun `formattedTime (extension) returns HH-mm format`() {
-        val ewc = makeEwc(date = fixedEpoch)
-        val result = ewc.formattedTime
-
-        // Time-only: exactly "HH:mm", no month/day
-        assertThat(result).matches("\\d{2}:\\d{2}")
-    }
-
-    @Test
-    fun `formattedDate and formattedTime are different for the same instance`() {
-        val ewc = makeEwc(date = fixedEpoch)
-        assertThat(ewc.formattedDate).isNotEqualTo(ewc.formattedTime)
+        // Member: month abbreviation plus colon-separated time
+        assertThat(ewc.formattedDate).containsMatch("[A-Za-z]{3} \\d{2}, \\d{2}:\\d{2}")
+        // Extension: exactly "HH:mm", no month/day (so it cannot equal formattedDate)
+        assertThat(ewc.formattedTime).matches("\\d{2}:\\d{2}")
     }
 
     @Test

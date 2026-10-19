@@ -431,8 +431,8 @@ def main():
     parser.add_argument(
         "--baseline",
         type=int,
-        default=29,
-        help="Maximum allowed total @Ignore + @Disabled count (default: 29)",
+        default=3,
+        help="Maximum allowed total @Ignore + @Disabled count (default: 3)",
     )
     args = parser.parse_args()
 

@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.domain.analytics
 
+import com.yourname.expensetracker.assertMoneyEquals
+import com.yourname.expensetracker.assertMoneyExact
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
@@ -9,6 +11,7 @@ import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.domain.util.PinnedUtcTimeZoneRule
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.every
@@ -21,6 +24,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.ClassRule
 import org.junit.Test
 import java.util.Calendar
 import kotlin.test.assertFailsWith
@@ -37,6 +41,14 @@ import kotlin.test.assertFailsWith
  * 5. Edge cases and error handling
  */
 class InsightsEngineValidationTest {
+
+    companion object {
+        // Zone pinned to UTC for the whole class: createDate (Calendar) and the engine's
+        // month/weekday bucketing all read the system default zone.
+        @JvmField
+        @ClassRule
+        val utcZone = PinnedUtcTimeZoneRule()
+    }
 
     private lateinit var engine: InsightsEngine
     private lateinit var expenseRepository: ExpenseRepository
@@ -151,7 +163,7 @@ class InsightsEngineValidationTest {
         
         // Change amount should be 200
         assertNotNull(snapshot.monthlyComparison.changeAmount)
-        assertEquals(200.0, snapshot.monthlyComparison.changeAmount!!, 0.01)
+        assertMoneyEquals(200.0, snapshot.monthlyComparison.changeAmount, "changeAmount (1200 - 1000)")
     }
 
     @Test
@@ -193,7 +205,7 @@ class InsightsEngineValidationTest {
         
         // Change amount should be -200
         assertNotNull(snapshot.monthlyComparison.changeAmount)
-        assertEquals(-200.0, snapshot.monthlyComparison.changeAmount!!, 0.01)
+        assertMoneyEquals(-200.0, snapshot.monthlyComparison.changeAmount, "changeAmount (800 - 1000)")
     }
 
     // ========== SCENARIO 2: Transaction Size Profiles ==========
@@ -219,10 +231,10 @@ class InsightsEngineValidationTest {
         val snapshot = engine.generateInsights(categories, expenses, "EUR")
         
         // Then: Average transaction size should be (5 + 15 + 50 + 150 + 500) / 5 = 144
-        assertEquals(144.0, snapshot.averageTransactionSize, 0.01)
-        
+        assertMoneyEquals(144.0, snapshot.averageTransactionSize, "averageTransactionSize")
+
         // Median should be 50 (middle value when sorted)
-        assertEquals(50.0, snapshot.medianTransactionSize, 0.01)
+        assertMoneyEquals(50.0, snapshot.medianTransactionSize, "medianTransactionSize")
     }
 
     @Test
@@ -243,10 +255,10 @@ class InsightsEngineValidationTest {
         
         // Then: Should only consider purchases (100, 200, 150)
         // Average: (100 + 200 + 150) / 3 = 150
-        assertEquals(150.0, snapshot.averageTransactionSize, 0.01)
-        
+        assertMoneyEquals(150.0, snapshot.averageTransactionSize, "averageTransactionSize excludes deposit")
+
         // Median: 150 (middle value)
-        assertEquals(150.0, snapshot.medianTransactionSize, 0.01)
+        assertMoneyEquals(150.0, snapshot.medianTransactionSize, "medianTransactionSize excludes deposit")
     }
 
     @Test
@@ -266,10 +278,10 @@ class InsightsEngineValidationTest {
         
         // Then: Should only consider mine (100, 150)
         // Average: (100 + 150) / 2 = 125
-        assertEquals(125.0, snapshot.averageTransactionSize, 0.01)
-        
+        assertMoneyEquals(125.0, snapshot.averageTransactionSize, "averageTransactionSize excludes not-mine")
+
         // Median: (100 + 150) / 2 = 125 (even number of values)
-        assertEquals(125.0, snapshot.medianTransactionSize, 0.01)
+        assertMoneyEquals(125.0, snapshot.medianTransactionSize, "medianTransactionSize excludes not-mine")
     }
 
     // ========== SCENARIO 3: Spending Pace Calculations ==========
@@ -311,7 +323,7 @@ class InsightsEngineValidationTest {
         val snapshot = engine.generateInsights(categories, currentExpenses, "EUR")
         
         // Then: Projected total should be 1500 (500 * 30 / 10)
-        assertEquals(1500.0, requireNotNull(snapshot.spendingPace.projectedTotal), 0.01)
+        assertMoneyExact(1500.0, snapshot.spendingPace.projectedTotal, "projectedTotal passed through")
         assertEquals(10, snapshot.spendingPace.daysElapsed)
         assertEquals(30, snapshot.spendingPace.daysInMonth)
     }
@@ -346,7 +358,7 @@ class InsightsEngineValidationTest {
         val snapshot = engine.generateInsights(categories, currentExpenses, "EUR")
         
         // Then: Projected total should use conservative estimate (900, not 3000)
-        assertEquals(900.0, requireNotNull(snapshot.spendingPace.projectedTotal), 0.01)
+        assertMoneyExact(900.0, snapshot.spendingPace.projectedTotal, "projectedTotal passed through")
         assertEquals(PaceStatus.UNDER_PACE, snapshot.spendingPace.paceStatus)
     }
 
@@ -410,15 +422,15 @@ class InsightsEngineValidationTest {
         // Then: Day of week pattern should have correct totals
         val mondayInsight = snapshot.dayOfWeekPattern.find { it.dayName == "Mon" }
         assertNotNull(mondayInsight)
-        assertEquals(220.0, requireNotNull(mondayInsight!!.totalSpent), 0.01) // 100 + 120
+        assertMoneyEquals(220.0, mondayInsight!!.totalSpent, "Monday totalSpent (100 + 120)")
         assertEquals(2, mondayInsight.transactionCount)
-        assertEquals(110.0, requireNotNull(mondayInsight.avgPerTransaction), 0.01) // 220 / 2
+        assertMoneyEquals(110.0, mondayInsight.avgPerTransaction, "Monday avgPerTransaction (220 / 2)")
         
         val tuesdayInsight = snapshot.dayOfWeekPattern.find { it.dayName == "Tue" }
         assertNotNull(tuesdayInsight)
-        assertEquals(150.0, requireNotNull(tuesdayInsight!!.totalSpent), 0.01)
+        assertMoneyEquals(150.0, tuesdayInsight!!.totalSpent, "Tuesday totalSpent")
         assertEquals(1, tuesdayInsight.transactionCount)
-        assertEquals(150.0, requireNotNull(tuesdayInsight.avgPerTransaction), 0.01)
+        assertMoneyEquals(150.0, tuesdayInsight.avgPerTransaction, "Tuesday avgPerTransaction")
     }
 
     // ========== SCENARIO 5: Category Insights ==========
@@ -501,7 +513,7 @@ class InsightsEngineValidationTest {
         )
 
         assertEquals(1, snapshot.recurringExpenses.size)
-        assertEquals(100.0, snapshot.recurringExpenses.single().avgAmount, 0.0)
+        assertMoneyExact(100.0, snapshot.recurringExpenses.single().avgAmount, "recurring avgAmount in source currency")
         assertEquals("USD", snapshot.recurringExpenses.single().displayCurrency)
         assertTrue(snapshot.conversionWarnings.isEmpty())
 
@@ -563,7 +575,7 @@ class InsightsEngineValidationTest {
         val snapshot = engine.generateInsights(emptyList(), expenses, "EUR")
 
         val recurring = snapshot.recurringExpenses.single()
-        assertEquals(100.0, recurring.avgAmount, 0.0)
+        assertMoneyExact(100.0, recurring.avgAmount, "detected recurring avgAmount not converted")
         assertEquals("EUR", recurring.displayCurrency)
         assertTrue(snapshot.conversionWarnings.isEmpty())
     }
@@ -592,26 +604,27 @@ class InsightsEngineValidationTest {
         val snapshot = engine.generateInsights(categories, emptyList(), "EUR")
         
         // Then: All values should be zero or empty
-        org.junit.Assert.assertEquals(0.0, requireNotNull(snapshot.monthlyComparison.currentTotal), 0.0)
+        // Valid empty input is an available zero (distinct from the unavailable/null cases above).
+        assertMoneyExact(0.0, snapshot.monthlyComparison.currentTotal, "currentTotal")
         assertTrue(snapshot.monthlyComparison.currentMoneyResult is com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Available)
         assertEquals(0, snapshot.monthlyComparison.currentCount)
         assertTrue(snapshot.categoryInsights.isEmpty())
         assertTrue(snapshot.topMerchants.isEmpty())
-        org.junit.Assert.assertEquals(0.0, requireNotNull(snapshot.spendingPace.currentMonthSpent), 0.0)
+        assertMoneyExact(0.0, snapshot.spendingPace.currentMonthSpent, "spendingPace.currentMonthSpent")
         assertTrue(snapshot.anomalies.isEmpty())
         assertTrue(snapshot.recurringExpenses.isEmpty())
         val expectedDayOrder = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
         assertEquals(7, snapshot.dayOfWeekPattern.size)
         assertEquals(expectedDayOrder, snapshot.dayOfWeekPattern.map { it.dayName })
         snapshot.dayOfWeekPattern.forEach { day ->
-            org.junit.Assert.assertEquals(0.0, requireNotNull(day.totalSpent), 0.0)
+            assertMoneyExact(0.0, day.totalSpent, "${day.dayName} totalSpent")
             assertEquals(0, day.transactionCount)
-            org.junit.Assert.assertEquals(0.0, requireNotNull(day.avgPerTransaction), 0.0)
+            assertMoneyExact(0.0, day.avgPerTransaction, "${day.dayName} avgPerTransaction")
             assertEquals("EUR", day.displayCurrency)
         }
         assertNull(snapshot.largestTransaction)
-        assertEquals(0.0, snapshot.averageTransactionSize, 0.01)
-        assertEquals(0.0, snapshot.medianTransactionSize, 0.01)
+        assertMoneyExact(0.0, snapshot.averageTransactionSize, "averageTransactionSize")
+        assertMoneyExact(0.0, snapshot.medianTransactionSize, "medianTransactionSize")
     }
 
     // ========== Helper Methods ==========

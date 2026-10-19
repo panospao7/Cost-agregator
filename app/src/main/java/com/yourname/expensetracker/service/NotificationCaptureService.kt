@@ -625,6 +625,9 @@ class NotificationCaptureService : NotificationListenerService() {
                                 correlationId = correlationId,
                                 isTerminal = true
                             ))
+                            // Release the key recorded by tryStart so a genuine repost
+                            // after privacy is restored is not swallowed as DUPLICATE.
+                            deduper.remove(dedupeKey)
                             return@withContext
                         }
                         is PrivacyDecision.Allowed -> { /* proceed */ }
@@ -642,6 +645,8 @@ class NotificationCaptureService : NotificationListenerService() {
                                 correlationId = correlationId,
                                 isTerminal = true
                             ))
+                            // Same as the Denied/FailClosed branch: release the dedupe key.
+                            deduper.remove(dedupeKey)
                             return@withContext
                         }
                     }

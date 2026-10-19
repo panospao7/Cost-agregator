@@ -37,8 +37,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -93,38 +91,6 @@ class NotificationIntakeWorkerTimeoutTest {
         workerTerminalDiagnosticSink, bgJobRunDao,
         permissionChecker, timeProvider
     )
-
-    // ═══════════════════════════════════════════════════════════════════════
-    //  Pure type-check tests — no mocks needed
-    // ═══════════════════════════════════════════════════════════════════════
-
-    @Test
-    fun `worker_timeout_marks_retryable_not_terminal`() {
-        val timeoutEx = createTimeoutCancellationException()
-        val isCancellation = timeoutEx is CancellationException
-        val isTimeout = timeoutEx is TimeoutCancellationException
-
-        assertTrue("TimeoutCancellationException must be a CancellationException subclass", isCancellation)
-        assertTrue("TimeoutCancellationException must be a TimeoutCancellationException", isTimeout)
-    }
-
-    @Test
-    fun `worker_system_cancellation_propagates`() {
-        val systemCancel: Throwable = CancellationException("System shutdown")
-        val isTimeout = systemCancel is TimeoutCancellationException
-
-        assertFalse("Plain CancellationException must NOT be a TimeoutCancellationException", isTimeout)
-    }
-
-    @Test
-    fun `timeout_cancellation_exception_is_subclass_of_cancellation_exception`() {
-        val timeoutEx = createTimeoutCancellationException()
-        val isCancellation = timeoutEx is CancellationException
-        val isTimeout = timeoutEx is TimeoutCancellationException
-
-        assertTrue("TimeoutCancellationException must be a CancellationException subclass", isCancellation)
-        assertTrue("TimeoutCancellationException must be a TimeoutCancellationException", isTimeout)
-    }
 
     // ═══════════════════════════════════════════════════════════════════════
     //  Exception routing tests

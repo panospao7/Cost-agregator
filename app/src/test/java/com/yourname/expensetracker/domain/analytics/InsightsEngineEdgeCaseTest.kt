@@ -1,24 +1,37 @@
 package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.toAnalyticsCategoryRefs
-import com.yourname.expensetracker.toExpenseSnapshot
 import com.yourname.expensetracker.toExpenseSnapshots
+import com.yourname.expensetracker.assertMoneyEquals
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.database.dao.MerchantStats
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.util.PinnedUtcTimeZoneRule
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.*
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Before
+import org.junit.ClassRule
 import org.junit.Test
-import java.util.Calendar
+import java.time.Instant
 
 class InsightsEngineEdgeCaseTest {
+
+    companion object {
+        // Zone pinned to UTC for the whole class: month/day bucketing reads the system default zone.
+        @JvmField
+        @ClassRule
+        val utcZone = PinnedUtcTimeZoneRule()
+
+        /** Fixed "now" (2026-03-15T12:00:00Z) so results never depend on the wall clock. */
+        private val fixedNow: Long = Instant.parse("2026-03-15T12:00:00Z").toEpochMilli()
+    }
+
     private var nextExpenseId = 1L
-    
+
     private val expenseRepository = mockk<ExpenseRepository>(relaxed = true)
     private val recurringEngine = mockk<com.yourname.expensetracker.domain.logic.RecurringExpenseEngine>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
@@ -32,10 +45,10 @@ class InsightsEngineEdgeCaseTest {
         val categoryInsightEngine = mockk<CategoryInsightEngine>(relaxed = true)
         val merchantInsightEngine = mockk<MerchantInsightEngine>(relaxed = true)
         val dayOfWeekAnalyzer = mockk<DayOfWeekAnalyzer>(relaxed = true)
-        
-        every { timeProvider.now() } returns System.currentTimeMillis()
+
+        every { timeProvider.now() } returns fixedNow
         coEvery { recurringEngine.getPatterns(any()) } returns emptyList()
-        
+
         engine = InsightsEngine(
             expenseRepository = expenseRepository,
             recurringExpenseEngine = recurringEngine,
@@ -47,7 +60,7 @@ class InsightsEngineEdgeCaseTest {
             merchantInsightEngine = merchantInsightEngine,
             dayOfWeekAnalyzer = dayOfWeekAnalyzer
         )
-        
+
         coEvery { expenseRepository.getTotalForPeriod(any(), any()) } returns 0.0
         coEvery { expenseRepository.getCountForPeriod(any(), any()) } returns 0
         coEvery { expenseRepository.getCategoryTotalsForPeriod(any(), any()) } returns emptyList()
@@ -59,54 +72,18 @@ class InsightsEngineEdgeCaseTest {
     }
 
     @Test
-    fun `empty expenses list returns valid snapshot with zeros`() = runBlocking {
-        val categories = listOf(
-            Category(id = 1L, name = "Food", icon = "food", color = "#FFFFFF")
-        )
-        
-        val snapshot = engine.generateInsights(categories.toAnalyticsCategoryRefs(), emptyList(), "EUR")
-        
-        assertNotNull("Snapshot should not be null", snapshot)
-        org.junit.Assert.assertEquals(0.0, requireNotNull(snapshot.monthlyComparison.currentTotal), 0.0)
-        assertTrue(snapshot.monthlyComparison.currentMoneyResult is com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Available)
-        assertEquals(0, snapshot.monthlyComparison.currentCount)
-        assertTrue("Category insights should be empty", snapshot.categoryInsights.isEmpty())
-        assertTrue("Top merchants should be empty", snapshot.topMerchants.isEmpty())
-    }
-
-    @Test
-    fun `single expense does not crash engine`() = runBlocking {
-        val categories = listOf(Category(id = 1L, name = "Food", icon = "food", color = "#FFFFFF"))
-        val expenses = listOf(
-            makeExpense(merchant = "Test", amount = 10.0, daysAgo = 5)
-        )
-        
-        val snapshot = engine.generateInsights(categories.toAnalyticsCategoryRefs(), expenses.toExpenseSnapshots(), "EUR")
-        
-        assertNotNull("Should handle single expense", snapshot)
-    }
-
-    @Test
     fun `leap year february calculations are correct`() {
-        val cal = Calendar.getInstance()
-        cal.set(2024, Calendar.FEBRUARY, 29)
-        every { timeProvider.now() } returns cal.timeInMillis
-        val period = engine.getMonthPeriod(cal.timeInMillis)
-        
-        assertEquals(2024, period.year)
-        assertEquals(Calendar.FEBRUARY, period.month)
-        
-        // Month period spans exactly one month
-        val periodCal = Calendar.getInstance()
-        periodCal.timeInMillis = period.startMs
-        assertEquals(2024, periodCal.get(Calendar.YEAR))
-        assertEquals(Calendar.FEBRUARY, periodCal.get(Calendar.MONTH))
-        assertEquals(1, periodCal.get(Calendar.DAY_OF_MONTH))
+        val feb29Noon = Instant.parse("2024-02-29T12:00:00Z").toEpochMilli()
+        every { timeProvider.now() } returns feb29Noon
+        val period = engine.getMonthPeriod(feb29Noon)
 
-        periodCal.timeInMillis = period.endMs
-        assertEquals(2024, periodCal.get(Calendar.YEAR))
-        assertEquals(Calendar.MARCH, periodCal.get(Calendar.MONTH))
-        assertEquals(1, periodCal.get(Calendar.DAY_OF_MONTH))
+        assertEquals(2024, period.year)
+        assertEquals("zero-based month for February", 1, period.month)
+
+        // Month period spans exactly Feb 1 00:00 UTC (inclusive) to Mar 1 00:00 UTC (exclusive).
+        assertEquals("start = 2024-02-01T00:00:00Z", 1_706_745_600_000L, period.startMs)
+        assertEquals("end = 2024-03-01T00:00:00Z", 1_709_251_200_000L, period.endMs)
+        assertEquals("leap February has 29 days", 29 * 86_400_000L, period.endMs - period.startMs)
     }
 
     @Test
@@ -115,11 +92,11 @@ class InsightsEngineEdgeCaseTest {
             makeExpense(merchant = "Refund", amount = -50.0, daysAgo = 0),
             makeExpense(merchant = "Purchase", amount = 100.0, daysAgo = 0)
         )
-        
+
         val totals = engine.buildDailyTotals(expenses.toExpenseSnapshots(), 1)
-        
+
         val totalSpent = totals.values.sum()
-        assertEquals(50.0, totalSpent, 0.01)
+        assertMoneyEquals(50.0, totalSpent, "refund -50 plus purchase 100")
     }
 
     @Test
@@ -128,14 +105,14 @@ class InsightsEngineEdgeCaseTest {
         val expenses = listOf(
             makeExpense(merchant = "BigPurchase", amount = largeAmount, daysAgo = 1)
         )
-        
+
         val totals = engine.buildDailyTotals(expenses.toExpenseSnapshots(), 7)
         assertNotNull("Large amounts should not cause crash", totals)
     }
 
     @Test
     fun `anomaly detection skips merchants with zero historical average`() = runBlocking {
-        val now = System.currentTimeMillis()
+        val now = fixedNow
         val expense = Expense(
             id = 99L,
             amount = 120.0,
@@ -175,6 +152,6 @@ class InsightsEngineEdgeCaseTest {
         currency = "EUR",
         merchant = merchant,
         transactionType = TransactionType.PURCHASE,
-        date = System.currentTimeMillis() - daysAgo * 86_400_000L
+        date = fixedNow - daysAgo * 86_400_000L
     )
 }

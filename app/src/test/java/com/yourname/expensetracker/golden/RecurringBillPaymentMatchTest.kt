@@ -13,69 +13,38 @@ import org.junit.Test
  * Golden Scenario Test 3: Recurring Bill Payment Match
  *
  * Verifies that when an expense matching a recurring bill is created:
- * 1. The occurrence is atomically claimed (status → PAID)
- * 2. The planned expense is fulfilled
- * 3. Open reminders are suppressed
- * 4. Only one expense can claim an occurrence (no double-link)
+ * 1. The planned expense is fulfilled (with linked-expense provenance)
+ * 2. Open reminders are suppressed
+ *
+ * The atomic occurrence claim (PLANNED -> PAID, no double-link) is pinned by
+ * ConcurrentOccurrenceClaimTest.
  */
 class RecurringBillPaymentMatchTest : GoldenTestBase() {
 
-    @Test
-    fun `occurrence claim is atomic - only PLANNED can be claimed`() = runTest {
-        val ruleId = seedRule()
-        val occId = seedPlannedOccurrence(ruleId)
-
-        // When: Claim the occurrence
-        val claimed = database.recurringOccurrenceDao().claimForExpense(
-            occurrenceId = occId,
-            expenseId = 999L,
-            amount = 15.99,
-            currency = "EUR",
-            paidAt = fixedNow
-        )
-
-        // Then: Claim succeeds
-        assertEquals(1, claimed)
-
-        // And: Occurrence is now PAID
-        val occ = database.recurringOccurrenceDao().getById(occId)
-        assertEquals("PAID", occ?.status)
-        assertEquals(999L, occ?.linkedExpenseId)
-    }
+    // Occurrence-claim atomicity (PLANNED -> PAID once, second claim rejected) is covered by
+    // ConcurrentOccurrenceClaimTest; this class keeps the downstream fulfil/suppress effects.
 
     @Test
-    fun `already claimed occurrence rejects second claim`() = runTest {
+    fun `fulfillByOccurrenceKey fulfils exactly the one open planned expense with provenance`() = runTest {
         val ruleId = seedRule()
-        val occId = seedPlannedOccurrence(ruleId)
-
-        // First claim succeeds
-        val first = database.recurringOccurrenceDao().claimForExpense(occId, 100L, 15.99, "EUR", fixedNow)
-        assertEquals(1, first)
-
-        // Second claim fails (already PAID)
-        val second = database.recurringOccurrenceDao().claimForExpense(occId, 200L, 15.99, "EUR", fixedNow)
-        assertEquals(0, second)
-
-        // Occurrence still linked to first expense
-        val occ = database.recurringOccurrenceDao().getById(occId)
-        assertEquals(100L, occ?.linkedExpenseId)
-    }
-
-    @Test
-    fun `planned expense fulfilled after occurrence claim`() = runTest {
-        val ruleId = seedRule()
-        val occId = seedPlannedOccurrence(ruleId)
-        val occKey = "RECURRING_RULE|$ruleId|${fixedNow + 86400000L * 30}|MONTHLY"
+        val occKey = "bill-match-key-1"
         seedPlannedExpenseForOccurrence(ruleId, occKey)
 
-        // When: Fulfill planned expense by occurrence key
-        val expenseId = 999L
-        val fulfilled = database.plannedExpenseDao().fulfillByOccurrenceKey(occKey, expenseId, fixedNow)
+        // When: Fulfill planned expense by occurrence key.
+        val fulfilled = database.plannedExpenseDao().fulfillByOccurrenceKey(occKey, 999L, fixedNow)
 
-        // Then
-        assertTrue(fulfilled > 0)
+        // Then: the UPDATE matches sourceOccurrenceKey AND status='PLANNED'; exactly one such row is seeded.
+        assertEquals(1, fulfilled)
         val planned = database.plannedExpenseDao().getBySourceOccurrenceKey(occKey)
         assertEquals("FULFILLED", planned?.status)
+        assertEquals(999L, planned?.linkedActualExpenseId)
+        assertNull(planned?.openSourceOccurrenceKey)
+        assertEquals(fixedNow, planned?.updatedAt)
+
+        // And: a second fulfil is a no-op because the row is no longer PLANNED.
+        val again = database.plannedExpenseDao().fulfillByOccurrenceKey(occKey, 1000L, fixedNow)
+        assertEquals(0, again)
+        assertEquals(999L, database.plannedExpenseDao().getBySourceOccurrenceKey(occKey)?.linkedActualExpenseId)
     }
 
     @Test
@@ -90,12 +59,14 @@ class RecurringBillPaymentMatchTest : GoldenTestBase() {
         assertEquals("SCHEDULED", before!!.status)
 
         // When: Suppress reminders for this occurrence
-        val suppressed = database.recurringReminderDeliveryDao().suppressByOccurrenceId(occId, System.currentTimeMillis())
+        val suppressed = database.recurringReminderDeliveryDao().suppressByOccurrenceId(occId, fixedNow)
 
-        // Then
-        assertTrue(suppressed > 0)
+        // Then: exactly the one seeded SCHEDULED reminder is cancelled with bounded reason + timestamp
+        assertEquals(1, suppressed)
         val after = database.recurringReminderDeliveryDao().getByOccurrenceAndWindow(occId, "DUE_DAY")
         assertEquals("CANCELLED", after!!.status)
+        assertEquals("occurrence_paid", after.failureReason)
+        assertEquals(fixedNow, after.updatedAt)
     }
 
     // ── Helpers ──

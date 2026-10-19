@@ -3,6 +3,7 @@ package com.yourname.expensetracker.data.ai.provider
 import androidx.annotation.VisibleForTesting
 import com.yourname.expensetracker.data.ai.provider.internal.CloudCorrelation
 import com.yourname.expensetracker.data.ai.provider.internal.CloudRetryPolicy
+import com.yourname.expensetracker.data.ai.provider.internal.SystemRetryDelay
 import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy
 import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
 import com.yourname.expensetracker.data.security.SecureKeyStorage
@@ -39,24 +40,41 @@ import javax.net.ssl.SSLException
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
 @Singleton
 // PRIV-441-01: Now uses CloudPayloadPolicy for all payload preparation — no direct redactBeforeCloud access
-class CloudDashboardBriefingService @Inject constructor(
+class CloudDashboardBriefingService @VisibleForTesting internal constructor(
     private val secureKeyStorage: SecureKeyStorage,
-    @CloudAiHttpClient private val client: OkHttpClient,
+    private val client: OkHttpClient,
     private val promptFormatter: DashboardBriefingPromptFormatter,
-    private val aiSettingsRepository: AiSettingsRepository? = null,
+    private val aiSettingsRepository: AiSettingsRepository?,
     private val privacyGate: PrivacyGate,
     private val cloudPayloadPolicy: CloudPayloadPolicy,
-    // PR5: Authoritative cloud AI gate — replaces ad-hoc aiSettings.allowCloudAi check
     private val effectiveCloudAiPolicyResolver: EffectiveCloudAiPolicyResolver,
-    // P8F-03: cloud-call provenance audit (Hilt resolves; default keeps test ctors fail-closed)
-    private val auditLogger: PrivacyAuditLogger = PrivacyAuditLogger.NO_OP
+    private val auditLogger: PrivacyAuditLogger,
+    // B4-K2: retry-delay seam; production delegates to coroutine delay(), tests record it.
+    private val retryDelay: suspend (Long) -> Unit
 ) : DashboardBriefingService {
+
+    // Hilt-visible constructor (unchanged dependency signature).
+    @Inject
+    constructor(
+        secureKeyStorage: SecureKeyStorage,
+        @CloudAiHttpClient client: OkHttpClient,
+        promptFormatter: DashboardBriefingPromptFormatter,
+        aiSettingsRepository: AiSettingsRepository? = null,
+        privacyGate: PrivacyGate,
+        cloudPayloadPolicy: CloudPayloadPolicy,
+        // PR5: Authoritative cloud AI gate — replaces ad-hoc aiSettings.allowCloudAi check
+        effectiveCloudAiPolicyResolver: EffectiveCloudAiPolicyResolver,
+        // P8F-03: cloud-call provenance audit (Hilt resolves; default keeps test ctors fail-closed)
+        auditLogger: PrivacyAuditLogger = PrivacyAuditLogger.NO_OP
+    ) : this(
+        secureKeyStorage, client, promptFormatter, aiSettingsRepository, privacyGate,
+        cloudPayloadPolicy, effectiveCloudAiPolicyResolver, auditLogger, SystemRetryDelay
+    )
 
     private var apiKeyOverride: String? = null
 
@@ -264,7 +282,7 @@ class CloudDashboardBriefingService @Inject constructor(
                 }
 
                 if (attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
-                    delay(CloudRetryPolicy.backoffDelayMs(attempt))
+                    retryDelay(CloudRetryPolicy.backoffDelayMs(attempt))
                 }
             }
 

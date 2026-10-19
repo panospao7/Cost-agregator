@@ -35,27 +35,28 @@ class DataSyncFgsTimeoutGuardTest {
     }
 
     @Test
-    fun `blocked immediately after a timeout is recorded`() {
-        val guard = guard()
-        guard.recordTimeout()
-        assertTrue(guard.isPromotionBlocked())
-        assertEquals(now, prefs.getLong(DataSyncFgsTimeoutGuard.KEY_TIMEOUT_ELAPSED_MS, -1L))
-    }
-
-    @Test
-    fun `still blocked just before 24 hours`() {
-        val guard = guard()
-        guard.recordTimeout()
-        now += DataSyncFgsTimeoutGuard.BLOCK_WINDOW_MS - 1
-        assertTrue(guard.isPromotionBlocked())
-    }
-
-    @Test
-    fun `unblocked at exactly 24 hours`() {
-        val guard = guard()
-        guard.recordTimeout()
-        now += DataSyncFgsTimeoutGuard.BLOCK_WINDOW_MS
-        assertFalse(guard.isPromotionBlocked())
+    fun `block window boundary - blocked immediately and just before 24 hours, unblocked at exactly 24 hours`() {
+        // name, elapsed ms since the recorded timeout, expected promotion-blocked
+        val rows = listOf(
+            Triple("immediately after record", 0L, true),
+            Triple("just before 24 hours", DataSyncFgsTimeoutGuard.BLOCK_WINDOW_MS - 1, true),
+            Triple("exactly 24 hours", DataSyncFgsTimeoutGuard.BLOCK_WINDOW_MS, false)
+        )
+        assertTrue("size guard", rows.size == 3)
+        for ((name, elapsed, expectedBlocked) in rows) {
+            prefs.edit().clear().commit()
+            now = 10_000_000L
+            val recordedAt = now
+            val guard = guard()
+            guard.recordTimeout()
+            assertEquals(
+                "row '$name' stored elapsed timestamp",
+                recordedAt,
+                prefs.getLong(DataSyncFgsTimeoutGuard.KEY_TIMEOUT_ELAPSED_MS, -1L)
+            )
+            now += elapsed
+            assertEquals("row '$name' isPromotionBlocked", expectedBlocked, guard.isPromotionBlocked())
+        }
     }
 
     @Test

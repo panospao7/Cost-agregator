@@ -1,8 +1,12 @@
 package com.yourname.expensetracker.data.ai.provider.internal
 
+import kotlinx.coroutines.delay
 import java.io.IOException
 import java.net.SocketTimeoutException
 import kotlin.random.Random
+
+/** Production retry delay: suspends in real time. Tests inject a recording no-op instead. */
+internal val SystemRetryDelay: suspend (Long) -> Unit = { delay(it) }
 
 object CloudRetryPolicy {
     const val MAX_RETRY_ATTEMPTS = 3

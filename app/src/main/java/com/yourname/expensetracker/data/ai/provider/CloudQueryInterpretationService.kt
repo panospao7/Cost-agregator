@@ -2,6 +2,7 @@ package com.yourname.expensetracker.data.ai.provider
 
 import com.yourname.expensetracker.data.ai.provider.internal.CloudCorrelation
 import com.yourname.expensetracker.data.ai.provider.internal.CloudRetryPolicy
+import com.yourname.expensetracker.data.ai.provider.internal.SystemRetryDelay
 import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy
 import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
 import com.yourname.expensetracker.data.security.SecureKeyStorage
@@ -35,19 +36,30 @@ import javax.net.ssl.SSLException
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 @Singleton
 // CRITICAL FIX (CRITICAL-1): Now uses SecureKeyStorage instead of BuildConfig
-class CloudQueryInterpretationService @Inject constructor(
+class CloudQueryInterpretationService @VisibleForTesting internal constructor(
     private val secureKeyStorage: SecureKeyStorage,
-    @CloudAiHttpClient private val client: OkHttpClient,
+    private val client: OkHttpClient,
     private val privacyGate: PrivacyGate,
     private val cloudPayloadPolicy: CloudPayloadPolicy,
-    // P8F-03: cloud-call provenance audit (Hilt resolves; default keeps test/secondary ctors inert)
-    private val auditLogger: PrivacyAuditLogger = PrivacyAuditLogger.NO_OP
+    private val auditLogger: PrivacyAuditLogger,
+    // B4-K2: retry-delay seam; production delegates to coroutine delay(), tests record it.
+    private val retryDelay: suspend (Long) -> Unit
 ) : QueryInterpretationService {
+
+    // Hilt-visible constructor (unchanged dependency signature).
+    @Inject
+    constructor(
+        secureKeyStorage: SecureKeyStorage,
+        @CloudAiHttpClient client: OkHttpClient,
+        privacyGate: PrivacyGate,
+        cloudPayloadPolicy: CloudPayloadPolicy,
+        // P8F-03: cloud-call provenance audit (Hilt resolves; default keeps test/secondary ctors inert)
+        auditLogger: PrivacyAuditLogger = PrivacyAuditLogger.NO_OP
+    ) : this(secureKeyStorage, client, privacyGate, cloudPayloadPolicy, auditLogger, SystemRetryDelay)
 
     private var apiKeyOverride: String? = null
 
@@ -188,7 +200,7 @@ class CloudQueryInterpretationService @Inject constructor(
                 if (attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
                     val delayMs = CloudRetryPolicy.backoffDelayMs(attempt)
                     Timber.d("CloudQueryInterpretationService: retrying after ${delayMs}ms")
-                    delay(delayMs)
+                    retryDelay(delayMs)
                 }
             }
 

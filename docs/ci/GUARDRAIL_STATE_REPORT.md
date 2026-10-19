@@ -849,6 +849,12 @@ defects.  Listed here so they are not lost.
    **23 / 23 PASSED** (RED baseline before the fix: 1 failed, exit 1).  Strict review
    verdict: PASS (money-math rules checked; termination guard added for the
    negative-remainder branch on inputs outside the validated non-negative domain).
+   *B3-4 note: the "test mirror" mentioned above (test-local copies of the equal and
+   percentage split formulas) was removed; the same cases now call the production
+   `EnhancedSplitManager` and assert exact integer cents (see
+   `percentage split of 0_03 at 50-50 keeps sum at total not 0_04` and
+   `percentage split allocates leftover cents by largest fractional part`). The 23/23
+   count above is historical.*
 2. **`BankApiIntegrationTest` — 2 failures that look like stale expectations** vs the current
    `STRICT_EXTERNAL_ID` hashing behaviour (`same provider transaction id yields stable strict
    dedupe identity` expected 1 got 2; `low confidence …` expected `low-conf-1` got a hex
@@ -929,7 +935,7 @@ These block broad test runs and therefore the merge gate.  Pre-existing; A/B-pro
 | A4 | `WarrantyTrackerRepositoryTest` executor OOM/JPLIS crash | same family as A1 | same owner decision as A1 |
 | B1 | `ReceiptLifecycleCoordinatorTest` 7 failures | listed in §5.3 | stub `createExpenseDbOnlyV2`; `null()` vs `isNull()` matcher |
 | B2 | `SavingsGoalsViewModelTest` 3 failures | — | per handoff §B2 |
-| B3 | `SplitCalculationPrecisionTest` | **FIXED 2026-09-11 — see §5.3.1** | largest-remainder allocation |
+| B3 | `SplitCalculationPrecisionTest` | **FIXED 2026-09-11 — see §5.3.1** | largest-remainder allocation (B3-4: local-formula cases removed; proof now in `SplitCalculationPrecisionTest` production-call cases and exact cases in `SplitCalculatorTest`) |
 | B4 | `verify_known_good_state` 11 failures | freshness "stamp=missing" → **GATE-00R debt**, not a code bug | goes green once the merge-time recapture runs |
 
 **⚠️ CORRECTION (2026-09-11): A1 does NOT block GATE-00R.**  An earlier backlog entry claimed
@@ -993,6 +999,13 @@ python build/guard-debug/gr14w0/triage.py
 gradlew.bat :app:compileDebugKotlin --console=plain
 ```
 
+> **Retirement note.** The board generator (`inspect_db_mediation_proof.py`), the fixture runner
+> (`fixture_runner.py`), the mediation proof engine modules (`proof.py`, `worker_recognition.py`) and the
+> dedicated GR-14/GR-15 engine test files were retired from the repository in the test-suite audit
+> (batch B9). The board, battery and fixture commands in the block above describe how the recorded
+> numbers were originally produced and can no longer be re-run from the current tree; references to
+> those files elsewhere in this report are historical.
+
 Notes: `test_models.py` is excluded (pre-existing bare `import models`, runs only from its own
 directory).  On Windows, redirecting `gradlew.bat` output can yield an **empty** log — verify
 via artifact timestamps.  Do not run two Gradle commands concurrently.
@@ -1002,7 +1015,9 @@ via artifact timestamps.  Do not run two Gradle commands concurrently.
 ## 9. Prioritized backlog
 
 1. ~~**§5.3.1 `SplitCalculationPrecisionTest` rounding**~~ — **FIXED 2026-09-11** (§5.3.1;
-   largest-remainder allocation, 23/23 targeted green, strict review PASS).
+   largest-remainder allocation, 23/23 targeted green, strict review PASS; B3-4: local-formula
+   cases removed, proof now in the `EnhancedSplitManager` production-call cases and exact
+   `SplitCalculatorTest` largest-remainder cases).
 2. ~~**§4.D4 interface bucket (20 rows)**~~ — **DONE 2026-09-11** across GR-14u23
    (anonymous-implementor counting, landed latent), GR-14u24 (single-implementor exactness
    rule) and GR-14u25 (**contract V3**, which turned the batch's one counterexample into a
@@ -1201,3 +1216,7 @@ via artifact timestamps.  Do not run two Gradle commands concurrently.
 | Per-defect narrative | `docs/ci/DEFERRED_ISSUES_AND_DEBUG_HANDOFF.md` |
 | Test red inventory | `TEST_FAILURE_LEDGER.md`, `docs/testing/generated/TEST_FAILURE_TRACKER.md` |
 | Board artifacts + probes | `build/guard-debug/gr14u*/`, `build/guard-debug/gr14w0/` |
+
+> The `inspect_db_mediation_proof.py` and `proof.py` rows above were retired in
+> the test-suite audit (batch B9); the table records where those components lived and does not point at
+> files that exist in the current tree.

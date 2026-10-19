@@ -1,6 +1,8 @@
 package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.assertApproxEquals
+import com.yourname.expensetracker.assertMoneyEquals
+import com.yourname.expensetracker.assertMoneyExact
 import com.yourname.expensetracker.createExpense
 import com.yourname.expensetracker.toExpenseSnapshots
 import com.yourname.expensetracker.data.database.entity.TransactionType
@@ -8,6 +10,7 @@ import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.DomainTransferDirection
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
+import com.yourname.expensetracker.domain.util.PinnedUtcTimeZoneRule
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.every
@@ -17,11 +20,20 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.ClassRule
 import org.junit.Test
 import java.time.LocalDate
 import java.time.ZoneId
 
 class InsightsEngineDeepTest {
+
+    companion object {
+        // Zone pinned to UTC for the whole class: dateMs/createExpense and the engine's
+        // month and weekday bucketing all read the system default zone.
+        @JvmField
+        @ClassRule
+        val utcZone = PinnedUtcTimeZoneRule()
+    }
 
     private lateinit var engine: InsightsEngine
     private lateinit var expenseRepository: ExpenseRepository
@@ -68,8 +80,8 @@ class InsightsEngineDeepTest {
 
         val snapshot = engine.generateInsights(categories, expenses.map { it.toSnapshot() }, "EUR")
 
-        assertApproxEquals(600.0, snapshot.monthlyComparison.currentTotal)
-        assertApproxEquals(200.0, snapshot.monthlyComparison.changeAmount ?: 0.0)
+        assertMoneyEquals(600.0, snapshot.monthlyComparison.currentTotal, "currentTotal")
+        assertMoneyEquals(200.0, snapshot.monthlyComparison.changeAmount, "changeAmount (600 - 400)")
         assertApproxEquals(50f, snapshot.monthlyComparison.changePercentage ?: 0f, 0.01f)
     }
 
@@ -93,7 +105,7 @@ class InsightsEngineDeepTest {
         val pace = snapshot.spendingPace
         assertEquals(PaceStatus.OVER_PACE, pace.paceStatus)
         assertApproxEquals(333.33f, pace.pacePercentage, 0.2f)
-        assertApproxEquals(3000.0, pace.projectedTotal)
+        assertMoneyExact(3000.0, pace.projectedTotal, "projectedTotal passed through")
     }
 
     @Test
@@ -145,9 +157,9 @@ class InsightsEngineDeepTest {
         val snapshot = engine.generateInsights(categories, listOf(mondayShared, mondayNormal).map { it.toSnapshot() }, "EUR")
         val monday = snapshot.dayOfWeekPattern.first { it.dayName == "Mon" }
 
-        assertApproxEquals(70.0, monday.totalSpent)
+        assertMoneyEquals(70.0, monday.totalSpent, "Monday totalSpent uses effective amount (40 + 30)")
         assertEquals(2, monday.transactionCount)
-        assertApproxEquals(35.0, monday.avgPerTransaction)
+        assertMoneyEquals(35.0, monday.avgPerTransaction, "Monday avgPerTransaction")
     }
 
     @Test
@@ -162,22 +174,14 @@ class InsightsEngineDeepTest {
         val snapshot = engine.generateInsights(categories, expenses.map { it.toSnapshot() }, "EUR")
 
         // Canonical expectation: avg=(20+50+30)/3=33.33, median=30
-        assertApproxEquals(33.33, snapshot.averageTransactionSize, 0.1)
-        assertApproxEquals(30.0, snapshot.medianTransactionSize, 0.01)
+        assertMoneyEquals(33.33, snapshot.averageTransactionSize, "averageTransactionSize (100/3 rounded to cents)")
+        assertMoneyEquals(30.0, snapshot.medianTransactionSize, "medianTransactionSize")
     }
 
-    @Test
-    fun `empty dataset yields safe defaults`() = runTest {
-        every { timeProvider.now() } returns dateMs(2026, 4, 10)
-        val snapshot = engine.generateInsights(categories, emptyList(), "EUR")
-
-        org.junit.Assert.assertEquals(0.0, requireNotNull(snapshot.monthlyComparison.currentTotal), 0.0)
-        assertTrue(snapshot.monthlyComparison.currentMoneyResult is com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Available)
-        assertTrue(snapshot.categoryInsights.isEmpty())
-        assertTrue(snapshot.topMerchants.isEmpty())
-        assertEquals(7, snapshot.dayOfWeekPattern.size)
-        assertTrue(snapshot.dayOfWeekPattern.all { it.totalSpent == 0.0 && it.transactionCount == 0 })
-    }
+    // Removed `empty dataset yields safe defaults`: every assertion (currentTotal 0.0 + Available,
+    // empty categoryInsights/topMerchants, 7 zero day-of-week buckets) is a strict subset of
+    // InsightsEngineValidationTest.`empty expenses list returns valid snapshot with zeros`,
+    // which asserts those zeros bit-exactly via assertMoneyExact.
 
     private fun dateMs(year: Int, month: Int, day: Int): Long =
         LocalDate.of(year, month, day)

@@ -152,6 +152,7 @@ class SafeSinkOperationRunHandle(
         severity: EventSeverity, metadata: SafeEventMetadata, exception: Throwable?,
         isTerminal: Boolean
     ) {
+        // Intent: sink failures are best-effort (swallowed), cancellation must propagate; terminal latch is set before emit.
         try {
             safeSink.recordDiagnosticEvent(
                 event = DiagnosticEvent(
@@ -167,6 +168,8 @@ class SafeSinkOperationRunHandle(
                 ),
                 mode = restoreMaintenanceMode.currentMode()
             )
+        } catch (e: CancellationException) {
+            throw e
         } catch (_: Exception) {}
     }
 

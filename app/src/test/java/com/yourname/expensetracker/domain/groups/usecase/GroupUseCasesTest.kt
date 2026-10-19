@@ -71,118 +71,57 @@ class GroupUseCasesTest {
      * repository/coordinator rather than doing its own pre-check.
      */
     @Test
-    fun `add group expense returns error when group is missing`() = runTest {
-        coEvery {
-            groupsRepository.addExpenseWithLink(
+    fun `add group expense forwards repository coordinator error messages unchanged`() = runTest {
+        // Rows: group missing, group inactive, payer missing, payer in another group.
+        val messages = listOf(
+            "Group not found",
+            "Group not found or inactive",
+            "Payer not found",
+            "Payer is not a member of this group"
+        )
+        assertEquals(4, messages.size)
+
+        messages.forEach { message ->
+            // Fresh repository and use case per row: call counts are verified.
+            val rowRepository = mockk<GroupsRepository>()
+            val rowUseCase = AddGroupExpenseUseCase(rowRepository, timeProvider)
+            coEvery {
+                rowRepository.addExpenseWithLink(
+                    groupId = 1L,
+                    systemExpenseId = 10L,
+                    description = "Dinner",
+                    amount = 45.0,
+                    paidById = 2L,
+                    splitType = SplitType.EQUAL,
+                    customSplitsJson = null,
+                    date = 1000L
+                )
+            } returns GroupExpenseCreationResult.Error(message)
+
+            val result = rowUseCase(
                 groupId = 1L,
                 systemExpenseId = 10L,
                 description = "Dinner",
                 amount = 45.0,
                 paidById = 2L,
-                splitType = SplitType.EQUAL,
-                customSplitsJson = null,
-                date = 1000L
+                splitType = SplitType.EQUAL
             )
-        } returns GroupExpenseCreationResult.Error("Group not found")
 
-        val result = addGroupExpenseUseCase(
-            groupId = 1L,
-            systemExpenseId = 10L,
-            description = "Dinner",
-            amount = 45.0,
-            paidById = 2L,
-            splitType = SplitType.EQUAL
-        )
-
-        assertTrue(result is GroupExpenseCreationResult.Error)
-        result as GroupExpenseCreationResult.Error
-        assertEquals("Group not found", result.message)
-    }
-
-    @Test
-    fun `add group expense returns error when group is inactive`() = runTest {
-        coEvery {
-            groupsRepository.addExpenseWithLink(
-                groupId = 1L,
-                systemExpenseId = 10L,
-                description = "Dinner",
-                amount = 45.0,
-                paidById = 2L,
-                splitType = SplitType.EQUAL,
-                customSplitsJson = null,
-                date = 1000L
-            )
-        } returns GroupExpenseCreationResult.Error("Group not found or inactive")
-
-        val result = addGroupExpenseUseCase(
-            groupId = 1L,
-            systemExpenseId = 10L,
-            description = "Dinner",
-            amount = 45.0,
-            paidById = 2L,
-            splitType = SplitType.EQUAL
-        )
-
-        assertTrue(result is GroupExpenseCreationResult.Error)
-        result as GroupExpenseCreationResult.Error
-        assertEquals("Group not found or inactive", result.message)
-    }
-
-    @Test
-    fun `add group expense returns error when payer is missing or in another group`() = runTest {
-        // Payer missing
-        coEvery {
-            groupsRepository.addExpenseWithLink(
-                groupId = 1L,
-                systemExpenseId = 10L,
-                description = "Dinner",
-                amount = 45.0,
-                paidById = 2L,
-                splitType = SplitType.EQUAL,
-                customSplitsJson = null,
-                date = 1000L
-            )
-        } returns GroupExpenseCreationResult.Error("Payer not found")
-
-        val missingPayer = addGroupExpenseUseCase(
-            groupId = 1L,
-            systemExpenseId = 10L,
-            description = "Dinner",
-            amount = 45.0,
-            paidById = 2L,
-            splitType = SplitType.EQUAL
-        )
-
-        assertTrue(missingPayer is GroupExpenseCreationResult.Error)
-        missingPayer as GroupExpenseCreationResult.Error
-        assertEquals("Payer not found", missingPayer.message)
-
-        // Payer in wrong group
-        coEvery {
-            groupsRepository.addExpenseWithLink(
-                groupId = 1L,
-                systemExpenseId = 10L,
-                description = "Dinner",
-                amount = 45.0,
-                paidById = 2L,
-                splitType = SplitType.EQUAL,
-                customSplitsJson = null,
-                date = 1000L
-            )
-        } returns GroupExpenseCreationResult.Error("Payer is not a member of this group")
-
-        val wrongGroupPayer = addGroupExpenseUseCase(
-            groupId = 1L,
-            systemExpenseId = 10L,
-            description = "Dinner",
-            amount = 45.0,
-            paidById = 2L,
-            splitType = SplitType.EQUAL
-        )
-
-        assertTrue(wrongGroupPayer is GroupExpenseCreationResult.Error)
-        wrongGroupPayer as GroupExpenseCreationResult.Error
-        assertEquals("Payer is not a member of this group", wrongGroupPayer.message)
+            assertTrue("$message: expected Error but was $result", result is GroupExpenseCreationResult.Error)
+            assertEquals("$message: forwarded message", message, (result as GroupExpenseCreationResult.Error).message)
+            coVerify(exactly = 1) {
+                rowRepository.addExpenseWithLink(
+                    groupId = 1L,
+                    systemExpenseId = 10L,
+                    description = "Dinner",
+                    amount = 45.0,
+                    paidById = 2L,
+                    splitType = SplitType.EQUAL,
+                    customSplitsJson = null,
+                    date = 1000L
+                )
+            }
+        }
     }
 
     @Test

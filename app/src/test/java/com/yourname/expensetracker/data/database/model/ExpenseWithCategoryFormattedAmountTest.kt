@@ -1,9 +1,11 @@
 package com.yourname.expensetracker.data.database.model
 
 import com.google.common.truth.Truth.assertThat
+import com.google.common.truth.Truth.assertWithMessage
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import org.junit.Assert.assertEquals
 import org.junit.Test
 import java.util.Locale
 
@@ -21,35 +23,27 @@ class ExpenseWithCategoryFormattedAmountTest {
     // ---- Polarity prefix ----
 
     @Test
-    fun `PURCHASE gets minus prefix`() {
-        val ewc = makeEwc(transactionType = TransactionType.PURCHASE, amount = 25.50)
-        assertThat(ewc.formattedAmount).startsWith("-")
-        assertThat(ewc.formattedAmount).contains("25")
-    }
-
-    @Test
-    fun `WITHDRAWAL gets minus prefix`() {
-        val ewc = makeEwc(transactionType = TransactionType.WITHDRAWAL, amount = 100.0)
-        assertThat(ewc.formattedAmount).startsWith("-")
-    }
-
-    @Test
-    fun `DEPOSIT gets plus prefix`() {
-        val ewc = makeEwc(transactionType = TransactionType.DEPOSIT, amount = 500.0)
-        assertThat(ewc.formattedAmount).startsWith("+")
-    }
-
-    @Test
-    fun `UNKNOWN gets no prefix`() {
-        val ewc = makeEwc(transactionType = TransactionType.UNKNOWN, amount = 10.0)
-        // Should not start with + or -
-        assertThat(ewc.formattedAmount).doesNotMatch("^[+-].*")
-    }
-
-    @Test
-    fun `TRANSFER gets no prefix`() {
-        val ewc = makeEwc(transactionType = TransactionType.TRANSFER, amount = 10.0)
-        assertThat(ewc.formattedAmount).doesNotMatch("^[+-].*")
+    fun `polarity prefix per transaction type`() {
+        // row: (type, amount, expected prefix or null for none, amount fragment or null)
+        data class Row(val type: TransactionType, val amount: Double, val prefix: String?, val fragment: String?)
+        val rows = listOf(
+            Row(TransactionType.PURCHASE, 25.50, "-", "25"),
+            Row(TransactionType.WITHDRAWAL, 100.0, "-", null),
+            Row(TransactionType.DEPOSIT, 500.0, "+", null),
+            Row(TransactionType.UNKNOWN, 10.0, null, null),
+            Row(TransactionType.TRANSFER, 10.0, null, null)
+        )
+        assertEquals("polarity prefix rows size", 5, rows.size)
+        rows.forEach { row ->
+            val formatted = makeEwc(transactionType = row.type, amount = row.amount).formattedAmount
+            val label = "Row ${row.type}: '$formatted'"
+            if (row.prefix != null) {
+                assertWithMessage(label).that(formatted).startsWith(row.prefix)
+            } else {
+                assertWithMessage(label).that(formatted).doesNotMatch("^[+-].*")
+            }
+            row.fragment?.let { assertWithMessage(label).that(formatted).contains(it) }
+        }
     }
 
     // ---- Currency placement ----
@@ -62,12 +56,10 @@ class ExpenseWithCategoryFormattedAmountTest {
         val eurIndex = ewc.formattedAmount.indexOf("EUR")
         val digitIndex = ewc.formattedAmount.indexOfFirst { it.isDigit() }
         assertThat(eurIndex).isLessThan(digitIndex)
-    }
 
-    @Test
-    fun `non-EUR currency is rendered correctly`() {
-        val ewc = makeEwc(currency = "USD", amount = 99.99, transactionType = TransactionType.DEPOSIT)
-        assertThat(ewc.formattedAmount).startsWith("+USD")
+        // Non-EUR currency is rendered with prefix then code
+        val usd = makeEwc(currency = "USD", amount = 99.99, transactionType = TransactionType.DEPOSIT)
+        assertThat(usd.formattedAmount).startsWith("+USD")
     }
 
     // ---- effectiveAmount usage ----
@@ -83,32 +75,32 @@ class ExpenseWithCategoryFormattedAmountTest {
     }
 
     @Test
-    fun `shared expense with myShareAmount uses that amount`() {
-        val ewc = makeEwc(
-            amount = 100.0,
-            isSharedExpense = true,
-            myShareAmount = 33.33,
-            transactionType = TransactionType.PURCHASE
+    fun `effective amount source per expense shape`() {
+        val rows = listOf(
+            // label to (ewc, expected fragment)
+            "shared expense with myShareAmount uses that amount" to
+                (makeEwc(
+                    amount = 100.0,
+                    isSharedExpense = true,
+                    myShareAmount = 33.33,
+                    transactionType = TransactionType.PURCHASE
+                ) to "33"),
+            // effectiveAmount = 200 * 50/100 = 100
+            "shared expense with mySharePercentage uses proportional amount" to
+                (makeEwc(
+                    amount = 200.0,
+                    isSharedExpense = true,
+                    mySharePercentage = 50,
+                    transactionType = TransactionType.PURCHASE
+                ) to "100"),
+            "standard expense uses full amount" to
+                (makeEwc(amount = 75.50, transactionType = TransactionType.PURCHASE) to "75")
         )
-        assertThat(ewc.formattedAmount).contains("33")
-    }
-
-    @Test
-    fun `shared expense with mySharePercentage uses proportional amount`() {
-        val ewc = makeEwc(
-            amount = 200.0,
-            isSharedExpense = true,
-            mySharePercentage = 50,
-            transactionType = TransactionType.PURCHASE
-        )
-        // effectiveAmount = 200 * 50/100 = 100
-        assertThat(ewc.formattedAmount).contains("100")
-    }
-
-    @Test
-    fun `standard expense uses full amount`() {
-        val ewc = makeEwc(amount = 75.50, transactionType = TransactionType.PURCHASE)
-        assertThat(ewc.formattedAmount).contains("75")
+        assertEquals("effective amount source rows size", 3, rows.size)
+        rows.forEach { (label, pair) ->
+            assertWithMessage("Row '$label': '${pair.first.formattedAmount}'")
+                .that(pair.first.formattedAmount).contains(pair.second)
+        }
     }
 
     // ---- Helpers ----

@@ -71,14 +71,6 @@ class BackgroundJobRunDaoTest {
     // -------------------------------------------------------------------------
 
     @Test
-    fun `insert a job run`() = runTest {
-        val run = createRun()
-        val id = dao.insert(run)
-
-        assertTrue(id > 0)
-    }
-
-    @Test
     fun `getRecent returns job runs ordered by startedAt DESC`() = runTest {
         dao.insert(createRun(workerName = "retention", startedAt = FIXED_NOW))
         dao.insert(createRun(workerName = "retention", startedAt = FIXED_NOW + 2000))
@@ -178,7 +170,7 @@ class BackgroundJobRunDaoTest {
     }
 
     @Test
-    fun `insert with full field set`() = runTest {
+    fun `insert then read back returns every job run field exactly`() = runTest {
         val run = createRun(
             workerName = "location_backfill",
             startedAt = FIXED_NOW,
@@ -187,8 +179,8 @@ class BackgroundJobRunDaoTest {
             rowsScanned = 500,
             rowsUpdated = 120,
             notificationsSent = 5,
-            retryReason = null,
-            errorMessage = null
+            retryReason = "RETRY_CODE",
+            errorMessage = "ERROR_CODE"
         )
         val id = dao.insert(run)
 
@@ -197,6 +189,7 @@ class BackgroundJobRunDaoTest {
         val results = dao.getRecent("location_backfill", 1)
         assertEquals(1, results.size)
         val loaded = results[0]
+        assertEquals(id, loaded.id)
         assertEquals("location_backfill", loaded.workerName)
         assertEquals(FIXED_NOW, loaded.startedAt)
         assertEquals(FIXED_NOW + 3000, loaded.finishedAt)
@@ -204,5 +197,7 @@ class BackgroundJobRunDaoTest {
         assertEquals(500, loaded.rowsScanned)
         assertEquals(120, loaded.rowsUpdated)
         assertEquals(5, loaded.notificationsSent)
+        assertEquals("RETRY_CODE", loaded.retryReason)
+        assertEquals("ERROR_CODE", loaded.errorMessage)
     }
 }

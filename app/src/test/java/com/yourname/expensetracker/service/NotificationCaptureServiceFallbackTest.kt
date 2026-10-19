@@ -19,6 +19,7 @@ import com.yourname.expensetracker.domain.privacy.PrivacySettings
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.privacy.RawStorageMode
 import com.yourname.expensetracker.domain.util.TimeProvider
+import io.mockk.clearMocks
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -137,32 +138,64 @@ class NotificationCaptureServiceFallbackTest {
         coVerify(exactly = 0) { intakeCoordinator.captureForRetry(any(), any(), any(), any(), any(), any(), any(), any(), any()) }
     }
 
-    @Test
-    fun `payment only in EXTRA_TEXT_LINES reaches live filter and coordinator`() {
-        service.onNotificationPosted(buildStatusBarNotification {
-            putCharSequence(Notification.EXTRA_TITLE, "Bank")
-            putCharSequenceArray(Notification.EXTRA_TEXT_LINES, arrayOf("Paid EUR 12.00 at Cafe"))
-        })
-        assertCapturedCombinedBody("Bank Paid EUR 12.00 at Cafe")
+    private class CapturedRow(
+        val name: String,
+        val expectedCombinedBody: String,
+        val extras: Bundle.() -> Unit
+    )
+
+    private class RejectedRow(
+        val name: String,
+        val expectedReason: NotificationFilterReason,
+        val extras: Bundle.() -> Unit
+    )
+
+    /** Each row starts from a clean call history (stubs are kept) so exactly-once checks stay per row. */
+    private fun resetRecordedCalls() {
+        clearMocks(intakeCoordinator, diagnosticEmitter, answers = false)
     }
 
     @Test
-    fun `payment only in EXTRA_INFO_TEXT with null bigText reaches coordinator`() {
-        service.onNotificationPosted(buildStatusBarNotification {
-            putCharSequence(Notification.EXTRA_TITLE, "Bank")
-            putCharSequence(Notification.EXTRA_INFO_TEXT, "Paid EUR 12.00 at Cafe")
-        })
-        assertCapturedCombinedBody("Bank Paid EUR 12.00 at Cafe")
-    }
-
-    @Test
-    fun `payment only in EXTRA_SUMMARY_TEXT with blank bigText reaches coordinator`() {
-        service.onNotificationPosted(buildStatusBarNotification {
-            putCharSequence(Notification.EXTRA_TITLE, "Bank")
-            putCharSequence(Notification.EXTRA_BIG_TEXT, "   ")
-            putCharSequence(Notification.EXTRA_SUMMARY_TEXT, "Paid EUR 12.00 at Cafe")
-        })
-        assertCapturedCombinedBody("Bank     Paid EUR 12.00 at Cafe")
+    fun `payment in a fallback or top-level extra reaches live filter and coordinator`() {
+        val rows = listOf(
+            CapturedRow("payment only in EXTRA_TEXT_LINES", "Bank Paid EUR 12.00 at Cafe") {
+                putCharSequence(Notification.EXTRA_TITLE, "Bank")
+                putCharSequenceArray(Notification.EXTRA_TEXT_LINES, arrayOf("Paid EUR 12.00 at Cafe"))
+            },
+            CapturedRow("payment only in EXTRA_INFO_TEXT with null bigText", "Bank Paid EUR 12.00 at Cafe") {
+                putCharSequence(Notification.EXTRA_TITLE, "Bank")
+                putCharSequence(Notification.EXTRA_INFO_TEXT, "Paid EUR 12.00 at Cafe")
+            },
+            CapturedRow("payment only in EXTRA_SUMMARY_TEXT with blank bigText", "Bank     Paid EUR 12.00 at Cafe") {
+                putCharSequence(Notification.EXTRA_TITLE, "Bank")
+                putCharSequence(Notification.EXTRA_BIG_TEXT, "   ")
+                putCharSequence(Notification.EXTRA_SUMMARY_TEXT, "Paid EUR 12.00 at Cafe")
+            },
+            CapturedRow("top level text and bigText with repeated fields deduplicated", "Bank Paid EUR 12.00 at Cafe") {
+                putCharSequence(Notification.EXTRA_TITLE, "Bank")
+                putCharSequence(Notification.EXTRA_TEXT, "Paid EUR 12.00 at Cafe")
+                putCharSequence(Notification.EXTRA_BIG_TEXT, "Paid EUR 12.00 at Cafe")
+                putCharSequence(Notification.EXTRA_INFO_TEXT, "Paid EUR 12.00 at Cafe")
+            },
+            CapturedRow("top level text only", "Bank Paid EUR 12.00 at Cafe") {
+                putCharSequence(Notification.EXTRA_TITLE, "Bank")
+                putCharSequence(Notification.EXTRA_TEXT, "Paid EUR 12.00 at Cafe")
+            },
+            CapturedRow("top level bigText only", "Bank Paid EUR 12.00 at Cafe") {
+                putCharSequence(Notification.EXTRA_TITLE, "Bank")
+                putCharSequence(Notification.EXTRA_BIG_TEXT, "Paid EUR 12.00 at Cafe")
+            }
+        )
+        assertEquals("captured rows size", 6, rows.size)
+        for (row in rows) {
+            resetRecordedCalls()
+            service.onNotificationPosted(buildStatusBarNotification(row.extras))
+            try {
+                assertCapturedCombinedBody(row.expectedCombinedBody)
+            } catch (e: AssertionError) {
+                throw AssertionError("row '${row.name}': ${e.message}", e)
+            }
+        }
     }
 
     @Test
@@ -194,60 +227,32 @@ class NotificationCaptureServiceFallbackTest {
     }
 
     @Test
-    fun `top level text and bigText capture with repeated fields deduplicated`() {
-        service.onNotificationPosted(buildStatusBarNotification {
-            putCharSequence(Notification.EXTRA_TITLE, "Bank")
-            putCharSequence(Notification.EXTRA_TEXT, "Paid EUR 12.00 at Cafe")
-            putCharSequence(Notification.EXTRA_BIG_TEXT, "Paid EUR 12.00 at Cafe")
-            putCharSequence(Notification.EXTRA_INFO_TEXT, "Paid EUR 12.00 at Cafe")
-        })
-        assertCapturedCombinedBody("Bank Paid EUR 12.00 at Cafe")
-    }
-
-    @Test
-    fun `no amount anywhere rejects before coordinator`() {
-        service.onNotificationPosted(buildStatusBarNotification {
-            putCharSequence(Notification.EXTRA_TITLE, "Bank")
-            putCharSequenceArray(Notification.EXTRA_TEXT_LINES, arrayOf("Paid at Cafe"))
-        })
-        assertFilterRejectedBeforeCoordinator(NotificationFilterReason.NO_AMOUNT)
-    }
-
-    @Test
-    fun `extended security text remains rejected for finance package`() {
-        service.onNotificationPosted(buildStatusBarNotification {
-            putCharSequence(Notification.EXTRA_TITLE, "Bank")
-            putCharSequence(Notification.EXTRA_TEXT, "Paid EUR 12.00 at Cafe")
-            putCharSequence(Notification.EXTRA_INFO_TEXT, "Security code")
-        })
-        assertFilterRejectedBeforeCoordinator(NotificationFilterReason.SECURITY_OR_AUTH)
-    }
-
-    @Test
-    fun `extended promotion text remains rejected for finance package`() {
-        service.onNotificationPosted(buildStatusBarNotification {
-            putCharSequence(Notification.EXTRA_TITLE, "Bank")
-            putCharSequence(Notification.EXTRA_TEXT, "Paid EUR 12.00 at Cafe")
-            putCharSequence(Notification.EXTRA_SUMMARY_TEXT, "Cashback offer")
-        })
-        assertFilterRejectedBeforeCoordinator(NotificationFilterReason.PROMOTION)
-    }
-
-    @Test
-    fun `top level text only still captures`() {
-        service.onNotificationPosted(buildStatusBarNotification {
-            putCharSequence(Notification.EXTRA_TITLE, "Bank")
-            putCharSequence(Notification.EXTRA_TEXT, "Paid EUR 12.00 at Cafe")
-        })
-        assertCapturedCombinedBody("Bank Paid EUR 12.00 at Cafe")
-    }
-
-    @Test
-    fun `top level bigText only still captures`() {
-        service.onNotificationPosted(buildStatusBarNotification {
-            putCharSequence(Notification.EXTRA_TITLE, "Bank")
-            putCharSequence(Notification.EXTRA_BIG_TEXT, "Paid EUR 12.00 at Cafe")
-        })
-        assertCapturedCombinedBody("Bank Paid EUR 12.00 at Cafe")
+    fun `rejected notifications never reach the coordinator and emit a terminal FILTER_REJECTED`() {
+        val rows = listOf(
+            RejectedRow("no amount anywhere", NotificationFilterReason.NO_AMOUNT) {
+                putCharSequence(Notification.EXTRA_TITLE, "Bank")
+                putCharSequenceArray(Notification.EXTRA_TEXT_LINES, arrayOf("Paid at Cafe"))
+            },
+            RejectedRow("extended security text in info text", NotificationFilterReason.SECURITY_OR_AUTH) {
+                putCharSequence(Notification.EXTRA_TITLE, "Bank")
+                putCharSequence(Notification.EXTRA_TEXT, "Paid EUR 12.00 at Cafe")
+                putCharSequence(Notification.EXTRA_INFO_TEXT, "Security code")
+            },
+            RejectedRow("extended promotion text in summary text", NotificationFilterReason.PROMOTION) {
+                putCharSequence(Notification.EXTRA_TITLE, "Bank")
+                putCharSequence(Notification.EXTRA_TEXT, "Paid EUR 12.00 at Cafe")
+                putCharSequence(Notification.EXTRA_SUMMARY_TEXT, "Cashback offer")
+            }
+        )
+        assertEquals("rejected rows size", 3, rows.size)
+        for (row in rows) {
+            resetRecordedCalls()
+            service.onNotificationPosted(buildStatusBarNotification(row.extras))
+            try {
+                assertFilterRejectedBeforeCoordinator(row.expectedReason)
+            } catch (e: AssertionError) {
+                throw AssertionError("row '${row.name}': ${e.message}", e)
+            }
+        }
     }
 }

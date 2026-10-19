@@ -1,6 +1,8 @@
 package com.yourname.expensetracker.metrics
 
+import com.yourname.expensetracker.assertMoneyExact
 import com.yourname.expensetracker.toExpenseSnapshots
+import com.yourname.expensetracker.domain.util.PinnedUtcTimeZoneRule
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.analytics.DayOfWeekAnalyzer
@@ -14,6 +16,7 @@ import io.mockk.mockk
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.ClassRule
 import org.junit.Test
 import java.util.Calendar
 
@@ -22,6 +25,13 @@ import java.util.Calendar
  * Critical for shared expenses, not-mine expenses, and correct metrics throughout the app.
  */
 class EffectiveAmountConsistencyTest {
+
+    companion object {
+        // Fixtures are built with Calendar.getInstance() and the engines read the default zone.
+        @JvmField
+        @ClassRule
+        val utcZone = PinnedUtcTimeZoneRule()
+    }
 
     private val timeProvider = mockk<TimeProvider>()
     private lateinit var spendingPaceCalculator: SpendingPaceCalculator
@@ -155,34 +165,46 @@ class EffectiveAmountConsistencyTest {
     // EDGE CASES
     // ============================================================================
 
-    @Test
-    fun `effectiveAmount - isNotMine overrides shared`() {
-        val exp = createExpense(
-            amount = 100.0,
-            date = 0,
-            isNotMine = true,
-            isSharedExpense = true,
-            myShareAmount = 50.0
-        )
-        assertEquals("isNotMine should return 0", 0.0, exp.effectiveAmount, 0.001)
-    }
+    private data class EffectiveAmountRow(
+        val name: String,
+        val expense: Expense,
+        val expected: Double
+    )
 
     @Test
-    fun `effectiveAmount - myShareAmount overrides mySharePercentage when both set`() {
-        val exp = createExpense(
-            amount = 100.0,
-            date = 0,
-            isSharedExpense = true,
-            myShareAmount = 30.0,
-            mySharePercentage = 50
+    fun `effectiveAmount - ownership rules table`() {
+        val rows = listOf(
+            EffectiveAmountRow(
+                "isNotMine overrides shared (returns 0)",
+                createExpense(amount = 100.0, date = 0, isNotMine = true, isSharedExpense = true, myShareAmount = 50.0),
+                0.0
+            ),
+            EffectiveAmountRow(
+                "myShareAmount takes precedence over mySharePercentage",
+                createExpense(amount = 100.0, date = 0, isSharedExpense = true, myShareAmount = 30.0, mySharePercentage = 50),
+                30.0
+            ),
+            EffectiveAmountRow(
+                "shared expense with no share data falls back to full amount",
+                createExpense(amount = 100.0, date = 0, isSharedExpense = true, myShareAmount = null, mySharePercentage = null),
+                100.0
+            ),
+            EffectiveAmountRow(
+                "shared expense with 33 percent uses proportional share",
+                createExpense(amount = 150.0, date = 0, isSharedExpense = true, mySharePercentage = 33),
+                49.5
+            ),
+            EffectiveAmountRow(
+                "normal expense uses full amount",
+                createExpense(75.0, 0),
+                75.0
+            )
         )
-        assertEquals("myShareAmount takes precedence", 30.0, exp.effectiveAmount, 0.001)
-    }
+        assertEquals(5, rows.size)
 
-    @Test
-    fun `effectiveAmount - normal expense uses full amount`() {
-        val exp = createExpense(75.0, 0)
-        assertEquals(75.0, exp.effectiveAmount, 0.001)
+        rows.forEach { row ->
+            assertMoneyExact(row.expected, row.expense.effectiveAmount, row.name)
+        }
     }
 
     @Test

@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
 import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationInput
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationResult
+import com.yourname.expensetracker.domain.privacy.PrivacyAuditLogger
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
@@ -59,10 +60,15 @@ class CloudQueryInterpretationServiceTest {
         EffectiveCloudAiPolicyResolver.failClosedNoAi(), DefaultCloudPayloadRedactor()
     )
 
-    private fun service(client: OkHttpClient): CloudQueryInterpretationService {
+    private fun service(
+        client: OkHttpClient,
+        retryDelay: RecordingRetryDelay = RecordingRetryDelay()
+    ): CloudQueryInterpretationService {
         val key = mockk<SecureKeyStorage>()
         every { key.getKey(SecureKeyStorage.KEY_GEMINI) } returns "test-key"
-        return CloudQueryInterpretationService(key, client, allowedGate(), testPayloadPolicy())
+        return CloudQueryInterpretationService(
+            key, client, allowedGate(), testPayloadPolicy(), PrivacyAuditLogger.NO_OP, retryDelay.delayer
+        )
     }
 
     private fun input() = FinancialQueryInterpretationInput("top merchants", 1_000L, "en-US")
@@ -99,10 +105,12 @@ class CloudQueryInterpretationServiceTest {
                     if (++attempts == 1 || !recover) throw failure
                     response(successBody())
                 }
-                val result = service(client).interpret(input())
+                val retryDelay = RecordingRetryDelay()
+                val result = service(client, retryDelay).interpret(input())
                 if (recover) assertFalse(result is FinancialQueryInterpretationResult.Unsupported)
                 else assertEquals(code, (result as FinancialQueryInterpretationResult.Unsupported).reason)
                 verify(exactly = if (recover) 2 else 3) { call.execute() }
+                retryDelay.assertSchedule(expectedRetries = if (recover) 1 else 2)
             }
         }
     }
@@ -119,10 +127,12 @@ class CloudQueryInterpretationServiceTest {
                     if (++attempts == 1 || !recover) response("/private/receipt", status)
                     else response(successBody())
                 }
-                val result = service(client).interpret(input())
+                val retryDelay = RecordingRetryDelay()
+                val result = service(client, retryDelay).interpret(input())
                 if (recover && status != 400) assertFalse(result is FinancialQueryInterpretationResult.Unsupported)
                 else assertEquals("UNKNOWN_ERROR", (result as FinancialQueryInterpretationResult.Unsupported).reason)
                 verify(exactly = if (status == 400) 1 else if (recover) 2 else 3) { call.execute() }
+                retryDelay.assertSchedule(expectedRetries = if (status == 400) 0 else if (recover) 1 else 2)
             }
         }
     }
@@ -442,12 +452,15 @@ class CloudQueryInterpretationServiceTest {
         }
         Timber.plant(tree)
         try {
+            val retryDelay = RecordingRetryDelay()
             val result = runBlocking {
-                CloudQueryInterpretationService(keyStorage, client, gate, testPayloadPolicy())
-                    .interpret(FinancialQueryInterpretationInput("top merchants", 1_000L, "en-US"))
+                CloudQueryInterpretationService(
+                    keyStorage, client, gate, testPayloadPolicy(), PrivacyAuditLogger.NO_OP, retryDelay.delayer
+                ).interpret(FinancialQueryInterpretationInput("top merchants", 1_000L, "en-US"))
             }
             assertFalse(result is FinancialQueryInterpretationResult.Unsupported)
             assertEquals(2, attempts)
+            retryDelay.assertSchedule(expectedRetries = 1)
             assertTrue(logs.any { it.second.contains("stage=ssl") })
             assertTrue(logs.all { it.first == null && !it.second.contains("/private/receipts/sql secret") })
         } finally {
@@ -466,13 +479,16 @@ class CloudQueryInterpretationServiceTest {
         every { client.newCall(any()) } returns call
         every { call.execute() } throws SSLException("connection reset /private/receipt")
 
+        val retryDelay = RecordingRetryDelay()
         val result = runBlocking {
-            CloudQueryInterpretationService(keyStorage, client, gate, testPayloadPolicy())
-                .interpret(FinancialQueryInterpretationInput("top merchants", 1_000L, "en-US"))
+            CloudQueryInterpretationService(
+                keyStorage, client, gate, testPayloadPolicy(), PrivacyAuditLogger.NO_OP, retryDelay.delayer
+            ).interpret(FinancialQueryInterpretationInput("top merchants", 1_000L, "en-US"))
         }
 
         assertEquals("UNKNOWN_ERROR", (result as FinancialQueryInterpretationResult.Unsupported).reason)
         verify(exactly = 3) { call.execute() }
+        retryDelay.assertSchedule(expectedRetries = 2)
     }
 
     @Test

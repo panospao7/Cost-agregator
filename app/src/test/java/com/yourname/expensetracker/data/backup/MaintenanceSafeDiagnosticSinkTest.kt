@@ -1,9 +1,9 @@
 package com.yourname.expensetracker.data.backup
 
-import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Before
 import org.junit.Test
@@ -25,67 +25,23 @@ class MaintenanceSafeDiagnosticSinkTest {
     }
 
     @Test
-    fun sink_does_not_throw_in_any_mode() = runTest {
-        for (mode in RestoreMaintenanceMode.Mode.entries) {
-            sink.recordBlockedOperation(
-                operation = "NotificationRepository.save",
-                mode = mode,
-                pipeline = "P1",
-                entity = "RawNotification"
-            )
-        }
-    }
-
-    @Test
-    fun sink_accepts_null_pipeline_and_entity() = runTest {
-        sink.recordBlockedOperation(
-            operation = "EmailReceiptIngestionService.processEmail",
-            mode = RestoreMaintenanceMode.Mode.RESTORE_PREPARING
-        )
-    }
-
-    @Test
     fun write_barrier_exception_carries_mode_for_sink() = runTest {
         setMode(RestoreMaintenanceMode.Mode.RESTORE_SWAPPING)
         val op = DatabaseAccessOperation("saveExpense", pipeline = "P2", entity = "Expense")
         val ex = try { writeBarrier.checkWritesAllowed(op); null }
                  catch (e: DatabaseAccessBlockedException) { e }
         assertNotNull("Expected DatabaseAccessBlockedException", ex)
+        assertEquals(RestoreMaintenanceMode.Mode.RESTORE_SWAPPING, ex!!.mode)
+        assertEquals("saveExpense", ex.operation.name)
+        assertEquals("P2", ex.operation.pipeline)
+        assertEquals("Expense", ex.operation.entity)
+        // No-throw check: the Timber sink's only effect is a log line (no observable state),
+        // so this verifies the exception's fields can be fed to the sink without failure.
         sink.recordBlockedOperation(
-            operation = ex!!.operation.name,
+            operation = ex.operation.name,
             mode = ex.mode,
             pipeline = ex.operation.pipeline,
             entity = ex.operation.entity
         )
-    }
-
-    @Test
-    fun sink_interface_is_implemented_by_timber_impl() = runTest {
-        val s: MaintenanceSafeDiagnosticSink = TimberMaintenanceSafeDiagnosticSink()
-        s.recordBlockedOperation(
-            operation = "test",
-            mode = RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED,
-            pipeline = "P9",
-            entity = "PipelineDiagnosticEvent"
-        )
-    }
-
-    @Test
-    fun mock_sink_can_verify_calls() = runTest {
-        val mockSink = mockk<MaintenanceSafeDiagnosticSink>(relaxed = true)
-        mockSink.recordBlockedOperation(
-            operation = "BudgetMonitor.diagnostic",
-            mode = RestoreMaintenanceMode.Mode.RESTORE_PREPARING,
-            pipeline = "P6"
-        )
-        coVerify {
-            mockSink.recordBlockedOperation(
-                operation = "BudgetMonitor.diagnostic",
-                mode = RestoreMaintenanceMode.Mode.RESTORE_PREPARING,
-                pipeline = "P6",
-                entity = null,
-                reason = any()
-            )
-        }
     }
 }

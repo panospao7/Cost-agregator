@@ -9,7 +9,6 @@ import java.time.DayOfWeek
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
-import java.time.YearMonth
 import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.ZonedDateTime
@@ -164,38 +163,29 @@ class TimePeriodUtilsT4CBatch1Test {
     // getDayOfWeek — Calendar constants (SUNDAY = 1 … SATURDAY = 7)
     // ============================================================================
 
+    // Merged (identical shape): the former "known boundary dates" test (2021-01-01
+    // Friday, 2020-12-31 Thursday - dates referenced by the utility's KDoc) is
+    // appended as rows. The former "matches java time ordinal mapping for a full
+    // week" test asserted the same seven 2024-01-01..07 noon-UTC instants with the
+    // same expected constants (Mon=2 .. Sun=1) and is covered by rows 1-7 below.
     @Test
-    fun `getDayOfWeek preserves Calendar constants Sunday=1 through Saturday=7`() {
-        withZone("UTC") {
-            assertEquals(Calendar.MONDAY, TimePeriodUtils.getDayOfWeek(dateAtNoonUtc(2024, 1, 1))) // 2
-            assertEquals(Calendar.TUESDAY, TimePeriodUtils.getDayOfWeek(dateAtNoonUtc(2024, 1, 2))) // 3
-            assertEquals(Calendar.WEDNESDAY, TimePeriodUtils.getDayOfWeek(dateAtNoonUtc(2024, 1, 3))) // 4
-            assertEquals(Calendar.THURSDAY, TimePeriodUtils.getDayOfWeek(dateAtNoonUtc(2024, 1, 4))) // 5
-            assertEquals(Calendar.FRIDAY, TimePeriodUtils.getDayOfWeek(dateAtNoonUtc(2024, 1, 5))) // 6
-            assertEquals(Calendar.SATURDAY, TimePeriodUtils.getDayOfWeek(dateAtNoonUtc(2024, 1, 6))) // 7
-            assertEquals(Calendar.SUNDAY, TimePeriodUtils.getDayOfWeek(dateAtNoonUtc(2024, 1, 7))) // 1
-        }
-    }
+    fun `getDayOfWeek table preserves Calendar constants Sunday=1 through Saturday=7`() {
+        val rows = listOf(
+            IntRow("2024-01-01 Monday", dateAtNoonUtc(2024, 1, 1), Calendar.MONDAY), // 2
+            IntRow("2024-01-02 Tuesday", dateAtNoonUtc(2024, 1, 2), Calendar.TUESDAY), // 3
+            IntRow("2024-01-03 Wednesday", dateAtNoonUtc(2024, 1, 3), Calendar.WEDNESDAY), // 4
+            IntRow("2024-01-04 Thursday", dateAtNoonUtc(2024, 1, 4), Calendar.THURSDAY), // 5
+            IntRow("2024-01-05 Friday", dateAtNoonUtc(2024, 1, 5), Calendar.FRIDAY), // 6
+            IntRow("2024-01-06 Saturday", dateAtNoonUtc(2024, 1, 6), Calendar.SATURDAY), // 7
+            IntRow("2024-01-07 Sunday", dateAtNoonUtc(2024, 1, 7), Calendar.SUNDAY), // 1
+            IntRow("2021-01-01 Friday (KDoc boundary date)", dateAtNoonUtc(2021, 1, 1), Calendar.FRIDAY),
+            IntRow("2020-12-31 Thursday (KDoc boundary date)", dateAtNoonUtc(2020, 12, 31), Calendar.THURSDAY)
+        )
+        assertEquals("getDayOfWeek table size", 9, rows.size)
 
-    @Test
-    fun `getDayOfWeek known boundary dates are Friday and Thursday`() {
-        // Dates referenced by the utility's KDoc: 2021-01-01 is a Friday,
-        // 2020-12-31 is a Thursday.
         withZone("UTC") {
-            assertEquals(Calendar.FRIDAY, TimePeriodUtils.getDayOfWeek(dateAtNoonUtc(2021, 1, 1)))
-            assertEquals(Calendar.THURSDAY, TimePeriodUtils.getDayOfWeek(dateAtNoonUtc(2020, 12, 31)))
-        }
-    }
-
-    @Test
-    fun `getDayOfWeek matches java time ordinal mapping for a full week`() {
-        withZone("UTC") {
-            for (dayOffset in 0..6) {
-                val date = LocalDate.of(2024, 1, 1).plusDays(dayOffset.toLong())
-                val ts = dateAtNoonUtc(date.year, date.monthValue, date.dayOfMonth)
-                // DayOfWeek.MONDAY ordinal 0 → Calendar.MONDAY = 2; SUNDAY ordinal 6 → Calendar.SUNDAY = 1.
-                val expectedCalendar = ((date.dayOfWeek.ordinal + 1) % 7) + 1
-                assertEquals(expectedCalendar, TimePeriodUtils.getDayOfWeek(ts))
+            for (row in rows) {
+                assertEquals("getDayOfWeek ${row.name} [UTC]", row.expected, TimePeriodUtils.getDayOfWeek(row.ts))
             }
         }
     }
@@ -205,32 +195,39 @@ class TimePeriodUtilsT4CBatch1Test {
     // ============================================================================
 
     @Test
-    fun `getDaysInMonth handles leap and non-leap February`() {
-        withZone("UTC") {
-            assertEquals(29, TimePeriodUtils.getDaysInMonth(dateAtNoonUtc(2024, 2, 15))) // leap
-            assertEquals(28, TimePeriodUtils.getDaysInMonth(dateAtNoonUtc(2023, 2, 15))) // non-leap
-            assertEquals(31, TimePeriodUtils.getDaysInMonth(dateAtNoonUtc(2024, 12, 31)))
-            assertEquals(30, TimePeriodUtils.getDaysInMonth(dateAtNoonUtc(2024, 4, 15)))
-        }
-    }
+    fun `month field tables - days in month, days remaining and zero based day index`() {
+        val daysInMonth = listOf(
+            IntRow("2024-02-15 leap February", dateAtNoonUtc(2024, 2, 15), 29),
+            IntRow("2023-02-15 non-leap February", dateAtNoonUtc(2023, 2, 15), 28),
+            IntRow("2024-12-31 December", dateAtNoonUtc(2024, 12, 31), 31),
+            IntRow("2024-04-15 April", dateAtNoonUtc(2024, 4, 15), 30)
+        )
+        val daysRemaining = listOf(
+            IntRow("2024-02-20 excludes current day (Feb 21..29)", dateAtNoonUtc(2024, 2, 20), 9),
+            IntRow("2024-02-29 last day of leap February", dateAtNoonUtc(2024, 2, 29), 0),
+            IntRow("2023-02-15 (Feb 16..28)", dateAtNoonUtc(2023, 2, 15), 13),
+            IntRow("2024-12-31 last day of year", dateAtNoonUtc(2024, 12, 31), 0)
+        )
+        val dayIndex = listOf(
+            IntRow("2024-02-01 first day", dateAtNoonUtc(2024, 2, 1), 0),
+            IntRow("2024-02-15", dateAtNoonUtc(2024, 2, 15), 14),
+            IntRow("2024-02-29 leap day", dateAtNoonUtc(2024, 2, 29), 28),
+            IntRow("2024-12-31 last day of 31-day month", dateAtNoonUtc(2024, 12, 31), 30)
+        )
+        assertEquals("getDaysInMonth table size", 4, daysInMonth.size)
+        assertEquals("getDaysRemainingInMonth table size", 4, daysRemaining.size)
+        assertEquals("getDayIndexFromMonthStart table size", 4, dayIndex.size)
 
-    @Test
-    fun `getDaysRemainingInMonth excludes the current day`() {
         withZone("UTC") {
-            assertEquals(9, TimePeriodUtils.getDaysRemainingInMonth(dateAtNoonUtc(2024, 2, 20))) // Feb 21..29
-            assertEquals(0, TimePeriodUtils.getDaysRemainingInMonth(dateAtNoonUtc(2024, 2, 29)))
-            assertEquals(13, TimePeriodUtils.getDaysRemainingInMonth(dateAtNoonUtc(2023, 2, 15))) // Feb 16..28
-            assertEquals(0, TimePeriodUtils.getDaysRemainingInMonth(dateAtNoonUtc(2024, 12, 31)))
-        }
-    }
-
-    @Test
-    fun `getDayIndexFromMonthStart is zero based`() {
-        withZone("UTC") {
-            assertEquals(0, TimePeriodUtils.getDayIndexFromMonthStart(dateAtNoonUtc(2024, 2, 1)))
-            assertEquals(14, TimePeriodUtils.getDayIndexFromMonthStart(dateAtNoonUtc(2024, 2, 15)))
-            assertEquals(28, TimePeriodUtils.getDayIndexFromMonthStart(dateAtNoonUtc(2024, 2, 29)))
-            assertEquals(30, TimePeriodUtils.getDayIndexFromMonthStart(dateAtNoonUtc(2024, 12, 31)))
+            for (row in daysInMonth) {
+                assertEquals("getDaysInMonth ${row.name} [UTC]", row.expected, TimePeriodUtils.getDaysInMonth(row.ts))
+            }
+            for (row in daysRemaining) {
+                assertEquals("getDaysRemainingInMonth ${row.name} [UTC]", row.expected, TimePeriodUtils.getDaysRemainingInMonth(row.ts))
+            }
+            for (row in dayIndex) {
+                assertEquals("getDayIndexFromMonthStart ${row.name} [UTC]", row.expected, TimePeriodUtils.getDayIndexFromMonthStart(row.ts))
+            }
         }
     }
 
@@ -269,25 +266,30 @@ class TimePeriodUtilsT4CBatch1Test {
     // ============================================================================
 
     @Test
-    fun `isSameMonth true for same month and year regardless of time of day`() {
-        withZone("UTC") {
-            assertTrue(TimePeriodUtils.isSameMonth(dateAtNoonUtc(2024, 6, 1), dateAtNoonUtc(2024, 6, 30)))
-            assertTrue(TimePeriodUtils.isSameMonth(jun15MidnightUtc, jun15LateUtc))
-            assertTrue(
-                TimePeriodUtils.isSameMonth(
-                    Instant.parse("2024-06-15T00:00:00Z").toEpochMilli(),
-                    Instant.parse("2024-06-15T23:59:59Z").toEpochMilli()
-                )
-            )
-        }
-    }
+    fun `isSameMonth table - true for same month and year, false for different months or years`() {
+        val rows = listOf(
+            SameMonthRow("June 1 and June 30 noon", dateAtNoonUtc(2024, 6, 1), dateAtNoonUtc(2024, 6, 30), true),
+            SameMonthRow("same day, different time of day (00:30 and 23:45)", jun15MidnightUtc, jun15LateUtc, true),
+            SameMonthRow(
+                "same day 00:00:00 and 23:59:59",
+                Instant.parse("2024-06-15T00:00:00Z").toEpochMilli(),
+                Instant.parse("2024-06-15T23:59:59Z").toEpochMilli(),
+                true
+            ),
+            SameMonthRow("June 15 and July 1", dateAtNoonUtc(2024, 6, 15), dateAtNoonUtc(2024, 7, 1), false),
+            SameMonthRow("June 30 and July 1", dateAtNoonUtc(2024, 6, 30), dateAtNoonUtc(2024, 7, 1), false),
+            SameMonthRow("same month, different year", dateAtNoonUtc(2024, 6, 15), dateAtNoonUtc(2025, 6, 15), false)
+        )
+        assertEquals("isSameMonth table size", 6, rows.size)
 
-    @Test
-    fun `isSameMonth false for different months or years`() {
         withZone("UTC") {
-            assertFalse(TimePeriodUtils.isSameMonth(dateAtNoonUtc(2024, 6, 15), dateAtNoonUtc(2024, 7, 1)))
-            assertFalse(TimePeriodUtils.isSameMonth(dateAtNoonUtc(2024, 6, 30), dateAtNoonUtc(2024, 7, 1)))
-            assertFalse(TimePeriodUtils.isSameMonth(dateAtNoonUtc(2024, 6, 15), dateAtNoonUtc(2025, 6, 15)))
+            for (row in rows) {
+                assertEquals(
+                    "isSameMonth ${row.name} [UTC]",
+                    row.expected,
+                    TimePeriodUtils.isSameMonth(row.first, row.second)
+                )
+            }
         }
     }
 
@@ -432,6 +434,7 @@ class TimePeriodUtilsT4CBatch1Test {
         // Each direction is checked against an explicit expected value; no
         // production helper is used as the oracle for another production helper.
         val cases = listOf(
+            "2025-12" to (2025 to 12), // moved from TimePeriodUtilsTest `month key helpers format parse and build inclusive range`
             "2020-01" to (2020 to 1),
             "2024-02" to (2024 to 2),
             "2026-12" to (2026 to 12)
@@ -455,22 +458,31 @@ class TimePeriodUtilsT4CBatch1Test {
         }
     }
 
+    // Merged (identical shape): the former "matches java time YearMonth enumeration"
+    // test (2024-11 .. 2025-03, enumerated with YearMonth.plusMonths) is the last row
+    // with its enumeration written out as a literal.
     @Test
-    fun `buildMonthKeyRange is inclusive on both ends`() {
-        assertEquals(
-            listOf("2026-02", "2026-03", "2026-04"),
-            TimePeriodUtils.buildMonthKeyRange("2026-02", "2026-04")
+    fun `buildMonthKeyRange table is inclusive on both ends`() {
+        val rows = listOf(
+            MonthRangeRow("same-year range", "2026-02", "2026-04", listOf("2026-02", "2026-03", "2026-04")),
+            MonthRangeRow("crosses a year boundary", "2025-11", "2026-02", listOf("2025-11", "2025-12", "2026-01", "2026-02")),
+            MonthRangeRow("single-month range includes its only element", "2026-05", "2026-05", listOf("2026-05")),
+            MonthRangeRow(
+                "2024-11..2025-03 matches YearMonth enumeration",
+                "2024-11",
+                "2025-03",
+                listOf("2024-11", "2024-12", "2025-01", "2025-02", "2025-03")
+            )
         )
-        // Crosses a year boundary.
-        assertEquals(
-            listOf("2025-11", "2025-12", "2026-01", "2026-02"),
-            TimePeriodUtils.buildMonthKeyRange("2025-11", "2026-02")
-        )
-        // A single-month range includes its only element.
-        assertEquals(
-            listOf("2026-05"),
-            TimePeriodUtils.buildMonthKeyRange("2026-05", "2026-05")
-        )
+        assertEquals("buildMonthKeyRange table size", 4, rows.size)
+
+        for (row in rows) {
+            assertEquals(
+                "buildMonthKeyRange ${row.name}",
+                row.expected,
+                TimePeriodUtils.buildMonthKeyRange(row.startKey, row.endKey)
+            )
+        }
     }
 
     @Test
@@ -483,20 +495,19 @@ class TimePeriodUtilsT4CBatch1Test {
         }
     }
 
-    @Test
-    fun `buildMonthKeyRange matches java time YearMonth enumeration`() {
-        val startKey = "2024-11"
-        val endKey = "2025-03"
-        val start = YearMonth.of(2024, 11)
-        val end = YearMonth.of(2025, 3)
-        val expected = generateSequence(start) { it.plusMonths(1) }
-            .takeWhile { !it.isAfter(end) }
-            .map { asciiMonthKey(it.year, it.monthValue) }
-            .toList()
-
-        assertEquals(expected, TimePeriodUtils.buildMonthKeyRange(startKey, endKey))
-    }
-
     private fun asciiMonthKey(year: Int, month: Int): String =
         year.toString().padStart(4, '0') + "-" + month.toString().padStart(2, '0')
+
+    // ---------- Table row types ----------
+
+    private data class IntRow(val name: String, val ts: Long, val expected: Int)
+
+    private data class SameMonthRow(val name: String, val first: Long, val second: Long, val expected: Boolean)
+
+    private data class MonthRangeRow(
+        val name: String,
+        val startKey: String,
+        val endKey: String,
+        val expected: List<String>
+    )
 }

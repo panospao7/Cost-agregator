@@ -14,7 +14,10 @@ import java.io.File
  * privacy_guard_fails_on_messageId_hashCode
  * privacy_guard_fails_on_allow_all_privacy_gate_in_main
  * no_hashCode_in_RawContentSanitizer
- * ExportPrivacyPolicy_has_no_encrypted_disabled_implies_raw_path
+ *
+ * The invariant "encryptedBackupEnabled=false never implies a raw export path" is proven
+ * behaviourally by ExportPrivacyPolicyTest.encrypted_disabled_does_not_allow_rawbackup_export
+ * (not by a source scan in this class).
  */
 class PrivacyGuardTest {
 
@@ -31,8 +34,12 @@ class PrivacyGuardTest {
     private val mainSrcRoot = File(projectRoot, "app/src/main/java/com/yourname/expensetracker")
 
     private fun allKtFiles(dir: File): List<File> {
-        if (!dir.exists()) return emptyList()
-        return dir.walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
+        // Fail loudly: a missing scan root must never degrade into "no violations found".
+        assertTrue("${dir.path} must exist — static privacy guard cannot scan", dir.exists())
+        val files = dir.walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
+        // An existing but empty/mis-rooted scan directory must not degrade into "no violations found".
+        assertTrue("${dir.path} must contain at least one .kt file — static privacy guard scanned nothing", files.isNotEmpty())
+        return files
     }
 
     /**
@@ -92,7 +99,7 @@ class PrivacyGuardTest {
     @Test
     fun no_hashCode_in_RawContentSanitizer() {
         val sanitizer = File(mainSrcRoot, "domain/privacy/RawContentSanitizer.kt")
-        if (!sanitizer.exists()) return
+        assertTrue("${sanitizer.path} must exist — G5 guard cannot run", sanitizer.exists())
         val content = sanitizer.readText()
         val hashCodeLines = content.lines()
             .mapIndexed { i, line -> i + 1 to line }
@@ -111,7 +118,7 @@ class PrivacyGuardTest {
 
     @Test
     fun privacy_guard_fails_on_allow_all_privacy_gate_in_main() {
-        if (!mainSrcRoot.exists()) return  // not available in test env
+        assertTrue("G4: mainSrcRoot not found: $mainSrcRoot — guard cannot run", mainSrcRoot.exists())
         val violations = mutableListOf<String>()
         val allowAllPattern = Regex("object\\s*:\\s*PrivacyGate")
         allKtFiles(mainSrcRoot).forEach { file ->
@@ -267,7 +274,7 @@ class PrivacyGuardTest {
 
     @Test
     fun privacy_guard_fails_on_messageId_hashCode() {
-        if (!mainSrcRoot.exists()) return
+        assertTrue("G5: mainSrcRoot not found: $mainSrcRoot — guard cannot run", mainSrcRoot.exists())
         val violations = mutableListOf<String>()
         val pattern = Regex("(messageId|providerTransactionId|transactionId.*accountId).*\\.hashCode\\(\\)|\\.hashCode\\(\\).*messageId")
         allKtFiles(mainSrcRoot).forEach { file ->
@@ -285,23 +292,9 @@ class PrivacyGuardTest {
         }
     }
 
-    // ── G8: encryptedBackupEnabled=false must NOT allow raw export ─────────────
-
-    @Test
-    fun ExportPrivacyPolicy_encrypted_disabled_does_not_allow_raw_export() {
-        // Contract test: verify ExportPrivacyGate's logic
-        // (structural test — the actual gate logic is tested in ExportPrivacyPolicyTest)
-        val gateFile = File(mainSrcRoot, "domain/privacy/ExportPrivacyGate.kt")
-        if (!gateFile.exists()) return
-
-        val content = gateFile.readText()
-        // The gate must NOT have a path that returns Allowed for RAWBACKUP_EXPORT
-        // when encryptedBackupEnabled is false
-        assertFalse(
-            "G8: ExportPrivacyGate must not allow RAWBACKUP_EXPORT when encrypted backup is disabled",
-            content.contains("encryptedBackupEnabled.*Allowed.*raw", ignoreCase = true)
-        )
-    }
+    // G8 (encryptedBackupEnabled=false must NOT allow raw export) was removed: its String.contains()
+    // "regex" could never match (vacuous). The rule is proven behaviourally by
+    // ExportPrivacyPolicyTest.encrypted_disabled_does_not_allow_rawbackup_export.
 
     // ── New guard types are defined in PrivacyCapability ─────────────────────
 
@@ -365,6 +358,9 @@ class PrivacyGuardTest {
     @Test
     fun fail_closed_defaults_disable_all_network_features() {
         val defaults = PrivacySettings.FAIL_CLOSED_DEFAULTS
+        // Fail-closed means a corrupted store must not keep notification capture on
+        // (the plain PrivacySettings() default is ON, so this differs on purpose).
+        assertFalse(defaults.notificationCaptureEnabled)
         assertFalse(defaults.cloudAiEnabled)
         assertFalse(defaults.receiptImageCloudEnabled)
         assertFalse(defaults.bankStatementAiEnabled)

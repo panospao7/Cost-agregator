@@ -156,15 +156,15 @@ def _parse_yaml_simple(text: str) -> Dict[str, Any]:
     """Minimal YAML parser for the triage format.
 
     Handles the specific structure of the triage YAML produced by
-    build_db_finding_triage.py (see docs/ci/DB_ACCESS_V2_TRIAGE_SCHEMA.md
-    for the schema documentation):
+    the (since retired) PR-D5 triage builder (see
+    docs/ci/DB_ACCESS_V2_TRIAGE_SCHEMA.md for the schema documentation):
     - metadata (flat key-value)
     - crosswalk (list of dicts)
     - duplicate_diagnostics (list of dicts)
     - triage_entries (list of dicts with nested symbol)
 
     This is NOT a general YAML parser.  It handles only the subset
-    produced by build_db_finding_triage.py.
+    produced by the retired PR-D5 triage builder.
     """
     try:
         import yaml

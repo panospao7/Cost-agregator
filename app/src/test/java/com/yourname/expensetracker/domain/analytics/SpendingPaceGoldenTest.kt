@@ -2,14 +2,24 @@ package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.AnalyticsEngineTestBase
 import com.yourname.expensetracker.assertApproxEquals
+import com.yourname.expensetracker.assertMoneyEquals
 import com.yourname.expensetracker.createExpense
+import com.yourname.expensetracker.domain.util.PinnedUtcTimeZoneRule
 import com.yourname.expensetracker.toExpenseSnapshots
 import io.mockk.every
 import org.junit.Assert.assertEquals
 import org.junit.Before
+import org.junit.ClassRule
 import org.junit.Test
 
 class SpendingPaceGoldenTest : AnalyticsEngineTestBase() {
+
+    companion object {
+        // Zone pinned to UTC for the whole class (including the base-class date fields).
+        @JvmField
+        @ClassRule
+        val utcZone = PinnedUtcTimeZoneRule()
+    }
 
     private lateinit var calculator: SpendingPaceCalculator
 
@@ -34,10 +44,10 @@ class SpendingPaceGoldenTest : AnalyticsEngineTestBase() {
             displayCurrency = "EUR"
         )
 
-        assertApproxEquals(991.79, requireNotNull(result.currentMonthSpent), 0.01)
-        assertApproxEquals(15.0, result.daysElapsed.toDouble(), 0.0)
+        assertMoneyEquals(991.79, result.currentMonthSpent, "golden day 15 spent")
+        assertEquals(15, result.daysElapsed)
         // projectedTotal: weight=1.0 (15/7>1), linearProjection = 991.79 * 31 / 15 = 2049.6993...
-        assertApproxEquals(2049.70, requireNotNull(result.projectedTotal), 0.01)
+        assertMoneyEquals(2049.70, result.projectedTotal, "golden day 15 projected")
         assertApproxEquals(175.0f, result.pacePercentage, 0.1f)
         assertEquals(PaceStatus.OVER_PACE, result.paceStatus)
     }
@@ -57,9 +67,9 @@ class SpendingPaceGoldenTest : AnalyticsEngineTestBase() {
             displayCurrency = "EUR"
         )
 
-        assertApproxEquals(31.0, result.daysElapsed.toDouble(), 0.0)
-        assertApproxEquals(1283.59, requireNotNull(result.currentMonthSpent), 0.01)
-        assertApproxEquals(1283.59, requireNotNull(result.projectedTotal), 0.01)
+        assertEquals(31, result.daysElapsed)
+        assertMoneyEquals(1283.59, result.currentMonthSpent, "golden last day spent")
+        assertMoneyEquals(1283.59, result.projectedTotal, "golden last day projected")
     }
 
     private fun goldenMarchAndFebruaryExpenses() = listOf(

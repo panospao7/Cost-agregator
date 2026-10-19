@@ -151,6 +151,10 @@ semantics in percentage split allocation.  **AGENTS.md money rules apply**:
 analyse the rounding mode and the sum-of-parts invariant before touching;
 do NOT "fix" by weakening the tolerance.  Likely needs largest-remainder
 allocation in the split calculator.
+*B3-4 note: the test-local formula cases were removed; proof now in the
+production-call tests `percentage split of 0_03 at 50-50 keeps sum at total not 0_04`
+and `percentage split allocates leftover cents by largest fractional part`
+(`SplitCalculationPrecisionTest`) plus exact `SplitCalculatorTest` cases.*
 
 ### B4. verify_known_good_state — 11 failures (A/B-identical set)
 All `TestTestResultFreshnessRow`/freshness "stamp=missing" rows: the
@@ -604,6 +608,9 @@ NotificationIntakePayloadRepairer, NotificationIntakeRecoveryScheduler), after
 which the gate passed and all 5 rows proved.  Board delta: proven_helper
 49 -> 54, ambiguous 174 -> 169.
 
+> **Retirement note.** The prover module named in the D5 entry below was retired from the repository in
+> the test-suite audit (batch B9); the entry is kept as a record of the diagnosis only.
+
 ### D5. Direct-site prover never sees bare `checkWritesAllowed` at a subject
 ###     mutation site (GR-14u6 finding — RESOLVED in GR-14u7)
 While fixing D3, adding `writeBarrier.checkWritesAllowed("...")` at the TOP of a
@@ -625,6 +632,11 @@ counterexamples, 0 regressions.  Fixture pin
 `scripts/ci/test_gr14u7_direct_site_offsets.py` was RED before the fix (prover
 returned `{}` at the mutation offset while the underlying GR-12 proof already
 said PROVEN).
+
+Note: `scripts/ci/test_gr14u7_direct_site_offsets.py` has been retired together with the
+mediation prover it drove. The underlying bridge-level assertions (dominating guard,
+guard after the mutation, unmodelable `runWrite(op, {...})`, late guard) are kept in
+`scripts/db_guard/test_transparent_inline_methods_pin.py`.
 
 ### D8. A Kotlin arrow (`->`) was counted as a generic close bracket (GR-14u20
 ###     — FIXED; found by a fresh census of the post-u19 board)

@@ -106,7 +106,7 @@ All background-work diagnostics use controlled, structured fields — never raw 
 - `PrivacyCapabilityHandlingPolicyTest` ensures all capabilities have explicit policy
 - `TIMBER_PII_LOGGING` capability is LOCAL_ONLY (no gate needed, just policy)
 - Debug data persistence gated by `debugDataPersistenceEnabled` setting
-- `EventMetadataSanitizer` verified in `GlobalDurableDiagnosticsGoldenTest` and `DurableDiagnosticsAcceptanceTest` (plus dedicated regression tests: `DurableDiagnosticsRegressionTest`, `DurableDiagnosticsA8RegressionTest`, `DDL512RegressionTest`)
+- `EventMetadataSanitizer` verified in `EventMetadataSanitizerTest` (key classification, hash-key values, string/exception-message and JSON sanitization, `SafeEventMetadata` builder) plus the surrounding diagnostics tests `GlobalDurableDiagnosticsGoldenTest`, `DurableDiagnosticsAcceptanceTest`, `DurableDiagnosticsA8RegressionTest`, `DDL512RegressionTest`
 - `SafePrivacyMetadata` verified in privacy contract tests
 - Worker diagnostics coverage: `WorkerRunLoggerTest`, `FileWorkerTerminalDiagnosticSinkTest`
 

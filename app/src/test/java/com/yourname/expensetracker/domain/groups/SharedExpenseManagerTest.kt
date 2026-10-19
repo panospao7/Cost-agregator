@@ -214,145 +214,114 @@ class SharedExpenseManagerTest {
         assertApproxEquals(0.0, balances[3L]?.netBalance ?: 1.0, 0.01)
     }
 
-    @Test
-    fun `removeMember returns member not found when member is absent`() = runTest(testDispatcher) {
-        val member = SharedExpenseMember(id = 99L, groupId = 5L, name = "Ghost")
-        coEvery { sharedExpenseDataPort.getGroupMembersOnce(5L) } returns listOf(
-            SharedExpenseMember(id = 1L, groupId = 5L, name = "A")
-        )
+    private enum class RemoveOutcome { NOT_FOUND, PAID_EXPENSES, SPLIT_REFERENCE, SUCCESS }
 
-        val result = manager.removeMember(member)
+    private data class RemoveMemberRow(
+        val name: String,
+        val target: SharedExpenseMember,
+        val members: List<SharedExpenseMember>,
+        val expenses: List<SharedGroupExpense>,
+        val outcome: RemoveOutcome,
+        val expectedExpenseCount: Int = 0
+    )
 
-        assertTrue(result is RemoveSharedExpenseMemberResult.Error)
-        result as RemoveSharedExpenseMemberResult.Error
-        assertEquals("Member not found", result.message)
-    }
-
-    @Test
-    fun `removeMember blocks deletion when member has paid expenses`() = runTest(testDispatcher) {
-        val member = SharedExpenseMember(id = 2L, groupId = 7L, name = "B")
-        coEvery { sharedExpenseDataPort.getGroupMembersOnce(7L) } returns listOf(member)
-        coEvery { sharedExpenseDataPort.getGroupExpensesOnce(7L) } returns listOf(
-            SharedGroupExpense(
-                id = 1L,
-                groupId = 7L,
-                expenseId = 12L,
-                paidById = 2L,
-                date = 0L,
-                description = "paid",
-                totalAmount = 10.0,
-                currency = "EUR",
-                splitType = GroupSplitType.EQUAL,
-            )
-        )
-
-        val result = manager.removeMember(member)
-
-        assertTrue(result is RemoveSharedExpenseMemberResult.CannotDeleteMemberWithExpenses)
-        result as RemoveSharedExpenseMemberResult.CannotDeleteMemberWithExpenses
-        assertEquals(1, result.expenseCount)
-    }
-
-    @Test
-    fun `removeMember blocks deletion when member is referenced in custom splits`() = runTest(testDispatcher) {
-        val target = SharedExpenseMember(id = 2L, groupId = 9L, name = "B")
-        coEvery { sharedExpenseDataPort.getGroupMembersOnce(9L) } returns listOf(
-            SharedExpenseMember(id = 1L, groupId = 9L, name = "A"),
-            target,
-            SharedExpenseMember(id = 3L, groupId = 9L, name = "C")
-        )
-        coEvery { sharedExpenseDataPort.getGroupExpensesOnce(9L) } returns listOf(
-            SharedGroupExpense(
-                id = 1L,
-                groupId = 9L,
-                expenseId = 23L,
-                paidById = 1L,
-                date = 0L,
-                description = "custom",
-                totalAmount = 30.0,
-                currency = "EUR",
-                splitType = GroupSplitType.CUSTOM_AMOUNT,
-                customSplitsSerialized = "1:10,2:10,3:10",
-            )
-        )
-
-        val result = manager.removeMember(target)
-
-        assertTrue(result is RemoveSharedExpenseMemberResult.CannotDeleteMemberReferencedInSplits)
-        result as RemoveSharedExpenseMemberResult.CannotDeleteMemberReferencedInSplits
-        assertEquals(1, result.expenseCount)
-    }
-
-    @Test
-    fun `removeMember blocks deletion when equal split expense is on or after joinedAt`() = runTest(testDispatcher) {
+    private fun removeMemberRows(): List<RemoveMemberRow> {
         val joinedAt = 1_700_000_000_000L
-        val target = SharedExpenseMember(id = 2L, groupId = 10L, name = "B", joinedAt = joinedAt)
-        coEvery { sharedExpenseDataPort.getGroupMembersOnce(10L) } returns listOf(
-            SharedExpenseMember(id = 1L, groupId = 10L, name = "A", joinedAt = joinedAt - 10_000L),
-            target
-        )
-        coEvery { sharedExpenseDataPort.getGroupExpensesOnce(10L) } returns listOf(
+        fun expense(groupId: Long, expenseId: Long, paidById: Long, date: Long, splitType: GroupSplitType, splits: String? = null) =
             SharedGroupExpense(
-                id = 1L,
-                groupId = 10L,
-                expenseId = 24L,
-                paidById = 1L,
-                date = joinedAt,
-                description = "equal",
-                totalAmount = 30.0,
-                currency = "EUR",
-                splitType = GroupSplitType.EQUAL,
+                id = 1L, groupId = groupId, expenseId = expenseId, paidById = paidById, date = date,
+                description = "row", totalAmount = 30.0, currency = "EUR", splitType = splitType,
+                customSplitsSerialized = splits
+            )
+
+        val absent = SharedExpenseMember(id = 99L, groupId = 5L, name = "Ghost")
+        val payer = SharedExpenseMember(id = 2L, groupId = 7L, name = "B")
+        val referenced = SharedExpenseMember(id = 2L, groupId = 9L, name = "B")
+        val lateEqualOnJoin = SharedExpenseMember(id = 2L, groupId = 10L, name = "B", joinedAt = joinedAt)
+        val unused = SharedExpenseMember(id = 2L, groupId = 11L, name = "B")
+        val lateEqualBefore = SharedExpenseMember(id = 2L, groupId = 12L, name = "B", joinedAt = joinedAt)
+        return listOf(
+            RemoveMemberRow(
+                "member absent returns Member not found", absent,
+                listOf(SharedExpenseMember(id = 1L, groupId = 5L, name = "A")), emptyList(), RemoveOutcome.NOT_FOUND
+            ),
+            RemoveMemberRow(
+                "member who paid an expense is blocked", payer, listOf(payer),
+                listOf(expense(7L, 12L, paidById = 2L, date = 0L, splitType = GroupSplitType.EQUAL)),
+                RemoveOutcome.PAID_EXPENSES, expectedExpenseCount = 1
+            ),
+            RemoveMemberRow(
+                "member referenced in custom splits is blocked", referenced,
+                listOf(
+                    SharedExpenseMember(id = 1L, groupId = 9L, name = "A"), referenced,
+                    SharedExpenseMember(id = 3L, groupId = 9L, name = "C")
+                ),
+                listOf(expense(9L, 23L, paidById = 1L, date = 0L, splitType = GroupSplitType.CUSTOM_AMOUNT, splits = "1:10,2:10,3:10")),
+                RemoveOutcome.SPLIT_REFERENCE, expectedExpenseCount = 1
+            ),
+            RemoveMemberRow(
+                "equal split expense exactly at joinedAt is blocked", lateEqualOnJoin,
+                listOf(SharedExpenseMember(id = 1L, groupId = 10L, name = "A", joinedAt = joinedAt - 10_000L), lateEqualOnJoin),
+                listOf(expense(10L, 24L, paidById = 1L, date = joinedAt, splitType = GroupSplitType.EQUAL)),
+                RemoveOutcome.SPLIT_REFERENCE, expectedExpenseCount = 1
+            ),
+            RemoveMemberRow(
+                "no paid expenses and no split references succeeds", unused,
+                listOf(SharedExpenseMember(id = 1L, groupId = 11L, name = "A"), unused), emptyList(), RemoveOutcome.SUCCESS
+            ),
+            RemoveMemberRow(
+                "equal split expense one ms before joinedAt is ignored and succeeds", lateEqualBefore,
+                listOf(SharedExpenseMember(id = 1L, groupId = 12L, name = "A", joinedAt = joinedAt - 10_000L), lateEqualBefore),
+                listOf(expense(12L, 25L, paidById = 1L, date = joinedAt - 1L, splitType = GroupSplitType.EQUAL)),
+                RemoveOutcome.SUCCESS
             )
         )
-
-        val result = manager.removeMember(target)
-
-        assertTrue(result is RemoveSharedExpenseMemberResult.CannotDeleteMemberReferencedInSplits)
-        result as RemoveSharedExpenseMemberResult.CannotDeleteMemberReferencedInSplits
-        assertEquals(1, result.expenseCount)
     }
 
     @Test
-    fun `removeMember succeeds when member has no paid expenses and no split references`() = runTest(testDispatcher) {
-        val target = SharedExpenseMember(id = 2L, groupId = 11L, name = "B")
-        coEvery { sharedExpenseDataPort.getGroupMembersOnce(11L) } returns listOf(
-            SharedExpenseMember(id = 1L, groupId = 11L, name = "A"),
-            target
-        )
-        coEvery { sharedExpenseDataPort.getGroupExpensesOnce(11L) } returns emptyList()
+    fun `removeMember table covers not found paid expenses split references and success`() = runTest(testDispatcher) {
+        val rows = removeMemberRows()
+        assertEquals(6, rows.size)
 
-        val result = manager.removeMember(target)
-
-        assertTrue(result is RemoveSharedExpenseMemberResult.Success)
-        coVerify(exactly = 1) { sharedExpenseDataPort.removeMember(target) }
-    }
-
-    @Test
-    fun `removeMember ignores equal split expenses before joinedAt`() = runTest(testDispatcher) {
-        val joinedAt = 1_700_000_000_000L
-        val target = SharedExpenseMember(id = 2L, groupId = 12L, name = "B", joinedAt = joinedAt)
-        coEvery { sharedExpenseDataPort.getGroupMembersOnce(12L) } returns listOf(
-            SharedExpenseMember(id = 1L, groupId = 12L, name = "A", joinedAt = joinedAt - 10_000L),
-            target
-        )
-        coEvery { sharedExpenseDataPort.getGroupExpensesOnce(12L) } returns listOf(
-            SharedGroupExpense(
-                id = 1L,
-                groupId = 12L,
-                expenseId = 25L,
-                paidById = 1L,
-                date = joinedAt - 1L,
-                description = "equal",
-                totalAmount = 30.0,
-                currency = "EUR",
-                splitType = GroupSplitType.EQUAL,
+        rows.forEach { row ->
+            // Fresh port and manager per row: removeMember call counts are verified.
+            val port = mockk<SharedExpenseDataPort>(relaxed = true)
+            every { port.getAllGroups() } returns flowOf(emptyList())
+            every { port.getActiveGroups() } returns flowOf(emptyList())
+            val rowManager = SharedExpenseManager(
+                sharedExpenseDataPort = port,
+                timeProvider = timeProvider,
+                currencySettingsRepository = mockk(),
+                ioDispatcher = testDispatcher
             )
-        )
+            val groupId = row.target.groupId
+            coEvery { port.getGroupMembersOnce(groupId) } returns row.members
+            coEvery { port.getGroupExpensesOnce(groupId) } returns row.expenses
 
-        val result = manager.removeMember(target)
+            val result = rowManager.removeMember(row.target)
 
-        assertTrue(result is RemoveSharedExpenseMemberResult.Success)
-        coVerify(exactly = 1) { sharedExpenseDataPort.removeMember(target) }
+            when (row.outcome) {
+                RemoveOutcome.NOT_FOUND -> {
+                    assertTrue("${row.name}: expected Error but was $result", result is RemoveSharedExpenseMemberResult.Error)
+                    assertEquals("${row.name}: message", "Member not found", (result as RemoveSharedExpenseMemberResult.Error).message)
+                }
+                RemoveOutcome.PAID_EXPENSES -> {
+                    assertTrue("${row.name}: expected CannotDeleteMemberWithExpenses but was $result", result is RemoveSharedExpenseMemberResult.CannotDeleteMemberWithExpenses)
+                    assertEquals("${row.name}: expenseCount", row.expectedExpenseCount, (result as RemoveSharedExpenseMemberResult.CannotDeleteMemberWithExpenses).expenseCount)
+                }
+                RemoveOutcome.SPLIT_REFERENCE -> {
+                    assertTrue("${row.name}: expected CannotDeleteMemberReferencedInSplits but was $result", result is RemoveSharedExpenseMemberResult.CannotDeleteMemberReferencedInSplits)
+                    assertEquals("${row.name}: expenseCount", row.expectedExpenseCount, (result as RemoveSharedExpenseMemberResult.CannotDeleteMemberReferencedInSplits).expenseCount)
+                }
+                RemoveOutcome.SUCCESS ->
+                    assertTrue("${row.name}: expected Success but was $result", result is RemoveSharedExpenseMemberResult.Success)
+            }
+            val expectedRemovals = if (row.outcome == RemoveOutcome.SUCCESS) 1 else 0
+            coVerify(exactly = expectedRemovals) { port.removeMember(any()) }
+            if (row.outcome == RemoveOutcome.SUCCESS) {
+                coVerify(exactly = 1) { port.removeMember(row.target) }
+            }
+        }
     }
 
     @Test

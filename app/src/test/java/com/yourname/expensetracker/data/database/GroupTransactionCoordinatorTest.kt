@@ -41,6 +41,7 @@ import com.yourname.expensetracker.domain.sideeffect.SideEffectTriggerType
 import kotlinx.coroutines.CancellationException
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.coVerifyOrder
 import io.mockk.every
 import io.mockk.verify
 import kotlinx.coroutines.Dispatchers
@@ -73,15 +74,16 @@ private val Result<*, *>.isFailure: Boolean
 /**
  * CRITICAL TESTS (CRITICAL-2): GroupTransactionCoordinator
  * 
- * Tests atomic multi-DAO transactions to ensure data consistency.
- * Verifies rollback scenarios when one operation fails.
- * 
+ * Tests multi-DAO coordinator behaviour against a real in-memory Room database.
+ *
  * Coverage:
- * - Successful atomic group creation
- * - Rollback when member insert fails
- * - Rollback when expense insert fails
- * - Concurrent transaction handling
- * - Partial failure scenarios
+ * - Group creation success paths
+ * - Exception propagation from a failing member insert (mock DAOs; NOT a rollback proof)
+ * - Linking, idempotency, split validation and cancellation behaviour
+ *
+ * This class makes NO atomicity or rollback claims. Rollback / atomicity proofs (fault
+ * injection on a real database) live in [GroupTransactionCoordinatorRollbackTest]. This class
+ * has no concurrency test.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [Config.OLDEST_SDK])
@@ -229,38 +231,44 @@ class GroupTransactionCoordinatorTest {
         val savedMembers = memberDao.getMembersForGroup(groupId).first()
         assertThat(savedMembers).hasSize(3)
         assertThat(savedMembers.map { it.name }).containsExactly("Alice", "Bob", "Charlie")
+
+        // Every member row is assigned the new group's id (folded from the former
+        // "should assign correct groupId to members" test). Read through a GLOBAL query (not the
+        // per-group one above, which filters on groupId and would make this check circular): the
+        // table holds exactly the three members and every one carries the new group's id.
+        val allMembers = memberDao.getAllMembers().first()
+        assertThat(allMembers.map { it.name }).containsExactly("Alice", "Bob", "Charlie")
+        assertThat(allMembers.map { it.groupId }).containsExactly(groupId, groupId, groupId)
+
+        // The current-user flag is persisted per member (folded from the former
+        // "should handle single member" test, which asserted isCurrentUser == true; its other
+        // assertions - one member, name, group id - are covered by the sequential-creation test
+        // below, whose groups each own exactly one member).
+        assertThat(savedMembers.first { it.name == "Alice" }.isCurrentUser).isTrue()
+        assertThat(savedMembers.filter { !it.isCurrentUser }.map { it.name })
+            .containsExactly("Bob", "Charlie")
     }
 
+    /**
+     * EXCEPTION-PROPAGATION test only - NOT a rollback proof.
+     *
+     * The group and member DAOs are mocks and the write barrier is relaxed, so no row is ever
+     * written and nothing could be rolled back. This only checks that a member-insert failure
+     * inside the coordinator's transaction block is rethrown to the caller unchanged (same
+     * exception type and "Disk full" message) and that the group insert was attempted before
+     * the member batch insert. Real rollback proofs (real Room DAOs + fault injection) are in
+     * GroupTransactionCoordinatorRollbackTest.
+     */
     @Test
-    fun `createGroupWithMembersAtomic should assign correct groupId to members`() = runTest {
-        // Arrange
-        val group = ExpenseGroup(name = "Dinner Group")
-        val members = listOf(
-            GroupMember(groupId = 0, name = "Person A"),
-            GroupMember(groupId = 0, name = "Person B")
-        )
-
-        // Act
-        val groupId = coordinator.createGroupWithMembersAtomic(group, members)
-
-        // Assert
-        val savedMembers = memberDao.getMembersForGroup(groupId).first()
-        assertThat(savedMembers).hasSize(2)
-        savedMembers.forEach { member ->
-            assertThat(member.groupId).isEqualTo(groupId)
-        }
-    }
-
-    @Test
-    fun `createGroupWithMembersAtomic should rollback when member insert fails`() = runTest {
+    fun `createGroupWithMembersAtomic propagates member insert exception to caller`() = runTest {
         // Arrange
         val group = ExpenseGroup(name = "Failing Group")
         val members = listOf(
             GroupMember(groupId = 0, name = "Valid Member"),
-            GroupMember(groupId = 0, name = "Invalid Member") // This will fail
+            GroupMember(groupId = 0, name = "Invalid Member")
         )
 
-        // Mock the memberDao to throw exception on second insert
+        // Mock DAOs; the member batch insert throws
         val mockMemberDao = mockk<GroupMemberDao>(relaxed = true)
         val mockGroupDao = mockk<ExpenseGroupDao>(relaxed = true)
         val mockGroupExpenseDao = mockk<GroupExpenseDao>(relaxed = true)
@@ -287,9 +295,16 @@ class GroupTransactionCoordinatorTest {
         // Assert
         assertThat(exception).isNotNull()
         assertThat(exception).isInstanceOf(SQLException::class.java)
+        assertThat(exception).hasMessageThat().isEqualTo("Disk full")
 
-        // Verify group insert was attempted but transaction rolled back
+        // Verify the group insert was attempted before the member insert failed
+        // (no rollback claim: DAOs are mocks, see KDoc)
         coVerify(exactly = 1) { mockGroupDao.insert(any()) }
+        coVerify(exactly = 1) { mockMemberDao.insertAll(any()) }
+        coVerifyOrder {
+            mockGroupDao.insert(any())
+            mockMemberDao.insertAll(any())
+        }
     }
 
     @Test
@@ -385,54 +400,46 @@ class GroupTransactionCoordinatorTest {
         assertThat(groupExpenseDao.getExpensesForGroup(groupId).first()).isEmpty()
     }
 
+    // The former "transaction should be atomic - partial failure rolls back everything" test was
+    // deleted: it only covered the success path (its assertions were guarded by `if (groupId > 0)`)
+    // and never injected a failure. Real rollback proofs (fault-injecting wrappers around real DAOs
+    // on a real in-memory Room database) live in GroupTransactionCoordinatorRollbackTest.
+
+    /**
+     * NOTE: this is a SEQUENTIAL test (renamed from "concurrent transactions should not
+     * interfere"). It does not exercise concurrency; it checks that repeated creations with
+     * the same member template yield distinct group ids and that each group owns exactly
+     * its own member row.
+     */
     @Test
-    fun `transaction should be atomic - partial failure rolls back everything`() = runTest {
-        // This test verifies the critical requirement: atomicity
-        // Arrange - Create initial state
-        val initialGroupCount = groupDao.getAllGroups().first().size
-        val initialMemberCount = memberDao.getAllMembers().first().size
-
-        val group = ExpenseGroup(name = "Atomic Test Group")
-        val members = (1..100).map { GroupMember(groupId = 0, name = "Member $it") }
-
-        // Act
-        val groupId = coordinator.createGroupWithMembersAtomic(group, members)
-
-        // Assert - Either all 100 members were created, or none (and exception thrown)
-        val finalGroupCount = groupDao.getAllGroups().first().size
-        val finalMemberCount = memberDao.getAllMembers().first().size
-
-        // If successful
-        if (groupId > 0) {
-            assertThat(finalGroupCount).isEqualTo(initialGroupCount + 1)
-            assertThat(finalMemberCount).isEqualTo(initialMemberCount + 100)
-        }
-        // If failed, counts should remain unchanged (rolled back)
-    }
-
-    @Test
-    fun `concurrent transactions should not interfere`() = runTest {
+    fun `sequential group creations get distinct ids and each owns its own member`() = runTest {
         // Arrange
         val groups = (1..5).map { index ->
-            ExpenseGroup(name = "Concurrent Group $index")
+            ExpenseGroup(name = "Sequential Group $index")
         }
         val members = listOf(GroupMember(groupId = 0, name = "Test Member"))
 
-        // Act - Create multiple groups concurrently
+        // Act - Create groups one after another
         val groupIds = groups.map { group ->
             coordinator.createGroupWithMembersAtomic(group, members)
         }
 
         // Assert
         assertThat(groupIds).hasSize(5)
+        assertThat(groupIds.toSet()).hasSize(5)
         groupIds.forEach { id ->
             assertThat(id).isGreaterThan(0)
         }
 
-        // Verify all groups exist
-        groupIds.forEach { id ->
+        // Verify every group exists under its own name and owns exactly one member
+        groupIds.forEachIndexed { index, id ->
             val group = groupDao.getGroupById(id)
             assertThat(group).isNotNull()
+            assertThat(group!!.name).isEqualTo("Sequential Group ${index + 1}")
+            val groupMembers = memberDao.getAllForGroup(id)
+            assertThat(groupMembers).hasSize(1)
+            assertThat(groupMembers.single().groupId).isEqualTo(id)
+            assertThat(groupMembers.single().name).isEqualTo("Test Member")
         }
     }
 
@@ -453,24 +460,6 @@ class GroupTransactionCoordinatorTest {
         
         val savedMembers = memberDao.getMembersForGroup(groupId).first()
         assertThat(savedMembers).isEmpty()
-    }
-
-    @Test
-    fun `createGroupWithMembersAtomic should handle single member`() = runTest {
-        // Arrange
-        val group = ExpenseGroup(name = "Solo Group")
-        val singleMember = listOf(GroupMember(groupId = 0, name = "Solo User", isCurrentUser = true))
-
-        // Act
-        val groupId = coordinator.createGroupWithMembersAtomic(group, singleMember)
-
-        // Assert
-        assertThat(groupId).isGreaterThan(0)
-        
-        val savedMembers = memberDao.getMembersForGroup(groupId).first()
-        assertThat(savedMembers).hasSize(1)
-        assertThat(savedMembers[0].name).isEqualTo("Solo User")
-        assertThat(savedMembers[0].isCurrentUser).isTrue()
     }
 
     @Test
@@ -504,52 +493,54 @@ class GroupTransactionCoordinatorTest {
         // Act — insert-only
         val expenseId = coordinator.addExpenseToGroupAtomic(groupExpense)
 
-        // Assert
+        // Assert - the returned id is the persisted row id, and the zero amount is stored as
+        // zero (not dropped or defaulted) with the link, payer and group intact.
         assertThat(expenseId).isGreaterThan(0)
+        val stored = groupExpenseDao.getById(expenseId)
+        assertThat(stored).isNotNull()
+        assertThat(stored!!.groupId).isEqualTo(groupId)
+        assertThat(stored.expenseId).isEqualTo(actualExpenseId)
+        assertThat(stored.paidById).isEqualTo(savedMembers[0].id)
+        assertThat(stored.totalAmount).isEqualTo(0.0)
+        assertThat(stored.description).isEqualTo("Gift")
+        assertThat(stored.splitType).isEqualTo(SplitType.EQUAL)
+        assertThat(groupExpenseDao.getExpensesForGroupOnce(groupId)).hasSize(1)
     }
 
     @Test
     fun `deleteGroupAtomic should handle non-existent group gracefully`() = runTest {
-        // Arrange
+        // Arrange - an unrelated group with a member that must be left untouched
+        val survivorId = coordinator.createGroupWithMembersAtomic(
+            ExpenseGroup(name = "Survivor Group"),
+            listOf(GroupMember(groupId = 0, name = "Survivor Member"))
+        )
+        val groupsBefore = groupDao.getAll()
+        val membersBefore = memberDao.getAllForGroup(survivorId)
+        assertThat(groupsBefore).hasSize(1)
+        assertThat(membersBefore).hasSize(1)
         val nonExistentGroupId = 999999L
+        assertThat(groupDao.getById(nonExistentGroupId)).isNull()
 
-        // Act & Assert - Should not throw
+        // Act - must complete without throwing
         coordinator.deleteGroupAtomic(nonExistentGroupId)
 
-        // Verify nothing was deleted (no crash)
-        // If we get here, the test passed
+        // Assert - no group/member/group-expense rows created or removed; the unrelated group and
+        // member are unchanged (linked system expenses and lifecycle events are not covered here)
+        assertThat(groupDao.getAll()).isEqualTo(groupsBefore)
+        assertThat(memberDao.getAllForGroup(survivorId)).isEqualTo(membersBefore)
+        assertThat(groupDao.getById(nonExistentGroupId)).isNull()
+        assertThat(memberDao.getAllForGroup(nonExistentGroupId)).isEmpty()
+        assertThat(groupExpenseDao.getExpensesForGroupOnce(nonExistentGroupId)).isEmpty()
     }
 
-    @Test
-    fun `transaction integrity - all operations succeed or all fail`() = runTest {
-        // This is the ultimate atomicity test
-        // Arrange - Track state before
-        val groupsBefore = groupDao.getAllGroups().first()
-        val membersBefore = memberDao.getAllMembers().first()
-
-        val group = ExpenseGroup(name = "Integrity Test")
-        val members = listOf(
-            GroupMember(groupId = 0, name = "Member 1"),
-            GroupMember(groupId = 0, name = "Member 2")
-        )
-
-        // Act
-        val groupId = coordinator.createGroupWithMembersAtomic(group, members)
-
-        // Assert
-        if (groupId > 0) {
-            // Success: verify both group and members exist
-            assertThat(groupDao.getGroupById(groupId)).isNotNull()
-            assertThat(memberDao.getMembersForGroup(groupId).first()).hasSize(2)
-        }
-
-        // If any assertion fails here, it means partial commit occurred (BUG!)
-    }
+    // The former "transaction integrity - all operations succeed or all fail" test was deleted:
+    // it only covered the success path (guarded by `if (groupId > 0)`) and never injected a
+    // fault. Real rollback proofs live in GroupTransactionCoordinatorRollbackTest.
 
     // ==================== B.4 Batch 2 Tests ====================
 
     @Test
-    fun `createSystemExpenseAndLinkToGroup atomically creates both records`() = runTest {
+    fun `createSystemExpenseAndLinkToGroup creates and links the system expense and the group expense (success path)`() = runTest {
         // Arrange - Create group with member
         val group = ExpenseGroup(name = "Atomic Link Group", defaultCurrency = "EUR")
         val members = listOf(
@@ -653,7 +644,7 @@ class GroupTransactionCoordinatorTest {
         val error = result as GroupExpenseCreationResult.Error
         assertThat(error.message).contains("inactive")
 
-        // Verify no system expense was created (atomic rollback)
+        // Verify no system expense was created (rejected by validation before any write)
         val allExpenses = expenseDao.getAllUncapped()
         assertThat(allExpenses).isEmpty()
     }
@@ -682,13 +673,13 @@ class GroupTransactionCoordinatorTest {
         val error = result as GroupExpenseCreationResult.Error
         assertThat(error.message).contains("Payer")
 
-        // Verify no system expense was created (atomic rollback)
+        // Verify no system expense was created (rejected by validation before any write)
         val allExpenses = expenseDao.getAllUncapped()
         assertThat(allExpenses).isEmpty()
     }
 
     @Test
-    fun `addMemberToGroup is atomic - validates inside transaction`() = runTest {
+    fun `addMemberToGroup persists the member for a valid active group (success path only)`() = runTest {
         // Arrange
         val group = ExpenseGroup(name = "Member Test Group")
         val members = listOf(GroupMember(groupId = 0, name = "Alice"))
@@ -724,7 +715,7 @@ class GroupTransactionCoordinatorTest {
     }
 
     @Test
-    fun `addExpenseWithLink is atomic - validates inside transaction`() = runTest {
+    fun `addExpenseWithLink returns Success carrying the group expense id and the linked system expense id (success path only)`() = runTest {
         // Arrange
         val group = ExpenseGroup(name = "Link Test Group", defaultCurrency = "EUR")
         val members = listOf(GroupMember(groupId = 0, name = "Alice", isCurrentUser = true))
@@ -818,7 +809,7 @@ class GroupTransactionCoordinatorTest {
     }
 
     @Test
-    fun `addExpenseWithLink fails closed when current user member is missing and rolls back`() = runTest {
+    fun `addExpenseWithLink fails closed and leaves the link and the expense unchanged when current user member is missing`() = runTest {
         val group = ExpenseGroup(name = "No Current User Group", defaultCurrency = "EUR")
         val groupId = coordinator.createGroupWithMembersAtomic(
             group = group,
@@ -956,7 +947,7 @@ class GroupTransactionCoordinatorTest {
     }
 
     @Test
-    fun `repository rejects departed member split before system or group rows appear`() = runTest {
+    fun `repository rejects departed member and RG04A-1 late joiner splits before system or group rows appear`() = runTest {
         val groupId = coordinator.createGroupWithMembersAtomic(
             group = ExpenseGroup(name = "Split Group", defaultCurrency = "EUR"),
             members = listOf(
@@ -983,69 +974,44 @@ class GroupTransactionCoordinatorTest {
         assertThat((result as GroupExpenseCreationResult.Error).message).isEqualTo("Invalid custom split for active members")
         assertThat(expenseDao.getAllUncapped()).isEmpty()
         assertThat(groupExpenseDao.getExpensesForGroup(groupId).first()).isEmpty()
-    }
 
-    @Test
-    fun `RG04A-1 repository rejects split referencing member who joined after expense date before any row appears`() = runTest {
-        val groupId = coordinator.createGroupWithMembersAtomic(
+        // RG04A-1 (folded from the former separate test): a split referencing a member who
+        // joined AFTER the expense date is rejected before any row appears.
+        val lateGroupId = coordinator.createGroupWithMembersAtomic(
             group = ExpenseGroup(name = "Late Joiner Group", defaultCurrency = "EUR"),
             members = listOf(
                 GroupMember(groupId = 0, name = "Alice", isCurrentUser = true, joinedAt = TEST_DATE - 10_000L),
                 GroupMember(groupId = 0, name = "Bob", joinedAt = TEST_DATE + 5_000L)
             )
         )
-        val members = memberDao.getMembersForGroup(groupId).first()
-        val aliceId = members.first { it.name == "Alice" }.id
-        val bobId = members.first { it.name == "Bob" }.id
-        val json = CustomSplitJsonCodec.toCanonicalJson(mapOf(aliceId to 10.0, bobId to 80.0))
+        val lateMembers = memberDao.getMembersForGroup(lateGroupId).first()
+        val lateAliceId = lateMembers.first { it.name == "Alice" }.id
+        val lateBobId = lateMembers.first { it.name == "Bob" }.id
+        val lateJson = CustomSplitJsonCodec.toCanonicalJson(mapOf(lateAliceId to 10.0, lateBobId to 80.0))
 
-        val result = groupsRepository.createSystemExpenseAndLinkToGroup(
-            groupId = groupId, description = "Dinner", amount = 90.0,
-            paidById = aliceId, currency = "EUR", splitType = SplitType.UNEQUAL,
-            customSplitsJson = json, date = TEST_DATE, transactionType = TransactionType.PURCHASE
+        val lateResult = groupsRepository.createSystemExpenseAndLinkToGroup(
+            groupId = lateGroupId, description = "Dinner", amount = 90.0,
+            paidById = lateAliceId, currency = "EUR", splitType = SplitType.UNEQUAL,
+            customSplitsJson = lateJson, date = TEST_DATE, transactionType = TransactionType.PURCHASE
         )
 
-        assertThat(result).isInstanceOf(GroupExpenseCreationResult.Error::class.java)
+        assertThat(lateResult).isInstanceOf(GroupExpenseCreationResult.Error::class.java)
         // INVALID_CUSTOM_SPLIT_MESSAGE is private to GroupsRepositoryImpl; the bounded literal is pinned here.
-        assertThat((result as GroupExpenseCreationResult.Error).message).isEqualTo("Invalid custom split for active members")
+        assertThat((lateResult as GroupExpenseCreationResult.Error).message).isEqualTo("Invalid custom split for active members")
         assertThat(expenseDao.getAllUncapped()).isEmpty()
-        assertThat(groupExpenseDao.getExpensesForGroup(groupId).first()).isEmpty()
+        assertThat(groupExpenseDao.getExpensesForGroup(lateGroupId).first()).isEmpty()
     }
 
+    // RG04A-1 boundary (folded from the former separate test): Bob joined EXACTLY at the expense
+    // date, so he is a valid participant - the persisted split and the current user's share match.
     @Test
-    fun `RG04A-1 boundary member who joined exactly at expense date is a valid split participant`() = runTest {
-        val groupId = coordinator.createGroupWithMembersAtomic(
-            group = ExpenseGroup(name = "Boundary Joiner Group", defaultCurrency = "EUR"),
-            members = listOf(
-                GroupMember(groupId = 0, name = "Alice", isCurrentUser = true, joinedAt = TEST_DATE - 10_000L),
-                GroupMember(groupId = 0, name = "Bob", joinedAt = TEST_DATE)
-            )
-        )
-        val members = memberDao.getMembersForGroup(groupId).first()
-        val aliceId = members.first { it.name == "Alice" }.id
-        val bobId = members.first { it.name == "Bob" }.id
-        val requestedJson = CustomSplitJsonCodec.toCanonicalJson(mapOf(aliceId to 10.0, bobId to 80.0))
-
-        val result = groupsRepository.createSystemExpenseAndLinkToGroup(
-            groupId = groupId, description = "Dinner", amount = 90.0,
-            paidById = aliceId, currency = "EUR", splitType = SplitType.UNEQUAL,
-            customSplitsJson = requestedJson, date = TEST_DATE, transactionType = TransactionType.PURCHASE
-        )
-
-        val success = result as GroupExpenseCreationResult.Success
-        val storedGroupExpense = groupExpenseDao.getById(success.groupExpenseId)
-        assertThat(storedGroupExpense).isNotNull()
-        assertThat(storedGroupExpense!!.customSplitsJson).isEqualTo(requestedJson)
-        assertThat(expenseDao.getById(success.expenseId)!!.myShareAmount).isEqualTo(10.0)
-    }
-
-    @Test
-    fun `repository persists valid active unequal split and current user share`() = runTest {
+    fun `repository persists valid active unequal split and current user share - RG04A-1 joiner at expense date is eligible`() = runTest {
+        val date = TEST_DATE + 1_000L
         val groupId = coordinator.createGroupWithMembersAtomic(
             group = ExpenseGroup(name = "Split Group", defaultCurrency = "EUR"),
             members = listOf(
                 GroupMember(groupId = 0, name = "Alice", isCurrentUser = true, joinedAt = TEST_DATE - 10_000L),
-                GroupMember(groupId = 0, name = "Bob", joinedAt = TEST_DATE - 10_000L),
+                GroupMember(groupId = 0, name = "Bob", joinedAt = date),
                 GroupMember(groupId = 0, name = "Carol", joinedAt = TEST_DATE - 10_000L)
             )
         )
@@ -1054,7 +1020,6 @@ class GroupTransactionCoordinatorTest {
         val bob = members.first { it.name == "Bob" }
         val carol = members.first { it.name == "Carol" }
         memberDao.update(carol.copy(leftAt = TEST_DATE - 1_000L))
-        val date = TEST_DATE + 1_000L
         val requestedJson = CustomSplitJsonCodec.toCanonicalJson(mapOf(alice.id to 10.0, bob.id to 80.0))
 
         val result = groupsRepository.createSystemExpenseAndLinkToGroup(
@@ -1063,6 +1028,7 @@ class GroupTransactionCoordinatorTest {
             customSplitsJson = requestedJson, date = date, transactionType = TransactionType.PURCHASE
         )
 
+        assertThat(result).isInstanceOf(GroupExpenseCreationResult.Success::class.java)
         val success = result as GroupExpenseCreationResult.Success
         val storedGroupExpense = groupExpenseDao.getById(success.groupExpenseId)
         val storedSystemExpense = expenseDao.getById(success.expenseId)
@@ -1086,7 +1052,7 @@ class GroupTransactionCoordinatorTest {
     }
 
     @Test
-    fun `valid custom amount and percent link atomically and rejected link leaves ownership unchanged`() = runTest {
+    fun `valid custom amount and percent links persist splits - rejected link leaves ownership unchanged`() = runTest {
         val groupId = coordinator.createGroupWithMembersAtomic(
             group = ExpenseGroup(name = "Link Split Group", defaultCurrency = "EUR"),
             members = listOf(
@@ -1386,7 +1352,8 @@ class GroupTransactionCoordinatorTest {
         assertThat(error.message).contains("EUR")
         assertThat(error.message).contains("USD")
 
-        // Verify no system expense was created (atomic rollback)
+        // Verify no system expense was created (rejected by validation before any write;
+        // real rollback proofs are in GroupTransactionCoordinatorRollbackTest)
         val allExpenses = expenseDao.getAllUncapped()
         assertThat(allExpenses).isEmpty()
     }

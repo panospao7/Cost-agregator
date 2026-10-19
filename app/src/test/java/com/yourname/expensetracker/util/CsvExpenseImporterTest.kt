@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.util
 
 import com.google.common.truth.Truth.assertThat
+import com.google.common.truth.Truth.assertWithMessage
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.dao.CategoryDao
@@ -19,6 +20,7 @@ import io.mockk.slot
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
 
@@ -55,17 +57,6 @@ class CsvExpenseImporterTest {
             currencySettingsRepository = currencySettingsRepository,
             writeBarrier = writeBarrier(RestoreMaintenanceMode.Mode.NORMAL)
         )
-    }
-
-    @Test
-    fun `importer can be instantiated with injected DAOs`() {
-        val imp = CsvExpenseImporter(
-            categoryDao,
-            mockk<TransactionLifecycleCoordinator>(relaxed = true),
-            currencySettingsRepository = currencySettingsRepository,
-            writeBarrier = writeBarrier(RestoreMaintenanceMode.Mode.NORMAL)
-        )
-        assertThat(imp).isNotNull()
     }
 
     @Test
@@ -113,8 +104,9 @@ class CsvExpenseImporterTest {
         coVerify(exactly = 0) { coordinator.createExpense(any()) }
     }
 
+    // Header line is skipped: header + one data line imports exactly one expense.
     @Test
-    fun `imports single valid line`() = runTest {
+    fun `imports single valid line and skips header line`() = runTest {
         val cat = Category(id = 5, name = "Coffee", icon = "C", color = "#FF0000")
         coEvery { categoryDao.getByName("Coffee") } returns cat
         coEvery { coordinator.createExpense(any()) } returns CreateExpenseResult.Created(1L)
@@ -126,21 +118,6 @@ class CsvExpenseImporterTest {
         val success = result as CsvExpenseImporter.ImportResult.Success
         assertThat(success.imported).isEqualTo(1)
         assertThat(success.errors).isEqualTo(0)
-    }
-
-    @Test
-    fun `skips header line`() = runTest {
-        val cat = Category(id = 1, name = "Food", icon = "F", color = "#00FF00")
-        coEvery { categoryDao.getByName(any()) } returns cat
-        coEvery { coordinator.createExpense(any()) } returns CreateExpenseResult.Created(1L)
-
-        val csv = """
-            date,amount,merchant,category,description
-            2024-01-15,10.00,Pizza Place,Food,Lunch
-        """.trimIndent()
-
-        val result = importer.importFromContent(csv) as CsvExpenseImporter.ImportResult.Success
-        assertThat(result.imported).isEqualTo(1)
         coVerify(exactly = 1) { coordinator.createExpense(any()) }
     }
 
@@ -220,18 +197,45 @@ class CsvExpenseImporterTest {
         assertThat(result.imported).isEqualTo(1)
     }
 
+    private data class InvalidRowCase(
+        val name: String,
+        val csv: String,
+        val expectedImported: Int,
+        val expectedErrors: Int,
+        val expectedCreateCalls: Int
+    )
+
     @Test
-    fun `invalid csv date increments error count and does not import row`() = runTest {
+    fun `invalid rows increment error count and are not imported table`() = runTest {
+        val cases = listOf(
+            InvalidRowCase(
+                "invalid csv date",
+                "date,amount,merchant,category,description\n2024-13-40,1.00,A,Cat,bad\n2024-01-02,2.00,B,Cat,ok",
+                expectedImported = 1,
+                expectedErrors = 1,
+                expectedCreateCalls = 1
+            ),
+            InvalidRowCase(
+                "unclosed quoted row",
+                "date,amount,merchant,category,description\n2024-01-15,25.50,\"Unclosed merchant,Food,Desc",
+                expectedImported = 0,
+                expectedErrors = 1,
+                expectedCreateCalls = 0
+            )
+        )
+        assertEquals("invalid rows table size", 2, cases.size)
         val cat = Category(id = 1, name = "Cat", icon = "C", color = "#112233")
-        coEvery { categoryDao.getByName(any()) } returns cat
-        coEvery { coordinator.createExpense(any()) } returns CreateExpenseResult.Created(1L)
+        cases.forEach { case ->
+            io.mockk.clearMocks(coordinator, answers = false)
+            coEvery { categoryDao.getByName(any()) } returns cat
+            coEvery { coordinator.createExpense(any()) } returns CreateExpenseResult.Created(1L)
 
-        val csv = "date,amount,merchant,category,description\n2024-13-40,1.00,A,Cat,bad\n2024-01-02,2.00,B,Cat,ok"
-        val result = importer.importFromContent(csv) as CsvExpenseImporter.ImportResult.Success
+            val result = importer.importFromContent(case.csv) as CsvExpenseImporter.ImportResult.Success
 
-        assertThat(result.errors).isEqualTo(1)
-        assertThat(result.imported).isEqualTo(1)
-        coVerify(exactly = 1) { coordinator.createExpense(any()) }
+            assertWithMessage("${case.name}: errors").that(result.errors).isEqualTo(case.expectedErrors)
+            assertWithMessage("${case.name}: imported").that(result.imported).isEqualTo(case.expectedImported)
+            coVerify(exactly = case.expectedCreateCalls) { coordinator.createExpense(any()) }
+        }
     }
 
     @Test
@@ -248,20 +252,6 @@ class CsvExpenseImporterTest {
         assertThat(result.errors).isEqualTo(0)
         assertThat(requestSlot.captured.merchant).isEqualTo("Starbucks, Downtown")
         assertThat(requestSlot.captured.notes).isEqualTo("Morning, coffee")
-    }
-
-    @Test
-    fun `invalid quoted csv row increments error count and skips insert`() = runTest {
-        val cat = Category(id = 1, name = "Cat", icon = "C", color = "#112233")
-        coEvery { categoryDao.getByName(any()) } returns cat
-        coEvery { coordinator.createExpense(any()) } returns CreateExpenseResult.Created(1L)
-
-        val csv = "date,amount,merchant,category,description\n2024-01-15,25.50,\"Unclosed merchant,Food,Desc"
-        val result = importer.importFromContent(csv) as CsvExpenseImporter.ImportResult.Success
-
-        assertThat(result.imported).isEqualTo(0)
-        assertThat(result.errors).isEqualTo(1)
-        coVerify(exactly = 0) { coordinator.createExpense(any()) }
     }
 
     @Test

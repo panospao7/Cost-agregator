@@ -638,6 +638,34 @@ class BudgetRolloverTest {
 
     // â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+    /**
+     * B3-4 (NEW-P6-004): behavioral replacement for the former source-regex check of
+     * MAX_ROLLOVER_PERIODS. A daily rollover budget with ~400 completed days of
+     * zero spend compounds +100 per retained period. Only the most recent 365
+     * completed periods are retained, so the effective limit is exactly
+     * 100 + 365 * 100 = 36600 (an unbounded loop would reach 100 + 400 * 100).
+     */
+    @Test
+    fun `rollover history is bounded to the most recent 365 completed periods`() = runTest(UnconfinedTestDispatcher()) {
+        val start = NOW - 400L * DAY_MS
+        val budget = createBudget(
+            rollover = true,
+            amount = 100.0,
+            period = BudgetPeriod.DAILY,
+            startDate = start
+        )
+
+        every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(budget))
+        every { categoryDao.getAllFlow() } returns flowOf(emptyList<Category>())
+        every { expenseDao.getTotalSpentFlow() } returns flowOf(0.0)
+        coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 0.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 0.0, 0))
+
+        val status = budgetRepository.getBudgetStatuses().first().single()
+
+        assertThat(status.effectiveLimit).isEqualTo(36_600.0)
+    }
+
     private fun createBudget(
         rollover: Boolean,
         amount: Double,

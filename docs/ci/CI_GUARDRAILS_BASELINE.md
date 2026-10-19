@@ -109,7 +109,7 @@
   4. Grant Gradle wrapper execute permission
   5. Run unit tests: `./gradlew :app:testDebugUnitTest --no-daemon --stacktrace`
   6. Verify Room schema snapshots: `./gradlew :app:verifyRoomSchemaSnapshots -PstrictRoomSchemas=true --no-daemon --stacktrace`
-  7. Verify no ignored-test growth: `./gradlew :app:verifyNoIgnoredGrowth -PmaxIgnoredTests=29 --no-daemon --stacktrace`
+  7. Verify no ignored-test growth: `./gradlew :app:verifyNoIgnoredGrowth -PmaxIgnoredTests=3 --no-daemon --stacktrace`
   8. Run currency guardrails (PowerShell): `pwsh scripts/currency_guardrails.ps1 -SourceDir app/src/main/java -ProjectRoot ${{ github.workspace }}`
   9. Upload unit test results artifact (7-day retention)
   10. Upload Room schema verification results artifact (7-day retention)
@@ -156,7 +156,7 @@ All verification tasks defined in `app/build.gradle.kts`. Tasks wired to `:app:c
 | `checkDirectTimeCalls` | Inline Kotlin | Scans for `System.currentTimeMillis()` / `Date()` / `Instant.now()` outside `TimeProvider`; 21 allowlisted files, skips legacy/deprecated/backfill paths | ✅ Yes |
 | `checkLifecycleBypass` | Inline Kotlin | Scans `src/main/java` for `expenseDao.insert/update/delete` outside the allowlist; 10 allowlisted classes | ✅ Yes |
 | `verifyDbAccessBoundaries` | External `.py` | Runs `scripts/verify_db_access_boundaries.py --fail-on-violation` | ✅ Yes |
-| `verifyNoIgnoredGrowth` | Inline Kotlin | Counts `@Ignore` annotations; fails if count exceeds `-PmaxIgnoredTests=N` (default: 29) | ✅ Yes (wired in PR 2) |
+| `verifyNoIgnoredGrowth` | Inline Kotlin | Counts `@Ignore` annotations; fails if count exceeds `-PmaxIgnoredTests=N` (default: 3) | ✅ Yes (wired in PR 2) |
 
 ### `checkLifecycleBypass` Allowlist (10 classes)
 
@@ -229,9 +229,8 @@ Located in `app/src/test/java/com/yourname/expensetracker/architecture/` and rel
 | `Engine5PrimitiveGuardTest` | No `System.currentTimeMillis()` / raw `CurrencyCode` usage in domain |
 | `ExpenseDaoMutationAccessTest` | Validates that expense DAO mutations are accessed only from approved classes |
 | `GuardSeededViolationTest` | Verifies guard scripts detect seeded violations (`guards/GuardSeededViolationTest.kt`) |
-| `MoneyBoundaryGuardTest` | Verifies money boundary guard catches regressions (`guard/MoneyBoundaryGuardTest.kt`) |
 
-**Total**: 18 architecture guard test classes across `architecture/`, `guards/`, `guard/`, and `contracts/` packages.
+**Total**: 17 architecture guard test classes across `architecture/`, `guards/`, and `contracts/` packages.
 
 ---
 
@@ -307,7 +306,7 @@ python -m pytest scripts/test_verify_migration_matrix.py -v
 
 ### Current State
 - **Current `@Ignore` count**: ~31 annotations
-- **Maximum threshold**: 29 (set via `-PmaxIgnoredTests=29` in CI)
+- **Maximum threshold**: 3 (set via `-PmaxIgnoredTests=3` in CI); lowered from 29 by test-suite-audit B3b-R, 2026-10-17 (current total: 3 `@Ignore`, 0 `@Disabled`; the category table below is historical)
 - **Guard**: `verifyNoIgnoredGrowth` Gradle task (✅ wired to `:app:check` in PR 2)
 
 ### Ignored Test Categories
@@ -327,7 +326,7 @@ python -m pytest scripts/test_verify_migration_matrix.py -v
 - Defined in `app/build.gradle.kts` (lines 356–387)
 - Counts `@Ignore` lines in `.kt` and `.java` files under `src/test/` and `src/androidTest/`
 - Skips commented-out `@Ignore` (lines starting with `//`)
-- Default threshold: 29 (`-PmaxIgnoredTests=29`)
+- Default threshold: 3 (`-PmaxIgnoredTests=3`); lowered from 29 by test-suite-audit B3b-R, 2026-10-17
 - **Wired to `:app:check` in PR 2** — also runs as a separate step in the `unit-tests` CI job for early failure feedback
 
 ### Guard: `verify_ignored_test_budget.py`

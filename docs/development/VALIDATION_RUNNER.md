@@ -97,17 +97,18 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 | `runner-progress-smoke` | Self-test heartbeat and output-byte progress |
 | `runner-stall-smoke` | Self-test no-output termination; TIMEOUT is expected |
 | `runner-protocol-tests` | Run isolated Windows runner protocol regression tests through Python pytest |
+| `pytest-subset` | Run one pytest path under `scripts/` with `--durations=40 -rs`: `-TestFilter scripts[/path][::test_id]` required (Python) |
 | `compile` | Compile debug Kotlin |
 | `assemble-debug` | Build the debug APK |
-| `targeted-unit-test` | Run `:app:testDebugUnitTest` with `-TestFilter` |
-| `targeted-release-unit-test` | Run `:app:testReleaseUnitTest` with `-TestFilter` |
+| `targeted-unit-test` | Run `:app:testDebugUnitTest` with `-TestFilter` (one filter or a comma-separated list, max 50) |
+| `targeted-release-unit-test` | Run `:app:testReleaseUnitTest` with `-TestFilter` (one filter or a comma-separated list, max 50) |
 | `unit-test-shard` | Run one named shard from `config/validation/test-shards.json` with `-Shard` |
 | `trusted-tests` | Run the curated fast structural group; this does not exempt other tests |
 | `legacy-tests` | Isolate active ledger entries without ignoring them |
 | `unit-tests` | Run all debug unit tests |
 | `migration-tests` | Run migration-filtered unit tests |
 | `lint` | Run debug lint |
-| `static-guards` | Run the canonical static guard suite |
+| `static-guards` | Run the canonical static guard suite; its `guard_tests` leg runs `pytest scripts` except `scripts/ci/test_validation_runner_protocol.py` (Windows-only, covered by `runner-protocol-tests`) |
 | `registered-guard` | Run one `-GuardId` through the canonical CI-mode bridge |
 | `app-check` | Run `:app:check` |
 | `connected-tests` | Run connected debug Android tests; optional `-DeviceSerial` |
@@ -115,21 +116,99 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 | `assemble-release` | Build the release APK (`:app:assembleRelease`) |
 | `release-artifact-evidence` | Read-only release APK verification and `build/ci/release-artifact/evidence.json` (Python, no inputs) |
 
+**Standing rule:** any change to `scripts/validation-runner.ps1`,
+`scripts/ci/test_validation_runner_protocol.py`, or runner profiles/docs requires
+`runner-protocol-tests` (and `runner-smoke`). `static-guards` no longer runs the
+runner protocol file. Release final acceptance should run `runner-protocol-tests`
+alongside `static-guards`.
+
 Gradle profiles default to `--console=plain --no-parallel --max-workers=1
 --no-daemon`, one test fork at a time, and fork recycling after 50 **test
 classes**, not test methods. Optional local settings are described below.
 
-Guard profiles, `runner-protocol-tests`, and `release-artifact-evidence` require a working Python interpreter.
+Guard profiles, `runner-protocol-tests`, `pytest-subset`, and `release-artifact-evidence` require a working Python interpreter.
 Resolution tries `-PythonExecutable`, `VALIDATION_PYTHON`, then `python3` and
 `python` on PATH. The runner never installs Python or pytest. The protocol-test
 profile requires pytest already installed in that interpreter and executes
-`-m pytest scripts/ci/test_validation_runner_protocol.py -q -p no:cacheprovider`:
+`-m pytest scripts/ci/test_validation_runner_protocol.py -q -p no:cacheprovider`
+(PASS rules and environment sanitising: see `pytest-subset` below):
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass `
   -File scripts/validation-runner.ps1 -Action Start `
   -Profile runner-protocol-tests -PythonExecutable python
 ```
+
+### `pytest-subset`
+
+Validates one Python test path without the full `static-guards` run, and prints
+the 40 slowest test phases (`--durations=40`) so per-test cost can be measured.
+`-rs` lists every skipped test and its reason in `stdout.log`.
+It runs `<python> -m pytest <filter> -q -p no:cacheprovider --durations=40 -rs`
+(2400 s total, 600 s no output) from the repository root. It takes the same
+single-lock, `request.json`, `result.json`, `stdout.log` and `complete.marker`
+path as every other profile, and follows the same duplicate-run and
+request-tamper rules (the worker revalidates `test_filter` and the recorded
+command before launch).
+
+`-TestFilter` is required and must be a repo-relative path that is exactly
+`scripts` or starts with `scripts/` (or `scripts\`), optionally followed by one
+or more `::` test-id segments:
+
+```text
+^scripts([/\\][A-Za-z0-9_.\-]+)*(::[A-Za-z0-9_\[\]\-]+)*\z      (case-sensitive)
+```
+
+The anchor is `\z` (absolute end of input), so a trailing newline is rejected. In
+addition, no path segment may consist only of dots (`.`/`..`), the lexically
+normalised path must stay inside `<repo>\scripts` and exist, and a `::` test id
+requires the path to be a file. Anything else (absolute paths, drive letters, a
+leading `/` or `\`, `..`, spaces, wildcards, `;`, `&`, `|`, quotes, empty or
+missing filters, nonexistent paths) is rejected with `E_INVALID_PYTEST_FILTER`
+before the lock is taken. The containment check is lexical only: reparse points
+(symlinks and junctions) under `scripts` are not resolved. Gradle options and
+`-DeviceSerial` are rejected as for the other Python profiles.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File scripts/validation-runner.ps1 -Action Start -Profile pytest-subset `
+  -TestFilter scripts/ci/test_guard_findings.py
+```
+
+#### What PASS means for pytest profiles
+
+For `pytest-subset` and `runner-protocol-tests`, `PASS` requires **both** child
+exit code 0 **and** at least one passed test. pytest exits 0 when every test was
+skipped or deselected, so after a zero exit the worker reads the tail of
+`stdout.log` and parses the final pytest summary line. That line must be the last
+non-empty line and must have the form `N passed[, M skipped ...] in Ts`: the
+`-q` form, the `=== ... ===` form, a trailing `(0:00:01)` and ANSI colour codes
+are accepted. When the summary is missing, is not the last line, or reports zero
+`passed` (only skipped, deselected, xfailed, `no tests ran`), the run is `FAIL`
+with `exit_code` 1 and the bounded failure code `E_NO_TESTS_PASSED`. A non-zero
+child exit keeps its historical mapping (`FAIL`, `E_COMMAND_FAILED`). `static-guards`
+output is the guard suite's own, so this rule is not applied to it.
+
+#### Environment and configuration sanitising
+
+Ambient pytest settings must not change what a PASS means. For
+`runner-protocol-tests`, `pytest-subset` and `static-guards` (which runs pytest
+inside the guard suite) the detached worker builds the child environment with
+`PYTEST_ADDOPTS` and `PYTEST_PLUGINS` removed and
+`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1` set, at the single place where it creates the
+child process, so detached runs behave the same. (`PYTEST_ADDOPTS=--co`, for
+example, would make pytest exit 0 without running a test.) No test in the
+repository depends on an autoloaded plugin; if one ever does, load it explicitly
+with `-p <name>`. Other environment is inherited unchanged and the recorded command
+(and duplicate detection) is unaffected.
+
+The repository has no pytest config file, and pytest searches upward past the
+repository root for `pytest.ini`, `.pytest.ini`, `pytest.toml`, `.pytest.toml`,
+`tox.ini` (`[pytest]`), `setup.cfg` (`[tool:pytest]`) and `pyproject.toml`
+(`[tool.pytest...]`). Before launching one of these profiles the worker looks for
+such a file above the repository root; if one exists (or cannot be read) the run is
+`INFRA_FAILURE` with `E_PYTEST_CONFIG_OUTSIDE_REPO` and nothing is launched. Remove
+or relocate that file; the runner does not work around it.
 
 Available shards are `architecture-contracts`, `data`, `domain-a-m`,
 `domain-n-z`, `runtime-ui`, and `integration-golden`. Serial execution is the
@@ -140,6 +219,29 @@ isolated workspaces. Shard filters are unchanged by tuning settings.
 The hanging-test ledger is `config/validation/known-hanging-tests.json`; see
 `docs/testing/KNOWN_HANGING_TESTS.md`. It changes routing only and never weakens
 the ignored-test guard.
+
+## Multi-filter targeted unit tests
+
+`targeted-unit-test` and `targeted-release-unit-test` accept `-TestFilter` as a
+comma-separated list (for example `-TestFilter "*ReceiptParser*,*TotalsAggregationEngine*"`)
+so a batch of test classes is compiled and run in ONE Gradle invocation. The
+runner emits one `--tests <item>` per item, in the given order; a single filter
+produces exactly the same arguments as before. Rules (one parser,
+`Get-TargetedTestFilters`, used before the lock and again by the detached
+worker): each item must match `^[A-Za-z0-9_.$*?\-]+\z` (`\z` also rejects a trailing newline; no trimming, so
+whitespace is rejected); empty items (`a,,b`, leading or trailing comma) and
+case-sensitively identical duplicate items are rejected with
+`E_INVALID_TEST_FILTER`; more than 50 items is `E_TOO_MANY_TEST_FILTERS`
+(checked before the per-item rules). Commas remain rejected by the other
+filter-taking profiles (`connected-test-class`, `pytest-subset`); profiles
+without a filter ignore `-TestFilter`. Zero-test semantics: Gradle (8.11.1)
+fails the run only when the WHOLE run matches zero tests. An individual
+`--tests` item that matches nothing is silently skipped and the run can still
+PASS. For a multi-filter run the validation owner must therefore confirm
+per-item coverage from the JUnit XML (`app/build/test-results/<task>/` files
+newer than the run start); an item with zero matched tests is NOT validated
+(run it alone or fix the name). A runner-side per-item check is planned
+(B4-P1d). The recorded request keeps the original comma-separated string.
 
 ## Release assurance profiles
 
@@ -226,7 +328,7 @@ The Kotlin compiler strategy is independent of Gradle daemon selection.
 serialized with the other settings; none of these options edit project files.
 
 Explicit Gradle-only options are rejected on non-Gradle profiles, including
-smoke profiles, `runner-protocol-tests`, guard profiles, and
+smoke profiles, `runner-protocol-tests`, `pytest-subset`, guard profiles, and
 `release-artifact-evidence`, with
 `E_GRADLE_OPTIONS_NOT_APPLICABLE`. This includes explicitly passing a default
 value such as `-MaxWorkers 1` or `-KotlinCompilerStrategy project`.

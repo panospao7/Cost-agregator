@@ -34,7 +34,7 @@ import org.junit.Assert.assertTrue
  * Phase 2: AI Follow-Through - Filter & Navigation Integration
  * 
  * Note: This test focuses only on recommendation-related functionality.
- * For full HomeViewModel tests, see existing HomeViewModelStressTest.
+ * For full HomeViewModel tests, see HomeViewModelWidgetsTest.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class HomeViewModelRecommendationTest {

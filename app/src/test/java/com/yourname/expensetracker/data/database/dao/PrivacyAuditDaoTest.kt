@@ -64,22 +64,29 @@ class PrivacyAuditDaoTest {
     // -------------------------------------------------------------------------
 
     @Test
-    fun `insert an audit event`() = runTest {
-        val event = createEvent()
-        val id = dao.insert(event)
-
+    fun `insert then read back returns every audit event field exactly`() = runTest {
+        val id = dao.insert(
+            createEvent(
+                capability = "CAMERA",
+                decision = "DENIED",
+                reason = "No permission",
+                context = "ctx_code",
+                timestampMs = FIXED_NOW + 1000,
+                caller = "test_caller"
+            )
+        )
         assertTrue(id > 0)
-    }
-
-    @Test
-    fun `getRecent returns all events within limit`() = runTest {
-        dao.insert(createEvent(capability = "LOCATION", timestampMs = FIXED_NOW))
-        dao.insert(createEvent(capability = "CAMERA", timestampMs = FIXED_NOW + 1000))
-        dao.insert(createEvent(capability = "CONTACTS", timestampMs = FIXED_NOW + 2000))
 
         val results = dao.getRecent(10)
 
-        assertEquals(3, results.size)
+        assertEquals(1, results.size)
+        assertEquals(id, results[0].id)
+        assertEquals("CAMERA", results[0].capability)
+        assertEquals("DENIED", results[0].decision)
+        assertEquals("No permission", results[0].reason)
+        assertEquals("ctx_code", results[0].context)
+        assertEquals(FIXED_NOW + 1000, results[0].timestampMs)
+        assertEquals("test_caller", results[0].caller)
     }
 
     @Test
@@ -106,18 +113,6 @@ class PrivacyAuditDaoTest {
         assertEquals(FIXED_NOW + 5000, results[0].timestampMs)
         assertEquals(FIXED_NOW + 2000, results[1].timestampMs)
         assertEquals(FIXED_NOW, results[2].timestampMs)
-    }
-
-    @Test
-    fun `insert multiple events and verify content`() = runTest {
-        dao.insert(createEvent(capability = "LOCATION", decision = "ALLOWED"))
-        dao.insert(createEvent(capability = "CAMERA", decision = "DENIED", reason = "No permission"))
-
-        val results = dao.getRecent(10)
-
-        assertEquals(2, results.size)
-        assertEquals("CAMERA", results[0].capability)
-        assertEquals("DENIED", results[0].decision)
     }
 
     @Test

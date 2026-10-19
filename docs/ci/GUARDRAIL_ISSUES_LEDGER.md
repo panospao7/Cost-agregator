@@ -452,7 +452,7 @@ detail: `GUARDRAIL_STATE_REPORT.md` §6.
 | A4 | `WarrantyTrackerRepositoryTest` executor OOM / JPLIS crash | same family as A1 | same owner decision |
 | B1 | `ReceiptLifecycleCoordinatorTest` 7 failures | — | stub `createExpenseDbOnlyV2`; `null()` vs `isNull()` matcher |
 | B2 | `SavingsGoalsViewModelTest` 3 failures | — | per handoff §B2 |
-| B3 | `SplitCalculationPrecisionTest` | **FIXED 2026-09-11** | largest-remainder allocation in integer cents |
+| B3 | `SplitCalculationPrecisionTest` | **FIXED 2026-09-11** | largest-remainder allocation in integer cents (B3-4: local-formula cases removed; proof now in `percentage split of 0_03 at 50-50 keeps sum at total not 0_04`, `percentage split allocates leftover cents by largest fractional part` and exact `SplitCalculatorTest` cases) |
 | B4 | `verify_known_good_state` 11 failures | freshness "stamp=missing" | **GATE-00R debt**, not a code bug |
 
 **Measured scale:** `TEST_FAILURE_LEDGER.md` records **121 pre-existing `domain.*` + 53 `data.*`**
@@ -612,6 +612,13 @@ python -m pytest scripts/ci -q
 python scripts/db_guard/mediation_analysis/fixture_runner.py     # 64/64
 python -m pytest scripts/db_guard -q                             # 235
 ```
+
+> **Retirement note.** The board generator (`inspect_db_mediation_proof.py`), the fixture runner
+> (`fixture_runner.py`), the mediation proof engine modules and their dedicated GR-14/GR-15 test files
+> were retired from the repository in the test-suite audit (batch B9). The commands in the block
+> above that invoke the board generator and the fixture runner therefore describe how the recorded
+> numbers were originally produced and can no longer be re-run from the current tree. The numbers
+> remain a historical record of the GR-14 remediation work.
 
 **Board determinism is a gate, not a nicety:** if a double run differs, the change is not
 committable until it is deterministic.

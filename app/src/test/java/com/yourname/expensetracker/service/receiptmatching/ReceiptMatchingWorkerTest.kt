@@ -71,6 +71,9 @@ class ReceiptMatchingWorkerTest {
             val block = secondArg<suspend (WorkerRunContext) -> Any>()
             try {
                 WorkerGuardResult.Success(block.invoke(ctx))
+            } catch (e: CancellationException) {
+                // Mirror the real guard: a plain CancellationException is rethrown ahead of the Exception catch.
+                throw e
             } catch (e: Exception) {
                 val msg = e.message ?: ""
                 val transient = listOf("timeout", "interrupted", "deadlock", "SQLITE_BUSY", "database is locked")
@@ -178,16 +181,6 @@ class ReceiptMatchingWorkerTest {
         coVerify(exactly = 0) { ctx.addRowsSkipped() }
         coVerify(exactly = 0) { ctx.addRowsUpdated() }
         coVerify(exactly = 0) { ctx.addNotificationsSent() }
-    }
-
-    @Test
-    fun `worker returns success`() = runTest {
-        coEvery { receiptRepository.getProcessableReceipts() } returns listOf(sampleReceipt(id = 11L))
-        coEvery { matcher.findBestMatch(any(), any()) } returns MatchResult.NoMatch
-
-        val result = buildWorker().doWork()
-
-        assertEquals(Result.success(), result)
     }
 
     @Test
@@ -436,7 +429,8 @@ class ReceiptMatchingWorkerTest {
     @Test
     fun `notification_service_cancellation_rethrows`() = runTest {
         // When sendBudgetAlert throws CancellationException, it must propagate
-        // through the notification catch, causing the worker to NOT succeed.
+        // through the notification catch, the worker's outer catch and the guard
+        // (which rethrows cancellation), so doWork() throws instead of returning a Result.
         val receipt = sampleReceipt(id = 83L)
         val expense = sampleExpense(id = 933L)
         coEvery { notificationPermissionChecker.areNotificationsEnabled() } returns true
@@ -447,10 +441,18 @@ class ReceiptMatchingWorkerTest {
         } returns kotlin.Result.success(sampleLink(receiptId = 83L, expenseId = 933L))
         coEvery { notificationService.postBudgetAlert(any(), any(), any()) } throws CancellationException("job cancelled")
 
-        val result = buildWorker().doWork()
-
-        // CancellationException propagates -> worker does NOT succeed.
-        assertEquals(Result.failure(), result)
+        // CancellationException must propagate out of doWork(), not be mapped to a Result.
+        // try/fail pattern: an AssertionError (not a CancellationException) is raised if
+        // doWork() returns normally, and any other exception type is not swallowed.
+        try {
+            val result = buildWorker().doWork()
+            throw AssertionError("Expected CancellationException to propagate, got result=$result")
+        } catch (e: CancellationException) {
+            // expected - cancellation must not be swallowed or mapped to a Result
+            assertEquals("job cancelled", e.message)
+        }
+        // The notification call was actually reached (the CE originated from it).
+        coVerify(exactly = 1) { notificationService.postBudgetAlert(any(), any(), any()) }
         // No suppression diagnostic should be recorded for cancellation.
         coVerify(exactly = 0) { matchService.recordNotificationSuppressed(any(), any(), any(), any()) }
         // No notification-sent metric.

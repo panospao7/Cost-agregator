@@ -209,18 +209,9 @@ class DataRetentionWorkerTest {
 
     // ── PR6E: Partial-failure semantics tests ────────────────────────────────
 
-    @Test
-    fun `all_targets_success_returns_success`() = runTest {
-        every { retentionRegistry.allTargets() } returns setOf(
-            target("raw_notifications", 2),
-            target("scanned_receipts.rawOcrText", 1)
-        )
-
-        val result = buildWorker().doWork()
-
-        assertEquals(Result.success(), result)
-        coVerify(exactly = 1) { ctx.addRowsUpdated(3) }
-    }
+    // all_targets_success_returns_success removed (B6-10): subsumed by
+    // `purges across all targets and surfaces total rowsUpdated`, which asserts the same
+    // Result.success() and the summed rowsUpdated for an all-success target set.
 
     @Test
     fun `one_target_transient_failure_continues_other_targets_then_retries`() = runTest {
@@ -368,6 +359,33 @@ class DataRetentionWorkerTest {
         assertEquals(RetentionCheckpointState.COMPLETED, completed!!.state)
     }
 
+    @Test
+    fun `target registered after the cancelling target is never purged`() = runTest {
+        // The worker orders targets by name: aaa_ runs first, mmm_ cancels, zzz_ sorts AFTER it.
+        every { retentionRegistry.allTargets() } returns setOf(
+            target("zzz_after_cancelling_target", 7),
+            throwingTarget("mmm_cancelling_target", CancellationException("worker stopped")),
+            target("aaa_before_cancelling_target", 2)
+        )
+
+        try {
+            buildWorker().doWork()
+            fail("Expected CancellationException to be thrown")
+        } catch (e: CancellationException) {
+            assertEquals("worker stopped", e.message)
+        }
+
+        assertEquals(
+            "[aaa_before_cancelling_target] ran, [zzz_after_cancelling_target] was never invoked",
+            listOf("aaa_before_cancelling_target"),
+            purgeCalls.map { it.first }
+        )
+        assertNull(
+            "[zzz_after_cancelling_target] must have no checkpoint record",
+            checkpointStore().load("zzz_after_cancelling_target")
+        )
+    }
+
     // ── RP-14 14b: audit-write failure is best-effort, never rolls back ──────
 
     @Test
@@ -437,74 +455,51 @@ class DataRetentionWorkerTest {
         }
     }
 
-    @Test
-    fun `cancellation_during_target_rethrows`() = runTest {
-        // target_b throws CancellationException; must propagate immediately
-        val cancelException = CancellationException("worker stopped")
-        every { retentionRegistry.allTargets() } returns setOf(
-            target("target_a", 5),
-            throwingTarget("target_b", cancelException),
-            target("target_c", 3)
-        )
-
-        try {
-            buildWorker().doWork()
-            fail("Expected CancellationException to be thrown")
-        } catch (e: CancellationException) {
-            assertEquals("worker stopped", e.message)
-        }
-    }
+    // cancellation_during_target_rethrows removed (B6-10): subsumed by
+    // `cancellation propagates and does not clear checkpoints` (same CancellationException
+    // message "worker stopped" propagated out of doWork; that survivor also asserts checkpoints).
 
     // ── PR12K-1: DataRetention Privacy Cleanup Semantics ──────────────
 
-    @Test
-    fun `data_retention_runs_when_raw_notification_retention_disabled`() = runTest {
-        coEvery { privacySettingsRepository.getSettings() } returns PrivacySettings(rawNotificationRetentionDays = 0)
-        every { retentionRegistry.allTargets() } returns setOf(
-            target("raw_notifications", 5)
-        )
-
-        val result = buildWorker().doWork()
-
-        assertEquals(Result.success(), result)
-    }
+    /** Rows: (row name, privacy settings with the raw retention disabled, target name, rows purged). */
+    private data class DisabledRetentionRow(
+        val rowName: String,
+        val settings: PrivacySettings,
+        val targetName: String,
+        val rows: Int
+    )
 
     @Test
-    fun `data_retention_purges_raw_notification_payload_when_disabled`() = runTest {
-        coEvery { privacySettingsRepository.getSettings() } returns PrivacySettings(rawNotificationRetentionDays = 0)
-        every { retentionRegistry.allTargets() } returns setOf(
-            target("raw_notifications", 5)
+    fun `data_retention_runs_and_purges_raw_payload_when_raw_retention_disabled`() = runTest {
+        val table = listOf(
+            DisabledRetentionRow(
+                "raw notification retention disabled",
+                PrivacySettings(rawNotificationRetentionDays = 0),
+                "raw_notifications",
+                5
+            ),
+            DisabledRetentionRow(
+                "raw OCR retention disabled",
+                PrivacySettings(rawOcrRetentionDays = 0),
+                "scanned_receipts.rawOcrText",
+                3
+            )
         )
+        assertEquals("table size guard", 2, table.size)
 
-        val result = buildWorker().doWork()
+        for (row in table) {
+            // Fresh run context per row so exactly-once verification is per row.
+            ctx = mockk(relaxed = true)
+            context.getSharedPreferences(DataRetentionWorker.PREFS_NAME, Context.MODE_PRIVATE)
+                .edit().clear().commit()
+            coEvery { privacySettingsRepository.getSettings() } returns row.settings
+            every { retentionRegistry.allTargets() } returns setOf(target(row.targetName, row.rows))
 
-        assertEquals(Result.success(), result)
-        coVerify(exactly = 1) { ctx.addRowsUpdated(5) }
-    }
+            val result = buildWorker().doWork()
 
-    @Test
-    fun `data_retention_runs_when_raw_ocr_retention_disabled`() = runTest {
-        coEvery { privacySettingsRepository.getSettings() } returns PrivacySettings(rawOcrRetentionDays = 0)
-        every { retentionRegistry.allTargets() } returns setOf(
-            target("scanned_receipts.rawOcrText", 3)
-        )
-
-        val result = buildWorker().doWork()
-
-        assertEquals(Result.success(), result)
-    }
-
-    @Test
-    fun `data_retention_purges_raw_ocr_payload_when_disabled`() = runTest {
-        coEvery { privacySettingsRepository.getSettings() } returns PrivacySettings(rawOcrRetentionDays = 0)
-        every { retentionRegistry.allTargets() } returns setOf(
-            target("scanned_receipts.rawOcrText", 3)
-        )
-
-        val result = buildWorker().doWork()
-
-        assertEquals(Result.success(), result)
-        coVerify(exactly = 1) { ctx.addRowsUpdated(3) }
+            assertEquals("[${row.rowName}] worker runs and succeeds", Result.success(), result)
+            coVerify(exactly = 1) { ctx.addRowsUpdated(row.rows) }
+        }
     }
 
     @Test
@@ -522,16 +517,34 @@ class DataRetentionWorkerTest {
 
     // ── PR12K-2: DataRetention Sanitized Diagnostics ─────────────────
 
+    /**
+     * B6-10 merge of target_failure_records_sanitized_diagnostic,
+     * retention_exception_message_path_not_persisted, retention_diagnostic_uses_failure_code and
+     * retention_diagnostic_uses_error_class: one permanent failure whose message carries a
+     * synthetic sensitive path. The verifications below are, in order: event envelope; metadata
+     * free of the message ("sensitive") and of an "error" key; no retention_purge event at all
+     * carrying either; bounded reason code; exception class name (not message).
+     */
     @Test
-    fun `retention_exception_message_path_not_persisted`() = runTest {
-        // A throwing target with sensitive path info in message
+    fun `retention_failure_diagnostic_is_sanitized_and_uses_bounded_codes`() = runTest {
         every { retentionRegistry.allTargets() } returns setOf(
-            throwingTarget("target_a", IllegalArgumentException("C:\\Users\\sensitive\\path"))
+            target("target_a", 5),
+            throwingTarget("target_b", IllegalArgumentException("C:\\Users\\sensitive\\path")),
+            target("target_c", 3)
         )
 
         buildWorker().doWork()
 
-        // Diagnostic metadata must not contain the raw exception message
+        // Event envelope: privacy pipeline, final failure, RetentionTarget entity.
+        coVerify(atLeast = 1) {
+            diagnosticEventWriter.emit(match { event ->
+                event.pipeline == AppPipeline.PRIVACY &&
+                event.stage == "retention_purge" &&
+                event.outcome == EventOutcome.FAILED_FINAL &&
+                event.entityType == "RetentionTarget"
+            })
+        }
+        // Diagnostic metadata must not contain the raw exception message.
         coVerify(atLeast = 1) {
             diagnosticEventWriter.emit(match { event ->
                 event.stage == "retention_purge" &&
@@ -539,32 +552,23 @@ class DataRetentionWorkerTest {
                 !event.metadata.toJson().contains("\"error\":")
             })
         }
-    }
-
-    @Test
-    fun `retention_diagnostic_uses_failure_code`() = runTest {
-        every { retentionRegistry.allTargets() } returns setOf(
-            throwingTarget("target_a", IllegalArgumentException("test"))
-        )
-
-        buildWorker().doWork()
-
+        // No retention_purge event may leak the raw message at all, nor carry a raw "error" key
+        // (B6 nit 44: the atLeast=1 check above only needs ONE clean event, so pin it for all).
+        coVerify(exactly = 0) {
+            diagnosticEventWriter.emit(match { event ->
+                event.stage == "retention_purge" &&
+                (event.metadata.toJson().contains("sensitive") ||
+                    event.metadata.toJson().contains("\"error\":"))
+            })
+        }
+        // Bounded reason code.
         coVerify(atLeast = 1) {
             diagnosticEventWriter.emit(match { event ->
                 event.stage == "retention_purge" &&
                 event.metadata.toJson().contains(DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name)
             })
         }
-    }
-
-    @Test
-    fun `retention_diagnostic_uses_error_class`() = runTest {
-        every { retentionRegistry.allTargets() } returns setOf(
-            throwingTarget("target_a", IllegalArgumentException("test"))
-        )
-
-        buildWorker().doWork()
-
+        // Exception class name (not message).
         coVerify(atLeast = 1) {
             diagnosticEventWriter.emit(match { event ->
                 event.stage == "retention_purge" &&

@@ -147,8 +147,8 @@ Add or update tests before implementation is considered complete.
 - `RecurringLifecycleCoordinatorTest.expenseAmountDateCurrencyUpdateReconcilesLinkedOccurrenceExactlyOnce`
 - `RecurringLifecycleCoordinatorTest.unlinkAfterExpenseDeleteReopensOnlyTheLinkedOccurrence`
 - `RecurringPlannedActualNoDoubleCountGoldenTest.ruleUpdateDoesNotDoubleCountPlannedAndActual`
-- `RecurringBillPaymentMatchTest.updatedRuleStillMatchesTheCorrectOccurrence`
-- `ConcurrentOccurrenceClaimTest.concurrentReconcileCannotClaimOneOccurrenceTwice`
+- `RecurringBillPaymentMatchTest.updatedRuleStillMatchesTheCorrectOccurrence` (consolidated into table tests by the test-suite audit; the class now holds `fulfillByOccurrenceKey fulfils exactly the one open planned expense with provenance` and `reminders suppressed after occurrence claim`)
+- `ConcurrentOccurrenceClaimTest.concurrentReconcileCannotClaimOneOccurrenceTwice` (consolidated into table tests by the test-suite audit; the class now holds `two claims on same occurrence - only one succeeds`, `PAID occurrence cannot be claimed` and `CANCELLED occurrence cannot be claimed`)
 
 ### Anchor and date behavior
 

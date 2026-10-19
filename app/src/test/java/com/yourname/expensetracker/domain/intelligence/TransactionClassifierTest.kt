@@ -58,39 +58,54 @@ class TransactionClassifierTest {
         assertTrue("Predict should return a valid probability", result in 0f..1f)
     }
 
+    /**
+     * Table test: training after any number of onBackground() transitions must still be counted
+     * (train() uses scheduleSave() which launches on the scope; onBackground must not cancel the
+     * scope itself). Merges: single background then train, repeated background/train cycles, and
+     * idempotent consecutive onBackground() calls.
+     */
     @Test
-    fun `onBackground does not prevent future train calls`() = runBlocking {
-        classifier.initialize()
-
-        // Background transition
-        classifier.onBackground()
-
-        // train() uses scheduleSave() internally which launches on the scope —
-        // this must not throw CancellationException
-        classifier.train("payment of 10.50 EUR", isTransaction = true)
-
-        val stats = classifier.getStats()
-        assertEquals("Training sample should be counted", 1, stats.totalPositive)
-    }
-
-    @Test
-    fun `repeated onBackground transitions do not break classifier`() = runBlocking {
-        classifier.initialize()
-
-        // Simulate multiple background/foreground cycles
-        repeat(5) { cycle ->
-            classifier.onBackground()
-
-            // After each background transition, training should still work
-            classifier.train("transaction payment #$cycle", isTransaction = true)
-        }
-
-        val stats = classifier.getStats()
-        assertEquals(
-            "All 5 training samples should be counted after repeated backgrounding",
-            5,
-            stats.totalPositive
+    fun `train samples are counted after onBackground transitions - table`() = runBlocking {
+        // Each scenario is an ordered op list: "BG" = onBackground(), "TRAIN" = train(positive).
+        val scenarios: List<Triple<String, List<String>, Int>> = listOf(
+            Triple("single background then train", listOf("BG", "TRAIN"), 1),
+            Triple("three consecutive backgrounds then train (idempotent)", listOf("BG", "BG", "BG", "TRAIN"), 1),
+            Triple(
+                "five background/train cycles",
+                List(5) { listOf("BG", "TRAIN") }.flatten(),
+                5
+            )
         )
+
+        for ((name, ops, expectedPositive) in scenarios) {
+            // Fresh classifier + fresh files dir per scenario so persisted state cannot leak.
+            val scenarioContext = mockk<Context>(relaxed = true)
+            every { scenarioContext.filesDir } returns createTempDir("classifier_table")
+            val scenarioClassifier = TransactionClassifier(
+                scenarioContext,
+                userCorrectionRepository,
+                atRestEncryptionService = mockk(relaxed = true)
+            )
+            scenarioClassifier.initialize()
+
+            var sampleIndex = 0
+            for (op in ops) {
+                when (op) {
+                    "BG" -> scenarioClassifier.onBackground()
+                    "TRAIN" -> scenarioClassifier.train(
+                        "payment of ${10 + sampleIndex++}.50 EUR",
+                        isTransaction = true
+                    )
+                    else -> fail("Unknown op $op in scenario '$name'")
+                }
+            }
+
+            assertEquals(
+                "Scenario '$name': all training samples must be counted",
+                expectedPositive,
+                scenarioClassifier.getStats().totalPositive
+            )
+        }
     }
 
     @Test
@@ -134,21 +149,6 @@ class TransactionClassifierTest {
         classifier.cleanup()
 
         // After cleanup, scope is permanently cancelled (same as destroy)
-    }
-
-    @Test
-    fun `onBackground is idempotent`() = runBlocking {
-        classifier.initialize()
-
-        // Calling onBackground multiple times without any work in between
-        classifier.onBackground()
-        classifier.onBackground()
-        classifier.onBackground()
-
-        // Should still be operational
-        classifier.train("payment EUR 20.00", isTransaction = true)
-        val stats = classifier.getStats()
-        assertEquals(1, stats.totalPositive)
     }
 
     @Test

@@ -7,6 +7,7 @@ import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.BankConnectionDao
 import com.yourname.expensetracker.data.database.dao.PendingReviewDao
 import com.yourname.expensetracker.data.database.entity.BankConnection
+import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.data.privacy.DefaultSensitiveHashingService
@@ -16,6 +17,7 @@ import com.yourname.expensetracker.domain.diagnostics.OperationRunHandle
 import com.yourname.expensetracker.domain.diagnostics.OperationRunRecorder
 import com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
 import com.yourname.expensetracker.domain.privacy.PrivacySettings
+import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.DeduplicationMode
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
@@ -26,6 +28,7 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkObject
+import io.mockk.spyk
 import io.mockk.unmockkAll
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
@@ -80,6 +83,65 @@ class BankApiIntegrationTest {
             metadata: SafeEventMetadata,
             block: suspend (OperationRunHandle) -> T
         ): T = block(NoOpOperationRunHandle)
+    }
+
+    /**
+     * W2 privacy recorder: captures every serialized field the sync loop hands to the
+     * operation-run handle (events plus terminal summaries) so a test can scan them for
+     * sentinels. Cancellation is never swallowed here — the handle only records.
+     */
+    private class RecordingOperationRunHandle : OperationRunHandle {
+        data class Recorded(
+            val stage: String,
+            val outcome: com.yourname.expensetracker.domain.diagnostics.EventOutcome,
+            val reasonCode: com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode?,
+            val severity: com.yourname.expensetracker.domain.diagnostics.EventSeverity,
+            val metadata: SafeEventMetadata,
+            val entityType: String?,
+            val entityId: Long?,
+            val exception: Throwable?
+        )
+
+        override val runId: Long = 7L
+        override val correlationId: String = "corr-fixed"
+        val events = mutableListOf<Recorded>()
+        val terminalTexts = mutableListOf<String?>()
+
+        override suspend fun event(
+            stage: String,
+            outcome: com.yourname.expensetracker.domain.diagnostics.EventOutcome,
+            reasonCode: com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode?,
+            severity: com.yourname.expensetracker.domain.diagnostics.EventSeverity,
+            metadata: SafeEventMetadata,
+            entityType: String?,
+            entityId: Long?,
+            exception: Throwable?,
+            isTerminal: Boolean
+        ) {
+            events.add(Recorded(stage, outcome, reasonCode, severity, metadata, entityType, entityId, exception))
+        }
+
+        override suspend fun increment(processed: Int, succeeded: Int, failed: Int, skipped: Int, warnings: Int, errors: Int) = Unit
+        override suspend fun success() { terminalTexts.add(null) }
+        override suspend fun partialSuccess(summary: String?) { terminalTexts.add(summary) }
+        override suspend fun failedFinal(reason: String, error: Throwable?) { terminalTexts.add(reason) }
+        override suspend fun failedRetryable(reason: String, error: Throwable?) { terminalTexts.add(reason) }
+        override suspend fun cancelled(reason: String?) { terminalTexts.add(reason) }
+    }
+
+    private class RecordingRecorder(private val handle: OperationRunHandle) : OperationRunRecorder {
+        override suspend fun start(
+            operationType: String,
+            actor: String?,
+            metadata: SafeEventMetadata
+        ): OperationRunHandle = handle
+
+        override suspend fun <T> runOperation(
+            operationType: String,
+            actor: String?,
+            metadata: SafeEventMetadata,
+            block: suspend (OperationRunHandle) -> T
+        ): T = block(handle)
     }
 
     @Before
@@ -275,25 +337,249 @@ class BankApiIntegrationTest {
     // ── P10-P1-04: Low-confidence review route ─────────────────────────────────
 
     @Test
-    fun `bank transaction defaults to high confidence`() {
-        // P10-P1-04: Default confidence should be 1.0f (auto-approve)
-        val tx = BankTransaction(
-            id = "tx-1", date = 1000L, amount = -10.0,
-            currency = "EUR", merchant = "Shop", description = "Test",
-            reference = null
+    fun `low confidence bank transaction triggers pending review on sync`() = runTest {
+        // P10-P1-04: drives the REAL syncTransactions loop (generateMockTransactions is
+        // the only stubbed seam, so the transactions and their confidences are exact).
+        // Below-threshold transactions must be inserted as PendingReview rows and must
+        // NEVER reach coordinator.createExpenseStandaloneV2; transactions AT or above
+        // the threshold take the standard coordinator path and create no review.
+        val bankConnectionDao = mockk<BankConnectionDao>(relaxed = true)
+        val pendingReviewDao = mockk<PendingReviewDao>(relaxed = true)
+        val database = mockk<AppDatabase>(relaxed = true)
+        val writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
+        val reviewCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true)
+        io.mockk.mockkStatic("androidx.room.RoomDatabaseKt")
+        coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
+            secondArg<suspend () -> Any>().invoke()
+        }
+        // No pre-existing pending duplicate; the atomic insert reports a created row.
+        coEvery {
+            pendingReviewDao.getPendingDuplicateCandidateInRangeTypeAware(
+                any(), any(), any(), any(), any(), any(), any(), any()
+            )
+        } returns null
+        val insertedReviews = mutableListOf<PendingReview>()
+        coEvery { pendingReviewDao.insert(capture(insertedReviews)) } returns 1L
+        val coordinatorRequests = mutableListOf<CreateExpenseRequest>()
+        coEvery { reviewCoordinator.createExpenseStandaloneV2(capture(coordinatorRequests)) } returns
+            CreateExpenseResult.Created(expenseId = 1L)
+
+        val threshold = BankApiIntegration.BANK_REVIEW_CONFIDENCE_THRESHOLD
+        val justBelowThreshold = Math.nextDown(threshold)
+        fun tx(id: String, amount: Double, merchant: String, confidence: Float) = BankTransaction(
+            id = id, date = 1000L, amount = amount,
+            currency = "EUR", merchant = merchant, description = "Synthetic purchase",
+            reference = null, movementType = BankMovementType.PURCHASE, confidence = confidence
         )
-        assertEquals(1.0f, tx.confidence, 0.0f)
-        assertTrue("Default confidence should be above review threshold",
-            tx.confidence >= BankApiIntegration.BANK_REVIEW_CONFIDENCE_THRESHOLD)
+        val transactions = listOf(
+            tx("low-conf-1", -10.0, "Lowmart", 0.30f),
+            tx("below-threshold-1", -11.0, "Belowmart", justBelowThreshold),
+            tx("at-threshold-1", -20.0, "Thresholdmart", threshold),
+            tx("high-conf-1", -30.0, "Highmart", 0.95f)
+        )
+        val realIntegration = BankApiIntegration(
+            timeProvider = FakeTimeProvider(),
+            coordinator = reviewCoordinator,
+            writeBarrier = writeBarrier,
+            operationRunRecorder = BlockInvokingRecorder(),
+            hashingService = DefaultSensitiveHashingService(),
+            privacySettingsRepository = mockk(relaxed = true) {
+                coEvery { getSettings() } returns PrivacySettings()
+            },
+            bankConnectionDao = bankConnectionDao,
+            pendingReviewDao = pendingReviewDao,
+            database = database
+        )
+        val testIntegration = spyk(realIntegration)
+        every { testIntegration.generateMockTransactions(any(), any()) } returns transactions
+
+        if (!BuildConfig.DEBUG) {
+            assertDemoApiDenied { testIntegration.syncTransactions(connection, since = 0L) }
+            coVerify(exactly = 0) { pendingReviewDao.insert(any()) }
+            // assertDemoApiDenied checks the class-level coordinator; this test wires its own.
+            coVerify(exactly = 0) { reviewCoordinator.createExpenseStandaloneV2(any()) }
+            return@runTest
+        }
+        val outcome = testIntegration.syncTransactions(connection, since = 0L)
+
+        assertEquals(
+            "2 reviews + 2 coordinator imports, no skips and no errors",
+            BankSyncOutcome.Success(importedCount = 4, skippedCount = 0),
+            outcome
+        )
+        // Review path: exactly the two below-threshold transactions, with exact fields.
+        coVerify(exactly = 2) { pendingReviewDao.insert(any()) }
+        assertEquals(2, insertedReviews.size)
+        assertEquals(listOf(0.30f, justBelowThreshold), insertedReviews.map { it.confidence })
+        assertEquals(listOf(10.0, 11.0), insertedReviews.map { it.suggestedAmount })
+        assertEquals(listOf("Lowmart", "Belowmart"), insertedReviews.map { it.suggestedMerchant })
+        insertedReviews.forEach { review ->
+            assertEquals("EUR", review.suggestedCurrency)
+            assertEquals(TransactionType.PURCHASE.name, review.suggestedType)
+            assertEquals(42L, review.suggestedCategoryId)
+            assertEquals(1000L, review.suggestedDate)
+            assertEquals("bank.sync.revolut", review.packageName)
+            assertEquals("Low-confidence bank transaction from revolut", review.explanation)
+            assertNull("no raw bank payload may be stored in the title", review.notificationTitle)
+            assertNull(review.rawNotificationId)
+            assertNull(review.scannedReceiptId)
+            assertNotNull("bank review identity must be set", review.bankReviewIdentity)
+            // Default rawBankStatementStorageMode is STORE_REDACTED: the provider description
+            // ("Synthetic purchase") must never be stored raw on the review.
+            assertEquals("[REDACTED]", review.notificationText)
+        }
+        // Exact identity, computed through the real hashing service from the documented
+        // "<bankId>|<connectionId>|<providerTransactionId>" input and purpose.
+        val identityHasher = DefaultSensitiveHashingService()
+        assertEquals(
+            listOf("low-conf-1", "below-threshold-1").map { txId ->
+                identityHasher.hmacSha256Prefix("revolut|${connection.id}|$txId", "bankReviewIdentity")
+            },
+            insertedReviews.map { it.bankReviewIdentity }
+        )
+        assertTrue(
+            "review identities must be hashed and distinct per provider transaction",
+            insertedReviews.map { it.bankReviewIdentity }.toSet().size == 2 &&
+                insertedReviews.none { it.bankReviewIdentity in setOf("low-conf-1", "below-threshold-1") }
+        )
+        coVerify(exactly = 2) {
+            writeBarrier.checkWritesAllowed("BankApiIntegration.syncTransactions.pendingReview")
+        }
+        // Standard path: only the transactions at/above the threshold; none of the
+        // low-confidence amounts ever reach the lifecycle coordinator.
+        coVerify(exactly = 2) { reviewCoordinator.createExpenseStandaloneV2(any()) }
+        assertEquals(listOf(20.0, 30.0), coordinatorRequests.map { it.amount })
+        assertTrue(coordinatorRequests.all { it.source == ExpenseSource.BANK_API_SYNC })
     }
 
     @Test
-    fun `low confidence bank transaction triggers pending review on sync`() = runTest {
-        // P10-P1-04: Transaction with confidence below threshold should be skipped
-        // by the standard import path (not call coordinator.createExpenseStandaloneV2).
-        // We verify by calling mapTransactionToExpense directly — the sync loop logic
-        // (confidence check) is in syncTransactions, not mapTransactionToExpense.
-        // The request is still valid and would be accepted by the coordinator.
+    fun `sync run events carry only hashed provider id and allow-listed metadata with no sentinel text`() = runTest {
+        // W2 call-site privacy: sentinel provider id / description (with an IBAN-like token) /
+        // merchant / reference must never reach any run event field, terminal summary, or
+        // metadata value. Production emission sites: BankApiIntegration.syncTransactions
+        // (PAGE_FETCHED itemCount; TRANSACTION_SKIPPED/SENT_FOR_REVIEW/IMPORTED/FAILED with
+        // putHashed("providerTransactionId") + currency/confidence/errorCount).
+        val bankConnectionDao = mockk<BankConnectionDao>(relaxed = true)
+        val pendingReviewDao = mockk<PendingReviewDao>(relaxed = true)
+        val database = mockk<AppDatabase>(relaxed = true)
+        val reviewCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true)
+        io.mockk.mockkStatic("androidx.room.RoomDatabaseKt")
+        coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
+            secondArg<suspend () -> Any>().invoke()
+        }
+        coEvery {
+            pendingReviewDao.getPendingDuplicateCandidateInRangeTypeAware(
+                any(), any(), any(), any(), any(), any(), any(), any()
+            )
+        } returns null
+        coEvery { pendingReviewDao.insert(any()) } returns 1L
+        coEvery { reviewCoordinator.createExpenseStandaloneV2(any()) } returnsMany listOf(
+            CreateExpenseResult.Created(expenseId = 1L),
+            CreateExpenseResult.ValidationFailed(listOf("SENTINEL_DESC_9k SENTINEL_MERCHANT_9k"))
+        )
+
+        val sentinelDescription = "SENTINEL_DESC_9k GR1601101250000000012300695"
+        fun tx(id: String, amount: Double, merchant: String, confidence: Float) = BankTransaction(
+            id = id, date = 1000L, amount = amount,
+            currency = "EUR", merchant = merchant, description = sentinelDescription,
+            reference = "SENTINEL_REF_9k", movementType = BankMovementType.PURCHASE, confidence = confidence
+        )
+        val rawIds = listOf(
+            "SENTINEL_TXN_9k_low", "SENTINEL_TXN_9k_zero", "SENTINEL_TXN_9k_ok", "SENTINEL_TXN_9k_invalid"
+        )
+        val transactions = listOf(
+            tx(rawIds[0], -10.0, "SENTINEL_MERCHANT_9k_low", 0.30f),
+            tx(rawIds[1], 0.0, "SENTINEL_MERCHANT_9k_zero", 0.95f),
+            tx(rawIds[2], -30.0, "SENTINEL_MERCHANT_9k_ok", 0.95f),
+            tx(rawIds[3], -31.0, "SENTINEL_MERCHANT_9k_invalid", 0.95f)
+        )
+        val handle = RecordingOperationRunHandle()
+        val testIntegration = spyk(
+            BankApiIntegration(
+                timeProvider = FakeTimeProvider(),
+                coordinator = reviewCoordinator,
+                writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
+                operationRunRecorder = RecordingRecorder(handle),
+                hashingService = DefaultSensitiveHashingService(),
+                privacySettingsRepository = mockk(relaxed = true) {
+                    coEvery { getSettings() } returns PrivacySettings()
+                },
+                bankConnectionDao = bankConnectionDao,
+                pendingReviewDao = pendingReviewDao,
+                database = database
+            )
+        )
+        every { testIntegration.generateMockTransactions(any(), any()) } returns transactions
+
+        if (!BuildConfig.DEBUG) {
+            assertDemoApiDenied { testIntegration.syncTransactions(connection, since = 0L) }
+            coVerify(exactly = 0) { reviewCoordinator.createExpenseStandaloneV2(any()) }
+            return@runTest
+        }
+        val outcome = testIntegration.syncTransactions(connection, since = 0L)
+
+        assertEquals(BankSyncOutcome.Partial(importedCount = 2, skippedCount = 1, failedCount = 1), outcome)
+
+        val allowedKeys = setOf(
+            "providerTransactionId", "currency", "confidence", "reason", "errorCount", "itemCount", "refreshOutcome"
+        )
+        val fixedSkipReasons = setOf(
+            com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.INVALID_AMOUNT,
+            com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.REFUND_UNSUPPORTED,
+            com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.TRANSFER_METADATA_MISSING
+        )
+        val hex16 = Regex("^[0-9a-f]{16}$")
+        val sentinelFragments = listOf(
+            "SENTINEL_TXN_9k", "SENTINEL_DESC_9k", "SENTINEL_MERCHANT_9k", "SENTINEL_REF_9k",
+            "GR1601101250000000012300695"
+        )
+
+        val perTransaction = handle.events.filter { it.stage.startsWith("TRANSACTION_") }
+        assertEquals(
+            listOf("TRANSACTION_SENT_FOR_REVIEW", "TRANSACTION_SKIPPED", "TRANSACTION_IMPORTED", "TRANSACTION_FAILED"),
+            perTransaction.map { it.stage }
+        )
+        assertTrue(handle.events.any { it.stage == "PAGE_FETCHED" })
+
+        handle.events.forEach { e ->
+            val json = org.json.JSONObject(e.metadata.toJson())
+            val keys = json.keys().asSequence().toSet()
+            assertTrue("stage=${e.stage} keys outside allow-list: $keys", allowedKeys.containsAll(keys))
+            val serialized = listOf(
+                e.stage, e.outcome.name, e.reasonCode?.name, e.severity.name,
+                e.metadata.toJson(), e.entityType, e.entityId
+            ).joinToString("|")
+            sentinelFragments.forEach { s ->
+                assertTrue("sentinel $s leaked in stage=${e.stage}: $serialized", !serialized.contains(s))
+            }
+            assertNull("no raw throwable expected on stage=${e.stage}", e.exception)
+            if (json.has("providerTransactionId")) {
+                val hashed = json.getString("providerTransactionId")
+                assertTrue("not 16 hex: $hashed", hashed.matches(hex16))
+                assertTrue("raw id leaked", hashed !in rawIds)
+            }
+        }
+        // Every per-transaction event must carry the hashed identity.
+        perTransaction.forEach {
+            assertTrue(org.json.JSONObject(it.metadata.toJson()).has("providerTransactionId"))
+        }
+        // Distinct raw ids hash to distinct identities.
+        val hashes = perTransaction.map { org.json.JSONObject(it.metadata.toJson()).getString("providerTransactionId") }
+        assertEquals(hashes.size, hashes.toSet().size)
+        // Contract skip uses a fixed reason code, never text.
+        assertTrue(perTransaction.single { it.stage == "TRANSACTION_SKIPPED" }.reasonCode in fixedSkipReasons)
+        // Terminal summaries are bounded counters, never payload text.
+        handle.terminalTexts.filterNotNull().forEach { text ->
+            sentinelFragments.forEach { s -> assertTrue("terminal text leaked $s", !text.contains(s)) }
+        }
+    }
+
+    @Test
+    fun `low confidence bank transaction maps to a strict hashed identity request`() = runTest {
+        // P10-P1-04 / P10-CURRENT-006 mapping shape only (the review routing itself is
+        // asserted in the sync test above): mapTransactionToExpense does not apply the
+        // confidence check, so a low-confidence transaction still maps to the same
+        // strict, hashed-identity request shape as a high-confidence one.
         val tx = BankTransaction(
             id = "low-conf-1", date = 1000L, amount = -10.0,
             currency = "EUR", merchant = "Unknown", description = "Blurry receipt",
@@ -309,18 +595,6 @@ class BankApiIntegrationTest {
             "raw provider id must never be the idempotency key",
             request.idempotencyKey != "low-conf-1"
         )
-    }
-
-    @Test
-    fun `high confidence bank transaction has confidence above threshold`() {
-        // P10-P1-04: Transaction with high confidence should be at or above threshold
-        val tx = BankTransaction(
-            id = "high-conf-1", date = 1000L, amount = -50.0,
-            currency = "EUR", merchant = "Store", description = "Known purchase",
-            reference = null, movementType = BankMovementType.PURCHASE, confidence = 0.95f
-        )
-        assertTrue("High confidence should be >= review threshold",
-            tx.confidence >= BankApiIntegration.BANK_REVIEW_CONFIDENCE_THRESHOLD)
     }
 
     // ── P10-P1-05: Bank metadata preserved ────────────────────────────────────

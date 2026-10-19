@@ -206,12 +206,15 @@ class WriteBarrierArchitectureGuardTest {
 
     /** All DAO interface files in the standard DAO package. Cached to avoid O(n×m×k) re-scanning. */
     private val daoFiles: List<File> by lazy {
-        File(sourceRoot, "com/yourname/expensetracker/data/database/dao")
-            .takeIf { it.exists() }
-            ?.walkTopDown()
-            ?.filter { it.isFile && it.extension == "kt" && !it.name.contains("RestrictedExpenseDaoMutation") }
-            ?.toList()
-            ?: emptyList()
+        val daoDir = File(sourceRoot, "com/yourname/expensetracker/data/database/dao")
+        // Fail closed: a missing DAO directory must never degrade to "no DAOs registered".
+        assertTrue(
+            "DAO directory missing: ${daoDir.path} — update the guard if it was moved",
+            daoDir.isDirectory
+        )
+        daoDir.walkTopDown()
+            .filter { it.isFile && it.extension == "kt" && !it.name.contains("RestrictedExpenseDaoMutation") }
+            .toList()
     }
 
     /**
@@ -226,7 +229,12 @@ class WriteBarrierArchitectureGuardTest {
     private data class DaoInfo(val interfaceName: String, val writeMethods: Set<String>)
 
     private fun parseDaoInfo(file: File): DaoInfo? {
-        val text = runCatching { file.readText() }.getOrNull() ?: return null
+        // Fail closed: an unreadable DAO file must fail the guard, never be dropped from the registry.
+        val text = try {
+            file.readText()
+        } catch (e: Exception) {
+            throw AssertionError("DAO file unreadable: ${file.path} (${e.javaClass.simpleName})", e)
+        }
 
         // Find the @Dao interface declaration to get the interface name.
         val interfaceMatch = Regex("""@Dao\s*\n.*?\binterface\s+(\w+)""").find(text)
@@ -497,6 +505,11 @@ class WriteBarrierArchitectureGuardTest {
         for ((dao, methods) in registry) {
             for (method in methods) {
                 if (found.keys.any { it.startsWith("$dao|$method|") }) continue
+                // Result-preserving pre-filter: every regex from buildCallerRegexes embeds the
+                // literal (Regex.escape'd, case-sensitive) method name, so a regex can only match
+                // if the content contains the plain method name. Skipping files without it
+                // therefore never changes which pairs are recorded.
+                if (!sanitizedContent.contains(method)) continue
                 for (regex in cachedCallerRegexes(dao, method)) {
                     if (regex.containsMatchIn(sanitizedContent)) {
                         record(dao, method, "regex", "caller regex (secondary check)")
@@ -734,6 +747,17 @@ class WriteBarrierArchitectureGuardTest {
 
         val violations = mutableListOf<String>()
 
+        // Reuse the lazily built sanitized sources: sanitizedMainSources is built from the very
+        // same allKotlinFiles() walk with the same sanitizer, so the text per file is identical
+        // (result-preserving; avoids re-reading and re-sanitizing every file). If building it
+        // fails (e.g. an unreadable file) fall back to the per-file path below so the original
+        // fail-closed "scanned file unreadable" assertion is still what reports it.
+        val cachedSanitized: Map<String, String>? = try {
+            sanitizedMainSources
+        } catch (e: Exception) {
+            null
+        }
+
         for (file in allFiles) {
             val callerClassName = file.nameWithoutExtension
 
@@ -741,9 +765,13 @@ class WriteBarrierArchitectureGuardTest {
             if (callerClassName in daoFileNames) continue
             if (callerClassName == "RestrictedExpenseDaoMutation") continue
 
-            val sanitized = runCatching {
-                SourceTextSanitizer.stripCommentsAndStringBodies(file.readText())
-            }.getOrNull() ?: continue
+            // Fail closed: an unreadable scanned file must fail the guard, never be skipped.
+            val sanitized = try {
+                cachedSanitized?.get(file.relativeTo(sourceRoot).invariantSeparatorsPath)
+                    ?: SourceTextSanitizer.stripCommentsAndStringBodies(file.readText())
+            } catch (e: Exception) {
+                throw AssertionError("scanned file unreadable: ${file.path} (${e.javaClass.simpleName})", e)
+            }
 
             if (callerClassName in EXEMPT_CLASSES.keys) continue
             // COVERED_BY_CALLER is honoured only while its mechanism check passes; a failing

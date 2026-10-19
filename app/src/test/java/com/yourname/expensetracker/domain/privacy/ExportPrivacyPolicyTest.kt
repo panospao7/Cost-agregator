@@ -47,10 +47,23 @@ class ExportPrivacyPolicyTest {
 
     @Test
     fun encrypted_disabled_does_not_allow_rawbackup_export() = runTest {
-        // Key invariant from PR8: encryptedBackupEnabled=false MUST NOT allow raw export
-        val gate = buildGate(encryptedBackupEnabled = false)
-        val decision = gate.check(PrivacyCapability.RAWBACKUP_EXPORT)
-        assertTrue("Disabling encrypted backup must NOT allow raw backup export", decision.blocksExecution())
+        // Key invariant from PR8: encryptedBackupEnabled=false MUST NOT allow raw export,
+        // whatever the build type or the debug-persistence consent (all four combinations).
+        for (isDebugBuild in listOf(false, true)) {
+            for (debugConsent in listOf(false, true)) {
+                val gate = buildGate(
+                    encryptedBackupEnabled = false,
+                    debugDataPersistenceEnabled = debugConsent,
+                    isDebugBuild = isDebugBuild
+                )
+                val decision = gate.check(PrivacyCapability.RAWBACKUP_EXPORT)
+                assertTrue(
+                    "Disabling encrypted backup must NOT allow raw backup export " +
+                        "(debugBuild=$isDebugBuild, debugConsent=$debugConsent)",
+                    decision.blocksExecution()
+                )
+            }
+        }
     }
 
     @Test

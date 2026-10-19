@@ -76,6 +76,39 @@ class RecurringReminderDeliveryDaoTest {
         assertNull(claimed.failureReason)
     }
 
+    @Test
+    fun `inserted scheduled delivery round-trips every field exactly`() = runTest {
+        val occurrenceId = occurrenceDao.insert(occurrence("roundtrip"))
+        assertEquals(true, occurrenceId > 0L)
+
+        val reminderId = dao.insert(
+            delivery(
+                occurrenceId = occurrenceId,
+                status = "SCHEDULED",
+                scheduledAt = FIXED_NOW
+            )
+        )
+        assertEquals(true, reminderId > 0L)
+
+        val loaded = dao.getById(reminderId)
+        assertNotNull(loaded)
+        assertEquals(reminderId, loaded.id)
+        assertEquals(occurrenceId, loaded.occurrenceId)
+        assertEquals("DUE_DAY", loaded.reminderWindow)
+        assertEquals(1_710_000_000_000L, loaded.scheduledAt)
+        assertEquals("SCHEDULED", loaded.status)
+        assertNull(loaded.lastSentAt)
+        assertNull(loaded.dismissedAt)
+        assertNull(loaded.snoozedUntil)
+        assertNull(loaded.notificationId)
+        assertEquals(1_710_000_000_000L, loaded.createdAt)
+        assertNull(loaded.claimedAt)
+        assertNull(loaded.lastAttemptAt)
+        assertEquals(0, loaded.attemptCount)
+        assertNull(loaded.failureReason)
+        assertEquals(1_710_000_000_000L, loaded.updatedAt)
+    }
+
     private fun occurrence(key: String, dueDate: Long = FIXED_NOW) = RecurringOccurrence(
         sourceType = "RECURRING_RULE",
         sourceId = key.hashCode().toLong(),

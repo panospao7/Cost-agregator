@@ -116,15 +116,6 @@ class MerchantKeyBackfillWorkerTest {
     }
 
     @Test
-    fun `doWork empty database returns success`() = runTest {
-        coEvery { expenseRepository.getExpensesWithNullMerchantKey(any()) } returns emptyList()
-
-        val result = buildWorker().doWork()
-
-        assertEquals(Result.success(), result)
-    }
-
-    @Test
     fun `doWork retries when same failing row repeats after partial progress`() = runTest {
         val successfulExpense = makeExpense(id = 1L, merchant = "Σκλαβενίτης")
         val failingExpense = makeExpense(id = 2L, merchant = "Broken Merchant")

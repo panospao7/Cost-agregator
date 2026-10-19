@@ -105,6 +105,9 @@ class SubscriptionManagementRepositoryTest {
         coEvery { subscriptionDao.getById(3L) } returns rule(id = 3L)
         val loaded = repository.getSubscriptionById(3L)
         assertEquals("Netflix", loaded?.merchant)
+        assertEquals(3L, loaded?.id)
+        coEvery { subscriptionDao.getById(4L) } returns null
+        assertEquals(null, repository.getSubscriptionById(4L))
         coVerify(exactly = 0) { coordinator.updateRule(any()) }
         coVerify(exactly = 0) { coordinator.deleteRule(any()) }
     }

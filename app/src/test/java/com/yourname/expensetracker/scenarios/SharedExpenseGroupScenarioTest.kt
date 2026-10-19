@@ -123,6 +123,7 @@ class SharedExpenseGroupScenarioTest {
         assertNotNull("ExpenseGroup should exist", group)
         assertEquals("Group name should match", groupName, group!!.name)
         assertTrue("Group should be active", group.isActive)
+        assertEquals("Group default currency should be EUR", "EUR", group.defaultCurrency)
 
         // THEN: members exist (count=3)
         val members = db.groupMemberDao().getAllForGroup(seed.groupId)
@@ -182,6 +183,7 @@ class SharedExpenseGroupScenarioTest {
             date = timeProvider.now(),
             description = "Group dinner at restaurant",
             totalAmount = 90.0,
+            currency = "EUR",
             splitType = SplitType.EQUAL
         )
         val groupExpenseId = db.groupExpenseDao().insert(groupExpense)
@@ -205,17 +207,28 @@ class SharedExpenseGroupScenarioTest {
             savedGroupExpense.paidById
         )
         assertEquals("GroupExpense should link to expense", expenseId, savedGroupExpense.expenseId)
+        assertEquals("GroupExpense should reference the group", seed.groupId, savedGroupExpense.groupId)
+        assertEquals("GroupExpense currency should be EUR", "EUR", savedGroupExpense.currency)
 
-        // AND: each member owes €30.00 — the EQUAL split with 3 members / €90
-        //   means each share = 90 / 3 = €30. We verify the total and split metadata
-        //   correctly imply this split.
+        // AND: the persisted per-user share of the EQUAL 3-way split of 90.00 is 30.00
+        assertEquals("seeded myShareAmount 30.0 round-trips", 30.0, savedExpense.myShareAmount!!, 0.001)
+
         val groupExpenses = db.groupExpenseDao().getExpensesForGroupOnce(seed.groupId)
         assertEquals("Should have exactly 1 group expense", 1, groupExpenses.size)
         assertEquals("Total amount is consistent", 90.00, groupExpenses.single().totalAmount, 0.001)
 
-        // Verify the split would produce 30€ per person: 90 / 3 members
-        val memberShare = savedGroupExpense.totalAmount / seed.memberIds.size
-        assertEquals("Each member's share should be €30.00", 30.00, memberShare, 0.001)
+        // AND: group-level counters (absorbed from the former settlement-lifecycle scenario)
+        assertEquals("Group should have 1 expense", 1, db.groupExpenseDao().getExpenseCount(seed.groupId))
+        assertEquals(
+            "Alice should have paid 1 expense",
+            1,
+            db.groupExpenseDao().countExpensesPaidByMember(seed.groupId, seed.memberIds[0])
+        )
+        assertEquals(
+            "Bob should have paid 0 expenses",
+            0,
+            db.groupExpenseDao().countExpensesPaidByMember(seed.groupId, seed.memberIds[1])
+        )
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -279,23 +292,19 @@ class SharedExpenseGroupScenarioTest {
         )
         assertTrue("isReimbursable should remain true", saved.isReimbursable)
 
-        // THEN: the payer's outstanding balance has decreased by €30
-        //   (original was 90 owed, now 30 has been reimbursed → 60 still owed)
-        val outstanding = saved.totalAmount - saved.reimbursedAmount
-        assertEquals("Outstanding balance for Alice should be €60.00", 60.0, outstanding, 0.001)
+        // THEN: the total is unchanged at 90.00 (so 60.00 of the original is still outstanding)
+        assertEquals("Total amount should still be 90.0", 90.0, saved.totalAmount, 0.001)
 
         // THEN: total expense count in the group is unchanged (still 1)
         val groupExpenses = db.groupExpenseDao().getExpensesForGroupOnce(seed.groupId)
         assertEquals("Should still have 1 group expense", 1, groupExpenses.size)
 
-        // THEN: the member who reimbursed (Bob) is tracked via the reimbursement
-        //   on the expense — in real flow a settlement record would also be created,
-        //   but at the DB-contract level the reimbursedAmount field is the key signal.
+        // The listing query returns the same persisted literals (no recomputation in the test).
         assertEquals("Total paid by Alice should be 90.0", 90.0, groupExpenses[0].totalAmount, 0.001)
         assertEquals(
-            "Alice's remaining receivable is €60",
-            60.0,
-            groupExpenses[0].totalAmount - groupExpenses[0].reimbursedAmount,
+            "Listed reimbursedAmount should be 30.0",
+            30.0,
+            groupExpenses[0].reimbursedAmount,
             0.001
         )
     }

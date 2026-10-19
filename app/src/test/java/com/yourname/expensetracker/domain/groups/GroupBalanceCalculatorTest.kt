@@ -1,6 +1,8 @@
 package com.yourname.expensetracker.domain.groups
 
 import com.google.common.truth.Truth.assertThat
+import com.yourname.expensetracker.assertMoneyEquals
+import com.yourname.expensetracker.assertMoneyExact
 import com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
 import com.yourname.expensetracker.data.database.dao.GroupExpenseDao
 import com.yourname.expensetracker.data.database.dao.GroupMemberDao
@@ -86,60 +88,80 @@ class GroupBalanceCalculatorTest {
         assertThat(aliceBalance.netBalance).isWithin(0.01).of(0.0)
     }
 
+    /**
+     * Calculator wiring of the settlement rules (the rules themselves are owned by
+     * GroupSettlementBalancePolicyTest). Replaces: cancelled settlement does not affect balance,
+     * foreign currency settlement is ignored, valid settlement still updates balance, and
+     * cancelled unknown and foreign repayments remain excluded.
+     * Setup: Bob paid a 100 EUR equal expense for Alice + Bob, so the base net is Alice -50 / Bob +50.
+     */
     @Test
-    fun `cancelled settlement does not affect balance`() = runTest {
-        val groupId = 3L
-        coEvery { groupDao.getGroupById(groupId) } returns ExpenseGroup(id = groupId, name = "Test Group", defaultCurrency = "EUR")
-        coEvery { memberDao.getAllForGroup(groupId) } returns emptyList()
-        coEvery { expenseDao.getExpensesForGroupOnce(groupId) } returns emptyList()
-
-        val cancelledSettlement = GroupSettlementEntity(
-            id = 1L, groupId = groupId, fromMemberId = 10L, toMemberId = 20L,
-            amount = 30.0, currency = "EUR", createdAt = 1_000L, status = "CANCELLED"
+    fun `settlement status and currency rows reach calculator paid received and net fields`() = runTest {
+        data class Row(
+            val name: String,
+            val status: String,
+            val currency: String,
+            val amount: Double,
+            val expectedPaid: Double,
+            val expectedAliceNet: Double,
+            val expectedBobNet: Double
         )
-        coEvery { settlementDao.getSettlementsForGroup(groupId) } returns listOf(cancelledSettlement)
+        val rows = listOf(
+            Row("CANCELLED EUR 30 is excluded", "CANCELLED", "EUR", 30.0, 0.0, -50.0, 50.0),
+            Row("UNKNOWN EUR 10 is excluded", "UNKNOWN", "EUR", 10.0, 0.0, -50.0, 50.0),
+            Row("RECORDED USD 50 foreign currency is excluded", "RECORDED", "USD", 50.0, 0.0, -50.0, 50.0),
+            Row("RECORDED EUR 25 is applied", "RECORDED", "EUR", 25.0, 25.0, -25.0, 25.0)
+        )
+        assertThat(rows).hasSize(4)
 
-        val balance = calculator.calculateMemberBalance(groupId, 10L)
-        assertThat(balance.settlementsPaid).isEqualTo(0.0)
-        assertThat(balance.netBalance).isWithin(0.01).of(0.0)
+        rows.forEachIndexed { index, row ->
+            val groupId = 30L + index
+            val alice = GroupMember(id = 10L, groupId = groupId, name = "Alice")
+            val bob = GroupMember(id = 20L, groupId = groupId, name = "Bob")
+            val expense = GroupExpense(300L + index, groupId, null, bob.id, 1_000L, "Dinner", 100.0, "EUR", SplitType.EQUAL)
+            coEvery { groupDao.getGroupById(groupId) } returns ExpenseGroup(id = groupId, name = "Trip", defaultCurrency = "EUR")
+            coEvery { memberDao.getAllForGroup(groupId) } returns listOf(alice, bob)
+            coEvery { expenseDao.getExpensesForGroupOnce(groupId) } returns listOf(expense)
+            coEvery { settlementDao.getSettlementsForGroup(groupId) } returns listOf(
+                GroupSettlementEntity(
+                    id = 40L + index, groupId = groupId, fromMemberId = alice.id, toMemberId = bob.id,
+                    amount = row.amount, currency = row.currency, createdAt = 2_000L, status = row.status
+                )
+            )
+
+            val aliceBalance = calculator.calculateMemberBalance(groupId, alice.id)
+            val bobBalance = calculator.calculateMemberBalance(groupId, bob.id)
+
+            assertMoneyExact(row.expectedPaid, aliceBalance.settlementsPaid, "${row.name}: Alice settlementsPaid")
+            assertMoneyExact(row.expectedPaid, bobBalance.settlementsReceived, "${row.name}: Bob settlementsReceived")
+            assertMoneyEquals(row.expectedAliceNet, aliceBalance.netBalance, "${row.name}: Alice net")
+            assertMoneyEquals(row.expectedBobNet, bobBalance.netBalance, "${row.name}: Bob net")
+        }
     }
 
+    /** An ineligible settlement must be skipped (continue), not end processing of later eligible ones. */
     @Test
-    fun `foreign currency settlement is ignored`() = runTest {
-        val groupId = 4L
-        coEvery { groupDao.getGroupById(groupId) } returns ExpenseGroup(id = groupId, name = "Test Group", defaultCurrency = "EUR")
-        coEvery { memberDao.getAllForGroup(groupId) } returns emptyList()
-        coEvery { expenseDao.getExpensesForGroupOnce(groupId) } returns emptyList()
-
-        val usdSettlement = GroupSettlementEntity(
-            id = 2L, groupId = groupId, fromMemberId = 10L, toMemberId = 20L,
-            amount = 50.0, currency = "USD", createdAt = 1_000L, status = "RECORDED"
+    fun `ineligible settlements before an eligible one in the same list do not stop later settlements`() = runTest {
+        val groupId = 50L
+        val alice = GroupMember(id = 10L, groupId = groupId, name = "Alice")
+        val bob = GroupMember(id = 20L, groupId = groupId, name = "Bob")
+        val expense = GroupExpense(350L, groupId, null, bob.id, 1_000L, "Dinner", 100.0, "EUR", SplitType.EQUAL)
+        coEvery { groupDao.getGroupById(groupId) } returns ExpenseGroup(id = groupId, name = "Trip", defaultCurrency = "EUR")
+        coEvery { memberDao.getAllForGroup(groupId) } returns listOf(alice, bob)
+        coEvery { expenseDao.getExpensesForGroupOnce(groupId) } returns listOf(expense)
+        coEvery { settlementDao.getSettlementsForGroup(groupId) } returns listOf(
+            GroupSettlementEntity(id = 60L, groupId = groupId, fromMemberId = alice.id, toMemberId = bob.id, amount = 30.0, currency = "EUR", createdAt = 2_000L, status = "CANCELLED"),
+            GroupSettlementEntity(id = 61L, groupId = groupId, fromMemberId = alice.id, toMemberId = bob.id, amount = 50.0, currency = "USD", createdAt = 2_500L, status = "RECORDED"),
+            GroupSettlementEntity(id = 62L, groupId = groupId, fromMemberId = alice.id, toMemberId = bob.id, amount = 25.0, currency = "EUR", createdAt = 3_000L, status = "RECORDED")
         )
-        coEvery { settlementDao.getSettlementsForGroup(groupId) } returns listOf(usdSettlement)
 
-        val balance = calculator.calculateMemberBalance(groupId, 10L)
-        assertThat(balance.settlementsPaid).isEqualTo(0.0)
-        assertThat(balance.netBalance).isWithin(0.01).of(0.0)
-    }
+        val aliceBalance = calculator.calculateMemberBalance(groupId, alice.id)
+        val bobBalance = calculator.calculateMemberBalance(groupId, bob.id)
 
-    @Test
-    fun `valid settlement still updates balance`() = runTest {
-        val groupId = 5L
-        coEvery { groupDao.getGroupById(groupId) } returns ExpenseGroup(id = groupId, name = "Test Group", defaultCurrency = "EUR")
-        coEvery { memberDao.getAllForGroup(groupId) } returns emptyList()
-        coEvery { expenseDao.getExpensesForGroupOnce(groupId) } returns emptyList()
-
-        val validSettlement = GroupSettlementEntity(
-            id = 3L, groupId = groupId, fromMemberId = 10L, toMemberId = 20L,
-            amount = 25.0, currency = "EUR", createdAt = 1_000L, status = "RECORDED"
-        )
-        coEvery { settlementDao.getSettlementsForGroup(groupId) } returns listOf(validSettlement)
-
-        val fromBalance = calculator.calculateMemberBalance(groupId, 10L)
-        assertThat(fromBalance.settlementsPaid).isEqualTo(25.0)
-
-        val toBalance = calculator.calculateMemberBalance(groupId, 20L)
-        assertThat(toBalance.settlementsReceived).isEqualTo(25.0)
+        assertMoneyExact(25.0, aliceBalance.settlementsPaid, "Alice settlementsPaid counts only the eligible later settlement")
+        assertMoneyExact(25.0, bobBalance.settlementsReceived, "Bob settlementsReceived counts only the eligible later settlement")
+        assertMoneyEquals(-25.0, aliceBalance.netBalance, "Alice net")
+        assertMoneyEquals(25.0, bobBalance.netBalance, "Bob net")
     }
 
     @Test
@@ -197,26 +219,6 @@ class GroupBalanceCalculatorTest {
         assertThat(aliceBalance.netBalance).isWithin(0.01).of(0.0)
         assertThat(bobBalance.netBalance).isWithin(0.01).of(0.0)
         assertThat(aliceBalance.netBalance + bobBalance.netBalance).isWithin(0.01).of(0.0)
-    }
-
-    @Test
-    fun `cancelled unknown and foreign repayments remain excluded`() = runTest {
-        val groupId = 8L
-        val alice = GroupMember(id = 10L, groupId = groupId, name = "Alice")
-        val bob = GroupMember(id = 20L, groupId = groupId, name = "Bob")
-        val expense = GroupExpense(202L, groupId, null, bob.id, 1_000L, "Dinner", 100.0, "EUR", SplitType.EQUAL)
-        coEvery { groupDao.getGroupById(groupId) } returns ExpenseGroup(id = groupId, name = "Trip", defaultCurrency = "EUR")
-        coEvery { memberDao.getAllForGroup(groupId) } returns listOf(alice, bob)
-        coEvery { expenseDao.getExpensesForGroupOnce(groupId) } returns listOf(expense)
-        coEvery { settlementDao.getSettlementsForGroup(groupId) } returns listOf(
-            GroupSettlementEntity(id = 4L, groupId = groupId, fromMemberId = alice.id, toMemberId = bob.id, amount = 10.0, currency = "EUR", createdAt = 2_000L, status = "CANCELLED"),
-            GroupSettlementEntity(id = 5L, groupId = groupId, fromMemberId = alice.id, toMemberId = bob.id, amount = 10.0, currency = "EUR", createdAt = 2_000L, status = "UNKNOWN"),
-            GroupSettlementEntity(id = 6L, groupId = groupId, fromMemberId = alice.id, toMemberId = bob.id, amount = 10.0, currency = "USD", createdAt = 2_000L, status = "RECORDED")
-        )
-        val aliceBalance = calculator.calculateMemberBalance(groupId, alice.id)
-        val bobBalance = calculator.calculateMemberBalance(groupId, bob.id)
-        assertThat(aliceBalance.netBalance).isWithin(0.01).of(-50.0)
-        assertThat(bobBalance.netBalance).isWithin(0.01).of(50.0)
     }
 
     @Test

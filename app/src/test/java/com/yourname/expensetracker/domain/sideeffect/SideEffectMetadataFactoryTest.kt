@@ -1,7 +1,6 @@
 package com.yourname.expensetracker.domain.sideeffect
 
 import com.yourname.expensetracker.domain.diagnostics.AppPipeline
-import com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -53,7 +52,6 @@ class SideEffectMetadataFactoryTest {
         val metadata = SideEffectMetadataFactory.forAction(sampleAction)
         val json = metadata.toJson()
         // idempotencyKey should be stored as a hashed value (hex string)
-        assertTrue(json.contains("idempotencyKey"))
         // The value should be a hex string (sha256 prefix of 16 chars)
         assertTrue(json.contains("\"idempotencyKey\""))
         // Extract the value and verify it looks like a hex hash prefix
@@ -88,58 +86,30 @@ class SideEffectMetadataFactoryTest {
     }
 
     @Test
-    fun `additional metadata does not overwrite core fields`() {
-        val additional = mapOf("sideEffectName" to "overwritten")
-        val metadata = SideEffectMetadataFactory.forAction(sampleAction, additional)
-        val json = metadata.toJson()
-        // The builder's put handles this - the additional will be merged but
-        // since we use SafeEventMetadata.builder().put() which goes through
-        // sanitizer, duplicate keys are overwritten by last write.
-        // Let's verify the value is present
-        assertTrue(json.contains("sideEffectName"))
+    fun `failure and skip reason maps carry bounded reasons`() {
+        val failure = SideEffectMetadataFactory.forFailure("Something broke", "java.lang.IllegalStateException")
+        assertEquals("forFailure with errorClass: failureReason", "Something broke", failure["failureReason"])
+        assertEquals("forFailure with errorClass: errorClass", "java.lang.IllegalStateException", failure["errorClass"])
+
+        val failureNoClass = SideEffectMetadataFactory.forFailure("Something broke", null)
+        assertEquals("forFailure null errorClass: failureReason", "Something broke", failureNoClass["failureReason"])
+        assertEquals("forFailure null errorClass: errorClass", null, failureNoClass["errorClass"])
+
+        val skip = SideEffectMetadataFactory.forSkip(SideEffectSkipReason.NOT_APPLICABLE)
+        assertEquals("forSkip: skipReason", "NOT_APPLICABLE", skip["skipReason"])
     }
 
     @Test
-    fun `forFailure returns failure reason map`() {
-        val result = SideEffectMetadataFactory.forFailure("Something broke", "java.lang.IllegalStateException")
-        assertEquals("Something broke", result["failureReason"])
-        assertEquals("java.lang.IllegalStateException", result["errorClass"])
-    }
-
-    @Test
-    fun `forFailure with null errorClass`() {
-        val result = SideEffectMetadataFactory.forFailure("Something broke", null)
-        assertEquals("Something broke", result["failureReason"])
-        assertEquals(null, result["errorClass"])
-    }
-
-    @Test
-    fun `forSkip returns skip reason map`() {
-        val result = SideEffectMetadataFactory.forSkip(SideEffectSkipReason.NOT_APPLICABLE)
-        assertEquals("NOT_APPLICABLE", result["skipReason"])
-    }
-
-    @Test
-    fun `metadata with null targetEntityId`() {
-        val action = sampleAction.copy(targetEntityId = null)
-        val metadata = SideEffectMetadataFactory.forAction(action)
-        val json = metadata.toJson()
-        assertTrue(!json.contains("targetEntityId"))
-    }
-
-    @Test
-    fun `metadata with null correlationId`() {
-        val action = sampleAction.copy(correlationId = null)
-        val metadata = SideEffectMetadataFactory.forAction(action)
-        val json = metadata.toJson()
-        assertTrue(!json.contains("correlationId"))
-    }
-
-    @Test
-    fun `metadata with null causationId`() {
-        val action = sampleAction.copy(causationId = null)
-        val metadata = SideEffectMetadataFactory.forAction(action)
-        val json = metadata.toJson()
-        assertTrue(!json.contains("causationId"))
+    fun `null optional action fields are omitted from metadata`() {
+        // rows: field name -> action with that field nulled
+        val rows = listOf(
+            "targetEntityId" to sampleAction.copy(targetEntityId = null),
+            "correlationId" to sampleAction.copy(correlationId = null),
+            "causationId" to sampleAction.copy(causationId = null)
+        )
+        rows.forEach { (field, action) ->
+            val json = SideEffectMetadataFactory.forAction(action).toJson()
+            assertTrue("null $field must be omitted from metadata", !json.contains(field))
+        }
     }
 }

@@ -673,6 +673,85 @@ class FinancialStressForecastEngineTest {
         assertTrue(result.horizons.all { it.recurringObligationsPartial })
     }
 
+    // ── B3-4 (P6-P1-14 / NEW-P6-014): behavioral replacements for P6BudgetCleanupTest
+    // source-regex and formula-copy tests ─────────────────────────────────────
+
+    @Test
+    fun `P6-P1-14 stress counts only PLANNED OVERDUE and DUE occurrences as obligations`() = runTest {
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            recurringPattern(
+                merchant = "Rule",
+                amount = 800.0,
+                nextDate = now + dayMs,
+                frequency = RecurrenceFrequency.MONTHLY,
+                confidence = 1.0f,
+                id = 7L
+            )
+        )
+        // One occurrence per status on distinct days inside the 30-day horizon.
+        val amountsByStatus = listOf(
+            "PLANNED" to 800.0,
+            "OVERDUE" to 60.0,
+            "DUE" to 40.0,
+            "PAID" to 300.0,
+            "SKIPPED" to 200.0,
+            "CANCELLED" to 100.0,
+            "IGNORED" to 50.0,
+            "MISSED" to 25.0,
+            "NOT_A_KNOWN_STATUS" to 11.0
+        )
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(7L, any(), any()) } returns
+            amountsByStatus.mapIndexed { index, (status, amount) ->
+                occurrenceRow(
+                    ruleId = 7L,
+                    dueDate = now + (index + 1) * dayMs,
+                    amount = amount,
+                    merchant = "Rule",
+                    status = status
+                )
+            }
+        coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns emptyList()
+
+        val result = engine.computeStressForecast()
+
+        // 800 (PLANNED) + 60 (OVERDUE) + 40 (DUE); PAID, SKIPPED, CANCELLED,
+        // IGNORED, MISSED and unknown statuses contribute nothing.
+        assertEquals(900.0, result.horizons.first { it.daysAhead == 30 }.recurringObligations, 0.0)
+    }
+
+    @Test
+    fun `NEW-P6-014 expected income divides deposits by the actual month span of the history`() = runTest {
+        allExpenses = emptyList()
+        // Feb 19 -> Apr 19 spans exactly 2 months: 2000 / 2 = 1000 per month.
+        // The retired hardcoded divisor of 3 would give 666.67 per month.
+        allDeposits = listOf(
+            expense(600L, 1000.0, TransactionType.DEPOSIT, millis(2026, Calendar.FEBRUARY, 19), merchant = "Employer"),
+            expense(601L, 1000.0, TransactionType.DEPOSIT, millis(2026, Calendar.APRIL, 19), merchant = "Employer")
+        )
+
+        val result = engine.computeStressForecast()
+
+        assertEquals(1000.0, result.horizons.first { it.daysAhead == 30 }.expectedIncome, 0.0)
+        assertEquals(2000.0, result.horizons.first { it.daysAhead == 60 }.expectedIncome, 0.0)
+        assertEquals(3000.0, result.horizons.first { it.daysAhead == 90 }.expectedIncome, 0.0)
+    }
+
+    @Test
+    fun `NEW-P6-014 deposits within one calendar month use a minimum divisor of one month`() = runTest {
+        allExpenses = emptyList()
+        // Apr 2 -> Apr 19 spans 0 whole months; the divisor floors at 1, never 0.
+        allDeposits = listOf(
+            expense(610L, 1000.0, TransactionType.DEPOSIT, millis(2026, Calendar.APRIL, 2), merchant = "Employer"),
+            expense(611L, 500.0, TransactionType.DEPOSIT, millis(2026, Calendar.APRIL, 19), merchant = "Bonus")
+        )
+
+        val result = engine.computeStressForecast()
+
+        assertEquals(1500.0, result.horizons.first { it.daysAhead == 30 }.expectedIncome, 0.0)
+    }
+
     private fun occurrenceRow(
         ruleId: Long,
         dueDate: Long,

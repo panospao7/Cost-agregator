@@ -158,40 +158,53 @@ class RetentionTargetPurgeTest {
         status = status
     )
 
-    @Test
-    fun `notification_intake target clears ciphertext of old transient row`() = runTest {
-        val dao = database.notificationIntakeDao()
-        val id = dao.insertOrIgnore(transientIntakeRow("transient-fp", olderThanCutoff))
-
-        val result = targetNamed("notification_intake").purge(cutoffMs)
-
-        assertEquals(1, result.rowsPurged)
-        assertTrue(result.success)
-        val row = dao.getById(id)!!
-        assertNull(row.transientPayloadCiphertext)
-        assertNull(row.transientPayloadNonce)
-        assertNull(row.transientPayloadVersion)
-        assertNotNull(row.rawPayloadPurgedAt)
-        assertNotNull(row.transientPayloadPurgedAt)
-    }
+    /**
+     * B6-10 table: old encrypted-transient rows past the cutoff lose their ciphertext.
+     * Merges the former "old transient row", "leftover ciphertext on already raw-purged row"
+     * (legacy backlog: old target only nulled plaintext and set rawPayloadPurgedAt) and
+     * "regardless of non-terminal status" (age-based, status-agnostic: a RECEIVED row past the
+     * cutoff must not keep its encrypted payload) tests. All rows are inserted together; the
+     * per-row assertions are the union of the originals.
+     */
+    private data class CiphertextRow(
+        val rowName: String,
+        val row: NotificationIntakeEntity
+    )
 
     @Test
-    fun `notification_intake target clears leftover ciphertext on already raw-purged row`() = runTest {
+    fun `notification_intake target clears ciphertext of old transient rows regardless of state`() = runTest {
         val dao = database.notificationIntakeDao()
-        // Legacy backlog: the old target only nulled plaintext and set rawPayloadPurgedAt,
-        // leaving the encrypted payload behind.
-        val id = dao.insertOrIgnore(
-            transientIntakeRow("legacy-fp", olderThanCutoff).copy(rawPayloadPurgedAt = olderThanCutoff)
+        val table = listOf(
+            CiphertextRow(
+                "old transient row",
+                transientIntakeRow("transient-fp", olderThanCutoff)
+            ),
+            CiphertextRow(
+                "leftover ciphertext on already raw-purged row",
+                transientIntakeRow("legacy-fp", olderThanCutoff).copy(rawPayloadPurgedAt = olderThanCutoff)
+            ),
+            CiphertextRow(
+                "non-terminal RECEIVED status",
+                transientIntakeRow("received-fp", olderThanCutoff, status = "RECEIVED")
+            )
         )
+        assertEquals("table size guard", 3, table.size)
+        val ids = table.map { dao.insertOrIgnore(it.row) }
 
         val result = targetNamed("notification_intake").purge(cutoffMs)
 
-        assertEquals(1, result.rowsPurged)
-        val row = dao.getById(id)!!
-        assertNull(row.transientPayloadCiphertext)
-        assertNull(row.transientPayloadNonce)
-        assertNull(row.transientPayloadVersion)
-        assertNotNull(row.transientPayloadPurgedAt)
+        assertEquals("every old ciphertext row is purged", table.size, result.rowsPurged)
+        assertTrue(result.success)
+        table.forEachIndexed { index, case ->
+            val row = dao.getById(ids[index])!!
+            val label = "[${case.rowName}]"
+            assertNull("$label ciphertext", row.transientPayloadCiphertext)
+            assertNull("$label nonce", row.transientPayloadNonce)
+            assertNull("$label version", row.transientPayloadVersion)
+            assertNotNull("$label transientPayloadPurgedAt", row.transientPayloadPurgedAt)
+            // B6 nit (45): asserted on every row (the legacy row had it pre-set, the others must gain it).
+            assertNotNull("$label rawPayloadPurgedAt", row.rawPayloadPurgedAt)
+        }
     }
 
     @Test
@@ -258,25 +271,6 @@ class RetentionTargetPurgeTest {
             assertNull(row.transientPayloadVersion)
             assertNotNull(row.transientPayloadPurgedAt)
         }
-    }
-
-    @Test
-    fun `notification_intake target purges ciphertext regardless of non-terminal status`() = runTest {
-        val dao = database.notificationIntakeDao()
-        // Deliberately status-agnostic: retention is age-based, so a RECEIVED (non-terminal)
-        // row past the cutoff must not keep its encrypted payload indefinitely.
-        val id = dao.insertOrIgnore(
-            transientIntakeRow("received-fp", olderThanCutoff, status = "RECEIVED")
-        )
-
-        val result = targetNamed("notification_intake").purge(cutoffMs)
-
-        assertEquals(1, result.rowsPurged)
-        val row = dao.getById(id)!!
-        assertNull(row.transientPayloadCiphertext)
-        assertNull(row.transientPayloadNonce)
-        assertNull(row.transientPayloadVersion)
-        assertNotNull(row.transientPayloadPurgedAt)
     }
 
     @Test

@@ -10,6 +10,8 @@ import org.junit.Assert.*
 /**
  * Unit tests for TransactionFilterSerializer.
  * Tests JSON serialization/deserialization and versioning.
+ *
+ * Table-driven: every row carries a name that is echoed in assertion messages.
  */
 class TransactionFilterSerializerTest {
 
@@ -20,57 +22,50 @@ class TransactionFilterSerializerTest {
         serializer = TransactionFilterSerializer()
     }
 
-    @Test
-    fun `serialize and deserialize round-trip preserves all fields`() {
-        val filter = DomainTransactionFilter(
-            categoryId = 123L,
-            merchantName = "Test Merchant",
-            transactionType = DomainTransactionType.PURCHASE,
-            dateRange = Pair(1000000L, 2000000L),
-            ownership = DomainOwnershipFilter.ALL,
-            minAmount = 10.0,
-            maxAmount = 100.0
-        )
+    private data class ParseRow(
+        val name: String,
+        val json: String,
+        val expected: DomainTransactionFilter
+    )
 
-        val json = serializer.serialize(filter)
-        val deserialized = serializer.deserialize(json)
-
-        assertNotNull(deserialized)
-        deserialized?.let {
-            assertEquals(filter.categoryId, it.categoryId)
-            assertEquals(filter.merchantName, it.merchantName)
-            assertEquals(filter.transactionType, it.transactionType)
-            assertEquals(filter.dateRange, it.dateRange)
-            assertEquals(filter.ownership, it.ownership)
-            assertEquals(filter.minAmount, it.minAmount)
-            assertEquals(filter.maxAmount, it.maxAmount)
-        }
-    }
+    /** The seven persisted fields, compared exactly (no tolerance: all expected values are exact). */
+    private fun fields(filter: DomainTransactionFilter): List<Any?> = listOf(
+        filter.categoryId,
+        filter.merchantName,
+        filter.transactionType,
+        filter.dateRange,
+        filter.ownership,
+        filter.minAmount,
+        filter.maxAmount
+    )
 
     @Test
-    fun `serialize handles null fields gracefully`() {
-        val filter = DomainTransactionFilter(
-            categoryId = null,
-            merchantName = null,
-            transactionType = null,
-            dateRange = null,
-            ownership = null,
-            minAmount = null,
-            maxAmount = null
+    fun `serialize and deserialize round-trip preserves all fields, including all-null`() {
+        val rows = listOf(
+            "all fields populated" to DomainTransactionFilter(
+                categoryId = 123L,
+                merchantName = "Test Merchant",
+                transactionType = DomainTransactionType.PURCHASE,
+                dateRange = Pair(1000000L, 2000000L),
+                ownership = DomainOwnershipFilter.ALL,
+                minAmount = 10.0,
+                maxAmount = 100.0
+            ),
+            "all fields null" to DomainTransactionFilter(
+                categoryId = null,
+                merchantName = null,
+                transactionType = null,
+                dateRange = null,
+                ownership = null,
+                minAmount = null,
+                maxAmount = null
+            )
         )
-
-        val json = serializer.serialize(filter)
-        val deserialized = serializer.deserialize(json)
-
-        assertNotNull(deserialized)
-        deserialized?.let {
-            assertNull(it.categoryId)
-            assertNull(it.merchantName)
-            assertNull(it.transactionType)
-            assertNull(it.dateRange)
-            assertNull(it.ownership)
-            assertNull(it.minAmount)
-            assertNull(it.maxAmount)
+        assertEquals("size guard", 2, rows.size)
+        for ((name, filter) in rows) {
+            val deserialized = serializer.deserialize(serializer.serialize(filter))
+            assertNotNull("row '$name' deserialized", deserialized)
+            assertEquals("row '$name' fields", fields(filter), fields(deserialized!!))
         }
     }
 
@@ -84,153 +79,78 @@ class TransactionFilterSerializerTest {
     }
 
     @Test
-    fun `deserialize handles missing optional fields`() {
-        val json = """{"version":1,"categoryId":123}"""
-
-        val filter = serializer.deserialize(json)
-
-        assertNotNull(filter)
-        filter?.let {
-            assertEquals(123L, it.categoryId)
-            assertNull(it.merchantName)
-            assertNull(it.transactionType)
-            assertNull(it.dateRange)
-            assertNull(it.ownership)
-            assertNull(it.minAmount)
-            assertNull(it.maxAmount)
+    fun `deserialize is tolerant of missing, unknown, invalid and boundary values`() {
+        val rows = listOf(
+            ParseRow(
+                "missing optional fields",
+                """{"version":1,"categoryId":123}""",
+                DomainTransactionFilter(categoryId = 123L)
+            ),
+            ParseRow(
+                "missing version field",
+                """{"categoryId":123,"merchantName":"Test"}""",
+                DomainTransactionFilter(categoryId = 123L, merchantName = "Test")
+            ),
+            ParseRow(
+                "unknown fields ignored for forward compatibility",
+                """{"version":1,"categoryId":123,"unknownField":"value","futureFeature":true}""",
+                DomainTransactionFilter(categoryId = 123L)
+            ),
+            ParseRow(
+                "invalid transaction type becomes null",
+                """{"version":1,"transactionType":"INVALID_TYPE"}""",
+                DomainTransactionFilter()
+            ),
+            ParseRow(
+                "invalid ownership filter becomes null",
+                """{"version":1,"ownership":"INVALID_OWNERSHIP"}""",
+                DomainTransactionFilter()
+            ),
+            ParseRow(
+                "dateRange with both start and end",
+                """{"version":1,"dateRangeStart":1000000,"dateRangeEnd":2000000}""",
+                DomainTransactionFilter(dateRange = Pair(1000000L, 2000000L))
+            ),
+            ParseRow(
+                "dateRange null when only start is present",
+                """{"version":1,"dateRangeStart":1000000}""",
+                DomainTransactionFilter()
+            ),
+            ParseRow(
+                "zero values are preserved, not treated as absent",
+                """{"version":1,"categoryId":0,"minAmount":0.0,"maxAmount":0.0}""",
+                DomainTransactionFilter(categoryId = 0L, minAmount = 0.0, maxAmount = 0.0)
+            ),
+            ParseRow(
+                "future version still parses",
+                """{"version":2,"categoryId":123,"merchantName":"Future Feature"}""",
+                DomainTransactionFilter(categoryId = 123L, merchantName = "Future Feature")
+            )
+        )
+        assertEquals("size guard", 9, rows.size)
+        for (row in rows) {
+            val filter = serializer.deserialize(row.json)
+            assertNotNull("row '${row.name}' deserialized", filter)
+            assertEquals("row '${row.name}' fields", fields(row.expected), fields(filter!!))
         }
     }
 
     @Test
-    fun `deserialize handles missing version field`() {
-        val json = """{"categoryId":123,"merchantName":"Test"}"""
-
-        val filter = serializer.deserialize(json)
-
-        assertNotNull(filter)
-        filter?.let {
-            assertEquals(123L, it.categoryId)
-            assertEquals("Test", it.merchantName)
+    fun `deserialize returns null for malformed JSON and empty string`() {
+        val rows = listOf(
+            "malformed JSON" to """{"invalid json structure""",
+            "empty string" to ""
+        )
+        assertEquals("size guard", 2, rows.size)
+        for ((name, json) in rows) {
+            assertNull("row '$name'", serializer.deserialize(json))
         }
     }
 
     @Test
-    fun `deserialize ignores unknown fields for forward compatibility`() {
-        val json = """{"version":1,"categoryId":123,"unknownField":"value","futureFeature":true}"""
-
-        val filter = serializer.deserialize(json)
-
-        assertNotNull(filter)
-        filter?.let {
-            assertEquals(123L, it.categoryId)
-        }
-    }
-
-    @Test
-    fun `deserialize handles invalid transaction type gracefully`() {
-        val json = """{"version":1,"transactionType":"INVALID_TYPE"}"""
-
-        val filter = serializer.deserialize(json)
-
-        assertNotNull(filter)
-        filter?.let {
-            assertNull(it.transactionType)
-        }
-    }
-
-    @Test
-    fun `deserialize handles invalid ownership filter gracefully`() {
-        val json = """{"version":1,"ownership":"INVALID_OWNERSHIP"}"""
-
-        val filter = serializer.deserialize(json)
-
-        assertNotNull(filter)
-        filter?.let {
-            assertNull(it.ownership)
-        }
-    }
-
-    @Test
-    fun `deserialize returns null for malformed JSON`() {
-        val json = """{"invalid json structure"""
-
-        val filter = serializer.deserialize(json)
-
-        assertNull(filter)
-    }
-
-    @Test
-    fun `deserialize returns null for empty string`() {
-        val filter = serializer.deserialize("")
-
-        assertNull(filter)
-    }
-
-    @Test
-    fun `isValid returns true for valid JSON`() {
-        val filter = DomainTransactionFilter(categoryId = 123L)
-        val json = serializer.serialize(filter)
-
-        assertTrue(serializer.isValid(json))
-    }
-
-    @Test
-    fun `isValid returns false for invalid JSON`() {
-        val json = """{"invalid json"""
-
-        assertFalse(serializer.isValid(json))
-    }
-
-    @Test
-    fun `deserialize handles dateRange with both start and end`() {
-        val json = """{"version":1,"dateRangeStart":1000000,"dateRangeEnd":2000000}"""
-
-        val filter = serializer.deserialize(json)
-
-        assertNotNull(filter)
-        filter?.let {
-            assertNotNull(it.dateRange)
-            assertEquals(1000000L, it.dateRange!!.first)
-            assertEquals(2000000L, it.dateRange!!.second)
-        }
-    }
-
-    @Test
-    fun `deserialize returns null dateRange when only start is present`() {
-        val json = """{"version":1,"dateRangeStart":1000000}"""
-
-        val filter = serializer.deserialize(json)
-
-        assertNotNull(filter)
-        filter?.let {
-            assertNull(it.dateRange)
-        }
-    }
-
-    @Test
-    fun `deserialize handles zero values correctly`() {
-        val json = """{"version":1,"categoryId":0,"minAmount":0.0,"maxAmount":0.0}"""
-
-        val filter = serializer.deserialize(json)
-
-        assertNotNull(filter)
-        filter?.let {
-            assertEquals(0L, it.categoryId)
-            assertEquals(0.0, it.minAmount!!, 0.001)
-            assertEquals(0.0, it.maxAmount!!, 0.001)
-        }
-    }
-
-    @Test
-    fun `version migration from future version still works`() {
-        val json = """{"version":2,"categoryId":123,"merchantName":"Future Feature"}"""
-
-        val filter = serializer.deserialize(json)
-
-        assertNotNull(filter)
-        filter?.let {
-            assertEquals(123L, it.categoryId)
-            assertEquals("Future Feature", it.merchantName)
-        }
+    fun `isValid is true for serialized filter and false for malformed JSON`() {
+        val validJson = serializer.serialize(DomainTransactionFilter(categoryId = 123L))
+        assertTrue("serialized filter", serializer.isValid(validJson))
+        assertFalse("malformed JSON", serializer.isValid("""{"invalid json"""))
     }
 }

@@ -356,7 +356,116 @@ class FinancialRunwayNoBurnTest {
         )
     }
 
+    // ── B3-4 (NEW-P5-011): remainder basis through the real compute path ─────
+    // Replaces the formula-copy cases of the deleted DashboardProjectionSafetyTest.
+
+    @Test
+    fun `no budget uses deposits as the remainder basis`() = runTest {
+        fixedNowMs = toEpochMs(2024, 7, 10, 12, 0) // day 10 of 31
+
+        // spent 200 over 10 days -> burn 20; income 2000 -> remainder 1800 -> 90 days.
+        val result = computeUseCase.compute(
+            createProcessedData(
+                expenses = listOf(
+                    deposit(2000.0, dayOffsetMs(1)),
+                    purchase(100.0, dayOffsetMs(1)),
+                    purchase(100.0, dayOffsetMs(2))
+                )
+            )
+        )
+        val runway = result.allWidgets.filterIsInstance<DashboardWidget.FinancialRunway>().single()
+
+        assertEquals(2000.0, runway.monthlyIncome, 0.0)
+        assertEquals(1800.0, runway.discretionaryRemaining, 0.0)
+        assertEquals(90, runway.daysRemaining)
+        assertEquals(DashboardWidget.RunwayStatus.HEALTHY, runway.status)
+    }
+
+    @Test
+    fun `explicit budget takes precedence over deposits as the remainder basis`() = runTest {
+        fixedNowMs = toEpochMs(2024, 7, 10, 12, 0)
+
+        // budget 500 - spent 200 = 300 (deposits of 2000 must not be used); burn 20 -> 15 days.
+        val result = computeUseCase.compute(
+            createProcessedData(
+                expenses = listOf(
+                    deposit(2000.0, dayOffsetMs(1)),
+                    purchase(100.0, dayOffsetMs(1)),
+                    purchase(100.0, dayOffsetMs(2))
+                ),
+                budgetStatuses = listOf(overallBudget(500.0))
+            )
+        )
+        val runway = result.allWidgets.filterIsInstance<DashboardWidget.FinancialRunway>().single()
+
+        assertEquals(300.0, runway.discretionaryRemaining, 0.0)
+        assertEquals(15, runway.daysRemaining)
+        assertEquals(DashboardWidget.RunwayStatus.HEALTHY, runway.status)
+    }
+
+    @Test
+    fun `deposits smaller than spending with no budget emit no runway widget instead of a negative remainder`() = runTest {
+        fixedNowMs = toEpochMs(2024, 7, 10, 12, 0)
+
+        // NOTE: this test alone cannot distinguish "deposit recognised and floored"
+        // from "deposit ignored" (both yield no runway widget). The sibling
+        // `no budget uses deposits as the remainder basis` proves deposits are recognised.
+        // income 150 - spent 200 would be -50. The remainder floors at 0, and the
+        // assembly gate (positive remainder OR explicit budget) then emits no
+        // runway widget at all: no negative number and no fabricated runway.
+        val result = computeUseCase.compute(
+            createProcessedData(
+                expenses = listOf(
+                    deposit(150.0, dayOffsetMs(1)),
+                    purchase(100.0, dayOffsetMs(1)),
+                    purchase(100.0, dayOffsetMs(2))
+                )
+            )
+        )
+        val runways = result.allWidgets.filterIsInstance<DashboardWidget.FinancialRunway>()
+
+        assertTrue(
+            "deposits < spending with no budget must not surface a runway widget " +
+                "(and never one with a negative remainder)",
+            runways.isEmpty()
+        )
+    }
+
+    @Test
+    fun `exhausted explicit budget floors the remainder at zero and classifies CRITICAL`() = runTest {
+        fixedNowMs = toEpochMs(2024, 7, 10, 12, 0)
+
+        // budget 150 - spent 200 would be -50; the remainder floors at 0 -> 0 days,
+        // CRITICAL. The explicit budget keeps the widget emitted (gate: budget > 0).
+        val result = computeUseCase.compute(
+            createProcessedData(
+                expenses = listOf(
+                    purchase(100.0, dayOffsetMs(1)),
+                    purchase(100.0, dayOffsetMs(2))
+                ),
+                budgetStatuses = listOf(overallBudget(150.0))
+            )
+        )
+        val runway = result.allWidgets.filterIsInstance<DashboardWidget.FinancialRunway>().single()
+
+        assertEquals(0.0, runway.discretionaryRemaining, 0.0)
+        assertEquals(0, runway.daysRemaining)
+        assertEquals(DashboardWidget.RunwayStatus.CRITICAL, runway.status)
+    }
+
     // ── Harness helpers ──────────────────────────────────────────────────────
+
+    private fun deposit(amount: Double, date: Long): DashboardExpense = DashboardExpense(
+        id = date + 1_000_000L,
+        amount = amount,
+        effectiveAmount = amount,
+        merchant = "Employer",
+        transactionType = DashboardTransactionType.DEPOSIT,
+        date = date,
+        categoryId = null,
+        isNotMine = false,
+        isManualEntry = false
+    )
 
     private fun overallBudget(amount: Double): BudgetStatusSnapshot = BudgetStatusSnapshot(
         budgetCategoryId = null,

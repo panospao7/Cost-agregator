@@ -111,7 +111,7 @@ Total Core Files Identified: 62 files across 6 layers
 11. GreekBankParser.kt
 - Path: domain/parser/parsers/GreekBankParser.kt
 - Purpose: Parses NBG, Alpha, Eurobank, Piraeus notifications
-- Current Tests: GreekBankParserTest.kt, NBGReproTest.kt ✓
+- Current Tests: GreekBankParserTest.kt (includes the NBG over-matched merchant regression) ✓
 - Stress Test Scenarios:
   - Bank Variations: Test all 4 Greek banks with 50+ notification formats each
   - Greek Encoding: UTF-8, ISO-8859-7, mixed encodings

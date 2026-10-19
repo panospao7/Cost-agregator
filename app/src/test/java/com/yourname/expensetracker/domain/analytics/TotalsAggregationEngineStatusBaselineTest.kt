@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.domain.analytics
 
+import com.yourname.expensetracker.assertMoneyEquals
+import com.yourname.expensetracker.assertMoneyExact
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.MonthMoneyAggregate
@@ -110,7 +112,7 @@ class TotalsAggregationEngineStatusBaselineTest {
         )
         // Partial-state propagation is preserved on the current month's row.
         val current = result.first { it.periodKey == "2026-09" }
-        assertEquals(300.0, current.totalAmount, 0.01)
+        assertMoneyExact(300.0, current.totalAmount, "2026-09 partial current month total (pass-through)")
         assertEquals(true, current.isPartial)
         assertEquals("2 conversions unavailable", current.warningMessage)
     }
@@ -257,7 +259,7 @@ class TotalsAggregationEngineStatusBaselineTest {
 
         val average = engine.getAverageForPeriodType(PeriodType.MONTH, excludeCurrent = false)
 
-        assertEquals(900.0, requireNotNull(average).amount, 0.01)
+        assertMoneyEquals(900.0, requireNotNull(average).amount, "include-current MONTH mean (1200+1200+300)/3")
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────

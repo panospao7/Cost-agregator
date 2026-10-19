@@ -10,16 +10,34 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.sql.SQLException
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
+import kotlin.test.assertFailsWith
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class WorkerRunLoggerTest {
@@ -201,10 +219,16 @@ class WorkerRunLoggerTest {
         }
     }
 
-    // ── PR12B: Mutex ensures exactly one terminal DB write under race ──
+    // ── PR12B: Single-thread bookkeeping - only the first terminal call reaches the DAO ──
 
+    /**
+     * NOT a thread-level race: runTest runs the four asyncs on ONE thread and the DAO mock
+     * never suspends, so each terminal call runs to completion before the next starts.
+     * This only checks the "already completed" bookkeeping. The real mutex race is covered by
+     * the `real threads` tests at the end of this class.
+     */
     @Test
-    fun concurrent_terminal_calls_result_in_exactly_one_write() = runTest {
+    fun sequential_terminal_calls_on_single_thread_result_in_exactly_one_write() = runTest {
         coEvery { dao.insert(any()) } returns 1L
         coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
         val handle = logger.start("test_worker")
@@ -1057,5 +1081,296 @@ class WorkerRunLoggerTest {
                 any(), any()
             )
         }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Real multi-threaded terminal-mutex tests
+    //
+    // Production owner: WorkerRunLoggerImpl.Handle.terminalMutex, taken with
+    // terminalMutex.lock() at the top of Handle.terminal() and released in its `finally`.
+    // The `completed` flag is read right after the lock and set only after the DB write
+    // succeeded (or the row was confirmed already terminal).
+    //
+    // Race window: the DAO fake SUSPENDS inside completeTerminal (until every contender has
+    // BEGUN its terminal call, then a further real delay(10)). `probe.started` is incremented
+    // by each contender immediately BEFORE it calls into the handle, so "started == contenders"
+    // means every contender is at most a few instructions away from the mutex; the delay(10)
+    // closes that remaining gap with near-certainty (it is a real delay, not a happens-before
+    // edge). Because the suspension is inside the critical section, the mutex is what stops the
+    // other contenders from also seeing `completed == false` and also reaching the DAO. If the
+    // mutex were removed (or lock() was not held across the DAO call), any contender that
+    // reaches the `completed` check while the first write is still suspended becomes an extra
+    // writer, and ONE extra writer fails the test (writeAttempts > 1 and maxInFlight > 1).
+    // Detection of that mutant is therefore near-certain over 20 iterations on 8 threads, not
+    // strictly deterministic; the correct code passes deterministically. Fixed 8-thread pool
+    // with a start latch; no Thread.sleep; every run is bounded by withTimeout so a deadlock
+    // fails. No mutant run is recorded.
+    // ══════════════════════════════════════════════════════════════════════
+
+    private class RaceProbe(val contenders: Int) {
+        val inFlight = AtomicInteger(0)
+        val maxInFlight = AtomicInteger(0)
+        val writeAttempts = AtomicInteger(0)
+        val attemptedStatuses = ConcurrentLinkedQueue<String>()
+        val started = AtomicInteger(0)
+    }
+
+    private fun stubRacingDao(raceDao: BackgroundJobRunDao, probe: RaceProbe, failFirstWrite: Boolean) {
+        coEvery { raceDao.insert(any()) } returns 1L
+        coEvery {
+            raceDao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        } coAnswers {
+            val attempt = probe.writeAttempts.incrementAndGet()
+            probe.attemptedStatuses.add(secondArg<String>())
+            val now = probe.inFlight.incrementAndGet()
+            probe.maxInFlight.accumulateAndGet(now) { a, b -> maxOf(a, b) }
+            try {
+                // Keep the write suspended until every contender has BEGUN its terminal call
+                // (`started` is incremented just before each call), then a real delay(10) that
+                // closes the remaining gap so late contenders are at the gate (near-certain,
+                // not a happens-before guarantee).
+                while (probe.started.get() < probe.contenders) yield()
+                delay(10)
+                if (failFirstWrite && attempt == 1) throw SQLException("synthetic first-write failure")
+                1
+            } finally {
+                probe.inFlight.decrementAndGet()
+            }
+        }
+    }
+
+    private fun call(
+        intendedStatus: String,
+        block: suspend () -> TerminalWriteOutcome
+    ): Pair<String, suspend () -> TerminalWriteOutcome> = intendedStatus to block
+
+    private fun contenders(handle: WorkerRunHandle): List<Pair<String, suspend () -> TerminalWriteOutcome>> = listOf(
+        call("SUCCESS") { handle.success() },
+        call("FAILED") { handle.failure("RACE_FAILURE") },
+        call("RETRY") { handle.retry("RACE_RETRY") },
+        call("SKIPPED") { handle.skipped("RACE_SKIPPED") },
+        call("CANCELLED") { handle.cancelled("RACE_CANCELLED") },
+        call("STALE_ABORTED") { handle.staleAborted() },
+        call("SUCCESS") { handle.success(rowsScanned = 7) },
+        call("FAILED") { handle.failure("RACE_FAILURE_2") }
+    )
+
+    private fun <T> runOnRealThreads(
+        threads: Int,
+        block: suspend CoroutineScope.(CoroutineDispatcher) -> T
+    ): T {
+        val executor = Executors.newFixedThreadPool(threads)
+        try {
+            val pool = executor.asCoroutineDispatcher()
+            return runBlocking { withTimeout(REAL_THREAD_TEST_TIMEOUT_MS) { block(this, pool) } }
+        } finally {
+            executor.shutdownNow()
+        }
+    }
+
+    private suspend fun CoroutineScope.raceAll(
+        pool: CoroutineDispatcher,
+        probe: RaceProbe,
+        calls: List<Pair<String, suspend () -> TerminalWriteOutcome>>
+    ): List<TerminalWriteOutcome> {
+        val ready = AtomicInteger(0)
+        val go = CompletableDeferred<Unit>()
+        val results = calls.map { (_, call) ->
+            async(pool) {
+                ready.incrementAndGet()
+                go.await()
+                probe.started.incrementAndGet()
+                call()
+            }
+        }
+        while (ready.get() < calls.size) yield()
+        go.complete(Unit)
+        return results.awaitAll()
+    }
+
+    @Test
+    fun `real threads - terminalMutex lets exactly one of N racing terminal calls reach the DAO`() {
+        repeat(20) { iteration ->
+            val raceDao = mockk<BackgroundJobRunDao>(relaxed = true)
+            val raceLogger = WorkerRunLoggerImpl(raceDao, sanitizer, timeProvider)
+            runOnRealThreads(threads = 8) { pool ->
+                val probe = RaceProbe(CONTENDER_COUNT)
+                stubRacingDao(raceDao, probe, failFirstWrite = false)
+                val handle = raceLogger.start("race_worker")
+                val calls = contenders(handle)
+                assertEquals(CONTENDER_COUNT, calls.size)
+
+                val outcomes = raceAll(pool, probe, calls)
+
+                assertEquals("iteration $iteration: exactly one terminal write", 1, probe.writeAttempts.get())
+                assertEquals("iteration $iteration: never two writers inside the critical section", 1, probe.maxInFlight.get())
+                val winners = outcomes.withIndex().filter { it.value == TerminalWriteOutcome.Durable }
+                assertEquals("iteration $iteration: exactly one Durable outcome", 1, winners.size)
+                // Persisted status is the single winner's intended status (no mixed final state).
+                assertEquals(calls[winners.single().index].first, probe.attemptedStatuses.single())
+                outcomes.filterIndexed { i, _ -> i != winners.single().index }.forEach {
+                    assertEquals(TerminalWriteOutcome.AlreadyTerminal("LOCAL_COMPLETED"), it)
+                }
+                // affected == 1 path never needs a read-back.
+                coVerify(exactly = 0) { raceDao.getById(any()) }
+            }
+        }
+    }
+
+    @Test
+    fun `real threads - failed first write does not burn the handle under contention`() {
+        repeat(20) { iteration ->
+            val raceDao = mockk<BackgroundJobRunDao>(relaxed = true)
+            val raceLogger = WorkerRunLoggerImpl(raceDao, sanitizer, timeProvider)
+            runOnRealThreads(threads = 8) { pool ->
+                val probe = RaceProbe(CONTENDER_COUNT)
+                stubRacingDao(raceDao, probe, failFirstWrite = true)
+                val handle = raceLogger.start("race_worker")
+                val calls = contenders(handle)
+                assertEquals(CONTENDER_COUNT, calls.size)
+
+                val outcomes = raceAll(pool, probe, calls)
+
+                // First writer fails (handle must stay retryable), the next contender through the
+                // mutex writes durably, everyone after sees the handle completed.
+                assertEquals("iteration $iteration", 2, probe.writeAttempts.get())
+                assertEquals(1, probe.maxInFlight.get())
+                val notDurable = outcomes.filterIsInstance<TerminalWriteOutcome.NotDurable>()
+                assertEquals(1, notDurable.size)
+                assertEquals("TERMINAL_WRITE_FAILED", notDurable.single().failureCode)
+                assertEquals("SQLException", notDurable.single().errorClass)
+                val attempted = probe.attemptedStatuses.toList()
+                assertEquals(attempted[0], notDurable.single().intendedStatus)
+                val winners = outcomes.withIndex().filter { it.value == TerminalWriteOutcome.Durable }
+                assertEquals(1, winners.size)
+                assertEquals(attempted[1], calls[winners.single().index].first)
+                val rest = outcomes.filter {
+                    it !is TerminalWriteOutcome.NotDurable && it != TerminalWriteOutcome.Durable
+                }
+                assertEquals(calls.size - 2, rest.size)
+                rest.forEach { assertEquals(TerminalWriteOutcome.AlreadyTerminal("LOCAL_COMPLETED"), it) }
+            }
+        }
+    }
+
+    /**
+     * Cancelling the coroutine that currently holds the terminal mutex (suspended inside the
+     * DAO write) must release the mutex (`finally { terminalMutex.unlock() }` in
+     * `Handle.terminal()`), must NOT mark the handle completed, and the holder must end by
+     * CancellationException (never return a NotDurable outcome): a queued second terminal call
+     * then writes durably.
+     *
+     * Deterministic queueing: the waiter is started with CoroutineStart.UNDISPATCHED, so it
+     * runs on this thread until its first suspension. Every step of `failure()` before
+     * `terminalMutex.lock()` (sanitizeReasonCode, the mocked sanitizer, classifyDiagnostic,
+     * building TerminalArgs) is non-suspending, and the holder already owns the mutex (it
+     * completed `entered` from inside the DAO call, which runs inside the critical section), so
+     * lock() enqueues the waiter and suspends. When `async` returns the waiter is therefore
+     * already queued on terminalMutex, strictly before the holder is cancelled; there is no
+     * scheduling race.
+     *
+     * Mutations (all deterministic): removing the unlock-in-finally makes the waiter wait
+     * forever and the bounded timeout fails the test; marking `completed` early makes the waiter
+     * return AlreadyTerminal instead of Durable; dropping `if (e is CancellationException) throw e`
+     * in terminal() turns the cancelled holder's CancellationException into a NotDurable
+     * return, so `holderOutcome` is non-null and the assertNull below fails.
+     */
+    @Test
+    fun `real threads - cancelling the mutex holder releases the lock and keeps the handle retryable`() {
+        runOnRealThreads(threads = 4) { pool ->
+            val attempts = AtomicInteger(0)
+            val entered = CompletableDeferred<Unit>()
+            val holderOutcome = AtomicReference<TerminalWriteOutcome?>(null)
+            coEvery { dao.insert(any()) } returns 1L
+            coEvery {
+                dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+            } coAnswers {
+                if (attempts.incrementAndGet() == 1) {
+                    entered.complete(Unit)
+                    awaitCancellation()
+                }
+                1
+            }
+            val handle = logger.start("cancel_worker")
+
+            val holder = launch(pool) { holderOutcome.set(handle.success()) }
+            entered.await()
+            val waiter = async(pool, start = CoroutineStart.UNDISPATCHED) { handle.failure("WAITER_FAILURE") }
+            holder.cancelAndJoin()
+
+            assertEquals(TerminalWriteOutcome.Durable, waiter.await())
+            assertEquals(2, attempts.get())
+            assertNull(
+                "the cancelled holder must end by CancellationException, never by returning an outcome",
+                holderOutcome.get()
+            )
+            // And now the handle really is terminal.
+            assertEquals(TerminalWriteOutcome.AlreadyTerminal("LOCAL_COMPLETED"), handle.skipped("AFTER_DONE"))
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // FG-10: CancellationException from the terminal write / snapshot must propagate
+    // (single-threaded; the caller is still active, so the CE is not a real caller cancel).
+    // ══════════════════════════════════════════════════════════════════════
+
+    /**
+     * The DAO write throws a CancellationException while the CALLER IS STILL ACTIVE (no job
+     * was cancelled). terminal() must rethrow it (`if (e is CancellationException) throw e`),
+     * not convert it into NotDurable, and must not burn the handle: the mutex is released and a
+     * subsequent terminal call writes durably (exactly 2 DAO attempts overall).
+     * Deterministic. Mutation: replacing the rethrow with `return NotDurableFailure(e)` makes
+     * `handle.success()` return instead of throwing, so assertFailsWith fails.
+     */
+    @Test
+    fun `terminal write CancellationException propagates and does not burn the handle`() = runTest {
+        coEvery { dao.insert(any()) } returns 1L
+        coEvery {
+            dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        } throws CancellationException("synthetic cancellation from the dao write") andThen 1
+        val handle = logger.start("test_worker")
+
+        assertFailsWith<CancellationException> { handle.success() }
+
+        // Not burned and not wedged: the mutex was released and the handle is still retryable.
+        assertEquals(TerminalWriteOutcome.Durable, handle.failure("AFTER_CANCELLATION"))
+        coVerify(exactly = 2) {
+            dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        }
+    }
+
+    /**
+     * The snapshotProvider (invoked under the terminal mutex, before persistence) throws a
+     * CancellationException while the caller is still active. terminal() must rethrow it
+     * (`catch (e: CancellationException) { throw e }`), must NOT reach the DAO, and must leave
+     * the handle retryable. Deterministic. Mutation: dropping that rethrow lets the generic
+     * `catch (e: Exception) { null }` swallow it, the write proceeds, `success()` returns and
+     * assertFailsWith plus the never-called DAO check fail.
+     */
+    @Test
+    fun `snapshotProvider CancellationException propagates before the dao write and keeps the handle retryable`() = runTest {
+        coEvery { dao.insert(any()) } returns 1L
+        coEvery {
+            dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        } returns 1
+        val handle = logger.start("test_worker")
+
+        assertFailsWith<CancellationException> {
+            handle.success(snapshotProvider = { throw CancellationException("synthetic cancellation from the snapshot") })
+        }
+        coVerify(exactly = 0) {
+            dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        }
+
+        // Handle not burned, mutex released: a later terminal call persists durably.
+        assertEquals(TerminalWriteOutcome.Durable, handle.failure("AFTER_CANCELLATION"))
+        coVerify(exactly = 1) {
+            dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        }
+    }
+
+    private companion object {
+        const val REAL_THREAD_TEST_TIMEOUT_MS = 60_000L
+        const val CONTENDER_COUNT = 8
     }
 }

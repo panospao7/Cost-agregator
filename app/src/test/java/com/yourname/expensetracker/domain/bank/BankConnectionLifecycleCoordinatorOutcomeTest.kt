@@ -93,35 +93,31 @@ class BankConnectionLifecycleCoordinatorOutcomeTest {
     // ── 17-A: availability gate ──────────────────────────────────────────────
 
     @Test
-    fun `syncConnection returns FeatureUnavailable in release and never touches dao or integration`() = runTest {
+    fun `release build returns FeatureUnavailable for every entry point and never touches dao or integration`() = runTest {
         val releaseCoordinator = buildCoordinator(bankSyncAvailable = false)
 
-        val outcome = releaseCoordinator.syncConnection(7L)
-
-        assertTrue(outcome is BankSyncOutcome.FeatureUnavailable)
+        // row: syncConnection
+        val syncOutcome = releaseCoordinator.syncConnection(7L)
+        assertTrue("syncConnection row: $syncOutcome", syncOutcome is BankSyncOutcome.FeatureUnavailable)
         coVerify(exactly = 0) { bankConnectionDao.getById(any()) }
         coVerify(exactly = 0) { bankApiIntegration.syncTransactions(any(), any()) }
         coVerify(exactly = 0) { bankConnectionDao.updateSyncStatus(any(), any(), any()) }
         coVerify(exactly = 0) { bankConnectionDao.updateSyncStatusOnly(any(), any()) }
-    }
 
-    @Test
-    fun `initiateConnection returns FeatureUnavailable in release and never enters integration`() = runTest {
-        val releaseCoordinator = buildCoordinator(bankSyncAvailable = false)
-
-        val outcome = releaseCoordinator.initiateConnection("revolut")
-
-        assertTrue(outcome is BankConnectionOperationOutcome.FeatureUnavailable)
+        // row: initiateConnection
+        val initiateOutcome = releaseCoordinator.initiateConnection("revolut")
+        assertTrue(
+            "initiateConnection row: $initiateOutcome",
+            initiateOutcome is BankConnectionOperationOutcome.FeatureUnavailable
+        )
         coVerify(exactly = 0) { bankApiIntegration.initiateConnection(any()) }
-    }
 
-    @Test
-    fun `completeConnection returns FeatureUnavailable in release and never enters integration`() = runTest {
-        val releaseCoordinator = buildCoordinator(bankSyncAvailable = false)
-
-        val outcome = releaseCoordinator.completeConnection("revolut", "auth-code")
-
-        assertTrue(outcome is BankConnectionOperationOutcome.FeatureUnavailable)
+        // row: completeConnection
+        val completeOutcome = releaseCoordinator.completeConnection("revolut", "auth-code")
+        assertTrue(
+            "completeConnection row: $completeOutcome",
+            completeOutcome is BankConnectionOperationOutcome.FeatureUnavailable
+        )
         coVerify(exactly = 0) { bankApiIntegration.completeConnection(any(), any()) }
     }
 
@@ -139,91 +135,76 @@ class BankConnectionLifecycleCoordinatorOutcomeTest {
     // ── 17-B: outcome → terminal status mapping table ────────────────────────
 
     @Test
-    fun `success outcome persists SUCCESS and advances lastSync`() = runTest {
-        coEvery { bankConnectionDao.getById(7L) } returns connection
-        coEvery { bankApiIntegration.syncTransactions(any(), any()) } returns
-            BankSyncOutcome.Success(importedCount = 3, skippedCount = 1)
-
-        val outcome = coordinator.syncConnection(7L)
-
-        assertTrue(outcome is BankSyncOutcome.Success)
-        coVerify(exactly = 1) {
-            bankConnectionDao.updateSyncStatus(7L, FIXED_NOW, SyncStatus.SUCCESS)
-        }
-        coVerify(exactly = 0) { bankConnectionDao.updateSyncStatusOnly(any(), any()) }
-    }
-
-    @Test
-    fun `partial outcome persists PARTIAL and advances lastSync`() = runTest {
-        coEvery { bankConnectionDao.getById(7L) } returns connection
-        coEvery { bankApiIntegration.syncTransactions(any(), any()) } returns
-            BankSyncOutcome.Partial(importedCount = 2, skippedCount = 1, failedCount = 1)
-
-        val outcome = coordinator.syncConnection(7L)
-
-        assertTrue(outcome is BankSyncOutcome.Partial)
-        coVerify(exactly = 1) {
-            bankConnectionDao.updateSyncStatus(7L, FIXED_NOW, SyncStatus.PARTIAL)
-        }
-    }
-
-    @Test
-    fun `reauthRequired persists FAILED without advancing lastSync`() = runTest {
-        coEvery { bankConnectionDao.getById(7L) } returns connection
-        coEvery { bankApiIntegration.syncTransactions(any(), any()) } returns
-            BankSyncOutcome.ReauthRequired()
-
-        val outcome = coordinator.syncConnection(7L)
-
-        assertTrue(outcome is BankSyncOutcome.ReauthRequired)
-        coVerify(exactly = 1) { bankConnectionDao.updateSyncStatusOnly(7L, SyncStatus.FAILED) }
-        coVerify(exactly = 0) { bankConnectionDao.updateSyncStatus(any(), any(), any()) }
-        assertEquals(FIXED_NOW, timeProvider.now())
-    }
-
-    @Test
-    fun `blocked retryable and permanent failures all persist FAILED without advancing lastSync`() = runTest {
-        val failureOutcomes = listOf(
-            BankSyncOutcome.Blocked(DiagnosticReasonCode.RESTORE_BLOCKED),
-            BankSyncOutcome.RetryableFailure(failedCount = 2),
-            BankSyncOutcome.PermanentFailure(DiagnosticReasonCode.TOKEN_INVALID)
+    fun `each sync outcome persists its terminal status in integration barrier DAO order`() = runTest {
+        // rows: label, integration outcome, expected persisted status, whether lastSync advances
+        class Row(
+            val label: String,
+            val outcome: BankSyncOutcome,
+            val status: SyncStatus,
+            val advancesLastSync: Boolean
         )
-        for (failure in failureOutcomes) {
+        val rows = listOf(
+            Row("Success", BankSyncOutcome.Success(importedCount = 3, skippedCount = 1), SyncStatus.SUCCESS, true),
+            Row("Partial", BankSyncOutcome.Partial(importedCount = 2, skippedCount = 1, failedCount = 1), SyncStatus.PARTIAL, true),
+            Row("ReauthRequired", BankSyncOutcome.ReauthRequired(), SyncStatus.FAILED, false),
+            Row("Blocked", BankSyncOutcome.Blocked(DiagnosticReasonCode.RESTORE_BLOCKED), SyncStatus.FAILED, false),
+            Row("RetryableFailure", BankSyncOutcome.RetryableFailure(failedCount = 2), SyncStatus.FAILED, false),
+            Row("PermanentFailure", BankSyncOutcome.PermanentFailure(DiagnosticReasonCode.TOKEN_INVALID), SyncStatus.FAILED, false)
+        )
+        for (row in rows) {
+            io.mockk.clearMocks(bankConnectionDao, bankApiIntegration, writeBarrier, answers = false)
             coEvery { bankConnectionDao.getById(7L) } returns connection
-            coEvery { bankApiIntegration.syncTransactions(any(), any()) } returns failure
+            coEvery { bankApiIntegration.syncTransactions(connection, null) } returns row.outcome
 
             val outcome = coordinator.syncConnection(7L)
 
-            assertEquals(failure, outcome)
-            coVerify(exactly = 1) { bankConnectionDao.updateSyncStatusOnly(7L, SyncStatus.FAILED) }
-            coVerify(exactly = 0) { bankConnectionDao.updateSyncStatus(any(), any(), any()) }
-            clearTokenStubs()
+            org.junit.Assert.assertSame("outcome identity for row ${row.label}", row.outcome, outcome)
+            if (row.advancesLastSync) {
+                coVerify(exactly = 1) {
+                    bankConnectionDao.updateSyncStatus(7L, FIXED_NOW, row.status)
+                }
+                coVerify(exactly = 0) { bankConnectionDao.updateSyncStatusOnly(any(), any()) }
+                io.mockk.coVerifyOrder {
+                    bankApiIntegration.syncTransactions(connection, null)
+                    writeBarrier.checkWritesAllowed("BankConnectionLifecycleCoordinator.persistOutcome")
+                    bankConnectionDao.updateSyncStatus(7L, FIXED_NOW, row.status)
+                }
+            } else {
+                coVerify(exactly = 1) { bankConnectionDao.updateSyncStatusOnly(7L, row.status) }
+                coVerify(exactly = 0) { bankConnectionDao.updateSyncStatus(any(), any(), any()) }
+                io.mockk.coVerifyOrder {
+                    bankApiIntegration.syncTransactions(connection, null)
+                    writeBarrier.checkWritesAllowed("BankConnectionLifecycleCoordinator.persistOutcome")
+                    bankConnectionDao.updateSyncStatusOnly(7L, row.status)
+                }
+            }
         }
     }
 
     @Test
-    fun `restore blocked outcome skips both terminal status writes`() = runTest {
-        coEvery { bankConnectionDao.getById(7L) } returns connection
-        val blocked = BankSyncOutcome.Blocked(DiagnosticReasonCode.RESTORE_BLOCKED)
-        coEvery { bankApiIntegration.syncTransactions(connection, null) } returns blocked
-        denyTerminalStatusWrite()
+    fun `barrier denial after integration outcome leaves outcome unchanged and skips both status writes`() = runTest {
+        // rows: Success (original barrier-denial case), Blocked(RESTORE_BLOCKED) (restore-blocked case)
+        // Every row runs with the barrier denying (clearMocks keeps answers): do not add an allowed row
+        // without clearing answers.
+        val rows = listOf(
+            "Success" to BankSyncOutcome.Success(importedCount = 2),
+            "Blocked" to BankSyncOutcome.Blocked(DiagnosticReasonCode.RESTORE_BLOCKED)
+        )
+        for ((label, outcome) in rows) {
+            io.mockk.clearMocks(bankConnectionDao, bankApiIntegration, writeBarrier, answers = false)
+            coEvery { bankConnectionDao.getById(7L) } returns connection
+            coEvery { bankApiIntegration.syncTransactions(connection, null) } returns outcome
+            denyTerminalStatusWrite()
 
-        assertEquals(blocked, coordinator.syncConnection(7L))
-        coVerify(exactly = 1) { bankApiIntegration.syncTransactions(connection, null) }
-        coVerify(exactly = 0) { bankConnectionDao.updateSyncStatus(any(), any(), any()) }
-        coVerify(exactly = 0) { bankConnectionDao.updateSyncStatusOnly(any(), any()) }
-    }
-
-    @Test
-    fun `barrier denial after integration success leaves outcome unchanged and skips status`() = runTest {
-        coEvery { bankConnectionDao.getById(7L) } returns connection
-        val success = BankSyncOutcome.Success(importedCount = 2)
-        coEvery { bankApiIntegration.syncTransactions(connection, null) } returns success
-        denyTerminalStatusWrite()
-
-        assertEquals(success, coordinator.syncConnection(7L))
-        coVerify(exactly = 0) { bankConnectionDao.updateSyncStatus(any(), any(), any()) }
-        coVerify(exactly = 0) { bankConnectionDao.updateSyncStatusOnly(any(), any()) }
+            org.junit.Assert.assertSame("outcome identity for row $label", outcome, coordinator.syncConnection(7L))
+            coVerify(exactly = 1) { bankApiIntegration.syncTransactions(connection, null) }
+            io.mockk.coVerifyOrder {
+                bankApiIntegration.syncTransactions(connection, null)
+                writeBarrier.checkWritesAllowed("BankConnectionLifecycleCoordinator.persistOutcome")
+            }
+            coVerify(exactly = 0) { bankConnectionDao.updateSyncStatus(any(), any(), any()) }
+            coVerify(exactly = 0) { bankConnectionDao.updateSyncStatusOnly(any(), any()) }
+        }
     }
 
     @Test
@@ -243,49 +224,6 @@ class BankConnectionLifecycleCoordinatorOutcomeTest {
         coVerify(exactly = 0) { bankConnectionDao.updateSyncStatusOnly(any(), any()) }
     }
 
-
-    @Test
-    fun terminal_outcomes_preserve_integration_barrier_DAO_order_and_original_identity() = runTest {
-        val outcomes = listOf(
-            BankSyncOutcome.Success(importedCount = 3), BankSyncOutcome.Partial(2, 1, 1),
-            BankSyncOutcome.ReauthRequired(), BankSyncOutcome.Blocked(DiagnosticReasonCode.RESTORE_BLOCKED),
-            BankSyncOutcome.RetryableFailure(failedCount = 2),
-            BankSyncOutcome.PermanentFailure(DiagnosticReasonCode.TOKEN_INVALID)
-        )
-        for (outcome in outcomes) {
-            io.mockk.clearMocks(bankConnectionDao, bankApiIntegration, writeBarrier, answers = false)
-            coEvery { bankConnectionDao.getById(7L) } returns connection
-            coEvery { bankApiIntegration.syncTransactions(connection, null) } returns outcome
-            org.junit.Assert.assertSame(outcome, coordinator.syncConnection(7L))
-            val status = outcome.toTerminalSyncStatus()!!
-            io.mockk.coVerifyOrder {
-                bankApiIntegration.syncTransactions(connection, null)
-                writeBarrier.checkWritesAllowed("BankConnectionLifecycleCoordinator.persistOutcome")
-                if (outcome.advancesLastSync()) bankConnectionDao.updateSyncStatus(7L, FIXED_NOW, status)
-                else bankConnectionDao.updateSyncStatusOnly(7L, status)
-            }
-            if (outcome.advancesLastSync()) coVerify(exactly = 0) { bankConnectionDao.updateSyncStatusOnly(any(), any()) }
-            else coVerify(exactly = 0) { bankConnectionDao.updateSyncStatus(any(), any(), any()) }
-        }
-    }
-
-    @Test
-    fun denied_terminal_outcomes_preserve_order_without_either_DAO_write() = runTest {
-        for (outcome in listOf(BankSyncOutcome.Success(importedCount = 2),
-            BankSyncOutcome.Blocked(DiagnosticReasonCode.RESTORE_BLOCKED))) {
-            io.mockk.clearMocks(bankConnectionDao, bankApiIntegration, writeBarrier, answers = false)
-            coEvery { bankConnectionDao.getById(7L) } returns connection
-            coEvery { bankApiIntegration.syncTransactions(connection, null) } returns outcome
-            denyTerminalStatusWrite()
-            org.junit.Assert.assertSame(outcome, coordinator.syncConnection(7L))
-            io.mockk.coVerifyOrder {
-                bankApiIntegration.syncTransactions(connection, null)
-                writeBarrier.checkWritesAllowed("BankConnectionLifecycleCoordinator.persistOutcome")
-            }
-            coVerify(exactly = 0) { bankConnectionDao.updateSyncStatus(any(), any(), any()) }
-            coVerify(exactly = 0) { bankConnectionDao.updateSyncStatusOnly(any(), any()) }
-        }
-    }
 
     private fun denyTerminalStatusWrite() {
         val operation = "BankConnectionLifecycleCoordinator.persistOutcome"
@@ -383,37 +321,33 @@ class BankConnectionLifecycleCoordinatorOutcomeTest {
     }
 
     @Test
-    fun `disconnect blocked by write barrier returns RetryableFailure without DB writes`() = runTest {
+    fun `disconnect that cannot proceed returns its result without DB writes`() = runTest {
+        // row 1: unknown connection -> NotFound
+        coEvery { bankConnectionDao.getById(7L) } returns null
+        assertEquals(
+            "unknown connection row",
+            ConnectionDisconnectResult.NotFound,
+            coordinator.disconnectConnection(7L)
+        )
+        coVerify(exactly = 0) { bankConnectionDao.disconnect(any()) }
+        coVerify(exactly = 0) { pendingReviewDao.deleteByBankConnectionScope(any()) }
+
+        // row 2: write barrier denies -> RetryableFailure (fresh mocks so row 1 stubs cannot mask the barrier)
+        io.mockk.clearMocks(bankConnectionDao, pendingReviewDao, writeBarrier)
+        coEvery { bankConnectionDao.getById(7L) } returns connection
         coEvery {
             writeBarrier.checkWritesAllowed("BankConnectionLifecycleCoordinator.disconnectConnection")
-        } throws com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException(
-            accessType = com.yourname.expensetracker.data.backup.DatabaseAccessType.WRITE,
-            operation = com.yourname.expensetracker.data.backup.DatabaseAccessOperation(
-                "BankConnectionLifecycleCoordinator.disconnectConnection"
-            ),
-            mode = com.yourname.expensetracker.data.backup.RestoreMaintenanceMode.Mode.RESTORE_STAGING
+        } throws DatabaseAccessBlockedException(
+            accessType = DatabaseAccessType.WRITE,
+            operation = DatabaseAccessOperation("BankConnectionLifecycleCoordinator.disconnectConnection"),
+            mode = RestoreMaintenanceMode.Mode.RESTORE_STAGING
         )
-
-        val result = coordinator.disconnectConnection(7L)
-
-        assertEquals(ConnectionDisconnectResult.RetryableFailure, result)
+        assertEquals(
+            "write barrier denial row",
+            ConnectionDisconnectResult.RetryableFailure,
+            coordinator.disconnectConnection(7L)
+        )
         coVerify(exactly = 0) { bankConnectionDao.disconnect(any()) }
         coVerify(exactly = 0) { pendingReviewDao.deleteByBankConnectionScope(any()) }
-    }
-
-    @Test
-    fun `disconnect of unknown connection is NotFound without writes`() = runTest {
-        coEvery { bankConnectionDao.getById(7L) } returns null
-
-        val result = coordinator.disconnectConnection(7L)
-
-        assertEquals(ConnectionDisconnectResult.NotFound, result)
-        coVerify(exactly = 0) { bankConnectionDao.disconnect(any()) }
-        coVerify(exactly = 0) { pendingReviewDao.deleteByBankConnectionScope(any()) }
-    }
-
-    private fun clearTokenStubs() {
-        io.mockk.clearMocks(bankConnectionDao, bankApiIntegration)
-        coEvery { bankConnectionDao.getById(7L) } returns connection
     }
 }

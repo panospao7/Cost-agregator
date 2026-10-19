@@ -1,0 +1,17 @@
+# B6-26 map + decision (scout 2026-10-19; orchestrator decision under standing approval)
+
+All 7 files use real in-memory Room (golden/e2e: GoldenTestBase, Robolectric sdk 33, fixedNow 1776340800000; scenarios: AppDatabaseTestFactory sdk 28, UTC dateMs). 29 tests total. The plan's -20 is not reachable under the keep rules; target 29 -> ~20.
+
+## Decision (one writer; test-only; hard-coded values; whole-test deletes only, no setup restructuring — hang-sensitive runTest/Room setups)
+- golden/RecurringBillPaymentMatchTest 4 -> 2: delete :24 (subsumed by ConcurrentOccurrenceClaimTest:21 — PAID + linkedExpenseId) and :47 (exact duplicate of ConcurrentOccurrenceClaimTest:21, same 100/200, 1/0). Keep :65 but strengthen `> 0` to the exact affected-row count read from production SQL, and fix the misleading name/unused occId. Keep :82; replace System.currentTimeMillis() with the base's fixed now. Keep the class name (RP-04 doc cites *RecurringBillPaymentMatch*).
+- golden/RecurringPlannedActualNoDoubleCountGoldenTest: untouched (gate-cited, JSON-pinned).
+- e2e/RecurringPaymentMatchE2ETest: untouched in B6-26. **Flag:** its golden pins linkSucceeded=false / 0 PAID, contradicting its KDoc ("transitions to PAID, FULFILLED"); the headline claim is not exercised. → follow-up B6-26b: read production RecurringLifecycleCoordinator.linkExpenseToOccurrence, confirm cause (scout hypothesis: expense dated fixedNow, occurrences at +30d), then decide on a positive-match row (test-only re-pin) or a production finding.
+- scenarios/RecurringNoDoubleCountScenarioTest 5 -> 0 (class deleted): delete :70 (dup RecurringOccurrenceDaoTest:89/116), :123 (tautological; survivor golden RecurringPlannedActual :65), :186 (exact dup RecurringOccurrenceDaoTest:178), :226 (dup RecurringOccurrenceDaoTest:201/215). Move :305 reminder insert/getById (all fields exact) into data/database/dao/RecurringReminderDeliveryDaoTest. Rename note in final docs pass (batch-08 audit doc, historical).
+- scenarios/GroupSettlementLifecycleScenarioTest 3 -> 1: delete :54 (survivor SharedExpenseGroupScenarioTest:114 + GroupTransactionCoordinatorTest:206); fold :107 into SharedExpenseGroupScenarioTest:159 keeping getExpenseCount == 1 and countExpensesPaidByMember == 1; keep :167 settlement (unique; groupSettlementDao used nowhere else).
+- scenarios/SharedExpenseGroupScenarioTest 4 -> 4: keep :114, :226, :308; :159 absorbs GroupSettlement :107; replace test-computed 90/3 and outstanding 60 with literals 30.0 / 60.0.
+- scenarios/ReceiptLifecycleDbContractTest 4 -> 3: keep :73 and :113 (event log); merge :166 + :237 into one 2-row table (DIRECT_SAVE / AUTO_MATCHED; by-receipt, by-expense, both rows still exist). Keep the class name (evidence-map.md:17).
+- Never touch ReceiptMatchingNoDoubleCountGolden*, RuleDeactivationCleanup*, ConcurrentOccurrenceClaim*; golden JSONs unchanged.
+- Expected 29 -> 20 (+1 moved reminder test in RecurringReminderDeliveryDaoTest; net class tests 29 -> 19 + 1).
+
+## Validation
+targeted-unit-test: golden.RecurringBillPaymentMatchTest, golden.RecurringPlannedActualNoDoubleCountGoldenTest, golden.ConcurrentOccurrenceClaimTest, golden.RuleDeactivationCleanupTest, e2e.RecurringPaymentMatchE2ETest, scenarios.GroupSettlementLifecycleScenarioTest, scenarios.SharedExpenseGroupScenarioTest, scenarios.ReceiptLifecycleDbContractTest, data.database.dao.RecurringReminderDeliveryDaoTest (+ N3 classes). Review: reviewer-strict (lifecycle).
