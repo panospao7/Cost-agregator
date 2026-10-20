@@ -6,7 +6,7 @@ model: claude-sonnet-5-5
 effort: high
 permissionMode: plan
 disallowedTools: Agent, Edit, Write
-maxTurns: 45
+maxTurns: 90
 ---
 
 # Release regression auditor

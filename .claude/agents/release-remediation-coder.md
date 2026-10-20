@@ -6,7 +6,7 @@ model: claude-sonnet-5-5
 effort: high
 permissionMode: default
 disallowedTools: Agent, Bash, PowerShell
-maxTurns: 50
+maxTurns: 100
 ---
 
 # Release remediation coder

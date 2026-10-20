@@ -6,7 +6,7 @@ model: claude-opus-5-5
 effort: max
 permissionMode: plan
 disallowedTools: Agent, Edit, Write
-maxTurns: 50
+maxTurns: 90
 ---
 
 # Release 1.0 final reviewer

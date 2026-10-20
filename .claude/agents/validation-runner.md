@@ -6,7 +6,7 @@ model: claude-haiku-5-5
 effort: low
 permissionMode: default
 disallowedTools: Agent, Edit, Write
-maxTurns: 35
+maxTurns: 120
 ---
 
 # Validation runner - execution only
