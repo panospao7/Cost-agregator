@@ -122,8 +122,9 @@ class RestoreDiagnosticsSink(
     suspend fun finalizeRunFailed(reason: String, error: Throwable? = null) {
         val handle = operationRunHandle
         if (roomAllowed && handle != null) {
-            CancellationSafe.runCatchingCancellable { handle.failedFinal(reason, error) }
-                .onFailure { Timber.w(it, "RestoreDiagnosticsSink: failedFinal write failed") }
+            CancellationSafe.runCatchingCancellable { handle.failedFinal(reason, error) }.onFailure {
+                Timber.w(it, "RestoreDiagnosticsSink: failedFinal write failed")
+            }
         }
     }
 }
