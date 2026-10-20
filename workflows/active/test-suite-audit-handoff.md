@@ -1061,8 +1061,281 @@ Note: B2 corrections from the re-verification are appended at the end of the pla
 
 - **Merge sanity PASS** (vr-20261019-173132-e3f4611f): the whole merged main + unit-test source set compiled (compileDebugKotlin and compileDebugUnitTestKotlin both executed). RecurringReminderDelivery 3, FinancialStress 41, NotificationCaptureServiceBlockedDecision 14 and NotificationIntakeWorkerTimeout 16 all passed. Merge committed. The runner briefly reported E_EXTERNAL_GRADLE_ACTIVE (likely the user's Gradle elsewhere); it cleared on retry.
 
+- **Merge committed: 945afffc.**
+- **Full unit-tests on the merged tree** (vr-20261019-173720-8ca26f02): FAIL, 7484 tests, **3 failed**, 32 skipped, 7.5 min.
+  - All 3 failures are in AnalyticsViewModelYearOverYearTest (an audit-added file) against the release-changed AnalyticsViewModel and the new AnalyticsComparisonWindows: a semantic merge conflict. The debugger is diagnosing.
+  - The fingerprint shows the empty-string hash because the tree was clean (the runner fingerprints uncommitted state). This is expected.
+- Post-merge work list → `workflows/active/test-suite-audit-postmerge.md`. The user was asked to approve the NEEDS-APPROVAL items; recommendations were given.
+- static-guards launched next.
+
+- **Debugger root cause for the 3 analytics failures:** the release added a 5th parameter, comparisonCutoffMillisInclusive, to AdvancedAnalyticsEngine.getCategoryAnalytics (R20b like-for-like). The audit test's 4-arg stub bound the new parameter to eq(null), so the relaxed mock returned a non-List and the VM hit its error state. All expectations still hold under release semantics, and no production bug was found. Test-only fix writer launched: a 5th any() plus a coVerify on the comparison minute.
+- **static-guards ran in the WRONG checkout** (vr-20261019-180317-223e4bc0, PASS 25/25, but git_revision 1b026317, the primary checkout Desktop/Cost-agregator). The PowerShell cwd defaulted to the primary repo. No sources were edited there; only runner artifacts were written under its ignored build/ dir, and the primary git status is unchanged. This is not evidence for 945afffc. It will be re-run from the worktree, with every runner command doing an explicit cd / Set-Location to the worktree, and git_revision verified.
+
+- **Post-merge validation (worktree, git_revision 945afffc confirmed):**
+  - Analytics fix: targeted-unit-test ui.screens.analytics.* PASS, 42 tests, 0 failures (vr-20261019-183634-1cf7ec2a). AnalyticsViewModelYearOverYearTest is 3/0. The fix is uncommitted.
+  - static-guards FAIL (vr-20261019-183835-c357c412), 24/25. The only failing leg is cancellation: NEW 0, **RESOLVED 1, G-CANCEL-01 CompositeOperationRunRecorder**. This is the known B1R-4 stale baseline entry from the approved B2-4 CE fix; it now blocks because the merge brought in the release's version of the guard.
+  - Fix = B1R-4 (remove the entry from config/baselines/cancellation.json and scripts/allowlists/cancellation_allowlist.yml if listed there). This is a baseline change, so **user approval is pending**.
+  - Starts were briefly blocked by E_EXTERNAL_GRADLE_ACTIVE from the user's release worktree Gradle runs; the runner waited, killed nothing.
+  - Merged-tree status: every unit test is green after the analytics fix (full suite: 7484 tests, the only 3 failures were the analytics ones, now fixed); all guards are green except the one approval-gated stale entry.
+
+- **USER DECISION (2026-10-19): "Approve your recommendations"**. APPROVED:
+  - B1R-4: cancellation baseline entry removal;
+  - B4-K5: PBKDF2 iteration seam, production default 600k, decrypt never reads the count from the bundle; privacy-security-guardian + reviewer-strict;
+  - B1-4: CE rethrow in MerchantKeyBackfillWorker/WarrantyExpirationWorker + SourceScanning allowlist shrink;
+  - B1-5: CancellationSafety guard real clock + 3 runCatching fixes, after a diff check against the release's guard changes;
+  - B1-3: stale provenance allowlist entry;
+  - B9 orphan cleanup: worker_root_dispositions.yml, GR-13_UNPROVEN_WRITERS.yml, dead CallGraphBuilder/V3 paths, as a separate slice;
+  - X5/X6: verify_db_access_boundaries.py text rewording incl. the :650 stderr.
+  NOT approved: B4-P5. Deferred: B7-2/B7-4 (later guard pass).
+
+- **B3b-6 done:**
+  - Of the 3 cases in the @Ignore'd NotificationIntakeEnqueueFailureTest, 1 was already covered (stronger) by the Room test. 2 were ported (the attempts 1-4→5 FAILED_FINAL sequence, and the getReadyForProcessing nextAttemptAt boundary at NOW+29_999/30_000), plus 1 extra negative (a FAILED_FINAL row never surfaces).
+  - The Room test went from 6 to 9 tests, and its dangling KDoc link is fixed. The orchestrator deleted the old class.
+  - Release ledger: R13 says "do not un-ignore", which is not a deletion ban; RG17B-1 was closed by the Room test.
+  - Doc rows are queued for the B3b-R2 docs step: TEST_IGNORE_CLASSIFICATION.md :17/:80, test-suite-groups-2026-09.md :56, 01-INVENTORY.md :851.
+  - Next: B3-1b (the 2 stress classes), then B3b-R2 (baseline 3→0 + docs), batched with B1R-4.
+
+- **B1R map** → `workflows/active/test-suite-audit-b1r-map.md`.
+  - B1-4 needs no production change: both workers already rethrow CE, so only a MerchantKey CE test remains.
+  - B1R-4 is a hand-edit of 2 baseline lines.
+  - B1-3 removes the DomainTransactionRunner.kt entry.
+  - B1-5 is the 3 production fixes, the real clock, and baseline removals for NetCashflow and SubscriptionManager.
+  - **User asked:** with the real clock, 9 raw-runCatching allowlist entries dated 2026-10-01 are already expired (hidden by the frozen clock). Recommendation: verify each, remove the stale ones, and renew the still-violating ones to 2027-03-31.
+
+- **B3-1b done:** both @Ignore stress classes (relaxed-mock delegation checks, stale against current source) were mapped.
+  - 17 tests were ported into NotificationRepositoryDeleteAllNotificationsClockTest and 10 into ReviewQueueRepositoryTest. They are stronger versions: assertSame on flows, the privacy storage-mode matrix for processAndSave, and APPROVED/PENDING boundaries.
+  - Nothing was dropped (there were no timing asserts). The orchestrator deleted both classes.
+  - Doc mentions: TEST_IGNORE_CLASSIFICATION, COVERAGE_REPORT :93-94, generated TEST_PRUNING_CANDIDATES :109-110 (frozen).
+- Batch-1 writer launched: B3b-R2 (ignore baseline 3→0 in all carriers + TEST_IGNORE docs) and B1R-4 (2 cancellation.json lines). Next: test writer for B1-3 (provenance entry) and B1-4 (MerchantKey CE tests), then one validation batch.
+
+- **USER DECISION (2026-10-19): "Ok"** to the B1-5 expired-entry handling: verify each of the 9 expired RAW_RUN_CATCHING_ALLOWLIST entries, remove the stale ones, and renew those still violating to 2027-03-31 under the real clock.
+
+- **B3b-R2 + B1R-4 implemented:**
+  - Real @Ignore/@Disabled count in tests is 0.
+  - Baseline 3→0 in guard_registry.py:315, test_gradle_registered_guard_contract.py:190, test_run_static_guard_suite.py:1587, verify_ignored_test_budget.py:434-435 default, ci.yml:235/:298, GUARD_COMMANDS.generated.md:151 (matches the generator's verbatim emission), CI_GUARDRAILS_BASELINE.md :112/:159/:309/:329, and local-ci.md :93/:279. The verifier accepts 0.
+  - TEST_IGNORE_CLASSIFICATION.md updated: 0 current ignores; the 3 deleted classes are recorded with their replacements.
+  - cancellation.json: both G-CANCEL-01 CompositeOperationRunRecorder lines removed; G-CANCEL-02 kept; CRLF kept.
+  - Left as historical: CI_GUARDRAILS_RECOVERY_DIRECTIVE :297/:580, and CI_GUARDRAILS_BASELINE :308/:314-323/:337 (stale history; final docs follow-up).
+  - The B1-3/B1-4 test writer was launched.
+
+- **USER (2026-10-19): "When we finish complete the merge"** means that once the post-merge work is finished and the final gate passes, the audit branch gets merged forward. The target branch is to be confirmed with the user; the proposal is the main branch `bug-fixes`, which already contains release f8433f51.
+
+- Compile fix (debug 1/2): `unblock(any())` was ambiguous between the String and BlockedPackage overloads. It now checks both typed overloads with exactly = 0, which keeps the original meaning. No other compile issues were found.
+- **Post-merge batch 1 validated, all PASS** (git 945afffc; fingerprint 323445b2… start == end):
+
+  | Check | Run | Result |
+  |---|---|---|
+  | targeted-unit-test | vr-20261019-194302-05084e64 | EnqueueFailureRoom 9, ProvenanceGuard 6, MerchantKeyBackfill 8, DeleteAllClock 17, ReviewQueueRepository 24, WriteBarrier 2 |
+  | ignored_test_budget | vr-20261019-194519-7afa849a | 0 / baseline 0 |
+  | cancellation | vr-20261019-194830-0b305fad | 99/99, NEW 0, RESOLVED 0 |
+  | test_gradle_registered_guard_contract | vr-20261019-194845-f421de85 | 11 passed |
+  | test_run_static_guard_suite | vr-20261019-194854-3163a550 | 95 passed |
+  | guard_docs_truth | vr-20261019-194915-c9106ff1 | 0 violations |
+
+  Next: reviewer-strict on batch 1 (B3b-6, B3-1b, B3b-R2, B1R-4, B1-3, B1-4). In parallel, the B1-5 production writer.
+
+- **B1-5 part 1 done (production; uncommitted):**
+  - Production:
+    - NetCashflowBalanceProvider: 2× runCatching → CancellationSafe.runCatchingCancellable.
+    - SubscriptionManagerEngine: same change, with the ISE mapping unchanged.
+    - DefaultCloudPayloadPolicy: readBytes → runCatchingCancellable().getOrNull(). It stays fail-closed for every non-CE Exception. The one behaviour difference is that an Error (e.g. OOM) now propagates instead of becoming null (2 MB cap, practically unreachable); privacy-security-guardian must accept this.
+  - Tests (12):
+    - new NetCashflowBalanceProviderTest (7);
+    - SubscriptionManagerEngineTest +3;
+    - CloudPayloadPolicyTest +2. readBytes cannot throw CE, so there is no CE case there.
+  - Baseline entries that will RESOLVE: NetCashflow G-CANCEL-02 ×2 and SubscriptionManagerEngine G-CANCEL-02 ×1.
+  - Now stale: cancellation_allowlist.yml :103-109 (DefaultCloudPayloadPolicy) and CancellationSafety raw entry :198.
+  - Part 2 (guard test real clock, 9 expired entries, delete the 3 raw entries, baseline removals, stale YAML entry) waits for the batch-1 reviewer to finish, because both touch cancellation.json.
+
+- **Batch-1 reviewer-strict: FAIL, 1 MAJOR (review iteration 1/2).**
+  - ISSUE-1: `.github/workflows/ci.yml:298` reads `-PmaxIgnoredTests=0--no-daemon` because a space was lost in the B3b-R2 edit. Runtime impact is low, but the live CI carrier is broken.
+  - Everything else is verified: the B3b-6/B3-1b mappings are complete and the storage-mode matrix matches sanitizeForStorage; no live carrier was missed; cancellation.json is valid with equal key sets; the B1-3 liveness test and the B1-4 CE tests cannot pass vacuously.
+  - Fix writer launched for ISSUE-1 plus nits N1 (CI_GUARDRAILS_BASELINE :308 "~31"), N3 (ClockTest class KDoc) and N4 (rawStorageMode asserts in the REDACTED/METADATA/DO_NOT_STORE cases).
+  - Ledger correction (N2): the ClockTest got +15 ported tests (17 in total), not +17. save and deleteAll survive in other tests.
+  - N5 and N6 are left as nits: the regex copy in the provenance test, and the mocked guard in the MerchantKey CE tests.
+
+- **Batch-1 fix pass done:**
+  - ci.yml :298 now reads `-PmaxIgnoredTests=0 --no-daemon --stacktrace`; a re-grep found no other slips.
+  - CI_GUARDRAILS_BASELINE :308 is reworded as historical.
+  - ClockTest KDoc updated.
+  - processUnderMode now captures the NotificationPersistenceContext; the REDACTED/METADATA/DO_NOT_STORE cases assert the full context and rawStorageMode.
+  - B1-5 part 2 writer launched (guard real clock, the 9 expired entries handled per the user decision, 3 raw entries deleted, cancellation.json G-CANCEL-02 removals for NetCashflow/SubscriptionManager, stale YAML entry).
+
+### 2026-10-19 — B1-5 part 2 implemented (guard real clock + allowlist/baseline)
+- CancellationSafetyArchitectureGuardTest: positive expiry tests on real clock (guardToday()); negative controls on synthetic lists (SyntheticExpired.kt / SyntheticLive.kt, exact assertEquals); GUARD_TODAY_VALID deleted (unused).
+- RAW_RUN_CATCHING_ALLOWLIST: removed DefaultCloudPayloadPolicy, NetCashflowBalanceProvider, SubscriptionManagerEngine (fixed); removed stale ValidateBankStatementTransactionsUseCase, AdvancedAnalyticsEngine, FinancialStressForecastEngine (no raw runCatching); renewed to 2027-03-31 (still violating, evidence per entry in writer report): RestoreJournalImporter, AnalyticsRepository, DatabaseBackupRepositoryImpl, CarbonFootprintCalculator (also in KNOWN_VIOLATIONS; kept for when that entry retires), DiagnosticsRepository, InvestmentTracker.
+- config/baselines/cancellation.json: G-CANCEL-02 NetCashflowBalanceProvider (2) + SubscriptionManagerEngine (1) removed; key sets equal.
+- scripts/allowlists/cancellation_allowlist.yml: stale G-CANCEL-02 DefaultCloudPayloadPolicy.prepareReceiptAssist entry removed (consumers: verify_cancellation_boundaries.py, verify_allowlist_compliance.py; no count/stale checks). Header comment ":19 19 remain" now stale (18) → fold into X5/X6 wording writer.
+- No script/test pins count these entries (grep clean).
+
+### 2026-10-19 — Validation batch (B1-5 + batch-1 fix pass), git_revision 945afffc, fingerprint 077281ec…
+- vr-20261019-203352-2756ba62 targeted-unit-test 7 classes: FAIL 99/2. ClockTest 17/0, NetCashflowBalanceProviderTest 7/0, TransactionContextProvenanceGuardTest 6/0, MerchantKeyBackfillWorkerTest 8/0, CancellationSafetyArchitectureGuardTest 22/0, CloudPayloadPolicyTest 13/0, SubscriptionManagerEngineTest 26/2 (the two CE tests: assertFalse(thrown is IllegalStateException) — j.u.c.CancellationException extends ISE; test defect, predicted by privacy review).
+- vr-20261019-203953-edf7b4b4 registered-guard cancellation: PASS (96/96 unchanged, NEW 0, RESOLVED 0).
+- vr-20261019-204009-76cbf785 static-guards: PASS 25/25 (first fully green static-guards on the merged tree).
+- Batch 1 (B3b-6, B3-1b, B3b-R2, B1R-4, B1-3, B1-4) ACCEPTED: review iter 2 PASS + green validation.
+
+## B1-5 privacy-security-guardian (2026-10-19): PASS / ACCEPT incl. Error propagation in DefaultCloudPayloadPolicy
+- MAJOR test defect: SubscriptionManagerEngineTest :563/:584 assertFalse(thrown is IllegalStateException) always fails (j.u.c.CancellationException extends ISE). Fix: delete; assertEquals(CancellationException::class.java, thrown!!::class.java); add message assert "cancelled while collecting" at :584.
+- MINOR: :599 pins raw message → assert type + prefix "Home currency unavailable" only. Follow-up (report): bounded ISE message + cause.
+- MINOR follow-up (report): DefaultCloudPayloadPolicy 2MB cap checked before read; bounded read later.
+- NITs: CloudPayloadPolicyTest add auditMetadata imageIncluded=false; drop imageMimeType pin when bytes null (:197); NetCashflowBalanceProviderTest expense-CE (:100-112) add message assert.
+- Out of scope follow-up: CloudReceiptAssistService.kt:433 buildRequestBodyForTest raw runCatching; prepareReceiptAssist reads file on caller dispatcher.
+## Batch-1 review iter 2 (2026-10-19): PASS (accepted pending current validation of ClockTest + static-guards incl. guard_docs_truth/actionlint)
+- NIT-1 ClockTest KDoc :46-51 add exists/resetSourceStats/retrainClassifier/processAndSaveAll; :163-167 reword barrier phrase (accessors don't use barrier) → fold into B1-5 fix pass.
+- NIT-2 CI_GUARDRAILS_BASELINE :21/:97/:198/:337 "warning mode — 31 pre-existing" present tense → mark historical (fold into X5/X6 docs writer).
+- NIT-3 -PmaxIgnoredTests decorative (gradle task ignores it) → report / later docs cleanup.
+- NIT-4 TransactionContextProvenanceGuardTest :145 regex duplicates :85 → hoist private val (fold into fix pass).
+- NIT-6 COVERAGE_REPORT.md:93-94 lists deleted stress classes; test-suite-groups-2026-09.md:56; 01-INVENTORY :851 → dated snapshots, report.
+
+### 2026-10-20 — B1-5 reviewer-strict iter 1: FAIL (only the known SubscriptionManagerEngineTest CE assertion defect)
+- All 9 expired-entry verdicts independently confirmed (guard logic re-implemented); baseline valid (43/43 keys, total 96, RESOLVED 0); real-clock tests non-vacuous; controls share enforcement helpers; production semantics unchanged for non-CE exceptions.
+- Note: Error (e.g. OOM) now propagates at all 3 sites (helper catches Exception, not Throwable), not only DefaultCloudPayloadPolicy — consistent with project helper; privacy guardian accepted.
+- NIT F2: synthetic controls lack expires==today case → added in fix pass. F3: YAML header count → fix pass.
+- Pre-existing: HistoricalSpendingDistribution raw entry stale (plan :94) → fix pass removes. KNOWN_VIOLATIONS (~77) + 2 raw entries expire 2026-12-31 → guard red on 2027-01-01 (plan D4; report to user). Kotlin guard skips expression-body suspend funs (Python G-CANCEL-02 covers).
+- Fix pass (test-author) launched: SubscriptionManagerEngineTest F1 + prefix-only message; CloudPayloadPolicyTest imageIncluded=false, drop mime pin; NetCashflow message assert; guard F2 + HistoricalSpendingDistribution removal; ClockTest KDoc (NIT-1); TransactionContextProvenance regex hoist (NIT-4); YAML header count.
+- B4-K5 scout relaunched (first attempt died on API timeout).
+
+### 2026-10-20 — B1-5 fix pass done; B4-K5 started
+- Fix pass (test-author) applied all 7 items; @Test counts unchanged (SME 26, CloudPayloadPolicy 13, NetCashflow 7, CancellationSafety 22, ClockTest 17, TCProvenance 6). HistoricalSpendingDistribution raw entry removed (no runCatching in source). YAML header: 18 remain. CloudPayloadPolicyTest asserts audit JSON imageIncluded=false.
+- B4-K5 map: workflows/active/test-suite-audit-b4k5-map.md. Production seam writer (feature-implementer) running; test-author next; then ONE validation batch covering B1-5 fix pass + B4-K5.
+- B5 leftovers scout running.
+
+### 2026-10-20 — B4-K5 implemented (production seam + tests)
+- Production: BackupEncryptionService internal primary constructor(iterations) + require(>0); @Inject constructor() : this(ITERATION_COUNT); deriveKey uses instance field; internal val iterationCount. No Hilt module; main-source sites all no-arg.
+- Tests: new testfixtures/backup/LowIterationBackupEncryption.kt (TEST_PBKDF2_ITERATIONS=1_000; LF). BackupEncryptionServiceTest 14→18 (production pin, never-inferred-from-ciphertext both ways AEADBadTagException, main-source seam scan non-vacuous, iterations>0); wrong-password stays production. CostbackupBundleTest threads low instance through all create/extract; ExtractFailureTest spyk low; DatabaseBackupRepositoryImplTest 7 create-only sites low (+ s2 round trip shares instance). BackupVerifierSavingsLedgerTest unchanged.
+- FINDING (pre-existing, report): DatabaseBackupRepositoryImpl.kt:1067 restore calls CostbackupBundle.extract without encryptionService → restore always uses a fresh production-count instance, ignoring the injected service (create :564/:881 uses injected). Behaviour-neutral in production (both 600k); seam inconsistency → follow-up.
+- Validation launched (11 classes targeted + di_release + cancellation).
+- B5 leftovers map: workflows/active/test-suite-audit-b5-leftovers-map.md (B5-4, B5-7, B5-14 DO; B5-9 receivers assertion-only; B5-9 worker merge + B5-18 DROPPED as DONE-WITH-REMAINDER).
+### B6 leftovers decisions (scout 2026-10-20)
+- B6-11 BackupRestoreViewModelPrivacyDenialTest (13; release added 5 getDatabaseStats tests): DROPPED (gain <= 1, fail-closed privacy assertions) → DONE-WITH-REMAINDER.
+- B6-15 DailyBriefingWorkerTest (25): remove 4 subsumed tests only — :180 (⊂ :160), :192 (tautological TODO; ⊂ :160), :359 (⊂ :371 exactly-1 APPEND_OR_REPLACE), :608 (⊂ :734 + distinct ids). Table fold of :325/:342/:389/:421/:440 SKIPPED (shared-mock hazard). Keep :231 CE propagation, :247 timeout, :416, :215, :201, :306, :521, PR12I/K block. Not in config/denylist. Validation FQN com.yourname.expensetracker.data.ai.worker.DailyBriefingWorkerTest (25→21). Review: strict (worker) — Sonnet override acceptable for 4 deletions.
+- B6-3 AdvancedAnalyticsEngineMoneyTest (10) + AdvAnalytics siblings: no true duplicates; slice target −25 already met pre-merge (handoff :533) → DONE-WITH-REMAINDER (skipped).
+- B6-18 ReviewQueueRepositoryNestedRollbackTest (15; ~3 release-added SOURCE_LINKED): already helper-driven grid; Parameterized would keep 9 executed rows (delta 0) → skipped, DONE-WITH-REMAINDER.
+
+### 2026-10-20 — Validation (B1-5 fix pass + B4-K5), git_revision 945afffc, fingerprint 5f3b2830…
+- vr-20261019-213542-f3868e81 targeted-unit-test 11 classes: PASS 221/0. SME 26, CloudPayloadPolicy 13, NetCashflow 7, CancellationSafety 22, ClockTest 17, TCProvenance 6, BackupEncryptionServiceTest 18 (7.7 s → 2.6 s), CostbackupBundleTest 9, ExtractFailure 6, BackupVerifierSavingsLedger 6 (unchanged file), DatabaseBackupRepositoryImplTest 97 (31.4 s; TSV had 78 tests/22.7 s — release added tests).
+- vr-20261019-214142-2f28aa8e registered-guard di_release: PASS (116 advisory, pre-existing).
+- vr-20261019-214155-a20e8bb3 registered-guard cancellation: PASS 96/96.
+- B6-13 map: workflows/active/test-suite-audit-b6-13-map.md (DO; ≈ −40 +1 X2).
+
+### 2026-10-20 — B4-K5 privacy-security-guardian: PASS (ACCEPT on all 5 decisions)
+- MINOR F1: seam scan only app/src/main *.kt → scan all app/src/* except test/androidTest, incl. .java. NIT F2: @VisibleForTesting on internal constructor (matches B4-K2 CloudCategorizationAssistService:42). NIT F3 (optional): one cross-count direction via decryptStream. NIT F4: RP-03A section comment (:91-94/:115-129) says 600k for tests now at 1,000 → fix comment. → fold into K5 fix pass with strict-review findings.
+- F5 follow-up (report, production, out of scope): DatabaseBackupRepositoryImpl.kt:1067 restore should pass encryptionService = backupEncryptionService; behaviour-neutral today, fail-closed.
+### 2026-10-20 — B5 W1 done (B5-4, B5-14, B5-9 receivers)
+- StatisticsUtilsStressTest (35) deleted by orchestrator → StatisticsUtilsTest (12, LF) with derived exact/IEEE rows; TESTING_ASSESSMENT.md:69 renamed. RecurringOccurrenceDaoTest 16→11 (all-fields read-back, exact order, exact updatedAt). Boot/ServiceRestart receiver "does not crash" tests + verify(exactly=1) startForegroundService. B5-7 W1 (navigation a-c) running.
+- B6-9 map: workflows/active/test-suite-audit-b6-9-map.md.
+
+### 2026-10-20 — reviewer-strict: B4-K5 PASS, B1-5 iter 2 PASS
+- **B1-5 ACCEPTED** (privacy PASS + strict PASS + green validation; static-guards re-run at final gate). **B4-K5 ACCEPTED** (privacy PASS + strict PASS + green validation), NIT pass queued after B5-7 W2:
+  - seam scan: all app/src/* source sets except test/androidTest, .kt + .java, plus regex self-test (multi-line + named arg) and `::BackupEncryptionService` reference check;
+  - @VisibleForTesting on the internal constructor (production, annotation only);
+  - RP-03A comment (:91-94) reword; fixture KDoc names the restore path (DatabaseBackupRepositoryImpl.kt:1067 always production count);
+  - optional: one cross-count direction via decryptStream;
+  - B1-5 NITs: drop tautological assertTrue(thrown is CancellationException) (SME :562/:583); CloudPayloadPolicyTest precondition unreadable.length() <= 2 MiB.
+- B5-7 W1 done: Route 29→13 (sealedSubclasses completeness; BudgetCreate/PrivacySettings/Debug added), FeatureConfig 12→8, Controller 13→11. W2 running.
+
+### 2026-10-20 — B6-23 DROPPED (scout): verifier classes have no shared fixtures and few true duplicates; RestoreJournalTimeProviderTest uses a different Robolectric config; BackupEncryptionServiceTest has 0 safe merges after K5. Realistic gain −1..−3 (below bar); a rename would churn evidence-map.md:21. Recorded DONE-WITH-REMAINDER.
+
+### 2026-10-20 — B6-17 decision (scout): DO small edit in NotificationProcessingPipelineReliabilityTest only (21→17): delete :1065 and :1079 detectTransactionSignalCandidate tests (exact subsets of OversizedAmountTest :54/:68); fold windowEndExclusive tests :340/:358/:382 into one keeping all assertion groups + messages. Atomicity (9), SourceLink (2), Oversized untouched. Queued with B6-15 DailyBriefing trim in one writer.
+
+### 2026-10-20 — scouts/maps for remaining work; B5-7 W2 verified
+- B5-7 W2 writer died (API timeout) after editing; audit pass PASS: DeepLinkParserTest 13→2 (exact kind+destination table; deferred-hosts test identical to HEAD — orchestrator diffed), DashboardWidgetRenderCoverageTest 3→1 (set equality vs sealedSubclasses), NavigationTargetResolverTest 32→21 (canHandle table; exact default filter rows). CRLF.
+- Maps written: b6-14 (≈−14), b6-22 (31→~17; keep ExportReadBarrierTest name for HANG-003 → no config change), b6-24-b3-9 (move + schema-subset/exclusion-set check; B3-9 delete 3 .kts + GuardSeededViolationTest + test-shards guards.* ×2 + doc notes), b9-orphans-x5x6 (delete fixtures dir + worker_root_dispositions.yml; keep GR-13/GR-14 evidence yml and callgraph.py; reword 6 promote_db_policy_v2 pointers).
+- DROPPED (DONE-WITH-REMAINDER): B6-20 (pure split of DatabaseBackupRepositoryImplTest, no reduction, high churn).
+- K5/B1-5 NIT pass writer (release-remediation-coder) running. Then: validation batch for B5 (Stats, RecurringOccurrence, receivers, navigation ×6) + NIT files + guard_docs_truth.
+
+### 2026-10-20 — K5/B1-5 NIT pass done
+- BackupEncryptionService: @VisibleForTesting (androidx) on internal constructor. BackupEncryptionServiceTest 18→19: production-source-set scan (all app/src/* except test*/androidTest*, .kt+.java, ::BackupEncryptionService and ::new refs), regex self-test, streaming cross-count direction, RP-03A comments. Fixture KDoc names the restore path. SME tautologies removed. CloudPayloadPolicyTest size precondition.
+- Validation batch (B5 + NIT, 13 classes + guard_docs_truth + di_release) and cheap B5 review launched.
+
+### 2026-10-20 — Validation B5 + NIT (git_revision 945afffc)
+- vr-20261019-224518-adbe9aaa targeted: FAIL compile (DashboardWidgetRenderCoverageTest:51-52 nullable simpleName → sorted()); debug iter 1 fix `?: it.toString()`.
+- vr-20261019-224848-27ce92b0 guard_docs_truth PASS; vr-20261019-224859-be1d4d27 di_release PASS.
+- vr-20261019-225325-34333c41 targeted re-run: PASS 150/0 — Stats 12, RecurringOccurrence 11, BootReceiver 9, ServiceRestart 4, Route 13, FeatureConfig 8, Controller 11, DeepLink 2, Dashboard 1, Resolver 21, BackupEncryptionService 19, CloudPayloadPolicy 13, SME 26. Fingerprint ee5de0ab….
+- B4-K5 NIT pass + B1-5 NITs validated. B5 cheap review running.
+
+### 2026-10-20 — B5 leftovers ACCEPTED (cheap review PASS + green vr-20261019-225325-34333c41)
+- Review re-derived every Statistics expectation incl. IEEE cases; navigation completeness helper non-vacuous; all deleted tests mapped to survivors. NITs: TESTING_ASSESSMENT.md:69 could add "(renamed from …)" (fold into docs pass); report-only: no duplicate-occurrenceKey (IGNORE → -1) test in RecurringOccurrenceDaoTest.
+- B6-15 + B6-17 written: DailyBriefingWorkerTest 25→21, NotificationProcessingPipelineReliabilityTest 21→17 (knownEurCurrency + assertNull import removed). B6-13 writer running.
+
+### 2026-10-20 — B6-13 + B6-14 written (worker group); validation + strict review launched
+- B6-13: WEG 53→40 (privacy/notification matrix ×2 entry points, 7 rows each, verifyOnlyTerminal exactly=0 on others; checkpoint table 3 rows + assertTrue(blockRan); X2 runGuardedWithContext CE test; R26 twin + skipped exactly=0), Logger 65→45 (Durable, duplicate, reason-code, classifyDiagnostic tables), P9 12→3 (spec-policy dupes ⊂ WorkerIdempotencyTest; midnight maxOf tautologies; 6 idempotent → table). Orchestrator verified no release-added test deleted.
+- B6-14: Sink 24→17 (exact 11-key allow-list from buildJsonLine :146-172 + all negative checks; nullable key-set strengthened; slow-append merge; rotation backup content check), Registry 28→25, Restore 20→15 (33-row mode × worker table with accessType/mode checks). Release-added tests verified kept.
+- Not achievable: sink virtual-time timeout (production withTimeout on IO+NonCancellable) → report.
+- vr-20261019-232555-2ac04288 targeted worker group: PASS 213/0 — WEG 40, Logger 45, P9 3, Idempotency 5, SpecScheduler 12, Sink 17, Registry 25, Restore 15, Verifier 3, DailyBriefing 21, Reliability 17, Oversized 10 (unchanged; scout's 9 was a miscount, HEAD has 10). Fingerprint 3da63ce5….
+
+### 2026-10-20 — B6-9 written (−16)
+- PrivacyCapabilityHandlingPolicyTest deleted by orchestrator (survivors ProductionTest :13/:27/:56-65); TEST_INDICATED_PRODUCTION_BUGS.md:134-136, SENSITIVE_DIAGNOSTICS_POLICY.md:106, PRIVACY_UI_ARCHITECTURE.md:103/:116 now name the ProductionTest.
+- PrivacyGuardTest 11→8 (union fail_closed_defaults test, 7 booleans + 4 modes; 2 enum tautologies removed), UPR5 7→6, PR5 10→9, RawPersistencePolicyTest 20→14 (survivor ConsolidationTest truth table :92-120 + literal rows; kept DO_NOT_STORE smoke + debug test), P8 8→7, Keystore 21→20.
+- Open for privacy review: ConsolidationTest expectedPolicy is a hand-written truth table (allowRaw/RedactedBody derived from mode) — acceptable? P8 `concurrent_settings_updates_dont_corrupt` also uses a fake repo (not deleted; report).
+- B6-22 writer running. Worker group: strict review running; architecture-guardian relaunched (first attempt API timeout).
+
+### 2026-10-20 — Worker group reviewer-strict: PASS (0 B/M/m)
+- All deletions mapped to survivors; exactly=0 checks verified against WorkerExecutionGuard production paths; X2 matches :423-428; release-added tests present.
+- NITs → final NIT pass: (1) WorkerRunLoggerTest:451 wrap Durable-table coVerify with row name; (2) WEG :911-915/:925/:933 any<WorkerCheckpointBlockedException>() → ofType<…>() (optional strengthening); (3) SENSITIVE_DIAGNOSTICS_POLICY.md:49 add schemaVersion to the sink field list (docs pass).
+- Awaiting architecture-guardian (retry) for acceptance.
+
+### 2026-10-20 — Worker group ACCEPTED; B6-22/B6-24/B3-9 written; B6-9 privacy REJECT iter 1
+- **Worker group (B6-13, B6-14, B6-15, B6-17) ACCEPTED:** strict PASS + architecture-guardian ACCEPT (split in 2 after two API timeouts; every invariant mapped to a surviving test) + green vr-20261019-232555-2ac04288. LOW notes → final NIT list: WEG :516 runGuarded CE test lacks exception-identity assert (pre-existing); WRR :348-356 hardcoded 9-name list (pre-existing).
+- B6-22 written: DatabaseBarrierTest 21→12 (write/read tables over Mode.entries × policies derived from DatabaseWriteBarrier.kt:30-39 / DatabaseReadBarrier.kt:20-37, coverage tests force decisions for new modes/policies; Robolectric runner removed), ExportReadBarrierTest 10→4 (class kept for HANG-003), new RestoreMaintenancePersistedBarrierRobolectricTest (1, LF). Release did not change either test file.
+- B6-24 written: BackupRestoreContractTest moved scenarios → data.backup (23; old file deleted by orchestrator; normalised CRLF). 59-count → schema-151 subset + exact UNTRACKED_BY_VERIFIER (13 tables). Claim "covered by whole-database backup copy" to be verified by strict review. Report: BackupVerifier KDoc counts inconsistent (58/59/tier totals) — production follow-up.
+- B3-9 written + orchestrator deleted scripts/guards/{check_direct_time_calls,check_lifecycle_bypasses,check_raw_money_aggregates}.kts, GuardSeededViolationTest.kt and the two empty dirs; test-shards.json guards.* removed ×2; doc retirement notes (CI_GUARDRAILS_BASELINE, ARCHITECTURE, CODEBASE_SEGMENTS, CODEBASE_INVENTORY, DEPENDENCY_MAP, test-suite-groups-2026-09); TESTING_ASSESSMENT rename note; SENSITIVE_DIAGNOSTICS_POLICY.md:49 schemaVersion.
+- B6-9 privacy-security-guardian REJECT (iter 1): truth table tautological for allowRaw/RedactedBody → literal 4-mode table replacing the smoke test; PR5 KDoc; add exact localOnlyCapabilities pin. Fix pass running. Follow-up (report): P8 concurrent_settings_updates_dont_corrupt does not pin the production Mutex (NEW-P8-001).
+
+### 2026-10-20 — B6-9 fix pass, X5/X6, B9 orphans done; validation launched
+- B6-9 fix: RawPersistencePolicyTest smoke test → `notification_policy_literal_truth_table_all_four_modes` (literal booleans for 7 fields × 4 modes, derived from RawPersistencePolicy.kt:24-25 + resolver :61-66); class comment corrected; PR5 KDoc pointer; ProductionTest +1 `local_only_capabilities_exact_set_is_pinned` (11).
+- X5/X6: scripts/verify_db_access_boundaries.py 6 promote_db_policy_v2 pointers → docs/ci/DB_TRIAGE_PROCEDURE.md wording (stderr still fixed string; error code/exit unchanged); no test pins full stderr.
+- B9 orphans: orchestrator deleted scripts/db_guard/mediation_analysis/fixtures/ (135 tracked files) and config/guards/worker_root_dispositions.yml after zero-reader greps; kept GR-13/GR-14 evidence yml and callgraph.py.
+- Validation (privacy/barrier/backup/architecture targeted, pytest db_access boundaries + db_guard, db_access, guard_docs_truth, legacy-tests) + strict review of B6-22/B6-24/B3-9 running.
+### 2026-10-20 — Validation privacy/barrier/backup/guards (git_revision 945afffc, fingerprint bd316eb8…): 6/6 PASS
+- vr-20261020-002036-2128f371 targeted (domain.privacy.*, data.privacy.*, barriers, BackupRestoreContractTest, architecture.*): 656/0 across 63 classes; all key counts match.
+- vr-20261020-002350-e785275a pytest test_verify_db_access_boundaries.py 275 passed; vr-20261020-002842-e50210d5 pytest scripts/db_guard 282 passed.
+- vr-20261020-003157-81a91440 db_access PASS (0/0); vr-20261020-003732-8bc14b4e guard_docs_truth PASS; vr-20261020-003743-cc2796f6 legacy-tests 235/0 (HANG-003 ExportReadBarrierTest 4 tests matched; no hang).
+
+### 2026-10-20 — B6-9 privacy re-review (iter 2): ACCEPT
+- All 28 literals match production; PR5 pointers fixed; localOnlyCapabilities exact set pinned. NIT → final NIT pass: RawPersistencePolicyTest.kt:15 comment names non-existent `email_message_id_hash_stable_across_modes_except_policy_denied` → `email_message_id_hash_stable_across_calls`.
+- B6-9 still needs reviewer-strict (tier) → include in final NIT-pass review.
+
+### 2026-10-20 — reviewer-strict B6-9 PASS (→ **B6-9 ACCEPTED**); X5/X6 + B9 FAIL (MINOR wording, iter 1)
+- ISSUE-B1: verify_db_access_boundaries.py :12/:423/:634/:652/:3570/:3699 — DB_TRIAGE_PROCEDURE.md is the baseline-triage doc; the active ownership-policy migration tool is scripts/migrate_db_policy_signatures.py (candidate reviewed, then replaces config/guards/db_ownership_policy.yml); line 12 leftover sentence. → final NIT pass.
+- ISSUE-C1: scripts/db_guard/mediation_analysis/callgraph.py :208-209/:366-368/:580-584 and __init__.py:1 comments reference deleted fixture corpus (HP-13..20, SL-01..03) → point to live pins (test_transparent_inline_methods_pin.py, test_parser_spans.py). → final NIT pass.
+- NIT: UPR5CompletionTest.kt:14-15 KDoc item still lists moved check.
+- Strict review of B6-22/B6-24/B3-9 timed out → split into three; B6-24 (backup coverage question) running.
+
+### 2026-10-20 — reviewer-strict B6-22 PASS → **B6-22 ACCEPTED**
+- NITs → final NIT pass: replace the 3 per-policy read tests with one loop over DatabaseReadPolicy.entries calling assertReadTableForPolicy (so a new policy's rows actually run); unused `import io.mockk.verify` in ExportReadBarrierTest.kt:5 (pre-existing).
+
+### 2026-10-20 — reviewer-strict B3-9: FAIL iter 1 (one MINOR doc line)
+- Deleted test was text-only; canonical guards registered (time_boundaries :348, raw_money_aggregates :722 1:1 extraction, db_access :598) and in the static-guards list; test-shards.json valid, no shard empty; docs truthful.
+- ISSUE-1: docs/ci/local-ci.md:114 `--tests "*GuardSeededViolation*"` (and "seeded violations" at :111) → final NIT pass.
+
+### 2026-10-20 — reviewer-strict B6-24 PASS → **B6-24 ACCEPTED**
+- Claim verified: backup = whole-DB snapshot (DatabaseBackupRepositoryImpl.kt:745 → SqliteSnapshotCreator VACUUM INTO :50 / file-copy fallback :34-36; CostbackupBundle.kt:610-611 database.sqlite); restore = whole-file swap (:1295, :2379). The 13 untracked tables are in backups; covered by DB-wide PRAGMA integrity_check / foreign_key_check only (no manifest row counts); redacted backups sanitize notification_intake / bank_statement_import_items (ExportAnonymizer.kt:281,394). NIT: reword comment :522-523 (suggested text in review) and drop hardcoded "schema 151". Report: stale production comment DatabaseBackupRepositoryImpl.kt:70 "Full 58-table verification".
+### Final NIT pass (two writers, sequential) — list
+- Kotlin: WorkerRunLoggerTest ~:451 row-name wrap; WEG checkpoint matcher ofType<WorkerCheckpointBlockedException>(); WEG :516 CE identity assert; WorkerRestoreRegressionTest :348-356 use listAllWorkerNames(); DatabaseBarrierTest one loop over DatabaseReadPolicy.entries; ExportReadBarrierTest:5 unused import; RawPersistencePolicyTest:15 comment; UPR5CompletionTest:14-15 KDoc; BackupRestoreContractTest :522-523 comment.
+- Scripts/docs: verify_db_access_boundaries.py ISSUE-B1 (migrate_db_policy_signatures.py; line-12 sentence); callgraph.py/__init__.py ISSUE-C1 comments; docs/ci/local-ci.md :111/:114; CI_GUARDRAILS_BASELINE.md :21/:97/:198/:337 "warning mode — 31 pre-existing" → historical.
+
+### 2026-10-20 — Final NIT passes done (Kotlin + scripts/docs)
+- Kotlin: Logger row-name wrap; WEG ofType<WorkerCheckpointBlockedException>() ×3 (incl. stop-requested verify) + CE identity assert; Restore listAllWorkerNames() + containsAll(old 9); DatabaseBarrierTest 12→10 (one loop over DatabaseReadPolicy.entries); ExportReadBarrierTest unused import; RawPersistencePolicyTest / UPR5 / BackupRestoreContractTest comments.
+- Scripts/docs: verify_db_access_boundaries.py pointers → scripts/migrate_db_policy_signatures.py (v1 → v2 candidate, reviewed, replaces config/guards/db_ownership_policy.yml), DB_TRIAGE_PROCEDURE dropped, stderr still fixed; callgraph.py/__init__.py comments → live pins (note: STRUCTURED_LAUNCH_METHODS has no dedicated pin — report); local-ci.md GuardSeededViolation line removed; CI_GUARDRAILS_BASELINE G-IGNORE-01 cells marked historical.
+- Next: FINAL GATE validation (unit-tests, static-guards, migration-tests, device set on emulator) + cheap re-review iter 2 of X5/X6/B9/B3-9 wording.
+
+### 2026-10-20 — Re-review iter 2 PASS → **X5/X6, B9 orphans, B3-9 ACCEPTED**
+- verify_db_access_boundaries.py 6 pointers → migrate_db_policy_signatures.py (accurate; stderr fixed string; tests assert only the error-code constant); callgraph/__init__ comments → live pins; local-ci.md command valid; CI_GUARDRAILS_BASELINE G-IGNORE-01 historical wording matches guard_registry.py:302-317.
+- Final gate validation (unit-tests, static-guards, migration-tests, device set) running.
+### 2026-10-20 — FINAL GATE (git_revision 945afffc, fingerprint cad00fe6…)
+- vr-20261020-011638-fe2a5c58 unit-tests: PASS 7326 passed / 0 failed / 1 skipped (523 s). Delta vs 7484 baseline = −158, exactly equal to the source @Test delta HEAD 7400 → worktree 7242 (orchestrator count) → intentional consolidation, nothing lost to discovery.
+- vr-20261020-012534-2c75dcc7 static-guards: PASS 25/25 (865 s).
+- vr-20261020-014012-1b191a67 migration-tests: PASS 17/0.
+- Device set: no device attached → orchestrator started AVD wave5-api35 (user instruction "Use the emulator"); connected runs pending.
+- Merge preview into bug-fixes (bff658e1 = release-1.0-wt tip; 2 new commits: b75f309b GreekBankParser H1 fix + test, bff658e1 docs): merge-tree clean, no conflicts. bug-fixes not checked out in any worktree → plan: commit audit work, merge bug-fixes into chore/test-suite-audit, targeted GreekBankParser tests + static-guards on merged tree, then fast-forward bug-fixes (`git push . chore/test-suite-audit:bug-fixes`, ff-only). No push.
+
+### 2026-10-20 — Device set PASS on emulator-5554 (git_revision 945afffc, fingerprint 4f6f7abf…)
+- vr-20261020-014206-13f3fe75 DatabaseMigrationTest 67/0; vr-20261020-014624-ff4da2fb DaoStressTest 20/0; vr-20261020-014803-c58944ff DaoDeviceSmokeTest 5/0.
+- **Audit post-merge scope COMPLETE and accepted.** Proceeding with "complete the merge" (user instruction): commit on chore/test-suite-audit → merge bug-fixes (bff658e1) → targeted GreekBankParser tests + static-guards → fast-forward bug-fixes. No push.
+
 ## Next action
-1. WAITING ON USER: release-merge go. All pre-merge work is accepted (B1-B5 non-WAIT, B6 READY, B7-A, B8 all, B9, final nit pass). On merge go: integrate f8433f51 into chore/test-suite-audit (never edit release worktrees), then the WAIT/BLOCKED slices and X1-X9, re-validate the B6/B7-3/B8 (JVM + device)/B9 legs, then the final gate (unit-tests + static-guards).
+1. Now: commit audit work → merge bug-fixes into chore/test-suite-audit → validate (GreekBankParser targeted + static-guards) → fast-forward bug-fixes (ff-only, local) → final report to user. No push unless asked.
 2. Then B5 (low-risk table merges), B6, B7/B7-K, B8, B9 per plan; batch validation with multi-filter runs + per-item JUnit counts.
 3. Human decision pending (not blocking): integrate release-1.0-wt tip into this branch (merge) — unblocks B3-1b, B3-9, B3b-6, B1R; 3 expected conflicts (NotificationCaptureService.kt, FinancialStressForecastEngineTest.kt, NotificationIntakeWorkerTimeoutTest.kt).
 4. Deferred to after release lands (B1R): B1R-4 tighten cancellation.json (G-CANCEL-01 CompositeOperationRunRecorder). static-guards cancellation leg expected RESOLVED:1 until then.

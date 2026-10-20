@@ -17,6 +17,8 @@ import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.*
 import kotlin.test.assertFailsWith
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -537,5 +539,63 @@ class SubscriptionManagerEngineTest {
         val slot = slot<SubscriptionPriceHistory>()
         coVerify { priceHistoryDao.insert(capture(slot)) }
         assertEquals("USD", slot.captured.currency)
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // getTotalMonthlySubscriptionCostAggregate — home currency failure mapping (B1-5)
+    // ──────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `getTotalMonthlySubscriptionCostAggregate rethrows CancellationException from homeCurrency instead of mapping to IllegalStateException`() = runTest {
+        coEvery { recurringExpenseRepository.getAll() } returns emptyList()
+        every { currencySettingsRepository.homeCurrency() } throws CancellationException("cancelled")
+
+        val engine = createEngine()
+
+        var thrown: Throwable? = null
+        try {
+            engine.getTotalMonthlySubscriptionCostAggregate()
+            fail("Expected CancellationException, but the aggregate was returned")
+        } catch (e: CancellationException) {
+            thrown = e
+        }
+        assertEquals(CancellationException::class.java, thrown!!::class.java)
+        assertEquals("cancelled", thrown?.message)
+    }
+
+    @Test
+    fun `getTotalMonthlySubscriptionCostAggregate rethrows CancellationException raised while collecting homeCurrency flow`() = runTest {
+        coEvery { recurringExpenseRepository.getAll() } returns emptyList()
+        every { currencySettingsRepository.homeCurrency() } returns flow<String> {
+            throw CancellationException("cancelled while collecting")
+        }
+
+        val engine = createEngine()
+
+        var thrown: Throwable? = null
+        try {
+            engine.getTotalMonthlySubscriptionCostAggregate()
+            fail("Expected CancellationException, but the aggregate was returned")
+        } catch (e: CancellationException) {
+            thrown = e
+        }
+        assertEquals(CancellationException::class.java, thrown!!::class.java)
+        assertEquals("cancelled while collecting", thrown?.message)
+    }
+
+    @Test
+    fun `getTotalMonthlySubscriptionCostAggregate maps non-cancellation homeCurrency failure to IllegalStateException`() = runTest {
+        coEvery { recurringExpenseRepository.getAll() } returns emptyList()
+        every { currencySettingsRepository.homeCurrency() } returns flow<String> {
+            throw RuntimeException("datastore unreadable")
+        }
+
+        val engine = createEngine()
+
+        val ex = assertFailsWith<IllegalStateException> {
+            engine.getTotalMonthlySubscriptionCostAggregate()
+        }
+        assertTrue(ex.message!!.startsWith("Home currency unavailable"))
+        assertFalse(ex is CancellationException)
     }
 }

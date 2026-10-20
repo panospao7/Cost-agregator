@@ -2,19 +2,17 @@
 
 **Original date:** May 6, 2026 (27 files with `@Ignore`)
 **Reconciled:** October 17, 2026 (test-suite-audit, B3 / B3b)
-**Current files with a real `@Ignore` annotation under `app/src/test`:** 3
+**Current files with a real `@Ignore` annotation under `app/src/test`:** 0
 
-## Current state (2026-10-17)
+## Current state
 
-Verified by grepping `app/src/test` for `@Ignore` annotations. Exactly three
-classes are still ignored. All three are release-owned (not in scope for the
-test-suite-audit programme):
-
-| File | `@Ignore` reason | Owner / path to revival |
-|------|------------------|-------------------------|
-| `data/repository/ReviewQueueRepositoryStressTest.kt` (8 tests) | "Stress test: may hang in CI, run manually" | Release-owned. Keep ignored for PR CI; run manually or in a nightly job. |
-| `data/repository/NotificationRepositoryStressTest.kt` (21 tests) | "Stress test: may hang in CI, run manually" | Release-owned. Same as above. |
-| `domain/notification/capture/NotificationIntakeEnqueueFailureTest.kt` | Real-Room + `runTest` + MockK suspend-extension (`Operation.await`) hang on first execution | Release-owned (RP-21 withTransaction/mock-hang workstream, RG17B-1). The one unique case (retry row surfaces after `nextAttemptAt`) is already covered live by `NotificationIntakeEnqueueFailureRoomTest.kt`; B3b-6 plans to delete this class once the release owner agrees. |
+Verified by grepping `app/src/test` and `app/src/androidTest` for `@Ignore` and
+`@Disabled` annotations. No test class carries either annotation. The three
+classes that were still ignored at the 2026-10-17 reconciliation
+(`ReviewQueueRepositoryStressTest`, `NotificationRepositoryStressTest`,
+`NotificationIntakeEnqueueFailureTest`) have been deleted; their replacements
+are listed under "Resolved by test-suite-audit" below. The G-IGNORE-01 budget
+baseline is 0.
 
 `BudgetRepositoryStressTest.kt` (15 tests) is NOT ignored any more (the
 `@Ignore` was removed in A.9 Batch 2). `ReceiptScanViewModelStressTest.kt` is
@@ -26,7 +24,7 @@ present and active.
 |-------|----------|
 | **DELETE** | Permanently ignored, duplicates better tests, source-text assertions, purely implementation-coupled, no unique business contract |
 | **REWRITE** | Protects financial correctness (money, tax, split precision, CSV escaping), has real business value but test is outdated/broken |
-| **NIGHTLY** | Deterministic stress/load/concurrency tests that are too slow for PRs but have value. As of 2026-10-17 no nightly workflow consumes these labels; the label survives only for the 2 stress classes above. |
+| **NIGHTLY** | Deterministic stress/load/concurrency tests that are too slow for PRs but have value. No nightly workflow consumes these labels; the label is retained only for historical reference. |
 
 ## Resolved by test-suite-audit (2026-10-17)
 
@@ -44,9 +42,9 @@ tree at reconciliation time (deleted or superseded in B3 / B3b); it is not an
 | 6 | `data/repository/CategoryRepositoryStressTest.kt` | NIGHTLY | DELETED (absent); live coverage in `CategoryRepositoryTest` |
 | 7 | `data/repository/ExpenseRepositoryStressTest.kt` | NIGHTLY | DELETED (absent); live coverage in `ExpenseRepositoryTest` |
 | 8 | `data/repository/NotificationProcessingPipelineStressTest.kt` | NIGHTLY | DELETED (absent); live coverage in `NotificationProcessingPipeline{Atomicity,OversizedAmount,Reliability,SourceLink}Test` |
-| 9 | `data/repository/NotificationRepositoryStressTest.kt` | NIGHTLY | STILL IGNORED (release-owned, see above) |
+| 9 | `data/repository/NotificationRepositoryStressTest.kt` | NIGHTLY | DELETED (absent); replaced by `data/repository/NotificationRepositoryDeleteAllNotificationsClockTest.kt` |
 | 10 | `data/repository/ReceiptRepositoryStressTest.kt` | NIGHTLY | REVIVED (original file absent) as `data/repository/ReceiptRepositoryOcrFallbackTest.kt` plus 3 receipt coordinator tests |
-| 11 | `data/repository/ReviewQueueRepositoryStressTest.kt` | NIGHTLY | STILL IGNORED (release-owned, see above) |
+| 11 | `data/repository/ReviewQueueRepositoryStressTest.kt` | NIGHTLY | DELETED (absent); replaced by `data/repository/ReviewQueueRepositoryTest.kt` |
 | 12 | `domain/tax/TaxCalculationTest.kt` | REWRITE | REVIVED (no `@Ignore`; class doc notes the old local VAT-extraction helper test stays removed) |
 | 13 | `domain/util/MoneyTest.kt` | REWRITE | REVIVED (no `@Ignore`) |
 | 14 | `domain/util/NotificationIdGeneratorTest.kt` | REWRITE | REVIVED (no `@Ignore`) |
@@ -67,20 +65,23 @@ tree at reconciliation time (deleted or superseded in B3 / B3b); it is not an
 Also revived in place (not in the original 27, previously ignored):
 `ui/screens/home/HomeViewModelCurrencyReloadTest.kt`.
 
+Also deleted (not in the original 27; ignored class added after the original
+audit): `domain/notification/capture/NotificationIntakeEnqueueFailureTest.kt`,
+replaced by `domain/notification/capture/NotificationIntakeEnqueueFailureRoomTest.kt`.
+
 ## Rollup
 
 | Status | Count (of original 27) |
 |--------|-------|
 | Revived (active, no `@Ignore`; includes ReceiptScanViewModelStressTest and BudgetRepositoryStressTest) | 15 |
-| Deleted / absent from tree | 10 |
-| Still ignored (release-owned) | 2 |
+| Deleted / absent from tree | 12 |
+| Still ignored | 0 |
 | **Total** | **27** |
 
-Plus one ignored class added after the original audit
-(`NotificationIntakeEnqueueFailureTest`), so the tree-wide total of real
-`@Ignore` annotations is **3**.
+The tree-wide total of real `@Ignore` annotations is **0**; this includes the
+class added after the original audit (`NotificationIntakeEnqueueFailureTest`),
+which has also been deleted.
 
 The original DELETE / REWRITE / NIGHTLY effort estimates and the nightly
 workflow recommendation (`--tests "*StressTest*"`) are superseded: no
-nightly workflow was created, and the two remaining stress classes stay
-manual until the release owner decides.
+nightly workflow was created.

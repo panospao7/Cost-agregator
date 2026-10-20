@@ -93,6 +93,12 @@ class BootReceiverStressTest {
         every { context.startForegroundService(any()) } throws RuntimeException("boom")
 
         receiver.onReceive(context, Intent(Intent.ACTION_BOOT_COMPLETED))
+
+        verify(exactly = 1) {
+            context.startForegroundService(
+                match { it.component?.className == NotificationCaptureService::class.java.name }
+            )
+        }
     }
 
     @Test

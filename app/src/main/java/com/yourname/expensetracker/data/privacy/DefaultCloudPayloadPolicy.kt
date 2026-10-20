@@ -7,6 +7,7 @@ import com.yourname.expensetracker.domain.privacy.CloudPayloadRedactor
 import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
 import com.yourname.expensetracker.domain.privacy.PreparedCloudPayload
 import com.yourname.expensetracker.domain.privacy.SafePrivacyMetadata
+import com.yourname.expensetracker.domain.util.CancellationSafe
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -88,7 +89,7 @@ class DefaultCloudPayloadPolicy @Inject constructor(
             } else {
                 val file = java.io.File(imagePath)
                 if (file.exists() && file.length() <= MAX_INLINE_IMAGE_BYTES) {
-                    runCatching { file.readBytes() }.getOrNull() to imageMimeType
+                    CancellationSafe.runCatchingCancellable { file.readBytes() }.getOrNull() to imageMimeType
                 } else null to null
             }
         } else null to null

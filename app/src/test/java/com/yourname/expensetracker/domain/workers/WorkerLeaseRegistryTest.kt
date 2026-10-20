@@ -72,30 +72,12 @@ class WorkerLeaseRegistryTest {
         assertTrue("Should drain after lease released", drainedAfter)
     }
 
-    // ── backup_waits_for_data_retention_worker_to_stop ────────────
-
-    @Test
-    fun backup_waits_for_data_retention_worker_to_stop() = runTest(dispatcher) {
-        val lease = registry.acquire("data_retention")
-        assertFalse(registry.awaitNoActiveWorkers(100))
-        lease.close()
-        assertTrue(registry.awaitNoActiveWorkers(100))
-    }
-
-    // ── cancelled_worker_releases_lease ──────────────────────────
-
-    @Test
-    fun cancelled_worker_releases_lease() = runTest(dispatcher) {
-        val lease = registry.acquire("receipt_matching")
-        assertEquals(1, registry.activeLeaseCount())
-
-        lease.close()
-        assertEquals(0, registry.activeLeaseCount())
-    }
+    // ── lease release / idempotent close ─────────────────────────
 
     @Test
     fun lease_close_is_idempotent() = runTest(dispatcher) {
         val lease = registry.acquire("receipt_matching")
+        assertEquals(1, registry.activeLeaseCount())
         lease.close()
         lease.close() // second close must not throw or double-decrement
         assertEquals(0, registry.activeLeaseCount())
@@ -213,15 +195,6 @@ class WorkerLeaseRegistryTest {
     }
 
     // ── PR6A: New lease registry hardening tests ──────────────────
-
-    @Test
-    fun `acquire after stop request is rejected`() = runTest(dispatcher) {
-        registry.requestStopAll("backup starting")
-
-        assertThrows(LeaseAcquisitionBlockedException::class.java) {
-            kotlinx.coroutines.runBlocking { registry.acquire("data_retention") }
-        }
-    }
 
     @Test
     fun `drain does not miss late acquire`() = runTest(dispatcher) {

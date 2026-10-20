@@ -1,6 +1,6 @@
 package com.yourname.expensetracker.data.backup
 
-import com.yourname.expensetracker.data.privacy.BackupEncryptionService
+import com.yourname.expensetracker.testfixtures.backup.lowIterationBackupEncryptionService
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -31,6 +31,13 @@ class CostbackupBundleTest {
 
     private val password = "zip-bomb-test-password"
 
+    /**
+     * One low-iteration PBKDF2 instance shared by EVERY create/extract/encrypt call in a
+     * test (the iteration count is not stored in the envelope, so mixing counts would fail
+     * authentication). No checked-in production-count fixture is read by this class.
+     */
+    private val encryption = lowIterationBackupEncryptionService()
+
     /** Deterministic epoch-millis stamped into the bundle manifest `createdAt`. */
     private val nowEpochMs = 1716163200000L // 2024-05-20 00:00 UTC
 
@@ -52,7 +59,8 @@ class CostbackupBundleTest {
             tableCounts = mapOf("expenses" to 1),
             databaseVersion = 1,
             redacted = true,
-            includeReceiptImages = false
+            includeReceiptImages = false,
+            encryptionService = encryption
         )
         assertTrue("bundle creation should succeed", result.isSuccess)
         return out
@@ -66,6 +74,7 @@ class CostbackupBundleTest {
         val result = CostbackupBundle.extract(
             bundle, outDir, password,
             nowEpochMs = nowEpochMs,
+            encryptionService = encryption,
             limits = CostbackupBundle.ExtractionLimits(
                 maxTotalDecompressedBytes = 10L * 1024 * 1024,
                 maxEntryBytes = 10L * 1024 * 1024,
@@ -100,6 +109,7 @@ class CostbackupBundleTest {
             databaseVersion = 1,
             redacted = true,
             includeReceiptImages = true,
+            encryptionService = encryption,
             privacyModeName = "REDACT_RAW_TEXT"
         )
         assertTrue("bundle creation should succeed", created.isSuccess)
@@ -108,7 +118,8 @@ class CostbackupBundleTest {
             bundleFile = bundle,
             outputDir = File(tmp.root, "extract_redacted_with_images"),
             password = password,
-            nowEpochMs = nowEpochMs
+            nowEpochMs = nowEpochMs,
+            encryptionService = encryption
         )
 
         assertTrue("bundle extraction should succeed", extracted.isSuccess)
@@ -136,7 +147,8 @@ class CostbackupBundleTest {
             tableCounts = mapOf("expenses" to 1),
             databaseVersion = 1,
             redacted = false,
-            includeReceiptImages = true
+            includeReceiptImages = true,
+            encryptionService = encryption
         )
 
         assertTrue("required receipt asset failure must fail the bundle", result.isFailure)
@@ -182,6 +194,7 @@ class CostbackupBundleTest {
             val result = CostbackupBundle.extract(
                 bundle, outDir, password,
                 nowEpochMs = nowEpochMs,
+                encryptionService = encryption,
                 limits = row.limits
             )
             assertTrue("[${row.name}] extract should fail", result.isFailure)
@@ -290,7 +303,8 @@ class CostbackupBundleTest {
             val outDir = File(tmp.root, "extract_created_at_$index")
 
             val result = CostbackupBundle.extract(
-                bundle, outDir, password, nowEpochMs = row.extractNowEpochMs
+                bundle, outDir, password, nowEpochMs = row.extractNowEpochMs,
+                encryptionService = encryption
             )
 
             assertTrue("[${row.name}] ${row.successMessage}", result.isSuccess)
@@ -340,7 +354,7 @@ class CostbackupBundleTest {
             // Header: magic (11B) + format version (2B big-endian uint16 = 1)
             fos.write("COSTBACKUP1".toByteArray(Charsets.US_ASCII))
             fos.write(byteArrayOf(0x00, 0x01))
-            BackupEncryptionService().encrypt(innerZip, fos, password)
+            encryption.encrypt(innerZip, fos, password)
         }
         return out
     }
@@ -371,6 +385,7 @@ class CostbackupBundleTest {
             databaseVersion = 7,
             redacted = true,
             includeReceiptImages = false,
+            encryptionService = encryption,
             tempDir = tmp.newFolder()
         )
         assertTrue("streaming bundle creation should succeed", result.isSuccess)
@@ -385,7 +400,8 @@ class CostbackupBundleTest {
         // The streamed bytes must extract like a File-produced bundle.
         val bundle = File(tmp.root, "streamed_bundle.costbackup").apply { writeBytes(bytes) }
         val extraction = CostbackupBundle.extract(
-            bundle, File(tmp.root, "extract_streamed"), password, nowEpochMs = 0L
+            bundle, File(tmp.root, "extract_streamed"), password, nowEpochMs = 0L,
+            encryptionService = encryption
         )
         assertTrue("streamed bundle should extract", extraction.isSuccess)
         assertEquals("stored createdAt must survive the streaming path", nowEpochMs, extraction.getOrNull()?.manifest?.createdAt)
@@ -414,6 +430,7 @@ class CostbackupBundleTest {
             databaseVersion = 1,
             redacted = true,
             includeReceiptImages = false,
+            encryptionService = encryption,
             tempDir = tempDir
         )
 

@@ -296,31 +296,10 @@ class PrivacyGuardTest {
     // "regex" could never match (vacuous). The rule is proven behaviourally by
     // ExportPrivacyPolicyTest.encrypted_disabled_does_not_allow_rawbackup_export.
 
-    // ── New guard types are defined in PrivacyCapability ─────────────────────
-
-    @Test
-    fun export_guard_capabilities_defined() {
-        val defined = setOf(
-            "EXPENSE_EXPORT", "EXPENSE_EXPORT_RAW", "EXPENSE_EXPORT_REDACTED",
-            "EXPENSE_EXPORT_ENCRYPTED", "DEBUG_RAW_EXPORT", "RAW_DATABASE_EXPORT"
-        )
-        val actual = PrivacyCapability.values().map { it.name }.toSet()
-        val missing = defined - actual
-        assertTrue(
-            "Missing export PrivacyCapability values: $missing",
-            missing.isEmpty()
-        )
-    }
-
-    // ── Cloud purposes include bank statement ─────────────────────────────────
-
-    @Test
-    fun cloud_purpose_bank_statement_validation_defined() {
-        val names = CloudPayloadPurpose.values().map { it.name }
-        assertTrue(names.contains("BANK_STATEMENT_VALIDATION"))
-        assertTrue(names.contains("BANK_TRANSACTION_CLASSIFICATION"))
-        assertTrue(names.contains("EXPORT_SUMMARY"))
-    }
+    // Enum-exists checks for the export PrivacyCapability values and the bank/export
+    // CloudPayloadPurpose values were removed (tautologies): they are asserted in
+    // ExportPrivacyPolicyTest (export capabilities), PrivacyCapabilityHandlingPolicyProductionTest
+    // (EXPENSE_EXPORT) and CloudPayloadPolicyTest (cloud purposes).
 
     // ── SafePrivacyMetadata blocks sensitive keys ─────────────────────────────
 
@@ -356,24 +335,39 @@ class PrivacyGuardTest {
     // ── Fail-closed defaults cover all sensitive features ─────────────────────
 
     @Test
-    fun fail_closed_defaults_disable_all_network_features() {
+    fun fail_closed_defaults_are_all_off_and_do_not_store() {
         val defaults = PrivacySettings.FAIL_CLOSED_DEFAULTS
         // Fail-closed means a corrupted store must not keep notification capture on
         // (the plain PrivacySettings() default is ON, so this differs on purpose).
-        assertFalse(defaults.notificationCaptureEnabled)
-        assertFalse(defaults.cloudAiEnabled)
-        assertFalse(defaults.receiptImageCloudEnabled)
-        assertFalse(defaults.bankStatementAiEnabled)
-        assertFalse(defaults.externalGeocodingEnabled)
-        assertFalse(defaults.backgroundLocationBackfillEnabled)
-        assertFalse(defaults.deviceGpsLocationEnabled)
-    }
-
-    @Test
-    fun fail_closed_defaults_set_all_raw_modes_to_do_not_store() {
-        val defaults = PrivacySettings.FAIL_CLOSED_DEFAULTS
-        assertEquals(RawStorageMode.DO_NOT_STORE, defaults.rawNotificationStorageMode)
-        assertEquals(RawStorageMode.DO_NOT_STORE, defaults.rawOcrStorageMode)
-        assertEquals(RawStorageMode.DO_NOT_STORE, defaults.emailReceiptStorageMode)
+        assertFalse("FAIL_CLOSED_DEFAULTS must disable notification capture", defaults.notificationCaptureEnabled)
+        assertFalse("FAIL_CLOSED_DEFAULTS must disable cloud AI", defaults.cloudAiEnabled)
+        assertFalse("FAIL_CLOSED_DEFAULTS must disable receipt image cloud upload", defaults.receiptImageCloudEnabled)
+        assertFalse("FAIL_CLOSED_DEFAULTS must disable bank statement AI", defaults.bankStatementAiEnabled)
+        assertFalse("FAIL_CLOSED_DEFAULTS must disable external geocoding", defaults.externalGeocodingEnabled)
+        assertFalse(
+            "FAIL_CLOSED_DEFAULTS must disable background location backfill",
+            defaults.backgroundLocationBackfillEnabled
+        )
+        assertFalse("FAIL_CLOSED_DEFAULTS must disable device GPS location", defaults.deviceGpsLocationEnabled)
+        assertEquals(
+            "FAIL_CLOSED_DEFAULTS must not store raw notifications",
+            RawStorageMode.DO_NOT_STORE,
+            defaults.rawNotificationStorageMode
+        )
+        assertEquals(
+            "FAIL_CLOSED_DEFAULTS must not store raw OCR",
+            RawStorageMode.DO_NOT_STORE,
+            defaults.rawOcrStorageMode
+        )
+        assertEquals(
+            "FAIL_CLOSED_DEFAULTS must not store email receipts",
+            RawStorageMode.DO_NOT_STORE,
+            defaults.emailReceiptStorageMode
+        )
+        assertEquals(
+            "FAIL_CLOSED_DEFAULTS must not store raw bank statements",
+            RawStorageMode.DO_NOT_STORE,
+            defaults.rawBankStatementStorageMode
+        )
     }
 }

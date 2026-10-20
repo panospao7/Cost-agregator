@@ -232,7 +232,7 @@ jobs:
   #   python3 scripts/verify_allowlist_compliance.py --fail-on-violation
   #   python3 scripts/verify_time_boundaries.py --root . --allowlist config/guards/time_boundary_exceptions.yml --fail-on-violation
   #   python3 scripts/verify_migration_matrix.py --fail-on-violation
-  #   python3 scripts/verify_ignored_test_budget.py --fail-on-violation --baseline 3
+  #   python3 scripts/verify_ignored_test_budget.py --fail-on-violation --baseline 0
   #   python3 scripts/ci/verify_deprecation_escalations.py --root .
   #   python -m pytest scripts/test_*.py -v
   static-guards:
@@ -295,7 +295,7 @@ jobs:
         run: ./gradlew :app:verifyRoomSchemaSnapshots -PstrictRoomSchemas=true --no-daemon --stacktrace
 
       - name: Verify no ignored-test growth
-        run: ./gradlew :app:verifyNoIgnoredGrowth -PmaxIgnoredTests=3 --no-daemon --stacktrace
+        run: ./gradlew :app:verifyNoIgnoredGrowth -PmaxIgnoredTests=0 --no-daemon --stacktrace
 
       - name: Run currency guardrails
         shell: pwsh

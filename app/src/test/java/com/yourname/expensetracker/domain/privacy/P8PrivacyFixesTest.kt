@@ -63,37 +63,6 @@ class P8PrivacyFixesTest {
         )
     }
 
-    @Test
-    fun concurrent_settings_updates_preserves_all_fields() = runTest {
-        // Verify that when two concurrent updates touch different fields,
-        // no field update is lost. Uses side-effect lambdas that mutate
-        // external state and return the settings unchanged.
-        val store = mutableMapOf(
-            "fieldA" to "original_a",
-            "fieldB" to "original_b"
-        )
-        val repo = createFakeRepository()
-
-        val job1 = async {
-            repo.updateSettings { settings ->
-                store["fieldA"] = "updated_a"
-                settings
-            }
-        }
-        val job2 = async {
-            repo.updateSettings { settings ->
-                store["fieldB"] = "updated_b"
-                settings
-            }
-        }
-
-        job1.await()
-        job2.await()
-
-        assertEquals("Field A must be preserved after concurrent update", "updated_a", store["fieldA"])
-        assertEquals("Field B must be preserved after concurrent update", "updated_b", store["fieldB"])
-    }
-
     // ── NEW-P8-005: requireAllowed checks specific capability ──
 
     @Test

@@ -7,9 +7,11 @@ ACTIVATED (PR-GR-07 Slice 2): the CLI runs the authoritative protocol-v2
 pipeline only.  The legacy v1 active-policy parsing (including the retired
 SIGNATURE_MISSING pre-gate) has been removed; a v1-shaped active policy can
 never authorize anything and is a controlled untrusted configuration error
-(classified ``DB_V2_ACTIVE_POLICY_NOT_V2``).  Run
-``scripts/ci/promote_db_policy_v2.py`` to promote the verified v2 candidate
-over the legacy active file.
+(classified ``DB_V2_ACTIVE_POLICY_NOT_V2``).  Remediation:
+regenerate or migrate the active policy to schemaVersion 2 with
+``scripts/migrate_db_policy_signatures.py``, which migrates the legacy v1
+ownership policy into a v2 candidate; after review, that candidate replaces
+``config/guards/db_ownership_policy.yml``.
 
 Pipeline (in order; every failure is an untrusted exit 2 with no partial
 findings):
@@ -418,7 +420,10 @@ STRUCTURAL_EXCEPTIONS_PATH = os.path.join(
 # SIGNATURE_MISSING classification, this code stays internal: the CLI report
 # carries only the registered umbrella diagnostic, while this constant names
 # the failure mode for operators and tests.  Remediation is always the same:
-# run scripts/ci/promote_db_policy_v2.py.
+# regenerate or migrate the active policy to schemaVersion 2
+# (scripts/migrate_db_policy_signatures.py produces a v2 candidate from the
+# legacy v1 policy; after review it replaces
+# config/guards/db_ownership_policy.yml).
 DB_V2_ACTIVE_POLICY_NOT_V2 = "DB_V2_ACTIVE_POLICY_NOT_V2"
 
 # The only activatable active-policy schema version and the bounded,
@@ -628,8 +633,10 @@ def load_db_ownership_policy(policy_path=None):
     There is NO tolerant legacy parsing: a v1-shaped active file (legacy
     ``class``/``daos``/``signature`` fields, no ``schemaVersion: 2``) is a
     controlled untrusted configuration error — exit 2, classified internally
-    as :data:`DB_V2_ACTIVE_POLICY_NOT_V2`.  Run
-    ``scripts/ci/promote_db_policy_v2.py`` to promote the verified candidate.
+    as :data:`DB_V2_ACTIVE_POLICY_NOT_V2`.  Regenerate or migrate the active
+    policy to schemaVersion 2 with ``scripts/migrate_db_policy_signatures.py``
+    (legacy v1 policy -> v2 candidate; after review the candidate replaces
+    ``config/guards/db_ownership_policy.yml``).
 
     Every rejection prints only controlled ``PolicyError`` codes and exits 2;
     raw payloads, file contents, and exception text are never emitted.
@@ -646,8 +653,8 @@ def load_db_ownership_policy(policy_path=None):
                   file=sys.stderr)
         print(
             f"ERROR: {DB_V2_ACTIVE_POLICY_NOT_V2}: active ownership policy "
-            "is not a schemaVersion 2 document; run "
-            "scripts/ci/promote_db_policy_v2.py",
+            "is not a schemaVersion 2 document; regenerate or migrate it "
+            "to schemaVersion 2 (see scripts/migrate_db_policy_signatures.py)",
             file=sys.stderr,
         )
         sys.exit(2)
@@ -3564,9 +3571,11 @@ def main(argv=None):
       2. Room inventory build;
       3. active v2 loader — ``load_policy_v2``, schemaVersion 2 required.  A
          v1-shaped active file is a controlled untrusted configuration error
-         classified :data:`DB_V2_ACTIVE_POLICY_NOT_V2`: run
-         ``scripts/ci/promote_db_policy_v2.py``.  There is no tolerant legacy
-         parsing and the retired SIGNATURE_MISSING pre-gate is removed;
+         classified :data:`DB_V2_ACTIVE_POLICY_NOT_V2`:
+         regenerate or migrate it (``scripts/migrate_db_policy_signatures.py``
+         builds a v2 candidate from the legacy v1 policy; after review it
+         replaces ``config/guards/db_ownership_policy.yml``).  There is no
+         tolerant legacy parsing and the retired SIGNATURE_MISSING pre-gate is removed;
       4. v2 exact source evidence — ``verify_v2_policy_source_evidence``
          over the loaded ``PolicyEntry`` objects, the declared root set, and
          the built Room inventory;
@@ -3694,7 +3703,9 @@ def main(argv=None):
                 # is no tolerant legacy parsing.  A v1-shaped active file is
                 # classified DB_V2_ACTIVE_POLICY_NOT_V2 (internal constant):
                 # the report carries only the registered umbrella diagnostic,
-                # and remediation is scripts/ci/promote_db_policy_v2.py.
+                # and remediation is scripts/migrate_db_policy_signatures.py
+                # (v1 -> v2 candidate, reviewed, then replaces
+                # config/guards/db_ownership_policy.yml).
                 policy_entries, policy_errors = load_policy_v2(ownership)
                 if policy_entries is None:
                     active_policy_schema_version = _read_active_policy_schema_version(

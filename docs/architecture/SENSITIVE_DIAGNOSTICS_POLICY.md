@@ -46,7 +46,7 @@ All background-work diagnostics use controlled, structured fields — never raw 
 - `WorkerRunLogger` (`domain/workers/`) writes run start/success/retry/failure rows to `BackgroundJobRunDao` (BackgroundJobRun table) with reason codes only.
 - `WorkerReasonCodes` (PR12J-1, `domain/workers/`) is the central exception → reason-code mapper. Codes are constrained to `[A-Z0-9_]{1,80}` controlled constants from `DiagnosticReasonCode` (e.g. `WORKER_TIMEOUT`, `WORKER_CANCELLED`, `WORKER_PRIVACY_DENIED`, `WORKER_NOTIFICATION_PERMISSION_DENIED`) — never raw exception messages, file paths, or PII.
 - `DiagnosticEventWriter` (`domain/diagnostics/`) writes typed `DiagnosticEvent` rows (pipeline, stage, outcome, severity, `DiagnosticReasonCode`, entity type/id, `sourceIdHash`, correlation/causation IDs, counts/booleans, `SafeEventMetadata`) to `PipelineDiagnosticEventDao`.
-- Terminal DB-write failures fall back to `WorkerTerminalDiagnosticSink` (PR12H-3); the durable implementation `FileWorkerTerminalDiagnosticSink` (PR12I-1) persists bounded JSONL records (workerName, runId, correlationId, workId, runAttempt, intendedStatus, reasonCode, failureCode, `errorClass` — exception class name only, timestamp) and must never throw.
+- Terminal DB-write failures fall back to `WorkerTerminalDiagnosticSink` (PR12H-3); the durable implementation `FileWorkerTerminalDiagnosticSink` (PR12I-1) persists bounded JSONL records (schemaVersion, workerName, runId, correlationId, workId, runAttempt, intendedStatus, reasonCode, failureCode, `errorClass` — exception class name only, timestamp) and must never throw.
 
 ### SafeDiagnostic typed error contract
 
@@ -103,7 +103,7 @@ All background-work diagnostics use controlled, structured fields — never raw 
 
 ### Unit enforcement
 
-- `PrivacyCapabilityHandlingPolicyTest` ensures all capabilities have explicit policy
+- `PrivacyCapabilityHandlingPolicyProductionTest` ensures all capabilities have explicit policy
 - `TIMBER_PII_LOGGING` capability is LOCAL_ONLY (no gate needed, just policy)
 - Debug data persistence gated by `debugDataPersistenceEnabled` setting
 - `EventMetadataSanitizer` verified in `EventMetadataSanitizerTest` (key classification, hash-key values, string/exception-message and JSON sanitization, `SafeEventMetadata` builder) plus the surrounding diagnostics tests `GlobalDurableDiagnosticsGoldenTest`, `DurableDiagnosticsAcceptanceTest`, `DurableDiagnosticsA8RegressionTest`, `DDL512RegressionTest`

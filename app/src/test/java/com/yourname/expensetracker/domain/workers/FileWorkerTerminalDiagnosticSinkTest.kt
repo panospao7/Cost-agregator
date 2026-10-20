@@ -239,45 +239,68 @@ class FileWorkerTerminalDiagnosticSinkTest {
         assertEquals("InstanceTestWorker", events[0].getString("workerName"))
     }
 
+    /**
+     * Privacy allow-list for one persisted line. The sink's writer (buildJsonLine in
+     * FileWorkerTerminalDiagnosticSink) ALWAYS emits all 11 keys of [SINK_SCHEMA_KEYS] and never
+     * omits a key conditionally: nullable values are written as JSON null, not dropped (see
+     * `nullable_fields_are_written_as_json_null`, which pins the same key set for the all-null
+     * event). This test therefore asserts the exact key set of a fully populated line (any added
+     * key such as a message, stack trace, payload or notification/bank/OCR field fails it), AND
+     * keeps the substring checks of the five tests it replaces so a sensitive key or a stack
+     * frame fails with a specific message.
+     */
     @Test
-    fun `diagnostic_does_not_store_exception_message`() = runTest {
+    fun `diagnostic_persists_exact_allowlisted_keys_and_no_sensitive_content`() = runTest {
         val sink = FileWorkerTerminalDiagnosticSink(context)
-        // Record an event — the sink interface does not accept an errorMessage
-        // parameter, so by design no exception message CAN be stored.
+        // The sink interface does not accept an errorMessage parameter, so by design no
+        // exception message CAN be stored.
         record(sink, TestEvent())
 
         val jsonLines = readAllStrings()
         assertEquals(1, jsonLines.size)
-
-        // Verify no sensitive error-message keywords are present
         val line = jsonLines[0]
+
+        // Exact key allow-list (replaces open-ended "does not contain" probing as the primary guard).
+        val obj = JSONObject(line)
+        assertEquals(
+            "persisted line must carry exactly the allow-listed sink schema keys",
+            SINK_SCHEMA_KEYS,
+            obj.keys().asSequence().toSet()
+        )
+
+        // --- former diagnostic_does_not_store_exception_message ---
         assertFalse("JSON must NOT contain 'errorMessage' field", line.contains("\"errorMessage\""))
         assertFalse("JSON must NOT contain 'message' field", line.contains("\"message\""))
         assertFalse("JSON must NOT contain 'cause' field", line.contains("\"cause\""))
-    }
 
-    @Test
-    fun `diagnostic_does_not_store_stacktrace`() = runTest {
-        val sink = FileWorkerTerminalDiagnosticSink(context)
-        record(sink, TestEvent())
-
-        val jsonLines = readAllStrings()
-        assertEquals(1, jsonLines.size)
-
-        val line = jsonLines[0]
-        // Stack trace elements — ensure no raw stack frames, file references,
-        // or standalone exception keys are present. The errorClass field
-        // contains only a class name (e.g. "TimeoutCancellationException"),
-        // which is safe and expected.
+        // --- former diagnostic_does_not_store_stacktrace ---
+        // No raw stack frames, file references, or standalone exception keys. The errorClass
+        // field contains only a class name (e.g. "TimeoutCancellationException"), which is
+        // safe and expected.
         assertFalse("JSON must NOT contain 'stackTrace'", line.contains("\"stackTrace\""))
         assertFalse("JSON must NOT contain 'stack_trace'", line.contains("\"stack_trace\""))
         assertFalse("JSON must NOT contain '.kt:' (file references from stacks)",
             line.contains(".kt:"))
-        // Ensure there's no "exceptionMessage" or "exception" key carrying raw text
         assertFalse("JSON must NOT contain 'exceptionMessage'", line.contains("\"exceptionMessage\""))
-        // Verify the errorClass is properly set to the expected class name
-        val obj = JSONObject(line)
+        // The errorClass is properly set to the expected class name
         assertEquals("TimeoutCancellationException", obj.optString("errorClass"))
+
+        // --- former diagnostic_does_not_store_notification_content ---
+        assertFalse("JSON must NOT contain 'notification' key", line.contains("\"notification"))
+        assertFalse("JSON must NOT contain 'payload'", line.contains("\"payload\""))
+        assertFalse("JSON must NOT contain 'title' (notification title)", line.contains("\"title\""))
+        assertFalse("JSON must NOT contain 'body' (notification body)", line.contains("\"body\""))
+
+        // --- former diagnostic_does_not_store_bank_data ---
+        assertFalse("JSON must NOT contain 'account'", line.contains("\"account"))
+        assertFalse("JSON must NOT contain 'iban'", line.contains("\"iban\""))
+        assertFalse("JSON must NOT contain 'balance'", line.contains("\"balance\""))
+        assertFalse("JSON must NOT contain 'transaction'", line.contains("\"transaction"))
+
+        // --- former diagnostic_does_not_store_ocr_receipt_data ---
+        assertFalse("JSON must NOT contain 'ocr'", line.contains("\"ocr"))
+        assertFalse("JSON must NOT contain 'receipt'", line.contains("\"receipt"))
+        assertFalse("JSON must NOT contain 'merchant'", line.contains("\"merchant\""))
     }
 
     @Test
@@ -478,53 +501,6 @@ class FileWorkerTerminalDiagnosticSinkTest {
     }
 
     @Test
-    fun `diagnostic_does_not_store_notification_content`() = runTest {
-        val sink = FileWorkerTerminalDiagnosticSink(context)
-        record(sink, TestEvent())
-
-        val jsonLines = readAllStrings()
-        assertEquals(1, jsonLines.size)
-
-        val line = jsonLines[0]
-        // Verify no notification-related sensitive data
-        assertFalse("JSON must NOT contain 'notification' key", line.contains("\"notification"))
-        assertFalse("JSON must NOT contain 'payload'", line.contains("\"payload\""))
-        assertFalse("JSON must NOT contain 'title' (notification title)", line.contains("\"title\""))
-        assertFalse("JSON must NOT contain 'body' (notification body)", line.contains("\"body\""))
-    }
-
-    @Test
-    fun `diagnostic_does_not_store_bank_data`() = runTest {
-        val sink = FileWorkerTerminalDiagnosticSink(context)
-        record(sink, TestEvent())
-
-        val jsonLines = readAllStrings()
-        assertEquals(1, jsonLines.size)
-
-        val line = jsonLines[0]
-        // Verify no bank-related sensitive data
-        assertFalse("JSON must NOT contain 'account'", line.contains("\"account"))
-        assertFalse("JSON must NOT contain 'iban'", line.contains("\"iban\""))
-        assertFalse("JSON must NOT contain 'balance'", line.contains("\"balance\""))
-        assertFalse("JSON must NOT contain 'transaction'", line.contains("\"transaction"))
-    }
-
-    @Test
-    fun `diagnostic_does_not_store_ocr_receipt_data`() = runTest {
-        val sink = FileWorkerTerminalDiagnosticSink(context)
-        record(sink, TestEvent())
-
-        val jsonLines = readAllStrings()
-        assertEquals(1, jsonLines.size)
-
-        val line = jsonLines[0]
-        // Verify no OCR/receipt-related sensitive data
-        assertFalse("JSON must NOT contain 'ocr'", line.contains("\"ocr"))
-        assertFalse("JSON must NOT contain 'receipt'", line.contains("\"receipt"))
-        assertFalse("JSON must NOT contain 'merchant'", line.contains("\"merchant\""))
-    }
-
-    @Test
     fun `nullable_fields_are_written_as_json_null`() = runTest {
         val sink = FileWorkerTerminalDiagnosticSink(context)
         record(sink, TestEvent(
@@ -544,6 +520,13 @@ class FileWorkerTerminalDiagnosticSinkTest {
         assertTrue("runAttempt should be JSON null", json.isNull("runAttempt"))
         assertTrue("reasonCode should be JSON null", json.isNull("reasonCode"))
         assertTrue("errorClass should be JSON null", json.isNull("errorClass"))
+        // isNull() is also true for an ABSENT key, so pin that nulls are written, not omitted:
+        // the all-null event carries exactly the same key set as a fully populated one.
+        assertEquals(
+            "null values must be written as JSON null, never dropped",
+            SINK_SCHEMA_KEYS,
+            json.keys().asSequence().toSet()
+        )
     }
 
     @Test
@@ -646,6 +629,18 @@ class FileWorkerTerminalDiagnosticSinkTest {
             "Old backup must be replaced (modtime changed: $oldBackupModTime -> $newBackupModTime)",
             newBackupModTime >= oldBackupModTime
         )
+        // Content proof (modtime alone cannot distinguish replaced from untouched): the backup is
+        // the rotated-out current file, so it holds the filler events and not the pre-created
+        // backup's worker.
+        val backupText = backupFile.readText()
+        assertFalse(
+            "the pre-existing backup's workerName must be gone after rotation",
+            backupText.contains("\"workerName\":\"Old\"")
+        )
+        assertTrue(
+            "the backup must hold the rotated-out filler events",
+            backupText.contains("\"workerName\":\"$largeWorkerName\"")
+        )
     }
 
     /**
@@ -694,80 +689,52 @@ class FileWorkerTerminalDiagnosticSinkTest {
     // ------------------------------------------------------------------
 
     @Test
-    fun `file_sink_records_event_under_timeout`() = runTest {
-        // Verify that a normal (fast) write completes successfully
-        // within the bounded timeout.
-        val sink = FileWorkerTerminalDiagnosticSink(context)
-        val event = TestEvent(
-            workerName = "BoundedWriteWorker",
-            runId = 100L,
-            failureCode = "TERMINAL_WRITE_TIMEOUT",
-            errorClass = "TimeoutCancellationException"
-        )
-        record(sink, event)
-
-        val events = readAll()
-        assertEquals("Should have written exactly 1 event under timeout", 1, events.size)
-
-        val json = events[0]
-        assertEquals("BoundedWriteWorker", json.getString("workerName"))
-        assertEquals(100L, json.getLong("runId"))
-        assertEquals("TERMINAL_WRITE_TIMEOUT", json.getString("failureCode"))
-    }
-
-    @Test
-    fun `file_sink_slow_append_times_out`() = runTest {
+    fun `file_sink_slow_append_times_out_without_throwing_and_sink_recovers`() = runTest {
         // Use DelayedDiagnosticSink with a delay longer than the
         // FILE_DIAGNOSTIC_WRITE_TIMEOUT_MS (500 ms). The cancellable
         // delay inside appendLineSafely allows withTimeout to fire.
         // If the timeout did NOT fire, record() would only return after the
         // 2000 ms delay and the real append would have written the line.
-        val sink = DelayedDiagnosticSink(context, delayMs = 2000L)
-        val event = TestEvent(
-            workerName = "SlowWorker",
-            runId = 200L,
-            failureCode = "TERMINAL_WRITE_TIMEOUT"
-        )
+        // Only the FIRST append is slow (slowCalls = 1); the second one is the real fast append,
+        // which proves the timeout left the sink usable (mutex released, nothing half-written).
+        val sink = DelayedDiagnosticSink(context, delayMs = 2000L, slowCalls = 1)
 
         withCapturedTimber { tree ->
-            // This must not throw — the TimeoutCancellationException is
-            // caught internally and logged via Timber.e.
-            record(sink, event)
+            // This must not throw: the TimeoutCancellationException is caught internally
+            // and logged via Timber.e.
+            try {
+                record(
+                    sink,
+                    TestEvent(
+                        workerName = "SlowWorker",
+                        runId = 300L,
+                        failureCode = "TERMINAL_WRITE_TIMEOUT"
+                    )
+                )
+            } catch (e: Exception) {
+                throw AssertionError("Timeout must NOT throw to the caller - sink must catch it internally", e)
+            }
 
             // The append was cancelled before reaching the file: strictly nothing on disk.
             assertFalse(
                 "Slow append must be cancelled by the timeout before any file is created",
                 File(tempDir, "diagnostics/worker_terminal_diagnostics.jsonl").exists()
             )
-            assertTrue(readAll().isEmpty())
+            assertTrue("timed-out event must not be persisted", readAll().isEmpty())
             val timeoutErrors = tree.sinkErrors()
             assertEquals("timeout is logged exactly once by the sink", 1, timeoutErrors.size)
             assertTrue(
                 "the dedicated timeout catch (not the generic one) must log it, was '${timeoutErrors.single().message}'",
                 timeoutErrors.single().message.startsWith(SINK_TIMEOUT_PREFIX)
             )
+
+            // Recovery: the next event is written by the same instance.
+            record(sink, TestEvent(workerName = "SlowWorker", runId = 301L))
+            val events = readAll()
+            assertEquals("sink must still work after a timeout (mutex released)", 1, events.size)
+            assertEquals(301L, events.single().getLong("runId"))
+            assertEquals("no further sink error for the successful write", 1, tree.sinkErrors().size)
         }
-    }
-
-    @Test
-    fun `file_sink_timeout_does_not_throw`() = runTest {
-        // Verify that even when the timeout fires, the method does NOT
-        // propagate TimeoutCancellationException to the caller, and that the
-        // timeout leaves the sink usable (mutex released, nothing half-written).
-        // Only the first append is slow; the second one is the real fast append.
-        val sink = DelayedDiagnosticSink(context, delayMs = 2000L, slowCalls = 1)
-
-        try {
-            record(sink, TestEvent(workerName = "NoThrowWorker", runId = 300L))
-        } catch (e: Exception) {
-            throw AssertionError("Timeout must NOT throw to the caller - sink must catch it internally", e)
-        }
-        assertTrue("timed-out event must not be persisted", readAll().isEmpty())
-
-        record(sink, TestEvent(workerName = "NoThrowWorker", runId = 301L))
-        val events = readAll()
-        assertEquals("sink must still work after a timeout (mutex released)", 1, events.size)
-        assertEquals(301L, events.single().getLong("runId"))
     }
 
     @Test
@@ -813,50 +780,6 @@ class FileWorkerTerminalDiagnosticSinkTest {
                 throw AssertionError("Line $index is not valid JSON: $line")
             }
         }
-    }
-
-    @Test
-    fun `file_sink_rotation_still_works`() = runTest {
-        // Verify that file rotation still functions correctly under the
-        // new bounded-suspend path. Fill the file past 512 KB, trigger
-        // rotation, and confirm the backup exists with old contents.
-        val sink = FileWorkerTerminalDiagnosticSink(context)
-
-        val currentFile = File(tempDir, "diagnostics/worker_terminal_diagnostics.jsonl")
-        val backupFile = File(tempDir, "diagnostics/worker_terminal_diagnostics.jsonl.1")
-
-        val largeWorkerName = "B".repeat(250) // ~500 bytes per event
-
-        // Fill past rotation threshold
-        var count = 0
-        while (currentFile.exists().not() || currentFile.length() <= 512L * 1024L) {
-            record(sink, TestEvent(
-                workerName = largeWorkerName,
-                runId = count.toLong(),
-                workId = null,
-                correlationId = null,
-                runAttempt = null,
-                reasonCode = null,
-                errorClass = null
-            ))
-            count++
-            if (count > 5000) break // safety
-        }
-
-        // Trigger rotation
-        record(sink, TestEvent(
-            workerName = "PostRotationBounded",
-            runId = 999L
-        ))
-
-        // Verify rotation occurred
-        assertTrue("Backup file must exist after rotation", backupFile.exists())
-        assertTrue("Backup file must have content", backupFile.length() > 0)
-        assertTrue("Current file must exist after rotation", currentFile.exists())
-        assertTrue(
-            "Current file must be small after rotation (was ${currentFile.length()} bytes)",
-            currentFile.length() < 100L * 1024L
-        )
     }
 }
 

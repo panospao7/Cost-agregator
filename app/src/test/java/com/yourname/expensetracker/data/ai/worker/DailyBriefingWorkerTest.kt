@@ -178,27 +178,6 @@ class DailyBriefingWorkerTest {
     }
 
     @Test
-    fun `no data empty briefing stored`() = runTest {
-        val emptyProcessed = sampleProcessedData()
-        coEvery { dashboardDataProvider.getProcessedDataFlow(analyticsRepository) } returns flowOf(emptyProcessed)
-
-        val result = buildWorker().doWork()
-
-        assertEquals(Result.success(), result)
-        coVerify(exactly = 1) { generateDashboardBriefingUseCase(emptyProcessed, 1000L) }
-    }
-
-    // TODO: Tautological mock test — consider adding real behavior assertion
-    @Test
-    fun `worker returns success`() = runTest {
-        coEvery { dashboardDataProvider.getProcessedDataFlow(analyticsRepository) } returns flowOf(sampleProcessedData())
-
-        val result = buildWorker().doWork()
-
-        assertEquals(Result.success(), result)
-    }
-
-    @Test
     fun `worker handles engine failure gracefully`() = runTest {
         val processed = sampleProcessedData()
         coEvery { dashboardDataProvider.getProcessedDataFlow(analyticsRepository) } returns flowOf(processed)
@@ -347,18 +326,6 @@ class DailyBriefingWorkerTest {
                 any<suspend (WorkerRunContext) -> Unit>()
             )
         } returns WorkerGuardResult.Skipped(DiagnosticReasonCode.RESTORE_BLOCKED.name)
-
-        val result = buildWorker().doWork()
-
-        assertEquals(Result.success(), result)
-        verify(atLeast = 1) {
-            workManager.enqueueUniqueWork(any(), any(), any<androidx.work.OneTimeWorkRequest>())
-        }
-    }
-
-    @Test
-    fun `success reschedules next run`() = runTest {
-        coEvery { dashboardDataProvider.getProcessedDataFlow(analyticsRepository) } returns flowOf(sampleProcessedData())
 
         val result = buildWorker().doWork()
 
@@ -603,46 +570,6 @@ class DailyBriefingWorkerTest {
                 dateKey = any(), startedAt = any(), notificationId = any()
             )
         }
-    }
-
-    @Test
-    fun `timeout_after_delivery_retry_uses_same_notification_id`() = runTest {
-        val processed = sampleProcessedData()
-        coEvery { dashboardDataProvider.getProcessedDataFlow(analyticsRepository) } returns flowOf(processed)
-        coEvery { generateDashboardBriefingUseCase(processed, 1000L) } returns Unit
-        // Allow artifact check to return null so both attempts generate+deliver
-        coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
-
-        val capturedIds = mutableListOf<Int>()
-        coEvery {
-            deliverProactiveBriefingNotificationUseCase(
-                dateKey = any(), startedAt = any(), notificationId = capture(capturedIds)
-            )
-        } returns Unit
-
-        // First attempt times out after delivery; second succeeds.
-        var addNotifCount = 0
-        every { ctx.addNotificationsSent() } answers {
-            addNotifCount++
-            if (addNotifCount == 1) {
-                throw fakeTimeoutCancellationException()
-            }
-        }
-
-        // First attempt → retry after timeout
-        val result1 = buildWorker().doWork()
-        assertEquals(Result.retry(), result1)
-
-        // Second attempt (retry) → complete successfully
-        val result2 = buildWorker().doWork()
-        assertEquals(Result.success(), result2)
-
-        // Both attempts should have called delivery with the same deterministic notificationId
-        assertEquals(2, capturedIds.size)
-        assertEquals(
-            "Retry must use same deterministic notificationId as first attempt",
-            capturedIds[0], capturedIds[1]
-        )
     }
 
     @Test

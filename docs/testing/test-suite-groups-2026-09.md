@@ -12,7 +12,7 @@ Package filters are abbreviated; every filter is `com.yourname.expensetracker.<p
 
 | Group ID | Runner profile/shard | Package filters | Contents summary | File count | Notes |
 |---|---|---|---|---|---|
-| GROUP-A | `architecture-contracts` | architecture, consistency, contracts, guard, guards, verification (+ metrics, diagnostics — sweep reporting only) | architecture guards, consistency cross-checks, contract tests, guard suites, verification, metrics consistency, durable diagnostics | ~53 | Runner shard covers only the 6 listed packages; `metrics/` and `diagnostics/` are added to this group for sweep reporting (see GROUP-E note). Verify. |
+| GROUP-A | `architecture-contracts` | architecture, consistency, contracts, guard, verification (+ metrics, diagnostics — sweep reporting only) | architecture guards, consistency cross-checks, contract tests, guard suites, verification, metrics consistency, durable diagnostics | ~53 | Runner shard covers only the 5 listed packages; `metrics/` and `diagnostics/` are added to this group for sweep reporting (see GROUP-E note). Verify. |
 | GROUP-B | `data` | data | data layer: ai, backup, currency, database (incl. dao), email, location, privacy, repository, security, service, speech, store | 139 | Largest shard. Contains HANG-003 (`data.backup.ExportReadBarrierTest`). |
 | GROUP-C | `domain-a-m` | domain.{ai, alerts, analytics, bank, budget, business, carbon, cashflow, categorization, challenge, common, consistency, core, currency, dashboard, debug, dto, engine, export, forecasting, groups, health, income, intelligence, investment, location, logic, model} | domain logic a–m (28 packages per shard filters) | ~163 | Verify. |
 | GROUP-D | `domain-n-z` | domain.{naturallanguage, negotiation, notification, parser, price, privacy, provenance, receipt, receiptmatching, recurring, reminder, savings, sideeffect, split, subscription, tax, transaction, usecase, util, widget, workers} | domain logic n–z (21 packages per shard filters) | ~136 | Contains HANG-001 (`domain.receipt.lifecycle.*`) and HANG-002 (`domain.transaction.lifecycle.*`). Verify. |
@@ -61,7 +61,7 @@ Sum check: 20 + 3 + 1 + 1 + 1 + 1 = 27.
 
 ### Special profiles
 
-- **`trusted-tests`** — fast structural gate; filters architecture/contracts/guard/guards/verification (per the `trusted` block in `test-shards.json`; note it does **not** include `consistency`, so it is narrower than GROUP-A). Not a replacement for the full suite.
+- **`trusted-tests`** — fast structural gate; filters architecture/contracts/guard/verification (per the `trusted` block in `test-shards.json`; note it does **not** include `consistency`, so it is narrower than GROUP-A). Not a replacement for the full suite.
 - **`legacy-tests`** — isolates ledgered hang suspects (HANG-001/002/003); never skips them from `unit-tests` or normal shards.
 - **`migration-tests`** — `*Migration*` filter over JVM tests; does **NOT** catch the androidTest `MigrationContractTest` (device-only, GROUP-H).
 

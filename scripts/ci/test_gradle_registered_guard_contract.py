@@ -187,4 +187,4 @@ def test_ignored_test_wrapper_cannot_override_the_registry_budget() -> None:
     assert "ignoredCount" not in task
     assert '"--baseline"' not in task
     arguments = GUARD_REGISTRY["ignored_test_budget"]["execution"]["arguments"]
-    assert arguments == ("--fail-on-violation", "--baseline", "3")
+    assert arguments == ("--fail-on-violation", "--baseline", "0")

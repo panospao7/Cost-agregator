@@ -8,11 +8,11 @@ import org.junit.Test
 /**
  * PR2 acceptance tests:
  *
- * store_raw_preserves_allowed_raw_fields
- * store_redacted_replaces_body_fields
- * metadata_only_omits_body_but_keeps_hashes
- * do_not_store_omits_body_and_plain_identifiers
- * email_message_id_hash_stable_across_modes_except_policy_denied
+ * (other sources x modes: see RawPersistencePolicyConsolidationTest matrix; its allowRawBody /
+ * allowRedactedBody expectations use the production constructor, so they are pinned independently
+ * only by the literal table below)
+ * notification_policy_literal_truth_table_all_four_modes (do_not_store omits body and parsed items)
+ * email_message_id_hash_stable_across_calls (the HMAC hash of a message id is repeatable)
  * hash_service_does_not_use_String_hashCode
  */
 class RawPersistencePolicyTest {
@@ -24,79 +24,109 @@ class RawPersistencePolicyTest {
 
     // ── Mode invariants ────────────────────────────────────────────────────────
 
-    @Test
-    fun store_raw_preserves_allowed_raw_fields() {
-        val policy = resolver.forSourceSync(
-            RawSourceType.NOTIFICATION,
-            PrivacySettings(rawNotificationStorageMode = RawStorageMode.STORE_RAW)
-        )
-        assertTrue(policy.allowRawBody)
-        assertTrue(policy.allowParsedItems)
-        assertTrue(policy.allowExternalIdHash)
-    }
+    // Fields pinned with independent literals HERE (NOTIFICATION source, debug persistence off, all
+    // four modes): allowRawBody, allowRedactedBody, allowParsedAmountDateCurrency, allowParsedItems,
+    // allowParsedMerchant, allowExternalIdHash, allowDebugBody.
+    //
+    // The remaining source x mode x debug combinations (all seven sources) are covered by
+    // RawPersistencePolicyConsolidationTest.matrix_all_seven_sources_x_all_modes_match_truth_table,
+    // which builds its expectations with the production RawPersistencePolicy constructor, so its
+    // allowRawBody / allowRedactedBody expectations are NOT independent of production; those two
+    // fields are pinned independently only by the literal table below.
+    // The fail-closed dedupe-hash rows (notification/email/bank true, OCR false) are also pinned in
+    // RawPersistencePolicyConsolidationTest.forSource_fail_closed_still_allows_dedupe_hash_for_dedupe_sources.
 
-    @Test
-    fun store_redacted_replaces_body_fields() {
-        val policy = resolver.forSourceSync(
-            RawSourceType.RECEIPT_OCR,
-            PrivacySettings(rawOcrStorageMode = RawStorageMode.STORE_REDACTED)
-        )
-        assertFalse(policy.allowRawBody)
-        assertTrue(policy.allowRedactedBody)
-        assertTrue(policy.allowParsedItems)
-        assertTrue(policy.allowExternalIdHash)
-    }
+    /** One row of the literal NOTIFICATION truth table. */
+    private data class PolicyRow(
+        val name: String,
+        val mode: RawStorageMode,
+        val allowRawBody: Boolean,
+        val allowRedactedBody: Boolean,
+        val allowParsedAmountDateCurrency: Boolean,
+        val allowParsedItems: Boolean,
+        val allowParsedMerchant: Boolean,
+        val allowExternalIdHash: Boolean,
+        val allowDebugBody: Boolean
+    )
 
+    /**
+     * Literal truth table for NOTIFICATION (debug persistence off) across all four modes.
+     * DO_NOT_STORE omits body, redacted body and parsed items/merchant/amount, but notification
+     * still keeps the dedupe hash (NOTIFICATION needs a dedupe hash). METADATA_ONLY keeps
+     * amount/date/currency and the hash only. STORE_REDACTED has no raw body; STORE_RAW has all.
+     */
     @Test
-    fun metadata_only_omits_body_but_keeps_hashes() {
-        val policy = resolver.forSourceSync(
-            RawSourceType.NOTIFICATION,
-            PrivacySettings(rawNotificationStorageMode = RawStorageMode.STORE_METADATA_ONLY)
+    fun notification_policy_literal_truth_table_all_four_modes() {
+        val rows = listOf(
+            PolicyRow(
+                name = "STORE_RAW",
+                mode = RawStorageMode.STORE_RAW,
+                allowRawBody = true,
+                allowRedactedBody = true,
+                allowParsedAmountDateCurrency = true,
+                allowParsedItems = true,
+                allowParsedMerchant = true,
+                allowExternalIdHash = true,
+                allowDebugBody = false
+            ),
+            PolicyRow(
+                name = "STORE_REDACTED",
+                mode = RawStorageMode.STORE_REDACTED,
+                allowRawBody = false,
+                allowRedactedBody = true,
+                allowParsedAmountDateCurrency = true,
+                allowParsedItems = true,
+                allowParsedMerchant = true,
+                allowExternalIdHash = true,
+                allowDebugBody = false
+            ),
+            PolicyRow(
+                name = "METADATA_ONLY",
+                mode = RawStorageMode.STORE_METADATA_ONLY,
+                allowRawBody = false,
+                allowRedactedBody = false,
+                allowParsedAmountDateCurrency = true,
+                allowParsedItems = false,
+                allowParsedMerchant = false,
+                allowExternalIdHash = true,
+                allowDebugBody = false
+            ),
+            PolicyRow(
+                name = "DO_NOT_STORE",
+                mode = RawStorageMode.DO_NOT_STORE,
+                allowRawBody = false,
+                allowRedactedBody = false,
+                allowParsedAmountDateCurrency = false,
+                allowParsedItems = false,
+                allowParsedMerchant = false,
+                allowExternalIdHash = true,
+                allowDebugBody = false
+            )
         )
-        assertFalse(policy.allowRawBody)
-        assertFalse(policy.allowRedactedBody)
-        assertFalse(policy.allowParsedItems)
-        assertTrue(policy.allowExternalIdHash)
-    }
 
-    @Test
-    fun do_not_store_omits_body_and_parsed_items() {
-        val policy = resolver.forSourceSync(
-            RawSourceType.RECEIPT_OCR,
-            PrivacySettings(rawOcrStorageMode = RawStorageMode.DO_NOT_STORE)
-        )
-        assertFalse(policy.allowRawBody)
-        assertFalse(policy.allowRedactedBody)
-        assertFalse(policy.allowParsedItems)
-    }
-
-    @Test
-    fun notification_do_not_store_keeps_dedupe_hash() {
-        val policy = resolver.forSourceSync(
-            RawSourceType.NOTIFICATION,
-            PrivacySettings(rawNotificationStorageMode = RawStorageMode.DO_NOT_STORE)
-        )
-        assertTrue("Notification needs dedup hash even under DO_NOT_STORE", policy.allowExternalIdHash)
-    }
-
-    @Test
-    fun ocr_do_not_store_omits_external_id_hash() {
-        val policy = resolver.forSourceSync(
-            RawSourceType.RECEIPT_OCR,
-            PrivacySettings(rawOcrStorageMode = RawStorageMode.DO_NOT_STORE)
-        )
-        // RECEIPT_OCR does not need a dedup hash
-        assertFalse(policy.allowExternalIdHash)
-    }
-
-    @Test
-    fun email_metadata_only_keeps_external_id_hash_for_dedup() {
-        val policy = resolver.forSourceSync(
-            RawSourceType.EMAIL_RECEIPT,
-            PrivacySettings(emailReceiptStorageMode = RawStorageMode.STORE_METADATA_ONLY)
-        )
-        assertFalse(policy.allowRawBody)
-        assertTrue(policy.allowExternalIdHash)
+        for (row in rows) {
+            val policy = resolver.forSourceSync(
+                RawSourceType.NOTIFICATION,
+                PrivacySettings(
+                    rawNotificationStorageMode = row.mode,
+                    debugDataPersistenceEnabled = false
+                )
+            )
+            val r = row.name
+            assertEquals("[$r] mode", row.mode, policy.mode)
+            assertEquals("[$r] sourceType", RawSourceType.NOTIFICATION, policy.sourceType)
+            assertEquals("[$r] allowRawBody", row.allowRawBody, policy.allowRawBody)
+            assertEquals("[$r] allowRedactedBody", row.allowRedactedBody, policy.allowRedactedBody)
+            assertEquals(
+                "[$r] allowParsedAmountDateCurrency",
+                row.allowParsedAmountDateCurrency,
+                policy.allowParsedAmountDateCurrency
+            )
+            assertEquals("[$r] allowParsedItems", row.allowParsedItems, policy.allowParsedItems)
+            assertEquals("[$r] allowParsedMerchant", row.allowParsedMerchant, policy.allowParsedMerchant)
+            assertEquals("[$r] allowExternalIdHash", row.allowExternalIdHash, policy.allowExternalIdHash)
+            assertEquals("[$r] allowDebugBody", row.allowDebugBody, policy.allowDebugBody)
+        }
     }
 
     @Test

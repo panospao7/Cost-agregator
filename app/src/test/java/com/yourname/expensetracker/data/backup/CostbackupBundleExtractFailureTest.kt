@@ -2,6 +2,7 @@ package com.yourname.expensetracker.data.backup
 
 import android.database.sqlite.SQLiteDatabase
 import com.yourname.expensetracker.data.privacy.BackupEncryptionService
+import com.yourname.expensetracker.testfixtures.backup.lowIterationBackupEncryptionService
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
@@ -98,11 +99,12 @@ class CostbackupBundleExtractFailureTest {
                 byteArrayOf(0x00, 0x01) + // format version 1
                 ByteArray(64) { 0xAB.toByte() } // random ciphertext
         )
-        //    This is the single attempt that pays the real PBKDF2 key derivation.
+        //    This is the single attempt that runs a real PBKDF2 key derivation (low
+        //    iteration count: the garbage input fails GCM authentication either way).
         //    A spy delegates to the real service but captures the FileInputStream
         //    that extract() opened, so we can assert it was really closed.
         val garbledSource = io.mockk.slot<java.io.InputStream>()
-        val spiedEncryption = io.mockk.spyk(BackupEncryptionService())
+        val spiedEncryption = io.mockk.spyk(lowIterationBackupEncryptionService())
         every { spiedEncryption.decryptStream(capture(garbledSource), any()) } answers { callOriginal() }
         val result3 = CostbackupBundle.extract(
             bundleFile = garbledFile,
@@ -132,7 +134,7 @@ class CostbackupBundleExtractFailureTest {
         //    no file-handle leak builds up (which would manifest as a crash
         //    from "Too many open files").
         //    The repeated attempts use a stubbed encryption service whose cipher
-        //    stream fails on read, so they skip the 600k-iteration PBKDF2 derivation
+        //    stream fails on read, so they skip the PBKDF2 derivation
         //    (already exercised once above) while still going through the same
         //    extract() open/close path; each attempt's stream must be closed.
         repeat(50) { i ->

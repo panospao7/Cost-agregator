@@ -100,7 +100,7 @@ All current implementations satisfy this invariant via typed `PrivacyBlocked` st
 
 - `PrivacyGateEnforcementGoldenTest` (`app/src/test/.../golden/`) — verifies gate deny + audit at DB level
 - `PrivacyDoNotStoreTest` (`app/src/test/.../golden/`) — verifies storage mode enforcement
-- `PrivacyCapabilityHandlingPolicyTest` (`app/src/test/.../domain/privacy/`) — ensures all capabilities have explicit handling policy
+- `PrivacyCapabilityHandlingPolicyProductionTest` (`app/src/test/.../domain/privacy/`) — ensures all capabilities have explicit handling policy
 - `PrivacyBehavioralRegressionTest` (`app/src/test/.../domain/privacy/`) — verifies CloudPayloadPolicy redaction, RawStorageMode behavior
 - `PR5PrivacyContractTest` (`app/src/test/.../domain/privacy/`) — contract tests for DatabaseWriteBarrier + privacy gate interactions
 - `PrivacyRuntimeWorkerPolicyTest` (`app/src/test/.../domain/workers/`) — validates the toggle→worker mapping against `WorkerSpec.DEFAULTS` and the `data_retention` exemption
@@ -113,7 +113,7 @@ All current implementations satisfy this invariant via typed `PrivacyBlocked` st
 - `PrivacySettingsScreen` renders blocked cards at top when features are disabled
 - `BackupRestoreViewModel` null input stream now throws explicit error
 - `BackupRestoreScreen` restart action extracted to `onRestartRequired` callback
-- `PrivacyCapabilityHandlingPolicyTest` prevents new capabilities from being fail-open
+- `PrivacyCapabilityHandlingPolicyProductionTest` prevents new capabilities from being fail-open
 
 ### Subsequent completeness fixes (post-Slice 3)
 

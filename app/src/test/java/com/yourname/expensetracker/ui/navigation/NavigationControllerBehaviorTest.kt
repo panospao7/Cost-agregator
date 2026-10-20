@@ -143,19 +143,22 @@ class NavigationControllerBehaviorTest {
     // ── canNavigateBack ──
 
     @Test
-    fun `canNavigateBack true on non-home tab`() {
-        controller.navigateToTab(2)
-        assertTrue(controller.canNavigateBack())
-    }
+    fun `canNavigateBack is false on Home and true on non-home tab and feature screen`() {
+        // Home (fresh controller from setUp)
+        assertFalse("canNavigateBack must be false on Home", controller.canNavigateBack())
 
-    @Test
-    fun `canNavigateBack true on feature screen`() {
-        controller.navigateTo(NavigationDestination.SavingsGoals)
-        assertTrue(controller.canNavigateBack())
-    }
+        // Non-home tab (fresh controller)
+        val tabController = NavigationController(
+            currentDestination = mutableStateOf(NavigationDestination.Home)
+        )
+        tabController.navigateToTab(2)
+        assertTrue("canNavigateBack must be true on non-home tab", tabController.canNavigateBack())
 
-    @Test
-    fun `canNavigateBack false on Home`() {
-        assertFalse(controller.canNavigateBack())
+        // Feature screen (fresh controller)
+        val featureController = NavigationController(
+            currentDestination = mutableStateOf(NavigationDestination.Home)
+        )
+        featureController.navigateTo(NavigationDestination.SavingsGoals)
+        assertTrue("canNavigateBack must be true on feature screen", featureController.canNavigateBack())
     }
 }

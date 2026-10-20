@@ -16,13 +16,12 @@ import org.junit.Test
 class FeatureConfigNavigationContractTest {
 
     @Test
-    fun `all feature IDs are unique`() {
+    fun `feature inventory ids are unique and destinations serialize restore and round-trip`() {
+        // Feature IDs are unique
         val ids = FeatureConfig.allFeatures.map { it.id }
         assertEquals("Duplicate feature IDs found", ids.size, ids.distinct().size)
-    }
 
-    @Test
-    fun `all feature destinations serialize to non-blank token`() {
+        // Serialize to non-blank token
         FeatureConfig.allFeatures.forEach { feature ->
             val token = feature.destination.toSaveToken()
             assertTrue(
@@ -30,10 +29,8 @@ class FeatureConfigNavigationContractTest {
                 token.isNotBlank()
             )
         }
-    }
 
-    @Test
-    fun `all feature destinations restore from token`() {
+        // Restore from token
         FeatureConfig.allFeatures.forEach { feature ->
             val token = feature.destination.toSaveToken()
             val restored = destinationFromSaveToken(token)
@@ -42,19 +39,15 @@ class FeatureConfigNavigationContractTest {
                 restored
             )
         }
-    }
 
-    @Test
-    fun `no duplicate destinations in feature list`() {
+        // No duplicate destinations in the feature list
         val tokens = FeatureConfig.allFeatures.map { it.destination.toSaveToken() }
         assertEquals(
             "Duplicate destinations found in FeatureConfig",
             tokens.size, tokens.distinct().size
         )
-    }
 
-    @Test
-    fun `route token round-trip preserves destination type`() {
+        // Route token round-trip preserves destination type
         FeatureConfig.allFeatures.forEach { feature ->
             val token = feature.destination.toSaveToken()
             val restored = destinationFromSaveToken(token)!!

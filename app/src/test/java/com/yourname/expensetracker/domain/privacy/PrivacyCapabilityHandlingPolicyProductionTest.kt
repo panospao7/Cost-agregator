@@ -34,6 +34,25 @@ class PrivacyCapabilityHandlingPolicyProductionTest {
     }
 
     @Test
+    fun local_only_capabilities_exact_set_is_pinned() {
+        val expected = setOf(
+            PrivacyCapability.RAW_NOTIFICATION_RETENTION,
+            PrivacyCapability.RAW_OCR_RETENTION,
+            PrivacyCapability.DEBUG_DATA_PERSISTENCE,
+            PrivacyCapability.TIMBER_PII_LOGGING
+        )
+        val actual = PrivacyCapabilityHandlingPolicy.localOnlyCapabilities
+        assertEquals(
+            "localOnlyCapabilities must be exactly $expected. Local-only capabilities default to " +
+                "Allowed with no gate decision, so moving a gated capability (e.g. a cloud, export " +
+                "or location capability) into this set is a fail-open change that requires privacy " +
+                "review. Unexpected additions: ${actual - expected}; missing: ${expected - actual}.",
+            expected,
+            actual
+        )
+    }
+
+    @Test
     fun gate_handled_capabilities_covers_all_cloud_ai_capabilities() {
         val gateHandled = PrivacyCapabilityHandlingPolicy.gateHandledCapabilities
         assertTrue(gateHandled.contains(PrivacyCapability.CLOUD_AI_RECEIPT_ASSIST))

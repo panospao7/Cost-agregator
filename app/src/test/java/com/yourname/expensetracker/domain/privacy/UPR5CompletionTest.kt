@@ -13,7 +13,8 @@ import org.junit.Test
  * Verifies the remaining items from the U-PR5 implementation plan:
  *
  * 1. FAIL_CLOSED_DEFAULTS blocks bank statement storage
- *    — rawBankStatementStorageMode is DO_NOT_STORE in fail-closed defaults.
+ *    — moved: asserted by PrivacyGuardTest.fail_closed_defaults_are_all_off_and_do_not_store
+ *    (not in this class).
  *
  * 2. Cloud OCR gated by EffectiveCloudAiPolicy
  *    — CLOUD_AI_RECEIPT_OCR capability is checked via requireAllowed()
@@ -25,32 +26,8 @@ import org.junit.Test
  */
 class UPR5CompletionTest {
 
-    // ── U-PR5-ITEM-1: FAIL_CLOSED_DEFAULTS blocks bank statement storage ─────
-
-    @Test
-    fun fail_closed_defaults_blocks_bank_statement_storage() {
-        // Contract: when privacy settings fail to load (DataStore corruption),
-        // FAIL_CLOSED_DEFAULTS ensures bank statement data is NOT stored.
-        val defaults = PrivacySettings.FAIL_CLOSED_DEFAULTS
-
-        assertEquals(
-            "FAIL_CLOSED_DEFAULTS must set rawBankStatementStorageMode to DO_NOT_STORE",
-            RawStorageMode.DO_NOT_STORE,
-            defaults.rawBankStatementStorageMode
-        )
-
-        // Also verify other related modes are DO_NOT_STORE for consistency
-        assertEquals(RawStorageMode.DO_NOT_STORE, defaults.rawOcrStorageMode)
-        assertEquals(RawStorageMode.DO_NOT_STORE, defaults.rawNotificationStorageMode)
-        assertEquals(RawStorageMode.DO_NOT_STORE, defaults.emailReceiptStorageMode)
-
-        // Cloud AI must be disabled
-        assertFalse("Cloud AI must be disabled in FAIL_CLOSED_DEFAULTS", defaults.cloudAiEnabled)
-        assertFalse(
-            "Bank statement AI must be disabled in FAIL_CLOSED_DEFAULTS",
-            defaults.bankStatementAiEnabled
-        )
-    }
+    // U-PR5-ITEM-1 (FAIL_CLOSED_DEFAULTS blocks bank statement storage) is asserted by
+    // PrivacyGuardTest.fail_closed_defaults_are_all_off_and_do_not_store.
 
     // ── U-PR5-ITEM-2: Cloud OCR gated by EffectiveCloudAiPolicy ──────────────
 

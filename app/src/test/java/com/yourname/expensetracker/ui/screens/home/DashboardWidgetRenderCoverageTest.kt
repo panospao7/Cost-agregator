@@ -45,36 +45,19 @@ class DashboardWidgetRenderCoverageTest {
     )
 
     @Test
-    fun `all DashboardWidget subclasses have render coverage`() {
-        val sealedSubclasses = DashboardWidget::class.sealedSubclasses
-        val missing = sealedSubclasses.filter { it !in RENDERED_WIDGETS }
+    fun `RENDERED_WIDGETS equals the DashboardWidget sealed subclasses exactly`() {
+        val sealedSubclasses: Set<KClass<out DashboardWidget>> =
+            DashboardWidget::class.sealedSubclasses.toSet()
+        val missing = (sealedSubclasses - RENDERED_WIDGETS).map { it.simpleName ?: it.toString() }.sorted()
+        val stale = (RENDERED_WIDGETS - sealedSubclasses).map { it.simpleName ?: it.toString() }.sorted()
 
-        assertTrue(
-            "New DashboardWidget subclass(es) without render coverage: " +
-            "${missing.map { it.simpleName }}. " +
-            "Add render logic in HomeScreen AND add to RENDERED_WIDGETS in this test.",
-            missing.isEmpty()
-        )
-    }
-
-    @Test
-    fun `RENDERED_WIDGETS does not contain stale entries`() {
-        val sealedSubclasses = DashboardWidget::class.sealedSubclasses.toSet()
-        val stale = RENDERED_WIDGETS.filter { it !in sealedSubclasses }
-
-        assertTrue(
-            "Stale entries in RENDERED_WIDGETS (widget removed but test not updated): " +
-            "${stale.map { it.simpleName }}",
-            stale.isEmpty()
-        )
-    }
-
-    @Test
-    fun `widget count matches expected`() {
-        val count = DashboardWidget::class.sealedSubclasses.size
         assertEquals(
-            "DashboardWidget subclass count changed. Update RENDERED_WIDGETS.",
-            22, count
+            "RENDERED_WIDGETS is out of sync with DashboardWidget sealed subclasses. " +
+                "New DashboardWidget subclass(es) without render coverage: $missing. " +
+                "Stale entries in RENDERED_WIDGETS (widget removed but test not updated): $stale. " +
+                "Add render logic in HomeScreen AND add to RENDERED_WIDGETS in this test.",
+            sealedSubclasses,
+            RENDERED_WIDGETS
         )
     }
 }

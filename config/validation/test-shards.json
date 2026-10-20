@@ -8,7 +8,6 @@
         "com.yourname.expensetracker.consistency.*",
         "com.yourname.expensetracker.contracts.*",
         "com.yourname.expensetracker.guard.*",
-        "com.yourname.expensetracker.guards.*",
         "com.yourname.expensetracker.verification.*"
       ]
     },
@@ -100,7 +99,6 @@
       "com.yourname.expensetracker.architecture.*",
       "com.yourname.expensetracker.contracts.*",
       "com.yourname.expensetracker.guard.*",
-      "com.yourname.expensetracker.guards.*",
       "com.yourname.expensetracker.verification.*"
     ]
   }

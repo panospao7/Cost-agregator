@@ -194,39 +194,29 @@ class CancellationSafetyArchitectureGuardTest {
         )
 
         val RAW_RUN_CATCHING_ALLOWLIST = listOf(
-            RawRunCatchingAllowlistEntry("RestoreJournalImporter.kt", "LEGACY_REPOSITORY", "Backup", "Non-critical backup restore utility", "MIT-034", LocalDate.of(2026, 10, 1)),
-            RawRunCatchingAllowlistEntry("DefaultCloudPayloadPolicy.kt", "NETWORK_PROVIDER", "Privacy", "Non-critical cloud payload formatting", "MIT-034", LocalDate.of(2026, 10, 1)),
-            RawRunCatchingAllowlistEntry("AnalyticsRepository.kt", "LEGACY_REPOSITORY", "Analytics", "Non-critical analytics repository", "MIT-034", LocalDate.of(2026, 10, 1)),
-            RawRunCatchingAllowlistEntry("DatabaseBackupRepositoryImpl.kt", "LEGACY_REPOSITORY", "Backup", "Non-critical backup repository", "MIT-034", LocalDate.of(2026, 10, 1)),
-            RawRunCatchingAllowlistEntry("ValidateBankStatementTransactionsUseCase.kt", "LEGACY_REPOSITORY", "AI", "Non-critical bank validation use case", "MIT-034", LocalDate.of(2026, 10, 1)),
-            RawRunCatchingAllowlistEntry("AdvancedAnalyticsEngine.kt", "LEGACY_REPOSITORY", "Analytics", "Non-critical analytics engine", "MIT-034", LocalDate.of(2026, 10, 1)),
-            RawRunCatchingAllowlistEntry("CarbonFootprintCalculator.kt", "LEGACY_REPOSITORY", "Carbon", "Non-critical carbon footprint calculator", "MIT-034", LocalDate.of(2026, 10, 1)),
-            RawRunCatchingAllowlistEntry("DiagnosticsRepository.kt", "LEGACY_REPOSITORY", "Diagnostics", "Non-critical diagnostics repository", "MIT-034", LocalDate.of(2026, 10, 1)),
-            RawRunCatchingAllowlistEntry("FinancialStressForecastEngine.kt", "LEGACY_REPOSITORY", "Forecasting", "Non-critical financial stress engine", "MIT-034", LocalDate.of(2026, 10, 1)),
-            RawRunCatchingAllowlistEntry("NetCashflowBalanceProvider.kt", "LEGACY_REPOSITORY", "Forecasting", "Non-critical cashflow provider", "MIT-034", LocalDate.of(2026, 10, 1)),
-            RawRunCatchingAllowlistEntry("InvestmentTracker.kt", "LEGACY_REPOSITORY", "Investment", "Non-critical investment tracker", "MIT-034", LocalDate.of(2026, 10, 1)),
-            RawRunCatchingAllowlistEntry("SubscriptionManagerEngine.kt", "LEGACY_REPOSITORY", "Subscription", "Non-critical subscription engine", "MIT-034", LocalDate.of(2026, 10, 1)),
+            RawRunCatchingAllowlistEntry("RestoreJournalImporter.kt", "LEGACY_REPOSITORY", "Backup", "Non-critical backup restore utility", "MIT-034", LocalDate.of(2027, 3, 31)),
+            RawRunCatchingAllowlistEntry("AnalyticsRepository.kt", "LEGACY_REPOSITORY", "Analytics", "Non-critical analytics repository", "MIT-034", LocalDate.of(2027, 3, 31)),
+            RawRunCatchingAllowlistEntry("DatabaseBackupRepositoryImpl.kt", "LEGACY_REPOSITORY", "Backup", "Non-critical backup repository", "MIT-034", LocalDate.of(2027, 3, 31)),
+            RawRunCatchingAllowlistEntry("CarbonFootprintCalculator.kt", "LEGACY_REPOSITORY", "Carbon", "Non-critical carbon footprint calculator", "MIT-034", LocalDate.of(2027, 3, 31)),
+            RawRunCatchingAllowlistEntry("DiagnosticsRepository.kt", "LEGACY_REPOSITORY", "Diagnostics", "Non-critical diagnostics repository", "MIT-034", LocalDate.of(2027, 3, 31)),
+            RawRunCatchingAllowlistEntry("InvestmentTracker.kt", "LEGACY_REPOSITORY", "Investment", "Non-critical investment tracker", "MIT-034", LocalDate.of(2027, 3, 31)),
             // ── TEMPORARY (RP-01 U-002 exposure): raw runCatching surfaced by the
             // un-excluded coordinator scan path and executable-evidence rework;
             // CE fixes are owned by the named plans. Must shrink. ──
             RawRunCatchingAllowlistEntry("RestoreDiagnosticsSink.kt", "BACKUP_DATA", "RP-03", "Raw runCatching in restore diagnostics sink; CE fix owned by RP-03", "MIT-034", LocalDate.of(2026, 12, 31)),
-            RawRunCatchingAllowlistEntry("HistoricalSpendingDistribution.kt", "DOMAIN", "RP-06", "Raw runCatching in forecasting distribution; CE fix owned by RP-06", "MIT-034", LocalDate.of(2026, 12, 31)),
         )
 
         /**
-         * U-003: deterministic clock inputs for expiry-enforcement tests.
-         * [GUARD_TODAY_VALID] is safely before every allowlist expiry
-         * (earliest: RAW_RUN_CATCHING_ALLOWLIST at 2026-10-01) — the
-         * valid-branch tests must pass with it. The two expired-branch
-         * dates sit safely AFTER expiry: [GUARD_TODAY_PAST_RAW_EXPIRY] is
-         * past the RAW_RUN_CATCHING_ALLOWLIST earliest expiry (2026-10-01)
-         * and [GUARD_TODAY_PAST_ALL_EXPIRIES] is past every expiry in both
-         * lists (KNOWN_VIOLATIONS entries expire 2026-12-31). Using fixed
-         * dates instead of [LocalDate.now] keeps both branches deterministic
-         * and exercises the real filter/enforcement logic rather than a
-         * tautology.
+         * U-003: deterministic clock inputs for the expiry-enforcement NEGATIVE
+         * CONTROLS only. The positive expiry tests evaluate the real allowlists
+         * against the real clock ([LocalDate.now] via `guardToday()`); these
+         * fixed dates are used solely against SYNTHETIC entry lists built in
+         * the controls, so the controls stay valid regardless of the real
+         * allowlist contents. [GUARD_TODAY_PAST_RAW_EXPIRY] is past the
+         * synthetic raw-entry expiry (2026-10-01) and
+         * [GUARD_TODAY_PAST_ALL_EXPIRIES] is past the synthetic structured
+         * entry expiry (2026-12-31).
          */
-        val GUARD_TODAY_VALID: LocalDate = LocalDate.of(2026, 9, 15)
         val GUARD_TODAY_PAST_RAW_EXPIRY: LocalDate = LocalDate.of(2026, 10, 15)
         val GUARD_TODAY_PAST_ALL_EXPIRIES: LocalDate = LocalDate.of(2027, 1, 15)
     }
@@ -407,27 +397,72 @@ class CancellationSafetyArchitectureGuardTest {
         }
     }
 
-    /** U-003: single injectable clock seam for expiry checks — keeps tests deterministic. */
+    /**
+     * U-003: single clock seam for expiry checks. Defaults to the REAL clock;
+     * only the synthetic negative controls pass an explicit past-expiry date.
+     */
     private fun guardToday(today: java.time.LocalDate = java.time.LocalDate.now()): java.time.LocalDate = today
+
+    /** Shared enforcement filter: entries whose expiry is strictly before [today]. */
+    private fun expiredStructured(entries: List<ArchitectureAllowlistEntry>, today: LocalDate) =
+        entries.filter { it.expires.isBefore(today) }
+
+    /** Shared enforcement filter: raw runCatching entries whose expiry is strictly before [today]. */
+    private fun expiredRaw(entries: List<RawRunCatchingAllowlistEntry>, today: LocalDate) =
+        entries.filter { it.expires.isBefore(today) }
 
     @Test
     fun `expired allowlist entries fail`() {
-        val today = guardToday(GUARD_TODAY_VALID)
-        val expired = KNOWN_VIOLATIONS.filter { it.expires.isBefore(today) }
+        val today = guardToday()
+        val expired = expiredStructured(KNOWN_VIOLATIONS, today)
         assertTrue(
-            "Expired allowlist entries found: ${expired.map { it.fileName }}",
+            "Expired allowlist entries found at $today: ${expired.map { it.fileName }}",
             expired.isEmpty()
         )
     }
 
-    /** U-003 negative control: with the clock past expiry, enforcement MUST flag expired entries. */
+    /**
+     * U-003 negative control: with the clock past expiry, enforcement MUST flag expired entries.
+     * Uses a SYNTHETIC entry list so the control holds regardless of the real allowlist contents.
+     */
     @Test
     fun `expired allowlist entries fail enforcement when clock is past expiry`() {
+        val synthetic = listOf(
+            ArchitectureAllowlistEntry(
+                fileName = "SyntheticExpired.kt",
+                rule = "CATCH_WITHOUT_CE_RETHROW",
+                category = "DOMAIN",
+                owner = "Synthetic",
+                reason = "synthetic control",
+                issue = "MIT-034",
+                expires = LocalDate.of(2026, 12, 31)
+            ),
+            ArchitectureAllowlistEntry(
+                fileName = "SyntheticLive.kt",
+                rule = "CATCH_WITHOUT_CE_RETHROW",
+                category = "DOMAIN",
+                owner = "Synthetic",
+                reason = "synthetic control",
+                issue = "MIT-034",
+                expires = LocalDate.of(2027, 12, 31)
+            ),
+            // Expires exactly on the evaluation date: still valid (pins isBefore, not isBefore-or-equal).
+            ArchitectureAllowlistEntry(
+                fileName = "SyntheticExpiresToday.kt",
+                rule = "CATCH_WITHOUT_CE_RETHROW",
+                category = "DOMAIN",
+                owner = "Synthetic",
+                reason = "synthetic control",
+                issue = "MIT-034",
+                expires = GUARD_TODAY_PAST_ALL_EXPIRIES
+            )
+        )
         val today = guardToday(GUARD_TODAY_PAST_ALL_EXPIRIES)
-        val expired = KNOWN_VIOLATIONS.filter { it.expires.isBefore(today) }
-        assertTrue(
-            "Expected KNOWN_VIOLATIONS entries to be expired at $today — enforcement seam is broken",
-            expired.isNotEmpty()
+        val expired = expiredStructured(synthetic, today)
+        assertEquals(
+            "Expected exactly the synthetic past-expiry entry to be flagged at $today — enforcement seam is broken",
+            listOf("SyntheticExpired.kt"),
+            expired.map { it.fileName }
         )
     }
 
@@ -438,23 +473,54 @@ class CancellationSafetyArchitectureGuardTest {
      */
     @Test
     fun `expired raw runCatching allowlist entries fail`() {
-        val today = guardToday(GUARD_TODAY_VALID)
-        val expired = RAW_RUN_CATCHING_ALLOWLIST.filter { it.expires.isBefore(today) }
+        val today = guardToday()
+        val expired = expiredRaw(RAW_RUN_CATCHING_ALLOWLIST, today)
         assertTrue(
-            "Expired raw runCatching allowlist entries found: ${expired.map { it.fileName }} — " +
+            "Expired raw runCatching allowlist entries found at $today: ${expired.map { it.fileName }} — " +
                 "renew with owner/reason or fix the underlying files",
             expired.isEmpty()
         )
     }
 
-    /** U-003 negative control: with the clock past expiry, enforcement MUST flag expired entries. */
+    /**
+     * U-003 negative control: with the clock past expiry, enforcement MUST flag expired entries.
+     * Uses a SYNTHETIC entry list so the control holds regardless of the real allowlist contents.
+     */
     @Test
     fun `expired raw runCatching allowlist entries fail enforcement when clock is past expiry`() {
+        val synthetic = listOf(
+            RawRunCatchingAllowlistEntry(
+                fileName = "SyntheticExpired.kt",
+                category = "LEGACY_REPOSITORY",
+                owner = "Synthetic",
+                reason = "synthetic control",
+                issue = "MIT-034",
+                expires = LocalDate.of(2026, 10, 1)
+            ),
+            RawRunCatchingAllowlistEntry(
+                fileName = "SyntheticLive.kt",
+                category = "LEGACY_REPOSITORY",
+                owner = "Synthetic",
+                reason = "synthetic control",
+                issue = "MIT-034",
+                expires = LocalDate.of(2027, 12, 31)
+            ),
+            // Expires exactly on the evaluation date: still valid (pins isBefore, not isBefore-or-equal).
+            RawRunCatchingAllowlistEntry(
+                fileName = "SyntheticExpiresToday.kt",
+                category = "LEGACY_REPOSITORY",
+                owner = "Synthetic",
+                reason = "synthetic control",
+                issue = "MIT-034",
+                expires = GUARD_TODAY_PAST_RAW_EXPIRY
+            )
+        )
         val today = guardToday(GUARD_TODAY_PAST_RAW_EXPIRY)
-        val expired = RAW_RUN_CATCHING_ALLOWLIST.filter { it.expires.isBefore(today) }
-        assertTrue(
-            "Expected RAW_RUN_CATCHING_ALLOWLIST entries to be expired at $today — enforcement seam is broken",
-            expired.isNotEmpty()
+        val expired = expiredRaw(synthetic, today)
+        assertEquals(
+            "Expected exactly the synthetic past-expiry raw entry to be flagged at $today — enforcement seam is broken",
+            listOf("SyntheticExpired.kt"),
+            expired.map { it.fileName }
         )
     }
 

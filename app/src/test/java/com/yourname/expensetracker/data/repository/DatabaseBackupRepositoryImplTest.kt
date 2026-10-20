@@ -37,6 +37,7 @@ import com.yourname.expensetracker.data.backup.RestoreJournal
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.testfixtures.backup.lowIterationBackupEncryptionService
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.diagnostics.OperationRunHandle
 import com.yourname.expensetracker.domain.diagnostics.OperationRunRecorder
@@ -149,7 +150,7 @@ class DatabaseBackupRepositoryImplTest {
         createFullSchemaDatabase(file = dbFile)
         every { context.cacheDir } returns File(tempDir, "cache").apply { mkdirs() }
 
-        val repo = createRepository(encryptionService = BackupEncryptionService())
+        val repo = createRepository(encryptionService = lowIterationBackupEncryptionService())
         val result = repo.createCostBackup(
             password = "allowed_file_password",
             includeReceiptImages = false,
@@ -174,7 +175,7 @@ class DatabaseBackupRepositoryImplTest {
         every { resolver.openOutputStream(destination, "wt") } returns output
 
         val repo = createRepository(
-            encryptionService = BackupEncryptionService()
+            encryptionService = lowIterationBackupEncryptionService()
         )
         val result = repo.createCostBackup(
             destination = destination,
@@ -363,7 +364,7 @@ class DatabaseBackupRepositoryImplTest {
             IllegalStateException("database is locked /data/secret-path")
 
         val repo = createRepository(
-            encryptionService = BackupEncryptionService(),
+            encryptionService = lowIterationBackupEncryptionService(),
             operationRunRecorder = operationRecorder
         )
         val result = repo.createCostBackup(
@@ -404,7 +405,7 @@ class DatabaseBackupRepositoryImplTest {
         // Checkpoint stays busy on every attempt.
         every { supportDb.query("PRAGMA wal_checkpoint(TRUNCATE)") } answers { checkpointCursor(busyCode = 1) }
 
-        val repo = createRepository(encryptionService = BackupEncryptionService())
+        val repo = createRepository(encryptionService = lowIterationBackupEncryptionService())
         val result = repo.createCostBackup(
             password = "checkpoint_failure_password",
             includeReceiptImages = false,
@@ -432,7 +433,7 @@ class DatabaseBackupRepositoryImplTest {
         every { mockRestoreMaintenanceMode.exit(forceRestartRequired = false) } answers { callLog.add("exit"); Unit }
 
         val repo = createRepository(
-            encryptionService = BackupEncryptionService(),
+            encryptionService = lowIterationBackupEncryptionService(),
             operationRunRecorder = operationRecorder
         )
         val result = repo.createCostBackup(
@@ -461,7 +462,7 @@ class DatabaseBackupRepositoryImplTest {
         every { mockRestoreMaintenanceMode.exit(forceRestartRequired = false) } answers { callLog.add("exit"); Unit }
 
         val repo = createRepository(
-            encryptionService = BackupEncryptionService(),
+            encryptionService = lowIterationBackupEncryptionService(),
             operationRunRecorder = operationRecorder
         )
         val result = repo.createCostBackup(
@@ -2028,6 +2029,8 @@ class DatabaseBackupRepositoryImplTest {
         val image = File(source, "photo.jpg").apply { writeBytes(ASSET_BYTES) }
         val dbSource = File(source, "db.bin").apply { writeBytes(ByteArray(64) { it.toByte() }) }
         val bundle = File(tempDir, "roundtrip.costbackup")
+        // One low-iteration instance for BOTH create and extract (count is not stored in the envelope).
+        val encryption = lowIterationBackupEncryptionService()
         val created = CostbackupBundle.create(
             outputFile = bundle,
             databaseFile = dbSource,
@@ -2037,11 +2040,17 @@ class DatabaseBackupRepositoryImplTest {
             tableCounts = mapOf("expenses" to 1),
             databaseVersion = 1,
             redacted = false,
-            includeReceiptImages = true
+            includeReceiptImages = true,
+            encryptionService = encryption
         )
         assertTrue(created.isSuccess)
         val extractRoot = File(tempDir, "roundtrip_extract")
-        assertTrue(CostbackupBundle.extract(bundle, extractRoot, "pw-roundtrip", nowEpochMs = 1716163200000L).isSuccess)
+        assertTrue(
+            CostbackupBundle.extract(
+                bundle, extractRoot, "pw-roundtrip", nowEpochMs = 1716163200000L,
+                encryptionService = encryption
+            ).isSuccess
+        )
 
         val journal = newRealJournal()
         val (outcome, dao) = runDirectAssetRestore(journal, extractedRoot = extractRoot)
@@ -3213,9 +3222,11 @@ class DatabaseBackupRepositoryImplTest {
         val countingTime = CountingTimeProvider(startTime = fixedTime)
 
         // Real crypto so the produced bundle is extractable and its manifest can be read back.
+        // One low-iteration instance serves both the repository's create and this test's extract.
+        val encryption = lowIterationBackupEncryptionService()
         val repo = createRepository(
             stagedVerifier = { _, _, _, _, summary -> summary },
-            encryptionService = BackupEncryptionService(),
+            encryptionService = encryption,
             timeProvider = countingTime
         )
 
@@ -3252,7 +3263,8 @@ class DatabaseBackupRepositoryImplTest {
         val extractDir = File(tempDir, "extract_created_at")
         val extraction = CostbackupBundle.extract(
             bundleFile, extractDir, "t2b_timestamp_password",
-            nowEpochMs = 0L
+            nowEpochMs = 0L,
+            encryptionService = encryption
         )
         assertTrue("bundle should extract with the same password", extraction.isSuccess)
         assertEquals(

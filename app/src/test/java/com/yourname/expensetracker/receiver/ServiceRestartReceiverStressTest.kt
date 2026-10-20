@@ -49,6 +49,12 @@ class ServiceRestartReceiverStressTest {
         every { context.startForegroundService(any()) } throws RuntimeException("boom")
 
         receiver.onReceive(context, Intent(NotificationCaptureService.ACTION_RESTART_SERVICE))
+
+        verify(exactly = 1) {
+            context.startForegroundService(
+                match { it.component?.className == NotificationCaptureService::class.java.name }
+            )
+        }
     }
 
     @Test

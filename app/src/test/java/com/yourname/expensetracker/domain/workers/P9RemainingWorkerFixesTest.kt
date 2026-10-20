@@ -1,6 +1,5 @@
 package com.yourname.expensetracker.domain.workers
 
-import androidx.work.ExistingWorkPolicy
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.MaintenanceSafeDiagnosticSink
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
@@ -23,7 +22,7 @@ import org.junit.Test
  *
  * - NEW-P9-014: Battery constraint for merchant_key_backfill
  * - NEW-P9-015: WorkerRunLogger.Handle idempotency
- * - NEW-P9-011: scheduleAtMidnight minimum delay guard (logic contract)
+ * - NEW-P9-011: scheduleAtMidnight minimum delay guard (now covered by WorkerSpecSchedulerTest)
  * - NEW-P9-013: WorkerExecutionGuard checkpoint exception handling
  */
 class P9RemainingWorkerFixesTest {
@@ -45,151 +44,68 @@ class P9RemainingWorkerFixesTest {
     }
 
     // ──────────────────────────────────────────────────────────────
-    // NEW-P9-006: REPLACE → UPDATE in WorkerSpecScheduler
-    // ──────────────────────────────────────────────────────────────
-
-    @Test
-    fun `default oneShotPolicy in data class is KEEP`() {
-        // Confirm the data-class default remains KEEP as documented.
-        val default = WorkerSpec(name = "test")
-        assertEquals(
-            "Default oneShotPolicy should be KEEP",
-            ExistingWorkPolicy.KEEP,
-            default.oneShotPolicy
-        )
-    }
-
-    @Test
-    fun `merchant_key_backfill still uses REPLACE as its spec policy`() {
-        // The spec's oneShotPolicy is the source of truth for the worker's
-        // scheduling intent (re-schedulable after completion). The deprecated
-        // REPLACE constant was replaced only in WorkerSpecScheduler's
-        // version-bump path (which now uses UPDATE). The spec itself still
-        // declares REPLACE as its desired policy — the scheduler honours it
-        // via spec.oneShotPolicy when there is no version bump.
-        val spec = WorkerSpec.DEFAULTS["merchant_key_backfill"]
-        assertNotNull("merchant_key_backfill spec must exist", spec)
-        assertEquals(
-            "merchant_key_backfill spec oneShotPolicy should be REPLACE",
-            ExistingWorkPolicy.REPLACE,
-            spec!!.oneShotPolicy
-        )
-    }
-
-    // ──────────────────────────────────────────────────────────────
     // NEW-P9-015: WorkerRunLogger.Handle idempotency
+    //
+    // These rows run against a relaxed DAO (completeTerminal returns the relaxed
+    // default rather than a stubbed affected-row count), which is a different DAO
+    // outcome path from WorkerRunLoggerTest's duplicate_terminal_call_is_noop_table
+    // (stubbed affected=1). Every terminal kind therefore stays a row here.
     // ──────────────────────────────────────────────────────────────
 
-    @Test
-    fun `handle success is idempotent — second call is no-op`() = runTest {
-        val dao = mockk<BackgroundJobRunDao>(relaxed = true)
-        val timeProvider = mockk<TimeProvider>()
-        val sanitizer = mockk<EventMetadataSanitizer>(relaxed = true)
-        every { timeProvider.now() } returns 1000L
-        every { sanitizer.sanitizeExceptionMessage(any()) } answers { firstArg() }
-
-        val logger = WorkerRunLoggerImpl(dao, sanitizer, timeProvider)
-        val handle = logger.start("test_worker")
-
-        // First call: should write to DAO
-        handle.success()
-        coVerify(exactly = 1) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
-
-        // Second call: must be idempotent — no additional DAO write
-        handle.success()
-        coVerify(exactly = 1) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
-    }
+    private data class IdempotencyRow(
+        val name: String,
+        val first: suspend (WorkerRunHandle) -> TerminalWriteOutcome,
+        val second: suspend (WorkerRunHandle) -> TerminalWriteOutcome
+    )
 
     @Test
-    fun `handle retry followed by success is idempotent`() = runTest {
-        val dao = mockk<BackgroundJobRunDao>(relaxed = true)
-        val timeProvider = mockk<TimeProvider>()
-        val sanitizer = mockk<EventMetadataSanitizer>(relaxed = true)
-        every { timeProvider.now() } returns 1000L
-        every { sanitizer.sanitizeExceptionMessage(any()) } answers { firstArg() }
+    fun `handle terminal calls are idempotent - second call is no-op`() = runTest {
+        val rows = listOf(
+            IdempotencyRow("success then success", { it.success() }, { it.success() }),
+            // Second call is a no-op even with a different terminal status
+            IdempotencyRow("retry then success", { it.retry("TRANSIENT_ERROR") }, { it.success() }),
+            IdempotencyRow(
+                "failure then failure",
+                { it.failure("PERMANENT_ERROR") }, { it.failure("IGNORED_DUPLICATE") }
+            ),
+            IdempotencyRow(
+                "cancelled then cancelled",
+                { it.cancelled("SYSTEM_CANCEL") }, { it.cancelled("IGNORED_DUPLICATE") }
+            ),
+            IdempotencyRow("staleAborted then staleAborted", { it.staleAborted() }, { it.staleAborted() }),
+            IdempotencyRow(
+                "skipped then skipped",
+                { it.skipped("WORK_ALREADY_IN_PROGRESS") }, { it.skipped("IGNORED_DUPLICATE") }
+            )
+        )
+        assertEquals("every terminal kind must stay a row", 6, rows.size)
 
-        val logger = WorkerRunLoggerImpl(dao, sanitizer, timeProvider)
-        val handle = logger.start("test_worker")
+        for (row in rows) {
+            val dao = mockk<BackgroundJobRunDao>(relaxed = true) // fresh mock per row
+            val timeProvider = mockk<TimeProvider>()
+            val sanitizer = mockk<EventMetadataSanitizer>(relaxed = true)
+            every { timeProvider.now() } returns 1000L
+            every { sanitizer.sanitizeExceptionMessage(any()) } answers { firstArg() }
 
-        handle.retry("TRANSIENT_ERROR")
-        coVerify(exactly = 1) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+            val logger = WorkerRunLoggerImpl(dao, sanitizer, timeProvider)
+            val handle = logger.start("test_worker")
 
-        // Second call is a no-op even with a different terminal status
-        handle.success()
-        coVerify(exactly = 1) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
-    }
+            // First call: should write to DAO
+            row.first(handle)
+            try {
+                coVerify(exactly = 1) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+            } catch (e: AssertionError) {
+                throw AssertionError("[${row.name}] first call must write exactly once: ${e.message}", e)
+            }
 
-    @Test
-    fun `handle failure is idempotent`() = runTest {
-        val dao = mockk<BackgroundJobRunDao>(relaxed = true)
-        val timeProvider = mockk<TimeProvider>()
-        val sanitizer = mockk<EventMetadataSanitizer>(relaxed = true)
-        every { timeProvider.now() } returns 1000L
-        every { sanitizer.sanitizeExceptionMessage(any()) } answers { firstArg() }
-
-        val logger = WorkerRunLoggerImpl(dao, sanitizer, timeProvider)
-        val handle = logger.start("test_worker")
-
-        handle.failure("PERMANENT_ERROR")
-        coVerify(exactly = 1) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
-
-        // Second call is no-op
-        handle.failure("IGNORED_DUPLICATE")
-        coVerify(exactly = 1) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
-    }
-
-    @Test
-    fun `handle cancelled is idempotent`() = runTest {
-        val dao = mockk<BackgroundJobRunDao>(relaxed = true)
-        val timeProvider = mockk<TimeProvider>()
-        val sanitizer = mockk<EventMetadataSanitizer>(relaxed = true)
-        every { timeProvider.now() } returns 1000L
-        every { sanitizer.sanitizeExceptionMessage(any()) } answers { firstArg() }
-
-        val logger = WorkerRunLoggerImpl(dao, sanitizer, timeProvider)
-        val handle = logger.start("test_worker")
-
-        handle.cancelled("SYSTEM_CANCEL")
-        coVerify(exactly = 1) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
-
-        handle.cancelled("IGNORED_DUPLICATE")
-        coVerify(exactly = 1) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
-    }
-
-    @Test
-    fun `handle staleAborted is idempotent`() = runTest {
-        val dao = mockk<BackgroundJobRunDao>(relaxed = true)
-        val timeProvider = mockk<TimeProvider>()
-        val sanitizer = mockk<EventMetadataSanitizer>(relaxed = true)
-        every { timeProvider.now() } returns 1000L
-        every { sanitizer.sanitizeExceptionMessage(any()) } answers { firstArg() }
-
-        val logger = WorkerRunLoggerImpl(dao, sanitizer, timeProvider)
-        val handle = logger.start("test_worker")
-
-        handle.staleAborted()
-        coVerify(exactly = 1) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
-
-        handle.staleAborted()
-        coVerify(exactly = 1) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
-    }
-
-    @Test
-    fun `handle skipped is idempotent`() = runTest {
-        val dao = mockk<BackgroundJobRunDao>(relaxed = true)
-        val timeProvider = mockk<TimeProvider>()
-        val sanitizer = mockk<EventMetadataSanitizer>(relaxed = true)
-        every { timeProvider.now() } returns 1000L
-        every { sanitizer.sanitizeExceptionMessage(any()) } answers { firstArg() }
-
-        val logger = WorkerRunLoggerImpl(dao, sanitizer, timeProvider)
-        val handle = logger.start("test_worker")
-
-        handle.skipped("WORK_ALREADY_IN_PROGRESS")
-        coVerify(exactly = 1) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
-
-        handle.skipped("IGNORED_DUPLICATE")
-        coVerify(exactly = 1) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+            // Second call: must be idempotent — no additional DAO write
+            row.second(handle)
+            try {
+                coVerify(exactly = 1) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+            } catch (e: AssertionError) {
+                throw AssertionError("[${row.name}] second call must be a no-op: ${e.message}", e)
+            }
+        }
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -253,21 +169,7 @@ class P9RemainingWorkerFixesTest {
         coVerify(exactly = 1) { diagnosticSink.recordBlockedOperation(any(), any(), any()) }
     }
 
-    // ──────────────────────────────────────────────────────────────
-    // NEW-P9-011: scheduleAtMidnight minimum delay guard
-    // ──────────────────────────────────────────────────────────────
-    // This test validates the LOGIC of the maxOf guard without requiring
-    // Android Context/WorkManager. The actual guard is applied inside
-    // WorkerSpecScheduler.scheduleAtMidnight; here we verify the contract.
-
-    @Test
-    fun `near_zero_midnight_delay_is_floored_to_60_seconds`() = runTest {
-        // Validates the floor logic used in scheduleAtMidnight
-        assertEquals(60_000L, maxOf(1L, 60_000L))
-    }
-
-    @Test
-    fun `normal_midnight_delay_above_floor_is_unaffected`() = runTest {
-        assertEquals(86_400_000L, maxOf(86_400_000L, 60_000L))
-    }
+    // NEW-P9-011 (scheduleAtMidnight 60 s floor) is covered against production code by
+    // WorkerSpecSchedulerTest `near-midnight schedule floors initial delay at 60 seconds`
+    // and `midnight worker initial delay equals next-midnight delay from fixed time`.
 }

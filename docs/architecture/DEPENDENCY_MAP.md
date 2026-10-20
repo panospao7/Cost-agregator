@@ -1328,8 +1328,9 @@ excludedActualCount, excludedPlannedCount, excludedRecurringCount,
 conversionWarnings, confidencePenalty.
 
 ### CI Guard (Segment 9)
-scripts/guards/check_lifecycle_bypasses.kts — scans for 14 forbidden
-direct ExpenseDao calls, with documented allowlist.
+The advisory Kotlin-script lifecycle-bypass guard (never wired into CI) has been
+retired; direct ExpenseDao mutation checks are owned by the registered
+`db_access` guard and its ownership policy.
 
 ### Rate Staleness
 CurrencyConverter.convert() checks rate.lastUpdated against 24h threshold.

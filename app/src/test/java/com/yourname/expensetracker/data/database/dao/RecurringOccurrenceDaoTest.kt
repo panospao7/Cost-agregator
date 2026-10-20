@@ -86,21 +86,35 @@ class RecurringOccurrenceDaoTest {
     // -------------------------------------------------------------------------
 
     @Test
-    fun `insert an occurrence`() = runTest {
-        val occurrence = createOccurrence()
+    fun `insert persists every field and reads back through getById getByKey and getBySource`() = runTest {
+        val occurrence = createOccurrence(
+            sourceType = "RECURRING_RULE",
+            sourceId = 5L,
+            occurrenceKey = "my_unique_key",
+            dueDate = FIXED_NOW + 3_000L,
+            status = "PAID",
+            linkedExpenseId = 77L,
+            expectedAmount = 12.34,
+            expectedCurrency = "USD",
+            paidAt = FIXED_NOW + 4_000L,
+            paidAmount = 12.5,
+            paidCurrency = "EUR",
+            frequency = "WEEKLY",
+            merchant = "Netflix",
+            categoryId = 3L,
+            createdAt = FIXED_NOW + 1_000L,
+            updatedAt = FIXED_NOW + 2_000L
+        )
+        // A row of a different source must not leak into the getBySource result.
+        dao.insert(createOccurrence(sourceId = 6L, occurrenceKey = "other_source_key"))
+
         val id = dao.insert(occurrence)
 
         assertTrue(id > 0)
-    }
-
-    @Test
-    fun `query by source type and id`() = runTest {
-        dao.insert(createOccurrence(sourceType = "RECURRING_RULE", sourceId = 5L))
-
-        val results = dao.getBySource("RECURRING_RULE", 5L)
-
-        assertEquals(1, results.size)
-        assertEquals("Netflix", results[0].merchant)
+        val expected = occurrence.copy(id = id)
+        assertEquals(expected, dao.getById(id))
+        assertEquals(expected, dao.getByKey("my_unique_key"))
+        assertEquals(listOf(expected), dao.getBySource("RECURRING_RULE", 5L))
     }
 
     @Test
@@ -129,40 +143,12 @@ class RecurringOccurrenceDaoTest {
     }
 
     @Test
-    fun `query by source returns empty list for unknown source`() = runTest {
+    fun `lookups for missing rows return empty list or null`() = runTest {
         dao.insert(createOccurrence(sourceType = "RECURRING_RULE", sourceId = 1L))
 
-        val results = dao.getBySource("RECURRING_RULE", 999L)
-
-        assertEquals(0, results.size)
-    }
-
-    @Test
-    fun `getById returns occurrence`() = runTest {
-        val id = dao.insert(createOccurrence())
-
-        val result = dao.getById(id)
-
-        assertNotNull(result)
-        assertEquals(id, result.id)
-    }
-
-    @Test
-    fun `getById returns null for non-existent id`() = runTest {
-        val result = dao.getById(999L)
-
-        assertNull(result)
-    }
-
-    @Test
-    fun `getByKey returns occurrence by unique key`() = runTest {
-        val key = "my_unique_key"
-        dao.insert(createOccurrence(occurrenceKey = key))
-
-        val result = dao.getByKey(key)
-
-        assertNotNull(result)
-        assertEquals(key, result.occurrenceKey)
+        assertEquals(emptyList(), dao.getBySource("RECURRING_RULE", 999L))
+        assertNull(dao.getById(999L))
+        assertNull(dao.getByKey("no_such_key"))
     }
 
     @Test
@@ -200,26 +186,22 @@ class RecurringOccurrenceDaoTest {
     }
 
     @Test
-    fun `update status from PLANNED to PAID`() = runTest {
-        val id = dao.insert(createOccurrence(status = "PLANNED", occurrenceKey = "update_status_key1"))
+    fun `updateStatus changes only status and updatedAt of the specified ids`() = runTest {
+        val original1 = createOccurrence(status = "PLANNED", occurrenceKey = "update_target_key1")
+        val original2 = createOccurrence(status = "PLANNED", occurrenceKey = "update_target_key2")
+        val id1 = dao.insert(original1)
+        val id2 = dao.insert(original2)
 
-        dao.updateStatus(listOf(id), "PAID", FIXED_NOW + 1000)
+        dao.updateStatus(listOf(id1), "PAID", FIXED_NOW + 1000)
 
-        val result = dao.getById(id)
-        assertNotNull(result)
-        assertEquals("PAID", result.status)
-        assertEquals(FIXED_NOW + 1000, result.updatedAt)
-    }
-
-    @Test
-    fun `update only targets specified ids`() = runTest {
-        val id1 = dao.insert(createOccurrence(status = "PLANNED", occurrenceKey = "update_target_key1"))
-        val id2 = dao.insert(createOccurrence(status = "PLANNED", occurrenceKey = "update_target_key2"))
-
-        dao.updateStatus(listOf(id1), "PAID", FIXED_NOW)
-
-        assertEquals("PAID", dao.getById(id1)?.status)
-        assertEquals("PLANNED", dao.getById(id2)?.status)
+        // Targeted row: new status and exact new updatedAt; every other field unchanged.
+        assertEquals(
+            original1.copy(id = id1, status = "PAID", updatedAt = FIXED_NOW + 1000),
+            dao.getById(id1)
+        )
+        // Non-targeted row is completely untouched (status and updatedAt included).
+        assertEquals(original2.copy(id = id2), dao.getById(id2))
+        assertEquals(FIXED_NOW, dao.getById(id2)?.updatedAt)
     }
 
     @Test
@@ -244,9 +226,15 @@ class RecurringOccurrenceDaoTest {
 
         val results = dao.getBySource("RECURRING_RULE", 1L)
 
-        assertEquals(3, results.size)
-        assertTrue(results[0].dueDate <= results[1].dueDate)
-        assertTrue(results[1].dueDate <= results[2].dueDate)
+        // ORDER BY dueDate: FIXED_NOW (key2), FIXED_NOW + 1000 (key3), FIXED_NOW + 2000 (key1).
+        assertEquals(
+            listOf("order_key2", "order_key3", "order_key1"),
+            results.map { it.occurrenceKey }
+        )
+        assertEquals(
+            listOf(FIXED_NOW, FIXED_NOW + 1000, FIXED_NOW + 2000),
+            results.map { it.dueDate }
+        )
     }
 
     @Test

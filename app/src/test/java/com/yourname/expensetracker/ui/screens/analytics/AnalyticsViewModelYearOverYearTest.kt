@@ -35,6 +35,7 @@ import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -110,7 +111,7 @@ class AnalyticsViewModelYearOverYearTest : ViewModelTestUtils() {
         every { budgetRepository.allBudgets } returns flowOf(emptyList())
         every { insightsEngine.getLegacyInsights(any(), any()) } returns emptyList()
         coEvery { recurringExpenseEngine.getPatternsFromSnapshots(any()) } returns emptyList()
-        coEvery { advancedAnalyticsEngine.getCategoryAnalytics(any(), any(), any(), any()) } returns
+        coEvery { advancedAnalyticsEngine.getCategoryAnalytics(any(), any(), any(), any(), any()) } returns
             Pair(emptyList(), emptyList())
         val merchantResult: Pair<List<EnhancedMerchantAnalytics>, List<AnalyticsConversionWarning>> =
             Pair(emptyList(), emptyList())
@@ -242,6 +243,8 @@ class AnalyticsViewModelYearOverYearTest : ViewModelTestUtils() {
         assertEquals("Jun", yoy.deltaByMonth.single().first)
         assertEquals(120.0, yoy.deltaByMonth.single().second, 0.001)
         assertEquals(75.0, yoy.deltaByMonth.single().third, 0.001)
+        // NOW is minute-aligned, so the comparison minute equals NOW.
+        coVerify { advancedAnalyticsEngine.getCategoryAnalytics(any(), any(), any(), any(), NOW) }
         collectJob.cancel()
     }
 

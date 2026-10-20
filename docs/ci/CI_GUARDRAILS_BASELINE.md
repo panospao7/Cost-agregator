@@ -18,7 +18,7 @@
 
 > **PR 7 update**: New Guards Batch B — 3 privacy/money/release guard scripts wired into CI: `verify_cloud_payload_boundaries.py` (G-CLOUD-01, blocking with `--fail-on-violation`), `verify_pii_logging_boundaries.py` (G-PII-01, warning mode — 52 pre-existing violations), `verify_di_release_boundaries.py` (G-DI-01, warning mode). Cloud payload guard is production-clean; PII logging and DI/release run in warning mode initially pending backlog migration.
 
-> **PR 8 update**: Ignored Test Budget — `verify_ignored_test_budget.py` (G-IGNORE-01) validates `@Ignore` annotations have non-empty reasons, categorizes them (stress, jvm_incompatible, removed_api, vat_logic, truth_boxing, negative_id, rewrite_needed, other), and checks against the `release_block_denylist.yml`. Runs in warning mode initially (31 pre-existing).
+> **PR 8 update**: Ignored Test Budget — `verify_ignored_test_budget.py` (G-IGNORE-01) validates `@Ignore` annotations have non-empty reasons, categorizes them (stress, jvm_incompatible, removed_api, vat_logic, truth_boxing, negative_id, rewrite_needed, other), and checks against the `release_block_denylist.yml`. Runs in warning mode initially (historical: warning mode, 31 pre-existing at introduction; now blocking with budget 0).
 
 > **PR 9 update**: Branch protection documentation and CODEOWNERS — `CODEOWNERS` file created assigning review ownership for CI/guard, database/migrations, lifecycle/architecture, workers, and privacy/security paths. Developer quickstart guide created at `docs/ci/developer-quickstart.md` with pre-push checklist, guard script commands, allowlist format, and CI pipeline overview. Branch protection recommendations (required checks, branch rules) documented below.
 > 
@@ -94,7 +94,7 @@
   16. Verify DI/release boundaries: `python3 scripts/verify_di_release_boundaries.py`
   17. Verify allowlist compliance: `python3 scripts/verify_allowlist_compliance.py --fail-on-violation`
   18. Verify migration matrix: `python3 scripts/verify_migration_matrix.py --fail-on-violation`
-  19. Verify ignored test budget (warning mode — 31 pre-existing): `python3 scripts/verify_ignored_test_budget.py`
+  19. Verify ignored test budget (historical: warning mode, 31 pre-existing at introduction; now blocking with budget 0): `python3 scripts/verify_ignored_test_budget.py`
   20. Run guard script tests: `python -m pytest scripts/test_*.py -v`
   21. Upload guard output artifact on failure (7-day retention)
  - **Purpose**: Runs all Python-based architecture guard scripts and their pytest test suites as blocking PR checks. Enforces project-specific rules that Gradle-based checks cannot easily express. Added in PR 3; allowlist compliance check added in PR 4; migration matrix check added in PR 5; 5 new guard scripts (cancellation, UI/DAO, worker, receipt link, import lifecycle) added in PR 6; 3 new guard scripts (cloud payload, PII logging, DI/release) added in PR 7; ignored test budget guard added in PR 8.
@@ -109,7 +109,7 @@
   4. Grant Gradle wrapper execute permission
   5. Run unit tests: `./gradlew :app:testDebugUnitTest --no-daemon --stacktrace`
   6. Verify Room schema snapshots: `./gradlew :app:verifyRoomSchemaSnapshots -PstrictRoomSchemas=true --no-daemon --stacktrace`
-  7. Verify no ignored-test growth: `./gradlew :app:verifyNoIgnoredGrowth -PmaxIgnoredTests=3 --no-daemon --stacktrace`
+  7. Verify no ignored-test growth: `./gradlew :app:verifyNoIgnoredGrowth -PmaxIgnoredTests=0 --no-daemon --stacktrace`
   8. Run currency guardrails (PowerShell): `pwsh scripts/currency_guardrails.ps1 -SourceDir app/src/main/java -ProjectRoot ${{ github.workspace }}`
   9. Upload unit test results artifact (7-day retention)
   10. Upload Room schema verification results artifact (7-day retention)
@@ -156,7 +156,7 @@ All verification tasks defined in `app/build.gradle.kts`. Tasks wired to `:app:c
 | `checkDirectTimeCalls` | Inline Kotlin | Scans for `System.currentTimeMillis()` / `Date()` / `Instant.now()` outside `TimeProvider`; 21 allowlisted files, skips legacy/deprecated/backfill paths | ✅ Yes |
 | `checkLifecycleBypass` | Inline Kotlin | Scans `src/main/java` for `expenseDao.insert/update/delete` outside the allowlist; 10 allowlisted classes | ✅ Yes |
 | `verifyDbAccessBoundaries` | External `.py` | Runs `scripts/verify_db_access_boundaries.py --fail-on-violation` | ✅ Yes |
-| `verifyNoIgnoredGrowth` | Inline Kotlin | Counts `@Ignore` annotations; fails if count exceeds `-PmaxIgnoredTests=N` (default: 3) | ✅ Yes (wired in PR 2) |
+| `verifyNoIgnoredGrowth` | Inline Kotlin | Counts `@Ignore` annotations; fails if count exceeds `-PmaxIgnoredTests=N` (default: 0) | ✅ Yes (wired in PR 2) |
 
 ### `checkLifecycleBypass` Allowlist (10 classes)
 
@@ -195,7 +195,7 @@ All located in `scripts/`:
 | `verify_cloud_payload_boundaries.py` | G-CLOUD-01: cloud payload boundaries (AiSettings.redactBeforeCloud, CloudPayloadPolicy enforcement) | `--fail-on-violation` | ✅ `scripts/test_verify_cloud_payload_boundaries.py` | `static-guards` |
 | `verify_pii_logging_boundaries.py` | G-PII-01: PII/sensitive data in log statements, error messages, or exception fields (warning mode — 52 pre-existing violations) | `--fail-on-violation` (CI runs in warning mode) | ✅ `scripts/test_verify_pii_logging_boundaries.py` | `static-guards` |
 | `verify_di_release_boundaries.py` | G-DI-01: DI/release binding boundaries (full-codebase detection) | `--fail-on-violation` | ✅ `scripts/test_verify_di_release_boundaries.py` | `static-guards` |
-| `verify_ignored_test_budget.py` | G-IGNORE-01: validates @Ignore annotations have reasons, categorizes them, checks release-block denylist (warning mode — 31 pre-existing) | `--fail-on-violation` (CI runs in warning mode) | ✅ `scripts/test_verify_ignored_test_budget.py` | `static-guards` |
+| `verify_ignored_test_budget.py` | G-IGNORE-01: validates @Ignore annotations have reasons, categorizes them, checks release-block denylist (historical: warning mode, 31 pre-existing at introduction; now blocking with budget 0) | `--fail-on-violation` (CI initially ran in warning mode; now blocking) | ✅ `scripts/test_verify_ignored_test_budget.py` | `static-guards` |
 | `test_verify_db_access_boundaries.py` | pytest tests for DB access boundary guard | N/A | N/A | `static-guards` (via pytest) |
 
 ### PowerShell Guardrails
@@ -228,9 +228,10 @@ Located in `app/src/test/java/com/yourname/expensetracker/architecture/` and rel
 | `BackupRestoreArchitectureGuardTest` | `resetDatabase` maintenance mode enforcement |
 | `Engine5PrimitiveGuardTest` | No `System.currentTimeMillis()` / raw `CurrencyCode` usage in domain |
 | `ExpenseDaoMutationAccessTest` | Validates that expense DAO mutations are accessed only from approved classes |
-| `GuardSeededViolationTest` | Verifies guard scripts detect seeded violations (`guards/GuardSeededViolationTest.kt`) |
 
-**Total**: 17 architecture guard test classes across `architecture/`, `guards/`, and `contracts/` packages.
+**Total**: 16 test classes listed above, across `architecture/`, `contracts/`, and related packages.
+
+**Retired**: `GuardSeededViolationTest` and the three standalone Kotlin-script guards it referenced (`check_direct_time_calls.kts`, `check_lifecycle_bypasses.kts`, `check_raw_money_aggregates.kts`) were advisory and never wired into the CI manifest; the test only checked that the script files existed and matched a regex defined inside the test itself. They have been removed. Time-boundary enforcement is the registered G-TIME-01 guard (`scripts/verify_time_boundaries.py`), DAO lifecycle-bypass enforcement is the `db_access` guard, and raw money aggregates are covered by the `raw_money_aggregates` guard.
 
 ---
 
@@ -305,8 +306,8 @@ python -m pytest scripts/test_verify_migration_matrix.py -v
 ## Ignored Test Budget
 
 ### Current State
-- **Current `@Ignore` count**: ~31 annotations
-- **Maximum threshold**: 3 (set via `-PmaxIgnoredTests=3` in CI); lowered from 29 by test-suite-audit B3b-R, 2026-10-17 (current total: 3 `@Ignore`, 0 `@Disabled`; the category table below is historical)
+- **Historical `@Ignore` count at guard introduction**: ~31 annotations
+- **Maximum threshold**: 0 (set via `-PmaxIgnoredTests=0` in CI); lowered from 29 to 3 by test-suite-audit B3b-R (2026-10-17) and from 3 to 0 by test-suite-audit B3b-R2 (current total: 0 `@Ignore`, 0 `@Disabled`; the category table below is historical)
 - **Guard**: `verifyNoIgnoredGrowth` Gradle task (✅ wired to `:app:check` in PR 2)
 
 ### Ignored Test Categories
@@ -326,7 +327,7 @@ python -m pytest scripts/test_verify_migration_matrix.py -v
 - Defined in `app/build.gradle.kts` (lines 356–387)
 - Counts `@Ignore` lines in `.kt` and `.java` files under `src/test/` and `src/androidTest/`
 - Skips commented-out `@Ignore` (lines starting with `//`)
-- Default threshold: 3 (`-PmaxIgnoredTests=3`); lowered from 29 by test-suite-audit B3b-R, 2026-10-17
+- Default threshold: 0 (`-PmaxIgnoredTests=0`); lowered from 29 to 3 by test-suite-audit B3b-R (2026-10-17) and from 3 to 0 by test-suite-audit B3b-R2
 - **Wired to `:app:check` in PR 2** — also runs as a separate step in the `unit-tests` CI job for early failure feedback
 
 ### Guard: `verify_ignored_test_budget.py`
@@ -334,7 +335,7 @@ python -m pytest scripts/test_verify_migration_matrix.py -v
 - **Rule ID**: `G-IGNORE-01`
 - **Location**: `scripts/verify_ignored_test_budget.py`
 - **Tests**: `scripts/test_verify_ignored_test_budget.py` (8 test cases)
-- **CI job**: `static-guards` (warning mode — 31 pre-existing)
+- **CI job**: `static-guards` (historical: warning mode, 31 pre-existing at introduction; now blocking with budget 0)
 - **Denylist**: `config/release_block_denylist.yml`
 
 #### What it checks

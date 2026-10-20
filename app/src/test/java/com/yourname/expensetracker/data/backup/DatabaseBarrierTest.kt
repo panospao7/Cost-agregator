@@ -1,8 +1,5 @@
 package com.yourname.expensetracker.data.backup
 
-import android.content.Context
-import androidx.test.core.app.ApplicationProvider
-import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
@@ -11,13 +8,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertThrows
 import org.junit.Before
 import org.junit.Test
-import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
-import org.robolectric.annotation.Config
-import java.io.File
 
-@RunWith(RobolectricTestRunner::class)
-@Config(sdk = [28])
 class DatabaseBarrierTest {
 
     private val maintenanceMode = mockk<RestoreMaintenanceMode>()
@@ -35,88 +26,60 @@ class DatabaseBarrierTest {
         every { maintenanceMode.isWritesAllowed() } returns (mode == RestoreMaintenanceMode.Mode.NORMAL)
     }
 
-    // ── Write barrier ─────────────────────────────────────────────
+    // ── Write barrier table ───────────────────────────────────────
+    // Expectations are written out from DatabaseWriteBarrier.checkWritesAllowed
+    // (DatabaseWriteBarrier.kt:30-39): a write is admitted only in Mode.NORMAL; every other
+    // mode throws DatabaseAccessBlockedException(WRITE, mode). The persisted resume-pending
+    // case lives in RestoreMaintenancePersistedBarrierRobolectricTest.
+
+    private val writeAllowedByMode: Map<RestoreMaintenanceMode.Mode, Boolean> = mapOf(
+        RestoreMaintenanceMode.Mode.NORMAL to true,
+        RestoreMaintenanceMode.Mode.BACKUP_EXPORTING to false,
+        RestoreMaintenanceMode.Mode.RESTORE_PREPARING to false,
+        RestoreMaintenanceMode.Mode.RESTORE_STAGING to false,
+        RestoreMaintenanceMode.Mode.RESTORE_SWAPPING to false,
+        RestoreMaintenanceMode.Mode.RESTORE_VERIFYING to false,
+        RestoreMaintenanceMode.Mode.RESTORE_ROLLING_BACK to false,
+        RestoreMaintenanceMode.Mode.ASSETS_RESTORING to false,
+        RestoreMaintenanceMode.Mode.RESETTING_DATABASE to false,
+        RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED to false,
+        RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED to false
+    )
 
     @Test
-    fun write_allowed_in_NORMAL() {
-        setMode(RestoreMaintenanceMode.Mode.NORMAL)
-        writeBarrier.checkWritesAllowed("test_op") // must not throw
+    fun write_table_covers_every_mode() {
+        assertEquals(
+            "write table must have exactly one row per Mode so a new Mode forces a decision",
+            RestoreMaintenanceMode.Mode.entries.toSet(),
+            writeAllowedByMode.keys
+        )
     }
 
     @Test
-    fun write_blocked_in_BACKUP_EXPORTING() {
-        setMode(RestoreMaintenanceMode.Mode.BACKUP_EXPORTING)
-        val ex = assertThrows(DatabaseAccessBlockedException::class.java) {
-            writeBarrier.checkWritesAllowed("test_op")
-        }
-        assertEquals(DatabaseAccessType.WRITE, ex.accessType)
-        assertEquals(RestoreMaintenanceMode.Mode.BACKUP_EXPORTING, ex.mode)
-    }
+    fun write_barrier_table_allows_only_NORMAL_and_blocks_every_other_mode_as_WRITE() {
+        for (mode in RestoreMaintenanceMode.Mode.entries) {
+            val rowName = "write row mode=$mode"
+            val expectedAllowed = writeAllowedByMode.getValue(mode)
+            // Fresh mock + barrier per row: no stub leaks between rows.
+            val rowMaintenance = mockk<RestoreMaintenanceMode>()
+            every { rowMaintenance.currentMode() } returns mode
+            val barrier = DatabaseWriteBarrier(rowMaintenance)
 
-    @Test
-    fun write_blocked_in_RESTORE_PREPARING() {
-        setMode(RestoreMaintenanceMode.Mode.RESTORE_PREPARING)
-        assertThrows(DatabaseAccessBlockedException::class.java) {
-            writeBarrier.checkWritesAllowed("test_op")
-        }
-    }
-
-    @Test
-    fun write_blocked_in_RESTORE_COMPLETE_RESTART_REQUIRED() {
-        setMode(RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED)
-        assertThrows(DatabaseAccessBlockedException::class.java) {
-            writeBarrier.checkWritesAllowed("test_op")
-        }
-    }
-
-    @Test
-    fun write_blocked_in_RESETTING_DATABASE() {
-        setMode(RestoreMaintenanceMode.Mode.RESETTING_DATABASE)
-        assertThrows(DatabaseAccessBlockedException::class.java) {
-            writeBarrier.checkWritesAllowed("test_op")
-        }
-    }
-
-    @Test
-    fun write_blocked_in_CRITICAL_RECOVERY_REQUIRED() {
-        setMode(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED)
-        assertThrows(DatabaseAccessBlockedException::class.java) {
-            writeBarrier.checkWritesAllowed("test_op")
-        }
-    }
-
-    @Test
-    fun persisted_resume_pending_blocks_current_and_fresh_write_barriers() {
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        val criticalSentinel = File(context.noBackupFilesDir, "restore_maintenance_critical")
-        criticalSentinel.delete()
-        val prefs = context.getSharedPreferences("restore_maintenance_mode", Context.MODE_PRIVATE)
-        prefs.edit().clear()
-            .putString("current_mode", RestoreMaintenanceMode.Mode.NORMAL.name)
-            .putBoolean("worker_resume_pending", true)
-            .commit()
-        try {
-            val current = RestoreMaintenanceMode(context, FakeTimeProvider(1716163200000L))
-            val fresh = RestoreMaintenanceMode(context, FakeTimeProvider(1716163200000L))
-
-            assertThrows(DatabaseAccessBlockedException::class.java) {
-                DatabaseWriteBarrier(current).checkWritesAllowed("current_pending")
-            }
-            assertThrows(DatabaseAccessBlockedException::class.java) {
-                DatabaseWriteBarrier(fresh).checkWritesAllowed("fresh_pending")
-            }
-        } finally {
-            prefs.edit().clear().commit()
-            criticalSentinel.delete()
-        }
-    }
-
-    @Test
-    fun every_known_non_normal_mode_blocks_writes() {
-        for (mode in RestoreMaintenanceMode.Mode.entries.filter { it != RestoreMaintenanceMode.Mode.NORMAL }) {
-            setMode(mode)
-            assertThrows("Expected block in mode $mode", DatabaseAccessBlockedException::class.java) {
-                writeBarrier.checkWritesAllowed("test_op")
+            if (expectedAllowed) {
+                try {
+                    barrier.checkWritesAllowed(DatabaseAccessOperation("test_op"))
+                } catch (t: Throwable) {
+                    throw AssertionError("$rowName: expected write to be allowed but got $t", t)
+                }
+            } else {
+                val ex = assertThrows(
+                    "$rowName: expected write to be blocked",
+                    DatabaseAccessBlockedException::class.java
+                ) {
+                    barrier.checkWritesAllowed(DatabaseAccessOperation("test_op"))
+                }
+                assertEquals("$rowName: accessType", DatabaseAccessType.WRITE, ex.accessType)
+                assertEquals("$rowName: ex.mode", mode, ex.mode)
             }
         }
     }
@@ -138,64 +101,77 @@ class DatabaseBarrierTest {
         assertEquals(DatabaseAccessBlockedException::class, exception!!::class)
     }
 
-    // ── Read barrier — NORMAL_APP_READ ────────────────────────────
+    // ── Read barrier table (policy x mode) ────────────────────────
+    // Allow-sets are written out from DatabaseReadBarrier.checkReadAllowed
+    // (DatabaseReadBarrier.kt:20-30):
+    //   NORMAL_APP_READ                -> {NORMAL}                     (:21-22)
+    //   EXPORT_OR_BACKUP_SNAPSHOT_READ -> {NORMAL, BACKUP_EXPORTING}   (:24-26)
+    //   RESTORE_INTERNAL_STAGED_DB_READ-> {} (always blocked on the app singleton)  (:29)
+    // Every other (policy, mode) row throws DatabaseAccessBlockedException(READ, mode)  (:31-37).
 
-    @Test
-    fun normal_read_allowed_in_NORMAL() {
-        setMode(RestoreMaintenanceMode.Mode.NORMAL)
-        readBarrier.checkReadAllowed(DatabaseAccessOperation("op"), DatabaseReadPolicy.NORMAL_APP_READ)
-    }
+    private val readAllowedModesByPolicy: Map<DatabaseReadPolicy, Set<RestoreMaintenanceMode.Mode>> = mapOf(
+        DatabaseReadPolicy.NORMAL_APP_READ to setOf(
+            RestoreMaintenanceMode.Mode.NORMAL
+        ),
+        DatabaseReadPolicy.EXPORT_OR_BACKUP_SNAPSHOT_READ to setOf(
+            RestoreMaintenanceMode.Mode.NORMAL,
+            RestoreMaintenanceMode.Mode.BACKUP_EXPORTING
+        ),
+        DatabaseReadPolicy.RESTORE_INTERNAL_STAGED_DB_READ to emptySet()
+    )
 
-    @Test
-    fun normal_read_blocked_in_BACKUP_EXPORTING() {
-        setMode(RestoreMaintenanceMode.Mode.BACKUP_EXPORTING)
-        val ex = assertThrows(DatabaseAccessBlockedException::class.java) {
-            readBarrier.checkReadAllowed(DatabaseAccessOperation("op"), DatabaseReadPolicy.NORMAL_APP_READ)
-        }
-        assertEquals(DatabaseAccessType.READ, ex.accessType)
-    }
-
-    @Test
-    fun normal_read_blocked_in_RESTORE_VERIFYING() {
-        setMode(RestoreMaintenanceMode.Mode.RESTORE_VERIFYING)
-        assertThrows(DatabaseAccessBlockedException::class.java) {
-            readBarrier.checkReadAllowed(DatabaseAccessOperation("op"), DatabaseReadPolicy.NORMAL_APP_READ)
-        }
-    }
-
-    // ── Read barrier — EXPORT_OR_BACKUP_SNAPSHOT_READ ─────────────
-
-    @Test
-    fun export_read_allowed_in_NORMAL() {
-        setMode(RestoreMaintenanceMode.Mode.NORMAL)
-        readBarrier.checkReadAllowed(DatabaseAccessOperation("op"), DatabaseReadPolicy.EXPORT_OR_BACKUP_SNAPSHOT_READ)
-    }
-
-    @Test
-    fun export_read_allowed_in_BACKUP_EXPORTING() {
-        setMode(RestoreMaintenanceMode.Mode.BACKUP_EXPORTING)
-        readBarrier.checkReadAllowed(DatabaseAccessOperation("op"), DatabaseReadPolicy.EXPORT_OR_BACKUP_SNAPSHOT_READ)
-    }
-
-    @Test
-    fun export_read_blocked_in_RESTORE_VERIFYING() {
-        setMode(RestoreMaintenanceMode.Mode.RESTORE_VERIFYING)
-        assertThrows(DatabaseAccessBlockedException::class.java) {
-            readBarrier.checkReadAllowed(DatabaseAccessOperation("op"), DatabaseReadPolicy.EXPORT_OR_BACKUP_SNAPSHOT_READ)
-        }
-    }
-
-    // ── Read barrier — RESTORE_INTERNAL_STAGED_DB_READ ───────────
-
-    @Test
-    fun staged_db_read_always_blocked_through_app_singleton() {
+    private fun assertReadTableForPolicy(policy: DatabaseReadPolicy) {
+        val allowedModes = readAllowedModesByPolicy.getValue(policy)
         for (mode in RestoreMaintenanceMode.Mode.entries) {
-            setMode(mode)
-            assertThrows("Expected block in mode $mode", DatabaseAccessBlockedException::class.java) {
-                readBarrier.checkReadAllowed(
-                    DatabaseAccessOperation("staged_op"),
-                    DatabaseReadPolicy.RESTORE_INTERNAL_STAGED_DB_READ
-                )
+            val rowName = "read row policy=$policy mode=$mode"
+            // Fresh mock + barrier per row: no stub leaks between rows.
+            val rowMaintenance = mockk<RestoreMaintenanceMode>()
+            every { rowMaintenance.currentMode() } returns mode
+            val barrier = DatabaseReadBarrier(rowMaintenance)
+            val operation = DatabaseAccessOperation("table_op")
+
+            if (mode in allowedModes) {
+                try {
+                    barrier.checkReadAllowed(operation, policy)
+                } catch (t: Throwable) {
+                    throw AssertionError("$rowName: expected read to be allowed but got $t", t)
+                }
+            } else {
+                val ex = assertThrows(
+                    "$rowName: expected read to be blocked",
+                    DatabaseAccessBlockedException::class.java
+                ) {
+                    barrier.checkReadAllowed(operation, policy)
+                }
+                assertEquals("$rowName: accessType", DatabaseAccessType.READ, ex.accessType)
+                assertEquals("$rowName: ex.mode", mode, ex.mode)
+                assertEquals("$rowName: ex.operation", operation, ex.operation)
+            }
+        }
+    }
+
+    @Test
+    fun read_table_covers_every_policy() {
+        assertEquals(
+            "read table must have exactly one allow-set per DatabaseReadPolicy so a new policy forces a decision",
+            DatabaseReadPolicy.entries.toSet(),
+            readAllowedModesByPolicy.keys
+        )
+    }
+
+    // One test over every policy: NORMAL_APP_READ allows only NORMAL; EXPORT_OR_BACKUP_SNAPSHOT_READ
+    // allows only NORMAL and BACKUP_EXPORTING; RESTORE_INTERNAL_STAGED_DB_READ is always blocked
+    // through the app singleton. A policy without a table entry fails with its name.
+    @Test
+    fun read_table_every_policy_allows_only_its_documented_modes() {
+        for (policy in DatabaseReadPolicy.entries) {
+            if (policy !in readAllowedModesByPolicy) {
+                throw AssertionError("read table has no allow-set entry for policy=$policy")
+            }
+            try {
+                assertReadTableForPolicy(policy)
+            } catch (e: AssertionError) {
+                throw AssertionError("policy=$policy: ${e.message}", e)
             }
         }
     }

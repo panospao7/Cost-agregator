@@ -31,7 +31,7 @@ import org.junit.Test
  * - bankApiIntegration_uses_rawBankStatementStorageMode_not_rawOcrStorageMode
  * - rawPersistencePolicyResolver_bank_api_uses_rawBankStatementStorageMode
  * - rawPersistencePolicyResolver_bank_statement_uses_rawBankStatementStorageMode
- * - fail_closed_defaults_sets_bank_statement_mode_to_do_not_store
+ * - (fail-closed defaults incl. bank statement DO_NOT_STORE: see PrivacyGuardTest.fail_closed_defaults_are_all_off_and_do_not_store)
  *
  * ## U-PRIVACY-02: EffectiveCloudAiPolicy authoritative gate
  * - effectiveCloudAiPolicy_blocks_when_privacy_disables_cloud
@@ -191,14 +191,8 @@ class PR5PrivacyContractTest {
     }
 
     // ── U-PRIVACY-01: FAIL_CLOSED_DEFAULTS ────────────────────────────────────
-
-    @Test
-    fun fail_closed_defaults_sets_bank_statement_mode_to_do_not_store() {
-        assertEquals(
-            RawStorageMode.DO_NOT_STORE,
-            PrivacySettings.FAIL_CLOSED_DEFAULTS.rawBankStatementStorageMode
-        )
-    }
+    // FAIL_CLOSED_DEFAULTS bank statement mode (DO_NOT_STORE) is asserted by
+    // PrivacyGuardTest.fail_closed_defaults_are_all_off_and_do_not_store.
 
     @Test
     fun default_settings_sets_bank_statement_mode_to_store_redacted() {

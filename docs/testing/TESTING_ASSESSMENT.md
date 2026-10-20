@@ -66,7 +66,7 @@
 - `MerchantNormalizerStressTest.kt`
 - `CompositeGeocodingServiceStressTest.kt`
 - `StringDistanceUtilsTest.kt` (merged from the former stress test)
-- `StatisticsUtilsStressTest.kt`
+- `StatisticsUtilsTest.kt` (renamed from the former stress test)
 
 **Stress Scenarios:**
 - ✅ High volume data processing

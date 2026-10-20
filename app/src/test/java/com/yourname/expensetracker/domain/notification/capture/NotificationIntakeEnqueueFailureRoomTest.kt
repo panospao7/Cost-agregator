@@ -42,7 +42,9 @@ import java.util.concurrent.Executors
 
 /**
  * RG17B-1 / V17B-N1: enqueue-failure handling against a REAL in-memory Room,
- * without the interplay that made [NotificationIntakeEnqueueFailureTest] hang.
+ * without the interplay (MockK-intercepted Operation.await under runTest) that made
+ * the former @Ignore'd NotificationIntakeEnqueueFailureTest hang; every case of that
+ * class now lives here.
  *
  * Hang avoidance: the WorkManager Operation is a hand-written
  * [FailingOperation] whose getResult() is a REAL already-failed
@@ -339,6 +341,79 @@ class NotificationIntakeEnqueueFailureRoomTest {
         assertEquals(NOW, after.terminalAt)
         assertEquals(MAX_ATTEMPTS, after.attempts)
         assertEquals(NotificationIntakeStatus.FAILED_FINAL.name, after.status)
+    }
+
+    // ── T6: full attempt sequence up to the maxAttempts boundary ────────────
+
+    @Test(timeout = 60_000)
+    fun `repeated enqueue failures stay retryable until maxAttempts then FAILED_FINAL and stop transitioning`() = runBlocking {
+        val id = insert(intakeRow("fp-sequence", NotificationIntakeStatus.RECEIVED.name, attempts = 0))
+
+        // Attempts 1..MAX_ATTEMPTS-1 stay retryable on the first rung of the ladder.
+        for (expectedAttempts in 1 until MAX_ATTEMPTS) {
+            assertEquals(1, markEnqueueFailed(id))
+            val row = intakeDao.getById(id)!!
+            assertEquals(NotificationIntakeStatus.FAILED_RETRYABLE.name, row.status)
+            assertEquals(expectedAttempts, row.attempts)
+            assertEquals(NOW + 30_000L, row.nextAttemptAt)
+            assertNull(row.terminalAt)
+        }
+
+        // The MAX_ATTEMPTS-th failure is the boundary: FAILED_FINAL, schedule cleared, terminalAt stamped.
+        assertEquals(1, markEnqueueFailed(id))
+        val finalRow = intakeDao.getById(id)!!
+        assertEquals(NotificationIntakeStatus.FAILED_FINAL.name, finalRow.status)
+        assertEquals(MAX_ATTEMPTS, finalRow.attempts)
+        assertNull(finalRow.nextAttemptAt)
+        assertEquals(NOW, finalRow.terminalAt)
+
+        // Conditional WHERE: a final-failed row is never transitioned or counted again.
+        assertEquals(0, markEnqueueFailed(id, nowMs = NOW + 5_000L))
+        assertEquals(finalRow, intakeDao.getById(id))
+    }
+
+    // ── T7: retryable row is recovered only once nextAttemptAt passes ───────
+
+    @Test(timeout = 60_000)
+    fun `retryable row after enqueue failure surfaces in getReadyForProcessing only once nextAttemptAt passes`() = runBlocking {
+        val result = coordinator().capture(
+            packageName = PACKAGE,
+            appName = "App",
+            notificationKey = "key",
+            notificationKeyHash = "hash",
+            postTime = NOW,
+            title = "Title",
+            text = "Text",
+            combinedBody = null,
+            subText = null,
+            extrasJson = null,
+            rawStorageMode = RawStorageMode.STORE_RAW,
+            correlationId = "corr-recovery",
+            source = "listener"
+        )
+        assertTrue(result is NotificationIntakeCaptureResult.EnqueueFailed)
+        val row = intakeDao.getByFingerprint(fingerprint)!!
+        assertEquals(NotificationIntakeStatus.FAILED_RETRYABLE.name, row.status)
+        assertEquals(NOW + 30_000L, row.nextAttemptAt)
+
+        // Not due yet: immediately after the failure and one millisecond before nextAttemptAt.
+        assertTrue(intakeDao.getReadyForProcessing(NOW, 100).none { it.id == row.id })
+        assertTrue(intakeDao.getReadyForProcessing(NOW + 29_999L, 100).none { it.id == row.id })
+
+        // Recovery scan (e.g. after process death) surfaces it exactly at and after nextAttemptAt.
+        assertTrue(intakeDao.getReadyForProcessing(NOW + 30_000L, 100).any { it.id == row.id })
+        assertTrue(intakeDao.getReadyForProcessing(NOW + 31_000L, 100).any { it.id == row.id })
+    }
+
+    @Test(timeout = 60_000)
+    fun `FAILED_FINAL row after enqueue failure never surfaces in getReadyForProcessing`() = runBlocking {
+        val id = insert(intakeRow("fp-final-not-ready", NotificationIntakeStatus.RECEIVED.name, attempts = MAX_ATTEMPTS - 1))
+
+        assertEquals(1, markEnqueueFailed(id))
+        assertEquals(NotificationIntakeStatus.FAILED_FINAL.name, intakeDao.getById(id)!!.status)
+
+        assertTrue(intakeDao.getReadyForProcessing(NOW, 100).none { it.id == id })
+        assertTrue(intakeDao.getReadyForProcessing(NOW + 7_200_000L, 100).none { it.id == id })
     }
 
     private companion object {
