@@ -336,8 +336,10 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             // Use reason codes extracted from validation errors — never raw URI
             val reasonCode = when {
                 validation.errors.any { it.contains("not readable") } -> "URI_NOT_READABLE"
-                validation.errors.any { it.contains("MIME type") || it.contains("determine MIME") } -> "MIME_UNKNOWN"
+                // DIAG-07: "Unsupported MIME type: ..." must be checked before the generic
+                // "MIME type" match, otherwise it is misclassified as MIME_UNKNOWN.
                 validation.errors.any { it.contains("Unsupported MIME") } -> "MIME_UNSUPPORTED"
+                validation.errors.any { it.contains("MIME type") || it.contains("determine MIME") } -> "MIME_UNKNOWN"
                 validation.errors.any { it.contains("too large") || it.contains("exceeds") } -> "FILE_TOO_LARGE"
                 validation.errors.any { it.contains("decode") } -> "IMAGE_DECODE_FAILED"
                 else -> "VALIDATION_FAILED"

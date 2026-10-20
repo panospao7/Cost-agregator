@@ -15,6 +15,7 @@ import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.SupportedCurrency
 import com.yourname.expensetracker.di.IoDispatcher
+import com.yourname.expensetracker.domain.util.CancellationSafe
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.first
@@ -90,7 +91,8 @@ class TaxEstimator @Inject constructor(
         val incomeCurrency = estimatedAnnualIncomeCurrency?.uppercase() ?: filingCurrency
 
         // PR7: Home-vs-filing currency warning
-        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }.getOrNull()?.uppercase()
+        // MONEY-04: cancellation must propagate, not become a null home currency.
+        val homeCurrency = CancellationSafe.runCatchingCancellable { currencySettingsRepository.homeCurrency().first() }.getOrNull()?.uppercase()
         val currencyMismatchWarning = if (homeCurrency != null && homeCurrency != filingCurrency) {
             "Home currency ($homeCurrency) differs from tax filing currency ($filingCurrency). Tax numbers are in filing currency."
         } else null
@@ -128,6 +130,7 @@ class TaxEstimator @Inject constructor(
             val result = taxRateProvider.getRate(taxSettings.getTaxCountry(), null)
             result.standardVatRate
         } catch (e: Exception) {
+            CancellationSafe.rethrowIfCancellation(e)
             null
         }
         val vatRate = if (providerRate != null && providerRate > 0.0) providerRate else taxConfig.getVatRate()

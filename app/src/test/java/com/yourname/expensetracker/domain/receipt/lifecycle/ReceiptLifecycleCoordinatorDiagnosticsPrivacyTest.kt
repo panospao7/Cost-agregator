@@ -316,6 +316,8 @@ class ReceiptLifecycleCoordinatorDiagnosticsPrivacyTest {
             "URI not readable $sentinelPath" to "URI_NOT_READABLE",
             "Cannot determine MIME type for $sentinelPath" to "MIME_UNKNOWN",
             "Unsupported MIME $sentinelPath" to "MIME_UNSUPPORTED",
+            // DIAG-07: real validator message must not fall into the generic "MIME type" bucket
+            "Unsupported MIME type: image/gif" to "MIME_UNSUPPORTED",
             "File too large $sentinelPath" to "FILE_TOO_LARGE",
             "Image decode failed $sentinelPath" to "IMAGE_DECODE_FAILED",
             "Something else entirely $sentinelPath $sentinelBody" to "VALIDATION_FAILED"

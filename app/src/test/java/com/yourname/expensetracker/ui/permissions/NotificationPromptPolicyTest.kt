@@ -40,6 +40,17 @@ class NotificationPromptPolicyTest {
     }
 
     @Test
+    fun `dismiss without choice keeps the prompt eligible and is not a final denial`() {
+        // Dismissing the system dialog without allow/deny reports (false, false, false): no
+        // rationale before or after, not granted. The platform cannot distinguish it from a
+        // suppressed dialog, so the settings offer must stay available rather than the prompt
+        // being treated as finally denied.
+        assertTrue(offer(rationaleBefore = false, rationaleAfter = false, granted = false))
+        // Control: a real first-time denial (rationale becomes available) does not qualify.
+        assertFalse(offer(rationaleBefore = false, rationaleAfter = true, granted = false))
+    }
+
+    @Test
     fun `never offers settings when permission was granted`() {
         assertFalse(offer(rationaleBefore = false, rationaleAfter = false, granted = true))
         assertFalse(offer(rationaleBefore = true, rationaleAfter = true, granted = true))

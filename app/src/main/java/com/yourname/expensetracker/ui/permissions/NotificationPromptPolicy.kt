@@ -19,6 +19,12 @@ object NotificationPromptPolicy {
      * (or will no longer) show its dialog: no rationale was available before the request and none
      * is available after it. The caller then shows the in-app dialog once more in "open settings"
      * mode. A first-time denial has rationaleAfter == true and therefore never qualifies.
+     *
+     * A dismiss-without-choice (the user leaves the system dialog without tapping allow or deny)
+     * reports (rationaleBefore = false, rationaleAfter = false, granted = false). The platform gives
+     * no signal that tells it apart from a suppressed dialog, so it is intentionally treated the same
+     * way: the prompt stays eligible and the in-app dialog is offered once more in "open settings"
+     * mode. It is never treated as a final denial.
      */
     fun shouldOfferSettingsAfterDenial(
         rationaleBefore: Boolean,

@@ -107,4 +107,56 @@ class CurrencyRateStalenessTest {
         // THEN: returns null (treated as unavailable due to staleness)
         assertThat(result).isNull()
     }
+
+    @Test
+    fun `future-dated direct rate beyond 24h is stale and unavailable`() = runTest {
+        // MONEY-05: now - lastUpdated is hugely negative for a future-dated rate; without abs()
+        // it was never > maxAge and the bad rate was accepted as fresh.
+        val now = 1_700_000_000_000L
+        val timeProvider = mockk<TimeProvider>()
+        every { timeProvider.now() } returns now
+
+        val exchangeRateStore = mockk<ExchangeRateStore>(relaxed = true)
+        coEvery { exchangeRateStore.getRate("USD", "EUR") } returns DomainExchangeRate(
+            fromCurrency = "USD",
+            toCurrency = "EUR",
+            rate = 0.92,
+            lastUpdated = now + (25 * ONE_HOUR_MS),
+            source = "test"
+        )
+        coEvery { exchangeRateStore.getRate("EUR", "EUR") } returns null
+
+        val converter = CurrencyConverter(exchangeRateStore, timeProvider)
+
+        assertThat(converter.convert(50.0, "USD", "EUR")).isNull()
+    }
+
+    @Test
+    fun `future-dated composite leg beyond 24h is stale and unavailable`() = runTest {
+        val now = 1_700_000_000_000L
+        val timeProvider = mockk<TimeProvider>()
+        every { timeProvider.now() } returns now
+
+        val exchangeRateStore = mockk<ExchangeRateStore>(relaxed = true)
+        coEvery { exchangeRateStore.getRate("USD", "GBP") } returns null
+        coEvery { exchangeRateStore.getRate("USD", "EUR") } returns DomainExchangeRate(
+            fromCurrency = "USD", toCurrency = "EUR", rate = 0.92, lastUpdated = now, source = "test"
+        )
+        val futureLeg = DomainExchangeRate(
+            fromCurrency = "EUR", toCurrency = "GBP", rate = 0.85,
+            lastUpdated = now + (25 * ONE_HOUR_MS), source = "test"
+        )
+        coEvery { exchangeRateStore.getRate("EUR", "GBP") } returns futureLeg
+
+        val converter = CurrencyConverter(exchangeRateStore, timeProvider)
+
+        assertThat(converter.convert(50.0, "USD", "GBP")).isNull()
+
+        // Control: the same composite with a current second leg converts, so the null above
+        // is caused by the future-dated leg and not by the stubbing.
+        coEvery { exchangeRateStore.getRate("EUR", "GBP") } returns futureLeg.copy(lastUpdated = now)
+        val ok = converter.convert(50.0, "USD", "GBP")
+        assertThat(ok).isNotNull()
+        assertThat(ok!!.convertedAmount).isWithin(0.001).of(50.0 * 0.92 * 0.85)
+    }
 }

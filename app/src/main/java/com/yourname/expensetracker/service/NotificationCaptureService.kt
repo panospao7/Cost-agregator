@@ -679,7 +679,8 @@ class NotificationCaptureService : NotificationListenerService() {
                             buildExtrasJson(extras)
                         } catch (e: Exception) {
                             if (e is kotlinx.coroutines.CancellationException) throw e
-                            "{\"error\": \"${e.message}\"}"
+                            // PRIV-07: bounded reason code only — never the raw exception message.
+                            "{\"error\": \"CAPTURE_FAILED\"}"
                         }
                         RawStorageMode.STORE_REDACTED -> """{"redacted":true}"""
                         RawStorageMode.STORE_METADATA_ONLY -> null
@@ -756,6 +757,9 @@ class NotificationCaptureService : NotificationListenerService() {
                         // RP-10 10b (P1-004): exactly one bounded terminal
                         // CANCELLED diagnostic from NonCancellable, then the
                         // cancellation propagates — never a retry or success.
+                        // PRIV-14: release the dedupe key recorded by tryStart so a genuine
+                        // repost after the service restarts is not swallowed as DUPLICATE.
+                        deduper.remove(dedupeKey)
                         kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
                             notificationDiagnosticEmitter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
                                 pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
@@ -863,7 +867,8 @@ class NotificationCaptureService : NotificationListenerService() {
             RawStorageMode.STORE_RAW -> try {
                 buildExtrasJson(extras)
             } catch (e: Exception) {
-                "{\"error\": \"${e.message}\"}"
+                // PRIV-07: bounded reason code only — never the raw exception message.
+                "{\"error\": \"CAPTURE_FAILED\"}"
             }
             RawStorageMode.STORE_REDACTED -> """{"redacted":true}"""
             RawStorageMode.STORE_METADATA_ONLY -> null

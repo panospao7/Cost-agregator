@@ -2746,6 +2746,62 @@ class DatabaseBackupRepositoryImplTest {
     }
 
     @Test
+    fun restart_required_mode_without_a_journal_blocks_every_restore_API_and_mutates_nothing() = runTest(testDispatcher) {
+        assertRestoreBlockedByModeAlone(RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED) {
+            mockRestoreMaintenanceMode.exit(true) // fixture mode -> RESTORE_COMPLETE_RESTART_REQUIRED
+        }
+    }
+
+    @Test
+    fun critical_recovery_mode_without_a_journal_blocks_every_restore_API_and_mutates_nothing() = runTest(testDispatcher) {
+        assertRestoreBlockedByModeAlone(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED) {
+            mockRestoreMaintenanceMode.enterCriticalRecoveryRequired("TEST_CRITICAL_MODE")
+        }
+    }
+
+    /**
+     * R32 N1 gate (restoreEntryBlockedOrNull): the blocking mode alone, with NO active journal,
+     * must yield RESTORE_BLOCKED and mutate nothing: no journal begun, no mode change, no run recorded.
+     */
+    private suspend fun assertRestoreBlockedByModeAlone(
+        expectedMode: RestoreMaintenanceMode.Mode,
+        enterMode: () -> Unit
+    ) {
+        for (operation in supportedRestoreOperations()) {
+            val fixture = restoreFixture()
+            try {
+                val journal = fixture.journal
+                val journalFile = File(fixture.directory, "restore_journal.json")
+                enterMode()
+                assertEquals(expectedMode, mockRestoreMaintenanceMode.currentMode())
+                assertFalse("$operation: precondition, no journal", journalFile.exists())
+                assertTrue(journal.readJournalResult() is RestoreJournal.JournalReadResult.Absent)
+                val before = dbFile.readBytes()
+                val recorder = mockk<OperationRunRecorder>(relaxed = true)
+                io.mockk.clearMocks(mockRestoreMaintenanceMode, answers = false, childMocks = false)
+
+                val result = invokeRestore(operation, createRepository(journal = journal, operationRunRecorder = recorder), fixture.source)
+
+                val error = result.exceptionOrNull()
+                assertTrue("$operation: $error", error is com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException)
+                assertEquals(
+                    DiagnosticReasonCode.RESTORE_BLOCKED.name,
+                    (error as com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException).operation.reason
+                )
+                verify(exactly = 0) { journal.beginJournal(any(), any(), any()) }
+                assertFalse("$operation: no journal may be created", journalFile.exists())
+                org.junit.Assert.assertArrayEquals(before, dbFile.readBytes())
+                verify(exactly = 0) { mockRestoreMaintenanceMode.enter(any()) }
+                verify(exactly = 0) { mockRestoreMaintenanceMode.exit(any()) }
+                verify(exactly = 0) { mockRestoreMaintenanceMode.enterCriticalRecoveryRequired(any()) }
+                verify(exactly = 0) { database.close() }
+                coVerify(exactly = 0) { recorder.start(any(), any(), any()) }
+                assertEquals(expectedMode, mockRestoreMaintenanceMode.currentMode())
+            } finally { releaseRestoreFixture() }
+        }
+    }
+
+    @Test
     fun reset_sidecar_delete_failures_and_failed_reopen_do_not_claim_success() = runTest(testDispatcher) {
         for (fault in listOf("WAL", "SHM", "REOPEN")) {
             val fixture = restoreFixture()

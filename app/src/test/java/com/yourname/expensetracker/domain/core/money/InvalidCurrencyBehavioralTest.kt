@@ -174,7 +174,70 @@ class InvalidCurrencyBehavioralTest {
         assertEquals(0.0, aggregate.displayAmount, 0.0)
     }
 
+    // --- CurrencyConverter.convertMultiple: invalid currency is not a missing rate (MONEY-05) ---
+
+    @Test
+    fun `convertMultiple maps invalid source currency to INVALID_CURRENCY not MISSING_RATE`() = runTest {
+        store.rates["USD_EUR"] = DomainExchangeRate("USD", "EUR", 0.92, lastUpdated = NOW, source = "api", validDate = NOW)
+
+        val aggregate = converter.convertMultiple(listOf(100.0 to "USD", 50.0 to "XYZ"), "EUR")
+
+        // Valid totals are unchanged; only the invalid bucket fails.
+        assertEquals(92.0, aggregate.total, 0.0001)
+        val failure = aggregate.failedConversions.single()
+        assertEquals("XYZ", failure.originalCurrency)
+        assertEquals(
+            com.yourname.expensetracker.domain.currency.FailedConversion.INVALID_CURRENCY,
+            failure.failureType
+        )
+        assertNotEquals(
+            com.yourname.expensetracker.domain.currency.FailedConversion.MISSING_RATE,
+            failure.failureType
+        )
+        assertEquals(FailureReason.INVALID_CURRENCY, failure.toConversionFailure().reason)
+    }
+
+    @Test
+    fun `convertMultiple maps invalid target currency to INVALID_CURRENCY not MISSING_RATE`() = runTest {
+        val aggregate = converter.convertMultiple(listOf(100.0 to "USD"), "XYZ")
+
+        assertEquals(0.0, aggregate.total, 0.0)
+        assertEquals(
+            com.yourname.expensetracker.domain.currency.FailedConversion.INVALID_CURRENCY,
+            aggregate.failedConversions.single().failureType
+        )
+    }
+
+    @Test
+    fun `convertMultiple still reports MISSING_RATE for a supported currency without a rate`() = runTest {
+        val aggregate = converter.convertMultiple(listOf(100.0 to "USD"), "EUR")
+
+        assertEquals(
+            com.yourname.expensetracker.domain.currency.FailedConversion.MISSING_RATE,
+            aggregate.failedConversions.single().failureType
+        )
+    }
+
     // --- MoneyMappers ---
+
+    @Test
+    fun `toConversionFailure maps INVALID_CURRENCY failureType to FailureReason INVALID_CURRENCY`() {
+        val oldFailure = com.yourname.expensetracker.domain.currency.FailedConversion(
+            originalAmount = 100.0,
+            originalCurrency = "XYZ",
+            targetCurrency = "EUR",
+            reason = "INVALID_SOURCE_CURRENCY",
+            failureType = com.yourname.expensetracker.domain.currency.FailedConversion.INVALID_CURRENCY
+        )
+        assertEquals(FailureReason.INVALID_CURRENCY, oldFailure.toConversionFailure().reason)
+
+        val aggregate = com.yourname.expensetracker.domain.currency.MultiConversionAggregate(
+            total = 0.0,
+            targetCurrency = "EUR",
+            failedConversions = listOf(oldFailure)
+        ).toMoneyAggregate()
+        assertEquals(FailureReason.INVALID_CURRENCY, aggregate.conversionFailures.single().reason)
+    }
 
     @Test
     fun `toConversionFailure handles invalid originalCurrency`() {

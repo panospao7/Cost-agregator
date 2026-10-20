@@ -86,6 +86,8 @@ data class FailedConversion(
     companion object {
         const val MISSING_RATE = "MISSING_RATE"
         const val STALE_RATE = "STALE_RATE"
+        // MONEY-05: unsupported/malformed source or target currency (not a missing rate).
+        const val INVALID_CURRENCY = "INVALID_CURRENCY"
     }
 }
 
@@ -182,7 +184,8 @@ class CurrencyConverter @Inject constructor(
             val now = timeProvider.now()
             val directMaxAgeMs = StaleRatePolicy.Default.maxAgeMs
                 ?: error("StaleRatePolicy.Default must define maxAgeMs")
-            if ((now - directRate.lastUpdated) > directMaxAgeMs) {
+            // MONEY-05: a future-dated rate (clock skew / bad feed) is stale, like convertOutcome.
+            if (kotlin.math.abs(now - directRate.lastUpdated) > directMaxAgeMs) {
                 Timber.d("Rate from %s to %s is %s (last updated %d ms ago)", fromCurrency, toCurrency, FailedConversion.STALE_RATE, now - directRate.lastUpdated)
             } else {
                 return@withContext ConversionResult(
@@ -213,7 +216,9 @@ class CurrencyConverter @Inject constructor(
             val now = timeProvider.now()
             val compositeMaxAgeMs = StaleRatePolicy.Default.maxAgeMs
                 ?: error("StaleRatePolicy.Default must define maxAgeMs")
-            if ((now - toEurRate.lastUpdated) > compositeMaxAgeMs || (now - fromEurRate.lastUpdated) > compositeMaxAgeMs) {
+            if (kotlin.math.abs(now - toEurRate.lastUpdated) > compositeMaxAgeMs ||
+                kotlin.math.abs(now - fromEurRate.lastUpdated) > compositeMaxAgeMs
+            ) {
                 Timber.d("Composite rate via EUR is %s for %s -> %s", FailedConversion.STALE_RATE, fromCurrency, toCurrency)
             } else {
                 val combinedRate = toEurRate.rate * fromEurRate.rate
@@ -567,6 +572,8 @@ class CurrencyConverter @Inject constructor(
                         ConversionFailureType.STALE_RATE -> FailedConversion.STALE_RATE
                         ConversionFailureType.MISSING_RATE,
                         ConversionFailureType.MISSING_HISTORICAL_RATE -> FailedConversion.MISSING_RATE
+                        ConversionFailureType.INVALID_SOURCE_CURRENCY,
+                        ConversionFailureType.INVALID_TARGET_CURRENCY -> FailedConversion.INVALID_CURRENCY
                         else -> FailedConversion.MISSING_RATE
                     }
                     failures += FailedConversion(

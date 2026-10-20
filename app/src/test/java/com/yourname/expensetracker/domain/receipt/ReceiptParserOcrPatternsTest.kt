@@ -186,12 +186,29 @@ class ReceiptParserOcrPatternsTest {
             42.76, null, 2.76
         ),
         // Originally presence-only: extractSubtotal captures 17,25 from the raw line.
-        TaxRow("ΚΑΘΑΡΗ ΑΞΙΑ is the net value (subtotal)", "STORE\nΚΑΘΑΡΗ ΑΞΙΑ: 17,25 ΕΥΡΩ", null, 17.25, null)
+        TaxRow("ΚΑΘΑΡΗ ΑΞΙΑ is the net value (subtotal)", "STORE\nΚΑΘΑΡΗ ΑΞΙΑ: 17,25 ΕΥΡΩ", null, 17.25, null),
+        // MONEY-01: label, optional rate, then amount; the rate is never the tax amount.
+        TaxRow("Greek label colon amount", "STORE\nΦΠΑ: 4,14\nTOTAL 50,00 €", null, null, 4.14),
+        TaxRow("Greek label with rate then amount", "STORE\nΦΠΑ 24%: 4,14\nTOTAL 50,00 €", null, null, 4.14),
+        TaxRow("bilingual label euro amount", "STORE\nVAT / ΦΠΑ: €2.76\nTOTAL 50,00 €", null, null, 2.76),
+        // MONEY-01: a rate-only VAT line must not take the first number of the next line as tax.
+        TaxRow(
+            "rate-only VAT line does not cross newline",
+            "STORE\nΦΠΑ 24%\n13,45\nΦΠΑ: 3,23\nTOTAL 16,68 €",
+            null, null, 3.23
+        )
     )
 
     @Test
+    fun `tax rate-only line yields no tax amount`() {
+        // MONEY-01: "ΦΠΑ 24,00%" carries only the rate; the rate must not be captured as tax.
+        val result = parser.parse("STORE\nΦΠΑ 24,00%\nTOTAL 50,00 €")
+        assertNull("rate-only VAT line must not produce a tax amount", result.tax)
+    }
+
+    @Test
     fun `tax and subtotal amounts are extracted exactly`() {
-        assertEquals("taxRows size guard", 3, taxRows.size)
+        assertEquals("taxRows size guard", 7,taxRows.size)
         assertEquals("row names must be unique", taxRows.size, taxRows.map { it.name }.toSet().size)
         for (row in taxRows) {
             val result = parser.parse(row.input)
@@ -212,18 +229,16 @@ class ReceiptParserOcrPatternsTest {
     }
 
     /**
-     * Original `test VAT with dots in label` only asserted presence. Static reading of ReceiptParser
-     * shows the dotted label is normalised to VAT_KEY and extractTax pattern 1 then captures the first
-     * decimal token after it, which is the rate "24,00" rather than the amount "9,68".
+     * Original `test VAT with dots in label` only asserted presence. The dotted label is normalised
+     * to VAT_KEY; MONEY-01 fixed extractTax so the optional rate "24,00%" is skipped and the amount
+     * "9,68" is captured instead of the rate.
      */
     @Test
-    fun `KNOWN DEFECT - dotted VAT label captures the rate as the tax amount`() {
-        // Characterizes current behaviour; correct value is 9.68; see test-suite-audit handoff release
-        // follow-up. Update when production is fixed.
+    fun `dotted VAT label with rate captures the amount not the rate`() {
         val result = parser.parse("STORE\nΦ.Π.Α. 24,00%: 9,68 €\nTOTAL 50,00 €")
         assertNotNull("tax must be present", result.tax)
         val tax = result.tax!!
-        assertEquals("tax amount (current behaviour captures the 24,00 rate; correct is 9.68)", 24.00, tax.amount, 0.0)
+        assertEquals("tax amount is 9.68 (the 24,00 rate is skipped)", 9.68, tax.amount, 0.0)
         assertEquals("tax currency", "EUR", tax.currency.code)
         assertEquals("total stays the TOTAL line", 50.00, result.total!!.amount, MONEY_DELTA)
     }
