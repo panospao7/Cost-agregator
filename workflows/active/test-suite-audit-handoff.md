@@ -1334,8 +1334,14 @@ Note: B2 corrections from the re-verification are appended at the end of the pla
 - vr-20261020-014206-13f3fe75 DatabaseMigrationTest 67/0; vr-20261020-014624-ff4da2fb DaoStressTest 20/0; vr-20261020-014803-c58944ff DaoDeviceSmokeTest 5/0.
 - **Audit post-merge scope COMPLETE and accepted.** Proceeding with "complete the merge" (user instruction): commit on chore/test-suite-audit → merge bug-fixes (bff658e1) → targeted GreekBankParser tests + static-guards → fast-forward bug-fixes. No push.
 
+### 2026-10-20 — MERGE COMPLETE
+- 0eeb1ae7 commit (post-merge audit work) → de817f8b merge of bug-fixes (bff658e1: GreekBankParser H1 fix + 29 tests, release-1.0.1 docs), no conflicts.
+- Merged-tree validation on de817f8b: vr-20261020-015240-b6972b2e unit-tests PASS 7355/0/1 (= 7326 + 29 GreekBankParserAmountGroupTest); vr-20261020-021123-48b4e0d1 static-guards PASS 25/25.
+- Local `bug-fixes` fast-forwarded bff658e1 → de817f8b (`git push . chore/test-suite-audit:bug-fixes`); not pushed to any remote.
+- Follow-ups for the user (production, out of audit scope): DatabaseBackupRepositoryImpl.kt:1067 restore ignores injected BackupEncryptionService (behaviour-neutral); BackupVerifier/DatabaseBackupRepositoryImpl stale table-count comments (58/59); SubscriptionManagerEngine raw cause message in ISE; DefaultCloudPayloadPolicy 2 MB cap checked before read; FileWorkerTerminalDiagnosticSink timeout needs a seam for virtual time; P8 concurrency test uses a fake repo (NEW-P8-001 not pinned); STRUCTURED_LAUNCH_METHODS has no dedicated pin; no duplicate-occurrenceKey DAO test; ~77 KNOWN_VIOLATIONS + 2 raw cancellation entries expire 2026-12-31 (guard red 2027-01-01); 6 raw entries renewed to 2027-03-31; -PmaxIgnoredTests is decorative; earlier release follow-ups list (workflows/active/test-suite-audit-release-followups.md).
+
 ## Next action
-1. Now: commit audit work → merge bug-fixes into chore/test-suite-audit → validate (GreekBankParser targeted + static-guards) → fast-forward bug-fixes (ff-only, local) → final report to user. No push unless asked.
+1. Done: audit merged into local bug-fixes (de817f8b + this handoff commit). Awaiting user: push or not; which follow-ups to schedule.
 2. Then B5 (low-risk table merges), B6, B7/B7-K, B8, B9 per plan; batch validation with multi-filter runs + per-item JUnit counts.
 3. Human decision pending (not blocking): integrate release-1.0-wt tip into this branch (merge) — unblocks B3-1b, B3-9, B3b-6, B1R; 3 expected conflicts (NotificationCaptureService.kt, FinancialStressForecastEngineTest.kt, NotificationIntakeWorkerTimeoutTest.kt).
 4. Deferred to after release lands (B1R): B1R-4 tighten cancellation.json (G-CANCEL-01 CompositeOperationRunRecorder). static-guards cancellation leg expected RESOLVED:1 until then.
