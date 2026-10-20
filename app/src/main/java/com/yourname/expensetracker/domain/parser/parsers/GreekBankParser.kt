@@ -33,57 +33,120 @@ class GreekBankParser(
     private val DEBIT_CODES = listOf("Χ", "ΧΡ", "ΧΡΕ", "ΧΡΕΩΣΗ", "DEBIT")
     private val CREDIT_CODES = listOf("Π", "ΠΙ", "ΠΙΣ", "ΠΙΣΤΩΣΗ", "CREDIT")
 
+    /**
+     * MONEY-02 hotfix H1: every pattern declares the ONLY capture group(s) that may carry the
+     * amount, the currency token and the merchant/description. Free-text groups (merchant,
+     * transfer tail) are never parsed as amounts, so digits in them ("SHOP 24", "14:32",
+     * "****1234") cannot overwrite the real amount. Group indices are 1-based regex groups;
+     * [NO_GROUP] means the pattern has no such group.
+     */
+    private class AmountPattern(
+        val pattern: Pattern,
+        val amountGroup: Int,
+        val currencyGroup: Int = NO_GROUP,
+        val merchantGroup: Int = NO_GROUP
+    )
+
     private val PURCHASE_PATTERNS = listOf(
         // "Αγορά 12,50 EUR στο MERCHANT" or "Πληρωμή €6.30 σε..."
         // Also handles: "Πληρώσατε €7,50 από την κάρτα *1554 σε BOX FOOD APP"
-        Pattern.compile(
-            """(?:αγορ[άα]|χρ[έε]ωσ|συναλλαγ[ήη]|πληρ[ώω]σ?(?:ατε|μ[ήη])?|payment|purchase)\s+(?:[€$£]|EUR|USD|GBP)?\s*(\d{1,3}(?:[.,\s]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*(?:EUR|€|USD|GBP)?\s*(?:απ[όο]\s+τ[ηι]ν?\s+κ[άα]ρτ[αά]\s*[*0-9]*\s*)?(?:στ[οη]ν?|σε|at|-)?\s*(.+?)(?:\s*(?:με|with)\s*κ[άα]ρτ|$)""",
-            Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
+        // group 1 = amount, group 2 = merchant (currency tokens are non-capturing)
+        AmountPattern(
+            Pattern.compile(
+                """(?:αγορ[άα]|χρ[έε]ωσ|συναλλαγ[ήη]|πληρ[ώω]σ?(?:ατε|μ[ήη])?|payment|purchase)\s+(?:[€$£]|EUR|USD|GBP)?\s*${AMOUNT_SPACED}\s*(?:EUR|€|USD|GBP)?\s*(?:απ[όο]\s+τ[ηι]ν?\s+κ[άα]ρτ[αά]\s*[*0-9]*\s*)?(?:στ[οη]ν?|σε|at|-)?\s*(.+?)(?:\s*(?:με|with)\s*κ[άα]ρτ|$)""",
+                Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
+            ),
+            amountGroup = 1,
+            merchantGroup = 2
         ),
         // "€12.50 at MERCHANT" or "12,50€ MERCHANT"
-        Pattern.compile(
-            """([€$£])\s*(\d{1,3}(?:[.,\s]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*(?:at|στ[οη]ν?|σε|-)\s+(.+?)(?:\s*(?:με|with)|$)""",
-            Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
+        // group 1 = currency symbol, group 2 = amount, group 3 = merchant
+        AmountPattern(
+            Pattern.compile(
+                """([€$£])\s*${AMOUNT_SPACED}\s*(?:at|στ[οη]ν?|σε|-)\s+(.+?)(?:\s*(?:με|with)|$)""",
+                Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
+            ),
+            amountGroup = 2,
+            currencyGroup = 1,
+            merchantGroup = 3
         ),
         // "MERCHANT 12,50 EUR"
-        Pattern.compile(
-            """(?:χρ[έε]ωσ[ηη]?\s*κ[άα]ρτ[αά]ς?\s*\*?\d*:?\s*)(\d{1,3}(?:[.,\s]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*(EUR|€)?\s*[-–]\s*(.+)""",
-            Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
+        // group 1 = amount, group 2 = optional currency (EUR|€), group 3 = merchant
+        AmountPattern(
+            Pattern.compile(
+                """(?:χρ[έε]ωσ[ηη]?\s*κ[άα]ρτ[αά]ς?\s*\*?\d*:?\s*)${AMOUNT_SPACED}\s*(EUR|€)?\s*[-–]\s*(.+)""",
+                Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
+            ),
+            amountGroup = 1,
+            currencyGroup = 2,
+            merchantGroup = 3
         )
     )
 
+    // All deposit patterns have exactly one capture group: the amount (group 1).
     private val DEPOSIT_PATTERNS = listOf(
         // Greek deposit keywords
-        Pattern.compile("""(?:κατάθεση|πίστωση|μισθοδοσία|καταθέσεις|πιστώσεις|επιστροφή)[\p{L}]*\s*[€$£]?\s*(\d+(?:[.,]\d{1,2})?)""", Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE),
+        AmountPattern(
+            Pattern.compile("""(?:κατάθεση|πίστωση|μισθοδοσία|καταθέσεις|πιστώσεις|επιστροφή)[\p{L}]*\s*[€$£]?\s*${AMOUNT}""", Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE),
+            amountGroup = 1
+        ),
         // English deposit keywords
-        Pattern.compile("""(?:deposit|credited|received|transfer\s*received|incoming)[\p{L}]*\s*[€$£]?\s*(\d+(?:[.,]\d{1,2})?)""", Pattern.CASE_INSENSITIVE),
+        AmountPattern(
+            Pattern.compile("""(?:deposit|credited|received|transfer\s*received|incoming)[\p{L}]*\s*[€$£]?\s*${AMOUNT}""", Pattern.CASE_INSENSITIVE),
+            amountGroup = 1
+        ),
         // Salary patterns
-        Pattern.compile("""(?:μισθ[όό]ς|salary|wages)[\p{L}]*\s*[€$£]?\s*(\d+(?:[.,]\d{1,2})?)""", Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE),
+        AmountPattern(
+            Pattern.compile("""(?:μισθ[όό]ς|salary|wages)[\p{L}]*\s*[€$£]?\s*${AMOUNT}""", Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE),
+            amountGroup = 1
+        ),
         // Amount followed by deposit keywords
-        Pattern.compile("""(\d+(?:[.,]\d{1,2})?)\s*[€$£]?\s*(?:κατάθεση|πίστωση|deposit|credited)""", Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE)
+        AmountPattern(
+            Pattern.compile("""${AMOUNT}\s*[€$£]?\s*(?:κατάθεση|πίστωση|deposit|credited)""", Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE),
+            amountGroup = 1
+        )
     )
-    
+
     // Transfer patterns (specific to bank transfers, not purchases)
     private val TRANSFER_PATTERNS = listOf(
         // "Μεταφορά 100€ σε Λογαριασμό" (Transfer to account)
-        Pattern.compile(
-            """(?:μεταφορ[άα]|μεταφορά|transfer)\s*(?:[€$£])?\s*(\d{1,3}(?:[.,\s]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*(?:EUR|€|σε|to|στον?)?\s*(.+)""",
-            Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
+        // group 1 = amount, group 2 = destination tail (merchant)
+        AmountPattern(
+            Pattern.compile(
+                """(?:μεταφορ[άα]|μεταφορά|transfer)\s*(?:[€$£])?\s*${AMOUNT_SPACED}\s*(?:EUR|€|σε|to|στον?)?\s*(.+)""",
+                Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
+            ),
+            amountGroup = 1,
+            merchantGroup = 2
         ),
         // Transaction code patterns: "Χ 50,00" or "Π 100,00"
-        Pattern.compile(
-            """(?:^|\s)([ΧΠXDP])\s*[:\-\s]?\s*(\d+(?:[.,]\d{1,2})?)\s*(?:EUR|€)?\s*(.*)""",
-            Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
+        // group 1 = direction code letter (metadata, not amount), group 2 = amount, group 3 = tail (merchant)
+        AmountPattern(
+            Pattern.compile(
+                """(?:^|\s)([ΧΠXDP])\s*[:\-\s]?\s*${AMOUNT}\s*(?:EUR|€)?\s*(.*)""",
+                Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
+            ),
+            amountGroup = 2,
+            merchantGroup = 3
         ),
         // Format variations: "50,00 € Χρέωση" or "Πίστωση 100.00 EUR" (statement-style)
-        Pattern.compile(
-            """(\d+(?:[.,]\d{1,2})?)\s*[€$£]?\s*(?:EUR|USD|GBP)?\s*(?:χρ[έε]ωση|π[ίι]στωση|ανάληψη|κατάθεση)""",
-            Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
+        // group 1 = amount; no merchant group
+        AmountPattern(
+            Pattern.compile(
+                """${AMOUNT}\s*[€$£]?\s*(?:EUR|USD|GBP)?\s*(?:χρ[έε]ωση|π[ίι]στωση|ανάληψη|κατάθεση)""",
+                Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
+            ),
+            amountGroup = 1
         ),
         // "€12,50 στο MERCHANT" (amount first, then location - common Greek format)
-        Pattern.compile(
-            """[€$£]?\s*(\d+(?:[.,]\d{1,2})?)\s*(?:EUR|€)?\s*(?:στ[οη]ν?|σε|at)\s+(.+?)(?:\s*(?:με|with)|$)""",
-            Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
+        // group 1 = amount, group 2 = merchant
+        AmountPattern(
+            Pattern.compile(
+                """[€$£]?\s*${AMOUNT}\s*(?:EUR|€)?\s*(?:στ[οη]ν?|σε|at)\s+(.+?)(?:\s*(?:με|with)|$)""",
+                Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
+            ),
+            amountGroup = 1,
+            merchantGroup = 2
         )
     )
 
@@ -119,28 +182,28 @@ class GreekBankParser(
             if (REJECT_PATTERNS.any { lowerField.contains(it) }) continue
 
             // Try deposit patterns first (they're usually incoming transfers/salary)
-            for (pattern in DEPOSIT_PATTERNS) {
-                val matcher = pattern.matcher(field)
+            for (spec in DEPOSIT_PATTERNS) {
+                val matcher = spec.pattern.matcher(field)
                 if (matcher.find()) {
-                    val result = tryExtractDeposit(matcher, field)
+                    val result = tryExtractDeposit(matcher, spec, field)
                     if (result != null) return result
                 }
             }
 
             // Then try purchase patterns
-            for (pattern in PURCHASE_PATTERNS) {
-                val matcher = pattern.matcher(field)
+            for (spec in PURCHASE_PATTERNS) {
+                val matcher = spec.pattern.matcher(field)
                 if (matcher.find()) {
-                    val result = tryExtract(matcher, field)
+                    val result = tryExtract(matcher, spec)
                     if (result != null) return result
                 }
             }
 
             // Finally try explicit transfer patterns
-            for (pattern in TRANSFER_PATTERNS) {
-                val matcher = pattern.matcher(field)
+            for (spec in TRANSFER_PATTERNS) {
+                val matcher = spec.pattern.matcher(field)
                 if (matcher.find()) {
-                    val result = tryExtractTransfer(matcher, field)
+                    val result = tryExtractTransfer(matcher, spec, field)
                     if (result != null) return result
                 }
             }
@@ -149,28 +212,20 @@ class GreekBankParser(
         return null
     }
 
-    private fun tryExtract(matcher: java.util.regex.Matcher, fullText: String): ParsedTransaction? {
-        // Try to find the amount (could be in group 1 or 2)
-        var amountStr: String? = null
-        var currency = homeCurrency
-        var merchant = "Unknown"
-
-        for (i in 1..matcher.groupCount()) {
-            val group = matcher.group(i) ?: continue
-            
-            // Fix (BUG-010): Use more specific currency check to avoid partial merchant matches
-            if (looksLikeAmountToken(group)) {
-                amountStr = group
-            } else if (group.matches(Regex("""^(?:[€$£]|EUR|USD|GBP)$""", RegexOption.IGNORE_CASE))) {
-                currency = currencyNormalizer.normalize(group)
-            } else if (group.length > 2 && merchant == "Unknown") {
-                merchant = merchantCleaner.clean(group)
-            }
-        }
-
-
-        val amount = amountStr?.let { AmountUtils.parseAmount(it) } ?: return null
+    private fun tryExtract(matcher: java.util.regex.Matcher, spec: AmountPattern): ParsedTransaction? {
+        // MONEY-02 H1: the amount comes only from the pattern's designated amount group.
+        val amount = extractAmount(matcher, spec.amountGroup) ?: return null
         if (amount < 0.01 || amount > 50000) return null
+
+        // MONEY-02 H1: when the whole tail is a bare currency token ("Αγορά 12,50 USD") the
+        // pattern's lazy tail captured it. It is the currency, never the merchant.
+        val rawTail = groupOrNull(matcher, spec.merchantGroup)
+        val tailCurrencyToken = currencyTokenOrNull(rawTail)
+        val currency = resolveCurrency(extractCurrencyToken(matcher, spec.currencyGroup) ?: tailCurrencyToken)
+        var merchant = "Unknown"
+        if (rawTail != null && tailCurrencyToken == null && rawTail.length > 2) {
+            merchant = merchantCleaner.clean(rawTail)
+        }
 
         return ParsedTransaction(
             amount = amount,
@@ -181,22 +236,15 @@ class GreekBankParser(
         )
     }
 
-    private fun tryExtractDeposit(matcher: java.util.regex.Matcher, fullText: String): ParsedTransaction? {
-        var amountStr: String? = null
-        var currency = homeCurrency
-
-        for (i in 1..matcher.groupCount()) {
-            val group = matcher.group(i) ?: continue
-            
-            if (looksLikeAmountToken(group)) {
-                amountStr = group
-            } else if (group.matches(Regex("""^(?:[€$£]|EUR|USD|GBP)$""", RegexOption.IGNORE_CASE))) {
-                currency = currencyNormalizer.normalize(group)
-            }
-        }
-
-        val amount = amountStr?.let { AmountUtils.parseAmount(it) } ?: return null
+    private fun tryExtractDeposit(
+        matcher: java.util.regex.Matcher,
+        spec: AmountPattern,
+        fullText: String
+    ): ParsedTransaction? {
+        val amount = extractAmount(matcher, spec.amountGroup) ?: return null
         if (amount < 0.01 || amount > 50000) return null
+
+        val currency = resolveCurrency(extractCurrencyToken(matcher, spec.currencyGroup))
 
         // For deposits, merchant is usually the sender (bank/employer)
         val merchant = extractDepositSource(fullText)
@@ -244,37 +292,25 @@ class GreekBankParser(
         )
     }
 
-    private fun tryExtractTransfer(matcher: java.util.regex.Matcher, fullText: String): ParsedTransaction? {
-        var amountStr: String? = null
-        var currency = homeCurrency
-        var merchant = "Transfer"
-
-        for (i in 1..matcher.groupCount()) {
-            val group = matcher.group(i)?.trim().orEmpty()
-            if (group.isEmpty()) continue
-
-            if (looksLikeAmountToken(group)) {
-                amountStr = group
-                continue
-            }
-
-            if (group.matches(Regex("""^(?:[€$£]|EUR|USD|GBP)$""", RegexOption.IGNORE_CASE))) {
-                currency = currencyNormalizer.normalize(group)
-                continue
-            }
-
-            // Single-letter bank code group (Χ/Π) is direction metadata, not merchant.
-            if (group.length == 1 && (group.equals("Χ", true) || group.equals("Π", true) || group.equals("D", true) || group.equals("C", true))) {
-                continue
-            }
-
-            if (group.length > 2) {
-                merchant = merchantCleaner.clean(group)
-            }
-        }
-
-        val amount = amountStr?.let { AmountUtils.parseAmount(it) } ?: return null
+    private fun tryExtractTransfer(
+        matcher: java.util.regex.Matcher,
+        spec: AmountPattern,
+        fullText: String
+    ): ParsedTransaction? {
+        // MONEY-02 H1: amount only from the designated group; the single-letter bank code
+        // group (Χ/Π) is direction metadata and is never read as merchant or amount.
+        val amount = extractAmount(matcher, spec.amountGroup) ?: return null
         if (amount < 0.01 || amount > 50000) return null
+
+        // A tail that is only a bare currency token ("Μεταφορά 100,00 USD", "Χ 50,00 $") is the
+        // currency, never the destination name.
+        val tail = groupOrNull(matcher, spec.merchantGroup)?.trim()
+        val tailCurrencyToken = currencyTokenOrNull(tail)
+        val currency = resolveCurrency(extractCurrencyToken(matcher, spec.currencyGroup) ?: tailCurrencyToken)
+        var merchant = "Transfer"
+        if (tail != null && tailCurrencyToken == null && tail.length > 2) {
+            merchant = merchantCleaner.clean(tail)
+        }
 
         // Matches from the last TRANSFER_PATTERN (index 3, bare "€amount στο MERCHANT")
         // lack an explicit transfer keyword (μεταφορά/transfer) and can overlap with
@@ -300,10 +336,56 @@ class GreekBankParser(
         )
     }
 
-    private fun looksLikeAmountToken(value: String): Boolean {
-        val token = value.trim()
-        if (token.none { it.isDigit() }) return false
-        return AmountUtils.parseAmount(token) != null
+    private fun groupOrNull(matcher: java.util.regex.Matcher, group: Int): String? {
+        if (group == NO_GROUP || group < 1 || group > matcher.groupCount()) return null
+        return matcher.group(group)
+    }
+
+    /**
+     * Parses the amount from the pattern's designated amount group only. A token that is
+     * missing, has no digit, or contains any letter is rejected (fail closed -> null).
+     */
+    private fun extractAmount(matcher: java.util.regex.Matcher, group: Int): Double? {
+        val token = groupOrNull(matcher, group)?.trim() ?: return null
+        if (token.none { it.isDigit() }) return null
+        if (token.any { it.isLetter() }) return null
+        return AmountUtils.parseAmount(token)
+    }
+
+    /** The trimmed text when it is exactly a recognised currency symbol/code, else null. */
+    private fun currencyTokenOrNull(text: String?): String? {
+        val token = text?.trim() ?: return null
+        return if (CURRENCY_TOKEN.matches(token)) token else null
+    }
+
+    /** Currency token from the designated currency group; recognised symbol/code tokens only. */
+    private fun extractCurrencyToken(matcher: java.util.regex.Matcher, group: Int): String? =
+        currencyTokenOrNull(groupOrNull(matcher, group))
+
+    /** Normalises a recognised currency token, or falls back to the home currency. */
+    private fun resolveCurrency(token: String?): String =
+        if (token != null) currencyNormalizer.normalize(token) else homeCurrency
+
+    private companion object {
+        const val NO_GROUP = -1
+        val CURRENCY_TOKEN = Regex("""^(?:[€$£]|EUR|USD|GBP)$""", RegexOption.IGNORE_CASE)
+
+        /**
+         * Amount tokens (MONEY-02 H1). Each pattern captures the amount as ONE group built from these:
+         * - leading boundary `(?<![\d.,])`: the amount can never start in the middle of a longer
+         *   number (stops "1.234,56" being read as "234,56" and "κάρτας 25,00" as "5,00");
+         * - trailing guard `(?![.,]?\d)`: the amount can never end inside a longer number, so a
+         *   lazy/optional capture after it cannot make the regex backtrack and give the amount's
+         *   last digit to the tail ("Αγορά €20" must not become amount 2 + tail "0").
+         * AMOUNT groups thousands with '.' or ','; AMOUNT_SPACED additionally accepts whitespace
+         * grouping (kept only for the patterns that always accepted it).
+         * The resulting string text is handed to AmountUtils.parseAmount unchanged.
+         */
+        const val AMOUNT_NUM = """\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?"""
+        const val AMOUNT_NUM_SPACED = """\d{1,3}(?:[.,\s]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?"""
+        // Atomic (?>...) so a failing tail can never backtrack into the amount and shorten it.
+        const val AMOUNT = """(?<![\d.,])(?>(${AMOUNT_NUM})(?![.,]?\d))"""
+        const val AMOUNT_SPACED = """(?<![\d.,])(?>(${AMOUNT_NUM_SPACED})(?![.,]?\d))"""
     }
     
     /**

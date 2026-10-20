@@ -1,0 +1,442 @@
+package com.yourname.expensetracker.domain.parser.parsers
+
+import com.yourname.expensetracker.domain.parser.ParsedTransactionType
+import com.yourname.expensetracker.domain.util.CurrencyNormalizer
+import com.yourname.expensetracker.domain.util.MerchantCleaner
+import io.mockk.every
+import io.mockk.mockk
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Before
+import org.junit.Test
+
+/**
+ * Regression for MONEY-02 hotfix H1.
+ *
+ * Former defect: [GreekBankParser] looped over every regex capture group and treated any group that
+ * [com.yourname.expensetracker.domain.util.AmountUtils.parseAmount] could parse as "the amount", with the
+ * LAST such group winning. Free-text tail groups (merchant / transfer destination) therefore overwrote
+ * the real amount whenever they contained digits, because parseAmount strips everything except [0-9.,-]:
+ * "SHOP 24" -> 24, "SKLAVENITIS στις 14:32" -> 1432, "σε λογαριασμό ****1234" -> 1234.
+ * Each pattern now declares its own amount group, so free-text groups are never parsed as amounts.
+ *
+ * Independent oracle: the amount printed right after the transaction keyword in each notification.
+ *
+ * Setup: identity merchant cleaner, the REAL [CurrencyNormalizer] (maps symbols/codes to ISO codes) and a
+ * home currency (GBP) that differs from every currency token used in the assertions, so a currency
+ * assertion can only pass when the parser really read the currency from the notification.
+ *
+ * Review follow-ups covered below: the amount token must never give its last digit to a lazy tail
+ * ("Αγορά €20" is not amount 2), a bare currency tail ("Αγορά 12,50 USD") is the currency and not the
+ * merchant, and deposit/transfer patterns honour thousands grouping ("Κατάθεση 1.500,00" is 1500).
+ *
+ * Notes on expressibility (traced against the actual regexes):
+ * - A date such as "12/05" cannot reproduce the defect: parseAmount rejects any token containing '/'.
+ * - A time "14:32" after the amount DOES reproduce it, because ':' is stripped and the digits concatenate.
+ */
+class GreekBankParserAmountGroupTest {
+
+    private lateinit var parser: GreekBankParser
+
+    @Before
+    fun setup() {
+        val merchantCleaner = mockk<MerchantCleaner> {
+            every { clean(any()) } answers { firstArg() ?: "Unknown" }
+        }
+        parser = GreekBankParser(CurrencyNormalizer(), merchantCleaner, homeCurrency = HOME_CURRENCY)
+    }
+
+    private fun parse(text: String, title: String = "Ειδοποίηση") = parser.parse(
+        title = title,
+        text = text,
+        bigText = null,
+        subText = null,
+        packageName = "gr.nbg.mobilebanking"
+    )
+
+    private companion object {
+        /** Deliberately different from the EUR/USD tokens asserted below. */
+        const val HOME_CURRENCY = "GBP"
+    }
+
+    // ---- Case 1: merchant name ends in digits --------------------------------------------------
+
+    /**
+     * Hits PURCHASE_PATTERNS[0]: keyword "Αγορά", group1 = "12,50", group2 (.+?) = "SHOP 24".
+     * Defect: group2 parses as 24 and overwrites the amount (actual 24.0, merchant left "Unknown").
+     */
+    @Test
+    fun `purchase with merchant ending in digits keeps the real amount`() {
+        val result = parse("Αγορά 12,50 EUR στο SHOP 24")
+
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.PURCHASE, result!!.type)
+        assertEquals(12.50, result.amount, 0.001)
+        assertEquals("SHOP 24", result.merchant)
+    }
+
+    // ---- Case 2: trailing time after the merchant ----------------------------------------------
+
+    /**
+     * Hits PURCHASE_PATTERNS[0]: group1 = "12,50", group2 = "SKLAVENITIS στις 14:32".
+     * Defect: group2 parses as 1432 (colon and letters stripped) and overwrites the amount.
+     */
+    @Test
+    fun `purchase with trailing time keeps the real amount`() {
+        val result = parse("Αγορά 12,50 EUR στο SKLAVENITIS στις 14:32")
+
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.PURCHASE, result!!.type)
+        assertEquals(12.50, result.amount, 0.001)
+    }
+
+    // ---- Case 3: transfer to masked account ----------------------------------------------------
+
+    /**
+     * Hits TRANSFER_PATTERNS[0] (no deposit or purchase pattern matches "Μεταφορά ..." without a
+     * currency symbol before the amount): group1 = "100,00", group2 (.+) = "σε λογαριασμό ****1234".
+     * Defect: group2 parses as 1234 and overwrites the amount.
+     */
+    @Test
+    fun `transfer to masked account keeps the real amount`() {
+        val result = parse("Μεταφορά 100,00 EUR σε λογαριασμό ****1234")
+
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.TRANSFER, result!!.type)
+        assertEquals(100.00, result.amount, 0.001)
+    }
+
+    // ---- Case 4 (control): no digits in the tail -----------------------------------------------
+
+    /** Hits PURCHASE_PATTERNS[0]; tail "MY MARKET" has no digits so it is never an amount token. */
+    @Test
+    fun `control - plain purchase without digits in tail`() {
+        val result = parse("Αγορά 8,40 EUR στο MY MARKET")
+
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.PURCHASE, result!!.type)
+        assertEquals(8.40, result.amount, 0.001)
+        assertEquals("MY MARKET", result.merchant)
+    }
+
+    // ---- Case 5 (control): thousands format ----------------------------------------------------
+
+    /**
+     * Hits PURCHASE_PATTERNS[0]: group1 = "1.234,56" (\d{1,3}(?:[.,\s]\d{3})*(?:[.,]\d{1,2})?),
+     * tail "ELECTRO STORE" has no digits. European grouping must resolve to 1234.56.
+     */
+    @Test
+    fun `control - thousands format 1 dot 234 comma 56`() {
+        val result = parse("Αγορά 1.234,56 EUR στο ELECTRO STORE")
+
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.PURCHASE, result!!.type)
+        assertEquals(1234.56, result.amount, 0.001)
+        assertEquals("ELECTRO STORE", result.merchant)
+    }
+
+    // ---- Cases 6-9: patterns whose amount group is not group 1 / other pattern families --------
+
+    /**
+     * PURCHASE_PATTERNS[1]: group1 = currency symbol, group2 = amount, group3 = merchant.
+     * Amount is NOT group 1; merchant group3 "SHOP 24" must not overwrite it.
+     */
+    @Test
+    fun `symbol-first purchase pattern uses group 2 as amount and keeps digit-bearing merchant`() {
+        val result = parse("€12,50 στο SHOP 24")
+
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.PURCHASE, result!!.type)
+        assertEquals(12.50, result.amount, 0.001)
+        // Currency symbol captured by group 1 -> "EUR"; home currency is GBP so a fallback would fail.
+        assertEquals("EUR", result.currency)
+        assertEquals("SHOP 24", result.merchant)
+    }
+
+    /**
+     * PURCHASE_PATTERNS[2] (card charge): group1 = amount, group2 = currency, group3 = merchant.
+     * Merchant "VODAFONE 4G" must not be read as amount 4.
+     */
+    @Test
+    fun `card charge pattern keeps real amount when merchant contains digits`() {
+        val result = parse("Χρέωση κάρτας: 25,00 EUR - VODAFONE 4G")
+
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.PURCHASE, result!!.type)
+        assertEquals(25.00, result.amount, 0.001)
+        assertEquals("VODAFONE 4G", result.merchant)
+    }
+
+    /**
+     * TRANSFER_PATTERNS[1] (transaction code): group1 = code letter, group2 = amount, group3 = tail.
+     * Amount is group 2; tail "ΑΤΜ 24" must not overwrite it.
+     */
+    @Test
+    fun `transaction code transfer pattern uses group 2 as amount`() {
+        val result = parse("Χ 50,00 EUR ΑΤΜ 24")
+
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.TRANSFER, result!!.type)
+        assertEquals(50.00, result.amount, 0.001)
+    }
+
+    /**
+     * TRANSFER_PATTERNS[3] (bare "amount στο MERCHANT", no currency symbol so no purchase pattern
+     * claims it): group1 = amount, group2 = merchant "SHOP 24".
+     */
+    @Test
+    fun `bare amount transfer pattern keeps real amount when merchant contains digits`() {
+        val result = parse("12,50 στο SHOP 24")
+
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.TRANSFER, result!!.type)
+        assertEquals(12.50, result.amount, 0.001)
+        assertEquals("SHOP 24", result.merchant)
+    }
+
+    /**
+     * Alpha package ("gr.alpha.mobile") is routed to the same [GreekBankParser] patterns (no
+     * Alpha-specific regex exists); verify a digit-bearing merchant under that package too.
+     */
+    @Test
+    fun `alpha package purchase with digit-bearing merchant keeps the real amount`() {
+        val result = parser.parse(
+            title = "Alpha Bank",
+            text = "Αγορά 12,50 EUR στο LIDL 24",
+            bigText = null,
+            subText = null,
+            packageName = "gr.alpha.mobile"
+        )
+
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.PURCHASE, result!!.type)
+        assertEquals(12.50, result.amount, 0.001)
+        assertEquals("LIDL 24", result.merchant)
+    }
+
+    // ---- Review ISSUE-1: the amount must not give its last digit to a lazy/greedy tail ---------
+
+    /**
+     * PURCHASE_PATTERNS[0] needs at least one tail character. Without the trailing amount guard the
+     * regex backtracked "€20" into amount "2" + tail "0". The title has no merchant so it must yield
+     * nothing; the text then supplies the real amount (the engine parses title first).
+     */
+    @Test
+    fun `title with bare amount does not steal the last digit and text still wins`() {
+        val result = parse(title = "Αγορά €20", text = "Αγορά €20 στο SKLAVENITIS")
+
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.PURCHASE, result!!.type)
+        assertEquals(20.0, result.amount, 0.001)
+        assertEquals("SKLAVENITIS", result.merchant)
+    }
+
+    /**
+     * With no tail the purchase patterns cannot match at all. (The old loop returned null for most
+     * of these, but 5.0 for "Αγορά 12,55".) They must never return a digit-truncated amount.
+     */
+    @Test
+    fun `purchase keyword with amount and no tail returns null instead of a truncated amount`() {
+        assertNull(parse("Πληρωμή 100"))
+        assertNull(parse("Αγορά €20"))
+        assertNull(parse("Αγορά 12,55"))
+        assertNull(parse("Αγορά 1.000"))
+    }
+
+    /** TRANSFER_PATTERNS[0] has a greedy tail too: "Μεταφορά €500" must not become 50. */
+    @Test
+    fun `transfer with bare amount and no tail returns null instead of a truncated amount`() {
+        assertNull(parse("Μεταφορά €500"))
+    }
+
+    /**
+     * "προς" keeps the text out of PURCHASE_PATTERNS[1] (which claims "€500 σε X" first, a
+     * pre-existing type quirk recorded as a follow-up), so this reaches TRANSFER_PATTERNS[0].
+     */
+    @Test
+    fun `transfer with amount and destination keeps the full amount`() {
+        val result = parse("Μεταφορά €500 προς Μαρία")
+
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.TRANSFER, result!!.type)
+        assertEquals(500.0, result.amount, 0.001)
+    }
+
+    /** Space-grouped amounts are atomic: with no tail they must not backtrack to "1" + "234,56". */
+    @Test
+    fun `space grouped amount with no tail returns null instead of a truncated amount`() {
+        assertNull(parse("Αγορά 1 234,56"))
+        assertNull(parse("Μεταφορά 1 500"))
+    }
+
+    /**
+     * PURCHASE_PATTERNS[2]: `\d*` before the amount could swallow "2" of "25,00" and let the amount
+     * start mid-number (5,00). The leading boundary forces the whole number.
+     */
+    @Test
+    fun `card charge without colon keeps the whole amount`() {
+        val result = parse("Χρέωση κάρτας 25,00 EUR - VODAFONE")
+
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.PURCHASE, result!!.type)
+        assertEquals(25.0, result.amount, 0.001)
+        assertEquals("VODAFONE", result.merchant)
+    }
+
+    // ---- Review ISSUE-2: a bare currency tail is the currency, not the merchant ----------------
+
+    @Test
+    fun `purchase whose whole tail is a currency code keeps that currency and default merchant`() {
+        val result = parse("Αγορά 12,50 USD")
+
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.PURCHASE, result!!.type)
+        assertEquals(12.50, result.amount, 0.001)
+        assertEquals("USD", result.currency)
+        assertEquals("Unknown", result.merchant)
+    }
+
+    @Test
+    fun `purchase whose whole tail is a dollar sign keeps USD`() {
+        val result = parse("Αγορά 12,50 \$")
+
+        assertNotNull(result)
+        assertEquals(12.50, result!!.amount, 0.001)
+        assertEquals("USD", result.currency)
+        assertEquals("Unknown", result.merchant)
+    }
+
+    @Test
+    fun `purchase whose whole tail is a euro code or sign keeps EUR when home currency differs`() {
+        val code = parse("Αγορά 12,50 EUR")
+        assertNotNull(code)
+        assertEquals("EUR", code!!.currency)
+        assertEquals("Unknown", code.merchant)
+
+        val sign = parse("Αγορά 12,50 €")
+        assertNotNull(sign)
+        assertEquals("EUR", sign!!.currency)
+        assertEquals("Unknown", sign.merchant)
+    }
+
+    @Test
+    fun `transfer whose whole tail is a currency code keeps that currency and default merchant`() {
+        val result = parse("Μεταφορά 100,00 USD")
+
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.TRANSFER, result!!.type)
+        assertEquals(100.0, result.amount, 0.001)
+        assertEquals("USD", result.currency)
+        assertEquals("Transfer", result.merchant)
+        assertFalse(result.transferAccountName?.contains("USD") == true)
+    }
+
+    @Test
+    fun `transaction code transfer whose whole tail is a currency keeps that currency`() {
+        // "Χ" is the Greek debit code letter.
+        val code = parse("Χ 50,00 USD")
+        assertNotNull(code)
+        assertEquals(ParsedTransactionType.TRANSFER, code!!.type)
+        assertEquals(50.0, code.amount, 0.001)
+        assertEquals("USD", code.currency)
+        assertEquals("Transfer", code.merchant)
+        assertFalse(code.transferAccountName?.contains("USD") == true)
+
+        val sign = parse("Χ 50,00 \$")
+        assertNotNull(sign)
+        assertEquals(50.0, sign!!.amount, 0.001)
+        assertEquals("USD", sign.currency)
+        assertEquals("Transfer", sign.merchant)
+    }
+
+    @Test
+    fun `card charge currency group still wins over the home currency`() {
+        val result = parse("Χρέωση κάρτας: 25,00 EUR - VODAFONE 4G")
+
+        assertNotNull(result)
+        assertEquals("EUR", result!!.currency)
+    }
+
+    // ---- Lead decision: thousands grouping in deposit / transfer patterns ----------------------
+
+    @Test
+    fun `greek deposit with european thousands grouping keeps the full amount`() {
+        val result = parse("Κατάθεση 1.500,00 EUR")
+
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.DEPOSIT, result!!.type)
+        assertEquals(1500.0, result.amount, 0.001)
+    }
+
+    @Test
+    fun `greek deposit with us thousands grouping keeps the full amount`() {
+        val result = parse("Κατάθεση 1,500.00 EUR")
+
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.DEPOSIT, result!!.type)
+        assertEquals(1500.0, result.amount, 0.001)
+    }
+
+    /**
+     * Pins AmountUtils.parseAmount for a lone separator followed by exactly three digits (unchanged
+     * by this hotfix): ',' reads as grouping (1500), '.' reads as a decimal point (1.5) because
+     * parseAmount only treats a comma-only token as grouped. A bare "1.500" is ambiguous; this test
+     * documents the current contract so any future change to it is deliberate.
+     */
+    @Test
+    fun `deposit lone separator with three digits follows the AmountUtils contract`() {
+        val comma = parse("Κατάθεση 1,500 EUR")
+        assertNotNull(comma)
+        assertEquals(1500.0, comma!!.amount, 0.001)
+
+        val dot = parse("Κατάθεση 1.500 EUR")
+        assertNotNull(dot)
+        assertEquals(1.5, dot!!.amount, 0.001)
+    }
+
+    @Test
+    fun `transaction code transfer with thousands grouping keeps the full amount`() {
+        // "Χ" is the Greek debit code letter.
+        val result = parse("Χ 1.234,56")
+
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.TRANSFER, result!!.type)
+        assertEquals(1234.56, result.amount, 0.001)
+    }
+
+    @Test
+    fun `bare amount transfer with thousands grouping does not start mid-number`() {
+        val result = parse("1.234,56 στο SHOP")
+
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.TRANSFER, result!!.type)
+        assertEquals(1234.56, result.amount, 0.001)
+        assertEquals("SHOP", result.merchant)
+    }
+
+    /** A number with more than two fraction digits is rejected whole; its tail is never an amount. */
+    @Test
+    fun `bare amount transfer never matches inside a longer number`() {
+        assertNull(parse("Σύνολο 1.234,5678 στο SHOP"))
+    }
+
+    @Test
+    fun `plain deposits and transfers are unchanged`() {
+        val deposit = parse("Κατάθεση €500.00 στον λογαριασμό σας")
+        assertNotNull(deposit)
+        assertEquals(ParsedTransactionType.DEPOSIT, deposit!!.type)
+        assertEquals(500.0, deposit.amount, 0.001)
+
+        val credited = parse("Amount credited 250.00 EUR to your account")
+        assertNotNull(credited)
+        assertEquals(ParsedTransactionType.DEPOSIT, credited!!.type)
+        assertEquals(250.0, credited.amount, 0.001)
+
+        val transfer = parse("Μεταφορά 100,00 EUR σε Μαρία")
+        assertNotNull(transfer)
+        assertEquals(ParsedTransactionType.TRANSFER, transfer!!.type)
+        assertEquals(100.0, transfer.amount, 0.001)
+    }
+}
