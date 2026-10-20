@@ -18,6 +18,7 @@
 # OnDeviceDashboardBriefingService.generate, OnDeviceDedupeJudgeService.judge,
 # OnDeviceReviewExplanationService.generate) were removed as stale after R6/R6b fixes; 19 remained.
 # 2026-10-19: DefaultCloudPayloadPolicy.prepareReceiptAssist removed as stale after its CancellationSafe fix; 18 remain.
+# 2026-10-20: RestoreDiagnosticsSink.finalizeRunFailed G-CANCEL-02/03 removed as stale after DIAG-04 CancellationSafe fix.
 # The stricter scanner only honours exact rule + path + Owner.fn(params) matches;
 # file-wide entries no longer authorize.
 
@@ -61,25 +62,9 @@
   expires: "2027-01-01"
   linked_issue: "MIT-035"
 
-- rule: G-CANCEL-02
-  path: app/src/main/java/com/yourname/expensetracker/data/backup/RestoreDiagnosticsSink.kt
-  symbol: "com.yourname.expensetracker.data.backup.RestoreDiagnosticsSink.finalizeRunFailed(String,Throwable?)"
-  reason: "Backup diagnostics infrastructure — runCatching for diagnostic recording, not business logic [Wave-2 exact-symbol conversion of prior file-wide entry; no CE rethrow at this site - tracked debt]"
-  owner: "@panospao7"
-  expires: "2027-01-01"
-  linked_issue: "MIT-035"
-
 - rule: G-CANCEL-03
   path: app/src/main/java/com/yourname/expensetracker/data/backup/RestoreDiagnosticsSink.kt
   symbol: "com.yourname.expensetracker.data.backup.RestoreDiagnosticsSink.event(String,com.yourname.expensetracker.domain.diagnostics.EventOutcome,com.yourname.expensetracker.domain.diagnostics.EventSeverity,com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode?,com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata,Throwable?,Boolean)"
-  reason: "Backup diagnostics infrastructure — runCatching for diagnostic recording, not business logic [Wave-2 exact-symbol conversion of prior file-wide entry; no CE rethrow at this site - tracked debt]"
-  owner: "@panospao7"
-  expires: "2027-01-01"
-  linked_issue: "MIT-035"
-
-- rule: G-CANCEL-03
-  path: app/src/main/java/com/yourname/expensetracker/data/backup/RestoreDiagnosticsSink.kt
-  symbol: "com.yourname.expensetracker.data.backup.RestoreDiagnosticsSink.finalizeRunFailed(String,Throwable?)"
   reason: "Backup diagnostics infrastructure — runCatching for diagnostic recording, not business logic [Wave-2 exact-symbol conversion of prior file-wide entry; no CE rethrow at this site - tracked debt]"
   owner: "@panospao7"
   expires: "2027-01-01"
