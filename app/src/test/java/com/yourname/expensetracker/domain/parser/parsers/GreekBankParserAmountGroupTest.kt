@@ -542,4 +542,51 @@ class GreekBankParserAmountGroupTest {
         assertEquals(ParsedTransactionType.TRANSFER, transfer!!.type)
         assertEquals(100.0, transfer.amount, 0.001)
     }
+
+    // ---- Currency letter boundary: a merchant starting with a currency code is not a currency --
+    // Home currency is GBP, so a wrongly read EUR/USD would show up as a currency mismatch.
+
+    /**
+     * PURCHASE_PATTERNS[0]: before the letter boundary "Eur" of "Eurospar" was read as the currency
+     * EUR and the merchant was truncated to "ospar".
+     */
+    @Test
+    fun `purchase whose merchant starts with a currency code keeps home currency and full merchant`() {
+        val result = parse("Αγορά 12,50 Eurospar")
+
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.PURCHASE, result!!.type)
+        assertEquals(12.50, result.amount, 0.001)
+        assertEquals(HOME_CURRENCY, result.currency)
+        assertEquals("Eurospar", result.merchant)
+    }
+
+    @Test
+    fun `purchase with a real EUR token before a preposition still reads EUR`() {
+        val result = parse("Αγορά 12,50 EUR στο SHOP")
+
+        assertNotNull(result)
+        assertEquals(12.50, result!!.amount, 0.001)
+        assertEquals("EUR", result.currency)
+        assertEquals("SHOP", result.merchant)
+    }
+
+    /** TRANSFER_PATTERNS[0] and [1] share the same letter boundary. */
+    @Test
+    fun `transfers whose tail starts with a currency code keep home currency and full tail`() {
+        val transfer = parse("Μεταφορά 100,00 Eurospar")
+        assertNotNull(transfer)
+        assertEquals(ParsedTransactionType.TRANSFER, transfer!!.type)
+        assertEquals(100.0, transfer.amount, 0.001)
+        assertEquals(HOME_CURRENCY, transfer.currency)
+        assertEquals("Eurospar", transfer.merchant)
+
+        // "Χ" is the Greek debit code letter.
+        val coded = parse("Χ 50,00 Eurospar")
+        assertNotNull(coded)
+        assertEquals(ParsedTransactionType.TRANSFER, coded!!.type)
+        assertEquals(50.0, coded.amount, 0.001)
+        assertEquals(HOME_CURRENCY, coded.currency)
+        assertEquals("Eurospar", coded.merchant)
+    }
 }

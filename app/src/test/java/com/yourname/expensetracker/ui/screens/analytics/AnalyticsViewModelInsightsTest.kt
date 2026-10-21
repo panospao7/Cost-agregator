@@ -624,7 +624,33 @@ class AnalyticsViewModelInsightsTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `allInsightsDoNotCollapseToCurrentMonth`() = runTest(testDispatcher) {
+    fun `category analytics comparison cut is the end of the current minute so current minute rows count`() = runTest(testDispatcher) {
+        // F-R20b-b symmetry: the category comparison must use the same end-of-minute cut as the prior window.
+        val minuteStart = 1718452800000L // 2024-06-15 12:00:00 UTC (minute aligned)
+        every { timeProvider.now() } returns minuteStart + 5_000L
+        val cutSlot = slot<Long>()
+        coEvery {
+            advancedAnalyticsEngine.getCategoryAnalytics(
+                any(), any(), any(), any(), comparisonCutoffMillisInclusive = capture(cutSlot)
+            )
+        } returns Pair(emptyList(), emptyList())
+
+        val collectJob = launch { viewModel.state.collect { } }
+        viewModel.selectPeriod(com.yourname.expensetracker.domain.analytics.TimePeriod.MONTH)
+        testDispatcher.scheduler.advanceTimeBy(400)
+        advanceUntilIdle()
+
+        assertTrue(cutSlot.isCaptured, "category analytics must be requested with a comparison cutoff")
+        val cut = cutSlot.captured
+        assertEquals(AnalyticsComparisonWindows.comparisonCutInstant(minuteStart + 5_000L), cut)
+        // A row stamped late in the current minute (after the floored minute) is on the current side.
+        assertTrue(minuteStart + 45_000L <= cut, "a row inside the current minute must not be cut")
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `allInsightsDoNotCollapseToCurrentMonth`()= runTest(testDispatcher) {
         // Fix "now" to 2024-06-15 12:00 UTC
         val now = 1718452800000L // 2024-06-15 12:00:00 UTC
         every { timeProvider.now() } returns now

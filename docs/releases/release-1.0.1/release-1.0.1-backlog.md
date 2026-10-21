@@ -133,6 +133,12 @@ Review follow-ups (P3 unless noted; detail in the lead log and the phase3-4 find
 - **F-R18 P3s:** UiWriteGuard sweep leftovers.
 - **F-R20b-b:** rows inside the current minute are excluded from %.
 - **F-R20b-c:** unbounded analytics caches.
+- **F-R20b-a (residual):** Home passes the whole current month, so the previous window is the first N days of
+  the previous calendar month where N is the current month's length (April compares with Mar 1-30; Feb with
+  Jan 1-28/29). No UI consumer reads the Home percent today. previousDailyHistory may differ in length from
+  dailyHistory. The year-over-year prior cutoff (AnalyticsViewModel about :651/:966) still uses the start of
+  the minute. PeriodComparisonWindows mixes its zone parameter with TimePeriodUtils (system zone): remove the
+  parameter or derive from zone.
 - **F-R20c-a..c:** date-picker follow-ups.
 - **F-R22-b:** NBG rows in unrecognised statements.
 - **F-R22-c:** dotted-time day-order flip.

@@ -54,7 +54,7 @@ class GreekBankParser(
         // (the optional leading currency token before the amount stays non-capturing)
         AmountPattern(
             Pattern.compile(
-                """(?:αγορ[άα]|χρ[έε]ωσ|συναλλαγ[ήη]|πληρ[ώω]σ?(?:ατε|μ[ήη])?|payment|purchase)\s+(?:[€$£]|EUR|USD|GBP)?\s*${AMOUNT_SPACED}\s*(EUR|€|USD|GBP)?\s*(?:απ[όο]\s+τ[ηι]ν?\s+κ[άα]ρτ[αά]\s*[*0-9]*\s*)?(?:στ[οη]ν?|σε|at|-)?\s*(.+?)(?:\s*(?:με|with)\s*κ[άα]ρτ|$)""",
+                """(?:αγορ[άα]|χρ[έε]ωσ|συναλλαγ[ήη]|πληρ[ώω]σ?(?:ατε|μ[ήη])?|payment|purchase)\s+(?:[€$£]|EUR|USD|GBP)?\s*${AMOUNT_SPACED}\s*((?:EUR|USD|GBP)(?![\p{L}\p{N}])|€)?\s*(?:απ[όο]\s+τ[ηι]ν?\s+κ[άα]ρτ[αά]\s*[*0-9]*\s*)?(?:στ[οη]ν?|σε|at|-)?\s*(.+?)(?:\s*(?:με|with)\s*κ[άα]ρτ|$)""",
                 Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
             ),
             amountGroup = 1,
@@ -112,11 +112,14 @@ class GreekBankParser(
     // Transfer patterns (specific to bank transfers, not purchases)
     private val TRANSFER_PATTERNS = listOf(
         // "Μεταφορά 100€ σε Λογαριασμό" (Transfer to account)
-        // group 1 = amount, group 2 = optional currency token (the preposition alternatives
-        // consume the same text as before but are non-capturing), group 3 = destination tail (merchant)
+        // group 1 = amount, group 2 = optional currency token (EUR|USD|GBP followed by a non-letter/digit,
+        // or €), group 3 = destination tail (merchant). The preposition alternatives are non-capturing.
+        // This pattern and the transaction-code pattern below now also consume USD and GBP tokens
+        // (previously only EUR and €), so "Μεταφορά 100,00 USD σε Μαρία" gives merchant "σε Μαρία"
+        // instead of "USD σε Μαρία" (an improvement pinned by tests).
         AmountPattern(
             Pattern.compile(
-                """(?:μεταφορ[άα]|μεταφορά|transfer)\s*(?:[€$£])?\s*${AMOUNT_SPACED}\s*(?:(EUR|€|USD|GBP)|σε|to|στον?)?\s*(.+)""",
+                """(?:μεταφορ[άα]|μεταφορά|transfer)\s*(?:[€$£])?\s*${AMOUNT_SPACED}\s*(?:((?:EUR|USD|GBP)(?![\p{L}\p{N}])|€)|σε|to|στον?)?\s*(.+)""",
                 Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
             ),
             amountGroup = 1,
@@ -128,7 +131,7 @@ class GreekBankParser(
         // group 3 = optional currency token, group 4 = tail (merchant)
         AmountPattern(
             Pattern.compile(
-                """(?:^|\s)([ΧΠXDP])\s*[:\-\s]?\s*${AMOUNT}\s*(EUR|€|USD|GBP)?\s*(.*)""",
+                """(?:^|\s)([ΧΠXDP])\s*[:\-\s]?\s*${AMOUNT}\s*((?:EUR|USD|GBP)(?![\p{L}\p{N}])|€)?\s*(.*)""",
                 Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
             ),
             amountGroup = 2,

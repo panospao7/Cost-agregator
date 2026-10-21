@@ -1437,7 +1437,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
      *
      * Inputs and hand-derived expectations:
      * - Patterns (all MONTHLY, dated today): 100 @0.95 (committed), 30 @0.80 (likely), 70 @0.60 (ignored,
-     *   below the 0.70 floor). Monthly recurring total (all three, IRREGULAR excluded) = 200.
+     *   below the 0.70 floor). Monthly recurring total (>=0.70 only) = 130.
      * - Planned: MUST 50 PLANNED (committed), LIKELY 100 PLANNED (x0.7 = 70 likely), OPTIONAL 60 PLANNED
      *   (weight 0), MUST 400 "CONVERTED" (non-PLANNED, dropped by the in-engine filter, not listed).
      * - committed = 100 + 50 = 150; likely = 30 + 70 = 100.
@@ -1448,10 +1448,10 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
      * - Pace: spent 200, average 1000 (previous 1400), UNDER_PACE.
      * - discretionary = 1000 - (200 + (100 + 50 + 30 + 70) + 483.33) = 66.67; buffer 0.0667 <= 0.10 and
      *   not over pace => HIGH.
-     * - predicted = (1000 - 200) / 29 * 14 = 386.21; projected points day 15..29 = 15,
-     *   first = 100 + 50 + 70 = 220, last = 220 + 386.21 = 606.21.
+     * - predicted = (1000 - 130) / 29 * 14 = 420.00; projected points day 15..29 = 15,
+     *   first = 100 + 50 + 70 = 220, last = 220 + 420.00 = 640.00.
      * - Confidence: budget present, average present, patterns present => 0.85 (fallback would be 0.0).
-     * - Insights: no pace/exceeded insight; strict goals = 2; MUST planned (PLANNED only) = 1.
+     * - Insights: no pace/exceeded insight; strict goals = 1 (funded 1200/1000 excluded); MUST planned (PLANNED only) = 1.
      */
     @Test
     fun `hostile mix - warning tracking funded low-confidence multiple overall budgets under pace and non-planned status`() = runTest {

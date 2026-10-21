@@ -455,7 +455,8 @@ class AnalyticsViewModel @Inject constructor(
         // period cut at the same elapsed point as the current period (period-to-date),
         // computed with calendar-aware TimePeriodUtils so DST transitions and varying
         // month lengths are handled correctly. ALL has no baseline (empty window).
-        // The cut includes time-of-day: use the minute-truncated instant so it matches the cache key.
+        // The cut includes time-of-day: the minute-truncated instant matches the cache key, while the
+        // comparison cut itself is the inclusive end of that minute (comparisonCutInstant).
         val comparisonMinute = AnalyticsComparisonWindows.comparisonMinute(now)
         // F-R20b-b: cut at the inclusive end of the comparison minute so current-minute rows count.
         val priorWindow = AnalyticsComparisonWindows.priorWindow(
@@ -697,7 +698,7 @@ class AnalyticsViewModel @Inject constructor(
             // Fetch budget snapshots for category analytics
             val budgetSnapshots = budgetRepository.getActiveBudgetSnapshots()
 
-            val catDeferred = async { advancedAnalyticsEngine.getCategoryAnalytics(currentInput, previousInput, categories, budgetSnapshots, comparisonCutoffMillisInclusive = comparisonMinute) }
+            val catDeferred = async { advancedAnalyticsEngine.getCategoryAnalytics(currentInput, previousInput, categories, budgetSnapshots, comparisonCutoffMillisInclusive = AnalyticsComparisonWindows.comparisonCutInstant(now)) }
             val merchDeferred = async { advancedAnalyticsEngine.getMerchantAnalytics(currentInput, historicalInput, limit = 15) }
             val patternsDeferred = async { advancedAnalyticsEngine.getSpendingPatterns(currentInput) }
             val statsDeferred = async { advancedAnalyticsEngine.getStatisticalInsights(currentInput) }
