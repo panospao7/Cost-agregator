@@ -114,7 +114,6 @@ class BankPrivacyHardeningTest {
             PrivacySettings(rawOcrStorageMode = RawStorageMode.STORE_RAW, debugDataPersistenceEnabled = false)
         )
         assertEquals(RawStorageMode.DO_NOT_STORE, policy.mode)
-        assertFalse(policy.allowDebugBody)
     }
 
     @Test

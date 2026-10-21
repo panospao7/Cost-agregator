@@ -196,10 +196,6 @@ class UPR5CompletionTest {
             RawStorageMode.STORE_METADATA_ONLY,
             bankStatementPolicy.mode
         )
-        assertFalse(
-            "BANK_STATEMENT with STORE_METADATA_ONLY must not allow parsed merchant",
-            bankStatementPolicy.allowParsedMerchant
-        )
 
         // BANK_API should also use rawBankStatementStorageMode
         val bankApiPolicy = resolver.forSourceSync(
@@ -245,10 +241,5 @@ class UPR5CompletionTest {
         val policy = resolver.forSourceSync(RawSourceType.BANK_STATEMENT, settings)
 
         assertEquals(RawStorageMode.DO_NOT_STORE, policy.mode)
-        assertFalse("DO_NOT_STORE must not allow parsed merchant", policy.allowParsedMerchant)
-        assertFalse("DO_NOT_STORE must not allow parsed items", policy.allowParsedItems)
-        // Bank statements need dedup hash even under DO_NOT_STORE
-        assertTrue("DO_NOT_STORE must allow external ID hash for dedup",
-            policy.allowExternalIdHash)
     }
 }

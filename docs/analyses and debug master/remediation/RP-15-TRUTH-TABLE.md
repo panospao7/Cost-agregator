@@ -4,6 +4,15 @@ Derived from source truth of `RawPersistencePolicyResolver`, `RawPersistencePoli
 `PrivacySettings`, `PrivacySettingsRepositoryImpl`, `RawContentSanitizer`, and the three
 call sites. This table is the spec the 15-A implementation and its tests are built from.
 
+> **1.0.2 update (PRIV-03, owner-approved):** the flags `allowParsedMerchant`, `allowParsedItems`,
+> `allowExternalIdHash` and `allowDebugBody` were removed from `RawPersistencePolicy` because no
+> production code enforced or read them. The corresponding rules (§1) and the merchant / items /
+> extIdHash / debugBody columns and rows 25-26 (§2) below are historical. Production call sites
+> consume only `mode` (via RawContentSanitizer, ReceiptStructuredDataPolicy,
+> EmailReceiptPersistencePayload); `allowRawBody`/`allowRedactedBody`/`allowParsedAmountDateCurrency`
+> are derived descriptors pinned by tests, not read by production code. The dedupe hash itself is
+> computed by the call sites and was never gated by `allowExternalIdHash`.
+
 ## 1. Policy derivation rules (unchanged semantics)
 
 For settings `s` and source `t`:
@@ -107,16 +116,18 @@ branch — write-site equivalence holds for both (processor uses BANK_STATEMENT)
 | camera/batch | read throws | DO_NOT_STORE | DO_NOT_STORE (resolver fail-closed) | ✓ identical outcome |
 | camera/batch | corrupt/invalid enum | STORE_RAW (fail-open) | DO_NOT_STORE | ✗ intentional tightening |
 | email (`saveEmailReceiptTyped`, deprecated `saveEmailReceipt`, `processEmailReceipt`) | healthy | `emailReceiptStorageMode` | `resolver.forSource(EMAIL_RECEIPT).mode` | ✓ identical |
-| email | read throws | exception ⇒ save fails / ingest aborts | DO_NOT_STORE policy ⇒ raw body/items/sender/subject not persisted; dedupe hash still allowed (row 12: extIdHash ✓) | ✗ intentional: privacy field fail-closed instead of operation failure |
+| email | read throws | exception ⇒ save fails / ingest aborts | DO_NOT_STORE policy ⇒ raw body/items/sender/subject not persisted; dedupe hash still allowed (row 12: extIdHash ✓ - removed in 1.0.2, PRIV-03; the email dedupe hash is covered by `EmailRawStorageEnforcementTest`) | ✗ intentional: privacy field fail-closed instead of operation failure |
 | email | corrupt/invalid enum | STORE_REDACTED | DO_NOT_STORE | ✗ intentional tightening |
 
 Preserved invariants (verified by tests):
 - Email dedupe/hash behavior: messageIdHash, fingerprint, textFingerprint, semanticFingerprint
-  computed and used for dedup in ALL modes (hash permitted under DO_NOT_STORE per row 12).
+  computed and used for dedup in ALL modes (hash permitted under DO_NOT_STORE per row 12
+  (removed in 1.0.2, PRIV-03); covered by `EmailRawStorageEnforcementTest`).
 - Source-specific parsed-field permissions: email keeps parsed amount/date/currency even under
   DO_NOT_STORE (row 12 `amountDateCcy ✓`); camera/bank do not.
 - Debug body gating: only EXPORT_DEBUG-with-dbg (and any STORE_RAW source with dbg) sets
-  `allowDebugBody`; no call site may derive this inline.
+  `allowDebugBody`; no call site may derive this inline. (removed in 1.0.2, PRIV-03; debug gating
+  now lives in `ExportPrivacyGate` and is pinned by `ExportPrivacyPolicyTest`)
 
 ## 5. Ownership invariant (static check)
 
@@ -135,7 +146,7 @@ pre-existing debt, NOT silently exempted.)
 ## 6. Tests derived from this table (15-A)
 
 1. `forSourceSync` reproduces rows 1–24 exactly (complete policy fields asserted, not just mode).
-2. Rows 25–26 debug conjunction pins.
+2. Rows 25–26 debug conjunction pins. (removed in 1.0.2, PRIV-03; see `ExportPrivacyGate` / `ExportPrivacyPolicyTest`)
 3. Fail-closed corruption: CorruptedFailClosed load state ⇒ all sources DO_NOT_STORE policy
    (forSource); repository exception ⇒ DO_NOT_STORE policy; CancellationException rethrown.
 4. Write-site equivalence: site-by-site old-vs-new assertions from §4.

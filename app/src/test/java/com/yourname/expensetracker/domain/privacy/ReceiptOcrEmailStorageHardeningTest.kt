@@ -66,6 +66,5 @@ class ReceiptOcrEmailStorageHardeningTest {
             PrivacySettings(debugDataPersistenceEnabled = false)
         )
         assertEquals(RawStorageMode.DO_NOT_STORE, policy.mode)
-        assertFalse(policy.allowDebugBody)
     }
 }

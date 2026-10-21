@@ -25,16 +25,15 @@ class RawPersistencePolicyTest {
     // ── Mode invariants ────────────────────────────────────────────────────────
 
     // Fields pinned with independent literals HERE (NOTIFICATION source, debug persistence off, all
-    // four modes): allowRawBody, allowRedactedBody, allowParsedAmountDateCurrency, allowParsedItems,
-    // allowParsedMerchant, allowExternalIdHash, allowDebugBody.
+    // four modes): allowRawBody, allowRedactedBody, allowParsedAmountDateCurrency.
+    // (allowParsedItems / allowParsedMerchant / allowExternalIdHash / allowDebugBody were removed in
+    // 1.0.2: nothing enforced them.)
     //
     // The remaining source x mode x debug combinations (all seven sources) are covered by
     // RawPersistencePolicyConsolidationTest.matrix_all_seven_sources_x_all_modes_match_truth_table,
     // which builds its expectations with the production RawPersistencePolicy constructor, so its
     // allowRawBody / allowRedactedBody expectations are NOT independent of production; those two
     // fields are pinned independently only by the literal table below.
-    // The fail-closed dedupe-hash rows (notification/email/bank true, OCR false) are also pinned in
-    // RawPersistencePolicyConsolidationTest.forSource_fail_closed_still_allows_dedupe_hash_for_dedupe_sources.
 
     /** One row of the literal NOTIFICATION truth table. */
     private data class PolicyRow(
@@ -42,11 +41,7 @@ class RawPersistencePolicyTest {
         val mode: RawStorageMode,
         val allowRawBody: Boolean,
         val allowRedactedBody: Boolean,
-        val allowParsedAmountDateCurrency: Boolean,
-        val allowParsedItems: Boolean,
-        val allowParsedMerchant: Boolean,
-        val allowExternalIdHash: Boolean,
-        val allowDebugBody: Boolean
+        val allowParsedAmountDateCurrency: Boolean
     )
 
     /**
@@ -63,44 +58,28 @@ class RawPersistencePolicyTest {
                 mode = RawStorageMode.STORE_RAW,
                 allowRawBody = true,
                 allowRedactedBody = true,
-                allowParsedAmountDateCurrency = true,
-                allowParsedItems = true,
-                allowParsedMerchant = true,
-                allowExternalIdHash = true,
-                allowDebugBody = false
+                allowParsedAmountDateCurrency = true
             ),
             PolicyRow(
                 name = "STORE_REDACTED",
                 mode = RawStorageMode.STORE_REDACTED,
                 allowRawBody = false,
                 allowRedactedBody = true,
-                allowParsedAmountDateCurrency = true,
-                allowParsedItems = true,
-                allowParsedMerchant = true,
-                allowExternalIdHash = true,
-                allowDebugBody = false
+                allowParsedAmountDateCurrency = true
             ),
             PolicyRow(
                 name = "METADATA_ONLY",
                 mode = RawStorageMode.STORE_METADATA_ONLY,
                 allowRawBody = false,
                 allowRedactedBody = false,
-                allowParsedAmountDateCurrency = true,
-                allowParsedItems = false,
-                allowParsedMerchant = false,
-                allowExternalIdHash = true,
-                allowDebugBody = false
+                allowParsedAmountDateCurrency = true
             ),
             PolicyRow(
                 name = "DO_NOT_STORE",
                 mode = RawStorageMode.DO_NOT_STORE,
                 allowRawBody = false,
                 allowRedactedBody = false,
-                allowParsedAmountDateCurrency = false,
-                allowParsedItems = false,
-                allowParsedMerchant = false,
-                allowExternalIdHash = true,
-                allowDebugBody = false
+                allowParsedAmountDateCurrency = false
             )
         )
 
@@ -122,26 +101,7 @@ class RawPersistencePolicyTest {
                 row.allowParsedAmountDateCurrency,
                 policy.allowParsedAmountDateCurrency
             )
-            assertEquals("[$r] allowParsedItems", row.allowParsedItems, policy.allowParsedItems)
-            assertEquals("[$r] allowParsedMerchant", row.allowParsedMerchant, policy.allowParsedMerchant)
-            assertEquals("[$r] allowExternalIdHash", row.allowExternalIdHash, policy.allowExternalIdHash)
-            assertEquals("[$r] allowDebugBody", row.allowDebugBody, policy.allowDebugBody)
         }
-    }
-
-    @Test
-    fun debug_body_only_allowed_when_store_raw_and_debug_enabled() {
-        val policyDebugOn = resolver.forSourceSync(
-            RawSourceType.EXPORT_DEBUG,
-            PrivacySettings(rawOcrStorageMode = RawStorageMode.STORE_RAW, debugDataPersistenceEnabled = true)
-        )
-        assertTrue(policyDebugOn.allowDebugBody)
-
-        val policyDebugOff = resolver.forSourceSync(
-            RawSourceType.EXPORT_DEBUG,
-            PrivacySettings(rawOcrStorageMode = RawStorageMode.STORE_RAW, debugDataPersistenceEnabled = false)
-        )
-        assertFalse(policyDebugOff.allowDebugBody)
     }
 
     // ── Hashing contract ──────────────────────────────────────────────────────
