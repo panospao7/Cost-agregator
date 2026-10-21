@@ -18,8 +18,9 @@ Not pushed. bug-fixes is moved locally only; pushing is an owner action.
 | assemble-release | vr-20261021-121927-4599c941 | PASS (up-to-date build) |
 | release-artifact-evidence | vr-20261021-122007-ef1da693 | PASS; APK SHA-256 `3985b067…51b6`; 1.0.1 (2); not debuggable; **debug certificate** |
 
-Not run: connected (on-device) tests (no emulator available to the runner), device smoke on
-the release APK.
+| connected-tests (emulator wave5-api35, Android 15, serial emulator-5554) | vr-20261021-122436-ae51bc1e | PASS, 159 tests / 0 failed / 0 skipped |
+
+The owner's phone was not used. Not run: manual device smoke on the release APK.
 
 Earlier failures on the way (all fixed, recorded for honesty): static-guards on the first W2 and
 W3 commits (guard window layout; raw `execSQL` in the export scrub), two analytics test-harness
@@ -58,7 +59,8 @@ above. A fresh final review of those last commits has not been run.
 | Item | State |
 | --- | --- |
 | Production signing | Open. The APK is signed with the debug certificate. Not shippable beyond the beta. |
-| On-device tests and device smoke | Open (no emulator available to the runner). |
+| On-device tests | Done: 159/0/0 on the wave5-api35 emulator (vr-20261021-122436-ae51bc1e). |
+| Manual device smoke on the release APK | Open (owner). |
 | Agent turn limits | Owner edited the main-folder agent files; whether the session reloads them was not confirmed. |
 | TB-1 (feature/ai-evolution dates expire 2026-10-31) | Open, owner. |
 | TB-2 (HANG-001..003 review_by 2026-12-01) | Open, owner (Q1). |
