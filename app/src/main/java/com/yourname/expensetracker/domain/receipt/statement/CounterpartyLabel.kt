@@ -14,7 +14,16 @@ object CounterpartyLabel {
     private const val MAX_NAME_LENGTH = 80
     private const val UNKNOWN_COUNTERPARTY = "Counterparty"
 
-    private val IBAN_PATTERN = Regex("""[A-Z]{2}\d{2}(?:\s?[A-Z0-9]){11,30}""")
+    private val WHITESPACE_RUN = Regex("""\s+""")
+
+    /**
+     * Not preceded by an ASCII letter or digit (so a run inside a word such as "SHOP12 ..." is not
+     * an IBAN start), then country code, check digits and 11-30 more characters.
+     */
+    private val IBAN_PATTERN = Regex("""(?<![A-Za-z0-9])[A-Z]{2}\d{2}(?:\s?[A-Z0-9]){11,30}""")
+
+    /** An IBAN has a long numeric body; "GR03 THESSALONIKI" has two digits and is a place name. */
+    private const val IBAN_MIN_DIGITS = 8
 
     /** IBAN lengths per country; a longer regex match gives the extra characters back. */
     private val IBAN_LENGTHS: Map<String, Int> = mapOf(
@@ -41,31 +50,95 @@ object CounterpartyLabel {
         return out.toString()
     }
 
-    /**
-     * Digits with up to two whitespace, Unicode space-separator (\p{Zs}: no-break space, narrow
-     * no-break space, figure space, ...) or hyphen characters between digit groups, so
-     * double-spaced and NBSP-separated card groups are caught even before whitespace is collapsed;
-     * counted before replacing.
-     */
-    private val DIGIT_RUN = Regex("""\d(?:[\s\p{Zs}-]{0,2}\d)*""")
     private const val LONG_DIGIT_RUN_MIN = 12
+    private const val ACCOUNT_NUMBER_MIN = 9
+    private const val MAX_JOINERS_BETWEEN_DIGITS = 2
+
+    /** Ascii digits only, like the regex \d it replaces. */
+    private fun isAsciiDigit(c: Char): Boolean = c in '0'..'9'
+
+    /** Whitespace, Unicode space separators (no-break space, narrow no-break space, ...) and hyphen. */
+    private fun isCardJoiner(c: Char): Boolean =
+        c == ' ' || c == '\t' || c == '\n' || c == '\u000B' || c == '\u000C' || c == '\r' ||
+            Character.getType(c) == Character.SPACE_SEPARATOR.toInt() || c == '-'
+
+    /** Card joiners plus '/' and '.', the separators of domestic account and phone numbers. */
+    private fun isAccountJoiner(c: Char): Boolean = isCardJoiner(c) || c == '/' || c == '.'
+
+    /**
+     * Linear scanner: a run is a digit followed by any number of (up to [MAX_JOINERS_BETWEEN_DIGITS]
+     * joiner characters, digit) steps, so double-spaced and NBSP-separated card groups are caught
+     * even before whitespace is collapsed. A run with at least [minDigits] digits becomes
+     * "****<last4>"; every other character is copied unchanged. No regex, no recursion: each
+     * character is visited a bounded number of times, so a 100,000-digit run costs O(n).
+     */
+    private fun maskDigitRuns(text: String, minDigits: Int, isJoiner: (Char) -> Boolean): String {
+        if (text.length < minDigits) return text
+        val length = text.length
+        var out: StringBuilder? = null
+        var cursor = 0
+        var index = 0
+        while (index < length) {
+            if (!isAsciiDigit(text[index])) {
+                index++
+                continue
+            }
+            val start = index
+            var last = index
+            var digits = 1
+            while (true) {
+                var probe = last + 1
+                var joiners = 0
+                while (probe < length && joiners < MAX_JOINERS_BETWEEN_DIGITS && isJoiner(text[probe])) {
+                    probe++
+                    joiners++
+                }
+                if (probe < length && isAsciiDigit(text[probe])) {
+                    last = probe
+                    digits++
+                } else {
+                    break
+                }
+            }
+            if (digits >= minDigits) {
+                val builder = out ?: StringBuilder(length).also { out = it }
+                builder.append(text, cursor, start).append("****")
+                var tail = 0
+                var back = last
+                val lastFour = CharArray(4)
+                while (back >= start && tail < 4) {
+                    if (isAsciiDigit(text[back])) lastFour[3 - tail++] = text[back]
+                    back--
+                }
+                builder.append(lastFour, 4 - tail, tail)
+                cursor = last + 1
+            }
+            index = last + 1
+        }
+        val result = out ?: return text
+        result.append(text, cursor, length)
+        return result.toString()
+    }
 
     /**
      * Replaces every run of 12 or more digits (up to two spaces/NBSPs or hyphens between digit
      * groups are part of the run, so card-number-like "1234 5678 9012 3456" counts) with
      * "****<last4>". Shorter numbers such as store numbers and amounts are left untouched.
      */
-    fun scrubLongDigitRuns(text: String): String {
-        if (text.length < LONG_DIGIT_RUN_MIN) return text
-        return DIGIT_RUN.replace(text) { match ->
-            val digits = match.value.filter { it.isDigit() }
-            if (digits.length >= LONG_DIGIT_RUN_MIN) "****" + digits.takeLast(4) else match.value
-        }
-    }
+    fun scrubLongDigitRuns(text: String): String =
+        maskDigitRuns(text, LONG_DIGIT_RUN_MIN) { isCardJoiner(it) }
+
+    /**
+     * Like [scrubLongDigitRuns] with a minimum of 9 digits and '/', '.' and '-' groups also joining
+     * a run: domestic account numbers and mobile numbers. Only for transfer counterparty labels;
+     * purchase merchants keep their store numbers.
+     */
+    fun scrubAccountNumbers(text: String): String =
+        maskDigitRuns(text, ACCOUNT_NUMBER_MIN) { isAccountJoiner(it) }
 
     /** Merchant/account labels for a counterparty known by [name]. */
     fun fromName(name: String, direction: ParsedTransferDirection): Label? {
-        val clean = scrubLongDigitRuns(maskIbans(name)).replace(Regex("""\s+"""), " ").trim().take(MAX_NAME_LENGTH).trim()
+        val clean = scrubAccountNumbers(maskIbans(name)).replace(WHITESPACE_RUN, " ").trim().take(MAX_NAME_LENGTH).trim()
         if (clean.isEmpty() || clean.none { it.isLetter() }) return null
         return Label(clean, prefix(direction) + clean)
     }
@@ -79,7 +152,7 @@ object CounterpartyLabel {
     /** Label for a counterparty known only by a masked account reference ending in [last4]. */
     fun fromReference(bank: String?, last4: String, direction: ParsedTransferDirection): Label {
         val digits = last4.filter { it.isLetterOrDigit() }.takeLast(4)
-        val bankName = bank?.let { scrubLongDigitRuns(maskIbans(it)) }?.replace(Regex("""\s+"""), " ")?.trim()
+        val bankName = bank?.let { scrubLongDigitRuns(maskIbans(it)) }?.replace(WHITESPACE_RUN, " ")?.trim()
             ?.take(MAX_NAME_LENGTH)?.trim()?.takeIf { it.isNotEmpty() && it.any { c -> c.isLetter() } }
         val label = "${bankName ?: "Account"} ****$digits"
         return Label(label, prefix(direction) + label)
@@ -132,6 +205,11 @@ object CounterpartyLabel {
                     }
                 }
                 compact = compact.take(expected)
+            }
+            if (compact.drop(2).count { it in '0'..'9' } < IBAN_MIN_DIGITS) {
+                // Not an IBAN (a name or place after a two-letter word): look again one character on.
+                pos = start + 1
+                continue
             }
             val end = start + cut
             matches += IbanMatch(start, end, compact.takeLast(4))

@@ -19,7 +19,10 @@ object NbgAccountLayout : TextStatementLayout {
     )
     private val TAIL = Regex("""^(.*?)\s*([ΧΠ])\s+([-+−]?\d[\d.,]*)\s+([-+−]?\d[\d.,]*)$""")
 
-    private val FOOTER_PRINT_DATE = Regex("""\d+\s+από\s+\d+\s+Ημ/νία\s+Εκτύπωσης""")
+    /** Any line that starts like a new row; it always closes the open row. */
+    private val DATE_START = Regex("""^\d{2}/\d{2}/\d{4}(?:\s|$)""")
+
+    private val FOOTER_PRINT_DATE = Regex("""\d{1,4}\s+από\s+\d{1,4}\s+Ημ/νία\s+Εκτύπωσης""")
     private const val BANK_NAME_PREFIX = "Εθνική Τράπεζα της Ελλάδος"
 
     private val OWN_TRANSFER_CODES = setOf("064", "068", "022")
@@ -49,7 +52,8 @@ object NbgAccountLayout : TextStatementLayout {
     )
 
     override fun parse(pages: List<List<String>>, ctx: StatementContext): TextStatementParseResult {
-        val lines = StatementText.flatten(pages)
+        val flat = StatementText.flattenCounted(pages)
+        val lines = flat.lines
         val firstHeader = lines.indexOfFirst { isColumnHeader(it.second) }
         if (firstHeader < 0) return TextStatementParseResult(id, emptyList())
         val headerCurrency = StatementAmountParser.singleHeaderCurrency(
@@ -67,6 +71,14 @@ object NbgAccountLayout : TextStatementLayout {
             if (isPageFurniture(line)) continue
 
             val dateLed = DATE_LED.matchEntire(line)
+            if (dateLed == null && DATE_START.containsMatchIn(line)) {
+                // A date-led line that fails the strict row pattern still starts a new row: it closes
+                // the open one and is counted itself, never appended as a continuation.
+                pending?.let { rows += StatementRow.Skipped(StatementSkipReason.INCOMPLETE_ROW, it.page) }
+                pending = null
+                rows += StatementRow.Skipped(StatementSkipReason.INCOMPLETE_ROW, page)
+                continue
+            }
             if (dateLed != null) {
                 pending?.let { rows += StatementRow.Skipped(StatementSkipReason.INCOMPLETE_ROW, it.page) }
                 pending = null
@@ -102,6 +114,7 @@ object NbgAccountLayout : TextStatementLayout {
             }
         }
         pending?.let { rows += StatementRow.Skipped(StatementSkipReason.INCOMPLETE_ROW, it.page) }
+        rows += flat.oversizedSkips()
         return TextStatementParseResult(id, rows)
     }
 

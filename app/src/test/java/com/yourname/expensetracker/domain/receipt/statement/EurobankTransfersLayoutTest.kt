@@ -81,6 +81,100 @@ class EurobankTransfersLayoutTest {
         assertEquals(CurrencyEvidence.ROW, result.parsedRows.first().currencyEvidence)
     }
 
+    private val title = "Ιστορικό Μεταφορών σε άλλη τράπεζα"
+    private val own = StatementTextFixtures.OWN_IBAN
+    private val creditedRow =
+        "07/12/2031 $own ${StatementTextFixtures.RECIPIENT_IBAN_1} SOME BANK SA 11,00 EUR Πιστώθηκε στον"
+
+    @Test
+    fun `a card debited cancelled row after a credited row does not cancel the credited one`() {
+        val pages = listOf(
+            listOf(
+                title,
+                creditedRow,
+                "δικαιούχο",
+                // Debited from a card, not an IBAN: it fails the strict row pattern.
+                "06/12/2031 0000 00** **** 0000 OTHER BANK 4,00 EUR Ακυρώθηκε"
+            )
+        )
+        val parsed = EurobankTransfersLayout.parse(pages, StatementTextFixtures.context())
+        assertEquals(1, parsed.parsedRows.size)
+        assertEquals(11.0, parsed.parsedRows.single().tx.amount, 0.0001)
+        assertEquals(listOf(StatementSkipReason.INCOMPLETE_ROW), parsed.skippedRows.map { it.reason })
+    }
+
+    @Test
+    fun `a malformed date-led line closes an incomplete open row and is counted itself`() {
+        val pages = listOf(
+            listOf(
+                title,
+                "07/12/2031 $own ${StatementTextFixtures.RECIPIENT_IBAN_1} SOME BANK SA",
+                "06/12/2031 not a row",
+                "11,00 EUR Πιστώθηκε στον δικαιούχο"
+            )
+        )
+        val parsed = EurobankTransfersLayout.parse(pages, StatementTextFixtures.context())
+        assertTrue(parsed.parsedRows.isEmpty())
+        assertEquals(
+            listOf(StatementSkipReason.INCOMPLETE_ROW, StatementSkipReason.INCOMPLETE_ROW),
+            parsed.skippedRows.map { it.reason }
+        )
+    }
+
+    @Test
+    fun `a negated status is unknown and never credited`() {
+        val pages = listOf(
+            listOf(
+                title,
+                "07/12/2031 $own ${StatementTextFixtures.RECIPIENT_IBAN_1} SOME BANK SA 11,00 EUR Δεν πιστώθηκε",
+                "05/12/2031 $own ${StatementTextFixtures.RECIPIENT_IBAN_2} OTHER BANK 4,00 EUR Δεν ακυρώθηκε"
+            )
+        )
+        val parsed = EurobankTransfersLayout.parse(pages, StatementTextFixtures.context())
+        assertTrue(parsed.parsedRows.isEmpty())
+        assertEquals(
+            listOf(StatementSkipReason.UNKNOWN_STATUS, StatementSkipReason.UNKNOWN_STATUS),
+            parsed.skippedRows.map { it.reason }
+        )
+    }
+
+    @Test
+    fun `an unrecognised or missing status is unknown and a cancelled status is cancelled`() {
+        val pages = listOf(
+            listOf(
+                title,
+                "07/12/2031 $own ${StatementTextFixtures.RECIPIENT_IBAN_1} SOME BANK SA 11,00 EUR",
+                "05/12/2031 $own ${StatementTextFixtures.RECIPIENT_IBAN_2} OTHER BANK 4,00 EUR Σε αναμονή",
+                "03/12/2031 $own ${StatementTextFixtures.RECIPIENT_IBAN_4} THIRD BANK 5,00 EUR Ακυρώθηκε"
+            )
+        )
+        val parsed = EurobankTransfersLayout.parse(pages, StatementTextFixtures.context())
+        assertEquals(
+            listOf(
+                StatementSkipReason.UNKNOWN_STATUS,
+                StatementSkipReason.UNKNOWN_STATUS,
+                StatementSkipReason.CANCELLED
+            ),
+            parsed.skippedRows.map { it.reason }
+        )
+    }
+
+    @Test(timeout = 20_000)
+    fun `hostile 100000 character lines finish quickly and are counted`() {
+        val pages = listOf(
+            listOf(
+                title,
+                "*".repeat(100_000),
+                "9".repeat(100_000),
+                creditedRow,
+                "δικαιούχο"
+            )
+        )
+        val parsed = EurobankTransfersLayout.parse(pages, StatementTextFixtures.context())
+        assertEquals(1, parsed.parsedRows.size)
+        assertEquals(2, parsed.skippedRows.count { it.reason == StatementSkipReason.INCOMPLETE_ROW })
+    }
+
     @Test
     fun `title column headers and footer produce no rows`() {
         val junk = EurobankTransfersLayout.parse(

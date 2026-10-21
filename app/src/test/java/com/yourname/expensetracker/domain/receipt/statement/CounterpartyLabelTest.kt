@@ -192,6 +192,80 @@ class CounterpartyLabelTest {
     }
 
     @Test
+    fun `maskIbans leaves a two letter word and a place name that only look like an iban start`() {
+        assertEquals("H&M GR03 THESSALONIKI", CounterpartyLabel.maskIbans("H&M GR03 THESSALONIKI"))
+        assertEquals("PAY AB12 SOMEWHERE ELSE", CounterpartyLabel.maskIbans("PAY AB12 SOMEWHERE ELSE"))
+        // A real IBAN right after such text is still masked.
+        assertEquals("H&M ****1234", CounterpartyLabel.maskIbans("H&M $iban"))
+    }
+
+    @Test
+    fun `maskIbans does not start an iban inside a word`() {
+        assertEquals("SHOPGR96000000000000", CounterpartyLabel.maskIbans("SHOPGR96000000000000"))
+        assertEquals("X ****1234", CounterpartyLabel.maskIbans("X $iban"))
+    }
+
+    @Test(timeout = 20_000)
+    fun `scrubLongDigitRuns handles a 100000 digit run in linear time`() {
+        assertEquals("****" + "9".repeat(4), CounterpartyLabel.scrubLongDigitRuns("9".repeat(100_000)))
+        assertEquals("AB ****5678 CD", CounterpartyLabel.scrubLongDigitRuns("AB " + "1".repeat(99_996) + "5678 CD"))
+    }
+
+    @Test(timeout = 20_000)
+    fun `scrubLongDigitRuns handles a 100000 character digit and space run in linear time`() {
+        val grouped = "1 ".repeat(50_000)
+        val masked = CounterpartyLabel.scrubLongDigitRuns(grouped)
+        assertEquals("****1111 ", masked)
+        val hyphens = "1-".repeat(50_000)
+        assertTrue(CounterpartyLabel.scrubLongDigitRuns(hyphens).startsWith("****1111"))
+    }
+
+    @Test(timeout = 20_000)
+    fun `scrub functions and maskIbans survive 100000 asterisks and letters`() {
+        val stars = "*".repeat(100_000)
+        assertEquals(stars, CounterpartyLabel.scrubLongDigitRuns(stars))
+        assertEquals(stars, CounterpartyLabel.scrubAccountNumbers(stars))
+        assertEquals(stars, CounterpartyLabel.maskIbans(stars))
+        val letters = "A".repeat(100_000)
+        assertEquals(letters, CounterpartyLabel.maskIbans(letters))
+    }
+
+    @Test
+    fun `scrubLongDigitRuns keeps its separator rules for runs next to text`() {
+        // Three separators break a run; two do not.
+        assertEquals("1234   5678   9012   3456", CounterpartyLabel.scrubLongDigitRuns("1234   5678   9012   3456"))
+        assertEquals("A ****3456 B", CounterpartyLabel.scrubLongDigitRuns("A 1234  5678  9012  3456 B"))
+        assertEquals("12,50 SHOP ****0000", CounterpartyLabel.scrubLongDigitRuns("12,50 SHOP 164500000000"))
+    }
+
+    @Test
+    fun `scrubAccountNumbers masks nine to eleven digit runs including slash dot and hyphen groups`() {
+        assertEquals("MARIA EXAMPLE ****8901", CounterpartyLabel.scrubAccountNumbers("MARIA EXAMPLE 12345678901"))
+        assertEquals("****6789", CounterpartyLabel.scrubAccountNumbers("123456789"))
+        assertEquals("X ****5678", CounterpartyLabel.scrubAccountNumbers("X 69/1234.5678"))
+        assertEquals("X ****5678", CounterpartyLabel.scrubAccountNumbers("X 12-345-678-5678"))
+        assertEquals("X ****6789", CounterpartyLabel.scrubAccountNumbers("X 697 123 6789"))
+        // Eight digits and amounts stay.
+        assertEquals("REF 12345678", CounterpartyLabel.scrubAccountNumbers("REF 12345678"))
+        assertEquals("12,50", CounterpartyLabel.scrubAccountNumbers("12,50"))
+    }
+
+    @Test
+    fun `fromName masks a domestic account number in merchant and account name`() {
+        val label = CounterpartyLabel.fromName("MARIA EXAMPLE 12345678901", ParsedTransferDirection.OUTGOING)!!
+        assertEquals("MARIA EXAMPLE ****8901", label.merchant)
+        assertEquals("To: MARIA EXAMPLE ****8901", label.accountName)
+        val described = CounterpartyLabel.fromDescription("JOHN DOE 6971234567", null, ParsedTransferDirection.INCOMING)
+        assertEquals("JOHN DOE ****4567", described.merchant)
+        assertEquals("From: JOHN DOE ****4567", described.accountName)
+    }
+
+    @Test
+    fun `scrubLongDigitRuns alone keeps a store number below twelve digits`() {
+        assertEquals("SOME SHOP 12345678901", CounterpartyLabel.scrubLongDigitRuns("SOME SHOP 12345678901"))
+    }
+
+    @Test
     fun `labels are bounded in length`() {
         val long = "A".repeat(200)
         val label = CounterpartyLabel.fromName(long, ParsedTransferDirection.OUTGOING)!!

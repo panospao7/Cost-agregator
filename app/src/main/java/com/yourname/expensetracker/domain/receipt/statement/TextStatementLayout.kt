@@ -55,7 +55,7 @@ class StatementContext(
             return StatementRow.Skipped(StatementSkipReason.AMOUNT_ABOVE_CEILING, page)
         }
         if (date > nowMs + FUTURE_TOLERANCE_MS) {
-            return StatementRow.Skipped(StatementSkipReason.NO_DATE, page)
+            return StatementRow.Skipped(StatementSkipReason.UNREASONABLE_DATE, page)
         }
         val evidence: CurrencyEvidence
         val currency: String
@@ -128,9 +128,37 @@ internal object StatementText {
             .filter { Character.getType(it) != Character.NON_SPACING_MARK.toInt() }
             .uppercase()
 
-    /** Flattens pages to (page number, cleaned line) pairs, dropping blank lines. */
-    fun flatten(pages: List<List<String>>): List<Pair<Int, String>> =
-        pages.flatMapIndexed { index, lines ->
-            lines.map { clean(it) }.filter { it.isNotEmpty() }.map { (index + 1) to it }
+    /**
+     * Longest cleaned line a layout will read. A longer line is never a statement row (hostile or
+     * corrupt text): it is dropped and counted through [Flattened.oversizedPages].
+     */
+    const val MAX_LINE_LENGTH = 2_000
+
+    /** Cleaned (page number, line) pairs plus the pages of the lines dropped for being too long. */
+    class Flattened(val lines: List<Pair<Int, String>>, val oversizedPages: List<Int>) {
+        /** One Skipped(INCOMPLETE_ROW) per dropped line; carries no line text. */
+        fun oversizedSkips(): List<StatementRow.Skipped> =
+            oversizedPages.map { StatementRow.Skipped(StatementSkipReason.INCOMPLETE_ROW, it) }
+    }
+
+    /** Flattens pages to (page number, cleaned line) pairs, dropping blank and oversized lines. */
+    fun flatten(pages: List<List<String>>): List<Pair<Int, String>> = flattenCounted(pages).lines
+
+    /** Like [flatten] but also reports the page of every line dropped for exceeding [MAX_LINE_LENGTH]. */
+    fun flattenCounted(pages: List<List<String>>): Flattened {
+        val lines = ArrayList<Pair<Int, String>>()
+        val oversized = ArrayList<Int>()
+        pages.forEachIndexed { index, pageLines ->
+            for (raw in pageLines) {
+                val cleaned = clean(raw)
+                if (cleaned.isEmpty()) continue
+                if (cleaned.length > MAX_LINE_LENGTH) {
+                    oversized += index + 1
+                } else {
+                    lines += (index + 1) to cleaned
+                }
+            }
         }
+        return Flattened(lines, oversized)
+    }
 }

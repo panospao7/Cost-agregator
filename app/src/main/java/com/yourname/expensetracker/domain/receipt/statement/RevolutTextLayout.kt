@@ -22,6 +22,12 @@ object RevolutTextLayout : TextStatementLayout {
     private const val MAX_SECTION_TITLE_LENGTH = 100
     private const val CURRENCY_EXCHANGE_LABEL = "Currency exchange"
 
+    /** Description prefixes that mean money in; used only when the balance chain cannot decide. */
+    private val INCOMING_KEYWORDS = listOf("PAYMENT FROM", "REFUND", "CASHBACK", "INTEREST")
+
+    private val TRANSFER_PREFIX = Regex("""(?i)^(?:transfer to|transfer from|received from)\s*""")
+    private val MASKED_ACCOUNT_SUFFIX = Regex("""\*{1,8}\s*(\d{2,4})$""")
+
     override fun matches(pages: List<List<String>>): Boolean =
         StatementText.flatten(pages).any { TABLE_HEADER.matches(it.second) }
 
@@ -41,7 +47,8 @@ object RevolutTextLayout : TextStatementLayout {
     }
 
     override fun parse(pages: List<List<String>>, ctx: StatementContext): TextStatementParseResult {
-        val lines = StatementText.flatten(pages)
+        val flat = StatementText.flattenCounted(pages)
+        val lines = flat.lines
         val openingBalance = lines
             .firstOrNull { it.second.startsWith(SUMMARY_ROW_PREFIX) }
             ?.let { StatementAmountParser.findCurrencyAmounts(it.second).firstOrNull()?.value }
@@ -106,7 +113,9 @@ object RevolutTextLayout : TextStatementLayout {
                 // "Reference:", "Card:", foreign amounts, rate notes and page junk are never stored.
             }
         }
-        return resolve(entries, openingBalance, ctx)
+        val resolved = resolve(entries, openingBalance, ctx)
+        val oversized = flat.oversizedSkips()
+        return if (oversized.isEmpty()) resolved else resolved.copy(rows = resolved.rows + oversized)
     }
 
     private fun cents(value: Double): Long = (value * 100.0).roundToLong()
@@ -161,7 +170,8 @@ object RevolutTextLayout : TextStatementLayout {
         val keywordDirection = when {
             upper.startsWith("TRANSFER TO") -> ParsedTransferDirection.OUTGOING
             upper.startsWith("TRANSFER FROM") || upper.startsWith("TOP-UP BY") ||
-                upper.startsWith("RECEIVED") -> ParsedTransferDirection.INCOMING
+                upper.startsWith("RECEIVED") ||
+                INCOMING_KEYWORDS.any { upper.startsWith(it) } -> ParsedTransferDirection.INCOMING
             else -> ParsedTransferDirection.OUTGOING
         }
         val direction = chainDirection ?: keywordDirection
@@ -220,10 +230,9 @@ object RevolutTextLayout : TextStatementLayout {
 
     /** Name from the To:/From: line, else from the description; masked reference as last resort. */
     private fun transferLabel(raw: RawRow, direction: ParsedTransferDirection): CounterpartyLabel.Label {
-        val fromDescription = raw.description
-            .replace(Regex("""(?i)^(?:transfer to|transfer from|received from)\s*"""), "")
+        val fromDescription = raw.description.replace(TRANSFER_PREFIX, "")
         val counterparty = raw.counterparty.orEmpty()
-        val mask = Regex("""\*+\s*(\d{2,4})$""").find(counterparty)?.groupValues?.get(1)
+        val mask = MASKED_ACCOUNT_SUFFIX.find(counterparty)?.groupValues?.get(1)
         CounterpartyLabel.fromName(counterparty, direction)?.let { return it }
         CounterpartyLabel.fromName(fromDescription, direction)?.let { return it }
         if (mask != null) return CounterpartyLabel.fromReference("Revolut", mask, direction)

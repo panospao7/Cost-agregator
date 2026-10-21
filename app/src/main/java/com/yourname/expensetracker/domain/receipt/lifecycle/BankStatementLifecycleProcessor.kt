@@ -1395,6 +1395,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
         StatementSkipReason.NOT_SETTLED -> "NOT_SETTLED"
         StatementSkipReason.AMOUNT_ABOVE_CEILING -> "AMOUNT_ABOVE_CEILING"
         StatementSkipReason.INCOMPLETE_ROW -> "INCOMPLETE_ROW"
+        StatementSkipReason.UNREASONABLE_DATE -> "UNREASONABLE_DATE"
     }
 
     private sealed interface StatementParse {

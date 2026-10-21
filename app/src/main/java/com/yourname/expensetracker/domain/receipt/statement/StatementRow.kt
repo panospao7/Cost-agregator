@@ -31,7 +31,10 @@ enum class StatementSkipReason {
     AMOUNT_ABOVE_CEILING,
 
     /** A dated row whose amount columns never arrived (truncated or unreadable). */
-    INCOMPLETE_ROW
+    INCOMPLETE_ROW,
+
+    /** A row whose date parsed but lies in the future (beyond the one-day clock tolerance). */
+    UNREASONABLE_DATE
 }
 
 sealed class StatementRow {

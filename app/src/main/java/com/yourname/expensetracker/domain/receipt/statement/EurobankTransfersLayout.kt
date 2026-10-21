@@ -15,8 +15,13 @@ object EurobankTransfersLayout : TextStatementLayout {
 
     private const val TITLE = "ΙΣΤΟΡΙΚΟ ΜΕΤΑΦΟΡΩΝ ΣΕ ΑΛΛΗ ΤΡΑΠΕΖΑ"
     private const val GREEK_IBAN_LENGTH = 27
+    private const val MAX_STATUS_LENGTH = 80
+
+    /** Folded Greek negations ("ΔΕΝ", "ΜΗ", "ΟΧΙ"): a negated status is never a credit. */
+    private val NEGATIONS = setOf("ΔΕΝ", "ΜΗ", "ΜΗΝ", "ΟΧΙ")
 
     private val DATE_LED = Regex("""^(\d{2}/\d{2}/\d{4})\s+([A-Z]{2}\d{2}[A-Z0-9]*)(?:\s.*)?$""")
+    private val DATE_START = Regex("""^\d{2}/\d{2}/\d{4}(?:\s|$)""")
     private val IBAN_START = Regex("""^[A-Z]{2}\d{2}[A-Z0-9]+$""")
     private val DIGITS = Regex("""^\d+$""")
     private val AMOUNT_CURRENCY = Regex("""^(\d[\d.,]*)\s+(EUR|USD|GBP)\b\s*(.*)$""")
@@ -39,13 +44,20 @@ object EurobankTransfersLayout : TextStatementLayout {
     override fun parse(pages: List<List<String>>, ctx: StatementContext): TextStatementParseResult {
         val rows = mutableListOf<StatementRow>()
         var buffer: Buffer? = null
+        var inTable = false
+        val flat = StatementText.flattenCounted(pages)
 
         fun flush() {
             buffer?.let { rows += toRow(it, ctx) }
             buffer = null
         }
 
-        for ((page, line) in StatementText.flatten(pages)) {
+        for ((page, line) in flat.lines) {
+            // Lines above the first title line (cover text, search period) are never rows.
+            if (!inTable) {
+                if (StatementText.fold(line).contains(TITLE)) inTable = true
+                continue
+            }
             if (isFooter(line)) {
                 flush()
                 continue
@@ -56,9 +68,17 @@ object EurobankTransfersLayout : TextStatementLayout {
                 buffer = Buffer(page, dateLed.groupValues[1], mutableListOf(line.substringAfter(' ').trim()))
                 continue
             }
+            if (DATE_START.containsMatchIn(line)) {
+                // A date-led line that fails the strict row pattern still starts a new row: it closes
+                // the open one and is counted itself, never appended to the previous row.
+                flush()
+                rows += StatementRow.Skipped(StatementSkipReason.INCOMPLETE_ROW, page)
+                continue
+            }
             buffer?.parts?.add(line)
         }
         flush()
+        rows += flat.oversizedSkips()
         return TextStatementParseResult(id, rows)
     }
 
@@ -80,11 +100,17 @@ object EurobankTransfersLayout : TextStatementLayout {
         val amount = StatementAmountParser.parse(tail.groupValues[1])
             ?: return skipped(buffer, StatementSkipReason.INCOMPLETE_ROW)
         val currency = tail.groupValues[2]
+        // Only this row's own tokens after the amount and currency decide the status.
         val status = StatementText.fold(tail.groupValues[3])
-
+        val words = status.split(' ').filter { it.isNotEmpty() }
+        val negated = words.any { it in NEGATIONS }
+        val cancelled = status.contains("ΑΚΥΡΩΘΗΚΕ")
+        val credited = status.contains("ΠΙΣΤΩΘΗΚΕ")
         when {
-            status.contains("ΑΚΥΡΩΘΗΚΕ") -> return skipped(buffer, StatementSkipReason.CANCELLED)
-            !status.contains("ΠΙΣΤΩΘΗΚΕ") -> return skipped(buffer, StatementSkipReason.UNKNOWN_STATUS)
+            // "Δεν πιστώθηκε", both words at once, an oversized or unrecognised status: never imported.
+            negated || cancelled == credited || status.length > MAX_STATUS_LENGTH ->
+                return skipped(buffer, StatementSkipReason.UNKNOWN_STATUS)
+            cancelled -> return skipped(buffer, StatementSkipReason.CANCELLED)
         }
         if (amount == 0.0) return skipped(buffer, StatementSkipReason.INCOMPLETE_ROW)
 

@@ -37,6 +37,7 @@ import com.yourname.expensetracker.domain.receipt.TextBlock
 import com.yourname.expensetracker.domain.receipt.statement.CurrencyEvidence
 import com.yourname.expensetracker.domain.receipt.statement.StatementLayoutId
 import com.yourname.expensetracker.domain.receipt.statement.StatementRow
+import com.yourname.expensetracker.domain.receipt.statement.StatementSkipReason
 import com.yourname.expensetracker.domain.receipt.statement.StatementTextFixtures
 import com.yourname.expensetracker.domain.receipt.statement.TextStatementParseResult
 import com.yourname.expensetracker.domain.receipt.statement.TextStatementParser
@@ -377,6 +378,26 @@ class BankStatementTextImportTest {
         // AI output carries no direction: it stays the parser's OUTGOING with the parsed label.
         assertTrue(harness.reviews.all { it.suggestedDirection == "OUTGOING" })
         assertTrue(harness.reviews.all { it.suggestedAccountName!!.startsWith("To: ") })
+    }
+
+    @Test
+    fun layoutSkippedFutureDatedRowIsLedgeredWithTheBoundedUnreasonableDateCode() = runTest {
+        val dated = parsedRow("OK SHOP", 5.0, StatementTextFixtures.day(2031, 11, 9))
+        val harness = Harness(
+            textPages = listOf(listOf("unused")),
+            textParser = parserReturning(
+                TextStatementParseResult(
+                    StatementLayoutId.EUROBANK_CARD,
+                    listOf(dated, StatementRow.Skipped(StatementSkipReason.UNREASONABLE_DATE, 1))
+                )
+            )
+        )
+        val result = harness.process().getOrThrow()
+
+        val skipped = harness.items.single { it.status == BankStatementImportItem.STATUS_SKIPPED }
+        assertEquals("UNREASONABLE_DATE", skipped.errorReason)
+        assertNull(skipped.transactionDate)
+        assertEquals(mapOf("UNREASONABLE_DATE" to 1), result.skippedByReason)
     }
 
     @Test

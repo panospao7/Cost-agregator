@@ -170,6 +170,81 @@ class RevolutTextLayoutTest {
     }
 
     @Test
+    fun `money in keywords decide the direction when the balance chain cannot`() {
+        val descriptions = listOf(
+            "Payment from JOHN DOE",
+            "Refund from Some Shop",
+            "Cashback",
+            "Interest paid"
+        )
+        for (description in descriptions) {
+            val pages = listOf(
+                listOf(
+                    "Date Description Money out Money in Balance",
+                    "Mar 10, 2031 $description €5.00 €9.00"
+                )
+            )
+            val parsed = RevolutTextLayout.parse(pages, StatementTextFixtures.context())
+            val tx = parsed.parsedRows.single().tx
+            assertEquals(description, ParsedTransactionType.DEPOSIT, tx.type)
+            assertEquals(description, ParsedTransferDirection.INCOMING, tx.transferDirection)
+        }
+    }
+
+    @Test
+    fun `the balance chain still wins over the money in keywords`() {
+        val pages = listOf(
+            listOf(
+                "Account (Current Account) €10.00 €5.00 €0.00 €5.00",
+                "Date Description Money out Money in Balance",
+                "Mar 10, 2031 Refund policy fee €5.00 €5.00"
+            )
+        )
+        val tx = RevolutTextLayout.parse(pages, StatementTextFixtures.context()).parsedRows.single().tx
+        assertEquals(ParsedTransactionType.PURCHASE, tx.type)
+    }
+
+    @Test
+    fun `a future dated row is counted as an unreasonable date and not as no date`() {
+        val pages = listOf(
+            listOf(
+                "Date Description Money out Money in Balance",
+                "Mar 10, 2033 Some Shop €2.00 €5.00"
+            )
+        )
+        val parsed = RevolutTextLayout.parse(pages, StatementTextFixtures.context())
+        assertEquals(StatementSkipReason.UNREASONABLE_DATE, parsed.skippedRows.single().reason)
+    }
+
+    @Test(timeout = 20_000)
+    fun `a 100000 asterisk counterparty line finishes quickly and is counted`() {
+        val pages = listOf(
+            listOf(
+                "Date Description Money out Money in Balance",
+                "Mar 10, 2031 Transfer to MARIA EXAMPLE €2.00 €5.00",
+                "To: " + "*".repeat(100_000) + "1234"
+            )
+        )
+        val parsed = RevolutTextLayout.parse(pages, StatementTextFixtures.context())
+        val tx = parsed.parsedRows.single().tx
+        assertEquals("MARIA EXAMPLE", tx.merchant)
+        assertEquals(listOf(StatementSkipReason.INCOMPLETE_ROW), parsed.skippedRows.map { it.reason })
+    }
+
+    @Test(timeout = 20_000)
+    fun `a bounded asterisk mask is still read from a short counterparty line`() {
+        val pages = listOf(
+            listOf(
+                "Date Description Money out Money in Balance",
+                "Mar 10, 2031 Transfer to €2.00 €5.00",
+                "To: *1234"
+            )
+        )
+        val tx = RevolutTextLayout.parse(pages, StatementTextFixtures.context()).parsedRows.single().tx
+        assertEquals("Revolut ****1234", tx.merchant)
+    }
+
+    @Test
     fun `a zero amount row is counted as incomplete instead of being dropped`() {
         val pages = listOf(
             listOf(

@@ -172,6 +172,89 @@ class NbgAccountLayoutTest {
         assertFalse(tx.merchant, Regex("""\d{12}""").containsMatchIn(tx.merchant))
     }
 
+    private val columnHeader = "Ημερομηνία / Ώρα Valeur Κατάστημα Συν Περιγραφή Χ/Π Ποσό Λογιστικό Υπόλοιπο"
+
+    @Test
+    fun `a malformed date-led line closes the open row and is counted instead of being stitched`() {
+        val pages = listOf(
+            listOf(
+                columnHeader,
+                "16/12/2031 08:10:20 15/12/2031 222 040 SOME SHOP",
+                "14/12/2031 garbled line",
+                "Χ -2,25 70,30"
+            )
+        )
+        val parsed = NbgAccountLayout.parse(pages, StatementTextFixtures.context())
+        assertTrue(parsed.parsedRows.isEmpty())
+        assertEquals(
+            listOf(
+                StatementSkipReason.INCOMPLETE_ROW,
+                StatementSkipReason.INCOMPLETE_ROW,
+                StatementSkipReason.NO_DATE
+            ),
+            parsed.skippedRows.map { it.reason }
+        )
+    }
+
+    @Test
+    fun `a malformed date-led line with no open row is counted as incomplete`() {
+        val pages = listOf(
+            listOf(
+                columnHeader,
+                "14/12/2031 03:04:05 12/12/2031 222 040 OTHER SHOP Χ -2,25 70,30",
+                "13/12/2031 not a row"
+            )
+        )
+        val parsed = NbgAccountLayout.parse(pages, StatementTextFixtures.context())
+        assertEquals(1, parsed.parsedRows.size)
+        assertEquals(listOf(StatementSkipReason.INCOMPLETE_ROW), parsed.skippedRows.map { it.reason })
+    }
+
+    @Test
+    fun `a transfer description is masked down to the last four of a domestic account or phone number`() {
+        val pages = listOf(
+            listOf(
+                columnHeader,
+                "14/12/2031 03:04:05 12/12/2031 222 064 MARIA EXAMPLE 12345678901 Χ -2,25 70,30",
+                "13/12/2031 03:04:05 12/12/2031 222 064 JOHN DOE 69/1234.5678 Π 3,25 72,55"
+            )
+        )
+        val parsed = NbgAccountLayout.parse(pages, StatementTextFixtures.context())
+        val first = parsed.parsedRows[0].tx
+        assertEquals("MARIA EXAMPLE ****8901", first.merchant)
+        assertEquals("To: MARIA EXAMPLE ****8901", first.transferAccountName)
+        val second = parsed.parsedRows[1].tx
+        assertEquals("JOHN DOE ****5678", second.merchant)
+        assertEquals("From: JOHN DOE ****5678", second.transferAccountName)
+    }
+
+    @Test
+    fun `a purchase merchant keeps a nine to eleven digit store number`() {
+        val pages = listOf(
+            listOf(
+                columnHeader,
+                "14/12/2031 03:04:05 12/12/2031 222 040 SOME SHOP 12345678901 Χ -2,25 70,30"
+            )
+        )
+        val tx = NbgAccountLayout.parse(pages, StatementTextFixtures.context()).parsedRows.single().tx
+        assertTrue(tx.merchant, tx.merchant.contains("12345678901"))
+    }
+
+    @Test(timeout = 20_000)
+    fun `hostile 100000 character lines finish quickly and are counted`() {
+        val pages = listOf(
+            listOf(
+                columnHeader,
+                "9".repeat(100_000) + " από " + "9".repeat(100_000) + " Ημ/νία Εκτύπωσης",
+                "*".repeat(100_000),
+                "14/12/2031 03:04:05 12/12/2031 222 040 OTHER SHOP Χ -2,25 70,30"
+            )
+        )
+        val parsed = NbgAccountLayout.parse(pages, StatementTextFixtures.context())
+        assertEquals(1, parsed.parsedRows.size)
+        assertEquals(2, parsed.skippedRows.count { it.reason == StatementSkipReason.INCOMPLETE_ROW })
+    }
+
     @Test
     fun `amount printed with a leading minus is accepted`() {
         val pages = listOf(

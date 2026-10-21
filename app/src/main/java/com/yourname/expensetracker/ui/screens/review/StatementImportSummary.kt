@@ -59,7 +59,7 @@ private fun skippedPhrase(result: BankStatementResult): String? {
 }
 
 private val REASON_ORDER = listOf(
-    "NO_DATE", "CANCELLED", "UNKNOWN_STATUS", "NOT_SETTLED", "AMOUNT_ABOVE_CEILING",
+    "NO_DATE", "UNREASONABLE_DATE", "CANCELLED", "UNKNOWN_STATUS", "NOT_SETTLED", "AMOUNT_ABOVE_CEILING",
     "INCOMPLETE_ROW", "CURRENCY_UNKNOWN", "AI_REJECTED"
 )
 
@@ -70,6 +70,7 @@ private val BOUNDED_REASON_CODE = Regex("^[A-Z][A-Z_]{0,39}$")
 
 private fun reasonLabel(code: String): String = when (code) {
     "NO_DATE" -> "no date"
+    "UNREASONABLE_DATE" -> "date in the future"
     "CANCELLED" -> "cancelled"
     "UNKNOWN_STATUS" -> "unknown status"
     "NOT_SETTLED" -> "pending"

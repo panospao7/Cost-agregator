@@ -3,6 +3,8 @@ package com.yourname.expensetracker.domain.receipt.statement
 import com.yourname.expensetracker.domain.parser.ParsedTransactionType
 import com.yourname.expensetracker.domain.parser.ParsedTransferDirection
 import com.yourname.expensetracker.domain.receipt.statement.StatementTextFixtures.day
+import com.yourname.expensetracker.domain.util.MerchantCleaner
+import com.yourname.expensetracker.domain.util.TimeProvider
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -110,6 +112,87 @@ class EurobankCardLayoutTest {
         val parsed = EurobankCardLayout.parse(pages, StatementTextFixtures.context())
         assertTrue(parsed.parsedRows.isEmpty())
         assertEquals(StatementSkipReason.INCOMPLETE_ROW, parsed.skippedRows.single().reason)
+    }
+
+    private val tableHeaderLines = StatementTextFixtures.EUROBANK_CARD_PAGES[1].take(5)
+
+    private fun parserAtFixtureNow() = TextStatementParser(
+        MerchantCleaner(),
+        object : TimeProvider {
+            override fun now(): Long = StatementTextFixtures.NOW_MS
+        }
+    )
+
+    @Test
+    fun `a header with a balance column does not match and produces no deposit`() {
+        val pages = listOf(
+            listOf(
+                "ΗΜ/ΝΙΑ ΣΥΝΑΛΛΑΓΗΣ ΗΜ/ΝΙΑ ΑΞΙΑΣ ΠΕΡΙΓΡΑΦΗ ΠΟΣΟ ΥΠΟΛΟΙΠΟ",
+                "10/11/2031 10/11/2031 SOME SHOP -7,41 1.227,15"
+            )
+        )
+        assertFalse(EurobankCardLayout.matches(pages))
+        assertTrue(EurobankCardLayout.parse(pages, StatementTextFixtures.context()).rows.isEmpty())
+        val parsed = parserAtFixtureNow().parse(pages, "EUR")
+        assertNull(parsed.layout)
+        assertTrue(parsed.parsedRows.none { it.tx.type == ParsedTransactionType.DEPOSIT })
+    }
+
+    @Test
+    fun `a balance column title on the line after the header is detected too`() {
+        val pages = listOf(
+            tableHeaderLines + listOf("Υπόλοιπο", "10/11/2031 10/11/2031 SOME SHOP -7,41 1.227,15")
+        )
+        assertFalse(EurobankCardLayout.matches(pages))
+    }
+
+    @Test
+    fun `debit and credit column headers do not match this single amount layout`() {
+        val debitCredit = listOf(
+            listOf("ΗΜ/ΝΙΑ ΣΥΝΑΛΛΑΓΗΣ ΗΜ/ΝΙΑ ΑΞΙΑΣ ΠΕΡΙΓΡΑΦΗ ΧΡΕΩΣΗ ΠΙΣΤΩΣΗ ΠΟΣΟ", "10/11/2031 10/11/2031 SOME SHOP 7,41")
+        )
+        assertFalse(EurobankCardLayout.matches(debitCredit))
+        assertFalse(
+            EurobankCardLayout.matches(
+                listOf(listOf("ΗΜ/ΝΙΑ ΣΥΝΑΛΛΑΓΗΣ ΗΜ/ΝΙΑ ΑΞΙΑΣ ΠΕΡΙΓΡΑΦΗ ΠΟΣΟ ΠΙΣΤΩΣΗ"))
+            )
+        )
+    }
+
+    @Test
+    fun `a row whose description ends in an amount is incomplete and not read as the last number`() {
+        val pages = listOf(tableHeaderLines + listOf("10/11/2031 10/11/2031 SOME SHOP -7,41 1.227,15"))
+        val parsed = EurobankCardLayout.parse(pages, StatementTextFixtures.context())
+        assertTrue(parsed.parsedRows.isEmpty())
+        assertEquals(StatementSkipReason.INCOMPLETE_ROW, parsed.skippedRows.single().reason)
+    }
+
+    @Test
+    fun `a bare number at the end of the description is still a normal row`() {
+        val pages = listOf(tableHeaderLines + listOf("10/11/2031 10/11/2031 SHOP / 210 949 -1,50"))
+        val parsed = EurobankCardLayout.parse(pages, StatementTextFixtures.context())
+        assertEquals(1.5, parsed.parsedRows.single().tx.amount, 0.0001)
+    }
+
+    @Test
+    fun `a future dated row is counted as an unreasonable date and not as no date`() {
+        val pages = listOf(tableHeaderLines + listOf("10/11/2033 11/11/2033 SOME SHOP -3,00"))
+        val parsed = EurobankCardLayout.parse(pages, StatementTextFixtures.context())
+        assertTrue(parsed.parsedRows.isEmpty())
+        assertEquals(StatementSkipReason.UNREASONABLE_DATE, parsed.skippedRows.single().reason)
+    }
+
+    @Test(timeout = 20_000)
+    fun `a 100000 character line is dropped and counted while the other rows are read`() {
+        val pages = listOf(
+            tableHeaderLines + listOf(
+                "10/11/2031 10/11/2031 SOME SHOP " + "9".repeat(100_000),
+                "10/11/2031 11/11/2031 OTHER SHOP LTD -2,10"
+            )
+        )
+        val parsed = EurobankCardLayout.parse(pages, StatementTextFixtures.context())
+        assertEquals(1, parsed.parsedRows.size)
+        assertEquals(listOf(StatementSkipReason.INCOMPLETE_ROW), parsed.skippedRows.map { it.reason })
     }
 
     @Test

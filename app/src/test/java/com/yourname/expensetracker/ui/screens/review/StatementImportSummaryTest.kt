@@ -96,6 +96,17 @@ class StatementImportSummaryTest {
     }
 
     @Test
+    fun unreasonableDateHasItsOwnLabelAndSitsAfterNoDate() {
+        val message = statementImportSummary(
+            result(skipped = 3, byReason = mapOf("CANCELLED" to 1, "UNREASONABLE_DATE" to 1, "NO_DATE" to 1))
+        )
+        assertTrue(
+            message,
+            message.contains("3 skipped (no date: 1, date in the future: 1, cancelled: 1).")
+        )
+    }
+
+    @Test
     fun pageNumbersAreClampedAndIgnoredWhenImplausible() {
         assertTrue(statementImportSummary(result(pages = 9, total = 5)).contains("Read 5 of 5 pages."))
         assertFalse(statementImportSummary(result(pages = 3, total = 0)).contains("Read"))
