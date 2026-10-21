@@ -1108,11 +1108,8 @@ class ReviewViewModel @Inject constructor(
                 when (val result = receiptLifecycleCoordinator.processBankStatement(uri)) {
                     is Result.Success<*> -> {
                         val bankResult = result.data as BankStatementResult
-                        val summary = "Imported ${bankResult.transactionsFound} transactions from statement! " +
-                            "(${bankResult.reviewsCreated} reviews created, ${bankResult.duplicatesSkipped} duplicates skipped)"
-                        _errorMessage.value = if (bankResult.isPartial) {
-                            "Statement partially imported; some pages were not processed. $summary"
-                        } else summary
+                        // Counts only (pages, reviews, duplicates, skipped by bounded reason); never row text.
+                        _errorMessage.value = statementImportSummary(bankResult)
                         bankResult.debugData?.let { data ->
                             _debugData.value = data
                             debugDataStorage.save(data)

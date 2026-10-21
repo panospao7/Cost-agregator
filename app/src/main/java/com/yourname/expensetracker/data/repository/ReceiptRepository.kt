@@ -695,8 +695,8 @@ class ReceiptRepository @Inject constructor(
      * triggering the full statement processing pipeline.
      */
     suspend fun runStatementOcr(imageUri: Uri): OcrResult {
-        // statement text path (processStatementUri) is enabled by S4 together with raw-text and AI-prompt caps
-        return ocrService.processUri(imageUri)
+        // Statement-only entry: PDF text path (every page up to the statement caps), OCR fallback otherwise.
+        return ocrService.processStatementUri(imageUri)
     }
 
     /**

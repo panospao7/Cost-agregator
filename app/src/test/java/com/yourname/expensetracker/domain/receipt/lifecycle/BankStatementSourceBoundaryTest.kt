@@ -33,6 +33,7 @@ import com.yourname.expensetracker.domain.privacy.RawStorageMode
 import com.yourname.expensetracker.domain.receipt.BankStatementParser
 import com.yourname.expensetracker.domain.receipt.OcrResult
 import com.yourname.expensetracker.domain.receipt.TextBlock
+import com.yourname.expensetracker.domain.receipt.statement.TextStatementParser
 import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
 import com.yourname.expensetracker.domain.transaction.TransactionContext
 import com.yourname.expensetracker.domain.util.CurrencyNormalizer
@@ -83,8 +84,11 @@ class BankStatementSourceBoundaryTest {
     @Test
     fun mixedRowsOnlyCreateExplicitlyDenominatedReviews() = runTest {
         val harness = Harness(null, listOf("10/05 SHOP -12.50 USD", "11/05 SHOP -15.00"))
-        // Existing finalization treats skipped items as a failed/partial run.
-        assertTrue(harness.process().isFailure)
+        // Owner decision O2 (statement-import plan): a skipped row no longer fails a run that created
+        // a review. This assertion previously pinned isFailure ("existing finalization treats skipped
+        // items as a failed/partial run"); the run now completes with skips and still returns success.
+        // The all-skipped case keeps failing: see invalidHomeCannotBecomeCurrencyEvidenceForUnknownRows.
+        assertTrue(harness.process().isSuccess)
         assertEquals(listOf("USD"), harness.reviews.map { it.suggestedCurrency })
         assertEquals(1, harness.items.count { it.status == BankStatementImportItem.STATUS_SKIPPED })
         assertEquals(1, harness.items.count { it.status == BankStatementImportItem.STATUS_CREATED_REVIEW })
@@ -328,7 +332,8 @@ class BankStatementSourceBoundaryTest {
                 database = mockk<AppDatabase>(relaxed = true), transactionRunner = runner,
                 receiptRepository = receiptRepository, scannedReceiptDao = mockk(relaxed = true),
                 receiptLifecycleEventWriter = mockk(relaxed = true), receiptLinkService = mockk(relaxed = true),
-                timeProvider = clock, bankStatementParser = parser, pendingReviewDao = pendingDao,
+                timeProvider = clock, bankStatementParser = parser,
+                textStatementParser = TextStatementParser(cleaner, clock), pendingReviewDao = pendingDao,
                 expenseDao = expenseDao, merchantNormalizer = normalizer, hybridClassifier = mockk(relaxed = true),
                 duplicateDetector = mockk(relaxed = true), assetStore = assetStore, transactionValidator = validator,
                 recurringExpenseRepository = mockk(relaxed = true), writeBarrier = barrier,
