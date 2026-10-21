@@ -801,7 +801,7 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
 
     @Test
     fun `biweekly pattern projects one or two occurrences depending on the remaining window`() = runTest {
-        fun committedFor(day: Int, frequency: RecurrenceFrequency, amount: Double = 100.0) = engine.synthesize(
+        suspend fun committedFor(day: Int, frequency: RecurrenceFrequency, amount: Double = 100.0) = engine.synthesize(
             pastSumDaily = emptyList(),
             recurringPatterns = listOf(createRecurringPattern(amount, 0.95f, millis(2024, Calendar.JANUARY, day), frequency)),
             plannedExpenses = emptyList(), savingsGoals = emptyList(), budgetStatuses = emptyList(),
