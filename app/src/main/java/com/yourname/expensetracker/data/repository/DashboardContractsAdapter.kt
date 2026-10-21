@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.repository
 
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.analytics.PeriodComparisonWindows
 import com.yourname.expensetracker.domain.model.PlannedExpense
 import com.yourname.expensetracker.domain.model.PlannedExpensePriority
 import com.yourname.expensetracker.domain.model.RecurringPattern
@@ -156,9 +157,10 @@ class DashboardContractsAdapter @Inject constructor(
     //  the reactive chain and requires careful testing. Tracked for future refactor.
     override fun observeCategoryBreakdown(start: Long, end: Long): Flow<List<DashboardCategoryBreakdown>> =
         analyticsRepository.getCategoryBreakdown(start, end).map { breakdown ->
-            val daysInPeriod = TimePeriodUtils.daysBetween(start, end).coerceAtLeast(1)
-            val previousStart = TimePeriodUtils.addDays(start, -daysInPeriod)
-            val previousEnd = start
+            // F-R20b-a: calendar-month ranges compare against the previous calendar month.
+            val previousWindow = PeriodComparisonWindows.previousWindowForRange(start, end)
+            val previousStart = previousWindow.startInclusive
+            val previousEnd = previousWindow.endExclusive
             val previousByCategoryId = analyticsRepository
                 .getCategoryBreakdown(previousStart, previousEnd)
                 .map { list -> list.associateBy { it.category.id } }

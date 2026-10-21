@@ -302,6 +302,43 @@ class AnalyticsComparisonWindowsTest {
     }
 
     @Test
+    fun `rows inside the current minute are counted and the prior cut uses the same minute end`() {
+        val zone = useZone("Europe/Athens")
+        val rawNow = millis(zone, LocalDateTime.of(2026, 5, 10, 14, 30)) + 20_000L
+        val minute = AnalyticsComparisonWindows.comparisonMinute(rawNow)
+        val cut = AnalyticsComparisonWindows.comparisonCutInstant(rawNow)
+        assertEquals(minute + 59_999L, cut)
+
+        // A row stamped 45s into the current minute (after the floored minute) still counts.
+        val rowInMinute = minute + 45_000L
+        assertTrue(AnalyticsComparisonWindows.countsInComparison(rowInMinute, minute))
+        assertTrue(AnalyticsComparisonWindows.countsInComparison(cut, minute))
+        assertTrue(!AnalyticsComparisonWindows.countsInComparison(cut + 1L, minute))
+
+        // The prior window covers the same wall-clock minute one month earlier (end of minute inclusive).
+        val (currentStart, _) = currentRange(TimePeriod.MONTH, rawNow)
+        val prior = AnalyticsComparisonWindows.priorWindow(TimePeriod.MONTH, currentStart, cut)
+        val priorRowInMinute = millis(zone, LocalDateTime.of(2026, 4, 10, 14, 30, 45))
+        assertTrue(priorRowInMinute >= prior.startInclusive && priorRowInMinute < prior.endExclusive)
+        assertEquals(millis(zone, LocalDateTime.of(2026, 4, 10, 14, 31)), prior.endExclusive)
+    }
+
+    @Test
+    fun `month prior window delegates to the shared previous month rule`() {
+        val zone = useZone("America/New_York")
+        val now = millis(zone, LocalDateTime.of(2026, 3, 15, 12, 0))
+        val (currentStart, _) = currentRange(TimePeriod.MONTH, now)
+
+        val prior = AnalyticsComparisonWindows.priorWindow(TimePeriod.MONTH, currentStart, now)
+        val shared = com.yourname.expensetracker.domain.analytics.PeriodComparisonWindows
+            .previousMonthWindow(currentStart, now, cutInclusive = true)
+
+        assertEquals(shared.startInclusive, prior.startInclusive)
+        assertEquals(shared.endExclusive, prior.endExclusive)
+        assertEquals(millis(zone, LocalDateTime.of(2026, 2, 15, 12, 0)) + 1L, prior.endExclusive)
+    }
+
+    @Test
     fun `ALL has no percentage and a null previous total`() {
         assertNull(AnalyticsComparisonWindows.changePercent(TimePeriod.ALL, 100.0, 50.0))
         assertNull(AnalyticsComparisonWindows.previousTotalOrNull(TimePeriod.ALL, 0.0))

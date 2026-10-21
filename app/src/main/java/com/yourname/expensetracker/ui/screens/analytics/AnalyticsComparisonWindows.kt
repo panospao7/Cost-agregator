@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.ui.screens.analytics
 
+import com.yourname.expensetracker.domain.analytics.PeriodComparisonWindows
 import com.yourname.expensetracker.domain.analytics.TimePeriod
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import java.time.Instant
@@ -44,6 +45,11 @@ internal object AnalyticsComparisonWindows {
      */
     fun priorWindow(period: TimePeriod, currentStart: Long, now: Long): ComparisonWindow {
         if (period == TimePeriod.ALL) return ComparisonWindow(currentStart, currentStart)
+        if (period == TimePeriod.MONTH) {
+            // F-R20b-a: the month rule is shared with the data layer (domain helper).
+            val month = PeriodComparisonWindows.previousMonthWindow(currentStart, now, cutInclusive = true)
+            return ComparisonWindow(month.startInclusive, month.endExclusive)
+        }
 
         val (priorStart, priorEnd) = previousCalendarPeriod(period, now)
         val zone = ZoneId.systemDefault()
@@ -81,6 +87,13 @@ internal object AnalyticsComparisonWindows {
     fun comparisonMinute(now: Long): Long = now - Math.floorMod(now, MILLIS_PER_MINUTE)
 
     /**
+     * F-R20b-b: inclusive end of the comparison minute (`:59.999`). Rows stamped anywhere in
+     * the current minute count on the current side, and the prior window is cut at the same
+     * instant. The cache key still uses [comparisonMinute] (same value for the whole minute).
+     */
+    fun comparisonCutInstant(now: Long): Long = comparisonMinute(now) + MILLIS_PER_MINUTE - 1L
+
+    /**
      * Whether an expense dated [date] counts in the year-over-year comparison for [year]:
      * it must fall in that calendar year, and prior-year dates must also be before
      * [priorYearCutoff] (year-to-date vs prior-year-to-date).
@@ -93,7 +106,8 @@ internal object AnalyticsComparisonWindows {
      * after the comparison instant (future-dated entries) are in the displayed period total
      * but have no cut-off prior-window counterpart, so they are excluded from the delta.
      */
-    fun countsInComparison(date: Long, comparisonMinute: Long): Boolean = date <= comparisonMinute
+    fun countsInComparison(date: Long, comparisonMinute: Long): Boolean =
+        date <= comparisonCutInstant(comparisonMinute)
 
     /** ALL has no baseline, so it never exposes a previous total (rather than 0.0). */
     fun previousTotalOrNull(period: TimePeriod, previousAmount: Double?): Double? =

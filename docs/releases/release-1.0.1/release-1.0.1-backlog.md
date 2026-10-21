@@ -122,7 +122,6 @@ From `release-1.0-user-notes.md` "Known limitations" (P2/P3, owner-confirmed 202
   feature).
 - Android 15+: the ongoing notification appears after reboot only once the app is opened.
 - Split template blocked by a backup closes silently.
-- Home "vs last period" uses same-length windows (F-R20b-a), so it can differ from the Analytics %.
 - Statement import drops rows that contain summary words (e.g. "OVER LIMIT FEE") (F-R22-a).
 - Privacy settings are reachable only from the Features menu.
 - The Safe-to-spend amount is not calculated (placeholder).

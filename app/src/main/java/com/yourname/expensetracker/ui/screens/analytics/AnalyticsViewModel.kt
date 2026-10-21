@@ -457,7 +457,10 @@ class AnalyticsViewModel @Inject constructor(
         // month lengths are handled correctly. ALL has no baseline (empty window).
         // The cut includes time-of-day: use the minute-truncated instant so it matches the cache key.
         val comparisonMinute = AnalyticsComparisonWindows.comparisonMinute(now)
-        val priorWindow = AnalyticsComparisonWindows.priorWindow(period, currentStart, comparisonMinute)
+        // F-R20b-b: cut at the inclusive end of the comparison minute so current-minute rows count.
+        val priorWindow = AnalyticsComparisonWindows.priorWindow(
+            period, currentStart, AnalyticsComparisonWindows.comparisonCutInstant(now)
+        )
         val previousStart = priorWindow.startInclusive
         val previousEnd = priorWindow.endExclusive
         val allExpenses = expenseRepository.getExpensesBetween(fullWindowStart, currentEnd)
