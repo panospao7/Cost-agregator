@@ -155,8 +155,27 @@ class CounterpartyLabelTest {
         assertEquals("STORE 12345 12,50", CounterpartyLabel.scrubLongDigitRuns("STORE 12345 12,50"))
         assertEquals("12345678901", CounterpartyLabel.scrubLongDigitRuns("12345678901"))
         assertEquals("1234 5678 901", CounterpartyLabel.scrubLongDigitRuns("1234 5678 901"))
-        assertEquals("AB 1234  5678  9012 3456", CounterpartyLabel.scrubLongDigitRuns("AB 1234  5678  9012 3456"))
         assertEquals("", CounterpartyLabel.scrubLongDigitRuns(""))
+    }
+
+    @Test
+    fun `scrubLongDigitRuns masks double spaced and no-break space separated card groups`() {
+        assertEquals("AB ****3456", CounterpartyLabel.scrubLongDigitRuns("AB 1234  5678  9012 3456"))
+        val nbsp = 160.toChar()
+        val narrow = 0x202F.toChar()
+        assertEquals("PAY ****3456", CounterpartyLabel.scrubLongDigitRuns("PAY 1234${nbsp}5678${nbsp}9012${nbsp}3456"))
+        assertEquals("****3456", CounterpartyLabel.scrubLongDigitRuns("1234${narrow}5678${narrow}9012${narrow}3456"))
+    }
+
+    @Test
+    fun `fromName masks double spaced card groups at the first call site`() {
+        val label = CounterpartyLabel.fromName("SHOP 1234  5678  9012 3456", ParsedTransferDirection.OUTGOING)!!
+        assertEquals("SHOP ****3456", label.merchant)
+    }
+
+    @Test
+    fun `scrubLongDigitRuns keeps short groups with double spaces untouched`() {
+        assertEquals("1234  5678  901", CounterpartyLabel.scrubLongDigitRuns("1234  5678  901"))
     }
 
     @Test

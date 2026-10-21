@@ -110,6 +110,35 @@ class PdfTextResultTest {
     }
 
     @Test
+    fun `200 image-only pages extracted as newlines return null`() {
+        assertNull(build(List(200) { "\n" }, totalPages = 200))
+    }
+
+    @Test
+    fun `150 empty pages return null`() {
+        assertNull(build(List(150) { "" }, totalPages = 150))
+    }
+
+    @Test
+    fun `scanned statement with only a page footer per page returns null`() {
+        val footers = (1..60).map { "Page $it of 60\n" }
+        assertNull(build(footers, totalPages = 60))
+    }
+
+    @Test
+    fun `real text statement still returns a result`() {
+        val result = build(pages(8), totalPages = 8)
+        assertNotNull(result)
+        assertEquals(8, result!!.pdfTextPages!!.size)
+    }
+
+    @Test
+    fun `text only on pages 6 and later returns null like the 5-page path`() {
+        val input = List(5) { "" } + pages(10)
+        assertNull(build(input, totalPages = 15))
+    }
+
+    @Test
     fun `failed pages are not counted as processed and make the result partial`() {
         val input = listOf(page(1), "", page(3))
         val result = build(input, totalPages = 3, failedPages = 1)!!

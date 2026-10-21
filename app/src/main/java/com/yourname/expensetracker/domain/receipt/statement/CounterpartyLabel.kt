@@ -41,14 +41,19 @@ object CounterpartyLabel {
         return out.toString()
     }
 
-    /** Digits with single spaces or hyphens between digit groups; counted before replacing. */
-    private val DIGIT_RUN = Regex("""\d(?:[ -]?\d)*""")
+    /**
+     * Digits with up to two whitespace, Unicode space-separator (\p{Zs}: no-break space, narrow
+     * no-break space, figure space, ...) or hyphen characters between digit groups, so
+     * double-spaced and NBSP-separated card groups are caught even before whitespace is collapsed;
+     * counted before replacing.
+     */
+    private val DIGIT_RUN = Regex("""\d(?:[\s\p{Zs}-]{0,2}\d)*""")
     private const val LONG_DIGIT_RUN_MIN = 12
 
     /**
-     * Replaces every run of 12 or more digits (single spaces or hyphens between digit groups are
-     * part of the run, so card-number-like "1234 5678 9012 3456" counts) with "****<last4>".
-     * Shorter numbers such as store numbers and amounts are left untouched.
+     * Replaces every run of 12 or more digits (up to two spaces/NBSPs or hyphens between digit
+     * groups are part of the run, so card-number-like "1234 5678 9012 3456" counts) with
+     * "****<last4>". Shorter numbers such as store numbers and amounts are left untouched.
      */
     fun scrubLongDigitRuns(text: String): String {
         if (text.length < LONG_DIGIT_RUN_MIN) return text

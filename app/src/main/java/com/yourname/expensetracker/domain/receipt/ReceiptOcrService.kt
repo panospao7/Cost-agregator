@@ -103,6 +103,9 @@ data class OcrResult(
 /** Direct-text PDF extraction is used only when it yields more than this many characters. */
 internal const val PDF_DIRECT_TEXT_MIN_CHARS = 100
 
+/** Pages whose concatenated length decides direct-text vs OCR (same 5 pages the receipt path reads). */
+internal const val PDF_DIRECT_TEXT_DECISION_PAGES = 5
+
 /** Statement text path: every page up to this cap is read (receipts and OCR keep 5 pages). */
 internal const val STATEMENT_TEXT_PAGE_CAP = 200
 
@@ -146,7 +149,11 @@ internal fun buildPdfTextResult(
             builder.append(pages[index])
         }
     }.toString()
-    if (fullText.length <= PDF_DIRECT_TEXT_MIN_CHARS) return null
+    // Same decision as the 5-page receipt path: the first pages alone must clear the threshold, so
+    // a tiny per-page text layer (page footers) or blank-page separators cannot add up to "text".
+    val leadingLength = (0 until minOf(taken, PDF_DIRECT_TEXT_DECISION_PAGES)).sumOf { pages[it].length }
+    if (leadingLength <= PDF_DIRECT_TEXT_MIN_CHARS) return null
+    if (fullText.count { !it.isWhitespace() } <= PDF_DIRECT_TEXT_MIN_CHARS) return null
 
     val pdfTextPages = ArrayList<List<String>>(taken)
     for (index in 0 until taken) pdfTextPages += pages[index].lines()
@@ -673,11 +680,14 @@ class ReceiptOcrService @Inject constructor(
                 Timber.w("%s class=%s", PDF_TEXT_EXTRACT_FAILED, e.javaClass.simpleName ?: "Unknown")
                 null
             } finally {
-                try { document?.close() } catch (e: Exception) {
+                try {
+                    document?.close()
+                } catch (e: Exception) {
                     if (e is CancellationException) throw e
                     Timber.w("%s class=%s", PDF_TEXT_EXTRACT_FAILED, e.javaClass.simpleName ?: "Unknown")
+                } finally {
+                    if (tempFile.exists()) tempFile.delete()
                 }
-                if (tempFile.exists()) tempFile.delete()
             }
         }
 
