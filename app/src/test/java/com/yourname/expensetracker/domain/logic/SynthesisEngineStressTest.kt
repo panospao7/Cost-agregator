@@ -437,7 +437,8 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
         // monthly recurring total 500 x 10 = 5000 reduces the 8000 baseline: (8000 - 5000) / 29 * 14 remaining days
         assertMoneyEquals(1448.28, c.predictedDiscretionary, "predictedDiscretionary")
         assertEquals("discretionary clamped at zero", 0.0, c.discretionaryBudget, 0.0)
-        assertEquals("risk", RiskLevel.HIGH, c.riskLevel)
+        // FORE-05 rule: spent 5000 + obligations 4165 + 3669 + reserves 26583 exceed the 7500 limit => CRITICAL
+        assertEquals("risk", RiskLevel.CRITICAL, c.riskLevel)
         assertEquals("past point count", 1000, c.pastSpendingPoints.size)
         assertEquals("last past point", 50000.0, c.pastSpendingPoints.last(), 0.0)
         assertEquals("projected point count (day 15..29)", 15, c.projectedSpendingPoints.size)
@@ -576,7 +577,8 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
         assertMoneyEquals(510.00, c.totalLikely, "totalLikely")
         assertMoneyEquals(966.67, c.goalReserves, "goalReserves")
         assertEquals("discretionary clamped to exactly zero", 0.0, c.discretionaryBudget, 0.0)
-        assertEquals("zero buffer on a positive budget", RiskLevel.HIGH, c.riskLevel)
+        // FORE-05: spent 500 + obligations and reserve 2376 exceed the 100 limit, so CRITICAL even though on pace (was HIGH).
+        assertEquals("obligations exceed the limit while on pace", RiskLevel.CRITICAL, c.riskLevel)
     }
 
     /**
@@ -629,7 +631,8 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
         assertTrue("goalReserves finite and positive", c.goalReserves.isFinite() && c.goalReserves > 0.0)
         assertTrue("projected points finite", c.projectedSpendingPoints.all { it.isFinite() })
         assertEquals("discretionary", 0.0, c.discretionaryBudget, 0.0)
-        assertEquals("risk", RiskLevel.HIGH, c.riskLevel)
+        // FORE-05: spent + obligations + goal reserve exceed the limit while on pace, so CRITICAL (was HIGH).
+        assertEquals("risk", RiskLevel.CRITICAL, c.riskLevel)
     }
 
     @Test
@@ -656,7 +659,8 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
         assertEquals("past points", listOf(0.01, 0.02), c.pastSpendingPoints)
         assertMoneyEquals(0.02, c.totalCommitted, "totalCommitted (0.01 pattern + 0.01 MUST)")
         assertEquals("discretionary", 0.0, c.discretionaryBudget, 0.0)
-        assertEquals("risk", RiskLevel.HIGH, c.riskLevel)
+        // FORE-05: spent 0.01 + obligations 0.02 + goal reserve 0.01 exceed the 0.01 limit while on pace (was HIGH).
+        assertEquals("risk", RiskLevel.CRITICAL, c.riskLevel)
     }
 
     // ============================================================================
@@ -887,7 +891,9 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     private data class FrequencyRow(
         val frequency: RecurrenceFrequency,
         val amount: Double,
-        val expectedPredictedDiscretionary: Double
+        val expectedPredictedDiscretionary: Double,
+        /** Committed total; defaults to one raw occurrence (every frequency except WEEKLY/BIWEEKLY). */
+        val expectedCommitted: Double = amount
     )
 
     /**
@@ -895,13 +901,15 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
      * 14 days remaining. The monthly-equivalent (RecurrenceCalculator multipliers: weekly 4.33,
      * biweekly 2.17, quarterly 1/3, semi-annual 1/6, annual 1/12; IRREGULAR excluded) reduces the
      * baseline: predicted = (1000 - monthly) / 29 * 14. The committed total is the raw per-occurrence
-     * amount for every frequency.
+     * amount per in-window occurrence (one for every frequency except WEEKLY/BIWEEKLY, see FORE-02).
      */
     @Test
     fun `recurring frequency - monthly equivalent reduces predicted discretionary`() = runTest {
         val rows = listOf(
-            FrequencyRow(RecurrenceFrequency.WEEKLY, 100.0, 273.72), // monthly 433 -> 567/29*14
-            FrequencyRow(RecurrenceFrequency.BIWEEKLY, 100.0, 378.00), // monthly 217 -> 783/29*14
+            // FORE-02: predicted discretionary is unchanged; committed now projects every in-window occurrence
+            // (today Feb 15: weekly 15/22/29 = 3 x 100, biweekly 15/29 = 2 x 100) instead of one raw occurrence.
+            FrequencyRow(RecurrenceFrequency.WEEKLY, 100.0, 273.72, expectedCommitted = 300.0), // monthly 433 -> 567/29*14
+            FrequencyRow(RecurrenceFrequency.BIWEEKLY, 100.0, 378.00, expectedCommitted = 200.0), // monthly 217 -> 783/29*14
             FrequencyRow(RecurrenceFrequency.MONTHLY, 100.0, 434.48), // monthly 100 -> 900/29*14
             FrequencyRow(RecurrenceFrequency.QUARTERLY, 300.0, 434.48), // 300/3 = 100
             FrequencyRow(RecurrenceFrequency.SEMI_ANNUALLY, 600.0, 434.48), // 600/6 = 100
@@ -923,7 +931,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
                 spendingPace = createPace()
             )
             assertMoneyEquals(row.expectedPredictedDiscretionary, forecast.components.predictedDiscretionary, "${row.frequency}: predictedDiscretionary")
-            assertEquals("${row.frequency}: committed is the raw amount", row.amount, forecast.components.totalCommitted, 0.0)
+            assertEquals("${row.frequency}: committed", row.expectedCommitted, forecast.components.totalCommitted, 0.0)
         }
     }
 

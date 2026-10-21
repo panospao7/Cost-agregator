@@ -358,6 +358,10 @@ class GreekBankParser(
         val token = groupOrNull(matcher, group)?.trim() ?: return null
         if (token.none { it.isDigit() }) return null
         if (token.any { it.isLetter() }) return null
+        // F-H1-a: in Greek notifications a dot-only token of 3-digit groups ("1.500", "1.234.567")
+        // is a thousands separator, not a decimal point. Scoped here so the shared
+        // AmountUtils.parseAmount contract used by other parsers is untouched.
+        if (GREEK_DOT_THOUSANDS.matches(token)) return token.replace(".", "").toDouble()
         return AmountUtils.parseAmount(token)
     }
 
@@ -378,6 +382,9 @@ class GreekBankParser(
     private companion object {
         const val NO_GROUP = -1
         val CURRENCY_TOKEN = Regex("""^(?:[€$£]|EUR|USD|GBP)$""", RegexOption.IGNORE_CASE)
+
+        /** Dot-only grouped integer: 1-3 leading digits (no leading zero) then one or more ".ddd" groups. */
+        val GREEK_DOT_THOUSANDS = Regex("""^[1-9]\d{0,2}(?:\.\d{3})+$""")
 
         /**
          * Amount tokens (MONEY-02 H1). Each pattern captures the amount as ONE group built from these:

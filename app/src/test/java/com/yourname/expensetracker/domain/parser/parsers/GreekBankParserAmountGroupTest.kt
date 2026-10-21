@@ -483,20 +483,65 @@ class GreekBankParserAmountGroupTest {
     }
 
     /**
-     * Pins AmountUtils.parseAmount for a lone separator followed by exactly three digits (unchanged
-     * by this hotfix): ',' reads as grouping (1500), '.' reads as a decimal point (1.5) because
-     * parseAmount only treats a comma-only token as grouped. A bare "1.500" is ambiguous; this test
-     * documents the current contract so any future change to it is deliberate.
+     * A lone separator followed by exactly three digits: ',' reads as grouping (1500, the
+     * AmountUtils.parseAmount contract) and, since F-H1-a, GreekBankParser also reads '.' as the Greek
+     * thousands separator (1500). Rationale for the changed dot row: it previously asserted 1.5, the
+     * generic AmountUtils decimal reading, which is wrong for Greek notifications.
      */
     @Test
-    fun `deposit lone separator with three digits follows the AmountUtils contract`() {
+    fun `deposit lone separator with three digits reads as thousands grouping`() {
         val comma = parse("Κατάθεση 1,500 EUR")
         assertNotNull(comma)
         assertEquals(1500.0, comma!!.amount, 0.001)
 
         val dot = parse("Κατάθεση 1.500 EUR")
         assertNotNull(dot)
-        assertEquals(1.5, dot!!.amount, 0.001)
+        assertEquals(1500.0, dot!!.amount, 0.001)
+    }
+
+    // ---- F-H1-a: dot followed by exactly three digits is a Greek thousands separator -----------
+
+    @Test
+    fun `purchase with dot thousands and merchant keeps the full amount`() {
+        val dotted = parse("Αγορά 1.500 EUR στο SHOP")
+        assertNotNull(dotted)
+        assertEquals(ParsedTransactionType.PURCHASE, dotted!!.type)
+        assertEquals(1500.0, dotted.amount, 0.001)
+        assertEquals("SHOP", dotted.merchant)
+
+        val full = parse("Αγορά 1.500,00 EUR στο SHOP")
+        assertNotNull(full)
+        assertEquals(1500.0, full!!.amount, 0.001)
+    }
+
+    @Test
+    fun `two decimal digit dot amount stays a decimal`() {
+        val result = parse("Αγορά 12.50 EUR στο SHOP")
+
+        assertNotNull(result)
+        assertEquals(12.50, result!!.amount, 0.001)
+    }
+
+    /**
+     * Documents the existing comma rule (unchanged): "1,500" is grouping and reads as 1500 via
+     * AmountUtils.parseAmount; it is NOT 1.5.
+     */
+    @Test
+    fun `purchase with comma and three digits keeps the existing grouping reading`() {
+        val result = parse("Αγορά 1,500 EUR στο SHOP")
+
+        assertNotNull(result)
+        assertEquals(1500.0, result!!.amount, 0.001)
+    }
+
+    @Test
+    fun `multi group dot thousands read as an integer and respect the amount ceiling`() {
+        val result = parse("Αγορά 12.345 EUR στο SHOP")
+        assertNotNull(result)
+        assertEquals(12345.0, result!!.amount, 0.001)
+
+        // 1.234.567 is read as 1234567, which is above the 50000 parser ceiling -> rejected, never 1.234567.
+        assertNull(parse("Αγορά 1.234.567 EUR στο SHOP"))
     }
 
     @Test

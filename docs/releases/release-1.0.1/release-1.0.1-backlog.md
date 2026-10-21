@@ -171,6 +171,10 @@ Review follow-ups (P3 unless noted; detail in the lead log and the phase3-4 find
     back to the home currency. Pre-existing; PURCHASE[0] and TRANSFER[0] have no currency group.
   - **F-H1-c:** "Μεταφορά €X σε Y" is typed PURCHASE, because PURCHASE[1] claims it first.
   - **F-H1-d:** `resolveCurrency` uses the deprecated `normalize`.
+  - **F-H1-e:** GreekBankParser/AmountUtils read "1,500" (comma + three digits, no decimals) as 1500
+    (grouping), not 1.5. Greek notifications use comma as the decimal separator, so this could
+    over-record by 1000x if a bank writes "1,500" for 1.50 (unlikely: banks write two decimals).
+    Not changed in 1.0.1; revisit with F-H1-a evidence.
 - **CURR-6 scoping (S0 check):** no schema change is needed. `baseAmount`/`baseCurrency` are fixed at
   save time. Preferred fix: a guarded re-normalisation worker through the TransactionLifecycle
   coordinator when the home currency changes; rows without a rate stay flagged. Planner-first; money
@@ -284,6 +288,20 @@ ID.
 | LIFE-09 | Low | RECAL | NEW | P3 | Test-only code; probably fails closed |
 | LIFE-10 | Low | NV | near HZ-03 F1b | P3 | Debug-only |
 | LIFE-11 | Low | PRESENT | test-audit batch-08 | P3 doc | evidence-map.md:20 |
+
+## D2. Wave 4b status (owner-approved)
+
+**DEFERRED beyond 1.0.1** (owner-approved recommendation):
+
+- **FORE-04:** feature-like and needs UI strings.
+- **CURR-6:** rewrites stored amounts in bulk and needs a new lifecycle legal path.
+- **F-H1-c:** may move transfers out of spending totals.
+
+**DONE in W4b:**
+
+- **FORE-05** (risk escalation).
+- **FORE-02 weekly** (the weekly part of FORE-02).
+- **F-H1-a** ("1.500" without decimals).
 
 ## E. Suggested 1.0.1 batching (for planning; not approved)
 
