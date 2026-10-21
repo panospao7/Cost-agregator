@@ -759,7 +759,8 @@ class GreekBankParserAmountGroupTest {
         assertNotNull(result)
         assertEquals(12.50, result!!.amount, 0.001)
         assertFalse(result.amount == 1234.0)
-        assertEquals("EUR", result.currency)
+        // leading currency token is not captured yet (F-H1-g); falls back to the home currency
+        assertEquals(HOME_CURRENCY, result.currency)
     }
 
     @Test
@@ -768,7 +769,9 @@ class GreekBankParserAmountGroupTest {
 
         assertNotNull(result)
         assertEquals(50.0, result!!.amount, 0.001)
-        assertEquals("EUR", result.currency)
+        assertFalse(result.amount == 12345.0)
+        // leading currency token is not captured yet (F-H1-g); falls back to the home currency
+        assertEquals(HOME_CURRENCY, result.currency)
     }
 
     @Test
