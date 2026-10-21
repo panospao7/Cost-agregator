@@ -213,7 +213,9 @@ object RevolutTextLayout : TextStatementLayout {
     }
 
     private fun cleanMerchant(description: String, ctx: StatementContext): String =
-        ctx.merchantCleaner.clean(CounterpartyLabel.maskIbans(description))
+        ctx.merchantCleaner.clean(
+            CounterpartyLabel.scrubLongDigitRuns(CounterpartyLabel.maskIbans(description))
+        )
 
     /** Name from the To:/From: line, else from the description; masked reference as last resort. */
     private fun transferLabel(raw: RawRow, direction: ParsedTransferDirection): CounterpartyLabel.Label {

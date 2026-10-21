@@ -139,6 +139,40 @@ class CounterpartyLabelTest {
     }
 
     @Test
+    fun `scrubLongDigitRuns masks a twelve digit reference and keeps the last four`() {
+        assertEquals("****0000/SOME SUBSCRIPTION", CounterpartyLabel.scrubLongDigitRuns("164500000000/SOME SUBSCRIPTION"))
+        assertEquals("REF ****6789 SHOP", CounterpartyLabel.scrubLongDigitRuns("REF 1234567890123456789 SHOP"))
+    }
+
+    @Test
+    fun `scrubLongDigitRuns masks card number like groups separated by spaces or hyphens`() {
+        assertEquals("PAY ****3456 NOW", CounterpartyLabel.scrubLongDigitRuns("PAY 1234 5678 9012 3456 NOW"))
+        assertEquals("****3456", CounterpartyLabel.scrubLongDigitRuns("1234-5678-9012-3456"))
+    }
+
+    @Test
+    fun `scrubLongDigitRuns leaves short numbers and amounts untouched`() {
+        assertEquals("STORE 12345 12,50", CounterpartyLabel.scrubLongDigitRuns("STORE 12345 12,50"))
+        assertEquals("12345678901", CounterpartyLabel.scrubLongDigitRuns("12345678901"))
+        assertEquals("1234 5678 901", CounterpartyLabel.scrubLongDigitRuns("1234 5678 901"))
+        assertEquals("AB 1234  5678  9012 3456", CounterpartyLabel.scrubLongDigitRuns("AB 1234  5678  9012 3456"))
+        assertEquals("", CounterpartyLabel.scrubLongDigitRuns(""))
+    }
+
+    @Test
+    fun `scrubLongDigitRuns is idempotent`() {
+        val once = CounterpartyLabel.scrubLongDigitRuns("164500000000 SHOP")
+        assertEquals(once, CounterpartyLabel.scrubLongDigitRuns(once))
+    }
+
+    @Test
+    fun `fromName never keeps a long digit run`() {
+        val label = CounterpartyLabel.fromName("MARIA 123456789012", ParsedTransferDirection.OUTGOING)!!
+        assertEquals("MARIA ****9012", label.merchant)
+        assertEquals("To: MARIA ****9012", label.accountName)
+    }
+
+    @Test
     fun `labels are bounded in length`() {
         val long = "A".repeat(200)
         val label = CounterpartyLabel.fromName(long, ParsedTransferDirection.OUTGOING)!!

@@ -56,7 +56,9 @@ object EurobankCardLayout : TextStatementLayout {
                 page = page,
                 amount = signed,
                 date = StatementDates.parseDmy(match.groupValues[1], ctx.zone),
-                merchant = ctx.merchantCleaner.clean(match.groupValues[3]),
+                merchant = ctx.merchantCleaner.clean(
+                    CounterpartyLabel.scrubLongDigitRuns(CounterpartyLabel.maskIbans(match.groupValues[3]))
+                ),
                 type = if (credit) ParsedTransactionType.DEPOSIT else ParsedTransactionType.PURCHASE,
                 direction = if (credit) ParsedTransferDirection.INCOMING else null,
                 accountName = null,

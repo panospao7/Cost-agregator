@@ -41,9 +41,26 @@ object CounterpartyLabel {
         return out.toString()
     }
 
+    /** Digits with single spaces or hyphens between digit groups; counted before replacing. */
+    private val DIGIT_RUN = Regex("""\d(?:[ -]?\d)*""")
+    private const val LONG_DIGIT_RUN_MIN = 12
+
+    /**
+     * Replaces every run of 12 or more digits (single spaces or hyphens between digit groups are
+     * part of the run, so card-number-like "1234 5678 9012 3456" counts) with "****<last4>".
+     * Shorter numbers such as store numbers and amounts are left untouched.
+     */
+    fun scrubLongDigitRuns(text: String): String {
+        if (text.length < LONG_DIGIT_RUN_MIN) return text
+        return DIGIT_RUN.replace(text) { match ->
+            val digits = match.value.filter { it.isDigit() }
+            if (digits.length >= LONG_DIGIT_RUN_MIN) "****" + digits.takeLast(4) else match.value
+        }
+    }
+
     /** Merchant/account labels for a counterparty known by [name]. */
     fun fromName(name: String, direction: ParsedTransferDirection): Label? {
-        val clean = maskIbans(name).replace(Regex("""\s+"""), " ").trim().take(MAX_NAME_LENGTH).trim()
+        val clean = scrubLongDigitRuns(maskIbans(name)).replace(Regex("""\s+"""), " ").trim().take(MAX_NAME_LENGTH).trim()
         if (clean.isEmpty() || clean.none { it.isLetter() }) return null
         return Label(clean, prefix(direction) + clean)
     }
@@ -57,7 +74,7 @@ object CounterpartyLabel {
     /** Label for a counterparty known only by a masked account reference ending in [last4]. */
     fun fromReference(bank: String?, last4: String, direction: ParsedTransferDirection): Label {
         val digits = last4.filter { it.isLetterOrDigit() }.takeLast(4)
-        val bankName = bank?.let { maskIbans(it) }?.replace(Regex("""\s+"""), " ")?.trim()
+        val bankName = bank?.let { scrubLongDigitRuns(maskIbans(it)) }?.replace(Regex("""\s+"""), " ")?.trim()
             ?.take(MAX_NAME_LENGTH)?.trim()?.takeIf { it.isNotEmpty() && it.any { c -> c.isLetter() } }
         val label = "${bankName ?: "Account"} ****$digits"
         return Label(label, prefix(direction) + label)

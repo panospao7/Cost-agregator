@@ -82,7 +82,9 @@ class StatementContext(
                 assumption = CurrencyAssumption.UNKNOWN
             }
         }
-        val safeMerchant = merchant.trim().ifEmpty { "Unknown" }
+        // Last scrub for every layout: a payment/card reference never reaches a stored label.
+        val safeMerchant = CounterpartyLabel.scrubLongDigitRuns(merchant).trim().ifEmpty { "Unknown" }
+        val safeAccountName = accountName?.let { CounterpartyLabel.scrubLongDigitRuns(it) }
         return try {
             StatementRow.Parsed(
                 tx = ParsedTransaction(
@@ -93,7 +95,7 @@ class StatementContext(
                     confidence = CONFIDENCE,
                     date = date,
                     transferDirection = direction,
-                    transferAccountName = accountName?.take(MAX_ACCOUNT_NAME),
+                    transferAccountName = safeAccountName?.take(MAX_ACCOUNT_NAME),
                     validationNowEpochMs = nowMs,
                     currencyAssumption = assumption
                 ),

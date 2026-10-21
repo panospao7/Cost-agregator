@@ -159,6 +159,20 @@ class NbgAccountLayoutTest {
     }
 
     @Test
+    fun `payment reference in a description is masked in the merchant`() {
+        val pages = listOf(
+            listOf(
+                "Ημερομηνία / Ώρα Valeur Κατάστημα Συν Περιγραφή Χ/Π Ποσό Λογιστικό Υπόλοιπο",
+                "14/12/2031 03:04:05 12/12/2031 222 040 164500000000/SOME SUBSCRIPTION Χ -9,99 70,30"
+            )
+        )
+        val tx = NbgAccountLayout.parse(pages, StatementTextFixtures.context()).parsedRows.single().tx
+        assertTrue(tx.merchant, tx.merchant.contains("****0000"))
+        assertTrue(tx.merchant, tx.merchant.contains("SOME SUBSCRIPTION"))
+        assertFalse(tx.merchant, Regex("""\d{12}""").containsMatchIn(tx.merchant))
+    }
+
+    @Test
     fun `amount printed with a leading minus is accepted`() {
         val pages = listOf(
             listOf(

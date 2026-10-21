@@ -695,7 +695,7 @@ class ReceiptRepository @Inject constructor(
      * triggering the full statement processing pipeline.
      */
     suspend fun runStatementOcr(imageUri: Uri): OcrResult {
-        return ocrService.processUri(imageUri)
+        return ocrService.processStatementUri(imageUri)
     }
 
     /**

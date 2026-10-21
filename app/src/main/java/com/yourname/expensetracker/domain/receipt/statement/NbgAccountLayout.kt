@@ -136,7 +136,9 @@ object NbgAccountLayout : TextStatementLayout {
             // Card purchases (040), benefits (076) and unknown codes follow the debit/credit
             // marker: a debit is a PURCHASE, a credit (refund, benefit) an incoming DEPOSIT.
             type = if (credit) ParsedTransactionType.DEPOSIT else ParsedTransactionType.PURCHASE
-            merchant = ctx.merchantCleaner.clean(CounterpartyLabel.maskIbans(description))
+            merchant = ctx.merchantCleaner.clean(
+                CounterpartyLabel.scrubLongDigitRuns(CounterpartyLabel.maskIbans(description))
+            )
             accountName = null
             txDirection = if (credit) ParsedTransferDirection.INCOMING else null
         }
