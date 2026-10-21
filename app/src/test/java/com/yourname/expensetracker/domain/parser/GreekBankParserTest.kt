@@ -23,6 +23,7 @@ class GreekBankParserTest {
     fun setup() {
         currencyNormalizer = io.mockk.mockk {
             io.mockk.every { normalize(any()) } returns "EUR"
+            io.mockk.every { normalizeOrNull(any()) } returns "EUR"
         }
         merchantCleaner = io.mockk.mockk {
             io.mockk.every { clean(any()) } answers { firstArg() ?: "Unknown" }
@@ -224,6 +225,7 @@ class GreekBankParserTest {
         // so the over-matched merchant text would be visible if the bug regressed.
         val nbgCurrencyNormalizer: CurrencyNormalizer = io.mockk.mockk {
             io.mockk.every { normalize(any()) } answers { firstArg() ?: "EUR" }
+            io.mockk.every { normalizeOrNull(any()) } answers { firstArg() }
         }
         val nbgParser = GreekBankParser(nbgCurrencyNormalizer, MerchantCleaner(), homeCurrency = "EUR")
 

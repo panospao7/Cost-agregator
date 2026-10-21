@@ -10,6 +10,7 @@ class AppParserRegistryRoutingTest {
 
     private val currencyNormalizer = io.mockk.mockk<com.yourname.expensetracker.domain.util.CurrencyNormalizer> {
         io.mockk.every { normalize(any()) } returns "EUR"
+        io.mockk.every { normalizeOrNull(any()) } returns "EUR"
     }
     private val merchantCleaner = io.mockk.mockk<com.yourname.expensetracker.domain.util.MerchantCleaner> {
         io.mockk.every { clean(any()) } answers { firstArg() ?: "Unknown" }

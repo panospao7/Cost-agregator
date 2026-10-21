@@ -1495,18 +1495,21 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
         assertMoneyEquals(100.00, c.totalLikely, "totalLikely")
         assertMoneyEquals(483.33, c.goalReserves, "goalReserves")
         assertMoneyEquals(66.67, c.discretionaryBudget, "discretionaryBudget")
-        assertMoneyEquals(386.21, c.predictedDiscretionary, "predictedDiscretionary")
+        // FORE-02 / FORE-06: low-confidence (0.60) pattern is no longer subtracted: (1000-130)/29*14
+        assertMoneyEquals(420.00, c.predictedDiscretionary, "predictedDiscretionary")
         assertEquals("goal reserve exclusions", 0, c.goalReserveExclusions)
         assertEquals("recurring listed (unfiltered)", 3, c.recurringExpenses.size)
         assertEquals("planned listed (non-PLANNED dropped)", 3, c.plannedExpenses.size)
         assertEquals("projected point count (day 15..29)", 15, c.projectedSpendingPoints.size)
         assertMoneyEquals(220.00, c.projectedSpendingPoints.first(), "first projected point")
-        assertMoneyEquals(606.21, c.projectedSpendingPoints.last(), "last projected point")
+        // FORE-02 / FORE-06: last point = 220 + 420.00 (predictedDiscretionary no longer reduced by low-confidence pattern)
+        assertMoneyEquals(640.00, c.projectedSpendingPoints.last(), "last projected point")
         assertEquals("excluded count", 0, forecast.excludedCount)
         assertFalse("not partial", forecast.isPartial)
         assertEquals(
             listOf(
-                UiText.fromKey(DomainTextKeys.SYNTHESIS_STRICT_SAVINGS_GOALS_ACTIVE_FORMAT, 2),
+                // FORE-02 / FORE-06: funded STRICT goal (1200/1000) is no longer counted as active
+                UiText.fromKey(DomainTextKeys.SYNTHESIS_STRICT_SAVINGS_GOALS_ACTIVE_FORMAT, 1),
                 UiText.fromKey(DomainTextKeys.SYNTHESIS_MUST_PAY_PLANNED_EXPENSES_FORMAT, 1)
             ),
             forecast.actionableInsights

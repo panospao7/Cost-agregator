@@ -171,10 +171,11 @@ class CurrencyConverter @Inject constructor(
         }
 
         // Try direct rate first
+        // MONEY-06: an invalid stored rate (NaN/Infinity/zero/negative) is treated as unavailable.
         val directRate = exchangeRateStore.getRate(
             from,
             to
-        )
+        )?.takeIf { isValidRate(it.rate) }
 
         if (directRate != null) {
             // NEW-P5-012: staleness threshold comes from the named
@@ -203,13 +204,13 @@ class CurrencyConverter @Inject constructor(
         val toEurRate = exchangeRateStore.getRate(
             from,
             DEFAULT_BASE_CURRENCY
-        )
+        )?.takeIf { isValidRate(it.rate) }
         val fromEurRate = exchangeRateStore.getRate(
             DEFAULT_BASE_CURRENCY,
             to
-        )
+        )?.takeIf { isValidRate(it.rate) }
 
-        if (toEurRate != null && fromEurRate != null) {
+        if (toEurRate != null && fromEurRate != null && isValidRate(toEurRate.rate * fromEurRate.rate)) {
             // NEW-P5-012: both composite legs are held to the same named
             // [StaleRatePolicy.Default] (24h) threshold; if either leg is stale,
             // the composite is treated as unavailable (→ MISSING_RATE fallthrough).
@@ -279,11 +280,12 @@ class CurrencyConverter @Inject constructor(
         }
 
         // Try direct rate first
+        // MONEY-06: invalid stored rates are treated as unavailable.
         val directRate = exchangeRateStore.getRateAsOf(
             from,
             to,
             atMillis
-        )
+        )?.takeIf { isValidRate(it.rate) }
 
         if (directRate != null) {
             return@withContext ConversionResult(
@@ -301,14 +303,14 @@ class CurrencyConverter @Inject constructor(
             from,
             DEFAULT_BASE_CURRENCY,
             atMillis
-        )
+        )?.takeIf { isValidRate(it.rate) }
         val fromEurRate = exchangeRateStore.getRateAsOf(
             DEFAULT_BASE_CURRENCY,
             to,
             atMillis
-        )
+        )?.takeIf { isValidRate(it.rate) }
 
-        if (toEurRate != null && fromEurRate != null) {
+        if (toEurRate != null && fromEurRate != null && isValidRate(toEurRate.rate * fromEurRate.rate)) {
             val combinedRate = toEurRate.rate * fromEurRate.rate
             return@withContext ConversionResult(
                 originalAmount = amount,
@@ -398,13 +400,14 @@ class CurrencyConverter @Inject constructor(
         data class RateResult(val rate: Double, val validDate: Long?, val lastUpdated: Long, val source: String?, val path: ConversionPath)
 
         val rateResult: RateResult? = if (useHistorical && atMillis != null) {
-            val direct = exchangeRateStore.getRateAsOf(from, to, atMillis)
+            // MONEY-06: invalid stored rates are treated as unavailable (fail closed).
+            val direct = exchangeRateStore.getRateAsOf(from, to, atMillis)?.takeIf { isValidRate(it.rate) }
             if (direct != null) {
                 RateResult(direct.rate, direct.validDate, direct.lastUpdated, direct.source, ConversionPath.DIRECT)
             } else {
-                val toEur = exchangeRateStore.getRateAsOf(from, DEFAULT_BASE_CURRENCY, atMillis)
-                val fromEur = exchangeRateStore.getRateAsOf(DEFAULT_BASE_CURRENCY, to, atMillis)
-                if (toEur != null && fromEur != null) {
+                val toEur = exchangeRateStore.getRateAsOf(from, DEFAULT_BASE_CURRENCY, atMillis)?.takeIf { isValidRate(it.rate) }
+                val fromEur = exchangeRateStore.getRateAsOf(DEFAULT_BASE_CURRENCY, to, atMillis)?.takeIf { isValidRate(it.rate) }
+                if (toEur != null && fromEur != null && isValidRate(toEur.rate * fromEur.rate)) {
                     // CURR-70F-03: weakest-leg provenance for composite conversions
                     RateResult(
                         rate = toEur.rate * fromEur.rate,
@@ -416,13 +419,13 @@ class CurrencyConverter @Inject constructor(
                 } else null
             }
         } else {
-            val direct = exchangeRateStore.getLatestRateForPair(from, to)
+            val direct = exchangeRateStore.getLatestRateForPair(from, to)?.takeIf { isValidRate(it.rate) }
             if (direct != null) {
                 RateResult(direct.rate, direct.validDate, direct.lastUpdated, direct.source, ConversionPath.DIRECT)
             } else {
-                val toEur = exchangeRateStore.getLatestRateForPair(from, DEFAULT_BASE_CURRENCY)
-                val fromEur = exchangeRateStore.getLatestRateForPair(DEFAULT_BASE_CURRENCY, to)
-                if (toEur != null && fromEur != null) {
+                val toEur = exchangeRateStore.getLatestRateForPair(from, DEFAULT_BASE_CURRENCY)?.takeIf { isValidRate(it.rate) }
+                val fromEur = exchangeRateStore.getLatestRateForPair(DEFAULT_BASE_CURRENCY, to)?.takeIf { isValidRate(it.rate) }
+                if (toEur != null && fromEur != null && isValidRate(toEur.rate * fromEur.rate)) {
                     // CURR-70F-03: weakest-leg provenance for composite conversions
                     RateResult(
                         rate = toEur.rate * fromEur.rate,

@@ -112,6 +112,63 @@ class ExchangeRateStoreAdapterTest {
         assertApproxEquals(1.03, result[1].rate, 0.0001)
     }
 
+    // ── MONEY-06: invalid stored rates fail closed on read ─────────
+
+    private val invalidRates = listOf(
+        Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY, 0.0, -0.5
+    )
+
+    private fun entity(rate: Double, from: String = "USD", to: String = "EUR") = ExchangeRate(
+        id = 1L,
+        fromCurrency = from,
+        toCurrency = to,
+        rate = rate,
+        lastUpdated = 1_700_000_001_000L,
+        source = "api"
+    )
+
+    @Test
+    fun `invalid stored rate maps to null on every single-row read`() = runTest {
+        for (bad in invalidRates) {
+            coEvery { exchangeRateDao.getRate("USD", "EUR") } returns entity(bad)
+            coEvery { exchangeRateDao.getLatestRateForPair("USD", "EUR") } returns entity(bad)
+            coEvery { exchangeRateDao.getRateAsOf("USD", "EUR", 5L) } returns entity(bad)
+            coEvery { exchangeRateDao.getLatestRate() } returns entity(bad)
+
+            assertEquals("getRate $bad", null, adapter.getRate("USD", "EUR"))
+            assertEquals("getLatestRateForPair $bad", null, adapter.getLatestRateForPair("USD", "EUR"))
+            assertEquals("getRateAsOf $bad", null, adapter.getRateAsOf("USD", "EUR", 5L))
+            assertEquals("getLatestRate $bad", null, adapter.getLatestRate())
+        }
+    }
+
+    @Test
+    fun `valid stored rate is still returned unchanged`() = runTest {
+        coEvery { exchangeRateDao.getLatestRateForPair("USD", "EUR") } returns entity(0.92)
+
+        val result = adapter.getLatestRateForPair("USD", "EUR")
+
+        assertNotNull(result)
+        assertApproxEquals(0.92, result!!.rate, 0.0001)
+    }
+
+    @Test
+    fun `rates-to-currency flow drops invalid rows and keeps valid rows`() = runTest {
+        val rows = listOf(
+            entity(Double.NaN, from = "USD"),
+            entity(0.91, from = "GBP"),
+            entity(0.0, from = "CHF"),
+            entity(-1.0, from = "JPY"),
+            entity(Double.POSITIVE_INFINITY, from = "SEK"),
+            entity(1.03, from = "NOK")
+        )
+        every { exchangeRateDao.getRatesToCurrency("EUR") } returns flowOf(rows)
+
+        val result = adapter.getRatesToCurrency("EUR").first()
+
+        assertEquals(listOf("GBP", "NOK"), result.map { it.fromCurrency })
+    }
+
     // ── Write barrier evidence (DB ownership policy) ───────────────
 
     @Test

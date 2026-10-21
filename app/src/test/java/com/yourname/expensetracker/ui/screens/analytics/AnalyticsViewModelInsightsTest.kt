@@ -597,6 +597,33 @@ class AnalyticsViewModelInsightsTest : ViewModelTestUtils() {
     }
 
     @Test
+    fun `result caches stay bounded across many comparison minute changes`() = runTest(testDispatcher) {
+        // F-R20b-c: the cache key embeds the comparison minute, so every minute adds a key.
+        // Stale-minute entries must be evicted so the caches do not grow with elapsed minutes.
+        val baseNow = 1718452800000L // 2024-06-15 12:00:00 UTC (minute aligned)
+        val minuteMs = 60_000L
+        val collectJob = launch { viewModel.state.collect { } }
+
+        val periods = listOf(
+            com.yourname.expensetracker.domain.analytics.TimePeriod.WEEK,
+            com.yourname.expensetracker.domain.analytics.TimePeriod.MONTH
+        )
+        repeat(25) { minute ->
+            every { timeProvider.now() } returns baseNow + minute * minuteMs + 5_000L
+            // Alternate the period so the combined inputs change and the pipeline recomputes.
+            viewModel.selectPeriod(periods[minute % periods.size])
+            testDispatcher.scheduler.advanceTimeBy(400)
+            advanceUntilIdle()
+        }
+
+        val (analyticsSize, advancedSize) = viewModel.cacheSizesForTest()
+        assertEquals(1, analyticsSize, "only the current-minute analytics entry may remain")
+        assertTrue(advancedSize <= 1, "advanced cache must not retain stale-minute entries")
+
+        collectJob.cancel()
+    }
+
+    @Test
     fun `allInsightsDoNotCollapseToCurrentMonth`() = runTest(testDispatcher) {
         // Fix "now" to 2024-06-15 12:00 UTC
         val now = 1718452800000L // 2024-06-15 12:00:00 UTC

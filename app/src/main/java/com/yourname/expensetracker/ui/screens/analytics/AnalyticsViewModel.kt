@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.ui.screens.analytics
 
+import androidx.annotation.VisibleForTesting
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.database.entity.Budget
@@ -278,6 +279,25 @@ class AnalyticsViewModel @Inject constructor(
 
     private val analyticsCache = ConcurrentHashMap<PeriodCacheKey, AnalyticsState>()
     private val advancedCache = ConcurrentHashMap<PeriodCacheKey, AdvResult>()
+
+    /**
+     * F-R20b-c: the cache key includes the comparison minute, so without eviction a new entry
+     * would accumulate every minute. Entries computed for any other minute can never be hit
+     * again (the key embeds the minute), so dropping them keeps the caches bounded without
+     * changing any displayed value.
+     */
+    private fun evictStaleMinuteEntries(currentComparisonMinuteMs: Long) {
+        analyticsCache.keys
+            .filter { it.comparisonMinuteMs != currentComparisonMinuteMs }
+            .forEach { analyticsCache.remove(it) }
+        advancedCache.keys
+            .filter { it.comparisonMinuteMs != currentComparisonMinuteMs }
+            .forEach { advancedCache.remove(it) }
+    }
+
+    @VisibleForTesting
+    internal fun cacheSizesForTest(): Pair<Int, Int> = analyticsCache.size to advancedCache.size
+
     @Volatile
     private var lastExpenseDataVersion: Long = -1L
     @Volatile
@@ -375,6 +395,7 @@ class AnalyticsViewModel @Inject constructor(
                 homeCurrency = homeCurrency,
                 rateTimestamp = rateTimestamp
             )
+            evictStaleMinuteEntries(cacheKey.comparisonMinuteMs)
 
             val cached = analyticsCache[cacheKey]
             if (cached != null) {

@@ -359,6 +359,109 @@ class GreekBankParserAmountGroupTest {
         assertEquals("EUR", result!!.currency)
     }
 
+    // ---- F-H1-b: an explicit currency written after the amount is captured, not dropped --------
+    // Home currency is GBP, so these can only pass when the currency token is really read.
+
+    @Test
+    fun `purchase with explicit USD and a merchant keeps USD and the merchant`() {
+        val result = parse("Αγορά 12,50 USD στο SHOP")
+
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.PURCHASE, result!!.type)
+        assertEquals(12.50, result.amount, 0.001)
+        assertEquals("USD", result.currency)
+        assertEquals("SHOP", result.merchant)
+    }
+
+    @Test
+    fun `purchase with explicit EUR and a merchant keeps EUR when home currency differs`() {
+        val result = parse("Αγορά 12,50 EUR στο SHOP")
+
+        assertNotNull(result)
+        assertEquals(12.50, result!!.amount, 0.001)
+        assertEquals("EUR", result.currency)
+        assertEquals("SHOP", result.merchant)
+    }
+
+    @Test
+    fun `transfer with explicit currency and a destination keeps that currency`() {
+        val usd = parse("Μεταφορά 100,00 USD σε Μαρία")
+        assertNotNull(usd)
+        assertEquals(ParsedTransactionType.TRANSFER, usd!!.type)
+        assertEquals(100.0, usd.amount, 0.001)
+        assertEquals("USD", usd.currency)
+        assertFalse(usd.merchant.contains("USD"))
+
+        val eur = parse("Μεταφορά 100,00 EUR σε Μαρία")
+        assertNotNull(eur)
+        assertEquals(ParsedTransactionType.TRANSFER, eur!!.type)
+        assertEquals(100.0, eur.amount, 0.001)
+        assertEquals("EUR", eur.currency)
+    }
+
+    @Test
+    fun `transaction code transfer with explicit currency and a tail keeps that currency`() {
+        // "Χ" is the Greek debit code letter.
+        val usd = parse("Χ 50,00 USD ΑΤΜ")
+        assertNotNull(usd)
+        assertEquals(ParsedTransactionType.TRANSFER, usd!!.type)
+        assertEquals(50.0, usd.amount, 0.001)
+        assertEquals("USD", usd.currency)
+        assertEquals("ΑΤΜ", usd.merchant)
+
+        val eur = parse("Χ 50,00 EUR ΑΤΜ 24")
+        assertNotNull(eur)
+        assertEquals(50.0, eur!!.amount, 0.001)
+        assertEquals("EUR", eur.currency)
+    }
+
+    @Test
+    fun `currency falls back to the home currency when none is written`() {
+        val purchase = parse("Αγορά 12,50 στο SHOP")
+        assertNotNull(purchase)
+        assertEquals(12.50, purchase!!.amount, 0.001)
+        assertEquals(HOME_CURRENCY, purchase.currency)
+        assertEquals("SHOP", purchase.merchant)
+
+        val transfer = parse("Μεταφορά 100,00 σε Μαρία")
+        assertNotNull(transfer)
+        assertEquals(100.0, transfer!!.amount, 0.001)
+        assertEquals(HOME_CURRENCY, transfer.currency)
+
+        val coded = parse("Χ 50,00 ΑΤΜ")
+        assertNotNull(coded)
+        assertEquals(50.0, coded!!.amount, 0.001)
+        assertEquals(HOME_CURRENCY, coded.currency)
+    }
+
+    // ---- F-H1-d: resolveCurrency uses normalizeOrNull and keeps the home-currency fallback -----
+
+    @Test
+    fun `a currency token the normalizer cannot resolve falls back to the home currency`() {
+        // Strict mock: only normalizeOrNull is stubbed, so calling the deprecated normalize()
+        // would throw. Returning null must yield the home currency, never a silent EUR.
+        val nullNormalizer = mockk<CurrencyNormalizer> {
+            every { normalizeOrNull(any()) } returns null
+        }
+        val cleaner = mockk<MerchantCleaner> {
+            every { clean(any()) } answers { firstArg() ?: "Unknown" }
+        }
+        val fallbackParser = GreekBankParser(nullNormalizer, cleaner, homeCurrency = HOME_CURRENCY)
+
+        val result = fallbackParser.parse(
+            title = "Ειδοποίηση",
+            text = "Αγορά 12,50 USD στο SHOP",
+            bigText = null,
+            subText = null,
+            packageName = "gr.nbg.mobilebanking"
+        )
+
+        assertNotNull(result)
+        assertEquals(12.50, result!!.amount, 0.001)
+        assertEquals(HOME_CURRENCY, result.currency)
+        assertEquals("SHOP", result.merchant)
+    }
+
     // ---- Lead decision: thousands grouping in deposit / transfer patterns ----------------------
 
     @Test

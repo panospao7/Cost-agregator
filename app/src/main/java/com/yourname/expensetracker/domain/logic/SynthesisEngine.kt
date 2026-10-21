@@ -195,7 +195,10 @@ class SynthesisEngine @Inject constructor(
                     recurringExpenses = emptyList(),
                     plannedExpenses = emptyList(),
                     goalReserves = 0.0,
-                    pastSpendingPoints = pastSumDaily,
+                    // FORE-01: sanitise on the fallback path exactly like the normal path; the raw
+                    // list could hold NaN/Infinity and trip FinancialForecast's finite-values
+                    // require() inside this catch block.
+                    pastSpendingPoints = sanitizePastSumDaily(pastSumDaily),
                     projectedSpendingPoints = emptyList(),
                     totalCommitted = 0.0,
                     totalLikely = 0.0,
@@ -341,7 +344,11 @@ class SynthesisEngine @Inject constructor(
         
         // RP-06 6b slice 2 (P5-CURRENT-009): failures here already exclude (mapNotNull,
         // no raw fallback) — count them so excludedCount/isPartial stay truthful.
-        val monthlyRecurringTotal = recurringPatterns.mapNotNull { pattern ->
+        //
+        // FORE-02: patterns below the 0.70 projection confidence floor (see likelyUpcomingBills)
+        // are not treated as real recurring spend, so they are not subtracted from the baseline.
+        // (Weekly/biweekly monthly-amount handling intentionally unchanged.)
+        val monthlyRecurringTotal = recurringPatterns.filter { it.confidence >= 0.70f }.mapNotNull { pattern ->
             when (pattern.frequency) {
                 RecurrenceFrequency.IRREGULAR -> null
                 else -> {
@@ -544,7 +551,7 @@ class SynthesisEngine @Inject constructor(
                 confirmedOccurrences = confirmedOccurrences,
                 goalReserveExclusions = goalReserveExclusions
             ),
-            actionableInsights = buildInsights(riskLevel, budgetStatuses, spendingPace, filteredPlannedExpenses, savingsGoals),
+            actionableInsights = buildInsights(riskLevel, budgetStatuses, spendingPace, filteredPlannedExpenses, savingsGoals, startOfToday, endOfMonthExclusive),
             // RP-06 6b slice 2: planned-expense projection day-map conversion failures now
             // feed the same exclusion accounting as recurring failures (U-MONEY-01).
             excludedCount = recurringConversionFailures + plannedConversionFailures,
@@ -995,7 +1002,9 @@ class SynthesisEngine @Inject constructor(
         budgets: List<BudgetStatusSnapshot>,
         pace: SpendingPace,
         planned: List<PlannedExpense>,
-        goals: List<SavingsGoal>
+        goals: List<SavingsGoal>,
+        windowStart: Long,
+        windowEndExclusive: Long
     ): List<UiText> {
         val insights = mutableListOf<UiText>()
         if (pace.paceStatus == PaceStatus.OVER_PACE) {
@@ -1006,12 +1015,21 @@ class SynthesisEngine @Inject constructor(
             insights.add(UiText.fromKey(DomainTextKeys.SYNTHESIS_BUDGETS_EXCEEDED_FORMAT, exceeded))
         }
         
-        val strictGoalCount = goals.count { it.protectionLevel == GoalProtectionLevel.STRICT }
+        // FORE-06: same reserve filter as the goal reserves (STRICT, unfinished, known currency),
+        // so funded or unknown-currency STRICT goals are not reported as active reserves.
+        val strictGoalCount = goals.count {
+            it.protectionLevel == GoalProtectionLevel.STRICT &&
+                SavingsGoalCurrencyPolicy.isUnfinished(it) &&
+                SavingsGoalCurrencyPolicy.knownCurrencyOrNull(it) != null
+        }
         if (strictGoalCount > 0) {
             insights.add(UiText.fromKey(DomainTextKeys.SYNTHESIS_STRICT_SAVINGS_GOALS_ACTIVE_FORMAT, strictGoalCount))
         }
         
-        val mustPlannedCount = planned.count { it.priority == PlannedExpensePriority.MUST }
+        // FORE-06: count only MUST items inside the forecast window (same window as committedPlanned).
+        val mustPlannedCount = planned.count {
+            it.priority == PlannedExpensePriority.MUST && it.date >= windowStart && it.date < windowEndExclusive
+        }
         if (mustPlannedCount > 0) {
             insights.add(UiText.fromKey(DomainTextKeys.SYNTHESIS_MUST_PAY_PLANNED_EXPENSES_FORMAT, mustPlannedCount))
         }

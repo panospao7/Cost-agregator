@@ -50,14 +50,16 @@ class GreekBankParser(
     private val PURCHASE_PATTERNS = listOf(
         // "Αγορά 12,50 EUR στο MERCHANT" or "Πληρωμή €6.30 σε..."
         // Also handles: "Πληρώσατε €7,50 από την κάρτα *1554 σε BOX FOOD APP"
-        // group 1 = amount, group 2 = merchant (currency tokens are non-capturing)
+        // group 1 = amount, group 2 = optional trailing currency token, group 3 = merchant
+        // (the optional leading currency token before the amount stays non-capturing)
         AmountPattern(
             Pattern.compile(
-                """(?:αγορ[άα]|χρ[έε]ωσ|συναλλαγ[ήη]|πληρ[ώω]σ?(?:ατε|μ[ήη])?|payment|purchase)\s+(?:[€$£]|EUR|USD|GBP)?\s*${AMOUNT_SPACED}\s*(?:EUR|€|USD|GBP)?\s*(?:απ[όο]\s+τ[ηι]ν?\s+κ[άα]ρτ[αά]\s*[*0-9]*\s*)?(?:στ[οη]ν?|σε|at|-)?\s*(.+?)(?:\s*(?:με|with)\s*κ[άα]ρτ|$)""",
+                """(?:αγορ[άα]|χρ[έε]ωσ|συναλλαγ[ήη]|πληρ[ώω]σ?(?:ατε|μ[ήη])?|payment|purchase)\s+(?:[€$£]|EUR|USD|GBP)?\s*${AMOUNT_SPACED}\s*(EUR|€|USD|GBP)?\s*(?:απ[όο]\s+τ[ηι]ν?\s+κ[άα]ρτ[αά]\s*[*0-9]*\s*)?(?:στ[οη]ν?|σε|at|-)?\s*(.+?)(?:\s*(?:με|with)\s*κ[άα]ρτ|$)""",
                 Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
             ),
             amountGroup = 1,
-            merchantGroup = 2
+            currencyGroup = 2,
+            merchantGroup = 3
         ),
         // "€12.50 at MERCHANT" or "12,50€ MERCHANT"
         // group 1 = currency symbol, group 2 = amount, group 3 = merchant
@@ -110,24 +112,28 @@ class GreekBankParser(
     // Transfer patterns (specific to bank transfers, not purchases)
     private val TRANSFER_PATTERNS = listOf(
         // "Μεταφορά 100€ σε Λογαριασμό" (Transfer to account)
-        // group 1 = amount, group 2 = destination tail (merchant)
+        // group 1 = amount, group 2 = optional currency token (the preposition alternatives
+        // consume the same text as before but are non-capturing), group 3 = destination tail (merchant)
         AmountPattern(
             Pattern.compile(
-                """(?:μεταφορ[άα]|μεταφορά|transfer)\s*(?:[€$£])?\s*${AMOUNT_SPACED}\s*(?:EUR|€|σε|to|στον?)?\s*(.+)""",
+                """(?:μεταφορ[άα]|μεταφορά|transfer)\s*(?:[€$£])?\s*${AMOUNT_SPACED}\s*(?:(EUR|€|USD|GBP)|σε|to|στον?)?\s*(.+)""",
                 Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
             ),
             amountGroup = 1,
-            merchantGroup = 2
+            currencyGroup = 2,
+            merchantGroup = 3
         ),
         // Transaction code patterns: "Χ 50,00" or "Π 100,00"
-        // group 1 = direction code letter (metadata, not amount), group 2 = amount, group 3 = tail (merchant)
+        // group 1 = direction code letter (metadata, not amount), group 2 = amount,
+        // group 3 = optional currency token, group 4 = tail (merchant)
         AmountPattern(
             Pattern.compile(
-                """(?:^|\s)([ΧΠXDP])\s*[:\-\s]?\s*${AMOUNT}\s*(?:EUR|€)?\s*(.*)""",
+                """(?:^|\s)([ΧΠXDP])\s*[:\-\s]?\s*${AMOUNT}\s*(EUR|€|USD|GBP)?\s*(.*)""",
                 Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
             ),
             amountGroup = 2,
-            merchantGroup = 3
+            currencyGroup = 3,
+            merchantGroup = 4
         ),
         // Format variations: "50,00 € Χρέωση" or "Πίστωση 100.00 EUR" (statement-style)
         // group 1 = amount; no merchant group
@@ -364,7 +370,7 @@ class GreekBankParser(
 
     /** Normalises a recognised currency token, or falls back to the home currency. */
     private fun resolveCurrency(token: String?): String =
-        if (token != null) currencyNormalizer.normalize(token) else homeCurrency
+        token?.let { currencyNormalizer.normalizeOrNull(it) } ?: homeCurrency
 
     private companion object {
         const val NO_GROUP = -1

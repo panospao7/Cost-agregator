@@ -40,7 +40,7 @@ class ExchangeRateStoreAdapter @Inject constructor(
 
     override fun getRatesToCurrency(targetCurrency: String): Flow<List<DomainExchangeRate>> {
         return exchangeRateDao.getRatesToCurrency(targetCurrency).map { list ->
-            list.map { it.toDomain() }
+            list.mapNotNull { it.toDomain() }
         }
     }
 
@@ -54,7 +54,15 @@ class ExchangeRateStoreAdapter @Inject constructor(
     }
 }
 
-private fun ExchangeRate.toDomain(): DomainExchangeRate {
+/**
+ * MONEY-06 (read side, fail closed): an invalid stored rate (NaN, Infinity, zero, negative)
+ * maps to null so it can never be converted with. Stored rows are NOT deleted or purged.
+ *
+ * Known effect: the DAO lookups are LIMIT 1 (newest row wins), so if the newest row for a
+ * pair is invalid the result is "no rate" (MISSING_RATE) rather than an older valid row.
+ */
+private fun ExchangeRate.toDomain(): DomainExchangeRate? {
+    if (!rate.isFinite() || rate <= 0.0) return null
     return DomainExchangeRate(
         fromCurrency = fromCurrency,
         toCurrency = toCurrency,
