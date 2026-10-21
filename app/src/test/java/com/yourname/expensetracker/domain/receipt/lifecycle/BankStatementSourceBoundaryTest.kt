@@ -44,11 +44,14 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -212,7 +215,10 @@ class BankStatementSourceBoundaryTest {
         harness.finalizeGate = gate
 
         val processing = async { harness.process() }
-        runCurrent()
+        // parseStatementRows hops to Dispatchers.Default (real thread): runCurrent() cannot guarantee
+        // the finalize latch is reached, so wait for it with a bounded timeout instead. The wait runs on
+        // Dispatchers.Default so the timeout is real time (runTest would skip virtual delays instantly).
+        withContext(Dispatchers.Default) { withTimeout(10_000) { harness.finalizeGateEntered.await() } }
         assertTrue(harness.finalizeGateEntered.isCompleted)
         assertEquals(1, harness.barrier.inFlightWriteCount())
 
