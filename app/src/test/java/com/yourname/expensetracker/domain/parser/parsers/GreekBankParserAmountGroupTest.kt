@@ -744,12 +744,45 @@ class GreekBankParserAmountGroupTest {
     }
 
     @Test
-    fun `bare amount transfer captures a trailing GBP token on an integer amount`() {
-        val result = parse("50 GBP στο SHOP")
+    fun `bare amount transfer captures a trailing EUR token on an integer amount`() {
+        val result = parse("50 EUR στο SHOP")
 
         assertNotNull(result)
         assertEquals(50.0, result!!.amount, 0.001)
-        assertEquals("GBP", result.currency)
+        assertEquals("EUR", result.currency)
+    }
+
+    @Test
+    fun `masked card glued to the code letter is not taken as the amount`() {
+        val result = parse("Card X1234 EUR 12,50 at SHOP")
+
+        assertNotNull(result)
+        assertEquals(12.50, result!!.amount, 0.001)
+        assertFalse(result.amount == 1234.0)
+        assertEquals("EUR", result.currency)
+    }
+
+    @Test
+    fun `reference glued to the code letter is not taken as the amount`() {
+        val result = parse("Ref: P12345 EUR 50,00 στο SHOP")
+
+        assertNotNull(result)
+        assertEquals(50.0, result!!.amount, 0.001)
+        assertEquals("EUR", result.currency)
+    }
+
+    @Test
+    fun `greek card text with masked card glued to the code letter yields no amount`() {
+        assertNull(parse("Κάρτα X1234 EUR 45,00"))
+    }
+
+    @Test
+    fun `lowercase quantity multiplier is not a transaction code`() {
+        val result = parse("3 x 4,50 = 13,50 EUR στο SHOP")
+
+        assertNotNull(result)
+        assertEquals(13.50, result!!.amount, 0.001)
+        assertEquals("EUR", result.currency)
     }
 
     @Test

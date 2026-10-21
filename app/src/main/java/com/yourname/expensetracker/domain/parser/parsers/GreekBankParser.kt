@@ -134,7 +134,7 @@ class GreekBankParser(
         // group 3 = optional currency token, group 4 = tail (merchant)
         AmountPattern(
             Pattern.compile(
-                """(?:^|(?<=\s)(?=[ΧΠXDP]\s*[:\-\s]?\s*(?:\d[\d.,]*[.,]\d{1,2}(?!\d)|[\d.,]+\s*(?:(?:EUR|USD|GBP)(?![\p{L}\p{N}])|€))))([ΧΠXDP])\s*[:\-\s]?\s*${AMOUNT}\s*((?:EUR|USD|GBP)(?![\p{L}\p{N}])|€)?\s*(.*)""",
+                """(?:^|(?<=\s)(?=(?-i:[ΧΠXDP])(?:\s*[:\-]\s*|\s+)(?:\d[\d.,]*[.,]\d{1,2}(?!\d)|[\d.,]+\s*(?:(?:EUR|USD|GBP)(?![\p{L}\p{N}])|€))))([ΧΠXDP])\s*[:\-\s]?\s*${AMOUNT}\s*((?:EUR|USD|GBP)(?![\p{L}\p{N}])|€)?\s*(.*)""",
                 Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
             ),
             amountGroup = 2,
