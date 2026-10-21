@@ -420,9 +420,13 @@ class BankStatementTextImportTest {
 
     @Test
     fun aiValidationTextIsScrubbedOfIbansIncludingSpacedOnesAndLongDigitRuns() = runTest {
+        // Card-layout fixture: TRANSFER rows are no longer AI candidates (parser-only), so an
+        // all-transfer statement makes no AI call at all. Purchases keep the AI path under test;
+        // the IBANs are injected through the extra text so the not-contains checks stay meaningful.
         val harness = Harness(
-            textPages = StatementTextFixtures.EUROBANK_TRANSFERS_PAGES,
-            extraFullText = "\nPAY GR96 0000 0000 0000 0000 0000 123 REF 164500000000 END"
+            textPages = StatementTextFixtures.EUROBANK_CARD_PAGES,
+            extraFullText = "\n${StatementTextFixtures.OWN_IBAN} ${StatementTextFixtures.RECIPIENT_IBAN_1}" +
+                "\nPAY GR96 0000 0000 0000 0000 0000 123 REF 164500000000 END"
         )
         harness.process().getOrThrow()
 
