@@ -1370,7 +1370,7 @@ class ReceiptLifecycleCoordinatorTest {
     fun `deleteReceipt_asset_delete_failure_writes_ASSET_DELETE_FAILED_audit_event`() = runTest {
         val receipt = deletedReceiptFixture()
         coEvery { scannedReceiptDao.getById(1L) } returns receipt
-        val assetFailureMessage = "x".repeat(600)
+        val assetFailureMessage = "secret-789 /data/user/0/x/files/receipt_2024.jpg"
         every { assetStore.deleteAsset(any()) } throws RuntimeException(assetFailureMessage)
 
         val eventSlot2 = slot<ReceiptEvent>()
@@ -1385,8 +1385,9 @@ class ReceiptLifecycleCoordinatorTest {
         assertNull(auditEvent.newStatus)
         assertEquals("system:coordinator", auditEvent.actor)
         assertEquals("Failed to delete asset file: [REDACTED]", auditEvent.message)
-        // take(500) truncation contract for the bounded error-details field.
-        assertEquals("x".repeat(500), auditEvent.errorDetails)
+        // Only the exception class name is stored; the message (secret text, file path) never is.
+        assertEquals("RuntimeException", auditEvent.errorDetails)
+        assertFalse(auditEvent.toString().contains("secret-789"))
         assertEquals(now, auditEvent.occurredAt)
         // The GR-14b direct-owner canonical barrier check.
         coVerify(exactly = 1) { writeBarrier.checkWritesAllowed("ReceiptLifecycleCoordinator.writeAssetDeleteFailedEvent") }

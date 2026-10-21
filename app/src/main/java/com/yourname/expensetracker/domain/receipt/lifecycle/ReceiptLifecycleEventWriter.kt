@@ -64,7 +64,7 @@ class RoomReceiptLifecycleEventWriter @Inject constructor(
                 // Free-text error details may carry raw receipt/OCR/path text: never persisted.
                 // Only code-shaped tokens (reason codes, exception class names, "code=X, class=Y")
                 // are kept; anything else is dropped to null.
-                errorDetails = event.errorDetails?.takeIf { SAFE_ERROR_DETAILS.matches(it) }
+                errorDetails = event.errorDetails?.takeIf { it.length <= MAX_ERROR_DETAILS_LENGTH && SAFE_ERROR_DETAILS.matches(it) }
             )
         )
     }
@@ -90,8 +90,15 @@ class RoomReceiptLifecycleEventWriter @Inject constructor(
     }
 
     private companion object {
-        /** Bounded code shape: optional "key=" prefix, then ", key=value" pairs. No spaces/hyphens/paths. */
-        val SAFE_ERROR_DETAILS = Regex("""(?:[a-z]+=)?[A-Za-z0-9_.$]{1,100}(?:, [a-z]+=[A-Za-z0-9_.$]{1,100})*""")
+        const val MAX_ERROR_DETAILS_LENGTH = 160
+
+        /**
+         * Reason-code shape only: UPPER_SNAKE code with optional "code=" prefix, optionally followed by
+         * ", class=<qualified ClassName>". Free text, file names, numbers and IBAN-like values never match.
+         * A single uppercase word still passes (accepted; an explicit allowlist would be the next step).
+         */
+        val SAFE_ERROR_DETAILS =
+            Regex("""(?:code=)?[A-Z]+(?:_[A-Z0-9]+)*(?:, class=(?:[a-z][a-z0-9_]*\.)*[A-Z][A-Za-z0-9_$]*)?""")
     }
 
     private fun buildMetadata(event: ReceiptLifecycleEvent, context: TransactionContext): String? {

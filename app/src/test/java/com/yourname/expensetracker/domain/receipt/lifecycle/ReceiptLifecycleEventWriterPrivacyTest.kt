@@ -75,12 +75,31 @@ class ReceiptLifecycleEventWriterPrivacyTest {
     @Test
     fun `code shaped errorDetails is preserved`() = runTest {
         assertEquals("RECEIPT_ALREADY_LINKED", storedFor("RECEIPT_ALREADY_LINKED").errorDetails)
-        assertEquals("transaction_matching_exception", storedFor("transaction_matching_exception").errorDetails)
         assertEquals(
             "code=WORKER_UNHANDLED_EXCEPTION, class=java.lang.RuntimeException",
             storedFor("code=WORKER_UNHANDLED_EXCEPTION, class=java.lang.RuntimeException").errorDetails
         )
         assertNull(storedFor(null).errorDetails)
         coVerify(atLeast = 1) { dao.insert(any<ReceiptEvent>()) }
+    }
+
+    // Only UPPER_SNAKE reason codes pass; lowercase identifiers, file names, names, numbers, IBAN-like
+    // values and over-long input are dropped. A single uppercase word still passes (accepted; an
+    // explicit allowlist would be the next step).
+    @Test
+    fun `identifier-like or personal-data-like errorDetails is dropped`() = runTest {
+        val values = listOf(
+            "transaction_matching_exception",
+            "receipt_2024.pdf",
+            "John.Smith",
+            "12.50",
+            "4111111111111111",
+            "GR1601101250000000012300695",
+            "message=receipt_2024.pdf",
+            "A".repeat(200)
+        )
+        for (value in values) {
+            assertNull("[$value] errorDetails must be dropped", storedFor(value).errorDetails)
+        }
     }
 }

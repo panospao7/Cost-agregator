@@ -21,6 +21,7 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.data.repository.ReceiptInsertResolver
 import com.yourname.expensetracker.data.repository.ReceiptInsertResult
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticThrowableSummary
 import com.yourname.expensetracker.domain.model.Result as DomainResult
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
@@ -1515,7 +1516,7 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
                     if (e is CancellationException) throw e
                     // P3-CUR-08: Write durable event when asset deletion fails
                     Timber.e(e, "Failed to delete asset for receipt %d: [REDACTED]", receiptId)
-                    writeAssetDeleteFailedEvent(receipt, receiptId, e.message?.take(500))
+                    writeAssetDeleteFailedEvent(receipt, receiptId, DiagnosticThrowableSummary.className(e))
                 }
             }
 

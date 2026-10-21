@@ -708,7 +708,14 @@ class GreekBankParserAmountGroupTest {
 
     @Test
     fun `bare store number is never an amount`() {
-        assertNull(parse("Αγορά στο ΚΑΤΑΣΤΗΜΑ 24"))
+        // Both prepositions present, so the bare-amount transfer pattern is actually exercised.
+        assertNull(parse("Αγορά στο ΚΑΤΑΣΤΗΜΑ 24 στο ΣΥΝΤΑΓΜΑ"))
+    }
+
+    @Test
+    fun `masked account number before a credited keyword is never an amount`() {
+        // Isolates the '*' lookbehind of the amount: "****1234" must not be read as money.
+        assertNull(parse("Account ****1234 credited with EUR 500.00"))
     }
 
     @Test
@@ -723,5 +730,77 @@ class GreekBankParserAmountGroupTest {
     @Test
     fun `transaction code in the middle of free text does not start an amount`() {
         assertNull(parse("Ref P 77 κάτι άλλο"))
+    }
+
+    // ---- Trailing currency token on the bare-amount transfer pattern (home currency is GBP) ----
+
+    @Test
+    fun `bare amount transfer captures a trailing USD token`() {
+        val result = parse("12,50 USD στο SHOP")
+
+        assertNotNull(result)
+        assertEquals(12.50, result!!.amount, 0.001)
+        assertEquals("USD", result.currency)
+    }
+
+    @Test
+    fun `bare amount transfer captures a trailing GBP token on an integer amount`() {
+        val result = parse("50 GBP στο SHOP")
+
+        assertNotNull(result)
+        assertEquals(50.0, result!!.amount, 0.001)
+        assertEquals("GBP", result.currency)
+    }
+
+    @Test
+    fun `card prefixed bare amount with USD keeps USD and the amount`() {
+        val result = parse("Κάρτα *1234: 30,00 USD στο AMAZON")
+
+        assertNotNull(result)
+        assertEquals(30.00, result!!.amount, 0.001)
+        assertEquals("USD", result.currency)
+    }
+
+    @Test
+    fun `bare dot thousands integer before a preposition still parses`() {
+        val result = parse("1.500 στο SHOP")
+
+        assertNotNull(result)
+        assertEquals(1500.0, result!!.amount, 0.001)
+    }
+
+    // ---- Transaction code after a prefix, a newline or a date (not only at field start) -------
+
+    @Test
+    fun `transaction code after a bank prefix is read`() {
+        val result = parse("NBG: Χ 50,00 EUR SKLAVENITIS")
+
+        assertNotNull(result)
+        assertEquals(50.00, result!!.amount, 0.001)
+        assertEquals("EUR", result.currency)
+    }
+
+    @Test
+    fun `transaction code on a later line of the big text is read`() {
+        val result = parser.parse(
+            title = "Ειδοποίηση",
+            text = null,
+            bigText = "Κίνηση λογαριασμού\nΧ 50,00 EUR SKLAVENITIS",
+            subText = null,
+            packageName = "gr.nbg.mobilebanking"
+        )
+
+        assertNotNull(result)
+        assertEquals(50.00, result!!.amount, 0.001)
+        assertEquals("EUR", result.currency)
+    }
+
+    @Test
+    fun `credit code after a date prefix is read`() {
+        val result = parse("21/10 Π 100,00 EUR ΜΙΣΘΟΔΟΣΙΑ")
+
+        assertNotNull(result)
+        assertEquals(100.00, result!!.amount, 0.001)
+        assertEquals("EUR", result.currency)
     }
 }

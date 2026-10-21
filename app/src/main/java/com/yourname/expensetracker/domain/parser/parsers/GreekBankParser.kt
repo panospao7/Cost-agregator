@@ -126,13 +126,15 @@ class GreekBankParser(
             currencyGroup = 2,
             merchantGroup = 3
         ),
-        // Transaction code patterns: "Χ 50,00" or "Π 100,00" (the code must start the field, so a
-        // stray "P"/"X" inside free text can never start an amount)
+        // Transaction code patterns: "Χ 50,00" or "Π 100,00". The code starts the field or follows
+        // whitespace (e.g. "NBG: Χ 50,00 EUR ..." or a line after a newline); a code in the middle of
+        // the text then needs a decimal fraction or a currency marker on the amount, so a stray
+        // "P"/"X" in free text ("Ref P 77 ...") can never start an amount.
         // group 1 = direction code letter (metadata, not amount), group 2 = amount,
         // group 3 = optional currency token, group 4 = tail (merchant)
         AmountPattern(
             Pattern.compile(
-                """^([ΧΠXDP])\s*[:\-\s]?\s*${AMOUNT}\s*((?:EUR|USD|GBP)(?![\p{L}\p{N}])|€)?\s*(.*)""",
+                """(?:^|(?<=\s)(?=[ΧΠXDP]\s*[:\-\s]?\s*(?:\d[\d.,]*[.,]\d{1,2}(?!\d)|[\d.,]+\s*(?:(?:EUR|USD|GBP)(?![\p{L}\p{N}])|€))))([ΧΠXDP])\s*[:\-\s]?\s*${AMOUNT}\s*((?:EUR|USD|GBP)(?![\p{L}\p{N}])|€)?\s*(.*)""",
                 Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
             ),
             amountGroup = 2,
@@ -149,17 +151,19 @@ class GreekBankParser(
             amountGroup = 1
         ),
         // "€12,50 στο MERCHANT" (amount first, then location - common Greek format)
-        // group 1 = amount, group 2 = merchant. A bare number cannot be the amount (a card or
-        // store number such as "4***1234" or "ΚΑΤΑΣΤΗΜΑ 24" must never be read as money): the amount
-        // needs a leading currency symbol, a trailing currency symbol/code, or a decimal fraction
-        // (existing "12,50 στο SHOP" shape). The markers are non-capturing, group indices unchanged.
+        // group 1 = amount, group 2 = optional trailing currency token (EUR|USD|GBP|€), group 3 =
+        // merchant. A bare number cannot be the amount (a card or store number such as "4***1234"
+        // or "ΚΑΤΑΣΤΗΜΑ 24" must never be read as money): the amount needs a leading currency
+        // symbol, a trailing currency symbol/code, a decimal fraction (existing "12,50 στο SHOP"
+        // shape) or dot-thousands grouping ("1.500 στο SHOP"). The markers are non-capturing.
         AmountPattern(
             Pattern.compile(
-                """(?:[€$£]\s*|(?=\d[\d.,]*[.,]\d{1,2}(?!\d))|(?=[\d.,]+\s*(?:(?:EUR|USD|GBP)(?![\p{L}\p{N}])|€)))${AMOUNT}\s*(?:EUR|USD|GBP|€)?\s*(?:στ[οη]ν?|σε|at)\s+(.+?)(?:\s*(?:με|with)|$)""",
+                """(?:[€$£]\s*|(?=\d[\d.,]*[.,]\d{1,2}(?!\d))|(?=\d{1,3}(?:\.\d{3})+(?![.,]?\d))|(?=[\d.,]+\s*(?:(?:EUR|USD|GBP)(?![\p{L}\p{N}])|€)))${AMOUNT}\s*((?:EUR|USD|GBP)(?![\p{L}\p{N}])|€)?\s*(?:στ[οη]ν?|σε|at)\s+(.+?)(?:\s*(?:με|with)|$)""",
                 Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
             ),
             amountGroup = 1,
-            merchantGroup = 2
+            currencyGroup = 2,
+            merchantGroup = 3
         )
     )
 
