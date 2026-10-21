@@ -22,6 +22,7 @@ import com.yourname.expensetracker.data.repository.toDbTransactionType
 import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
+import com.yourname.expensetracker.domain.ai.usecase.CleanTransaction
 import com.yourname.expensetracker.domain.ai.usecase.DebugTransaction
 import com.yourname.expensetracker.domain.ai.usecase.StatementValidationContracts
 import com.yourname.expensetracker.domain.ai.usecase.StatementValidationOutcome
@@ -94,6 +95,63 @@ internal const val STATEMENT_ITEM_AMOUNT_CEILING: Double = StatementImportGate.A
  * own 4000-char prompt cap so an IBAN straddling the cap is masked whole.
  */
 internal const val STATEMENT_AI_TEXT_SLICE: Int = 4_100
+
+/** The raw-text window the AI use case keeps (chars); the text handed over is already cut to it. */
+internal const val STATEMENT_AI_PROMPT_WINDOW: Int = 4_000
+
+/** True for any whitespace or Unicode space/zero-width separator (NBSP U+00A0, U+202F, newlines, ...). */
+private fun isStatementSpace(c: Char): Boolean =
+    c.isWhitespace() || Character.isSpaceChar(c) || Character.getType(c) == Character.FORMAT.toInt()
+
+/**
+ * Statement text for the AI prompt, in this order: (1) collapse every whitespace/Unicode space run to
+ * one space (so an IBAN or card number split by NBSP, newlines or runs of spaces is one scannable
+ * token), over a head slightly wider than the window; (2) mask IBANs, then 12+ digit runs; (3) cut to
+ * [STATEMENT_AI_PROMPT_WINDOW] at the last whitespace boundary, dropping a trailing partial token, so
+ * no cut-off identifier fragment reaches the prompt. Returns blank when the window holds no complete
+ * token. Pure and linear in the input head.
+ */
+internal fun statementTextForAi(fullText: String): String {
+    val collapsed = StringBuilder(STATEMENT_AI_TEXT_SLICE + 1)
+    var pendingSpace = false
+    for (c in fullText) {
+        if (isStatementSpace(c)) {
+            pendingSpace = true
+            continue
+        }
+        if (pendingSpace && collapsed.isNotEmpty()) collapsed.append(' ')
+        pendingSpace = false
+        if (collapsed.length > STATEMENT_AI_TEXT_SLICE) break
+        collapsed.append(c)
+        if (collapsed.length > STATEMENT_AI_TEXT_SLICE) break
+    }
+    // The source text continues past the head unless it was fully consumed; the head ends on a token
+    // boundary only when the character right after it is the collapsed space.
+    val headEndsOnBoundary = collapsed.length <= STATEMENT_AI_TEXT_SLICE ||
+        collapsed[STATEMENT_AI_TEXT_SLICE] == ' '
+    val scrubbed = CounterpartyLabel.scrubLongDigitRuns(
+        CounterpartyLabel.maskIbans(collapsed.substring(0, minOf(collapsed.length, STATEMENT_AI_TEXT_SLICE)))
+    )
+    val window: String
+    val endsOnBoundary: Boolean
+    if (scrubbed.length > STATEMENT_AI_PROMPT_WINDOW) {
+        window = scrubbed.substring(0, STATEMENT_AI_PROMPT_WINDOW)
+        endsOnBoundary = scrubbed[STATEMENT_AI_PROMPT_WINDOW] == ' '
+    } else {
+        window = scrubbed
+        endsOnBoundary = headEndsOnBoundary
+    }
+    if (endsOnBoundary) return window.trimEnd()
+    val lastSpace = window.lastIndexOf(' ')
+    return if (lastSpace > 0) window.substring(0, lastSpace).trimEnd() else ""
+}
+
+/**
+ * Failure of a run whose rows were ALL skipped (nothing created, no duplicate, no failed item). The run
+ * is still FAILED; this carries the bounded, counts-only [result] so the summary can say why. The message
+ * is a fixed code, never statement text.
+ */
+class StatementAllRowsSkippedException(val result: BankStatementResult) : Exception("STATEMENT_ALL_ROWS_SKIPPED")
 
 /** Persisted statement text cap (chars) before sanitising, so a huge text PDF cannot overflow a CursorWindow. */
 internal const val STATEMENT_RAW_PERSIST_CAP: Int = 200_000
@@ -261,7 +319,9 @@ class BankStatementLifecycleProcessor @Inject constructor(
             val transactionsFound = parsedTransactions.size
             Timber.d("BankStatementLifecycleProcessor: %d transactions found", transactionsFound)
 
-            if (parsedTransactions.isEmpty()) {
+            // A recognised layout that yielded only skipped rows (all cancelled, all pending, ...) is not
+            // "no transactions": it continues into a ledger run so the skipped counts reach the result.
+            if (parsedTransactions.isEmpty() && layoutSkippedRows.isEmpty()) {
                 parsingLogs.add("No transactions found in bank statement")
                 return Result.failure(
                     IllegalStateException("No transactions found in bank statement")
@@ -320,9 +380,18 @@ class BankStatementLifecycleProcessor @Inject constructor(
             // parser source-line index through aiEligibleIndexes); results merge back
             // BY candidateId — never by response position. The use case splits large
             // candidate lists into bounded AI calls itself.
-            val debugTransactions = aiEligibleIndexes.mapIndexed { candidateId, rowIndex ->
+            // On a recognised layout a TRANSFER row is never an AI candidate: its merchant is a masked
+            // counterparty label and any AI output for it is discarded anyway. It still proceeds to the
+            // ledger/review as a parser-only row below. Every candidate merchant string (all paths,
+            // including the generic fallback and OCR path) is scrubbed of IBANs and long digit runs.
+            val aiCandidateIndexes = aiEligibleIndexes.filter { rowIndex ->
+                !(statementParse.layoutRecognised &&
+                    parsedTransactions[rowIndex].type == ParsedTransactionType.TRANSFER)
+            }
+            val debugTransactions = aiCandidateIndexes.mapIndexed { candidateId, rowIndex ->
                 val tx = parsedTransactions[rowIndex]
                 DebugTransaction.fromParsedTransaction(tx, candidateId = candidateId).copy(
+                    merchant = scrubStatementText(tx.merchant),
                     currencyAssumption = if (sourceCurrencyEvidence[rowIndex]) {
                         CurrencyAssumption.PARSED_FROM_SOURCE
                     } else {
@@ -334,11 +403,11 @@ class BankStatementLifecycleProcessor @Inject constructor(
                 StatementValidationOutcome.Validated(emptyList())
             } else {
                 transactionValidator.validateTransactions(
-                    // Privacy: the AI prompt gets only a bounded, scrubbed head of the statement text
-                    // (IBANs incl. spaced ones and 12+ digit runs masked). The slice is a little wider
-                    // than the use-case cap of 4000 so an identifier straddling the cap is masked whole
-                    // before the use case truncates.
-                    rawOcrText = scrubStatementText(ocrResult.fullText.take(STATEMENT_AI_TEXT_SLICE)),
+                    // Privacy: the AI prompt gets only a bounded, scrubbed head of the statement text.
+                    // Whitespace is collapsed first (NBSP, narrow NBSP, newlines, space runs), then IBANs
+                    // and 12+ digit runs are masked, then the text is cut to the use case's 4000-char
+                    // window at a whitespace boundary so no identifier fragment is sent.
+                    rawOcrText = statementTextForAi(ocrResult.fullText),
                     candidateTransactions = debugTransactions,
                     homeCurrency = homeCurrency
                 )
@@ -408,12 +477,35 @@ class BankStatementLifecycleProcessor @Inject constructor(
                     StatementValidationContracts.CURRENCY_UNKNOWN
                 }
 
-            val mergedTransactions = validatedTransactions.map { cleanTx ->
-                val aiCandidateId = cleanTx.candidateId
-                require(aiCandidateId in aiEligibleIndexes.indices) {
+            // AI outcomes keyed by parser row index; rows that were never AI candidates (TRANSFER rows on a
+            // recognised layout) get a parser-only echo so they still flow to the ledger in row order.
+            val aiOutcomeByRow = HashMap<Int, CleanTransaction>()
+            validatedTransactions.forEach { cleanTx ->
+                require(cleanTx.candidateId in aiCandidateIndexes.indices) {
                     "AI candidateId outside proven candidate range"
                 }
-                val candidateId = aiEligibleIndexes[aiCandidateId]
+                aiOutcomeByRow[aiCandidateIndexes[cleanTx.candidateId]] = cleanTx
+            }
+            val aiCandidateRowSet = aiCandidateIndexes.toHashSet()
+            val rowOutcomes = aiEligibleIndexes.mapNotNull { rowIndex ->
+                aiOutcomeByRow[rowIndex]?.let { rowIndex to it }
+                    ?: if (rowIndex !in aiCandidateRowSet) {
+                        val echoTx = parsedTransactions[rowIndex]
+                        rowIndex to CleanTransaction(
+                            candidateId = rowIndex,
+                            merchant = echoTx.merchant,
+                            amount = echoTx.amount,
+                            currency = echoTx.currency,
+                            date = echoTx.date ?: 0L,
+                            confidence = echoTx.confidence,
+                            source = StatementValidationContracts.SOURCE_PARSER_ONLY
+                        )
+                    } else {
+                        null
+                    }
+            }
+
+            val mergedTransactions = rowOutcomes.map { (candidateId, cleanTx) ->
                 val originalTx = parsedTransactions[candidateId]
                 val rowSourceEvidence = sourceCurrencyEvidence[candidateId]
                 // Boundary scrub: no IBAN or long digit run reaches a stored merchant or label,
@@ -1229,6 +1321,25 @@ class BankStatementLifecycleProcessor @Inject constructor(
                             .build()
                     ))
                 }
+                }
+                if (finalFailedItemCount == 0 && skippedItemCount > 0) {
+                    // Every row was skipped and nothing was created: still a failed run, but the bounded
+                    // counts travel with the failure so the summary can show why (counts only).
+                    return Result.failure(
+                        StatementAllRowsSkippedException(
+                            BankStatementResult(
+                                receiptId = receiptId,
+                                transactionsFound = transactionsFound,
+                                reviewsCreated = 0,
+                                duplicatesSkipped = 0,
+                                isPartial = ocrResult.isPartial,
+                                skippedCount = skippedItemCount,
+                                skippedByReason = skippedByReason.toMap(),
+                                pagesProcessed = ocrResult.pagesProcessed,
+                                totalPages = ocrResult.totalPages
+                            )
+                        )
+                    )
                 }
                 return Result.failure(
                     Exception("Bank statement import had $finalFailedItemCount failed and $skippedItemCount skipped items")

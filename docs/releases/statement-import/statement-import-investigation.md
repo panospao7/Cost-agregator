@@ -128,3 +128,16 @@ Follow-ups (not part of this work):
 * A Revolut P2P row carrying a fee is unlabelled.
 * CSV/XLSX statement import is not implemented (owner decision).
 * Own-account transfer detection and netting.
+* MINOR fingerprint: `bank_statement_import_items.transactionFingerprint` equals the merchant key
+  (a transliteration, not a hash) and survives the 30-day merchant purge for transfer counterparty names.
+* Cloud payload: the 2,000-character truncation means the cloud never sees the candidate list
+  (pre-existing; cloud validation of statements is effectively text-only).
+* Eurobank transfers: a wrapped non-GR IBAN leaves bank-name digits in the label.
+* Revolut "To NAME" / "Payment from NAME" rows are not typed TRANSFER, so they feed merchant learning.
+* Revolut `chainResets` is not surfaced to the summary.
+* There is no per-run row cap and no timeout on the AI call (the AI chunk count is capped at 5).
+* The drain test could inject the dispatcher instead of relying on the default one.
+* Aggregate statement metadata appears in this document (section 6); use relative figures if the
+  repository is shared.
+
+Owner decisions: O1-O12 defaults accepted by owner via blanket approval on 2026-10-21.

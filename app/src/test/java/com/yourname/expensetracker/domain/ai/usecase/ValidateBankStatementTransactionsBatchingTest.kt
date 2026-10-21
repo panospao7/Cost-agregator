@@ -213,6 +213,41 @@ class ValidateBankStatementTransactionsBatchingTest {
     }
 
     @Test
+    fun `calls per run are capped at five chunks and the rest stay unvalidated but are not dropped`() = runBlocking {
+        onDeviceAnswers { _, prompt -> AiServiceResult.Success(acceptEverything(prompt)) }
+
+        // 260 candidates = 6 full chunks of 40 plus 20; only the first 5 chunks (200 candidates) are sent.
+        val outcome = useCase.validateTransactions("raw", candidates(260), "EUR")
+
+        assertEquals(5, StatementValidationContracts.MAX_CHUNKS_PER_RUN)
+        assertEquals(listOf(40, 40, 40, 40, 40), prompts.map { promptIds(it).size })
+        assertTrue(outcome is StatementValidationOutcome.Validated)
+        // Every candidate still has exactly one outcome, owned by its own id.
+        assertEquals((0 until 260).toList(), outcome.transactions.map { it.candidateId })
+        for (tx in outcome.transactions) {
+            val expected = if (tx.candidateId >= 200) {
+                StatementValidationContracts.SOURCE_PARSER_ONLY
+            } else {
+                StatementValidationContracts.SOURCE_AI_VALIDATED
+            }
+            assertEquals("candidate ${tx.candidateId}", expected, tx.source)
+            assertEquals("M${tx.candidateId}", tx.merchant)
+            assertEquals(1.0 + tx.candidateId, tx.amount, 0.0001)
+            assertEquals("EUR", tx.currency)
+        }
+    }
+
+    @Test
+    fun `exactly two hundred candidates use five calls and none is left unvalidated`() = runBlocking {
+        onDeviceAnswers { _, prompt -> AiServiceResult.Success(acceptEverything(prompt)) }
+
+        val outcome = useCase.validateTransactions("raw", candidates(200), "EUR")
+
+        assertEquals(5, prompts.size)
+        assertTrue(outcome.transactions.all { it.source == StatementValidationContracts.SOURCE_AI_VALIDATED })
+    }
+
+    @Test
     fun `when every chunk violates the identity contract the outcome is an identity mismatch`() = runBlocking {
         onDeviceAnswers { _, _ -> AiServiceResult.Success("[]") }
 

@@ -114,6 +114,30 @@ class StatementImportSummaryTest {
     }
 
     @Test
+    fun allSkippedRunShowsTheSkippedCountsInsteadOfAGenericFailure() {
+        val message = statementAllSkippedSummary(
+            result(
+                found = 0, reviews = 0, duplicates = 0, skipped = 3,
+                byReason = mapOf("CANCELLED" to 2, "NOT_SETTLED" to 1), pages = 2, total = 2
+            )
+        )
+        assertEquals(
+            "No transactions were imported from the statement. 3 skipped (cancelled: 2, pending: 1). " +
+                "Read 2 of 2 pages.",
+            message
+        )
+        assertFalse(message.contains("Imported"))
+    }
+
+    @Test
+    fun allSkippedSummaryWithoutCountsStillSaysNothingWasImported() {
+        assertEquals(
+            "No transactions were imported from the statement.",
+            statementAllSkippedSummary(result(found = 0, reviews = 0, duplicates = 0))
+        )
+    }
+
+    @Test
     fun summaryNeverContainsMerchantOrAmountText() {
         val message = statementImportSummary(result(skipped = 1, byReason = mapOf("NO_DATE" to 1), pages = 1, total = 1))
         assertFalse(message.contains("EUR"))

@@ -69,15 +69,31 @@ class PdfTextResultTest {
     }
 
     @Test
-    fun `blank page between text pages keeps its index and counts as processed`() {
+    fun `blank page between text pages keeps its index but is not counted as processed`() {
         val input = listOf(page(1), "", page(3))
         val result = build(input)!!
         val perPage = result.pdfTextPages!!
         assertEquals(3, perPage.size)
         assertTrue(perPage[1].all { it.isBlank() })
         assertTrue(perPage[2].first().startsWith("Line 3 first row"))
-        assertEquals(3, result.pagesProcessed)
-        assertFalse(result.isPartial)
+        // A page without text was not read: processed < total, so the result is partial.
+        assertEquals(2, result.pagesProcessed)
+        assertEquals(3, result.totalPages)
+        assertNull(result.failedPages)
+        assertTrue(result.isPartial)
+    }
+
+    @Test
+    fun `whitespace-only page counts as not processed and a failed blank page is not counted twice`() {
+        val whitespaceOnly = build(listOf(page(1), " \n\t ", page(3), page(4)))!!
+        assertEquals(3, whitespaceOnly.pagesProcessed)
+        assertTrue(whitespaceOnly.isPartial)
+
+        // The failed page is one of the blank pages: 1 failed + 1 other blank = 2 unread, not 3.
+        val mixed = build(listOf(page(1), "", "", page(4)), totalPages = 4, failedPages = 1)!!
+        assertEquals(2, mixed.pagesProcessed)
+        assertEquals(1, mixed.failedPages)
+        assertTrue(mixed.isPartial)
     }
 
     @Test

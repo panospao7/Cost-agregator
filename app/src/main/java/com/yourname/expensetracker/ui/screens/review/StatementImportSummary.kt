@@ -41,6 +41,20 @@ internal fun statementImportSummary(result: BankStatementResult): String {
     }
 }
 
+/**
+ * Message for a run that skipped every row and imported nothing (the run is FAILED). Counts only, built
+ * from the same bounded reason labels as [statementImportSummary]; never a merchant, amount or text.
+ */
+internal fun statementAllSkippedSummary(result: BankStatementResult): String {
+    val skipped = skippedPhrase(result)
+    val pages = pagesPhrase(result.pagesProcessed, result.totalPages)
+    return buildString {
+        append("No transactions were imported from the statement.")
+        skipped?.let { append(' ').append(it) }
+        pages?.let { append(' ').append(it).append('.') }
+    }
+}
+
 private fun pagesPhrase(processed: Int?, total: Int?): String? {
     if (processed == null || total == null || total <= 0 || processed < 0) return null
     return "Read ${processed.coerceAtMost(total)} of $total pages"

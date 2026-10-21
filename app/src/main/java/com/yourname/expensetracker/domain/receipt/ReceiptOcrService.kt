@@ -120,8 +120,8 @@ internal const val PDF_TEXT_EXTRACT_FAILED = "PDF_TEXT_EXTRACT_FAILED"
  *
  * Keeps whole pages in order while the page count stays within [pageCap] and the summed page
  * text stays within [charCap]; the first page that would exceed [charCap] and every later page
- * is dropped. [failedPages] pages (extracted as blank text so indexes stay aligned) are not
- * counted as processed. Returns null when the joined text is not longer than
+ * is dropped. [failedPages] pages (extracted as blank text so indexes stay aligned) and every other
+ * page without text are not counted as processed (the result is then partial). Returns null when the joined text is not longer than
  * [PDF_DIRECT_TEXT_MIN_CHARS], so the caller falls back to OCR. [OcrResult.savedImagePath] is
  * empty; the caller attaches the thumbnail.
  */
@@ -176,11 +176,17 @@ internal fun buildPdfTextResult(
     }
 
     val failed = failedPages.coerceIn(0, taken)
+    // In a document that IS text, a page without any text (a scanned page, or a page whose extraction
+    // failed and was kept as blank to stay aligned) was not read: it does not count as processed, so
+    // pagesProcessed < totalPages and the import is reported partial. Failed pages are blank pages,
+    // so the larger of the two counts is the number of pages not read.
+    val blankPages = (0 until taken).count { pages[it].isBlank() }
+    val notProcessed = maxOf(failed, blankPages)
     return OcrResult(
         fullText = fullText,
         blocks = blocks,
         savedImagePath = "",
-        pagesProcessed = taken - failed,
+        pagesProcessed = taken - notProcessed,
         totalPages = maxOf(totalPages, taken),
         failedPages = failed.takeIf { it > 0 },
         pdfTextPages = pdfTextPages

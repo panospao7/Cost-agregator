@@ -896,7 +896,10 @@ TEXT-PDF ROUTING (statement-import, debug-only feature):
     fails fails the run cleanly; an unknown layout uses BankStatementParser with requireDate = true
   → parser output is authoritative for amount, currency, date, type, direction and counterparty
     label on recognised layouts; AI may only offer a scrubbed merchant on non-TRANSFER rows and
-    never drops a row. AI validation is batched (40 candidates per call)
+    never drops a row. AI validation is batched (40 candidates per call, at most 5 calls = 200
+    candidates per run; later candidates stay unvalidated, never dropped). TRANSFER rows on a
+    recognised layout are not AI candidates; the AI text is whitespace-collapsed, scrubbed, then cut
+    to 4,000 chars at a token boundary
   → unreadable/undated/cancelled/unsettled/over-ceiling (100,000) rows become STATUS_SKIPPED
     ledger items with bounded reason codes; run status COMPLETED_WITH_SKIPS (FAILED only if an
     item failed or every row was skipped)
@@ -906,7 +909,7 @@ TEXT-PDF ROUTING (statement-import, debug-only feature):
 
 FORBIDDEN:
   ❌ Dating a row without a date as "today" on the text path (skip it as NO_DATE)
-  ❌ Persisting an IBAN, card number or long digit run in any merchant/label/account field
+  ❌ Persisting an IBAN, a card number, or a digit run of 12+ digits (9+ on transfer labels) in any merchant/label/account field
   ❌ Letting AI output override parser money on a recognised layout
   ❌ BankStatementImportItemDao.insert outside processor
   ❌ BankStatementImportRunDao.insertRun outside processor

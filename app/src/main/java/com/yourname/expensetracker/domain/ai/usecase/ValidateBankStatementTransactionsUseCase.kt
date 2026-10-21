@@ -92,6 +92,13 @@ object StatementValidationContracts {
      * of rows) are validated in consecutive calls of at most this many candidates each.
      */
     const val MAX_CANDIDATES_PER_AI_CALL = 40
+
+    /**
+     * Most AI calls ("chunks") made for one statement run. Candidates in chunks beyond this cap
+     * ([MAX_CHUNKS_PER_RUN] x [MAX_CANDIDATES_PER_AI_CALL] = 200 candidates) are not sent: they get the
+     * parser echo, exactly like an AI that gave no opinion. They are never dropped.
+     */
+    const val MAX_CHUNKS_PER_RUN = 5
 }
 
 /**
@@ -206,7 +213,8 @@ class ValidateBankStatementTransactionsUseCase @Inject constructor(
      * sent with local ids and the caller's candidateIds are restored on the way back; ownership is
      * still by id, never by response position. A chunk whose call is unusable (or throws a non
      * cancellation exception) falls back to the parser echo for that chunk AND every later chunk (no
-     * further AI calls are made after the first unusable one); cancellation always propagates.
+     * further AI calls are made after the first unusable one); cancellation always propagates. At most
+     * [StatementValidationContracts.MAX_CHUNKS_PER_RUN] calls are made; later chunks get the parser echo.
      */
     private suspend fun validateInBatches(
         rawOcrText: String,
@@ -220,8 +228,10 @@ class ValidateBankStatementTransactionsUseCase @Inject constructor(
         // remaining chunks are NOT sent: every further call would resend the same statement header to
         // the same unavailable or misbehaving provider. They get the parser echo directly.
         var stopCalling = false
-        for (chunk in candidates.chunked(StatementValidationContracts.MAX_CANDIDATES_PER_AI_CALL)) {
-            if (stopCalling) {
+        val chunks = candidates.chunked(StatementValidationContracts.MAX_CANDIDATES_PER_AI_CALL)
+        for ((chunkIndex, chunk) in chunks.withIndex()) {
+            // Cost/latency bound: chunks past the per-run cap are left unvalidated (parser echo).
+            if (stopCalling || chunkIndex >= StatementValidationContracts.MAX_CHUNKS_PER_RUN) {
                 merged += parserEcho(chunk)
                 continue
             }

@@ -104,8 +104,103 @@ class BankStatementTextImportTest {
 
         assertEquals(2, result.skippedCount)
         assertEquals(mapOf("CANCELLED" to 1, "UNKNOWN_STATUS" to 1), result.skippedByReason)
-        // Skipped rows never reach AI validation.
-        assertEquals(3, harness.validatorCalls.single().size)
+        // Skipped rows never reach AI validation; on a recognised layout neither do TRANSFER rows
+        // (this statement holds three transfers), so there is no candidate and no AI call at all.
+        assertTrue(harness.validatorCalls.isEmpty())
+    }
+
+    @Test
+    fun recognisedLayoutExcludesTransferRowsFromAiCandidatesButStillImportsThem() = runTest {
+        val harness = Harness(textPages = StatementTextFixtures.NBG_PAGES)
+        val result = harness.process().getOrThrow()
+
+        val candidates = harness.validatorCalls.single()
+        assertTrue(candidates.none { it.type == "TRANSFER" })
+        // Dense ids over the remaining candidates, mapped back to parser rows by the processor.
+        assertEquals(candidates.indices.toList(), candidates.map { it.candidateId })
+        val transferReviews = harness.reviews.count { it.suggestedType == "TRANSFER" }
+        assertTrue(transferReviews > 0)
+        // Every transfer is still imported (parser-only) next to the candidates the AI saw.
+        assertEquals(12, result.reviewsCreated)
+        assertEquals(candidates.size + transferReviews, harness.reviews.size)
+        val created = harness.items.filter { it.status == BankStatementImportItem.STATUS_CREATED_REVIEW }
+        assertEquals(created.size, created.map { it.itemIndex }.toSet().size)
+        assertNoIbanOrLongDigitRun(harness)
+    }
+
+    @Test
+    fun everyAiCandidateMerchantIsScrubbedOfIbansAndLongDigitRuns() = runTest {
+        val dirty = parsedRow(
+            "PAY ${StatementTextFixtures.RECIPIENT_IBAN_1} 164500000000 SHOP", 5.0,
+            StatementTextFixtures.day(2031, 11, 9)
+        )
+        val harness = Harness(
+            textPages = listOf(listOf("unused")),
+            textParser = parserReturning(TextStatementParseResult(StatementLayoutId.EUROBANK_CARD, listOf(dirty)))
+        )
+        harness.process().getOrThrow()
+
+        val merchant = harness.validatorCalls.single().single().merchant
+        assertFalse(merchant, merchant.contains("GR11"))
+        assertFalse(merchant, Regex("""\d{12}""").containsMatchIn(merchant))
+        assertTrue(merchant, merchant.contains("****"))
+    }
+
+    @Test
+    fun ocrPathCandidateMerchantIsScrubbedToo() = runTest {
+        val harness = Harness(ocrRows = listOf("10/05/2031 PAY 164500000000 SHOP -12.50 USD"))
+        harness.process().getOrThrow()
+
+        val merchants = harness.validatorCalls.single().map { it.merchant }
+        assertTrue(merchants.isNotEmpty())
+        assertTrue(merchants.none { Regex("""\d{12}""").containsMatchIn(it) })
+    }
+
+    @Test
+    fun recognisedLayoutWithOnlySkippedRowsCreatesTheRunAndCarriesTheSkippedCounts() = runTest {
+        val harness = Harness(
+            textPages = listOf(listOf("unused")),
+            textParser = parserReturning(
+                TextStatementParseResult(
+                    StatementLayoutId.EUROBANK_TRANSFERS,
+                    listOf(
+                        StatementRow.Skipped(StatementSkipReason.CANCELLED, 1),
+                        StatementRow.Skipped(StatementSkipReason.CANCELLED, 1),
+                        StatementRow.Skipped(StatementSkipReason.NOT_SETTLED, 2)
+                    )
+                )
+            )
+        )
+        val result = harness.process()
+
+        // Policy unchanged: nothing created and everything skipped is a FAILED run ...
+        assertTrue(result.isFailure)
+        assertEquals(BankStatementImportRun.STATUS_FAILED, harness.finalStatusOrNull())
+        // ... but it is a real ledger run, not the bare "No transactions found" failure.
+        coVerify(exactly = 1) { harness.runs.insert(any()) }
+        assertEquals(3, harness.items.count { it.status == BankStatementImportItem.STATUS_SKIPPED })
+        assertTrue(harness.reviews.isEmpty())
+        assertTrue(harness.validatorCalls.isEmpty())
+        val failure = result.exceptionOrNull()
+        assertTrue(failure.toString(), failure is StatementAllRowsSkippedException)
+        val counts = (failure as StatementAllRowsSkippedException).result
+        assertEquals(3, counts.skippedCount)
+        assertEquals(mapOf("CANCELLED" to 2, "NOT_SETTLED" to 1), counts.skippedByReason)
+        assertEquals(0, counts.reviewsCreated)
+        assertEquals("STATEMENT_ALL_ROWS_SKIPPED", failure.message)
+    }
+
+    @Test
+    fun aStatementWithNeitherRowsNorSkipsStillFailsWithoutARun() = runTest {
+        val harness = Harness(
+            textPages = listOf(listOf("unused")),
+            textParser = parserReturning(TextStatementParseResult(StatementLayoutId.EUROBANK_CARD, emptyList()))
+        )
+        val result = harness.process()
+
+        assertTrue(result.isFailure)
+        assertEquals("No transactions found in bank statement", result.exceptionOrNull()?.message)
+        coVerify(exactly = 0) { harness.runs.insert(any()) }
     }
 
     @Test
