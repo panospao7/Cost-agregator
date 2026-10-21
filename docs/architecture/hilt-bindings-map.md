@@ -357,7 +357,7 @@ Binds:
 Provides:
   PrivacyGate                                 → CompositePrivacyGate(
       NotificationPrivacyGate, LocationPrivacyGate, CloudAiPrivacyGate,
-      BackupPrivacyGate, ExportPrivacyGate)
+      BackupPrivacyGate, ExportPrivacyGate, NetworkPrivacyGate)
   PrivacyAuditLogger                          → PrivacyAuditLoggerImpl
 ```
 

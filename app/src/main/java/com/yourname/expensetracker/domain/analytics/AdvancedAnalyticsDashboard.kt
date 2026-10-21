@@ -126,9 +126,9 @@ class AdvancedAnalyticsDashboard @Inject constructor(
         val displayCurrency = currencySettingsRepository.homeCurrency().first()
         val expensesRaw = expenseRepository.getExpenseSnapshotsBetween(startDate, endDate)
         val comparisonExpenses = if (endDate > startDate) {
-            val daysInPeriod = TimePeriodUtils.daysBetween(startDate, endDate).coerceAtLeast(1)
-            val comparisonStart = TimePeriodUtils.addDays(startDate, -daysInPeriod)
-            expenseRepository.getExpenseSnapshotsBetween(comparisonStart, startDate)
+            // F-R20b-a: calendar-month ranges compare against the previous calendar month.
+            val comparisonWindow = PeriodComparisonWindows.previousWindowForRange(startDate, endDate)
+            expenseRepository.getExpenseSnapshotsBetween(comparisonWindow.startInclusive, comparisonWindow.endExclusive)
         } else {
             emptyList()
         }

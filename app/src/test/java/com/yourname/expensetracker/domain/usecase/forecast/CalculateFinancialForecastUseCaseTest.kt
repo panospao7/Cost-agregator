@@ -24,8 +24,14 @@ import com.yourname.expensetracker.domain.model.SavingsGoal
 import com.yourname.expensetracker.domain.util.TimeBoundaryTicker
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.*
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -46,6 +52,7 @@ class CalculateFinancialForecastUseCaseTest {
     private lateinit var synthesisEngine: SynthesisEngine
     private lateinit var timeBoundaryTicker: TimeBoundaryTicker
     private lateinit var timeProvider: TimeProvider
+    private lateinit var currencySettingsRepository: com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 
     private lateinit var useCase: CalculateFinancialForecastUseCase
 
@@ -63,8 +70,10 @@ class CalculateFinancialForecastUseCaseTest {
 
         val mockAnalyticsCurrencyNormalizer = mockk<com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer>(relaxed = true)
         val mockCurrencySettingsRepository = mockk<com.yourname.expensetracker.domain.currency.CurrencySettingsRepository>(relaxed = true)
+        currencySettingsRepository = mockCurrencySettingsRepository
 
         every { mockCurrencySettingsRepository.homeCurrency() } returns flowOf("EUR")
+        every { mockCurrencySettingsRepository.lastRateUpdate() } returns flowOf(0L)
         coEvery { mockCurrencySettingsRepository.resolveHomeCurrency() } returns
             com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Resolved(
                 com.yourname.expensetracker.domain.core.money.CurrencyCode("EUR")
@@ -106,8 +115,92 @@ class CalculateFinancialForecastUseCaseTest {
             recurringPatternsProvider = recurringPatternsProvider,
             forecastInputAssembler = forecastInputAssembler,
             synthesisEngine = synthesisEngine,
-            timeBoundaryTicker = timeBoundaryTicker
+            timeBoundaryTicker = timeBoundaryTicker,
+            currencySettingsRepository = currencySettingsRepository
         )
+    }
+
+    private fun stubEmptySources() {
+        every { expenseRepository.getAllExpenses() } returns flowOf(emptyList())
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+        every { recurringExpenseRepository.getAllFlow() } returns flowOf(emptyList())
+        every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(emptyList())
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(emptyList())
+        coEvery { synthesisEngine.synthesize(any()) } returns dummyForecast(0L)
+    }
+
+    @Test
+    fun `invoke re-emits when home currency changes`() = runTest {
+        stubEmptySources()
+        val homeCurrency = MutableStateFlow("EUR")
+        every { currencySettingsRepository.homeCurrency() } returns homeCurrency
+        every { currencySettingsRepository.lastRateUpdate() } returns flowOf(0L)
+
+        val emissions = mutableListOf<FinancialForecast>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            useCase.invoke().collect { emissions += it }
+        }
+        runCurrent()
+        assertEquals(1, emissions.size)
+
+        homeCurrency.value = "USD"
+        runCurrent()
+
+        assertEquals(2, emissions.size)
+    }
+
+    @Test
+    fun `invoke does not re-emit when home currency is re-published unchanged`() = runTest {
+        stubEmptySources()
+        val homeCurrency = MutableSharedFlow<String>(replay = 1)
+        homeCurrency.emit("EUR")
+        every { currencySettingsRepository.homeCurrency() } returns homeCurrency
+        every { currencySettingsRepository.lastRateUpdate() } returns flowOf(0L)
+
+        val emissions = mutableListOf<FinancialForecast>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            useCase.invoke().collect { emissions += it }
+        }
+        runCurrent()
+        assertEquals(1, emissions.size)
+
+        homeCurrency.emit("EUR")
+        runCurrent()
+
+        assertEquals(1, emissions.size)
+    }
+
+    @Test
+    fun `invoke re-emits when rate update timestamp changes`() = runTest {
+        stubEmptySources()
+        val rateUpdate = MutableStateFlow(1_000L)
+        every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
+        every { currencySettingsRepository.lastRateUpdate() } returns rateUpdate
+
+        val emissions = mutableListOf<FinancialForecast>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            useCase.invoke().collect { emissions += it }
+        }
+        runCurrent()
+        assertEquals(1, emissions.size)
+
+        rateUpdate.value = 2_000L
+        runCurrent()
+
+        assertEquals(2, emissions.size)
+    }
+
+    @Test
+    fun `invoke keeps emitting when currency settings flows fail`() = runTest {
+        stubEmptySources()
+        every { currencySettingsRepository.homeCurrency() } returns
+            flow { throw IllegalStateException("home currency unavailable") }
+        every { currencySettingsRepository.lastRateUpdate() } returns
+            flow { throw IllegalStateException("rate timestamp unavailable") }
+
+        val forecast = useCase.invoke().first()
+
+        assertEquals(ForecastHorizon.REST_OF_MONTH, forecast.horizon)
     }
 
     @Test

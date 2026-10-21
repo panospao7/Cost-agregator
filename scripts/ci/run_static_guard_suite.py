@@ -172,11 +172,19 @@ from guard_execution_plan import (  # noqa: E402
 # must run FIRST and the guard test runner runs LAST.  Commands are
 # declared here. Guard tests recurse over scripts so nested proof/parser tests
 # cannot silently fall outside a shallow filename-glob selection.
+# test_validation_runner_protocol.py is ignored here: it is Windows-only
+# (module-level skipif os.name != "nt", so Linux CI never ran it) and takes
+# minutes; it stays covered by the dedicated ``runner-protocol-tests`` profile
+# of scripts/validation-runner.ps1.  The path is relative to the project root,
+# which is the suite's subprocess cwd.
 SUITE_INFRASTRUCTURE_LEGS: List[Tuple[str, List[str], str]] = [
     ("guard_registry", ["python3", "scripts/ci/verify_guard_registry.py"], "blocking"),
     (
         "guard_tests",
-        [SUITE_PYTHON, "-m", "pytest", "scripts", "-v", "--tb=short"],
+        [
+            SUITE_PYTHON, "-m", "pytest", "scripts", "-v", "--tb=short",
+            "--ignore=scripts/ci/test_validation_runner_protocol.py",
+        ],
         "blocking",
     ),
 ]

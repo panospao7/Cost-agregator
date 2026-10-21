@@ -44,10 +44,9 @@ import org.junit.Test
  * RP-08 slice C3 (P6-004 low-history UI contract): ViewModel-level tests for the
  * quality/isActionable display contract on the autopilot banner.
  *
- * Follows the [BudgetViewModelStressTest] harness style (mockk +
- * InstantTaskExecutorRule + StandardTestDispatcher) but is NOT ignored —
- * these tests must run in CI. The stress harness is a ledgered hang suspect,
- * so these assertions live in their own active test class.
+ * Uses a mockk + InstantTaskExecutorRule + StandardTestDispatcher harness and is
+ * NOT ignored — these tests must run in CI. (The former class-level @Ignore'd
+ * BudgetViewModelStressTest harness, a ledgered hang suspect, was removed in B3-8.)
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class BudgetAutopilotUiContractTest {

@@ -1,15 +1,27 @@
 {
-  "occurrencesGenerated": 2,
-  "remindersCreated": 2,
-  "totalOccurrences": 2,
+  "occurrencesGenerated": 3,
+  "remindersCreated": 3,
+  "totalOccurrences": 3,
   "plannedExpensesCreated": 0,
-  "linkSucceeded": false,
-  "paidOccurrenceCount": 0,
+  "linkSucceeded": true,
+  "paidOccurrenceCount": 1,
   "remainingPlannedCount": 2,
+  "paidOccurrenceAmount": 12.99,
+  "paidOccurrenceStatus": "PAID",
+  "paidOccurrenceLinkedExpenseIdMatches": true,
+  "plannedStatusAfterLink": "FULFILLED",
+  "plannedLinkedActualExpenseIdMatches": true,
+  "suppressedReminderCount": 1,
+  "reminderStatuses": [
+    "CANCELLED",
+    "SCHEDULED",
+    "SCHEDULED"
+  ],
   "dashboardTotal": 12.99,
   "dashboardTransactionCount": 1,
   "noDoubleCount": true,
   "occurrenceStatuses": [
+    "PAID",
     "PLANNED",
     "PLANNED"
   ]

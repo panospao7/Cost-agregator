@@ -906,7 +906,11 @@ fun AddEditBudgetDialog(
 ) {
     // R3: displayed currency is read-only; edit shows the stored currency, create shows home.
     val displayedCurrency = initialBudget?.currency ?: homeCurrency
-    var amount by remember { mutableStateOf(initialBudget?.amount?.toString() ?: "") }
+    // R16: locale-independent edit prefill (Double.toString can emit "1.0E7"); round-trips through
+    // AmountInputSanitizer.sanitize + parseUserAmount in every locale.
+    var amount by remember {
+        mutableStateOf(initialBudget?.amount?.let { java.lang.String.format(java.util.Locale.US, "%.2f", it) } ?: "")
+    }
     var selectedCategory by remember { mutableStateOf(initialBudget?.categoryId ?: initialCategoryId) }
     var period by remember { mutableStateOf(initialBudget?.period ?: BudgetPeriod.MONTHLY) }
     var periodMode by remember { mutableStateOf(initialBudget?.periodMode ?: "ROLLING") }
@@ -930,9 +934,9 @@ fun AddEditBudgetDialog(
                     },
                     label = { Text(stringResource(R.string.budget_amount_label)) },
                     modifier = Modifier.fillMaxWidth(),
-                    isError = amount.isNotEmpty() && (amount.toDoubleOrNull() ?: 0.0) <= 0,
-                    supportingText = { 
-                        if (amount.isNotEmpty() && (amount.toDoubleOrNull() ?: 0.0) <= 0) {
+                    isError = amount.isNotEmpty() && (com.yourname.expensetracker.ui.util.AmountInputSanitizer.parseOrNull(amount) ?: 0.0) <= 0,
+                    supportingText = {
+                        if (amount.isNotEmpty() && (com.yourname.expensetracker.ui.util.AmountInputSanitizer.parseOrNull(amount) ?: 0.0) <= 0) {
                             Text(stringResource(R.string.budget_error_invalid_amount))
                         }
                     },
@@ -987,7 +991,7 @@ fun AddEditBudgetDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    val amt = amount.toDoubleOrNull() ?: 0.0
+                    val amt = com.yourname.expensetracker.ui.util.AmountInputSanitizer.parseOrNull(amount) ?: 0.0
                     val resolvedCurrency = homeCurrency ?: return@Button
                     if (amt > 0) {
                         val budgetToSave = initialBudget?.copy(

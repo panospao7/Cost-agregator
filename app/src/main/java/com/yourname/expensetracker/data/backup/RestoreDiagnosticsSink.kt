@@ -3,11 +3,13 @@ package com.yourname.expensetracker.data.backup
 import com.yourname.expensetracker.domain.diagnostics.AppPipeline
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticThrowableSummary
 import com.yourname.expensetracker.domain.diagnostics.EventMetadataSanitizer
 import com.yourname.expensetracker.domain.diagnostics.EventOutcome
 import com.yourname.expensetracker.domain.diagnostics.EventSeverity
 import com.yourname.expensetracker.domain.diagnostics.OperationRunHandle
 import com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
+import com.yourname.expensetracker.domain.util.CancellationSafe
 import timber.log.Timber
 
 /**
@@ -59,7 +61,7 @@ class RestoreDiagnosticsSink(
                     reasonCode = reasonCode?.name,
                     metadataJson = safeMetadataJson,
                     exceptionClass = exception?.javaClass?.simpleName,
-                    exceptionMessageSafe = sanitizer.sanitizeExceptionMessage(exception?.message),
+                    exceptionMessageSafe = exception?.let { DiagnosticThrowableSummary.className(it) },
                     isTerminal = isTerminal
                 )
             } else {
@@ -72,7 +74,7 @@ class RestoreDiagnosticsSink(
                     reasonCode = reasonCode?.name,
                     metadataJson = safeMetadataJson,
                     exceptionClass = exception?.javaClass?.simpleName,
-                    exceptionMessageSafe = sanitizer.sanitizeExceptionMessage(exception?.message),
+                    exceptionMessageSafe = exception?.let { DiagnosticThrowableSummary.className(it) },
                     isTerminal = isTerminal
                 )
             }
@@ -101,7 +103,7 @@ class RestoreDiagnosticsSink(
         // Room operation events only before DB swap
         val handle = operationRunHandle
         if (roomAllowed && handle != null) {
-            runCatching {
+            CancellationSafe.runCatchingCancellable {
                 handle.event(
                     stage = stage,
                     outcome = outcome,
@@ -121,8 +123,9 @@ class RestoreDiagnosticsSink(
     suspend fun finalizeRunFailed(reason: String, error: Throwable? = null) {
         val handle = operationRunHandle
         if (roomAllowed && handle != null) {
-            runCatching { handle.failedFinal(reason, error) }
-                .onFailure { Timber.w(it, "RestoreDiagnosticsSink: failedFinal write failed") }
+            CancellationSafe.runCatchingCancellable { handle.failedFinal(reason, error) }.onFailure {
+                Timber.w(it, "RestoreDiagnosticsSink: failedFinal write failed")
+            }
         }
     }
 }

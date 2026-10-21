@@ -7,9 +7,11 @@ ACTIVATED (PR-GR-07 Slice 2): the CLI runs the authoritative protocol-v2
 pipeline only.  The legacy v1 active-policy parsing (including the retired
 SIGNATURE_MISSING pre-gate) has been removed; a v1-shaped active policy can
 never authorize anything and is a controlled untrusted configuration error
-(classified ``DB_V2_ACTIVE_POLICY_NOT_V2``).  Run
-``scripts/ci/promote_db_policy_v2.py`` to promote the verified v2 candidate
-over the legacy active file.
+(classified ``DB_V2_ACTIVE_POLICY_NOT_V2``).  Remediation:
+regenerate or migrate the active policy to schemaVersion 2 with
+``scripts/migrate_db_policy_signatures.py``, which migrates the legacy v1
+ownership policy into a v2 candidate; after review, that candidate replaces
+``config/guards/db_ownership_policy.yml``.
 
 Pipeline (in order; every failure is an untrusted exit 2 with no partial
 findings):
@@ -418,7 +420,10 @@ STRUCTURAL_EXCEPTIONS_PATH = os.path.join(
 # SIGNATURE_MISSING classification, this code stays internal: the CLI report
 # carries only the registered umbrella diagnostic, while this constant names
 # the failure mode for operators and tests.  Remediation is always the same:
-# run scripts/ci/promote_db_policy_v2.py.
+# regenerate or migrate the active policy to schemaVersion 2
+# (scripts/migrate_db_policy_signatures.py produces a v2 candidate from the
+# legacy v1 policy; after review it replaces
+# config/guards/db_ownership_policy.yml).
 DB_V2_ACTIVE_POLICY_NOT_V2 = "DB_V2_ACTIVE_POLICY_NOT_V2"
 
 # The only activatable active-policy schema version and the bounded,
@@ -628,8 +633,10 @@ def load_db_ownership_policy(policy_path=None):
     There is NO tolerant legacy parsing: a v1-shaped active file (legacy
     ``class``/``daos``/``signature`` fields, no ``schemaVersion: 2``) is a
     controlled untrusted configuration error — exit 2, classified internally
-    as :data:`DB_V2_ACTIVE_POLICY_NOT_V2`.  Run
-    ``scripts/ci/promote_db_policy_v2.py`` to promote the verified candidate.
+    as :data:`DB_V2_ACTIVE_POLICY_NOT_V2`.  Regenerate or migrate the active
+    policy to schemaVersion 2 with ``scripts/migrate_db_policy_signatures.py``
+    (legacy v1 policy -> v2 candidate; after review the candidate replaces
+    ``config/guards/db_ownership_policy.yml``).
 
     Every rejection prints only controlled ``PolicyError`` codes and exits 2;
     raw payloads, file contents, and exception text are never emitted.
@@ -646,8 +653,8 @@ def load_db_ownership_policy(policy_path=None):
                   file=sys.stderr)
         print(
             f"ERROR: {DB_V2_ACTIVE_POLICY_NOT_V2}: active ownership policy "
-            "is not a schemaVersion 2 document; run "
-            "scripts/ci/promote_db_policy_v2.py",
+            "is not a schemaVersion 2 document; regenerate or migrate it "
+            "to schemaVersion 2 (see scripts/migrate_db_policy_signatures.py)",
             file=sys.stderr,
         )
         sys.exit(2)
@@ -768,15 +775,21 @@ MANIFEST_COUNT_KEYS = frozenset({"structural_entries"})
 # GR-08j: 62 -> 64 (two exact named-object Room-migration tuples,
 # MIGRATION_16_17/migrate and MIGRATION_41_42/migrate on AppDatabase.kt).
 # Human-authorized 2026-09-28: one exact cleanupRestoreStaging fixture, 64 -> 65.
-PINNED_STRUCTURAL_ENTRY_COUNT = 65
+# R26 (owner-approved guard tightening): removed the stale runCostBackupExport/
+# writableDatabase exception (the PRAGMA statement was removed), 65 -> 64.
+# R25 (owner-approved Q-R25-G1, 2026-10-17): three exact tuples for the core open
+# gate (DatabaseOpenGate probe/databaseFile, GatedOpenHelper openGated),
+# 64 -> 67.
+PINNED_STRUCTURAL_ENTRY_COUNT = 67
 
 # ── Immutable checked-in tuple contracts (expected/fixtures classification) ────
 # The manifest's ``expected`` and ``fixtures`` sections must EXACTLY equal these
 # canonical (path, class, method_pattern, operation) tuple sets.  The sets are
 # IMMUTABLE — they pin the exact identities of the checked-in manifest:
 #
-#   * MANIFEST_IMMUTABLE_EXPECTED_TUPLES — 60 tuples (58 pre-GR-08j + the two
-#     GR-08j named-object Room-migration tuples).  Operation evidence is
+#   * MANIFEST_IMMUTABLE_EXPECTED_TUPLES — 62 tuples (58 pre-GR-08j + the two
+#     GR-08j named-object Room-migration tuples, minus the R26 removal, plus
+#     the three R25 open-gate tuples).  Operation evidence is
 #     REQUIRED for every expected tuple: the operation token must occur in the
 #     exact declaration body.
 #   * MANIFEST_IMMUTABLE_FIXTURE_TUPLES — 5 tuples.  Fixture tuples keep
@@ -815,6 +828,12 @@ _STRUCT_PATH_EXPORT_ANONYMIZER = (
 )
 _STRUCT_PATH_LEGACY_MIGRATION = (
     "app/src/main/java/com/yourname/expensetracker/service/debug/LegacyDataMigrationService.kt"
+)
+_STRUCT_PATH_DATABASE_OPEN_GATE = (
+    "app/src/main/java/com/yourname/expensetracker/data/database/DatabaseOpenGate.kt"
+)
+_STRUCT_PATH_GATED_OPEN_HELPER = (
+    "app/src/main/java/com/yourname/expensetracker/data/database/GatedOpenHelper.kt"
 )
 _STRUCT_PATH_BACKUP_VERIFIER = (
     "app/src/main/java/com/yourname/expensetracker/data/backup/BackupVerifier.kt"
@@ -861,7 +880,6 @@ MANIFEST_IMMUTABLE_EXPECTED_TUPLES = frozenset([
     (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "exportDatabase", "getDatabasePath"),
     # RP-03A (0835b5c7f, 2026-09-14) moved the existing export pipeline into
     # this shared helper. One-for-one identity moves; exact evidence required.
-    (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "runCostBackupExport", "writableDatabase"),
     (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "runCostBackupExport", "getDatabasePath"),
     (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "runCostBackupExport", "openDatabase"),
     (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "restoreCostBackup", "getDatabasePath"),
@@ -903,6 +921,11 @@ MANIFEST_IMMUTABLE_EXPECTED_TUPLES = frozenset([
     (_STRUCT_PATH_EXPORT_ANONYMIZER, "ExportAnonymizer", "sanitizeBankStatementImportItems", "execSQL"),
     # ── Legacy data migration (LegacyDataMigrationService.kt) ────────────────
     (_STRUCT_PATH_LEGACY_MIGRATION, "LegacyDataMigrationService", "migrateFromBackup", "openDatabase"),
+    # ── Core open gate (DatabaseOpenGate.kt / GatedOpenHelper.kt) ─────
+    # R25 (owner-approved Q-R25-G1, 2026-10-17).
+    (_STRUCT_PATH_DATABASE_OPEN_GATE, "DatabaseOpenGate", "probe", "openDatabase"),
+    (_STRUCT_PATH_DATABASE_OPEN_GATE, "DatabaseOpenGate", "databaseFile", "getDatabasePath"),
+    (_STRUCT_PATH_GATED_OPEN_HELPER, "GatedOpenHelper", "openGated", "writableDatabase"),
 ])
 
 MANIFEST_IMMUTABLE_FIXTURE_TUPLES = frozenset([
@@ -915,7 +938,7 @@ MANIFEST_IMMUTABLE_FIXTURE_TUPLES = frozenset([
     (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "cleanupRestoreStaging", "deleteRecursively"),
 ])
 
-# Derived contract counts (60 expected / 5 fixtures).
+# Derived contract counts (62 expected / 5 fixtures).
 MANIFEST_IMMUTABLE_EXPECTED_COUNT = len(MANIFEST_IMMUTABLE_EXPECTED_TUPLES)
 MANIFEST_IMMUTABLE_FIXTURE_COUNT = len(MANIFEST_IMMUTABLE_FIXTURE_TUPLES)
 
@@ -3548,9 +3571,11 @@ def main(argv=None):
       2. Room inventory build;
       3. active v2 loader — ``load_policy_v2``, schemaVersion 2 required.  A
          v1-shaped active file is a controlled untrusted configuration error
-         classified :data:`DB_V2_ACTIVE_POLICY_NOT_V2`: run
-         ``scripts/ci/promote_db_policy_v2.py``.  There is no tolerant legacy
-         parsing and the retired SIGNATURE_MISSING pre-gate is removed;
+         classified :data:`DB_V2_ACTIVE_POLICY_NOT_V2`:
+         regenerate or migrate it (``scripts/migrate_db_policy_signatures.py``
+         builds a v2 candidate from the legacy v1 policy; after review it
+         replaces ``config/guards/db_ownership_policy.yml``).  There is no
+         tolerant legacy parsing and the retired SIGNATURE_MISSING pre-gate is removed;
       4. v2 exact source evidence — ``verify_v2_policy_source_evidence``
          over the loaded ``PolicyEntry`` objects, the declared root set, and
          the built Room inventory;
@@ -3678,7 +3703,9 @@ def main(argv=None):
                 # is no tolerant legacy parsing.  A v1-shaped active file is
                 # classified DB_V2_ACTIVE_POLICY_NOT_V2 (internal constant):
                 # the report carries only the registered umbrella diagnostic,
-                # and remediation is scripts/ci/promote_db_policy_v2.py.
+                # and remediation is scripts/migrate_db_policy_signatures.py
+                # (v1 -> v2 candidate, reviewed, then replaces
+                # config/guards/db_ownership_policy.yml).
                 policy_entries, policy_errors = load_policy_v2(ownership)
                 if policy_entries is None:
                     active_policy_schema_version = _read_active_policy_schema_version(

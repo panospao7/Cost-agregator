@@ -344,7 +344,7 @@ GRADLE_PROFILE_ARGUMENTS = {
 }
 NON_GRADLE_PROFILES = (
     "runner-smoke", "runner-progress-smoke", "runner-stall-smoke",
-    "runner-protocol-tests", "static-guards", "registered-guard",
+    "runner-protocol-tests", "pytest-subset", "static-guards", "registered-guard",
     "release-artifact-evidence",
 )
 CLASS_FILTER = "com.yourname.expensetracker.ProtocolCase"
@@ -376,7 +376,7 @@ def _ps_json(value):
     return f"({_ps_quote(json.dumps(value))} | ConvertFrom-Json)"
 
 
-def _powershell_json(tmp_path, script, timeout=30):
+def _powershell_json(tmp_path, script, timeout=30, env=None):
     # -File avoids Windows' command-line length limit for extracted functions.
     probe = tmp_path / "protocol probe.ps1"
     probe.write_text(
@@ -387,6 +387,7 @@ def _powershell_json(tmp_path, script, timeout=30):
         ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy",
          "Bypass", "-File", str(probe)],
         cwd=tmp_path, capture_output=True, text=True, timeout=timeout,
+        env=None if env is None else {**os.environ, **env},
     )
     assert completed.returncode == 0, (completed.stdout, completed.stderr)
     return json.loads(completed.stdout)
@@ -430,7 +431,7 @@ def _gradle_fixture(tmp_path):
     }), encoding="utf-8")
     source = _functions(
         "Read-JsonFile", "Read-ValidationConfig", "Assert-SafeTestFilters",
-        "Get-ShardFilters", "Get-TrustedFilters", "Get-LegacyFilters",
+        "Get-TargetedTestFilters", "Get-ShardFilters", "Get-TrustedFilters", "Get-LegacyFilters",
         "New-TestArguments", "Test-GradleProfile", "Resolve-InvocationDeviceSerial",
         "New-GradleSettings",
         "Resolve-InvocationGradleSettings", "Resolve-RequestGradleSettings",
@@ -470,16 +471,94 @@ def _command_display(executable, arguments):
     )
 
 
-@pytest.mark.parametrize("profile", GRADLE_PROFILE_ARGUMENTS)
-def test_all_gradle_profiles_retain_exact_historical_default_argv(tmp_path, profile):
-    root, source = _gradle_fixture(tmp_path)
-    selected_filter = _ps_quote(PROFILE_FILTERS.get(profile, "*ProtocolCase*"))
-    result = _powershell_json(tmp_path, source + _invocation_setup({}, profile) + f"""
+def _case_key(*params):
+    # Stable batch key derived from a test's own parametrized values.
+    return json.dumps(params, sort_keys=True, default=str)
+
+
+class _BatchResults:
+    """Per-case outcomes of one batched PowerShell run; lookups fail closed."""
+
+    def __init__(self, raw, index):
+        self._raw = raw
+        self._index = index
+
+    def __getitem__(self, key):
+        assert key in self._index, f"case missing from batch output: {key!r}"
+        slot = self._index[key]
+        assert slot in self._raw, f"case missing from batch output: {key!r}"
+        text = self._raw[slot]
+        assert isinstance(text, str) and text.strip(), f"empty batch output for case: {key}"
+        try:
+            value = json.loads(text)
+        except ValueError:
+            pytest.fail(f"garbled batch output for case: {key}: {text!r}")
+        assert not (isinstance(value, dict) and "__batch_error__" in value), (key, value)
+        return value
+
+
+def _run_batch(base, source, cases, timeout=170):
+    """Evaluate every (key, script) case in ONE PowerShell process.
+
+    Each case runs in its own child scope inside its own try/catch; an unhandled
+    exception becomes that case's `__batch_error__` outcome (which fails its
+    test). Child scopes isolate ordinary variables only: script-scope state is
+    shared across the batch, so each case first removes
+    `$script:InvocationParameters` (the one script-scope variable the runner
+    functions read) before its body runs. Whole-process failure, non-zero exit
+    or unparseable stdout raises here, failing every dependent test. A key absent
+    from the output fails the test that looks it up. The default timeout stays
+    below the runner-protocol-tests no-output limit (180 s) so a hung batch fails
+    as a pytest error instead of a runner stall.
+    """
+    keys = [key for key, _ in cases]
+    assert len(keys) == len(set(keys)), "duplicate batch case key"
+    parts = [source, "$batch = [ordered]@{}"]
+    for position, (key, body) in enumerate(cases):
+        parts.append(
+            f"$batch[{_ps_quote(str(position))}] = & {{\n"
+            "    try {\n"
+            "        (& {\n"
+            "            Remove-Variable InvocationParameters -Scope Script -ErrorAction SilentlyContinue\n"
+            f"{body}\n        }} | Out-String)\n"
+            "    } catch {\n"
+            "        @{ '__batch_error__' = [string]$_.Exception.Message } | ConvertTo-Json\n"
+            "    }\n"
+            "}"
+        )
+    parts.append("$batch | ConvertTo-Json -Depth 3")
+    raw = _powershell_json(base, "\n".join(parts), timeout=timeout)
+    assert isinstance(raw, dict), "batch output is not a JSON object"
+    index = {key: str(position) for position, (key, _) in enumerate(cases)}
+    return _BatchResults(raw, index)
+
+
+@pytest.fixture(scope="module")
+def gradle_batch_env(tmp_path_factory):
+    base = tmp_path_factory.mktemp("gradle-batch")
+    root, source = _gradle_fixture(base)
+    return base, root, source
+
+
+@pytest.fixture(scope="module")
+def profile_argv_batch(gradle_batch_env):
+    base, _root, source = gradle_batch_env
+    cases = []
+    for profile in GRADLE_PROFILE_ARGUMENTS:
+        selected_filter = _ps_quote(PROFILE_FILTERS.get(profile, "*ProtocolCase*"))
+        cases.append((profile, _invocation_setup({}, profile) + f"""
 $settings = Resolve-InvocationGradleSettings
 $implicit = Get-ProfileSpec -Name $Profile -Filter {selected_filter} -ShardName 'protocol-shard'
 $explicit = Get-ProfileSpec -Name $Profile -Filter {selected_filter} -ShardName 'protocol-shard' -GradleSettings $settings
 @{{ settings = $settings; implicit = $implicit; explicit = $explicit }} | ConvertTo-Json -Depth 8
-""")
+"""))
+    return _run_batch(base, source, cases)
+
+
+@pytest.mark.parametrize("profile", GRADLE_PROFILE_ARGUMENTS)
+def test_all_gradle_profiles_retain_exact_historical_default_argv(gradle_batch_env, profile_argv_batch, profile):
+    root = gradle_batch_env[1]
+    result = profile_argv_batch[profile]
     assert result["settings"] == DEFAULT_GRADLE_SETTINGS
     expected = GRADLE_PROFILE_ARGUMENTS[profile] + [
         "--console=plain", "--no-parallel", "--max-workers=1",
@@ -510,85 +589,154 @@ TUNING_CASES = [
 ]
 
 
-@pytest.mark.parametrize("options,expected", TUNING_CASES)
-def test_gradle_presets_only_replace_omitted_counts_and_build_explicit_flags(tmp_path, options, expected):
-    _, source = _gradle_fixture(tmp_path)
-    result = _powershell_json(tmp_path, source + _invocation_setup(options) + """
+@pytest.fixture(scope="module")
+def tuning_batch(gradle_batch_env):
+    base, _root, source = gradle_batch_env
+    cases = [
+        (_case_key(case.values[0]), _invocation_setup(case.values[0]) + """
 $settings = Resolve-InvocationGradleSettings
 $spec = Get-ProfileSpec -Name $Profile -GradleSettings $settings
 @{ settings = $settings; arguments = $spec.arguments } | ConvertTo-Json -Depth 8
 """)
+        for case in TUNING_CASES
+    ]
+    return _run_batch(base, source, cases)
+
+
+@pytest.mark.parametrize("options,expected", TUNING_CASES)
+def test_gradle_presets_only_replace_omitted_counts_and_build_explicit_flags(tuning_batch, options, expected):
+    result = tuning_batch[_case_key(options)]
     assert result == {"settings": expected, "arguments": _gradle_arguments("compile", expected)}
 
 
-@pytest.mark.parametrize("options", [
+WORKERS_BELOW_FORKS_OPTIONS = [
     {"MaxWorkers": 1, "TestForks": 2},
     {"Parallel": True, "MaxWorkers": 1},
-])
-def test_explicit_workers_below_test_forks_are_rejected_not_silently_raised(tmp_path, options):
-    _, source = _gradle_fixture(tmp_path)
-    result = _powershell_json(tmp_path, source + _invocation_setup(options) + """
+]
+
+
+@pytest.fixture(scope="module")
+def workers_below_forks_batch(gradle_batch_env):
+    base, _root, source = gradle_batch_env
+    cases = [
+        (_case_key(options), _invocation_setup(options) + """
 try { $null = Resolve-InvocationGradleSettings; @{ outcome = 'accepted' } | ConvertTo-Json }
 catch { @{ outcome = $_.Exception.Message } | ConvertTo-Json }
 """)
+        for options in WORKERS_BELOW_FORKS_OPTIONS
+    ]
+    return _run_batch(base, source, cases)
+
+
+@pytest.mark.parametrize("options", WORKERS_BELOW_FORKS_OPTIONS)
+def test_explicit_workers_below_test_forks_are_rejected_not_silently_raised(workers_below_forks_batch, options):
+    result = workers_below_forks_batch[_case_key(options)]
     assert result == {"outcome": "E_TEST_FORKS_EXCEED_WORKERS"}
 
 
-@pytest.mark.parametrize("argument", [
+OUT_OF_BOUNDS_ARGUMENTS = [
     "-Workers 0", "-Workers 17", "-Forks 0", "-Workers 16 -Forks 9",
     "-RecycleAfter -1", "-RecycleAfter 1001", "-CompilerStrategy 'unbounded'",
-])
-def test_new_gradle_settings_rejects_out_of_bounds_controls(tmp_path, argument):
-    source = _functions("New-GradleSettings")
-    result = _powershell_json(tmp_path, source + f"""
+]
+
+
+@pytest.fixture(scope="module")
+def out_of_bounds_batch(tmp_path_factory):
+    cases = [
+        (argument, f"""
 try {{ $null = New-GradleSettings {argument}; @{{ accepted = $true }} | ConvertTo-Json }}
 catch {{ @{{ accepted = $false; exception_type = $_.Exception.GetType().Name }} | ConvertTo-Json }}
 """)
+        for argument in OUT_OF_BOUNDS_ARGUMENTS
+    ]
+    return _run_batch(tmp_path_factory.mktemp("out-of-bounds-batch"), _functions("New-GradleSettings"), cases)
+
+
+@pytest.mark.parametrize("argument", OUT_OF_BOUNDS_ARGUMENTS)
+def test_new_gradle_settings_rejects_out_of_bounds_controls(out_of_bounds_batch, argument):
+    result = out_of_bounds_batch[argument]
     assert result["accepted"] is False
     assert result["exception_type"].startswith("ParameterBinding")
 
 
-@pytest.mark.parametrize("profile", NON_GRADLE_PROFILES)
-@pytest.mark.parametrize("options", [
+NON_GRADLE_DEFAULT_OPTIONS = [
     {}, {"MaxWorkers": 1}, {"TestForks": 1}, {"ForkEvery": 50},
     {"Parallel": False}, {"GradleDaemon": False}, {"KotlinCompilerStrategy": "project"},
-])
-def test_non_gradle_profiles_reject_even_explicit_default_options(tmp_path, profile, options):
-    source = _functions("Test-GradleProfile", "Resolve-InvocationGradleSettings")
-    result = _powershell_json(tmp_path, source + _invocation_setup(options, profile) + """
+]
+
+
+@pytest.fixture(scope="module")
+def non_gradle_options_batch(tmp_path_factory):
+    cases = [
+        (_case_key(profile, options), _invocation_setup(options, profile) + """
 try {
     $settings = Resolve-InvocationGradleSettings
     @{ outcome = if ($null -eq $settings) { 'not-applicable' } else { 'unexpected-settings' } } | ConvertTo-Json
 } catch { @{ outcome = $_.Exception.Message } | ConvertTo-Json }
 """)
+        for profile in NON_GRADLE_PROFILES
+        for options in NON_GRADLE_DEFAULT_OPTIONS
+    ]
+    source = _functions("Test-GradleProfile", "Resolve-InvocationGradleSettings")
+    return _run_batch(tmp_path_factory.mktemp("non-gradle-options-batch"), source, cases)
+
+
+@pytest.mark.parametrize("profile", NON_GRADLE_PROFILES)
+@pytest.mark.parametrize("options", NON_GRADLE_DEFAULT_OPTIONS)
+def test_non_gradle_profiles_reject_even_explicit_default_options(non_gradle_options_batch, profile, options):
+    result = non_gradle_options_batch[_case_key(profile, options)]
     assert result == {
         "outcome": "E_GRADLE_OPTIONS_NOT_APPLICABLE" if options else "not-applicable",
     }
 
 
-@pytest.mark.parametrize("profile", ["compile", "targeted-release-unit-test", *NON_GRADLE_PROFILES])
-def test_old_requests_without_gradle_settings_keep_historical_defaults(tmp_path, profile):
-    source = _functions("Test-GradleProfile", "New-GradleSettings", "Resolve-RequestGradleSettings")
-    result = _powershell_json(tmp_path, source + f"""
+OLD_REQUEST_PROFILES = ["compile", "targeted-release-unit-test", *NON_GRADLE_PROFILES]
+
+
+@pytest.fixture(scope="module")
+def old_requests_batch(tmp_path_factory):
+    cases = [
+        (profile, f"""
 $request = {_ps_json({'profile': profile})}
 @{{ settings = (Resolve-RequestGradleSettings -Request $request) }} | ConvertTo-Json -Depth 8
 """)
+        for profile in OLD_REQUEST_PROFILES
+    ]
+    source = _functions("Test-GradleProfile", "New-GradleSettings", "Resolve-RequestGradleSettings")
+    return _run_batch(tmp_path_factory.mktemp("old-requests-batch"), source, cases)
+
+
+@pytest.mark.parametrize("profile", OLD_REQUEST_PROFILES)
+def test_old_requests_without_gradle_settings_keep_historical_defaults(old_requests_batch, profile):
+    result = old_requests_batch[profile]
     assert result["settings"] == (None if profile in NON_GRADLE_PROFILES else DEFAULT_GRADLE_SETTINGS)
 
 
-@pytest.mark.parametrize("settings,expected", [
+NEW_REQUEST_SETTINGS_CASES = [
     (DEFAULT_GRADLE_SETTINGS, DEFAULT_GRADLE_SETTINGS),
     (_settings(fork_every=0, parallel=True, gradle_daemon=True, kotlin_compiler_strategy="Daemon"),
      _settings(fork_every=0, parallel=True, gradle_daemon=True, kotlin_compiler_strategy="daemon")),
     (_settings(max_workers=16, test_forks=8, fork_every=1000, kotlin_compiler_strategy="IN-PROCESS"),
      _settings(max_workers=16, test_forks=8, fork_every=1000, kotlin_compiler_strategy="in-process")),
-])
-def test_new_request_settings_preserve_counts_false_zero_and_normalize_strategy(tmp_path, settings, expected):
-    source = _functions("Test-GradleProfile", "New-GradleSettings", "Resolve-RequestGradleSettings")
-    result = _powershell_json(tmp_path, source + f"""
+]
+
+
+@pytest.fixture(scope="module")
+def new_request_settings_batch(tmp_path_factory):
+    cases = [
+        (_case_key(settings), f"""
 $request = {_ps_json({'profile': 'compile', 'gradle_settings': settings})}
 @{{ settings = (Resolve-RequestGradleSettings -Request $request) }} | ConvertTo-Json -Depth 8
 """)
+        for settings, _expected in NEW_REQUEST_SETTINGS_CASES
+    ]
+    source = _functions("Test-GradleProfile", "New-GradleSettings", "Resolve-RequestGradleSettings")
+    return _run_batch(tmp_path_factory.mktemp("new-request-settings-batch"), source, cases)
+
+
+@pytest.mark.parametrize("settings,expected", NEW_REQUEST_SETTINGS_CASES)
+def test_new_request_settings_preserve_counts_false_zero_and_normalize_strategy(new_request_settings_batch, settings, expected):
+    result = new_request_settings_batch[_case_key(settings)]
     assert result["settings"] == expected
 
 
@@ -619,11 +767,14 @@ def _malformed_settings_cases():
     return cases
 
 
-@pytest.mark.parametrize("settings,expected_code", _malformed_settings_cases())
-def test_request_settings_fail_closed_on_missing_null_wrong_types_and_ranges(tmp_path, settings, expected_code):
-    source = _functions("Test-GradleProfile", "New-GradleSettings", "Resolve-RequestGradleSettings")
-    result = _powershell_json(tmp_path, source + f"""
-$request = {_ps_json({'profile': 'compile', 'gradle_settings': settings})}
+MALFORMED_SETTINGS_CASES = _malformed_settings_cases()
+
+
+@pytest.fixture(scope="module")
+def malformed_settings_batch(tmp_path_factory):
+    cases = [
+        (case.id, f"""
+$request = {_ps_json({'profile': 'compile', 'gradle_settings': case.values[0]})}
 try {{
     $null = Resolve-RequestGradleSettings -Request $request
     @{{ accepted = $true }} | ConvertTo-Json
@@ -631,6 +782,15 @@ try {{
     @{{ accepted = $false; code = $_.Exception.Message; exception_type = $_.Exception.GetType().Name }} | ConvertTo-Json
 }}
 """)
+        for case in MALFORMED_SETTINGS_CASES
+    ]
+    source = _functions("Test-GradleProfile", "New-GradleSettings", "Resolve-RequestGradleSettings")
+    return _run_batch(tmp_path_factory.mktemp("malformed-settings-batch"), source, cases)
+
+
+@pytest.mark.parametrize("settings,expected_code", MALFORMED_SETTINGS_CASES)
+def test_request_settings_fail_closed_on_missing_null_wrong_types_and_ranges(malformed_settings_batch, request, settings, expected_code):
+    result = malformed_settings_batch[request.node.callspec.id]
     assert result["accepted"] is False
     if expected_code is not None:
         assert result["code"] == expected_code
@@ -638,17 +798,30 @@ try {{
         assert result["exception_type"].startswith("ParameterBinding")
 
 
-@pytest.mark.parametrize("profile", NON_GRADLE_PROFILES)
-@pytest.mark.parametrize("settings", [None, DEFAULT_GRADLE_SETTINGS])
-def test_non_gradle_request_settings_only_accept_null(tmp_path, profile, settings):
-    source = _functions("Test-GradleProfile", "Resolve-RequestGradleSettings")
-    result = _powershell_json(tmp_path, source + f"""
+NON_GRADLE_REQUEST_SETTINGS = [None, DEFAULT_GRADLE_SETTINGS]
+
+
+@pytest.fixture(scope="module")
+def non_gradle_request_batch(tmp_path_factory):
+    cases = [
+        (_case_key(profile, settings), f"""
 $request = {_ps_json({'profile': profile, 'gradle_settings': settings})}
 try {{
     $settings = Resolve-RequestGradleSettings -Request $request
     @{{ outcome = if ($null -eq $settings) {{ 'not-applicable' }} else {{ 'unexpected' }} }} | ConvertTo-Json
 }} catch {{ @{{ outcome = $_.Exception.Message }} | ConvertTo-Json }}
 """)
+        for profile in NON_GRADLE_PROFILES
+        for settings in NON_GRADLE_REQUEST_SETTINGS
+    ]
+    source = _functions("Test-GradleProfile", "Resolve-RequestGradleSettings")
+    return _run_batch(tmp_path_factory.mktemp("non-gradle-request-batch"), source, cases)
+
+
+@pytest.mark.parametrize("profile", NON_GRADLE_PROFILES)
+@pytest.mark.parametrize("settings", NON_GRADLE_REQUEST_SETTINGS)
+def test_non_gradle_request_settings_only_accept_null(non_gradle_request_batch, profile, settings):
+    result = non_gradle_request_batch[_case_key(profile, settings)]
     assert result == {"outcome": "not-applicable" if settings is None else "E_GRADLE_OPTIONS_NOT_APPLICABLE"}
 
 
@@ -688,11 +861,28 @@ $match = Find-OverlappingSuccessfulRun -RequestedProfile $Profile -RequestedComm
 
 def _detached_worker_case(
     tmp_path, options=None, request_patch="", profile="compile", record_patch="",
-    test_filter="*ProtocolCase*",
+    test_filter="*ProtocolCase*", parent_env=None, child_stdout=None, child_exit=0,
+    parent_files=None, real_config_scan=False,
 ):
+    # parent_env is set in the starter's environment, so it reaches the child
+    # only through the real Start-Process -> detached worker -> Process.Start chain.
+    # child_stdout (printed after the harmless line; "\n" and "\x1b" are decoded)
+    # and child_exit make the fake child imitate a pytest run. parent_files are
+    # written beside the fixture repository root, i.e. above it.
+    # The upward pytest config scan is neutralised unless real_config_scan is set,
+    # so the other fixtures do not depend on the machine's ancestor directories.
+    environment = dict(parent_env or {})
+    if child_stdout is not None:
+        environment["PROTOCOL_FAKE_STDOUT"] = child_stdout
+    if child_exit:
+        environment["PROTOCOL_FAKE_EXIT"] = str(child_exit)
     root, source = _gradle_fixture(tmp_path)
+    for name, text in (parent_files or {}).items():
+        (root.parent / name).write_text(text, encoding="utf-8")
+    (root / "scripts" / "ci").mkdir(parents=True)
+    (root / "scripts" / "ci" / "test_guard_findings.py").write_text("", encoding="utf-8")
     capture = root / "capture argv.py"
-    capture.write_text("""import json
+    capture.write_text(r"""import json
 import os
 import sys
 import time
@@ -710,16 +900,27 @@ else:
 (run / "executed.json").write_text(json.dumps({
     "argv": sys.argv[1:], "cwd": os.getcwd(), "pid": os.getpid(),
     "android_serial": os.environ.get("ANDROID_SERIAL"),
+    "pytest_addopts": os.environ.get("PYTEST_ADDOPTS"),
+    "pytest_plugins": os.environ.get("PYTEST_PLUGINS"),
+    "pytest_disable_autoload": os.environ.get("PYTEST_DISABLE_PLUGIN_AUTOLOAD"),
     "worker_pid": int(os.environ["PROTOCOL_WORKER_PID"]),
     "record_at_launch": record,
 }), encoding="utf-8")
 print("harmless argv capture; no Gradle")
+fake = os.environ.get("PROTOCOL_FAKE_STDOUT")
+if fake is not None:
+    print(fake.replace("\\n", "\n").replace("\\x1b", "\x1b"))
+sys.exit(int(os.environ.get("PROTOCOL_FAKE_EXIT", "0")))
 """, encoding="utf-8")
     source += "\n" + _functions(
         "Get-UtcTimestamp", "Write-JsonAtomic", "Get-RunDirectory", "New-LockFile",
         "ConvertTo-ProcessArguments", "Find-OverlappingSuccessfulRun",
-        "Start-ValidationRun", "Invoke-ValidationWorker",
+        "Start-ValidationRun", "Invoke-ValidationWorker", "Assert-SafePytestFilter",
+        "Test-PytestProfile", "Test-PytestSummaryProfile", "Set-PytestChildEnvironment",
+        "Test-PytestConfigOutsideRepo", "Get-PytestPassedCount",
     )
+    if not real_config_scan:
+        source += "\nfunction Test-PytestConfigOutsideRepo { param($Root, $StopAt) return $false }\n"
     # Keep command construction and both settings resolvers real. Replace only
     # the executable transport, external-process probing, and git fingerprint.
     # Start-Process and the worker's ProcessStartInfo/Process.Start are NOT mocked.
@@ -798,7 +999,9 @@ Invoke-ValidationWorker
         "Set-StrictMode -Version Latest\n$ErrorActionPreference = 'Stop'\n" + source,
         encoding="utf-8-sig",
     )
-    started = _powershell_json(tmp_path, f"& {_ps_quote(shim)} -Action Start", timeout=45)
+    started = _powershell_json(
+        tmp_path, f"& {_ps_quote(shim)} -Action Start", timeout=45, env=environment or None,
+    )
     run = root / "build" / "validation-runs" / started["run_id"]
     assert run.parent.parent.parent == root
     assert (run / "complete.marker").is_file(), started
@@ -942,22 +1145,48 @@ def _serial_arguments(serial):
     return [f"-PvalidationDeviceSerial={serial}"] if serial else []
 
 
-def _spec_outcome(tmp_path, profile, filter_value=None, serial=None):
-    _, source = _gradle_fixture(tmp_path)
-    options = {} if serial is None else {"DeviceSerial": serial}
-    return _powershell_json(tmp_path, source + _invocation_setup(options, profile) + f"""
-function Resolve-PythonCommand {{ param($Requested) return 'C:\\fake\\python.exe' }}
+# Every (profile, filter, serial) spec evaluation used by a test is registered at
+# import time and evaluated by ONE PowerShell process (spec_batch). A spec that a
+# test asks for but that was never registered fails closed as "missing".
+_SPEC_REGISTRY = {}
+
+
+def _spec_key(profile, filter_value=None, serial=None):
+    return _case_key(profile, filter_value, serial)
+
+
+def _register_spec(profile, filter_value=None, serial=None):
+    _SPEC_REGISTRY[_spec_key(profile, filter_value, serial)] = (profile, filter_value, serial)
+
+
+@pytest.fixture(scope="module")
+def spec_batch(gradle_batch_env):
+    base, _root, source = gradle_batch_env
+    source += "\nfunction Resolve-PythonCommand { param($Requested) return 'C:\\fake\\python.exe' }\n"
+    cases = []
+    for key, (profile, filter_value, serial) in _SPEC_REGISTRY.items():
+        options = {} if serial is None else {"DeviceSerial": serial}
+        cases.append((key, _invocation_setup(options, profile) + f"""
 try {{
     $settings = Resolve-InvocationGradleSettings
     $serial = Resolve-InvocationDeviceSerial
     $spec = Get-ProfileSpec -Name $Profile -Filter {_ps_value(filter_value)} -ShardName 'protocol-shard' -GradleSettings $settings -SelectedSerial $serial
     @{{ outcome = 'accepted'; arguments = $spec.arguments; timeout = $spec.timeout; no_output_timeout = $spec.no_output_timeout }} | ConvertTo-Json -Depth 8
 }} catch {{ @{{ outcome = $_.Exception.Message }} | ConvertTo-Json }}
-""")
+"""))
+    return _run_batch(base, source, cases, timeout=170)
 
 
-def test_connected_test_class_exact_argv_and_timeouts(tmp_path):
-    result = _spec_outcome(tmp_path, "connected-test-class", CLASS_FILTER)
+def _spec_outcome(spec_batch, profile, filter_value=None, serial=None):
+    return spec_batch[_spec_key(profile, filter_value, serial)]
+
+
+_register_spec("connected-test-class", CLASS_FILTER)
+_register_spec("connected-tests")
+
+
+def test_connected_test_class_exact_argv_and_timeouts(spec_batch):
+    result = _spec_outcome(spec_batch, "connected-test-class", CLASS_FILTER)
     assert result["outcome"] == "accepted"
     assert result["arguments"] == [
         ":app:connectedDebugAndroidTest",
@@ -968,18 +1197,23 @@ def test_connected_test_class_exact_argv_and_timeouts(tmp_path):
     assert (result["timeout"], result["no_output_timeout"]) == (3600, 900)
 
 
-@pytest.mark.parametrize("filter_value", [
+CONNECTED_CLASS_ACCEPTED_FILTERS = [
     "com.yourname.expensetracker.feature.Case",
     "com.yourname.expensetracker.A1_b.Case_2",
     "com.yourname.expensetracker._Case",
-])
-def test_connected_test_class_accepts_package_qualified_classes(tmp_path, filter_value):
-    result = _spec_outcome(tmp_path, "connected-test-class", filter_value)
+]
+for _filter in CONNECTED_CLASS_ACCEPTED_FILTERS:
+    _register_spec("connected-test-class", _filter)
+
+
+@pytest.mark.parametrize("filter_value", CONNECTED_CLASS_ACCEPTED_FILTERS)
+def test_connected_test_class_accepts_package_qualified_classes(spec_batch, filter_value):
+    result = _spec_outcome(spec_batch, "connected-test-class", filter_value)
     assert result["outcome"] == "accepted"
     assert result["arguments"][1] == f"-Pandroid.testInstrumentationRunnerArguments.class={filter_value}"
 
 
-@pytest.mark.parametrize("filter_value", [
+CONNECTED_CLASS_REJECTED_FILTERS = [
     "com.yourname.expensetracker.*",
     "com.yourname.expensetracker.A*",
     "*ProtocolCase*",
@@ -999,18 +1233,28 @@ def test_connected_test_class_accepts_package_qualified_classes(tmp_path, filter
     "com.other.expensetracker.A",
     "Com.yourname.expensetracker.A",
     "ProtocolCase",
-])
-def test_connected_test_class_rejects_unsafe_or_foreign_filters(tmp_path, filter_value):
-    assert _spec_outcome(tmp_path, "connected-test-class", filter_value) == {"outcome": "E_INVALID_TEST_FILTER"}
+]
+for _filter in CONNECTED_CLASS_REJECTED_FILTERS:
+    _register_spec("connected-test-class", _filter)
 
 
-@pytest.mark.parametrize("filter_value", [None, ""])
-def test_connected_test_class_requires_a_filter(tmp_path, filter_value):
-    assert _spec_outcome(tmp_path, "connected-test-class", filter_value) == {"outcome": "E_TEST_FILTER_REQUIRED"}
+@pytest.mark.parametrize("filter_value", CONNECTED_CLASS_REJECTED_FILTERS)
+def test_connected_test_class_rejects_unsafe_or_foreign_filters(spec_batch, filter_value):
+    assert _spec_outcome(spec_batch, "connected-test-class", filter_value) == {"outcome": "E_INVALID_TEST_FILTER"}
 
 
-def test_connected_tests_default_argv_is_byte_identical_without_device_serial(tmp_path):
-    result = _spec_outcome(tmp_path, "connected-tests")
+CONNECTED_CLASS_REQUIRED_FILTERS = [None, ""]
+for _filter in CONNECTED_CLASS_REQUIRED_FILTERS:
+    _register_spec("connected-test-class", _filter)
+
+
+@pytest.mark.parametrize("filter_value", CONNECTED_CLASS_REQUIRED_FILTERS)
+def test_connected_test_class_requires_a_filter(spec_batch, filter_value):
+    assert _spec_outcome(spec_batch, "connected-test-class", filter_value) == {"outcome": "E_TEST_FILTER_REQUIRED"}
+
+
+def test_connected_tests_default_argv_is_byte_identical_without_device_serial(spec_batch):
+    result = _spec_outcome(spec_batch, "connected-tests")
     assert result["arguments"] == [
         ":app:connectedDebugAndroidTest", "--console=plain", "--no-parallel",
         "--max-workers=1", "-PvalidationMaxParallelForks=1", "-PvalidationForkEvery=50",
@@ -1019,8 +1263,190 @@ def test_connected_tests_default_argv_is_byte_identical_without_device_serial(tm
     assert (result["timeout"], result["no_output_timeout"]) == (7200, 1200)
 
 
-def test_assemble_release_argv_and_timeouts(tmp_path):
-    result = _spec_outcome(tmp_path, "assemble-release", "ignored-filter")
+# --- B4-P1c: comma-separated -TestFilter for the targeted unit-test profiles ---
+
+TARGETED_PROFILES = {
+    "targeted-unit-test": ":app:testDebugUnitTest",
+    "targeted-release-unit-test": ":app:testReleaseUnitTest",
+}
+
+
+def _targeted_expected(task, items):
+    tail = _gradle_arguments("compile", DEFAULT_GRADLE_SETTINGS)[1:]
+    arguments = [task]
+    for item in items:
+        arguments += ["--tests", item]
+    return arguments + tail
+
+
+TARGETED_ORDER_CASES = [
+    ("*ProtocolCase*", ["*ProtocolCase*"]),
+    ("com.example.A", ["com.example.A"]),
+    ("*A*,*B*", ["*A*", "*B*"]),
+    ("com.example.Z,com.example.A.method,*M?*,a$b-c", ["com.example.Z", "com.example.A.method", "*M?*", "a$b-c"]),
+]
+for _profile in TARGETED_PROFILES:
+    for _filter, _items in TARGETED_ORDER_CASES:
+        _register_spec(_profile, _filter)
+    _register_spec(_profile, "*ProtocolCase*")
+    _register_spec(_profile, "*a*,*A*")
+
+
+@pytest.mark.parametrize("profile,task", TARGETED_PROFILES.items())
+@pytest.mark.parametrize("filter_value,items", TARGETED_ORDER_CASES)
+def test_targeted_profiles_emit_one_tests_flag_per_filter_in_order(spec_batch, profile, task, filter_value, items):
+    result = _spec_outcome(spec_batch, profile, filter_value)
+    assert result["outcome"] == "accepted"
+    assert result["arguments"] == _targeted_expected(task, items)
+    assert (result["timeout"], result["no_output_timeout"]) == (2400, 600)
+
+
+@pytest.mark.parametrize("profile,task", TARGETED_PROFILES.items())
+def test_targeted_profiles_single_filter_argv_is_unchanged(spec_batch, profile, task):
+    result = _spec_outcome(spec_batch, profile, "*ProtocolCase*")
+    assert result["arguments"] == GRADLE_PROFILE_ARGUMENTS[profile] + _gradle_arguments("compile", DEFAULT_GRADLE_SETTINGS)[1:]
+
+
+TARGETED_MALFORMED_FILTERS = [
+    "a,,b",
+    ",a",
+    "a,",
+    ",",
+    "a,a",
+    "*A*,*B*,*A*",
+    "a, b",
+    "a ,b",
+    "a b",
+    "a,b#c",
+    "a,b;c",
+    "a,b/c",
+    "a,b'c",
+    "a,b=c",
+    "",
+    None,
+]
+FIFTY_FILTERS = ",".join(f"*Case{index}*" for index in range(50))
+FIFTY_ONE_FILTERS = ",".join(f"*Case{index}*" for index in range(51))
+FIFTY_ONE_WITH_EMPTY_FILTERS = ",".join(["*Case0*", ""] + [f"*Case{index}*" for index in range(1, 50)])
+for _profile in TARGETED_PROFILES:
+    for _filter in (*TARGETED_MALFORMED_FILTERS, FIFTY_FILTERS, FIFTY_ONE_FILTERS, FIFTY_ONE_WITH_EMPTY_FILTERS):
+        _register_spec(_profile, _filter)
+
+
+@pytest.mark.parametrize("profile", TARGETED_PROFILES)
+@pytest.mark.parametrize("filter_value", TARGETED_MALFORMED_FILTERS)
+def test_targeted_profiles_reject_malformed_filter_lists(spec_batch, profile, filter_value):
+    assert _spec_outcome(spec_batch, profile, filter_value) == {"outcome": "E_INVALID_TEST_FILTER"}
+
+
+@pytest.mark.parametrize("profile", TARGETED_PROFILES)
+def test_targeted_profiles_enforce_the_fifty_filter_limit(spec_batch, profile):
+    assert _spec_outcome(spec_batch, profile, FIFTY_FILTERS)["outcome"] == "accepted"
+    assert _spec_outcome(spec_batch, profile, FIFTY_ONE_FILTERS) == {"outcome": "E_TOO_MANY_TEST_FILTERS"}
+
+
+@pytest.mark.parametrize("profile", TARGETED_PROFILES)
+def test_targeted_profiles_report_too_many_filters_before_per_item_validation(spec_batch, profile):
+    assert len(FIFTY_ONE_WITH_EMPTY_FILTERS.split(",")) == 51
+    assert _spec_outcome(spec_batch, profile, FIFTY_ONE_WITH_EMPTY_FILTERS) == {"outcome": "E_TOO_MANY_TEST_FILTERS"}
+
+
+@pytest.mark.parametrize("profile,task", TARGETED_PROFILES.items())
+def test_targeted_profiles_duplicate_check_is_case_sensitive(spec_batch, profile, task):
+    result = _spec_outcome(spec_batch, profile, "*a*,*A*")
+    assert result["outcome"] == "accepted"
+    assert result["arguments"] == _targeted_expected(task, ["*a*", "*A*"])
+
+
+TRAILING_NEWLINE_EXPRESSIONS = [
+    "'*A*' + \"`n\"",
+    "'*A*,*B*' + \"`n\"",
+    "'*A*,*B*' + \"`r`n\"",
+]
+
+
+@pytest.fixture(scope="module")
+def trailing_newline_batch(gradle_batch_env):
+    base, _root, source = gradle_batch_env
+    cases = [
+        (filter_expression, _invocation_setup({}, "targeted-unit-test") + f"""
+try {{
+    $spec = Get-ProfileSpec -Name $Profile -Filter ({filter_expression}) -GradleSettings (Resolve-InvocationGradleSettings)
+    @{{ outcome = 'accepted' }} | ConvertTo-Json
+}} catch {{ @{{ outcome = $_.Exception.Message }} | ConvertTo-Json }}
+""")
+        for filter_expression in TRAILING_NEWLINE_EXPRESSIONS
+    ]
+    return _run_batch(base, source, cases)
+
+
+@pytest.mark.parametrize("filter_expression", TRAILING_NEWLINE_EXPRESSIONS)
+def test_targeted_profiles_reject_trailing_newlines(trailing_newline_batch, filter_expression):
+    result = trailing_newline_batch[filter_expression]
+    assert result == {"outcome": "E_INVALID_TEST_FILTER"}
+
+
+_register_spec("connected-test-class", "com.yourname.expensetracker.A,com.yourname.expensetracker.B")
+
+
+def test_comma_lists_are_rejected_by_connected_test_class_and_pytest_subset(spec_batch, pytest_subset_batch):
+    connected = _spec_outcome(
+        spec_batch, "connected-test-class",
+        "com.yourname.expensetracker.A,com.yourname.expensetracker.B",
+    )
+    assert connected == {"outcome": "E_INVALID_TEST_FILTER"}
+    pytest_result = _pytest_subset_outcome(
+        pytest_subset_batch, "scripts/ci/test_guard_findings.py,scripts/ci/test_guard_findings.py",
+    )
+    assert pytest_result == {"outcome": "E_INVALID_PYTEST_FILTER"}
+
+
+def test_targeted_filters_are_parsed_by_one_helper_before_the_lock_and_in_the_worker():
+    spec = _functions("Get-ProfileSpec")
+    assert spec.count("Get-TargetedTestFilters -Filter $Filter") == 2
+    assert "--tests\", $Filter" not in spec
+    start = _functions("Start-ValidationRun")
+    assert start.index("Get-ProfileSpec") < start.index("New-LockFile")
+    worker = _functions("Invoke-ValidationWorker")
+    assert "-Filter $request.test_filter" in worker
+
+
+@pytest.mark.parametrize("profile", TARGETED_PROFILES)
+@pytest.mark.parametrize("patch,code", [
+    ("$request.test_filter = '*A*,,*B*'", "E_INVALID_TEST_FILTER"),
+    ("$request.test_filter = '*A*,*A*'", "E_INVALID_TEST_FILTER"),
+    ("$request.test_filter = '*A*,*B* '", "E_INVALID_TEST_FILTER"),
+    ("$request.test_filter = '*A*,*B*,'", "E_INVALID_TEST_FILTER"),
+    (f"$request.test_filter = {_ps_quote(','.join(f'*C{index}*' for index in range(51)))}", "E_TOO_MANY_TEST_FILTERS"),
+    ("$request.test_filter = '*A*'", "E_COMMAND_MISMATCH"),
+    ("$request.test_filter = '*B*,*A*'", "E_COMMAND_MISMATCH"),
+])
+def test_detached_worker_revalidates_tampered_multi_filter_without_launch(tmp_path, profile, patch, code):
+    _, run, _, _, records = _detached_worker_case(
+        tmp_path, request_patch=patch, profile=profile, test_filter="*A*,*B*",
+    )
+    result = records["result"]
+    assert (result["status"], result["exit_code"], result["failure_code"]) == ("INFRA_FAILURE", 2, code)
+    assert result["child_pid"] is None
+    assert records["executed"] is None
+    assert "exit_code=2" in (run / "complete.marker").read_text(encoding="utf-8-sig")
+
+
+def test_detached_worker_launches_multi_filter_with_one_tests_flag_per_item(tmp_path):
+    _, run, capture, _, records = _detached_worker_case(tmp_path, profile="targeted-unit-test", test_filter="*A*,*B*")
+    arguments = _targeted_expected(":app:testDebugUnitTest", ["*A*", "*B*"])
+    assert records["result"]["status"] == "PASS"
+    assert records["request"]["test_filter"] == "*A*,*B*"
+    assert records["result"]["command"] == _command_display(sys.executable, [str(capture), *arguments])
+    assert records["executed"]["argv"] == arguments
+
+
+_register_spec("assemble-release", "ignored-filter")
+_register_spec("release-artifact-evidence", "ignored-filter")
+
+
+def test_assemble_release_argv_and_timeouts(spec_batch):
+    result = _spec_outcome(spec_batch, "assemble-release", "ignored-filter")
     assert result["arguments"] == [
         ":app:assembleRelease", "--console=plain", "--no-parallel", "--max-workers=1",
         "-PvalidationMaxParallelForks=1", "-PvalidationForkEvery=50", "--no-daemon",
@@ -1029,42 +1455,316 @@ def test_assemble_release_argv_and_timeouts(tmp_path):
     assert "--tests" not in result["arguments"]
 
 
-def test_release_artifact_evidence_uses_fixed_python_argv_without_free_inputs(tmp_path):
-    result = _spec_outcome(tmp_path, "release-artifact-evidence", "ignored-filter")
+def test_release_artifact_evidence_uses_fixed_python_argv_without_free_inputs(spec_batch):
+    result = _spec_outcome(spec_batch, "release-artifact-evidence", "ignored-filter")
     assert result["arguments"] == ["scripts/ci/release_artifact_evidence.py"]
     assert (result["timeout"], result["no_output_timeout"]) == (600, 300)
 
 
-@pytest.mark.parametrize("profile", CONNECTED_PROFILES)
-@pytest.mark.parametrize("serial", [
-    "emulator-5554", "R5CT1234ABC", "192.168.1.5:5555", "a.b_c-d:e", "A" * 64,
+# --- B4-P1: pytest-subset profile (one pytest path under scripts/) ---
+
+# Pinned argv after "-m pytest <filter>": quiet, no cache dir, slowest phases, and
+# "-rs" so every skip and its reason is listed in the run log.
+PYTEST_SUBSET_FLAGS = ["-q", "-p", "no:cacheprovider", "--durations=40", "-rs"]
+
+# filter_expression is PowerShell source, so values that cannot survive a Python
+# text-mode write (for example a bare trailing LF) are built in PowerShell.
+# Expressions are registered at import time and evaluated by ONE PowerShell
+# process (pytest_subset_batch); an unregistered expression fails as "missing".
+_PYTEST_SUBSET_REGISTRY = []
+
+
+def _register_pytest_subset_expression(filter_expression):
+    if filter_expression not in _PYTEST_SUBSET_REGISTRY:
+        _PYTEST_SUBSET_REGISTRY.append(filter_expression)
+
+
+def _register_pytest_subset(filter_value):
+    _register_pytest_subset_expression(_ps_value(filter_value))
+
+
+@pytest.fixture(scope="module")
+def pytest_subset_batch(tmp_path_factory):
+    base = tmp_path_factory.mktemp("pytest-subset-batch")
+    root, source = _gradle_fixture(base)
+    (root / "scripts" / "ci").mkdir(parents=True)
+    (root / "scripts" / "ci" / "test_guard_findings.py").write_text("", encoding="utf-8")
+    source += "\n" + _functions("Assert-SafePytestFilter")
+    source += "\nfunction Resolve-PythonCommand { param($Requested) return 'C:\\fake\\python.exe' }\n"
+    cases = [
+        (expression, _invocation_setup({}, "pytest-subset") + f"""
+try {{
+    $spec = Get-ProfileSpec -Name $Profile -Filter ({expression})
+    @{{ outcome = 'accepted'; arguments = $spec.arguments; timeout = $spec.timeout; no_output_timeout = $spec.no_output_timeout }} | ConvertTo-Json -Depth 8
+}} catch {{ @{{ outcome = $_.Exception.Message }} | ConvertTo-Json }}
+""")
+        for expression in _PYTEST_SUBSET_REGISTRY
+    ]
+    batch = _run_batch(base, source, cases, timeout=170)
+    batch.root = root
+    return batch
+
+
+def _pytest_subset_outcome_expression(pytest_subset_batch, filter_expression):
+    return pytest_subset_batch[filter_expression]
+
+
+def _pytest_subset_outcome(pytest_subset_batch, filter_value):
+    return pytest_subset_batch[_ps_value(filter_value)]
+
+
+_register_pytest_subset("scripts/ci/test_guard_findings.py,scripts/ci/test_guard_findings.py")
+PYTEST_SUBSET_ACCEPTED_FILTERS = [
+    "scripts",
+    "scripts/ci/test_guard_findings.py",
+    "scripts\\ci\\test_guard_findings.py",
+    "scripts/ci/test_guard_findings.py::test_case[param-1]",
+    "scripts/ci/test_guard_findings.py::TestClass::test_case",
+]
+for _filter in PYTEST_SUBSET_ACCEPTED_FILTERS:
+    _register_pytest_subset(_filter)
+
+
+@pytest.mark.parametrize("filter_value", PYTEST_SUBSET_ACCEPTED_FILTERS)
+def test_pytest_subset_accepts_existing_paths_under_scripts_with_exact_argv(pytest_subset_batch, filter_value):
+    result = _pytest_subset_outcome(pytest_subset_batch, filter_value)
+    assert result["outcome"] == "accepted"
+    assert result["arguments"] == ["-m", "pytest", filter_value, *PYTEST_SUBSET_FLAGS]
+    assert (result["timeout"], result["no_output_timeout"]) == (2400, 600)
+
+
+PYTEST_SUBSET_REJECTED_FILTERS = [
+    "../x",
+    "scripts/../x",
+    "scripts/ci/../../x",
+    "scripts/./ci",
+    "C:/scripts/ci/test_guard_findings.py",
+    "C:\\scripts\\ci\\test_guard_findings.py",
+    "/scripts/ci/test_guard_findings.py",
+    "\\scripts\\ci\\test_guard_findings.py",
+    "scripts/x; rm",
+    "scripts/ci/test_guard_findings.py;",
+    "scripts/ci/test_guard_findings.py && calc",
+    "scripts/ci/test_guard_findings.py | more",
+    # CRLF case: the probe is written in text mode, so this LF reaches the
+    # PowerShell literal as CRLF (the bare-LF case is built in PowerShell below).
+    "scripts/ci/test_guard_findings.py\n",
+    "scripts/ci test_guard_findings.py",
+    "scripts/ci/*.py",
+    "scripts/ci/test_?.py",
+    "scripts/ci/test_guard_findings.py'",
+    'scripts/ci/test_guard_findings.py"',
+    "scripts/ci/test_guard_findings.py::",
+    "scripts/ci/test_guard_findings.py::test case",
+    "scripts/ci/test_guard_findings.py::test_*",
+    "scripts/ci/missing.py",
+    "scripts/ci::test_case",
+    "scriptsX/ci/test_guard_findings.py",
+    "Scripts/ci/test_guard_findings.py",
+    "app/src/test.py",
+    "scripts/",
+    "scripts//ci",
+    "",
+    None,
+]
+for _filter in PYTEST_SUBSET_REJECTED_FILTERS:
+    _register_pytest_subset(_filter)
+
+
+@pytest.mark.parametrize("filter_value", PYTEST_SUBSET_REJECTED_FILTERS)
+def test_pytest_subset_rejects_unsafe_missing_or_out_of_scope_filters(pytest_subset_batch, filter_value):
+    assert _pytest_subset_outcome(pytest_subset_batch, filter_value) == {"outcome": "E_INVALID_PYTEST_FILTER"}
+
+
+PYTEST_SUBSET_OPTION_SHAPED_FILTERS = [
+    "-p",
+    "--rootdir=scripts",
+    "-cscripts",
+    "--confcutdir=scripts",
+    "@scripts/x",
+    # Traversal to a file that really exists in the fixture root (shards.json).
+    "scripts/../shards.json",
+]
+for _filter in PYTEST_SUBSET_OPTION_SHAPED_FILTERS:
+    _register_pytest_subset(_filter)
+
+
+@pytest.mark.parametrize("filter_value", PYTEST_SUBSET_OPTION_SHAPED_FILTERS)
+def test_pytest_subset_rejects_option_shaped_and_traversal_filters(pytest_subset_batch, filter_value):
+    assert _pytest_subset_outcome(pytest_subset_batch, filter_value) == {"outcome": "E_INVALID_PYTEST_FILTER"}
+    # The traversal case targets a file that exists, so rejection is not "missing path".
+    assert (pytest_subset_batch.root / "shards.json").is_file()
+
+
+PYTEST_SUBSET_NEWLINE_EXPRESSIONS = [
+    "'scripts/ci/test_guard_findings.py' + \"`n\"",
+    "'scripts/ci/test_guard_findings.py' + \"`r`n\"",
+    "'scripts' + \"`n\"",
+    "'scripts/ci/test_guard_findings.py::test_case' + \"`n\"",
+]
+for _expression in PYTEST_SUBSET_NEWLINE_EXPRESSIONS:
+    _register_pytest_subset_expression(_expression)
+    _register_pytest_subset_expression(_expression.split(" + ")[0])
+
+
+@pytest.mark.parametrize("filter_expression", PYTEST_SUBSET_NEWLINE_EXPRESSIONS)
+def test_pytest_subset_pins_the_absolute_end_anchor_against_trailing_newlines(pytest_subset_batch, filter_expression):
+    # The value is built inside PowerShell so no text-mode newline translation
+    # applies. A '$' anchor would accept a bare trailing LF; only '\z' rejects it.
+    assert _pytest_subset_outcome_expression(pytest_subset_batch, filter_expression) == {
+        "outcome": "E_INVALID_PYTEST_FILTER",
+    }
+    # Control: the same value without the trailing newline is accepted.
+    base_expression = filter_expression.split(" + ")[0]
+    accepted = _pytest_subset_outcome_expression(pytest_subset_batch, base_expression)
+    assert accepted["outcome"] == "accepted"
+    # The parenthesised expression must bind as the single -Filter value, not be
+    # split into extra positional arguments.
+    assert accepted["arguments"][2] == base_expression.strip("'")
+
+
+@pytest.mark.parametrize("test_filter", ["../x", None])
+def test_detached_worker_rejects_tampered_pytest_filter_without_launch(tmp_path, test_filter):
+    _, run, _, _, records = _detached_worker_case(
+        tmp_path, request_patch=f"$request.test_filter = {_ps_value(test_filter)}",
+        profile="pytest-subset", test_filter="scripts/ci/test_guard_findings.py",
+    )
+    result = records["result"]
+    assert (result["status"], result["exit_code"], result["failure_code"]) == (
+        "INFRA_FAILURE", 2, "E_INVALID_PYTEST_FILTER",
+    )
+    assert result["child_pid"] is None
+    assert records["executed"] is None
+    assert "exit_code=2" in (run / "complete.marker").read_text(encoding="utf-8-sig")
+
+
+@pytest.mark.parametrize("replacement", [
+    "scripts",
+    "scripts/ci/test_guard_findings.py::test_other",
+    "scripts\\ci\\test_guard_findings.py",
 ])
-def test_device_serial_is_accepted_on_both_connected_profiles(tmp_path, profile, serial):
-    result = _spec_outcome(tmp_path, profile, PROFILE_FILTERS.get(profile), serial)
+def test_detached_worker_rejects_a_different_valid_pytest_filter_as_command_mismatch(tmp_path, replacement):
+    _, run, capture, _, records = _detached_worker_case(
+        tmp_path, request_patch=f"$request.test_filter = {_ps_quote(replacement)}",
+        profile="pytest-subset", test_filter="scripts/ci/test_guard_findings.py",
+    )
+    result = records["result"]
+    assert (result["status"], result["exit_code"], result["failure_code"]) == (
+        "INFRA_FAILURE", 2, "E_COMMAND_MISMATCH",
+    )
+    assert result["child_pid"] is None
+    assert records["executed"] is None
+    # The worker rebuilt the command from the (valid) tampered filter, not the recorded one.
+    assert result["command"] == _command_display(sys.executable, [
+        str(capture), "-m", "pytest", replacement, *PYTEST_SUBSET_FLAGS,
+    ])
+    assert records["request"]["command"] != result["command"]
+    assert "exit_code=2" in (run / "complete.marker").read_text(encoding="utf-8-sig")
+
+
+def test_detached_worker_launches_pytest_subset_with_exact_argv_preserving_backslashes(tmp_path):
+    filter_value = "scripts\\ci\\test_guard_findings.py"
+    root, run, capture, _, records = _detached_worker_case(
+        tmp_path, profile="pytest-subset", test_filter=filter_value,
+        child_stdout="1 passed in 0.01s",
+    )
+    arguments = ["-m", "pytest", filter_value, *PYTEST_SUBSET_FLAGS]
+    command = _command_display(sys.executable, [str(capture), *arguments])
+    result = records["result"]
+    assert (result["status"], result["exit_code"], result["failure_code"]) == ("PASS", 0, None)
+    for name in ("start-request", "request", "start-result", "result"):
+        assert records[name]["command"] == command
+    assert records["request"]["test_filter"] == filter_value
+    executed = records["executed"]
+    assert executed["argv"] == [
+        "-m", "pytest", "scripts\\ci\\test_guard_findings.py", "-q", "-p", "no:cacheprovider",
+        "--durations=40", "-rs",
+    ]
+    assert executed["cwd"] == str(root)
+    assert result["child_pid"] == executed["pid"]
+    assert "status=PASS" in (run / "complete.marker").read_text(encoding="utf-8-sig")
+
+
+@pytest.mark.parametrize("recorded,requested,duplicate", [
+    ("scripts/ci/test_guard_findings.py", "scripts/ci/test_guard_findings.py", True),
+    ("scripts/ci/test_guard_findings.py", "scripts", False),
+    ("scripts/ci/test_guard_findings.py", "scripts/ci/test_guard_findings.py::test_other", False),
+    ("scripts/ci/test_guard_findings.py::test_one", "scripts/ci/test_guard_findings.py::test_other", False),
+    ("scripts/ci/test_guard_findings.py", "scripts\\ci\\test_guard_findings.py", False),
+])
+def test_dedup_treats_different_pytest_filters_as_different_runs(tmp_path, recorded, requested, duplicate):
+    root, source = _gradle_fixture(tmp_path)
+    (root / "scripts" / "ci").mkdir(parents=True)
+    (root / "scripts" / "ci" / "test_guard_findings.py").write_text("", encoding="utf-8")
+    run = root / "build" / "validation-runs" / "vr-20260101-000000-deadbeef"
+    run.mkdir()
+    baseline = _command_display("python.exe", ["-m", "pytest", recorded, *PYTEST_SUBSET_FLAGS])
+    (run / "result.json").write_text(json.dumps({
+        "profile": "pytest-subset", "status": "PASS", "exit_code": 0, "command": baseline,
+        "git_revision": "revision-a",
+        "worktree_fingerprint_start": "fingerprint", "worktree_fingerprint_end": "fingerprint",
+    }), encoding="utf-8")
+    (run / "complete.marker").write_text("complete", encoding="utf-8")
+    source += "\n" + _functions("Find-OverlappingSuccessfulRun", "Assert-SafePytestFilter")
+    source += "\n" + _invocation_setup({}, "pytest-subset")
+    result = _powershell_json(tmp_path, source + f"""
+function Resolve-PythonCommand {{ param($Requested) return 'C:\\fake\\python.exe' }}
+$spec = Get-ProfileSpec -Name $Profile -Filter {_ps_quote(requested)}
+$command = Get-SafeCommandDisplay -Spec $spec
+$match = Find-OverlappingSuccessfulRun -RequestedProfile $Profile -RequestedCommand $command -Fingerprint 'fingerprint' -Revision 'revision-a'
+@{{ duplicate = $null -ne $match }} | ConvertTo-Json
+""")
+    assert result == {"duplicate": duplicate}
+
+
+def test_pytest_subset_validates_the_filter_before_the_lock_and_in_the_worker():
+    start = _functions("Start-ValidationRun")
+    assert start.index("Get-ProfileSpec") < start.index("New-LockFile")
+    spec = _functions("Get-ProfileSpec")
+    assert spec.index('"pytest-subset"') < spec.index("Assert-SafePytestFilter")
+    assert "Assert-SafePytestFilter -Filter $Filter" in spec
+    worker = _functions("Invoke-ValidationWorker")
+    assert "-Filter $request.test_filter" in worker
+
+
+VALID_DEVICE_SERIALS = ["emulator-5554", "R5CT1234ABC", "192.168.1.5:5555", "a.b_c-d:e", "A" * 64]
+SERIAL_REJECTED_PROFILES = [
+    "compile", "assemble-debug", "assemble-release", "targeted-unit-test",
+    "unit-tests", "app-check", "lint", "runner-smoke", "static-guards",
+    "registered-guard", "release-artifact-evidence", "pytest-subset",
+]
+INVALID_DEVICE_SERIALS = [
+    "", " ", "bad serial", "a;b", "a'b", 'a"b', "a/b", "a\\b", "a&b", "a$b",
+    "a=b", "a,b", "A" * 65, "emulator-5554\n", "-Pevil=1 x",
+]
+for _profile in CONNECTED_PROFILES:
+    for _serial in (*VALID_DEVICE_SERIALS, *INVALID_DEVICE_SERIALS):
+        _register_spec(_profile, PROFILE_FILTERS.get(_profile), _serial)
+for _profile in SERIAL_REJECTED_PROFILES:
+    _register_spec(_profile, "*ProtocolCase*", SERIAL)
+
+
+@pytest.mark.parametrize("profile", CONNECTED_PROFILES)
+@pytest.mark.parametrize("serial", VALID_DEVICE_SERIALS)
+def test_device_serial_is_accepted_on_both_connected_profiles(spec_batch, profile, serial):
+    result = _spec_outcome(spec_batch, profile, PROFILE_FILTERS.get(profile), serial)
     assert result["outcome"] == "accepted"
     # Inert recorded property follows the standard Gradle tail.
     assert result["arguments"][-1] == f"-PvalidationDeviceSerial={serial}"
     assert result["arguments"][:-1] == _gradle_arguments(profile, DEFAULT_GRADLE_SETTINGS)
 
 
-@pytest.mark.parametrize("profile", [
-    "compile", "assemble-debug", "assemble-release", "targeted-unit-test",
-    "unit-tests", "app-check", "lint", "runner-smoke", "static-guards",
-    "registered-guard", "release-artifact-evidence",
-])
-def test_device_serial_is_rejected_on_every_other_profile(tmp_path, profile):
-    assert _spec_outcome(tmp_path, profile, "*ProtocolCase*", SERIAL) == {
+@pytest.mark.parametrize("profile", SERIAL_REJECTED_PROFILES)
+def test_device_serial_is_rejected_on_every_other_profile(spec_batch, profile):
+    assert _spec_outcome(spec_batch, profile, "*ProtocolCase*", SERIAL) == {
         "outcome": "E_DEVICE_SERIAL_NOT_APPLICABLE",
     }
 
 
-@pytest.mark.parametrize("serial", [
-    "", " ", "bad serial", "a;b", "a'b", 'a"b', "a/b", "a\\b", "a&b", "a$b",
-    "a=b", "a,b", "A" * 65, "emulator-5554\n", "-Pevil=1 x",
-])
+@pytest.mark.parametrize("serial", INVALID_DEVICE_SERIALS)
 @pytest.mark.parametrize("profile", CONNECTED_PROFILES)
-def test_invalid_device_serial_is_rejected_on_connected_profiles(tmp_path, profile, serial):
-    result = _spec_outcome(tmp_path, profile, PROFILE_FILTERS.get(profile), serial)
+def test_invalid_device_serial_is_rejected_on_connected_profiles(spec_batch, profile, serial):
+    result = _spec_outcome(spec_batch, profile, PROFILE_FILTERS.get(profile), serial)
     assert result == {"outcome": "E_INVALID_DEVICE_SERIAL"}
 
 
@@ -1074,6 +1774,231 @@ def test_omitted_device_serial_is_not_recorded_or_validated(tmp_path):
 @{ serial = (Resolve-InvocationDeviceSerial) } | ConvertTo-Json
 """)
     assert result == {"serial": None}
+
+
+# --- B4-P1b: pytest profile hardening (ambient env, zero-pass runs, outside config) ---
+
+PYTEST_FILTER = "scripts/ci/test_guard_findings.py"
+PYTEST_ENV_PROFILES = ("runner-protocol-tests", "pytest-subset", "static-guards")
+PYTEST_SUMMARY_PROFILES = ("runner-protocol-tests", "pytest-subset")
+# PYTEST_DISABLE_PLUGIN_AUTOLOAD=0 is set on purpose: the suite itself may run
+# under the runner, which already exports "1", and the runner must still set it.
+HOSTILE_PYTEST_ENV = {
+    "PYTEST_ADDOPTS": "--co",
+    "PYTEST_PLUGINS": "protocol_fake_plugin",
+    "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "0",
+}
+COLOUR_SUMMARY = r"\x1b[33m1 skipped\x1b[0m, \x1b[32m2 passed\x1b[0m\x1b[32m in 0.05s\x1b[0m"
+
+
+@pytest.mark.parametrize("profile", PYTEST_ENV_PROFILES)
+def test_pytest_profiles_launch_the_child_without_ambient_pytest_options(tmp_path, profile):
+    # PYTEST_ADDOPTS=--co would make pytest exit 0 after running zero tests.
+    _, _, _, _, records = _detached_worker_case(
+        tmp_path, profile=profile, test_filter=PYTEST_FILTER,
+        parent_env=HOSTILE_PYTEST_ENV, child_stdout="1 passed in 0.01s",
+    )
+    executed = records["executed"]
+    assert executed["pytest_addopts"] is None
+    assert executed["pytest_plugins"] is None
+    assert executed["pytest_disable_autoload"] == "1"
+    assert records["result"]["status"] == "PASS"
+
+
+def test_non_pytest_profiles_keep_the_inherited_environment(tmp_path):
+    # Scope pin: the sanitising applies only to the profiles that run pytest.
+    _, _, _, _, records = _detached_worker_case(tmp_path, profile="compile", parent_env=HOSTILE_PYTEST_ENV)
+    executed = records["executed"]
+    assert executed["pytest_addopts"] == "--co"
+    assert executed["pytest_plugins"] == "protocol_fake_plugin"
+    assert executed["pytest_disable_autoload"] == "0"
+    assert records["result"]["status"] == "PASS"
+
+
+@pytest.mark.parametrize("stdout,exit_code,status,failure_code,result_exit", [
+    # Everything skipped: pytest exits 0, the runner must not call it a PASS.
+    ("3 skipped in 0.01s", 0, "FAIL", "E_NO_TESTS_PASSED", 1),
+    # Summary missing entirely (collection-only output, crash after the tests, ...).
+    (None, 0, "FAIL", "E_NO_TESTS_PASSED", 1),
+    ("2 passed, 1 skipped in 0.01s", 0, "PASS", None, 0),
+    ("2 passed in 0.01s", 0, "PASS", None, 0),
+    ("=== 2 passed, 1 warning in 1.20s (0:00:01) ===", 0, "PASS", None, 0),
+    (COLOUR_SUMMARY, 0, "PASS", None, 0),
+    # Non-zero exits keep the historical mapping, whatever the summary says.
+    ("1 failed, 2 passed in 0.01s", 1, "FAIL", "E_COMMAND_FAILED", 1),
+    ("2 passed in 0.01s", 5, "FAIL", "E_COMMAND_FAILED", 5),
+])
+def test_pytest_subset_pass_requires_exit_zero_and_at_least_one_passed(
+    tmp_path, stdout, exit_code, status, failure_code, result_exit,
+):
+    _, run, _, _, records = _detached_worker_case(
+        tmp_path, profile="pytest-subset", test_filter=PYTEST_FILTER,
+        child_stdout=stdout, child_exit=exit_code,
+    )
+    result = records["result"]
+    assert (result["status"], result["exit_code"], result["failure_code"]) == (status, result_exit, failure_code)
+    marker = (run / "complete.marker").read_text(encoding="utf-8-sig")
+    assert f"status={status}" in marker
+    assert f"exit_code={result_exit}" in marker
+    # The decision comes from the persisted log, not from a recorded exit alone.
+    assert "harmless argv capture; no Gradle" in (run / "stdout.log").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("stdout,status,failure_code", [
+    ("3 skipped in 0.01s", "FAIL", "E_NO_TESTS_PASSED"),
+    ("2 passed, 1 skipped in 0.01s", "PASS", None),
+])
+def test_runner_protocol_tests_profile_applies_the_same_zero_pass_rule(tmp_path, stdout, status, failure_code):
+    _, _, _, _, records = _detached_worker_case(
+        tmp_path, profile="runner-protocol-tests", child_stdout=stdout,
+    )
+    result = records["result"]
+    assert (result["status"], result["failure_code"]) == (status, failure_code)
+
+
+def test_zero_pass_rule_is_not_applied_to_profiles_without_a_pytest_summary(tmp_path):
+    # static-guards stdout is the guard suite's, not a pytest summary line.
+    _, _, _, _, records = _detached_worker_case(
+        tmp_path, profile="static-guards", child_stdout="3 skipped in 0.01s",
+    )
+    result = records["result"]
+    assert (result["status"], result["exit_code"], result["failure_code"]) == ("PASS", 0, None)
+
+
+def test_pytest_summary_parser_reads_only_the_final_summary_line(tmp_path):
+    padding = b"filler line\n" * 20000  # > 64 KiB, so only the tail may be read
+    cases = {
+        "q-form": (b"..\n2 passed in 0.01s\n", 2),
+        "decorated": (b"=========== 3 passed, 1 skipped in 0.12s ===========\n", 3),
+        "skipped-only": (b"3 skipped in 0.01s\n", 0),
+        "deselected-only": (b"1 deselected in 0.01s\n", 0),
+        "no-tests-ran": (b"no tests ran in 0.01s\n", 0),
+        "xpassed-is-not-passed": (b"1 xpassed in 0.01s\n", 0),
+        "subtests-are-not-tests": (b"4 subtests passed in 0.01s\n", 0),
+        "passed-plus-subtests": (b"1 passed, 4 subtests passed in 0.01s\n", 1),
+        "warnings": (b"12 passed, 1 warning in 3.40s\n", 12),
+        "time-suffix": (b"1 passed in 61.00s (0:01:01)\n", 1),
+        "crlf": (b"1 passed in 0.01s\r\n", 1),
+        "no-final-newline": (b"1 passed in 0.01s", 1),
+        "colour": (COLOUR_SUMMARY.replace(r"\x1b", "\x1b").encode("ascii"), 2),
+        # Realistic -q layout: the stats line comes AFTER the durations and -rs blocks.
+        "durations-then-short-summary-then-stats": (
+            b"..s\n"
+            b"============================ slowest 3 durations ============================\n"
+            b"0.02s call     scripts/x.py::test_a\n"
+            b"0.01s setup    scripts/x.py::test_b\n"
+            b"0.01s teardown scripts/x.py::test_b\n"
+            b"=========================== short test summary info ===========================\n"
+            b"SKIPPED [1] scripts/x.py:3: reason\n"
+            b"2 passed, 1 skipped in 0.05s\n",
+            2,
+        ),
+        "invalid-utf8-before": (b"\xff\xfe\n1 passed in 0.01s\n", 1),
+        "tail-of-large-log": (padding + b"7 passed in 9.00s\n", 7),
+        "trailing-blank-lines": (b"1 passed in 0.01s\n\n  \n", 1),
+        "noise-after-summary": (b"5 passed in 0.10s\nINTERNALERROR\n", 0),
+        "prefixed-spoof": (b"foo 5 passed in 0.10s\n", 0),
+        "suffixed-spoof": (b"5 passed in 0.10s extra\n", 0),
+        "uppercase": (b"5 PASSED in 0.10s\n", 0),
+        "summary-in-earlier-output": (b"5 passed in 0.10s\nsomething else\n", 0),
+        "failed-only": (b"1 failed in 0.01s\n", 0),
+        "no-summary": (b"collected 3 items\n", 0),
+        "empty": (b"", 0),
+    }
+    logs = {}
+    for name, (content, _) in cases.items():
+        path = tmp_path / f"{name}.log"
+        path.write_bytes(content)
+        logs[name] = str(path)
+    logs["missing"] = str(tmp_path / "does-not-exist.log")
+    cases["missing"] = (b"", 0)
+    source = _functions("Get-PytestPassedCount") + f"""
+$logs = {_ps_json(logs)}
+$counts = [ordered]@{{}}
+foreach ($property in $logs.PSObject.Properties) {{
+    $counts[$property.Name] = [int](Get-PytestPassedCount -Path $property.Value)
+}}
+$counts | ConvertTo-Json
+"""
+    counts = _powershell_json(tmp_path, source, timeout=60)
+    assert counts == {name: expected for name, (_, expected) in cases.items()}
+
+
+def test_pytest_config_search_above_the_repo_root_is_detected(tmp_path):
+    layouts = {
+        "pytest-ini-empty": ("pytest.ini", "", True),
+        "dot-pytest-ini": (".pytest.ini", "", True),
+        "pytest-toml": ("pytest.toml", "", True),
+        "tox-with-pytest-section": ("tox.ini", "[pytest]\naddopts = --co\n", True),
+        "tox-without-pytest-section": ("tox.ini", "[tox]\nenvlist = py\n", False),
+        "setup-cfg-with-section": ("setup.cfg", "[tool:pytest]\naddopts = -x\n", True),
+        "setup-cfg-without-section": ("setup.cfg", "[metadata]\nname = x\n", False),
+        "pyproject-ini-options": ("pyproject.toml", "[tool.pytest.ini_options]\naddopts = '--co'\n", True),
+        "pyproject-tool-pytest": ("pyproject.toml", "[tool.pytest]\naddopts = ['--co']\n", True),
+        "pyproject-other-tool": ("pyproject.toml", "[tool.black]\nline-length = 1\n", False),
+        "pyproject-commented-section": ("pyproject.toml", "# [tool.pytest.ini_options]\n", False),
+        "no-config": (None, None, False),
+    }
+    cases = {}
+    for name, (filename, content, _) in layouts.items():
+        outer = tmp_path / name / "outer"
+        root = outer / "repo"
+        root.mkdir(parents=True)
+        if filename:
+            (outer / filename).write_text(content, encoding="utf-8")
+        cases[name] = str(root)
+    # A config in the repository root itself is repo-owned, not outside configuration.
+    own_root = tmp_path / "repo-owned" / "outer" / "repo"
+    own_root.mkdir(parents=True)
+    (own_root / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+    cases["repo-owned-config"] = str(own_root)
+    # A config two levels above the repository root is found too.
+    grandparent_root = tmp_path / "grandparent" / "mid" / "repo"
+    grandparent_root.mkdir(parents=True)
+    (tmp_path / "grandparent" / "pytest.ini").write_text("", encoding="utf-8")
+    cases["grandparent-config"] = str(grandparent_root)
+    # An unreadable candidate (tox.ini is a directory) fails closed.
+    unreadable_root = tmp_path / "unreadable" / "outer" / "repo"
+    unreadable_root.mkdir(parents=True)
+    (tmp_path / "unreadable" / "outer" / "tox.ini").mkdir()
+    cases["unreadable-candidate"] = str(unreadable_root)
+    source = _functions("Test-PytestConfigOutsideRepo") + f"""
+$stop = {_ps_quote(tmp_path)}
+$roots = {_ps_json(cases)}
+$found = [ordered]@{{}}
+foreach ($property in $roots.PSObject.Properties) {{
+    $found[$property.Name] = [bool](Test-PytestConfigOutsideRepo -Root $property.Value -StopAt $stop)
+}}
+$found | ConvertTo-Json
+"""
+    expected = {name: outcome for name, (_, _, outcome) in layouts.items()}
+    expected.update({"repo-owned-config": False, "grandparent-config": True, "unreadable-candidate": True})
+    assert _powershell_json(tmp_path, source, timeout=60) == expected
+
+
+@pytest.mark.parametrize("profile", ["pytest-subset", "static-guards"])
+def test_worker_refuses_to_launch_pytest_under_an_outside_config(tmp_path, profile):
+    _, run, _, _, records = _detached_worker_case(
+        tmp_path, profile=profile, test_filter=PYTEST_FILTER, real_config_scan=True,
+        parent_files={"pytest.ini": "[pytest]\naddopts = --co\n"},
+        child_stdout="1 passed in 0.01s",
+    )
+    result = records["result"]
+    assert (result["status"], result["exit_code"], result["failure_code"]) == (
+        "INFRA_FAILURE", 2, "E_PYTEST_CONFIG_OUTSIDE_REPO",
+    )
+    assert result["child_pid"] is None
+    assert records["executed"] is None
+    assert "status=INFRA_FAILURE" in (run / "complete.marker").read_text(encoding="utf-8-sig")
+
+
+def test_outside_pytest_config_does_not_block_non_pytest_profiles(tmp_path):
+    _, _, _, _, records = _detached_worker_case(
+        tmp_path, profile="compile", real_config_scan=True,
+        parent_files={"pytest.ini": "[pytest]\n"},
+    )
+    assert records["result"]["status"] == "PASS"
+    assert records["executed"] is not None
 
 
 def test_start_validates_inputs_before_claiming_the_lock():

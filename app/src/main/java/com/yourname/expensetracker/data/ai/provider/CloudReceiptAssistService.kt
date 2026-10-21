@@ -12,6 +12,7 @@ import com.yourname.expensetracker.domain.privacy.CloudPayloadPolicy
 import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
 import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
 import com.yourname.expensetracker.data.ai.provider.internal.CloudRetryPolicy
+import com.yourname.expensetracker.data.ai.provider.internal.SystemRetryDelay
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistInput
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistSuggestion
 import com.yourname.expensetracker.domain.ai.model.SuggestedValue
@@ -41,28 +42,44 @@ import javax.net.ssl.SSLException
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 
 @Singleton
 // PRIV-441-01: Now uses CloudPayloadPolicy for all payload preparation — no direct redactBeforeCloud access
-class CloudReceiptAssistService @Inject constructor(
+class CloudReceiptAssistService @VisibleForTesting internal constructor(
     private val aiSettingsRepository: AiSettingsRepository,
     private val secureKeyStorage: SecureKeyStorage,
-    @CloudAiHttpClient private val client: OkHttpClient,
+    private val client: OkHttpClient,
     private val privacyGate: PrivacyGate,
     private val cloudPayloadPolicy: CloudPayloadPolicy,
-    // P8F-03: cloud-call provenance audit. Hilt resolves this from the PrivacyModule
-    // binding; the default keeps @VisibleForTesting/secondary constructors fail-closed.
-    private val auditLogger: PrivacyAuditLogger = PrivacyAuditLogger.NO_OP,
-    // G-TIME-01: reference clock for AI-output validation. Hilt injects the bound
-    // TimeProvider; the default keeps the @VisibleForTesting secondary constructor
-    // compiling unchanged.
-    private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider =
-        com.yourname.expensetracker.domain.util.SystemTimeProvider()
+    private val auditLogger: PrivacyAuditLogger,
+    private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider,
+    // B4-K2: retry-delay seam; production delegates to coroutine delay(), tests record it.
+    private val retryDelay: suspend (Long) -> Unit
 ) : ReceiptAssistService {
+
+    // Hilt-visible constructor (unchanged dependency signature).
+    @Inject
+    constructor(
+        aiSettingsRepository: AiSettingsRepository,
+        secureKeyStorage: SecureKeyStorage,
+        @CloudAiHttpClient client: OkHttpClient,
+        privacyGate: PrivacyGate,
+        cloudPayloadPolicy: CloudPayloadPolicy,
+        // P8F-03: cloud-call provenance audit. Hilt resolves this from the PrivacyModule
+        // binding; the default keeps @VisibleForTesting/secondary constructors fail-closed.
+        auditLogger: PrivacyAuditLogger = PrivacyAuditLogger.NO_OP,
+        // G-TIME-01: reference clock for AI-output validation. Hilt injects the bound
+        // TimeProvider; the default keeps the @VisibleForTesting secondary constructor
+        // compiling unchanged.
+        timeProvider: com.yourname.expensetracker.domain.util.TimeProvider =
+            com.yourname.expensetracker.domain.util.SystemTimeProvider()
+    ) : this(
+        aiSettingsRepository, secureKeyStorage, client, privacyGate, cloudPayloadPolicy,
+        auditLogger, timeProvider, SystemRetryDelay
+    )
 
     private var apiKeyOverride: String? = null
 
@@ -246,7 +263,7 @@ class CloudReceiptAssistService @Inject constructor(
                 }
 
                 if (attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
-                    delay(CloudRetryPolicy.backoffDelayMs(attempt))
+                    retryDelay(CloudRetryPolicy.backoffDelayMs(attempt))
                 }
             }
 
@@ -399,7 +416,7 @@ class CloudReceiptAssistService @Inject constructor(
                 }
 
                 if (attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
-                    delay(CloudRetryPolicy.backoffDelayMs(attempt))
+                    retryDelay(CloudRetryPolicy.backoffDelayMs(attempt))
                 }
             }
 

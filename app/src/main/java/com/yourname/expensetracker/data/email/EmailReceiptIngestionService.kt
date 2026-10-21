@@ -114,7 +114,6 @@ class EmailReceiptIngestionService @Inject constructor(
                 sourceType = "email",
                 metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
                     .putHashed("messageId", messageId)
-                    .putHashed("sender", sender)
                     .build()
             ))
         } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e }

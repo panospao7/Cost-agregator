@@ -786,6 +786,54 @@ class ReceiptLifecycleCoordinatorTest {
             inputSlot.captured.ephemeralParsedItems)
     }
 
+    // isOcrFailure marker: the repository tags OCR-failed drafts with the literal
+    // "[OCR Failed or Skipped]" (legacy "Scan Failed:" prefix also honoured). The
+    // coordinator must persist OCR_FAILED for them even if parsed fields look valid,
+    // and must not fingerprint the marker text. Normal OCR text is the control.
+    private suspend fun savedStatusAndFingerprintCalls(
+        rawOcrText: String,
+        expectedFingerprintCalls: Int
+    ): String {
+        val uri = mockk<Uri>(relaxed = true)
+        coEvery { inputValidator.validate(uri) } returns scanValidationResult()
+        coEvery { receiptRepository.processReceipt(uri, false, "image/jpeg") } returns
+            ReceiptRepository.ProcessReceiptResult(
+                receipt = scanDraftReceipt().copy(rawOcrText = rawOcrText),
+                parsed = parsedScanReceipt()
+            )
+        coEvery { duplicateDetector.checkDuplicate(any(), any(), any(), any()) } returns ReceiptDuplicateDetector.DuplicateResult(
+            isDuplicate = false, confidence = 0.0f, existingReceiptId = null, reason = null, matchType = "NONE"
+        )
+        val insertedSlot = slot<ScannedReceipt>()
+        coEvery { receiptInsertResolver.insertOrResolve(capture(insertedSlot)) } returns ReceiptInsertResult.Inserted(1L)
+        coEvery { receiptSideEffectPlanner.planAfterReceiptSaved(any<ReceiptSideEffectInput>(), any(), any()) } returns nonEmptyBatch()
+        coEvery { postCommitActionRunner.run(any()) } returns mockk(relaxed = true)
+
+        val outcome = coordinator.processReceiptInput(uri).getOrThrow()
+
+        assertTrue("Expected inserted=true, got $outcome", outcome.inserted)
+        verify(exactly = expectedFingerprintCalls) { duplicateDetector.computeTextFingerprintPublic(any()) }
+        return insertedSlot.captured.processingStatus
+    }
+
+    @Test
+    fun `processReceiptInput isOcrFailure marker text is persisted as OCR_FAILED without text fingerprint`() = runTest {
+        val status = savedStatusAndFingerprintCalls("[OCR Failed or Skipped]", expectedFingerprintCalls = 0)
+        assertEquals("OCR_FAILED", status)
+    }
+
+    @Test
+    fun `processReceiptInput isOcrFailure Scan Failed prefix is persisted as OCR_FAILED without text fingerprint`() = runTest {
+        val status = savedStatusAndFingerprintCalls("Scan Failed: engine error", expectedFingerprintCalls = 0)
+        assertEquals("OCR_FAILED", status)
+    }
+
+    @Test
+    fun `processReceiptInput isOcrFailure normal OCR text is not OCR_FAILED and is fingerprinted`() = runTest {
+        val status = savedStatusAndFingerprintCalls("Test Shop\nTotal 25.00", expectedFingerprintCalls = 1)
+        assertEquals("PARSED", status)
+    }
+
     // RP-12 12b (P3-007) conditional remainder: the email path parses its
     // ephemeral parser-format items JSON into the in-memory projection for a
     // fresh insert under a restricted storage mode.
@@ -1322,7 +1370,7 @@ class ReceiptLifecycleCoordinatorTest {
     fun `deleteReceipt_asset_delete_failure_writes_ASSET_DELETE_FAILED_audit_event`() = runTest {
         val receipt = deletedReceiptFixture()
         coEvery { scannedReceiptDao.getById(1L) } returns receipt
-        val assetFailureMessage = "x".repeat(600)
+        val assetFailureMessage = "secret-789 /data/user/0/x/files/receipt_2024.jpg"
         every { assetStore.deleteAsset(any()) } throws RuntimeException(assetFailureMessage)
 
         val eventSlot2 = slot<ReceiptEvent>()
@@ -1337,8 +1385,9 @@ class ReceiptLifecycleCoordinatorTest {
         assertNull(auditEvent.newStatus)
         assertEquals("system:coordinator", auditEvent.actor)
         assertEquals("Failed to delete asset file: [REDACTED]", auditEvent.message)
-        // take(500) truncation contract for the bounded error-details field.
-        assertEquals("x".repeat(500), auditEvent.errorDetails)
+        // Only the exception class name is stored; the message (secret text, file path) never is.
+        assertEquals("RuntimeException", auditEvent.errorDetails)
+        assertFalse(auditEvent.toString().contains("secret-789"))
         assertEquals(now, auditEvent.occurredAt)
         // The GR-14b direct-owner canonical barrier check.
         coVerify(exactly = 1) { writeBarrier.checkWritesAllowed("ReceiptLifecycleCoordinator.writeAssetDeleteFailedEvent") }

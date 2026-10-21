@@ -12,7 +12,10 @@ import com.yourname.expensetracker.R
 fun NotificationPermissionDialog(
     showDialog: Boolean,
     onDismiss: () -> Unit,
-    onEnable: () -> Unit
+    onEnable: () -> Unit,
+    // R24b: when the system will no longer show its dialog, the button opens app notification
+    // settings (handled by the caller's onEnable) and is labelled accordingly.
+    openSettings: Boolean = false
 ) {
     if (showDialog) {
         AlertDialog(
@@ -22,11 +25,16 @@ fun NotificationPermissionDialog(
             confirmButton = {
                 TextButton(onClick = {
                     onDismiss()
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    if (openSettings || Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                         onEnable()
                     }
                 }) {
-                    Text(stringResource(R.string.notification_enable_button))
+                    Text(
+                        stringResource(
+                            if (openSettings) R.string.notification_open_settings_button
+                            else R.string.notification_enable_button
+                        )
+                    )
                 }
             },
             dismissButton = {

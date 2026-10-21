@@ -1960,23 +1960,6 @@ entries:
   receiver: null
   parameterTypes:
   - Long
-  daoAccessor: transactionEventDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08e1 EXACT_POLICY: BULK_DELETED TransactionEvent audit write (expenseId
-    null, provider-derived occurredAt, bounded metadata) before the bulk mutation,
-    inside the deleteAllNotifications transaction; accessor normalized to the injected
-    transactionEventDao constructor property by the GR-08e source change (was database-chained)'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08E
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
-  kind: function
-  method: deleteAllNotifications
-  receiver: null
-  parameterTypes:
-  - Long
   daoAccessor: userCorrectionDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.UserCorrectionDao
   operation: deleteAll
@@ -2654,35 +2637,6 @@ entries:
   - Double?
   - String?
   - String?
-  daoAccessor: transactionEventDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08d EXACT_POLICY: SOURCE_LINKED provenance event for pending-review
-    source-link promotion, written only when promotion inserted links, inside the
-    approval transaction'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08D
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.ReviewQueueRepository
-  kind: function
-  method: approveReview
-  receiver: null
-  parameterTypes:
-  - Long
-  - Double?
-  - String?
-  - String?
-  - Long?
-  - Long?
-  - com.yourname.expensetracker.data.database.entity.TransactionType?
-  - com.yourname.expensetracker.data.database.entity.TransferDirection?
-  - String?
-  - Boolean
-  - Double?
-  - Double?
-  - String?
-  - String?
   daoAccessor: userCorrectionDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.UserCorrectionDao
   operation: insert
@@ -3233,7 +3187,7 @@ entries:
   operation: insert
   barrierMode: helper
   reason: 'GR-08e2 EXACT_POLICY: WARRANTY_CREATED provenance event after the insert,
-    inside the addWarranty transaction (cancellation-safe best-effort write); accessor
+    inside the addWarranty transaction (fail-closed in-transaction write, R29); accessor
     normalized to the injected warrantyLifecycleEventDao constructor property by the
     GR-08e source change (was database-chained)'
   owner: '@panospao7'
@@ -3267,7 +3221,7 @@ entries:
   barrierMode: helper
   reason: 'GR-08e2 EXACT_POLICY: WARRANTY_CREATED provenance event written only when
     the conflict-safe insert actually inserted a row, inside the addWarrantyIgnoreConflicts
-    transaction (cancellation-safe best-effort write); accessor normalized to the
+    transaction (fail-closed in-transaction write, R29); accessor normalized to the
     injected warrantyLifecycleEventDao constructor property by the GR-08e source change
     (was database-chained)'
   owner: '@panospao7'
@@ -3330,7 +3284,7 @@ entries:
   operation: insert
   barrierMode: helper
   reason: 'GR-08e2 EXACT_POLICY: CLAIMED provenance event after the status update,
-    inside the markWarrantyAsClaimed transaction (cancellation-safe best-effort write);
+    inside the markWarrantyAsClaimed transaction (fail-closed in-transaction write, R29);
     accessor normalized to the injected warrantyLifecycleEventDao constructor property
     by the GR-08e source change (was database-chained)'
   owner: '@panospao7'
@@ -3424,7 +3378,7 @@ entries:
   operation: insert
   barrierMode: helper
   reason: 'GR-08e2 EXACT_POLICY: AI_EXTRACTION_DISCARDED provenance event inside the
-    S12-009 atomic-reject transaction (cancellation-safe best-effort write); accessor
+    S12-009 atomic-reject transaction (fail-closed in-transaction write, R29); accessor
     normalized to the injected warrantyLifecycleEventDao constructor property by the
     GR-08e source change (was database-chained)'
   owner: '@panospao7'
@@ -3609,11 +3563,12 @@ entries:
   - com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
   daoAccessor: notificationIntakeDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.NotificationIntakeDao
-  operation: purgeRawPayload
+  operation: purgeAllPayload
   barrierMode: helper
   reason: 'GR-08k1 EXACT_POLICY: notification_intake retention target nulls the captured
-    raw payload (title/text/bigText/subText/extrasJson) on unpurged intake rows past
-    the notification cutoff (P8F-01, batched loop)'
+    raw payload (title/text/bigText/subText/extrasJson) and the encrypted transient
+    payload (ciphertext/nonce/version) on intake rows past the notification cutoff
+    (P8F-01, R28, batched loop)'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08K
 - path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
@@ -5399,6 +5354,20 @@ entries:
 - path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
   ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
   kind: function
+  method: collapseStaleDueDeliveries
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: reminderDeliveryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao
+  operation: cancelOpenDueDeliveriesByIds
+  barrierMode: helper
+  reason: 'R21 S1 EXACT_POLICY: stale due-reminder collapse -- cancels superseded windows and expired overdue-occurrence deliveries (SCHEDULED/SNOOZED/FAILED_TRANSIENT only, never CLAIMED) with controlled reason codes in one runWrite+transaction so a long-offline device does not fire a notification storm'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08C
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+  kind: function
   method: dismissReminderDelivery
   receiver: null
   parameterTypes:
@@ -5430,10 +5399,12 @@ entries:
 - path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
   ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
   kind: function
-  method: linkExpenseToOccurrence
+  method: claimLinkSuppressInWrite
   receiver: null
   parameterTypes:
   - Long
+  - String
+  - () -> Long?
   daoAccessor: occurrenceDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
   operation: claimForExpense
@@ -5445,10 +5416,12 @@ entries:
 - path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
   ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
   kind: function
-  method: linkExpenseToOccurrence
+  method: claimLinkSuppressInWrite
   receiver: null
   parameterTypes:
   - Long
+  - String
+  - () -> Long?
   daoAccessor: plannedExpenseDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.PlannedExpenseDao
   operation: linkToActualExpense
@@ -5460,10 +5433,12 @@ entries:
 - path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
   ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
   kind: function
-  method: linkExpenseToOccurrence
+  method: claimLinkSuppressInWrite
   receiver: null
   parameterTypes:
   - Long
+  - String
+  - () -> Long?
   daoAccessor: reminderDeliveryDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao
   operation: suppressOpenDeliveriesForOccurrence
@@ -5781,6 +5756,38 @@ entries:
   reason: 'GR-08c1 EXACT_POLICY: typed SKIPPED/CANCELLED/MISSED status transition
     validated by RecurringOccurrenceTransitionPolicy, inside the status transaction
     (MIT-043)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08C
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+  kind: function
+  method: updateOccurrenceStatus
+  receiver: null
+  parameterTypes:
+  - Long
+  - com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceStatus
+  - com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceTransitionReason
+  daoAccessor: plannedExpenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PlannedExpenseDao
+  operation: updateStatus
+  barrierMode: helper
+  reason: 'R21 review EXACT_POLICY: SKIPPED ("already recorded") occurrence cancels its still-PLANNED planned_expenses projection (status CANCELLED) inside the same status transaction so no open planned row remains'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08C
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+  kind: function
+  method: updateOccurrenceStatus
+  receiver: null
+  parameterTypes:
+  - Long
+  - com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceStatus
+  - com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceTransitionReason
+  daoAccessor: reminderDeliveryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao
+  operation: suppressOpenDeliveriesForOccurrence
+  barrierMode: helper
+  reason: 'R21 review EXACT_POLICY: SKIPPED ("already recorded") occurrence suppresses its open/snoozed/claimed/transient reminder deliveries inside the same status transaction (reason occurrence_skipped) so no reminder fires for an already-recorded bill'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08C
 - path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleEventWriter.kt
@@ -7314,6 +7321,7 @@ entries:
   method: deliverReminder
   receiver: null
   parameterTypes:
+  - com.yourname.expensetracker.domain.workers.WorkerRunContext
   - com.yourname.expensetracker.data.database.entity.Warranty
   - Int
   - Long
@@ -7335,6 +7343,7 @@ entries:
   method: deliverReminder
   receiver: null
   parameterTypes:
+  - com.yourname.expensetracker.domain.workers.WorkerRunContext
   - com.yourname.expensetracker.data.database.entity.Warranty
   - Int
   - Long
@@ -7355,6 +7364,7 @@ entries:
   method: deliverReminder
   receiver: null
   parameterTypes:
+  - com.yourname.expensetracker.domain.workers.WorkerRunContext
   - com.yourname.expensetracker.data.database.entity.Warranty
   - Int
   - Long
@@ -7373,6 +7383,7 @@ entries:
   method: deliverReminder
   receiver: null
   parameterTypes:
+  - com.yourname.expensetracker.domain.workers.WorkerRunContext
   - com.yourname.expensetracker.data.database.entity.Warranty
   - Int
   - Long
@@ -7391,6 +7402,7 @@ entries:
   method: deliverReminder
   receiver: null
   parameterTypes:
+  - com.yourname.expensetracker.domain.workers.WorkerRunContext
   - com.yourname.expensetracker.data.database.entity.Warranty
   - Int
   - Long
@@ -7583,7 +7595,7 @@ entries:
   parameterTypes:
   - Long
   - Long
-  - com.yourname.expensetracker.domain.workers.WorkerRunContext?
+  - com.yourname.expensetracker.domain.workers.WorkerRunContext
   daoAccessor: intakeDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.NotificationIntakeDao
   operation: purgeAllPayload

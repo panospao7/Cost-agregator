@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.privacy
 
+import androidx.annotation.VisibleForTesting
 import java.io.File
 import java.io.FileInputStream
 import java.io.InputStream
@@ -32,9 +33,24 @@ import javax.inject.Singleton
  *
  * ## Input format (for [decrypt])
  * Must be exactly as produced by [encrypt].
+ *
+ * @constructor Internal primary constructor: test-only seam for a low PBKDF2 [iterations]
+ * count. Production code must use the [Inject]/no-arg constructor (always [ITERATION_COUNT]).
+ * The iteration count is never read from ciphertext, so decrypt always uses this instance's
+ * count.
  */
 @Singleton
-class BackupEncryptionService @Inject constructor() {
+class BackupEncryptionService @VisibleForTesting internal constructor(private val iterations: Int) {
+
+    /** Production constructor: always uses [ITERATION_COUNT]. */
+    @Inject
+    constructor() : this(ITERATION_COUNT)
+
+    init {
+        require(iterations > 0) { "iterations must be positive" }
+    }
+
+    internal val iterationCount: Int get() = iterations
 
     private val secureRandom = SecureRandom()
 
@@ -153,6 +169,12 @@ class BackupEncryptionService @Inject constructor() {
         val salt = data.copyOfRange(offset, SALT_LENGTH_BYTES).also { offset += SALT_LENGTH_BYTES }
         val iv = data.copyOfRange(offset, offset + IV_LENGTH_BYTES).also { offset += IV_LENGTH_BYTES }
         val ciphertext = data.copyOfRange(offset, data.size)
+        // A GCM ciphertext always carries the full authentication tag. Shorter input is
+        // corrupt/truncated; reject it the same way regardless of JCA provider (SunJCE throws
+        // ProviderException(ShortBufferException) here, other providers AEADBadTagException).
+        if (ciphertext.size < GCM_TAG_LENGTH_BITS / 8) {
+            throw javax.crypto.AEADBadTagException("Encrypted data is truncated")
+        }
 
         val secretKey = deriveKey(password, salt)
         val cipher = Cipher.getInstance(CIPHER_TRANSFORMATION)
@@ -163,7 +185,7 @@ class BackupEncryptionService @Inject constructor() {
 
     private fun deriveKey(password: String, salt: ByteArray): SecretKey {
         val factory: SecretKeyFactory = SecretKeyFactory.getInstance(PBKDF2_ALGORITHM)
-        val spec: KeySpec = PBEKeySpec(password.toCharArray(), salt, ITERATION_COUNT, KEY_LENGTH_BITS)
+        val spec: KeySpec = PBEKeySpec(password.toCharArray(), salt, iterations, KEY_LENGTH_BITS)
         val rawKey = factory.generateSecret(spec).encoded
         return SecretKeySpec(rawKey, AES_ALGORITHM)
     }

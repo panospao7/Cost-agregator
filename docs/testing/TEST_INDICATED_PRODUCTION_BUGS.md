@@ -131,7 +131,9 @@ Recommended fix (cheap hardening for when a future caller appears): move
 The 2026-09-19 diagnosis menu overstates this as an active leak; treat as P2
 hardening.
 
-Related test note: `PrivacyCapabilityHandlingPolicyTest` and
+Related test note: `PrivacyCapabilityHandlingPolicyTest` (since removed; its
+checks live on in `PrivacyCapabilityHandlingPolicyProductionTest`, which asserts
+against the production policy) and
 `UPR5CompletionTest` were updated 2026-09-20 (test-side only) to reflect the
 resolver's actual, stricter contract.
 

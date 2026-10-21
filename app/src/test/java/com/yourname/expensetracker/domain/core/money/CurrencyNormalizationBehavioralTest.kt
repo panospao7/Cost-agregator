@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.domain.core.money
 
+import com.yourname.expensetracker.assertMoneyEquals
+import com.yourname.expensetracker.assertMoneyExact
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.DomainExchangeRate
@@ -46,7 +48,7 @@ class CurrencyNormalizationBehavioralTest {
         val outcome = converter.convertOutcome(100.0, "USD", "EUR", RateBasis.LATEST_AVAILABLE)
         assertTrue(outcome is ConversionOutcome.Converted)
         val converted = outcome as ConversionOutcome.Converted
-        assertEquals(0.92, converted.rateUsed, 0.001)
+        assertEquals(0.92, converted.rateUsed, 0.0)
     }
 
     @Test
@@ -62,19 +64,108 @@ class CurrencyNormalizationBehavioralTest {
     // --- convertOutcome historical basis requires date ---
 
     @Test
-    fun `convertOutcome transaction date without atMillis fails`() = runTest {
+    fun `convertOutcome historical basis without atMillis fails and never falls back to latest`() = runTest {
+        // A latest rate exists; a historical basis without a date must still fail.
         store.rates["USD_EUR"] = DomainExchangeRate("USD", "EUR", 0.92, lastUpdated = NOW, source = "api", validDate = NOW)
+        val bases = listOf(
+            RateBasis.TRANSACTION_DATE,
+            RateBasis.PERIOD_START,
+            RateBasis.PERIOD_END,
+            RateBasis.FORECAST_DATE
+        )
+        assertEquals("row count", 4, bases.size)
 
-        val outcome = converter.convertOutcome(100.0, "USD", "EUR", RateBasis.TRANSACTION_DATE, atMillis = null)
-        assertTrue("Should fail without date", outcome is ConversionOutcome.Failed)
+        bases.forEach { basis ->
+            val outcome = converter.convertOutcome(100.0, "USD", "EUR", basis, atMillis = null)
+
+            assertTrue("$basis: should fail without date but was $outcome", outcome is ConversionOutcome.Failed)
+            assertEquals(
+                "$basis: failure type",
+                ConversionFailureType.MISSING_HISTORICAL_RATE,
+                (outcome as ConversionOutcome.Failed).failureType
+            )
+        }
+    }
+
+    // --- Moved from domain.currency.CurrencyNormalizationBehavioralTest (B6-6) ---
+
+    @Test
+    fun `latest rate prefers fresh manual rate over historical backfill`() = runTest {
+        // Historical backfill inserted today with yesterday's validDate.
+        store.rates["USD_EUR_backfill"] = DomainExchangeRate(
+            "USD", "EUR", 0.85, lastUpdated = NOW, source = "backfill", validDate = NOW - DAY_MS
+        )
+
+        // Fresh manual rate stored through a converter whose clock is 3h into the day, so the
+        // stored validDate (start of today, UTC == NOW) is distinguishable from the clock time.
+        val midDayConverter = CurrencyConverter(store, FakeTimeProvider(NOW + 3 * 3_600_000L))
+        midDayConverter.storeRate("USD", "EUR", 0.92, "manual")
+
+        val latest = store.getLatestRateForPair("USD", "EUR")
+        assertNotNull(latest)
+        assertEquals(0.92, latest!!.rate, 0.0)
+        assertEquals("manual", latest.source)
+        assertEquals(NOW, latest.validDate)
+        assertEquals(NOW + 3 * 3_600_000L, latest.lastUpdated)
     }
 
     @Test
-    fun `convertOutcome period end without atMillis fails`() = runTest {
-        store.rates["USD_EUR"] = DomainExchangeRate("USD", "EUR", 0.92, lastUpdated = NOW, source = "api", validDate = NOW)
+    fun `historical conversion uses as-of validDate not lastUpdated`() = runTest {
+        // Rate valid two days ago (midnight), inserted today.
+        val validTwoDaysAgo = NOW - 2 * DAY_MS
+        store.rates["USD_EUR"] = DomainExchangeRate(
+            "USD", "EUR", 0.88, lastUpdated = NOW, source = "api", validDate = validTwoDaysAgo
+        )
 
-        val outcome = converter.convertOutcome(100.0, "USD", "EUR", RateBasis.PERIOD_END, atMillis = null)
-        assertTrue("Should fail without date", outcome is ConversionOutcome.Failed)
+        // As-of lookup three hours into that day finds it.
+        val found = converter.convertAsOf(100.0, "USD", "EUR", validTwoDaysAgo + 3 * 3_600_000L)
+        assertNotNull(found)
+        assertEquals(0.88, found!!.rateUsed, 0.0)
+        assertMoneyEquals(88.0, found.convertedAmount, "as-of converted")
+
+        // As-of lookup before the rate's validDate must not find it, despite lastUpdated = today.
+        assertNull(converter.convertAsOf(100.0, "USD", "EUR", validTwoDaysAgo - 1L))
+    }
+
+    @Test
+    fun `empty aggregate preserves explicit rateBasis`() {
+        val aggregate = MoneyAggregate.empty(CurrencyCode("EUR"), RateBasis.PERIOD_END)
+
+        assertEquals(RateBasis.PERIOD_END, aggregate.rateBasis)
+        assertEquals(RateBasis.PERIOD_END, aggregate.requestedRateBasis)
+    }
+
+    @Test
+    fun `single currency identity does not default to latest`() {
+        val aggregate = MoneyAggregate.singleCurrency(
+            amount = 100.0,
+            currency = CurrencyCode("EUR"),
+            transactionCount = 1,
+            rateBasis = RateBasis.TRANSACTION_DATE
+        )
+
+        assertEquals(RateBasis.TRANSACTION_DATE, aggregate.rateBasis)
+        assertEquals(RateBasis.IDENTITY, aggregate.actualRateBasis)
+    }
+
+    @Test
+    fun `aggregate metadata counts missing and excluded rows`() = runTest {
+        // Only a USD->EUR rate is available; GBP has none; EUR is identity.
+        store.rates["USD_EUR"] = DomainExchangeRate("USD", "EUR", 0.90, lastUpdated = NOW, source = "api", validDate = NOW)
+        val engine = MoneyNormalizationEngine(converter)
+        val expenses = listOf(
+            fakeExpense(1, 100.0, "USD", NOW),
+            fakeExpense(2, 50.0, "GBP", NOW), // no rate
+            fakeExpense(3, 75.0, "EUR", NOW)
+        )
+
+        val aggregate = engine.aggregateExpenses(expenses, CurrencyCode.EUR, RateBasis.TRANSACTION_DATE)
+
+        assertTrue(aggregate.isPartial)
+        assertEquals(2, aggregate.metadata.includedTransactionCount)
+        assertEquals(1, aggregate.metadata.excludedTransactionCount)
+        assertEquals(1, aggregate.metadata.missingRateCount)
+        assertMoneyEquals(165.0, aggregate.displayAmount, "USD 100*0.90 + EUR 75")
     }
 
     @Test
@@ -117,7 +208,7 @@ class CurrencyNormalizationBehavioralTest {
 
         assertTrue(aggregate.isPartial)
         assertEquals(1, aggregate.conversionFailures.size)
-        assertEquals(92.0, aggregate.displayAmount, 0.01) // Only USD converted
+        assertMoneyEquals(92.0, aggregate.displayAmount, "only USD converted")
         assertEquals(RateBasis.LATEST_AVAILABLE, aggregate.rateBasis)
         assertEquals(2, aggregate.totalTransactionCount)
         assertEquals(1, aggregate.failedTransactionCount)
@@ -134,7 +225,8 @@ class CurrencyNormalizationBehavioralTest {
         val aggregate = engine.aggregateExpenses(expenses, CurrencyCode.EUR, RateBasis.TRANSACTION_DATE)
 
         assertEquals(RateBasis.TRANSACTION_DATE, aggregate.rateBasis)
-        assertEquals(90.0, aggregate.displayAmount, 0.01)
+        assertEquals(RateBasis.TRANSACTION_DATE, aggregate.requestedRateBasis)
+        assertMoneyEquals(90.0, aggregate.displayAmount, "USD 100 * 0.90")
     }
 
     @Test
@@ -150,13 +242,13 @@ class CurrencyNormalizationBehavioralTest {
 
         val aggregate = engine.aggregateExpenses(expenses, CurrencyCode.EUR, RateBasis.LATEST_AVAILABLE)
 
-        assertEquals(30.0, aggregate.displayAmount, 0.0)
+        assertMoneyExact(30.0, aggregate.displayAmount, "displayAmount")
         assertEquals(5, aggregate.totalTransactionCount)
         assertEquals(3, aggregate.failedTransactionCount)
         assertEquals(2, aggregate.metadata.includedTransactionCount)
         assertEquals(3, aggregate.metadata.excludedTransactionCount)
-        assertEquals(30.0, aggregate.sourceBuckets.single { it.currency == CurrencyCode.EUR }.amount, 0.0)
-        assertEquals(120.0, aggregate.sourceBuckets.single { it.currency == CurrencyCode("GBP") }.amount, 0.0)
+        assertMoneyExact(30.0, aggregate.sourceBuckets.single { it.currency == CurrencyCode.EUR }.amount, "EUR bucket")
+        assertMoneyExact(120.0, aggregate.sourceBuckets.single { it.currency == CurrencyCode("GBP") }.amount, "GBP bucket")
     }
 
     @Test
@@ -183,10 +275,10 @@ class CurrencyNormalizationBehavioralTest {
 
         val aggregate = engine.aggregateExpenses(expenses, CurrencyCode.EUR, RateBasis.LATEST_AVAILABLE)
 
-        assertEquals(40.0, aggregate.displayAmount, 0.0)
-        assertEquals(40.0, aggregate.sourceBuckets.single { it.currency == CurrencyCode.EUR }.amount, 0.0)
-        assertEquals(30.0, aggregate.sourceBuckets.single { it.currency == CurrencyCode("GBP") }.amount, 0.0)
-        assertEquals(30.0, aggregate.conversionFailures.single().originalAmount.amount, 0.0)
+        assertMoneyExact(40.0, aggregate.displayAmount, "displayAmount")
+        assertMoneyExact(40.0, aggregate.sourceBuckets.single { it.currency == CurrencyCode.EUR }.amount, "EUR bucket")
+        assertMoneyExact(30.0, aggregate.sourceBuckets.single { it.currency == CurrencyCode("GBP") }.amount, "GBP bucket")
+        assertMoneyExact(30.0, aggregate.conversionFailures.single().originalAmount.amount, "failed original amount")
     }
 
     @Test
@@ -207,7 +299,7 @@ class CurrencyNormalizationBehavioralTest {
             RateBasis.LATEST_AVAILABLE
         )
 
-        assertEquals(0.0, aggregate.displayAmount, 0.0)
+        assertMoneyExact(0.0, aggregate.displayAmount, "displayAmount")
         assertEquals(1, aggregate.totalTransactionCount)
         assertEquals(1, aggregate.sourceBuckets.single().transactionCount)
         assertEquals(FailureReason.RATE_STALE, aggregate.conversionFailures.single().reason)
@@ -229,7 +321,7 @@ class CurrencyNormalizationBehavioralTest {
             TransactionTypeFilter.PURCHASE_ONLY
         )
 
-        assertEquals(10.0, aggregate.displayAmount, 0.0)
+        assertMoneyExact(10.0, aggregate.displayAmount, "displayAmount")
         assertEquals(1, aggregate.totalTransactionCount)
         assertEquals(1, aggregate.sourceBuckets.single().transactionCount)
     }
@@ -263,7 +355,7 @@ class CurrencyNormalizationBehavioralTest {
         assertTrue(aggregate.isPartial)
         // USD should convert; two invalid currencies should be excluded
         assertEquals(2, aggregate.conversionFailures.size)
-        assertEquals(92.0, aggregate.displayAmount, 0.01)
+        assertMoneyEquals(92.0, aggregate.displayAmount, "only USD converted")
         assertEquals(
             2,
             aggregate.conversionFailures.count { it.reason == FailureReason.INVALID_CURRENCY }
@@ -284,7 +376,7 @@ class CurrencyNormalizationBehavioralTest {
 
         assertTrue(aggregate.isPartial)
         assertEquals(ConversionQuality.UNAVAILABLE, aggregate.conversionQuality)
-        assertEquals(0.0, aggregate.displayAmount, 0.0)
+        assertMoneyExact(0.0, aggregate.displayAmount, "displayAmount")
         assertEquals(2, aggregate.conversionFailures.size)
         assertEquals(2, aggregate.totalTransactionCount)
         assertEquals(2, aggregate.sourceBuckets.single().transactionCount)
@@ -303,7 +395,7 @@ class CurrencyNormalizationBehavioralTest {
         val aggregate = engine.aggregateBuckets(buckets, CurrencyCode.EUR, RateBasis.TRANSACTION_DATE, BucketDatePolicy.RequireBucketDate)
 
         assertTrue(aggregate.isPartial)
-        assertEquals(0.0, aggregate.displayAmount, 0.0)
+        assertMoneyExact(0.0, aggregate.displayAmount, "displayAmount")
         assertEquals(1, aggregate.conversionFailures.size)
         assertEquals(1, aggregate.sourceBuckets.size)
         assertEquals(5, aggregate.totalTransactionCount)

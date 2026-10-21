@@ -15,6 +15,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
+import com.yourname.expensetracker.ui.components.asString
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
@@ -31,8 +33,18 @@ fun SplitTemplatesScreen(
 ) {
     val templates by viewModel.templates.collectAsState()
     var showDeleteDialog by remember { mutableStateOf<SplitTemplate?>(null) }
-    
+
+    // R18b: bounded "changes paused during backup/restore" message for user-started writes.
+    val snackbarHostState = remember { SnackbarHostState() }
+    val context = LocalContext.current
+    LaunchedEffect(viewModel) {
+        viewModel.writeBlockedMessages.collect { message ->
+            snackbarHostState.showSnackbar(message.asString(context))
+        }
+    }
+
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.screen_split_templates)) },

@@ -13,32 +13,22 @@ import com.yourname.expensetracker.data.database.dao.NegotiationOutcomeDao
 import com.yourname.expensetracker.data.security.BankTokenCipher
 
 /**
- * ## RSP-R2A: Migration path for v1–v5 (pre-migration-chain)
- * Users upgrading from a database created by the very first app releases
- * (schema versions 1 through 5) will encounter a gap: the current migration
- * chain starts at version 6 (the lowest schema for which we export Room JSON
- * schemas and provide a [Migration] object).
+ * ## Supported schema range (no destructive fallback)
+ * The app opens ONLY databases whose schema version is within
+ * [DatabaseSchemaPolicy.MIGRATION_BASELINE] (v145) through
+ * [APP_DATABASE_SCHEMA_VERSION] (v151); the registered migrations in
+ * [DatabaseSchemaPolicy.ALL_MIGRATIONS] carry data forward within that range.
  *
- * ### What happens on v1–v5 databases
- * Room's [fallbackToDestructiveMigration] will DROP all tables and recreate
- * them from scratch, losing all user data. This is the **only** automated
- * path for pre-v6 databases because:
- * - No Room `@Database(version = N)` annotation ever existed for v1–v5 in the
- *   current codebase — those schemas were from the very first prototype builds.
- * - We do not export or test JSON schema files for versions 1–5 (they predate
- *   `exportSchema = true`).
- * - Creating individual [Migration] objects for 1→6, 2→6, etc. would require
- *   reverse-engineering the table shapes from ancient git history.
+ * ### Older, newer, or unreadable databases
+ * A database below v145, above v151, or unreadable is REFUSED by
+ * `DatabaseOpenGate` before Room opens it. There is no destructive migration
+ * fallback: user data is never dropped or recreated. The
+ * `UnsupportedDatabaseActivity` explains the state and offers an export of the
+ * untouched file (user-started SAF export only).
  *
- * ### Recommendation
- * Users on v1–v5 should be directed to export their data before upgrading,
- * then perform a fresh install. Alternatively, a [LegacyDatabaseImporter]
- * (see RSP-R5A) can be used to import data from a legacy `.db` file into
- * the current schema after a destructive migration.
- *
- * The test [DatabaseMigrationTest.fallback_to_destructive_migration_works]
- * specifically validates that a v5 database is correctly handled by
- * [fallbackToDestructiveMigration].
+ * ### Backups
+ * Backups whose schema is below v145 or above v151 are rejected before any
+ * swap with BACKUP_SCHEMA_UNSUPPORTED_LEGACY / BACKUP_SCHEMA_UNSUPPORTED_NEWER.
  */
 const val APP_DATABASE_SCHEMA_VERSION = 151
 

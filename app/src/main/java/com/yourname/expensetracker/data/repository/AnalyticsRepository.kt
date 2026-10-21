@@ -8,6 +8,7 @@ import com.yourname.expensetracker.domain.analytics.AnalyticsConversionWarningTy
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.analytics.AnalyticsNormalizationResult
 import com.yourname.expensetracker.domain.analytics.DataQualityReport
+import com.yourname.expensetracker.domain.analytics.PeriodComparisonWindows
 import com.yourname.expensetracker.domain.core.money.ConversionFailure
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.FailureReason
@@ -82,9 +83,10 @@ class AnalyticsRepository @Inject constructor(
      * AnalyticsCurrencyNormalizer for daily-history granularity.
      */
     fun getSpendingSummary(start: Long, end: Long): Flow<SpendingSummary> {
-        val daysInPeriod = TimePeriodUtils.daysBetween(start, end).coerceAtLeast(1)
-        val previousStart = TimePeriodUtils.addDays(start, -daysInPeriod)
-        val previousEnd = start
+        // F-R20b-a: calendar-month ranges compare against the previous calendar month.
+        val previousWindow = PeriodComparisonWindows.previousWindowForRange(start, end)
+        val previousStart = previousWindow.startInclusive
+        val previousEnd = previousWindow.endExclusive
 
         return flow {
             val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }.getOrElse { throw IllegalStateException("Home currency unavailable: ${it.message}") }

@@ -2,6 +2,8 @@
 
 > **Historical record** — this ledger is a frozen test-stabilization log, not current-state authority. as-of: the Pipeline 5–12 stabilization era (the ledger records short SHA `43ca2228`); scope: those measured runs only; it is not evidence for current HEAD. Current state authority: docs/ci/GUARD_EVIDENCE_INDEX.yml and docs/ci/GUARD_STATUS.generated.md.
 
+> Note (B3-2 test cleanup): `data.store.ExpenseStoreTest` cited by F-09 and F-14 below was deleted in Batch B3-2 (delegation-only mock tests of `ExpenseReadStore`); the references are retained as historical record only.
+
 > HEAD: `43ca2228` (Pipeline 11 + accumulated 5–12)
 > Method: real `:app:testDebugUnitTest` runs, batched by package. Numbers below are MEASURED, not estimated.
 

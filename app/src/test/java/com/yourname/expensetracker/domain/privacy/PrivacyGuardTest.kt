@@ -14,7 +14,10 @@ import java.io.File
  * privacy_guard_fails_on_messageId_hashCode
  * privacy_guard_fails_on_allow_all_privacy_gate_in_main
  * no_hashCode_in_RawContentSanitizer
- * ExportPrivacyPolicy_has_no_encrypted_disabled_implies_raw_path
+ *
+ * The invariant "encryptedBackupEnabled=false never implies a raw export path" is proven
+ * behaviourally by ExportPrivacyPolicyTest.encrypted_disabled_does_not_allow_rawbackup_export
+ * (not by a source scan in this class).
  */
 class PrivacyGuardTest {
 
@@ -31,8 +34,12 @@ class PrivacyGuardTest {
     private val mainSrcRoot = File(projectRoot, "app/src/main/java/com/yourname/expensetracker")
 
     private fun allKtFiles(dir: File): List<File> {
-        if (!dir.exists()) return emptyList()
-        return dir.walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
+        // Fail loudly: a missing scan root must never degrade into "no violations found".
+        assertTrue("${dir.path} must exist — static privacy guard cannot scan", dir.exists())
+        val files = dir.walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
+        // An existing but empty/mis-rooted scan directory must not degrade into "no violations found".
+        assertTrue("${dir.path} must contain at least one .kt file — static privacy guard scanned nothing", files.isNotEmpty())
+        return files
     }
 
     /**
@@ -92,7 +99,7 @@ class PrivacyGuardTest {
     @Test
     fun no_hashCode_in_RawContentSanitizer() {
         val sanitizer = File(mainSrcRoot, "domain/privacy/RawContentSanitizer.kt")
-        if (!sanitizer.exists()) return
+        assertTrue("${sanitizer.path} must exist — G5 guard cannot run", sanitizer.exists())
         val content = sanitizer.readText()
         val hashCodeLines = content.lines()
             .mapIndexed { i, line -> i + 1 to line }
@@ -111,7 +118,7 @@ class PrivacyGuardTest {
 
     @Test
     fun privacy_guard_fails_on_allow_all_privacy_gate_in_main() {
-        if (!mainSrcRoot.exists()) return  // not available in test env
+        assertTrue("G4: mainSrcRoot not found: $mainSrcRoot — guard cannot run", mainSrcRoot.exists())
         val violations = mutableListOf<String>()
         val allowAllPattern = Regex("object\\s*:\\s*PrivacyGate")
         allKtFiles(mainSrcRoot).forEach { file ->
@@ -267,7 +274,7 @@ class PrivacyGuardTest {
 
     @Test
     fun privacy_guard_fails_on_messageId_hashCode() {
-        if (!mainSrcRoot.exists()) return
+        assertTrue("G5: mainSrcRoot not found: $mainSrcRoot — guard cannot run", mainSrcRoot.exists())
         val violations = mutableListOf<String>()
         val pattern = Regex("(messageId|providerTransactionId|transactionId.*accountId).*\\.hashCode\\(\\)|\\.hashCode\\(\\).*messageId")
         allKtFiles(mainSrcRoot).forEach { file ->
@@ -285,49 +292,14 @@ class PrivacyGuardTest {
         }
     }
 
-    // ── G8: encryptedBackupEnabled=false must NOT allow raw export ─────────────
+    // G8 (encryptedBackupEnabled=false must NOT allow raw export) was removed: its String.contains()
+    // "regex" could never match (vacuous). The rule is proven behaviourally by
+    // ExportPrivacyPolicyTest.encrypted_disabled_does_not_allow_rawbackup_export.
 
-    @Test
-    fun ExportPrivacyPolicy_encrypted_disabled_does_not_allow_raw_export() {
-        // Contract test: verify ExportPrivacyGate's logic
-        // (structural test — the actual gate logic is tested in ExportPrivacyPolicyTest)
-        val gateFile = File(mainSrcRoot, "domain/privacy/ExportPrivacyGate.kt")
-        if (!gateFile.exists()) return
-
-        val content = gateFile.readText()
-        // The gate must NOT have a path that returns Allowed for RAWBACKUP_EXPORT
-        // when encryptedBackupEnabled is false
-        assertFalse(
-            "G8: ExportPrivacyGate must not allow RAWBACKUP_EXPORT when encrypted backup is disabled",
-            content.contains("encryptedBackupEnabled.*Allowed.*raw", ignoreCase = true)
-        )
-    }
-
-    // ── New guard types are defined in PrivacyCapability ─────────────────────
-
-    @Test
-    fun export_guard_capabilities_defined() {
-        val defined = setOf(
-            "EXPENSE_EXPORT", "EXPENSE_EXPORT_RAW", "EXPENSE_EXPORT_REDACTED",
-            "EXPENSE_EXPORT_ENCRYPTED", "DEBUG_RAW_EXPORT", "RAW_DATABASE_EXPORT"
-        )
-        val actual = PrivacyCapability.values().map { it.name }.toSet()
-        val missing = defined - actual
-        assertTrue(
-            "Missing export PrivacyCapability values: $missing",
-            missing.isEmpty()
-        )
-    }
-
-    // ── Cloud purposes include bank statement ─────────────────────────────────
-
-    @Test
-    fun cloud_purpose_bank_statement_validation_defined() {
-        val names = CloudPayloadPurpose.values().map { it.name }
-        assertTrue(names.contains("BANK_STATEMENT_VALIDATION"))
-        assertTrue(names.contains("BANK_TRANSACTION_CLASSIFICATION"))
-        assertTrue(names.contains("EXPORT_SUMMARY"))
-    }
+    // Enum-exists checks for the export PrivacyCapability values and the bank/export
+    // CloudPayloadPurpose values were removed (tautologies): they are asserted in
+    // ExportPrivacyPolicyTest (export capabilities), PrivacyCapabilityHandlingPolicyProductionTest
+    // (EXPENSE_EXPORT) and CloudPayloadPolicyTest (cloud purposes).
 
     // ── SafePrivacyMetadata blocks sensitive keys ─────────────────────────────
 
@@ -363,21 +335,39 @@ class PrivacyGuardTest {
     // ── Fail-closed defaults cover all sensitive features ─────────────────────
 
     @Test
-    fun fail_closed_defaults_disable_all_network_features() {
+    fun fail_closed_defaults_are_all_off_and_do_not_store() {
         val defaults = PrivacySettings.FAIL_CLOSED_DEFAULTS
-        assertFalse(defaults.cloudAiEnabled)
-        assertFalse(defaults.receiptImageCloudEnabled)
-        assertFalse(defaults.bankStatementAiEnabled)
-        assertFalse(defaults.externalGeocodingEnabled)
-        assertFalse(defaults.backgroundLocationBackfillEnabled)
-        assertFalse(defaults.deviceGpsLocationEnabled)
-    }
-
-    @Test
-    fun fail_closed_defaults_set_all_raw_modes_to_do_not_store() {
-        val defaults = PrivacySettings.FAIL_CLOSED_DEFAULTS
-        assertEquals(RawStorageMode.DO_NOT_STORE, defaults.rawNotificationStorageMode)
-        assertEquals(RawStorageMode.DO_NOT_STORE, defaults.rawOcrStorageMode)
-        assertEquals(RawStorageMode.DO_NOT_STORE, defaults.emailReceiptStorageMode)
+        // Fail-closed means a corrupted store must not keep notification capture on
+        // (the plain PrivacySettings() default is ON, so this differs on purpose).
+        assertFalse("FAIL_CLOSED_DEFAULTS must disable notification capture", defaults.notificationCaptureEnabled)
+        assertFalse("FAIL_CLOSED_DEFAULTS must disable cloud AI", defaults.cloudAiEnabled)
+        assertFalse("FAIL_CLOSED_DEFAULTS must disable receipt image cloud upload", defaults.receiptImageCloudEnabled)
+        assertFalse("FAIL_CLOSED_DEFAULTS must disable bank statement AI", defaults.bankStatementAiEnabled)
+        assertFalse("FAIL_CLOSED_DEFAULTS must disable external geocoding", defaults.externalGeocodingEnabled)
+        assertFalse(
+            "FAIL_CLOSED_DEFAULTS must disable background location backfill",
+            defaults.backgroundLocationBackfillEnabled
+        )
+        assertFalse("FAIL_CLOSED_DEFAULTS must disable device GPS location", defaults.deviceGpsLocationEnabled)
+        assertEquals(
+            "FAIL_CLOSED_DEFAULTS must not store raw notifications",
+            RawStorageMode.DO_NOT_STORE,
+            defaults.rawNotificationStorageMode
+        )
+        assertEquals(
+            "FAIL_CLOSED_DEFAULTS must not store raw OCR",
+            RawStorageMode.DO_NOT_STORE,
+            defaults.rawOcrStorageMode
+        )
+        assertEquals(
+            "FAIL_CLOSED_DEFAULTS must not store email receipts",
+            RawStorageMode.DO_NOT_STORE,
+            defaults.emailReceiptStorageMode
+        )
+        assertEquals(
+            "FAIL_CLOSED_DEFAULTS must not store raw bank statements",
+            RawStorageMode.DO_NOT_STORE,
+            defaults.rawBankStatementStorageMode
+        )
     }
 }

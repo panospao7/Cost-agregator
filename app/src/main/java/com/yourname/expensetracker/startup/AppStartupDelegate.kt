@@ -15,6 +15,14 @@ object AppStartupDelegate {
         ).appStartupCoordinator()
         coordinator.initialize(application)
     }
+
+    /** R25 D-M2: journal crash-recovery stage only (see [AppStartupCoordinator.recoverRestoreJournalOnly]). */
+    fun recoverRestoreJournalOnly(application: Application) {
+        EntryPointAccessors.fromApplication(
+            application,
+            AppStartupEntryPoint::class.java
+        ).appStartupCoordinator().recoverRestoreJournalOnly()
+    }
 }
 
 @EntryPoint

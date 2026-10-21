@@ -52,6 +52,17 @@ On crash during restore, startup:
 4. If any check fails → `CRITICAL_RECOVERY_REQUIRED`
 5. If all pass → delete journal → reset to `NORMAL`
 
+### Cancellation after the destructive swap (HZ-03 F1, restore only)
+
+A `.costbackup` restore cancelled after the live DB swap (journal in `SWAPPING`, `VERIFYING` or
+`ASSETS_RESTORING`) is treated like a process crash, not as `CRITICAL_RECOVERY_REQUIRED`. The
+cancellation cleanup exits to `RESTORE_COMPLETE_RESTART_REQUIRED` (writes stay blocked, the UI asks
+for a restart), deletes only the staged DB trio and keeps the active journal, the safety backup,
+`.pre_restore` and the extraction workspace. The next start runs the normal journal recovery
+(`SWAPPING`/`VERIFYING` roll back from the safety backup; `ASSETS_RESTORING` resumes assets). If the
+cleanup itself fails, `RESTORE_CANCELLED_CLEANUP_FAILED` latches `CRITICAL_RECOVERY_REQUIRED`.
+Reset and legacy import keep their existing post-destructive cancellation behaviour.
+
 ### Cross-restart fail-closed (P7-CURRENT-003)
 
 If the safety-backup copy itself cannot complete (missing/unreadable backup, copy error),
@@ -91,21 +102,22 @@ and writes remain blocked until manual recovery clears the mode. By contrast,
 
 `RestoreJournal` writes journal/event temp files via an fsync'd write (`FileOutputStream.fd.sync()`) before the atomic rename, so a crash immediately after rename cannot leave a transition or safety-backup path unflushed.
 
-## Restart-required banner is user-dismissible (P7-P1-08)
+## Restart after a successful restore (R27-S3, supersedes P7-P1-08)
 
-After a successful restore the mode is `RESTORE_COMPLETE_RESTART_REQUIRED` and writes are
-blocked. The user can dismiss the restart-required banner via
-`BackupRestoreViewModel.dismissRestartRequired()`, which:
+After a successful restore the mode is `RESTORE_COMPLETE_RESTART_REQUIRED` and writes stay
+blocked until the process restarts; there is no in-process dismiss path
+(`dismissRestartRequired` was removed). The restored database is only trusted by a fresh
+process.
 
-1. Clears the screen-local `restartRequired` flag.
-2. Calls `RestoreMaintenanceMode.exit(forceRestartRequired = false)`, transitioning to
-   `NORMAL` mode — this unblocks writes, reschedules background workers, and transitions
-   `operationalStateFlow` to `AppOperationalState.Normal`, which dismisses the full-screen
-   app-shell lock in `MainActivity`.
-
-The restored database is already in place on disk, so keeping writes blocked after the
-restore is overly conservative and creates a poor UX (user forced to restart). The dismiss
-action is the intended recovery path — the user can immediately resume using the app.
+- **Automatic relaunch (in-process only).** `BackupRestoreViewModel` marks the in-memory,
+  non-persisted `RestoreRestartSignal` when the restore result is
+  `DatabaseImportResult.SuccessNeedsRestart`. `MainActivity` renders the global
+  restart-required lock screen (`AppOperationalState.RestartRequiredAfterRestore`) and, if the
+  signal is set, calls `restartApp(context)` from a `LaunchedEffect`. This does not depend on
+  `BackupRestoreScreen` still being composed.
+- **Manual relaunch.** The lock screen's "Restart Now" button always calls `restartApp(context)`.
+- **No restart loop.** A persisted restart-required state read at cold start never
+  auto-restarts: the signal is process-scoped and starts `false` in every new process.
 
 ## Diagnostics ledger import (P7-CURRENT-016)
 
@@ -136,3 +148,18 @@ Raw `exportDatabase()` produces a legacy `.db`/`.enc` artifact (no `.costbackup`
 and is release-disabled at runtime. A static guard (`BackupRestoreArchitectureGuardTest`) asserts
 no production UI references it — the debug screen (`ui/screens/debug/**`) is the single intended
 caller. Production restore/backup must use `restoreCostBackup()` / `createCostBackup()`.
+
+## Known limitations (1.0)
+
+- **Check-only writers are not drained.** About 60 classes (budgets, categories, savings,
+  groups, importers, and similar) still call the non-counting
+  `DatabaseWriteBarrier.checkWritesAllowed(...)` instead of `runWrite(...)`. They are not awaited
+  by `awaitNoInFlightWrites`, so a backup/restore entering maintenance does not wait for them.
+  These are user-initiated, short, single-transaction writes; the R25 open-gate (writes blocked
+  once a non-`NORMAL` mode is entered) is the second safeguard.
+- **Bank statement import overlapping backup/restore.** A bank statement receipt can remain in
+  `PARSED` status if an import overlaps a backup/restore. The import run row is moved to
+  `STALE_FAILED` by stale-run recovery after 15 minutes.
+- **Startup maintenance entries have no write drain.** `AppStartupCoordinator` maintenance
+  entries do not await in-flight writes; they run at startup, before user-initiated writes can
+  begin.

@@ -97,13 +97,13 @@ class RestoreMaintenanceMode @Inject constructor(
         CRITICAL_RECOVERY_REQUIRED("critical_recovery_required")
     }
 
-    private data class PersistedState(
+    internal data class PersistedState(
         val rawMode: Mode,
         val resumePending: Boolean,
         val effectiveMode: Mode
     )
 
-    private data class ReadResult(
+    internal data class ReadResult(
         val state: PersistedState? = null,
         val failureReason: String? = null
     )
@@ -549,76 +549,26 @@ class RestoreMaintenanceMode @Inject constructor(
     }
 
     private fun readPersistedStateLocked(): ReadResult {
-        when (criticalSentinelExists()) {
-            true -> return ReadResult(
-                PersistedState(
-                    rawMode = Mode.CRITICAL_RECOVERY_REQUIRED,
-                    resumePending = false,
-                    effectiveMode = Mode.CRITICAL_RECOVERY_REQUIRED
-                )
-            )
-            null -> return ReadResult(failureReason = MODE_READ_FAILURE)
-            false -> Unit
-        }
-
-        val preferences = prefs ?: return ReadResult(failureReason = MODE_PREFERENCES_UNAVAILABLE)
-        return try {
-            // SharedPreferences getters are individually thread-safe, but a sequence of
-            // contains/get calls is not a coherent snapshot. Decode one copied map so a
-            // concurrent pending-marker removal cannot be mistaken for corrupt state.
-            val snapshot = preferences.all.toMap()
-            val hasMode = snapshot.containsKey(KEY_MAINTENANCE_MODE)
-            val hasPending = snapshot.containsKey(KEY_WORKER_RESUME_PENDING)
-            val hasCriticalReason = snapshot.containsKey(KEY_CRITICAL_REASON)
-            val hasCriticalTimestamp = snapshot.containsKey(KEY_CRITICAL_TIMESTAMP)
-            val hasCriticalMetadata = hasCriticalReason || hasCriticalTimestamp
-
-            if (!hasMode) {
-                if (hasPending || hasCriticalMetadata) {
-                    ReadResult(failureReason = MODE_STATE_INVALID)
-                } else {
-                    ReadResult(PersistedState(Mode.NORMAL, resumePending = false, effectiveMode = Mode.NORMAL))
-                }
-            } else {
-                val storedName = snapshot[KEY_MAINTENANCE_MODE] as? String
-                    ?: return ReadResult(failureReason = MODE_STATE_INVALID)
-                if (storedName.isBlank()) return ReadResult(failureReason = MODE_STATE_INVALID)
-
-                val rawMode = try {
-                    Mode.valueOf(storedName)
-                } catch (_: IllegalArgumentException) {
-                    return ReadResult(failureReason = MODE_STATE_INVALID)
-                }
-
-                val resumePending = if (hasPending) {
-                    if (snapshot[KEY_WORKER_RESUME_PENDING] != true) {
-                        return ReadResult(failureReason = MODE_STATE_INVALID)
-                    }
-                    true
-                } else {
-                    false
-                }
-
-                when {
-                    rawMode == Mode.CRITICAL_RECOVERY_REQUIRED -> ReadResult(
-                        PersistedState(rawMode, resumePending, Mode.CRITICAL_RECOVERY_REQUIRED)
-                    )
-
-                    hasCriticalMetadata -> ReadResult(failureReason = MODE_STATE_INVALID)
-
-                    resumePending && rawMode == Mode.NORMAL -> ReadResult(
-                        PersistedState(rawMode, resumePending = true, Mode.RESTORE_COMPLETE_RESTART_REQUIRED)
-                    )
-
-                    resumePending -> ReadResult(failureReason = MODE_STATE_INVALID)
-                    else -> ReadResult(PersistedState(rawMode, resumePending = false, rawMode))
+        val sentinelExists = criticalSentinelExists()
+        // The preference snapshot is only read when the sentinel does not already decide
+        // the outcome (unchanged ordering: sentinel first, then preferences).
+        val snapshot: Map<String, *>? = if (sentinelExists == false) {
+            prefs?.let { preferences ->
+                try {
+                    // SharedPreferences getters are individually thread-safe, but a sequence of
+                    // contains/get calls is not a coherent snapshot. Decode one copied map so a
+                    // concurrent pending-marker removal cannot be mistaken for corrupt state.
+                    preferences.all.toMap()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    null
                 }
             }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {
-            ReadResult(failureReason = MODE_READ_FAILURE)
+        } else {
+            null
         }
+        return decodePersistedState(sentinelExists, snapshot, prefsAvailable = prefs != null)
     }
 
     private fun writeMode(mode: Mode, publish: Boolean = true) {
@@ -627,6 +577,10 @@ class RestoreMaintenanceMode @Inject constructor(
             persistenceHealthy = false
             throw PersistenceException()
         }
+
+        // R25/R27: the process-wide swap latch is raised BEFORE the RESTORE_SWAPPING commit so a
+        // gated DB open can never observe a window where the swap is under way but unrecorded.
+        if (mode == Mode.RESTORE_SWAPPING) swapLatched = true
 
         val committed = try {
             preferences.edit()
@@ -643,6 +597,9 @@ class RestoreMaintenanceMode @Inject constructor(
             throw PersistenceException()
         }
         persistenceHealthy = true
+        // Any other mode, once durably committed, supersedes the swap latch. A failed commit
+        // leaves the latch as-is (fail closed).
+        if (mode != Mode.RESTORE_SWAPPING) swapLatched = false
         if (publish) publishMode(mode)
     }
 
@@ -666,6 +623,7 @@ class RestoreMaintenanceMode @Inject constructor(
             persistenceHealthy = false
             throw PersistenceException()
         }
+        swapLatched = false
     }
 
     private fun clearResumePending() {
@@ -717,6 +675,7 @@ class RestoreMaintenanceMode @Inject constructor(
                 false
             }
         } ?: false
+        if (preferencesPersisted) swapLatched = false
         return preferencesPersisted
     }
 
@@ -796,13 +755,112 @@ class RestoreMaintenanceMode @Inject constructor(
     companion object {
         private val PERSISTED_STATE_LOCK = Any()
         private var workerPauseGeneration = 0L
-        private const val PREFS_NAME = "restore_maintenance_mode"
-        private const val KEY_MAINTENANCE_MODE = "current_mode"
-        private const val KEY_WORKER_RESUME_PENDING = "worker_resume_pending"
-        private const val KEY_CRITICAL_REASON = "critical_recovery_reason"
-        private const val KEY_CRITICAL_TIMESTAMP = "critical_recovery_timestamp"
-        private const val CRITICAL_SENTINEL_FILE = "restore_maintenance_critical"
+        internal const val PREFS_NAME = "restore_maintenance_mode"
+        internal const val KEY_MAINTENANCE_MODE = "current_mode"
+        internal const val KEY_WORKER_RESUME_PENDING = "worker_resume_pending"
+        internal const val KEY_CRITICAL_REASON = "critical_recovery_reason"
+        internal const val KEY_CRITICAL_TIMESTAMP = "critical_recovery_timestamp"
+        internal const val CRITICAL_SENTINEL_FILE = "restore_maintenance_critical"
         private val CRITICAL_SENTINEL_CONTENT = byteArrayOf(1)
+
+        /**
+         * Process-wide swap latch (R25/R27). Raised before the RESTORE_SWAPPING commit and cleared
+         * once any other mode is durably committed. Consulted by the gated open helper so a DB
+         * open is refused during a swap even if the persisted mode is unreadable.
+         */
+        @Volatile
+        private var swapLatched = false
+
+        internal fun isSwapLatched(): Boolean = swapLatched
+
+        /**
+         * Raises the process-wide swap latch without persisting a mode. Used by destructive
+         * live-file operations (rollback, reset) that do not pass through RESTORE_SWAPPING so the
+         * gated open helper refuses to reopen the live database mid-operation. Cleared by the next
+         * durable mode commit (exit to RESTART_REQUIRED or NORMAL); the persisted peek stays
+         * SWAPPING-only.
+         */
+        internal fun raiseSwapLatch() {
+            swapLatched = true
+        }
+
+        internal fun setSwapLatchForTests(value: Boolean) {
+            swapLatched = value
+        }
+
+        /**
+         * Pure decoder of the persisted maintenance state. [sentinelExists] is null when the
+         * critical sentinel could not be checked; [snapshot] is null when the preferences could
+         * not be read (or when [prefsAvailable] is false / the sentinel already decided).
+         */
+        internal fun decodePersistedState(
+            sentinelExists: Boolean?,
+            snapshot: Map<String, *>?,
+            prefsAvailable: Boolean
+        ): ReadResult {
+            when (sentinelExists) {
+                true -> return ReadResult(
+                    PersistedState(
+                        rawMode = Mode.CRITICAL_RECOVERY_REQUIRED,
+                        resumePending = false,
+                        effectiveMode = Mode.CRITICAL_RECOVERY_REQUIRED
+                    )
+                )
+                null -> return ReadResult(failureReason = MODE_READ_FAILURE)
+                false -> Unit
+            }
+
+            if (!prefsAvailable) return ReadResult(failureReason = MODE_PREFERENCES_UNAVAILABLE)
+            if (snapshot == null) return ReadResult(failureReason = MODE_READ_FAILURE)
+
+            val hasMode = snapshot.containsKey(KEY_MAINTENANCE_MODE)
+            val hasPending = snapshot.containsKey(KEY_WORKER_RESUME_PENDING)
+            val hasCriticalReason = snapshot.containsKey(KEY_CRITICAL_REASON)
+            val hasCriticalTimestamp = snapshot.containsKey(KEY_CRITICAL_TIMESTAMP)
+            val hasCriticalMetadata = hasCriticalReason || hasCriticalTimestamp
+
+            if (!hasMode) {
+                return if (hasPending || hasCriticalMetadata) {
+                    ReadResult(failureReason = MODE_STATE_INVALID)
+                } else {
+                    ReadResult(PersistedState(Mode.NORMAL, resumePending = false, effectiveMode = Mode.NORMAL))
+                }
+            }
+
+            val storedName = snapshot[KEY_MAINTENANCE_MODE] as? String
+                ?: return ReadResult(failureReason = MODE_STATE_INVALID)
+            if (storedName.isBlank()) return ReadResult(failureReason = MODE_STATE_INVALID)
+
+            val rawMode = try {
+                Mode.valueOf(storedName)
+            } catch (_: IllegalArgumentException) {
+                return ReadResult(failureReason = MODE_STATE_INVALID)
+            }
+
+            val resumePending = if (hasPending) {
+                if (snapshot[KEY_WORKER_RESUME_PENDING] != true) {
+                    return ReadResult(failureReason = MODE_STATE_INVALID)
+                }
+                true
+            } else {
+                false
+            }
+
+            return when {
+                rawMode == Mode.CRITICAL_RECOVERY_REQUIRED -> ReadResult(
+                    PersistedState(rawMode, resumePending, Mode.CRITICAL_RECOVERY_REQUIRED)
+                )
+
+                hasCriticalMetadata -> ReadResult(failureReason = MODE_STATE_INVALID)
+
+                resumePending && rawMode == Mode.NORMAL -> ReadResult(
+                    PersistedState(rawMode, resumePending = true, Mode.RESTORE_COMPLETE_RESTART_REQUIRED)
+                )
+
+                resumePending -> ReadResult(failureReason = MODE_STATE_INVALID)
+                else -> ReadResult(PersistedState(rawMode, resumePending = false, rawMode))
+            }
+        }
         private const val MODE_PERSISTENCE_FAILURE = "RESTORE_MAINTENANCE_MODE_PERSISTENCE_FAILED"
         private const val MODE_PREFERENCES_UNAVAILABLE = "RESTORE_MAINTENANCE_MODE_PREFERENCES_UNAVAILABLE"
         private const val MODE_READ_FAILURE = "RESTORE_MAINTENANCE_MODE_READ_FAILED"

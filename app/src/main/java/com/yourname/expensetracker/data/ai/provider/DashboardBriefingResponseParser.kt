@@ -28,7 +28,7 @@ internal object DashboardBriefingResponseParser {
                 }
             )
         } catch (e: Exception) {
-            Timber.w(e, "DashboardBriefingResponseParser: JSON parse failure")
+            Timber.w("DashboardBriefingResponseParser: PARSER_FAILED class=%s", e::class.java.simpleName)
             null
         }
     }

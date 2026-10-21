@@ -9,7 +9,8 @@ Covers the reviewed-seed-rows contract added for GR-08a:
 * seeded candidates merge deterministically and stay crosswalk-verifiable
   against the accounting artifact (``seedRecords``);
 * seedless accounting artifacts stay byte-identical (no ``seedRecords``);
-* the promotion gate's accounting key union includes seed keys;
+* the retired promotion gate's accounting key union (test-local copy) includes
+  seed keys;
 * NEAR-MISS protection: the GR-08a rows authorize EXACTLY their callable
   identity + DAO + operation -- wrong overload, wrong owner, wrong DAO, and
   wrong operation stay unauthorized (exact-match, no wildcards).
@@ -532,6 +533,7 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
 import yaml
 
 # ``policy_v2_candidate`` uses in-package relative imports, so everything
@@ -540,9 +542,6 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from scripts.ci.promote_db_policy_v2 import (  # noqa: E402
-    _collect_accounting_mutation_keys,
-)
 from scripts.db_guard.policy_model import (  # noqa: E402
     BarrierMode,
     CallableKind,
@@ -556,6 +555,7 @@ from scripts.db_guard.policy_v2_candidate import (  # noqa: E402
 )
 from scripts.db_guard.policy_v2_loader import build_policy_entry  # noqa: E402
 from scripts.migrate_db_policy_signatures import (  # noqa: E402
+    CliFailure,
     _candidate_document,
     _load_seed_entries,
     _reject_seed_duplicates,
@@ -939,7 +939,146 @@ def test_rendered_candidate_missing_seed_key_fails_pair_verification(tmp_path):
         )
 
 
-# ── (4) Promotion gate: accounting key union includes seed keys ──────────────
+# Malformed ``seedRecords`` section in the accounting payload.  Each factory
+# receives the payload's VALID seedRecords list and returns the malformed
+# replacement value.  The pair gate must fail closed with the bounded
+# "malformed output" message (not the "disagree" mismatch message, which is
+# what a silently skipped malformed entry would produce).
+_MALFORMED_SEED_RECORDS_MESSAGE = "generated candidate failed verification"
+
+_MALFORMED_SEED_RECORDS_CASES = [
+    # section is not a list
+    pytest.param(lambda valid: "not-a-list", id="section-string"),
+    pytest.param(lambda valid: {"key": "k"}, id="section-mapping"),
+    pytest.param(lambda valid: None, id="section-none"),
+    pytest.param(lambda valid: 7, id="section-int"),
+    pytest.param(lambda valid: ("a", "b"), id="section-tuple"),
+    # an element is not a mapping
+    pytest.param(lambda valid: ["not-a-mapping"], id="element-string"),
+    pytest.param(lambda valid: [None], id="element-none"),
+    pytest.param(lambda valid: [["key"]], id="element-list"),
+    pytest.param(
+        lambda valid: [valid[0], "not-a-mapping"], id="element-after-valid"
+    ),
+    # an element's ``key`` is absent / not a string / empty
+    pytest.param(lambda valid: [{}], id="key-missing"),
+    pytest.param(lambda valid: [{"key": None}], id="key-none"),
+    pytest.param(lambda valid: [{"key": 1}], id="key-int"),
+    pytest.param(lambda valid: [{"key": ["a"]}], id="key-list"),
+    pytest.param(lambda valid: [{"key": ""}], id="key-empty-string"),
+    pytest.param(
+        lambda valid: [valid[0], {"key": ""}], id="key-empty-after-valid"
+    ),
+]
+
+_EXPECTED_MALFORMED_SEED_RECORDS_CASE_COUNT = 15
+
+
+def test_malformed_seed_records_cases_table_size_guard():
+    assert len(_MALFORMED_SEED_RECORDS_CASES) == (
+        _EXPECTED_MALFORMED_SEED_RECORDS_CASE_COUNT
+    ), "malformed seedRecords case table size changed: %d != %d" % (
+        len(_MALFORMED_SEED_RECORDS_CASES),
+        _EXPECTED_MALFORMED_SEED_RECORDS_CASE_COUNT,
+    )
+    assert len({p.id for p in _MALFORMED_SEED_RECORDS_CASES}) == len(
+        _MALFORMED_SEED_RECORDS_CASES
+    ), "malformed seedRecords case ids must be unique"
+
+
+@pytest.mark.parametrize("malformed_factory", _MALFORMED_SEED_RECORDS_CASES)
+def test_malformed_seed_records_fail_pair_verification(
+    request, tmp_path, malformed_factory
+):
+    case_id = request.node.callspec.id
+    seed_entries = _load_seed_entries(
+        _write_seed_doc(tmp_path, _gr08a_seed_rows())
+    )
+    result = _legacy_result()
+    legacy_entry = result.resolved[0].entry
+    document = _candidate_document(result, seed_entries)
+    candidate_text = yaml.safe_dump(
+        document, sort_keys=False, allow_unicode=False
+    ).replace("\r\n", "\n")
+    artifact_payload = _accounting_for(
+        result, [legacy_entry], seed_entries=seed_entries
+    ).to_dict()
+    artifact_payload["candidateSha256"] = None
+    valid_seed_records = list(artifact_payload["seedRecords"])
+    assert len(valid_seed_records) == len(seed_entries), case_id
+    # Control: the unmodified pair verifies, so the failure below is caused
+    # solely by the malformed seedRecords value.
+    _verify_candidate_accounting_pair(candidate_text, artifact_payload)
+
+    artifact_payload["seedRecords"] = malformed_factory(valid_seed_records)
+    with pytest.raises(CliFailure) as excinfo:
+        _verify_candidate_accounting_pair(candidate_text, artifact_payload)
+    message = str(excinfo.value)
+    assert message == _MALFORMED_SEED_RECORDS_MESSAGE, (
+        "%s: expected malformed-output failure, got %r" % (case_id, message)
+    )
+
+
+# ── (4) Retired promotion gate (test-local copy): accounting key union includes seed keys ──
+
+# Test-local copy of the accounting-crosswalk logic from the retired promote CLI
+# (scripts/ci/promote_db_policy_v2.py, removed); kept so the union-of-seed-keys
+# behaviour stays pinned.
+CODE_ACCOUNTING_MALFORMED = "DB_PROMOTE_ACCOUNTING_MALFORMED"
+CODE_ACCOUNTING_INDEX_INCOMPLETE = "DB_PROMOTE_ACCOUNTING_INDEX_INCOMPLETE"
+
+
+def _collect_accounting_mutation_keys(document):
+    # Takes the parsed accounting document (a str-keyed mapping) and returns a
+    # 3-tuple: optional key set, optional input count, optional problem code.
+    """Validate accounting shape and collect ``(keys, input_count, problem)``.
+
+    ``problem`` is ``None`` on success, ``CODE_ACCOUNTING_MALFORMED`` for
+    any type/shape violation, or ``CODE_ACCOUNTING_INDEX_INCOMPLETE`` when
+    record indices are not exactly the complete set ``0 .. inputCount-1``
+    (missing, duplicate, or out-of-range indices).  ``keys`` is the union
+    of every record's ``mutationKeys`` strings plus, since GR-08a, every
+    reviewed seed row's ``key`` from the optional ``seedRecords`` section
+    (absent section -> no change; present-but-malformed -> malformed).
+    """
+    records = document.get("records")
+    if not isinstance(records, list):
+        return None, None, CODE_ACCOUNTING_MALFORMED
+    input_count = document.get("inputCount")
+    if isinstance(input_count, bool) or not isinstance(input_count, int):
+        return None, None, CODE_ACCOUNTING_MALFORMED
+    union = set()
+    seen_indices = set()
+    for record in records:
+        if not isinstance(record, dict):
+            return None, None, CODE_ACCOUNTING_MALFORMED
+        index = record.get("index")
+        if isinstance(index, bool) or not isinstance(index, int):
+            return None, None, CODE_ACCOUNTING_MALFORMED
+        if index < 0 or index >= input_count or index in seen_indices:
+            return None, None, CODE_ACCOUNTING_INDEX_INCOMPLETE
+        seen_indices.add(index)
+        keys = record.get("mutationKeys")
+        if not isinstance(keys, list):
+            return None, None, CODE_ACCOUNTING_MALFORMED
+        for key in keys:
+            if not isinstance(key, str):
+                return None, None, CODE_ACCOUNTING_MALFORMED
+            union.add(key)
+    if seen_indices != set(range(input_count)):
+        return None, None, CODE_ACCOUNTING_INDEX_INCOMPLETE
+    seed_records = document.get("seedRecords")
+    if seed_records is not None:
+        if not isinstance(seed_records, list):
+            return None, None, CODE_ACCOUNTING_MALFORMED
+        for seed_record in seed_records:
+            if not isinstance(seed_record, dict):
+                return None, None, CODE_ACCOUNTING_MALFORMED
+            seed_key = seed_record.get("key")
+            if not isinstance(seed_key, str) or not seed_key:
+                return None, None, CODE_ACCOUNTING_MALFORMED
+            union.add(seed_key)
+    return union, input_count, None
 
 
 def test_promotion_gate_unions_seed_record_keys():
@@ -995,89 +1134,6 @@ def _gr08a_policy_entries(tmp_path):
         )
         entries.append(entry)
     return entries
-
-
-def _assert_exact_match(tmp_path, **overrides):
-    """The exact GR-08a auto-accept identity matches; mutants never do."""
-    entries = _gr08a_policy_entries(tmp_path)
-    target = [
-        entry
-        for entry in entries
-        if entry.method == "handleAutoAcceptInTransaction"
-        and entry.dao_accessor == "dao"
-        and entry.operation == "markProcessed"
-    ][0]
-    kwargs = dict(
-        path=target.path,
-        owner_fqcn=target.owner_fqcn,
-        kind=target.kind,
-        method=target.method,
-        receiver=target.receiver,
-        parameter_types=target.parameter_types,
-        dao_accessor=target.dao_accessor,
-        dao_fqcn=target.dao_fqcn,
-        operation=target.operation,
-    )
-    kwargs.update(overrides)
-    return match_mutation(target, **kwargs)
-
-
-def test_exact_identity_matches(tmp_path):
-    assert _assert_exact_match(tmp_path) is True
-
-
-def test_near_miss_wrong_overload_stays_unauthorized(tmp_path):
-    entries = _gr08a_policy_entries(tmp_path)
-    target = entries[1]  # handleAutoAcceptInTransaction / dao / markProcessed
-    wrong_overload = target.parameter_types[:-1] + ("String?",)
-    assert (
-        match_mutation(
-            target,
-            path=target.path,
-            owner_fqcn=target.owner_fqcn,
-            kind=target.kind,
-            method=target.method,
-            receiver=target.receiver,
-            parameter_types=wrong_overload,
-            dao_accessor=target.dao_accessor,
-            dao_fqcn=target.dao_fqcn,
-            operation=target.operation,
-        )
-        is False
-    )
-
-
-def test_near_miss_wrong_owner_stays_unauthorized(tmp_path):
-    assert (
-        _assert_exact_match(tmp_path, owner_fqcn="com.example.OtherPipeline")
-        is False
-    )
-
-
-def test_near_miss_wrong_dao_stays_unauthorized(tmp_path):
-    assert (
-        _assert_exact_match(
-            tmp_path,
-            dao_accessor="sourceStatsDao",
-            dao_fqcn=(
-                "com.yourname.expensetracker.data.database.dao.SourceStatsDao"
-            ),
-        )
-        is False
-    )
-
-
-def test_near_miss_wrong_operation_stays_unauthorized(tmp_path):
-    assert _assert_exact_match(tmp_path, operation="markRelevance") is False
-
-
-def test_near_miss_wrong_path_stays_unauthorized(tmp_path):
-    assert (
-        _assert_exact_match(
-            tmp_path, path="app/src/main/java/com/example/Copy.kt"
-        )
-        is False
-    )
 
 
 def test_seed_record_from_entry_round_trips_key(tmp_path):
@@ -2092,63 +2148,6 @@ def _assert_gr08c_exact_match(tmp_path, rows, select_method, select_accessor,
     return match_mutation(target, **kwargs)
 
 
-def test_gr08c1_exact_identity_matches(tmp_path):
-    rows = _gr08c1_seed_rows()
-    assert (
-        _assert_gr08c_exact_match(
-            tmp_path, rows, "linkExpenseToOccurrence", "occurrenceDao",
-            "claimForExpense",
-        )
-        is True
-    )
-
-
-def test_gr08c1_near_miss_wrong_overload_stays_unauthorized(tmp_path):
-    rows = _gr08c1_seed_rows()
-    assert (
-        _assert_gr08c_exact_match(
-            tmp_path, rows, "linkExpenseToOccurrence", "occurrenceDao",
-            "claimForExpense", parameter_types=("Long", "Long"),
-        )
-        is False
-    )
-
-
-def test_gr08c1_near_miss_wrong_owner_stays_unauthorized(tmp_path):
-    rows = _gr08c1_seed_rows()
-    assert (
-        _assert_gr08c_exact_match(
-            tmp_path, rows, "linkExpenseToOccurrence", "occurrenceDao",
-            "claimForExpense", owner_fqcn="com.example.OtherCoordinator",
-        )
-        is False
-    )
-
-
-def test_gr08c1_near_miss_wrong_dao_stays_unauthorized(tmp_path):
-    rows = _gr08c1_seed_rows()
-    assert (
-        _assert_gr08c_exact_match(
-            tmp_path, rows, "linkExpenseToOccurrence", "occurrenceDao",
-            "claimForExpense",
-            dao_accessor="reminderDeliveryDao",
-            dao_fqcn=REMINDER_DELIVERY_DAO,
-        )
-        is False
-    )
-
-
-def test_gr08c1_near_miss_wrong_operation_stays_unauthorized(tmp_path):
-    rows = _gr08c1_seed_rows()
-    assert (
-        _assert_gr08c_exact_match(
-            tmp_path, rows, "linkExpenseToOccurrence", "occurrenceDao",
-            "claimForExpense", operation="update",
-        )
-        is False
-    )
-
-
 def test_gr08c1_update_status_row_near_misses_stay_unauthorized(tmp_path):
     """The typed-status rows are exact too: sibling shapes never match."""
     rows = _gr08c1_seed_rows()
@@ -2182,63 +2181,6 @@ def test_gr08c1_update_status_row_near_misses_stay_unauthorized(tmp_path):
                 dao_accessor="lifecycleEventDao",
                 dao_fqcn=LIFECYCLE_EVENT_DAO,
             ),
-        )
-        is False
-    )
-
-
-def test_gr08c2_exact_identity_matches(tmp_path):
-    rows = _gr08c2_seed_rows()
-    assert (
-        _assert_gr08c_exact_match(
-            tmp_path, rows, "claimReminderDelivery", "reminderDeliveryDao",
-            "claimDelivery",
-        )
-        is True
-    )
-
-
-def test_gr08c2_near_miss_wrong_overload_stays_unauthorized(tmp_path):
-    rows = _gr08c2_seed_rows()
-    assert (
-        _assert_gr08c_exact_match(
-            tmp_path, rows, "claimReminderDelivery", "reminderDeliveryDao",
-            "claimDelivery", parameter_types=("Long", "Long"),
-        )
-        is False
-    )
-
-
-def test_gr08c2_near_miss_wrong_owner_stays_unauthorized(tmp_path):
-    rows = _gr08c2_seed_rows()
-    assert (
-        _assert_gr08c_exact_match(
-            tmp_path, rows, "claimReminderDelivery", "reminderDeliveryDao",
-            "claimDelivery", owner_fqcn="com.example.OtherCoordinator",
-        )
-        is False
-    )
-
-
-def test_gr08c2_near_miss_wrong_dao_stays_unauthorized(tmp_path):
-    rows = _gr08c2_seed_rows()
-    assert (
-        _assert_gr08c_exact_match(
-            tmp_path, rows, "claimReminderDelivery", "reminderDeliveryDao",
-            "claimDelivery",
-            dao_accessor="lifecycleEventDao",
-            dao_fqcn=LIFECYCLE_EVENT_DAO,
-        )
-        is False
-    )
-
-
-def test_gr08c2_near_miss_wrong_operation_stays_unauthorized(tmp_path):
-    rows = _gr08c2_seed_rows()
-    assert (
-        _assert_gr08c_exact_match(
-            tmp_path, rows, "claimReminderDelivery", "reminderDeliveryDao",
-            "claimDelivery", operation="update",
         )
         is False
     )
@@ -2299,83 +2241,6 @@ def _gr08b_policy_entries(tmp_path):
         )
         entries.append(entry)
     return entries
-
-
-def _assert_gr08b_exact_match(tmp_path, **overrides):
-    """The exact GR-08b processInternal identity matches; mutants never do."""
-    entries = _gr08b_policy_entries(tmp_path)
-    target = [
-        entry
-        for entry in entries
-        if entry.method == "processInternal"
-        and entry.dao_accessor == "dao"
-        and entry.operation == "markProcessed"
-    ][0]
-    kwargs = dict(
-        path=target.path,
-        owner_fqcn=target.owner_fqcn,
-        kind=target.kind,
-        method=target.method,
-        receiver=target.receiver,
-        parameter_types=target.parameter_types,
-        dao_accessor=target.dao_accessor,
-        dao_fqcn=target.dao_fqcn,
-        operation=target.operation,
-    )
-    kwargs.update(overrides)
-    return match_mutation(target, **kwargs)
-
-
-def test_gr08b_exact_identity_matches(tmp_path):
-    assert _assert_gr08b_exact_match(tmp_path) is True
-
-
-def test_gr08b_near_miss_wrong_overload_stays_unauthorized(tmp_path):
-    entries = _gr08b_policy_entries(tmp_path)
-    target = entries[0]  # processInternal / dao / markProcessed
-    wrong_overload = target.parameter_types[:-1] + ("String?",)
-    assert (
-        match_mutation(
-            target,
-            path=target.path,
-            owner_fqcn=target.owner_fqcn,
-            kind=target.kind,
-            method=target.method,
-            receiver=target.receiver,
-            parameter_types=wrong_overload,
-            dao_accessor=target.dao_accessor,
-            dao_fqcn=target.dao_fqcn,
-            operation=target.operation,
-        )
-        is False
-    )
-
-
-def test_gr08b_near_miss_wrong_owner_stays_unauthorized(tmp_path):
-    assert (
-        _assert_gr08b_exact_match(
-            tmp_path, owner_fqcn="com.example.OtherPipeline"
-        )
-        is False
-    )
-
-
-def test_gr08b_near_miss_wrong_dao_stays_unauthorized(tmp_path):
-    assert (
-        _assert_gr08b_exact_match(
-            tmp_path,
-            dao_accessor="sourceStatsDao",
-            dao_fqcn=SOURCE_STATS_DAO,
-        )
-        is False
-    )
-
-
-def test_gr08b_near_miss_wrong_operation_stays_unauthorized(tmp_path):
-    assert (
-        _assert_gr08b_exact_match(tmp_path, operation="markRelevance")
-        is False
-    )
 
 
 def test_gr08b_insert_row_near_misses_stay_unauthorized(tmp_path):
@@ -2473,64 +2338,6 @@ def test_gr08b_closure_row_near_misses_stay_unauthorized(tmp_path):
 # operation.  Each test mutates exactly one identity field of a real GR-08d
 # row and asserts the mutation stays unauthorized.  The closure rows get the
 # same exactness treatment (GR-08b closure precedent).
-
-
-def test_gr08d_exact_identity_matches(tmp_path):
-    rows = _gr08d_seed_rows()
-    assert (
-        _assert_gr08c_exact_match(
-            tmp_path, rows, "approveReview", "pendingReviewDao",
-            "transitionStatus",
-        )
-        is True
-    )
-
-
-def test_gr08d_near_miss_wrong_overload_stays_unauthorized(tmp_path):
-    rows = _gr08d_seed_rows()
-    assert (
-        _assert_gr08c_exact_match(
-            tmp_path, rows, "approveReview", "pendingReviewDao",
-            "transitionStatus", parameter_types=("Long",),
-        )
-        is False
-    )
-
-
-def test_gr08d_near_miss_wrong_owner_stays_unauthorized(tmp_path):
-    rows = _gr08d_seed_rows()
-    assert (
-        _assert_gr08c_exact_match(
-            tmp_path, rows, "approveReview", "pendingReviewDao",
-            "transitionStatus",
-            owner_fqcn="com.example.OtherRepository",
-        )
-        is False
-    )
-
-
-def test_gr08d_near_miss_wrong_dao_stays_unauthorized(tmp_path):
-    rows = _gr08d_seed_rows()
-    assert (
-        _assert_gr08c_exact_match(
-            tmp_path, rows, "approveReview", "pendingReviewDao",
-            "transitionStatus",
-            dao_accessor="rawNotificationDao",
-            dao_fqcn=RAW_NOTIFICATION_DAO_GR08D,
-        )
-        is False
-    )
-
-
-def test_gr08d_near_miss_wrong_operation_stays_unauthorized(tmp_path):
-    rows = _gr08d_seed_rows()
-    assert (
-        _assert_gr08c_exact_match(
-            tmp_path, rows, "approveReview", "pendingReviewDao",
-            "transitionStatus", operation="updateStatus",
-        )
-        is False
-    )
 
 
 def test_gr08d_recover_stuck_row_near_misses_stay_unauthorized(tmp_path):
@@ -3171,60 +2978,6 @@ def _assert_gr08e_exact_match(tmp_path, rows, select_method, select_accessor,
     return match_mutation(target, **kwargs)
 
 
-def test_gr08e1_exact_identity_matches(tmp_path):
-    rows = _gr08e1_seed_rows()
-    assert (
-        _assert_gr08e_exact_match(
-            tmp_path, rows, "save", "dao", "insert"
-        )
-        is True
-    )
-
-
-def test_gr08e1_near_miss_wrong_overload_stays_unauthorized(tmp_path):
-    rows = _gr08e1_seed_rows()
-    assert (
-        _assert_gr08e_exact_match(
-            tmp_path, rows, "save", "dao", "insert",
-            parameter_types=("String",),
-        )
-        is False
-    )
-
-
-def test_gr08e1_near_miss_wrong_owner_stays_unauthorized(tmp_path):
-    rows = _gr08e1_seed_rows()
-    assert (
-        _assert_gr08e_exact_match(
-            tmp_path, rows, "save", "dao", "insert",
-            owner_fqcn="com.example.OtherRepository",
-        )
-        is False
-    )
-
-
-def test_gr08e1_near_miss_wrong_dao_stays_unauthorized(tmp_path):
-    rows = _gr08e1_seed_rows()
-    assert (
-        _assert_gr08e_exact_match(
-            tmp_path, rows, "save", "dao", "insert",
-            dao_accessor="sourceStatsDao",
-            dao_fqcn=SOURCE_STATS_DAO,
-        )
-        is False
-    )
-
-
-def test_gr08e1_near_miss_wrong_operation_stays_unauthorized(tmp_path):
-    rows = _gr08e1_seed_rows()
-    assert (
-        _assert_gr08e_exact_match(
-            tmp_path, rows, "save", "dao", "insert", operation="insertAll"
-        )
-        is False
-    )
-
-
 def test_gr08e1_normalized_accessor_row_near_misses_stay_unauthorized(tmp_path):
     """The accessor-normalized audit row is exact too: mutants never match.
 
@@ -3269,61 +3022,6 @@ def test_gr08e1_normalized_accessor_row_near_misses_stay_unauthorized(tmp_path):
     assert (
         _assert_gr08e_exact_match(
             tmp_path, rows, **dict(base_kwargs, method="deleteAll")
-        )
-        is False
-    )
-
-
-def test_gr08e2_exact_identity_matches(tmp_path):
-    rows = _gr08e2_seed_rows()
-    assert (
-        _assert_gr08e_exact_match(
-            tmp_path, rows, "addWarranty", "warrantyDao", "insertWarranty"
-        )
-        is True
-    )
-
-
-def test_gr08e2_near_miss_wrong_overload_stays_unauthorized(tmp_path):
-    rows = _gr08e2_seed_rows()
-    assert (
-        _assert_gr08e_exact_match(
-            tmp_path, rows, "addWarranty", "warrantyDao", "insertWarranty",
-            parameter_types=(RETURN_WINDOW_ENTITY,),
-        )
-        is False
-    )
-
-
-def test_gr08e2_near_miss_wrong_owner_stays_unauthorized(tmp_path):
-    rows = _gr08e2_seed_rows()
-    assert (
-        _assert_gr08e_exact_match(
-            tmp_path, rows, "addWarranty", "warrantyDao", "insertWarranty",
-            owner_fqcn="com.example.OtherRepository",
-        )
-        is False
-    )
-
-
-def test_gr08e2_near_miss_wrong_dao_stays_unauthorized(tmp_path):
-    rows = _gr08e2_seed_rows()
-    assert (
-        _assert_gr08e_exact_match(
-            tmp_path, rows, "addWarranty", "warrantyDao", "insertWarranty",
-            dao_accessor="returnWindowDao",
-            dao_fqcn=RETURN_WINDOW_DAO,
-        )
-        is False
-    )
-
-
-def test_gr08e2_near_miss_wrong_operation_stays_unauthorized(tmp_path):
-    rows = _gr08e2_seed_rows()
-    assert (
-        _assert_gr08e_exact_match(
-            tmp_path, rows, "addWarranty", "warrantyDao", "insertWarranty",
-            operation="insertWarrantyIgnore",
         )
         is False
     )
@@ -3646,64 +3344,6 @@ def _assert_gr08f_exact_match(tmp_path, rows, select_method, select_accessor,
     return match_mutation(target, **kwargs)
 
 
-def test_gr08f_exact_identity_matches(tmp_path):
-    rows = _gr08f_seed_rows()
-    assert (
-        _assert_gr08f_exact_match(
-            tmp_path, rows, "deactivateRule", "manualRecurringExpenseDao",
-            "setActiveStatus",
-        )
-        is True
-    )
-
-
-def test_gr08f_near_miss_wrong_overload_stays_unauthorized(tmp_path):
-    rows = _gr08f_seed_rows()
-    assert (
-        _assert_gr08f_exact_match(
-            tmp_path, rows, "deactivateRule", "manualRecurringExpenseDao",
-            "setActiveStatus", parameter_types=("Long", "Boolean"),
-        )
-        is False
-    )
-
-
-def test_gr08f_near_miss_wrong_owner_stays_unauthorized(tmp_path):
-    rows = _gr08f_seed_rows()
-    assert (
-        _assert_gr08f_exact_match(
-            tmp_path, rows, "deactivateRule", "manualRecurringExpenseDao",
-            "setActiveStatus",
-            owner_fqcn="com.example.OtherCoordinator",
-        )
-        is False
-    )
-
-
-def test_gr08f_near_miss_wrong_dao_stays_unauthorized(tmp_path):
-    rows = _gr08f_seed_rows()
-    assert (
-        _assert_gr08f_exact_match(
-            tmp_path, rows, "deactivateRule", "manualRecurringExpenseDao",
-            "setActiveStatus",
-            dao_accessor="occurrenceDao",
-            dao_fqcn=OCCURRENCE_DAO,
-        )
-        is False
-    )
-
-
-def test_gr08f_near_miss_wrong_operation_stays_unauthorized(tmp_path):
-    rows = _gr08f_seed_rows()
-    assert (
-        _assert_gr08f_exact_match(
-            tmp_path, rows, "deactivateRule", "manualRecurringExpenseDao",
-            "setActiveStatus", operation="update",
-        )
-        is False
-    )
-
-
 def test_gr08f_advance_row_near_misses_stay_unauthorized(tmp_path):
     """The two-parameter advance row is exact too: siblings never match."""
     rows = _gr08f_seed_rows()
@@ -4008,61 +3648,6 @@ def _assert_gr08g_exact_match(tmp_path, rows, select_accessor,
     )
     kwargs.update(overrides)
     return match_mutation(target, **kwargs)
-
-
-def test_gr08g_exact_identity_matches(tmp_path):
-    rows = _gr08g_seed_rows()
-    assert (
-        _assert_gr08g_exact_match(
-            tmp_path, rows, "bankStatementImportRunDao", "finalize",
-        )
-        is True
-    )
-
-
-def test_gr08g_near_miss_wrong_overload_stays_unauthorized(tmp_path):
-    rows = _gr08g_seed_rows()
-    assert (
-        _assert_gr08g_exact_match(
-            tmp_path, rows, "bankStatementImportRunDao", "finalize",
-            parameter_types=("android.net.Uri", "Long"),
-        )
-        is False
-    )
-
-
-def test_gr08g_near_miss_wrong_owner_stays_unauthorized(tmp_path):
-    rows = _gr08g_seed_rows()
-    assert (
-        _assert_gr08g_exact_match(
-            tmp_path, rows, "bankStatementImportRunDao", "finalize",
-            owner_fqcn="com.example.OtherProcessor",
-        )
-        is False
-    )
-
-
-def test_gr08g_near_miss_wrong_dao_stays_unauthorized(tmp_path):
-    rows = _gr08g_seed_rows()
-    assert (
-        _assert_gr08g_exact_match(
-            tmp_path, rows, "bankStatementImportRunDao", "finalize",
-            dao_accessor="bankStatementImportItemDao",
-            dao_fqcn=BANK_STATEMENT_IMPORT_ITEM_DAO,
-        )
-        is False
-    )
-
-
-def test_gr08g_near_miss_wrong_operation_stays_unauthorized(tmp_path):
-    rows = _gr08g_seed_rows()
-    assert (
-        _assert_gr08g_exact_match(
-            tmp_path, rows, "bankStatementImportRunDao", "finalize",
-            operation="markStaleFailed",
-        )
-        is False
-    )
 
 
 def test_gr08g_run_ledger_rows_near_misses_stay_unauthorized(tmp_path):
@@ -4392,71 +3977,6 @@ def _assert_gr08h_exact_match(tmp_path, rows, select_method, select_accessor,
     )
     kwargs.update(overrides)
     return match_mutation(target, **kwargs)
-
-
-def test_gr08h_exact_identity_matches(tmp_path):
-    rows = _gr08h_seed_rows()
-    assert (
-        _assert_gr08h_exact_match(
-            tmp_path, rows, "saveMatchSuggestion", "scannedReceiptDao",
-            "update",
-        )
-        is True
-    )
-    assert (
-        _assert_gr08h_exact_match(
-            tmp_path, rows, "recordNotificationSuppressed",
-            "receiptEventDao", "insert",
-        )
-        is True
-    )
-
-
-def test_gr08h_near_miss_wrong_overload_stays_unauthorized(tmp_path):
-    rows = _gr08h_seed_rows()
-    assert (
-        _assert_gr08h_exact_match(
-            tmp_path, rows, "saveMatchSuggestion", "scannedReceiptDao",
-            "update", parameter_types=("Long", "Long"),
-        )
-        is False
-    )
-
-
-def test_gr08h_near_miss_wrong_owner_stays_unauthorized(tmp_path):
-    rows = _gr08h_seed_rows()
-    assert (
-        _assert_gr08h_exact_match(
-            tmp_path, rows, "saveMatchSuggestion", "scannedReceiptDao",
-            "update",
-            owner_fqcn="com.example.OtherMatchService",
-        )
-        is False
-    )
-
-
-def test_gr08h_near_miss_wrong_dao_stays_unauthorized(tmp_path):
-    rows = _gr08h_seed_rows()
-    assert (
-        _assert_gr08h_exact_match(
-            tmp_path, rows, "saveMatchSuggestion", "scannedReceiptDao",
-            "update",
-            dao_accessor="receiptEventDao",
-            dao_fqcn=RECEIPT_EVENT_DAO_GR08H,
-        )
-        is False
-    )
-
-
-def test_gr08h_near_miss_wrong_operation_stays_unauthorized(tmp_path):
-    rows = _gr08h_seed_rows()
-    assert (
-        _assert_gr08h_exact_match(
-            tmp_path, rows, "saveMatchSuggestion", "scannedReceiptDao",
-            "update", operation="insert",
-        )
-        is False
-    )
 
 
 def test_gr08h_match_state_rows_near_misses_stay_unauthorized(tmp_path):
@@ -5073,68 +4593,6 @@ def _assert_gr08i_exact_match(tmp_path, rows, select_method, select_accessor,
     return match_mutation(target, **kwargs)
 
 
-def test_gr08i1_exact_identity_matches(tmp_path):
-    rows = _gr08i1_seed_rows()
-    assert (
-        _assert_gr08i_exact_match(
-            tmp_path, rows, "createGroupWithMembers", "groupDao", "insert"
-        )
-        is True
-    )
-    assert (
-        _assert_gr08i_exact_match(
-            tmp_path, rows, "deleteGroupAtomic", "expenseDao",
-            "clearSharedExpenseFlags",
-        )
-        is True
-    )
-
-
-def test_gr08i1_near_miss_wrong_overload_stays_unauthorized(tmp_path):
-    rows = _gr08i1_seed_rows()
-    assert (
-        _assert_gr08i_exact_match(
-            tmp_path, rows, "deleteGroup", "groupDao", "archiveGroup",
-            parameter_types=("Long", "() -> Unit"),
-        )
-        is False
-    )
-
-
-def test_gr08i1_near_miss_wrong_owner_stays_unauthorized(tmp_path):
-    rows = _gr08i1_seed_rows()
-    assert (
-        _assert_gr08i_exact_match(
-            tmp_path, rows, "addMemberToGroup", "memberDao", "insert",
-            owner_fqcn="com.example.OtherCoordinator",
-        )
-        is False
-    )
-
-
-def test_gr08i1_near_miss_wrong_dao_stays_unauthorized(tmp_path):
-    rows = _gr08i1_seed_rows()
-    assert (
-        _assert_gr08i_exact_match(
-            tmp_path, rows, "addMemberToGroup", "memberDao", "insert",
-            dao_accessor="groupDao",
-            dao_fqcn=EXPENSE_GROUP_DAO,
-        )
-        is False
-    )
-
-
-def test_gr08i1_near_miss_wrong_operation_stays_unauthorized(tmp_path):
-    rows = _gr08i1_seed_rows()
-    assert (
-        _assert_gr08i_exact_match(
-            tmp_path, rows, "deleteGroup", "groupDao", "archiveGroup",
-            operation="delete",
-        )
-        is False
-    )
-
-
 def test_gr08i1_cascade_rows_near_misses_stay_unauthorized(tmp_path):
     """The four deleteGroupAtomic cascade rows are exact per accessor.
 
@@ -5191,65 +4649,6 @@ def test_gr08i1_cascade_rows_near_misses_stay_unauthorized(tmp_path):
     )
 
 
-def test_gr08i2_exact_identity_matches(tmp_path):
-    rows = _gr08i2_seed_rows()
-    assert (
-        _assert_gr08i_exact_match(
-            tmp_path, rows, "materializeInCurrentTransaction",
-            "occurrenceDao", "insert",
-        )
-        is True
-    )
-
-
-def test_gr08i2_near_miss_wrong_overload_stays_unauthorized(tmp_path):
-    rows = _gr08i2_seed_rows()
-    assert (
-        _assert_gr08i_exact_match(
-            tmp_path, rows, "materializeInCurrentTransaction",
-            "occurrenceDao", "insert",
-            parameter_types=(RESOLVED_OCCURRENCE_LIST,),
-        )
-        is False
-    )
-
-
-def test_gr08i2_near_miss_wrong_owner_stays_unauthorized(tmp_path):
-    rows = _gr08i2_seed_rows()
-    assert (
-        _assert_gr08i_exact_match(
-            tmp_path, rows, "materializeInCurrentTransaction",
-            "occurrenceDao", "insert",
-            owner_fqcn="com.example.OtherMaterializer",
-        )
-        is False
-    )
-
-
-def test_gr08i2_near_miss_wrong_dao_stays_unauthorized(tmp_path):
-    rows = _gr08i2_seed_rows()
-    assert (
-        _assert_gr08i_exact_match(
-            tmp_path, rows, "materializeInCurrentTransaction",
-            "occurrenceDao", "insert",
-            dao_accessor="reminderDeliveryDao",
-            dao_fqcn=REMINDER_DELIVERY_DAO,
-        )
-        is False
-    )
-
-
-def test_gr08i2_near_miss_wrong_operation_stays_unauthorized(tmp_path):
-    rows = _gr08i2_seed_rows()
-    assert (
-        _assert_gr08i_exact_match(
-            tmp_path, rows, "materializeInCurrentTransaction",
-            "occurrenceDao", "insert", operation="update",
-        )
-        is False
-    )
-
-
 def test_gr08i2_update_row_near_misses_stay_unauthorized(tmp_path):
     """The occurrenceDao.update row is exact too: siblings never match.
 
@@ -5290,68 +4689,6 @@ def test_gr08i2_update_row_near_misses_stay_unauthorized(tmp_path):
     assert (
         _assert_gr08i_exact_match(
             tmp_path, rows, **dict(base_kwargs, method="materialize")
-        )
-        is False
-    )
-
-
-def test_gr08i3_exact_identity_matches(tmp_path):
-    rows = _gr08i3_seed_rows()
-    assert (
-        _assert_gr08i_exact_match(
-            tmp_path, rows, "doWork", "intakeDao", "claimForProcessing"
-        )
-        is True
-    )
-    assert (
-        _assert_gr08i_exact_match(
-            tmp_path, rows, "runPrivacyCleanupGuarded", "intakeDao",
-            "markPrivacyDeniedAndPurgeAllPayload",
-        )
-        is True
-    )
-
-
-def test_gr08i3_near_miss_wrong_overload_stays_unauthorized(tmp_path):
-    rows = _gr08i3_seed_rows()
-    assert (
-        _assert_gr08i_exact_match(
-            tmp_path, rows, "doWork", "intakeDao", "claimForProcessing",
-            parameter_types=("Long",),
-        )
-        is False
-    )
-
-
-def test_gr08i3_near_miss_wrong_owner_stays_unauthorized(tmp_path):
-    rows = _gr08i3_seed_rows()
-    assert (
-        _assert_gr08i_exact_match(
-            tmp_path, rows, "doWork", "intakeDao", "claimForProcessing",
-            owner_fqcn="com.example.OtherWorker",
-        )
-        is False
-    )
-
-
-def test_gr08i3_near_miss_wrong_dao_stays_unauthorized(tmp_path):
-    rows = _gr08i3_seed_rows()
-    assert (
-        _assert_gr08i_exact_match(
-            tmp_path, rows, "doWork", "intakeDao", "claimForProcessing",
-            dao_accessor="repository",
-            dao_fqcn=RAW_NOTIFICATION_DAO,
-        )
-        is False
-    )
-
-
-def test_gr08i3_near_miss_wrong_operation_stays_unauthorized(tmp_path):
-    rows = _gr08i3_seed_rows()
-    assert (
-        _assert_gr08i_exact_match(
-            tmp_path, rows, "doWork", "intakeDao", "claimForProcessing",
-            operation="markTerminal",
         )
         is False
     )
@@ -5789,70 +5126,6 @@ def _assert_gr08j_exact_match(tmp_path, rows, select_method, select_accessor,
     return match_mutation(target, **kwargs)
 
 
-def test_gr08j1_exact_identity_matches(tmp_path):
-    rows = _gr08j1_seed_rows()
-    assert (
-        _assert_gr08j_exact_match(
-            tmp_path, rows, "linkReceiptToExpense", "receiptExpenseLinkDao",
-            "insert",
-        )
-        is True
-    )
-    assert (
-        _assert_gr08j_exact_match(
-            tmp_path, rows, "unlinkReceiptFromExpense", "scannedReceiptDao",
-            "update",
-        )
-        is True
-    )
-
-
-def test_gr08j1_near_miss_wrong_overload_stays_unauthorized(tmp_path):
-    rows = _gr08j1_seed_rows()
-    assert (
-        _assert_gr08j_exact_match(
-            tmp_path, rows, "unlinkReceiptFromExpense", "scannedReceiptDao",
-            "update", parameter_types=("Long",),
-        )
-        is False
-    )
-
-
-def test_gr08j1_near_miss_wrong_owner_stays_unauthorized(tmp_path):
-    rows = _gr08j1_seed_rows()
-    assert (
-        _assert_gr08j_exact_match(
-            tmp_path, rows, "linkReceiptToExpense", "receiptExpenseLinkDao",
-            "insert", owner_fqcn="com.example.OtherLinkService",
-        )
-        is False
-    )
-
-
-def test_gr08j1_near_miss_wrong_dao_stays_unauthorized(tmp_path):
-    rows = _gr08j1_seed_rows()
-    assert (
-        _assert_gr08j_exact_match(
-            tmp_path, rows, "linkReceiptToExpense", "receiptExpenseLinkDao",
-            "insert",
-            dao_accessor="scannedReceiptDao",
-            dao_fqcn=SCANNED_RECEIPT_DAO,
-        )
-        is False
-    )
-
-
-def test_gr08j1_near_miss_wrong_operation_stays_unauthorized(tmp_path):
-    rows = _gr08j1_seed_rows()
-    assert (
-        _assert_gr08j_exact_match(
-            tmp_path, rows, "linkReceiptToExpense", "receiptExpenseLinkDao",
-            "insert", operation="unlink",
-        )
-        is False
-    )
-
-
 def test_gr08j1_claim_row_near_misses_stay_unauthorized(tmp_path):
     """The claimForAutoMatch row is exact too: siblings never match.
 
@@ -5938,67 +5211,6 @@ def test_gr08j1_propagation_rows_near_misses_stay_unauthorized(tmp_path):
     assert (
         _assert_gr08j_exact_match(
             tmp_path, rows, **dict(base_kwargs, operation="update")
-        )
-        is False
-    )
-
-
-def test_gr08j2_exact_identity_matches(tmp_path):
-    rows = _gr08j2_seed_rows()
-    assert (
-        _assert_gr08j_exact_match(
-            tmp_path, rows, "insert", "expenseDao", "insert"
-        )
-        is True
-    )
-    assert (
-        _assert_gr08j_exact_match(
-            tmp_path, rows, "insertIfNotExists", "dao", "insertIfNotExists"
-        )
-        is True
-    )
-
-
-def test_gr08j2_near_miss_wrong_overload_stays_unauthorized(tmp_path):
-    rows = _gr08j2_seed_rows()
-    assert (
-        _assert_gr08j_exact_match(
-            tmp_path, rows, "insert", "expenseDao", "insert",
-            parameter_types=(EXPENSE_ENTITY_LIST,),
-        )
-        is False
-    )
-
-
-def test_gr08j2_near_miss_wrong_owner_stays_unauthorized(tmp_path):
-    rows = _gr08j2_seed_rows()
-    assert (
-        _assert_gr08j_exact_match(
-            tmp_path, rows, "insert", "expenseDao", "insert",
-            owner_fqcn="com.example.OtherStore",
-        )
-        is False
-    )
-
-
-def test_gr08j2_near_miss_wrong_dao_stays_unauthorized(tmp_path):
-    rows = _gr08j2_seed_rows()
-    assert (
-        _assert_gr08j_exact_match(
-            tmp_path, rows, "insert", "expenseDao", "insert",
-            dao_accessor="dao",
-            dao_fqcn=SOURCE_STATS_DAO_GR08J,
-        )
-        is False
-    )
-
-
-def test_gr08j2_near_miss_wrong_operation_stays_unauthorized(tmp_path):
-    rows = _gr08j2_seed_rows()
-    assert (
-        _assert_gr08j_exact_match(
-            tmp_path, rows, "insert", "expenseDao", "insert",
-            operation="insertAll",
         )
         is False
     )
@@ -6499,70 +5711,6 @@ def _assert_gr08k_exact_match(tmp_path, rows, select_method, select_accessor,
     return match_mutation(target, **kwargs)
 
 
-def test_gr08k1_exact_identity_matches(tmp_path):
-    rows = _gr08k1_seed_rows()
-    assert (
-        _assert_gr08k_exact_match(
-            tmp_path, rows, "provideRetentionTargets", "rawNotificationDao",
-            "updateRawContentPurged",
-        )
-        is True
-    )
-    assert (
-        _assert_gr08k_exact_match(
-            tmp_path, rows, "saveAll", "dao", "archiveActiveOverflow"
-        )
-        is True
-    )
-
-
-def test_gr08k1_near_miss_wrong_overload_stays_unauthorized(tmp_path):
-    rows = _gr08k1_seed_rows()
-    assert (
-        _assert_gr08k_exact_match(
-            tmp_path, rows, "save", "dao", "insert",
-            parameter_types=(DASHBOARD_RECOMMENDATION_LIST,),
-        )
-        is False
-    )
-
-
-def test_gr08k1_near_miss_wrong_owner_stays_unauthorized(tmp_path):
-    rows = _gr08k1_seed_rows()
-    assert (
-        _assert_gr08k_exact_match(
-            tmp_path, rows, "provideRetentionTargets", "rawNotificationDao",
-            "updateRawContentPurged",
-            owner_fqcn="com.example.OtherRetentionModule",
-        )
-        is False
-    )
-
-
-def test_gr08k1_near_miss_wrong_dao_stays_unauthorized(tmp_path):
-    rows = _gr08k1_seed_rows()
-    assert (
-        _assert_gr08k_exact_match(
-            tmp_path, rows, "provideRetentionTargets", "aiArtifactDao",
-            "deleteExpired",
-            dao_accessor="aiChatMessageDao",
-            dao_fqcn=AI_CHAT_MESSAGE_DAO,
-        )
-        is False
-    )
-
-
-def test_gr08k1_near_miss_wrong_operation_stays_unauthorized(tmp_path):
-    rows = _gr08k1_seed_rows()
-    assert (
-        _assert_gr08k_exact_match(
-            tmp_path, rows, "expireAll", "dao", "expireOld",
-            operation="expireAllActiveByUser",
-        )
-        is False
-    )
-
-
 def test_gr08k1_normalized_accessors_reject_historical_spellings(tmp_path):
     """The GR-08k1 normalization is load-bearing: old spellings never match.
 
@@ -6600,70 +5748,6 @@ def test_gr08k1_normalized_accessors_reject_historical_spellings(tmp_path):
         _assert_gr08k_exact_match(
             tmp_path, rows, "expireOld", "dao", "expireOld",
             method="expireAll",
-        )
-        is False
-    )
-
-
-def test_gr08k2_exact_identity_matches(tmp_path):
-    rows = _gr08k2_seed_rows()
-    assert (
-        _assert_gr08k_exact_match(
-            tmp_path, rows, "recordSettlement", "settlementDao", "insert"
-        )
-        is True
-    )
-    assert (
-        _assert_gr08k_exact_match(
-            tmp_path, rows, "assignItemsToParticipants",
-            "splitItemAssignmentDao", "insertAssignments",
-        )
-        is True
-    )
-
-
-def test_gr08k2_near_miss_wrong_overload_stays_unauthorized(tmp_path):
-    rows = _gr08k2_seed_rows()
-    assert (
-        _assert_gr08k_exact_match(
-            tmp_path, rows, "removeMember", "memberDao", "update",
-            parameter_types=("Long",),
-        )
-        is False
-    )
-
-
-def test_gr08k2_near_miss_wrong_owner_stays_unauthorized(tmp_path):
-    rows = _gr08k2_seed_rows()
-    assert (
-        _assert_gr08k_exact_match(
-            tmp_path, rows, "recordSettlement", "settlementDao", "insert",
-            owner_fqcn="com.example.OtherGroupCoordinator",
-        )
-        is False
-    )
-
-
-def test_gr08k2_near_miss_wrong_dao_stays_unauthorized(tmp_path):
-    rows = _gr08k2_seed_rows()
-    assert (
-        _assert_gr08k_exact_match(
-            tmp_path, rows, "createTemplate", "splitTemplateDao",
-            "insertTemplate",
-            dao_accessor="splitItemAssignmentDao",
-            dao_fqcn=SPLIT_ITEM_ASSIGNMENT_DAO,
-        )
-        is False
-    )
-
-
-def test_gr08k2_near_miss_wrong_operation_stays_unauthorized(tmp_path):
-    rows = _gr08k2_seed_rows()
-    assert (
-        _assert_gr08k_exact_match(
-            tmp_path, rows, "setDefaultTemplate", "splitTemplateDao",
-            "clearDefaultTemplate",
-            operation="setDefaultTemplate",
         )
         is False
     )
@@ -7557,69 +6641,6 @@ def _assert_gr08l_exact_match(tmp_path, rows, select_method, select_accessor,
     return match_mutation(target, **kwargs)
 
 
-def test_gr08l1_exact_identity_matches(tmp_path):
-    rows = _gr08l1_seed_rows()
-    assert (
-        _assert_gr08l_exact_match(
-            tmp_path, rows, "deleteAllExpenses", "expenseDao", "deleteAll"
-        )
-        is True
-    )
-    assert (
-        _assert_gr08l_exact_match(
-            tmp_path, rows, "insertAlias", "dao", "updateAlias"
-        )
-        is True
-    )
-
-
-def test_gr08l1_near_miss_wrong_overload_stays_unauthorized(tmp_path):
-    rows = _gr08l1_seed_rows()
-    assert (
-        _assert_gr08l_exact_match(
-            tmp_path, rows, "updateExpenseCategoryBulk", "userCorrectionDao",
-            "insert",
-            parameter_types=("String",),
-        )
-        is False
-    )
-
-
-def test_gr08l1_near_miss_wrong_owner_stays_unauthorized(tmp_path):
-    rows = _gr08l1_seed_rows()
-    assert (
-        _assert_gr08l_exact_match(
-            tmp_path, rows, "deleteAllExpenses", "expenseDao", "deleteAll",
-            owner_fqcn="com.example.OtherExpenseRepository",
-        )
-        is False
-    )
-
-
-def test_gr08l1_near_miss_wrong_dao_stays_unauthorized(tmp_path):
-    rows = _gr08l1_seed_rows()
-    assert (
-        _assert_gr08l_exact_match(
-            tmp_path, rows, "insertCanonical", "dao", "insertCanonical",
-            dao_accessor="expenseDao",
-            dao_fqcn=EXPENSE_DAO,
-        )
-        is False
-    )
-
-
-def test_gr08l1_near_miss_wrong_operation_stays_unauthorized(tmp_path):
-    rows = _gr08l1_seed_rows()
-    assert (
-        _assert_gr08l_exact_match(
-            tmp_path, rows, "clearExpenseLocation", "expenseDao",
-            "clearLocation",
-            operation="conditionallySetLocation",
-        )
-        is False
-    )
-
-
 def test_gr08l1_multi_operation_rows_near_misses_stay_unauthorized(tmp_path):
     """The two-operations-per-callable rows are exact per operation.
 
@@ -7792,71 +6813,6 @@ def test_gr08l1_residual_closure_rows_exact_and_near_misses(tmp_path):
             "insert",
             select_parameters=recurring_params,
             owner_fqcn="com.example.OtherRecurringRepository",
-        )
-        is False
-    )
-
-
-def test_gr08l2_exact_identity_matches(tmp_path):
-    rows = _gr08l2_seed_rows()
-    assert (
-        _assert_gr08l_exact_match(
-            tmp_path, rows, "deleteExpense", "expenseDao", "delete"
-        )
-        is True
-    )
-    assert (
-        _assert_gr08l_exact_match(
-            tmp_path, rows, "markCandidateAsRejected", "candidateDao",
-            "markAsRejected"
-        )
-        is True
-    )
-
-
-def test_gr08l2_near_miss_wrong_overload_stays_unauthorized(tmp_path):
-    rows = _gr08l2_seed_rows()
-    assert (
-        _assert_gr08l_exact_match(
-            tmp_path, rows, "deleteExpense", "expenseDao", "delete",
-            parameter_types=("Long",),
-        )
-        is False
-    )
-
-
-def test_gr08l2_near_miss_wrong_owner_stays_unauthorized(tmp_path):
-    rows = _gr08l2_seed_rows()
-    assert (
-        _assert_gr08l_exact_match(
-            tmp_path, rows, "bulkUpdateCategory", "expenseDao",
-            "updateCategoryForMerchant",
-            owner_fqcn="com.example.OtherTransactionCoordinator",
-        )
-        is False
-    )
-
-
-def test_gr08l2_near_miss_wrong_dao_stays_unauthorized(tmp_path):
-    rows = _gr08l2_seed_rows()
-    assert (
-        _assert_gr08l_exact_match(
-            tmp_path, rows, "insertSubscription", "subscriptionDao",
-            "insert",
-            dao_accessor="usageDao",
-            dao_fqcn=SUBSCRIPTION_USAGE_DAO,
-        )
-        is False
-    )
-
-
-def test_gr08l2_near_miss_wrong_operation_stays_unauthorized(tmp_path):
-    rows = _gr08l2_seed_rows()
-    assert (
-        _assert_gr08l_exact_match(
-            tmp_path, rows, "markCandidateAsConverted", "candidateDao",
-            "markAsConverted",
-            operation="markAsRejected",
         )
         is False
     )
@@ -8492,84 +7448,6 @@ def _assert_gr08m_exact_match(tmp_path, rows, select_method, select_accessor,
     return match_mutation(target, **kwargs)
 
 
-def test_gr08m1_exact_identity_matches(tmp_path):
-    rows = _gr08m1_seed_rows()
-    assert (
-        _assert_gr08m_exact_match(
-            tmp_path, rows, "createSession", "sessionDao", "insert"
-        )
-        is True
-    )
-    assert (
-        _assert_gr08m_exact_match(
-            tmp_path, rows, "increment", "runDao", "incrementCounters"
-        )
-        is True
-    )
-    assert (
-        _assert_gr08m_exact_match(
-            tmp_path, rows, "importLastFailureJournalIfPresent",
-            "operationRunEventDao", "insert",
-        )
-        is True
-    )
-
-
-def test_gr08m1_near_miss_wrong_overload_stays_unauthorized(tmp_path):
-    rows = _gr08m1_seed_rows()
-    assert (
-        _assert_gr08m_exact_match(
-            tmp_path, rows, "purgeOldMessages", "messageDao",
-            "deleteOlderThan",
-            parameter_types=("String",),
-        )
-        is False
-    )
-
-
-def test_gr08m1_near_miss_wrong_owner_stays_unauthorized(tmp_path):
-    rows = _gr08m1_seed_rows()
-    # The Handle rows must not match under the OUTER recorder owner.
-    assert (
-        _assert_gr08m_exact_match(
-            tmp_path, rows, "event", "eventDao", "insert",
-            owner_fqcn=ROOM_OPERATION_RUN_RECORDER_FQCN,
-        )
-        is False
-    )
-    assert (
-        _assert_gr08m_exact_match(
-            tmp_path, rows, "start", "runDao", "insert",
-            owner_fqcn="com.example.OtherRunRecorder",
-        )
-        is False
-    )
-
-
-def test_gr08m1_near_miss_wrong_dao_stays_unauthorized(tmp_path):
-    rows = _gr08m1_seed_rows()
-    assert (
-        _assert_gr08m_exact_match(
-            tmp_path, rows, "clearAllHistory", "sessionDao", "deleteAll",
-            dao_accessor="messageDao",
-            dao_fqcn=AI_CHAT_MESSAGE_DAO,
-        )
-        is False
-    )
-
-
-def test_gr08m1_near_miss_wrong_operation_stays_unauthorized(tmp_path):
-    rows = _gr08m1_seed_rows()
-    assert (
-        _assert_gr08m_exact_match(
-            tmp_path, rows, "recoverStaleRunningOperationRuns", "runDao",
-            "finalizeIfRunning",
-            operation="incrementCounters",
-        )
-        is False
-    )
-
-
 def test_gr08m1_shared_fingerprint_and_multi_row_callables_near_misses(tmp_path):
     """The shared-fingerprint and two-row callables are exact per identity.
 
@@ -8629,71 +7507,6 @@ def test_gr08m1_shared_fingerprint_and_multi_row_callables_near_misses(tmp_path)
             tmp_path, rows, "importLastSuccessJournalIfPresent",
             "operationRunDao", "insert",
             method="importLastFailureJournalIfPresent",
-        )
-        is False
-    )
-
-
-def test_gr08m2_exact_identity_matches(tmp_path):
-    rows = _gr08m2_seed_rows()
-    assert (
-        _assert_gr08m_exact_match(
-            tmp_path, rows, "processReceiptInput", "scannedReceiptDao",
-            "delete"
-        )
-        is True
-    )
-    assert (
-        _assert_gr08m_exact_match(
-            tmp_path, rows, "deliverReminder", "deliveryDao", "claim"
-        )
-        is True
-    )
-
-
-def test_gr08m2_near_miss_wrong_overload_stays_unauthorized(tmp_path):
-    rows = _gr08m2_seed_rows()
-    assert (
-        _assert_gr08m_exact_match(
-            tmp_path, rows, "deliverReminder", "deliveryDao", "claim",
-            parameter_types=("Long", "Int", "Long"),
-        )
-        is False
-    )
-
-
-def test_gr08m2_near_miss_wrong_owner_stays_unauthorized(tmp_path):
-    rows = _gr08m2_seed_rows()
-    assert (
-        _assert_gr08m_exact_match(
-            tmp_path, rows, "processEmailReceipt", "emailReceiptDao",
-            "insertOrIgnore",
-            owner_fqcn="com.example.OtherReceiptCoordinator",
-        )
-        is False
-    )
-
-
-def test_gr08m2_near_miss_wrong_dao_stays_unauthorized(tmp_path):
-    rows = _gr08m2_seed_rows()
-    assert (
-        _assert_gr08m_exact_match(
-            tmp_path, rows, "processReceiptInput", "pendingReviewDao",
-            "insert",
-            dao_accessor="scannedReceiptDao",
-            dao_fqcn=SCANNED_RECEIPT_DAO_GR08M,
-        )
-        is False
-    )
-
-
-def test_gr08m2_near_miss_wrong_operation_stays_unauthorized(tmp_path):
-    rows = _gr08m2_seed_rows()
-    assert (
-        _assert_gr08m_exact_match(
-            tmp_path, rows, "deliverReminder", "deliveryDao",
-            "markSentFromClaimed",
-            operation="markFailed",
         )
         is False
     )
@@ -9248,91 +8061,6 @@ def _assert_gr08n_exact_match(tmp_path, rows, select_method, select_accessor,
     return match_mutation(target, **kwargs)
 
 
-def test_gr08n1_exact_identity_matches(tmp_path):
-    rows = _gr08n1_seed_rows()
-    assert (
-        _assert_gr08n_exact_match(
-            tmp_path, rows, "upsert", "dao", "upsert"
-        )
-        is True
-    )
-    assert (
-        _assert_gr08n_exact_match(
-            tmp_path, rows, "deleteAll", "budgetDao", "deleteAll",
-            select_parameters=(),
-        )
-        is True
-    )
-    assert (
-        _assert_gr08n_exact_match(
-            tmp_path, rows, "evictStaleCache", "dao", "deleteStaleEntries",
-            select_parameters=(),
-        )
-        is True
-    )
-
-
-def test_gr08n1_near_miss_wrong_overload_stays_unauthorized(tmp_path):
-    rows = _gr08n1_seed_rows()
-    assert (
-        _assert_gr08n_exact_match(
-            tmp_path, rows, "updateExceededNotification", "budgetDao",
-            "updateExceededNotification",
-            parameter_types=("Long", "String"),
-        )
-        is False
-    )
-
-
-def test_gr08n1_near_miss_wrong_owner_stays_unauthorized(tmp_path):
-    rows = _gr08n1_seed_rows()
-    assert (
-        _assert_gr08n_exact_match(
-            tmp_path, rows, "upsert", "dao", "upsert",
-            owner_fqcn="com.example.OtherArtifactRepository",
-        )
-        is False
-    )
-    assert (
-        _assert_gr08n_exact_match(
-            tmp_path, rows, "getCachedLocation", "dao", "incrementHitCount",
-            owner_fqcn="com.example.OtherLocationRepository",
-        )
-        is False
-    )
-
-
-def test_gr08n1_near_miss_wrong_dao_stays_unauthorized(tmp_path):
-    rows = _gr08n1_seed_rows()
-    assert (
-        _assert_gr08n_exact_match(
-            tmp_path, rows, "deleteAll", "budgetDao", "deleteAll",
-            select_parameters=(),
-            dao_accessor="dao",
-            dao_fqcn=AI_ARTIFACT_DAO,
-        )
-        is False
-    )
-
-
-def test_gr08n1_near_miss_wrong_operation_stays_unauthorized(tmp_path):
-    rows = _gr08n1_seed_rows()
-    assert (
-        _assert_gr08n_exact_match(
-            tmp_path, rows, "markDismissed", "dao", "markDismissed",
-            operation="markApplied",
-        )
-        is False
-    )
-    assert (
-        _assert_gr08n_exact_match(
-            tmp_path, rows, "saveCorrection", "dao", "upsertCorrection",
-            operation="upsertLocation",
-        )
-        is False
-    )
-
-
 def test_gr08n1_shared_operation_distinct_callables_near_misses(tmp_path):
     """The two deleteAll rows are exact per callable identity.
 
@@ -9357,91 +8085,6 @@ def test_gr08n1_shared_operation_distinct_callables_near_misses(tmp_path):
         _assert_gr08n_exact_match(
             tmp_path, rows, "restoreDebugSnapshot", "budgetDao", "deleteAll",
             parameter_types=(),
-        )
-        is False
-    )
-
-
-def test_gr08n2_exact_identity_matches(tmp_path):
-    rows = _gr08n2_seed_rows()
-    assert (
-        _assert_gr08n_exact_match(
-            tmp_path, rows, "addHolding", "investmentDao", "insert"
-        )
-        is True
-    )
-    assert (
-        _assert_gr08n_exact_match(
-            tmp_path, rows, "acceptCandidate", "candidateDao",
-            "markAsConverted"
-        )
-        is True
-    )
-    assert (
-        _assert_gr08n_exact_match(
-            tmp_path, rows, "writeReceiptEvent", "receiptEventDao", "insert"
-        )
-        is True
-    )
-
-
-def test_gr08n2_near_miss_wrong_overload_stays_unauthorized(tmp_path):
-    rows = _gr08n2_seed_rows()
-    assert (
-        _assert_gr08n_exact_match(
-            tmp_path, rows, "updatePrice", "investmentDao", "updatePrice",
-            parameter_types=("Long", "Float"),
-        )
-        is False
-    )
-
-
-def test_gr08n2_near_miss_wrong_owner_stays_unauthorized(tmp_path):
-    rows = _gr08n2_seed_rows()
-    assert (
-        _assert_gr08n_exact_match(
-            tmp_path, rows, "recordUsage", "usageDao", "insert",
-            owner_fqcn="com.example.OtherSubscriptionEngine",
-        )
-        is False
-    )
-    assert (
-        _assert_gr08n_exact_match(
-            tmp_path, rows, "clearMatchForReceipt", "scannedReceiptDao",
-            "update",
-            owner_fqcn="com.yourname.expensetracker.domain.receipt.lifecycle."
-                       "ReceiptMatchLifecycleService",
-        )
-        is False
-    )
-
-
-def test_gr08n2_near_miss_wrong_dao_stays_unauthorized(tmp_path):
-    rows = _gr08n2_seed_rows()
-    assert (
-        _assert_gr08n_exact_match(
-            tmp_path, rows, "addHolding", "investmentValueDao", "insert",
-            dao_accessor="investmentDao",
-            dao_fqcn=INVESTMENT_DAO,
-        )
-        is False
-    )
-
-
-def test_gr08n2_near_miss_wrong_operation_stays_unauthorized(tmp_path):
-    rows = _gr08n2_seed_rows()
-    assert (
-        _assert_gr08n_exact_match(
-            tmp_path, rows, "updatePrice", "investmentDao", "updatePrice",
-            operation="insert",
-        )
-        is False
-    )
-    assert (
-        _assert_gr08n_exact_match(
-            tmp_path, rows, "acceptCandidate", "candidateDao",
-            "markAsConverted",
-            operation="insert",
         )
         is False
     )
@@ -9971,96 +8614,6 @@ def _assert_gr08o_exact_match(tmp_path, rows, select_method,
     )
     kwargs.update(overrides)
     return match_mutation(target, **kwargs)
-
-
-def test_gr08o_exact_identity_matches(tmp_path):
-    rows = _gr08o_seed_rows()
-    assert (
-        _assert_gr08o_exact_match(
-            tmp_path, rows, "processMatchResult", "scannedReceiptDao",
-            "update",
-        )
-        is True
-    )
-    assert (
-        _assert_gr08o_exact_match(
-            tmp_path, rows, "ensureDefaultCategories", "categoryDao",
-            "seedDefaultsIfEmpty", select_parameters=(),
-        )
-        is True
-    )
-    assert (
-        _assert_gr08o_exact_match(
-            tmp_path, rows, "backfillNotificationLinks", "sourceLinkDao",
-            "insert",
-        )
-        is True
-    )
-
-
-def test_gr08o_near_miss_wrong_overload_stays_unauthorized(tmp_path):
-    rows = _gr08o_seed_rows()
-    assert (
-        _assert_gr08o_exact_match(
-            tmp_path, rows, "updateUserCorrection", "dao",
-            "updateUserCorrection",
-            parameter_types=("Long", "Long?", "String?", "String"),
-        )
-        is False
-    )
-
-
-def test_gr08o_near_miss_wrong_owner_stays_unauthorized(tmp_path):
-    rows = _gr08o_seed_rows()
-    assert (
-        _assert_gr08o_exact_match(
-            tmp_path, rows, "processMatchResult", "receiptEventDao",
-            "insert",
-            owner_fqcn="com.yourname.expensetracker.domain.receipt.lifecycle."
-                       "ReceiptMatchLifecycleService",
-        )
-        is False
-    )
-    assert (
-        _assert_gr08o_exact_match(
-            tmp_path, rows, "saveToHistory", "healthScoreHistoryDao",
-            "insert",
-            owner_fqcn="com.example.OtherHealthEngine",
-        )
-        is False
-    )
-
-
-def test_gr08o_near_miss_wrong_dao_stays_unauthorized(tmp_path):
-    rows = _gr08o_seed_rows()
-    assert (
-        _assert_gr08o_exact_match(
-            tmp_path, rows, "ensureDefaultCategories", "categoryDao",
-            "insert", select_parameters=(),
-            dao_accessor="merchantCategoryDao",
-            dao_fqcn=MERCHANT_CATEGORY_DAO_GR08O,
-        )
-        is False
-    )
-
-
-def test_gr08o_near_miss_wrong_operation_stays_unauthorized(tmp_path):
-    rows = _gr08o_seed_rows()
-    assert (
-        _assert_gr08o_exact_match(
-            tmp_path, rows, "refreshToken", "bankConnectionDao",
-            "updateToken",
-            operation="insert",
-        )
-        is False
-    )
-    assert (
-        _assert_gr08o_exact_match(
-            tmp_path, rows, "archiveGroup", "groupDao", "archiveGroup",
-            operation="restoreGroup",
-        )
-        is False
-    )
 
 
 def test_gr08o_shared_operation_distinct_callables_near_misses(tmp_path):
@@ -10753,135 +9306,6 @@ def _assert_gr08p1_exact_match(tmp_path, rows, select_method,
     return match_mutation(target, **kwargs)
 
 
-def test_gr08p1_exact_identity_matches(tmp_path):
-    rows = _gr08p1_seed_rows()
-    assert (
-        _assert_gr08p1_exact_match(
-            tmp_path, rows, "doWork", "auditDao", "insert",
-            select_parameters=(),
-        )
-        is True
-    )
-    assert (
-        _assert_gr08p1_exact_match(
-            tmp_path, rows, "recordNegotiationOutcome",
-            "negotiationOutcomeDao", "insert",
-            select_parameters=RECORD_OUTCOME_PARAMS,
-        )
-        is True
-    )
-    assert (
-        _assert_gr08p1_exact_match(
-            tmp_path, rows, "terminal", "dao", "completeTerminal",
-            select_parameters=TERMINAL_PARAMS,
-        )
-        is True
-    )
-    assert (
-        _assert_gr08p1_exact_match(
-            tmp_path, rows, "parseV2Row", "categoryDao", "insert",
-            select_parameters=PARSE_ROW_PARAMS,
-        )
-        is True
-    )
-
-
-def test_gr08p1_near_miss_wrong_overload_stays_unauthorized(tmp_path):
-    rows = _gr08p1_seed_rows()
-    # captureForRetry's 8-parameter overload never matches capture's
-    # 13-parameter identity behind the same accessor + operation.
-    assert (
-        _assert_gr08p1_exact_match(
-            tmp_path, rows, "capture", "intakeDao", "insertOrIgnore",
-            select_parameters=CAPTURE_PARAMS,
-            parameter_types=CAPTURE_FOR_RETRY_PARAMS,
-        )
-        is False
-    )
-    # A wrong TerminalArgs parameter type never matches the terminal row.
-    assert (
-        _assert_gr08p1_exact_match(
-            tmp_path, rows, "terminal", "dao", "completeTerminal",
-            select_parameters=TERMINAL_PARAMS,
-            parameter_types=("String", "TerminalArgs"),
-        )
-        is False
-    )
-
-
-def test_gr08p1_near_miss_wrong_owner_stays_unauthorized(tmp_path):
-    rows = _gr08p1_seed_rows()
-    # The nested Handle.terminal row never matches the outer-impl owner.
-    assert (
-        _assert_gr08p1_exact_match(
-            tmp_path, rows, "terminal", "dao", "completeTerminal",
-            select_parameters=TERMINAL_PARAMS,
-            owner_fqcn=WORKER_RUN_LOGGER_IMPL_FQCN,
-        )
-        is False
-    )
-    # A foreign engine owner never matches the negotiation-outcome row.
-    assert (
-        _assert_gr08p1_exact_match(
-            tmp_path, rows, "recordNegotiationOutcome",
-            "negotiationOutcomeDao", "insert",
-            select_parameters=RECORD_OUTCOME_PARAMS,
-            owner_fqcn="com.example.OtherNegotiationEngine",
-        )
-        is False
-    )
-
-
-def test_gr08p1_near_miss_wrong_dao_stays_unauthorized(tmp_path):
-    rows = _gr08p1_seed_rows()
-    # The doWork row never matches the derived-identity accessor spelling
-    # the legacy MIT-003 row used (the alias bridge resolves auditDao to
-    # the same DAO identity, but the exact policy match is per spelling).
-    assert (
-        _assert_gr08p1_exact_match(
-            tmp_path, rows, "doWork", "auditDao", "insert",
-            select_parameters=(),
-            dao_accessor="privacyAuditDao",
-        )
-        is False
-    )
-    # The assignCategoryIfUnset expenseDao row never matches the
-    # transactionEventDao identity behind the same callable.
-    assert (
-        _assert_gr08p1_exact_match(
-            tmp_path, rows, "assignCategoryIfUnset", "expenseDao",
-            "updateCategory", select_parameters=ASSIGN_CATEGORY_PARAMS,
-            dao_accessor="transactionEventDao",
-            dao_fqcn=TRANSACTION_EVENT_DAO_GR08P1,
-        )
-        is False
-    )
-
-
-def test_gr08p1_near_miss_wrong_operation_stays_unauthorized(tmp_path):
-    rows = _gr08p1_seed_rows()
-    # The purgeVisiblePayload row never matches the encryptAndClear
-    # operation behind the same callable + accessor.
-    assert (
-        _assert_gr08p1_exact_match(
-            tmp_path, rows, "repairLegacyPlaintextTransientRows",
-            "intakeDao", "purgeVisiblePayload", select_parameters=(),
-            operation="encryptAndClearVisiblePayload",
-        )
-        is False
-    )
-    # The start row never matches the completeTerminal operation behind the
-    # same accessor + DAO.
-    assert (
-        _assert_gr08p1_exact_match(
-            tmp_path, rows, "start", "dao", "insert",
-            select_parameters=WORKER_RUN_START_PARAMS,
-            operation="completeTerminal",
-        )
-        is False
-    )
-
-
 def test_gr08p1_shared_operation_distinct_callables_near_misses(tmp_path):
     """The multi-row callables are exact per (accessor, operation) identity.
 
@@ -11457,137 +9881,6 @@ def _assert_gr08p2_exact_match(tmp_path, rows, select_method,
     return match_mutation(target, **kwargs)
 
 
-def test_gr08p2_exact_identity_matches(tmp_path):
-    rows = _gr08p2_seed_rows()
-    assert (
-        _assert_gr08p2_exact_match(
-            tmp_path, rows, "insertGroupWithMembers", "memberDao",
-            "insertAll", select_parameters=INSERT_GROUP_WITH_MEMBERS_PARAMS,
-        )
-        is True
-    )
-    assert (
-        _assert_gr08p2_exact_match(
-            tmp_path, rows, "restoreReceiptAssets", "dao", "update",
-            select_parameters=RESTORE_RECEIPT_ASSETS_PARAMS,
-        )
-        is True
-    )
-    assert (
-        _assert_gr08p2_exact_match(
-            tmp_path, rows, "write", "dao", "insert",
-            select_parameters=RECEIPT_WRITE_PARAMS,
-        )
-        is True
-    )
-    assert (
-        _assert_gr08p2_exact_match(
-            tmp_path, rows, "getOrCreateCategory", "categoryDao", "insert",
-            select_parameters=("String",),
-        )
-        is True
-    )
-
-
-def test_gr08p2_near_miss_wrong_overload_stays_unauthorized(tmp_path):
-    rows = _gr08p2_seed_rows()
-    # A wrong parameter list never matches the restoreReceiptAssets row.
-    assert (
-        _assert_gr08p2_exact_match(
-            tmp_path, rows, "restoreReceiptAssets", "dao", "update",
-            select_parameters=RESTORE_RECEIPT_ASSETS_PARAMS,
-            parameter_types=RESTORE_RECEIPT_ASSETS_PARAMS[:-1],
-        )
-        is False
-    )
-    # A wrong Map spelling (no space) never matches the logDecision row.
-    assert (
-        _assert_gr08p2_exact_match(
-            tmp_path, rows, "logDecision", "dao", "insert",
-            select_parameters=LOG_DECISION_PARAMS,
-            parameter_types=(
-                PRIVACY_CAPABILITY, PRIVACY_DECISION, "Map<String,String>",
-            ),
-        )
-        is False
-    )
-
-
-def test_gr08p2_near_miss_wrong_owner_stays_unauthorized(tmp_path):
-    rows = _gr08p2_seed_rows()
-    # The receipt lifecycle event writer row never matches the transaction
-    # lifecycle event writer owner behind the same (write, dao, insert)
-    # triple shape.
-    assert (
-        _assert_gr08p2_exact_match(
-            tmp_path, rows, "write", "dao", "insert",
-            select_parameters=RECEIPT_WRITE_PARAMS,
-            owner_fqcn=ROOM_TRANSACTION_LIFECYCLE_EVENT_WRITER_FQCN,
-        )
-        is False
-    )
-    # A foreign coordinator owner never matches the disconnectConnection
-    # row.
-    assert (
-        _assert_gr08p2_exact_match(
-            tmp_path, rows, "disconnectConnection", "bankConnectionDao",
-            "disconnect", select_parameters=("Long",),
-            owner_fqcn="com.example.OtherBankCoordinator",
-        )
-        is False
-    )
-
-
-def test_gr08p2_near_miss_wrong_dao_stays_unauthorized(tmp_path):
-    rows = _gr08p2_seed_rows()
-    # The deleteMember row never matches the ExpenseGroupDao identity
-    # behind the same memberDao accessor spelling.
-    assert (
-        _assert_gr08p2_exact_match(
-            tmp_path, rows, "deleteMember", "memberDao", "update",
-            select_parameters=("Long", "Long"),
-            dao_fqcn=EXPENSE_GROUP_DAO_FQCN,
-        )
-        is False
-    )
-    # The insertGroupWithMembers row never matches the ExpenseGroupDao
-    # self-DAO identity (the flagged mutation is the cross-DAO memberDao
-    # insertAll, not the DAO's own insert).
-    assert (
-        _assert_gr08p2_exact_match(
-            tmp_path, rows, "insertGroupWithMembers", "memberDao",
-            "insertAll", select_parameters=INSERT_GROUP_WITH_MEMBERS_PARAMS,
-            dao_accessor="insert",
-            dao_fqcn=EXPENSE_GROUP_DAO_FQCN,
-        )
-        is False
-    )
-
-
-def test_gr08p2_near_miss_wrong_operation_stays_unauthorized(tmp_path):
-    rows = _gr08p2_seed_rows()
-    # The recoverPending row never matches a different mutating-query
-    # operation behind the same intakeDao accessor.
-    assert (
-        _assert_gr08p2_exact_match(
-            tmp_path, rows, "recoverPending", "intakeDao",
-            "releaseStaleProcessing", select_parameters=("Int",),
-            operation="insertOrIgnore",
-        )
-        is False
-    )
-    # The updateForecastAccuracy row never matches the insert operation
-    # behind the same budgetForecastDao accessor.
-    assert (
-        _assert_gr08p2_exact_match(
-            tmp_path, rows, "updateForecastAccuracy", "budgetForecastDao",
-            "update", select_parameters=("Long", "Double"),
-            operation="insert",
-        )
-        is False
-    )
-
-
 def test_gr08p2_shared_shape_distinct_callables_near_misses(tmp_path):
     """The same-shape rows are exact per (path, parameters) identity.
 
@@ -11618,5 +9911,1149 @@ def test_gr08p2_shared_shape_distinct_callables_near_misses(tmp_path):
             parameter_types=("String",),
         )
         is False
+    )
+
+
+# ── Consolidated exact-identity / single-field near-miss table ──────────────
+#
+# One parametrized test replaces the per-batch ``exact_identity_matches`` and
+# ``near_miss_wrong_{overload,owner,dao,operation}`` functions.  Each row is
+# exactly one former assert statement: the same seed-rows factory, the same
+# target selection, the same single-field override and the same expected
+# result.  ``None`` in a selector slot means "do not filter on this field".
+# ``overrides`` is a dict, or a callable ``target -> dict`` for overrides that
+# are derived from the selected target.
+
+
+def _policy_entries(rows):
+    """Build schema-valid policy entries from seed rows (shared by the table)."""
+    entries = []
+    for position, row in enumerate(rows):
+        entry, errors = build_policy_entry(row, position)
+        assert entry is not None and not errors, (
+            "fixture row must be schema-valid: %s" % (errors,)
+        )
+        entries.append(entry)
+    return entries
+
+
+def _select_target(entries, method, accessor, operation, parameters):
+    """The single entry matching every non-None selector value."""
+    candidates = [
+        entry
+        for entry in entries
+        if (method is None or entry.method == method)
+        and (accessor is None or entry.dao_accessor == accessor)
+        and (operation is None or entry.operation == operation)
+        and (
+            parameters is None
+            or tuple(entry.parameter_types) == tuple(parameters)
+        )
+    ]
+    selector = (method, accessor, operation, parameters)
+    assert len(candidates) == 1, (
+        f"selector={selector!r} matched {len(candidates)}"
+    )
+    return candidates[0]
+
+
+def _wrong_last_parameter_overload(target):
+    return {"parameter_types": target.parameter_types[:-1] + ("String?",)}
+
+
+_MATCH_CASES = [
+    # ── GR-08a: handleAutoAcceptInTransaction / dao / markProcessed ──
+    pytest.param(
+        _gr08a_seed_rows,
+        ("handleAutoAcceptInTransaction", "dao", "markProcessed", None),
+        {}, True, id="a-exact-identity",
+    ),
+    pytest.param(
+        _gr08a_seed_rows,
+        ("handleAutoAcceptInTransaction", "dao", "markProcessed", None),
+        _wrong_last_parameter_overload, False, id="a-wrong-overload",
+    ),
+    pytest.param(
+        _gr08a_seed_rows,
+        ("handleAutoAcceptInTransaction", "dao", "markProcessed", None),
+        {"owner_fqcn": "com.example.OtherPipeline"}, False,
+        id="a-wrong-owner",
+    ),
+    pytest.param(
+        _gr08a_seed_rows,
+        ("handleAutoAcceptInTransaction", "dao", "markProcessed", None),
+        {
+            "dao_accessor": "sourceStatsDao",
+            "dao_fqcn": (
+                "com.yourname.expensetracker.data.database.dao.SourceStatsDao"
+            ),
+        },
+        False, id="a-wrong-dao",
+    ),
+    pytest.param(
+        _gr08a_seed_rows,
+        ("handleAutoAcceptInTransaction", "dao", "markProcessed", None),
+        {"operation": "markRelevance"}, False, id="a-wrong-operation",
+    ),
+    pytest.param(
+        _gr08a_seed_rows,
+        ("handleAutoAcceptInTransaction", "dao", "markProcessed", None),
+        {"path": "app/src/main/java/com/example/Copy.kt"}, False,
+        id="a-wrong-path",
+    ),
+    # ── GR-08b: processInternal / dao / markProcessed ──
+    pytest.param(
+        _gr08b_seed_rows,
+        ("processInternal", "dao", "markProcessed", None),
+        {}, True, id="b-exact-identity",
+    ),
+    pytest.param(
+        _gr08b_seed_rows,
+        ("processInternal", "dao", "markProcessed", None),
+        _wrong_last_parameter_overload, False, id="b-wrong-overload",
+    ),
+    pytest.param(
+        _gr08b_seed_rows,
+        ("processInternal", "dao", "markProcessed", None),
+        {"owner_fqcn": "com.example.OtherPipeline"}, False,
+        id="b-wrong-owner",
+    ),
+    pytest.param(
+        _gr08b_seed_rows,
+        ("processInternal", "dao", "markProcessed", None),
+        {"dao_accessor": "sourceStatsDao", "dao_fqcn": SOURCE_STATS_DAO},
+        False, id="b-wrong-dao",
+    ),
+    pytest.param(
+        _gr08b_seed_rows,
+        ("processInternal", "dao", "markProcessed", None),
+        {"operation": "markRelevance"}, False, id="b-wrong-operation",
+    ),
+    # ── GR-08c1: linkExpenseToOccurrence / occurrenceDao / claimForExpense ──
+    pytest.param(
+        _gr08c1_seed_rows,
+        ("linkExpenseToOccurrence", "occurrenceDao", "claimForExpense", None),
+        {}, True, id="c1-exact-identity",
+    ),
+    pytest.param(
+        _gr08c1_seed_rows,
+        ("linkExpenseToOccurrence", "occurrenceDao", "claimForExpense", None),
+        {"parameter_types": ("Long", "Long")}, False, id="c1-wrong-overload",
+    ),
+    pytest.param(
+        _gr08c1_seed_rows,
+        ("linkExpenseToOccurrence", "occurrenceDao", "claimForExpense", None),
+        {"owner_fqcn": "com.example.OtherCoordinator"}, False,
+        id="c1-wrong-owner",
+    ),
+    pytest.param(
+        _gr08c1_seed_rows,
+        ("linkExpenseToOccurrence", "occurrenceDao", "claimForExpense", None),
+        {
+            "dao_accessor": "reminderDeliveryDao",
+            "dao_fqcn": REMINDER_DELIVERY_DAO,
+        },
+        False, id="c1-wrong-dao",
+    ),
+    pytest.param(
+        _gr08c1_seed_rows,
+        ("linkExpenseToOccurrence", "occurrenceDao", "claimForExpense", None),
+        {"operation": "update"}, False, id="c1-wrong-operation",
+    ),
+    # ── GR-08c2: claimReminderDelivery / reminderDeliveryDao / claimDelivery ──
+    pytest.param(
+        _gr08c2_seed_rows,
+        ("claimReminderDelivery", "reminderDeliveryDao", "claimDelivery", None),
+        {}, True, id="c2-exact-identity",
+    ),
+    pytest.param(
+        _gr08c2_seed_rows,
+        ("claimReminderDelivery", "reminderDeliveryDao", "claimDelivery", None),
+        {"parameter_types": ("Long", "Long")}, False, id="c2-wrong-overload",
+    ),
+    pytest.param(
+        _gr08c2_seed_rows,
+        ("claimReminderDelivery", "reminderDeliveryDao", "claimDelivery", None),
+        {"owner_fqcn": "com.example.OtherCoordinator"}, False,
+        id="c2-wrong-owner",
+    ),
+    pytest.param(
+        _gr08c2_seed_rows,
+        ("claimReminderDelivery", "reminderDeliveryDao", "claimDelivery", None),
+        {"dao_accessor": "lifecycleEventDao", "dao_fqcn": LIFECYCLE_EVENT_DAO},
+        False, id="c2-wrong-dao",
+    ),
+    pytest.param(
+        _gr08c2_seed_rows,
+        ("claimReminderDelivery", "reminderDeliveryDao", "claimDelivery", None),
+        {"operation": "update"}, False, id="c2-wrong-operation",
+    ),
+    # ── GR-08d: approveReview / pendingReviewDao / transitionStatus ──
+    pytest.param(
+        _gr08d_seed_rows,
+        ("approveReview", "pendingReviewDao", "transitionStatus", None),
+        {}, True, id="d-exact-identity",
+    ),
+    pytest.param(
+        _gr08d_seed_rows,
+        ("approveReview", "pendingReviewDao", "transitionStatus", None),
+        {"parameter_types": ("Long",)}, False, id="d-wrong-overload",
+    ),
+    pytest.param(
+        _gr08d_seed_rows,
+        ("approveReview", "pendingReviewDao", "transitionStatus", None),
+        {"owner_fqcn": "com.example.OtherRepository"}, False,
+        id="d-wrong-owner",
+    ),
+    pytest.param(
+        _gr08d_seed_rows,
+        ("approveReview", "pendingReviewDao", "transitionStatus", None),
+        {
+            "dao_accessor": "rawNotificationDao",
+            "dao_fqcn": RAW_NOTIFICATION_DAO_GR08D,
+        },
+        False, id="d-wrong-dao",
+    ),
+    pytest.param(
+        _gr08d_seed_rows,
+        ("approveReview", "pendingReviewDao", "transitionStatus", None),
+        {"operation": "updateStatus"}, False, id="d-wrong-operation",
+    ),
+    # ── GR-08e1: save / dao / insert ──
+    pytest.param(
+        _gr08e1_seed_rows, ("save", "dao", "insert", None),
+        {}, True, id="e1-exact-identity",
+    ),
+    pytest.param(
+        _gr08e1_seed_rows, ("save", "dao", "insert", None),
+        {"parameter_types": ("String",)}, False, id="e1-wrong-overload",
+    ),
+    pytest.param(
+        _gr08e1_seed_rows, ("save", "dao", "insert", None),
+        {"owner_fqcn": "com.example.OtherRepository"}, False,
+        id="e1-wrong-owner",
+    ),
+    pytest.param(
+        _gr08e1_seed_rows, ("save", "dao", "insert", None),
+        {"dao_accessor": "sourceStatsDao", "dao_fqcn": SOURCE_STATS_DAO},
+        False, id="e1-wrong-dao",
+    ),
+    pytest.param(
+        _gr08e1_seed_rows, ("save", "dao", "insert", None),
+        {"operation": "insertAll"}, False, id="e1-wrong-operation",
+    ),
+    # ── GR-08e2: addWarranty / warrantyDao / insertWarranty ──
+    pytest.param(
+        _gr08e2_seed_rows,
+        ("addWarranty", "warrantyDao", "insertWarranty", None),
+        {}, True, id="e2-exact-identity",
+    ),
+    pytest.param(
+        _gr08e2_seed_rows,
+        ("addWarranty", "warrantyDao", "insertWarranty", None),
+        {"parameter_types": (RETURN_WINDOW_ENTITY,)}, False,
+        id="e2-wrong-overload",
+    ),
+    pytest.param(
+        _gr08e2_seed_rows,
+        ("addWarranty", "warrantyDao", "insertWarranty", None),
+        {"owner_fqcn": "com.example.OtherRepository"}, False,
+        id="e2-wrong-owner",
+    ),
+    pytest.param(
+        _gr08e2_seed_rows,
+        ("addWarranty", "warrantyDao", "insertWarranty", None),
+        {"dao_accessor": "returnWindowDao", "dao_fqcn": RETURN_WINDOW_DAO},
+        False, id="e2-wrong-dao",
+    ),
+    pytest.param(
+        _gr08e2_seed_rows,
+        ("addWarranty", "warrantyDao", "insertWarranty", None),
+        {"operation": "insertWarrantyIgnore"}, False, id="e2-wrong-operation",
+    ),
+    # ── GR-08f: deactivateRule / manualRecurringExpenseDao / setActiveStatus ──
+    pytest.param(
+        _gr08f_seed_rows,
+        ("deactivateRule", "manualRecurringExpenseDao", "setActiveStatus", None),
+        {}, True, id="f-exact-identity",
+    ),
+    pytest.param(
+        _gr08f_seed_rows,
+        ("deactivateRule", "manualRecurringExpenseDao", "setActiveStatus", None),
+        {"parameter_types": ("Long", "Boolean")}, False, id="f-wrong-overload",
+    ),
+    pytest.param(
+        _gr08f_seed_rows,
+        ("deactivateRule", "manualRecurringExpenseDao", "setActiveStatus", None),
+        {"owner_fqcn": "com.example.OtherCoordinator"}, False,
+        id="f-wrong-owner",
+    ),
+    pytest.param(
+        _gr08f_seed_rows,
+        ("deactivateRule", "manualRecurringExpenseDao", "setActiveStatus", None),
+        {"dao_accessor": "occurrenceDao", "dao_fqcn": OCCURRENCE_DAO},
+        False, id="f-wrong-dao",
+    ),
+    pytest.param(
+        _gr08f_seed_rows,
+        ("deactivateRule", "manualRecurringExpenseDao", "setActiveStatus", None),
+        {"operation": "update"}, False, id="f-wrong-operation",
+    ),
+    # ── GR-08g: processBankStatement / bankStatementImportRunDao / finalize ──
+    # (selector has no method: every row shares processBankStatement)
+    pytest.param(
+        _gr08g_seed_rows,
+        (None, "bankStatementImportRunDao", "finalize", None),
+        {}, True, id="g-exact-identity",
+    ),
+    pytest.param(
+        _gr08g_seed_rows,
+        (None, "bankStatementImportRunDao", "finalize", None),
+        {"parameter_types": ("android.net.Uri", "Long")}, False,
+        id="g-wrong-overload",
+    ),
+    pytest.param(
+        _gr08g_seed_rows,
+        (None, "bankStatementImportRunDao", "finalize", None),
+        {"owner_fqcn": "com.example.OtherProcessor"}, False,
+        id="g-wrong-owner",
+    ),
+    pytest.param(
+        _gr08g_seed_rows,
+        (None, "bankStatementImportRunDao", "finalize", None),
+        {
+            "dao_accessor": "bankStatementImportItemDao",
+            "dao_fqcn": BANK_STATEMENT_IMPORT_ITEM_DAO,
+        },
+        False, id="g-wrong-dao",
+    ),
+    pytest.param(
+        _gr08g_seed_rows,
+        (None, "bankStatementImportRunDao", "finalize", None),
+        {"operation": "markStaleFailed"}, False, id="g-wrong-operation",
+    ),
+    # ── GR-08h: match-state rows (two exact identities, one target for near misses) ──
+    pytest.param(
+        _gr08h_seed_rows,
+        ("saveMatchSuggestion", "scannedReceiptDao", "update", None),
+        {}, True, id="h-exact-identity-0",
+    ),
+    pytest.param(
+        _gr08h_seed_rows,
+        ("recordNotificationSuppressed", "receiptEventDao", "insert", None),
+        {}, True, id="h-exact-identity-1",
+    ),
+    pytest.param(
+        _gr08h_seed_rows,
+        ("saveMatchSuggestion", "scannedReceiptDao", "update", None),
+        {"parameter_types": ("Long", "Long")}, False, id="h-wrong-overload",
+    ),
+    pytest.param(
+        _gr08h_seed_rows,
+        ("saveMatchSuggestion", "scannedReceiptDao", "update", None),
+        {"owner_fqcn": "com.example.OtherMatchService"}, False,
+        id="h-wrong-owner",
+    ),
+    pytest.param(
+        _gr08h_seed_rows,
+        ("saveMatchSuggestion", "scannedReceiptDao", "update", None),
+        {
+            "dao_accessor": "receiptEventDao",
+            "dao_fqcn": RECEIPT_EVENT_DAO_GR08H,
+        },
+        False, id="h-wrong-dao",
+    ),
+    pytest.param(
+        _gr08h_seed_rows,
+        ("saveMatchSuggestion", "scannedReceiptDao", "update", None),
+        {"operation": "insert"}, False, id="h-wrong-operation",
+    ),
+    # ── GR-08i1: group lifecycle (overload/operation: deleteGroup/groupDao/archiveGroup;
+    #    owner/dao: addMemberToGroup/memberDao/insert) ──
+    pytest.param(
+        _gr08i1_seed_rows,
+        ("createGroupWithMembers", "groupDao", "insert", None),
+        {}, True, id="i1-exact-identity-0",
+    ),
+    pytest.param(
+        _gr08i1_seed_rows,
+        ("deleteGroupAtomic", "expenseDao", "clearSharedExpenseFlags", None),
+        {}, True, id="i1-exact-identity-1",
+    ),
+    pytest.param(
+        _gr08i1_seed_rows,
+        ("deleteGroup", "groupDao", "archiveGroup", None),
+        {"parameter_types": ("Long", "() -> Unit")}, False,
+        id="i1-wrong-overload",
+    ),
+    pytest.param(
+        _gr08i1_seed_rows,
+        ("addMemberToGroup", "memberDao", "insert", None),
+        {"owner_fqcn": "com.example.OtherCoordinator"}, False,
+        id="i1-wrong-owner",
+    ),
+    pytest.param(
+        _gr08i1_seed_rows,
+        ("addMemberToGroup", "memberDao", "insert", None),
+        {"dao_accessor": "groupDao", "dao_fqcn": EXPENSE_GROUP_DAO},
+        False, id="i1-wrong-dao",
+    ),
+    pytest.param(
+        _gr08i1_seed_rows,
+        ("deleteGroup", "groupDao", "archiveGroup", None),
+        {"operation": "delete"}, False, id="i1-wrong-operation",
+    ),
+    # ── GR-08i2: materializeInCurrentTransaction / occurrenceDao / insert ──
+    pytest.param(
+        _gr08i2_seed_rows,
+        ("materializeInCurrentTransaction", "occurrenceDao", "insert", None),
+        {}, True, id="i2-exact-identity",
+    ),
+    pytest.param(
+        _gr08i2_seed_rows,
+        ("materializeInCurrentTransaction", "occurrenceDao", "insert", None),
+        {"parameter_types": (RESOLVED_OCCURRENCE_LIST,)}, False,
+        id="i2-wrong-overload",
+    ),
+    pytest.param(
+        _gr08i2_seed_rows,
+        ("materializeInCurrentTransaction", "occurrenceDao", "insert", None),
+        {"owner_fqcn": "com.example.OtherMaterializer"}, False,
+        id="i2-wrong-owner",
+    ),
+    pytest.param(
+        _gr08i2_seed_rows,
+        ("materializeInCurrentTransaction", "occurrenceDao", "insert", None),
+        {
+            "dao_accessor": "reminderDeliveryDao",
+            "dao_fqcn": REMINDER_DELIVERY_DAO,
+        },
+        False, id="i2-wrong-dao",
+    ),
+    pytest.param(
+        _gr08i2_seed_rows,
+        ("materializeInCurrentTransaction", "occurrenceDao", "insert", None),
+        {"operation": "update"}, False, id="i2-wrong-operation",
+    ),
+    # ── GR-08i3: doWork / intakeDao / claimForProcessing ──
+    pytest.param(
+        _gr08i3_seed_rows,
+        ("doWork", "intakeDao", "claimForProcessing", None),
+        {}, True, id="i3-exact-identity-0",
+    ),
+    pytest.param(
+        _gr08i3_seed_rows,
+        (
+            "runPrivacyCleanupGuarded", "intakeDao",
+            "markPrivacyDeniedAndPurgeAllPayload", None,
+        ),
+        {}, True, id="i3-exact-identity-1",
+    ),
+    pytest.param(
+        _gr08i3_seed_rows,
+        ("doWork", "intakeDao", "claimForProcessing", None),
+        {"parameter_types": ("Long",)}, False, id="i3-wrong-overload",
+    ),
+    pytest.param(
+        _gr08i3_seed_rows,
+        ("doWork", "intakeDao", "claimForProcessing", None),
+        {"owner_fqcn": "com.example.OtherWorker"}, False,
+        id="i3-wrong-owner",
+    ),
+    pytest.param(
+        _gr08i3_seed_rows,
+        ("doWork", "intakeDao", "claimForProcessing", None),
+        {"dao_accessor": "repository", "dao_fqcn": RAW_NOTIFICATION_DAO},
+        False, id="i3-wrong-dao",
+    ),
+    pytest.param(
+        _gr08i3_seed_rows,
+        ("doWork", "intakeDao", "claimForProcessing", None),
+        {"operation": "markTerminal"}, False, id="i3-wrong-operation",
+    ),
+    # ── GR-08j1: link/unlink receipt (overload targets unlinkReceiptFromExpense) ──
+    pytest.param(
+        _gr08j1_seed_rows,
+        ("linkReceiptToExpense", "receiptExpenseLinkDao", "insert", None),
+        {}, True, id="j1-exact-identity-0",
+    ),
+    pytest.param(
+        _gr08j1_seed_rows,
+        ("unlinkReceiptFromExpense", "scannedReceiptDao", "update", None),
+        {}, True, id="j1-exact-identity-1",
+    ),
+    pytest.param(
+        _gr08j1_seed_rows,
+        ("unlinkReceiptFromExpense", "scannedReceiptDao", "update", None),
+        {"parameter_types": ("Long",)}, False, id="j1-wrong-overload",
+    ),
+    pytest.param(
+        _gr08j1_seed_rows,
+        ("linkReceiptToExpense", "receiptExpenseLinkDao", "insert", None),
+        {"owner_fqcn": "com.example.OtherLinkService"}, False,
+        id="j1-wrong-owner",
+    ),
+    pytest.param(
+        _gr08j1_seed_rows,
+        ("linkReceiptToExpense", "receiptExpenseLinkDao", "insert", None),
+        {"dao_accessor": "scannedReceiptDao", "dao_fqcn": SCANNED_RECEIPT_DAO},
+        False, id="j1-wrong-dao",
+    ),
+    pytest.param(
+        _gr08j1_seed_rows,
+        ("linkReceiptToExpense", "receiptExpenseLinkDao", "insert", None),
+        {"operation": "unlink"}, False, id="j1-wrong-operation",
+    ),
+    # ── GR-08j2: ExpenseWriteStore.insert + SourceStatsRepository ──
+    pytest.param(
+        _gr08j2_seed_rows,
+        ("insert", "expenseDao", "insert", None),
+        {}, True, id="j2-exact-identity-0",
+    ),
+    pytest.param(
+        _gr08j2_seed_rows,
+        ("insertIfNotExists", "dao", "insertIfNotExists", None),
+        {}, True, id="j2-exact-identity-1",
+    ),
+    pytest.param(
+        _gr08j2_seed_rows,
+        ("insert", "expenseDao", "insert", None),
+        {"parameter_types": (EXPENSE_ENTITY_LIST,)}, False,
+        id="j2-wrong-overload",
+    ),
+    pytest.param(
+        _gr08j2_seed_rows,
+        ("insert", "expenseDao", "insert", None),
+        {"owner_fqcn": "com.example.OtherStore"}, False, id="j2-wrong-owner",
+    ),
+    pytest.param(
+        _gr08j2_seed_rows,
+        ("insert", "expenseDao", "insert", None),
+        {"dao_accessor": "dao", "dao_fqcn": SOURCE_STATS_DAO_GR08J},
+        False, id="j2-wrong-dao",
+    ),
+    pytest.param(
+        _gr08j2_seed_rows,
+        ("insert", "expenseDao", "insert", None),
+        {"operation": "insertAll"}, False, id="j2-wrong-operation",
+    ),
+    # ── GR-08k1: retention targets / recommendation + chat stores ──
+    pytest.param(
+        _gr08k1_seed_rows,
+        (
+            "provideRetentionTargets", "rawNotificationDao",
+            "updateRawContentPurged", None,
+        ),
+        {}, True, id="k1-exact-identity-0",
+    ),
+    pytest.param(
+        _gr08k1_seed_rows,
+        ("saveAll", "dao", "archiveActiveOverflow", None),
+        {}, True, id="k1-exact-identity-1",
+    ),
+    pytest.param(
+        _gr08k1_seed_rows,
+        ("save", "dao", "insert", None),
+        {"parameter_types": (DASHBOARD_RECOMMENDATION_LIST,)}, False,
+        id="k1-wrong-overload",
+    ),
+    pytest.param(
+        _gr08k1_seed_rows,
+        (
+            "provideRetentionTargets", "rawNotificationDao",
+            "updateRawContentPurged", None,
+        ),
+        {"owner_fqcn": "com.example.OtherRetentionModule"}, False,
+        id="k1-wrong-owner",
+    ),
+    pytest.param(
+        _gr08k1_seed_rows,
+        ("provideRetentionTargets", "aiArtifactDao", "deleteExpired", None),
+        {"dao_accessor": "aiChatMessageDao", "dao_fqcn": AI_CHAT_MESSAGE_DAO},
+        False, id="k1-wrong-dao",
+    ),
+    pytest.param(
+        _gr08k1_seed_rows,
+        ("expireAll", "dao", "expireOld", None),
+        {"operation": "expireAllActiveByUser"}, False,
+        id="k1-wrong-operation",
+    ),
+    # ── GR-08k2: group lifecycle coordinator + split manager ──
+    pytest.param(
+        _gr08k2_seed_rows,
+        ("recordSettlement", "settlementDao", "insert", None),
+        {}, True, id="k2-exact-identity-0",
+    ),
+    pytest.param(
+        _gr08k2_seed_rows,
+        (
+            "assignItemsToParticipants", "splitItemAssignmentDao",
+            "insertAssignments", None,
+        ),
+        {}, True, id="k2-exact-identity-1",
+    ),
+    pytest.param(
+        _gr08k2_seed_rows,
+        ("removeMember", "memberDao", "update", None),
+        {"parameter_types": ("Long",)}, False, id="k2-wrong-overload",
+    ),
+    pytest.param(
+        _gr08k2_seed_rows,
+        ("recordSettlement", "settlementDao", "insert", None),
+        {"owner_fqcn": "com.example.OtherGroupCoordinator"}, False,
+        id="k2-wrong-owner",
+    ),
+    pytest.param(
+        _gr08k2_seed_rows,
+        ("createTemplate", "splitTemplateDao", "insertTemplate", None),
+        {
+            "dao_accessor": "splitItemAssignmentDao",
+            "dao_fqcn": SPLIT_ITEM_ASSIGNMENT_DAO,
+        },
+        False, id="k2-wrong-dao",
+    ),
+    pytest.param(
+        _gr08k2_seed_rows,
+        ("setDefaultTemplate", "splitTemplateDao", "clearDefaultTemplate", None),
+        {"operation": "setDefaultTemplate"}, False, id="k2-wrong-operation",
+    ),
+    # ── GR-08l1: expense / alias / user-correction / location rows ──
+    pytest.param(
+        _gr08l1_seed_rows,
+        ("deleteAllExpenses", "expenseDao", "deleteAll", None),
+        {}, True, id="l1-exact-identity-0",
+    ),
+    pytest.param(
+        _gr08l1_seed_rows,
+        ("insertAlias", "dao", "updateAlias", None),
+        {}, True, id="l1-exact-identity-1",
+    ),
+    pytest.param(
+        _gr08l1_seed_rows,
+        ("updateExpenseCategoryBulk", "userCorrectionDao", "insert", None),
+        {"parameter_types": ("String",)}, False, id="l1-wrong-overload",
+    ),
+    pytest.param(
+        _gr08l1_seed_rows,
+        ("deleteAllExpenses", "expenseDao", "deleteAll", None),
+        {"owner_fqcn": "com.example.OtherExpenseRepository"}, False,
+        id="l1-wrong-owner",
+    ),
+    pytest.param(
+        _gr08l1_seed_rows,
+        ("insertCanonical", "dao", "insertCanonical", None),
+        {"dao_accessor": "expenseDao", "dao_fqcn": EXPENSE_DAO}, False,
+        id="l1-wrong-dao",
+    ),
+    pytest.param(
+        _gr08l1_seed_rows,
+        ("clearExpenseLocation", "expenseDao", "clearLocation", None),
+        {"operation": "conditionallySetLocation"}, False,
+        id="l1-wrong-operation",
+    ),
+    # ── GR-08l2: expense delete / candidate / subscription rows ──
+    pytest.param(
+        _gr08l2_seed_rows,
+        (
+            "deleteExpense", "expenseDao", "delete",
+            ("Long", "String", "String?", "String?", "String?"),
+        ),
+        {}, True, id="l2-exact-identity-0",
+    ),
+    pytest.param(
+        _gr08l2_seed_rows,
+        ("markCandidateAsRejected", "candidateDao", "markAsRejected", None),
+        {}, True, id="l2-exact-identity-1",
+    ),
+    pytest.param(
+        _gr08l2_seed_rows,
+        (
+            "deleteExpense", "expenseDao", "delete",
+            ("Long", "String", "String?", "String?", "String?"),
+        ),
+        {"parameter_types": ("Long",)}, False, id="l2-wrong-overload",
+    ),
+    pytest.param(
+        _gr08l2_seed_rows,
+        ("bulkUpdateCategory", "expenseDao", "updateCategoryForMerchant", None),
+        {"owner_fqcn": "com.example.OtherTransactionCoordinator"}, False,
+        id="l2-wrong-owner",
+    ),
+    pytest.param(
+        _gr08l2_seed_rows,
+        ("insertSubscription", "subscriptionDao", "insert", None),
+        {"dao_accessor": "usageDao", "dao_fqcn": SUBSCRIPTION_USAGE_DAO},
+        False, id="l2-wrong-dao",
+    ),
+    pytest.param(
+        _gr08l2_seed_rows,
+        ("markCandidateAsConverted", "candidateDao", "markAsConverted", None),
+        {"operation": "markAsRejected"}, False, id="l2-wrong-operation",
+    ),
+    # ── GR-08m1: AI chat session / operation-run recorder rows ──
+    pytest.param(
+        _gr08m1_seed_rows,
+        ("createSession", "sessionDao", "insert", None),
+        {}, True, id="m1-exact-identity-0",
+    ),
+    pytest.param(
+        _gr08m1_seed_rows,
+        ("increment", "runDao", "incrementCounters", None),
+        {}, True, id="m1-exact-identity-1",
+    ),
+    pytest.param(
+        _gr08m1_seed_rows,
+        (
+            "importLastFailureJournalIfPresent", "operationRunEventDao",
+            "insert", None,
+        ),
+        {}, True, id="m1-exact-identity-2",
+    ),
+    pytest.param(
+        _gr08m1_seed_rows,
+        ("purgeOldMessages", "messageDao", "deleteOlderThan", None),
+        {"parameter_types": ("String",)}, False, id="m1-wrong-overload",
+    ),
+    pytest.param(
+        _gr08m1_seed_rows,
+        ("event", "eventDao", "insert", None),
+        {"owner_fqcn": ROOM_OPERATION_RUN_RECORDER_FQCN}, False,
+        id="m1-wrong-owner-0",
+    ),
+    pytest.param(
+        _gr08m1_seed_rows,
+        ("start", "runDao", "insert", None),
+        {"owner_fqcn": "com.example.OtherRunRecorder"}, False,
+        id="m1-wrong-owner-1",
+    ),
+    pytest.param(
+        _gr08m1_seed_rows,
+        ("clearAllHistory", "sessionDao", "deleteAll", None),
+        {"dao_accessor": "messageDao", "dao_fqcn": AI_CHAT_MESSAGE_DAO},
+        False, id="m1-wrong-dao",
+    ),
+    pytest.param(
+        _gr08m1_seed_rows,
+        (
+            "recoverStaleRunningOperationRuns", "runDao", "finalizeIfRunning",
+            None,
+        ),
+        {"operation": "incrementCounters"}, False, id="m1-wrong-operation",
+    ),
+    # ── GR-08m2: receipt / email-receipt / reminder-delivery rows ──
+    pytest.param(
+        _gr08m2_seed_rows,
+        ("processReceiptInput", "scannedReceiptDao", "delete", None),
+        {}, True, id="m2-exact-identity-0",
+    ),
+    pytest.param(
+        _gr08m2_seed_rows,
+        ("deliverReminder", "deliveryDao", "claim", None),
+        {}, True, id="m2-exact-identity-1",
+    ),
+    pytest.param(
+        _gr08m2_seed_rows,
+        ("deliverReminder", "deliveryDao", "claim", None),
+        {"parameter_types": ("Long", "Int", "Long")}, False,
+        id="m2-wrong-overload",
+    ),
+    pytest.param(
+        _gr08m2_seed_rows,
+        ("processEmailReceipt", "emailReceiptDao", "insertOrIgnore", None),
+        {"owner_fqcn": "com.example.OtherReceiptCoordinator"}, False,
+        id="m2-wrong-owner",
+    ),
+    pytest.param(
+        _gr08m2_seed_rows,
+        ("processReceiptInput", "pendingReviewDao", "insert", None),
+        {
+            "dao_accessor": "scannedReceiptDao",
+            "dao_fqcn": SCANNED_RECEIPT_DAO_GR08M,
+        },
+        False, id="m2-wrong-dao",
+    ),
+    pytest.param(
+        _gr08m2_seed_rows,
+        ("deliverReminder", "deliveryDao", "markSentFromClaimed", None),
+        {"operation": "markFailed"}, False, id="m2-wrong-operation",
+    ),
+    # ── GR-08n1: artifact / budget / location-cache rows ──
+    pytest.param(
+        _gr08n1_seed_rows,
+        ("upsert", "dao", "upsert", None),
+        {}, True, id="n1-exact-identity-0",
+    ),
+    pytest.param(
+        _gr08n1_seed_rows,
+        ("deleteAll", "budgetDao", "deleteAll", ()),
+        {}, True, id="n1-exact-identity-1",
+    ),
+    pytest.param(
+        _gr08n1_seed_rows,
+        ("evictStaleCache", "dao", "deleteStaleEntries", ()),
+        {}, True, id="n1-exact-identity-2",
+    ),
+    pytest.param(
+        _gr08n1_seed_rows,
+        (
+            "updateExceededNotification", "budgetDao",
+            "updateExceededNotification", None,
+        ),
+        {"parameter_types": ("Long", "String")}, False,
+        id="n1-wrong-overload",
+    ),
+    pytest.param(
+        _gr08n1_seed_rows,
+        ("upsert", "dao", "upsert", None),
+        {"owner_fqcn": "com.example.OtherArtifactRepository"}, False,
+        id="n1-wrong-owner-0",
+    ),
+    pytest.param(
+        _gr08n1_seed_rows,
+        ("getCachedLocation", "dao", "incrementHitCount", None),
+        {"owner_fqcn": "com.example.OtherLocationRepository"}, False,
+        id="n1-wrong-owner-1",
+    ),
+    pytest.param(
+        _gr08n1_seed_rows,
+        ("deleteAll", "budgetDao", "deleteAll", ()),
+        {"dao_accessor": "dao", "dao_fqcn": AI_ARTIFACT_DAO}, False,
+        id="n1-wrong-dao",
+    ),
+    pytest.param(
+        _gr08n1_seed_rows,
+        ("markDismissed", "dao", "markDismissed", None),
+        {"operation": "markApplied"}, False, id="n1-wrong-operation-0",
+    ),
+    pytest.param(
+        _gr08n1_seed_rows,
+        ("saveCorrection", "dao", "upsertCorrection", None),
+        {"operation": "upsertLocation"}, False, id="n1-wrong-operation-1",
+    ),
+    # ── GR-08n2: investment / candidate / receipt-event rows ──
+    pytest.param(
+        _gr08n2_seed_rows,
+        ("addHolding", "investmentDao", "insert", None),
+        {}, True, id="n2-exact-identity-0",
+    ),
+    pytest.param(
+        _gr08n2_seed_rows,
+        ("acceptCandidate", "candidateDao", "markAsConverted", None),
+        {}, True, id="n2-exact-identity-1",
+    ),
+    pytest.param(
+        _gr08n2_seed_rows,
+        ("writeReceiptEvent", "receiptEventDao", "insert", None),
+        {}, True, id="n2-exact-identity-2",
+    ),
+    pytest.param(
+        _gr08n2_seed_rows,
+        ("updatePrice", "investmentDao", "updatePrice", None),
+        {"parameter_types": ("Long", "Float")}, False,
+        id="n2-wrong-overload",
+    ),
+    pytest.param(
+        _gr08n2_seed_rows,
+        ("recordUsage", "usageDao", "insert", None),
+        {"owner_fqcn": "com.example.OtherSubscriptionEngine"}, False,
+        id="n2-wrong-owner-0",
+    ),
+    pytest.param(
+        _gr08n2_seed_rows,
+        ("clearMatchForReceipt", "scannedReceiptDao", "update", None),
+        {
+            "owner_fqcn": (
+                "com.yourname.expensetracker.domain.receipt.lifecycle."
+                "ReceiptMatchLifecycleService"
+            ),
+        },
+        False, id="n2-wrong-owner-1",
+    ),
+    pytest.param(
+        _gr08n2_seed_rows,
+        ("addHolding", "investmentValueDao", "insert", None),
+        {"dao_accessor": "investmentDao", "dao_fqcn": INVESTMENT_DAO}, False,
+        id="n2-wrong-dao",
+    ),
+    pytest.param(
+        _gr08n2_seed_rows,
+        ("updatePrice", "investmentDao", "updatePrice", None),
+        {"operation": "insert"}, False, id="n2-wrong-operation-0",
+    ),
+    pytest.param(
+        _gr08n2_seed_rows,
+        ("acceptCandidate", "candidateDao", "markAsConverted", None),
+        {"operation": "insert"}, False, id="n2-wrong-operation-1",
+    ),
+    # ── GR-08o: receipt-match / category-seed / backfill rows ──
+    pytest.param(
+        _gr08o_seed_rows,
+        ("processMatchResult", "scannedReceiptDao", "update", None),
+        {}, True, id="o-exact-identity-0",
+    ),
+    pytest.param(
+        _gr08o_seed_rows,
+        ("ensureDefaultCategories", "categoryDao", "seedDefaultsIfEmpty", ()),
+        {}, True, id="o-exact-identity-1",
+    ),
+    pytest.param(
+        _gr08o_seed_rows,
+        ("backfillNotificationLinks", "sourceLinkDao", "insert", None),
+        {}, True, id="o-exact-identity-2",
+    ),
+    pytest.param(
+        _gr08o_seed_rows,
+        ("updateUserCorrection", "dao", "updateUserCorrection", None),
+        {"parameter_types": ("Long", "Long?", "String?", "String")}, False,
+        id="o-wrong-overload",
+    ),
+    pytest.param(
+        _gr08o_seed_rows,
+        ("processMatchResult", "receiptEventDao", "insert", None),
+        {
+            "owner_fqcn": (
+                "com.yourname.expensetracker.domain.receipt.lifecycle."
+                "ReceiptMatchLifecycleService"
+            ),
+        },
+        False, id="o-wrong-owner-0",
+    ),
+    pytest.param(
+        _gr08o_seed_rows,
+        ("saveToHistory", "healthScoreHistoryDao", "insert", None),
+        {"owner_fqcn": "com.example.OtherHealthEngine"}, False,
+        id="o-wrong-owner-1",
+    ),
+    pytest.param(
+        _gr08o_seed_rows,
+        ("ensureDefaultCategories", "categoryDao", "insert", ()),
+        {
+            "dao_accessor": "merchantCategoryDao",
+            "dao_fqcn": MERCHANT_CATEGORY_DAO_GR08O,
+        },
+        False, id="o-wrong-dao",
+    ),
+    pytest.param(
+        _gr08o_seed_rows,
+        ("refreshToken", "bankConnectionDao", "updateToken", None),
+        {"operation": "insert"}, False, id="o-wrong-operation-0",
+    ),
+    pytest.param(
+        _gr08o_seed_rows,
+        ("archiveGroup", "groupDao", "archiveGroup", None),
+        {"operation": "restoreGroup"}, False, id="o-wrong-operation-1",
+    ),
+    # ── GR-08p1: worker-run / intake / negotiation / parse rows ──
+    pytest.param(
+        _gr08p1_seed_rows,
+        ("doWork", "auditDao", "insert", ()),
+        {}, True, id="p1-exact-identity-0",
+    ),
+    pytest.param(
+        _gr08p1_seed_rows,
+        (
+            "recordNegotiationOutcome", "negotiationOutcomeDao", "insert",
+            RECORD_OUTCOME_PARAMS,
+        ),
+        {}, True, id="p1-exact-identity-1",
+    ),
+    pytest.param(
+        _gr08p1_seed_rows,
+        ("terminal", "dao", "completeTerminal", TERMINAL_PARAMS),
+        {}, True, id="p1-exact-identity-2",
+    ),
+    pytest.param(
+        _gr08p1_seed_rows,
+        ("parseV2Row", "categoryDao", "insert", PARSE_ROW_PARAMS),
+        {}, True, id="p1-exact-identity-3",
+    ),
+    pytest.param(
+        _gr08p1_seed_rows,
+        ("capture", "intakeDao", "insertOrIgnore", CAPTURE_PARAMS),
+        {"parameter_types": CAPTURE_FOR_RETRY_PARAMS}, False,
+        id="p1-wrong-overload-0",
+    ),
+    pytest.param(
+        _gr08p1_seed_rows,
+        ("terminal", "dao", "completeTerminal", TERMINAL_PARAMS),
+        {"parameter_types": ("String", "TerminalArgs")}, False,
+        id="p1-wrong-overload-1",
+    ),
+    pytest.param(
+        _gr08p1_seed_rows,
+        ("terminal", "dao", "completeTerminal", TERMINAL_PARAMS),
+        {"owner_fqcn": WORKER_RUN_LOGGER_IMPL_FQCN}, False,
+        id="p1-wrong-owner-0",
+    ),
+    pytest.param(
+        _gr08p1_seed_rows,
+        (
+            "recordNegotiationOutcome", "negotiationOutcomeDao", "insert",
+            RECORD_OUTCOME_PARAMS,
+        ),
+        {"owner_fqcn": "com.example.OtherNegotiationEngine"}, False,
+        id="p1-wrong-owner-1",
+    ),
+    pytest.param(
+        _gr08p1_seed_rows,
+        ("doWork", "auditDao", "insert", ()),
+        {"dao_accessor": "privacyAuditDao"}, False, id="p1-wrong-dao-0",
+    ),
+    pytest.param(
+        _gr08p1_seed_rows,
+        (
+            "assignCategoryIfUnset", "expenseDao", "updateCategory",
+            ASSIGN_CATEGORY_PARAMS,
+        ),
+        {
+            "dao_accessor": "transactionEventDao",
+            "dao_fqcn": TRANSACTION_EVENT_DAO_GR08P1,
+        },
+        False, id="p1-wrong-dao-1",
+    ),
+    pytest.param(
+        _gr08p1_seed_rows,
+        (
+            "repairLegacyPlaintextTransientRows", "intakeDao",
+            "purgeVisiblePayload", (),
+        ),
+        {"operation": "encryptAndClearVisiblePayload"}, False,
+        id="p1-wrong-operation-0",
+    ),
+    pytest.param(
+        _gr08p1_seed_rows,
+        ("start", "dao", "insert", WORKER_RUN_START_PARAMS),
+        {"operation": "completeTerminal"}, False, id="p1-wrong-operation-1",
+    ),
+    # ── GR-08p2: final triage batch (fifteen 1-finding files) ──
+    pytest.param(
+        _gr08p2_seed_rows,
+        (
+            "insertGroupWithMembers", "memberDao", "insertAll",
+            INSERT_GROUP_WITH_MEMBERS_PARAMS,
+        ),
+        {}, True, id="p2-exact-identity-0",
+    ),
+    pytest.param(
+        _gr08p2_seed_rows,
+        (
+            "restoreReceiptAssets", "dao", "update",
+            RESTORE_RECEIPT_ASSETS_PARAMS,
+        ),
+        {}, True, id="p2-exact-identity-1",
+    ),
+    pytest.param(
+        _gr08p2_seed_rows,
+        ("write", "dao", "insert", RECEIPT_WRITE_PARAMS),
+        {}, True, id="p2-exact-identity-2",
+    ),
+    pytest.param(
+        _gr08p2_seed_rows,
+        ("getOrCreateCategory", "categoryDao", "insert", ("String",)),
+        {}, True, id="p2-exact-identity-3",
+    ),
+    pytest.param(
+        _gr08p2_seed_rows,
+        (
+            "restoreReceiptAssets", "dao", "update",
+            RESTORE_RECEIPT_ASSETS_PARAMS,
+        ),
+        {"parameter_types": RESTORE_RECEIPT_ASSETS_PARAMS[:-1]}, False,
+        id="p2-wrong-overload-0",
+    ),
+    pytest.param(
+        _gr08p2_seed_rows,
+        ("logDecision", "dao", "insert", LOG_DECISION_PARAMS),
+        {
+            "parameter_types": (
+                PRIVACY_CAPABILITY, PRIVACY_DECISION, "Map<String,String>",
+            ),
+        },
+        False, id="p2-wrong-overload-1",
+    ),
+    pytest.param(
+        _gr08p2_seed_rows,
+        ("write", "dao", "insert", RECEIPT_WRITE_PARAMS),
+        {"owner_fqcn": ROOM_TRANSACTION_LIFECYCLE_EVENT_WRITER_FQCN}, False,
+        id="p2-wrong-owner-0",
+    ),
+    pytest.param(
+        _gr08p2_seed_rows,
+        ("disconnectConnection", "bankConnectionDao", "disconnect", ("Long",)),
+        {"owner_fqcn": "com.example.OtherBankCoordinator"}, False,
+        id="p2-wrong-owner-1",
+    ),
+    pytest.param(
+        _gr08p2_seed_rows,
+        ("deleteMember", "memberDao", "update", ("Long", "Long")),
+        {"dao_fqcn": EXPENSE_GROUP_DAO_FQCN}, False, id="p2-wrong-dao-0",
+    ),
+    pytest.param(
+        _gr08p2_seed_rows,
+        (
+            "insertGroupWithMembers", "memberDao", "insertAll",
+            INSERT_GROUP_WITH_MEMBERS_PARAMS,
+        ),
+        {"dao_accessor": "insert", "dao_fqcn": EXPENSE_GROUP_DAO_FQCN},
+        False, id="p2-wrong-dao-1",
+    ),
+    pytest.param(
+        _gr08p2_seed_rows,
+        ("recoverPending", "intakeDao", "releaseStaleProcessing", ("Int",)),
+        {"operation": "insertOrIgnore"}, False, id="p2-wrong-operation-0",
+    ),
+    pytest.param(
+        _gr08p2_seed_rows,
+        (
+            "updateForecastAccuracy", "budgetForecastDao", "update",
+            ("Long", "Double"),
+        ),
+        {"operation": "insert"}, False, id="p2-wrong-operation-1",
+    ),
+    # Update _EXPECTED_MATCH_CASE_COUNT when rows change.
+]
+
+_EXPECTED_MATCH_CASE_COUNT = 170
+
+
+def test_match_cases_table_size_guard():
+    """The table must keep exactly one row per removed assert statement."""
+    assert len(_MATCH_CASES) == _EXPECTED_MATCH_CASE_COUNT, (
+        "match-case table size changed: %d != %d"
+        % (len(_MATCH_CASES), _EXPECTED_MATCH_CASE_COUNT)
+    )
+    assert len({p.id for p in _MATCH_CASES}) == len(_MATCH_CASES), (
+        "match-case ids must be unique"
+    )
+
+
+@pytest.mark.parametrize(
+    "rows_factory, selector, overrides, expected", _MATCH_CASES
+)
+def test_seed_row_match_mutation_contract(
+    request, rows_factory, selector, overrides, expected
+):
+    """Exact identity matches; each single-field mutant never does."""
+    case_id = request.node.callspec.id
+    method, accessor, operation, parameters = selector
+    entries = _policy_entries(rows_factory())
+    target = _select_target(entries, method, accessor, operation, parameters)
+    resolved = overrides(target) if callable(overrides) else overrides
+    kwargs = dict(
+        path=target.path,
+        owner_fqcn=target.owner_fqcn,
+        kind=target.kind,
+        method=target.method,
+        receiver=target.receiver,
+        parameter_types=target.parameter_types,
+        dao_accessor=target.dao_accessor,
+        dao_fqcn=target.dao_fqcn,
+        operation=target.operation,
+    )
+    kwargs.update(resolved)
+    result = match_mutation(target, **kwargs)
+    assert result is expected, "%s: expected match_mutation to be %r" % (
+        case_id,
+        expected,
     )
 

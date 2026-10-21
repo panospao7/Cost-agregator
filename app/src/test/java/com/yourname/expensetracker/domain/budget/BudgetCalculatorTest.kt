@@ -1,442 +1,220 @@
 package com.yourname.expensetracker.domain.budget
 
-import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
+import com.yourname.expensetracker.domain.util.GlobalTimeZoneTestLock
+import com.yourname.expensetracker.domain.util.PinnedUtcTimeZoneRule
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.every
 import io.mockk.mockk
 import org.junit.Assert.assertEquals
+import org.junit.Assert.fail
 import org.junit.Before
+import org.junit.ClassRule
 import org.junit.Test
-import java.util.Calendar
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.util.TimeZone
 
+/**
+ * B6-4: fixed-length (DAILY / WEEKLY) window rows plus the convenience-wrapper delegation.
+ *
+ * MONTHLY / YEARLY anchored windows (anchor-day coercion, leap years, year wrap, historical /
+ * next / future cycles) live in [BudgetCalculatorTimeBoundaryTest]; `calculatePeriodRange`
+ * mode routing (CALENDAR vs ROLLING) lives in [BudgetCalculatorBoundaryTest].
+ *
+ * Row-tag legend (shared by the three BudgetCalculator classes): `BCT` = row that came from the
+ * former BudgetCalculatorTest, `B` = former BudgetCalculatorBoundaryTest, `TB` = row authored
+ * for the time-boundary suite (including the neighbour boundaries added in B6-4), `P6-016` =
+ * B3-4 weekly rows.
+ *
+ * The JVM default zone is pinned to UTC for the class ([PinnedUtcTimeZoneRule]); fixtures use
+ * an explicit zone. Zone-switching rows (DST) hold [GlobalTimeZoneTestLock] and restore UTC.
+ */
 class BudgetCalculatorTest {
+
+    companion object {
+        // Zone pinned to UTC for the whole class: BudgetCalculator reads ZoneId.systemDefault().
+        @JvmField
+        @ClassRule
+        val utcZone = PinnedUtcTimeZoneRule()
+
+        private val UTC: ZoneId = ZoneId.of("UTC")
+        private val ATHENS: ZoneId = ZoneId.of("Europe/Athens")
+        private const val HOUR_MS = 60L * 60L * 1000L
+    }
 
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
     private lateinit var calculator: BudgetCalculator
 
     @Before
     fun setup() {
-        every { timeProvider.now() } returns System.currentTimeMillis()
+        every { timeProvider.now() } returns 0L
         calculator = BudgetCalculator(timeProvider)
     }
 
-    @Test
-    fun `calculatePeriodWindow DAILY returns 24h window`() {
-        val evalCal = Calendar.getInstance().apply {
-            set(2026, Calendar.JANUARY, 15, 10, 30, 0)
-            set(Calendar.MILLISECOND, 0)
+    private fun at(year: Int, month: Int, day: Int, hour: Int = 0, minute: Int = 0, zone: ZoneId = UTC): Long =
+        LocalDate.of(year, month, day).atTime(hour, minute).atZone(zone).toInstant().toEpochMilli()
+
+    private fun dayStart(year: Int, month: Int, day: Int, zone: ZoneId = UTC): Long =
+        LocalDate.of(year, month, day).atStartOfDay(zone).toInstant().toEpochMilli()
+
+    private fun <T> withDefaultTimeZone(zoneId: String, block: () -> T): T =
+        GlobalTimeZoneTestLock.withLock {
+            val previous = TimeZone.getDefault()
+            TimeZone.setDefault(TimeZone.getTimeZone(zoneId))
+            try {
+                block()
+            } finally {
+                TimeZone.setDefault(previous)
+            }
         }
-        val now = evalCal.timeInMillis
-        val window = calculator.calculatePeriodWindowForTime(BudgetPeriod.DAILY, 0L, now)
-        
-        val startCal = Calendar.getInstance().apply { timeInMillis = window.startInclusiveMillis }
-        val endCal = Calendar.getInstance().apply { timeInMillis = window.endExclusiveMillis }
-        
-        // Start should be start of today
-        assertEquals(0, startCal.get(Calendar.HOUR_OF_DAY))
-        assertEquals(0, startCal.get(Calendar.MINUTE))
-        
-        // End should be exactly 24 hours later
-        val diff = window.endExclusiveMillis - window.startInclusiveMillis
-        assertEquals(24 * 60 * 60 * 1000L, diff)
-    }
 
-    @Test
-    fun `calculatePeriodWindow WEEKLY returns 7 day window aligned to anchor`() {
-        // Anchor: Monday
-        val anchorCal = Calendar.getInstance()
-        anchorCal.set(2024, Calendar.JANUARY, 1, 10, 0, 0) // Mon Jan 1 2024
-        val anchor = anchorCal.timeInMillis
-        
-        // Eval: Wednesday Jan 3
-        val evalCal = Calendar.getInstance()
-        evalCal.set(2024, Calendar.JANUARY, 3, 15, 0, 0)
-        
-        val window = calculator.calculatePeriodWindowForTime(BudgetPeriod.WEEKLY, anchor, evalCal.timeInMillis)
-        
-        val startCal = Calendar.getInstance().apply { timeInMillis = window.startInclusiveMillis }
-        
-        // Start should be the Monday of that week (Jan 1)
-        assertEquals(Calendar.MONDAY, startCal.get(Calendar.DAY_OF_WEEK))
-        assertEquals(1, startCal.get(Calendar.DAY_OF_MONTH))
-        
-        // Length should be 7 days
-        val length = window.endExclusiveMillis - window.startInclusiveMillis
-        assertEquals(7 * 24 * 60 * 60 * 1000L, length)
-    }
+    private data class WindowRow(
+        val name: String,
+        val period: BudgetPeriod,
+        val anchor: Long,
+        val evaluationTime: Long,
+        val expectedStart: Long,
+        val expectedEndExclusive: Long
+    )
 
-    @Test
-    fun `calculatePeriodWindow MONTHLY respects anchor day`() {
-        // Anchor: 15th of month
-        val anchorCal = Calendar.getInstance()
-        anchorCal.set(2024, Calendar.JANUARY, 15, 10, 0, 0)
-        val anchor = anchorCal.timeInMillis
-        
-        // Eval: Jan 20th
-        val evalCal = Calendar.getInstance()
-        evalCal.set(2024, Calendar.JANUARY, 20, 10, 0, 0)
-        
-        val window = calculator.calculatePeriodWindowForTime(BudgetPeriod.MONTHLY, anchor, evalCal.timeInMillis)
-        
-        val startCal = Calendar.getInstance().apply { timeInMillis = window.startInclusiveMillis }
-        val endCal = Calendar.getInstance().apply { timeInMillis = window.endExclusiveMillis }
-        
-        // Should be Jan 15 - Feb 15
-        assertEquals(15, startCal.get(Calendar.DAY_OF_MONTH))
-        assertEquals(Calendar.JANUARY, startCal.get(Calendar.MONTH))
-        
-        assertEquals(15, endCal.get(Calendar.DAY_OF_MONTH))
-        assertEquals(Calendar.FEBRUARY, endCal.get(Calendar.MONTH))
-    }
-
-    @Test
-    fun `calculatePeriodWindow MONTHLY wraps around year correctly`() {
-        // Anchor: 15th
-        val anchorCal = Calendar.getInstance()
-        anchorCal.set(2023, Calendar.DECEMBER, 15, 0, 0, 0)
-        val anchor = anchorCal.timeInMillis
-        
-        // Eval: Dec 20
-        val evalCal = Calendar.getInstance()
-        evalCal.set(2023, Calendar.DECEMBER, 20, 0, 0, 0)
-        
-        val window = calculator.calculatePeriodWindowForTime(BudgetPeriod.MONTHLY, anchor, evalCal.timeInMillis)
-        
-        val startCal = Calendar.getInstance().apply { timeInMillis = window.startInclusiveMillis }
-        val endCal = Calendar.getInstance().apply { timeInMillis = window.endExclusiveMillis }
-        
-        // Dec 15 2023 -> Jan 15 2024
-        assertEquals(Calendar.DECEMBER, startCal.get(Calendar.MONTH))
-        assertEquals(2023, startCal.get(Calendar.YEAR))
-        
-        assertEquals(Calendar.JANUARY, endCal.get(Calendar.MONTH))
-        assertEquals(2024, endCal.get(Calendar.YEAR))
-    }
-
-    @Test
-    fun `calculatePeriodWindow MONTHLY handles leap year Feb 29`() {
-        // Anchor: Feb 29 2024
-        val anchorCal = Calendar.getInstance()
-        anchorCal.set(2024, Calendar.FEBRUARY, 29, 0, 0, 0)
-        val anchor = anchorCal.timeInMillis
-        
-        // Eval: March 15
-        val evalCal = Calendar.getInstance()
-        evalCal.set(2024, Calendar.MARCH, 15, 0, 0, 0)
-        
-        val window = calculator.calculatePeriodWindowForTime(BudgetPeriod.MONTHLY, anchor, evalCal.timeInMillis)
-        
-        val startCal = Calendar.getInstance().apply { timeInMillis = window.startInclusiveMillis }
-        val endCal = Calendar.getInstance().apply { timeInMillis = window.endExclusiveMillis }
-        
-        // Feb 29 -> March 29
-        assertEquals(Calendar.FEBRUARY, startCal.get(Calendar.MONTH))
-        assertEquals(29, startCal.get(Calendar.DAY_OF_MONTH))
-        
-        assertEquals(Calendar.MARCH, endCal.get(Calendar.MONTH))
-        assertEquals(29, endCal.get(Calendar.DAY_OF_MONTH))
-    }
-
-    @Test
-    fun `calculatePeriodWindow YEARLY returns 12 month window`() {
-        // Anchor: Jan 1 2024
-        val anchorCal = Calendar.getInstance()
-        anchorCal.set(2024, Calendar.JANUARY, 1, 0, 0, 0)
-        val anchor = anchorCal.timeInMillis
-        
-        // Eval: June 15
-        val evalCal = Calendar.getInstance()
-        evalCal.set(2024, Calendar.JUNE, 15, 0, 0, 0)
-        
-        val window = calculator.calculatePeriodWindowForTime(BudgetPeriod.YEARLY, anchor, evalCal.timeInMillis)
-        
-        val startCal = Calendar.getInstance().apply { timeInMillis = window.startInclusiveMillis }
-        val endCal = Calendar.getInstance().apply { timeInMillis = window.endExclusiveMillis }
-        
-        assertEquals(2024, startCal.get(Calendar.YEAR))
-        assertEquals(Calendar.JANUARY, startCal.get(Calendar.MONTH))
-        
-        assertEquals(2025, endCal.get(Calendar.YEAR))
-        assertEquals(Calendar.JANUARY, endCal.get(Calendar.MONTH))
-    }
-
-    @Test
-    fun `calculatePeriodWindow YEARLY treats Feb 29 anchor as passed on Feb 28 in non leap year`() {
-        // Anchor: Feb 29 2024 (leap year)
-        val anchorCal = Calendar.getInstance()
-        anchorCal.set(2024, Calendar.FEBRUARY, 29, 0, 0, 0)
-        val anchor = anchorCal.timeInMillis
-
-        // Eval: Feb 28 2025 (non-leap year)
-        val evalCal = Calendar.getInstance()
-        evalCal.set(2025, Calendar.FEBRUARY, 28, 12, 0, 0)
-
-        val window = calculator.calculatePeriodWindowForTime(BudgetPeriod.YEARLY, anchor, evalCal.timeInMillis)
-
-        val startCal = Calendar.getInstance().apply { timeInMillis = window.startInclusiveMillis }
-        val endCal = Calendar.getInstance().apply { timeInMillis = window.endExclusiveMillis }
-
-        // Feb 28 2025 -> Feb 28 2026 (treated as anniversary passed)
-        assertEquals(2025, startCal.get(Calendar.YEAR))
-        assertEquals(Calendar.FEBRUARY, startCal.get(Calendar.MONTH))
-        assertEquals(28, startCal.get(Calendar.DAY_OF_MONTH))
-
-        assertEquals(2026, endCal.get(Calendar.YEAR))
-        assertEquals(Calendar.FEBRUARY, endCal.get(Calendar.MONTH))
-        assertEquals(28, endCal.get(Calendar.DAY_OF_MONTH))
-    }
-
-    // Critical edge cases from analysis document
-    @Test
-    fun `calculatePeriodWindow MONTHLY anchor Jan 31 leap year`() {
-        // Anchor: Jan 31 2024 (leap year)
-        val anchorCal = Calendar.getInstance()
-        anchorCal.set(2024, Calendar.JANUARY, 31, 0, 0, 0)
-        val anchor = anchorCal.timeInMillis
-        
-        // Eval: Feb 15 2024
-        val evalCal = Calendar.getInstance()
-        evalCal.set(2024, Calendar.FEBRUARY, 15, 0, 0, 0)
-        
-        val window = calculator.calculatePeriodWindowForTime(BudgetPeriod.MONTHLY, anchor, evalCal.timeInMillis)
-        
-        val startCal = Calendar.getInstance().apply { timeInMillis = window.startInclusiveMillis }
-        val endCal = Calendar.getInstance().apply { timeInMillis = window.endExclusiveMillis }
-        
-        // Jan 31 -> Feb 29 (leap year has Feb 29)
-        assertEquals(31, startCal.get(Calendar.DAY_OF_MONTH))
-        assertEquals(Calendar.JANUARY, startCal.get(Calendar.MONTH))
-        
-        assertEquals(29, endCal.get(Calendar.DAY_OF_MONTH))
-        assertEquals(Calendar.FEBRUARY, endCal.get(Calendar.MONTH))
-    }
-
-    @Test
-    fun `calculatePeriodWindow MONTHLY anchor Jan 31 non-leap year`() {
-        // Anchor: Jan 31 2023 (non-leap year)
-        val anchorCal = Calendar.getInstance()
-        anchorCal.set(2023, Calendar.JANUARY, 31, 0, 0, 0)
-        val anchor = anchorCal.timeInMillis
-        
-        // Eval: Feb 15 2023
-        val evalCal = Calendar.getInstance()
-        evalCal.set(2023, Calendar.FEBRUARY, 15, 0, 0, 0)
-        
-        val window = calculator.calculatePeriodWindowForTime(BudgetPeriod.MONTHLY, anchor, evalCal.timeInMillis)
-        
-        val startCal = Calendar.getInstance().apply { timeInMillis = window.startInclusiveMillis }
-        val endCal = Calendar.getInstance().apply { timeInMillis = window.endExclusiveMillis }
-        
-        // Jan 31 -> Feb 28 (non-leap year)
-        assertEquals(31, startCal.get(Calendar.DAY_OF_MONTH))
-        assertEquals(Calendar.JANUARY, startCal.get(Calendar.MONTH))
-        
-        assertEquals(28, endCal.get(Calendar.DAY_OF_MONTH))
-        assertEquals(Calendar.FEBRUARY, endCal.get(Calendar.MONTH))
-    }
-
-    @Test
-    fun `calculatePeriodWindow MONTHLY anchor Dec 31 year boundary`() {
-        // Anchor: Dec 31
-        val anchorCal = Calendar.getInstance()
-        anchorCal.set(2023, Calendar.DECEMBER, 31, 0, 0, 0)
-        val anchor = anchorCal.timeInMillis
-        
-        // Eval: Jan 15 2024
-        val evalCal = Calendar.getInstance()
-        evalCal.set(2024, Calendar.JANUARY, 15, 0, 0, 0)
-        
-        val window = calculator.calculatePeriodWindowForTime(BudgetPeriod.MONTHLY, anchor, evalCal.timeInMillis)
-        
-        val startCal = Calendar.getInstance().apply { timeInMillis = window.startInclusiveMillis }
-        val endCal = Calendar.getInstance().apply { timeInMillis = window.endExclusiveMillis }
-        
-        // Dec 31 -> Jan 31
-        assertEquals(Calendar.DECEMBER, startCal.get(Calendar.MONTH))
-        assertEquals(2023, startCal.get(Calendar.YEAR))
-        
-        assertEquals(Calendar.JANUARY, endCal.get(Calendar.MONTH))
-        assertEquals(31, endCal.get(Calendar.DAY_OF_MONTH))
-        assertEquals(2024, endCal.get(Calendar.YEAR))
-    }
-
-    @Test
-    fun `calculatePeriodWindow MONTHLY anchor Mar 31 month coercion`() {
-        // Anchor: Mar 31
-        val anchorCal = Calendar.getInstance()
-        anchorCal.set(2024, Calendar.MARCH, 31, 0, 0, 0)
-        val anchor = anchorCal.timeInMillis
-        
-        // Eval: Apr 15
-        val evalCal = Calendar.getInstance()
-        evalCal.set(2024, Calendar.APRIL, 15, 0, 0, 0)
-        
-        val window = calculator.calculatePeriodWindowForTime(BudgetPeriod.MONTHLY, anchor, evalCal.timeInMillis)
-        
-        val startCal = Calendar.getInstance().apply { timeInMillis = window.startInclusiveMillis }
-        val endCal = Calendar.getInstance().apply { timeInMillis = window.endExclusiveMillis }
-        
-        // Mar 31 -> Apr 30 (April only has 30 days, should coerce)
-        assertEquals(31, startCal.get(Calendar.DAY_OF_MONTH))
-        assertEquals(Calendar.MARCH, startCal.get(Calendar.MONTH))
-        
-        assertEquals(30, endCal.get(Calendar.DAY_OF_MONTH))
-        assertEquals(Calendar.APRIL, endCal.get(Calendar.MONTH))
-    }
-
-    // ========================================================================
-    // Calendar-year yearly window regressions (B.2 Batch 1)
-    // ========================================================================
-
-    @Test
-    fun `CALENDAR yearly budget resolves Jan 1 to Jan 1 regardless of anchor`() {
-        // Anchor is in March, but CALENDAR yearly should ignore it.
-        val anchorCal = Calendar.getInstance().apply {
-            set(2025, Calendar.MARCH, 15, 0, 0, 0)
-            set(Calendar.MILLISECOND, 0)
+    /** Evaluates all rows and reports every mismatching row (named) in one failure. */
+    private fun assertWindowTable(table: String, expectedRowCount: Int, rows: List<WindowRow>) {
+        assertEquals("$table: row count guard", expectedRowCount, rows.size)
+        assertEquals("$table: row names must be unique", rows.size, rows.map { it.name }.toSet().size)
+        val failures = mutableListOf<String>()
+        for (row in rows) {
+            val window = calculator.calculatePeriodWindowForTime(row.period, row.anchor, row.evaluationTime)
+            if (window.startInclusiveMillis != row.expectedStart) {
+                failures += "[$table/${row.name}] start expected ${Instant.ofEpochMilli(row.expectedStart)} " +
+                    "but was ${Instant.ofEpochMilli(window.startInclusiveMillis)}"
+            }
+            if (window.endExclusiveMillis != row.expectedEndExclusive) {
+                failures += "[$table/${row.name}] end expected ${Instant.ofEpochMilli(row.expectedEndExclusive)} " +
+                    "but was ${Instant.ofEpochMilli(window.endExclusiveMillis)}"
+            }
+            if (!window.contains(row.evaluationTime)) {
+                failures += "[$table/${row.name}] window [${Instant.ofEpochMilli(window.startInclusiveMillis)}, " +
+                    "${Instant.ofEpochMilli(window.endExclusiveMillis)}) must contain the evaluation time " +
+                    "${Instant.ofEpochMilli(row.evaluationTime)}"
+            }
         }
-        val anchor = anchorCal.timeInMillis
-
-        val evalCal = Calendar.getInstance().apply {
-            set(2026, Calendar.JUNE, 10, 14, 0, 0)
-            set(Calendar.MILLISECOND, 0)
+        if (failures.isNotEmpty()) {
+            fail(failures.joinToString(separator = "\n"))
         }
-        val now = evalCal.timeInMillis
+    }
+
+    @Test
+    fun `calculatePeriodWindow DAILY returns 24h window table`() {
+        assertWindowTable(
+            table = "daily",
+            expectedRowCount = 2,
+            rows = listOf(
+                // Start is start of the evaluation day; end is exactly 24 hours later.
+                WindowRow("BCT mid-morning", BudgetPeriod.DAILY, 0L, at(2026, 1, 15, 10, 30),
+                    dayStart(2026, 1, 15), dayStart(2026, 1, 16)),
+                // Half-open neighbour: the instant of midnight belongs to the next day.
+                WindowRow("TB exactly midnight belongs to the new day", BudgetPeriod.DAILY, 0L, at(2026, 1, 16, 0, 0),
+                    dayStart(2026, 1, 16), dayStart(2026, 1, 17))
+            )
+        )
+        // The DAILY window in a fixed-offset zone is exactly 24 hours.
+        val window = calculator.calculatePeriodWindowForTime(BudgetPeriod.DAILY, 0L, at(2026, 1, 15, 10, 30))
+        assertEquals(24L * HOUR_MS, window.endExclusiveMillis - window.startInclusiveMillis)
+    }
+
+    @Test
+    fun `calculatePeriodWindow WEEKLY aligns to anchor weekday table`() {
+        assertWindowTable(
+            table = "weekly",
+            expectedRowCount = 5,
+            rows = listOf(
+                // Anchor Monday Jan 1 2024, evaluated Wednesday Jan 3 -> Mon Jan 1 .. Mon Jan 8 (7 days).
+                WindowRow("BCT 7 day window aligned to Monday anchor", BudgetPeriod.WEEKLY,
+                    at(2024, 1, 1, 10, 0), at(2024, 1, 3, 15, 0),
+                    dayStart(2024, 1, 1), dayStart(2024, 1, 8)),
+                WindowRow("B weekly period returns monday to monday window", BudgetPeriod.WEEKLY,
+                    at(2026, 1, 5, 9, 0), at(2026, 3, 11, 14, 0),
+                    dayStart(2026, 3, 9), dayStart(2026, 3, 16)),
+                // Dec 27 2026 is a Sunday. The old Calendar-based formula DayOfWeek.of(calDay - 1)
+                // would have thrown DateTimeException for Sunday (Calendar.SUNDAY == 1).
+                WindowRow("P6-016 rolling weekly Sunday anchor spans Sunday to Sunday across the year boundary",
+                    BudgetPeriod.WEEKLY, at(2026, 12, 27, 9, 0), at(2026, 12, 31, 14, 0),
+                    dayStart(2026, 12, 27), dayStart(2027, 1, 3)),
+                WindowRow("P6-016 Sunday anchor evaluated Saturday late evening stays in the current window",
+                    BudgetPeriod.WEEKLY, at(2026, 12, 27, 9, 0), at(2027, 1, 2, 23, 59),
+                    dayStart(2026, 12, 27), dayStart(2027, 1, 3)),
+                // Half-open [start, end): the instant Sunday Jan 3 00:00 belongs to the NEW window.
+                WindowRow("P6-016 Sunday anchor evaluated at Sunday midnight starts the next window",
+                    BudgetPeriod.WEEKLY, at(2026, 12, 27, 9, 0), at(2027, 1, 3, 0, 0),
+                    dayStart(2027, 1, 3), dayStart(2027, 1, 10))
+            )
+        )
+    }
+
+    @Test
+    fun `daily period across athens dst transitions table`() {
+        data class DstRow(
+            val name: String,
+            val evalYear: Int, val evalMonth: Int, val evalDay: Int, val evalHour: Int,
+            val expectedDurationMs: Long
+        )
+        val rows = listOf(
+            // 2026-03-29 03:00 Athens does not exist (clocks jump 03:00 -> 04:00); the original
+            // fixture resolved 03:00 forward to 04:00. The day is 23 hours long.
+            DstRow("B spring forward 2026-03-29 has 23 hour duration", 2026, 3, 29, 4, 23L * HOUR_MS),
+            // Fall back 2026-10-25 (04:00 EEST -> 03:00 EET) -> a 25 hour day.
+            DstRow("TB fall back 2026-10-25 has 25 hour duration", 2026, 10, 25, 12, 25L * HOUR_MS)
+        )
+        assertEquals("dst: row count guard", 2, rows.size)
+        assertEquals("dst: row names must be unique", rows.size, rows.map { it.name }.toSet().size)
+
+        val failures = mutableListOf<String>()
+        for (row in rows) {
+            withDefaultTimeZone("Europe/Athens") {
+                val fakeTimeProvider = FakeTimeProvider(
+                    at(row.evalYear, row.evalMonth, row.evalDay, row.evalHour, 0, ATHENS)
+                )
+                val dstCalculator = BudgetCalculator(fakeTimeProvider)
+
+                val window = dstCalculator.calculatePeriodWindow(BudgetPeriod.DAILY, 0L)
+                val expectedStart = dayStart(row.evalYear, row.evalMonth, row.evalDay, ATHENS)
+                val expectedEnd = LocalDate.of(row.evalYear, row.evalMonth, row.evalDay).plusDays(1)
+                    .atStartOfDay(ATHENS).toInstant().toEpochMilli()
+                if (window.startInclusiveMillis != expectedStart) {
+                    failures += "[dst/${row.name}] start expected ${Instant.ofEpochMilli(expectedStart)} " +
+                        "but was ${Instant.ofEpochMilli(window.startInclusiveMillis)}"
+                }
+                if (window.endExclusiveMillis != expectedEnd) {
+                    failures += "[dst/${row.name}] end expected ${Instant.ofEpochMilli(expectedEnd)} " +
+                        "but was ${Instant.ofEpochMilli(window.endExclusiveMillis)}"
+                }
+                val duration = window.endExclusiveMillis - window.startInclusiveMillis
+                if (duration != row.expectedDurationMs) {
+                    failures += "[dst/${row.name}] duration expected ${row.expectedDurationMs} but was $duration"
+                }
+            }
+        }
+        if (failures.isNotEmpty()) {
+            fail(failures.joinToString(separator = "\n"))
+        }
+    }
+
+    @Test
+    fun `convenience calculatePeriodWindow delegates to calculatePeriodWindowForTime with timeProvider now`() {
+        val now = at(2026, 4, 10, 14, 0)
         every { timeProvider.now() } returns now
+        val anchorDate = at(2026, 1, 5, 0, 0)
 
-        val budget = Budget(
-            id = 1L, categoryId = null, amount = 5000.0,
-            period = BudgetPeriod.YEARLY, periodMode = "CALENDAR",
-            startDate = anchor
-        )
-        val (start, end) = calculator.calculatePeriodRange(budget)
+        val convenienceResult = calculator.calculatePeriodWindow(BudgetPeriod.MONTHLY, anchorDate)
+        val explicitResult = calculator.calculatePeriodWindowForTime(BudgetPeriod.MONTHLY, anchorDate, now)
 
-        val startCal = Calendar.getInstance().apply { timeInMillis = start }
-        val endCal = Calendar.getInstance().apply { timeInMillis = end }
-
-        // Must be Jan 1, 2026 → Jan 1, 2027
-        assertEquals(Calendar.JANUARY, startCal.get(Calendar.MONTH))
-        assertEquals(1, startCal.get(Calendar.DAY_OF_MONTH))
-        assertEquals(2026, startCal.get(Calendar.YEAR))
-
-        assertEquals(Calendar.JANUARY, endCal.get(Calendar.MONTH))
-        assertEquals(1, endCal.get(Calendar.DAY_OF_MONTH))
-        assertEquals(2027, endCal.get(Calendar.YEAR))
-    }
-
-    @Test
-    fun `ROLLING yearly budget uses anchor anniversary not Jan 1`() {
-        // Anchor is in March; ROLLING yearly should use anniversary-style.
-        val anchorCal = Calendar.getInstance().apply {
-            set(2025, Calendar.MARCH, 15, 0, 0, 0)
-            set(Calendar.MILLISECOND, 0)
-        }
-        val anchor = anchorCal.timeInMillis
-
-        val evalCal = Calendar.getInstance().apply {
-            set(2026, Calendar.JUNE, 10, 14, 0, 0)
-            set(Calendar.MILLISECOND, 0)
-        }
-        val now = evalCal.timeInMillis
-        every { timeProvider.now() } returns now
-
-        val budget = Budget(
-            id = 1L, categoryId = null, amount = 5000.0,
-            period = BudgetPeriod.YEARLY, periodMode = "ROLLING",
-            startDate = anchor
-        )
-        val (start, end) = calculator.calculatePeriodRange(budget)
-
-        val startCal = Calendar.getInstance().apply { timeInMillis = start }
-        val endCal = Calendar.getInstance().apply { timeInMillis = end }
-
-        // Must be Mar 15, 2026 → Mar 15, 2027
-        assertEquals(Calendar.MARCH, startCal.get(Calendar.MONTH))
-        assertEquals(15, startCal.get(Calendar.DAY_OF_MONTH))
-        assertEquals(2026, startCal.get(Calendar.YEAR))
-
-        assertEquals(Calendar.MARCH, endCal.get(Calendar.MONTH))
-        assertEquals(15, endCal.get(Calendar.DAY_OF_MONTH))
-        assertEquals(2027, endCal.get(Calendar.YEAR))
-    }
-
-    // ========================================================================
-    // Historical / next-window derivation regressions (B.2 Batch 1)
-    // ========================================================================
-
-    @Test
-    fun `calculatePeriodWindowForTime derives historical window when evaluationTime is in the past`() {
-        // Anchor day 10; evaluate on Feb 15 2024 → window is Feb 10 – Mar 10 2024
-        val anchorCal = Calendar.getInstance().apply {
-            set(2023, Calendar.NOVEMBER, 10, 0, 0, 0)
-            set(Calendar.MILLISECOND, 0)
-        }
-        val evalCal = Calendar.getInstance().apply {
-            set(2024, Calendar.FEBRUARY, 15, 12, 0, 0)
-            set(Calendar.MILLISECOND, 0)
-        }
-
-        val window = calculator.calculatePeriodWindowForTime(
-            BudgetPeriod.MONTHLY, anchorCal.timeInMillis, evalCal.timeInMillis
-        )
-        val startCal = Calendar.getInstance().apply { timeInMillis = window.startInclusiveMillis }
-        val endCal = Calendar.getInstance().apply { timeInMillis = window.endExclusiveMillis }
-
-        assertEquals(Calendar.FEBRUARY, startCal.get(Calendar.MONTH))
-        assertEquals(10, startCal.get(Calendar.DAY_OF_MONTH))
-        assertEquals(2024, startCal.get(Calendar.YEAR))
-
-        assertEquals(Calendar.MARCH, endCal.get(Calendar.MONTH))
-        assertEquals(10, endCal.get(Calendar.DAY_OF_MONTH))
-        assertEquals(2024, endCal.get(Calendar.YEAR))
-    }
-
-    @Test
-    fun `calculatePeriodWindowForTime derives next window when evaluationTime advances past current cycle`() {
-        // Anchor day 10; evaluate on Mar 12 2024 → window is Mar 10 – Apr 10 2024
-        val anchorCal = Calendar.getInstance().apply {
-            set(2023, Calendar.NOVEMBER, 10, 0, 0, 0)
-            set(Calendar.MILLISECOND, 0)
-        }
-        val evalCal = Calendar.getInstance().apply {
-            set(2024, Calendar.MARCH, 12, 12, 0, 0)
-            set(Calendar.MILLISECOND, 0)
-        }
-
-        val window = calculator.calculatePeriodWindowForTime(
-            BudgetPeriod.MONTHLY, anchorCal.timeInMillis, evalCal.timeInMillis
-        )
-        val startCal = Calendar.getInstance().apply { timeInMillis = window.startInclusiveMillis }
-        val endCal = Calendar.getInstance().apply { timeInMillis = window.endExclusiveMillis }
-
-        assertEquals(Calendar.MARCH, startCal.get(Calendar.MONTH))
-        assertEquals(10, startCal.get(Calendar.DAY_OF_MONTH))
-        assertEquals(2024, startCal.get(Calendar.YEAR))
-
-        assertEquals(Calendar.APRIL, endCal.get(Calendar.MONTH))
-        assertEquals(10, endCal.get(Calendar.DAY_OF_MONTH))
-        assertEquals(2024, endCal.get(Calendar.YEAR))
-    }
-
-    @Test
-    fun `CALENDAR daily budget returns same range as TimePeriodUtils getDayRange`() {
-        val evalCal = Calendar.getInstance().apply {
-            set(2026, Calendar.APRIL, 15, 14, 30, 0)
-            set(Calendar.MILLISECOND, 0)
-        }
-        val now = evalCal.timeInMillis
-        every { timeProvider.now() } returns now
-
-        val budget = Budget(
-            id = 1L, categoryId = null, amount = 100.0,
-            period = BudgetPeriod.DAILY, periodMode = "CALENDAR",
-            startDate = now - 86400_000L // irrelevant
-        )
-        val (start, end) = calculator.calculatePeriodRange(budget)
-        val expected = com.yourname.expensetracker.domain.util.TimePeriodUtils.getDayRange(now)
-
-        assertEquals(expected.first, start)
-        assertEquals(expected.second, end)
+        assertEquals(explicitResult.startInclusiveMillis, convenienceResult.startInclusiveMillis)
+        assertEquals(explicitResult.endExclusiveMillis, convenienceResult.endExclusiveMillis)
+        // Exact values: anchor day 5, evaluated Apr 10 -> Apr 5 .. May 5.
+        assertEquals(dayStart(2026, 4, 5), convenienceResult.startInclusiveMillis)
+        assertEquals(dayStart(2026, 5, 5), convenienceResult.endExclusiveMillis)
     }
 }

@@ -46,7 +46,7 @@ All background-work diagnostics use controlled, structured fields — never raw 
 - `WorkerRunLogger` (`domain/workers/`) writes run start/success/retry/failure rows to `BackgroundJobRunDao` (BackgroundJobRun table) with reason codes only.
 - `WorkerReasonCodes` (PR12J-1, `domain/workers/`) is the central exception → reason-code mapper. Codes are constrained to `[A-Z0-9_]{1,80}` controlled constants from `DiagnosticReasonCode` (e.g. `WORKER_TIMEOUT`, `WORKER_CANCELLED`, `WORKER_PRIVACY_DENIED`, `WORKER_NOTIFICATION_PERMISSION_DENIED`) — never raw exception messages, file paths, or PII.
 - `DiagnosticEventWriter` (`domain/diagnostics/`) writes typed `DiagnosticEvent` rows (pipeline, stage, outcome, severity, `DiagnosticReasonCode`, entity type/id, `sourceIdHash`, correlation/causation IDs, counts/booleans, `SafeEventMetadata`) to `PipelineDiagnosticEventDao`.
-- Terminal DB-write failures fall back to `WorkerTerminalDiagnosticSink` (PR12H-3); the durable implementation `FileWorkerTerminalDiagnosticSink` (PR12I-1) persists bounded JSONL records (workerName, runId, correlationId, workId, runAttempt, intendedStatus, reasonCode, failureCode, `errorClass` — exception class name only, timestamp) and must never throw.
+- Terminal DB-write failures fall back to `WorkerTerminalDiagnosticSink` (PR12H-3); the durable implementation `FileWorkerTerminalDiagnosticSink` (PR12I-1) persists bounded JSONL records (schemaVersion, workerName, runId, correlationId, workId, runAttempt, intendedStatus, reasonCode, failureCode, `errorClass` — exception class name only, timestamp) and must never throw.
 
 ### SafeDiagnostic typed error contract
 
@@ -71,15 +71,20 @@ All background-work diagnostics use controlled, structured fields — never raw 
 - `TransactionClassifier` and `ExpenseCategoryClassifier` use encryption for all on-device ML data
 
 ### Exception message redaction
-- All exception messages written to durable storage are sanitized by `EventMetadataSanitizer.sanitizeExceptionMessage()`
+- Room diagnostics (`RoomDiagnosticEventWriter`, `RoomOperationRunRecorder`, `CompositeOperationRunRecorder`), the restore journal (`RestoreJournal`), the DataStore maintenance sink (`DataStoreMaintenanceSafeDiagnosticSink`), the journal importer (`RestoreJournalImporter`) and the redacted-export scrub (`ExportAnonymizer.sanitizeExport()`, applied only to redacted exports) do NOT store exception messages. Only the exception class simple name is stored (`DiagnosticThrowableSummary.className()`), both in `exceptionMessage` columns and in run `errorSummary` / status reasons derived from a throwable. The redacted-export scrub additionally nulls previously persisted `exceptionMessage` / `errorSummary` text in the exported copy; full (non-redacted) exports are not scrubbed.
+- Other durable sinks that still persist a message sanitize it with `EventMetadataSanitizer.sanitizeExceptionMessage()`
 - Patterns redacted (via `sanitizeStringValue()`):
-  - Digit sequences (12+), IBANs, JWT tokens, Bearer authorization headers → `[REDACTED]`
+  - Digit sequences (10+), IBANs, JWT tokens, Bearer authorization headers → `[REDACTED]`
   - File paths (`/path/to/file`, `C:\path`) → `[PATH]`
   - URLs and email addresses are NOT explicitly matched (caught incidentally if at all)
   - Any value matching blocked key substrings (`raw`, `ocr`, `prompt`, `token`, `secret`, etc.)
 - Strings longer than `2 × MAX_STRING_LENGTH` (512 chars) are replaced entirely with `[REDACTED]`
 - Messages truncated to `MAX_STRING_LENGTH` (256 chars)
 - Null messages remain null (no redaction needed)
+
+> Known residuals: `WorkerRunLogger.kt` (about :309, :322) and `ReceiptLifecycleEventWriter.kt` (about :64) still persist
+> regex-sanitized exception messages (not class name only). The read path `DiagnosticsRepository.kt` (about :139, :162)
+> surfaces messages stored in old records; there is no UI consumer of it in the release build.
 
 > Note: Separate from `EventMetadataSanitizer`, the `ReceiptRepository.debugReceipt()` and PII sanitizers
 > in `CloudPiiSanitizer` / input builders use `[REDACTED_URI]`, `[REDACTED_PATH]`, `[REDACTED_URL]`,
@@ -103,10 +108,10 @@ All background-work diagnostics use controlled, structured fields — never raw 
 
 ### Unit enforcement
 
-- `PrivacyCapabilityHandlingPolicyTest` ensures all capabilities have explicit policy
+- `PrivacyCapabilityHandlingPolicyProductionTest` ensures all capabilities have explicit policy
 - `TIMBER_PII_LOGGING` capability is LOCAL_ONLY (no gate needed, just policy)
 - Debug data persistence gated by `debugDataPersistenceEnabled` setting
-- `EventMetadataSanitizer` verified in `GlobalDurableDiagnosticsGoldenTest` and `DurableDiagnosticsAcceptanceTest` (plus dedicated regression tests: `DurableDiagnosticsRegressionTest`, `DurableDiagnosticsA8RegressionTest`, `DDL512RegressionTest`)
+- `EventMetadataSanitizer` verified in `EventMetadataSanitizerTest` (key classification, hash-key values, string/exception-message and JSON sanitization, `SafeEventMetadata` builder) plus the surrounding diagnostics tests `GlobalDurableDiagnosticsGoldenTest`, `DurableDiagnosticsAcceptanceTest`, `DurableDiagnosticsA8RegressionTest`, `DDL512RegressionTest`
 - `SafePrivacyMetadata` verified in privacy contract tests
 - Worker diagnostics coverage: `WorkerRunLoggerTest`, `FileWorkerTerminalDiagnosticSinkTest`
 

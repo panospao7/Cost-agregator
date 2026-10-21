@@ -5,8 +5,9 @@ import org.junit.Assert.*
 import org.junit.Before
 
 /**
- * Comprehensive tests for TransferDirectionDetector.
- * Tests 50+ patterns across English and Greek languages.
+ * Table-driven tests for TransferDirectionDetector.
+ * Covers 50+ patterns across English and Greek languages. Every row of every table
+ * is one distinct case; failure messages name the row id.
  */
 class TransferDirectionDetectorTest {
 
@@ -17,368 +18,161 @@ class TransferDirectionDetectorTest {
         detector = TransferDirectionDetector()
     }
 
-    // ==================== ENGLISH INCOMING PATTERNS ====================
+    private data class DirectionCase(
+        val id: String,
+        val title: String? = null,
+        val text: String?,
+        val bigText: String? = null,
+        val type: ParsedTransactionType,
+        val expected: ParsedTransferDirection?
+    )
 
-    @Test
-    fun `detect incoming - received from pattern`() {
-        val text = "You received €100 from John Smith"
-        val result = detector.detectDirection(null, text, null, ParsedTransactionType.TRANSFER)
-        assertEquals(ParsedTransferDirection.INCOMING, result)
+    private data class NameCase(
+        val id: String,
+        val text: String,
+        val expected: String?
+    )
+
+    private fun assertDirections(cases: List<DirectionCase>) {
+        cases.forEach { c ->
+            val result = detector.detectDirection(c.title, c.text, c.bigText, c.type)
+            assertEquals("case '${c.id}'", c.expected, result)
+        }
     }
 
-    @Test
-    fun `detect incoming - deposited to pattern`() {
-        val text = "Amount deposited to your account: €500"
-        val result = detector.detectDirection(null, text, null, ParsedTransactionType.DEPOSIT)
-        assertEquals(ParsedTransferDirection.INCOMING, result)
-    }
+    // ==================== ENGLISH + GREEK PATTERNS ====================
 
     @Test
-    fun `detect incoming - credited pattern`() {
-        val text = "Your account has been credited with €250"
-        val result = detector.detectDirection(null, text, null, ParsedTransactionType.TRANSFER)
-        assertEquals(ParsedTransferDirection.INCOMING, result)
-    }
-
-    @Test
-    fun `detect incoming - salary deposit pattern`() {
-        val text = "Salary deposit: €2,500.00"
-        val result = detector.detectDirection("Salary Payment", text, null, ParsedTransactionType.DEPOSIT)
-        assertEquals(ParsedTransferDirection.INCOMING, result)
-    }
-
-    @Test
-    fun `detect incoming - refund pattern`() {
-        val text = "Refund processed: €45.99"
-        val result = detector.detectDirection(null, text, null, ParsedTransactionType.DEPOSIT)
-        assertEquals(ParsedTransferDirection.INCOMING, result)
-    }
-
-    @Test
-    fun `detect incoming - transfer in pattern`() {
-        val text = "Transfer IN: €300 from Savings Account"
-        val result = detector.detectDirection(null, text, null, ParsedTransactionType.TRANSFER)
-        assertEquals(ParsedTransferDirection.INCOMING, result)
-    }
-
-    // ==================== ENGLISH OUTGOING PATTERNS ====================
-
-    @Test
-    fun `detect outgoing - sent to pattern`() {
-        val text = "You sent €50 to Jane Doe"
-        val result = detector.detectDirection(null, text, null, ParsedTransactionType.TRANSFER)
-        assertEquals(ParsedTransferDirection.OUTGOING, result)
-    }
-
-    @Test
-    fun `detect outgoing - paid to pattern`() {
-        val text = "You paid €25 to Coffee Shop"
-        val result = detector.detectDirection(null, text, null, ParsedTransactionType.PURCHASE)
-        assertNull(result) // Purchase should not detect direction
-    }
-
-    @Test
-    fun `detect outgoing - transfer out pattern`() {
-        val text = "Transfer OUT: €200 to Joint Account"
-        val result = detector.detectDirection(null, text, null, ParsedTransactionType.TRANSFER)
-        assertEquals(ParsedTransferDirection.OUTGOING, result)
-    }
-
-    @Test
-    fun `detect outgoing - withdrew pattern`() {
-        val text = "You withdrew €100 from ATM"
-        val result = detector.detectDirection(null, text, null, ParsedTransactionType.WITHDRAWAL)
-        assertEquals(ParsedTransferDirection.OUTGOING, result)
-    }
-
-    @Test
-    fun `detect outgoing - debited pattern`() {
-        val text = "Your account has been debited €75"
-        val result = detector.detectDirection(null, text, null, ParsedTransactionType.TRANSFER)
-        assertEquals(ParsedTransferDirection.OUTGOING, result)
-    }
-
-    @Test
-    fun `detect outgoing - transfer to pattern`() {
-        val text = "Transfer to Mary: €150"
-        val result = detector.detectDirection(null, text, null, ParsedTransactionType.TRANSFER)
-        assertEquals(ParsedTransferDirection.OUTGOING, result)
-    }
-
-    // ==================== GREEK INCOMING PATTERNS ====================
-
-    @Test
-    fun `detect incoming - greek pistosi pattern`() {
-        val text = "Πίστωση λογαριασμού: €500"
-        val result = detector.detectDirection(null, text, null, ParsedTransactionType.TRANSFER)
-        assertEquals(ParsedTransferDirection.INCOMING, result)
-    }
-
-    @Test
-    fun `detect incoming - greek katathesi pattern`() {
-        val text = "Κατάθεση: €1,000"
-        val result = detector.detectDirection(null, text, null, ParsedTransactionType.DEPOSIT)
-        assertEquals(ParsedTransferDirection.INCOMING, result)
-    }
-
-    @Test
-    fun `detect incoming - greek eisrema pattern`() {
-        val text = "Είσπραξη ποσού €250"
-        val result = detector.detectDirection(null, text, null, ParsedTransactionType.TRANSFER)
-        assertEquals(ParsedTransferDirection.INCOMING, result)
-    }
-
-    @Test
-    fun `detect incoming - greek misthos pattern`() {
-        val text = "Κατάθεση μισθοδοσίας: €1,800"
-        val result = detector.detectDirection(null, text, null, ParsedTransactionType.DEPOSIT)
-        assertEquals(ParsedTransferDirection.INCOMING, result)
-    }
-
-    @Test
-    fun `detect incoming - greek code pi pattern`() {
-        val text = "Π Εμβασμα: €300"
-        val result = detector.detectDirection(null, text, null, ParsedTransactionType.TRANSFER)
-        assertEquals(ParsedTransferDirection.INCOMING, result)
-    }
-
-    // ==================== GREEK OUTGOING PATTERNS ====================
-
-    @Test
-    fun `detect outgoing - greek xreosi pattern`() {
-        val text = "Χρέωση λογαριασμού: €150"
-        val result = detector.detectDirection(null, text, null, ParsedTransactionType.TRANSFER)
-        assertEquals(ParsedTransferDirection.OUTGOING, result)
-    }
-
-    @Test
-    fun `detect outgoing - greek anilema pattern`() {
-        val text = "Ανάληψη: €200"
-        val result = detector.detectDirection(null, text, null, ParsedTransactionType.WITHDRAWAL)
-        assertEquals(ParsedTransferDirection.OUTGOING, result)
-    }
-
-    @Test
-    fun `detect outgoing - greek metafora pattern`() {
-        val text = "Μεταφορά σε Ιωάννη: €100"
-        val result = detector.detectDirection(null, text, null, ParsedTransactionType.TRANSFER)
-        assertEquals(ParsedTransferDirection.OUTGOING, result)
-    }
-
-    @Test
-    fun `detect outgoing - greek code chi pattern`() {
-        val text = "Χ Ανάληψη: €50"
-        val result = detector.detectDirection(null, text, null, ParsedTransactionType.WITHDRAWAL)
-        assertEquals(ParsedTransferDirection.OUTGOING, result)
-    }
-
-    @Test
-    fun `detect outgoing - greek pliromi pattern`() {
-        val text = "Πληρωμή λογαριασμού: €85"
-        val result = detector.detectDirection(null, text, null, ParsedTransactionType.PURCHASE)
-        assertNull(result) // Purchase should not detect direction
+    fun `detect direction - english and greek incoming and outgoing patterns`() {
+        val inc = ParsedTransferDirection.INCOMING
+        val out = ParsedTransferDirection.OUTGOING
+        val transfer = ParsedTransactionType.TRANSFER
+        val deposit = ParsedTransactionType.DEPOSIT
+        val withdrawal = ParsedTransactionType.WITHDRAWAL
+        val purchase = ParsedTransactionType.PURCHASE
+        assertDirections(
+            listOf(
+                // English incoming
+                DirectionCase("en incoming - received from", text = "You received €100 from John Smith", type = transfer, expected = inc),
+                DirectionCase("en incoming - deposited to", text = "Amount deposited to your account: €500", type = deposit, expected = inc),
+                DirectionCase("en incoming - credited", text = "Your account has been credited with €250", type = transfer, expected = inc),
+                DirectionCase("en incoming - salary deposit", title = "Salary Payment", text = "Salary deposit: €2,500.00", type = deposit, expected = inc),
+                DirectionCase("en incoming - refund", text = "Refund processed: €45.99", type = deposit, expected = inc),
+                DirectionCase("en incoming - transfer in", text = "Transfer IN: €300 from Savings Account", type = transfer, expected = inc),
+                // English outgoing
+                DirectionCase("en outgoing - sent to", text = "You sent €50 to Jane Doe", type = transfer, expected = out),
+                DirectionCase("en outgoing - paid to on PURCHASE yields no direction", text = "You paid €25 to Coffee Shop", type = purchase, expected = null),
+                DirectionCase("en outgoing - transfer out", text = "Transfer OUT: €200 to Joint Account", type = transfer, expected = out),
+                DirectionCase("en outgoing - withdrew", text = "You withdrew €100 from ATM", type = withdrawal, expected = out),
+                DirectionCase("en outgoing - debited", text = "Your account has been debited €75", type = transfer, expected = out),
+                DirectionCase("en outgoing - transfer to", text = "Transfer to Mary: €150", type = transfer, expected = out),
+                // Greek incoming
+                DirectionCase("el incoming - pistosi", text = "Πίστωση λογαριασμού: €500", type = transfer, expected = inc),
+                DirectionCase("el incoming - katathesi", text = "Κατάθεση: €1,000", type = deposit, expected = inc),
+                DirectionCase("el incoming - eispraxi", text = "Είσπραξη ποσού €250", type = transfer, expected = inc),
+                DirectionCase("el incoming - katathesi misthodosias", text = "Κατάθεση μισθοδοσίας: €1,800", type = deposit, expected = inc),
+                DirectionCase("el incoming - code Pi", text = "Π Εμβασμα: €300", type = transfer, expected = inc),
+                // Greek outgoing
+                DirectionCase("el outgoing - xreosi", text = "Χρέωση λογαριασμού: €150", type = transfer, expected = out),
+                DirectionCase("el outgoing - analipsi", text = "Ανάληψη: €200", type = withdrawal, expected = out),
+                DirectionCase("el outgoing - metafora se", text = "Μεταφορά σε Ιωάννη: €100", type = transfer, expected = out),
+                DirectionCase("el outgoing - code Chi", text = "Χ Ανάληψη: €50", type = withdrawal, expected = out),
+                DirectionCase("el outgoing - pliromi on PURCHASE yields no direction", text = "Πληρωμή λογαριασμού: €85", type = purchase, expected = null)
+            )
+        )
     }
 
     // ==================== EDGE CASES ====================
 
     @Test
-    fun `detect direction - null text returns null`() {
-        val result = detector.detectDirection(null, null, null, ParsedTransactionType.TRANSFER)
-        assertNull(result)
+    fun `detect direction - edge cases null empty type ambiguous and priority`() {
+        val out = ParsedTransferDirection.OUTGOING
+        val transfer = ParsedTransactionType.TRANSFER
+        assertDirections(
+            listOf(
+                DirectionCase("null text returns null", text = null, type = transfer, expected = null),
+                DirectionCase("empty text returns null", text = "", type = transfer, expected = null),
+                DirectionCase("non-transfer type returns null", text = "You received €100 from John", type = ParsedTransactionType.PURCHASE, expected = null),
+                DirectionCase("ambiguous text returns null", text = "Transaction completed: €50", type = transfer, expected = null),
+                // "sent" appears before "received" in the text, so it should be OUTGOING
+                DirectionCase("conflicting patterns prioritizes first match", text = "You sent €100 and received €50", type = transfer, expected = out),
+                DirectionCase("transfer to wins in mixed incoming wording", text = "Refund processed. Transfer to John €40", type = transfer, expected = out),
+                DirectionCase("greek transfer se wins in mixed wording", text = "Επιστροφή χρημάτων, μεταφορά σε Μαρία 20,00€", type = transfer, expected = out)
+            )
+        )
     }
 
-    @Test
-    fun `detect direction - empty text returns null`() {
-        val result = detector.detectDirection(null, "", null, ParsedTransactionType.TRANSFER)
-        assertNull(result)
-    }
+    // ==================== PROVIDER-SPECIFIC + CASE INSENSITIVITY + REAL WORLD ====================
 
     @Test
-    fun `detect direction - non-transfer type returns null`() {
-        val text = "You received €100 from John"
-        val result = detector.detectDirection(null, text, null, ParsedTransactionType.PURCHASE)
-        assertNull(result)
-    }
-
-    @Test
-    fun `detect direction - ambiguous text returns null`() {
-        val text = "Transaction completed: €50"
-        val result = detector.detectDirection(null, text, null, ParsedTransactionType.TRANSFER)
-        assertNull(result)
-    }
-
-    @Test
-    fun `detect direction - conflicting patterns prioritizes first match`() {
-        // Both sent and received present - should match first pattern found
-        val text = "You sent €100 and received €50"
-        val result = detector.detectDirection(null, text, null, ParsedTransactionType.TRANSFER)
-        // "sent" appears before "received" in the text, so it should be OUTGOING
-        assertEquals(ParsedTransferDirection.OUTGOING, result)
-    }
-
-    @Test
-    fun `detect direction - transfer to wins in mixed incoming wording`() {
-        val text = "Refund processed. Transfer to John €40"
-        val result = detector.detectDirection(null, text, null, ParsedTransactionType.TRANSFER)
-        assertEquals(ParsedTransferDirection.OUTGOING, result)
-    }
-
-    @Test
-    fun `detect direction - greek transfer se wins in mixed wording`() {
-        val text = "Επιστροφή χρημάτων, μεταφορά σε Μαρία 20,00€"
-        val result = detector.detectDirection(null, text, null, ParsedTransactionType.TRANSFER)
-        assertEquals(ParsedTransferDirection.OUTGOING, result)
+    fun `detect direction - revolut greek bank case insensitivity and real world examples`() {
+        val inc = ParsedTransferDirection.INCOMING
+        val out = ParsedTransferDirection.OUTGOING
+        val transfer = ParsedTransactionType.TRANSFER
+        assertDirections(
+            listOf(
+                // Revolut specific
+                DirectionCase("revolut incoming - received from", title = "Received from John Smith", text = "€100.00 has been added to your account", type = transfer, expected = inc),
+                DirectionCase("revolut outgoing - paid to", title = "You paid to Jane Doe", text = "€50.00", type = transfer, expected = out),
+                DirectionCase("revolut outgoing - transfer to", title = "Transfer to Savings", text = "€200.00", type = transfer, expected = out),
+                // Greek bank specific
+                DirectionCase("greek bank outgoing - withdrawal", text = "Ανάληψη 100,00€ από ΚΑΡΤΑ ΣΑΣ", type = ParsedTransactionType.WITHDRAWAL, expected = out),
+                DirectionCase("greek bank - card purchase yields no direction", text = "Αγορά 45,50€ με ΚΑΡΤΑ", type = ParsedTransactionType.PURCHASE, expected = null),
+                DirectionCase("greek bank incoming - deposit", text = "Κατάθεση €500 στον λογαριασμό σας", type = ParsedTransactionType.DEPOSIT, expected = inc),
+                // Case insensitivity
+                DirectionCase("case insensitive matching", text = "YOU RECEIVED €100 FROM TEST", type = transfer, expected = inc),
+                DirectionCase("mixed case greek", text = "ΠΊΣΤΩΣΗ €500", type = transfer, expected = inc),
+                // Real-world examples
+                DirectionCase(
+                    "real world - revolut incoming notification",
+                    title = "Received from John Smith",
+                    text = "+ €150.00",
+                    bigText = "From: John Smith (GR12 3456 7890 1234 5678 9012 345)",
+                    type = transfer,
+                    expected = inc
+                ),
+                DirectionCase(
+                    "real world - greek bank transfer notification",
+                    title = "Ειδοποίηση Συναλλαγής",
+                    text = "Χ Μεταφορά: €200.00 προς ΜΑΡΙΑ ΠΑΠΑΔΟΠΟΥΛΟΥ",
+                    type = transfer,
+                    expected = out
+                ),
+                DirectionCase(
+                    "real world - salary deposit notification",
+                    title = "Salary Deposit",
+                    text = "Your salary of €2,500.00 has been deposited",
+                    type = ParsedTransactionType.DEPOSIT,
+                    expected = inc
+                ),
+                DirectionCase(
+                    "real world - atm withdrawal notification",
+                    title = "ATM Withdrawal",
+                    text = "You withdrew €100.00 from ATM #1234",
+                    type = ParsedTransactionType.WITHDRAWAL,
+                    expected = out
+                )
+            )
+        )
     }
 
     // ==================== ACCOUNT NAME EXTRACTION ====================
 
     @Test
-    fun `extract account name - from pattern`() {
-        val text = "You received €100 from John Smith"
-        val result = detector.extractAccountName(null, text, null)
-        assertEquals("John Smith", result)
-    }
-
-    @Test
-    fun `extract account name - to pattern`() {
-        val text = "You sent €50 to Jane Doe"
-        val result = detector.extractAccountName(null, text, null)
-        assertEquals("Jane Doe", result)
-    }
-
-    @Test
-    fun `extract account name - greek from pattern`() {
-        val text = "Μεταφορά από Ιωάννης Παπαδόπουλος"
-        val result = detector.extractAccountName(null, text, null)
-        assertEquals("Ιωάννης Παπαδόπουλος", result)
-    }
-
-    @Test
-    fun `extract account name - greek to pattern`() {
-        val text = "Μεταφορά προς Μαρία"
-        val result = detector.extractAccountName(null, text, null)
-        assertEquals("Μαρία", result)
-    }
-
-    @Test
-    fun `extract account name - strips trailing greek amount details`() {
-        val text = "Μεταφορά από Ιωάννης Παπαδόπουλος ποσό 20,00€"
-        val result = detector.extractAccountName(null, text, null)
-        assertEquals("Ιωάννης Παπαδόπουλος", result)
-    }
-
-    @Test
-    fun `extract account name - strips trailing iban details`() {
-        val text = "Μεταφορά από Ιωάννης Παπαδόπουλος IBAN GR1601101250000000012300695"
-        val result = detector.extractAccountName(null, text, null)
-        assertEquals("Ιωάννης Παπαδόπουλος", result)
-    }
-
-    @Test
-    fun `extract account name - no match returns null`() {
-        val text = "Transaction completed: €50"
-        val result = detector.extractAccountName(null, text, null)
-        assertNull(result)
-    }
-
-    // ==================== REVOLUT SPECIFIC ====================
-
-    @Test
-    fun `detect incoming - revolut received from pattern`() {
-        val title = "Received from John Smith"
-        val text = "€100.00 has been added to your account"
-        val result = detector.detectDirection(title, text, null, ParsedTransactionType.TRANSFER)
-        assertEquals(ParsedTransferDirection.INCOMING, result)
-    }
-
-    @Test
-    fun `detect outgoing - revolut paid to pattern`() {
-        val title = "You paid to Jane Doe"
-        val text = "€50.00"
-        val result = detector.detectDirection(title, text, null, ParsedTransactionType.TRANSFER)
-        assertEquals(ParsedTransferDirection.OUTGOING, result)
-    }
-
-    @Test
-    fun `detect outgoing - revolut transfer to pattern`() {
-        val title = "Transfer to Savings"
-        val text = "€200.00"
-        val result = detector.detectDirection(title, text, null, ParsedTransactionType.TRANSFER)
-        assertEquals(ParsedTransferDirection.OUTGOING, result)
-    }
-
-    // ==================== GREEK BANK SPECIFIC ====================
-
-    @Test
-    fun `detect outgoing - greek bank withdrawal pattern`() {
-        val text = "Ανάληψη 100,00€ από ΚΑΡΤΑ ΣΑΣ"
-        val result = detector.detectDirection(null, text, null, ParsedTransactionType.WITHDRAWAL)
-        assertEquals(ParsedTransferDirection.OUTGOING, result)
-    }
-
-    @Test
-    fun `detect outgoing - greek bank card purchase`() {
-        val text = "Αγορά 45,50€ με ΚΑΡΤΑ"
-        val result = detector.detectDirection(null, text, null, ParsedTransactionType.PURCHASE)
-        assertNull(result)
-    }
-
-    @Test
-    fun `detect incoming - greek bank deposit pattern`() {
-        val text = "Κατάθεση €500 στον λογαριασμό σας"
-        val result = detector.detectDirection(null, text, null, ParsedTransactionType.DEPOSIT)
-        assertEquals(ParsedTransferDirection.INCOMING, result)
-    }
-
-    // ==================== CASE INSENSITIVITY ====================
-
-    @Test
-    fun `detect direction - case insensitive matching`() {
-        val text = "YOU RECEIVED €100 FROM TEST"
-        val result = detector.detectDirection(null, text, null, ParsedTransactionType.TRANSFER)
-        assertEquals(ParsedTransferDirection.INCOMING, result)
-    }
-
-    @Test
-    fun `detect direction - mixed case greek`() {
-        val text = "ΠΊΣΤΩΣΗ €500"
-        val result = detector.detectDirection(null, text, null, ParsedTransactionType.TRANSFER)
-        assertEquals(ParsedTransferDirection.INCOMING, result)
-    }
-
-    // ==================== REAL-WORLD EXAMPLES ====================
-
-    @Test
-    fun `real world - revolut incoming notification`() {
-        val title = "Received from John Smith"
-        val text = "+ €150.00"
-        val bigText = "From: John Smith (GR12 3456 7890 1234 5678 9012 345)"
-        val result = detector.detectDirection(title, text, bigText, ParsedTransactionType.TRANSFER)
-        assertEquals(ParsedTransferDirection.INCOMING, result)
-    }
-
-    @Test
-    fun `real world - greek bank transfer notification`() {
-        val title = "Ειδοποίηση Συναλλαγής"
-        val text = "Χ Μεταφορά: €200.00 προς ΜΑΡΙΑ ΠΑΠΑΔΟΠΟΥΛΟΥ"
-        val result = detector.detectDirection(title, text, null, ParsedTransactionType.TRANSFER)
-        assertEquals(ParsedTransferDirection.OUTGOING, result)
-    }
-
-    @Test
-    fun `real world - salary deposit notification`() {
-        val title = "Salary Deposit"
-        val text = "Your salary of €2,500.00 has been deposited"
-        val result = detector.detectDirection(title, text, null, ParsedTransactionType.DEPOSIT)
-        assertEquals(ParsedTransferDirection.INCOMING, result)
-    }
-
-    @Test
-    fun `real world - atm withdrawal notification`() {
-        val title = "ATM Withdrawal"
-        val text = "You withdrew €100.00 from ATM #1234"
-        val result = detector.detectDirection(title, text, null, ParsedTransactionType.WITHDRAWAL)
-        assertEquals(ParsedTransferDirection.OUTGOING, result)
+    fun `extract account name - table of from to greek trailing details and no match`() {
+        val cases = listOf(
+            NameCase("from pattern", "You received €100 from John Smith", "John Smith"),
+            NameCase("to pattern", "You sent €50 to Jane Doe", "Jane Doe"),
+            NameCase("greek from pattern", "Μεταφορά από Ιωάννης Παπαδόπουλος", "Ιωάννης Παπαδόπουλος"),
+            NameCase("greek to pattern", "Μεταφορά προς Μαρία", "Μαρία"),
+            NameCase("strips trailing greek amount details", "Μεταφορά από Ιωάννης Παπαδόπουλος ποσό 20,00€", "Ιωάννης Παπαδόπουλος"),
+            NameCase("strips trailing iban details", "Μεταφορά από Ιωάννης Παπαδόπουλος IBAN GR1601101250000000012300695", "Ιωάννης Παπαδόπουλος"),
+            NameCase("no match returns null", "Transaction completed: €50", null)
+        )
+        cases.forEach { c ->
+            val result = detector.extractAccountName(null, c.text, null)
+            assertEquals("case '${c.id}'", c.expected, result)
+        }
     }
 
     // ==================== ACCURACY THRESHOLD ====================
@@ -427,19 +221,11 @@ class TransferDirectionDetectorTest {
     // ==================== PATTERN VALIDATION PROPERTIES ====================
 
     @Test
-    fun `validate - incoming patterns not empty`() {
-        assertTrue(detector.incomingPatterns.isNotEmpty())
-        assertTrue(detector.incomingPatterns.size >= 15)
-    }
-
-    @Test
-    fun `validate - outgoing patterns not empty`() {
-        assertTrue(detector.outgoingPatterns.isNotEmpty())
-        assertTrue(detector.outgoingPatterns.size >= 15)
-    }
-
-    @Test
-    fun `validate - total patterns at least 50`() {
+    fun `validate - incoming and outgoing pattern sets are populated`() {
+        assertTrue("incoming patterns not empty", detector.incomingPatterns.isNotEmpty())
+        assertTrue("incoming patterns at least 15", detector.incomingPatterns.size >= 15)
+        assertTrue("outgoing patterns not empty", detector.outgoingPatterns.isNotEmpty())
+        assertTrue("outgoing patterns at least 15", detector.outgoingPatterns.size >= 15)
         val totalPatterns = detector.incomingPatterns.size + detector.outgoingPatterns.size
         assertTrue("Should have at least 50 patterns, but had $totalPatterns", totalPatterns >= 50)
     }

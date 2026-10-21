@@ -14,7 +14,6 @@ import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.flowOf
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.time.LocalDateTime
@@ -32,6 +31,11 @@ import java.time.ZoneId
  * - Non-spend rows do not affect volatility calculations
  * - Adding non-spend rows does not change the spendingControl score component
  * - Score weights, thresholds, streak math, and time-boundary behavior are preserved
+ *
+ * The relative (baseline vs. with-non-spend) comparisons run against two budget
+ * configurations: an effectively unbounded ON_TRACK budget (the original scenario)
+ * and no budget at all (default targets 50 / 350 / 1500), where an inflated spend
+ * total would visibly drop spendingControl from 25 to 5.
  */
 class FinancialHealthCalculatorTransactionTypeTest {
 
@@ -53,6 +57,9 @@ class FinancialHealthCalculatorTransactionTypeTest {
             .toInstant()
             .toEpochMilli()
     }
+
+    private fun calculatorAt(now: Long): FinancialHealthCalculator =
+        FinancialHealthCalculator(FakeTimeProvider(now), AnalyticsCurrencyNormalizer(mockk()), currencySettingsRepository)
 
     private fun expense(
         id: Long,
@@ -79,14 +86,20 @@ class FinancialHealthCalculatorTransactionTypeTest {
         periodEnd = Long.MAX_VALUE
     )
 
+    /** Label to budget list pairs every relative comparison is evaluated against. */
+    private fun budgetConfigs(): List<Pair<String, List<BudgetStatusSnapshot>>> = listOf(
+        "on-track budget" to listOf(onTrackBudget()),
+        "no budget" to emptyList()
+    )
+
     /** Compute health scores with standard defaults so tests stay concise. */
     private fun compute(
         calculator: FinancialHealthCalculator,
         expenses: List<Expense>,
-        budgetAmount: Double = 1000.0
+        budgets: List<BudgetStatusSnapshot> = listOf(onTrackBudget())
     ): HealthScoreResult = calculator.calculateHealthScores(
         expenses = expenses,
-        budgetStatuses = listOf(onTrackBudget(budgetAmount)),
+        budgetStatuses = budgets,
         pendingReviews = 0,
         todayStreak = 0,
         weekStreak = 0,
@@ -95,73 +108,53 @@ class FinancialHealthCalculatorTransactionTypeTest {
     )
 
     // ========================================================================
-    // Today — non-spend rows must not affect daily spending control
+    // Today — each non-spend type must not affect daily spending control
     // ========================================================================
 
-    @Test
-    fun `DEPOSIT today does not affect today spending control score`() {
-        val now = toEpochMs(2026, 4, 15, 12, 0)
-        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer(mockk()), currencySettingsRepository)
+    private data class NonSpendRow(
+        val label: String,
+        val type: TransactionType,
+        val amount: Double
+    )
 
+    @Test
+    fun `single non-spend type today does not affect today spending control score`() {
+        val rows = listOf(
+            NonSpendRow("DEPOSIT", TransactionType.DEPOSIT, 5000.0),
+            NonSpendRow("TRANSFER", TransactionType.TRANSFER, 3000.0),
+            NonSpendRow("WITHDRAWAL", TransactionType.WITHDRAWAL, 500.0),
+            NonSpendRow("UNKNOWN", TransactionType.UNKNOWN, 999.0)
+        )
+        assertEquals(4, rows.size)
+
+        val now = toEpochMs(2026, 4, 15, 12, 0)
+        val calculator = calculatorAt(now)
         val purchaseOnly = listOf(
             expense(1L, toEpochMs(2026, 4, 15, 9, 0), 10.0, TransactionType.PURCHASE)
         )
-        val withDeposit = purchaseOnly + expense(
-            2L, toEpochMs(2026, 4, 15, 10, 0), 5000.0, TransactionType.DEPOSIT
-        )
 
-        val scorePurchaseOnly = compute(calculator, purchaseOnly)
-        val scoreWithDeposit = compute(calculator, withDeposit)
+        for (row in rows) {
+            val withNonSpend = purchaseOnly + expense(
+                2L, toEpochMs(2026, 4, 15, 10, 0), row.amount, row.type
+            )
 
-        assertEquals(
-            "DEPOSIT must not change today spendingControl",
-            scorePurchaseOnly.today.breakdown.spendingControl,
-            scoreWithDeposit.today.breakdown.spendingControl
-        )
-    }
+            for ((budgetLabel, budgets) in budgetConfigs()) {
+                val scorePurchaseOnly = compute(calculator, purchaseOnly, budgets)
+                val scoreWithNonSpend = compute(calculator, withNonSpend, budgets)
 
-    @Test
-    fun `TRANSFER today does not affect today spending control score`() {
-        val now = toEpochMs(2026, 4, 15, 12, 0)
-        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer(mockk()), currencySettingsRepository)
-
-        val purchaseOnly = listOf(
-            expense(1L, toEpochMs(2026, 4, 15, 9, 0), 10.0, TransactionType.PURCHASE)
-        )
-        val withTransfer = purchaseOnly + expense(
-            2L, toEpochMs(2026, 4, 15, 10, 0), 3000.0, TransactionType.TRANSFER
-        )
-
-        val scorePurchaseOnly = compute(calculator, purchaseOnly)
-        val scoreWithTransfer = compute(calculator, withTransfer)
-
-        assertEquals(
-            "TRANSFER must not change today spendingControl",
-            scorePurchaseOnly.today.breakdown.spendingControl,
-            scoreWithTransfer.today.breakdown.spendingControl
-        )
-    }
-
-    @Test
-    fun `WITHDRAWAL today does not affect today spending control score`() {
-        val now = toEpochMs(2026, 4, 15, 12, 0)
-        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer(mockk()), currencySettingsRepository)
-
-        val purchaseOnly = listOf(
-            expense(1L, toEpochMs(2026, 4, 15, 9, 0), 10.0, TransactionType.PURCHASE)
-        )
-        val withWithdrawal = purchaseOnly + expense(
-            2L, toEpochMs(2026, 4, 15, 10, 0), 500.0, TransactionType.WITHDRAWAL
-        )
-
-        val scorePurchaseOnly = compute(calculator, purchaseOnly)
-        val scoreWithWithdrawal = compute(calculator, withWithdrawal)
-
-        assertEquals(
-            "WITHDRAWAL must not change today spendingControl",
-            scorePurchaseOnly.today.breakdown.spendingControl,
-            scoreWithWithdrawal.today.breakdown.spendingControl
-        )
+                // Absolute pin: 10.0 spent today is far below any daily target, so control is the maximum 25.
+                assertEquals(
+                    "[${row.label} / $budgetLabel] purchase-only baseline today spendingControl",
+                    25,
+                    scorePurchaseOnly.today.breakdown.spendingControl
+                )
+                assertEquals(
+                    "[${row.label} / $budgetLabel] ${row.label} must not change today spendingControl",
+                    scorePurchaseOnly.today.breakdown.spendingControl,
+                    scoreWithNonSpend.today.breakdown.spendingControl
+                )
+            }
+        }
     }
 
     // ========================================================================
@@ -172,7 +165,7 @@ class FinancialHealthCalculatorTransactionTypeTest {
     fun `non-spend rows this week do not affect weekly spending control`() {
         // Wednesday April 15, 2026
         val now = toEpochMs(2026, 4, 15, 14, 0)
-        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer(mockk()), currencySettingsRepository)
+        val calculator = calculatorAt(now)
 
         val purchases = listOf(
             expense(1L, toEpochMs(2026, 4, 13, 10, 0), 50.0, TransactionType.PURCHASE),
@@ -184,14 +177,22 @@ class FinancialHealthCalculatorTransactionTypeTest {
             expense(5L, toEpochMs(2026, 4, 15, 8, 0), 300.0, TransactionType.WITHDRAWAL)
         )
 
-        val scorePurchases = compute(calculator, purchases)
-        val scoreMixed = compute(calculator, mixed)
+        for ((budgetLabel, budgets) in budgetConfigs()) {
+            val scorePurchases = compute(calculator, purchases, budgets)
+            val scoreMixed = compute(calculator, mixed, budgets)
 
-        assertEquals(
-            "Week spendingControl must be identical with or without non-spend rows",
-            scorePurchases.week.breakdown.spendingControl,
-            scoreMixed.week.breakdown.spendingControl
-        )
+            // 80.0 spent with daily totals 50/30 (volatility 25 percent, below the penalty threshold) gives 25.
+            assertEquals(
+                "[$budgetLabel] purchase-only baseline week spendingControl",
+                25,
+                scorePurchases.week.breakdown.spendingControl
+            )
+            assertEquals(
+                "[$budgetLabel] Week spendingControl must be identical with or without non-spend rows",
+                scorePurchases.week.breakdown.spendingControl,
+                scoreMixed.week.breakdown.spendingControl
+            )
+        }
     }
 
     // ========================================================================
@@ -201,7 +202,7 @@ class FinancialHealthCalculatorTransactionTypeTest {
     @Test
     fun `non-spend rows this month do not affect monthly spending control`() {
         val now = toEpochMs(2026, 4, 20, 14, 0)
-        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer(mockk()), currencySettingsRepository)
+        val calculator = calculatorAt(now)
 
         val purchases = listOf(
             expense(1L, toEpochMs(2026, 4, 5, 10, 0), 100.0, TransactionType.PURCHASE),
@@ -214,14 +215,22 @@ class FinancialHealthCalculatorTransactionTypeTest {
             expense(6L, toEpochMs(2026, 4, 7, 16, 0), 800.0, TransactionType.WITHDRAWAL)
         )
 
-        val scorePurchases = compute(calculator, purchases)
-        val scoreMixed = compute(calculator, mixed)
+        for ((budgetLabel, budgets) in budgetConfigs()) {
+            val scorePurchases = compute(calculator, purchases, budgets)
+            val scoreMixed = compute(calculator, mixed, budgets)
 
-        assertEquals(
-            "Month spendingControl must be identical with or without non-spend rows",
-            scorePurchases.month.breakdown.spendingControl,
-            scoreMixed.month.breakdown.spendingControl
-        )
+            // 450.0 spent with daily totals 100/150/200 (volatility about 27 percent) gives 25.
+            assertEquals(
+                "[$budgetLabel] purchase-only baseline month spendingControl",
+                25,
+                scorePurchases.month.breakdown.spendingControl
+            )
+            assertEquals(
+                "[$budgetLabel] Month spendingControl must be identical with or without non-spend rows",
+                scorePurchases.month.breakdown.spendingControl,
+                scoreMixed.month.breakdown.spendingControl
+            )
+        }
     }
 
     // ========================================================================
@@ -231,7 +240,7 @@ class FinancialHealthCalculatorTransactionTypeTest {
     @Test
     fun `mixed non-spend types across all periods do not change composite score`() {
         val now = toEpochMs(2026, 4, 15, 14, 0)
-        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer(mockk()), currencySettingsRepository)
+        val calculator = calculatorAt(now)
 
         val purchases = listOf(
             expense(1L, toEpochMs(2026, 4, 15, 9, 0), 20.0, TransactionType.PURCHASE),  // today
@@ -244,29 +253,31 @@ class FinancialHealthCalculatorTransactionTypeTest {
             expense(6L, toEpochMs(2026, 4, 5, 13, 0), 5555.0, TransactionType.WITHDRAWAL)
         )
 
-        val scorePurchases = compute(calculator, purchases)
-        val scoreMixed = compute(calculator, mixed)
+        for ((budgetLabel, budgets) in budgetConfigs()) {
+            val scorePurchases = compute(calculator, purchases, budgets)
+            val scoreMixed = compute(calculator, mixed, budgets)
 
-        assertEquals(
-            "Composite score must be identical with or without non-spend rows",
-            scorePurchases.composite,
-            scoreMixed.composite
-        )
-        assertEquals(
-            "Today score must be identical",
-            scorePurchases.today.score,
-            scoreMixed.today.score
-        )
-        assertEquals(
-            "Week score must be identical",
-            scorePurchases.week.score,
-            scoreMixed.week.score
-        )
-        assertEquals(
-            "Month score must be identical",
-            scorePurchases.month.score,
-            scoreMixed.month.score
-        )
+            assertEquals(
+                "[$budgetLabel] Composite score must be identical with or without non-spend rows",
+                scorePurchases.composite,
+                scoreMixed.composite
+            )
+            assertEquals(
+                "[$budgetLabel] Today score must be identical",
+                scorePurchases.today.score,
+                scoreMixed.today.score
+            )
+            assertEquals(
+                "[$budgetLabel] Week score must be identical",
+                scorePurchases.week.score,
+                scoreMixed.week.score
+            )
+            assertEquals(
+                "[$budgetLabel] Month score must be identical",
+                scorePurchases.month.score,
+                scoreMixed.month.score
+            )
+        }
     }
 
     // ========================================================================
@@ -276,7 +287,7 @@ class FinancialHealthCalculatorTransactionTypeTest {
     @Test
     fun `only non-spend rows produces same result as empty expense list`() {
         val now = toEpochMs(2026, 4, 15, 14, 0)
-        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer(mockk()), currencySettingsRepository)
+        val calculator = calculatorAt(now)
 
         val nonSpendOnly = listOf(
             expense(1L, toEpochMs(2026, 4, 15, 9, 0), 1000.0, TransactionType.DEPOSIT),
@@ -284,50 +295,31 @@ class FinancialHealthCalculatorTransactionTypeTest {
             expense(3L, toEpochMs(2026, 4, 5, 12, 0), 300.0, TransactionType.WITHDRAWAL)
         )
 
-        val scoreNonSpend = compute(calculator, nonSpendOnly)
-        val scoreEmpty = compute(calculator, emptyList())
+        for ((budgetLabel, budgets) in budgetConfigs()) {
+            val scoreNonSpend = compute(calculator, nonSpendOnly, budgets)
+            val scoreEmpty = compute(calculator, emptyList(), budgets)
 
-        assertEquals(
-            "Non-spend-only should produce same today spendingControl as empty",
-            scoreEmpty.today.breakdown.spendingControl,
-            scoreNonSpend.today.breakdown.spendingControl
-        )
-        assertEquals(
-            "Non-spend-only should produce same week spendingControl as empty",
-            scoreEmpty.week.breakdown.spendingControl,
-            scoreNonSpend.week.breakdown.spendingControl
-        )
-        assertEquals(
-            "Non-spend-only should produce same month spendingControl as empty",
-            scoreEmpty.month.breakdown.spendingControl,
-            scoreNonSpend.month.breakdown.spendingControl
-        )
-    }
+            // Zero spend is the best case in every period: spendingControl 25.
+            assertEquals("[$budgetLabel] empty today spendingControl", 25, scoreEmpty.today.breakdown.spendingControl)
+            assertEquals("[$budgetLabel] empty week spendingControl", 25, scoreEmpty.week.breakdown.spendingControl)
+            assertEquals("[$budgetLabel] empty month spendingControl", 25, scoreEmpty.month.breakdown.spendingControl)
 
-    // ========================================================================
-    // UNKNOWN type is also not spending
-    // ========================================================================
-
-    @Test
-    fun `UNKNOWN transaction type does not affect spending control`() {
-        val now = toEpochMs(2026, 4, 15, 12, 0)
-        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer(mockk()), currencySettingsRepository)
-
-        val purchaseOnly = listOf(
-            expense(1L, toEpochMs(2026, 4, 15, 9, 0), 10.0, TransactionType.PURCHASE)
-        )
-        val withUnknown = purchaseOnly + expense(
-            2L, toEpochMs(2026, 4, 15, 10, 0), 999.0, TransactionType.UNKNOWN
-        )
-
-        val scorePurchaseOnly = compute(calculator, purchaseOnly)
-        val scoreWithUnknown = compute(calculator, withUnknown)
-
-        assertEquals(
-            "UNKNOWN must not change today spendingControl",
-            scorePurchaseOnly.today.breakdown.spendingControl,
-            scoreWithUnknown.today.breakdown.spendingControl
-        )
+            assertEquals(
+                "[$budgetLabel] Non-spend-only should produce same today spendingControl as empty",
+                scoreEmpty.today.breakdown.spendingControl,
+                scoreNonSpend.today.breakdown.spendingControl
+            )
+            assertEquals(
+                "[$budgetLabel] Non-spend-only should produce same week spendingControl as empty",
+                scoreEmpty.week.breakdown.spendingControl,
+                scoreNonSpend.week.breakdown.spendingControl
+            )
+            assertEquals(
+                "[$budgetLabel] Non-spend-only should produce same month spendingControl as empty",
+                scoreEmpty.month.breakdown.spendingControl,
+                scoreNonSpend.month.breakdown.spendingControl
+            )
+        }
     }
 
     // ========================================================================
@@ -337,7 +329,7 @@ class FinancialHealthCalculatorTransactionTypeTest {
     @Test
     fun `score weights thresholds and streaks remain unchanged after filtering`() {
         val now = toEpochMs(2026, 4, 15, 14, 0)
-        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer(mockk()), currencySettingsRepository)
+        val calculator = calculatorAt(now)
 
         // Use only PURCHASE rows so filtering doesn't change anything —
         // this verifies the core math is untouched by the refactoring.
@@ -357,17 +349,13 @@ class FinancialHealthCalculatorTransactionTypeTest {
             noSpendStreak = 0
         )
 
-        // Verify all scores are in valid range
-        assertTrue("Today score in [0,100]", result.today.score in 0..100)
-        assertTrue("Week score in [0,100]", result.week.score in 0..100)
-        assertTrue("Month score in [0,100]", result.month.score in 0..100)
-        assertTrue("Composite score in [0,100]", result.composite in 0..100)
-
-        // Verify breakdown components are non-negative
-        assertTrue("Budget health >= 0", result.today.breakdown.budgetHealth >= 0)
-        assertTrue("Spending control >= 0", result.today.breakdown.spendingControl >= 0)
-        assertTrue("Cleanliness >= 0", result.today.breakdown.cleanliness >= 0)
-        assertTrue("Bonus points >= 0", result.today.breakdown.bonusPoints >= 0)
+        // Today: budgetHealth 25 (all on track), spendingControl 25, cleanliness 7 (2 pending reviews),
+        // bonus 2 (on-track only; todayStreak 5 < 7). Raw 59 of 70 -> 84.
+        assertEquals("Today budgetHealth", 25, result.today.breakdown.budgetHealth)
+        assertEquals("Today spendingControl", 25, result.today.breakdown.spendingControl)
+        assertEquals("Today cleanliness", 7, result.today.breakdown.cleanliness)
+        assertEquals("Today bonusPoints", 2, result.today.breakdown.bonusPoints)
+        assertEquals("Today score", 84, result.today.score)
 
         // weekStreak = 8, which triggers streak bonus of 3
         // allBudgetsOnTrack = true, which adds 2
@@ -378,5 +366,17 @@ class FinancialHealthCalculatorTransactionTypeTest {
             5,
             result.week.breakdown.bonusPoints
         )
+        // Week: 25 + 25 + 7 + 5 = 62 of 70 -> 89
+        assertEquals("Week spendingControl", 25, result.week.breakdown.spendingControl)
+        assertEquals("Week score", 89, result.week.score)
+
+        // Month: monthStreak 10 gives the same bonus of 5; 62 of 70 -> 89
+        assertEquals("Month bonusPoints", 5, result.month.breakdown.bonusPoints)
+        assertEquals("Month spendingControl", 25, result.month.breakdown.spendingControl)
+        assertEquals("Month score", 89, result.month.score)
+
+        // Composite is 0.2 * 84 + 0.3 * 89 + 0.5 * 89 = 88.0; in IEEE doubles the partial sums
+        // (16.8 + 26.7 = 43.5, then + 44.5) are exact, so the truncated weighted sum is exactly 88.
+        assertEquals("Composite", 88, result.composite)
     }
 }

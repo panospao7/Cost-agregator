@@ -16,6 +16,7 @@ class ConvertersTest {
 
     @Test
     fun `converts all TransactionTypes roundtrip`() {
+        assertTrue("TransactionType.entries must not be empty", TransactionType.entries.isNotEmpty())
         TransactionType.entries.forEach { type ->
             val str = converters.fromTransactionType(type)
             assertEquals(type, converters.toTransactionType(str))
@@ -23,12 +24,15 @@ class ConvertersTest {
     }
 
     @Test
-    fun `invalid string returns UNKNOWN`() {
-        assertEquals(TransactionType.UNKNOWN, converters.toTransactionType("INVALID_TYPE"))
-    }
-
-    @Test
-    fun `empty string returns UNKNOWN`() {
-        assertEquals(TransactionType.UNKNOWN, converters.toTransactionType(""))
+    fun `unparseable strings return UNKNOWN`() {
+        val inputs = listOf("INVALID_TYPE", "")
+        assertEquals("unparseable inputs size", 2, inputs.size)
+        inputs.forEach { input ->
+            assertEquals(
+                "Input '$input' should map to UNKNOWN",
+                TransactionType.UNKNOWN,
+                converters.toTransactionType(input)
+            )
+        }
     }
 }

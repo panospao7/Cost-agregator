@@ -1,22 +1,11 @@
 package com.yourname.expensetracker.data.ai.provider
 
-import com.google.mlkit.genai.prompt.GenerateContentRequest
-import com.google.mlkit.genai.prompt.GenerativeModel
-import com.yourname.expensetracker.domain.ai.model.AiServiceError
-import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.ReviewExplanationInput
-import io.mockk.coEvery
-import io.mockk.mockk
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import timber.log.Timber
 
 class OnDeviceReviewExplanationServiceTest {
 
@@ -95,72 +84,6 @@ class OnDeviceReviewExplanationServiceTest {
         assertNull(service.parseResponse("not json"))
     }
 
-    // ---- R6 (RG02B-1 / RG02B-4): bounded codes, no leaked text, CancellationException propagates ----
-
-    private inline fun <T> withPlantedLogs(block: (MutableList<Pair<Throwable?, String>>) -> T): T {
-        val logs = mutableListOf<Pair<Throwable?, String>>()
-        val tree = object : Timber.Tree() {
-            override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
-                logs += t to message
-            }
-        }
-        Timber.plant(tree)
-        try {
-            return block(logs)
-        } finally {
-            Timber.uproot(tree)
-        }
-    }
-
-    /** Seeds the production model cache (no production change; avoids Generation.getClient()). */
-    private fun serviceWithModel(model: GenerativeModel): OnDeviceReviewExplanationService {
-        val target = OnDeviceReviewExplanationService()
-        val field = OnDeviceReviewExplanationService::class.java.getDeclaredField("cachedModel")
-        field.isAccessible = true
-        field.set(target, model)
-        return target
-    }
-
-    @Test
-    fun `parseResponse does not log throwable or sentinel on JSON failure`() {
-        withPlantedLogs { logs ->
-            val result = service.parseResponse("{ R6SENTINEL_9f2c }")
-
-            assertNull(result)
-            assertTrue(logs.any { it.second.contains("PARSER_FAILED") })
-            assertTrue(logs.all { it.first == null && !it.second.contains("R6SENTINEL_9f2c") })
-        }
-    }
-
-    @Test
-    fun `generate maps unexpected exception to bounded UNKNOWN_ERROR without leaking sentinel`() {
-        val model = mockk<GenerativeModel>()
-        coEvery { model.generateContent(any<GenerateContentRequest>()) } throws
-            IllegalStateException("R6SENTINEL_9f2c")
-
-        withPlantedLogs { logs ->
-            val result = runBlocking { serviceWithModel(model).generate(sampleInput) }
-
-            assertEquals(
-                AiServiceResult.Failure(AiServiceError.Unknown("UNKNOWN_ERROR")),
-                result
-            )
-            assertFalse(result.toString().contains("R6SENTINEL_9f2c"))
-            assertTrue(logs.all { it.first == null && !it.second.contains("R6SENTINEL_9f2c") })
-        }
-    }
-
-    @Test
-    fun `generate propagates CancellationException instead of mapping to Unknown`() {
-        val model = mockk<GenerativeModel>()
-        coEvery { model.generateContent(any<GenerateContentRequest>()) } throws
-            CancellationException("R6SENTINEL_9f2c")
-
-        withPlantedLogs { logs ->
-            assertThrows(CancellationException::class.java) {
-                runBlocking { serviceWithModel(model).generate(sampleInput) }
-            }
-            assertTrue(logs.none { it.second.contains("UNKNOWN_ERROR") })
-        }
-    }
+    // R6 error contract (unknown exception, cancellation, parse-failure log hygiene) lives in
+    // OnDeviceAiServiceErrorContractTest.
 }

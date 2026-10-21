@@ -459,6 +459,29 @@ class AdvancedAnalyticsDashboardTest : AnalyticsEngineTestBase() {
         }
     }
 
+    @Test
+    fun `calendar month comparison window is the previous calendar month and non month ranges keep the legacy window`() = runTest {
+        val ranges = mutableListOf<Pair<Long, Long>>()
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } answers {
+            ranges += firstArg<Long>() to secondArg<Long>()
+            emptyList()
+        }
+
+        // F-R20b-a: March (31 days) used to compare against [Jan 29, Mar 1); now the whole of February.
+        dashboard.generateDashboardData(ms("2026-03-01"), ms("2026-04-01"))
+        assertEquals(ms("2026-02-01") to ms("2026-03-01"), ranges[1])
+
+        // February (28 days) compares against Jan 1..Jan 29 (28 days), not [Jan 4, Feb 1).
+        ranges.clear()
+        dashboard.generateDashboardData(ms("2026-02-01"), ms("2026-03-01"))
+        assertEquals(ms("2026-01-01") to ms("2026-01-29"), ranges[1])
+
+        // Non-month range: unchanged same-length window (Jan 15 - Feb 20 = 36 days before Jan 15).
+        ranges.clear()
+        dashboard.generateDashboardData(ms("2026-01-15"), ms("2026-02-20"))
+        assertEquals(ms("2025-12-10") to ms("2026-01-15"), ranges[1])
+    }
+
     private fun zonedMs(
         year: Int,
         month: Int,

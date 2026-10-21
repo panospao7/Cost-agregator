@@ -90,7 +90,7 @@ def test_candidate_signatures_accepted_by_v2_loader():
     """The tracked signatures candidate is a valid v2 document with 407 entries.
 
     Derivation of the 407 pin: the candidate is the activation artifact that
-    was promoted over the active path (scripts/ci/promote_db_policy_v2.py),
+    was promoted over the active path (by the since-retired promote CLI),
     so it carries the same entries as the activated v2 policy document
     ``config/guards/db_ownership_policy.yml`` — 475 entries post-GR-08,
     471 post-GR-14h, 461 post-GR-14u, 451 post-GR-14u2, 441 post-GR-14u3, 434 post-GR-14u4 (dead-writer tranche 5), 432 post-GR-14u34 (zero-caller singles), 421 post-GR-14u35 (ExpenseWriteStore x11), 412 post-GR-14u36 (GroupLifecycleCoordinator x9), 407 post-GR-14u37 (deleteExpense ID overload, updatePrice, updateForecastAccuracy),

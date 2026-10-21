@@ -85,6 +85,9 @@ class NotificationProcessingPipelineAtomicityTest {
     private val subscriptionDetector = mockk<NotificationSubscriptionDetector>(relaxed = true)
     private val coordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true)
     private val writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
+    private val lifecycleEventWriter =
+        mockk<com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEventWriter>(relaxed = true)
+    private val transactionRunner = mockk<DomainTransactionRunner>(relaxed = true)
     private val testDispatcher = StandardTestDispatcher()
     private val applicationScope = TestScope(testDispatcher)
 
@@ -142,8 +145,8 @@ class NotificationProcessingPipelineAtomicityTest {
             postCommitActionRunner = mockk(relaxed = true),
             pendingReviewSourceLinkService = mockk(relaxed = true),
             sourceLinkWriter = mockk(relaxed = true),
-            transactionLifecycleEventWriter = mockk(relaxed = true),
-            transactionRunner = mockk(relaxed = true),
+            transactionLifecycleEventWriter = lifecycleEventWriter,
+            transactionRunner = transactionRunner,
             diagnosticEmitter = mockk(relaxed = true),
             writeBarrier = writeBarrier,
             rawPersistencePolicyResolver = com.yourname.expensetracker.domain.privacy.RawPersistencePolicyResolver(
@@ -362,6 +365,61 @@ class NotificationProcessingPipelineAtomicityTest {
         assertTrue("Expected Error outcome, got $result", result is NotificationPipelineOutcome.Error)
         // markProcessed must NOT be called when the transaction rolls back
         coVerify(exactly = 0) { rawDao.markProcessed(any()) }
+    }
+
+    @Test
+    fun `R30 auto-accept audit event failure fails closed instead of reporting Created`() = runBlocking {
+        val notification = testNotification()
+        val parsed = ParsedTransaction(
+            amount = 50.0,
+            currency = "EUR",
+            merchant = "Shop",
+            type = ParsedTransactionType.PURCHASE,
+            confidence = 0.95f,
+            date = notification.timestamp
+        )
+        coEvery {
+            parserRegistry.parseWithProvenance(any(), any(), any(), any(), any())
+        } returns ParseOutcome.Parsed(parsed, mockk(relaxed = true))
+        coEvery {
+            confidenceRouter.route(parsed, any(), any())
+        } returns RoutingResult(
+            decision = RoutingDecision.AUTO_ACCEPT,
+            adjustedConfidence = 0.95f,
+            reason = "high confidence"
+        )
+        coEvery {
+            hybridClassifier.classify(any(), any(), any(), any(), any())
+        } returns ClassificationResult(0L, "Unknown", 0f, matchType = MatchType.FALLBACK)
+        coEvery { rawDao.insertOrIgnore(any()) } returns 123L
+        coEvery { expenseDao.isDuplicateCurrencyAware(any(), any(), any(), any(), any(), any(), any(), any()) } returns false
+        coEvery { pendingReviewDao.hasPendingDuplicateInRangeTypeAware(any(), any(), any(), any(), any(), any(), any(), any()) } returns false
+        coEvery { coordinator.createExpenseDbOnlyV2(any()) } returns MutationResult(
+            com.yourname.expensetracker.domain.transaction.CreateExpenseResult.Created(456L),
+            PostCommitActionBatch.empty("test")
+        )
+        // The nested audit transaction runs its block for real; the event writer fails.
+        coEvery { transactionRunner.runInTransaction<Any>(any(), any(), any(), any(), any(), any()) } coAnswers {
+            arg<suspend (com.yourname.expensetracker.domain.transaction.TransactionContext) -> Any>(5)(
+                com.yourname.expensetracker.domain.transaction.TransactionContext(
+                    correlationId = "test", occurredAt = 1_700_000_000_000L
+                )
+            )
+        }
+        coEvery { lifecycleEventWriter.write(any(), any()) } throws
+            IllegalStateException("TEST_AUDIT_EVENT_FAILURE")
+
+        val result = pipeline.process(notification)
+
+        // The failure must surface (outer transaction fails); it must never be swallowed into AutoAccepted.
+        assertTrue("Expected Error outcome, got $result", result is NotificationPipelineOutcome.Error)
+        assertTrue(
+            "Error must carry the audit-writer failure",
+            (result as NotificationPipelineOutcome.Error).throwable is IllegalStateException
+        )
+        // The outer transaction aborted before the terminal markProcessed step.
+        coVerify(exactly = 0) { rawDao.markProcessed(any()) }
+        coVerify(exactly = 1) { lifecycleEventWriter.write(any(), any()) }
     }
 
     @Test

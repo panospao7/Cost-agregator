@@ -6,6 +6,7 @@ import android.content.Intent
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
+import com.yourname.expensetracker.data.database.DatabaseOpenGate
 import dagger.hilt.android.AndroidEntryPoint
 import timber.log.Timber
 import javax.inject.Inject
@@ -24,6 +25,12 @@ class DismissReminderReceiver : BroadcastReceiver() {
     @Inject lateinit var workManager: WorkManager
 
     override fun onReceive(context: Context, intent: Intent) {
+        // R25: never enqueue DB-touching work while the database open gate blocks the live DB.
+        val gateReason = DatabaseOpenGate.blockedReasonOrNull(context)
+        if (gateReason != null) {
+            Timber.w("DismissReminderReceiver skipped: open gate blocked reason=%s", gateReason)
+            return
+        }
         val deliveryId = intent.getLongExtra("deliveryId", -1L)
         if (deliveryId == -1L) {
             Timber.w("DismissReminderReceiver: missing deliveryId extra")

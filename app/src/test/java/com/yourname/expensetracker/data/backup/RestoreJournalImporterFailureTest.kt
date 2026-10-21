@@ -347,6 +347,64 @@ class RestoreJournalImporterFailureTest {
         org.junit.Assert.assertFalse(journal.isFailureJournalImported(failureCid))
     }
 
+    // ── DIAG-03: legacy journal message text is never imported into the ledger ──
+
+    @Test
+    fun `legacy failure journal exception message text imports as null`() = runTest {
+        val cid = writeFailureJournal("VALIDATION_FAILED")
+        journal.appendEventToFailureJournal(
+            correlationId = cid,
+            stage = "ROLLBACK",
+            outcome = "FAILED_FINAL",
+            exceptionClass = "IllegalStateException",
+            exceptionMessageSafe = "secret-456",
+            isTerminal = true
+        )
+        coEvery { operationRunDao.getByCorrelationId(cid) } returns null
+        coEvery { operationRunDao.insert(any()) } returns 42L
+        coEvery { operationRunEventDao.getByRunId(42L) } returns emptyList()
+        val events = mutableListOf<OperationRunEvent>()
+        coEvery { operationRunEventDao.insert(capture(events)) } returns 1L
+
+        importer.importLastFailureJournalIfPresent()
+
+        assertEquals(2, events.size)
+        events.forEach { assertEquals(null, it.exceptionMessage) }
+        assertTrue(events.none { it.toString().contains("secret-456") })
+        assertEquals("IllegalStateException", events.single { it.stage == "ROLLBACK" }.exceptionClass)
+    }
+
+    @Test
+    fun `legacy success journal exception message text imports as null`() = runTest {
+        val entry = journal.beginJournal(
+            sourceBackupPath = "/cache/s.costbackup",
+            stagedDbPath = "/data/staged.db",
+            liveDbPath = "/data/live.db"
+        )
+        journal.appendEvent(
+            correlationId = entry.operationCorrelationId,
+            stage = "RESTORE_VERIFIED",
+            outcome = "SUCCESS",
+            exceptionClass = "IOException",
+            exceptionMessageSafe = "secret-456",
+            isTerminal = true
+        )
+        journal.commitJournal(entry)
+        val cid = entry.operationCorrelationId
+        coEvery { operationRunDao.getByCorrelationId(cid) } returns null
+        coEvery { operationRunDao.insert(any()) } returns 43L
+        coEvery { operationRunEventDao.getByRunId(43L) } returns emptyList()
+        val events = mutableListOf<OperationRunEvent>()
+        coEvery { operationRunEventDao.insert(capture(events)) } returns 1L
+
+        importer.importLastSuccessJournalIfPresent()
+
+        assertEquals(1, events.size)
+        assertEquals(null, events.single().exceptionMessage)
+        assertFalse(events.single().toString().contains("secret-456"))
+        assertEquals("IOException", events.single().exceptionClass)
+    }
+
     /** Writes a terminal success journal (active journal renamed to the success file). */
     private fun writeSuccessJournal(): String {
         val entry = journal.beginJournal(

@@ -9,6 +9,8 @@ data class PrivacySettings(
     val externalGeocodingEnabled: Boolean = false,
     val backgroundLocationBackfillEnabled: Boolean = false,
     val deviceGpsLocationEnabled: Boolean = false,
+    /** R23: opt-in ECB exchange-rate download. Default OFF (fail-closed). */
+    val exchangeRateDownloadEnabled: Boolean = false,
     val encryptedBackupEnabled: Boolean = true,
     val rawNotificationRetentionDays: Int = 30,
     val rawOcrRetentionDays: Int = 30,
@@ -32,6 +34,7 @@ data class PrivacySettings(
             externalGeocodingEnabled = false,
             backgroundLocationBackfillEnabled = false,
             deviceGpsLocationEnabled = false,
+            exchangeRateDownloadEnabled = false,
             encryptedBackupEnabled = true,
             rawNotificationRetentionDays = 30,
             rawOcrRetentionDays = 30,

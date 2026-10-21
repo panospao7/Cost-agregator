@@ -40,7 +40,6 @@ import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifie
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptStructuredDataPolicy
-import com.yourname.expensetracker.domain.util.AmountUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.ui.screens.debug.DebugData
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -126,7 +125,13 @@ data class ReceiptScanState(
     /** A saved parse failure has no trustworthy retained page-coverage evidence. */
     val hasUnverifiedOcrCoverage: Boolean = false,
     /** RG12-01 / V12-NEW-B: the scan resolved to an already-saved receipt (outcome.inserted == false). */
-    val reopenedExistingReceipt: Boolean = false
+    val reopenedExistingReceipt: Boolean = false,
+    /**
+     * R24c: the OCR result carried no currency and the home currency was assumed.
+     * Quick-save is disabled until the user explicitly picks/confirms a currency;
+     * manual save after review stays allowed.
+     */
+    val currencyUnverified: Boolean = false
 )
 
 data class ReceiptQuickSavePreview(
@@ -217,10 +222,14 @@ class ReceiptScanViewModel @Inject constructor(
     /** S7-016: In-flight guard for AI assist requests. */
     private val inFlightAssist = mutableSetOf<String>()
 
+    /** Last home currency loaded by the init collector; re-applied by reset()/retry(). */
+    private var homeCurrencyCode: String? = null
+
     init {
         // S7-009: Load home currency on init so editCurrency is never a hardcoded "EUR"
         viewModelScope.launch {
             currencySettingsRepository.homeCurrency().collect { homeCurrency ->
+                homeCurrencyCode = homeCurrency
                 _state.update { current ->
                     current.copy(
                         editCurrency = current.editCurrency ?: homeCurrency
@@ -279,6 +288,7 @@ class ReceiptScanViewModel @Inject constructor(
                 errorMessage = null,
                 hasPartialOcr = false,
                 hasUnverifiedOcrCoverage = false,
+                currencyUnverified = false,
                 reopenedExistingReceipt = false,
                 pendingAppliedAiCapabilities = emptySet(),
                 receiptAssistState = AiLoadState.Idle,
@@ -371,6 +381,8 @@ class ReceiptScanViewModel @Inject constructor(
                             editMerchant = "",
                             editAmount = "",
                             editCurrency = homeCurrency,
+                            // R24c: the home currency is only assumed here (no OCR result)
+                            currencyUnverified = true,
                             editDate = now,
                             selectedCategoryId = null,
                             paymentMethod = PaymentMethod.CARD,
@@ -459,6 +471,8 @@ class ReceiptScanViewModel @Inject constructor(
                             } ?: "",
                             // S7-009: Use OCR currency if present, else keep loaded home currency
                             editCurrency = parsed.currency.takeIf { c -> c.isNotBlank() } ?: it.editCurrency,
+                            // R24c: blank OCR currency means the home currency is only assumed
+                            currencyUnverified = parsed.currency.isBlank(),
                             editDate = parsed.date ?: timeProvider.now(),
                             ocrConfidence = parsed.confidence,
                             selectedCategoryId = null,
@@ -559,7 +573,8 @@ class ReceiptScanViewModel @Inject constructor(
      * before saving. Default is the OCR-detected currency or home currency.
      */
     fun updateCurrency(currency: String) {
-        _state.update { it.copy(editCurrency = currency) }
+        // R24c: any explicit pick (including re-selecting the assumed home currency) confirms it
+        _state.update { it.copy(editCurrency = currency, currencyUnverified = false) }
     }
 
     fun selectCategory(categoryId: Long) {
@@ -603,10 +618,13 @@ class ReceiptScanViewModel @Inject constructor(
 
         val receiptSuggestion = (currentState.receiptAssistState as? AiLoadState.Ready)?.value
         val hasMerchant = currentState.editMerchant.isNotBlank() || !receiptSuggestion?.merchant?.value.isNullOrBlank()
-        val hasAmount = AmountUtils.parseAmount(currentState.editAmount)?.let { it > 0 } == true ||
+        val hasAmount = com.yourname.expensetracker.ui.util.AmountInputSanitizer.parseOrNull(currentState.editAmount)?.let { it > 0 } == true ||
             (receiptSuggestion?.total?.value?.let { it > 0 } == true)
 
         return when {
+            currentState.currencyUnverified -> {
+                "Quick save is off until you confirm the receipt currency."
+            }
             currentState.receiptAssistState is AiLoadState.Idle && currentState.categoryAssistState is AiLoadState.Idle -> {
                 "Request AI receipt or category assist first."
             }
@@ -743,7 +761,7 @@ class ReceiptScanViewModel @Inject constructor(
                 when (val result = suggestCategoryFallbackUseCase(
                     receipt = receipt,
                     draftMerchant = currentState.editMerchant,
-                    draftAmount = AmountUtils.parseAmount(currentState.editAmount),
+                    draftAmount = com.yourname.expensetracker.ui.util.AmountInputSanitizer.parseOrNull(currentState.editAmount),
                     draftDate = currentState.editDate.takeIf { it > 0L },
                     currentCategoryId = currentState.selectedCategoryId,
                     force = force
@@ -937,6 +955,13 @@ class ReceiptScanViewModel @Inject constructor(
         }
         // S7-004: Idempotency guard
         if (currentState.isSaving) return
+        // R24c: defense in depth — an unverified currency can never be quick-saved
+        if (currentState.currencyUnverified) {
+            _state.update {
+                it.copy(quickSavePreview = null, errorMessage = "Check the receipt currency before saving.")
+            }
+            return
+        }
 
         val request = ReceiptSaveRequest(
             receiptId = currentState.receiptId ?: return,
@@ -1013,6 +1038,7 @@ class ReceiptScanViewModel @Inject constructor(
         _state.update {
             ReceiptScanState(
                 editDate = timeProvider.now(),
+                editCurrency = homeCurrencyCode,
                 receiptQuickSaveEnabled = it.receiptQuickSaveEnabled
             )
         }
@@ -1023,6 +1049,7 @@ class ReceiptScanViewModel @Inject constructor(
         _state.update {
             ReceiptScanState(
                 editDate = timeProvider.now(),
+                editCurrency = homeCurrencyCode,
                 receiptQuickSaveEnabled = it.receiptQuickSaveEnabled
             )
         }
@@ -1053,7 +1080,8 @@ class ReceiptScanViewModel @Inject constructor(
             return null
         }
 
-        val amount = AmountUtils.parseAmount(currentState.editAmount)
+        // R16: strict locale-aware parser shared with the sanitizer (ambiguous -> existing error).
+        val amount = com.yourname.expensetracker.ui.util.AmountInputSanitizer.parseOrNull(currentState.editAmount)
         if (amount == null || amount <= 0) {
             _state.update { it.copy(errorMessage = "Enter a valid amount") }
             return null
@@ -1099,13 +1127,15 @@ class ReceiptScanViewModel @Inject constructor(
         if (currentState.receiptId == null || currentState.isSaving) return null
         // S7-014: Quick save unavailable until currency is loaded
         if (currentState.editCurrency.isNullOrBlank()) return null
+        // R24c: assumed (unread) currency must be confirmed by the user before quick save
+        if (currentState.currencyUnverified) return null
 
         // RCP-11: Skip quick-save when OCR confidence is too low — the
         // extracted data is unreliable and requires user review.
         if (currentState.ocrConfidence < QUICK_SAVE_MIN_CONFIDENCE) return null
 
         var merchant = currentState.editMerchant.trim()
-        var amount = AmountUtils.parseAmount(currentState.editAmount)
+        var amount = com.yourname.expensetracker.ui.util.AmountInputSanitizer.parseOrNull(currentState.editAmount)
         var date = currentState.editDate
         var categoryId = currentState.selectedCategoryId
         var categoryName: String? = categoryId?.let { selectedId ->

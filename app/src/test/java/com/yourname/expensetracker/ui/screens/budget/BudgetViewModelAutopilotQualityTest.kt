@@ -50,8 +50,8 @@ import org.junit.Test
  *     label through the UI state.
  * (c) COMPLETE actionable recommendation is unaffected — normal Apply behavior.
  *
- * Harness follows the BudgetViewModelStressTest style (mockk + InstantTaskExecutorRule
- * + StandardTestDispatcher); state observation reads the real UI state via
+ * Harness uses mockk + InstantTaskExecutorRule
+ * + StandardTestDispatcher; state observation reads the real UI state via
  * `uiState.first {}` (no turbine dependency in this class).
  */
 @OptIn(ExperimentalCoroutinesApi::class)

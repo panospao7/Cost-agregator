@@ -197,7 +197,7 @@ interface NotificationIntakeDao {
         SET title = NULL, text = NULL, bigText = NULL,
             subText = NULL, extrasJson = NULL,
             rawPayloadPurgedAt = :nowMs, updatedAt = :nowMs
-        WHERE id = :id
+        WHERE id = :id AND rawPayloadPurgedAt IS NULL
     """)
     suspend fun purgeRawPayload(id: Long, nowMs: Long): Int
 
@@ -215,7 +215,7 @@ interface NotificationIntakeDao {
         SET title = NULL, text = NULL, bigText = NULL,
             subText = NULL, extrasJson = NULL,
             rawPayloadPurgedAt = :nowMs, updatedAt = :nowMs
-        WHERE id = :id
+        WHERE id = :id AND rawPayloadPurgedAt IS NULL
     """)
     suspend fun purgeVisiblePayload(id: Long, nowMs: Long): Int
 
@@ -226,7 +226,7 @@ interface NotificationIntakeDao {
             transientPayloadVersion = :version,
             title = NULL, text = NULL, bigText = NULL,
             subText = NULL, extrasJson = NULL, updatedAt = :nowMs
-        WHERE id = :id
+        WHERE id = :id AND rawPayloadPurgedAt IS NULL
     """)
     suspend fun encryptAndClearVisiblePayload(
         id: Long, ciphertext: String, nonce: String, version: Int, nowMs: Long
@@ -301,10 +301,13 @@ interface NotificationIntakeDao {
 
     // ── Data retention worker support (P8F-01) ─────────────────────────────────
 
+    // R28: selects rows past the cutoff that still hold visible plaintext (never raw-purged)
+    // OR leftover encrypted transient payload ciphertext (best-effort worker purge skipped),
+    // so the retention sweep can clear both. Fully purged rows are never reselected.
     @Query("""
         SELECT * FROM notification_intake
         WHERE capturedAt < :cutoffMs
-          AND rawPayloadPurgedAt IS NULL
+          AND (rawPayloadPurgedAt IS NULL OR transientPayloadCiphertext IS NOT NULL)
         LIMIT :limit
     """)
     suspend fun getUnpurgedIntakeOlderThan(cutoffMs: Long, limit: Int): List<NotificationIntakeEntity>

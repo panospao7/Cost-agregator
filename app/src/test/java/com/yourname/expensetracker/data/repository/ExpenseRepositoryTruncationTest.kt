@@ -84,39 +84,17 @@ class ExpenseRepositoryTruncationTest {
     // ── getAllExpenses — formerly capped at 500 ─────────────────────────────
 
     @Test
-    fun `getAllExpenses returns all rows when history exceeds former 500-row cap`() = runTest {
-        val largeHistory = generateExpenses(750)
-        every { expenseDao.getAllFlowUncapped() } returns flowOf(largeHistory)
-
-        val result = repository.getAllExpenses().first()
-
-        assertEquals(
-            "getAllExpenses must return the full dataset (750), not the former 500 cap",
-            750,
-            result.size
-        )
-    }
-
-    @Test
-    fun `getAllExpenses returns all rows when history exceeds former 2000-row cap`() = runTest {
+    fun `getAllExpenses returns all 2500 rows via uncapped DAO flow not bounded getAllFlow`() = runTest {
         val largeHistory = generateExpenses(2500)
         every { expenseDao.getAllFlowUncapped() } returns flowOf(largeHistory)
 
         val result = repository.getAllExpenses().first()
 
         assertEquals(
-            "getAllExpenses must return the full dataset (2500), not any legacy cap",
+            "getAllExpenses must return the full dataset (2500), not any legacy cap (500 or 2000)",
             2500,
             result.size
         )
-    }
-
-    @Test
-    fun `getAllExpenses delegates to uncapped DAO flow not bounded getAllFlow`() = runTest {
-        every { expenseDao.getAllFlowUncapped() } returns flowOf(emptyList())
-
-        repository.getAllExpenses().first()
-
         verify { expenseDao.getAllFlowUncapped() }
         verify(exactly = 0) { expenseDao.getAllFlow(any()) }
     }
@@ -124,7 +102,7 @@ class ExpenseRepositoryTruncationTest {
     // ── getExpensesBetween — formerly capped at 2000 ────────────────────────
 
     @Test
-    fun `getExpensesBetween returns all rows when history exceeds former 2000-row cap`() = runTest {
+    fun `getExpensesBetween returns all 3000 rows via uncapped DAO method not bounded variant`() = runTest {
         val start = 1_690_000_000_000L
         val end = 1_700_000_000_000L
         val largeHistory = generateExpenses(3000, baseTime = end)
@@ -138,17 +116,6 @@ class ExpenseRepositoryTruncationTest {
             3000,
             result.size
         )
-    }
-
-    @Test
-    fun `getExpensesBetween delegates to uncapped DAO method not bounded variant`() = runTest {
-        val start = 1_690_000_000_000L
-        val end = 1_700_000_000_000L
-
-        coEvery { expenseDao.getExpensesBetweenUncapped(start, end) } returns emptyList()
-
-        repository.getExpensesBetween(start, end)
-
         coVerify { expenseDao.getExpensesBetweenUncapped(start, end) }
         coVerify(exactly = 0) { expenseDao.getExpensesBetween(any(), any(), any(), any()) }
     }
@@ -156,7 +123,7 @@ class ExpenseRepositoryTruncationTest {
     // ── getExpensesBetweenFlow — formerly capped at 2000 ────────────────────
 
     @Test
-    fun `getExpensesBetweenFlow returns all rows when history exceeds former 2000-row cap`() = runTest {
+    fun `getExpensesBetweenFlow returns all 2500 rows via uncapped DAO flow not bounded variant`() = runTest {
         val start = 1_690_000_000_000L
         val end = 1_700_000_000_000L
         val largeHistory = generateExpenses(2500, baseTime = end)
@@ -170,17 +137,6 @@ class ExpenseRepositoryTruncationTest {
             2500,
             result.size
         )
-    }
-
-    @Test
-    fun `getExpensesBetweenFlow delegates to uncapped DAO flow not bounded variant`() = runTest {
-        val start = 1_690_000_000_000L
-        val end = 1_700_000_000_000L
-
-        every { expenseDao.getExpensesBetweenFlowUncapped(start, end) } returns flowOf(emptyList())
-
-        repository.getExpensesBetweenFlow(start, end).first()
-
         verify { expenseDao.getExpensesBetweenFlowUncapped(start, end) }
         verify(exactly = 0) { expenseDao.getExpensesBetweenFlow(any(), any(), any()) }
     }

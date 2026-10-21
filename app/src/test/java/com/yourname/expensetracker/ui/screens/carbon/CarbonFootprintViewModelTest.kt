@@ -51,21 +51,54 @@ class CarbonFootprintViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `initial state shows carbon footprint`() = runTest(testDispatcher) {
-        val report = carbonReport(totalEmissionsKg = 64.0, dailyAverageKg = 2.1)
-        coEvery { calculator.calculateCarbonFootprint(any(), any()) } returns report
+    fun `loadReport publishes report totals and recommendations exactly`() = runTest(testDispatcher) {
+        val recommendation = CarbonFootprintCalculator.SustainabilityRecommendation(
+            category = "Transportation",
+            title = UiText.DynamicString("Reduce fuel usage"),
+            description = "Use public transit more",
+            potentialImpact = "40% reduction",
+            difficulty = CarbonFootprintCalculator.Difficulty.MEDIUM,
+            savings = 120.0
+        )
+        // Row: (label, report, loadReport days or null for the default-argument call, expected recommendations)
+        data class Row(
+            val label: String,
+            val report: CarbonFootprintCalculator.CarbonFootprintReport,
+            val days: Int?,
+            val total: Double,
+            val daily: Double,
+            val recommendations: List<CarbonFootprintCalculator.SustainabilityRecommendation>
+        )
+        val rows = listOf(
+            Row("normal footprint", carbonReport(totalEmissionsKg = 64.0, dailyAverageKg = 2.1), 30, 64.0, 2.1, emptyList()),
+            Row(
+                "high footprint with suggestion, default period",
+                carbonReport(totalEmissionsKg = 420.0, dailyAverageKg = 14.0, recommendations = listOf(recommendation)),
+                null, 420.0, 14.0, listOf(recommendation)
+            )
+        )
+        assertEquals(2, rows.size) // size guard: do not silently lose a row
 
-        viewModel.report.test {
-            assertNull(awaitItem())
+        for (row in rows) {
+            val currencyRepo = mockk<CurrencySettingsRepository>(relaxed = true)
+            every { currencyRepo.homeCurrency() } returns flowOf("EUR")
+            coEvery { currencyRepo.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
+            val vm = CarbonFootprintViewModel(calculator, timeProvider, currencySettingsRepository = currencyRepo)
+            coEvery { calculator.calculateCarbonFootprint(any(), any()) } returns row.report
 
-            viewModel.loadReport(30)
-            advanceUntilIdle()
+            vm.report.test {
+                assertNull("row '${row.label}' initial", awaitItem())
 
-            val loaded = awaitItem()
-            assertNotNull(loaded)
-            assertEquals(64.0, loaded!!.totalEmissionsKg, 0.0)
-            assertEquals(2.1, loaded.dailyAverageKg, 0.0)
-            cancelAndIgnoreRemainingEvents()
+                if (row.days == null) vm.loadReport() else vm.loadReport(row.days)
+                advanceUntilIdle()
+
+                val loaded = awaitItem()
+                assertNotNull("row '${row.label}' loaded", loaded)
+                assertEquals("row '${row.label}' total", row.total, loaded!!.totalEmissionsKg, 0.0)
+                assertEquals("row '${row.label}' daily", row.daily, loaded.dailyAverageKg, 0.0)
+                assertEquals("row '${row.label}' recommendations", row.recommendations, loaded.recommendations)
+                cancelAndIgnoreRemainingEvents()
+            }
         }
     }
 
@@ -96,37 +129,6 @@ class CarbonFootprintViewModelTest : ViewModelTestUtils() {
 
         coVerify(exactly = 1) { calculator.calculateCarbonFootprint(start30, fixedNow) }
         coVerify(exactly = 1) { calculator.calculateCarbonFootprint(start7, fixedNow) }
-    }
-
-    @Test
-    fun `high footprint suggestions shown`() = runTest(testDispatcher) {
-        val high = carbonReport(
-            totalEmissionsKg = 420.0,
-            dailyAverageKg = 14.0,
-            recommendations = listOf(
-                CarbonFootprintCalculator.SustainabilityRecommendation(
-                    category = "Transportation",
-                    title = UiText.DynamicString("Reduce fuel usage"),
-                    description = "Use public transit more",
-                    potentialImpact = "40% reduction",
-                    difficulty = CarbonFootprintCalculator.Difficulty.MEDIUM,
-                    savings = 120.0
-                )
-            )
-        )
-        coEvery { calculator.calculateCarbonFootprint(any(), any()) } returns high
-
-        viewModel.report.test {
-            assertNull(awaitItem())
-
-            viewModel.loadReport()
-            advanceUntilIdle()
-
-            val loaded = awaitItem()!!
-            assertTrue(loaded.totalEmissionsKg > 100)
-            assertTrue(loaded.recommendations.isNotEmpty())
-            cancelAndIgnoreRemainingEvents()
-        }
     }
 
     @Test
@@ -186,27 +188,25 @@ class CarbonFootprintViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `load failure exposes error when no existing report`() = runTest(testDispatcher) {
-        coEvery { calculator.calculateCarbonFootprint(any(), any()) } throws IllegalStateException("carbon failed")
+    fun `load failure exposes generic error and no report regardless of exception message`() = runTest(testDispatcher) {
+        val exceptionMessages = listOf("carbon failed", "   ")
+        assertEquals(2, exceptionMessages.size) // size guard: do not silently lose a row
 
-        viewModel.loadReport(30)
-        advanceUntilIdle()
+        for (message in exceptionMessages) {
+            // Fresh state per row: a new ViewModel with no existing report.
+            val currencyRepo = mockk<CurrencySettingsRepository>(relaxed = true)
+            every { currencyRepo.homeCurrency() } returns flowOf("EUR")
+            coEvery { currencyRepo.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
+            val vm = CarbonFootprintViewModel(calculator, timeProvider, currencySettingsRepository = currencyRepo)
+            coEvery { calculator.calculateCarbonFootprint(any(), any()) } throws IllegalStateException(message)
 
-        assertNull(viewModel.report.value)
-        assertEquals("Failed to load data", viewModel.error.value)
-        assertFalse(viewModel.isLoading.value)
-    }
+            vm.loadReport(30)
+            advanceUntilIdle()
 
-    @Test
-    fun `loadReport failure with blank message sets generic error`() = runTest(testDispatcher) {
-        coEvery { calculator.calculateCarbonFootprint(any(), any()) } throws IllegalStateException("   ")
-
-        viewModel.loadReport(30)
-        advanceUntilIdle()
-
-        assertTrue(viewModel.error.value?.isNotBlank() == true)
-        assertEquals("Failed to load data", viewModel.error.value)
-        assertFalse(viewModel.isLoading.value)
+            assertNull("row '$message' report", vm.report.value)
+            assertEquals("row '$message' error", "Failed to load data", vm.error.value)
+            assertFalse("row '$message' isLoading", vm.isLoading.value)
+        }
     }
 
     @Test

@@ -16,6 +16,7 @@ import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.domain.util.CancellationSafe
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -621,7 +622,7 @@ class SubscriptionManagerEngine @Inject constructor(
             byCurrency[currency] = Pair(existingTotal + monthly, existingCount + 1)
         }
         
-        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
+        val homeCurrency = CancellationSafe.runCatchingCancellable { currencySettingsRepository.homeCurrency().first() }
             .getOrElse { throw IllegalStateException("Home currency unavailable: ${it.message}") }
         val buckets = byCurrency.map { Pair(it.value.first, it.key) }
         val counts = byCurrency.map { it.value.second }

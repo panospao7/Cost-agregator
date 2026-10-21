@@ -217,14 +217,17 @@ class RetentionPerimeterTargetTest {
     }
 
     @Test
-    fun `snapshot stage keeps rows exactly at cutoff and nulls one millisecond older`() = runTest {
+    fun `snapshot stage keeps rows inside window and exactly at cutoff and nulls one millisecond older`() = runTest {
+        // B6-10: merged with the former "29 days kept" test (inside-window row is kept).
         val dao = database.transactionEventDao()
+        val inWindow29d = dao.insert(transactionEvent(cutoffDaysAgo(29)))
         val atCutoff = dao.insert(transactionEvent(cutoffDaysAgo(30)))
         val justOver = dao.insert(transactionEvent(justBeforeCutoff(30)))
 
         val result = targetNamed("10_transaction_events.snapshots").purge(cutoffDaysAgo(30))
 
-        assertEquals(1, result.rowsPurged)
+        assertEquals("only the one-millisecond-older row is purged", 1, result.rowsPurged)
+        assertNotNull(dao.getEventsForExpense(100L).first { it.id == inWindow29d }.beforeSnapshot)
         assertNotNull(dao.getEventsForExpense(100L).first { it.id == atCutoff }.beforeSnapshot)
         assertNull(dao.getEventsForExpense(100L).first { it.id == justOver }.beforeSnapshot)
     }
@@ -237,17 +240,6 @@ class RetentionPerimeterTargetTest {
 
         assertEquals(1, target.purge(cutoffDaysAgo(30)).rowsPurged)
         assertEquals(0, target.purge(cutoffDaysAgo(30)).rowsPurged)
-    }
-
-    @Test
-    fun `snapshot stage preserves rows inside the window - 29 days kept`() = runTest {
-        val dao = database.transactionEventDao()
-        dao.insert(transactionEvent(cutoffDaysAgo(29)))
-
-        val result = targetNamed("10_transaction_events.snapshots").purge(cutoffDaysAgo(30))
-
-        assertEquals(0, result.rowsPurged)
-        assertNotNull(dao.getEventsForExpense(100L).first().beforeSnapshot)
     }
 
     // ══ P8-001 — 20_transaction_events.rows (365d) ════════════════════════════

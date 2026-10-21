@@ -32,6 +32,8 @@ import com.yourname.expensetracker.data.database.entity.SplitShare
 import com.yourname.expensetracker.data.database.entity.SplitTemplate
 import com.yourname.expensetracker.domain.split.EnhancedSplitManager
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
+import com.yourname.expensetracker.ui.components.asString
+import com.yourname.expensetracker.ui.util.AmountInputSanitizer
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
 
@@ -55,14 +57,14 @@ internal data class SplitTextFieldState(
     companion object {
         fun initial(externalValue: Double): SplitTextFieldState {
             return SplitTextFieldState(
-                text = externalValue.toString(),
+                text = AmountInputSanitizer.formatForInput(externalValue),
                 lastCommittedValue = externalValue
             )
         }
     }
 
     fun onUserInput(newText: String, onParsed: (Double) -> Unit = {}): SplitTextFieldState {
-        val parsed = newText.toDoubleOrNull()
+        val parsed = AmountInputSanitizer.parseOrNull(newText)
         return if (parsed != null && parsed.isFinite()) {
             onParsed(parsed)
             copy(text = newText, lastCommittedValue = parsed)
@@ -73,7 +75,7 @@ internal data class SplitTextFieldState(
 
     fun onExternalValueChange(externalValue: Double): SplitTextFieldState {
         return if (externalValue != lastCommittedValue) {
-            copy(text = externalValue.toString(), lastCommittedValue = externalValue)
+            copy(text = AmountInputSanitizer.formatForInput(externalValue), lastCommittedValue = externalValue)
         } else {
             this
         }
@@ -181,8 +183,25 @@ fun VisualSplitEditorScreen(
     LaunchedEffect(totalAmount, participants, splitType) {
         viewModel.calculateSplit(totalAmount, participants, splitType)
     }
-    
+
+    // R18b: bounded "changes paused during backup/restore" message for user-started writes.
+    val snackbarHostState = remember { SnackbarHostState() }
+    val writeBlockedContext = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(viewModel) {
+        viewModel.writeBlockedMessages.collect { message ->
+            snackbarHostState.showSnackbar(message.asString(writeBlockedContext))
+        }
+    }
+
+    LaunchedEffect(viewModel) {
+        viewModel.templateCreated.collect {
+            showSaveTemplateDialog = false
+            templateName = ""
+        }
+    }
+
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.split_editor_title)) },
@@ -491,9 +510,8 @@ fun VisualSplitEditorScreen(
                             }
 
                             onSaveAsTemplate?.invoke(templateName, sanitizedParticipants, splitType)
+                            // Dialog stays open (name kept) until templateCreated confirms the write.
                             viewModel.createTemplate(templateName, sanitizedParticipants, splitType)
-                            showSaveTemplateDialog = false
-                            templateName = ""
                         }
                     },
                     enabled = templateName.isNotBlank()
@@ -666,10 +684,12 @@ fun ParticipantSplitCard(
                         OutlinedTextField(
                             value = percentageState.text,
                             onValueChange = { newText ->
-                                percentageState = percentageState.onUserInput(newText) { parsed ->
+                                percentageState = percentageState.onUserInput(AmountInputSanitizer.sanitize(newText)) { parsed ->
                                     onPercentageChange(parsed)
                                 }
                             },
+                            isError = percentageState.text.isNotBlank() &&
+                                AmountInputSanitizer.parseOrNull(percentageState.text) == null,
                             label = { Text(stringResource(R.string.visual_split_percentage_label)) },
                             suffix = { Text(stringResource(R.string.visual_split_percentage_suffix)) },
                             modifier = Modifier.width(120.dp),
@@ -688,10 +708,12 @@ fun ParticipantSplitCard(
                     OutlinedTextField(
                         value = amountState.text,
                         onValueChange = { newText ->
-                            amountState = amountState.onUserInput(newText) { parsed ->
+                            amountState = amountState.onUserInput(AmountInputSanitizer.sanitize(newText)) { parsed ->
                                 onAmountChange(parsed)
                             }
                         },
+                        isError = amountState.text.isNotBlank() &&
+                            AmountInputSanitizer.parseOrNull(amountState.text) == null,
                         label = { Text(stringResource(R.string.visual_split_amount_label)) },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true

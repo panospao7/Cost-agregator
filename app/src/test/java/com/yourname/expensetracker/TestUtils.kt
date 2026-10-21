@@ -5,6 +5,8 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import org.junit.Assert
+import java.math.BigDecimal
+import java.math.RoundingMode
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -135,7 +137,7 @@ fun assertApproxEquals(
     if (actual == null) {
         Assert.fail(buildString {
             if (message != null) append(message)
-            append("Expected $expected Â±$tolerance, but actual was null")
+            append("Expected $expected ±$tolerance, but actual was null")
         })
     }
     assertApproxEquals(expected, requireNotNull(actual), tolerance, message)
@@ -154,6 +156,80 @@ fun assertApproxEquals(
         })
     }
     assertApproxEquals(requireNotNull(expected), requireNotNull(actual), tolerance, message)
+}
+
+/**
+ * Asserts that a money amount, rounded HALF_UP to cents, equals a hard-coded expected
+ * cent literal.
+ *
+ * The actual is rounded via `BigDecimal.valueOf(actual).setScale(2, RoundingMode.HALF_UP)`
+ * and must `compareTo == 0` the expected cent value, so it accepts sub-cent deviations
+ * (|delta| < 0.005) but rejects an actual that rounds to a different cent (unlike
+ * [assertApproxEquals] with its default 0.01 inclusive tolerance, where a whole cent of
+ * error passes). Intended for computed money (means, percentages), where the engines keep
+ * raw IEEE-754 results (for example `1600.0 / 12` is `133.33333333333334`). Where an
+ * amount must be exact (repository pass-through, zero-fill), use [assertMoneyExact]
+ * (bit-exact via `java.lang.Double.compare`, so `-0.0` != `0.0`) instead.
+ *
+ * The expected value must itself be a cent-precision literal (at most 2 decimals,
+ * e.g. `133.33`); a literal such as `133.333` is rejected so expectations cannot
+ * silently hide precision. Both values must be finite. A `null` actual (unavailable
+ * money) never equals an amount, including zero.
+ *
+ * @param expected Hard-coded expected amount with at most 2 decimals
+ * @param actual Actual amount produced by the code under test
+ * @param message Optional row/case name included in every failure message
+ */
+fun assertMoneyEquals(expected: Double, actual: Double, message: String? = null) {
+    val prefix = if (message != null) "$message: " else ""
+    Assert.assertTrue("${prefix}expected must be finite, was $expected", expected.isFinite())
+    Assert.assertTrue("${prefix}actual must be finite, was $actual", actual.isFinite())
+    val exactExpected = BigDecimal.valueOf(expected)
+    val expectedCents = exactExpected.setScale(2, RoundingMode.HALF_UP)
+    Assert.assertTrue(
+        "${prefix}expected $expected is not a cent-precision literal (max 2 decimals)",
+        exactExpected.compareTo(expectedCents) == 0
+    )
+    val actualCents = BigDecimal.valueOf(actual).setScale(2, RoundingMode.HALF_UP)
+    Assert.assertTrue(
+        "${prefix}expected $expectedCents but was $actualCents (raw actual: $actual)",
+        expectedCents.compareTo(actualCents) == 0
+    )
+}
+
+/** Null-aware overload of [assertMoneyEquals]: a `null` actual always fails. */
+fun assertMoneyEquals(expected: Double, actual: Double?, message: String? = null) {
+    if (actual == null) {
+        Assert.fail("${if (message != null) "$message: " else ""}expected $expected but amount was null (unavailable)")
+    }
+    assertMoneyEquals(expected, requireNotNull(actual), message)
+}
+
+/**
+ * Asserts that a money amount is bit-exact (zero tolerance). Use for amounts that must
+ * not be recomputed or rounded: pass-through values, zero-fill, and values that must not
+ * be converted. A `null` actual (unavailable money) always fails, including for zero.
+ *
+ * Equality is decided by [java.lang.Double.compare], so it is stricter than a delta of
+ * `0.0`: negative zero (`-0.0`) is NOT equal to `0.0` (production clamps must yield
+ * positive zero), and `NaN` equals `NaN` (`Double.compare` treats NaN as equal to
+ * itself). Callers expecting zero must
+ * therefore receive exactly `+0.0`.
+ *
+ * @param expected Hard-coded expected amount
+ * @param actual Actual amount produced by the code under test
+ * @param message Optional row/case name included in every failure message
+ */
+fun assertMoneyExact(expected: Double, actual: Double?, message: String? = null) {
+    if (actual == null) {
+        Assert.fail("${if (message != null) "$message: " else ""}expected $expected but amount was null (unavailable)")
+    }
+    val actualValue = requireNotNull(actual)
+    if (java.lang.Double.compare(expected, actualValue) != 0) {
+        // Same message format as Assert.assertEquals(message, expected, actual, 0.0).
+        val prefix = if (message != null && message.isNotEmpty()) "$message " else ""
+        Assert.fail("${prefix}expected:<$expected> but was:<$actualValue>")
+    }
 }
 
 /**
@@ -187,7 +263,7 @@ fun assertApproxEquals(
     if (actual == null) {
         Assert.fail(buildString {
             if (message != null) append(message)
-            append("Expected $expected Â±$tolerance, but actual was null")
+            append("Expected $expected ±$tolerance, but actual was null")
         })
     }
     assertApproxEquals(expected, requireNotNull(actual), tolerance, message)
@@ -206,64 +282,6 @@ fun assertApproxEquals(
         })
     }
     assertApproxEquals(requireNotNull(expected), requireNotNull(actual), tolerance, message)
-}
-
-/**
- * Asserts that an actual value is within a percentage of expected value.
- *
- * @param expected Expected value
- * @param actual Actual value
- * @param percentTolerance Percentage tolerance (default: 1.0 = 1%)
- * @param message Optional message to include on failure
- */
-fun assertWithinPercent(
-    expected: Double,
-    actual: Double,
-    percentTolerance: Double = 1.0,
-    message: String? = null
-) {
-    val tolerance = expected * (percentTolerance / 100.0)
-    val diff = kotlin.math.abs(expected - actual)
-    val fullMessage = buildString {
-        if (message != null) append(message)
-        append("Expected $expected ±$percentTolerance%, but was $actual (diff: ${diff / expected * 100}%)")
-    }
-    Assert.assertTrue(fullMessage, diff <= tolerance)
-}
-
-/**
- * Asserts that an expense's effective amount matches expected.
- */
-fun assertEffectiveAmount(
-    expense: Expense,
-    expected: Double,
-    tolerance: Double = 0.01
-) {
-    assertApproxEquals(
-        expected = expected,
-        actual = expense.effectiveAmount,
-        tolerance = tolerance,
-        message = "Expense '${expense.merchant}' effective amount: "
-    )
-}
-
-/**
- * Asserts that a list of expenses has the expected total effective amount.
- */
-fun assertTotalEffective(
-    expenses: List<Expense>,
-    expected: Double,
-    tolerance: Double = 0.01,
-    message: String? = null
-) {
-    val actual = expenses.sumOf { it.effectiveAmount }
-    val fullMessage = message ?: "Total effective amount: "
-    assertApproxEquals(
-        expected = expected,
-        actual = actual,
-        tolerance = tolerance,
-        message = fullMessage
-    )
 }
 
 // ============================================================================
@@ -309,31 +327,6 @@ fun endOfMonth(year: Int, month: Int): Long {
         .toEpochMilli()
 }
 
-/**
- * Gets the inclusive end of a month (last millisecond) in epoch milliseconds.
- *
- * **Deprecated**: Returns `23:59:59.999999999` of the last day of the month
- * (inclusive end), which violates the half-open
- * `[startInclusive, endExclusive)` convention.
- *
- * Use [endOfMonth] instead, which returns the half-open exclusive end
- * (start of the next month).
- */
-@Deprecated(
-    message = "Returns inclusive end (last millisecond). Use endOfMonth() which returns half-open exclusive end.",
-    replaceWith = ReplaceWith("endOfMonth(year, month)")
-)
-fun endOfMonthInclusive(year: Int, month: Int): Long {
-    val lastDay = LocalDate.of(year, month, 1)
-        .plusMonths(1)
-        .minusDays(1)
-    return lastDay
-        .atTime(23, 59, 59, 999_999_999)
-        .atZone(ZoneId.systemDefault())
-        .toInstant()
-        .toEpochMilli()
-}
-
 // ============================================================================
 // Category Helpers
 // ============================================================================
@@ -348,17 +341,3 @@ val TEST_CATEGORIES = listOf(
     Category(id = 4L, name = "Travel", icon = "✈️", color = "#F333FF"),
     Category(id = 5L, name = "Utilities", icon = "💡", color = "#FFD700")
 )
-
-/**
- * Gets a test category by ID.
- */
-fun getTestCategory(id: Long): Category? {
-    return TEST_CATEGORIES.find { it.id == id }
-}
-
-/**
- * Gets a test category by name.
- */
-fun getTestCategory(name: String): Category? {
-    return TEST_CATEGORIES.find { it.name.equals(name, ignoreCase = true) }
-}

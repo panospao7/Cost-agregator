@@ -32,8 +32,7 @@ import org.robolectric.annotation.Config
  * Scenario tests for multi-currency behaviour, focusing on:
  * 1. Domain-level cross-currency arithmetic safety
  * 2. Multi-currency expense seeding via [ScenarioSeeder]
- * 3. Raw dashboard totals (no conversion — seedState stores as-is)
- * 4. [MoneyAmount] helpers ([isZero], [isPositive], [money], extension properties)
+ * 3. [MoneyAmount] helpers ([isZero], [isPositive], [money], extension properties)
  *
  * These tests verify that the domain model enforces currency isolation and that
  * the database layer stores multi-currency expenses without implicit conversion.
@@ -56,25 +55,8 @@ class MulticurrencyPartialRateScenarioTest {
         if (::db.isInitialized) db.close()
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Test 1: Cross-currency addition throws IllegalArgumentException
-    // ─────────────────────────────────────────────────────────────────────────
-
-    @Test
-    fun `cross currency addition throws exception`() {
-        // GIVEN: MoneyAmount(45.50, EUR) and MoneyAmount(30.00, USD)
-        val eurAmount = MoneyAmount(45.50, CurrencyCode.EUR)
-        val usdAmount = MoneyAmount(30.00, CurrencyCode.USD)
-
-        // WHEN: adding them directly, THEN: should throw IllegalArgumentException
-        val exception = assertThrows(IllegalArgumentException::class.java) {
-            eurAmount + usdAmount
-        }
-        assertTrue(
-            "Exception message should mention different currencies",
-            exception.message!!.contains("different currencies")
-        )
-    }
+    // Cross-currency addition throwing is proven by
+    // MoneyAggregateConversionScenarioTest `MoneyAmount cross-currency addition throws`.
 
     // ─────────────────────────────────────────────────────────────────────────
     // Test 2: Same-currency addition works
@@ -166,57 +148,6 @@ class MulticurrencyPartialRateScenarioTest {
         // Verify seed result metadata
         assertEquals("Expected exactly 3 expense IDs", 3, result.expenseIds.size)
         assertEquals("Expected exactly 3 category IDs", 3, result.categoryIds.size)
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Test 4: Dashboard total is sum of raw amounts (no conversion in seedState)
-    // ─────────────────────────────────────────────────────────────────────────
-
-    @Test
-    fun `dashboard total is sum of raw amounts (no conversion in seedState)`() = runTest {
-        // GIVEN: same 3 expenses as above (€45.50 + $30.00 + £20.00)
-        val currentTime = dateMs(2026, 5, 1)
-        val seed = ScenarioSeed(
-            categories = listOf(
-                CategorySeed("Food & Dining"),
-                CategorySeed("Shopping"),
-                CategorySeed("Transportation")
-            ),
-            expenses = listOf(
-                ExpenseSeed(
-                    amount = 45.50,
-                    currency = "EUR",
-                    merchant = "SKLAVENITIS",
-                    categoryName = "Food & Dining",
-                    date = currentTime
-                ),
-                ExpenseSeed(
-                    amount = 30.00,
-                    currency = "USD",
-                    merchant = "Amazon",
-                    categoryName = "Shopping",
-                    date = currentTime
-                ),
-                ExpenseSeed(
-                    amount = 20.00,
-                    currency = "GBP",
-                    merchant = "Tesco",
-                    categoryName = "Food & Dining",
-                    date = currentTime
-                )
-            ),
-            fixedNowMs = currentTime,
-            description = "Dashboard total should be raw sum of mixed-currency amounts"
-        )
-
-        // WHEN: seeding the expenses
-        val seeder = ScenarioSeeder(db)
-        seeder.seedState(seed)
-
-        // THEN: total should be 95.50 (raw sum, no conversion — seedState doesn't convert)
-        with(ScenarioAssertions) {
-            db.assertDashboardTotal(95.50)
-        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────

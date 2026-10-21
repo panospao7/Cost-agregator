@@ -28,6 +28,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.currency.ConversionResult
 import com.yourname.expensetracker.ui.theme.SemanticColors
+import com.yourname.expensetracker.ui.util.AmountInputSanitizer
 import java.text.NumberFormat
 import java.time.Instant
 import java.time.ZoneId
@@ -35,7 +36,7 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 internal fun isAmountParseableAndPositive(amount: String): Boolean {
-    val parsedAmount = amount.toDoubleOrNull() ?: return false
+    val parsedAmount = AmountInputSanitizer.parseOrNull(amount) ?: return false
     return parsedAmount.isFinite() && parsedAmount > 0
 }
 
@@ -58,8 +59,11 @@ fun CurrencyManagementScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     var showConversionDialog by remember { mutableStateOf(false) }
 
+    val errorMessageRes = uiState.error?.let { currencyErrorMessageRes(it) }
+    val errorMessageText = errorMessageRes?.let { stringResource(it) }
+
     LaunchedEffect(uiState.error) {
-        uiState.error?.let { message ->
+        errorMessageText?.let { message ->
             snackbarHostState.showSnackbar(message)
         }
     }
@@ -124,7 +128,7 @@ fun CurrencyManagementScreen(
                         .padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                        uiState.error?.let { errorMessage ->
+                        errorMessageText?.let { errorMessage ->
                             item {
                                 Card(
                                     modifier = Modifier.fillMaxWidth(),
@@ -149,8 +153,10 @@ fun CurrencyManagementScreen(
                                             color = MaterialTheme.colorScheme.onErrorContainer,
                                             modifier = Modifier.weight(1f)
                                         )
-                                        TextButton(onClick = { viewModel.refreshRates() }) {
-                                            Text(stringResource(R.string.action_retry))
+                                        if (!uiState.rateDownloadDisabled) {
+                                            TextButton(onClick = { viewModel.refreshRates() }) {
+                                                Text(stringResource(R.string.action_retry))
+                                            }
                                         }
                                         IconButton(onClick = { viewModel.clearError() }) {
                                             Icon(Icons.Rounded.Close, contentDescription = stringResource(R.string.cd_dismiss))
@@ -181,7 +187,7 @@ fun CurrencyManagementScreen(
                         }
                         
                         // Offline/Stale Warning
-                        if (uiState.isOffline || uiState.isRatesStale) {
+                        if (!uiState.rateDownloadDisabled && (uiState.isOffline || uiState.isRatesStale)) {
                             item {
                                 Card(
                                     modifier = Modifier.fillMaxWidth(),
@@ -682,7 +688,7 @@ private fun ConversionDialog(
                 OutlinedTextField(
                     value = amount,
                     onValueChange = {
-                        amount = it
+                        amount = AmountInputSanitizer.sanitize(it)
                         amountInteracted = true
                     },
                     label = { Text(stringResource(R.string.label_amount)) },
@@ -774,7 +780,7 @@ private fun ConversionDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    amount.toDoubleOrNull()?.takeIf { it.isFinite() }?.let { amt ->
+                    AmountInputSanitizer.parseOrNull(amount)?.takeIf { it.isFinite() }?.let { amt ->
                         onConvert(amt, fromCurrency, toCurrency)
                     }
                 },

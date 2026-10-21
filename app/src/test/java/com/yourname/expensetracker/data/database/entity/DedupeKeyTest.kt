@@ -2,6 +2,7 @@ package com.yourname.expensetracker.data.database.entity
 
 import org.junit.Assert.*
 import org.junit.Test
+import java.util.Locale
 
 /**
  * P0 tests for [Expense.generateDedupeKey].
@@ -73,6 +74,59 @@ class DedupeKeyTest {
         val key2 = Expense.generateDedupeKey(5.0, "kiosk", t2, "EUR")
 
         assertEquals(key1, key2)
+    }
+
+    @Test
+    fun `timestamps straddling the exact 5-minute bucket boundary produce different keys`() {
+        // 299_999 is the last ms of bucket 0; 300_000 is the first ms of bucket 1.
+        val key1 = Expense.generateDedupeKey(50.0, "shop", 299_999L, "EUR")
+        val key2 = Expense.generateDedupeKey(50.0, "shop", 300_000L, "EUR")
+
+        assertNotEquals(key1, key2)
+        assertEquals("50.00_shop_0_EUR", key1)
+        assertEquals("50.00_shop_1_EUR", key2)
+    }
+
+    @Test
+    fun `zero amount renders two decimals`() {
+        assertEquals("0.00_shop_0_EUR", Expense.generateDedupeKey(0.0, "shop", 0L, "EUR"))
+    }
+
+    // ── Locale invariance: amount formatting must use Locale.ROOT (dot decimal) ──
+
+    @Test
+    fun `key is identical under German and Greek default locales`() {
+        val original = Locale.getDefault()
+        try {
+            Locale.setDefault(Locale.ROOT)
+            val rootKey = Expense.generateDedupeKey(1234.56, "shop", 1_000_000L, "EUR")
+
+            Locale.setDefault(Locale.GERMANY)
+            val deKey = Expense.generateDedupeKey(1234.56, "shop", 1_000_000L, "EUR")
+
+            Locale.setDefault(Locale("el", "GR"))
+            val elKey = Expense.generateDedupeKey(1234.56, "shop", 1_000_000L, "EUR")
+
+            assertEquals(rootKey, deKey)
+            assertEquals(rootKey, elKey)
+            assertTrue("Key must use dot decimal separator: $rootKey", rootKey.startsWith("1234.56_"))
+        } finally {
+            Locale.setDefault(original)
+        }
+    }
+
+    // ── Rounding ──
+
+    @Test
+    fun `amount 1_255 rounds to 1_26 in key`() {
+        val key = Expense.generateDedupeKey(1.255, "shop", 1_000_000L, "EUR")
+        assertTrue("Expected amount segment 1.26 in key: $key", key.startsWith("1.26_"))
+    }
+
+    @Test
+    fun `amount 1_254 rounds down to 1_25 in key`() {
+        val key = Expense.generateDedupeKey(1.254, "shop", 1_000_000L, "EUR")
+        assertTrue("Expected amount segment 1.25 in key: $key", key.startsWith("1.25_"))
     }
 
     // ── ISSUE-6 regression: currency must be required, no silent EUR fallback ──

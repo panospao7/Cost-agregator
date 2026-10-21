@@ -14,6 +14,12 @@ object PrivacyGateReasonCodes {
     /** Generic privacy-gate failure (e.g. a gate threw; the exception itself is not diagnosed). */
     const val PRIVACY_GATE_FAILURE = "PRIVACY_GATE_FAILURE"
 
+    /**
+     * R26: the privacy-audit write for a decision failed (e.g. SQLITE_BUSY, write barrier).
+     * The gate fails closed; workers treat this code as transient and retry.
+     */
+    const val PRIVACY_AUDIT_WRITE_FAILED = "PRIVACY_AUDIT_WRITE_FAILED"
+
     /** Catch-all blocked marker used when no more specific code applies. */
     const val PRIVACY_BLOCKED = "PRIVACY_BLOCKED"
 
@@ -49,10 +55,12 @@ object PrivacyGateReasonCodes {
     const val ENCRYPTED_BACKUP_DISABLED = "ENCRYPTED_BACKUP_DISABLED"
     const val OVERPASS_DISABLED = "OVERPASS_DISABLED"
     const val DEBUG_PERSISTENCE_DISABLED = "DEBUG_PERSISTENCE_DISABLED"
+    const val EXCHANGE_RATE_DOWNLOAD_DISABLED = "EXCHANGE_RATE_DOWNLOAD_DISABLED"
 
     /** All codes — used by tests to assert boundedness. */
     val ALL: Set<String> = setOf(
         PRIVACY_GATE_FAILURE,
+        PRIVACY_AUDIT_WRITE_FAILED,
         PRIVACY_BLOCKED,
         NO_GATE_HANDLER,
         CLOUD_AI_DISABLED,
@@ -67,6 +75,7 @@ object PrivacyGateReasonCodes {
         BACKGROUND_LOCATION_DISABLED,
         ENCRYPTED_BACKUP_DISABLED,
         OVERPASS_DISABLED,
-        DEBUG_PERSISTENCE_DISABLED
+        DEBUG_PERSISTENCE_DISABLED,
+        EXCHANGE_RATE_DOWNLOAD_DISABLED
     )
 }

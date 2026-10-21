@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.ui.screens.analytics
 
+import androidx.annotation.VisibleForTesting
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.database.entity.Budget
@@ -228,7 +229,12 @@ class AnalyticsViewModel @Inject constructor(
         val budgetsHash: Int,
         val budgetDataVersion: Long,
         val homeCurrency: String,
-        val rateTimestamp: Long
+        val rateTimestamp: Long,
+        /**
+         * V-E-12: the like-for-like cut (prior window end, YoY cutoff) includes the local
+         * time-of-day, so key on the minute-truncated comparison instant, not the day.
+         */
+        val comparisonMinuteMs: Long
     )
 
     private data class ExpenseFreshness(
@@ -273,6 +279,25 @@ class AnalyticsViewModel @Inject constructor(
 
     private val analyticsCache = ConcurrentHashMap<PeriodCacheKey, AnalyticsState>()
     private val advancedCache = ConcurrentHashMap<PeriodCacheKey, AdvResult>()
+
+    /**
+     * F-R20b-c: the cache key includes the comparison minute, so without eviction a new entry
+     * would accumulate every minute. Entries computed for any other minute can never be hit
+     * again (the key embeds the minute), so dropping them keeps the caches bounded without
+     * changing any displayed value.
+     */
+    private fun evictStaleMinuteEntries(currentComparisonMinuteMs: Long) {
+        analyticsCache.keys
+            .filter { it.comparisonMinuteMs != currentComparisonMinuteMs }
+            .forEach { analyticsCache.remove(it) }
+        advancedCache.keys
+            .filter { it.comparisonMinuteMs != currentComparisonMinuteMs }
+            .forEach { advancedCache.remove(it) }
+    }
+
+    @VisibleForTesting
+    internal fun cacheSizesForTest(): Pair<Int, Int> = analyticsCache.size to advancedCache.size
+
     @Volatile
     private var lastExpenseDataVersion: Long = -1L
     @Volatile
@@ -357,6 +382,7 @@ class AnalyticsViewModel @Inject constructor(
             val now = timeProvider.now()
             val (currentStart, currentEnd) = getPeriodRange(period, now)
             val cacheKey = PeriodCacheKey(
+                comparisonMinuteMs = AnalyticsComparisonWindows.comparisonMinute(now),
                 period = period,
                 startMs = currentStart,
                 endMs = currentEnd,
@@ -369,6 +395,7 @@ class AnalyticsViewModel @Inject constructor(
                 homeCurrency = homeCurrency,
                 rateTimestamp = rateTimestamp
             )
+            evictStaleMinuteEntries(cacheKey.comparisonMinuteMs)
 
             val cached = analyticsCache[cacheKey]
             if (cached != null) {
@@ -424,17 +451,28 @@ class AnalyticsViewModel @Inject constructor(
             TimePeriod.ALL -> 0L
             else -> TimePeriodUtils.getStartOfYear(now)
         }
-        // SRH-11: Use calendar-aware TimePeriodUtils instead of raw ms
-        // subtraction so that DST transitions and varying month lengths
-        // are handled correctly.
-        val daysInPeriod = TimePeriodUtils.daysBetween(currentStart, currentEnd).coerceAtLeast(1)
-        val previousStart = TimePeriodUtils.addDays(currentStart, -daysInPeriod)
-        val previousEnd = currentStart
+        // V-E-12: like-for-like comparison. The prior window is the previous calendar
+        // period cut at the same elapsed point as the current period (period-to-date),
+        // computed with calendar-aware TimePeriodUtils so DST transitions and varying
+        // month lengths are handled correctly. ALL has no baseline (empty window).
+        // The cut includes time-of-day: the minute-truncated instant matches the cache key, while the
+        // comparison cut itself is the inclusive end of that minute (comparisonCutInstant).
+        val comparisonMinute = AnalyticsComparisonWindows.comparisonMinute(now)
+        // F-R20b-b: cut at the inclusive end of the comparison minute so current-minute rows count.
+        val priorWindow = AnalyticsComparisonWindows.priorWindow(
+            period, currentStart, AnalyticsComparisonWindows.comparisonCutInstant(now)
+        )
+        val previousStart = priorWindow.startInclusive
+        val previousEnd = priorWindow.endExclusive
         val allExpenses = expenseRepository.getExpensesBetween(fullWindowStart, currentEnd)
-        val previousExpenses = expenseRepository.getExpensesBetween(previousStart, previousEnd)
-            .asSequence()
-            .filter { it.transactionType == TransactionType.PURCHASE }
-            .toList()
+        val previousExpenses = if (priorWindow.isEmpty) {
+            emptyList()
+        } else {
+            expenseRepository.getExpensesBetween(previousStart, previousEnd)
+                .asSequence()
+                .filter { it.transactionType == TransactionType.PURCHASE }
+                .toList()
+        }
 
         val yearOverYearLookbackStart = TimePeriodUtils.getYearRange(TimePeriodUtils.getYear(now) - 1).first
         val yearOverYearExpenses = expenseRepository.getExpensesBetween(yearOverYearLookbackStart, currentEnd)
@@ -493,12 +531,22 @@ class AnalyticsViewModel @Inject constructor(
         // Keep the legacy scalar for existing UI contracts, while the typed result
         // remains authoritative for unavailable/partial conversion states.
         val currentTotal = currentAvailableAmount ?: 0.0
-        val previousTotal = previousAvailableAmount ?: 0.0
-        val changePercent = if (currentAvailableAmount != null && previousAvailableAmount != null && previousAvailableAmount > 0.0) {
-            ((currentAvailableAmount - previousAvailableAmount) / previousAvailableAmount * 100).toFloat()
+        // Future-dated current rows (after the comparison instant) stay in the displayed total
+        // but have no counterpart in the cut prior window, so the % compares like for like.
+        val comparableCurrentAmount = if (period == TimePeriod.ALL || currentAvailableAmount == null) {
+            currentAvailableAmount
         } else {
-            null
+            NormalizedAnalyticsMoneyAdapter.aggregateInputSlice(
+                currentInput,
+                currentInput.includedExpenses.filter {
+                    AnalyticsComparisonWindows.countsInComparison(it.date, comparisonMinute)
+                },
+                displayCurrency = homeCurrency
+            ).aggregateOrNull()?.displayAmount
         }
+        val changePercent = AnalyticsComparisonWindows.changePercent(
+            period, comparableCurrentAmount, previousAvailableAmount
+        )
 
         val totalForPercentage = currentTotal.coerceAtLeast(0.0)
         val categoryBreakdown = currentExpenseSnapshots
@@ -601,7 +649,7 @@ class AnalyticsViewModel @Inject constructor(
         }
 
         // ── Year-over-Year Comparison ──────────────────────────────────────────
-        val yearOverYear = computeYearOverYear(yoyInput.includedExpenses.map { it.toExpenseSnapshot() }, now, homeCurrency)
+        val yearOverYear = computeYearOverYear(yoyInput.includedExpenses.map { it.toExpenseSnapshot() }, comparisonMinute, homeCurrency)
 
         // ── Spending Velocity Anomalies ──────────────────────────────────
         val velocityAnomalies = computeVelocityAnomalies(currentExpenseSnapshots, homeCurrency)
@@ -650,7 +698,7 @@ class AnalyticsViewModel @Inject constructor(
             // Fetch budget snapshots for category analytics
             val budgetSnapshots = budgetRepository.getActiveBudgetSnapshots()
 
-            val catDeferred = async { advancedAnalyticsEngine.getCategoryAnalytics(currentInput, previousInput, categories, budgetSnapshots) }
+            val catDeferred = async { advancedAnalyticsEngine.getCategoryAnalytics(currentInput, previousInput, categories, budgetSnapshots, comparisonCutoffMillisInclusive = AnalyticsComparisonWindows.comparisonCutInstant(now)) }
             val merchDeferred = async { advancedAnalyticsEngine.getMerchantAnalytics(currentInput, historicalInput, limit = 15) }
             val patternsDeferred = async { advancedAnalyticsEngine.getSpendingPatterns(currentInput) }
             val statsDeferred = async { advancedAnalyticsEngine.getStatisticalInsights(currentInput) }
@@ -769,7 +817,7 @@ class AnalyticsViewModel @Inject constructor(
  return AnalyticsState(
   selectedPeriod = period,
   currentTotal = currentTotal,
-  previousTotal = previousAvailableAmount,
+  previousTotal = AnalyticsComparisonWindows.previousTotalOrNull(period, previousAvailableAmount),
   currentTotalMoneyResult = currentTotalResult,
   previousTotalMoneyResult = previousTotalResult,
   error = currentMoneyError,
@@ -914,10 +962,14 @@ class AnalyticsViewModel @Inject constructor(
 
         val monthNames = arrayOf("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
 
+        // V-E-12: year-to-date vs prior-year-to-date. Only prior-year dates before the
+        // same calendar date one year ago count, so the % is like-for-like.
+        val priorYearCutoff = AnalyticsComparisonWindows.priorYearCutoff(now)
+
         fun monthTotals(year: Int): List<MonthlyYearTotal> {
             return purchases
                 .filter { exp ->
-                    TimePeriodUtils.getYear(exp.date) == year
+                    AnalyticsComparisonWindows.countsInYearOverYear(exp.date, year, priorYear, priorYearCutoff)
                 }
                 .groupBy { exp ->
                     TimePeriodUtils.getMonth(exp.date)

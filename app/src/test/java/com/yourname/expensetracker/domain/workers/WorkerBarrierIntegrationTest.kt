@@ -107,7 +107,8 @@ class WorkerBarrierIntegrationTest {
             workerTerminalDiagnosticSink = workerTerminalDiagnosticSink,
             backgroundJobRunDao = backgroundJobRunDao,
             notificationPermissionChecker = permissionChecker,
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            appContext = mockk<android.content.Context>(relaxed = true)
         )
     }
 

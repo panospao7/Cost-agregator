@@ -13,6 +13,8 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import dagger.multibindings.ElementsIntoSet
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import javax.inject.Singleton
 
 /**
@@ -30,6 +32,9 @@ import javax.inject.Singleton
 @Module
 @InstallIn(SingletonComponent::class)
 object RetentionModule {
+
+    /** R26: maximum rows deleted per batch by the batched purge targets. */
+    internal const val RETENTION_PURGE_BATCH_SIZE = 5000
 
     @Provides
     @Singleton
@@ -252,7 +257,8 @@ object RetentionModule {
             override val name = "notification_intake"
             // P8F-01: Null out raw payload text (title/text/bigText/subText/extrasJson) past
             // the retention window — mirrors the raw_notifications target since intake carries
-            // the same captured notification content. cutoffMs is the notification cutoff,
+            // the same captured notification content. R28: also clears the encrypted transient
+            // payload (ciphertext/nonce/version). cutoffMs is the notification cutoff,
             // passed by DataRetentionWorker.
             override suspend fun purge(cutoffMs: Long): RetentionPurgeResult {
                 // GR-14u51b: canonical write-barrier admission before the
@@ -279,7 +285,7 @@ object RetentionModule {
                     while (true) {
                         val batch = notificationIntakeDao.getUnpurgedIntakeOlderThan(cutoffMs, 100)
                         if (batch.isEmpty()) break
-                        for (n in batch) notificationIntakeDao.purgeRawPayload(n.id, now)
+                        for (n in batch) notificationIntakeDao.purgeAllPayload(n.id, now)
                         total += batch.size
                     }
                     RetentionPurgeResult(name, total, true)
@@ -300,35 +306,45 @@ object RetentionModule {
             // metadataJson can carry PII). cutoffMs is the diagnostics cutoff, passed by
             // DataRetentionWorker.
             override suspend fun purge(cutoffMs: Long): RetentionPurgeResult {
-                // GR-14u51b: canonical write-barrier admission before the
-                // runCatchingCancellable wrapper (see raw_notifications).
-                try {
-                    writeBarrier.checkWritesAllowed("RetentionModule.PipelineDiagnosticEventDao.purge")
-                } catch (e: Exception) {
-                    if (e is kotlinx.coroutines.CancellationException) throw e
-                    return RetentionPurgeResult(
-                        targetName = name,
-                        rowsPurged = 0,
-                        success = false,
-                        errorMessage = "WRITE_BARRIER_BLOCKED",
-                        isTransient = true,
-                        errorCode = "WRITE_BARRIER_BLOCKED"
-                    )
+                // R26: bounded batches. The write barrier is re-checked BEFORE every
+                // batch (outside the runCatchingCancellable wrapper, which would swallow
+                // DatabaseAccessBlockedException — see raw_notifications) and the
+                // coroutine is checked for cancellation AFTER every batch. A barrier that
+                // closes mid-run yields the transient WRITE_BARRIER_BLOCKED result; the
+                // retention checkpoint stays pending and the next run resumes.
+                var total = 0
+                while (true) {
+                    try {
+                        writeBarrier.checkWritesAllowed("RetentionModule.PipelineDiagnosticEventDao.purge")
+                    } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+                        return RetentionPurgeResult(
+                            targetName = name,
+                            rowsPurged = total,
+                            success = false,
+                            errorMessage = "WRITE_BARRIER_BLOCKED",
+                            isTransient = true,
+                            errorCode = "WRITE_BARRIER_BLOCKED"
+                        )
+                    }
+                    val deleted = CancellationSafe.runCatchingCancellable {
+                        // GR-08k1 accessor normalization: DAO-named local replaces the
+                        // database-chained receiver (GR-08e precedent).
+                        val pipelineDiagnosticEventDao = appDatabase.pipelineDiagnosticEventDao()
+                        pipelineDiagnosticEventDao.deleteOlderThan(cutoffMs, RETENTION_PURGE_BATCH_SIZE)
+                    }.getOrElse {
+                        return RetentionPurgeResult(
+                            targetName = name,
+                            rowsPurged = total,
+                            success = false,
+                            errorMessage = "RETENTION_PURGE_FAILED:${it::class.simpleName}"
+                        )
+                    }
+                    total += deleted
+                    currentCoroutineContext().ensureActive()
+                    if (deleted < RETENTION_PURGE_BATCH_SIZE) break
                 }
-                return CancellationSafe.runCatchingCancellable {
-                    // GR-08k1 accessor normalization: DAO-named local replaces the
-                    // database-chained receiver (GR-08e precedent).
-                    val pipelineDiagnosticEventDao = appDatabase.pipelineDiagnosticEventDao()
-                    val count = pipelineDiagnosticEventDao.deleteOlderThan(cutoffMs)
-                    RetentionPurgeResult(name, count, true)
-                }.getOrElse {
-                    RetentionPurgeResult(
-                        targetName = name,
-                        rowsPurged = 0,
-                        success = false,
-                        errorMessage = "RETENTION_PURGE_FAILED:${it::class.simpleName}"
-                    )
-                }
+                return RetentionPurgeResult(name, total, true)
             }
         },
 
@@ -617,35 +633,44 @@ object RetentionModule {
             // constant): bound the privacy-audit accountability ledger. Count-only
             // and purge-safe; the cutoff requires compliance sign-off to change.
             override suspend fun purge(cutoffMs: Long): RetentionPurgeResult {
-                try {
-                    writeBarrier.checkWritesAllowed("RetentionModule.PrivacyAuditDao.purge")
-                } catch (e: Exception) {
-                    if (e is kotlinx.coroutines.CancellationException) throw e
-                    return RetentionPurgeResult(
-                        targetName = name,
-                        rowsPurged = 0,
-                        success = false,
-                        errorMessage = "WRITE_BARRIER_BLOCKED",
-                        isTransient = true,
-                        errorCode = "WRITE_BARRIER_BLOCKED"
-                    )
+                // R26: bounded batches — barrier check before and cancellation check
+                // after every batch (see pipeline_diagnostic_events). The cutoff and the
+                // 180-day constant are unchanged.
+                var total = 0
+                while (true) {
+                    try {
+                        writeBarrier.checkWritesAllowed("RetentionModule.PrivacyAuditDao.purge")
+                    } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+                        return RetentionPurgeResult(
+                            targetName = name,
+                            rowsPurged = total,
+                            success = false,
+                            errorMessage = "WRITE_BARRIER_BLOCKED",
+                            isTransient = true,
+                            errorCode = "WRITE_BARRIER_BLOCKED"
+                        )
+                    }
+                    val deleted = CancellationSafe.runCatchingCancellable {
+                        val privacyAuditDao = appDatabase.privacyAuditDao()
+                        privacyAuditDao.deleteOlderThan(cutoffMs, RETENTION_PURGE_BATCH_SIZE)
+                    }.getOrElse {
+                        return RetentionPurgeResult(
+                            targetName = name,
+                            rowsPurged = total,
+                            success = false,
+                            errorMessage = "RETENTION_PURGE_FAILED:${it::class.simpleName}",
+                            errorCode = "RETENTION_PURGE_FAILED",
+                            errorClass = it::class.simpleName,
+                            isTransient = it is android.database.sqlite.SQLiteException ||
+                                it is java.io.IOException
+                        )
+                    }
+                    total += deleted
+                    currentCoroutineContext().ensureActive()
+                    if (deleted < RETENTION_PURGE_BATCH_SIZE) break
                 }
-                return CancellationSafe.runCatchingCancellable {
-                    val privacyAuditDao = appDatabase.privacyAuditDao()
-                    val count = privacyAuditDao.deleteOlderThan(cutoffMs)
-                    RetentionPurgeResult(name, count, true)
-                }.getOrElse {
-                    RetentionPurgeResult(
-                        targetName = name,
-                        rowsPurged = 0,
-                        success = false,
-                        errorMessage = "RETENTION_PURGE_FAILED:${it::class.simpleName}",
-                        errorCode = "RETENTION_PURGE_FAILED",
-                        errorClass = it::class.simpleName,
-                        isTransient = it is android.database.sqlite.SQLiteException ||
-                            it is java.io.IOException
-                    )
-                }
+                return RetentionPurgeResult(name, total, true)
             }
         }
     )

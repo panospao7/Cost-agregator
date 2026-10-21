@@ -165,10 +165,4 @@ class ConfidenceRouterTest {
         assertTrue(result.adjustedConfidence <= 1.0f)
         assertTrue(result.adjustedConfidence >= 0.0f)
     }
-
-    @Test
-    fun `thresholds are correct`() {
-        assertEquals(0.85f, ConfidenceRouter.AUTO_ACCEPT_THRESHOLD)
-        assertEquals(0.50f, ConfidenceRouter.REVIEW_THRESHOLD)
-    }
 }

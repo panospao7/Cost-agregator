@@ -78,7 +78,11 @@ class AiChatRepositoryImplTest {
         val result = repository.observeSessions().first()
 
         assertEquals(1, result.size)
-        assertEquals("Assistant", result.first().title)
+        val session = result.first()
+        assertEquals(1L, session.id)
+        assertEquals("Assistant", session.title)
+        assertEquals(10L, session.createdAt)
+        assertEquals(20L, session.updatedAt)
     }
 
     @Test
@@ -99,17 +103,27 @@ class AiChatRepositoryImplTest {
         val result = repository.observeMessages(1L).first()
 
         assertEquals(1, result.size)
-        assertEquals("How much?", result.first().text)
+        val message = result.first()
+        assertEquals(2L, message.id)
+        assertEquals(1L, message.sessionId)
+        assertEquals(AssistantMessageRole.USER, message.role)
+        assertEquals(AssistantMessageKind.QUERY, message.kind)
+        assertEquals("How much?", message.text)
+        assertEquals(15L, message.createdAt)
     }
 
     @Test
-    fun `createSession returns null when history disabled`() = runTest {
+    fun `createSession and appendMessage return null and persist nothing when history disabled`() = runTest {
         every { aiSettingsRepository.settings() } returns flowOf(AiSettings(storeConversationHistory = false))
 
-        val result = repository.createSession("Assistant")
+        val session = repository.createSession("Assistant")
+        val message = repository.appendMessage(1L, AssistantMessageRole.USER, AssistantMessageKind.QUERY, "Hi")
 
-        assertNull(result)
+        assertNull("Row createSession", session)
+        assertNull("Row appendMessage", message)
         coVerify(exactly = 0) { sessionDao.insert(any()) }
+        coVerify(exactly = 0) { messageDao.insert(any()) }
+        coVerify(exactly = 0) { sessionDao.updateLastTouched(any(), any()) }
     }
 
     @Test
@@ -125,16 +139,6 @@ class AiChatRepositoryImplTest {
                 AiChatSessionEntity(title = "Assistant", createdAt = 1_000L, updatedAt = 1_000L)
             )
         }
-    }
-
-    @Test
-    fun `appendMessage returns null when history disabled`() = runTest {
-        every { aiSettingsRepository.settings() } returns flowOf(AiSettings(storeConversationHistory = false))
-
-        val result = repository.appendMessage(1L, AssistantMessageRole.USER, AssistantMessageKind.QUERY, "Hi")
-
-        assertNull(result)
-        coVerify(exactly = 0) { messageDao.insert(any()) }
     }
 
     @Test
@@ -169,14 +173,13 @@ class AiChatRepositoryImplTest {
     }
 
     @Test
-    fun `clearSession delegates to session dao`() = runTest {
+    fun `clearSession deletes only that session and clearAllHistory deletes all`() = runTest {
         repository.clearSession(3L)
-        coVerify { sessionDao.deleteById(3L) }
-    }
+        coVerify(exactly = 1) { sessionDao.deleteById(3L) }
+        coVerify(exactly = 0) { sessionDao.deleteAll() }
 
-    @Test
-    fun `clearAllHistory delegates to session dao`() = runTest {
         repository.clearAllHistory()
-        coVerify { sessionDao.deleteAll() }
+        coVerify(exactly = 1) { sessionDao.deleteAll() }
+        coVerify(exactly = 1) { sessionDao.deleteById(any()) }
     }
 }

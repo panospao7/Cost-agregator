@@ -12,6 +12,7 @@ import com.yourname.expensetracker.domain.privacy.CloudPayloadPolicy
 import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
 import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
 import com.yourname.expensetracker.data.ai.provider.internal.CloudRetryPolicy
+import com.yourname.expensetracker.data.ai.provider.internal.SystemRetryDelay
 import com.yourname.expensetracker.domain.ai.model.CategorizationAssistInput
 import com.yourname.expensetracker.domain.ai.model.CategoryAssistSuggestion
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
@@ -23,7 +24,6 @@ import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -39,15 +39,31 @@ import timber.log.Timber
 
 @Singleton
 // PRIV-43B-01: Now uses CloudPayloadPolicy — no direct redactBeforeCloud access
-class CloudCategorizationAssistService @Inject constructor(
+class CloudCategorizationAssistService @VisibleForTesting internal constructor(
     private val secureKeyStorage: SecureKeyStorage,
-    @CloudAiHttpClient private val client: OkHttpClient,
-    private val aiSettingsRepository: AiSettingsRepository? = null,
+    private val client: OkHttpClient,
+    private val aiSettingsRepository: AiSettingsRepository?,
     private val privacyGate: PrivacyGate,
     private val cloudPayloadPolicy: CloudPayloadPolicy,
-    // P8F-03: cloud-call provenance audit (Hilt resolves; default keeps test ctors fail-closed)
-    private val auditLogger: PrivacyAuditLogger = PrivacyAuditLogger.NO_OP
+    private val auditLogger: PrivacyAuditLogger,
+    // B4-K2: retry-delay seam; production delegates to coroutine delay(), tests record it.
+    private val retryDelay: suspend (Long) -> Unit
 ) : CategorizationAssistService {
+
+    // Hilt-visible constructor (unchanged dependency signature).
+    @Inject
+    constructor(
+        secureKeyStorage: SecureKeyStorage,
+        @CloudAiHttpClient client: OkHttpClient,
+        aiSettingsRepository: AiSettingsRepository? = null,
+        privacyGate: PrivacyGate,
+        cloudPayloadPolicy: CloudPayloadPolicy,
+        // P8F-03: cloud-call provenance audit (Hilt resolves; default keeps test ctors fail-closed)
+        auditLogger: PrivacyAuditLogger = PrivacyAuditLogger.NO_OP
+    ) : this(
+        secureKeyStorage, client, aiSettingsRepository, privacyGate, cloudPayloadPolicy,
+        auditLogger, SystemRetryDelay
+    )
 
     @VisibleForTesting
     internal constructor(secureKeyStorage: SecureKeyStorage) : this(
@@ -164,7 +180,7 @@ class CloudCategorizationAssistService @Inject constructor(
                 }
 
                 if (attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
-                    delay(CloudRetryPolicy.backoffDelayMs(attempt))
+                    retryDelay(CloudRetryPolicy.backoffDelayMs(attempt))
                 }
             }
 

@@ -903,7 +903,7 @@ class RestoreJournal @Inject constructor(
     }
 
     companion object {
-        private const val JOURNAL_FILENAME = "restore_journal.json"
+        internal const val JOURNAL_FILENAME = "restore_journal.json"
         const val FAILURE_JOURNAL_FILENAME = "restore_journal_last_failure.json"
         const val SUCCESS_JOURNAL_FILENAME = "restore_journal_last_success.json"
 
@@ -913,7 +913,10 @@ class RestoreJournal @Inject constructor(
             DiagnosticReasonCode.RESTORE_BLOCKED.name,
             DiagnosticReasonCode.WRITE_BARRIER_DENIED.name,
             DiagnosticReasonCode.READ_BARRIER_DENIED.name,
-            DiagnosticReasonCode.TIMEOUT.name
+            DiagnosticReasonCode.TIMEOUT.name,
+            // R25-C: bounded backup schema-range rejection codes.
+            com.yourname.expensetracker.data.repository.BackupSchemaUnsupportedException.LEGACY,
+            com.yourname.expensetracker.data.repository.BackupSchemaUnsupportedException.NEWER
         )
 
         internal fun failureReasonCode(value: String?): String =

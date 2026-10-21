@@ -167,7 +167,8 @@ internal fun NavigationDestination.toSaveToken(): String = when (this) {
 
 internal fun destinationFromSaveToken(
     token: String,
-    bankSyncAvailable: Boolean = true
+    bankSyncAvailable: Boolean = true,
+    deferredAvailable: Boolean = true
 ): NavigationDestination? {
     // Backward compatibility with older persisted format: visual_split_editor:<templateId>
     if (token.startsWith("visual_split_editor:")) {
@@ -213,7 +214,11 @@ internal fun destinationFromSaveToken(
         baseToken == "bill_negotiation" -> NavigationDestination.BillNegotiation
         baseToken == "smart_search" -> NavigationDestination.SmartSearch
         baseToken == "receipt_matching" -> NavigationDestination.ReceiptMatching
+        // R19 (H-1 hide): deferred destinations (investment / challenges / tax) are
+        // not restorable while the deferred surface is unavailable (release builds);
+        // callers fall back to Home / drop them from the restored back stack.
         baseToken == "investment_portfolio" -> NavigationDestination.InvestmentPortfolio
+            .takeIf { deferredAvailable }
         // RP-17 17-A / D1: the bank destination is only restorable while the
         // bank-sync surface is available (debug/provider mode). An unavailable
         // build returns null — callers fall back (Home / back-stack filtering)
@@ -223,7 +228,7 @@ internal fun destinationFromSaveToken(
         baseToken == "bill_reminders" -> NavigationDestination.BillReminders
         baseToken == "spending_challenges" -> NavigationDestination.SpendingChallenges(
             showCreateDialog = params["create"]?.toBooleanStrictOrNull() == true
-        )
+        ).takeIf { deferredAvailable }
         baseToken == "advanced_analytics" -> NavigationDestination.AdvancedAnalytics
         baseToken == "cash_flow_calendar" -> NavigationDestination.CashFlowCalendar
         baseToken == "lifestyle_inflation" -> NavigationDestination.LifestyleInflation
@@ -237,6 +242,7 @@ internal fun destinationFromSaveToken(
         baseToken == "currency_management" -> NavigationDestination.CurrencyManagement
         baseToken == "subscription_management" -> NavigationDestination.SubscriptionManagement
         baseToken == "tax_configuration" -> NavigationDestination.TaxConfiguration
+            .takeIf { deferredAvailable }
         baseToken == "export_options" -> NavigationDestination.ExportOptions
         baseToken == "backup_restore" -> NavigationDestination.BackupRestore
         baseToken == "shared_expense_groups" -> NavigationDestination.SharedExpenseGroups
@@ -481,10 +487,11 @@ fun ProvideNavigationController(
     val bankSyncAvailable = remember { com.yourname.expensetracker.domain.bank.BankFeatureAvailability().isBankSyncAvailable }
     val restoredDestination = destinationFromSaveToken(
         token = persistedState.destinationToken,
-        bankSyncAvailable = bankSyncAvailable
+        bankSyncAvailable = bankSyncAvailable,
+        deferredAvailable = DeferredFeatureGate.available
     ) ?: initialDestination
     val restoredBackStack = persistedState.backStackTokens
-        .mapNotNull { destinationFromSaveToken(it, bankSyncAvailable) }
+        .mapNotNull { destinationFromSaveToken(it, bankSyncAvailable, DeferredFeatureGate.available) }
 
     val currentDestination = remember {
         mutableStateOf(restoredDestination)

@@ -205,8 +205,10 @@ class AnalysisContract:
 # name-exact admission cannot be shadowed onto a non-inline carrier.
 # Lazy carriers (Sequence/Flow builders, custom dispatch) are deliberately
 # absent and keep the default `async` uncertainty.  Any change to this tuple
-# requires a dedicated reviewed diff with fixture coverage
-# (fixtures helper_proof HP-13..HP-20) and a shadow before/after delta.
+# requires a dedicated reviewed diff that updates the live pin
+# (scripts/db_guard/test_transparent_inline_methods_pin.py) and a shadow
+# before/after delta.  The former HP-13..HP-20 helper_proof fixture corpus
+# was removed.
 PRODUCTION_TRANSPARENT_INLINE_METHODS: tuple[str, ...] = (
     # kotlin scope functions (inline, eager)
     "let",
@@ -364,8 +366,11 @@ PRODUCTION_TRANSPARENT_INLINE_METHODS: tuple[str, ...] = (
 #     custom parameters) stay async-uncertain (fail closed).
 # STRUCTURED_LAUNCH_METHODS is closed: only `launch` is evidenced in the
 # production tree for the admitted receivers.  Any change to either set
-# requires a dedicated reviewed diff with fixture coverage (fixtures
-# structured_launch SL-01..SL-03) and a shadow before/after delta.
+# requires a dedicated reviewed diff that updates the live pins
+# (scripts/db_guard/test_transparent_inline_methods_pin.py and
+# scripts/db_guard/mediation_analysis/test_parser_spans.py) and a shadow
+# before/after delta.  The former SL-01..SL-03 structured_launch fixture
+# corpus was removed.
 STRUCTURED_LAUNCH_METHODS: tuple[str, ...] = ("launch",)
 
 
@@ -577,7 +582,8 @@ _FUN_DECL_SKIP_RE = re.compile(r"\bfun\s+(?:interface|class|object|typealias)\b"
 _IMPORT_RE = re.compile(
     r"\bimport\s+([A-Za-z_][A-Za-z0-9_.]*)(?:\s+as\s+([A-Za-z_][A-Za-z0-9_]*))?"
 )
-# Machine-readable read-only-backup waiver marker (fixture corpus only): the
+# Machine-readable read-only-backup waiver marker (synthetic fixtures only;
+# the former HP/SL fixture corpus was removed): the
 # recorded GR-13 contract makes a guard scope with an explicit
 # allowDuringBackupExport=true / requiresDatabaseWrite=false request a
 # NON-proving scope; production call sites carry the flags in the

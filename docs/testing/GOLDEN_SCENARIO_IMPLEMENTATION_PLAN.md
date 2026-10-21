@@ -18,7 +18,7 @@
 | `SplitCalculatorGoldenTest.kt` | Real split math |
 | `HealthScoreGoldenTest.kt` | Real health calculation |
 | `NotificationProcessingPipelineReliabilityTest.kt` | Tests real pipeline behavior |
-| `CsvExportImportRoundtripTest.kt` | Real roundtrip verification |
+| `CsvExportImportRoundtripTest.kt` | Removed in test-suite-audit B3-11: it was a seeder/DAO test, not real CSV roundtrip verification. Range/count/field-roundtrip proofs moved to `data/database/dao/ExpenseDaoDateRangeTest.kt` |
 | `RecurringNoDoubleCountScenarioTest.kt` | Important business rule (needs rewrite to use coordinator) |
 | `MixedCurrencyCoreFinancialScenarioTest.kt` | Important multi-currency verification |
 
@@ -38,7 +38,7 @@
 | File | Why |
 |------|-----|
 | `GoldenScenarioSmokeTest.kt` | Only tests ScenarioSeeder infrastructure |
-| `TransactionLifecycleDbContractTest.kt` | Tests seeder, not lifecycle |
+| `TransactionLifecycleDbContractTest.kt` | Removed in test-suite-audit B3-11: it was a seeder/DAO test, not lifecycle verification. Lifecycle is covered by `scenarios/TransactionLifecycleCoordinatorDbContractTest.kt`; range/count/roundtrip by `data/database/dao/ExpenseDaoDateRangeTest.kt` |
 | `FlowPipelineTestHarness.kt` | Dead infrastructure with deprecated calls |
 
 ---

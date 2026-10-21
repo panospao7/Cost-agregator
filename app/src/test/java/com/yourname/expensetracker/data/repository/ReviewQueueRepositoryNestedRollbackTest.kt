@@ -36,7 +36,13 @@ import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.DefaultExpenseCategoryAssignmentService
 import com.yourname.expensetracker.domain.transaction.ExpenseCategoryAssignmentPort
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
+import com.yourname.expensetracker.domain.diagnostics.EventMetadataSanitizer
+import com.yourname.expensetracker.domain.transaction.LifecycleEventType
+import com.yourname.expensetracker.domain.transaction.TransactionContext
+import com.yourname.expensetracker.domain.transaction.lifecycle.RoomTransactionLifecycleEventWriter
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEvent
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEventWriter
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.testfixtures.database.AppDatabaseTestFactory
 import io.mockk.coEvery
@@ -108,6 +114,8 @@ class ReviewQueueRepositoryNestedRollbackTest {
     private lateinit var linkService: ReceiptLinkService
     private lateinit var repository: ReviewQueueRepository
     private lateinit var receiptCoordinator: ReceiptLifecycleCoordinator
+    private lateinit var promoter: FakePromoter
+    private lateinit var lifecycleWriter: FaultableLifecycleWriter
 
     private class RecordingPostCommitRunner : PostCommitActionRunner {
         var runs = 0
@@ -203,12 +211,36 @@ class ReviewQueueRepositoryNestedRollbackTest {
     }
 
     private class FakePromoter : PendingReviewSourceLinkPromoter {
+        var result: PendingReviewPromotionResult = PendingReviewPromotionResult(0, 0, 0, 0)
+
         override suspend fun promotePendingReviewLinksToExpense(
             pendingReviewId: Long,
             expenseId: Long,
             correlationId: String?,
             source: ExpenseSource
-        ): PendingReviewPromotionResult = PendingReviewPromotionResult(0, 0, 0, 0)
+        ): PendingReviewPromotionResult = result
+    }
+
+    /** Delegates to the REAL lifecycle writer; can be told to fail SOURCE_LINKED writes. */
+    private class FaultableLifecycleWriter(
+        private val delegate: TransactionLifecycleEventWriter
+    ) : TransactionLifecycleEventWriter {
+        var failSourceLinked = false
+        val sourceLinkedWrites = mutableListOf<TransactionLifecycleEvent>()
+
+        override suspend fun write(context: TransactionContext, event: TransactionLifecycleEvent) {
+            if (event.eventType == LifecycleEventType.SOURCE_LINKED.name) {
+                sourceLinkedWrites += event
+                if (failSourceLinked) throw IllegalStateException("synthetic lifecycle writer failure")
+            }
+            delegate.write(context, event)
+        }
+
+        @Suppress("OVERRIDE_DEPRECATION", "DEPRECATION_ERROR")
+        @Deprecated("Use write(context, event)", level = DeprecationLevel.ERROR)
+        override suspend fun write(event: TransactionLifecycleEvent) {
+            throw UnsupportedOperationException("legacy write is not supported in this test")
+        }
     }
 
     @Before
@@ -258,6 +290,15 @@ class ReviewQueueRepositoryNestedRollbackTest {
         assignmentRecorder = RecordingCategoryAssignmentPort(categoryAssignment)
 
         val transactionRunner = RoomDomainTransactionRunner(database, timeProvider)
+        promoter = FakePromoter()
+        lifecycleWriter = FaultableLifecycleWriter(
+            RoomTransactionLifecycleEventWriter(
+                database.transactionEventDao(),
+                EventMetadataSanitizer(),
+                timeProvider,
+                writeBarrier
+            )
+        )
 
         linkService = ReceiptLinkService(
             database = database,
@@ -293,8 +334,9 @@ class ReviewQueueRepositoryNestedRollbackTest {
             confidenceRouter = mockk(relaxed = true),
             transactionLifecycleCoordinator = txCoordinator,
             pendingReviewSourceLinkService = mockk(relaxed = true),
-            pendingReviewSourceLinkPromoter = FakePromoter(),
-            transactionEventDao = database.transactionEventDao(),
+            pendingReviewSourceLinkPromoter = promoter,
+            transactionRunner = transactionRunner,
+            transactionLifecycleEventWriter = lifecycleWriter,
             postCommitActionRunner = postCommitRunner
         )
 
@@ -708,6 +750,81 @@ class ReviewQueueRepositoryNestedRollbackTest {
         assertEquals("no receipt link may remain [$ctx]", 0, obs.links)
         assertEquals("post-commit runner must not run [$ctx]", 0, obs.postCommitRuns)
         assertEquals("no category dispatch [$ctx]", 0, failingPort.dispatchCalls)
+    }
+
+    // ------------------------------------------- SOURCE_LINKED via the lifecycle writer
+
+    /**
+     * promotion.inserted > 0: exactly one SOURCE_LINKED promotion event is written through
+     * the lifecycle writer (legal path) with the approved expense id, REVIEW_APPROVAL source,
+     * the promotion metadata keys, and the runner clock as occurredAt.
+     */
+    @Test
+    fun approveReview_promotionInserted_writesExactlyOneSourceLinkedEventThroughWriter() = runTest {
+        val f = seed(Seed.NONE)
+        val reviewId = insertPendingReview(f.receiptId)
+        promoter.result = PendingReviewPromotionResult(attempted = 3, inserted = 2, alreadyExists = 1, failed = 0)
+
+        val result = repository.approveReview(reviewId)
+
+        assertTrue("approveReview must succeed (result=${result.javaClass.simpleName})", result is ReviewResult.Success)
+        val expenseId = (result as ReviewResult.Success).data
+        assertEquals("writer must see exactly one SOURCE_LINKED write", 1, lifecycleWriter.sourceLinkedWrites.size)
+        val persisted = database.transactionEventDao().getEventsForExpense(expenseId)
+            .filter { it.eventType == LifecycleEventType.SOURCE_LINKED.name && it.reason == "Source links promoted from pending review" }
+        assertEquals("exactly one persisted promotion event", 1, persisted.size)
+        val event = persisted.single()
+        assertEquals(expenseId, event.expenseId)
+        assertEquals(ExpenseSource.REVIEW_APPROVAL.name, event.source)
+        assertEquals(now, event.occurredAt)
+        val meta = org.json.JSONObject(event.metadata!!)
+        assertEquals("PENDING_REVIEW_SOURCE_PROMOTION", meta.getString("operation"))
+        assertEquals(reviewId, meta.getLong("pendingReviewId"))
+        assertEquals(3, meta.getInt("attempted"))
+        assertEquals(2, meta.getInt("inserted"))
+        assertEquals(1, meta.getInt("alreadyExists"))
+    }
+
+    /** promotion.inserted == 0: no SOURCE_LINKED promotion event is written. */
+    @Test
+    fun approveReview_promotionNothingInserted_writesNoSourceLinkedEvent() = runTest {
+        val f = seed(Seed.NONE)
+        val reviewId = insertPendingReview(f.receiptId)
+        promoter.result = PendingReviewPromotionResult(attempted = 1, inserted = 0, alreadyExists = 1, failed = 0)
+
+        val result = repository.approveReview(reviewId)
+
+        assertTrue("approveReview must succeed", result is ReviewResult.Success)
+        assertEquals("no SOURCE_LINKED write expected", 0, lifecycleWriter.sourceLinkedWrites.size)
+    }
+
+    /**
+     * A failing SOURCE_LINKED write must roll back the whole approval (no try/catch around the
+     * writer): Error result, review PENDING, no expense, no link, no post-commit run, no event.
+     */
+    @Test
+    fun approveReview_sourceLinkedWriterFailure_rollsBackApprovalAndReturnsError() = runTest {
+        val f = seed(Seed.NONE)
+        val reviewId = insertPendingReview(f.receiptId)
+        promoter.result = PendingReviewPromotionResult(attempted = 1, inserted = 1, alreadyExists = 0, failed = 0)
+        lifecycleWriter.failSourceLinked = true
+
+        val result = repository.approveReview(reviewId)
+
+        val obs = observe(f.receiptId, reviewId)
+        val ctx = "result=${result.javaClass.simpleName}, expenses=${obs.expenses}, links=${obs.links}, " +
+            "review=${obs.reviewStatus}, postCommitRuns=${obs.postCommitRuns}"
+        assertEquals("writer must be invoked exactly once [$ctx]", 1, lifecycleWriter.sourceLinkedWrites.size)
+        assertTrue("approveReview must return Error [$ctx]", result is ReviewResult.Error)
+        assertEquals("review must still be PENDING [$ctx]", PendingReviewStatus.PENDING, obs.reviewStatus)
+        assertEquals("no expense may remain [$ctx]", 0, obs.expenses)
+        assertEquals("no receipt link may remain [$ctx]", 0, obs.links)
+        assertEquals("post-commit runner must not run [$ctx]", 0, obs.postCommitRuns)
+        assertEquals(
+            "no SOURCE_LINKED event may remain [$ctx]",
+            0,
+            database.transactionEventDao().countByType(LifecycleEventType.SOURCE_LINKED.name)
+        )
     }
 
     // -------------------------------------------------- standalone linkReceiptToExpense

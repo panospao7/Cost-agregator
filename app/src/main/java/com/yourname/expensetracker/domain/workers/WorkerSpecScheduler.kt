@@ -5,6 +5,7 @@ import androidx.work.*
 import com.yourname.expensetracker.domain.diagnostics.AppPipeline
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticThrowableSummary
 import com.yourname.expensetracker.domain.diagnostics.EventOutcome
 import com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -167,8 +168,9 @@ object WorkerSpecScheduler {
             }
         } catch (e: Exception) {
             if (e is CancellationException) throw e
-            val errorMsg = e.message ?: "Unknown error"
-            android.util.Log.e("WorkerSpecScheduler", "Failed to enqueue worker '$workerName'", e)
+            // DIAG-10 / LOG-02: class name only; exception messages may carry user data.
+            val errorMsg = DiagnosticThrowableSummary.className(e)
+            android.util.Log.e("WorkerSpecScheduler", "Failed to enqueue worker '$workerName': $errorMsg")
 
             emitScheduleDiagnostic(
                 diagnosticEventWriter = diagnosticEventWriter,
@@ -199,7 +201,8 @@ object WorkerSpecScheduler {
      *
      * If the spec is disabled, any existing scheduled work is cancelled (parity with
      * [scheduleFromSpec]) and no new work is enqueued. When enabled, the enqueue uses
-     * [WorkerSpec.oneShotPolicy], except a version bump forces [ExistingWorkPolicy.UPDATE].
+     * [WorkerSpec.oneShotPolicy], except a version bump forces [ExistingWorkPolicy.REPLACE];
+     * a non-null [policyOverride] takes precedence over both.
      *
      * @param context  Application or activity context.
      * @param workerName  Key into [WorkerSpec.DEFAULTS] (also used as the unique work name).
@@ -208,6 +211,9 @@ object WorkerSpecScheduler {
      *   delay until the next midnight boundary. The actual enqueue still happens on the
      *   real WorkManager wall clock, so scheduling remains real-time correct.
      * @param diagnosticEventWriter  Optional writer for emitting diagnostic events on failure.
+     * @param policyOverride  R21 / HZ-05: when non-null, wins over both the spec's
+     *   [WorkerSpec.oneShotPolicy] and the version-bump REPLACE. Used by the worker's own
+     *   midnight self-reschedule to append behind the currently running request.
      * @return [ScheduleResult] describing the scheduling outcome.
      */
     fun scheduleAtMidnight(
@@ -215,7 +221,8 @@ object WorkerSpecScheduler {
         workerName: String,
         workerClass: Class<out ListenableWorker>,
         timeProvider: TimeProvider,
-        diagnosticEventWriter: DiagnosticEventWriter? = null
+        diagnosticEventWriter: DiagnosticEventWriter? = null,
+        policyOverride: ExistingWorkPolicy? = null
     ): ScheduleResult {
         val spec = WorkerSpec.DEFAULTS[workerName] ?: run {
             android.util.Log.w("WorkerSpecScheduler", "No WorkerSpec found for: $workerName")
@@ -231,7 +238,10 @@ object WorkerSpecScheduler {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                android.util.Log.w("WorkerSpecScheduler", "Failed to cancel disabled worker '$workerName'", e)
+                android.util.Log.w(
+                    "WorkerSpecScheduler",
+                    "Failed to cancel disabled worker '$workerName': ${DiagnosticThrowableSummary.className(e)}"
+                )
             }
             return ScheduleResult(workerName = workerName, scheduled = false, policyUsed = "", versionChanged = false, error = "Worker '$workerName' is disabled")
         }
@@ -243,7 +253,9 @@ object WorkerSpecScheduler {
         val lastVersion = prefs.getInt(workerName, 0)
         val versionChanged = spec.version != lastVersion
 
-        val effectivePolicy = if (versionChanged) {
+        val effectivePolicy = if (policyOverride != null) {
+            policyOverride
+        } else if (versionChanged) {
             android.util.Log.i(
                 "WorkerSpecScheduler",
                 "Worker '$workerName' version changed (${lastVersion} → ${spec.version}), forcing UPDATE"
@@ -305,8 +317,9 @@ object WorkerSpecScheduler {
             )
         } catch (e: Exception) {
             if (e is CancellationException) throw e
-            val errorMsg = e.message ?: "Unknown error"
-            android.util.Log.e("WorkerSpecScheduler", "Failed to enqueue midnight worker '$workerName'", e)
+            // DIAG-10 / LOG-02: class name only; exception messages may carry user data.
+            val errorMsg = DiagnosticThrowableSummary.className(e)
+            android.util.Log.e("WorkerSpecScheduler", "Failed to enqueue midnight worker '$workerName': $errorMsg")
 
             emitScheduleDiagnostic(
                 diagnosticEventWriter = diagnosticEventWriter,
@@ -347,6 +360,7 @@ object WorkerSpecScheduler {
         "data_retention",
         "ai_daily_briefing",
         "bill_reminder_periodic",
+        "recurring_horizon",
         "reminder_action_dismiss",
         "reminder_action_snooze"
     )

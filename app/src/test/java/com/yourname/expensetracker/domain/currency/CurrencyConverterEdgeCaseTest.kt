@@ -1,6 +1,9 @@
 package com.yourname.expensetracker.domain.currency
 
 import com.yourname.expensetracker.assertApproxEquals
+import com.yourname.expensetracker.domain.core.money.ConversionFailureType
+import com.yourname.expensetracker.domain.core.money.ConversionOutcome
+import com.yourname.expensetracker.domain.core.money.RateBasis
 import com.yourname.expensetracker.domain.core.money.StaleRatePolicy
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
@@ -159,6 +162,166 @@ class CurrencyConverterEdgeCaseTest {
 
         // Assert
         assertApproxEquals(100.0, currentAmount, 0.0001)
+    }
+
+    // ── MONEY-06: invalid rates from the store never produce a conversion ──
+
+    private val moneyNow = 1_700_000_000_000L
+    private val invalidRates = listOf(
+        Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY, 0.0, -0.5
+    )
+    private val fixedClockConverter = CurrencyConverter(
+        exchangeRateStore,
+        timeProvider = object : TimeProvider {
+            override fun now(): Long = moneyNow
+        }
+    )
+
+    private fun rateRow(from: String, to: String, rate: Double) = DomainExchangeRate(
+        fromCurrency = from,
+        toCurrency = to,
+        rate = rate,
+        lastUpdated = moneyNow,
+        source = "fixture",
+        validDate = moneyNow
+    )
+
+    @Test
+    fun `legacy convert fails closed on invalid direct rate`() = runTest {
+        for (bad in invalidRates) {
+            coEvery { exchangeRateStore.getRate(any(), any()) } returns null
+            coEvery { exchangeRateStore.getRate("USD", "GBP") } returns rateRow("USD", "GBP", bad)
+
+            assertNull("direct rate $bad", fixedClockConverter.convert(100.0, "USD", "GBP"))
+        }
+    }
+
+    @Test
+    fun `legacy convert fails closed on invalid composite leg`() = runTest {
+        for (bad in invalidRates) {
+            coEvery { exchangeRateStore.getRate(any(), any()) } returns null
+            coEvery { exchangeRateStore.getRate("USD", "EUR") } returns rateRow("USD", "EUR", bad)
+            coEvery { exchangeRateStore.getRate("EUR", "GBP") } returns rateRow("EUR", "GBP", 0.85)
+            assertNull("first leg $bad", fixedClockConverter.convert(100.0, "USD", "GBP"))
+
+            coEvery { exchangeRateStore.getRate("USD", "EUR") } returns rateRow("USD", "EUR", 0.9)
+            coEvery { exchangeRateStore.getRate("EUR", "GBP") } returns rateRow("EUR", "GBP", bad)
+            assertNull("second leg $bad", fixedClockConverter.convert(100.0, "USD", "GBP"))
+        }
+    }
+
+    @Test
+    fun `legacy convert still converts with valid direct and composite rates`() = runTest {
+        coEvery { exchangeRateStore.getRate(any(), any()) } returns null
+        coEvery { exchangeRateStore.getRate("USD", "GBP") } returns rateRow("USD", "GBP", 0.8)
+        val direct = fixedClockConverter.convert(100.0, "USD", "GBP")
+        assertNotNull(direct)
+        assertApproxEquals(80.0, direct!!.convertedAmount, 0.000001)
+
+        coEvery { exchangeRateStore.getRate("USD", "GBP") } returns null
+        coEvery { exchangeRateStore.getRate("USD", "EUR") } returns rateRow("USD", "EUR", 0.9)
+        coEvery { exchangeRateStore.getRate("EUR", "GBP") } returns rateRow("EUR", "GBP", 0.8)
+        val composite = fixedClockConverter.convert(100.0, "USD", "GBP")
+        assertNotNull(composite)
+        assertApproxEquals(72.0, composite!!.convertedAmount, 0.000001)
+    }
+
+    @Test
+    fun `convertAsOf fails closed on invalid direct and composite rates`() = runTest {
+        for (bad in invalidRates) {
+            coEvery { exchangeRateStore.getRateAsOf(any(), any(), any()) } returns null
+            coEvery { exchangeRateStore.getRateAsOf("USD", "GBP", moneyNow) } returns rateRow("USD", "GBP", bad)
+            assertNull("direct $bad", fixedClockConverter.convertAsOf(100.0, "USD", "GBP", moneyNow))
+
+            coEvery { exchangeRateStore.getRateAsOf("USD", "GBP", moneyNow) } returns null
+            coEvery { exchangeRateStore.getRateAsOf("USD", "EUR", moneyNow) } returns rateRow("USD", "EUR", bad)
+            coEvery { exchangeRateStore.getRateAsOf("EUR", "GBP", moneyNow) } returns rateRow("EUR", "GBP", 0.8)
+            assertNull("composite leg1 $bad", fixedClockConverter.convertAsOf(100.0, "USD", "GBP", moneyNow))
+
+            coEvery { exchangeRateStore.getRateAsOf("USD", "EUR", moneyNow) } returns rateRow("USD", "EUR", 0.9)
+            coEvery { exchangeRateStore.getRateAsOf("EUR", "GBP", moneyNow) } returns rateRow("EUR", "GBP", bad)
+            assertNull("composite leg2 $bad", fixedClockConverter.convertAsOf(100.0, "USD", "GBP", moneyNow))
+        }
+    }
+
+    @Test
+    fun `convertAsOf still converts valid direct rate`() = runTest {
+        coEvery { exchangeRateStore.getRateAsOf("USD", "GBP", moneyNow) } returns rateRow("USD", "GBP", 0.8)
+
+        val result = fixedClockConverter.convertAsOf(100.0, "USD", "GBP", moneyNow)
+
+        assertNotNull(result)
+        assertApproxEquals(80.0, result!!.convertedAmount, 0.000001)
+    }
+
+    @Test
+    fun `convertOutcome latest basis never yields Converted for invalid rates`() = runTest {
+        for (bad in invalidRates) {
+            coEvery { exchangeRateStore.getLatestRateForPair(any(), any()) } returns null
+            coEvery { exchangeRateStore.getLatestRateForPair("USD", "GBP") } returns rateRow("USD", "GBP", bad)
+            val direct = fixedClockConverter.convertOutcome(100.0, "USD", "GBP", RateBasis.LATEST_AVAILABLE)
+            assertFailedMissing("direct $bad", direct)
+
+            coEvery { exchangeRateStore.getLatestRateForPair("USD", "GBP") } returns null
+            coEvery { exchangeRateStore.getLatestRateForPair("USD", "EUR") } returns rateRow("USD", "EUR", bad)
+            coEvery { exchangeRateStore.getLatestRateForPair("EUR", "GBP") } returns rateRow("EUR", "GBP", 0.8)
+            assertFailedMissing(
+                "composite leg1 $bad",
+                fixedClockConverter.convertOutcome(100.0, "USD", "GBP", RateBasis.LATEST_AVAILABLE)
+            )
+
+            coEvery { exchangeRateStore.getLatestRateForPair("USD", "EUR") } returns rateRow("USD", "EUR", 0.9)
+            coEvery { exchangeRateStore.getLatestRateForPair("EUR", "GBP") } returns rateRow("EUR", "GBP", bad)
+            assertFailedMissing(
+                "composite leg2 $bad",
+                fixedClockConverter.convertOutcome(100.0, "USD", "GBP", RateBasis.LATEST_AVAILABLE)
+            )
+        }
+    }
+
+    @Test
+    fun `convertOutcome historical basis never yields Converted for invalid rates`() = runTest {
+        for (bad in invalidRates) {
+            coEvery { exchangeRateStore.getRateAsOf(any(), any(), any()) } returns null
+            coEvery { exchangeRateStore.getRateAsOf("USD", "GBP", moneyNow) } returns rateRow("USD", "GBP", bad)
+            val direct = fixedClockConverter.convertOutcome(
+                100.0, "USD", "GBP", RateBasis.TRANSACTION_DATE, atMillis = moneyNow
+            )
+            assertEquals("direct $bad", true, direct is ConversionOutcome.Failed)
+
+            coEvery { exchangeRateStore.getRateAsOf("USD", "GBP", moneyNow) } returns null
+            coEvery { exchangeRateStore.getRateAsOf("USD", "EUR", moneyNow) } returns rateRow("USD", "EUR", 0.9)
+            coEvery { exchangeRateStore.getRateAsOf("EUR", "GBP", moneyNow) } returns rateRow("EUR", "GBP", bad)
+            val composite = fixedClockConverter.convertOutcome(
+                100.0, "USD", "GBP", RateBasis.TRANSACTION_DATE, atMillis = moneyNow
+            )
+            assertEquals("composite $bad", true, composite is ConversionOutcome.Failed)
+        }
+    }
+
+    @Test
+    fun `convertOutcome still converts valid latest direct and composite rates`() = runTest {
+        coEvery { exchangeRateStore.getLatestRateForPair(any(), any()) } returns null
+        coEvery { exchangeRateStore.getLatestRateForPair("USD", "GBP") } returns rateRow("USD", "GBP", 0.8)
+        val direct = fixedClockConverter.convertOutcome(100.0, "USD", "GBP", RateBasis.LATEST_AVAILABLE)
+        assertEquals(true, direct is ConversionOutcome.Converted)
+        assertApproxEquals(80.0, (direct as ConversionOutcome.Converted).convertedAmount, 0.000001)
+
+        coEvery { exchangeRateStore.getLatestRateForPair("USD", "GBP") } returns null
+        coEvery { exchangeRateStore.getLatestRateForPair("USD", "EUR") } returns rateRow("USD", "EUR", 0.9)
+        coEvery { exchangeRateStore.getLatestRateForPair("EUR", "GBP") } returns rateRow("EUR", "GBP", 0.8)
+        val composite = fixedClockConverter.convertOutcome(100.0, "USD", "GBP", RateBasis.LATEST_AVAILABLE)
+        assertEquals(true, composite is ConversionOutcome.Converted)
+        assertApproxEquals(72.0, (composite as ConversionOutcome.Converted).convertedAmount, 0.000001)
+    }
+
+    private fun assertFailedMissing(message: String, outcome: ConversionOutcome) {
+        assertEquals(message, true, outcome is ConversionOutcome.Failed)
+        assertEquals(
+            message,
+            ConversionFailureType.MISSING_RATE,
+            (outcome as ConversionOutcome.Failed).failureType
+        )
     }
 
     @Test

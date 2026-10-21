@@ -9,11 +9,9 @@ import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.TimeProvider
-import io.mockk.CapturingSlot
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
-import io.mockk.slot
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
@@ -57,35 +55,77 @@ class JsonExpenseImporterTest {
     private fun newCountingProvider(): CountingTimeProvider =
         CountingTimeProvider(FakeTimeProvider(fixedNow))
 
-    private fun captureRequest(): CapturingSlot<CreateExpenseRequest> {
-        val requestSlot = slot<CreateExpenseRequest>()
-        coEvery { coordinator.createExpense(capture(requestSlot)) } returns CreateExpenseResult.Created(1L)
-        return requestSlot
-    }
+    private data class DateRow(
+        val name: String,
+        val schemaVersion: Int,
+        val rowFields: String,
+        val expectedDate: Long,
+        val expectedNowCalls: Int
+    )
 
-    // ── Valid date ────────────────────────────────────────────────────────────
+    // ── Date/timestamp resolution contract ────────────────────────────────────
 
     @Test
-    fun `valid date is used and provider is not consulted`() = runTest {
-        val provider = newCountingProvider()
-        val importer = newImporter(provider)
-        val requestSlot = captureRequest()
+    fun `date resolution table prefers date then timestamp then provider exactly once`() = runTest {
+        val rows = listOf(
+            DateRow("valid date is used, provider not consulted", 2, """"date": $providedDate""", providedDate, 0),
+            DateRow(
+                "valid date takes precedence over valid timestamp",
+                2,
+                """"date": $providedDate, "timestamp": ${providedDate - 1000}""",
+                providedDate,
+                0
+            ),
+            // Long.MIN_VALUE is a valid provided date, so the provider must not be called.
+            DateRow("Long.MIN_VALUE date is a valid provided value", 2, """"date": ${Long.MIN_VALUE}""", Long.MIN_VALUE, 0),
+            DateRow("valid timestamp is used when date absent", 2, """"timestamp": $providedDate""", providedDate, 0),
+            DateRow("absent date and timestamp fall back to provider once", 2, "", fixedNow, 1),
+            DateRow(
+                "invalid date falls back to valid timestamp without provider",
+                2,
+                """"date": "not-a-date", "timestamp": $providedDate""",
+                providedDate,
+                0
+            ),
+            DateRow(
+                "null date and null timestamp fall back to provider once",
+                2,
+                """"date": null, "timestamp": null""",
+                fixedNow,
+                1
+            ),
+            DateRow("invalid date without timestamp falls back to provider once", 2, """"date": "garbage"""", fixedNow, 1),
+            DateRow("V1 valid date is used without provider", 1, """"date": $providedDate""", providedDate, 0)
+        )
+        assertEquals("date resolution table size", 9, rows.size)
 
-        val content = """
-            {
-              "schemaVersion": 2,
-              "rows": [
-                {"merchant": "Starbucks", "amount": 25.5, "date": $providedDate}
-              ]
+        val failures = mutableListOf<String>()
+        rows.forEach { row ->
+            val provider = newCountingProvider()
+            val importer = newImporter(provider)
+            val captured = mutableListOf<CreateExpenseRequest>()
+            coEvery { coordinator.createExpense(capture(captured)) } returns CreateExpenseResult.Created(1L)
+
+            val extra = if (row.rowFields.isEmpty()) "" else ", ${row.rowFields}"
+            val result = importer.importFromContent(
+                """{"schemaVersion": ${row.schemaVersion}, "rows": [{"merchant": "Starbucks", "amount": 25.5$extra}]}"""
+            )
+
+            if (!result.success) failures += "row '${row.name}': import did not succeed"
+            else if (captured.size != 1) failures += "row '${row.name}': expected 1 request, got ${captured.size}"
+            else {
+                if (captured.single().date != row.expectedDate) {
+                    failures += "row '${row.name}': date expected ${row.expectedDate} but was ${captured.single().date}"
+                }
+                if (provider.nowCalls != row.expectedNowCalls) {
+                    failures += "row '${row.name}': provider nowCalls expected ${row.expectedNowCalls} but was ${provider.nowCalls}"
+                }
             }
-        """.trimIndent()
-
-        val result = importer.importFromContent(content)
-
-        assertTrue(result.success)
-        assertEquals(providedDate, requestSlot.captured.date)
-        assertEquals("Provider must not be called when a valid date exists", 0, provider.nowCalls)
+        }
+        assertTrue("${failures.size}/${rows.size} rows failed:\n" + failures.joinToString("\n"), failures.isEmpty())
     }
+
+    // ── Provenance ────────────────────────────────────────────────────────────
 
     @Test
     fun `JSON rows carry import provenance batch id and row number`() = runTest {
@@ -142,190 +182,6 @@ class JsonExpenseImporterTest {
 
         assertEquals(2, requests.size)
         assertTrue(requests[0].csvImportBatchId != requests[1].csvImportBatchId)
-    }
-
-    @Test
-    fun `valid date takes precedence over valid timestamp`() = runTest {
-        val provider = newCountingProvider()
-        val importer = newImporter(provider)
-        val requestSlot = captureRequest()
-
-        val content = """
-            {
-              "schemaVersion": 2,
-              "rows": [
-                {"merchant": "Starbucks", "amount": 25.5, "date": $providedDate, "timestamp": ${providedDate - 1000}}
-              ]
-            }
-        """.trimIndent()
-
-        val result = importer.importFromContent(content)
-
-        assertTrue(result.success)
-        assertEquals(providedDate, requestSlot.captured.date)
-        assertEquals("Valid date must win over timestamp", 0, provider.nowCalls)
-    }
-
-    @Test
-    fun `Long MIN_VALUE date is a valid provided value and provider is not consulted`() = runTest {
-        val provider = newCountingProvider()
-        val importer = newImporter(provider)
-        val requestSlot = captureRequest()
-
-        val content = """
-            {
-              "schemaVersion": 2,
-              "rows": [
-                {"merchant": "Starbucks", "amount": 25.5, "date": ${Long.MIN_VALUE}}
-              ]
-            }
-        """.trimIndent()
-
-        val result = importer.importFromContent(content)
-
-        assertTrue(result.success)
-        assertEquals(Long.MIN_VALUE, requestSlot.captured.date)
-        assertEquals("Long.MIN_VALUE is a valid provided date, so provider must not be called", 0, provider.nowCalls)
-    }
-
-    // ── Valid timestamp ───────────────────────────────────────────────────────
-
-    @Test
-    fun `valid timestamp is used when date absent`() = runTest {
-        val provider = newCountingProvider()
-        val importer = newImporter(provider)
-        val requestSlot = captureRequest()
-
-        val content = """
-            {
-              "schemaVersion": 2,
-              "rows": [
-                {"merchant": "Starbucks", "amount": 25.5, "timestamp": $providedDate}
-              ]
-            }
-        """.trimIndent()
-
-        val result = importer.importFromContent(content)
-
-        assertTrue(result.success)
-        assertEquals(providedDate, requestSlot.captured.date)
-        assertEquals("Provider must not be called when a valid timestamp exists", 0, provider.nowCalls)
-    }
-
-    // ── Absent fields → fake provider fallback ────────────────────────────────
-
-    @Test
-    fun `absent date and timestamp fall back to provider once`() = runTest {
-        val provider = newCountingProvider()
-        val importer = newImporter(provider)
-        val requestSlot = captureRequest()
-
-        val content = """
-            {
-              "schemaVersion": 2,
-              "rows": [
-                {"merchant": "Starbucks", "amount": 25.5}
-              ]
-            }
-        """.trimIndent()
-
-        val result = importer.importFromContent(content)
-
-        assertTrue(result.success)
-        assertEquals(fixedNow, requestSlot.captured.date)
-        assertEquals("Provider fallback must be consulted exactly once", 1, provider.nowCalls)
-    }
-
-    // ── Invalid / null fields ─────────────────────────────────────────────────
-
-    @Test
-    fun `invalid date falls back to valid timestamp without provider`() = runTest {
-        val provider = newCountingProvider()
-        val importer = newImporter(provider)
-        val requestSlot = captureRequest()
-
-        val content = """
-            {
-              "schemaVersion": 2,
-              "rows": [
-                {"merchant": "Starbucks", "amount": 25.5, "date": "not-a-date", "timestamp": $providedDate}
-              ]
-            }
-        """.trimIndent()
-
-        val result = importer.importFromContent(content)
-
-        assertTrue(result.success)
-        assertEquals(providedDate, requestSlot.captured.date)
-        assertEquals("Invalid date must fall through to valid timestamp, not provider", 0, provider.nowCalls)
-    }
-
-    @Test
-    fun `null date and null timestamp fall back to provider once`() = runTest {
-        val provider = newCountingProvider()
-        val importer = newImporter(provider)
-        val requestSlot = captureRequest()
-
-        val content = """
-            {
-              "schemaVersion": 2,
-              "rows": [
-                {"merchant": "Starbucks", "amount": 25.5, "date": null, "timestamp": null}
-              ]
-            }
-        """.trimIndent()
-
-        val result = importer.importFromContent(content)
-
-        assertTrue(result.success)
-        assertEquals(fixedNow, requestSlot.captured.date)
-        assertEquals("Null date/timestamp must fall back to provider exactly once", 1, provider.nowCalls)
-    }
-
-    @Test
-    fun `invalid date without timestamp falls back to provider once`() = runTest {
-        val provider = newCountingProvider()
-        val importer = newImporter(provider)
-        val requestSlot = captureRequest()
-
-        val content = """
-            {
-              "schemaVersion": 2,
-              "rows": [
-                {"merchant": "Starbucks", "amount": 25.5, "date": "garbage"}
-              ]
-            }
-        """.trimIndent()
-
-        val result = importer.importFromContent(content)
-
-        assertTrue(result.success)
-        assertEquals(fixedNow, requestSlot.captured.date)
-        assertEquals("Invalid date with no timestamp must fall back to provider once", 1, provider.nowCalls)
-    }
-
-    // ── V1 rows share the same resolution ─────────────────────────────────────
-
-    @Test
-    fun `V1 valid date is used without provider`() = runTest {
-        val provider = newCountingProvider()
-        val importer = newImporter(provider)
-        val requestSlot = captureRequest()
-
-        val content = """
-            {
-              "schemaVersion": 1,
-              "rows": [
-                {"merchant": "Starbucks", "amount": 25.5, "date": $providedDate}
-              ]
-            }
-        """.trimIndent()
-
-        val result = importer.importFromContent(content)
-
-        assertTrue(result.success)
-        assertEquals(providedDate, requestSlot.captured.date)
-        assertEquals("V1 valid date must not consult provider", 0, provider.nowCalls)
     }
 
     // ── GR-14u44b write-barrier gating ────────────────────────────────────────

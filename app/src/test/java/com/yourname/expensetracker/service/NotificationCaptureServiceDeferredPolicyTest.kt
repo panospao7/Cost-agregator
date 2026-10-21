@@ -555,6 +555,66 @@ class NotificationCaptureServiceDeferredPolicyTest {
     }
 
     @Test
+    fun `live capture cancellation releases the dedupe key emits one CANCELLED event and propagates`() {
+        // PRIV-14: the Allowed (live) path records the dedupe key via tryStart before the
+        // intake handoff. A cancellation during that handoff must release the key, otherwise a
+        // genuine repost inside the dedupe window is swallowed as DUPLICATE.
+        val deduper = mockk<com.yourname.expensetracker.domain.notification.capture.NotificationCaptureDeduper>()
+        val startedKey = slot<String>()
+        val removedKey = slot<String>()
+        every { deduper.tryStart(capture(startedKey), any()) } returns false
+        every { deduper.remove(capture(removedKey)) } returns Unit
+        ReflectionHelpers.setField(service, "deduper", deduper)
+        val timeProvider = mockk<com.yourname.expensetracker.domain.util.TimeProvider>()
+        every { timeProvider.now() } returns 1_700_000_000_000L
+        ReflectionHelpers.setField(service, "timeProvider", timeProvider)
+
+        coEvery { captureGate.decide(any(), any()) } coAnswers {
+            captureJob = currentCoroutineContext().job
+            captureJob.invokeOnCompletion { completionCause = it }
+            NotificationCaptureDecision.Allowed
+        }
+        coEvery { privacySettingsRepository.getSettings() } returns
+            PrivacySettings(notificationCaptureEnabled = true, rawNotificationStorageMode = RawStorageMode.STORE_REDACTED)
+        coEvery {
+            intakeCoordinator.capture(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        } throws CancellationException("cancelled")
+
+        mockkObject(NotificationFilter)
+        try {
+            every { NotificationFilter.decide(any(), any(), any(), any()) } returns NotificationFilterDecision(
+                capture = true,
+                reason = NotificationFilterReason.ALLOW_STRONG_EXPENSE,
+                confidence = 1.0f,
+                direction = TransactionDirection.DEBIT,
+                hasMoneySignal = true
+            )
+
+            postNotification(buildStatusBarNotification {
+                putCharSequence(Notification.EXTRA_TITLE, "Bank")
+                putCharSequence(Notification.EXTRA_TEXT, "Paid EUR 12.00")
+            })
+        } finally {
+            unmockkObject(NotificationFilter)
+        }
+
+        // Key released exactly once, and it is the very key tryStart recorded.
+        verify(exactly = 1) { deduper.tryStart(any(), any()) }
+        verify(exactly = 1) { deduper.remove(any()) }
+        assertEquals(startedKey.captured, removedKey.captured)
+
+        // Exactly one bounded CANCELLED terminal event.
+        val cancelled = emittedEvents.filter { it.outcome == EventOutcome.CANCELLED }
+        assertEquals(1, cancelled.size)
+        assertEquals(DiagnosticReasonCode.CAPTURE_CANCELLED, cancelled.single().reasonCode)
+        assertTrue(cancelled.single().isTerminal)
+
+        // The CancellationException still propagates out of the capture coroutine.
+        assertTrue("cancellation must propagate out of the capture coroutine", captureJob.isCancelled)
+        assertTrue(completionCause is CancellationException)
+    }
+
+    @Test
     fun `parent cancellation during capability read is accounted for and propagated`() {
         assertParentCancellationAt("capability")
     }

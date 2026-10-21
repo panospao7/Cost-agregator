@@ -21,6 +21,7 @@ import com.yourname.expensetracker.data.privacy.BackupEncryptionService
 import com.yourname.expensetracker.data.privacy.ExportAnonymizer
 import com.yourname.expensetracker.data.database.APP_DATABASE_SCHEMA_VERSION
 import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.data.database.DatabaseSchemaPolicy
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.di.IoDispatcher
@@ -97,7 +98,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
     private val diagnosticSink: MaintenanceSafeDiagnosticSink,
     private val timeProvider: TimeProvider,
     private val databaseReadBarrier: com.yourname.expensetracker.data.backup.DatabaseReadBarrier =
-        com.yourname.expensetracker.data.backup.DatabaseReadBarrier(restoreMaintenanceMode)
+        com.yourname.expensetracker.data.backup.DatabaseReadBarrier(restoreMaintenanceMode),
+    private val databaseWriteBarrier: com.yourname.expensetracker.data.backup.DatabaseWriteBarrier =
+        com.yourname.expensetracker.data.backup.DatabaseWriteBarrier(restoreMaintenanceMode)
 ) : DatabaseBackupRepository {
 
     private var stagedImportVerifier: suspend (Context, String, File, Int, DatabaseImportSummary) -> DatabaseImportSummary =
@@ -130,7 +133,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         object : RestoreDatabaseOpener { override fun openFreshDatabase() = database },
         com.yourname.expensetracker.data.backup.MaintenanceOperationRunner(
             restoreMaintenanceMode,
-            com.yourname.expensetracker.domain.workers.NoOpWorkerDrainController()
+            com.yourname.expensetracker.domain.workers.NoOpWorkerDrainController(),
+            com.yourname.expensetracker.data.backup.DatabaseWriteBarrier(restoreMaintenanceMode)
         ),
         com.yourname.expensetracker.data.backup.SqliteSnapshotCreator(),
         com.yourname.expensetracker.data.backup.RestoreInternalWriteScope(restoreMaintenanceMode),
@@ -149,7 +153,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
 
         /** RP-03A (P7-003): app-private home for legacy/test-delegate .costbackup files. */
         private const val COSTBACKUP_SUBDIR = "costbackups"
-        private const val MIN_SUPPORTED_SCHEMA_VERSION = 6
+        /** R25-C: supported backup floor == the only schema floor the app opens. */
+        private const val MIN_SUPPORTED_SCHEMA_VERSION = DatabaseSchemaPolicy.MIGRATION_BASELINE
         private const val BUDGETS_SCHEMA_GUARD_VERSION = 86
         private const val IMPORT_STAGING_PREFIX = "expense_tracker_db_import_stage_"
         private const val CURRENT_SUPPORTED_SCHEMA_VERSION = APP_DATABASE_SCHEMA_VERSION
@@ -386,29 +391,16 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             )
         }
 
-        // Enter maintenance mode + drain workers before copying live DB (debug path)
-        try {
-            maintenanceOperationRunner.enterAndDrain(
-                RestoreMaintenanceMode.Mode.BACKUP_EXPORTING,
-                "exportDatabaseDebugRaw",
-                failOnTimeout = true
-            )
-        } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-            return@withContext Result.failure(e)
-        }
-        try {
-            val dbFile = context.getDatabasePath(AppDatabase.DATABASE_NAME)
-            if (!dbFile.exists()) {
-                return@withContext Result.failure(Exception("Database file not found"))
-            }
-
-            // --- Privacy gate checks ---
+        // --- Privacy gate checks (non-blocking preflight) ---
+        // G3-S2: the privacy audit logger honours the DB write barrier, so these checks must run
+        // BEFORE the BACKUP_EXPORTING window is entered. Rejected exports must not enter the
+        // maintenance cleanup scope because they never acquired it.
+        val encryptionEnabled = try {
             // 1. Check whether encrypted backup is enabled via settings
             val settings = privacySettingsRepository.getSettings()
-            val encryptionEnabled = settings.encryptedBackupEnabled
+            val encryptedBackupEnabled = settings.encryptedBackupEnabled
 
-            if (encryptionEnabled) {
+            if (encryptedBackupEnabled) {
                 // Gate: ENCRYPTED_BACKUP must be allowed
                 val encryptedDecision = privacyGate.check(
                     PrivacyCapability.ENCRYPTED_BACKUP,
@@ -430,6 +422,29 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                         PrivacyDeniedException(PrivacyCapability.RAWBACKUP_EXPORT)
                     )
                 }
+            }
+            encryptedBackupEnabled
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Timber.e("Backup: UNKNOWN_ERROR stage=export class=%s", e::class.java.simpleName)
+            return@withContext Result.failure(e)
+        }
+
+        // Enter maintenance mode + drain workers before copying live DB (debug path)
+        try {
+            maintenanceOperationRunner.enterAndDrain(
+                RestoreMaintenanceMode.Mode.BACKUP_EXPORTING,
+                "exportDatabaseDebugRaw",
+                failOnTimeout = true
+            )
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            return@withContext Result.failure(e)
+        }
+        try {
+            val dbFile = context.getDatabasePath(AppDatabase.DATABASE_NAME)
+            if (!dbFile.exists()) {
+                return@withContext Result.failure(Exception("Database file not found"))
             }
 
             val checkpointResult = checkpointWal()
@@ -610,7 +625,14 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         privacyMode: BackupPrivacyMode?,
         writeBundle: (CostBackupSnapshot) -> Result<T>
     ): Result<T> = withContext(ioDispatcher) {
-        val run = operationRunRecorder.start("BACKUP_EXPORT", actor = "user")
+        // R26: diagnostics must never break the export. A failing recorder start
+        // falls back to the no-op handle; cancellation still propagates.
+        val run = com.yourname.expensetracker.domain.util.CancellationSafe.runCatchingCancellable {
+            operationRunRecorder.start("BACKUP_EXPORT", actor = "user")
+        }.getOrElse {
+            Timber.w("BACKUP_RUN_RECORDER_START_FAILED")
+            NoOpOperationRunHandle
+        }
 
         // Privacy is a non-blocking preflight. Rejected exports must not enter
         // the maintenance cleanup scope because they never acquired it.
@@ -647,6 +669,10 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             )
         }
 
+        // G2: the write barrier blocks Room run finalization while BACKUP_EXPORTING is active, so
+        // terminal run calls made inside the maintenance window are captured here and replayed
+        // after restoreMaintenanceMode.exit() in the finally below.
+        val deferredTerminal = DeferredRunTerminal()
         try {
             // P1-05: Enter backup maintenance mode + drain workers for point-in-time consistency
             maintenanceOperationRunner.enterAndDrain(RestoreMaintenanceMode.Mode.BACKUP_EXPORTING,
@@ -661,7 +687,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 // DDL-512-12: finalize operation run for early failures
                 run.event("WAL_CHECKPOINTED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
                     reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.UNKNOWN_ERROR)
-                run.failedFinal("WAL checkpoint failed", checkpointResult.exceptionOrNull())
+                deferredTerminal.defer { run.failedFinal("WAL checkpoint failed", checkpointResult.exceptionOrNull()) }
                 return@withContext Result.failure(
                     checkpointResult.exceptionOrNull() ?: Exception("Failed to checkpoint WAL")
                 )
@@ -671,11 +697,14 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             // 1. BACKUP_EXPORTING maintenance mode (write barrier + worker drain)
             // 2. WAL checkpoint before snapshot
             // 3. Write barrier double-check right before snapshot
-            // 4. PRAGMA locking_mode = EXCLUSIVE (no-op on Android, documents intent)
-
-            // Set exclusive locking mode — no-op on Android (SQLite always uses
-            // exclusive mode for on-device DBs), but documents the intent.
-            database.openHelper.writableDatabase.query("PRAGMA locking_mode = EXCLUSIVE").use { /* consume cursor */ }
+            // 4. VACUUM INTO (API 30+), which reads the whole snapshot in a single read transaction.
+            //    On API 26-29 (or if VACUUM INTO fails) the drained whole-file copy runs right after
+            //    the TRUNCATE checkpoint: later commits by writers outside the barrier land in the WAL,
+            //    not the main file, so the copy reflects the checkpoint state (a tear would need an
+            //    auto-checkpoint during the copy). The method used is recorded on SNAPSHOT_CREATED.
+            // R26: no connection-level locking-mode change is applied; on a WAL database it
+            // persists on the pooled writer connection and blocks later writes
+            // (SQLITE_BUSY) while any reader holds a shared lock.
 
             // Double-check: verify write barrier is still active (mode wasn't exited
             // between checkpoint and snapshot). If somehow the mode was exited, this
@@ -689,7 +718,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 // DDL-512-12: finalize operation run
                 run.event("DATABASE_FILE_FOUND", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
                     reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.UNKNOWN_ERROR)
-                run.failedFinal("Database file not found")
+                deferredTerminal.defer { run.failedFinal("Database file not found") }
                 return@withContext Result.failure(Exception("Database file not found"))
             }
 
@@ -715,7 +744,14 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 // Use VACUUM INTO if supported, otherwise drained file-copy
                 val snapshotResult = snapshotCreator.createSnapshot(dbFile, tempDb, liveCountsBeforeCopy)
                 Timber.d("Snapshot created via %s", snapshotResult.method)
-                run.event("SNAPSHOT_CREATED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED)
+                run.event(
+                    "SNAPSHOT_CREATED",
+                    com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED,
+                    // R26: bounded enum name (VACUUM_INTO / drained copy) so a silent fallback is visible.
+                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                        .put("snapshotMethod", snapshotResult.method.name)
+                        .build()
+                )
 
                 // Sanitize if redacted
                 if (resolvedRedacted) {
@@ -735,7 +771,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     // snapshotDb is closed by the finally below.
                     run.event("SNAPSHOT_VERIFIED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
                         reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.VALIDATION_FAILED)
-                    run.failedFinal("Required table count query failed", e)
+                    deferredTerminal.defer { run.failedFinal("Required table count query failed", e) }
                     return@withContext Result.failure(e)
                 } finally {
                     runCatching { snapshotDb.close() }
@@ -747,7 +783,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     // DDL-512-12: finalize operation run for snapshot verification failure
                     run.event("SNAPSHOT_VERIFIED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
                         reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.VALIDATION_FAILED)
-                    run.failedFinal("Backup snapshot verification failed")
+                    deferredTerminal.defer { run.failedFinal("Backup snapshot verification failed") }
                     return@withContext Result.failure(
                         Exception("Backup snapshot verification failed: ${snapshotVerification.errors.joinToString("; ")}")
                     )
@@ -773,7 +809,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 val result = writeBundle(snapshot)
 
                 if (result.isFailure) {
-                    run.failedFinal("Bundle creation failed", result.exceptionOrNull())
+                    deferredTerminal.defer { run.failedFinal("Bundle creation failed", result.exceptionOrNull()) }
                     return@withContext Result.failure(
                         result.exceptionOrNull() ?: Exception("Failed to create .costbackup bundle")
                     )
@@ -782,7 +818,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 run.event("ENCRYPTED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED)
                 Timber.d("Created .costbackup bundle")
                 Timber.d("BackupOperationEvent.BACKUP_COMPLETED: backup finished successfully")
-                run.success()
+                deferredTerminal.defer { run.success() }
                 result
             } finally {
                 tempDb.delete()
@@ -790,10 +826,13 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e("Backup: UNKNOWN_ERROR stage=bundle_export class=%s", e::class.java.simpleName)
-            run.failedFinal("BACKUP_EXPORT_FAILED", e)
+            deferredTerminal.defer { run.failedFinal("BACKUP_EXPORT_FAILED", e) }
             Result.failure(e)
         } finally {
             runCatching { restoreMaintenanceMode.exit(forceRestartRequired = false) }
+            // G2: the barrier is released; now finalize the run row. Runs even if exit() failed
+            // (runCatching above) and on cancellation (flush is NonCancellable and never throws).
+            deferredTerminal.flush()
         }
     }
 
@@ -933,12 +972,49 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         }
     }
 
+    /**
+     * R32 N1: fail-closed entry guard for restore/import/reset. A cancelled post-swap restore
+     * leaves the process in RESTORE_COMPLETE_RESTART_REQUIRED with an ACTIVE post-swap journal that
+     * the next startup recovery must consume; a second operation must never overwrite it
+     * ([RestoreJournal.beginJournal] replaces a valid active journal). Also refuses in the absorbing
+     * CRITICAL_RECOVERY_REQUIRED mode. A corrupt active journal is deliberately NOT handled here:
+     * beginJournal already rejects it with JournalDurabilityException (critical latch).
+     *
+     * Returns the bounded blocked outcome (maps to WRITE_BARRIER_DENIED via
+     * [restoreFailureReasonCode]; operation reason RESTORE_BLOCKED) or null when the entry is clear.
+     * Mutates nothing: no journal, no mode change, no run recorded.
+     */
+    private fun restoreEntryBlockedOrNull(operation: String): DatabaseAccessBlockedException? {
+        val mode = restoreMaintenanceMode.currentMode()
+        val modeBlocks = mode == RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED ||
+            mode == RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED
+        val activeJournal = restoreJournal.readJournalResult() is RestoreJournal.JournalReadResult.Valid
+        if (!modeBlocks && !activeJournal) return null
+        Timber.w("Restore entry blocked code=%s operation=%s mode=%s", DiagnosticReasonCode.RESTORE_BLOCKED.name, operation, mode)
+        return DatabaseAccessBlockedException(
+            DatabaseAccessType.WRITE,
+            com.yourname.expensetracker.data.backup.DatabaseAccessOperation(name = operation, reason = DiagnosticReasonCode.RESTORE_BLOCKED.name),
+            mode
+        )
+    }
+
     private suspend fun enterRestoreAndDrain(operation: String) {
+        // Re-entrancy is rejected BEFORE the mode is entered so it can never leave it entered.
+        databaseWriteBarrier.checkNotInsideCountedWrite(kotlinx.coroutines.currentCoroutineContext())
         restoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.RESTORE_PREPARING)
         // Unlike the generic runner, keep the barrier closed on timeout until
         // this restore operation has durably finalized its pre-destructive abort.
+        // Typed timeouts map to DiagnosticReasonCode.TIMEOUT in restoreFailureReasonCode.
         if (!workerDrain.requestStopAndAwaitDrain(operation)) {
-            throw IllegalStateException("RESTORE_WORKER_DRAIN_TIMEOUT")
+            throw WorkerDrainTimeoutException(operation)
+        }
+        // Same fail-closed handling as the worker drain: the barrier stays closed and the
+        // caller's pre-destructive abort path finalizes it. No partial state is started.
+        if (!databaseWriteBarrier.awaitNoInFlightWrites(
+                com.yourname.expensetracker.data.backup.DatabaseWriteBarrier.WRITE_DRAIN_TIMEOUT_MS
+            )
+        ) {
+            throw com.yourname.expensetracker.data.backup.WriteDrainTimeoutException()
         }
     }
 
@@ -947,6 +1023,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         password: String
     ): Result<DatabaseImportResult> = withContext(ioDispatcher) {
         containRestoreOperation {
+        restoreEntryBlockedOrNull("restoreCostBackup")?.let { return@withContext Result.failure(it) }
         val run = operationRunRecorder.start("RESTORE_COSTBACKUP", actor = "user")
         // DDL-016-01: wrap in RestoreDiagnosticsSink so post-swap events never use Room
 
@@ -996,9 +1073,11 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                         severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.ERROR,
                         reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.VALIDATION_FAILED,
                         exception = error as? Exception, isTerminal = true)
-                    restoreEvents.finalizeRunFailed("BUNDLE_EXTRACTION_FAILED", error as? Exception)
                     restoreJournal.failJournal(journalEntry, "BUNDLE_EXTRACTION_FAILED")
                     exitAfterPreDestructiveAbort()
+                    // G2b: finalize the run only after the maintenance window is exited
+                    // (the write barrier blocks Room run finalization while it is active).
+                    restoreEvents.finalizeRunFailed("BUNDLE_EXTRACTION_FAILED", error as? Exception)
                     tempDir.deleteRecursively()
                     return@withContext when (error) {
                         is CostbackupBundle.WrongBackupPasswordException ->
@@ -1020,6 +1099,25 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             }
             restoreEvents.event("BUNDLE_VALIDATED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED)
 
+            // 3a. R25-C: reject a manifest schema outside [floor, current] BEFORE any
+            // staging/swap, while the live DB is intact (bounded code only).
+            val manifestSchemaCode = BackupSchemaUnsupportedException.codeForVersion(
+                manifest.databaseVersion, MIN_SUPPORTED_SCHEMA_VERSION, CURRENT_SUPPORTED_SCHEMA_VERSION
+            )
+            if (manifestSchemaCode != null) {
+                Timber.w("Restore: manifest schema rejected code=%s", manifestSchemaCode)
+                val schemaError = BackupSchemaUnsupportedException(manifestSchemaCode)
+                restoreEvents.event("BUNDLE_VALIDATED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
+                    severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.ERROR,
+                    reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.VALIDATION_FAILED, isTerminal = true)
+                restoreJournal.failJournal(journalEntry, manifestSchemaCode)
+                exitAfterPreDestructiveAbort()
+                // G2b: finalize the run only after the maintenance window is exited.
+                restoreEvents.finalizeRunFailed(manifestSchemaCode, schemaError)
+                tempDir.deleteRecursively()
+                return@withContext Result.failure(schemaError)
+            }
+
             // 4. Verify manifest has data
             val manifestTableCounts = manifest.tableCounts
             if (manifestTableCounts.values.all { it == 0 }) {
@@ -1027,9 +1125,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 restoreEvents.event("BUNDLE_VALIDATED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
                     severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.ERROR,
                     reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.VALIDATION_FAILED, isTerminal = true)
-                restoreEvents.finalizeRunFailed("Backup contains no data")
                 restoreJournal.failJournal(journalEntry, "BACKUP_EMPTY")
                 exitAfterPreDestructiveAbort()
+                restoreEvents.finalizeRunFailed("Backup contains no data")
                 tempDir.deleteRecursively()
                 return@withContext Result.failure(
                     Exception("Backup contains no data. Restore blocked.")
@@ -1050,9 +1148,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 restoreEvents.event("BUNDLE_VALIDATED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
                     severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.ERROR,
                     reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.VALIDATION_FAILED, isTerminal = true)
-                restoreEvents.finalizeRunFailed("Incomplete backup manifest", e)
                 restoreJournal.failJournal(journalEntry, "MANIFEST_INCOMPLETE")
                 exitAfterPreDestructiveAbort()
+                restoreEvents.finalizeRunFailed("Incomplete backup manifest", e)
                 tempDir.deleteRecursively()
                 return@withContext Result.failure(e)
             }
@@ -1075,9 +1173,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 // DDL-512-01: emit terminal event BEFORE failJournal
                 restoreEvents.event("STAGED_DB_VERIFIED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
                     severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.ERROR, exception = e, isTerminal = true)
-                restoreEvents.finalizeRunFailed("Staged verification failed", e)
                 restoreJournal.failJournal(journalEntry, "STAGED_VERIFICATION_FAILED")
                 exitAfterPreDestructiveAbort()
+                restoreEvents.finalizeRunFailed("Staged verification failed", e)
                 cleanupRestoreStaging(stagedDbPath, tempDir)
                 return@withContext Result.failure(
                     Exception("STAGED_VERIFICATION_FAILED")
@@ -1107,9 +1205,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                             com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
                             severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.ERROR,
                             exception = error as? Exception, isTerminal = true)
-                        restoreEvents.finalizeRunFailed("Post-migration verification failed", error as? Exception)
                         restoreJournal.failJournal(journalEntry, "POST_MIGRATION_VERIFICATION_FAILED")
                         exitAfterPreDestructiveAbort()
+                        restoreEvents.finalizeRunFailed("Post-migration verification failed", error as? Exception)
                         cleanupRestoreStaging(stagedDbPath, tempDir)
                         return@withContext Result.failure(
                             Exception("POST_MIGRATION_VERIFICATION_FAILED")
@@ -1127,9 +1225,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
                     severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.ERROR,
                     exception = e, isTerminal = true)
-                restoreEvents.finalizeRunFailed("Staged migration failed", e)
                 restoreJournal.failJournal(journalEntry, "STAGED_MIGRATION_FAILED")
                 exitAfterPreDestructiveAbort()
+                restoreEvents.finalizeRunFailed("Staged migration failed", e)
                 // Delete any migrated WAL/SHM files Room may have created
                 cleanupRestoreStaging(stagedDbPath, tempDir)
                 return@withContext Result.failure(
@@ -1147,9 +1245,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
                     severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.ERROR,
                     exception = safetyBackupResult.exceptionOrNull(), isTerminal = true)
-                restoreEvents.finalizeRunFailed("Safety backup failed: $reason", safetyBackupResult.exceptionOrNull())
                 restoreJournal.failJournal(journalEntry, "SAFETY_BACKUP_FAILED")
                 exitAfterPreDestructiveAbort()
+                restoreEvents.finalizeRunFailed("Safety backup failed: $reason", safetyBackupResult.exceptionOrNull())
                 cleanupRestoreStaging(stagedDbPath, tempDir)
                 return@withContext Result.failure(
                     Exception("Restore cancelled because safety backup failed: $reason")
@@ -1370,7 +1468,15 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         } catch (e: kotlinx.coroutines.CancellationException) {
             finishCancelledRestore(e) {
                 if (destructiveStarted) {
-                    restoreMaintenanceMode.enterCriticalRecoveryRequired("RESTORE_CANCELLED_AFTER_SWAP")
+                    // HZ-03 F1 (Q-R32-1): a post-swap cancellation is treated exactly like a
+                    // process crash. The journal stays in its post-swap state and the safety
+                    // backup, .pre_restore and the extraction workspace are all preserved, so
+                    // the next startup runs RestoreJournal.checkAndRecover (SWAPPING/VERIFYING
+                    // -> rollback, ASSETS_RESTORING -> asset resume). Writes stay blocked
+                    // (restart required); only the staged DB trio is residue. A failure here
+                    // is latched as RESTORE_CANCELLED_CLEANUP_FAILED by finishCancelledRestore.
+                    restoreMaintenanceMode.exit(forceRestartRequired = true)
+                    cleanupStagedDbTrio(stagedDbPath)
                 } else {
                     restoreJournal.failJournal(journalEntry, "RESTORE_CANCELLED")
                     cleanupRestoreStaging(stagedDbPath, tempDir)
@@ -1785,11 +1891,12 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
      * infrastructure.
      */
     /**
-     * ## RSP-R5A: LegacyDatabaseImporter for pre-v6 schemas (planned)
+     * ## RSP-R5A: LegacyDatabaseImporter for pre-baseline schemas (planned)
      * Currently [importDatabase] requires a source database at schema version
-     * >= [MIN_SUPPORTED_SCHEMA_VERSION] (v6). Databases created by very old app
-     * versions (v1–v5) are rejected because the migration chain does not cover
-     * those versions (see RSP-R2A).
+     * >= [MIN_SUPPORTED_SCHEMA_VERSION] (== [DatabaseSchemaPolicy.MIGRATION_BASELINE])
+     * and <= [APP_DATABASE_SCHEMA_VERSION]. Databases created by older app
+     * versions are rejected early with BACKUP_SCHEMA_UNSUPPORTED_LEGACY because no
+     * data-preserving migration chain covers them (see RSP-R2A).
      *
      * A future `LegacyDatabaseImporter` component should:
      * 1. Open the legacy `.db` file with `SQLiteDatabase.openDatabase()` (bypassing
@@ -1802,9 +1909,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
      *    are applied.
      * 5. Log warnings for any data that could not be mapped (e.g. dropped columns).
      *
-     * Until this importer is built, the [validateSourceDatabase] step will reject
-     * pre-v6 files with a descriptive error message directing the user to export
-     * their data first.
+     * Until this importer is built, the [validateSourceDatabase] step rejects
+     * out-of-range files with a bounded [BackupSchemaUnsupportedException] code.
      */
     override suspend fun importDatabase(sourceFile: File): Result<DatabaseImportSummary> = withContext(ioDispatcher) {
         containRestoreOperation {
@@ -1817,6 +1923,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             )
         }
 
+        restoreEntryBlockedOrNull("importDatabase")?.let { return@withContext Result.failure(it) }
         // DDL-512-13: wrap with operation run recorder for uniform diagnostic trail
         val run = operationRunRecorder.start("RESTORE_LEGACY_DB", actor = "user")
 
@@ -1847,20 +1954,22 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             // Validate source file exists and is readable
             if (!sourceFile.exists()) {
                 restoreJournal.failJournal(journalEntry, "validation_failed: source database file not found")
-                run.failedFinal("Source database file not found")
                 restoreMaintenanceMode.exit(forceRestartRequired = false)
+                // G2b: finalize the run only after the maintenance window is exited
+                // (the write barrier blocks Room run finalization while it is active).
+                run.failedFinal("Source database file not found")
                 return@withContext Result.failure(Exception("Source database file not found"))
             }
             if (!sourceFile.canRead()) {
                 restoreJournal.failJournal(journalEntry, "validation_failed: cannot read source database file")
-                run.failedFinal("Cannot read source database file")
                 restoreMaintenanceMode.exit(forceRestartRequired = false)
+                run.failedFinal("Cannot read source database file")
                 return@withContext Result.failure(Exception("Cannot read source database file. Check file permissions."))
             }
             if (sourceFile.length() == 0L) {
                 restoreJournal.failJournal(journalEntry, "validation_failed: source database file is empty")
-                run.failedFinal("Source database file is empty")
                 restoreMaintenanceMode.exit(forceRestartRequired = false)
+                run.failedFinal("Source database file is empty")
                 return@withContext Result.failure(Exception("Source database file is empty."))
             }
 
@@ -1871,16 +1980,19 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 Timber.e("Source database validation failed: SOURCE_VALIDATION_FAILED")
                 run.event("SOURCE_VALIDATED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
                     reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.VALIDATION_FAILED)
-                run.failedFinal("Invalid backup file", sourceValidation.exceptionOrNull())
                 restoreMaintenanceMode.exit(forceRestartRequired = false)
+                val validationError = sourceValidation.exceptionOrNull()
+                run.failedFinal("Invalid backup file", validationError)
                 return@withContext Result.failure(
-                    Exception("SOURCE_VALIDATION_FAILED")
+                    // R25-C: the bounded schema-range code is surfaced as-is.
+                    if (validationError is BackupSchemaUnsupportedException) validationError
+                    else Exception("SOURCE_VALIDATION_FAILED")
                 )
             }
             val sourceSummary = sourceValidation.getOrNull() ?: run {
                 restoreJournal.failJournal(journalEntry, "validation_failed: failed to read backup summary")
-                run.failedFinal("Failed to read backup summary")
                 restoreMaintenanceMode.exit(forceRestartRequired = false)
+                run.failedFinal("Failed to read backup summary")
                 return@withContext Result.failure(Exception("Failed to read backup summary"))
             }
 
@@ -1893,8 +2005,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 )
                 run.event("SOURCE_VALIDATED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
                     reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.VALIDATION_FAILED)
-                run.failedFinal("Backup file contains no data")
                 restoreMaintenanceMode.exit(forceRestartRequired = false)
+                run.failedFinal("Backup file contains no data")
                 return@withContext Result.failure(
                     Exception("Backup file contains no data. Import blocked to prevent data loss.")
                 )
@@ -1930,8 +2042,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     val reason = "SAFETY_BACKUP_FAILED"
                     Timber.e("Database import aborted: safety backup failed: $reason")
                     restoreJournal.failJournal(journalEntry, "Safety backup failed: $reason")
-                    run.failedFinal("Safety backup failed: $reason", safetyBackupResult.exceptionOrNull())
                     restoreMaintenanceMode.exit(forceRestartRequired = false)
+                    run.failedFinal("Safety backup failed: $reason", safetyBackupResult.exceptionOrNull())
                     return@withContext Result.failure(
                         Exception(
                             "Import cancelled because safety backup failed. " +
@@ -1941,8 +2053,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 }
                 safetyBackupFile = safetyBackupResult.getOrNull() ?: run {
                     restoreJournal.failJournal(journalEntry, "Safety backup path unavailable")
-                    run.failedFinal("Safety backup path unavailable")
                     restoreMaintenanceMode.exit(forceRestartRequired = false)
+                    run.failedFinal("Safety backup path unavailable")
                     return@withContext Result.failure(Exception("Safety backup was created but path is unavailable"))
                 }
 
@@ -2066,8 +2178,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     }
                 }
                 restoreJournal.failJournal(journalEntry, "IMPORT_FAILED_PRE_SWAP")
-                run.failedFinal("IMPORT_FAILED_PRE_SWAP", importError)
+                // destinationFilesMutated is provably false here (both mutated branches returned above).
                 restoreMaintenanceMode.exit(forceRestartRequired = false)
+                run.failedFinal("IMPORT_FAILED_PRE_SWAP", importError)
                 return@withContext Result.failure(importError)
 
             } finally {
@@ -2093,8 +2206,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             }
             Timber.e("Restore: %s stage=database_import class=%s", restoreFailureReasonCode(e), e::class.java.simpleName)
             restoreJournal.failJournal(journalEntry, "IMPORT_FAILED_PRE_SWAP")
-            run.failedFinal("IMPORT_FAILED_PRE_SWAP", e)
             restoreMaintenanceMode.exit(forceRestartRequired = false)
+            run.failedFinal("IMPORT_FAILED_PRE_SWAP", e)
             Result.failure(e)
         }
         }
@@ -2190,22 +2303,12 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 
                 // Reject unsupported schema versions before touching destination files.
                 val currentSupportedVersion = CURRENT_SUPPORTED_SCHEMA_VERSION
-                if (schemaVersion < MIN_SUPPORTED_SCHEMA_VERSION || schemaVersion > currentSupportedVersion) {
-                    Timber.e(
-                        "Source database schema version $schemaVersion is unsupported. " +
-                            "Supported range: $MIN_SUPPORTED_SCHEMA_VERSION..$currentSupportedVersion"
-                    )
-                    val message = if (schemaVersion < MIN_SUPPORTED_SCHEMA_VERSION) {
-                        "Backup from old app version (schema $schemaVersion). " +
-                            "Supported schema range is $MIN_SUPPORTED_SCHEMA_VERSION..$currentSupportedVersion. " +
-                            "Migration would destroy data. Please use a newer backup or manually migrate first."
-                    } else {
-                        "Backup uses newer schema $schemaVersion than this app supports ($currentSupportedVersion). " +
-                            "Please update the app or export from a compatible version."
-                    }
-                    return Result.failure(
-                        Exception(message)
-                    )
+                val unsupportedCode = BackupSchemaUnsupportedException.codeForVersion(
+                    schemaVersion, MIN_SUPPORTED_SCHEMA_VERSION, currentSupportedVersion
+                )
+                if (unsupportedCode != null) {
+                    Timber.w("Source database schema rejected code=%s", unsupportedCode)
+                    return Result.failure(BackupSchemaUnsupportedException(unsupportedCode))
                 }
                 
                 var requiresBudgetsRepair = false
@@ -2666,6 +2769,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         dbShmFile: File
     ): Result<Unit> {
         return com.yourname.expensetracker.domain.util.CancellationSafe.runCatchingCancellable {
+            // R25 D-M1: refuse gated DB opens for the whole rollback file replacement.
+            RestoreMaintenanceMode.raiseSwapLatch()
             com.yourname.expensetracker.domain.util.CancellationSafe.runCatchingCancellable { database.close() }
                 .onFailure { Timber.w("Restore: UNKNOWN_ERROR stage=close_room_before_rollback class=%s", it::class.java.simpleName) }
             com.yourname.expensetracker.domain.util.CancellationSafe.runCatchingCancellable { database.openHelper.close() }
@@ -2813,6 +2918,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
     
     override suspend fun resetDatabase(): Result<Unit> = withContext(ioDispatcher) {
         containRestoreOperation {
+        restoreEntryBlockedOrNull("resetDatabase")?.let { return@withContext Result.failure(it) }
         // DDL-512-13: wrap with operation run recorder for uniform diagnostic trail
         val run = operationRunRecorder.start("RESET_DATABASE", actor = "user")
         val liveDbFile = context.getDatabasePath(AppDatabase.DATABASE_NAME)
@@ -2851,9 +2957,11 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 resetEvents.event("SAFETY_BACKUP_CREATED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
                     reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.UNKNOWN_ERROR,
                     isTerminal = true)
-                resetEvents.finalizeRunFailed(reason, null)
                 restoreJournal.failJournal(journalEntry, "RESET_SAFETY_BACKUP_FAILED")
                 exitAfterPreDestructiveAbort()
+                // G2b: finalize the run only after the maintenance window is exited
+                // (the write barrier blocks Room run finalization while it is active).
+                resetEvents.finalizeRunFailed(reason, null)
                 return@withContext Result.failure(
                     Exception(
                         "Reset cancelled because safety backup failed. " +
@@ -2879,6 +2987,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 journalEntry = restoreJournal.transitionTo(journalEntry, RestoreJournal.JournalState.SWAPPING)
                 restoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.RESETTING_DATABASE)
                 destructiveStarted = true
+                // R25 D-M1: the RESETTING_DATABASE commit cleared the latch; re-raise it so the
+                // gated helper refuses reopening while live files are deleted/replaced.
+                RestoreMaintenanceMode.raiseSwapLatch()
                 closeLiveDatabaseForFileSwap()
                 // DDL-F876-01: destructive point — Room DB is closed; no run.* after this
                 resetEvents.markLiveDbSwapStarted()
@@ -2950,15 +3061,17 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             restoreJournal.failJournal(journalEntry, "RESET_FAILED_PRE_DESTRUCTIVE_STEP")
             val failureCode = restoreFailureReasonCode(e)
             Timber.e("Reset: %s stage=enter_or_drain class=%s", failureCode, e::class.java.simpleName)
-            com.yourname.expensetracker.domain.util.CancellationSafe.runCatchingCancellable { resetEvents.finalizeRunFailed(failureCode.name, null) }
             exitAfterPreDestructiveAbort()
+            com.yourname.expensetracker.domain.util.CancellationSafe.runCatchingCancellable { resetEvents.finalizeRunFailed(failureCode.name, null) }
             Result.failure(e)
         }
         }
     }
 
     private fun restoreFailureReasonCode(error: Throwable): DiagnosticReasonCode = when (error) {
+        is BackupSchemaUnsupportedException -> DiagnosticReasonCode.VALIDATION_FAILED
         is WorkerDrainTimeoutException -> DiagnosticReasonCode.TIMEOUT
+        is com.yourname.expensetracker.data.backup.WriteDrainTimeoutException -> DiagnosticReasonCode.TIMEOUT
         is DatabaseAccessBlockedException -> when (error.accessType) {
             DatabaseAccessType.WRITE -> DiagnosticReasonCode.WRITE_BARRIER_DENIED
             DatabaseAccessType.READ -> DiagnosticReasonCode.READ_BARRIER_DENIED
@@ -3046,6 +3159,46 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         }
 
         return Result.failure(Exception("Failed to checkpoint WAL"))
+    }
+}
+
+/**
+ * R25-C: a backup whose schema version is outside the supported
+ * [DatabaseSchemaPolicy.MIGRATION_BASELINE]..[APP_DATABASE_SCHEMA_VERSION] range.
+ * The message is the bounded [code] only (never paths, SQL, or file contents).
+ */
+class BackupSchemaUnsupportedException(val code: String) : IllegalStateException(code) {
+    companion object {
+        const val LEGACY = "BACKUP_SCHEMA_UNSUPPORTED_LEGACY"
+        const val NEWER = "BACKUP_SCHEMA_UNSUPPORTED_NEWER"
+
+        /** Returns the bounded rejection code for [version], or null when it is in range. */
+        fun codeForVersion(version: Int, floor: Int, current: Int): String? = when {
+            version < floor -> LEGACY
+            version > current -> NEWER
+            else -> null
+        }
+    }
+}
+
+/**
+ * G2: captures the first terminal run call made inside the BACKUP_EXPORTING maintenance
+ * window (where the write barrier blocks Room finalization) and replays it once via [flush]
+ * after the window is exited. If nothing was captured (e.g. cancellation) [flush] is a no-op.
+ */
+private class DeferredRunTerminal {
+    private var pending: (suspend () -> Unit)? = null
+
+    fun defer(terminal: suspend () -> Unit) {
+        if (pending == null) pending = terminal
+    }
+
+    suspend fun flush() {
+        val terminal = pending ?: return
+        pending = null
+        withContext(kotlinx.coroutines.NonCancellable) {
+            com.yourname.expensetracker.domain.util.CancellationSafe.runCatchingCancellable { terminal() }
+        }
     }
 }
 

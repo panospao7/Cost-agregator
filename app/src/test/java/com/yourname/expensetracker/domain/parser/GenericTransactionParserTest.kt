@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.domain.parser
 
+import com.yourname.expensetracker.domain.util.CurrencyNormalizer
+import com.yourname.expensetracker.domain.util.MerchantCleaner
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
@@ -9,6 +11,14 @@ class GenericTransactionParserTest {
     private lateinit var currencyNormalizer: com.yourname.expensetracker.domain.util.CurrencyNormalizer
     private lateinit var merchantCleaner: com.yourname.expensetracker.domain.util.MerchantCleaner
     private lateinit var directionDetector: com.yourname.expensetracker.domain.parser.TransferDirectionDetector
+
+    /** Parser wired with REAL collaborators (no mocks of normalizer/cleaner/detector). */
+    private val realParser = GenericTransactionParser(
+        currencyNormalizer = CurrencyNormalizer(),
+        merchantCleaner = MerchantCleaner(),
+        directionDetector = TransferDirectionDetector(),
+        timeProvider = io.mockk.mockk()
+    )
 
     @Before
     fun setup() {
@@ -25,43 +35,51 @@ class GenericTransactionParserTest {
         parser = GenericTransactionParser(currencyNormalizer, merchantCleaner, directionDetector, timeProvider = io.mockk.mockk())
     }
 
-    // === SUCCESSFUL PARSING ===
+    private data class AcceptCase(
+        val id: String,
+        val title: String = "Alert",
+        val text: String,
+        val expectedAmount: Double? = null,
+        val expectedExactMerchant: String? = null,
+        val expectedMerchantContains: String? = null,
+        val expectedType: ParsedTransactionType? = null,
+        val expectedCurrency: String? = null
+    )
+
+    private data class RejectCase(val id: String, val title: String, val text: String)
+
+    private fun parseMocked(title: String, text: String) = parser.parse(
+        title = title,
+        text = text,
+        bigText = null, subText = null,
+        packageName = "com.unknown.app"
+    )
+
+    private fun parseReal(text: String) = realParser.parse(
+        title = "Alert",
+        text = text,
+        bigText = null,
+        subText = null,
+        packageName = "unknown.app"
+    )
+
+    // === SUCCESSFUL PARSING (mocked collaborators) ===
 
     @Test
-    fun `parse you paid pattern`() {
-        val result = parser.parse(
-            title = "Alert",
-            text = "You paid €25.00 at Starbucks",
-            bigText = null, subText = null,
-            packageName = "com.unknown.app"
+    fun `successful parsing - amount patterns across english greek and greeklish`() {
+        val cases = listOf(
+            AcceptCase("you paid pattern", text = "You paid €25.00 at Starbucks", expectedAmount = 25.00, expectedExactMerchant = "Starbucks"),
+            AcceptCase("payment of pattern", title = "Notification", text = "Payment of €15.00 at Amazon", expectedAmount = 15.00),
+            AcceptCase("charged pattern", text = "Charged €10.50 at Shell Gas Station", expectedAmount = 10.50),
+            AcceptCase("Greek payment pattern", title = "Ειδοποίηση", text = "Πληρωμή 30,00 EUR στο COSMOTE", expectedAmount = 30.00),
+            AcceptCase("Greeklish payment pattern", text = "Pliromi 20,00 EUR sto MERCHANT", expectedAmount = 20.00)
         )
-        assertNotNull(result)
-        assertEquals(25.00, result!!.amount, 0.01)
-        assertEquals("Starbucks", result.merchant)
-    }
-
-    @Test
-    fun `parse payment of pattern`() {
-        val result = parser.parse(
-            title = "Notification",
-            text = "Payment of €15.00 at Amazon",
-            bigText = null, subText = null,
-            packageName = "com.unknown.app"
-        )
-        assertNotNull(result)
-        assertEquals(15.00, result!!.amount, 0.01)
-    }
-
-    @Test
-    fun `parse charged pattern`() {
-        val result = parser.parse(
-            title = "Alert",
-            text = "Charged €10.50 at Shell Gas Station",
-            bigText = null, subText = null,
-            packageName = "com.unknown.app"
-        )
-        assertNotNull(result)
-        assertEquals(10.50, result!!.amount, 0.01)
+        cases.forEach { c ->
+            val result = parseMocked(c.title, c.text)
+            assertNotNull("case '${c.id}' should parse", result)
+            assertEquals("case '${c.id}' amount", c.expectedAmount!!, result!!.amount, 0.01)
+            c.expectedExactMerchant?.let { assertEquals("case '${c.id}' merchant", it, result.merchant) }
+        }
     }
 
     @Test
@@ -88,186 +106,62 @@ class GenericTransactionParserTest {
     }
 
     @Test
-    fun `parse Greek payment pattern`() {
-        val result = parser.parse(
-            title = "Ειδοποίηση",
-            text = "Πληρωμή 30,00 EUR στο COSMOTE",
-            bigText = null, subText = null,
-            packageName = "com.unknown.app"
-        )
-        assertNotNull(result)
-        assertEquals(30.00, result!!.amount, 0.01)
-    }
-
-    @Test
-    fun `parse Greeklish payment pattern`() {
-        val result = parser.parse(
-            title = "Alert",
-            text = "Pliromi 20,00 EUR sto MERCHANT",
-            bigText = null, subText = null,
-            packageName = "com.unknown.app"
-        )
-        assertNotNull(result)
-        assertEquals(20.00, result!!.amount, 0.01)
-    }
-
-    @Test
     fun `lower confidence than app-specific parsers`() {
-        val result = parser.parse(
-            title = "Alert",
-            text = "You paid €25.00 at Starbucks",
-            bigText = null, subText = null,
-            packageName = "com.unknown.app"
-        )
+        val result = parseMocked("Alert", "You paid €25.00 at Starbucks")
         assertNotNull(result)
         assertEquals(0.60f, result!!.confidence, 0.01f)
     }
 
     @Test
     fun `ordinary purchase remains purchase`() {
-        val result = parser.parse(
-            title = "Alert",
-            text = "You paid €25.00 at Starbucks",
-            bigText = null,
-            subText = null,
-            packageName = "com.unknown.app"
-        )
+        val result = parseMocked("Alert", "You paid €25.00 at Starbucks")
 
         assertNotNull(result)
         assertEquals(ParsedTransactionType.PURCHASE, result!!.type)
     }
 
-    // === NEGATIVE SIGNAL REJECTION ===
+    // === REJECTION: NEGATIVE SIGNALS, NO STRONG SIGNAL, AMOUNT BOUNDS (mocked collaborators) ===
 
     @Test
-    fun `reject offer notification`() {
-        assertNull(parser.parse(
-            title = "Special offer!",
-            text = "You paid €0 - save up to €50 today! offer ends soon",
-            bigText = null, subText = null,
-            packageName = "com.unknown.app"
-        ))
-    }
-
-    @Test
-    fun `reject OTP notification`() {
-        assertNull(parser.parse(
-            title = "Verification code",
-            text = "Your OTP code is 123456",
-            bigText = null, subText = null,
-            packageName = "com.unknown.app"
-        ))
-    }
-
-    @Test
-    fun `reject tracking notification`() {
-        assertNull(parser.parse(
-            title = "Order update",
-            text = "Your order has been shipped and is being tracked",
-            bigText = null, subText = null,
-            packageName = "com.unknown.app"
-        ))
-    }
-
-    @Test
-    fun `reject balance notification`() {
-        assertNull(parser.parse(
-            title = "Balance update",
-            text = "Your balance is €1500.00",
-            bigText = null, subText = null,
-            packageName = "com.unknown.app"
-        ))
-    }
-
-    @Test
-    fun `reject sale promotion`() {
-        assertNull(parser.parse(
-            title = "Big Sale",
-            text = "50% off everything! Sale ends tonight",
-            bigText = null, subText = null,
-            packageName = "com.unknown.app"
-        ))
-    }
-
-    @Test
-    fun `reject Greek promotional notification`() {
-        assertNull(parser.parse(
-            title = "Προσφορά",
-            text = "Δωρεάν αποστολή σε παραγγελίες άνω των €30",
-            bigText = null, subText = null,
-            packageName = "com.unknown.app"
-        ))
-    }
-
-    // === NO STRONG SIGNAL ===
-
-    @Test
-    fun `reject notification without transaction signal`() {
-        assertNull(parser.parse(
-            title = "Random App",
-            text = "€25.00 available in your account",
-            bigText = null, subText = null,
-            packageName = "com.unknown.app"
-        ))
-    }
-
-    // === AMOUNT BOUNDS ===
-
-    @Test
-    fun `reject amount below 0_10`() {
-        assertNull(parser.parse(
-            title = "Alert",
-            text = "You paid €0.05 at Shop",
-            bigText = null, subText = null,
-            packageName = "com.unknown.app"
-        ))
-    }
-
-    @Test
-    fun `reject amount above 25000`() {
-        assertNull(parser.parse(
-            title = "Alert",
-            text = "You paid €30000.00 at Shop",
-            bigText = null, subText = null,
-            packageName = "com.unknown.app"
-        ))
-    }
-
-    // === MERCHANT EXTRACTION ===
-
-    @Test
-    fun `extract merchant after at`() {
-        val result = parser.parse(
-            title = "Alert",
-            text = "You paid €10.00 at Lidl Supermarket",
-            bigText = null, subText = null,
-            packageName = "com.unknown.app"
+    fun `rejection - negative signals missing signal and amount bounds`() {
+        val cases = listOf(
+            RejectCase("offer notification", "Special offer!", "You paid €0 - save up to €50 today! offer ends soon"),
+            RejectCase("OTP notification", "Verification code", "Your OTP code is 123456"),
+            RejectCase("tracking notification", "Order update", "Your order has been shipped and is being tracked"),
+            RejectCase("balance notification", "Balance update", "Your balance is €1500.00"),
+            RejectCase("sale promotion", "Big Sale", "50% off everything! Sale ends tonight"),
+            RejectCase("Greek promotional notification", "Προσφορά", "Δωρεάν αποστολή σε παραγγελίες άνω των €30"),
+            RejectCase("notification without transaction signal", "Random App", "€25.00 available in your account"),
+            RejectCase("amount below 0_10", "Alert", "You paid €0.05 at Shop"),
+            RejectCase("amount above 25000", "Alert", "You paid €30000.00 at Shop")
         )
-        assertNotNull(result)
-        assertTrue(result!!.merchant.contains("Lidl"))
+        cases.forEach { c ->
+            assertNull("case '${c.id}' should be rejected", parseMocked(c.title, c.text))
+        }
     }
 
+    // === MERCHANT EXTRACTION (mocked collaborators) ===
+
     @Test
-    fun `extract merchant after Greek preposition`() {
-        val result = parser.parse(
-            title = "Alert",
-            text = "Πληρωμή 10,00€ στο EVEREST",
-            bigText = null, subText = null,
-            packageName = "com.unknown.app"
+    fun `merchant extraction - after at and after Greek preposition`() {
+        val cases = listOf(
+            AcceptCase("extract merchant after at", text = "You paid €10.00 at Lidl Supermarket", expectedMerchantContains = "Lidl"),
+            AcceptCase("extract merchant after Greek preposition", text = "Πληρωμή 10,00€ στο EVEREST", expectedMerchantContains = "EVEREST")
         )
-        assertNotNull(result)
-        assertTrue(result!!.merchant.contains("EVEREST"))
+        cases.forEach { c ->
+            val result = parseMocked(c.title, c.text)
+            assertNotNull("case '${c.id}' should parse", result)
+            assertTrue(
+                "case '${c.id}' merchant '${result!!.merchant}' should contain '${c.expectedMerchantContains}'",
+                result.merchant.contains(c.expectedMerchantContains!!)
+            )
+        }
     }
 
     @Test
     fun `fallback to Unknown when no merchant found`() {
         io.mockk.every { merchantCleaner.clean(any()) } answers { firstArg() ?: "Unknown" }
-        val result = parser.parse(
-            title = "Alert",
-            text = "You paid €10.00",
-            bigText = null, subText = null,
-            packageName = "com.unknown.app"
-        )
+        val result = parseMocked("Alert", "You paid €10.00")
         assertNotNull(result)
         assertEquals("Unknown", result!!.merchant)
     }
@@ -281,16 +175,92 @@ class GenericTransactionParserTest {
             directionDetector.extractAccountName(any(), any(), any())
         } returns "Payroll Account"
 
-        val result = parser.parse(
-            title = "Salary credited",
-            text = "Deposit €1500.00",
-            bigText = null, subText = null,
-            packageName = "com.unknown.app"
-        )
+        val result = parseMocked("Salary credited", "Deposit €1500.00")
 
         assertNotNull(result)
         assertEquals(ParsedTransactionType.DEPOSIT, result!!.type)
         assertEquals(ParsedTransferDirection.INCOMING, result.transferDirection)
         assertEquals("From: Payroll Account", result.transferAccountName)
+    }
+
+    // === REAL COLLABORATORS (formerly the "stress" suite) ===
+
+    @Test
+    fun `real collaborators - accepted messages yield expected type amount currency and merchant`() {
+        val cases = listOf(
+            AcceptCase(
+                "generic purchase with amount and merchant",
+                text = "Payment of €25.00 at Starbucks",
+                expectedType = ParsedTransactionType.PURCHASE,
+                expectedAmount = 25.0,
+                expectedMerchantContains = "Starbucks"
+            ),
+            AcceptCase(
+                "incoming deposit signal as deposit type",
+                text = "Salary credited €1200.00 from ACME",
+                expectedType = ParsedTransactionType.DEPOSIT
+            ),
+            AcceptCase(
+                "greek deposit message containing apo is not rejected",
+                text = "Κατάθεση €120,00 από ACME LTD",
+                expectedType = ParsedTransactionType.DEPOSIT,
+                expectedAmount = 120.0
+            ),
+            AcceptCase(
+                "dollar currency normalization",
+                text = "You paid $10.00 at Walmart",
+                expectedCurrency = "USD"
+            ),
+            AcceptCase(
+                "supported european amount format",
+                text = "Πληρωμή 12,50 EUR στο Μασούτης",
+                expectedAmount = 12.5
+            ),
+            AcceptCase(
+                "one decimal place amount with currency adjacent",
+                text = "Payment of €12,5 at Cafe",
+                expectedAmount = 12.5
+            ),
+            AcceptCase(
+                "prefers transaction amount when multiple amounts are present",
+                text = "Available €1.245,00. Payment of €12,5 at Cafe",
+                expectedAmount = 12.5
+            )
+        )
+        cases.forEach { c ->
+            val result = parseReal(c.text)
+            assertNotNull("case '${c.id}' should parse", result)
+            c.expectedType?.let { assertEquals("case '${c.id}' type", it, result!!.type) }
+            c.expectedAmount?.let { assertEquals("case '${c.id}' amount", it, result!!.amount, 0.001) }
+            c.expectedCurrency?.let { assertEquals("case '${c.id}' currency", it, result!!.currency) }
+            c.expectedMerchantContains?.let {
+                assertTrue(
+                    "case '${c.id}' merchant '${result!!.merchant}' should contain '$it'",
+                    result!!.merchant.contains(it, ignoreCase = true)
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `real collaborators - non-financial marketing and malformed amount are rejected`() {
+        val cases = listOf(
+            "non-financial notification" to "Reminder: meeting at 3 PM",
+            "marketing message despite numbers" to "Flash sale 50% off - save up to €100",
+            "malformed fraction-like amount" to "Payment 1/2 EUR at Store"
+        )
+        cases.forEach { (id, text) ->
+            assertNull("case '$id' should be rejected", parseReal(text))
+        }
+    }
+
+    @Test
+    fun `real collaborators - is deterministic across repeated parses`() {
+        val input = "Transaction of €44.10 at Lidl"
+        val a = parseReal(input)
+        val b = parseReal(input)
+        assertNotNull("first parse must produce a result", a)
+        assertNotNull("second parse must produce a result", b)
+        assertEquals(a, b)
     }
 }

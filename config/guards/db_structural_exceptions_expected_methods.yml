@@ -69,7 +69,7 @@ baseline:
 # only; ownership cardinality is an observational migration metric and is not
 # pinned here.
 counts:
-  structural_entries: 65
+  structural_entries: 67
 
 expected:
 
@@ -237,13 +237,6 @@ expected:
     method_pattern: "exportDatabase"
     operation: getDatabasePath
     reason: "File-level backup/restore — resolves live DB path for export"
-    owner: "@panospao7"
-    linked_issue: "MIT-003"
-  - path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
-    class: DatabaseBackupRepositoryImpl
-    method_pattern: "runCostBackupExport"
-    operation: writableDatabase
-    reason: "File-level backup/restore — writable DB access for WAL checkpoint before snapshot"
     owner: "@panospao7"
     linked_issue: "MIT-003"
   - path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
@@ -511,6 +504,31 @@ expected:
     method_pattern: "migrateFromBackup"
     operation: openDatabase
     reason: "Debug-only legacy data migration — opens raw SQLite file for read-only migration"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── R25 core open gate (owner-approved Q-R25-G1, 2026-10-17) ─────
+  - path: app/src/main/java/com/yourname/expensetracker/data/database/DatabaseOpenGate.kt
+    class: DatabaseOpenGate
+    method_pattern: "probe"
+    operation: openDatabase
+    reason: "R25 DatabaseOpenGate read-only version probe (owner-approved Q-R25-G1) — OPEN_READONLY open with a no-op error handler; never writes, repairs or deletes"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/data/database/DatabaseOpenGate.kt
+    class: DatabaseOpenGate
+    method_pattern: "databaseFile"
+    operation: getDatabasePath
+    reason: "R25 DatabaseOpenGate read-only version probe (owner-approved Q-R25-G1) — resolves the live database file path for the probe and export file list"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/data/database/GatedOpenHelper.kt
+    class: GatedOpenHelper
+    method_pattern: "openGated"
+    operation: writableDatabase
+    reason: "R25 GatedOpenHelperFactory gate wrapper (owner-approved Q-R25-G1) — the only delegate writableDatabase access, reached after the open gate and restore-swap checks"
     owner: "@panospao7"
     linked_issue: "MIT-003"
 

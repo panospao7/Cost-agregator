@@ -134,7 +134,7 @@ documents:
     lastReviewedSha: 9f583cc6964a888f9b51942627c2b4437d9abfcc
     currentStateSource:
       registry: scripts/ci/guard_registry.py
-      implementation: scripts/ci/build_db_finding_triage.py
+      implementation: scripts/ci/generate_db_baseline_v2.py
       evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
     historicalClaimsAllowed: false
   - id: legal-paths
@@ -224,7 +224,7 @@ documents:
     lastReviewedSha: 9f583cc6964a888f9b51942627c2b4437d9abfcc
     currentStateSource:
       registry: scripts/ci/guard_registry.py
-      implementation: scripts/ci/build_db_finding_triage.py
+      implementation: scripts/ci/generate_db_baseline_v2.py
       evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
     historicalClaimsAllowed: false
   - id: db-policy-signatures
@@ -340,7 +340,7 @@ documents:
     lastReviewedSha: 2742e54700000000000000000000000000000000
     currentStateSource:
       registry: scripts/ci/guard_registry.py
-      implementation: scripts/ci/inspect_db_mediation_proof.py
+      implementation: scripts/verify_db_access_boundaries.py
       evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
     historicalClaimsAllowed: true
   # ── Historical records (bannered; never current authority) ──────────────────

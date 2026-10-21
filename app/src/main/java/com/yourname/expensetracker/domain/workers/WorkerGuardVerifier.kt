@@ -40,6 +40,7 @@ class WorkerGuardVerifier @Inject constructor() {
         "DataRetentionWorker" to "data_retention",
         "DailyBriefingWorker" to "ai_daily_briefing",
         "BillReminderWorker" to "bill_reminder_periodic",
+        "RecurringHorizonWorker" to "recurring_horizon",
         "DismissReminderActionWorker" to "reminder_action_dismiss",
         "SnoozeReminderActionWorker" to "reminder_action_snooze"
     )
@@ -111,6 +112,7 @@ class WorkerGuardVerifier @Inject constructor() {
             com.yourname.expensetracker.data.privacy.DataRetentionWorker::class.java,
             com.yourname.expensetracker.data.ai.worker.DailyBriefingWorker::class.java,
             com.yourname.expensetracker.service.reminder.BillReminderWorker::class.java,
+            com.yourname.expensetracker.service.recurring.RecurringHorizonWorker::class.java,
             com.yourname.expensetracker.service.reminder.DismissReminderActionWorker::class.java,
             com.yourname.expensetracker.service.reminder.SnoozeReminderActionWorker::class.java
         )

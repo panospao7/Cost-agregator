@@ -6,91 +6,68 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import kotlin.reflect.KClass
 
 @RunWith(RobolectricTestRunner::class)
 @Config(manifest = Config.NONE, sdk = [33])
 class DeepLinkParserTest {
 
+    private class Row(
+        val name: String,
+        val uri: String,
+        val expectedKind: KClass<out DeepLinkDecision>,
+        val expectedDestination: NavigationDestination?
+    )
+
     @Test
-    fun `home host allows navigation to Home`() {
-        val decision = parseDeepLink(Uri.parse("expensetracker://home"))
-        assertTrue(decision is DeepLinkDecision.Allow)
-        assertEquals(NavigationDestination.Home, (decision as DeepLinkDecision.Allow).destination)
+    fun `deep link table yields exact decision kind and destination`() {
+        val rows = listOf(
+            Row("home host", "expensetracker://home",
+                DeepLinkDecision.Allow::class, NavigationDestination.Home),
+            Row("dashboard host", "expensetracker://dashboard",
+                DeepLinkDecision.Allow::class, NavigationDestination.Home),
+            Row("activity without expenseId", "expensetracker://activity",
+                DeepLinkDecision.Allow::class, NavigationDestination.Transactions(initialExpenseId = null)),
+            Row("activity with expenseId", "expensetracker://activity?expenseId=123",
+                DeepLinkDecision.RequireConfirmation::class, NavigationDestination.Transactions(initialExpenseId = 123L)),
+            Row("activity with invalid expenseId", "expensetracker://activity?expenseId=abc",
+                DeepLinkDecision.Allow::class, NavigationDestination.Transactions(initialExpenseId = null)),
+            Row("review", "expensetracker://review",
+                DeepLinkDecision.RequireConfirmation::class, NavigationDestination.Review),
+            Row("add", "expensetracker://add",
+                DeepLinkDecision.RequireConfirmation::class, NavigationDestination.AddExpense),
+            Row("plan", "expensetracker://plan",
+                DeepLinkDecision.Allow::class, NavigationDestination.Budget),
+            Row("analytics with period", "expensetracker://analytics?period=MONTH",
+                DeepLinkDecision.Allow::class, NavigationDestination.Analytics(initialPeriod = "MONTH")),
+            Row("map with location", "expensetracker://map?location=Athens",
+                DeepLinkDecision.Allow::class, NavigationDestination.SpendingMap(initialLocationQuery = "Athens")),
+            Row("unknown host", "expensetracker://unknown",
+                DeepLinkDecision.Reject::class, null),
+            Row("wrong scheme", "https://expensetracker.app/home",
+                DeepLinkDecision.Reject::class, null)
+        )
+
+        rows.forEach { row ->
+            val decision = parseDeepLink(Uri.parse(row.uri))
+            val actualDestination = when (decision) {
+                is DeepLinkDecision.Allow -> decision.destination
+                is DeepLinkDecision.RequireConfirmation -> decision.destination
+                is DeepLinkDecision.Reject -> null
+            }
+            assertEquals("Row '${row.name}' (${row.uri}) decision kind", row.expectedKind, decision::class)
+            assertEquals("Row '${row.name}' (${row.uri}) destination", row.expectedDestination, actualDestination)
+        }
     }
 
     @Test
-    fun `dashboard host allows navigation to Home`() {
-        val decision = parseDeepLink(Uri.parse("expensetracker://dashboard"))
-        assertTrue(decision is DeepLinkDecision.Allow)
-    }
-
-    @Test
-    fun `activity without expenseId allows transactions list`() {
-        val decision = parseDeepLink(Uri.parse("expensetracker://activity"))
-        assertTrue(decision is DeepLinkDecision.Allow)
-        assertTrue((decision as DeepLinkDecision.Allow).destination is NavigationDestination.Transactions)
-    }
-
-    @Test
-    fun `activity with expenseId requires confirmation`() {
-        val decision = parseDeepLink(Uri.parse("expensetracker://activity?expenseId=123"))
-        assertTrue(decision is DeepLinkDecision.RequireConfirmation)
-        val dest = (decision as DeepLinkDecision.RequireConfirmation).destination
-        assertTrue(dest is NavigationDestination.Transactions)
-        assertEquals(123L, (dest as NavigationDestination.Transactions).initialExpenseId)
-    }
-
-    @Test
-    fun `review requires confirmation`() {
-        val decision = parseDeepLink(Uri.parse("expensetracker://review"))
-        assertTrue(decision is DeepLinkDecision.RequireConfirmation)
-        assertEquals(NavigationDestination.Review, (decision as DeepLinkDecision.RequireConfirmation).destination)
-    }
-
-    @Test
-    fun `add requires confirmation`() {
-        val decision = parseDeepLink(Uri.parse("expensetracker://add"))
-        assertTrue(decision is DeepLinkDecision.RequireConfirmation)
-    }
-
-    @Test
-    fun `plan allows budget navigation`() {
-        val decision = parseDeepLink(Uri.parse("expensetracker://plan"))
-        assertTrue(decision is DeepLinkDecision.Allow)
-        assertEquals(NavigationDestination.Budget, (decision as DeepLinkDecision.Allow).destination)
-    }
-
-    @Test
-    fun `analytics preserves period parameter`() {
-        val decision = parseDeepLink(Uri.parse("expensetracker://analytics?period=MONTH"))
-        assertTrue(decision is DeepLinkDecision.Allow)
-        val dest = (decision as DeepLinkDecision.Allow).destination as NavigationDestination.Analytics
-        assertEquals("MONTH", dest.initialPeriod)
-    }
-
-    @Test
-    fun `map preserves location parameter`() {
-        val decision = parseDeepLink(Uri.parse("expensetracker://map?location=Athens"))
-        assertTrue(decision is DeepLinkDecision.Allow)
-        val dest = (decision as DeepLinkDecision.Allow).destination as NavigationDestination.SpendingMap
-        assertEquals("Athens", dest.initialLocationQuery)
-    }
-
-    @Test
-    fun `unknown host rejects`() {
-        val decision = parseDeepLink(Uri.parse("expensetracker://unknown"))
-        assertTrue(decision is DeepLinkDecision.Reject)
-    }
-
-    @Test
-    fun `wrong scheme rejects`() {
-        val decision = parseDeepLink(Uri.parse("https://expensetracker.app/home"))
-        assertTrue(decision is DeepLinkDecision.Reject)
-    }
-
-    @Test
-    fun `invalid expenseId treated as no expenseId`() {
-        val decision = parseDeepLink(Uri.parse("expensetracker://activity?expenseId=abc"))
-        assertTrue(decision is DeepLinkDecision.Allow)
+    fun `deferred feature hosts are not deep-link routable`() {
+        listOf(
+            "tax", "tax_configuration", "investment", "investment_portfolio",
+            "challenges", "spending_challenges"
+        ).forEach { host ->
+            val decision = parseDeepLink(Uri.parse("expensetracker://$host"))
+            assertTrue("Host '$host' must be rejected", decision is DeepLinkDecision.Reject)
+        }
     }
 }

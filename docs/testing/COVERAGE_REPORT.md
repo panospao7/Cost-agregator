@@ -46,12 +46,12 @@
 ### Domain Layer - Categorization (7/7 files) - 100% ✅
 | File | Status | Test File | Test Count |
 |------|--------|-----------|------------|
-| ✅ CategorizationEngine.kt | Complete | CategorizationEngineStressTest.kt | 32 |
-| ✅ ContextualInferenceEngine.kt | Complete | ContextualInferenceEngineStressTest.kt | 42 |
-| ✅ SemanticKeywordMatcher.kt | Complete | CategorizationComponentsTest.kt | 21 |
-| ✅ MerchantCanonicalizer.kt | Complete | MerchantCanonicalizerStressTest.kt | 21 |
-| ✅ MerchantCleaner.kt | Complete | MerchantCleanerStressTest.kt | 39 |
-| ✅ ContextualInferenceEngine.kt | Complete | ContextualInferenceEngineStressTest.kt | 42 |
+| ✅ CategorizationEngine.kt | Complete | CategorizationEngineTest.kt (table-driven; stress cases merged) | 15 |
+| ✅ ContextualInferenceEngine.kt | Complete | CategorizationComponentsTest.kt (ContextualInferenceEngineTest, table-driven) | - |
+| ✅ SemanticKeywordMatcher.kt | Complete | CategorizationComponentsTest.kt (SemanticKeywordMatcherTest) | - |
+| ✅ MerchantCanonicalizer.kt | Complete | CategorizationComponentsTest.kt (MerchantCanonicalizerTest) | - |
+| ✅ MerchantCleaner.kt | Complete | MerchantCleanerTest.kt (table-driven) | 4 |
+| ✅ ContextualInferenceEngine.kt | Complete | CategorizationComponentsTest.kt (ContextualInferenceEngineTest, table-driven) | - |
 | ✅ GreeklishNormalizer | Tested via | CategorizationEngine | - |
 
 ### Domain Layer - Parsers (5/5 files) - 100% ✅
@@ -99,12 +99,12 @@
 ### Utilities (8/8 files) - 100% ✅
 | File | Status | Test File | Test Count |
 |------|--------|-----------|------------|
-| ✅ AmountUtils.kt | Complete | AmountUtilsStressTest.kt | 64 |
+| ✅ AmountUtils.kt | Complete | AmountUtilsTest.kt (table-driven; stress cases merged) | 13 |
 | ✅ TimePeriodUtils.kt | Complete | TimePeriodUtilsStressTest.kt | 30 |
 | ✅ StatisticsUtils.kt | Complete | StatisticsUtilsStressTest.kt | 29 |
-| ✅ StringDistanceUtils.kt | Complete | StringDistanceUtilsStressTest.kt | 28 |
-| ✅ MerchantKeyGenerator.kt | Complete | MerchantKeyGeneratorStressTest.kt | 30 |
-| ✅ MerchantCleaner.kt | Complete | MerchantCleanerStressTest.kt | 39 |
+| ✅ StringDistanceUtils.kt | Complete | StringDistanceUtilsTest.kt (table-driven; stress cases merged) | 8 |
+| ✅ MerchantKeyGenerator.kt | Complete | MerchantKeyGeneratorTest.kt (stress cases merged) | 20 |
+| ✅ MerchantCleaner.kt | Complete | MerchantCleanerTest.kt (table-driven) | 4 |
 | ✅ BudgetCalculator.kt | Complete | BudgetCalculatorStressTest.kt | 21 |
 | ✅ SynthesisEngine.kt | Complete | SynthesisEngineStressTest.kt | 60+ |
 
@@ -117,28 +117,35 @@
 | ✅ PendingReviewDao.kt | Complete | PendingReviewDaoTest.kt | 4 | ✅ PASS |
 | ✅ ExpenseDao.kt | Complete | ExpenseDaoTest.kt + Boundary | 20+ | ✅ PASS |
 
-### ViewModels (9/11 files)
+### ViewModels (10/11 files; table reconciled 2026-10-17 after test-suite-audit B3/B3b)
 | File | Status | Test File | Test Count |
 |------|--------|-----------|------------|
-| ✅ BudgetViewModel.kt | Complete | BudgetViewModelStressTest.kt | 15 |
-| ✅ ReviewViewModel.kt | Complete | ReviewViewModelStressTest.kt | 18 |
-| ✅ HomeViewModel.kt | Complete | HomeViewModelStressTest.kt | 18 |
-| ✅ AnalyticsViewModel.kt | Complete | AnalyticsViewModelStressTest.kt | 8 |
-| ✅ MainViewModel.kt | Complete | MainViewModelStressTest.kt | 4 |
-| ✅ TransactionsViewModel.kt | Complete | TransactionsViewModelStressTest.kt | 13 |
-| ✅ AddExpenseViewModel.kt | Complete | AddExpenseViewModelStressTest.kt | 8 |
-| ✅ ReceiptScanViewModel.kt | Complete | ReceiptScanViewModelStressTest.kt | 4 |
-| ✅ SpendingMapViewModel.kt | Complete | SpendingMapViewModelStressTest.kt | 3 |
+| ✅ BudgetViewModel.kt | Complete | BudgetViewModelCurrencyProvenanceTest.kt + BudgetViewModelAutopilotQualityTest.kt (BudgetViewModelStressTest deleted, B3-8) | 21 |
+| ✅ ReviewViewModel.kt | Complete | ReviewViewModelAiAssistTest.kt (was ReviewViewModelStressTest, B3b-2) | 22 |
+| ✅ HomeViewModel.kt | Complete | HomeViewModelWidgetsTest.kt + HomeViewModelCurrencyReloadTest.kt (was HomeViewModelStressTest, B3b-1) | 17 |
+| ✅ AnalyticsViewModel.kt | Complete | AnalyticsViewModelYearOverYearTest.kt (was AnalyticsViewModelStressTest, B3b-4) | 3 |
+| ✅ MainViewModel.kt | Complete | MainViewModelEventsTest.kt (was MainViewModelStressTest, B3b-4) | 5 |
+| ✅ TransactionsViewModel.kt | Complete | TransactionsViewModelPagingTest.kt (was TransactionsViewModelStressTest, B3b-3) | 6 |
+| ✅ AddExpenseViewModel.kt | Complete | AddExpenseViewModelTest.kt (stress validation tests merged, B3b-3) | 19 |
+| ✅ ReceiptScanViewModel.kt | Complete | ReceiptScanViewModelStressTest.kt (active, no @Ignore) | 20 |
+| ✅ SpendingMapViewModel.kt | Complete | SpendingMapViewModelHeatmapTest.kt (was SpendingMapViewModelStressTest, B3b-4) | 5 |
+| ✅ DebugViewModel.kt | Complete | DebugViewModelTest.kt (was DebugViewModelStressTest, B3b-4) | 5 |
 
-### Integration Tests (6/6 files) - 100% ✅
-| File | Status | Test File | Test Count |
+### Integration Tests (9 files, 47 tests) - 100% ✅
+
+(Reconciled 2026-10-17 against `app/src/test/java/com/yourname/expensetracker/integration/`. The earlier table listed Budget/Analytics/RecurringExpenseDetection/DataExportImport pipeline tests that no longer exist; ExpenseCreationPipeline and CategorizationPipeline integration tests were removed in test-suite audit slice B3-10, their util-level cases live in AmountUtilsTest, StringDistanceUtilsTest and the MerchantCleaner/MerchantKeyGenerator tests.)
+
+| Area | Status | Test File | Test Count |
 |------|--------|-----------|------------|
-| ✅ ExpenseCreationPipeline | Complete | ExpenseCreationPipelineIntegrationTest.kt | 16 |
-| ✅ CategorizationPipeline | Complete | CategorizationPipelineIntegrationTest.kt | 21 |
-| ✅ BudgetCalculationPipeline | Complete | BudgetCalculationPipelineIntegrationTest.kt | 21 |
-| ✅ AnalyticsPipeline | Complete | AnalyticsPipelineIntegrationTest.kt | 21 |
-| ✅ RecurringExpenseDetectionPipeline | Complete | RecurringExpenseDetectionPipelineIntegrationTest.kt | 21 |
-| ✅ DataExportImportPipeline | Complete | DataExportImportPipelineIntegrationTest.kt | 18 |
+| ✅ Budget cashflow currency | Complete | BudgetCashflowCurrencyBehavioralTest.kt | 6 |
+| ✅ Currency conversion | Complete | CurrencyConversionIntegrationTest.kt | 10 |
+| ✅ Currency normalization (post 9a6) | Complete | CurrencyNormalizationPost9a6Test.kt | 7 |
+| ✅ Dashboard currency | Complete | DashboardCurrencyIntegrationTest.kt | 7 |
+| ✅ Effective-amount pipeline | Complete | EffectiveAmountPipelineIntegrationTest.kt | 1 |
+| ✅ Forecast runway | Complete | ForecastRunwayIntegrationTest.kt | 4 |
+| ✅ Multi-currency analytics | Complete | MultiCurrencyAnalyticsTest.kt | 4 |
+| ✅ Multi-currency repository | Complete | MultiCurrencyRepositoryBehavioralTest.kt | 4 |
+| ✅ Curr-587 behavioral | Complete | Curr587BehavioralTest.kt | 4 |
 
 ---
 
@@ -165,7 +172,7 @@ Latest gap closure in this pass:
 | **Utilities** | 8 | 8 | 100% | ✅ Complete |
 | **Services** | 4 | 4 | 100% | ✅ Complete |
 | **ViewModels** | 11 | 10 | 91% | ✅ Good |
-| **Integration** | 6 | 6 | 100% | ✅ Complete |
+| **Integration** | 9 | 9 | 100% | ✅ Complete |
 | **Database** | 6 | 6 | 100% | ✅ Complete |
 
 ---

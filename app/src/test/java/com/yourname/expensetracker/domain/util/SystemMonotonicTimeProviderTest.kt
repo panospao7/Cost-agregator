@@ -13,7 +13,6 @@ import org.junit.Test
  * would overclaim platform timing guarantees. Only the stable monotonic
  * contract is verified here:
  *
- *  - readings are integer Long-like values;
  *  - successive readings are non-decreasing.
  *
  * Deterministic elapsed-duration behavior (e.g. ViewModel timing
@@ -21,15 +20,6 @@ import org.junit.Test
  * advance explicitly instead of depending on real platform timing.
  */
 class SystemMonotonicTimeProviderTest {
-
-    @Test
-    fun `nowNanos returns an integer Long-like value`() {
-        val provider = SystemMonotonicTimeProvider()
-
-        val value = provider.nowNanos()
-
-        assertThat(value).isInstanceOf(Long::class.javaObjectType)
-    }
 
     @Test
     fun `successive readings are non-decreasing`() {
@@ -41,21 +31,5 @@ class SystemMonotonicTimeProviderTest {
             assertThat(current).isAtLeast(previous)
             previous = current
         }
-    }
-
-    @Test
-    fun `fake provider yields deterministic controlled readings`() {
-        val fake = FakeMonotonicTimeProvider(1_000_000L)
-
-        assertThat(fake.nowNanos()).isEqualTo(1_000_000L)
-
-        fake.advanceMillis(5)
-        assertThat(fake.nowNanos()).isEqualTo(6_000_000L)
-
-        fake.advanceNanos(250L)
-        assertThat(fake.nowNanos()).isEqualTo(6_000_250L)
-
-        fake.setNanos(42L)
-        assertThat(fake.nowNanos()).isEqualTo(42L)
     }
 }

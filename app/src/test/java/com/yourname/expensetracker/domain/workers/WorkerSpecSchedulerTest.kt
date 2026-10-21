@@ -7,6 +7,8 @@ import androidx.work.ListenableWorker
 import androidx.work.OneTimeWorkRequest
 import androidx.work.WorkManager
 import com.yourname.expensetracker.data.location.MerchantKeyBackfillWorker
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.every
 import io.mockk.mockk
@@ -15,6 +17,7 @@ import io.mockk.mockkStatic
 import io.mockk.slot
 import io.mockk.unmockkAll
 import io.mockk.verify
+import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -25,6 +28,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowLog
 
 /**
  * Robolectric-style contract tests for [WorkerSpecScheduler.scheduleAtMidnight]
@@ -169,6 +173,98 @@ class WorkerSpecSchedulerTest {
         assertTrue("Version bump should flag versionChanged", result.versionChanged)
     }
 
+    // ── R21 / HZ-05: startup scheduling must not replace in-flight one-shot work ──
+
+    @Test
+    fun `two startup schedules with unchanged version both enqueue with KEEP`() {
+        val name = "startup_keep_midnight_worker"
+        val spec = WorkerSpec(
+            name = name,
+            version = 1,
+            enabled = true,
+            repeatIntervalHours = null,
+            oneShotPolicy = ExistingWorkPolicy.KEEP
+        )
+        every { WorkerSpec.DEFAULTS } returns mapOf(name to spec)
+
+        val policies = mutableListOf<ExistingWorkPolicy>()
+        every {
+            workManager.enqueueUniqueWork(eq(name), capture(policies), any<OneTimeWorkRequest>())
+        } returns mockk(relaxed = true)
+
+        // First cold start: no stored version yet, so the version-bump REPLACE is
+        // legitimate. It persists the version after the enqueue.
+        WorkerSpecScheduler.scheduleAtMidnight(context, name, workerClass, timeProvider)
+        // Second and third cold starts: version unchanged, must use KEEP so the
+        // queued unique work (and its work id) is preserved.
+        val second = WorkerSpecScheduler.scheduleAtMidnight(context, name, workerClass, timeProvider)
+        val third = WorkerSpecScheduler.scheduleAtMidnight(context, name, workerClass, timeProvider)
+
+        assertEquals(3, policies.size)
+        assertEquals(ExistingWorkPolicy.KEEP, policies[1])
+        assertEquals(ExistingWorkPolicy.KEEP, policies[2])
+        assertFalse(second.versionChanged)
+        assertFalse(third.versionChanged)
+        assertEquals(ExistingWorkPolicy.KEEP.name, second.policyUsed)
+    }
+
+    @Test
+    fun `ai_daily_briefing startup schedule uses KEEP when version unchanged and REPLACE on version change`() {
+        val name = "ai_daily_briefing"
+        val spec = WorkerSpec.DEFAULTS.getValue(name)
+        val prefs = context.getSharedPreferences("worker_spec_versions", Context.MODE_PRIVATE)
+
+        val policySlot = slot<ExistingWorkPolicy>()
+        every {
+            workManager.enqueueUniqueWork(eq(name), capture(policySlot), any<OneTimeWorkRequest>())
+        } returns mockk(relaxed = true)
+
+        prefs.edit().putInt(name, spec.version).commit()
+        WorkerSpecScheduler.scheduleAtMidnight(context, name, workerClass, timeProvider)
+        assertEquals(ExistingWorkPolicy.KEEP, policySlot.captured)
+
+        prefs.edit().putInt(name, spec.version - 1).commit()
+        val bumped = WorkerSpecScheduler.scheduleAtMidnight(context, name, workerClass, timeProvider)
+        assertEquals(ExistingWorkPolicy.REPLACE, policySlot.captured)
+        assertTrue(bumped.versionChanged)
+    }
+
+    @Test
+    fun `scheduleAtMidnight policyOverride wins over spec policy and version bump`() {
+        val name = "override_midnight_worker"
+        val spec = WorkerSpec(
+            name = name,
+            version = 2,
+            enabled = true,
+            repeatIntervalHours = null,
+            oneShotPolicy = ExistingWorkPolicy.KEEP
+        )
+        every { WorkerSpec.DEFAULTS } returns mapOf(name to spec)
+        val prefs = context.getSharedPreferences("worker_spec_versions", Context.MODE_PRIVATE)
+
+        val policySlot = slot<ExistingWorkPolicy>()
+        every {
+            workManager.enqueueUniqueWork(eq(name), capture(policySlot), any<OneTimeWorkRequest>())
+        } returns mockk(relaxed = true)
+
+        // Unchanged version: override beats the spec's KEEP.
+        prefs.edit().putInt(name, spec.version).commit()
+        val unchanged = WorkerSpecScheduler.scheduleAtMidnight(
+            context, name, workerClass, timeProvider,
+            policyOverride = ExistingWorkPolicy.APPEND_OR_REPLACE
+        )
+        assertEquals(ExistingWorkPolicy.APPEND_OR_REPLACE, policySlot.captured)
+        assertEquals(ExistingWorkPolicy.APPEND_OR_REPLACE.name, unchanged.policyUsed)
+
+        // Version bump: override still beats the forced REPLACE.
+        prefs.edit().putInt(name, 1).commit()
+        WorkerSpecScheduler.scheduleAtMidnight(
+            context, name, workerClass, timeProvider,
+            policyOverride = ExistingWorkPolicy.APPEND_OR_REPLACE
+        )
+        assertEquals(ExistingWorkPolicy.APPEND_OR_REPLACE, policySlot.captured)
+    }
+
     @Test
     fun `scheduleFromSpec merchant_key one-shot enqueues with REPLACE oneShotPolicy`() {
         // Exercises the REAL merchant_key_backfill path, which schedules via
@@ -306,10 +402,92 @@ class WorkerSpecSchedulerTest {
 
         assertFalse("WorkManager failure should return scheduled=false", result.scheduled)
         assertNotNull("Error message must be set on failure", result.error)
+        // DIAG-10: only the exception class name is surfaced, never the message text.
         assertEquals(
-            "Error message should match simulated failure",
-            simulatedError, result.error
+            "Error must be the exception class name only",
+            "RuntimeException", result.error
         )
+        assertFalse(result.error!!.contains(simulatedError))
+    }
+
+    @Test
+    fun `scheduleFromSpec failure keeps exception message out of result diagnostics and logs`() {
+        val name = "failing_worker_privacy"
+        val spec = WorkerSpec(
+            name = name,
+            version = 1,
+            enabled = true,
+            repeatIntervalHours = null,
+            oneShotPolicy = ExistingWorkPolicy.REPLACE
+        )
+        every { WorkerSpec.DEFAULTS } returns mapOf(name to spec)
+        context.getSharedPreferences("worker_spec_versions", Context.MODE_PRIVATE)
+            .edit().putInt(name, spec.version).commit()
+        val secret = "secret-123"
+        every {
+            workManager.enqueueUniqueWork(eq(name), any(), any<OneTimeWorkRequest>())
+        } throws IllegalStateException("merchant Lidl $secret")
+        val events = java.util.concurrent.CopyOnWriteArrayList<DiagnosticEvent>()
+        val latch = java.util.concurrent.CountDownLatch(1)
+        val writer = object : DiagnosticEventWriter {
+            override suspend fun emit(event: DiagnosticEvent) {
+                events.add(event)
+                latch.countDown()
+            }
+        }
+        ShadowLog.clear()
+
+        val result = WorkerSpecScheduler.scheduleFromSpec(context, name, workerClass, null, writer)
+
+        assertEquals("IllegalStateException", result.error)
+        assertTrue("diagnostic event must be emitted", latch.await(5, java.util.concurrent.TimeUnit.SECONDS))
+        val stored = events.single()
+        assertEquals("IllegalStateException", JSONObject(stored.metadata.toJson()).getString("error"))
+        assertFalse(stored.metadata.toJson().contains(secret))
+        assertFalse(result.toString().contains(secret))
+        ShadowLog.getLogs().forEach { item ->
+            assertFalse("log must not contain message text", item.msg.contains(secret))
+            assertTrue("log must not attach the throwable", item.throwable == null)
+        }
+    }
+
+    @Test
+    fun `scheduleAtMidnight failure keeps exception message out of result diagnostics and logs`() {
+        val name = "failing_midnight_worker_privacy"
+        val spec = WorkerSpec(
+            name = name,
+            version = 1,
+            enabled = true,
+            repeatIntervalHours = null,
+            oneShotPolicy = ExistingWorkPolicy.REPLACE
+        )
+        every { WorkerSpec.DEFAULTS } returns mapOf(name to spec)
+        context.getSharedPreferences("worker_spec_versions", Context.MODE_PRIVATE)
+            .edit().putInt(name, spec.version).commit()
+        val secret = "secret-123"
+        every {
+            workManager.enqueueUniqueWork(eq(name), any(), any<OneTimeWorkRequest>())
+        } throws IllegalStateException("account 4242 $secret")
+        val events = java.util.concurrent.CopyOnWriteArrayList<DiagnosticEvent>()
+        val latch = java.util.concurrent.CountDownLatch(1)
+        val writer = object : DiagnosticEventWriter {
+            override suspend fun emit(event: DiagnosticEvent) {
+                events.add(event)
+                latch.countDown()
+            }
+        }
+        ShadowLog.clear()
+
+        val result = WorkerSpecScheduler.scheduleAtMidnight(context, name, workerClass, timeProvider, writer)
+
+        assertEquals("IllegalStateException", result.error)
+        assertTrue("diagnostic event must be emitted", latch.await(5, java.util.concurrent.TimeUnit.SECONDS))
+        assertEquals("IllegalStateException", JSONObject(events.single().metadata.toJson()).getString("error"))
+        assertFalse(events.single().metadata.toJson().contains(secret))
+        ShadowLog.getLogs().forEach { item ->
+            assertFalse("log must not contain message text", item.msg.contains(secret))
+            assertTrue("log must not attach the throwable", item.throwable == null)
+        }
     }
 
     // ── G-TIME-01: deterministic next-midnight delay via injected TimeProvider ──

@@ -4,6 +4,7 @@ import androidx.room.withTransaction
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.*
 import com.yourname.expensetracker.data.database.entity.*
+import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import com.yourname.expensetracker.domain.alerts.AnomalyAlertOrchestrator
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.intelligence.ConfidenceRouter
@@ -23,6 +24,7 @@ import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import io.mockk.*
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.*
@@ -110,7 +112,8 @@ class ReviewQueueRepositoryTest {
             transactionLifecycleCoordinator = transactionLifecycleCoordinator,
             pendingReviewSourceLinkService = mockk(relaxed = true),
             pendingReviewSourceLinkPromoter = mockk(relaxed = true),
-            transactionEventDao = database.transactionEventDao(),
+            transactionRunner = mockk(relaxed = true),
+            transactionLifecycleEventWriter = mockk(relaxed = true),
             postCommitActionRunner = mockk(relaxed = true),
         )
     }
@@ -151,6 +154,65 @@ class ReviewQueueRepositoryTest {
         coVerify(exactly = 0) {
             transactionLifecycleCoordinator.createExpenseDbOnlyV2(any())
         }
+    }
+
+    private fun approvablePendingReview(reviewId: Long) = PendingReview(
+        id = reviewId,
+        rawNotificationId = 10L,
+        suggestedAmount = 50.0,
+        suggestedCurrency = "EUR",
+        suggestedMerchant = "Test Merchant",
+        suggestedType = "PURCHASE",
+        suggestedCategoryId = 1L,
+        confidence = 0.8f,
+        packageName = "com.test.app",
+        notificationTitle = "Test",
+        notificationText = "Spent 50"
+    )
+
+    @Test
+    fun `approveReview validation failure returns bounded code without joined errors`() = runTest {
+        val reviewId = 31L
+        coEvery { pendingReviewDao.getById(reviewId) } returns approvablePendingReview(reviewId)
+        coEvery {
+            pendingReviewDao.transitionStatus(
+                reviewId, PendingReviewStatus.PENDING, PendingReviewStatus.PROCESSING
+            )
+        } returns 1
+        coEvery { transactionLifecycleCoordinator.createExpenseDbOnlyV2(any()) } returns
+            MutationResult(
+                CreateExpenseResult.ValidationFailed(listOf("SENSITIVE_DETAIL_A", "SENSITIVE_DETAIL_B")),
+                PostCommitActionBatch.empty("")
+            )
+
+        val result = repository.approveReview(reviewId)
+
+        assertTrue(result is Result.Error)
+        val message = (result as Result.Error).message
+        assertEquals(ReviewQueueRepository.ERROR_VALIDATION_FAILED, message)
+        assertTrue(message in ReviewQueueRepository.KNOWN_APPROVAL_ERRORS)
+        assertFalse(message!!.contains("SENSITIVE_DETAIL"))
+        coVerify(exactly = 0) { pendingReviewDao.updateStatus(reviewId, PendingReviewStatus.APPROVED) }
+    }
+
+    @Test
+    fun `approveReview unexpected exception returns bounded code without exception text`() = runTest {
+        val reviewId = 32L
+        coEvery { pendingReviewDao.getById(reviewId) } returns approvablePendingReview(reviewId)
+        coEvery {
+            pendingReviewDao.transitionStatus(
+                reviewId, PendingReviewStatus.PENDING, PendingReviewStatus.PROCESSING
+            )
+        } returns 1
+        coEvery { transactionLifecycleCoordinator.createExpenseDbOnlyV2(any()) } throws
+            IllegalStateException("SQLITE_CONSTRAINT raw text Spent 50")
+
+        val result = repository.approveReview(reviewId)
+
+        assertTrue(result is Result.Error)
+        val message = (result as Result.Error).message
+        assertEquals(ReviewQueueRepository.ERROR_APPROVAL_FAILED, message)
+        assertTrue(message in ReviewQueueRepository.KNOWN_APPROVAL_ERRORS)
     }
 
     @Test
@@ -662,5 +724,147 @@ class ReviewQueueRepositoryTest {
             "Fallback suggestedAmount must be null (synthetic placeholder sentinel), was ${captured.suggestedAmount}",
             captured.suggestedAmount
         )
+    }
+
+    // ── Queue accessors and bulk operations (ported from the retired ReviewQueueRepositoryStressTest) ──
+
+    @Test
+    fun `getAllPendingReviews exposes the uncapped DAO flow unchanged`() = runTest {
+        val daoFlow = MutableStateFlow(emptyList<PendingReviewWithReceipt>())
+        every { pendingReviewDao.getPendingUncappedFlow() } returns daoFlow
+
+        assertSame(daoFlow, repository.getAllPendingReviews())
+    }
+
+    @Test
+    fun `getPendingReviewCount exposes the DAO count flow unchanged`() = runTest {
+        val daoFlow = MutableStateFlow(3)
+        every { pendingReviewDao.getPendingCountFlow() } returns daoFlow
+
+        assertSame(daoFlow, repository.getPendingReviewCount())
+    }
+
+    @Test
+    fun `getReviewById returns the stored review and null for a missing id`() = runTest {
+        val stored = approvablePendingReview(61L)
+        coEvery { pendingReviewDao.getById(61L) } returns stored
+        coEvery { pendingReviewDao.getById(999L) } returns null
+
+        assertEquals(stored, repository.getReviewById(61L))
+        assertNull(repository.getReviewById(999L))
+    }
+
+    @Test
+    fun `approveAllReview on an empty queue returns no results and approves nothing`() = runTest {
+        coEvery { pendingReviewDao.getPendingUncapped() } returns emptyList()
+
+        val results = repository.approveAllReview()
+
+        assertTrue(results.isEmpty())
+        coVerify(exactly = 0) { pendingReviewDao.transitionStatus(any(), any(), any()) }
+        coVerify(exactly = 0) { transactionLifecycleCoordinator.createExpenseDbOnlyV2(any()) }
+    }
+
+    @Test
+    fun `approveAllReview reports one result per pending review in queue order`() = runTest {
+        val overLimit = approvablePendingReview(41L).copy(suggestedAmount = 2_000_000.0)
+        val blankCurrency = approvablePendingReview(42L).copy(suggestedCurrency = "")
+        coEvery { pendingReviewDao.getPendingUncapped() } returns listOf(
+            PendingReviewWithReceipt(review = overLimit, receipt = null),
+            PendingReviewWithReceipt(review = blankCurrency, receipt = null)
+        )
+        coEvery { pendingReviewDao.getById(41L) } returns overLimit
+        coEvery { pendingReviewDao.getById(42L) } returns blankCurrency
+
+        val results = repository.approveAllReview()
+
+        assertEquals(listOf(41L, 42L), results.map { it.first })
+        assertEquals("AMOUNT_EXCEEDS_LIMIT", (results[0].second as Result.Error).message)
+        assertEquals(
+            "Currency is required. Please edit the review and select a currency.",
+            (results[1].second as Result.Error).message
+        )
+        coVerify(exactly = 0) { transactionLifecycleCoordinator.createExpenseDbOnlyV2(any()) }
+    }
+
+    @Test
+    fun `rejectAllReviews on an empty queue rejects nothing and records no correction`() = runTest {
+        coEvery { pendingReviewDao.getPendingUncapped() } returns emptyList()
+
+        repository.rejectAllReviews()
+
+        coVerify(exactly = 0) { pendingReviewDao.transitionStatus(any(), any(), any()) }
+        coVerify(exactly = 0) { userCorrectionDao.insert(any()) }
+    }
+
+    @Test
+    fun `rejectAllReviews rejects every pending review and records one correction each`() = runTest {
+        val first = approvablePendingReview(51L)
+        val second = approvablePendingReview(52L)
+        coEvery { pendingReviewDao.getPendingUncapped() } returns listOf(
+            PendingReviewWithReceipt(review = first, receipt = null),
+            PendingReviewWithReceipt(review = second, receipt = null)
+        )
+        coEvery { pendingReviewDao.getById(51L) } returns first
+        coEvery { pendingReviewDao.getById(52L) } returns second
+        coEvery {
+            pendingReviewDao.transitionStatus(any(), PendingReviewStatus.PENDING, PendingReviewStatus.REJECTED)
+        } returns 1
+
+        repository.rejectAllReviews()
+
+        coVerify(exactly = 1) {
+            pendingReviewDao.transitionStatus(51L, PendingReviewStatus.PENDING, PendingReviewStatus.REJECTED)
+        }
+        coVerify(exactly = 1) {
+            pendingReviewDao.transitionStatus(52L, PendingReviewStatus.PENDING, PendingReviewStatus.REJECTED)
+        }
+        coVerify(exactly = 2) { userCorrectionDao.insert(any()) }
+    }
+
+    @Test
+    fun `getPendingReviewsByMerchant looks up by canonical key and name and returns the DAO rows`() = runTest {
+        val lidlReview = approvablePendingReview(71L).copy(suggestedMerchant = "LIDL")
+        coEvery { pendingReviewDao.getPendingByMerchant("lidl", "LIDL") } returns listOf(lidlReview)
+        coEvery { pendingReviewDao.getPendingByMerchant("unknown", "Unknown") } returns emptyList()
+
+        assertEquals(listOf(lidlReview), repository.getPendingReviewsByMerchant("LIDL"))
+        assertTrue(repository.getPendingReviewsByMerchant("Unknown").isEmpty())
+        coVerify(exactly = 1) { pendingReviewDao.getPendingByMerchant("lidl", "LIDL") }
+        coVerify(exactly = 1) { pendingReviewDao.getPendingByMerchant("unknown", "Unknown") }
+    }
+
+    @Test
+    fun `updatePendingReviewCategoryBulk writes the canonical key and category inside the write barrier`() = runTest {
+        repository.updatePendingReviewCategoryBulk("Test Merchant", 7L)
+
+        coVerify(exactly = 1) {
+            pendingReviewDao.bulkUpdateCategoryByMerchant("testmerchant", "Test Merchant", 7L)
+        }
+        coVerify(exactly = 1) {
+            writeBarrier.runWrite(
+                match<DatabaseAccessOperation> {
+                    it.name == "ReviewQueueRepository.updatePendingReviewCategoryBulk"
+                },
+                any<suspend () -> Any?>()
+            )
+        }
+    }
+
+    @Test
+    fun `updatePendingReviewMerchantBulk renames with canonical old and new keys inside the write barrier`() = runTest {
+        repository.updatePendingReviewMerchantBulk("Old", "New")
+
+        coVerify(exactly = 1) {
+            pendingReviewDao.bulkRenameMerchant("old", "Old", "New", "new")
+        }
+        coVerify(exactly = 1) {
+            writeBarrier.runWrite(
+                match<DatabaseAccessOperation> {
+                    it.name == "ReviewQueueRepository.updatePendingReviewMerchantBulk"
+                },
+                any<suspend () -> Any?>()
+            )
+        }
     }
 }

@@ -49,7 +49,8 @@ object OwnershipValidator {
         }
 
         if (hasAmount) {
-            val amt = AmountInputSanitizer.sanitize(shareAmountText).toDoubleOrNull()
+            // Same strict locale-aware parser as the save path (ambiguous/invalid -> null).
+            val amt = AmountInputSanitizer.parseOrNull(shareAmountText)
             if (amt == null || amt <= 0) {
                 return ValidationResult.Invalid("Share amount must be greater than 0")
             }

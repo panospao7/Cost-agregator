@@ -1,21 +1,23 @@
 package com.yourname.expensetracker.data.repository
 
 import androidx.room.withTransaction
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.BlockedPackageDao
 import com.yourname.expensetracker.data.database.dao.PendingReviewDao
 import com.yourname.expensetracker.data.database.dao.RawNotificationDao
 import com.yourname.expensetracker.data.database.dao.SourceStatsDao
-import com.yourname.expensetracker.data.database.dao.TransactionEventDao
 import com.yourname.expensetracker.data.database.dao.UserCorrectionDao
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.BlockedPackage
 import com.yourname.expensetracker.data.database.entity.PendingReviewStatus
 import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.data.database.entity.SourceStats
-import com.yourname.expensetracker.data.database.entity.TransactionEvent
+import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
 import com.yourname.expensetracker.domain.transaction.LifecycleEventType
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEvent
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEventWriter
 import com.yourname.expensetracker.domain.intelligence.ClassifierStats
 import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import com.yourname.expensetracker.domain.notification.NotificationPersistenceContext
@@ -43,7 +45,8 @@ class NotificationRepository @Inject constructor(
     private val pendingReviewDao: PendingReviewDao,
     private val userCorrectionDao: UserCorrectionDao,
     private val sourceStatsDao: SourceStatsDao,
-    private val transactionEventDao: TransactionEventDao,
+    private val transactionRunner: DomainTransactionRunner,
+    private val transactionLifecycleEventWriter: TransactionLifecycleEventWriter,
     private val classifier: TransactionClassifier,
     private val pipeline: NotificationProcessingPipeline,
     private val writeBarrier: DatabaseWriteBarrier,
@@ -66,7 +69,9 @@ class NotificationRepository @Inject constructor(
     fun getCount(): Flow<Int> = dao.getCountFlow()
     suspend fun save(notification: RawNotification): Long {
         writeBarrier.checkWritesAllowed("NotificationRepository.save")
-        return dao.insert(notification)
+        return writeBarrier.runWrite(DatabaseAccessOperation("NotificationRepository.save")) {
+            dao.insert(notification)
+        }
     }
     suspend fun exists(packageName: String, timestamp: Long, title: String?, text: String?, bigText: String? = null): Boolean =
         dao.exists(packageName, timestamp, title, text, bigText)
@@ -151,12 +156,16 @@ class NotificationRepository @Inject constructor(
     // === Package blocking ===
     suspend fun blockPackage(packageName: String) {
         writeBarrier.checkWritesAllowed("NotificationRepository.blockPackage")
-        blockedPackageDao.block(BlockedPackage(packageName))
+        writeBarrier.runWrite(DatabaseAccessOperation("NotificationRepository.blockPackage")) {
+            blockedPackageDao.block(BlockedPackage(packageName))
+        }
     }
 
     suspend fun unblockPackage(packageName: String) {
         writeBarrier.checkWritesAllowed("NotificationRepository.unblockPackage")
-        blockedPackageDao.unblock(packageName)
+        writeBarrier.runWrite(DatabaseAccessOperation("NotificationRepository.unblockPackage")) {
+            blockedPackageDao.unblock(packageName)
+        }
     }
 
     suspend fun isPackageBlocked(packageName: String): Boolean =
@@ -167,13 +176,15 @@ class NotificationRepository @Inject constructor(
 
     suspend fun delete(notification: RawNotification) {
         writeBarrier.checkWritesAllowed("NotificationRepository.delete")
-        database.withTransaction {
-            val pendingReview = pendingReviewDao.getByRawId(notification.id)
-            if (pendingReview != null && pendingReview.status == PendingReviewStatus.PENDING) {
-                sourceStatsDao.decrementPending(notification.packageName)
+        writeBarrier.runWrite(DatabaseAccessOperation("NotificationRepository.delete")) {
+            database.withTransaction {
+                val pendingReview = pendingReviewDao.getByRawId(notification.id)
+                if (pendingReview != null && pendingReview.status == PendingReviewStatus.PENDING) {
+                    sourceStatsDao.decrementPending(notification.packageName)
+                }
+                pendingReviewDao.deleteByRawId(notification.id)
+                dao.delete(notification)
             }
-            pendingReviewDao.deleteByRawId(notification.id)
-            dao.delete(notification)
         }
     }
 
@@ -192,28 +203,32 @@ class NotificationRepository @Inject constructor(
      * safe for notification-specific cleanup without losing imported expense records.
      *
      * @param now Current time in epoch milliseconds (G-TIME-01). Used as the
-     *   [TransactionEvent.occurredAt] for the BULK_DELETED audit event. Callers
+     *   occurredAt of the BULK_DELETED lifecycle event (via `ctx.copy(occurredAt = now)`). Callers
      *   must pass the injected [com.yourname.expensetracker.domain.util.TimeProvider]
      *   value — this method intentionally has no hidden clock.
      */
     suspend fun deleteAllNotifications(now: Long) {
         writeBarrier.checkWritesAllowed("NotificationRepository.deleteAllNotifications")
-        database.withTransaction {
+        writeBarrier.runWrite(DatabaseAccessOperation("NotificationRepository.deleteAllNotifications")) {
+        transactionRunner.runInTransaction(
+            correlationId = java.util.UUID.randomUUID().toString(),
+            operationId = "notification.delete_all",
+            source = "NotificationRepository.deleteAllNotifications"
+        ) { ctx ->
             // P2-PR2 (NEW-P2-006): Write BULK_DELETED TransactionEvent before mutation
-            transactionEventDao.insert(TransactionEvent(
-                expenseId = null,
-                eventType = LifecycleEventType.BULK_DELETED.name,
-                source = "SYSTEM",
-                actor = null,
-                occurredAt = now,
-                dedupeKey = null,
-                duplicateExpenseId = null,
-                beforeSnapshot = null,
-                afterSnapshot = null,
-                metadata = """{"operation":"deleteAllNotifications"}""",
-                reason = "Bulk delete all notifications, reviews, corrections, and stats",
-                correlationId = null
-            ))
+            // via the legal lifecycle writer; occurredAt stays the injected [now] (G-TIME-01).
+            transactionLifecycleEventWriter.write(
+                ctx.copy(occurredAt = now),
+                TransactionLifecycleEvent(
+                    expenseId = null,
+                    eventType = LifecycleEventType.BULK_DELETED.name,
+                    source = "SYSTEM",
+                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                        .put("operation", "deleteAllNotifications")
+                        .build(),
+                    reason = "Bulk delete all notifications, reviews, corrections, and stats"
+                )
+            )
 
             dao.deleteAll()
             pendingReviewDao.deleteAll()
@@ -230,6 +245,7 @@ class NotificationRepository @Inject constructor(
                     .build(),
                 isTerminal = true
             ))
+        }
         }
     }
 
@@ -252,18 +268,22 @@ class NotificationRepository @Inject constructor(
     )
     suspend fun deleteAll() {
         writeBarrier.checkWritesAllowed("NotificationRepository.deleteAll")
-        database.withTransaction {
-            dao.deleteAll()
-            expenseDao.deleteAll()
-            pendingReviewDao.deleteAll()
-            userCorrectionDao.deleteAll()
-            sourceStatsDao.resetAllPendingCounts()
+        writeBarrier.runWrite(DatabaseAccessOperation("NotificationRepository.deleteAll")) {
+            database.withTransaction {
+                dao.deleteAll()
+                expenseDao.deleteAll()
+                pendingReviewDao.deleteAll()
+                userCorrectionDao.deleteAll()
+                sourceStatsDao.resetAllPendingCounts()
+            }
         }
     }
 
     suspend fun resetSourceStats() {
         writeBarrier.checkWritesAllowed("NotificationRepository.resetSourceStats")
-        sourceStatsDao.deleteAll()
+        writeBarrier.runWrite(DatabaseAccessOperation("NotificationRepository.resetSourceStats")) {
+            sourceStatsDao.deleteAll()
+        }
     }
 
     suspend fun createDebugSnapshot(): DebugNotificationsSnapshot {
@@ -281,14 +301,16 @@ class NotificationRepository @Inject constructor(
         if (!com.yourname.expensetracker.BuildConfig.DEBUG) {
             throw UnsupportedOperationException("Debug snapshots disabled in release")
         }
-        database.withTransaction {
-            dao.deleteAll()
-            sourceStatsDao.deleteAll()
-            if (snapshot.notifications.isNotEmpty()) {
-                dao.insertAll(snapshot.notifications)
-            }
-            if (snapshot.sourceStats.isNotEmpty()) {
-                sourceStatsDao.insertAll(snapshot.sourceStats)
+        writeBarrier.runWrite(DatabaseAccessOperation("NotificationRepository.restoreDebugSnapshot")) {
+            database.withTransaction {
+                dao.deleteAll()
+                sourceStatsDao.deleteAll()
+                if (snapshot.notifications.isNotEmpty()) {
+                    dao.insertAll(snapshot.notifications)
+                }
+                if (snapshot.sourceStats.isNotEmpty()) {
+                    sourceStatsDao.insertAll(snapshot.sourceStats)
+                }
             }
         }
     }
@@ -299,10 +321,12 @@ class NotificationRepository @Inject constructor(
 
     suspend fun restoreSourceStatsSnapshot(stats: List<SourceStats>) {
         writeBarrier.checkWritesAllowed("NotificationRepository.restoreSourceStatsSnapshot")
-        database.withTransaction {
-            sourceStatsDao.deleteAll()
-            if (stats.isNotEmpty()) {
-                sourceStatsDao.insertAll(stats)
+        writeBarrier.runWrite(DatabaseAccessOperation("NotificationRepository.restoreSourceStatsSnapshot")) {
+            database.withTransaction {
+                sourceStatsDao.deleteAll()
+                if (stats.isNotEmpty()) {
+                    sourceStatsDao.insertAll(stats)
+                }
             }
         }
     }

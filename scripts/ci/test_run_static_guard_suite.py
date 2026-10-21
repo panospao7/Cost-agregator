@@ -759,6 +759,8 @@ class TestGuardTestsInterpreterPortable:
             "-m", "pytest",
             "scripts",
             "-v", "--tb=short",
+            # Windows-only, minutes-long; covered by runner-protocol-tests.
+            "--ignore=scripts/ci/test_validation_runner_protocol.py",
         ], f"guard_tests pytest invocation changed: {command[1:]}"
         root = Path(__file__).resolve().parents[2]
         selected = {path.relative_to(root).as_posix()
@@ -1582,7 +1584,7 @@ LEGACY_GUARD_MANIFEST_FIXTURE: List[Tuple[str, List[str], str]] = [
     ("pii_logging", ["python3", "scripts/verify_pii_logging_boundaries.py", "--fail-on-violation"], "blocking"),
     ("di_release", ["python3", "scripts/verify_di_release_boundaries.py", "--fail-on-violation"], "blocking"),
     ("allowlist_compliance", ["python3", "scripts/verify_allowlist_compliance.py", "--fail-on-violation"], "blocking"),
-    ("ignored_test_budget", ["python3", "scripts/verify_ignored_test_budget.py", "--fail-on-violation", "--baseline", "29"], "blocking"),
+    ("ignored_test_budget", ["python3", "scripts/verify_ignored_test_budget.py", "--fail-on-violation", "--baseline", "0"], "blocking"),
     ("lint_baseline_policy", ["python3", "scripts/verify_lint_baseline_policy.py", "--fail-on-violation"], "blocking"),
     (
         "time_boundaries",
@@ -1713,7 +1715,14 @@ LEGACY_GUARD_MANIFEST_FIXTURE: List[Tuple[str, List[str], str]] = [
     ),
     # CL-22 deliberately expands this infrastructure leg beyond the historical
     # migration fixture; registry-derived guard commands stay unchanged.
-    ("guard_tests", [sys.executable, "-m", "pytest", "scripts", "-v", "--tb=short"], "blocking"),
+    (
+        "guard_tests",
+        [
+            sys.executable, "-m", "pytest", "scripts", "-v", "--tb=short",
+            "--ignore=scripts/ci/test_validation_runner_protocol.py",
+        ],
+        "blocking",
+    ),
 ]
 
 # Verbatim pre-migration GUARD_TIME_BUDGETS (the named timeout profiles must

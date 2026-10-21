@@ -93,6 +93,72 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
     }
 
     // =========================================================================
+    // Cancellation (MONEY-04)
+    // =========================================================================
+
+    @Test
+    fun `estimateTaxes propagates cancellation from the tax rate provider instead of swallowing it`() = runTest {
+        val start = atDateTime(2026, 3, 1, 0, 0)
+        val end = atDateTime(2026, 4, 1, 0, 0)
+        coEvery { businessExpenseRepository.getTotalBusinessExpenses(start, end) } returns 0.0
+        val cancellingProvider = mockk<TaxRateProvider>()
+        coEvery { cancellingProvider.getRate(any(), any()) } throws kotlinx.coroutines.CancellationException("cancelled")
+        val estimator = TaxEstimator(
+            expenseDao = expenseDao,
+            businessExpenseRepository = businessExpenseRepository,
+            timeProvider = timeProvider,
+            currencyConverter = mockk(relaxed = true),
+            currencySettingsRepository = currencySettingsRepo,
+            taxSettings = taxSettingsRepo,
+            ioDispatcher = Dispatchers.Unconfined,
+            taxRateProvider = cancellingProvider,
+            multiCurrencyRepository = multiCurrencyRepository
+        )
+
+        val thrown = runCatching { estimator.estimateTaxes(start, end, 30000.0) }.exceptionOrNull()
+
+        assertTrue("CancellationException must propagate, was: $thrown",
+            thrown is kotlinx.coroutines.CancellationException)
+    }
+
+    @Test
+    fun `estimateTaxes propagates cancellation from the home currency lookup`() = runTest {
+        val start = atDateTime(2026, 3, 1, 0, 0)
+        val end = atDateTime(2026, 4, 1, 0, 0)
+        coEvery { businessExpenseRepository.getTotalBusinessExpenses(start, end) } returns 0.0
+        every { currencySettingsRepo.homeCurrency() } throws kotlinx.coroutines.CancellationException("cancelled")
+
+        val thrown = runCatching { taxEstimator.estimateTaxes(start, end, 30000.0) }.exceptionOrNull()
+
+        assertTrue("CancellationException must propagate, was: $thrown",
+            thrown is kotlinx.coroutines.CancellationException)
+    }
+
+    @Test
+    fun `estimateTaxes still falls back to the configured VAT rate when the provider fails normally`() = runTest {
+        val start = atDateTime(2026, 3, 1, 0, 0)
+        val end = atDateTime(2026, 4, 1, 0, 0)
+        coEvery { businessExpenseRepository.getTotalBusinessExpenses(start, end) } returns 1240.0
+        val failingProvider = mockk<TaxRateProvider>()
+        coEvery { failingProvider.getRate(any(), any()) } throws IllegalStateException("provider down")
+        val estimator = TaxEstimator(
+            expenseDao = expenseDao,
+            businessExpenseRepository = businessExpenseRepository,
+            timeProvider = timeProvider,
+            currencyConverter = mockk(relaxed = true),
+            currencySettingsRepository = currencySettingsRepo,
+            taxSettings = taxSettingsRepo,
+            ioDispatcher = Dispatchers.Unconfined,
+            taxRateProvider = failingProvider,
+            multiCurrencyRepository = multiCurrencyRepository
+        )
+
+        val estimate = estimator.estimateTaxes(start, end, 30000.0, taxConfig = GreeceTaxConfiguration())
+
+        assertApproxEquals(1240.0 * (0.24 / 1.24), estimate.estimatedVatPortion, 0.01)
+    }
+
+    // =========================================================================
     // Core VAT estimation
     // =========================================================================
 

@@ -9,6 +9,7 @@ param(
         "runner-progress-smoke",
         "runner-stall-smoke",
         "runner-protocol-tests",
+        "pytest-subset",
         "compile",
         "benchmark-compile",
         "benchmark-test-shard",
@@ -350,6 +351,24 @@ function Assert-SafeTestFilters {
     }
 }
 
+# Single parser for targeted-unit-test / targeted-release-unit-test filters.
+# -TestFilter may be a comma-separated list. No trimming: whitespace, empty
+# items and duplicate items are rejected (E_INVALID_TEST_FILTER); more than
+# 50 items is E_TOO_MANY_TEST_FILTERS.
+function Get-TargetedTestFilters {
+    param([string]$Filter)
+    $maxFilters = 50
+    if (-not $Filter) { throw "E_INVALID_TEST_FILTER" }
+    $items = @($Filter.Split(','))
+    if ($items.Count -gt $maxFilters) { throw "E_TOO_MANY_TEST_FILTERS" }
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
+    foreach ($item in $items) {
+        if (-not $item -or $item -notmatch '^[A-Za-z0-9_.$*?\-]+\z') { throw "E_INVALID_TEST_FILTER" }
+        if (-not $seen.Add($item)) { throw "E_INVALID_TEST_FILTER" }
+    }
+    return $items
+}
+
 function Get-ShardFilters {
     param([Parameter(Mandatory = $true)][string]$Name)
     if ($Name -notmatch '^[a-z][a-z0-9-]{1,63}$') { throw "E_INVALID_SHARD" }
@@ -398,9 +417,9 @@ function Get-LegacyFilters {
 }
 
 function New-TestArguments {
-    param([object[]]$Filters)
+    param([object[]]$Filters, [string]$Task = ":app:testDebugUnitTest")
     $arguments = New-Object System.Collections.Generic.List[string]
-    $arguments.Add(":app:testDebugUnitTest")
+    $arguments.Add($Task)
     foreach ($filter in $Filters) {
         $arguments.Add("--tests")
         $arguments.Add([string]$filter)
@@ -412,9 +431,38 @@ function Test-GradleProfile {
     param([string]$Name)
     return $Name -notin @(
         "runner-smoke", "runner-progress-smoke", "runner-stall-smoke",
-        "runner-protocol-tests", "static-guards", "registered-guard",
+        "runner-protocol-tests", "pytest-subset", "static-guards", "registered-guard",
         "release-artifact-evidence"
     )
+}
+
+function Assert-SafePytestFilter {
+    # Fail-closed validation for the pytest-subset profile. Throws
+    # E_INVALID_PYTEST_FILTER for anything that is not a repo-relative path that
+    # is exactly "scripts" or lives under "scripts/", optionally followed by
+    # "::" test-id segments. The pattern admits no whitespace, wildcard, shell
+    # metacharacter, quote, drive letter (":" only appears in "::"), or leading
+    # separator; "." and ".." path segments are rejected explicitly.
+    param([string]$Filter)
+    if (-not $Filter) { throw "E_INVALID_PYTEST_FILTER" }
+    $pattern = '^(?<path>scripts(?:[/\\][A-Za-z0-9_.\-]+)*)(?<ids>(?:::[A-Za-z0-9_\[\]\-]+)*)\z'
+    $match = [regex]::Match($Filter, $pattern, [System.Text.RegularExpressions.RegexOptions]::None)
+    if (-not $match.Success) { throw "E_INVALID_PYTEST_FILTER" }
+    $relative = $match.Groups["path"].Value
+    foreach ($segment in ($relative -split '[/\\]')) {
+        if ($segment -match '^\.+$') { throw "E_INVALID_PYTEST_FILTER" }
+    }
+    $scriptsRoot = [System.IO.Path]::GetFullPath((Join-Path $script:RepoRoot "scripts"))
+    $full = [System.IO.Path]::GetFullPath((Join-Path $script:RepoRoot $relative))
+    $separator = [System.IO.Path]::DirectorySeparatorChar
+    if (-not [string]::Equals($full, $scriptsRoot, [System.StringComparison]::OrdinalIgnoreCase) -and -not $full.StartsWith($scriptsRoot + $separator, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "E_INVALID_PYTEST_FILTER"
+    }
+    if (-not (Test-Path -LiteralPath $full)) { throw "E_INVALID_PYTEST_FILTER" }
+    # A "::" test id only makes sense for a file.
+    if ($match.Groups["ids"].Value -and -not (Test-Path -LiteralPath $full -PathType Leaf)) {
+        throw "E_INVALID_PYTEST_FILTER"
+    }
 }
 
 function Resolve-InvocationDeviceSerial {
@@ -547,6 +595,16 @@ function Get-ProfileSpec {
                 no_output_timeout = 180
             }
         }
+        "pytest-subset" {
+            Assert-SafePytestFilter -Filter $Filter
+            $python = Resolve-PythonCommand -Requested $RequestedPython
+            return @{
+                executable = $python
+                arguments = @("-m", "pytest", $Filter, "-q", "-p", "no:cacheprovider", "--durations=40", "-rs")
+                timeout = 2400
+                no_output_timeout = 600
+            }
+        }
         "compile" { return @{ executable = $gradle; arguments = @(":app:compileDebugKotlin") + $gradleTail; timeout = 1800; no_output_timeout = 600 } }
         "benchmark-compile" {
             return @{ executable = $gradle; arguments = @(":app:compileDebugKotlin", "--rerun", "--no-build-cache", "-Pkotlin.incremental=false", "-Pkotlin.build.report.output=file", "--profile") + $gradleTail; timeout = 1800; no_output_timeout = 600 }
@@ -560,12 +618,12 @@ function Get-ProfileSpec {
         }
         "assemble-debug" { return @{ executable = $gradle; arguments = @(":app:assembleDebug") + $gradleTail; timeout = 3600; no_output_timeout = 900 } }
         "targeted-unit-test" {
-            if (-not $Filter -or $Filter -notmatch '^[A-Za-z0-9_.$*?\-]+$') { throw "E_INVALID_TEST_FILTER" }
-            return @{ executable = $gradle; arguments = @(":app:testDebugUnitTest", "--tests", $Filter) + $gradleTail; timeout = 2400; no_output_timeout = 600 }
+            $targetedFilters = Get-TargetedTestFilters -Filter $Filter
+            return @{ executable = $gradle; arguments = (New-TestArguments -Filters $targetedFilters) + $gradleTail; timeout = 2400; no_output_timeout = 600 }
         }
         "targeted-release-unit-test" {
-            if (-not $Filter -or $Filter -notmatch '^[A-Za-z0-9_.$*?\-]+$') { throw "E_INVALID_TEST_FILTER" }
-            return @{ executable = $gradle; arguments = @(":app:testReleaseUnitTest", "--tests", $Filter) + $gradleTail; timeout = 2400; no_output_timeout = 600 }
+            $targetedFilters = Get-TargetedTestFilters -Filter $Filter
+            return @{ executable = $gradle; arguments = (New-TestArguments -Filters $targetedFilters -Task ":app:testReleaseUnitTest") + $gradleTail; timeout = 2400; no_output_timeout = 600 }
         }
         "unit-test-shard" { return @{ executable = $gradle; arguments = (New-TestArguments -Filters (Get-ShardFilters -Name $ShardName)) + $gradleTail; timeout = 3600; no_output_timeout = 900 } }
         "trusted-tests" { return @{ executable = $gradle; arguments = (New-TestArguments -Filters (Get-TrustedFilters)) + $gradleTail; timeout = 3600; no_output_timeout = 900 } }
@@ -641,6 +699,115 @@ function ConvertTo-ProcessArguments {
         # remaining Windows argv cases without invoking a command shell.
         return '"' + $value.Replace('\', '\').Replace('"', '\"') + '"'
     }) -join " ")
+}
+
+function Test-PytestProfile {
+    # Profiles whose child runs pytest, directly or through the guard suite.
+    # Their child environment is sanitised and the pytest config search is
+    # checked before launch. Profile names only; never part of the command display.
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Name)
+    return $Name -in @("runner-protocol-tests", "pytest-subset", "static-guards")
+}
+
+function Test-PytestSummaryProfile {
+    # Profiles whose own stdout ends with the pytest summary line, so an exit 0
+    # is only a PASS when at least one test passed.
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Name)
+    return $Name -in @("runner-protocol-tests", "pytest-subset")
+}
+
+function Set-PytestChildEnvironment {
+    # Ambient pytest options or plugins must not change what a PASS means:
+    # PYTEST_ADDOPTS (for example --co) can make pytest exit 0 without running
+    # any test, PYTEST_PLUGINS and autoloaded entry-point plugins can rewrite
+    # outcomes. Applied at the single place where the worker builds the child.
+    param([Parameter(Mandatory = $true)]$StartInfo)
+    $StartInfo.EnvironmentVariables.Remove("PYTEST_ADDOPTS")
+    $StartInfo.EnvironmentVariables.Remove("PYTEST_PLUGINS")
+    $StartInfo.EnvironmentVariables["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
+}
+
+function Test-PytestConfigOutsideRepo {
+    # pytest searches for pytest.ini, pytest.toml, pyproject.toml, tox.ini and
+    # setup.cfg in every ancestor of the collected paths, past the repository
+    # root. This repository has no pytest config, so one found above the
+    # repository root is injected, untracked configuration. Fail closed: an
+    # unreadable candidate counts as a config. StopAt is a test seam; scanning
+    # stops before that directory.
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [string]$StopAt = ""
+    )
+    $directory = Split-Path -Parent $Root
+    while ($directory) {
+        if ($StopAt -and $directory -ieq $StopAt) { break }
+        foreach ($name in @("pytest.ini", ".pytest.ini", "pytest.toml", ".pytest.toml")) {
+            if (Test-Path -LiteralPath (Join-Path $directory $name)) { return $true }
+        }
+        $sections = @(
+            @{ file = "tox.ini"; pattern = '(?m)^\s*\[pytest\]' },
+            @{ file = "setup.cfg"; pattern = '(?m)^\s*\[tool:pytest\]' },
+            @{ file = "pyproject.toml"; pattern = '(?m)^\s*\[{0,2}\s*tool\s*\.\s*pytest\b' }
+        )
+        foreach ($section in $sections) {
+            $candidate = Join-Path $directory $section.file
+            if (-not (Test-Path -LiteralPath $candidate)) { continue }
+            try {
+                if ([System.IO.File]::ReadAllText($candidate) -match $section.pattern) { return $true }
+            }
+            catch { return $true }
+        }
+        $parent = Split-Path -Parent $directory
+        if ($parent -ceq $directory) { break }
+        $directory = $parent
+    }
+    return $false
+}
+
+function Get-PytestPassedCount {
+    # Parses the final pytest summary line from the tail of a captured stdout
+    # log and returns its passed count. Returns 0 when the log is missing or
+    # unreadable, when the last non-empty line is not a pytest summary line, or
+    # when no test passed (only skipped, deselected, xfailed or "no tests ran").
+    # Accepts the -q form ("3 passed, 1 skipped in 0.12s"), the decorated form
+    # ("=== 3 passed in 0.12s ==="), a trailing "(0:00:01)", and ANSI colour codes.
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $text = ""
+    try {
+        if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return 0 }
+        $stream = [System.IO.File]::Open(
+            $Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite
+        )
+        try {
+            $length = $stream.Length
+            $take = [int][Math]::Min($length, 65536)
+            $null = $stream.Seek($length - $take, [System.IO.SeekOrigin]::Begin)
+            $buffer = New-Object byte[] $take
+            $read = 0
+            while ($read -lt $take) {
+                $chunk = $stream.Read($buffer, $read, $take - $read)
+                if ($chunk -le 0) { break }
+                $read += $chunk
+            }
+            $text = [System.Text.Encoding]::UTF8.GetString($buffer, 0, $read)
+        }
+        finally { $stream.Dispose() }
+    }
+    catch { return 0 }
+    $text = [regex]::Replace($text, '\x1B\[[0-9;?]*[ -/]*[@-~]', '')
+    $summaryPattern = '^=*\s*(?<body>no tests ran|[0-9]+ [a-z]+(?: [a-z]+)*(?:, [0-9]+ [a-z]+(?: [a-z]+)*)*) in [0-9]+(?:\.[0-9]+)?s(?: \([0-9]+:[0-9]{2}:[0-9]{2}\))?\s*=*$'
+    $lines = @(($text -split "\r?\n") | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    if ($lines.Count -eq 0) { return 0 }
+    $last = [string]$lines[$lines.Count - 1]
+    if ($last.Length -gt 200) { return 0 }
+    $match = [regex]::Match($last, $summaryPattern)
+    if (-not $match.Success) { return 0 }
+    $passed = 0
+    foreach ($segment in ($match.Groups["body"].Value -split ", ")) {
+        $counted = [regex]::Match($segment, '^([0-9]{1,9}) passed$')
+        if ($counted.Success) { $passed += [int]$counted.Groups[1].Value }
+    }
+    return $passed
 }
 
 function Test-ExternalGradleClient {
@@ -865,6 +1032,10 @@ function Invoke-ValidationWorker {
             (-not $request.PSObject.Properties["command"] -or $request.command -isnot [string] -or -not $request.command)) {
             throw "E_COMMAND_MISMATCH"
         }
+        $isPytestProfile = Test-PytestProfile -Name ([string]$request.profile)
+        if ($isPytestProfile -and (Test-PytestConfigOutsideRepo -Root $script:RepoRoot)) {
+            throw "E_PYTEST_CONFIG_OUTSIDE_REPO"
+        }
         $stdout = Join-Path $runDirectory "stdout.log"
         $stderr = Join-Path $runDirectory "stderr.log"
         $startInfo = New-Object System.Diagnostics.ProcessStartInfo
@@ -876,6 +1047,7 @@ function Invoke-ValidationWorker {
         $startInfo.RedirectStandardOutput = $true
         $startInfo.RedirectStandardError = $true
         $startInfo.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8"
+        if ($isPytestProfile) { Set-PytestChildEnvironment -StartInfo $startInfo }
         # Device selection for connected profiles; the serial was validated above.
         if ($requestSerial) { $startInfo.EnvironmentVariables["ANDROID_SERIAL"] = $requestSerial }
 
@@ -964,7 +1136,17 @@ function Invoke-ValidationWorker {
         }
         else {
             $exitCode = [int]$process.ExitCode
-            if ($exitCode -eq 0) { $record.status = "PASS" }
+            if ($exitCode -eq 0) {
+                $record.status = "PASS"
+                # pytest exits 0 when everything was skipped or deselected. For
+                # pytest profiles PASS also requires at least one passed test.
+                if ((Test-PytestSummaryProfile -Name ([string]$request.profile)) -and
+                    (Get-PytestPassedCount -Path $stdout) -lt 1) {
+                    $record.status = "FAIL"
+                    $exitCode = 1
+                    $failureCode = "E_NO_TESTS_PASSED"
+                }
+            }
             else { $record.status = "FAIL"; $failureCode = "E_COMMAND_FAILED" }
         }
     }
@@ -1072,14 +1254,15 @@ function Show-Profiles {
         @{ name = "runner-smoke"; purpose = "Exercise only the detached runner protocol" },
         @{ name = "runner-progress-smoke"; purpose = "Exercise heartbeat/output progress detection" },
         @{ name = "runner-stall-smoke"; purpose = "Exercise no-output timeout handling; expected TIMEOUT" },
-        @{ name = "runner-protocol-tests"; purpose = "Run isolated Windows runner protocol regression tests" },
+        @{ name = "runner-protocol-tests"; purpose = "Run isolated Windows runner protocol regression tests; PASS needs at least one passed test" },
+        @{ name = "pytest-subset"; purpose = "Run one pytest path under scripts/ with durations and skip reasons; PASS needs at least one passed test; required -TestFilter scripts[/path][::test_id]" },
         @{ name = "compile"; purpose = "Compile debug Kotlin" },
         @{ name = "benchmark-compile"; purpose = "Force full debug Kotlin compilation without build-cache reuse; local benchmark only" },
         @{ name = "benchmark-test-shard"; purpose = "Force one unchanged named shard to execute; local benchmark only" },
         @{ name = "benchmark-app-check"; purpose = "Force both full unit suites and run app-check with unchanged checks" },
         @{ name = "assemble-debug"; purpose = "Build the debug APK" },
-        @{ name = "targeted-unit-test"; purpose = "Run one allowlisted Gradle test filter" },
-        @{ name = "targeted-release-unit-test"; purpose = "Run one allowlisted release Gradle test filter" },
+        @{ name = "targeted-unit-test"; purpose = "Run one allowlisted Gradle test filter or a comma-separated list (max 50)" },
+        @{ name = "targeted-release-unit-test"; purpose = "Run one allowlisted release Gradle test filter or a comma-separated list (max 50)" },
         @{ name = "unit-test-shard"; purpose = "Run one named manifest shard with -Shard" },
         @{ name = "trusted-tests"; purpose = "Run the curated trusted structural test group" },
         @{ name = "legacy-tests"; purpose = "Run ledger-routed suspected/confirmed hanging tests in isolation" },

@@ -769,14 +769,18 @@ class ReceiptParser @Inject constructor(
     private fun extractTax(text: String): Double? {
         // Multiple tax patterns to handle Greek ΦΠΑ OCR variations
         val taxPatterns = listOf(
+            // MONEY-01: an optional rate ("24,00%") may precede the amount, and a number that
+            // is itself followed by '%' is a rate, never the tax amount ((?![ \t]*%) guards).
+            // The rate prefix and the '%' guards are line-local ([ \t], never \s) so a rate-only
+            // line ("ΦΠΑ 24%") cannot take the first number of the next line as the tax.
             // Normalized VAT_KEY pattern
-            Regex("""VAT_KEY\s*[:\s]*[€$]?\s*(\d+[.,]\d{2})"""),
+            Regex("""VAT_KEY\s*[:\s]*(?:\d{1,3}(?:[.,]\d{1,2})?[ \t]*%[ \t:]*(?=[€$\d]))?[€$]?[ \t]*(\d+[.,]\d{2})(?![ \t]*%)"""),
             // Greek/English with percentage and bilingual: "VAT / ΦΠΑ: €2.76" or "ΦΠΑ 24%: 4,14"
-            Regex("""(?:Φ\.?Π\.?Α\.?|VAT|TAX)(?:\s*/\s*(?:Φ\.?Π\.?Α\.?|VAT|TAX))?\s*\d*[.,]?\d*%?\s*:?\s*[€$]?\s*(\d+[.,]\d{2})"""),
+            Regex("""(?:Φ\.?Π\.?Α\.?|VAT|TAX)(?:\s*/\s*(?:Φ\.?Π\.?Α\.?|VAT|TAX))?\s*\d*[.,]?\d*%?\s*:?\s*[€$]?\s*(\d+[.,]\d{2})(?![ \t]*%)"""),
             // OCR corrupted: "0.n.A 24,00%" or "O.n.A"
-            Regex("""0\.?n\.?A\.?\s*\d*[.,]?\d*%?\s*[€$]?\s*(\d+[.,]\d{2})"""),
-            Regex("""O\.?n\.?A\s*\d*[.,]?\d*%?\s*[€$]?\s*(\d+[.,]\d{2})"""),
-            Regex("""0\.?Π\.?Α\s*\d*[.,]?\d*%?\s*[€$]?\s*(\d+[.,]\d{2})"""),
+            Regex("""0\.?n\.?A\.?\s*\d*[.,]?\d*%?\s*[€$]?\s*(\d+[.,]\d{2})(?![ \t]*%)"""),
+            Regex("""O\.?n\.?A\s*\d*[.,]?\d*%?\s*[€$]?\s*(\d+[.,]\d{2})(?![ \t]*%)"""),
+            Regex("""0\.?Π\.?Α\s*\d*[.,]?\d*%?\s*[€$]?\s*(\d+[.,]\d{2})(?![ \t]*%)"""),
             // Line with tax percentage: "4,14 24%"
             Regex("""(\d+[.,]\d{2})\s*\d{1,3}[.,]?\d{0,2}%""")
         )

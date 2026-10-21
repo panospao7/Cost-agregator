@@ -5,6 +5,7 @@ import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.navigation.DomainOwnershipFilter
 import com.yourname.expensetracker.domain.engine.DashboardFollowThroughEngine
 import com.yourname.expensetracker.domain.model.navigation.DomainTransactionFilter
+import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
 import io.mockk.every
 import io.mockk.mockk
 import org.junit.Before
@@ -30,64 +31,30 @@ class NavigationTargetResolverTest {
 
     // ========== canHandle() Tests ==========
 
-    @Test
-    fun `canHandle returns true for TRANSACTION_LIST target`() {
-        val result = resolver.canHandle(DashboardFollowThroughEngine.NAV_TARGET_TRANSACTION_LIST)
-        assertTrue(result)
-    }
+    private class CanHandleRow(val name: String, val target: String, val expected: Boolean)
 
     @Test
-    fun `canHandle returns true for CATEGORY_DETAIL target`() {
-        val result = resolver.canHandle(DashboardFollowThroughEngine.NAV_TARGET_CATEGORY_DETAIL)
-        assertTrue(result)
-    }
+    fun `canHandle table matches expected result for every target spelling`() {
+        val rows = listOf(
+            CanHandleRow("TRANSACTION_LIST constant", DashboardFollowThroughEngine.NAV_TARGET_TRANSACTION_LIST, true),
+            CanHandleRow("CATEGORY_DETAIL constant", DashboardFollowThroughEngine.NAV_TARGET_CATEGORY_DETAIL, true),
+            CanHandleRow("BUDGET_DETAIL constant", DashboardFollowThroughEngine.NAV_TARGET_BUDGET_DETAIL, true),
+            CanHandleRow("ANALYTICS constant", DashboardFollowThroughEngine.NAV_TARGET_ANALYTICS, true),
+            CanHandleRow("MAP", "MAP", true),
+            CanHandleRow("lowercase map", "map", true),
+            CanHandleRow("mixed case Transaction_List", "Transaction_List", true),
+            CanHandleRow("unknown target", "UNKNOWN_TARGET", false),
+            CanHandleRow("empty string", "", false),
+            CanHandleRow("whitespace-padded TRANSACTION_LIST", "  TRANSACTION_LIST  ", true)
+        )
 
-    @Test
-    fun `canHandle returns true for BUDGET_DETAIL target`() {
-        val result = resolver.canHandle(DashboardFollowThroughEngine.NAV_TARGET_BUDGET_DETAIL)
-        assertTrue(result)
-    }
-
-    @Test
-    fun `canHandle returns true for ANALYTICS target`() {
-        val result = resolver.canHandle(DashboardFollowThroughEngine.NAV_TARGET_ANALYTICS)
-        assertTrue(result)
-    }
-
-    @Test
-    fun `canHandle returns true for MAP target`() {
-        val result = resolver.canHandle("MAP")
-        assertTrue(result)
-    }
-
-    @Test
-    fun `canHandle returns true for lowercase map target`() {
-        val result = resolver.canHandle("map")
-        assertTrue(result)
-    }
-
-    @Test
-    fun `canHandle returns true for mixed case target`() {
-        val result = resolver.canHandle("Transaction_List")
-        assertTrue(result)
-    }
-
-    @Test
-    fun `canHandle returns false for unknown target`() {
-        val result = resolver.canHandle("UNKNOWN_TARGET")
-        assertFalse(result)
-    }
-
-    @Test
-    fun `canHandle returns false for empty string`() {
-        val result = resolver.canHandle("")
-        assertFalse(result)
-    }
-
-    @Test
-    fun `canHandle handles whitespace in target`() {
-        val result = resolver.canHandle("  TRANSACTION_LIST  ")
-        assertTrue(result)
+        rows.forEach { row ->
+            assertEquals(
+                "canHandle row '${row.name}' for target '${row.target}'",
+                row.expected,
+                resolver.canHandle(row.target)
+            )
+        }
     }
 
     // ========== resolve() for TRANSACTION_LIST ==========
@@ -131,38 +98,25 @@ class NavigationTargetResolverTest {
     }
 
     @Test
-    fun `resolve handles null filter JSON for TRANSACTION_LIST`() {
-        val action = resolver.resolve(
-            DashboardFollowThroughEngine.NAV_TARGET_TRANSACTION_LIST,
-            null
+    fun `resolve yields the default filter for null, empty and blank filter JSON for TRANSACTION_LIST`() {
+        val rows = listOf<Pair<String, String?>>(
+            "null filter JSON" to null,
+            "empty filter JSON" to "",
+            "blank filter JSON" to "   "
         )
 
-        assertTrue(action is NavigationAction.ToTransactionList)
-        val filter = (action as NavigationAction.ToTransactionList).filter
-        assertNull(filter.categoryId)
-        assertNull(filter.merchantName)
-    }
+        rows.forEach { (name, filterJson) ->
+            val action = resolver.resolve(
+                DashboardFollowThroughEngine.NAV_TARGET_TRANSACTION_LIST,
+                filterJson
+            )
 
-    @Test
-    fun `resolve handles empty filter JSON for TRANSACTION_LIST`() {
-        val action = resolver.resolve(
-            DashboardFollowThroughEngine.NAV_TARGET_TRANSACTION_LIST,
-            ""
-        )
-
-        assertTrue(action is NavigationAction.ToTransactionList)
-        val filter = (action as NavigationAction.ToTransactionList).filter
-        assertNull(filter.categoryId)
-    }
-
-    @Test
-    fun `resolve handles blank filter JSON for TRANSACTION_LIST`() {
-        val action = resolver.resolve(
-            DashboardFollowThroughEngine.NAV_TARGET_TRANSACTION_LIST,
-            "   "
-        )
-
-        assertTrue(action is NavigationAction.ToTransactionList)
+            assertEquals(
+                "Row '$name' must resolve to the default filter",
+                NavigationAction.ToTransactionList(TransactionFilter()),
+                action
+            )
+        }
     }
 
     // ========== resolve() for CATEGORY_DETAIL ==========

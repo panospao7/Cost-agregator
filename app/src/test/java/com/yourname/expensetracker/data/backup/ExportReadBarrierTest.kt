@@ -2,7 +2,6 @@ package com.yourname.expensetracker.data.backup
 
 import io.mockk.every
 import io.mockk.mockk
-import io.mockk.verify
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.toList
@@ -12,7 +11,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertThrows
 import org.junit.Before
 import org.junit.Test
 
@@ -30,80 +28,9 @@ class ExportReadBarrierTest {
         every { maintenanceMode.currentMode() } returns mode
     }
 
-    // ── restore_blocks_export_generation ─────────────────────────
-
-    @Test
-    fun restore_blocks_export_generation() {
-        setMode(RestoreMaintenanceMode.Mode.RESTORE_VERIFYING)
-        assertThrows(DatabaseAccessBlockedException::class.java) {
-            readBarrier.checkReadAllowed(
-                DatabaseAccessOperation("ExportDataRepository.export", pipeline = "P12"),
-                DatabaseReadPolicy.EXPORT_OR_BACKUP_SNAPSHOT_READ
-            )
-        }
-    }
-
-    // ── restart_required_blocks_export_generation ─────────────────
-
-    @Test
-    fun restart_required_blocks_export_generation() {
-        setMode(RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED)
-        assertThrows(DatabaseAccessBlockedException::class.java) {
-            readBarrier.checkReadAllowed(
-                DatabaseAccessOperation("ExportOptionsViewModel.generateExport", pipeline = "P12"),
-                DatabaseReadPolicy.EXPORT_OR_BACKUP_SNAPSHOT_READ
-            )
-        }
-    }
-
-    // ── backup_export_policy_allows_only_snapshot_reads ───────────
-
-    @Test
-    fun export_read_allowed_in_NORMAL() {
-        setMode(RestoreMaintenanceMode.Mode.NORMAL)
-        readBarrier.checkReadAllowed(
-            DatabaseAccessOperation("export"),
-            DatabaseReadPolicy.EXPORT_OR_BACKUP_SNAPSHOT_READ
-        ) // must not throw
-    }
-
-    @Test
-    fun export_read_allowed_in_BACKUP_EXPORTING() {
-        setMode(RestoreMaintenanceMode.Mode.BACKUP_EXPORTING)
-        readBarrier.checkReadAllowed(
-            DatabaseAccessOperation("export"),
-            DatabaseReadPolicy.EXPORT_OR_BACKUP_SNAPSHOT_READ
-        ) // must not throw
-    }
-
-    @Test
-    fun normal_app_read_blocked_in_BACKUP_EXPORTING() {
-        setMode(RestoreMaintenanceMode.Mode.BACKUP_EXPORTING)
-        assertThrows(DatabaseAccessBlockedException::class.java) {
-            readBarrier.checkReadAllowed(
-                DatabaseAccessOperation("dashboard"),
-                DatabaseReadPolicy.NORMAL_APP_READ
-            )
-        }
-    }
-
-    // ── restore_blocks_import ─────────────────────────────────────
-
-    @Test
-    fun restore_blocks_all_non_NORMAL_modes_for_normal_reads() {
-        val blockingModes = RestoreMaintenanceMode.Mode.entries.filter {
-            it != RestoreMaintenanceMode.Mode.NORMAL
-        }
-        for (mode in blockingModes) {
-            setMode(mode)
-            assertThrows("Expected block in $mode", DatabaseAccessBlockedException::class.java) {
-                readBarrier.checkReadAllowed(
-                    DatabaseAccessOperation("dashboard"),
-                    DatabaseReadPolicy.NORMAL_APP_READ
-                )
-            }
-        }
-    }
+    // The per-mode / per-policy read-barrier cases (export generation, restart-required,
+    // snapshot-only export policy, normal reads) live in the read-barrier table in
+    // DatabaseBarrierTest. This class keeps the Flow-helper tests (known-hanging-tests HANG-003).
 
     // ── guardedDatabaseRead Flow helper ───────────────────────────
 

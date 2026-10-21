@@ -1,7 +1,6 @@
 package com.yourname.expensetracker.domain.receipt
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.UUID
@@ -16,49 +15,35 @@ import java.util.UUID
  */
 class ReceiptOcrTempNameTest {
 
-    @Test
-    fun temp_names_are_non_empty_and_well_formed() {
-        repeat(20) {
-            val name = uniqueTempFileName("temp_ocr", "jpg")
-            assertTrue("temp name must not be blank", name.isNotBlank())
-            assertTrue("temp name must keep the prefix", name.startsWith("temp_ocr_"))
-            assertTrue("temp name must keep the extension", name.endsWith(".jpg"))
-            assertFalse(
-                "temp name must not be purely the prefix/extension",
-                name == "temp_ocr_.jpg"
-            )
-        }
-    }
+    private data class NameRow(val prefix: String, val extension: String, val calls: Int)
+
+    private val nameRows = listOf(
+        NameRow("temp_ocr", "jpg", 20),
+        NameRow("camera", "jpg", 250),
+        NameRow("temp_pdf", "pdf", 500),
+        NameRow("temp_pdf_thumb", "pdf", 20)
+    )
 
     @Test
-    fun temp_names_are_unique_across_calls() {
-        val names = (1..500).map { uniqueTempFileName("temp_pdf", "pdf") }
-        assertEquals(
-            "every generated temp name must be unique",
-            500,
-            names.toSet().size
-        )
-    }
+    fun temp_names_have_prefix_valid_uuid_suffix_and_are_unique_per_prefix() {
+        assertEquals("nameRows size guard", 4, nameRows.size)
+        for (row in nameRows) {
+            val label = "[${row.prefix}.${row.extension}]"
+            val names = (1..row.calls).map { uniqueTempFileName(row.prefix, row.extension) }
 
-    @Test
-    fun unique_temp_file_name_for_camera_jpg_has_prefix_suffix_uuid_and_uniqueness() {
-        val names = (1..250).map { uniqueTempFileName("camera", "jpg") }
-
-        assertEquals(
-            "every generated temp name must be unique",
-            250,
-            names.toSet().size
-        )
-        names.forEach { name ->
-            assertTrue("temp name must start with camera_ prefix", name.startsWith("camera_"))
-            assertTrue("temp name must end with .jpg suffix", name.endsWith(".jpg"))
-            val uuidComponent = name.removePrefix("camera_").removeSuffix(".jpg")
-            assertTrue("uuid component must be non-empty", uuidComponent.isNotBlank())
-            assertEquals(
-                "uuid component must be a valid UUID",
-                uuidComponent,
-                UUID.fromString(uuidComponent).toString()
-            )
+            assertEquals("$label every generated temp name must be unique", row.calls, names.toSet().size)
+            names.forEach { name ->
+                assertTrue("$label temp name must not be blank", name.isNotBlank())
+                assertTrue("$label temp name must keep the ${row.prefix}_ prefix", name.startsWith("${row.prefix}_"))
+                assertTrue("$label temp name must keep the .${row.extension} suffix", name.endsWith(".${row.extension}"))
+                val uuidComponent = name.removePrefix("${row.prefix}_").removeSuffix(".${row.extension}")
+                assertTrue("$label uuid component must be non-empty", uuidComponent.isNotBlank())
+                assertEquals(
+                    "$label uuid component must be a valid UUID",
+                    uuidComponent,
+                    UUID.fromString(uuidComponent).toString()
+                )
+            }
         }
     }
 

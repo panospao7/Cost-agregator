@@ -59,6 +59,7 @@ fun MultiConversionAggregate.toMoneyAggregate(
     val failures = failedConversions.map { oldFailure ->
         val reason = when (oldFailure.failureType) {
             FailedConversion.STALE_RATE -> FailureReason.RATE_STALE
+            FailedConversion.INVALID_CURRENCY -> FailureReason.INVALID_CURRENCY
             else -> FailureReason.MISSING_RATE
         }
         ConversionFailure(
@@ -92,6 +93,7 @@ fun MultiConversionAggregate.toMoneyAggregate(
 fun FailedConversion.toConversionFailure(): ConversionFailure {
     val reason = when (failureType) {
         FailedConversion.STALE_RATE -> FailureReason.RATE_STALE
+        FailedConversion.INVALID_CURRENCY -> FailureReason.INVALID_CURRENCY
         else -> FailureReason.MISSING_RATE
     }
     return ConversionFailure(

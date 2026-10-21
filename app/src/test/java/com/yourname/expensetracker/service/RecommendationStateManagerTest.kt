@@ -51,6 +51,12 @@ class RecommendationStateManagerTest {
     @Before
     fun setup() {
         Dispatchers.setMain(testDispatcher)
+        buildFixture()
+    }
+
+    /** Fresh mocks + manager; table-driven tests call this once per row. */
+    private fun buildFixture() {
+        if (this::applicationScope.isInitialized) applicationScope.cancel()
         repository = mockk(relaxed = true)
 
         // Prevent NPE from RecommendationRepository's default-param accessing timeProvider
@@ -79,10 +85,22 @@ class RecommendationStateManagerTest {
         Dispatchers.resetMain()
     }
 
+    /** Runs [block] and re-throws any failure with the table row name in the message. */
+    private inline fun <T> row(name: String, block: () -> T): T {
+        try {
+            return block()
+        } catch (e: Throwable) {
+            throw AssertionError("row '$name' failed: ${e.message}", e)
+        }
+    }
+
     // ========== Basic Refresh Tests ==========
 
     @Test
     fun `refreshForUser publishes active recommendations`() = runTest(testDispatcher) {
+        // Before any refresh there is no current user.
+        assertNull(manager.getCurrentUserId())
+
         val recs = listOf(createRecommendation("r1"), createRecommendation("r2"))
         coEvery { repository.getActiveForUser("user1") } returns recs
 
@@ -94,54 +112,31 @@ class RecommendationStateManagerTest {
     }
 
     @Test
-    fun `refreshForUser same user re-queries repository without force refresh`() = runTest(testDispatcher) {
-        coEvery { repository.getActiveForUser("user1") } returnsMany listOf(
-            listOf(createRecommendation("r1")),
-            listOf(createRecommendation("r2"))
-        )
+    fun `refreshForUser for the already-active user re-queries storage and publishes fresh data`() =
+        runTest(testDispatcher) {
+            // Row: second-call forceRefresh flag. Both the plain same-user reload (invalidate
+            // path) and the forced reload must expire + re-query and publish the new data.
+            for (forceRefresh in listOf(false, true)) {
+                row("second refresh forceRefresh=$forceRefresh") {
+                    buildFixture()
+                    coEvery { repository.getActiveForUser("user1") } returnsMany listOf(
+                        listOf(createRecommendation("initial", userId = "user1")),
+                        listOf(createRecommendation("reloaded", userId = "user1"))
+                    )
 
-        manager.refreshForUser("user1")
-        advanceUntilIdle()
+                    manager.refreshForUser("user1")
+                    advanceUntilIdle()
+                    assertEquals("initial", manager.recommendations.value.single().id)
 
-        manager.refreshForUser("user1")
-        advanceUntilIdle()
+                    manager.refreshForUser("user1", forceRefresh = forceRefresh)
+                    advanceUntilIdle()
 
-        coVerify(exactly = 2) { repository.getActiveForUser("user1") }
-        assertEquals(1, manager.recommendations.value.size)
-        assertEquals("r2", manager.recommendations.value.single().id)
-    }
-
-    @Test
-    fun `refreshForUser force refresh reloads`() = runTest(testDispatcher) {
-        coEvery { repository.getActiveForUser("user1") } returns listOf(createRecommendation("r1"))
-
-        manager.refreshForUser("user1")
-        advanceUntilIdle()
-
-        manager.refreshForUser("user1", forceRefresh = true)
-        advanceUntilIdle()
-
-        coVerify(exactly = 2) { repository.getActiveForUser("user1") }
-    }
-
-    @Test
-    fun `refreshForUser same user reload after invalidate path publishes fresh data`() = runTest(testDispatcher) {
-        coEvery { repository.getActiveForUser("user1") } returnsMany listOf(
-            listOf(createRecommendation("initial", userId = "user1")),
-            listOf(createRecommendation("reloaded", userId = "user1"))
-        )
-
-        manager.refreshForUser("user1")
-        advanceUntilIdle()
-        assertEquals("initial", manager.recommendations.value.single().id)
-
-        manager.refreshForUser("user1")
-        advanceUntilIdle()
-
-        assertEquals("reloaded", manager.recommendations.value.single().id)
-        coVerify(exactly = 2) { repository.expireOld("user1", nowMillis) }
-        coVerify(exactly = 2) { repository.getActiveForUser("user1") }
-    }
+                    assertEquals("reloaded", manager.recommendations.value.single().id)
+                    coVerify(exactly = 2) { repository.expireOld("user1", nowMillis) }
+                    coVerify(exactly = 2) { repository.getActiveForUser("user1") }
+                }
+            }
+        }
 
     @Test
     fun `invalidate all path refreshes against empty active set after expireAll`() = runTest(testDispatcher) {
@@ -184,89 +179,12 @@ class RecommendationStateManagerTest {
     }
 
     // ========== Generation-Guard Tests ==========
-
-    @Test
-    fun `stale refresh does not overwrite state after user switch`() = runTest(testDispatcher) {
-        // User1 refresh will be slow
-        val user1Recs = listOf(createRecommendation("r1-user1"))
-        val user2Recs = listOf(createRecommendation("r2-user2"))
-
-        coEvery { repository.getActiveForUser("user1") } coAnswers {
-            // Simulate slow response — user2 will have been set by then
-            user1Recs
-        }
-        coEvery { repository.getActiveForUser("user2") } returns user2Recs
-
-        // Start user1 refresh
-        manager.refreshForUser("user1")
-        // Immediately switch to user2 (this bumps the generation)
-        manager.refreshForUser("user2")
-
-        advanceUntilIdle()
-
-        // The final state should belong to user2, not user1
-        val result = manager.recommendations.value
-        assertEquals("user2", manager.getCurrentUserId())
-        assertTrue(
-            "Expected user2 recommendations but got: $result",
-            result.all { it.userId == "user2" || it.id == "r2-user2" }
-        )
-    }
-
-    @Test
-    fun `stale refresh does not overwrite state after clear`() = runTest(testDispatcher) {
-        // Use a gate to hold the refresh in-flight (past lock section 1) while clear() runs.
-        // This mirrors the overlap test pattern and correctly reflects the synchronous clear()
-        // contract: clear() must bump the generation so the gated refresh is rejected on publish.
-        val gate = CompletableDeferred<Unit>()
-
-        coEvery { repository.getActiveForUser("user1") } coAnswers {
-            gate.await()
-            listOf(createRecommendation("r1"))
-        }
-
-        // Start user1 refresh — coroutine reaches lock section 1, sets currentUserId, then
-        // blocks at getActiveForUser (inside gate.await())
-        manager.refreshForUser("user1")
-        advanceUntilIdle() // coroutine now waiting at gate.await()
-
-        // clear() is synchronous — bumps generation and nulls currentUserId immediately
-        manager.clear()
-
-        assertTrue(manager.recommendations.value.isEmpty())
-        assertNull(manager.getCurrentUserId())
-
-        // Release the gate — the stale refresh will try to publish but its
-        // capturedGeneration is now older; the generation guard must reject it
-        gate.complete(Unit)
-        advanceUntilIdle()
-
-        // State must remain cleared
-        assertTrue(manager.recommendations.value.isEmpty())
-        assertNull(manager.getCurrentUserId())
-    }
-
-    @Test
-    fun `dismiss does not allow stale refresh to re-add dismissed item`() = runTest(testDispatcher) {
-        val recs = listOf(createRecommendation("r1"), createRecommendation("r2"))
-        coEvery { repository.getActiveForUser("user1") } returns recs
-
-        // Initial load
-        manager.refreshForUser("user1")
-        advanceUntilIdle()
-
-        assertEquals(2, manager.recommendations.value.size)
-
-        // Now set up the second refresh to return same items (simulating repo not yet persisted)
-        coEvery { repository.getActiveForUser("user1") } returns recs
-
-        // Dismiss r1 — this will also trigger a forceRefresh internally
-        manager.dismiss("r1")
-        advanceUntilIdle()
-
-        // The dismiss removes the item from in-memory state before the refresh
-        coVerify { repository.dismiss("r1") }
-    }
+    //
+    // The stale-refresh / generation-guard races (user switch, same-user refresh, clear,
+    // dismiss, removeFromState, clearForUser) are covered ONLY by the gated
+    // "Deterministic Overlap Tests" section below. Earlier un-gated variants ran the two
+    // refreshes strictly one after the other on a StandardTestDispatcher, so no overlap
+    // ever happened; they were removed as vacuous/duplicate (see the gated equivalents).
 
     // ========== Dismiss Tests ==========
 
@@ -285,6 +203,8 @@ class RecommendationStateManagerTest {
         advanceUntilIdle()
 
         coVerify(exactly = 1) { repository.dismiss("r1") }
+        // The follow-up forced refresh publishes the repository's remaining item only.
+        assertEquals(listOf("r2"), manager.recommendations.value.map { it.id })
     }
 
     @Test
@@ -303,22 +223,6 @@ class RecommendationStateManagerTest {
     }
 
     // ========== removeFromState Tests ==========
-
-    @Test
-    fun `removeFromState removes item and bumps generation`() = runTest(testDispatcher) {
-        val recs = listOf(createRecommendation("r1"), createRecommendation("r2"))
-        coEvery { repository.getActiveForUser("user1") } returns recs
-
-        manager.refreshForUser("user1")
-        advanceUntilIdle()
-
-        manager.removeFromState("r1")
-        advanceUntilIdle()
-
-        val result = manager.recommendations.value
-        assertEquals(1, result.size)
-        assertEquals("r2", result[0].id)
-    }
 
     /**
      * ISSUE-9 regression: [removeFromState] must complete the in-memory mutation
@@ -350,22 +254,14 @@ class RecommendationStateManagerTest {
             )
             assertEquals("r2", result[0].id)
             assertTrue("r1 must be absent immediately after removeFromState", result.none { it.id == "r1" })
+
+            // The removal must also remain stable after the coroutines are pumped.
+            advanceUntilIdle()
+            assertEquals(1, manager.recommendations.value.size)
+            assertEquals("r2", manager.recommendations.value[0].id)
         }
 
     // ========== Clear Tests ==========
-
-    @Test
-    fun `clear empties state and nulls userId`() = runTest(testDispatcher) {
-        coEvery { repository.getActiveForUser("user1") } returns listOf(createRecommendation("r1"))
-        manager.refreshForUser("user1")
-        advanceUntilIdle()
-
-        manager.clear()
-        advanceUntilIdle()
-
-        assertTrue(manager.recommendations.value.isEmpty())
-        assertNull(manager.getCurrentUserId())
-    }
 
     /**
      * ISSUE-10 regression: [clear] must perform its in-memory mutation inline,
@@ -397,36 +293,36 @@ class RecommendationStateManagerTest {
                 "getCurrentUserId() must return null immediately after clear() returns",
                 manager.getCurrentUserId()
             )
+
+            // Still cleared after the coroutines are pumped.
+            advanceUntilIdle()
+            assertTrue(manager.recommendations.value.isEmpty())
+            assertNull(manager.getCurrentUserId())
         }
 
     // ========== clearForUser Tests ==========
 
     @Test
-    fun `clearForUser clears state only for matching user`() = runTest(testDispatcher) {
-        coEvery { repository.getActiveForUser("user1") } returns listOf(createRecommendation("r1"))
-        manager.refreshForUser("user1")
-        advanceUntilIdle()
+    fun `clearForUser always clears the repository but clears in-memory state only for the matching user`() =
+        runTest(testDispatcher) {
+            // Row: user passed to clearForUser -> in-memory recommendations expected afterwards
+            // (current user is "user1" with one published item).
+            val rows = listOf("user1" to 0, "user2" to 1)
+            for ((targetUser, expectedRemaining) in rows) {
+                row("clearForUser('$targetUser')") {
+                    buildFixture()
+                    coEvery { repository.getActiveForUser("user1") } returns listOf(createRecommendation("r1"))
+                    manager.refreshForUser("user1")
+                    advanceUntilIdle()
 
-        manager.clearForUser("user1")
-        advanceUntilIdle()
+                    manager.clearForUser(targetUser)
+                    advanceUntilIdle()
 
-        assertTrue(manager.recommendations.value.isEmpty())
-        coVerify { repository.clearForUser("user1") }
-    }
-
-    @Test
-    fun `clearForUser does not clear state for different user`() = runTest(testDispatcher) {
-        coEvery { repository.getActiveForUser("user1") } returns listOf(createRecommendation("r1"))
-        manager.refreshForUser("user1")
-        advanceUntilIdle()
-
-        // Clear for a different user — should call repo but NOT clear in-memory state
-        manager.clearForUser("user2")
-        advanceUntilIdle()
-
-        assertEquals(1, manager.recommendations.value.size)
-        coVerify { repository.clearForUser("user2") }
-    }
+                    assertEquals(expectedRemaining, manager.recommendations.value.size)
+                    coVerify { repository.clearForUser(targetUser) }
+                }
+            }
+        }
 
     @Test
     fun `clearForUser handles error gracefully`() = runTest(testDispatcher) {
@@ -468,18 +364,6 @@ class RecommendationStateManagerTest {
 
         assertTrue(manager.recommendations.value.isEmpty())
         assertNull(manager.getCurrentUserId())
-    }
-
-    @Test
-    fun `getCurrentUserId is safe to read concurrently`() = runTest(testDispatcher) {
-        // Before any refresh, userId should be null
-        assertNull(manager.getCurrentUserId())
-
-        coEvery { repository.getActiveForUser("user1") } returns emptyList()
-        manager.refreshForUser("user1")
-        advanceUntilIdle()
-
-        assertEquals("user1", manager.getCurrentUserId())
     }
 
     // ========== Deterministic Overlap Tests (ISSUE-8) ==========
@@ -564,40 +448,59 @@ class RecommendationStateManagerTest {
         }
 
     /**
-     * Holds user1's refresh in-flight (blocked on [gate]) while clear() executes.
-     * After the gate is released, the stale user1 result must be discarded because
-     * clear() bumped the generation and nulled currentUserId.
+     * Holds user1's refresh in-flight (blocked on a [CompletableDeferred] gate - no timers or
+     * sleeps) while a competing state-clearing mutation executes. After the gate is released,
+     * the stale user1 result must be discarded because the mutation bumped the generation.
+     *
+     * Rows: clear() (also nulls the user id), removeFromState("r1"), clearForUser("user1").
+     * No prior state exists, so the in-memory list must be empty before and after release.
      */
     @Test
-    fun `overlap - stale refresh blocked by gate is discarded after clear`() =
+    fun `overlap - stale refresh blocked by gate is discarded after clear, removeFromState and clearForUser`() =
         runTest(testDispatcher) {
-            val gate = CompletableDeferred<Unit>()
+            class Row(val name: String, val expectNullUserId: Boolean, val mutate: () -> Unit)
 
-            val user1Recs = listOf(createRecommendation("stale-r1", userId = "user1"))
+            val rows = listOf(
+                Row("clear", true) { manager.clear() },
+                Row("removeFromState", false) { manager.removeFromState("r1") },
+                Row("clearForUser", false) { manager.clearForUser("user1") }
+            )
 
-            coEvery { repository.getActiveForUser("user1") } coAnswers {
-                gate.await()
-                user1Recs
+            for (case in rows) {
+                row(case.name) {
+                    buildFixture()
+                    val gate = CompletableDeferred<Unit>()
+                    val staleRecs = listOf(
+                        createRecommendation("r1", userId = "user1"),
+                        createRecommendation("r2", userId = "user1")
+                    )
+                    coEvery { repository.getActiveForUser("user1") } coAnswers {
+                        gate.await()
+                        staleRecs
+                    }
+
+                    // Start user1 refresh - it blocks inside getActiveForUser
+                    manager.refreshForUser("user1")
+                    advanceUntilIdle()
+
+                    // While the refresh is in-flight, the competing mutation bumps the generation
+                    case.mutate()
+                    advanceUntilIdle()
+
+                    if (case.expectNullUserId) assertNull(manager.getCurrentUserId())
+                    assertTrue(manager.recommendations.value.isEmpty())
+
+                    // Release the gate - the stale result must be rejected
+                    gate.complete(Unit)
+                    advanceUntilIdle()
+
+                    if (case.expectNullUserId) assertNull(manager.getCurrentUserId())
+                    assertTrue(
+                        "Stale refresh must not publish after ${case.name} bumped generation",
+                        manager.recommendations.value.isEmpty()
+                    )
+                }
             }
-
-            // Start user1 refresh — will block at getActiveForUser
-            manager.refreshForUser("user1")
-            advanceUntilIdle()
-
-            // While refresh is in-flight, clear() is called — bumps generation, nulls userId
-            manager.clear()
-            advanceUntilIdle()
-
-            assertNull(manager.getCurrentUserId())
-            assertTrue(manager.recommendations.value.isEmpty())
-
-            // Release gate — the stale user1 result must be rejected
-            gate.complete(Unit)
-            advanceUntilIdle()
-
-            // State must remain cleared
-            assertNull(manager.getCurrentUserId())
-            assertTrue(manager.recommendations.value.isEmpty())
         }
 
     /**
@@ -660,85 +563,6 @@ class RecommendationStateManagerTest {
             // Stale refresh must be rejected — state must remain empty
             assertTrue(
                 "Stale force-refresh must not re-add r1 or r2",
-                manager.recommendations.value.isEmpty()
-            )
-        }
-
-    /**
-     * Holds user1's refresh in-flight (blocked on [gate]) while removeFromState() executes
-     * concurrently. After the gate is released, the stale refresh result must be discarded
-     * because removeFromState() bumped the generation.
-     */
-    @Test
-    fun `overlap - stale refresh blocked by gate is discarded after removeFromState`() =
-        runTest(testDispatcher) {
-            val gate = CompletableDeferred<Unit>()
-
-            val staleRecs = listOf(
-                createRecommendation("r1", userId = "user1"),
-                createRecommendation("r2", userId = "user1")
-            )
-
-            coEvery { repository.getActiveForUser("user1") } coAnswers {
-                gate.await()
-                staleRecs
-            }
-
-            // Start a force-refresh for user1 — it will block inside getActiveForUser
-            manager.refreshForUser("user1")
-            advanceUntilIdle()
-
-            // While refresh is in-flight, removeFromState("r1") executes — bumps generation
-            // removeFromState is synchronous so no launch wrapper is needed
-            manager.removeFromState("r1")
-            advanceUntilIdle()
-
-            // Release gate — the stale refresh wants to publish [r1, r2] but its
-            // capturedGeneration is now older than the generation bumped by removeFromState
-            gate.complete(Unit)
-            advanceUntilIdle()
-
-            // The stale publish must be blocked — state should remain empty (no prior state)
-            // or at most reflect only what removeFromState left (which is empty since no prior data)
-            assertTrue(
-                "Stale refresh must not publish after removeFromState bumped generation",
-                manager.recommendations.value.isEmpty()
-            )
-        }
-
-    /**
-     * Holds user1's refresh in-flight (blocked on [gate]) while clearForUser() executes.
-     * After the gate is released, the stale refresh result must be discarded because
-     * clearForUser() bumped the generation.
-     */
-    @Test
-    fun `overlap - stale refresh blocked by gate is discarded after clearForUser`() =
-        runTest(testDispatcher) {
-            val gate = CompletableDeferred<Unit>()
-
-            val staleRecs = listOf(createRecommendation("r1", userId = "user1"))
-
-            coEvery { repository.getActiveForUser("user1") } coAnswers {
-                gate.await()
-                staleRecs
-            }
-
-            // Start user1 refresh — will block at getActiveForUser
-            manager.refreshForUser("user1")
-            advanceUntilIdle()
-
-            // While refresh is in-flight, clearForUser("user1") executes — bumps generation
-            manager.clearForUser("user1")
-            advanceUntilIdle()
-
-            assertTrue(manager.recommendations.value.isEmpty())
-
-            // Release gate — stale result must be rejected
-            gate.complete(Unit)
-            advanceUntilIdle()
-
-            assertTrue(
-                "Stale refresh must not publish after clearForUser bumped generation",
                 manager.recommendations.value.isEmpty()
             )
         }

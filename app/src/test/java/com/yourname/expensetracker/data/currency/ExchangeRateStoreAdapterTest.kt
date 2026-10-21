@@ -9,6 +9,7 @@ import com.yourname.expensetracker.data.database.entity.ExchangeRate
 import com.yourname.expensetracker.domain.currency.DomainExchangeRate
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.coVerifyOrder
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
@@ -111,20 +112,67 @@ class ExchangeRateStoreAdapterTest {
         assertApproxEquals(1.03, result[1].rate, 0.0001)
     }
 
+    // ── MONEY-06: invalid stored rates fail closed on read ─────────
+
+    private val invalidRates = listOf(
+        Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY, 0.0, -0.5
+    )
+
+    private fun entity(rate: Double, from: String = "USD", to: String = "EUR") = ExchangeRate(
+        id = 1L,
+        fromCurrency = from,
+        toCurrency = to,
+        rate = rate,
+        lastUpdated = 1_700_000_001_000L,
+        source = "api"
+    )
+
     @Test
-    fun `delete stale rates delegates to dao cleanup method`() = runTest {
-        val cutoff = 1_699_000_000_000L
-        coEvery { exchangeRateDao.deleteOldRates(cutoff) } returns Unit
+    fun `invalid stored rate maps to null on every single-row read`() = runTest {
+        for (bad in invalidRates) {
+            coEvery { exchangeRateDao.getRate("USD", "EUR") } returns entity(bad)
+            coEvery { exchangeRateDao.getLatestRateForPair("USD", "EUR") } returns entity(bad)
+            coEvery { exchangeRateDao.getRateAsOf("USD", "EUR", 5L) } returns entity(bad)
+            coEvery { exchangeRateDao.getLatestRate() } returns entity(bad)
 
-        adapter.deleteOldRates(cutoff)
+            assertEquals("getRate $bad", null, adapter.getRate("USD", "EUR"))
+            assertEquals("getLatestRateForPair $bad", null, adapter.getLatestRateForPair("USD", "EUR"))
+            assertEquals("getRateAsOf $bad", null, adapter.getRateAsOf("USD", "EUR", 5L))
+            assertEquals("getLatestRate $bad", null, adapter.getLatestRate())
+        }
+    }
 
-        coVerify(exactly = 1) { exchangeRateDao.deleteOldRates(cutoff) }
+    @Test
+    fun `valid stored rate is still returned unchanged`() = runTest {
+        coEvery { exchangeRateDao.getLatestRateForPair("USD", "EUR") } returns entity(0.92)
+
+        val result = adapter.getLatestRateForPair("USD", "EUR")
+
+        assertNotNull(result)
+        assertApproxEquals(0.92, result!!.rate, 0.0001)
+    }
+
+    @Test
+    fun `rates-to-currency flow drops invalid rows and keeps valid rows`() = runTest {
+        val rows = listOf(
+            entity(Double.NaN, from = "USD"),
+            entity(0.91, from = "GBP"),
+            entity(0.0, from = "CHF"),
+            entity(-1.0, from = "JPY"),
+            entity(Double.POSITIVE_INFINITY, from = "SEK"),
+            entity(1.03, from = "NOK")
+        )
+        every { exchangeRateDao.getRatesToCurrency("EUR") } returns flowOf(rows)
+
+        val result = adapter.getRatesToCurrency("EUR").first()
+
+        assertEquals(listOf("GBP", "NOK"), result.map { it.fromCurrency })
     }
 
     // ── Write barrier evidence (DB ownership policy) ───────────────
 
     @Test
-    fun `insertOrUpdate checks write barrier before dao mutation`() = runTest {
+    fun `every mutation checks write barrier before dao mutation`() = runTest {
         val rate = DomainExchangeRate(
             fromCurrency = "USD",
             toCurrency = "EUR",
@@ -133,40 +181,36 @@ class ExchangeRateStoreAdapterTest {
             source = "api",
             validDate = 1_700_000_001_000L
         )
-        coEvery { exchangeRateDao.insertOrUpdate(any()) } returns 1L
-
-        adapter.insertOrUpdate(rate)
-
-        verify(exactly = 1) {
-            writeBarrier.checkWritesAllowed("ExchangeRateStoreAdapter.insertOrUpdate")
-        }
-        coVerify(exactly = 1) { exchangeRateDao.insertOrUpdate(any()) }
-    }
-
-    @Test
-    fun `insertOrUpdateAll checks write barrier before dao mutation`() = runTest {
         val rates = listOf(
             DomainExchangeRate("USD", "EUR", 0.92, 1_700_000_001_000L, "api", 1_700_000_001_000L),
             DomainExchangeRate("GBP", "EUR", 1.17, 1_700_000_002_000L, "api", 1_700_000_002_000L)
         )
+        val cutoff = 1_699_000_000_000L
+        coEvery { exchangeRateDao.insertOrUpdate(any()) } returns 1L
+
+        adapter.insertOrUpdate(rate)
+        coVerifyOrder {
+            writeBarrier.checkWritesAllowed("ExchangeRateStoreAdapter.insertOrUpdate")
+            exchangeRateDao.insertOrUpdate(any())
+        }
 
         adapter.insertOrUpdateAll(rates)
-
-        verify(exactly = 1) {
+        coVerifyOrder {
             writeBarrier.checkWritesAllowed("ExchangeRateStoreAdapter.insertOrUpdateAll")
+            exchangeRateDao.insertOrUpdateAll(any())
         }
-        coVerify(exactly = 1) { exchangeRateDao.insertOrUpdateAll(any()) }
-    }
-
-    @Test
-    fun `deleteOldRates checks write barrier before dao mutation`() = runTest {
-        val cutoff = 1_699_000_000_000L
 
         adapter.deleteOldRates(cutoff)
-
-        verify(exactly = 1) {
+        coVerifyOrder {
             writeBarrier.checkWritesAllowed("ExchangeRateStoreAdapter.deleteOldRates")
+            exchangeRateDao.deleteOldRates(cutoff)
         }
+
+        verify(exactly = 1) { writeBarrier.checkWritesAllowed("ExchangeRateStoreAdapter.insertOrUpdate") }
+        verify(exactly = 1) { writeBarrier.checkWritesAllowed("ExchangeRateStoreAdapter.insertOrUpdateAll") }
+        verify(exactly = 1) { writeBarrier.checkWritesAllowed("ExchangeRateStoreAdapter.deleteOldRates") }
+        coVerify(exactly = 1) { exchangeRateDao.insertOrUpdate(any()) }
+        coVerify(exactly = 1) { exchangeRateDao.insertOrUpdateAll(any()) }
         coVerify(exactly = 1) { exchangeRateDao.deleteOldRates(cutoff) }
     }
 

@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.repository
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import timber.log.Timber
@@ -16,7 +17,8 @@ import javax.inject.Singleton
  */
 @Singleton
 class ReceiptInsertResolver @Inject constructor(
-    private val scannedReceiptDao: ScannedReceiptDao
+    private val scannedReceiptDao: ScannedReceiptDao,
+    private val writeBarrier: DatabaseWriteBarrier
 ) {
 
     /**
@@ -29,6 +31,8 @@ class ReceiptInsertResolver @Inject constructor(
      *   existing receipt could be matched.
      */
     suspend fun insertOrResolve(receipt: ScannedReceipt): ReceiptInsertResult {
+        // U-004 (G3/S1): the resolver is the final receipt insert; deny while maintenance is active.
+        writeBarrier.checkWritesAllowed("ReceiptInsertResolver.insertOrResolve")
         val id = scannedReceiptDao.insert(receipt)
         if (id > 0) return ReceiptInsertResult.Inserted(id)
 

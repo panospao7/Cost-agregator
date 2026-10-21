@@ -7,7 +7,10 @@ import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.core.money.ConversionOutcome
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.RateBasis
+import com.yourname.expensetracker.domain.core.money.StaleRatePolicy
 import com.yourname.expensetracker.domain.core.money.MoneyAmount
 import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
@@ -18,6 +21,7 @@ import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+import com.yourname.expensetracker.domain.util.CancellationSafe
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -169,9 +173,14 @@ class FinancialStressForecastEngine @Inject constructor(
                 recommendations = recommendations,
                 displayCurrency = resolvedDisplayCurrency,
                 mode = StressForecastMode.NET_CASHFLOW_ESTIMATE,
-                isPartial = normExpenses.hasWarnings || normDeposits.hasWarnings,
+                // HZ01-B: recurring-obligation conversion failures make the forecast partial.
+                // The 90-day horizon is a superset of the 30/60-day windows, so its excluded
+                // count is the number of distinct occurrences dropped (no double counting).
+                isPartial = normExpenses.hasWarnings || normDeposits.hasWarnings ||
+                    horizons.any { it.recurringObligationsPartial },
                 qualityWarnings = (normExpenses.warnings + normDeposits.warnings).map { it.message },
-                excludedCount = normExpenses.excludedCount + normDeposits.excludedCount
+                excludedCount = normExpenses.excludedCount + normDeposits.excludedCount +
+                    (horizons.maxOfOrNull { it.recurringExcludedConversionCount } ?: 0)
             )
             
         } catch (e: Exception) {
@@ -247,7 +256,11 @@ class FinancialStressForecastEngine @Inject constructor(
             displayCurrency = displayCurrency,
             // DBG-06: recurring obligations are unreliable when the restore barrier blocked
             // the materialized read (SKIPPED/CANCELLED overrides may be missing).
-            recurringObligationsPartial = recurringOutflowResult.materializedReadBlocked
+            // HZ01-B: also partial when any occurrence/pattern amount could not be converted
+            // to the display currency (it is excluded from the total, never added raw).
+            recurringObligationsPartial = recurringOutflowResult.materializedReadBlocked ||
+                recurringOutflowResult.excludedConversionCount > 0,
+            recurringExcludedConversionCount = recurringOutflowResult.excludedConversionCount
         )
     }
 
@@ -285,11 +298,14 @@ class FinancialStressForecastEngine @Inject constructor(
         val manualPatterns = patterns.filter { it.id != null && it.confidence >= 0.50f }
         val detectedPatterns = patterns.filter { it.id == null && it.confidence >= 0.50f }
 
-        var totalOutflows = 0.0
+        // Display-currency amounts (already converted); aggregated via MoneyAggregateBuilder.
+        val convertedOutflows = mutableListOf<Double>()
         // DBG-06: set when the materialized read is blocked by the restore barrier, so the
         // caller can flag the horizon's recurring section as partial/unreliable (projections
         // bypass the barrier and would drop SKIPPED/CANCELLED overrides).
         var materializedReadBlocked = false
+        // HZ01-B: amounts that could not be converted to displayCurrency and were excluded.
+        var excludedConversionCount = 0
 
         // ── Part 1: Manual patterns — READ-ONLY occurrence path ─────────────
         if (manualPatterns.isNotEmpty()) {
@@ -359,15 +375,14 @@ class FinancialStressForecastEngine @Inject constructor(
                 val amount = occ.expectedAmount
                 val currency = occ.expectedCurrency
 
-                val converted = runCatching {
-                    currencyConverter.convert(amount, currency, displayCurrency)
-                }.getOrNull()
+                val converted = convertToDisplayOrNull(amount, currency, displayCurrency)
 
                 if (converted != null) {
-                    totalOutflows += converted.convertedAmount
+                    convertedOutflows += converted
                 } else {
-                    Timber.w("$TAG: Failed to convert occurrence id=%d amount=%.2f %s to %s, excluding",
-                        occ.id, amount, currency, displayCurrency)
+                    excludedConversionCount++
+                    Timber.w("$TAG: Conversion unavailable for occurrence id=%d %s to %s, excluding",
+                        occ.id, currency, displayCurrency)
                 }
             }
 
@@ -376,23 +391,57 @@ class FinancialStressForecastEngine @Inject constructor(
                 val failedPatterns = manualPatterns.filter { it.id in failedRuleIds }
                 if (failedPatterns.isNotEmpty()) {
                     Timber.w("$TAG: Falling back to ad-hoc expansion for %d failed rule(s)", failedRuleIds.size)
-                    totalOutflows += expandDetectedPatterns(failedPatterns, startDate, endDate, displayCurrency)
+                    val expansion = expandDetectedPatterns(failedPatterns, startDate, endDate, displayCurrency)
+                    convertedOutflows += expansion.convertedAmounts
+                    excludedConversionCount += expansion.excludedConversionCount
                 }
             }
         }
 
         // ── Part 2: Detected-only patterns — simplified ad-hoc fallback ──────
         if (detectedPatterns.isNotEmpty()) {
-            totalOutflows += expandDetectedPatterns(detectedPatterns, startDate, endDate, displayCurrency)
+            val expansion = expandDetectedPatterns(detectedPatterns, startDate, endDate, displayCurrency)
+            convertedOutflows += expansion.convertedAmounts
+            excludedConversionCount += expansion.excludedConversionCount
         }
 
         return RecurringOutflowResult(
             total = MoneyAggregateBuilder.fromHomeCurrencyAmounts(
-                amounts = listOf(totalOutflows),
+                amounts = convertedOutflows,
                 homeCurrency = displayCurrency
             ),
-            materializedReadBlocked = materializedReadBlocked
+            materializedReadBlocked = materializedReadBlocked,
+            excludedConversionCount = excludedConversionCount
         )
+    }
+
+    /**
+     * HZ01-B: Convert [amount] to [displayCurrency] with the canonical latest-rate stale
+     * policy. Returns null when the conversion fails (missing/stale/invalid rate or a
+     * non-cancellation error) so callers exclude and count the row instead of adding it raw.
+     * [kotlinx.coroutines.CancellationException] always propagates.
+     */
+    private suspend fun convertToDisplayOrNull(
+        amount: Double,
+        fromCurrency: String,
+        displayCurrency: String
+    ): Double? = try {
+        val outcome = currencyConverter.convertOutcome(
+            amount = amount,
+            fromCurrency = fromCurrency,
+            toCurrency = displayCurrency,
+            rateBasis = RateBasis.LATEST_AVAILABLE,
+            stalePolicy = StaleRatePolicy.forBasis(RateBasis.LATEST_AVAILABLE)
+        )
+        when (outcome) {
+            is ConversionOutcome.Converted -> outcome.convertedAmount
+            is ConversionOutcome.Failed -> null
+        }
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Timber.w("STRESS_FORECAST_CONVERSION_FAILED class=%s", e.javaClass.simpleName)
+        null
     }
 
     /**
@@ -405,12 +454,13 @@ class FinancialStressForecastEngine @Inject constructor(
         startDate: Long,
         endDate: Long,
         displayCurrency: String = ""
-    ): Double {
+    ): DetectedExpansionResult {
         // NEW-P6-008: Stale pattern threshold — exclude patterns whose nextExpectedDate
         // is more than 90 days before the forecast window (likely dead/abandoned patterns).
         val staleThreshold = TimePeriodUtils.addDays(startDate, -90)
 
-        var total = 0.0
+        val convertedAmounts = mutableListOf<Double>()
+        var excludedConversionCount = 0
         for (pattern in patterns) {
             var nextDate = pattern.nextExpectedDate
 
@@ -424,9 +474,14 @@ class FinancialStressForecastEngine @Inject constructor(
             if (nextDate >= endDate) continue
             // P6-PR2 (NEW-P6-007): Half-open interval [start, end) prevents double-counting at boundaries
             while (nextDate >= startDate && nextDate < endDate) {
-                val converted = if (displayCurrency.isBlank()) pattern.averageAmount
-                    else currencyConverter.convert(pattern.averageAmount, pattern.currency, displayCurrency)?.convertedAmount
-                if (converted != null) total += converted
+                val converted = convertToDisplayOrNull(pattern.averageAmount, pattern.currency, displayCurrency)
+                if (converted != null) {
+                    convertedAmounts += converted
+                } else {
+                    excludedConversionCount++
+                    Timber.w("$TAG: Conversion unavailable for detected pattern %s to %s, excluding",
+                        pattern.currency, displayCurrency)
+                }
                 nextDate = when (pattern.frequency) {
                     RecurrenceFrequency.WEEKLY -> TimePeriodUtils.addDays(nextDate, 7)
                     RecurrenceFrequency.BIWEEKLY -> TimePeriodUtils.addDays(nextDate, 14)
@@ -438,7 +493,7 @@ class FinancialStressForecastEngine @Inject constructor(
                 }
             }
         }
-        return total
+        return DetectedExpansionResult(convertedAmounts, excludedConversionCount)
     }
 
     /**
@@ -693,7 +748,7 @@ class FinancialStressForecastEngine @Inject constructor(
      */
     private suspend fun resolveStartingBalanceBaseline(displayCurrency: String): Double {
         // P6-P1-13: Delegate to AccountBalanceProvider (currently NetCashflowBalanceProvider)
-        val balance = runCatching { accountBalanceProvider.currentBalance(displayCurrency) }.getOrNull()
+        val balance = CancellationSafe.runCatchingCancellable { accountBalanceProvider.currentBalance(displayCurrency) }.getOrNull()
         if (balance != null) {
             Timber.d("FCST-9: resolveStartingBalanceBaseline via AccountBalanceProvider = %.2f", balance)
             return balance
@@ -702,10 +757,10 @@ class FinancialStressForecastEngine @Inject constructor(
         // Inline fallback if provider fails
         val now = timeProvider.now()
         val ninetyDaysAgo = TimePeriodUtils.addDays(now, -90)
-        val recentDeposits = runCatching {
+        val recentDeposits = CancellationSafe.runCatchingCancellable {
             multiCurrencyRepository.getHomeCurrencyDepositTotal(ninetyDaysAgo, now).displayAmount
         }.getOrDefault(0.0)
-        val recentExpenses = runCatching {
+        val recentExpenses = CancellationSafe.runCatchingCancellable {
             multiCurrencyRepository.getHomeCurrencyPurchaseTotal(ninetyDaysAgo, now).displayAmount
         }.getOrDefault(0.0)
         val netCashflow = recentDeposits - recentExpenses
@@ -718,11 +773,8 @@ class FinancialStressForecastEngine @Inject constructor(
      * Defaults to [DEFAULT_EMERGENCY_BUFFER_FALLBACK] if the setting is unavailable.
      */
     private suspend fun getEmergencyBuffer(): Double {
-        return runCatching { currencySettingsRepository.emergencyBuffer().first() }
-            .getOrElse {
-                if (it is kotlinx.coroutines.CancellationException) throw it
-                DEFAULT_EMERGENCY_BUFFER_FALLBACK
-            }
+        return CancellationSafe.runCatchingCancellable { currencySettingsRepository.emergencyBuffer().first() }
+            .getOrElse { DEFAULT_EMERGENCY_BUFFER_FALLBACK }
     }
 
     /**
@@ -810,7 +862,13 @@ data class StressHorizon(
      * should label it as a degraded/partial estimate rather than authoritative.
      * Additive with a neutral default — existing constructors are unaffected.
      */
-    val recurringObligationsPartial: Boolean = false
+    val recurringObligationsPartial: Boolean = false,
+    /**
+     * HZ01-B: number of recurring occurrences/pattern instances in this horizon that were
+     * excluded from [recurringObligations] because they could not be converted to
+     * [displayCurrency]. Non-zero implies [recurringObligationsPartial].
+     */
+    val recurringExcludedConversionCount: Int = 0
 ) {
     val moneyProjectedBalance: MoneyAmount get() = MoneyAmount(projectedBalance, CurrencyCode(displayCurrency))
     val moneyMinProjectedBalance: MoneyAmount get() = MoneyAmount(minProjectedBalance, CurrencyCode(displayCurrency))
@@ -859,5 +917,13 @@ private data class MonteCarloHorizonResult(
  */
 private data class RecurringOutflowResult(
     val total: MoneyAggregate,
-    val materializedReadBlocked: Boolean = false
+    val materializedReadBlocked: Boolean = false,
+    /** HZ01-B: occurrences/pattern instances excluded because conversion to displayCurrency failed. */
+    val excludedConversionCount: Int = 0
+)
+
+private data class DetectedExpansionResult(
+    /** Display-currency amounts of converted instances; aggregated by the caller via MoneyAggregateBuilder. */
+    val convertedAmounts: List<Double>,
+    val excludedConversionCount: Int
 )

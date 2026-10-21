@@ -150,6 +150,11 @@ class TimePeriodUtilsT4CBatch2ATest {
             NormalDayCase("Asia/Kolkata", normalLateUtc, "2024-06-15T18:30:00Z", "2024-06-16T18:30:00Z"),
             NormalDayCase("Asia/Kolkata", yearBoundary2024, "2024-12-30T18:30:00Z", "2024-12-31T18:30:00Z")
         )
+        assertEquals("normal day table size", 11, expected.size)
+        // The former "normal day returns exact local midnight values" (UTC/NY/Kolkata at
+        // normalNoonUtc) and "normal day boundary duration is exactly 24 hours" (UTC at
+        // normalNoonUtc, implied by the two exact instants) were removed as exact
+        // duplicates of the normalNoonUtc rows of this table.
         for (case in expected) {
             withZone(case.zoneId) {
                 assertEquals(
@@ -163,33 +168,6 @@ class TimePeriodUtilsT4CBatch2ATest {
                     TimePeriodUtils.getEndOfDay(case.ts)
                 )
             }
-        }
-    }
-
-    @Test
-    fun `normal day returns exact local midnight values`() {
-        withZone("UTC") {
-            assertEquals(Instant.parse("2024-06-15T00:00:00Z").toEpochMilli(), TimePeriodUtils.getStartOfDay(normalNoonUtc))
-            assertEquals(Instant.parse("2024-06-16T00:00:00Z").toEpochMilli(), TimePeriodUtils.getEndOfDay(normalNoonUtc))
-        }
-        withZone("America/New_York") {
-            // June is EDT (UTC-4): midnight local = 04:00Z, next midnight = 04:00Z next day.
-            assertEquals(Instant.parse("2024-06-15T04:00:00Z").toEpochMilli(), TimePeriodUtils.getStartOfDay(normalNoonUtc))
-            assertEquals(Instant.parse("2024-06-16T04:00:00Z").toEpochMilli(), TimePeriodUtils.getEndOfDay(normalNoonUtc))
-        }
-        withZone("Asia/Kolkata") {
-            // +05:30: midnight local = previous day 18:30Z.
-            assertEquals(Instant.parse("2024-06-14T18:30:00Z").toEpochMilli(), TimePeriodUtils.getStartOfDay(normalNoonUtc))
-            assertEquals(Instant.parse("2024-06-15T18:30:00Z").toEpochMilli(), TimePeriodUtils.getEndOfDay(normalNoonUtc))
-        }
-    }
-
-    @Test
-    fun `normal day boundary duration is exactly 24 hours`() {
-        withZone("UTC") {
-            val start = TimePeriodUtils.getStartOfDay(normalNoonUtc)
-            val end = TimePeriodUtils.getEndOfDay(normalNoonUtc)
-            assertEquals(24L * 60 * 60 * 1000, end - start)
         }
     }
 

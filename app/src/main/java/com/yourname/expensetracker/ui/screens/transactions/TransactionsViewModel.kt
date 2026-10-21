@@ -24,6 +24,7 @@ import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.provenance.SourceLinkQueryService
+import com.yourname.expensetracker.domain.transaction.lifecycle.GroupLinkedExpenseException
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.data.database.entity.EntitySourceLink
 import javax.inject.Inject
@@ -480,6 +481,10 @@ class TransactionsViewModel @Inject constructor(
                 expenseRepository.deleteExpense(expense)
                 _successMessage.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Transaction deleted"))
                 refresh()
+            } catch (e: GroupLinkedExpenseException) {
+                // R18: bounded code only; localized guidance, no raw exception text.
+                Timber.w("Transactions: TRANSACTION_DELETE_BLOCKED code=%s", e.code)
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.from(com.yourname.expensetracker.R.string.expense_delete_blocked_group_linked))
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 Timber.w("Transactions: TRANSACTION_DELETE_FAILED class=%s", e::class.java.simpleName)
@@ -569,6 +574,10 @@ class TransactionsViewModel @Inject constructor(
                 _successMessage.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Type changed to ${newType.name}"))
                 _typeChangeSuccess.tryEmit(expense.id) // S5-014R
                 refreshPagedExpensesAfterMutation()
+            } catch (e: GroupLinkedExpenseException) {
+                // R18: bounded code only; localized guidance, no raw exception text.
+                Timber.w("Transactions: TRANSACTION_UPDATE_BLOCKED code=%s", e.code)
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.from(com.yourname.expensetracker.R.string.expense_edit_blocked_group_linked))
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 Timber.w("Transactions: TRANSACTION_UPDATE_FAILED class=%s", e::class.java.simpleName)
@@ -660,7 +669,7 @@ class TransactionsViewModel @Inject constructor(
                     isSharedExpense = isSharedExpense,
                     sharedWithName = sharedWithName.takeIf { it.isNotBlank() },
                     mySharePercentage = parsedSharePercentage,
-                    myShareAmount = com.yourname.expensetracker.domain.util.AmountUtils.parseAmount(myShareAmount.trim())
+                    myShareAmount = com.yourname.expensetracker.ui.util.AmountInputSanitizer.parseOrNull(myShareAmount.trim())
                 )
                 val message = when {
                     isNotMine -> "Marked as not mine"
@@ -670,6 +679,10 @@ class TransactionsViewModel @Inject constructor(
                 _successMessage.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString(message))
                 _ownershipSuccess.tryEmit(expense.id) // S5-014R
                 refreshPagedExpensesAfterMutation()
+            } catch (e: GroupLinkedExpenseException) {
+                // R18: bounded code only; localized guidance, no raw exception text.
+                Timber.w("Transactions: TRANSACTION_UPDATE_BLOCKED code=%s", e.code)
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.from(com.yourname.expensetracker.R.string.expense_edit_blocked_group_linked))
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 Timber.w("Transactions: TRANSACTION_UPDATE_FAILED class=%s", e::class.java.simpleName)

@@ -12,6 +12,7 @@ import com.yourname.expensetracker.domain.diagnostics.EventOutcome
 import com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.service.receiptmatching.ReceiptMatchingWorker
+import com.yourname.expensetracker.service.recurring.RecurringHorizonWorker
 import com.yourname.expensetracker.service.reminder.BillReminderWorker
 import com.yourname.expensetracker.service.warranty.WarrantyExpirationWorker
 import kotlinx.coroutines.CancellationException
@@ -103,6 +104,9 @@ object WorkerRegistry {
         },
         Entry("bill_reminder_periodic") { context, _ ->
             WorkerSpecScheduler.scheduleFromSpec(context, "bill_reminder_periodic", BillReminderWorker::class.java)
+        },
+        Entry("recurring_horizon") { context, _ ->
+            WorkerSpecScheduler.scheduleFromSpec(context, "recurring_horizon", RecurringHorizonWorker::class.java)
         },
         Entry("receipt_matching") { context, _ ->
             WorkerSpecScheduler.scheduleFromSpec(context, "receipt_matching", ReceiptMatchingWorker::class.java)

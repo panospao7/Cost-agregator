@@ -23,9 +23,9 @@ import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.model.GoalProtectionLevel
 import com.yourname.expensetracker.domain.model.SavingsGoal
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
+import com.yourname.expensetracker.ui.components.asString
 import com.yourname.expensetracker.domain.usecase.savings.GoalAllocation
 import com.yourname.expensetracker.domain.usecase.savings.SavingsSweepRecommendation
-import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -41,9 +41,18 @@ fun SavingsGoalsScreen(
     val context = LocalContext.current
     val dateFormat = remember { DateTimeFormatter.ofPattern("MMM yyyy", Locale.getDefault()) }
     val snackbarHostState = remember { SnackbarHostState() }
-    val scope = rememberCoroutineScope()
     var showAddGoalDialog by remember { mutableStateOf(false) }
     var recommendationToConfirm by remember { mutableStateOf<SmartRecommendation?>(null) }
+
+    LaunchedEffect(viewModel) {
+        viewModel.events.collect { event ->
+            val message = when (event) {
+                SavingsGoalsEvent.GoalCreated -> context.getString(R.string.savings_goal_created_message)
+                is SavingsGoalsEvent.WriteBlocked -> event.message.asString(context)
+            }
+            snackbarHostState.showSnackbar(message = message, withDismissAction = true)
+        }
+    }
 
     Scaffold(
         snackbarHost = {
@@ -209,14 +218,9 @@ fun SavingsGoalsScreen(
                         targetDate = targetDate,
                         protectionLevel = protectionLevel
                     )
+                    // R18b: the "created" snackbar is shown on SavingsGoalsEvent.GoalCreated,
+                    // i.e. only after the write succeeded (see LaunchedEffect above).
                     showAddGoalDialog = false
-                    val createdMessage = context.getString(R.string.savings_goal_created_message)
-                    scope.launch {
-                        snackbarHostState.showSnackbar(
-                            message = createdMessage,
-                            withDismissAction = true
-                        )
-                    }
                 }
             )
         }
@@ -383,7 +387,7 @@ private fun AddGoalDialog(
     var showDatePicker by remember { mutableStateOf(false) }
     var protectionLevel by remember { mutableStateOf(GoalProtectionLevel.WARNING) }
 
-    val parsedAmount = targetAmountInput.toDoubleOrNull()
+    val parsedAmount = com.yourname.expensetracker.ui.util.AmountInputSanitizer.parseOrNull(targetAmountInput)
     val isNameValid = goalName.trim().isNotEmpty()
     val isAmountValid = parsedAmount != null && parsedAmount > 0.0
     val dateLabel = remember(targetDateMillis) {
@@ -411,9 +415,8 @@ private fun AddGoalDialog(
                 OutlinedTextField(
                     value = targetAmountInput,
                     onValueChange = { value ->
-                        if (value.isEmpty() || value.matches(Regex("^\\d*\\.?\\d{0,2}$"))) {
-                            targetAmountInput = value
-                        }
+                        // R16: locale-aware; keeps the comma decimal separator instead of rejecting it.
+                        targetAmountInput = com.yourname.expensetracker.ui.util.AmountInputSanitizer.sanitize(value)
                     },
                     label = { Text(stringResource(R.string.savings_target_amount_label)) },
                     singleLine = true,
@@ -494,14 +497,20 @@ private fun AddGoalDialog(
 
     if (showDatePicker) {
         val datePickerState = rememberDatePickerState(
-            initialSelectedDateMillis = targetDateMillis
+            // R20c: picker values are UTC-midnight millis; convert to/from the local calendar day.
+            initialSelectedDateMillis = targetDateMillis?.let {
+                com.yourname.expensetracker.ui.util.UiTimeUtils.instantToPickerMillis(it)
+            }
         )
         DatePickerDialog(
             onDismissRequest = { showDatePicker = false },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        targetDateMillis = datePickerState.selectedDateMillis
+                        datePickerState.selectedDateMillis?.let {
+                            targetDateMillis =
+                                com.yourname.expensetracker.ui.util.UiTimeUtils.pickerMillisToLocalStartOfDay(it)
+                        }
                         showDatePicker = false
                     }
                 ) {

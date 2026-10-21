@@ -312,7 +312,7 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
         "execution": {
             "engine": "python-direct",
             "entrypoint": "scripts/verify_ignored_test_budget.py",
-            "arguments": ("--fail-on-violation", "--baseline", "29"),
+            "arguments": ("--fail-on-violation", "--baseline", "0"),
             "mode": "blocking",
             "requiredInputs": (),
             "timeoutProfile": "standard",

@@ -709,4 +709,80 @@ class BankStatementParserTest {
 
         assertNull(parser.resolveHomeCurrencySuspend())
     }
+
+    // -----------------------------------------------------------------------
+    //  R16 — generic statement path: 3 trailing digits after one separator = grouping
+    // -----------------------------------------------------------------------
+
+    private fun genericStatementRow(description: String, amountText: String, balanceText: String = "9.250,00"): List<TextBlock> = listOf(
+        TextBlock("DATE", null, 10, 10, 80, 30),
+        TextBlock("DESCRIPTION", null, 100, 10, 250, 30),
+        TextBlock("AMOUNT", null, 300, 10, 400, 30),
+        TextBlock("BALANCE", null, 450, 10, 550, 30),
+        TextBlock("15/03/2025", null, 10, 50, 90, 70),
+        TextBlock(description, null, 100, 50, 250, 70),
+        TextBlock(amountText, null, 300, 50, 400, 70),
+        TextBlock(balanceText, null, 450, 50, 550, 70)
+    )
+
+    @Test
+    fun `generic row comma thousands without decimals is grouping not a fraction`() {
+        val results = parser.parse(genericStatementRow("COFFEE SHOP", "-1,234 EUR"), "EUR")
+
+        assertEquals(1, results.size)
+        assertEquals(1234.0, results[0].amount, 0.0)
+        assertEquals(ParsedTransactionType.PURCHASE, results[0].type)
+    }
+
+    @Test
+    fun `generic row leading currency with comma thousands is grouping`() {
+        val results = parser.parse(genericStatementRow("COFFEE SHOP", "EUR123,456"), "EUR")
+
+        assertEquals(1, results.size)
+        assertEquals(123456.0, results[0].amount, 0.0)
+    }
+
+    @Test
+    fun `generic row above the parsed transaction maximum is skipped without failing the statement`() {
+        // Repeated comma grouping parses as 1,234,567 (was 1234.567 before R16) and exceeds the
+        // 1,000,000 ParsedTransaction cap; the row is skipped instead of throwing.
+        val results = parser.parse(genericStatementRow("COFFEE SHOP", "EUR1,234,567"), "EUR")
+
+        assertEquals(0, results.size)
+    }
+
+    @Test
+    fun `generic row dot thousands with trailing currency is grouping`() {
+        val results = parser.parse(genericStatementRow("COFFEE SHOP", "1.234 EUR"), "EUR")
+
+        assertEquals(1, results.size)
+        assertEquals(1234.0, results[0].amount, 0.0)
+    }
+
+    @Test
+    fun `generic row european grouped decimal with trailing currency keeps its fraction`() {
+        val results = parser.parse(genericStatementRow("COFFEE SHOP", "1.234,56 EUR"), "EUR")
+
+        assertEquals(1, results.size)
+        assertEquals(1234.56, results[0].amount, 0.0)
+    }
+
+    @Test
+    fun `generic row two digit decimals are unchanged`() {
+        val dot = parser.parse(genericStatementRow("COFFEE SHOP", "-12.50 EUR"), "EUR")
+        val comma = parser.parse(genericStatementRow("COFFEE SHOP", "-12,50 EUR"), "EUR")
+
+        assertEquals(12.5, dot.single().amount, 0.0)
+        assertEquals(12.5, comma.single().amount, 0.0)
+        assertEquals(ParsedTransactionType.PURCHASE, dot.single().type)
+    }
+
+    @Test
+    fun `generic row grouping fix keeps amount absolute and deposit keyword typing`() {
+        val results = parser.parse(genericStatementRow("SALARY ACME", "-2,500 EUR"), "EUR")
+
+        assertEquals(1, results.size)
+        assertEquals(2500.0, results[0].amount, 0.0)
+        assertEquals(ParsedTransactionType.DEPOSIT, results[0].type)
+    }
 }

@@ -66,7 +66,7 @@ unresolvable receiver/DAO scope is a **blocking** diagnostic (exit 2 — the
 scan is untrusted, CI fails). There are no wildcards, no name-only matching,
 and no v1 fallback.
 
-**Fixture proof** (`scripts/test_lifecycle_scanner_subsumption.py`):
+**Fixture proof** (`scripts/test_lifecycle_scanner_subsumption.py` for items 1-3; item 4 is asserted by the canonical D4 suites named there):
 
 1. *Rule mapping* — the Room inventory discovers a mutator identity for every
    method in the retired rule surface (17/17).
@@ -82,7 +82,13 @@ and no v1 fallback.
 4. *Strict superiority* — D4 is receiver-TYPE based: a mutation call through
    a receiver **not** named `expenseDao` is invisible to the retired
    name-based regexes but discovered by D4. An unresolved receiver scope
-   fails closed (blocking diagnostic) instead of passing silently.
+   fails closed (blocking diagnostic) instead of passing silently. These
+   properties are pinned by `scripts/test_db_guard_scanner_d4.py` and
+   `scripts/test_verify_db_access_v2.py` (receiver-name-independent
+   `DB_UNAUTHORIZED_MUTATION` findings with exact `identity.accessor`, and
+   exact `DB_DAO_SCOPE_UNRESOLVED` blocking diagnostics with
+   `trusted: false`), as are repo-relative deterministic finding paths; the
+   subsumption file no longer duplicates them.
 
 **Fresh full-tree evidence** (`build/guard-debug/gr10c/gate-after.json`,
 protocol-v2 scan of the live tree): `trusted: true`, `findingCount: 0`,
@@ -261,7 +267,7 @@ bridge imposes no process timeout of its own.
 | Check | Status |
 |---|---|
 | Extraction tests (`scripts/test_verify_raw_money_aggregates.py`) | written — NOT RUN in this session (command execution prohibited) |
-| Subsumption proof tests (`scripts/test_lifecycle_scanner_subsumption.py`) | written — NOT RUN in this session |
+| Subsumption proof tests (`scripts/test_lifecycle_scanner_subsumption.py`, rule mapping / positive fixtures / false-positive class) | written — NOT RUN in this session |
 | Gradle wrapper contract tests (`test_gradle_db_guard_contract.py`, `test_gradle_registered_guard_contract.py`) | updated/written — NOT RUN in this session |
 | Suite/registry tests (`test_run_static_guard_suite.py`) | updated — NOT RUN in this session |
 | `python3 scripts/ci/verify_guard_registry.py --root .` | NOT RUN in this session |

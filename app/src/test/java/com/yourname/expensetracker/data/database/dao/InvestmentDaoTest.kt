@@ -89,17 +89,51 @@ class InvestmentDaoTest {
     // -------------------------------------------------------------------------
 
     @Test
-    fun `insert an investment holding`() = runTest {
-        val investment = createInvestment()
-        val id = dao.insert(investment)
+    fun `insert then read back returns every investment field exactly`() = runTest {
+        val purchaseDate = FIXED_NOW - 30L * 24 * 60 * 60 * 1000
+        val id = dao.insert(
+            createInvestment(
+                name = "Test Investment",
+                symbol = "TST",
+                type = InvestmentType.CRYPTO,
+                currency = "USD",
+                exchange = "NASDAQ",
+                purchasePrice = 100.0,
+                quantity = 5.0,
+                purchaseDate = purchaseDate,
+                purchaseFees = 2.5,
+                currentPrice = 120.0,
+                lastUpdated = FIXED_NOW,
+                category = "Tech",
+                notes = "Long term hold",
+                isActive = true,
+                targetPrice = 200.0,
+                stopLossPrice = 100.0,
+                createdAt = purchaseDate
+            )
+        )
 
         assertTrue(id > 0)
 
         val loaded = dao.getById(id)
         assertNotNull(loaded)
-        assertEquals("Apple Inc.", loaded.name)
-        assertEquals("AAPL", loaded.symbol)
-        assertEquals(InvestmentType.STOCK, loaded.type)
+        assertEquals("Test Investment", loaded.name)
+        assertEquals("TST", loaded.symbol)
+        assertEquals(InvestmentType.CRYPTO, loaded.type)
+        assertEquals("USD", loaded.currency)
+        assertEquals("NASDAQ", loaded.exchange)
+        assertEquals(100.0, loaded.purchasePrice, 0.0001)
+        assertEquals(5.0, loaded.quantity, 0.0001)
+        assertEquals(purchaseDate, loaded.purchaseDate)
+        assertEquals(2.5, loaded.purchaseFees, 0.0001)
+        assertEquals(120.0, loaded.currentPrice, 0.0001)
+        assertEquals(FIXED_NOW, loaded.lastUpdated)
+        assertEquals("Tech", loaded.category)
+        assertEquals("Long term hold", loaded.notes)
+        assertTrue(loaded.isActive)
+        assertEquals(200.0, loaded.targetPrice)
+        assertEquals(100.0, loaded.stopLossPrice)
+        assertEquals(purchaseDate, loaded.createdAt)
     }
 
     @Test
@@ -126,29 +160,6 @@ class InvestmentDaoTest {
 
         assertEquals(1, active.size)
         assertEquals("Active Holding", active[0].name)
-    }
-
-    @Test
-    fun `verify value fields for an investment`() = runTest {
-        val id = dao.insert(
-            createInvestment(
-                name = "Test Investment",
-                symbol = "TST",
-                purchasePrice = 100.0,
-                quantity = 5.0,
-                currentPrice = 120.0,
-                purchaseFees = 2.5,
-                currency = "USD"
-            )
-        )
-
-        val loaded = dao.getById(id)
-        assertNotNull(loaded)
-        assertEquals(100.0, loaded.purchasePrice, 0.0001)
-        assertEquals(5.0, loaded.quantity, 0.0001)
-        assertEquals(120.0, loaded.currentPrice, 0.0001)
-        assertEquals(2.5, loaded.purchaseFees, 0.0001)
-        assertEquals("USD", loaded.currency)
     }
 
     @Test

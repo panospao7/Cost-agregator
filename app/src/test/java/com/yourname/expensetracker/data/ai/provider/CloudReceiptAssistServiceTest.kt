@@ -145,10 +145,12 @@ class CloudReceiptAssistServiceTest {
                             response("/private/receipt", status)
                         } else response(successBody())
                     }
-                    val service = allowedService(client)
+                    val retryDelay = RecordingRetryDelay()
+                    val service = allowedService(client, retryDelay)
                     val result = runBlocking {
                         if (textMode) service.suggestFromText("bank rows") else service.suggest(sampleInput())
                     }
+                    retryDelay.assertSchedule(expectedRetries = if (status == 400) 0 else if (recover) 1 else 2)
                     if (recover && status != 400) assertTrue(result is AiServiceResult.Success<*>)
                     else {
                         val expected = if (status == null) AiServiceError.Offline else AiServiceError.HttpError(status, "UNKNOWN_ERROR")
@@ -160,7 +162,10 @@ class CloudReceiptAssistServiceTest {
         }
     }
 
-    private fun allowedService(client: OkHttpClient): CloudReceiptAssistService {
+    private fun allowedService(
+        client: OkHttpClient,
+        retryDelay: RecordingRetryDelay = RecordingRetryDelay()
+    ): CloudReceiptAssistService {
         val settings = mockk<AiSettingsRepository>()
         every { settings.settings() } returns flowOf(AiSettings())
         val gate = mockk<PrivacyGate>()
@@ -173,7 +178,10 @@ class CloudReceiptAssistServiceTest {
             cloudPayloadPolicy = DefaultCloudPayloadPolicy(
                 EffectiveCloudAiPolicyResolver.failClosedForTest(settings),
                 DefaultCloudPayloadRedactor()
-            )
+            ),
+            auditLogger = com.yourname.expensetracker.domain.privacy.PrivacyAuditLogger.NO_OP,
+            timeProvider = com.yourname.expensetracker.domain.util.SystemTimeProvider(),
+            retryDelay = retryDelay.delayer
         )
     }
 
@@ -199,14 +207,19 @@ class CloudReceiptAssistServiceTest {
                     attempts.incrementAndGet()
                     throw failure
                 }.build()
-                val service = allowedService(client)
+                val retryDelay = RecordingRetryDelay()
+                val service = allowedService(client, retryDelay)
+                val expectedRetries = if (failure is SocketTimeoutException) 2 else 0
                 val suggestionFailure = runBlocking { service.suggest(sampleInput()) } as AiServiceResult.Failure
                 assertEquals(expected, suggestionFailure.error)
                 assertEquals(if (failure is SocketTimeoutException) 3 else 1, attempts.get())
+                retryDelay.assertSchedule(expectedRetries)
+                retryDelay.reset()
                 attempts.set(0)
                 val textFailure = runBlocking { service.suggestFromText("bank rows") } as AiServiceResult.Failure
                 assertEquals(expected, textFailure.error)
                 assertEquals(if (failure is SocketTimeoutException) 3 else 1, attempts.get())
+                retryDelay.assertSchedule(expectedRetries)
                 val readable = when (expected) {
                     AiServiceError.Timeout -> "AI receipt assist timed out. Please retry."
                     AiServiceError.SslError -> "Secure connection failed. Please retry later."
@@ -444,6 +457,7 @@ class CloudReceiptAssistServiceTest {
             }
             .build()
 
+        val retryDelay = RecordingRetryDelay()
         val service = CloudReceiptAssistService(
             aiSettingsRepository = settingsRepository,
             secureKeyStorage = createMockKeyStorage(apiKey = "test-key"),
@@ -452,7 +466,10 @@ class CloudReceiptAssistServiceTest {
             cloudPayloadPolicy = com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy(
                 com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver.failClosedForTest(settingsRepository),
                 com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor()
-            )
+            ),
+            auditLogger = com.yourname.expensetracker.domain.privacy.PrivacyAuditLogger.NO_OP,
+            timeProvider = com.yourname.expensetracker.domain.util.SystemTimeProvider(),
+            retryDelay = retryDelay.delayer
         )
 
         val result = kotlinx.coroutines.runBlocking {
@@ -461,6 +478,7 @@ class CloudReceiptAssistServiceTest {
 
         assertTrue(result is AiServiceResult.Success<*>)
         assertEquals(2, attempts.get())
+        retryDelay.assertSchedule(expectedRetries = 1)
     }
 
     // PRIV-43B-02: buildRequestBodyForTest now returns raw prompt — redaction is done by CloudPayloadPolicy, not provider.

@@ -43,7 +43,7 @@ abstract class GoldenTestBase {
     protected val testDispatcher = StandardTestDispatcher()
     protected val testScope = TestScope(testDispatcher)
 
-    // Fixed time: 2026-04-15 12:00:00 UTC
+    // Fixed time: 2026-04-16 12:00:00 UTC
     protected val fixedNow = 1776340800000L
     protected val timeProvider: TimeProvider = mockk<TimeProvider>().also {
         every { it.now() } returns fixedNow

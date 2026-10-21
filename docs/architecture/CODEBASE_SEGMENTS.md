@@ -105,6 +105,7 @@ Owns notification capture, parser routing, structured transaction extraction, an
 - `data/repository/NotificationRepository.kt`
 - `data/repository/NotificationProcessingPipeline.kt`
 - `data/repository/ReviewQueueRepository.kt`
+- `data/service/AndroidNotificationListenerAccessChecker.kt` (R17: read-only OS listener-access probe, bound in `PrivacyModule`)
 - `ui/screens/review/ReviewScreen.kt`
 
 **Boundary note:** this segment stops at parsed/reviewable transactions; OCR belongs to Segment 4 and receipt-item AI belongs to Segment 5.
@@ -244,7 +245,6 @@ Owns the base expense CRUD surface, shared core expense models, and the **transa
 - `domain/transaction/lifecycle/TransactionSideEffectDispatcher.kt` — Post-creation side effects
 - `docs/development/DAO_ACCESS_GUARDRAILS.md` — DAO access policy
 - `scripts/guardrails/dao-access-check.kts` — Guardrail enforcement
-- `scripts/guards/check_lifecycle_bypasses.kts` — CI guard for direct DAO bypasses
 - `util/ImportCoordinator.kt` — CSV/JSON import orchestration (format detection, delegation, result reporting)
 - `util/JsonExpenseImporter.kt` — JSON bulk import engine (v1 flat + v2 enriched formats, bulk dedup mode)
 
@@ -734,16 +734,14 @@ Owns the repo-level static architecture guard suite, boundary verification scrip
 - `scripts/ci/run_static_guard_suite.py` — CI manifest runner for the guard suite
 - `scripts/ci/shared_guard_engine.py` — Shared engine used by guard scripts
 - `scripts/ci/guard_ratchet.py` — Growth-enforcing baselines for ratchet-mode guards
-- `scripts/guards/check_lifecycle_bypasses.kts` — CI guard for direct DAO lifecycle bypasses
-- `scripts/guards/check_direct_time_calls.kts` — CI guard against direct clock access outside the `TimeProvider` seam (java.time migration)
-- `scripts/guards/check_raw_money_aggregates.kts` — CI guard against raw money aggregation outside approved types
+- Retired advisory Kotlin-script guards (lifecycle bypasses, direct time calls, raw money aggregates; never wired into CI) and their file-existence test `GuardSeededViolationTest`; enforcement lives in the `db_access`, `time_boundaries` (G-TIME-01) and `raw_money_aggregates` registered guards
 - `scripts/guardrails/dao-access-check.kts` + `dao-approved-files.txt` — DAO access guardrail with approved-file allowlist
 - `scripts/verify_*_boundaries.py` — Standalone boundary verifiers (privacy, DB access, money, time, UI→DAO, worker, receipt link, cloud payload, cancellation, import lifecycle, source provenance, event writers, migration matrix, DI release, PII logging)
 - `scripts/allowlists/*.yml` — Per-guard allowlists
 - `tools/lifecycle-bypass-guard.groovy` — Gradle-side lifecycle bypass guard
 - `docs/ci/guard-policy.md`, `docs/ci/guard-framework.md` — Guard policy and framework documentation
 
-**Boundary note:** `scripts/guardrails/dao-access-check.kts` and `scripts/guards/check_lifecycle_bypasses.kts` enforce Segment 9's lifecycle rules; the tooling itself is owned here. `scripts/currency_guardrails.ps1` remains listed with Segment 16.
+**Boundary note:** `scripts/guardrails/dao-access-check.kts` and the registered `db_access` guard check Segment 9's lifecycle rules; the tooling itself is owned here. `scripts/currency_guardrails.ps1` remains listed with Segment 16.
 
 **Boundary note:** `AGENTS.md` at the repo root governs agent behavior across all segments; `DatabaseSchemaPolicy.kt` (Segment 9/16-adjacent, in `data/database/`) is the single source of truth for schema version and migration baseline consumed by CI (`scripts/verify_migration_matrix.py`).
 
@@ -793,7 +791,7 @@ File-to-segment mapping for all 39 segments:
 | 36 | Bill Reminders | `domain/reminder/`, `BillReminderManager`, `BillReminderSettings`, `ReminderSettingsModule` |
 | 37 | Spending Challenges | `domain/challenge/`, `SpendingChallengeManager` |
 | 38 | Receipt Matching | `domain/receiptmatching/`, `ReceiptTransactionMatcher`, `ReceiptMatchLifecycleService` |
-| 39 | Static Guardrails & CI Verification | `scripts/ci/`, `scripts/guards/`, `scripts/guardrails/`, `scripts/allowlists/`, `scripts/verify_*_boundaries.py`, `tools/`, `.github/workflows/ci.yml` |
+| 39 | Static Guardrails & CI Verification | `scripts/ci/`, `scripts/guardrails/`, `scripts/allowlists/`, `scripts/verify_*_boundaries.py`, `tools/`, `.github/workflows/ci.yml` |
 
 ### Quick checks
 - Forecast issues → Segment 1

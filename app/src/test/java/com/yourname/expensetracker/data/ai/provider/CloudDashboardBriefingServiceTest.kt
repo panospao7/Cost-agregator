@@ -12,6 +12,7 @@ import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.privacy.CloudPayloadPolicy
 import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicy
 import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
+import com.yourname.expensetracker.domain.privacy.PrivacyAuditLogger
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
@@ -127,10 +128,12 @@ class CloudDashboardBriefingServiceTest {
                 if (++attempts == 1 || !recover) throw IOException("connection reset /private/receipt")
                 response(successfulResponseBody())
             }
-            val result = runBlocking { allowedService(key, client).generate(defaultInput()) }
+            val retryDelay = RecordingRetryDelay()
+            val result = runBlocking { allowedService(key, client, retryDelay).generate(defaultInput()) }
             if (recover) assertTrue(result is AiServiceResult.Success<*>)
             else assertEquals(AiServiceError.Offline, (result as AiServiceResult.Failure).error)
             verify(exactly = if (recover) 2 else 3) { call.execute() }
+            retryDelay.assertSchedule(expectedRetries = if (recover) 1 else 2)
         }
     }
 
@@ -158,9 +161,11 @@ class CloudDashboardBriefingServiceTest {
                     attempts.incrementAndGet()
                     throw failure
                 }.build()
-                val result = runBlocking { allowedService(key, client).generate(defaultInput()) }
+                val retryDelay = RecordingRetryDelay()
+                val result = runBlocking { allowedService(key, client, retryDelay).generate(defaultInput()) }
                 assertEquals(expected, (result as AiServiceResult.Failure).error)
                 assertEquals(if (failure is SocketTimeoutException) 3 else 1, attempts.get())
+                retryDelay.assertSchedule(expectedRetries = if (failure is SocketTimeoutException) 2 else 0)
                 assertArtifactError(result.error, when (expected) {
                     AiServiceError.Timeout -> "Dashboard briefing timed out"
                     AiServiceError.SslError -> "Secure connection failed"
@@ -276,11 +281,13 @@ class CloudDashboardBriefingServiceTest {
             }
             .build()
 
-        val service = allowedService(mockKeyStorage, client)
+        val retryDelay = RecordingRetryDelay()
+        val service = allowedService(mockKeyStorage, client, retryDelay)
 
         val result = service.generate(defaultInput())
 
         assertEquals(2, attempts.get())
+        retryDelay.assertSchedule(expectedRetries = 1)
         assertTrue(result is AiServiceResult.Success)
         val success = result as AiServiceResult.Success
         assertEquals("Daily snapshot", success.value.title)
@@ -318,11 +325,13 @@ class CloudDashboardBriefingServiceTest {
             }
             .build()
 
-        val service = allowedService(mockKeyStorage, client)
+        val retryDelay = RecordingRetryDelay()
+        val service = allowedService(mockKeyStorage, client, retryDelay)
 
         val result = service.generate(defaultInput())
 
         assertEquals(2, attempts.get())
+        retryDelay.assertSchedule(expectedRetries = 1)
         assertTrue(result is AiServiceResult.Success)
     }
 
@@ -357,11 +366,13 @@ class CloudDashboardBriefingServiceTest {
             }
             .build()
 
-        val service = allowedService(mockKeyStorage, client)
+        val retryDelay = RecordingRetryDelay()
+        val service = allowedService(mockKeyStorage, client, retryDelay)
 
         val result = service.generate(defaultInput())
 
         assertEquals(2, attempts.get())
+        retryDelay.assertSchedule(expectedRetries = 1)
         assertTrue(result is AiServiceResult.Success)
     }
 
@@ -385,11 +396,13 @@ class CloudDashboardBriefingServiceTest {
             }
             .build()
 
-        val service = allowedService(mockKeyStorage, client)
+        val retryDelay = RecordingRetryDelay()
+        val service = allowedService(mockKeyStorage, client, retryDelay)
 
         val result = service.generate(defaultInput())
 
         assertEquals(3, attempts.get())
+        retryDelay.assertSchedule(expectedRetries = 2)
         assertTrue(result is AiServiceResult.Failure)
         val failure = result as AiServiceResult.Failure
         assertTrue(failure.error is AiServiceError.HttpError)
@@ -420,7 +433,8 @@ class CloudDashboardBriefingServiceTest {
 
     private fun allowedService(
         keyStorage: SecureKeyStorage,
-        client: OkHttpClient
+        client: OkHttpClient,
+        retryDelay: RecordingRetryDelay = RecordingRetryDelay()
     ): CloudDashboardBriefingService {
         val resolver = mockk<EffectiveCloudAiPolicyResolver>()
         coEvery { resolver.resolve() } returns EffectiveCloudAiPolicy(
@@ -443,7 +457,9 @@ class CloudDashboardBriefingServiceTest {
             aiSettingsRepository = null,
             privacyGate = privacyGate,
             cloudPayloadPolicy = payloadPolicy,
-            effectiveCloudAiPolicyResolver = resolver
+            effectiveCloudAiPolicyResolver = resolver,
+            auditLogger = PrivacyAuditLogger.NO_OP,
+            retryDelay = retryDelay.delayer
         )
     }
 

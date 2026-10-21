@@ -26,6 +26,8 @@ class PostCommitActionBatchTest {
         idempotencyKey = "key-2"
     )
 
+    private val duplicateAction = sampleAction.copy(name = "duplicate", idempotencyKey = "key-1")
+
     @Test
     fun `empty batch returns zero actions`() {
         val batch = PostCommitActionBatch.empty("corr-empty")
@@ -34,43 +36,33 @@ class PostCommitActionBatchTest {
     }
 
     @Test
-    fun `plus operator merges two batches`() {
+    fun `normalized keeps first occurrence per idempotency key`() {
+        // row: label, input actions, expected action names in order
+        val rows = listOf(
+            Triple("empty batch", emptyList<PostCommitAction>(), emptyList<String>()),
+            Triple("unique actions keep count", listOf(sampleAction, anotherAction), listOf("test_action", "another_action")),
+            Triple(
+                "duplicate idempotency key dropped keeping first occurrence",
+                listOf(sampleAction, anotherAction, duplicateAction),
+                listOf("test_action", "another_action")
+            )
+        )
+        rows.forEach { (label, input, expectedNames) ->
+            val normalized = PostCommitActionBatch("corr-1", input).normalized()
+            assertEquals("normalized names for row: $label", expectedNames, normalized.actions.map { it.name })
+        }
+    }
+
+    @Test
+    fun `plus operator merges in order and preserves original batches`() {
         val batch1 = PostCommitActionBatch("corr-1", listOf(sampleAction))
         val batch2 = PostCommitActionBatch("corr-1", listOf(anotherAction))
         val merged = batch1 + batch2
         assertEquals(2, merged.actions.size)
         assertEquals("key-1", merged.actions[0].idempotencyKey)
         assertEquals("key-2", merged.actions[1].idempotencyKey)
-    }
-
-    @Test
-    fun `normalized removes duplicate idempotency keys keeping first occurrence`() {
-        val duplicateAction = sampleAction.copy(name = "duplicate", idempotencyKey = "key-1")
-        val batch = PostCommitActionBatch(
-            "corr-1",
-            listOf(sampleAction, anotherAction, duplicateAction)
-        )
-        val normalized = batch.normalized()
-        assertEquals(2, normalized.actions.size)
-        assertEquals("test_action", normalized.actions[0].name)
-        assertEquals("another_action", normalized.actions[1].name)
-    }
-
-    @Test
-    fun `normalized on unique actions returns same count`() {
-        val batch = PostCommitActionBatch(
-            "corr-1",
-            listOf(sampleAction, anotherAction)
-        )
-        val normalized = batch.normalized()
-        assertEquals(2, normalized.actions.size)
-    }
-
-    @Test
-    fun `normalized on empty batch returns empty`() {
-        val batch = PostCommitActionBatch.empty("corr-empty")
-        val normalized = batch.normalized()
-        assertEquals(0, normalized.actions.size)
+        assertEquals(1, batch1.actions.size)
+        assertEquals(1, batch2.actions.size)
     }
 
     @Test
@@ -79,15 +71,5 @@ class PostCommitActionBatchTest {
         val copy = batch.copy(correlationId = "corr-2")
         assertNotEquals(batch.correlationId, copy.correlationId)
         assertEquals(batch.actions, copy.actions)
-    }
-
-    @Test
-    fun `plus operator preserves original batches`() {
-        val batch1 = PostCommitActionBatch("corr-1", listOf(sampleAction))
-        val batch2 = PostCommitActionBatch("corr-1", listOf(anotherAction))
-        val merged = batch1 + batch2
-        assertEquals(1, batch1.actions.size)
-        assertEquals(1, batch2.actions.size)
-        assertEquals(2, merged.actions.size)
     }
 }

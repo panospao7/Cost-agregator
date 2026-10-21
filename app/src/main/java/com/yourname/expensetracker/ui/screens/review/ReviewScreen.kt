@@ -1586,7 +1586,8 @@ fun EditReviewDialog(
     onLocationCleared: () -> Unit = {}
 ) {
     var amount by remember {
-        mutableStateOf(String.format("%.2f", initialReceiptPrefill?.amount ?: review.suggestedAmount ?: 0.0))
+        // R16: Locale.US so the prefill is locale-independent and round-trips through parseUserAmount.
+        mutableStateOf(String.format(java.util.Locale.US, "%.2f", initialReceiptPrefill?.amount ?: review.suggestedAmount ?: 0.0))
     }
     var merchant by remember { mutableStateOf(initialReceiptPrefill?.merchant ?: review.suggestedMerchant) }
     // S6-D5-003: Currency is editable — null means user must select before approval
@@ -1741,6 +1742,9 @@ fun EditReviewDialog(
                     else stringResource(R.string.review_amount_label_generic)
                 ) },
                 singleLine = true,
+                // R16: surface amounts the locale-aware parser rejects instead of a silent no-op on Approve.
+                isError = amount.isNotBlank() &&
+                    com.yourname.expensetracker.ui.util.AmountInputSanitizer.parseOrNull(amount) == null,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp)
@@ -1958,7 +1962,7 @@ fun EditReviewDialog(
                     onClick = {
                         haptic(HapticType.Success)
                         // S6-015: Validate before save
-                        val parsedAmount = AmountUtils.parseAmount(amount)
+                        val parsedAmount = com.yourname.expensetracker.ui.util.AmountInputSanitizer.parseOrNull(amount)
                         if (amount.isNotBlank() && parsedAmount == null) {
                             return@Button
                         }

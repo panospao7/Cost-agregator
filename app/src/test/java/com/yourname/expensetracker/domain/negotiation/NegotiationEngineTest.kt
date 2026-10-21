@@ -15,11 +15,16 @@ import kotlinx.coroutines.CancellationException
 import io.mockk.*
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
+import java.util.Locale
 import kotlin.time.Duration.Companion.seconds
+
+/** Fixed clock value returned by the per-row [NegotiationEngineTest.Fixture] time provider. */
+private const val FIXED_NOW = 1_760_000_000_000L
 
 /**
  * Contract tests for [SmartBillNegotiationEngine].
@@ -70,6 +75,56 @@ class NegotiationEngineTest {
         timeProvider = timeProvider
     )
 
+    /**
+     * Fresh mocks + engine per table row, so recorded calls / stubs / verify counts
+     * never leak from one row to the next. Strict mocks except where noted.
+     */
+    private class Fixture {
+        val repo: RecurringExpenseRepository = mockk()
+        val priceHistoryDao: SubscriptionPriceHistoryDao = mockk()
+        val outcomeDao: NegotiationOutcomeDao = mockk(relaxed = true)
+        val provider: MarketRateProvider = mockk()
+        val database: AppDatabase = mockk(relaxed = true)
+        val writeBarrier: DatabaseWriteBarrier = mockk(relaxed = true)
+        val timeProvider: TimeProvider = mockk()
+
+        val engine: SmartBillNegotiationEngine
+
+        init {
+            every { timeProvider.now() } returns FIXED_NOW
+            coEvery { database.negotiationOutcomeDao() } returns outcomeDao
+            engine = SmartBillNegotiationEngine(
+                recurringExpenseRepository = repo,
+                priceHistoryDao = priceHistoryDao,
+                negotiationOutcomeDao = outcomeDao,
+                marketRateProvider = provider,
+                database = database,
+                writeBarrier = writeBarrier,
+                timeProvider = timeProvider
+            )
+        }
+
+        /** Runs the transaction block inline (requires the class-level mockkStatic of RoomDatabaseKt). */
+        fun stubTransactionPassThrough() {
+            coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
+                secondArg<suspend () -> Any>().invoke()
+            }
+        }
+    }
+
+    private fun subscription(
+        id: Long,
+        merchant: String,
+        amount: Double,
+        frequency: RecurrenceFrequency = RecurrenceFrequency.MONTHLY,
+        currency: String = "EUR"
+    ) = ManualRecurringExpense(
+        id = id, merchant = merchant, amount = amount, currency = currency,
+        frequency = frequency,
+        nextDate = FIXED_NOW,
+        isSubscription = true, isActive = true
+    )
+
     @Test
     fun `no recommendation when no data`() = runTest(timeout = 60.seconds) {
         // Given: no subscriptions exist
@@ -84,19 +139,37 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `provider failure handled gracefully`() = runTest(timeout = 60.seconds) {
-        // Given: the repository throws (e.g., database error)
+    fun `repository failure propagates from analyze (not swallowed)`() = runTest(timeout = 60.seconds) {
+        // Given: the repository throws (e.g., database error). analyzeNegotiationOpportunities
+        // reads subscriptions outside any try/catch (SmartBillNegotiationEngine.kt:39).
         coEvery { recurringExpenseRepository.getAll() } throws RuntimeException("DB connection lost")
 
         val engine = createEngine()
 
-        // Then: the exception propagates to the caller (no silent swallowing)
+        // Then: exactly that exception reaches the caller; no pass path without a throw.
+        var thrown: Exception? = null
         try {
             engine.analyzeNegotiationOpportunities()
         } catch (e: Exception) {
-            assertTrue("Exception should be the repository error",
-                e.message?.contains("DB connection lost") == true)
+            thrown = e
         }
+        assertNotNull("Repository failure must propagate, but analyze returned normally", thrown)
+        assertEquals(RuntimeException::class.java, thrown!!.javaClass)
+        assertEquals("DB connection lost", thrown.message)
+    }
+
+    @Test
+    fun `market rate provider failure is handled gracefully as no opportunity`() = runTest(timeout = 60.seconds) {
+        // findMarketRate catches non-cancellation provider exceptions and returns null
+        // (SmartBillNegotiationEngine.kt:101-105), so the subscription yields no opportunity.
+        val fx = Fixture()
+        coEvery { fx.repo.getAll() } returns listOf(subscription(1L, "Netflix", 13.99))
+        coEvery { fx.provider.getRates(any(), any(), any()) } throws RuntimeException("provider down")
+
+        val opportunities = fx.engine.analyzeNegotiationOpportunities()
+
+        assertEquals(emptyList<SmartBillNegotiationEngine.NegotiationOpportunity>(), opportunities)
+        coVerify(exactly = 1) { fx.provider.getRates(ServiceType.STREAMING, "GR", "EUR") }
     }
 
     @Test
@@ -164,242 +237,204 @@ class NegotiationEngineTest {
         assertEquals(1, opportunities.size)
     }
 
-    @Test
-    fun `annual subscription script shows monthly equivalent not raw amount`() = runTest(timeout = 60.seconds) {
-        val subscription = ManualRecurringExpense(
-            id = 1L, merchant = "Netflix", amount = 120.0, currency = "EUR",
-            frequency = RecurrenceFrequency.ANNUALLY,
-            nextDate = System.currentTimeMillis(),
-            isSubscription = true, isActive = true
-        )
-        coEvery { recurringExpenseRepository.getAll() } returns listOf(subscription)
-        coEvery { priceHistoryDao.getAllPricesForSubscription(any()) } returns emptyList()
-
-        val provider: MarketRateProvider = mockk()
-        coEvery { provider.getRates(any(), any(), any()) } returns MarketRateResult(
-            quotes = listOf(MarketRateQuote("Netflix", 13.99, 8.99, 6.99, "EUR", "GR", MarketRateConfidence.MEDIUM)),
-            source = "test", lastUpdatedAt = System.currentTimeMillis()
-        )
-
-        val engine = createEngine(marketRateProvider = provider)
-        val opportunities = engine.analyzeNegotiationOpportunities()
-        val opp = opportunities.first()
-
-        assertEquals(10.0, opp.monthlyEquivalentPrice, 0.01)
-        assertEquals(120.0, opp.rawBillingAmount, 0.01)
-
-        val scriptText = opp.negotiationScript.opening + opp.negotiationScript.talkingPoints.joinToString(" ")
-        assertTrue("Script should mention monthly equivalent (10.00), not raw annual (120.00)",
-            scriptText.contains("10.00") && !scriptText.contains("120.00"))
-    }
+    private data class BillingCycleRow(
+        val label: String,
+        val id: Long,
+        val merchant: String,
+        val amount: Double,
+        val frequency: RecurrenceFrequency,
+        val quote: MarketRateQuote,
+        val expectedMonthlyEquivalent: Double,
+        val expectedRawBillingAmount: Double,
+        /** Substring the script MUST contain (null = not asserted for this row). */
+        val scriptMustContain: String?,
+        /** Substring the script MUST NOT contain (null = not asserted for this row). */
+        val scriptMustNotContain: String?
+    )
 
     @Test
-    fun `monthly subscription script uses same amount for monthly equivalent`() = runTest(timeout = 60.seconds) {
-        val subscription = ManualRecurringExpense(
-            id = 2L, merchant = "Spotify", amount = 9.99, currency = "EUR",
-            frequency = RecurrenceFrequency.MONTHLY,
-            nextDate = System.currentTimeMillis(),
-            isSubscription = true, isActive = true
-        )
-        coEvery { recurringExpenseRepository.getAll() } returns listOf(subscription)
-        coEvery { priceHistoryDao.getAllPricesForSubscription(any()) } returns emptyList()
+    fun `analyze reports monthly equivalent and raw billing amount per billing cycle`() = runTest(timeout = 60.seconds) {
+        // The script uses String.format("%.2f") / Currency symbol with the default Locale
+        // (SmartBillNegotiationEngine.kt:427-452); pin Locale.US so "10.00" is deterministic.
+        val originalLocale = Locale.getDefault()
+        Locale.setDefault(Locale.US)
+        try {
+            val rows = listOf(
+                BillingCycleRow(
+                    label = "annual Netflix 120.00",
+                    id = 1L, merchant = "Netflix", amount = 120.0,
+                    frequency = RecurrenceFrequency.ANNUALLY,
+                    quote = MarketRateQuote("Netflix", 13.99, 8.99, 6.99, "EUR", "GR", MarketRateConfidence.MEDIUM),
+                    expectedMonthlyEquivalent = 10.0,
+                    expectedRawBillingAmount = 120.0,
+                    scriptMustContain = "10.00",
+                    scriptMustNotContain = "120.00"
+                ),
+                BillingCycleRow(
+                    label = "monthly Spotify 9.99",
+                    id = 2L, merchant = "Spotify", amount = 9.99,
+                    frequency = RecurrenceFrequency.MONTHLY,
+                    quote = MarketRateQuote("Spotify", 10.99, 6.99, 5.99, "EUR", "GR", MarketRateConfidence.MEDIUM),
+                    expectedMonthlyEquivalent = 9.99,
+                    expectedRawBillingAmount = 9.99,
+                    scriptMustContain = null,
+                    scriptMustNotContain = null
+                ),
+                BillingCycleRow(
+                    label = "quarterly Gym 90.00",
+                    id = 3L, merchant = "Gym", amount = 90.0,
+                    frequency = RecurrenceFrequency.QUARTERLY,
+                    quote = MarketRateQuote("Gym", 39.99, 29.99, 24.99, "EUR", "GR", MarketRateConfidence.LOW),
+                    expectedMonthlyEquivalent = 30.0,
+                    expectedRawBillingAmount = 90.0,
+                    scriptMustContain = null,
+                    scriptMustNotContain = null
+                )
+            )
+            assertEquals("billing-cycle table size", 3, rows.size)
 
-        val provider: MarketRateProvider = mockk()
-        coEvery { provider.getRates(any(), any(), any()) } returns MarketRateResult(
-            quotes = listOf(MarketRateQuote("Spotify", 10.99, 6.99, 5.99, "EUR", "GR", MarketRateConfidence.MEDIUM)),
-            source = "test", lastUpdatedAt = System.currentTimeMillis()
-        )
+            for (row in rows) {
+                val fx = Fixture()
+                coEvery { fx.repo.getAll() } returns
+                    listOf(subscription(row.id, row.merchant, row.amount, row.frequency))
+                coEvery { fx.priceHistoryDao.getAllPricesForSubscription(any()) } returns emptyList()
+                coEvery { fx.provider.getRates(any(), any(), any()) } returns MarketRateResult(
+                    quotes = listOf(row.quote), source = "test", lastUpdatedAt = FIXED_NOW
+                )
 
-        val engine = createEngine(marketRateProvider = provider)
-        val opportunities = engine.analyzeNegotiationOpportunities()
-        val opp = opportunities.first()
+                val opportunities = fx.engine.analyzeNegotiationOpportunities()
 
-        assertEquals(9.99, opp.monthlyEquivalentPrice, 0.01)
-        assertEquals(9.99, opp.rawBillingAmount, 0.01)
-    }
+                assertEquals("[${row.label}] opportunity count", 1, opportunities.size)
+                val opp = opportunities.single()
+                assertEquals("[${row.label}] monthlyEquivalentPrice",
+                    row.expectedMonthlyEquivalent, opp.monthlyEquivalentPrice, 0.01)
+                assertEquals("[${row.label}] rawBillingAmount",
+                    row.expectedRawBillingAmount, opp.rawBillingAmount, 0.01)
 
-    @Test
-    fun `quarterly subscription script uses monthly equivalent`() = runTest(timeout = 60.seconds) {
-        val subscription = ManualRecurringExpense(
-            id = 3L, merchant = "Gym", amount = 90.0, currency = "EUR",
-            frequency = RecurrenceFrequency.QUARTERLY,
-            nextDate = System.currentTimeMillis(),
-            isSubscription = true, isActive = true
-        )
-        coEvery { recurringExpenseRepository.getAll() } returns listOf(subscription)
-        coEvery { priceHistoryDao.getAllPricesForSubscription(any()) } returns emptyList()
-
-        val provider: MarketRateProvider = mockk()
-        coEvery { provider.getRates(any(), any(), any()) } returns MarketRateResult(
-            quotes = listOf(MarketRateQuote("Gym", 39.99, 29.99, 24.99, "EUR", "GR", MarketRateConfidence.LOW)),
-            source = "test", lastUpdatedAt = System.currentTimeMillis()
-        )
-
-        val engine = createEngine(marketRateProvider = provider)
-        val opportunities = engine.analyzeNegotiationOpportunities()
-        val opp = opportunities.first()
-
-        assertEquals(30.0, opp.monthlyEquivalentPrice, 0.01)
-        assertEquals(90.0, opp.rawBillingAmount, 0.01)
-    }
-
-    @Test
-    fun `negotiationSuccess_persistsOutcomeAndUpdatesSubscription`() = runTest(timeout = 60.seconds) {
-        val subscription = ManualRecurringExpense(
-            id = 1L, merchant = "Netflix", amount = 13.99, currency = "EUR",
-            frequency = RecurrenceFrequency.MONTHLY,
-            nextDate = System.currentTimeMillis(),
-            isSubscription = true, isActive = true
-        )
-        coEvery { recurringExpenseRepository.getById(1L) } returns subscription
-        coEvery { writeBarrier.checkWritesAllowed(any<String>()) } returns Unit
-        coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
-            secondArg<suspend () -> Any>().invoke()
+                val scriptText = opp.negotiationScript.opening +
+                    opp.negotiationScript.talkingPoints.joinToString(" ")
+                row.scriptMustContain?.let {
+                    assertTrue("[${row.label}] script should mention monthly equivalent ($it)",
+                        scriptText.contains(it))
+                }
+                row.scriptMustNotContain?.let {
+                    assertTrue("[${row.label}] script must not mention raw billing amount ($it)",
+                        !scriptText.contains(it))
+                }
+            }
+        } finally {
+            Locale.setDefault(originalLocale)
         }
-        coEvery { priceHistoryDao.insert(any()) } returns 1L
-        coEvery { recurringExpenseRepository.update(any()) } returns Unit
-
-        val engine = createEngine()
-        val result = engine.recordNegotiationOutcome(
-            subscriptionId = 1L,
-            outcome = SmartBillNegotiationEngine.NegotiationOutcome.SUCCESS,
-            newPrice = 9.99,
-            savings = 4.0,
-            notes = "Negotiated"
-        )
-
-        assertTrue(result.isSuccess)
-        coVerify { negotiationOutcomeDao.insert(match { entity ->
-            entity.subscriptionId == 1L &&
-            entity.outcome == "SUCCESS" &&
-            entity.oldAmount == 13.99 &&
-            entity.newAmount == 9.99 &&
-            entity.savingsAmount == 4.0
-        }) }
-        coVerify { priceHistoryDao.insert(match { history ->
-            history.subscriptionId == 1L &&
-            history.amount == 9.99
-        }) }
-        coVerify { recurringExpenseRepository.update(match { expense ->
-            expense.amount == 9.99
-        }) }
     }
 
-    @Test
-    fun `negotiationSuccess_annualSubscription_convertsMonthlyPriceToBillingCycleAmount`() = runTest(timeout = 60.seconds) {
-        // PR8: For annual subscriptions, the monthly newPrice must be converted
-        // back to the billing-cycle amount before storing in subscription + price history.
-        val subscription = ManualRecurringExpense(
-            id = 1L, merchant = "Netflix", amount = 120.0, currency = "EUR",
-            frequency = RecurrenceFrequency.ANNUALLY,
-            nextDate = System.currentTimeMillis(),
-            isSubscription = true, isActive = true
-        )
-        coEvery { recurringExpenseRepository.getById(1L) } returns subscription
-        coEvery { writeBarrier.checkWritesAllowed(any<String>()) } returns Unit
-        coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
-            secondArg<suspend () -> Any>().invoke()
-        }
-        coEvery { priceHistoryDao.insert(any()) } returns 1L
-        coEvery { recurringExpenseRepository.update(any()) } returns Unit
-
-        val engine = createEngine()
-        val result = engine.recordNegotiationOutcome(
-            subscriptionId = 1L,
-            outcome = SmartBillNegotiationEngine.NegotiationOutcome.SUCCESS,
-            newPrice = 7.0, // monthly equivalent after negotiation
-            savings = 3.0,
-            notes = "Negotiated annual subscription"
-        )
-
-        assertTrue(result.isSuccess)
-        // outcome entity stores the monthly newPrice (user-facing)
-        coVerify { negotiationOutcomeDao.insert(match { entity ->
-            entity.subscriptionId == 1L &&
-            entity.outcome == "SUCCESS" &&
-            entity.oldAmount == 120.0 &&
-            entity.newAmount == 7.0 && // monthly — NOT converted
-            entity.savingsAmount == 3.0
-        }) }
-        // price history stores the billing-cycle amount (7.0 * 12 = 84.0/year)
-        coVerify { priceHistoryDao.insert(match { history ->
-            history.subscriptionId == 1L &&
-            history.amount == 7.0 * 12.0 // 84.0
-        }) }
-        // subscription update uses the billing-cycle amount (84.0/year)
-        coVerify { recurringExpenseRepository.update(match { expense ->
-            expense.amount == 7.0 * 12.0 // 84.0
-        }) }
-    }
+    private data class OutcomeWriteRow(
+        val label: String,
+        val id: Long,
+        val frequency: RecurrenceFrequency,
+        val oldAmount: Double,
+        val outcome: SmartBillNegotiationEngine.NegotiationOutcome,
+        val newPrice: Double,
+        val savings: Double,
+        val notes: String,
+        /** Expected billing-cycle amount written to price history and to the subscription. */
+        val expectedBillingAmount: Double,
+        /** Absolute tolerance for [expectedBillingAmount] (0.0 = exact equality). */
+        val delta: Double
+    )
 
     @Test
-    fun `negotiationSuccess_weeklySubscription_convertsMonthlyPriceToBillingCycleAmount`() = runTest(timeout = 60.seconds) {
-        val subscription = ManualRecurringExpense(
-            id = 4L, merchant = "Weekly Gym", amount = 50.0, currency = "EUR",
-            frequency = RecurrenceFrequency.WEEKLY,
-            nextDate = System.currentTimeMillis(),
-            isSubscription = true, isActive = true
+    fun `recordNegotiationOutcome SUCCESS and PARTIAL persist outcome, price history and subscription per billing cycle`() = runTest(timeout = 60.seconds) {
+        // PR8: monthly newPrice is stored as-is on the outcome entity, but converted back to the
+        // billing-cycle amount for price history + subscription update
+        // (SmartBillNegotiationEngine.kt:257-263, 619-640).
+        val rows = listOf(
+            OutcomeWriteRow(
+                label = "SUCCESS monthly", id = 1L, frequency = RecurrenceFrequency.MONTHLY,
+                oldAmount = 13.99, outcome = SmartBillNegotiationEngine.NegotiationOutcome.SUCCESS,
+                newPrice = 9.99, savings = 4.0, notes = "Negotiated",
+                expectedBillingAmount = 9.99, delta = 0.0
+            ),
+            OutcomeWriteRow(
+                label = "PARTIAL monthly", id = 1L, frequency = RecurrenceFrequency.MONTHLY,
+                oldAmount = 13.99, outcome = SmartBillNegotiationEngine.NegotiationOutcome.PARTIAL,
+                newPrice = 9.99, savings = 4.0, notes = "Negotiated",
+                expectedBillingAmount = 9.99, delta = 0.0
+            ),
+            OutcomeWriteRow(
+                label = "SUCCESS annual", id = 1L, frequency = RecurrenceFrequency.ANNUALLY,
+                oldAmount = 120.0, outcome = SmartBillNegotiationEngine.NegotiationOutcome.SUCCESS,
+                newPrice = 7.0, savings = 3.0, notes = "Negotiated annual subscription",
+                expectedBillingAmount = 84.0, delta = 0.0
+            ),
+            OutcomeWriteRow(
+                label = "PARTIAL annual", id = 1L, frequency = RecurrenceFrequency.ANNUALLY,
+                oldAmount = 120.0, outcome = SmartBillNegotiationEngine.NegotiationOutcome.PARTIAL,
+                newPrice = 7.0, savings = 3.0, notes = "Partial on annual",
+                expectedBillingAmount = 84.0, delta = 0.0
+            ),
+            // 117.26 * 7 / (365 / 12) = 26.98586301...
+            OutcomeWriteRow(
+                label = "SUCCESS weekly", id = 4L, frequency = RecurrenceFrequency.WEEKLY,
+                oldAmount = 50.0, outcome = SmartBillNegotiationEngine.NegotiationOutcome.SUCCESS,
+                newPrice = 117.26, savings = 100.0, notes = "test",
+                expectedBillingAmount = 26.98586301, delta = 1e-6
+            ),
+            // 167.26 * 14 / (365 / 12) = 76.98542466...
+            OutcomeWriteRow(
+                label = "SUCCESS biweekly", id = 5L, frequency = RecurrenceFrequency.BIWEEKLY,
+                oldAmount = 100.0, outcome = SmartBillNegotiationEngine.NegotiationOutcome.SUCCESS,
+                newPrice = 167.26, savings = 50.0, notes = "test",
+                expectedBillingAmount = 76.98542466, delta = 1e-6
+            )
         )
-        coEvery { recurringExpenseRepository.getById(4L) } returns subscription
-        coEvery { writeBarrier.checkWritesAllowed(any<String>()) } returns Unit
-        coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
-            secondArg<suspend () -> Any>().invoke()
+        assertEquals("outcome-write table size", 6, rows.size)
+
+        for (row in rows) {
+            val fx = Fixture()
+            coEvery { fx.repo.getById(row.id) } returns
+                subscription(row.id, "Netflix", row.oldAmount, row.frequency)
+            fx.stubTransactionPassThrough()
+            coEvery { fx.priceHistoryDao.insert(any()) } returns 1L
+            coEvery { fx.repo.update(any()) } returns Unit
+
+            val result = fx.engine.recordNegotiationOutcome(
+                subscriptionId = row.id,
+                outcome = row.outcome,
+                newPrice = row.newPrice,
+                savings = row.savings,
+                notes = row.notes
+            )
+
+            assertTrue("[${row.label}] result.isSuccess", result.isSuccess)
+
+            val outcomeSlot = slot<NegotiationOutcomeEntity>()
+            coVerify(exactly = 1) { fx.outcomeDao.insert(capture(outcomeSlot)) }
+            assertEquals("[${row.label}] outcome.subscriptionId", row.id, outcomeSlot.captured.subscriptionId)
+            assertEquals("[${row.label}] outcome.outcome", row.outcome.name, outcomeSlot.captured.outcome)
+            assertEquals("[${row.label}] outcome.oldAmount", row.oldAmount, outcomeSlot.captured.oldAmount, 0.0)
+            // outcome entity stores the user-facing monthly newPrice, NOT converted
+            assertEquals("[${row.label}] outcome.newAmount", row.newPrice, outcomeSlot.captured.newAmount!!, 0.0)
+            assertEquals("[${row.label}] outcome.savingsAmount", row.savings, outcomeSlot.captured.savingsAmount!!, 0.0)
+            assertEquals("[${row.label}] outcome.notes", row.notes, outcomeSlot.captured.notes)
+            assertEquals("[${row.label}] outcome.currency", "EUR", outcomeSlot.captured.currency)
+            assertEquals("[${row.label}] outcome.createdAt", FIXED_NOW, outcomeSlot.captured.createdAt)
+
+            val historySlot = slot<com.yourname.expensetracker.data.database.entity.SubscriptionPriceHistory>()
+            coVerify(exactly = 1) { fx.priceHistoryDao.insert(capture(historySlot)) }
+            assertEquals("[${row.label}] history.subscriptionId", row.id, historySlot.captured.subscriptionId)
+            assertEquals("[${row.label}] history.amount",
+                row.expectedBillingAmount, historySlot.captured.amount, row.delta)
+            assertEquals("[${row.label}] history.changeReason",
+                "Negotiation outcome: ${row.outcome.name}", historySlot.captured.changeReason)
+            assertEquals("[${row.label}] history.recordedAt", FIXED_NOW, historySlot.captured.recordedAt)
+
+            val updateSlot = slot<ManualRecurringExpense>()
+            coVerify(exactly = 1) { fx.repo.update(capture(updateSlot)) }
+            assertEquals("[${row.label}] update.id", row.id, updateSlot.captured.id)
+            assertEquals("[${row.label}] update.amount",
+                row.expectedBillingAmount, updateSlot.captured.amount, row.delta)
+            assertEquals("[${row.label}] update.frequency", row.frequency, updateSlot.captured.frequency)
         }
-        coEvery { negotiationOutcomeDao.insert(any()) } returns 1L
-        coEvery { priceHistoryDao.insert(any()) } returns 1L
-        coEvery { recurringExpenseRepository.update(any()) } returns Unit
-
-        // monthlyEquivalent(50, WEEKLY) = 50 * (365/12) / 7 ≈ 217.26
-        // After negotiation saving 100/monthly, newPrice = 117.26
-        val engine = createEngine()
-        val result = engine.recordNegotiationOutcome(
-            subscriptionId = 4L,
-            outcome = SmartBillNegotiationEngine.NegotiationOutcome.SUCCESS,
-            newPrice = 117.26,
-            savings = 100.0,
-            notes = "test"
-        )
-
-        assertTrue("Expected success", result.isSuccess)
-        val updateSlot = slot<ManualRecurringExpense>()
-        coVerify { recurringExpenseRepository.update(capture(updateSlot)) }
-        // convertFromMonthlyEquivalent(117.26, WEEKLY) = 117.26 * 7 / (365/12) ≈ 27.0
-        assertEquals(27.0, updateSlot.captured.amount, 1.0)
-    }
-
-    @Test
-    fun `negotiationSuccess_biweeklySubscription_convertsMonthlyPriceToBillingCycleAmount`() = runTest(timeout = 60.seconds) {
-        val subscription = ManualRecurringExpense(
-            id = 5L, merchant = "Biweekly Service", amount = 100.0, currency = "EUR",
-            frequency = RecurrenceFrequency.BIWEEKLY,
-            nextDate = System.currentTimeMillis(),
-            isSubscription = true, isActive = true
-        )
-        coEvery { recurringExpenseRepository.getById(5L) } returns subscription
-        coEvery { writeBarrier.checkWritesAllowed(any<String>()) } returns Unit
-        coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
-            secondArg<suspend () -> Any>().invoke()
-        }
-        coEvery { negotiationOutcomeDao.insert(any()) } returns 1L
-        coEvery { priceHistoryDao.insert(any()) } returns 1L
-        coEvery { recurringExpenseRepository.update(any()) } returns Unit
-
-        // monthlyEquivalent(100, BIWEEKLY) = 100 * (365/12) / 14 ≈ 217.26
-        // After negotiation saving 50/monthly, newPrice = 167.26
-        val engine = createEngine()
-        val result = engine.recordNegotiationOutcome(
-            subscriptionId = 5L,
-            outcome = SmartBillNegotiationEngine.NegotiationOutcome.SUCCESS,
-            newPrice = 167.26,
-            savings = 50.0,
-            notes = "test"
-        )
-
-        assertTrue("Expected success", result.isSuccess)
-        val updateSlot = slot<ManualRecurringExpense>()
-        coVerify { recurringExpenseRepository.update(capture(updateSlot)) }
-        // convertFromMonthlyEquivalent(167.26, BIWEEKLY) = 167.26 * 14 / (365/12) ≈ 77.0
-        assertEquals(77.0, updateSlot.captured.amount, 1.0)
     }
 
     @Test
@@ -461,6 +496,11 @@ class NegotiationEngineTest {
         )
 
         assertTrue(result.isFailure)
+        assertTrue(
+            "Expected DatabaseAccessBlockedException, got: ${result.exceptionOrNull()}",
+            result.exceptionOrNull() is DatabaseAccessBlockedException
+        )
+        coVerify(exactly = 0) { negotiationOutcomeDao.insert(any()) }
     }
 
     @Test
@@ -481,7 +521,18 @@ class NegotiationEngineTest {
         val engine = createEngine()
         val history = engine.getNegotiationHistory()
 
+        // Persisted outcomes are returned unchanged and in DAO order
+        // (SmartBillNegotiationEngine.kt:574-576).
         assertEquals(2, history.size)
+        assertEquals(listOf(1L, 2L), history.map { it.id })
+        assertEquals(listOf(1L, 2L), history.map { it.subscriptionId })
+        assertEquals(listOf("SUCCESS", "FAILURE"), history.map { it.outcome })
+        assertEquals(listOf<Double?>(9.99, null), history.map { it.newAmount })
+        assertEquals(listOf<Double?>(4.0, null), history.map { it.savingsAmount })
+        assertEquals(listOf(13.99, 15.99), history.map { it.oldAmount })
+        assertEquals(listOf<String?>("Negotiated", "Declined"), history.map { it.notes })
+        assertEquals(listOf(outcome1, outcome2), history)
+        coVerify(exactly = 1) { negotiationOutcomeDao.getAll() }
     }
 
     @Test
@@ -503,93 +554,7 @@ class NegotiationEngineTest {
             "Expected IllegalArgumentException",
             result.exceptionOrNull() is IllegalArgumentException
         )
-    }
-
-    @Test
-    fun `negotiationPartial_persistsOutcomeAndUpdatesSubscription`() = runTest(timeout = 60.seconds) {
-        val subscription = ManualRecurringExpense(
-            id = 1L, merchant = "Netflix", amount = 13.99, currency = "EUR",
-            frequency = RecurrenceFrequency.MONTHLY,
-            nextDate = System.currentTimeMillis(),
-            isSubscription = true, isActive = true
-        )
-        coEvery { recurringExpenseRepository.getById(1L) } returns subscription
-        coEvery { writeBarrier.checkWritesAllowed(any<String>()) } returns Unit
-        coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
-            secondArg<suspend () -> Any>().invoke()
-        }
-        coEvery { priceHistoryDao.insert(any()) } returns 1L
-        coEvery { recurringExpenseRepository.update(any()) } returns Unit
-
-        val engine = createEngine()
-        val result = engine.recordNegotiationOutcome(
-            subscriptionId = 1L,
-            outcome = SmartBillNegotiationEngine.NegotiationOutcome.PARTIAL,
-            newPrice = 9.99,
-            savings = 4.0,
-            notes = "Negotiated"
-        )
-
-        assertTrue(result.isSuccess)
-        coVerify { negotiationOutcomeDao.insert(match { entity ->
-            entity.subscriptionId == 1L &&
-            entity.outcome == "PARTIAL" &&
-            entity.oldAmount == 13.99 &&
-            entity.newAmount == 9.99 &&
-            entity.savingsAmount == 4.0
-        }) }
-        coVerify { priceHistoryDao.insert(match { history ->
-            history.subscriptionId == 1L &&
-            history.amount == 9.99
-        }) }
-        coVerify { recurringExpenseRepository.update(match { expense ->
-            expense.amount == 9.99
-        }) }
-    }
-
-    @Test
-    fun `negotiationPartial_annualSubscription_convertsMonthlyPriceToBillingCycleAmount`() = runTest(timeout = 60.seconds) {
-        // PR8: Same conversion as success — PARTIAL outcomes also update the subscription.
-        val subscription = ManualRecurringExpense(
-            id = 1L, merchant = "Annual Sub", amount = 120.0, currency = "EUR",
-            frequency = RecurrenceFrequency.ANNUALLY,
-            nextDate = System.currentTimeMillis(),
-            isSubscription = true, isActive = true
-        )
-        coEvery { recurringExpenseRepository.getById(1L) } returns subscription
-        coEvery { writeBarrier.checkWritesAllowed(any<String>()) } returns Unit
-        coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
-            secondArg<suspend () -> Any>().invoke()
-        }
-        coEvery { priceHistoryDao.insert(any()) } returns 1L
-        coEvery { recurringExpenseRepository.update(any()) } returns Unit
-
-        val engine = createEngine()
-        val result = engine.recordNegotiationOutcome(
-            subscriptionId = 1L,
-            outcome = SmartBillNegotiationEngine.NegotiationOutcome.PARTIAL,
-            newPrice = 7.0,
-            savings = 3.0,
-            notes = "Partial on annual"
-        )
-
-        assertTrue(result.isSuccess)
-        coVerify { negotiationOutcomeDao.insert(match { entity ->
-            entity.subscriptionId == 1L &&
-            entity.outcome == "PARTIAL" &&
-            entity.oldAmount == 120.0 &&
-            entity.newAmount == 7.0 && // monthly — NOT converted
-            entity.savingsAmount == 3.0
-        }) }
-        // price history stores billing-cycle amount
-        coVerify { priceHistoryDao.insert(match { history ->
-            history.subscriptionId == 1L &&
-            history.amount == 7.0 * 12.0
-        }) }
-        // subscription update uses billing-cycle amount
-        coVerify { recurringExpenseRepository.update(match { expense ->
-            expense.amount == 7.0 * 12.0
-        }) }
+        assertEquals("Subscription not found: 999", result.exceptionOrNull()?.message)
     }
 
     @Test
@@ -619,8 +584,13 @@ class NegotiationEngineTest {
         )
 
         assertTrue("Expected failure when price history insert fails", result.isFailure)
-        coVerify { negotiationOutcomeDao.insert(any()) }
-        coVerify { priceHistoryDao.insert(any()) }
+        // The exact DAO error is surfaced via Result.failure (SmartBillNegotiationEngine.kt:646-648)
+        // and the transaction body aborts before updating the subscription.
+        assertEquals(RuntimeException::class.java, result.exceptionOrNull()?.javaClass)
+        assertEquals("DB locked", result.exceptionOrNull()?.message)
+        coVerify(exactly = 1) { negotiationOutcomeDao.insert(any()) }
+        coVerify(exactly = 1) { priceHistoryDao.insert(any()) }
+        coVerify(exactly = 0) { recurringExpenseRepository.update(any()) }
     }
 
     @Test
@@ -759,218 +729,130 @@ class NegotiationEngineTest {
         }
     }
 
-    @Test
-    fun `deiEnergy_doesNotGenerateNegotiationOpportunity`() = runTest(timeout = 60.seconds) {
-        val subscription = ManualRecurringExpense(
-            id = 22L, merchant = "DEI Energy", amount = 50.0, currency = "EUR",
-            frequency = RecurrenceFrequency.MONTHLY,
-            nextDate = System.currentTimeMillis(),
-            isSubscription = true, isActive = true
-        )
-        coEvery { recurringExpenseRepository.getAll() } returns listOf(subscription)
-        coEvery { priceHistoryDao.getAllPricesForSubscription(any()) } returns emptyList()
-
-        val provider: MarketRateProvider = mockk()
-        // No stub needed — ENERGY should be skipped before provider is called
-
-        val engine = createEngine(marketRateProvider = provider)
-        val opportunities = engine.analyzeNegotiationOpportunities()
-
-        assertTrue("ENERGY subscription should not generate negotiation opportunity", opportunities.isEmpty())
-        coVerify(exactly = 0) { provider.getRates(any(), any(), any()) }
-    }
+    private data class GatingRow(
+        val label: String,
+        val id: Long,
+        val merchant: String,
+        val currency: String,
+        val amount: Double,
+        /** Quote the provider returns for [expectedProviderType]; null = provider must never be consulted. */
+        val quote: MarketRateQuote?,
+        val expectedOpportunityCount: Int,
+        /** Expected getRates(type, "GR", "EUR") call count for [expectedProviderType]; any other type must be 0. */
+        val expectedProviderCalls: Int,
+        val expectedProviderType: ServiceType?
+    )
 
     @Test
-    fun `usdSubscription_isSkippedNotComparedToEurRate`() = runTest(timeout = 60.seconds) {
-        val subscription = ManualRecurringExpense(
-            id = 25L, merchant = "Netflix", amount = 13.99, currency = "USD",
-            frequency = RecurrenceFrequency.MONTHLY,
-            nextDate = System.currentTimeMillis(),
-            isSubscription = true, isActive = true
-        )
-        coEvery { recurringExpenseRepository.getAll() } returns listOf(subscription)
-        coEvery { priceHistoryDao.getAllPricesForSubscription(any()) } returns emptyList()
-
-        val provider: MarketRateProvider = mockk()
-
-        val engine = createEngine(marketRateProvider = provider)
-        val opportunities = engine.analyzeNegotiationOpportunities()
-
-        assertTrue("Non-EUR subscription should be skipped", opportunities.isEmpty())
-        coVerify(exactly = 0) { provider.getRates(any(), any(), any()) }
-    }
-
-    @Test
-    fun `eurSubscription_stillProducesOpportunity`() = runTest(timeout = 60.seconds) {
-        val subscription = ManualRecurringExpense(
-            id = 26L, merchant = "Netflix", amount = 13.99, currency = "EUR",
-            frequency = RecurrenceFrequency.MONTHLY,
-            nextDate = System.currentTimeMillis(),
-            isSubscription = true, isActive = true
-        )
-        coEvery { recurringExpenseRepository.getAll() } returns listOf(subscription)
-        coEvery { priceHistoryDao.getAllPricesForSubscription(any()) } returns emptyList()
-
-        val provider: MarketRateProvider = mockk()
-        coEvery {
-            provider.getRates(
-                serviceType = com.yourname.expensetracker.domain.negotiation.ServiceType.STREAMING,
-                region = "GR",
-                currency = "EUR"
+    fun `analyze gates subscriptions by classification and currency before consulting provider`() = runTest(timeout = 60.seconds) {
+        val rows = listOf(
+            // ENERGY is skipped after classification (SmartBillNegotiationEngine.kt:89-92)
+            GatingRow(
+                label = "DEI Energy (ENERGY skipped)", id = 22L, merchant = "DEI Energy",
+                currency = "EUR", amount = 50.0, quote = null,
+                expectedOpportunityCount = 0, expectedProviderCalls = 0, expectedProviderType = null
+            ),
+            // Non-EUR skipped before classification (SmartBillNegotiationEngine.kt:43-51)
+            GatingRow(
+                label = "USD Netflix (non-EUR skipped)", id = 25L, merchant = "Netflix",
+                currency = "USD", amount = 13.99, quote = null,
+                expectedOpportunityCount = 0, expectedProviderCalls = 0, expectedProviderType = null
+            ),
+            // Bare "Vodafone" has no MOBILE/INTERNET keyword -> unclassified -> null
+            GatingRow(
+                label = "plain Vodafone (unclassified)", id = 90L, merchant = "Vodafone",
+                currency = "EUR", amount = 24.99, quote = null,
+                expectedOpportunityCount = 0, expectedProviderCalls = 0, expectedProviderType = null
+            ),
+            // Control: EUR Netflix is classified STREAMING and consults the provider exactly once
+            GatingRow(
+                label = "EUR Netflix (control, opportunity produced)", id = 26L, merchant = "Netflix",
+                currency = "EUR", amount = 13.99,
+                quote = MarketRateQuote("Netflix", 12.99, 7.99, 6.99, "EUR", "GR", MarketRateConfidence.MEDIUM),
+                expectedOpportunityCount = 1, expectedProviderCalls = 1,
+                expectedProviderType = ServiceType.STREAMING
             )
-        } returns MarketRateResult(
-            quotes = listOf(MarketRateQuote("Netflix", 12.99, 7.99, 6.99, "EUR", "GR", MarketRateConfidence.MEDIUM)),
-            source = "test", lastUpdatedAt = System.currentTimeMillis()
         )
+        assertEquals("gating table size", 4, rows.size)
 
-        val engine = createEngine(marketRateProvider = provider)
-        val opportunities = engine.analyzeNegotiationOpportunities()
+        for (row in rows) {
+            val fx = Fixture()
+            coEvery { fx.repo.getAll() } returns
+                listOf(subscription(row.id, row.merchant, row.amount, currency = row.currency))
+            coEvery { fx.priceHistoryDao.getAllPricesForSubscription(any()) } returns emptyList()
+            if (row.quote != null && row.expectedProviderType != null) {
+                coEvery { fx.provider.getRates(row.expectedProviderType, "GR", "EUR") } returns
+                    MarketRateResult(quotes = listOf(row.quote), source = "test", lastUpdatedAt = FIXED_NOW)
+            }
 
-        assertEquals("EUR subscription should still produce opportunity", 1, opportunities.size)
-        coVerify(exactly = 1) {
-            provider.getRates(
-                com.yourname.expensetracker.domain.negotiation.ServiceType.STREAMING,
-                "GR", "EUR"
-            )
+            val opportunities = fx.engine.analyzeNegotiationOpportunities()
+
+            assertEquals("[${row.label}] opportunity count", row.expectedOpportunityCount, opportunities.size)
+            if (row.expectedProviderType == null) {
+                coVerify(exactly = 0) { fx.provider.getRates(any(), any(), any()) }
+            } else {
+                coVerify(exactly = row.expectedProviderCalls) {
+                    fx.provider.getRates(row.expectedProviderType, "GR", "EUR")
+                }
+                coVerify(exactly = row.expectedProviderCalls) { fx.provider.getRates(any(), any(), any()) }
+            }
         }
     }
 
-    @Test
-    fun `negotiationSuccess_requiresFinitePositiveNewPrice`() = runTest(timeout = 60.seconds) {
-        val subscription = ManualRecurringExpense(
-            id = 30L, merchant = "Netflix", amount = 13.99, currency = "EUR",
-            frequency = RecurrenceFrequency.MONTHLY,
-            nextDate = System.currentTimeMillis(),
-            isSubscription = true, isActive = true
-        )
-        coEvery { recurringExpenseRepository.getById(30L) } returns subscription
-        coEvery { writeBarrier.checkWritesAllowed(any<String>()) } returns Unit
-
-        val engine = createEngine()
-        val result = engine.recordNegotiationOutcome(
-            subscriptionId = 30L,
-            outcome = SmartBillNegotiationEngine.NegotiationOutcome.SUCCESS,
-            newPrice = null,
-            savings = 4.0,
-            notes = "test"
-        )
-
-        assertTrue("SUCCESS without newPrice should fail", result.isFailure)
-    }
+    private data class InvalidOutcomeRow(
+        val label: String,
+        val id: Long,
+        val outcome: SmartBillNegotiationEngine.NegotiationOutcome,
+        val newPrice: Double?,
+        val savings: Double?,
+        val expectedMessage: String
+    )
 
     @Test
-    fun `negotiationPartial_requiresFinitePositiveNewPrice`() = runTest(timeout = 60.seconds) {
-        val subscription = ManualRecurringExpense(
-            id = 31L, merchant = "Netflix", amount = 13.99, currency = "EUR",
-            frequency = RecurrenceFrequency.MONTHLY,
-            nextDate = System.currentTimeMillis(),
-            isSubscription = true, isActive = true
+    fun `recordNegotiationOutcome rejects invalid newPrice or savings with IllegalArgumentException and writes nothing`() = runTest(timeout = 60.seconds) {
+        // Messages come from validateNegotiationOutcomeInput (SmartBillNegotiationEngine.kt:667-682).
+        val newPriceMessage = "Successful or partial negotiation requires a finite positive new price"
+        val savingsMessage = "Savings must be finite and non-negative"
+        val rows = listOf(
+            InvalidOutcomeRow("SUCCESS null newPrice", 30L,
+                SmartBillNegotiationEngine.NegotiationOutcome.SUCCESS, null, 4.0, newPriceMessage),
+            InvalidOutcomeRow("PARTIAL null newPrice", 31L,
+                SmartBillNegotiationEngine.NegotiationOutcome.PARTIAL, null, 2.0, newPriceMessage),
+            InvalidOutcomeRow("SUCCESS +Infinity newPrice", 32L,
+                SmartBillNegotiationEngine.NegotiationOutcome.SUCCESS, Double.POSITIVE_INFINITY, 4.0, newPriceMessage),
+            InvalidOutcomeRow("SUCCESS NaN newPrice", 33L,
+                SmartBillNegotiationEngine.NegotiationOutcome.SUCCESS, Double.NaN, 4.0, newPriceMessage),
+            InvalidOutcomeRow("SUCCESS +Infinity savings", 34L,
+                SmartBillNegotiationEngine.NegotiationOutcome.SUCCESS, 9.99, Double.POSITIVE_INFINITY, savingsMessage),
+            InvalidOutcomeRow("SUCCESS negative savings", 35L,
+                SmartBillNegotiationEngine.NegotiationOutcome.SUCCESS, 9.99, -1.0, savingsMessage)
         )
-        coEvery { recurringExpenseRepository.getById(31L) } returns subscription
-        coEvery { writeBarrier.checkWritesAllowed(any<String>()) } returns Unit
+        assertEquals("invalid-outcome table size", 6, rows.size)
 
-        val engine = createEngine()
-        val result = engine.recordNegotiationOutcome(
-            subscriptionId = 31L,
-            outcome = SmartBillNegotiationEngine.NegotiationOutcome.PARTIAL,
-            newPrice = null,
-            savings = 2.0,
-            notes = "test"
-        )
+        for (row in rows) {
+            val fx = Fixture()
+            coEvery { fx.repo.getById(row.id) } returns subscription(row.id, "Netflix", 13.99)
+            fx.stubTransactionPassThrough()
+            coEvery { fx.priceHistoryDao.insert(any()) } returns 1L
+            coEvery { fx.repo.update(any()) } returns Unit
 
-        assertTrue("PARTIAL without newPrice should fail", result.isFailure)
-    }
+            val result = fx.engine.recordNegotiationOutcome(
+                subscriptionId = row.id,
+                outcome = row.outcome,
+                newPrice = row.newPrice,
+                savings = row.savings,
+                notes = "test"
+            )
 
-    @Test
-    fun `negotiationSuccess_rejectsInfiniteNewPrice`() = runTest(timeout = 60.seconds) {
-        val subscription = ManualRecurringExpense(
-            id = 32L, merchant = "Netflix", amount = 13.99, currency = "EUR",
-            frequency = RecurrenceFrequency.MONTHLY,
-            nextDate = System.currentTimeMillis(),
-            isSubscription = true, isActive = true
-        )
-        coEvery { recurringExpenseRepository.getById(32L) } returns subscription
-        coEvery { writeBarrier.checkWritesAllowed(any<String>()) } returns Unit
-
-        val engine = createEngine()
-        val result = engine.recordNegotiationOutcome(
-            subscriptionId = 32L,
-            outcome = SmartBillNegotiationEngine.NegotiationOutcome.SUCCESS,
-            newPrice = Double.POSITIVE_INFINITY,
-            savings = 4.0,
-            notes = "test"
-        )
-
-        assertTrue("SUCCESS with infinite newPrice should fail", result.isFailure)
-    }
-
-    @Test
-    fun `negotiationSuccess_rejectsNaNNewPrice`() = runTest(timeout = 60.seconds) {
-        val subscription = ManualRecurringExpense(
-            id = 33L, merchant = "Netflix", amount = 13.99, currency = "EUR",
-            frequency = RecurrenceFrequency.MONTHLY,
-            nextDate = System.currentTimeMillis(),
-            isSubscription = true, isActive = true
-        )
-        coEvery { recurringExpenseRepository.getById(33L) } returns subscription
-        coEvery { writeBarrier.checkWritesAllowed(any<String>()) } returns Unit
-
-        val engine = createEngine()
-        val result = engine.recordNegotiationOutcome(
-            subscriptionId = 33L,
-            outcome = SmartBillNegotiationEngine.NegotiationOutcome.SUCCESS,
-            newPrice = Double.NaN,
-            savings = 4.0,
-            notes = "test"
-        )
-
-        assertTrue("SUCCESS with NaN newPrice should fail", result.isFailure)
-    }
-
-    @Test
-    fun `negotiationOutcome_rejectsInfiniteSavings`() = runTest(timeout = 60.seconds) {
-        val subscription = ManualRecurringExpense(
-            id = 34L, merchant = "Netflix", amount = 13.99, currency = "EUR",
-            frequency = RecurrenceFrequency.MONTHLY,
-            nextDate = System.currentTimeMillis(),
-            isSubscription = true, isActive = true
-        )
-        coEvery { recurringExpenseRepository.getById(34L) } returns subscription
-        coEvery { writeBarrier.checkWritesAllowed(any<String>()) } returns Unit
-
-        val engine = createEngine()
-        val result = engine.recordNegotiationOutcome(
-            subscriptionId = 34L,
-            outcome = SmartBillNegotiationEngine.NegotiationOutcome.SUCCESS,
-            newPrice = 9.99,
-            savings = Double.POSITIVE_INFINITY,
-            notes = "test"
-        )
-
-        assertTrue("Infinite savings should fail", result.isFailure)
-    }
-
-    @Test
-    fun `negotiationOutcome_rejectsNegativeSavings`() = runTest(timeout = 60.seconds) {
-        val subscription = ManualRecurringExpense(
-            id = 35L, merchant = "Netflix", amount = 13.99, currency = "EUR",
-            frequency = RecurrenceFrequency.MONTHLY,
-            nextDate = System.currentTimeMillis(),
-            isSubscription = true, isActive = true
-        )
-        coEvery { recurringExpenseRepository.getById(35L) } returns subscription
-        coEvery { writeBarrier.checkWritesAllowed(any<String>()) } returns Unit
-
-        val engine = createEngine()
-        val result = engine.recordNegotiationOutcome(
-            subscriptionId = 35L,
-            outcome = SmartBillNegotiationEngine.NegotiationOutcome.SUCCESS,
-            newPrice = 9.99,
-            savings = -1.0,
-            notes = "test"
-        )
-
-        assertTrue("Negative savings should fail", result.isFailure)
+            assertTrue("[${row.label}] should fail", result.isFailure)
+            val error = result.exceptionOrNull()
+            assertTrue("[${row.label}] expected IllegalArgumentException, got: $error",
+                error is IllegalArgumentException)
+            assertEquals("[${row.label}] error message", row.expectedMessage, error?.message)
+            coVerify(exactly = 0) { fx.outcomeDao.insert(any()) }
+            coVerify(exactly = 0) { fx.priceHistoryDao.insert(any()) }
+            coVerify(exactly = 0) { fx.repo.update(any()) }
+        }
     }
 
     @Test
@@ -1097,6 +979,9 @@ class NegotiationEngineTest {
         )
 
         assertTrue("getById failure should return Result.failure", result.isFailure)
+        assertEquals(RuntimeException::class.java, result.exceptionOrNull()?.javaClass)
+        assertEquals("DB error", result.exceptionOrNull()?.message)
+        coVerify(exactly = 0) { negotiationOutcomeDao.insert(any()) }
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -1139,178 +1024,87 @@ class NegotiationEngineTest {
     // PR2: Invalid subscription amounts are skipped (NaN, Inf, zero, negative)
     // ─────────────────────────────────────────────────────────────────
 
-    @Test
-    fun `analyzeOpportunities_nanSubscriptionAmount_skipsAndDoesNotCallProvider`() = runTest(timeout = 60.seconds) {
-        val subscription = ManualRecurringExpense(
-            id = 60L, merchant = "Netflix", amount = Double.NaN, currency = "EUR",
-            frequency = RecurrenceFrequency.MONTHLY,
-            nextDate = System.currentTimeMillis(),
-            isSubscription = true, isActive = true
-        )
-        coEvery { recurringExpenseRepository.getAll() } returns listOf(subscription)
-
-        val provider: MarketRateProvider = mockk()
-        val engine = createEngine(marketRateProvider = provider)
-        val opportunities = engine.analyzeNegotiationOpportunities()
-
-        assertTrue("NaN amount subscription should be skipped", opportunities.isEmpty())
-        coVerify(exactly = 0) { provider.getRates(any(), any(), any()) }
-    }
+    private data class InvalidAmountRow(val label: String, val id: Long, val amount: Double)
 
     @Test
-    fun `analyzeOpportunities_infiniteSubscriptionAmount_skipsAndDoesNotCallProvider`() = runTest(timeout = 60.seconds) {
-        val subscription = ManualRecurringExpense(
-            id = 61L, merchant = "Netflix", amount = Double.POSITIVE_INFINITY, currency = "EUR",
-            frequency = RecurrenceFrequency.MONTHLY,
-            nextDate = System.currentTimeMillis(),
-            isSubscription = true, isActive = true
+    fun `analyze skips subscriptions with invalid amount without consulting provider`() = runTest(timeout = 60.seconds) {
+        // E1-REMAINING-002 (SmartBillNegotiationEngine.kt:53-61): NaN, +Inf, zero, negative are skipped.
+        val rows = listOf(
+            InvalidAmountRow("NaN amount", 60L, Double.NaN),
+            InvalidAmountRow("+Infinity amount", 61L, Double.POSITIVE_INFINITY),
+            InvalidAmountRow("zero amount", 62L, 0.0),
+            InvalidAmountRow("negative amount", 63L, -5.0)
         )
-        coEvery { recurringExpenseRepository.getAll() } returns listOf(subscription)
+        assertEquals("invalid-amount table size", 4, rows.size)
 
-        val provider: MarketRateProvider = mockk()
-        val engine = createEngine(marketRateProvider = provider)
-        val opportunities = engine.analyzeNegotiationOpportunities()
+        for (row in rows) {
+            val fx = Fixture()
+            coEvery { fx.repo.getAll() } returns listOf(subscription(row.id, "Netflix", row.amount))
 
-        assertTrue("Infinite amount subscription should be skipped", opportunities.isEmpty())
-        coVerify(exactly = 0) { provider.getRates(any(), any(), any()) }
-    }
+            val opportunities = fx.engine.analyzeNegotiationOpportunities()
 
-    @Test
-    fun `analyzeOpportunities_zeroSubscriptionAmount_skipsAndDoesNotCallProvider`() = runTest(timeout = 60.seconds) {
-        val subscription = ManualRecurringExpense(
-            id = 62L, merchant = "Netflix", amount = 0.0, currency = "EUR",
-            frequency = RecurrenceFrequency.MONTHLY,
-            nextDate = System.currentTimeMillis(),
-            isSubscription = true, isActive = true
-        )
-        coEvery { recurringExpenseRepository.getAll() } returns listOf(subscription)
-
-        val provider: MarketRateProvider = mockk()
-        val engine = createEngine(marketRateProvider = provider)
-        val opportunities = engine.analyzeNegotiationOpportunities()
-
-        assertTrue("Zero amount subscription should be skipped", opportunities.isEmpty())
-        coVerify(exactly = 0) { provider.getRates(any(), any(), any()) }
-    }
-
-    @Test
-    fun `analyzeOpportunities_negativeSubscriptionAmount_skipsAndDoesNotCallProvider`() = runTest(timeout = 60.seconds) {
-        val subscription = ManualRecurringExpense(
-            id = 63L, merchant = "Netflix", amount = -5.0, currency = "EUR",
-            frequency = RecurrenceFrequency.MONTHLY,
-            nextDate = System.currentTimeMillis(),
-            isSubscription = true, isActive = true
-        )
-        coEvery { recurringExpenseRepository.getAll() } returns listOf(subscription)
-
-        val provider: MarketRateProvider = mockk()
-        val engine = createEngine(marketRateProvider = provider)
-        val opportunities = engine.analyzeNegotiationOpportunities()
-
-        assertTrue("Negative amount subscription should be skipped", opportunities.isEmpty())
-        coVerify(exactly = 0) { provider.getRates(any(), any(), any()) }
+            assertEquals("[${row.label}] opportunities", emptyList<SmartBillNegotiationEngine.NegotiationOpportunity>(), opportunities)
+            coVerify(exactly = 0) { fx.provider.getRates(any(), any(), any()) }
+            coVerify(exactly = 0) { fx.priceHistoryDao.getAllPricesForSubscription(any()) }
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────
     // PR3: Invalid provider quotes are filtered (zero, NaN, blank name)
     // ─────────────────────────────────────────────────────────────────
 
-    @Test
-    fun `providerReturnsZeroCompetitivePrice_skipsQuote`() = runTest(timeout = 60.seconds) {
-        val subscription = ManualRecurringExpense(
-            id = 70L, merchant = "Netflix", amount = 13.99, currency = "EUR",
-            frequency = RecurrenceFrequency.MONTHLY,
-            nextDate = System.currentTimeMillis(),
-            isSubscription = true, isActive = true
-        )
-        coEvery { recurringExpenseRepository.getAll() } returns listOf(subscription)
-        coEvery { priceHistoryDao.getAllPricesForSubscription(any()) } returns emptyList()
-
-        val provider: MarketRateProvider = mockk()
-        coEvery {
-            provider.getRates(
-                serviceType = com.yourname.expensetracker.domain.negotiation.ServiceType.STREAMING,
-                region = "GR",
-                currency = "EUR"
-            )
-        } returns MarketRateResult(
-            quotes = listOf(
-                MarketRateQuote("Bad Provider", 10.0, 0.0, 5.0, "EUR", "GR", MarketRateConfidence.LOW),
-                MarketRateQuote("Netflix", 12.99, 7.99, 6.99, "EUR", "GR", MarketRateConfidence.MEDIUM)
-            ),
-            source = "test", lastUpdatedAt = System.currentTimeMillis()
-        )
-
-        val engine = createEngine(marketRateProvider = provider)
-        val opportunities = engine.analyzeNegotiationOpportunities()
-
-        assertEquals("Should skip invalid quote and use valid one", 1, opportunities.size)
-        assertEquals("Netflix", opportunities.first().currentProvider)
-    }
+    private data class QuoteFilterRow(
+        val label: String,
+        val id: Long,
+        val quotes: List<MarketRateQuote>,
+        /** Expected currentProvider of the single opportunity; null = no opportunity expected. */
+        val expectedProvider: String?
+    )
 
     @Test
-    fun `providerReturnsNaNQuote_skipsQuote`() = runTest(timeout = 60.seconds) {
-        val subscription = ManualRecurringExpense(
-            id = 71L, merchant = "Netflix", amount = 13.99, currency = "EUR",
-            frequency = RecurrenceFrequency.MONTHLY,
-            nextDate = System.currentTimeMillis(),
-            isSubscription = true, isActive = true
+    fun `analyze filters invalid provider quotes before matching`() = runTest(timeout = 60.seconds) {
+        // E1-REMAINING-003 (SmartBillNegotiationEngine.kt:107-116): zero, NaN, blank-name quotes are dropped.
+        val validNetflix = MarketRateQuote("Netflix", 12.99, 7.99, 6.99, "EUR", "GR", MarketRateConfidence.MEDIUM)
+        val rows = listOf(
+            QuoteFilterRow("zero competitive price skipped", 70L,
+                listOf(MarketRateQuote("Bad Provider", 10.0, 0.0, 5.0, "EUR", "GR", MarketRateConfidence.LOW), validNetflix),
+                "Netflix"),
+            QuoteFilterRow("NaN average price skipped", 71L,
+                listOf(MarketRateQuote("Bad Provider", Double.NaN, 7.99, 5.0, "EUR", "GR", MarketRateConfidence.LOW), validNetflix),
+                "Netflix"),
+            QuoteFilterRow("blank provider name skipped", 73L,
+                listOf(MarketRateQuote("  ", 10.0, 5.0, 4.0, "EUR", "GR", MarketRateConfidence.LOW), validNetflix),
+                "Netflix"),
+            QuoteFilterRow("only invalid quotes -> no opportunity", 72L,
+                listOf(
+                    MarketRateQuote("Bad Provider", 0.0, 0.0, 0.0, "EUR", "GR", MarketRateConfidence.LOW),
+                    MarketRateQuote("Another Bad", Double.NaN, Double.NaN, Double.NaN, "EUR", "GR", MarketRateConfidence.LOW)
+                ),
+                null)
         )
-        coEvery { recurringExpenseRepository.getAll() } returns listOf(subscription)
-        coEvery { priceHistoryDao.getAllPricesForSubscription(any()) } returns emptyList()
+        assertEquals("quote-filter table size", 4, rows.size)
 
-        val provider: MarketRateProvider = mockk()
-        coEvery {
-            provider.getRates(
-                serviceType = com.yourname.expensetracker.domain.negotiation.ServiceType.STREAMING,
-                region = "GR",
-                currency = "EUR"
-            )
-        } returns MarketRateResult(
-            quotes = listOf(
-                MarketRateQuote("Bad Provider", Double.NaN, 7.99, 5.0, "EUR", "GR", MarketRateConfidence.LOW),
-                MarketRateQuote("Netflix", 12.99, 7.99, 6.99, "EUR", "GR", MarketRateConfidence.MEDIUM)
-            ),
-            source = "test", lastUpdatedAt = System.currentTimeMillis()
-        )
+        for (row in rows) {
+            val fx = Fixture()
+            coEvery { fx.repo.getAll() } returns listOf(subscription(row.id, "Netflix", 13.99))
+            coEvery { fx.priceHistoryDao.getAllPricesForSubscription(any()) } returns emptyList()
+            coEvery { fx.provider.getRates(ServiceType.STREAMING, "GR", "EUR") } returns
+                MarketRateResult(quotes = row.quotes, source = "test", lastUpdatedAt = FIXED_NOW)
 
-        val engine = createEngine(marketRateProvider = provider)
-        val opportunities = engine.analyzeNegotiationOpportunities()
+            val opportunities = fx.engine.analyzeNegotiationOpportunities()
 
-        assertEquals("Should skip NaN quote and use valid one", 1, opportunities.size)
-        assertEquals("Netflix", opportunities.first().currentProvider)
-    }
-
-    @Test
-    fun `providerReturnsOnlyInvalidQuotes_noOpportunity`() = runTest(timeout = 60.seconds) {
-        val subscription = ManualRecurringExpense(
-            id = 72L, merchant = "Netflix", amount = 13.99, currency = "EUR",
-            frequency = RecurrenceFrequency.MONTHLY,
-            nextDate = System.currentTimeMillis(),
-            isSubscription = true, isActive = true
-        )
-        coEvery { recurringExpenseRepository.getAll() } returns listOf(subscription)
-        coEvery { priceHistoryDao.getAllPricesForSubscription(any()) } returns emptyList()
-
-        val provider: MarketRateProvider = mockk()
-        coEvery {
-            provider.getRates(
-                serviceType = com.yourname.expensetracker.domain.negotiation.ServiceType.STREAMING,
-                region = "GR",
-                currency = "EUR"
-            )
-        } returns MarketRateResult(
-            quotes = listOf(
-                MarketRateQuote("Bad Provider", 0.0, 0.0, 0.0, "EUR", "GR", MarketRateConfidence.LOW),
-                MarketRateQuote("Another Bad", Double.NaN, Double.NaN, Double.NaN, "EUR", "GR", MarketRateConfidence.LOW)
-            ),
-            source = "test", lastUpdatedAt = System.currentTimeMillis()
-        )
-
-        val engine = createEngine(marketRateProvider = provider)
-        val opportunities = engine.analyzeNegotiationOpportunities()
-
-        assertTrue("All invalid quotes should result in no opportunity", opportunities.isEmpty())
+            if (row.expectedProvider == null) {
+                assertEquals("[${row.label}] opportunities",
+                    emptyList<SmartBillNegotiationEngine.NegotiationOpportunity>(), opportunities)
+            } else {
+                assertEquals("[${row.label}] opportunity count", 1, opportunities.size)
+                assertEquals("[${row.label}] currentProvider", row.expectedProvider, opportunities.single().currentProvider)
+                // the dropped invalid quote must not leak into the alternatives list
+                assertEquals("[${row.label}] alternativeProviders",
+                    emptyList<String>(), opportunities.single().alternativeProviders)
+            }
+            coVerify(exactly = 1) { fx.provider.getRates(any(), any(), any()) }
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -1351,27 +1145,4 @@ class NegotiationEngineTest {
         assertEquals("Disney+", opportunities.first().currentProvider)
     }
 
-    // ─────────────────────────────────────────────────────────────────
-    // PR5: Plain "Vodafone" without MOBILE/INTERNET keyword → no opportunity
-    // ─────────────────────────────────────────────────────────────────
-
-    @Test
-    fun `plainVodafone_returnsNoOpportunityWithoutServiceKeyword`() = runTest(timeout = 60.seconds) {
-        val subscription = ManualRecurringExpense(
-            id = 90L, merchant = "Vodafone", amount = 24.99, currency = "EUR",
-            frequency = RecurrenceFrequency.MONTHLY,
-            nextDate = System.currentTimeMillis(),
-            isSubscription = true, isActive = true
-        )
-        coEvery { recurringExpenseRepository.getAll() } returns listOf(subscription)
-        coEvery { priceHistoryDao.getAllPricesForSubscription(any()) } returns emptyList()
-
-        val provider: MarketRateProvider = mockk()
-
-        val engine = createEngine(marketRateProvider = provider)
-        val opportunities = engine.analyzeNegotiationOpportunities()
-
-        assertTrue("Plain Vodafone without MOBILE/INTERNET keyword should not generate opportunity", opportunities.isEmpty())
-        coVerify(exactly = 0) { provider.getRates(any(), any(), any()) }
-    }
 }

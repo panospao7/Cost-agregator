@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.repository
 
 import com.google.common.truth.Truth.assertThat
+import com.yourname.expensetracker.assertMoneyExact
 import com.yourname.expensetracker.data.database.dao.BudgetDao
 import com.yourname.expensetracker.data.database.dao.CategoryDao
 import com.yourname.expensetracker.data.database.dao.CategoryCurrencyTotal
@@ -139,7 +140,7 @@ class BudgetRepositoryHistoricalStatusTest {
         assertThat(statuses).hasSize(1)
         assertThat(statuses.single().periodStart).isEqualTo(historicalStart)
         assertThat(statuses.single().periodEnd).isEqualTo(historicalEnd)
-        assertThat(statuses.single().spentAmount).isEqualTo(800.0)
+        assertMoneyExact(800.0, statuses.single().spentAmount, "historical spentAmount pass-through")
         assertThat(statuses.single().healthStatus).isEqualTo(BudgetHealthStatus.WARNING)
     }
 
@@ -161,7 +162,7 @@ class BudgetRepositoryHistoricalStatusTest {
 
         assertThat(statuses).hasSize(1)
         assertThat(statuses.single().category).isEqualTo(category)
-        assertThat(statuses.single().remainingAmount).isEqualTo(300.0)
+        assertMoneyExact(300.0, statuses.single().remainingAmount, "category remainingAmount = 400 limit - 100 spent")
         assertThat(statuses.single().healthStatus).isEqualTo(BudgetHealthStatus.ON_TRACK)
     }
 
@@ -191,8 +192,8 @@ class BudgetRepositoryHistoricalStatusTest {
         val status = repository.getBudgetStatusesAt(evaluationTime).single()
 
         assertThat(status.adjustedSpendBreakdown).isNotNull()
-        assertThat(status.adjustedSpendBreakdown!!.effectiveSpend).isEqualTo(350.0)
-        assertThat(status.adjustedSpendBreakdown!!.netSharedLiability).isEqualTo(50.0)
+        assertMoneyExact(350.0, status.adjustedSpendBreakdown!!.effectiveSpend, "effectiveSpend pass-through")
+        assertMoneyExact(50.0, status.adjustedSpendBreakdown!!.netSharedLiability, "netSharedLiability pass-through")
     }
 
     @Suppress("DEPRECATION_ERROR")
@@ -215,85 +216,140 @@ class BudgetRepositoryHistoricalStatusTest {
         assertThat(status.adjustedSpendBreakdown).isNull()
     }
 
-    @Test
-    fun `addBudget rejects NaN amount`() = runTest(UnconfinedTestDispatcher()) {
-        val result = repository.addBudget(budget(amount = Double.NaN, categoryId = null))
-        assertThat(result).isInstanceOf(com.yourname.expensetracker.domain.model.Result.Error::class.java)
-        coVerify(exactly = 0) { budgetDao.insert(any()) }
-        coVerify(exactly = 0) { budgetDao.insertAndActivateOverall(any()) }
-    }
+    private enum class WriteOp { ADD, UPDATE }
 
-    @Test
-    fun `addBudget rejects infinite amount`() = runTest(UnconfinedTestDispatcher()) {
-        val result = repository.addBudget(budget(amount = Double.POSITIVE_INFINITY, categoryId = null))
-        assertThat(result).isInstanceOf(com.yourname.expensetracker.domain.model.Result.Error::class.java)
-    }
+    private data class RejectRow(val name: String, val op: WriteOp, val budget: Budget)
 
-    @Test
-    fun `addBudget rejects inverted thresholds`() = runTest(UnconfinedTestDispatcher()) {
-        val invalid = budget(amount = 100.0, categoryId = null).copy(
-            notifyAtWarning = 0.9f,
-            notifyAtCritical = 0.5f
-        )
-        val result = repository.addBudget(invalid)
-        assertThat(result).isInstanceOf(com.yourname.expensetracker.domain.model.Result.Error::class.java)
-    }
+    private data class AcceptRow(
+        val name: String,
+        val budget: Budget,
+        val categoryScoped: Boolean
+    )
 
-    @Test
-    fun `addBudget rejects warning threshold at or below zero`() = runTest(UnconfinedTestDispatcher()) {
-        // notifyAtWarning must be strictly within (0,1); the lower bound is exclusive.
-        val invalid = budget(amount = 100.0, categoryId = null).copy(notifyAtWarning = 0.0f)
-        val result = repository.addBudget(invalid)
-        assertThat(result).isInstanceOf(com.yourname.expensetracker.domain.model.Result.Error::class.java)
-    }
+    /** Fresh repository bound to a per-row [dao] so coVerify counts never leak between table rows. */
+    private fun repositoryWith(dao: BudgetDao): BudgetRepository = BudgetRepository(
+        budgetDao = dao,
+        categoryDao = categoryDao,
+        expenseDao = expenseDao,
+        budgetCalculator = budgetCalculator,
+        timeProvider = timeProvider,
+        offsetEngine = offsetEngine,
+        timeBoundaryTicker = TimeBoundaryTicker(timeProvider),
+        currencyConverter = currencyConverter,
+        currencySettingsRepository = currencySettingsRepository,
+        multiCurrencyRepository = multiCurrencyRepository,
+        writeBarrier = writeBarrier,
+        database = database,
+        budgetForecastDao = budgetForecastDao,
+    )
 
+    // Boundary validation (P6-CURRENT-029): every invalid add/update is rejected with
+    // Result.Error and NO insert/update DAO statement is issued.
     @Test
-    fun `addBudget rejects warning threshold at or above one`() = runTest(UnconfinedTestDispatcher()) {
-        // notifyAtWarning must be strictly within (0,1); the upper bound is exclusive.
-        val invalid = budget(amount = 100.0, categoryId = null).copy(notifyAtWarning = 1.0f)
-        val result = repository.addBudget(invalid)
-        assertThat(result).isInstanceOf(com.yourname.expensetracker.domain.model.Result.Error::class.java)
-    }
+    fun `budget write validation rejects invalid amount start date and thresholds without any DAO write`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val base = budget(amount = 100.0, categoryId = null)
+            val rows = listOf(
+                RejectRow("add NaN amount", WriteOp.ADD, budget(amount = Double.NaN, categoryId = null)),
+                RejectRow("add infinite amount", WriteOp.ADD, budget(amount = Double.POSITIVE_INFINITY, categoryId = null)),
+                RejectRow("add zero amount", WriteOp.ADD, budget(amount = 0.0, categoryId = null)),
+                RejectRow("add negative amount -100", WriteOp.ADD, budget(amount = -100.0, categoryId = null)),
+                RejectRow("add startDate 0", WriteOp.ADD, base.copy(startDate = 0L)),
+                RejectRow("add startDate -1000", WriteOp.ADD, base.copy(startDate = -1000L)),
+                // notifyAtCritical must be strictly greater than notifyAtWarning.
+                RejectRow("add inverted thresholds 0.9/0.5", WriteOp.ADD, base.copy(notifyAtWarning = 0.9f, notifyAtCritical = 0.5f)),
+                // notifyAtWarning must be strictly within (0,1): lower bound exclusive.
+                RejectRow("add warning 0.0", WriteOp.ADD, base.copy(notifyAtWarning = 0.0f)),
+                // ... upper bound exclusive.
+                RejectRow("add warning 1.0", WriteOp.ADD, base.copy(notifyAtWarning = 1.0f)),
+                RejectRow("add critical equals warning 0.75", WriteOp.ADD, base.copy(notifyAtWarning = 0.75f, notifyAtCritical = 0.75f)),
+                // notifyAtCritical must be at most 1.0.
+                RejectRow("add critical 1.5", WriteOp.ADD, base.copy(notifyAtWarning = 0.75f, notifyAtCritical = 1.5f)),
+                RejectRow("update zero amount", WriteOp.UPDATE, budget(amount = 0.0, categoryId = null)),
+                RejectRow("update negative amount -50", WriteOp.UPDATE, budget(amount = -50.0, categoryId = null)),
+            )
+            org.junit.Assert.assertEquals("reject table size", 13, rows.size)
 
-    @Test
-    fun `addBudget rejects critical threshold equal to warning`() = runTest(UnconfinedTestDispatcher()) {
-        // notifyAtCritical must be strictly greater than notifyAtWarning.
-        val invalid = budget(amount = 100.0, categoryId = null).copy(
-            notifyAtWarning = 0.75f,
-            notifyAtCritical = 0.75f
-        )
-        val result = repository.addBudget(invalid)
-        assertThat(result).isInstanceOf(com.yourname.expensetracker.domain.model.Result.Error::class.java)
-    }
+            val failures = mutableListOf<String>()
+            for (row in rows) {
+                try {
+                    val dao = mockk<BudgetDao>(relaxed = true)
+                    val repo = repositoryWith(dao)
+                    val result = when (row.op) {
+                        WriteOp.ADD -> repo.addBudget(row.budget)
+                        WriteOp.UPDATE -> repo.updateBudget(row.budget)
+                    }
+                    assertThat(result)
+                        .isInstanceOf(com.yourname.expensetracker.domain.model.Result.Error::class.java)
+                    when (row.op) {
+                        WriteOp.ADD -> {
+                            coVerify(exactly = 0) { dao.insert(any()) }
+                            coVerify(exactly = 0) { dao.insertAndActivateOverall(any()) }
+                            coVerify(exactly = 0) { dao.insertAndActivateCategory(any()) }
+                        }
+                        WriteOp.UPDATE -> {
+                            coVerify(exactly = 0) { dao.update(any()) }
+                            coVerify(exactly = 0) { dao.updateAndEnforceActiveScope(any()) }
+                        }
+                    }
+                } catch (e: AssertionError) {
+                    failures += "[${row.name}] ${e.message}"
+                }
+            }
+            if (failures.isNotEmpty()) {
+                org.junit.Assert.fail("reject rows failed:\n" + failures.joinToString("\n"))
+            }
+        }
 
+    // Inclusive boundaries and extreme-but-valid amounts are accepted and routed to the
+    // matching insert path (overall vs category-scoped), returning the DAO-assigned id.
     @Test
-    fun `addBudget rejects critical threshold above one`() = runTest(UnconfinedTestDispatcher()) {
-        // notifyAtCritical must be at most 1.0.
-        val invalid = budget(amount = 100.0, categoryId = null).copy(
-            notifyAtWarning = 0.75f,
-            notifyAtCritical = 1.5f
-        )
-        val result = repository.addBudget(invalid)
-        assertThat(result).isInstanceOf(com.yourname.expensetracker.domain.model.Result.Error::class.java)
-    }
+    fun `budget add validation accepts inclusive boundaries and extreme amounts`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val base = budget(amount = 100.0, categoryId = null)
+            val rows = listOf(
+                // notifyAtCritical == 1.0 is the inclusive upper bound.
+                AcceptRow("critical threshold equal to one", base.copy(notifyAtWarning = 0.75f, notifyAtCritical = 1.0f), false),
+                // Finite positive amount with warning in (0,1) and warning < critical <= 1.0.
+                AcceptRow("fully valid overall budget", base, false),
+                AcceptRow(
+                    "very large yearly amount 1e9",
+                    base.copy(amount = 1_000_000_000.0, period = BudgetPeriod.YEARLY, notifyAtWarning = 0.8f, notifyAtCritical = 0.95f),
+                    false
+                ),
+                AcceptRow("very small amount 0.01", base.copy(amount = 0.01, notifyAtWarning = 0.8f, notifyAtCritical = 0.95f), false),
+                AcceptRow(
+                    "valid category-scoped budget",
+                    base.copy(amount = 500.0, categoryId = 1L, notifyAtWarning = 0.8f, notifyAtCritical = 0.95f),
+                    true
+                ),
+            )
+            org.junit.Assert.assertEquals("accept table size", 5, rows.size)
 
-    @Test
-    fun `addBudget accepts critical threshold equal to one`() = runTest(UnconfinedTestDispatcher()) {
-        // notifyAtCritical == 1.0 is the inclusive upper bound and must be accepted.
-        val valid = budget(amount = 100.0, categoryId = null).copy(
-            notifyAtWarning = 0.75f,
-            notifyAtCritical = 1.0f
-        )
-        val result = repository.addBudget(valid)
-        assertThat(result).isInstanceOf(com.yourname.expensetracker.domain.model.Result.Success::class.java)
-    }
+            val failures = mutableListOf<String>()
+            for (row in rows) {
+                try {
+                    val dao = mockk<BudgetDao>(relaxed = true)
+                    coEvery { dao.insertAndActivateOverall(any()) } returns 11L
+                    coEvery { dao.insertAndActivateCategory(any()) } returns 12L
+                    val repo = repositoryWith(dao)
 
-    @Test
-    fun `addBudget accepts fully valid budget`() = runTest(UnconfinedTestDispatcher()) {
-        // Finite positive amount with warning in (0,1) and warning < critical <= 1.0.
-        val result = repository.addBudget(budget(amount = 100.0, categoryId = null))
-        assertThat(result).isInstanceOf(com.yourname.expensetracker.domain.model.Result.Success::class.java)
-    }
+                    val result = repo.addBudget(row.budget)
+
+                    val expectedId = if (row.categoryScoped) 12L else 11L
+                    assertThat(result)
+                        .isEqualTo(com.yourname.expensetracker.domain.model.Result.Success(expectedId))
+                    coVerify(exactly = if (row.categoryScoped) 0 else 1) { dao.insertAndActivateOverall(any()) }
+                    coVerify(exactly = if (row.categoryScoped) 1 else 0) { dao.insertAndActivateCategory(any()) }
+                    coVerify(exactly = 0) { dao.insert(any()) }
+                } catch (e: AssertionError) {
+                    failures += "[${row.name}] ${e.message}"
+                }
+            }
+            if (failures.isNotEmpty()) {
+                org.junit.Assert.fail("accept rows failed:\n" + failures.joinToString("\n"))
+            }
+        }
 
     @Suppress("DEPRECATION_ERROR")
     @Test
@@ -336,7 +392,7 @@ class BudgetRepositoryHistoricalStatusTest {
         val status = repository.getBudgetStatusesAt(evaluationTime).single()
 
         // 1000 USD → 800 EUR at period-end rate (NOT a latest rate).
-        assertThat(status.spentAmount).isEqualTo(800.0)
+        assertMoneyExact(800.0, status.spentAmount, "spent converted at period-end rate")
     }
 
     // ── P6-P1-06: budget limit uses period-end rate ─────────────────────────
@@ -376,7 +432,7 @@ class BudgetRepositoryHistoricalStatusTest {
         val status = repository.getBudgetStatusesAt(evaluationTime).single()
 
         // Limit converted at period-end rate: 1000 USD → 850 EUR (0.85 rate)
-        assertThat(status.effectiveLimit).isEqualTo(850.0)
+        assertMoneyExact(850.0, status.effectiveLimit, "limit converted at period-end rate")
         // period-end rate (0.85) should be used, NOT latest rate
         coVerify(exactly = 1) {
             currencyConverter.convertAsOf(1_000.0, "USD", "EUR", end)
@@ -384,46 +440,6 @@ class BudgetRepositoryHistoricalStatusTest {
         coVerify(exactly = 0) {
             currencyConverter.convert(1_000.0, "USD", "EUR")
         }
-    }
-
-    @Suppress("DEPRECATION_ERROR")
-    @Test
-    fun `budget limit falls back to latest rate when historical unavailable`() = runTest(UnconfinedTestDispatcher()) {
-        val budget = budget(amount = 500.0, categoryId = null).copy(currency = "GBP")
-        val evaluationTime = utcMs(2026, Calendar.MARCH, 15)
-        val start = utcMs(2026, Calendar.MARCH, 1)
-        val end = utcMs(2026, Calendar.APRIL, 1)
-
-        every { timeProvider.now() } returns evaluationTime
-        coEvery { budgetDao.getActiveBudgets() } returns listOf(budget)
-        coEvery { categoryDao.getAll() } returns emptyList()
-        every { budgetCalculator.calculatePeriodRange(budget, evaluationTime) } returns (start to end)
-        coEvery { expenseDao.getTotalSpentBetweenByCurrency(start, end) } returns listOf(CurrencyTotal("EUR", 0.0, 0))
-
-        // Historical rate is unavailable (returns null)
-        coEvery {
-            currencyConverter.convertAsOf(any<Double>(), any<String>(), any<String>(), any<Long>())
-        } returns null
-
-        // Latest rate is available
-        coEvery {
-            currencyConverter.convert(500.0, "GBP", "EUR")
-        } returns com.yourname.expensetracker.domain.currency.ConversionResult(
-            originalAmount = 500.0,
-            originalCurrency = "GBP",
-            convertedAmount = 580.0,
-            targetCurrency = "EUR",
-            rateUsed = 1.16,
-            timestamp = 0L
-        )
-
-        val status = repository.getBudgetStatusesAt(evaluationTime).single()
-
-        // Falls back to latest rate
-        assertThat(status.effectiveLimit).isEqualTo(580.0)
-        // Must be marked partial with a warning since historical rate was unavailable
-        assertThat(status.isPartial).isTrue()
-        assertThat(status.conversionWarning).contains("latest rate")
     }
 
     // ── RP-09 (P6-005 / P6-006): percentKnown + conversion-quality contract ────────
@@ -455,8 +471,8 @@ class BudgetRepositoryHistoricalStatusTest {
         assertThat(status.percentKnown).isFalse()
         assertThat(status.percentUsed).isEqualTo(0f)
         assertThat(status.healthStatus).isEqualTo(BudgetHealthStatus.UNKNOWN)
-        assertThat(status.effectiveLimit).isEqualTo(0.0)
-        assertThat(status.remainingAmount).isEqualTo(0.0)
+        assertMoneyExact(0.0, status.effectiveLimit, "unusable limit is zero, not a fabricated amount")
+        assertMoneyExact(0.0, status.remainingAmount, "remaining is zero when limit unavailable")
         assertThat(status.isPartial).isTrue()
         assertThat(status.conversionWarning).isNotEmpty()
     }
@@ -494,7 +510,10 @@ class BudgetRepositoryHistoricalStatusTest {
         // threshold checks stay active, while isPartial + warning flag the basis.
         assertThat(status.percentKnown).isTrue()
         assertThat(status.isPartial).isTrue()
-        assertThat(status.effectiveLimit).isEqualTo(580.0)
+        // Falls back to the latest rate (historical unavailable): limit passes through as 580 EUR
+        // and the warning names the latest-rate basis.
+        assertMoneyExact(580.0, status.effectiveLimit, "limit converted at latest rate")
+        assertThat(status.conversionWarning).contains("latest rate")
         assertThat(status.percentUsed).isWithin(1e-6f).of((100.0 / 580.0).toFloat())
         assertThat(status.healthStatus).isEqualTo(BudgetHealthStatus.ON_TRACK)
     }
@@ -519,7 +538,7 @@ class BudgetRepositoryHistoricalStatusTest {
         )
 
         assertThat(result.rateAsOfMillis).isEqualTo(end)
-        assertThat(result.aggregate.displayAmount).isEqualTo(400.0)
+        assertMoneyExact(400.0, result.aggregate.displayAmount, "elapsed-window spend pass-through")
         assertThat(result.aggregate.rateBasis).isEqualTo(RateBasis.PERIOD_END)
         // The spend WINDOW is the elapsed window, NOT the full period.
         coVerify(exactly = 1) { expenseDao.getTotalSpentBetweenByCurrency(start, elapsedEnd) }

@@ -32,7 +32,14 @@ interface PrivacyAuditDao {
      * so the 180-day cutoff is a single named constant
      * ([com.yourname.expensetracker.data.privacy.DataRetentionWorker.PRIVACY_AUDIT_RETENTION_DAYS])
      * and ANY change to it requires explicit compliance sign-off.
+     *
+     * R26: bounded batch — deletes at most [limit] rows per call (lowest ids
+     * first) so a purge never holds the SQLite write lock for a large backlog.
+     * Callers loop until a call returns fewer than [limit] rows.
      */
-    @Query("DELETE FROM privacy_audit_events WHERE timestampMs < :timestamp")
-    suspend fun deleteOlderThan(timestamp: Long): Int
+    @Query(
+        "DELETE FROM privacy_audit_events WHERE id IN " +
+            "(SELECT id FROM privacy_audit_events WHERE timestampMs < :timestamp ORDER BY id LIMIT :limit)"
+    )
+    suspend fun deleteOlderThan(timestamp: Long, limit: Int): Int
 }

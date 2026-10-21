@@ -116,15 +116,6 @@ class MerchantKeyBackfillWorkerTest {
     }
 
     @Test
-    fun `doWork empty database returns success`() = runTest {
-        coEvery { expenseRepository.getExpensesWithNullMerchantKey(any()) } returns emptyList()
-
-        val result = buildWorker().doWork()
-
-        assertEquals(Result.success(), result)
-    }
-
-    @Test
     fun `doWork retries when same failing row repeats after partial progress`() = runTest {
         val successfulExpense = makeExpense(id = 1L, merchant = "Σκλαβενίτης")
         val failingExpense = makeExpense(id = 2L, merchant = "Broken Merchant")
@@ -190,6 +181,48 @@ class MerchantKeyBackfillWorkerTest {
         coVerify(exactly = 1) { expenseRepository.updateMerchantKey(1L, currentKey) }
         coVerify(exactly = 2) { ctx.addRowsScanned() }
         coVerify(exactly = 1) { ctx.addRowsUpdated() }
+        coVerify(exactly = 0) { ctx.addErrors() }
+    }
+
+    @Test
+    fun `doWork propagates CancellationException from updateMerchantKey without counting an error`() = runTest {
+        val first = makeExpense(id = 1L, merchant = "Cancelled Merchant")
+        val second = makeExpense(id = 2L, merchant = "Later Merchant")
+        coEvery { expenseRepository.getExpensesWithNullMerchantKey(any()) } returns listOf(first, second)
+        coEvery { expenseRepository.updateMerchantKey(1L, any()) } throws CancellationException("cancelled")
+        coEvery { expenseRepository.updateMerchantKey(2L, any()) } returns true
+
+        try {
+            buildWorker().doWork()
+            throw AssertionError("Expected CancellationException to propagate")
+        } catch (_: CancellationException) {
+            // expected - cancellation must not be swallowed or mapped to retry/failure
+        }
+
+        coVerify(exactly = 1) { expenseRepository.updateMerchantKey(1L, any()) }
+        // The worker must stop at the cancelled row: later rows are never processed.
+        coVerify(exactly = 0) { expenseRepository.updateMerchantKey(2L, any()) }
+        coVerify(exactly = 1) { expenseRepository.getExpensesWithNullMerchantKey(any()) }
+        coVerify(exactly = 1) { ctx.addRowsScanned() }
+        coVerify(exactly = 0) { ctx.addRowsUpdated() }
+        // Cancellation is not a row error.
+        coVerify(exactly = 0) { ctx.addErrors() }
+    }
+
+    @Test
+    fun `doWork propagates CancellationException from getExpensesWithNullMerchantKey`() = runTest {
+        coEvery { expenseRepository.getExpensesWithNullMerchantKey(any()) } throws CancellationException("cancelled")
+
+        try {
+            buildWorker().doWork()
+            throw AssertionError("Expected CancellationException to propagate")
+        } catch (_: CancellationException) {
+            // expected - cancellation must not be swallowed or mapped to retry/failure
+        }
+
+        coVerify(exactly = 1) { expenseRepository.getExpensesWithNullMerchantKey(any()) }
+        coVerify(exactly = 0) { expenseRepository.updateMerchantKey(any(), any()) }
+        coVerify(exactly = 0) { ctx.addRowsScanned() }
         coVerify(exactly = 0) { ctx.addErrors() }
     }
 

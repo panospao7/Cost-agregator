@@ -1,567 +1,268 @@
 package com.yourname.expensetracker.domain.analytics
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.assertMoneyEquals
+import com.yourname.expensetracker.assertMoneyExact
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
-import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.domain.util.PinnedUtcTimeZoneRule
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.every
 import io.mockk.mockk
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
-import org.junit.Before
+import org.junit.ClassRule
 import org.junit.Test
-import java.util.Calendar
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.ZoneId
 
 /**
- * Validation tests for SpendingPaceCalculator to ensure pace calculations
- * are mathematically correct.
- * 
- * Tests cover:
- * 1. Daily rate comparisons
- * 2. Projected total calculations
- * 3. Pace percentage calculations
- * 4. Edge cases (first 3 days, zero spending, etc.)
+ * Validation tests for SpendingPaceCalculator: pace ratio, projection, exclusion and
+ * zero-spend behaviour, expressed as tables with hard-coded expected values.
  */
 class SpendingPaceCalculatorValidationTest {
 
-    private lateinit var calculator: SpendingPaceCalculator
-    private lateinit var timeProvider: TimeProvider
-
-    // Helper to create timestamps for specific dates
-    private fun createDate(year: Int, month: Int, day: Int, hour: Int = 0, minute: Int = 0): Long {
-        val cal = Calendar.getInstance()
-        cal.set(year, month - 1, day, hour, minute, 0)
-        cal.set(Calendar.MILLISECOND, 0)
-        return cal.timeInMillis
+    companion object {
+        @JvmField
+        @ClassRule
+        val utcZone = PinnedUtcTimeZoneRule()
     }
 
-    // Helper to create test expenses
-    private fun createExpense(
-        id: Long = 0,
+    // ----- helpers (zone is pinned to UTC by [utcZone]) -----
+
+    private fun millis(date: LocalDate): Long =
+        date.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+
+    private fun millis(dateTime: LocalDateTime): Long =
+        dateTime.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+
+    private fun snapshot(
+        id: Long,
         amount: Double,
-        date: Long,
-        transactionType: TransactionType = TransactionType.PURCHASE,
-        isNotMine: Boolean = false
-    ): ExpenseSnapshot {
-        return ExpenseSnapshot(
-            id = id,
-            amount = amount,
-            effectiveAmount = amount,
-            currency = "EUR",
-            merchant = "Test Merchant",
-            merchantKey = null,
-            transactionType = transactionType.toDomainTransactionType(),
-            date = date,
-            categoryId = null,
-            isNotMine = isNotMine,
-            transferDirection = null,
-            notes = null
-        )
-    }
+        date: LocalDate,
+        type: DomainTransactionType = DomainTransactionType.PURCHASE,
+        isNotMine: Boolean = false,
+        effectiveAmount: Double = amount
+    ): ExpenseSnapshot = ExpenseSnapshot(
+        id = id,
+        amount = amount,
+        effectiveAmount = effectiveAmount,
+        currency = "EUR",
+        merchant = "Test Merchant",
+        merchantKey = null,
+        transactionType = type,
+        date = millis(date),
+        categoryId = null,
+        isNotMine = isNotMine,
+        transferDirection = null,
+        notes = null
+    )
 
-    @Before
-    fun setup() {
-        timeProvider = mockk(relaxed = true)
-        calculator = SpendingPaceCalculator(timeProvider)
-    }
-
-    // ========== SCENARIO 1: Daily Rate Comparisons ==========
-
-    @Test
-    fun `pace calculation compares daily rates correctly`() {
-        // Given: Current date is April 15, 2024 (15th day of month)
-        val currentDate = createDate(2024, 4, 15, 12, 0)
-        every { timeProvider.now() } returns currentDate
-        
-        // Current month: spent 750 in 15 days (50 per day)
-        val currentExpenses = listOf(
-            createExpense(id = 1, amount = 750.0, date = createDate(2024, 4, 1))
-        )
-        
-        // Previous month: spent 1550 in 31 days (50 per day, March has 31 days)
-        val previousMonthStart = createDate(2024, 3, 1)
-        val previousMonthEnd = createDate(2024, 4, 1)
-        
-        // When: Calculate spending pace
-        val previousExpenses = listOf(
-            createExpense(id = 2, amount = 1550.0, date = createDate(2024, 3, 15))
-        )
-        
-        val result = calculator.calculate(
-            currentMonthStart = createDate(2024, 4, 1),
-            previousMonthStart = previousMonthStart,
-            previousMonthEnd = previousMonthEnd,
-            allExpenses = currentExpenses + previousExpenses
-        )
-        
-        // Then: Daily rates should be equal (50 per day)
-        val currentDailyRate = requireNotNull(result.currentMonthSpent) / result.daysElapsed
-        val previousDailyRate = result.previousMonthTotal!! / 31 // March has 31 days
-        
-        assertEquals(50.0, currentDailyRate, 0.01)
-        assertEquals(50.0, previousDailyRate, 0.01)
-        
-        // Pace percentage should be 100% (same daily rate)
-        assertEquals(100.0f, result.pacePercentage, 0.01f)
-        assertEquals(PaceStatus.ON_PACE, result.paceStatus)
-    }
-
-    @Test
-    fun `pace calculation detects overspending`() {
-        // Given: Current date is April 15, 2024 (15th day of month)
-        val currentDate = createDate(2024, 4, 15, 12, 0)
-        every { timeProvider.now() } returns currentDate
-        
-        // Current month: spent 1500 in 15 days (100 per day)
-        val currentExpenses = listOf(
-            createExpense(id = 1, amount = 1500.0, date = createDate(2024, 4, 1))
-        )
-        
-        // Previous month: spent 1550 in 31 days (50 per day, March has 31 days)
-        val previousMonthStart = createDate(2024, 3, 1)
-        val previousMonthEnd = createDate(2024, 4, 1)
-        
-        // When: Calculate spending pace
-        val previousExpenses = listOf(
-            createExpense(id = 2, amount = 1550.0, date = createDate(2024, 3, 15))
-        )
-        
-        val result = calculator.calculate(
-            currentMonthStart = createDate(2024, 4, 1),
-            previousMonthStart = previousMonthStart,
-            previousMonthEnd = previousMonthEnd,
-            allExpenses = currentExpenses + previousExpenses
-        )
-        
-        // Then: Current daily rate is double (100 vs 50)
-        val currentDailyRate = requireNotNull(result.currentMonthSpent) / result.daysElapsed
-        val previousDailyRate = result.previousMonthTotal!! / 31
-        
-        assertEquals(100.0, currentDailyRate, 0.01)
-        assertEquals(50.0, previousDailyRate, 0.01)
-        
-        // Pace percentage should be 200% (double the daily rate)
-        assertEquals(200.0f, result.pacePercentage, 0.01f)
-        assertEquals(PaceStatus.OVER_PACE, result.paceStatus)
-    }
-
-    @Test
-    fun `pace calculation detects underspending`() {
-        // Given: Current date is April 15, 2024 (15th day of month)
-        val currentDate = createDate(2024, 4, 15, 12, 0)
-        every { timeProvider.now() } returns currentDate
-        
-        // Current month: spent 375 in 15 days (25 per day)
-        val currentExpenses = listOf(
-            createExpense(id = 1, amount = 375.0, date = createDate(2024, 4, 1))
-        )
-        
-        // Previous month: spent 1550 in 31 days (50 per day, March has 31 days)
-        val previousMonthStart = createDate(2024, 3, 1)
-        val previousMonthEnd = createDate(2024, 4, 1)
-        
-        // When: Calculate spending pace
-        val previousExpenses = listOf(
-            createExpense(id = 2, amount = 1550.0, date = createDate(2024, 3, 15))
-        )
-        
-        val result = calculator.calculate(
-            currentMonthStart = createDate(2024, 4, 1),
-            previousMonthStart = previousMonthStart,
-            previousMonthEnd = previousMonthEnd,
-            allExpenses = currentExpenses + previousExpenses
-        )
-        
-        // Then: Current daily rate is half (25 vs 50)
-        val currentDailyRate = requireNotNull(result.currentMonthSpent) / result.daysElapsed
-        val previousDailyRate = result.previousMonthTotal!! / 31
-        
-        assertEquals(25.0, currentDailyRate, 0.01)
-        assertEquals(50.0, previousDailyRate, 0.01)
-        
-        // Pace percentage should be 50% (half the daily rate)
-        assertEquals(50.0f, result.pacePercentage, 0.01f)
-        assertEquals(PaceStatus.UNDER_PACE, result.paceStatus)
-    }
-
-    // ========== SCENARIO 2: Projected Total Calculations ==========
-
-    @Test
-    fun `projected total calculation for normal days`() {
-        // Given: Current date is April 10, 2024 (10th day of month)
-        val currentDate = createDate(2024, 4, 10, 12, 0)
-        every { timeProvider.now() } returns currentDate
-        
-        // Current month: spent 500 in 10 days
-        val currentExpenses = listOf(
-            createExpense(id = 1, amount = 500.0, date = createDate(2024, 4, 1))
-        )
-        
-        // April has 30 days
-        val previousMonthStart = createDate(2024, 3, 1)
-        val previousMonthEnd = createDate(2024, 4, 1)
-        
-        // When: Calculate spending pace
-        val result = calculator.calculate(
-            currentMonthStart = createDate(2024, 4, 1),
-            previousMonthStart = previousMonthStart,
-            previousMonthEnd = previousMonthEnd,
-            allExpenses = currentExpenses,
+    /** Fresh calculator and clock per row so rows cannot influence each other. */
+    private fun calculate(
+        now: LocalDateTime,
+        monthStart: LocalDate,
+        expenses: List<ExpenseSnapshot>
+    ): SpendingPace {
+        val timeProvider = mockk<TimeProvider>(relaxed = true)
+        every { timeProvider.now() } returns millis(now)
+        return SpendingPaceCalculator(timeProvider).calculate(
+            currentMonthStart = millis(monthStart),
+            previousMonthStart = millis(monthStart.minusMonths(1)),
+            previousMonthEnd = millis(monthStart),
+            allExpenses = expenses,
             displayCurrency = "EUR"
         )
-        
-        // Then: Projected total should be 500 * 30 / 10 = 1500
-        assertEquals(1500.0, requireNotNull(result.projectedTotal), 0.01)
-        assertEquals(10, result.daysElapsed)
-        assertEquals(30, result.daysInMonth)
     }
+
+    // ========== Pace ratio table (daily-rate comparisons) ==========
+
+    private data class PaceRow(
+        val name: String,
+        val now: LocalDateTime,
+        val monthStart: LocalDate,
+        val currentAmount: Double,
+        val previousDate: LocalDate,
+        val previousAmount: Double,
+        val expectedSpent: Double,
+        val expectedDaysElapsed: Int,
+        val expectedDaysInMonth: Int,
+        val expectedPreviousTotal: Double,
+        val expectedProjected: Double,
+        val expectedPace: Float,
+        val expectedStatus: PaceStatus
+    )
 
     @Test
-    fun `projected total uses blended smoothing for early days`() {
-        // Given: Current date is April 2, 2024 (2nd day of month)
-        val currentDate = createDate(2024, 4, 2, 12, 0)
-        every { timeProvider.now() } returns currentDate
-        
-        // Current month: spent 200 in 2 days
-        val currentExpenses = listOf(
-            createExpense(id = 1, amount = 200.0, date = createDate(2024, 4, 1))
+    fun `pace ratio table compares current and previous daily rates`() {
+        val apr2024 = LocalDate.of(2024, 4, 1)
+        val rows = listOf(
+            // 750 / 15 = 50 per day vs 1550 / 31 = 50 per day
+            PaceRow(
+                "equal daily rate", LocalDateTime.of(2024, 4, 15, 12, 0), apr2024, 750.0,
+                LocalDate.of(2024, 3, 15), 1550.0, 750.0, 15, 30, 1550.0, 1500.0, 100.0f, PaceStatus.ON_PACE
+            ),
+            // 1500 / 15 = 100 per day vs 50 per day
+            PaceRow(
+                "double daily rate", LocalDateTime.of(2024, 4, 15, 12, 0), apr2024, 1500.0,
+                LocalDate.of(2024, 3, 15), 1550.0, 1500.0, 15, 30, 1550.0, 3000.0, 200.0f, PaceStatus.OVER_PACE
+            ),
+            // 375 / 15 = 25 per day vs 50 per day
+            PaceRow(
+                "half daily rate", LocalDateTime.of(2024, 4, 15, 12, 0), apr2024, 375.0,
+                LocalDate.of(2024, 3, 15), 1550.0, 375.0, 15, 30, 1550.0, 750.0, 50.0f, PaceStatus.UNDER_PACE
+            ),
+            // 900 / 15 = 60 per day vs 50 per day
+            PaceRow(
+                "120 percent daily rate", LocalDateTime.of(2024, 4, 15, 12, 0), apr2024, 900.0,
+                LocalDate.of(2024, 3, 15), 1550.0, 900.0, 15, 30, 1550.0, 1800.0, 120.0f, PaceStatus.OVER_PACE
+            ),
+            // last day of month: projection equals actual spend; 1500 / 30 = 50 per day
+            PaceRow(
+                "last day of month", LocalDateTime.of(2024, 4, 30, 12, 0), apr2024, 1500.0,
+                LocalDate.of(2024, 3, 15), 1550.0, 1500.0, 30, 30, 1550.0, 1500.0, 100.0f, PaceStatus.ON_PACE
+            ),
+            // February (28 days): 700 / 14 = 50 per day vs January 1550 / 31 = 50 per day
+            PaceRow(
+                "february 28 days", LocalDateTime.of(2023, 2, 14, 12, 0), LocalDate.of(2023, 2, 1), 700.0,
+                LocalDate.of(2023, 1, 15), 1550.0, 700.0, 14, 28, 1550.0, 1400.0, 100.0f, PaceStatus.ON_PACE
+            )
         )
-        
-        // April has 30 days
-        val previousMonthStart = createDate(2024, 3, 1)
-        val previousMonthEnd = createDate(2024, 4, 1)
-        
-        // When: Calculate spending pace
-        val result = calculator.calculate(
-            currentMonthStart = createDate(2024, 4, 1),
-            previousMonthStart = previousMonthStart,
-            previousMonthEnd = previousMonthEnd,
-            allExpenses = currentExpenses,
-            displayCurrency = "EUR"
-        )
-        
-        // Then: Without a prior baseline, early days use a stabilized projection floor.
-        // day=2, stabilizedDays=max(2,5)=5 => 200*30/5 = 1200
-        assertEquals(1200.0, requireNotNull(result.projectedTotal), 0.01)
-        assertEquals(2, result.daysElapsed)
-        assertEquals(30, result.daysInMonth)
-    }
+        assertEquals("pace ratio table size", 6, rows.size)
 
-    @Test
-    fun `projected total for day 4 remains smooth and below full linear`() {
-        // Given: Current date is April 4, 2024 (4th day of month)
-        val currentDate = createDate(2024, 4, 4, 12, 0)
-        every { timeProvider.now() } returns currentDate
-        
-        // Current month: spent 400 in 4 days
-        val currentExpenses = listOf(
-            createExpense(id = 1, amount = 400.0, date = createDate(2024, 4, 1))
-        )
-        
-        // April has 30 days
-        val previousMonthStart = createDate(2024, 3, 1)
-        val previousMonthEnd = createDate(2024, 4, 1)
-        
-        // When: Calculate spending pace
-        val result = calculator.calculate(
-            currentMonthStart = createDate(2024, 4, 1),
-            previousMonthStart = previousMonthStart,
-            previousMonthEnd = previousMonthEnd,
-            allExpenses = currentExpenses,
-            displayCurrency = "EUR"
-        )
-        
-        // Then: Without a prior baseline, day 4 is still stabilized to a 5-day floor.
-        // 400*30/5 = 2400
-        assertEquals(2400.0, requireNotNull(result.projectedTotal), 0.01)
-        assertEquals(4, result.daysElapsed)
-        assertEquals(30, result.daysInMonth)
-    }
+        for (row in rows) {
+            val result = calculate(
+                now = row.now,
+                monthStart = row.monthStart,
+                expenses = listOf(
+                    snapshot(1, row.currentAmount, row.monthStart),
+                    snapshot(2, row.previousAmount, row.previousDate)
+                )
+            )
 
-    // ========== SCENARIO 3: Pace Percentage Calculations ==========
-
-    @Test
-    fun `pace percentage uses daily rate comparison`() {
-        // Given: Current date is April 15, 2024 (15th day of month)
-        val currentDate = createDate(2024, 4, 15, 12, 0)
-        every { timeProvider.now() } returns currentDate
-        
-        // Current month: spent 900 in 15 days (60 per day)
-        val currentExpenses = listOf(
-            createExpense(id = 1, amount = 900.0, date = createDate(2024, 4, 1))
-        )
-        
-        // Previous month: spent 1550 in 31 days (50 per day, March has 31 days)
-        val previousMonthStart = createDate(2024, 3, 1)
-        val previousMonthEnd = createDate(2024, 4, 1)
-        
-        // When: Calculate spending pace
-        val previousExpenses = listOf(
-            createExpense(id = 2, amount = 1550.0, date = createDate(2024, 3, 15))
-        )
-        
-        val result = calculator.calculate(
-            currentMonthStart = createDate(2024, 4, 1),
-            previousMonthStart = previousMonthStart,
-            previousMonthEnd = previousMonthEnd,
-            allExpenses = currentExpenses + previousExpenses
-        )
-        
-        // Then: Pace percentage should be (60/50) * 100 = 120%
-        val currentDailyRate = requireNotNull(result.currentMonthSpent) / result.daysElapsed
-        val previousDailyRate = result.previousMonthTotal!! / 31
-        
-        assertEquals(60.0, currentDailyRate, 0.01)
-        assertEquals(50.0, previousDailyRate, 0.01)
-        assertEquals(120.0f, result.pacePercentage, 0.01f)
-    }
-
-    @Test
-    fun `pace percentage handles zero previous spending`() {
-        // Given: Current date is April 15, 2024 (15th day of month)
-        val currentDate = createDate(2024, 4, 15, 12, 0)
-        every { timeProvider.now() } returns currentDate
-        
-        // Current month: spent 900 in 15 days
-        val currentExpenses = listOf(
-            createExpense(id = 1, amount = 900.0, date = createDate(2024, 4, 1))
-        )
-        
-        // Previous month: no spending
-        val previousMonthStart = createDate(2024, 3, 1)
-        val previousMonthEnd = createDate(2024, 4, 1)
-        
-        // When: Calculate spending pace
-        val result = calculator.calculate(
-            currentMonthStart = createDate(2024, 4, 1),
-            previousMonthStart = previousMonthStart,
-            previousMonthEnd = previousMonthEnd,
-            allExpenses = currentExpenses,
-            displayCurrency = "EUR"
-        )
-        
-        // Then: -1 is the explicit sentinel for an unavailable baseline.
-        assertEquals(-1.0f, result.pacePercentage, 0.01f)
-    }
-
-    // ========== SCENARIO 4: Edge Cases ==========
-
-    @Test
-    fun `pace calculation with no current spending`() {
-        // Given: Current date is April 15, 2024 (15th day of month)
-        val currentDate = createDate(2024, 4, 15, 12, 0)
-        every { timeProvider.now() } returns currentDate
-        
-        // Current month: no spending
-        val currentExpenses = emptyList<ExpenseSnapshot>()
-        
-        // Previous month: spent 1500
-        val previousMonthStart = createDate(2024, 3, 1)
-        val previousMonthEnd = createDate(2024, 4, 1)
-        
-        // When: Calculate spending pace
-        val result = calculator.calculate(
-            currentMonthStart = createDate(2024, 4, 1),
-            previousMonthStart = previousMonthStart,
-            previousMonthEnd = previousMonthEnd,
-            allExpenses = currentExpenses,
-            displayCurrency = "EUR"
-        )
-        
-        // Then: Current spending should be 0
-        assertEquals(0.0, requireNotNull(result.currentMonthSpent), 0.01)
-        assertEquals(15, result.daysElapsed)
-        
-        // Projected total should be 0
-        assertEquals(0.0, requireNotNull(result.projectedTotal), 0.01)
-    }
-
-    @Test
-    fun `pace calculation excludes non-purchase transactions`() {
-        // Given: Current date is April 15, 2024 (15th day of month)
-        val currentDate = createDate(2024, 4, 15, 12, 0)
-        every { timeProvider.now() } returns currentDate
-        
-        // Current month: mix of purchases and non-purchases
-        val currentExpenses = listOf(
-            createExpense(id = 1, amount = 500.0, date = createDate(2024, 4, 1), transactionType = TransactionType.PURCHASE),
-            createExpense(id = 2, amount = 1000.0, date = createDate(2024, 4, 2), transactionType = TransactionType.DEPOSIT), // Not a purchase
-            createExpense(id = 3, amount = 400.0, date = createDate(2024, 4, 3), transactionType = TransactionType.PURCHASE)
-        )
-        
-        // Previous month: spent 1500
-        val previousMonthStart = createDate(2024, 3, 1)
-        val previousMonthEnd = createDate(2024, 4, 1)
-        
-        // When: Calculate spending pace
-        val result = calculator.calculate(
-            currentMonthStart = createDate(2024, 4, 1),
-            previousMonthStart = previousMonthStart,
-            previousMonthEnd = previousMonthEnd,
-            allExpenses = currentExpenses,
-            displayCurrency = "EUR"
-        )
-        
-        // Then: Should only count purchases (500 + 400 = 900)
-        assertEquals(900.0, requireNotNull(result.currentMonthSpent), 0.01)
-    }
-
-    @Test
-    fun `pace calculation excludes not-mine transactions`() {
-        // Given: Current date is April 15, 2024 (15th day of month)
-        val currentDate = createDate(2024, 4, 15, 12, 0)
-        every { timeProvider.now() } returns currentDate
-        
-        // Current month: mix of mine and not-mine transactions
-        val currentExpenses = listOf(
-            createExpense(id = 1, amount = 500.0, date = createDate(2024, 4, 1), isNotMine = false),
-            createExpense(id = 2, amount = 1000.0, date = createDate(2024, 4, 2), isNotMine = true), // Not mine
-            createExpense(id = 3, amount = 400.0, date = createDate(2024, 4, 3), isNotMine = false)
-        )
-        
-        // Previous month: spent 1500
-        val previousMonthStart = createDate(2024, 3, 1)
-        val previousMonthEnd = createDate(2024, 4, 1)
-        
-        // When: Calculate spending pace
-        val result = calculator.calculate(
-            currentMonthStart = createDate(2024, 4, 1),
-            previousMonthStart = previousMonthStart,
-            previousMonthEnd = previousMonthEnd,
-            allExpenses = currentExpenses,
-            displayCurrency = "EUR"
-        )
-        
-        // Then: Should only count mine (500 + 400 = 900)
-        assertEquals(900.0, requireNotNull(result.currentMonthSpent), 0.01)
-    }
-
-    @Test
-    fun `pace calculation for last day of month`() {
-        // Given: Current date is April 30, 2024 (30th day of month)
-        val currentDate = createDate(2024, 4, 30, 12, 0)
-        every { timeProvider.now() } returns currentDate
-        
-        // Current month: spent 1500 in 30 days
-        val currentExpenses = listOf(
-            createExpense(id = 1, amount = 1500.0, date = createDate(2024, 4, 1))
-        )
-        
-        // Previous month: spent 1550 in 31 days (50 per day, March has 31 days)
-        val previousMonthStart = createDate(2024, 3, 1)
-        val previousMonthEnd = createDate(2024, 4, 1)
-        
-        // When: Calculate spending pace
-        val previousExpenses = listOf(
-            createExpense(id = 2, amount = 1550.0, date = createDate(2024, 3, 15))
-        )
-        
-        val result = calculator.calculate(
-            currentMonthStart = createDate(2024, 4, 1),
-            previousMonthStart = previousMonthStart,
-            previousMonthEnd = previousMonthEnd,
-            allExpenses = currentExpenses + previousExpenses
-        )
-        
-        // Then: Projected total should equal actual spending
-        assertEquals(1500.0, requireNotNull(result.projectedTotal), 0.01)
-        assertEquals(30, result.daysElapsed)
-        assertEquals(30, result.daysInMonth)
-        
-        // Daily rates should be equal
-        val currentDailyRate = requireNotNull(result.currentMonthSpent) / result.daysElapsed
-        val previousDailyRate = result.previousMonthTotal!! / 31
-        
-        assertEquals(50.0, currentDailyRate, 0.01)
-        assertEquals(50.0, previousDailyRate, 0.01)
-        assertEquals(100.0f, result.pacePercentage, 0.01f)
-    }
-
-    // ========== SCENARIO 5: Month with Different Days ==========
-
-    @Test
-    fun `pace calculation for February (28 days)`() {
-        // Given: Current date is February 14, 2023 (14th day of month)
-        val currentDate = createDate(2023, 2, 14, 12, 0)
-        every { timeProvider.now() } returns currentDate
-        
-        // Current month: spent 700 in 14 days (50 per day)
-        val currentExpenses = listOf(
-            createExpense(id = 1, amount = 700.0, date = createDate(2023, 2, 1))
-        )
-        
-        // Previous month (January): spent 1550 in 31 days (50 per day)
-        val previousMonthStart = createDate(2023, 1, 1)
-        val previousMonthEnd = createDate(2023, 2, 1)
-        
-        // When: Calculate spending pace
-        val previousExpenses = listOf(
-            createExpense(id = 2, amount = 1550.0, date = createDate(2023, 1, 15))
-        )
-        
-        val result = calculator.calculate(
-            currentMonthStart = createDate(2023, 2, 1),
-            previousMonthStart = previousMonthStart,
-            previousMonthEnd = previousMonthEnd,
-            allExpenses = currentExpenses + previousExpenses
-        )
-        
-        // Then: February has 28 days
-        assertEquals(14, result.daysElapsed)
-        assertEquals(28, result.daysInMonth)
-        
-        // Projected total: 700 * 28 / 14 = 1400
-        assertEquals(1400.0, requireNotNull(result.projectedTotal), 0.01)
-        
-        // Daily rates: current 50, previous 50 (1550/31 = 50)
-        val currentDailyRate = requireNotNull(result.currentMonthSpent) / result.daysElapsed
-        val previousDailyRate = result.previousMonthTotal!! / 31
-        
-        assertEquals(50.0, currentDailyRate, 0.01)
-        assertEquals(50.0, previousDailyRate, 0.01)
-        assertEquals(100.0f, result.pacePercentage, 0.01f)
-    }
-
-    @Test
-    fun `pace calculation for February leap year (29 days)`() {
-        // Given: Current date is February 14, 2024 (14th day of month, leap year)
-        val currentDate = createDate(2024, 2, 14, 12, 0)
-        every { timeProvider.now() } returns currentDate
-        
-        // Current month: spent 700 in 14 days (50 per day)
-        val currentExpenses = listOf(
-            createExpense(id = 1, amount = 700.0, date = createDate(2024, 2, 1))
-        )
-        
-        // Previous month (January): spent 1550 in 31 days (50 per day)
-        val previousMonthStart = createDate(2024, 1, 1)
-        val previousMonthEnd = createDate(2024, 2, 1)
-        
-        // When: Calculate spending pace
-        val result = calculator.calculate(
-            currentMonthStart = createDate(2024, 2, 1),
-            previousMonthStart = previousMonthStart,
-            previousMonthEnd = previousMonthEnd,
-            allExpenses = currentExpenses,
-            displayCurrency = "EUR"
-        )
-        
-        // Then: February 2024 has 29 days (leap year)
-        assertEquals(14, result.daysElapsed)
-        assertEquals(29, result.daysInMonth)
-        
-        // Projected total: 700 * 29 / 14 = 1450
-        assertEquals(1450.0, requireNotNull(result.projectedTotal), 0.01)
-    }
-
-    private fun TransactionType.toDomainTransactionType(): DomainTransactionType {
-        return when (this) {
-            TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
-            TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
-            TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
-            TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
-            TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+            assertMoneyEquals(row.expectedSpent, result.currentMonthSpent, "${row.name} spent")
+            assertEquals("${row.name} daysElapsed", row.expectedDaysElapsed, result.daysElapsed)
+            assertEquals("${row.name} daysInMonth", row.expectedDaysInMonth, result.daysInMonth)
+            assertMoneyEquals(row.expectedPreviousTotal, result.previousMonthTotal, "${row.name} previous total")
+            assertMoneyEquals(row.expectedProjected, result.projectedTotal, "${row.name} projected")
+            assertEquals("${row.name} pace", row.expectedPace, result.pacePercentage, 0.01f)
+            assertEquals("${row.name} status", row.expectedStatus, result.paceStatus)
         }
+    }
+
+    // ========== Projection table (no previous-month baseline) ==========
+
+    private data class ProjectionRow(
+        val name: String,
+        val now: LocalDateTime,
+        val monthStart: LocalDate,
+        val amount: Double,
+        val expectedDaysElapsed: Int,
+        val expectedDaysInMonth: Int,
+        val expectedProjected: Double
+    )
+
+    @Test
+    fun `projection table uses linear after five days and five day floor before`() {
+        val apr2024 = LocalDate.of(2024, 4, 1)
+        val apr2026 = LocalDate.of(2026, 4, 1)
+        val rows = listOf(
+            // day 10 >= 5: 500 * 30 / 10
+            ProjectionRow("normal day 10", LocalDateTime.of(2024, 4, 10, 12, 0), apr2024, 500.0, 10, 30, 1500.0),
+            // day 2 < 5, no baseline: stabilized floor 5 => 200 * 30 / 5
+            ProjectionRow("early day 2", LocalDateTime.of(2024, 4, 2, 12, 0), apr2024, 200.0, 2, 30, 1200.0),
+            // day 4 < 5, no baseline: 400 * 30 / 5
+            ProjectionRow("early day 4", LocalDateTime.of(2024, 4, 4, 12, 0), apr2024, 400.0, 4, 30, 2400.0),
+            // leap February: 700 * 29 / 14
+            ProjectionRow(
+                "february leap year 29 days", LocalDateTime.of(2024, 2, 14, 12, 0), LocalDate.of(2024, 2, 1),
+                700.0, 14, 29, 1450.0
+            ),
+            // same as early day 2 but with now at local midnight (2026)
+            ProjectionRow("early day 2 at midnight", LocalDateTime.of(2026, 4, 2, 0, 0), apr2026, 200.0, 2, 30, 1200.0),
+            // same as early day 4 but with now at local midnight (2026)
+            ProjectionRow("early day 4 at midnight", LocalDateTime.of(2026, 4, 4, 0, 0), apr2026, 400.0, 4, 30, 2400.0)
+        )
+        assertEquals("projection table size", 6, rows.size)
+
+        for (row in rows) {
+            val result = calculate(
+                now = row.now,
+                monthStart = row.monthStart,
+                expenses = listOf(snapshot(1, row.amount, row.monthStart))
+            )
+
+            assertEquals("${row.name} daysElapsed", row.expectedDaysElapsed, result.daysElapsed)
+            assertEquals("${row.name} daysInMonth", row.expectedDaysInMonth, result.daysInMonth)
+            assertMoneyEquals(row.expectedProjected, result.projectedTotal, "${row.name} projected")
+        }
+    }
+
+    // ========== Exclusion table ==========
+
+    private data class ExclusionRow(
+        val name: String,
+        val now: LocalDateTime,
+        val monthStart: LocalDate,
+        val expenses: List<ExpenseSnapshot>,
+        val expectedSpent: Double
+    )
+
+    @Test
+    fun `exclusion table counts only own purchases`() {
+        val apr2024 = LocalDate.of(2024, 4, 1)
+        val apr2026 = LocalDate.of(2026, 4, 1)
+        val rows = listOf(
+            ExclusionRow(
+                "deposit is not a purchase", LocalDateTime.of(2024, 4, 15, 12, 0), apr2024,
+                listOf(
+                    snapshot(1, 500.0, LocalDate.of(2024, 4, 1)),
+                    snapshot(2, 1000.0, LocalDate.of(2024, 4, 2), type = DomainTransactionType.DEPOSIT),
+                    snapshot(3, 400.0, LocalDate.of(2024, 4, 3))
+                ),
+                900.0
+            ),
+            ExclusionRow(
+                "not-mine flag excludes even with full effective amount", LocalDateTime.of(2024, 4, 15, 12, 0), apr2024,
+                listOf(
+                    snapshot(1, 500.0, LocalDate.of(2024, 4, 1)),
+                    snapshot(2, 1000.0, LocalDate.of(2024, 4, 2), isNotMine = true),
+                    snapshot(3, 400.0, LocalDate.of(2024, 4, 3))
+                ),
+                900.0
+            ),
+            ExclusionRow(
+                "deposit and zero-effective not-mine together", LocalDateTime.of(2026, 4, 10, 0, 0), apr2026,
+                listOf(
+                    snapshot(1, 100.0, LocalDate.of(2026, 4, 1)),
+                    snapshot(2, 80.0, LocalDate.of(2026, 4, 2), isNotMine = true, effectiveAmount = 0.0),
+                    snapshot(3, 250.0, LocalDate.of(2026, 4, 3), type = DomainTransactionType.DEPOSIT),
+                    snapshot(4, 60.0, LocalDate.of(2026, 4, 4))
+                ),
+                160.0
+            )
+        )
+        assertEquals("exclusion table size", 3, rows.size)
+
+        for (row in rows) {
+            val result = calculate(row.now, row.monthStart, row.expenses)
+            assertMoneyEquals(row.expectedSpent, result.currentMonthSpent, "${row.name} spent")
+        }
+    }
+
+    // ========== Zero spend (available zero, not unavailable) ==========
+
+    @Test
+    fun `no current spending is available zero not unavailable`() {
+        val result = calculate(
+            now = LocalDateTime.of(2024, 4, 15, 12, 0),
+            monthStart = LocalDate.of(2024, 4, 1),
+            expenses = emptyList()
+        )
+
+        // assertMoneyExact fails on null and requires exactly 0.0, so an unavailable or
+        // merely near-zero result cannot masquerade as zero.
+        assertMoneyExact(0.0, result.currentMonthSpent, "current month spent")
+        assertEquals(15, result.daysElapsed)
+        assertMoneyExact(0.0, result.projectedTotal, "projected total")
     }
 }

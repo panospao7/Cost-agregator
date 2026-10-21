@@ -34,7 +34,10 @@ import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.provenance.PendingReviewSourceLinkPromoter
 import com.yourname.expensetracker.domain.provenance.PendingReviewSourceLinkService
-import org.json.JSONObject
+import com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
+import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEvent
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEventWriter
 
 @Singleton
 class ReviewQueueRepository @Inject constructor(
@@ -56,14 +59,44 @@ class ReviewQueueRepository @Inject constructor(
     private val transactionLifecycleCoordinator: TransactionLifecycleCoordinator,
     private val pendingReviewSourceLinkService: PendingReviewSourceLinkService,
     private val pendingReviewSourceLinkPromoter: PendingReviewSourceLinkPromoter,
-    private val transactionEventDao: TransactionEventDao,
+    private val transactionRunner: DomainTransactionRunner,
+    private val transactionLifecycleEventWriter: TransactionLifecycleEventWriter,
     private val postCommitActionRunner: PostCommitActionRunner
 ) {
-    private companion object {
-        private const val ERROR_REVIEW_NOT_FOUND = "REVIEW_NOT_FOUND"
-        private const val ERROR_AMOUNT_EXCEEDS_LIMIT = "AMOUNT_EXCEEDS_LIMIT"
-        private const val ERROR_REVIEW_ALREADY_PROCESSED = "REVIEW_ALREADY_PROCESSED"
+    /**
+     * R24a: public, bounded approval error messages. [approveReview] only ever returns
+     * one of [KNOWN_APPROVAL_ERRORS] as `Result.Error.message`; the UI may display a
+     * message only if it is a member of this set. Never put exception text, validation
+     * error joins, or notification/receipt text into these values.
+     */
+    companion object {
+        const val ERROR_REVIEW_NOT_FOUND = "REVIEW_NOT_FOUND"
+        const val ERROR_AMOUNT_EXCEEDS_LIMIT = "AMOUNT_EXCEEDS_LIMIT"
+        const val ERROR_REVIEW_ALREADY_PROCESSED = "REVIEW_ALREADY_PROCESSED"
+        const val ERROR_VALIDATION_FAILED = "VALIDATION_FAILED"
+        const val ERROR_APPROVAL_FAILED = "APPROVAL_FAILED"
+        const val ERROR_SYNTHETIC_AMOUNT =
+            "Cannot approve review with synthetic fallback amount. Please edit the amount first."
+        const val ERROR_UNKNOWN_MERCHANT =
+            "Cannot approve review with unknown merchant. Please edit the merchant first."
+        const val ERROR_CURRENCY_REQUIRED =
+            "Currency is required. Please edit the review and select a currency."
+
+        val KNOWN_APPROVAL_ERRORS: Set<String> = setOf(
+            ERROR_REVIEW_NOT_FOUND,
+            ERROR_AMOUNT_EXCEEDS_LIMIT,
+            ERROR_REVIEW_ALREADY_PROCESSED,
+            ERROR_VALIDATION_FAILED,
+            ERROR_APPROVAL_FAILED,
+            ERROR_SYNTHETIC_AMOUNT,
+            ERROR_UNKNOWN_MERCHANT,
+            ERROR_CURRENCY_REQUIRED
+        )
     }
+
+    /** Carries only a bounded error count; never the validation error texts. */
+    private class ReviewApprovalValidationException(errorCount: Int) :
+        IllegalArgumentException("Validation failed ($errorCount error(s))")
 
 
     fun getAllPendingReviews(): Flow<List<PendingReviewWithReceipt>> =
@@ -133,12 +166,12 @@ class ReviewQueueRepository @Inject constructor(
     // Block approval when the parser could not extract an amount (suggestedAmount is null)
     // and the user has not yet provided a real override.
     if (review.suggestedAmount == null && finalAmount == null) {
-        return Result.Error(message = "Cannot approve review with synthetic fallback amount. Please edit the amount first.")
+        return Result.Error(message = ERROR_SYNTHETIC_AMOUNT)
     }
     val amount: Double = finalAmount ?: review.suggestedAmount!!
     val merchant: String = finalMerchant ?: review.suggestedMerchant
     if (review.suggestedMerchant == "Unknown" && finalMerchant == null) {
-        return Result.Error(message = "Cannot approve review with unknown merchant. Please edit the merchant first.")
+        return Result.Error(message = ERROR_UNKNOWN_MERCHANT)
     }
 
     // The coordinator owns merchantKey and dedupeKey generation.
@@ -148,7 +181,7 @@ class ReviewQueueRepository @Inject constructor(
         val resolved = finalCurrency?.takeIf { it.isNotBlank() }
             ?: review.suggestedCurrency?.takeIf { it.isNotBlank() }
         if (resolved.isNullOrBlank()) {
-            return Result.Error(message = "Currency is required. Please edit the review and select a currency.")
+            return Result.Error(message = ERROR_CURRENCY_REQUIRED)
         }
         resolved
     }
@@ -278,28 +311,30 @@ class ReviewQueueRepository @Inject constructor(
 
                         // Write SOURCE_LINKED event for promotion
                         if (promotion.inserted > 0) {
-                            transactionEventDao.insert(
-                                com.yourname.expensetracker.data.database.entity.TransactionEvent(
-                                    expenseId = id,
-                                    eventType = LifecycleEventType.SOURCE_LINKED.name,
-                                    source = ExpenseSource.REVIEW_APPROVAL.name,
-                                    actor = null,
-                                    occurredAt = timeProvider.now(),
-                                    dedupeKey = null,
-                                    duplicateExpenseId = null,
-                                    beforeSnapshot = null,
-                                    afterSnapshot = null,
-                                    metadata = JSONObject().apply {
-                                        put("operation", "PENDING_REVIEW_SOURCE_PROMOTION")
-                                        put("pendingReviewId", reviewId)
-                                        put("attempted", promotion.attempted)
-                                        put("inserted", promotion.inserted)
-                                        put("alreadyExists", promotion.alreadyExists)
-                                    }.toString(),
-                                    reason = "Source links promoted from pending review",
-                                    correlationId = null
+                            // Nested runner joins the outer Room transaction; a writer
+                            // failure propagates and rolls back the whole approval.
+                            transactionRunner.runInTransaction(
+                                correlationId = java.util.UUID.randomUUID().toString(),
+                                operationId = "review.approve.source_linked",
+                                source = "ReviewQueueRepository.approveReview"
+                            ) { ctx ->
+                                transactionLifecycleEventWriter.write(
+                                    ctx,
+                                    TransactionLifecycleEvent(
+                                        expenseId = id,
+                                        eventType = LifecycleEventType.SOURCE_LINKED.name,
+                                        source = ExpenseSource.REVIEW_APPROVAL.name,
+                                        metadata = SafeEventMetadata.builder()
+                                            .put("operation", "PENDING_REVIEW_SOURCE_PROMOTION")
+                                            .put("pendingReviewId", reviewId)
+                                            .put("attempted", promotion.attempted)
+                                            .put("inserted", promotion.inserted)
+                                            .put("alreadyExists", promotion.alreadyExists)
+                                            .build(),
+                                        reason = "Source links promoted from pending review"
+                                    )
                                 )
-                            )
+                            }
                         }
 
                         review.rawNotificationId?.let { rawNotificationDao.markRelevance(it, true) }
@@ -365,7 +400,7 @@ class ReviewQueueRepository @Inject constructor(
                     }
                     is CreateExpenseResult.ValidationFailed -> {
                         // S6-001: Throw inside transaction — rolls back PROCESSING status to PENDING
-                        throw IllegalArgumentException("Validation failed: ${result.errors.joinToString(", ")}")
+                        throw ReviewApprovalValidationException(result.errors.size)
                     }
                     is CreateExpenseResult.Error -> throw result.exception
                 }
@@ -376,8 +411,19 @@ class ReviewQueueRepository @Inject constructor(
         } catch (e: Exception) {
             // S6-D5-001/002: Thrown exceptions (ValidationFailed, link failure) roll back the
             // transaction and surface as Result.Error — review stays PENDING
-            Timber.e(e, "Review approval failed for reviewId=$reviewId")
-            return Result.Error(message = e.message ?: "Approval failed")
+            // R24a: bounded code only; never surface or log exception text or validation joins.
+            val code = if (e is ReviewApprovalValidationException) {
+                ERROR_VALIDATION_FAILED
+            } else {
+                ERROR_APPROVAL_FAILED
+            }
+            Timber.e(
+                "Review approval failed class=%s code=%s reviewId=%d",
+                e::class.java.simpleName,
+                code,
+                reviewId
+            )
+            return Result.Error(message = code)
         }
 
         when (txOutcome.type) {
@@ -515,8 +561,14 @@ class ReviewQueueRepository @Inject constructor(
         return pendingReviews.map { review ->
             val result = try {
                 approveReview(review.review.id)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                Timber.e(e, "Failed to approve review ${review.review.id}")
+                Timber.e(
+                    "Failed to approve review class=%s reviewId=%d",
+                    e::class.java.simpleName,
+                    review.review.id
+                )
                 Result.Error(exception = e)
             }
             review.review.id to result
@@ -529,8 +581,14 @@ class ReviewQueueRepository @Inject constructor(
         for (review in pendingReviews) {
             try {
                 rejectReview(review.review.id)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                Timber.e(e, "Failed to reject review ${review.review.id}")
+                Timber.e(
+                    "Failed to reject review class=%s reviewId=%d",
+                    e::class.java.simpleName,
+                    review.review.id
+                )
             }
         }
     }

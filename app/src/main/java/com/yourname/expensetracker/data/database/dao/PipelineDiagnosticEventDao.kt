@@ -37,6 +37,11 @@ interface PipelineDiagnosticEventDao {
 
     // ── Data retention worker support (P8F-06) ─────────────────────────────────
 
-    @Query("DELETE FROM pipeline_diagnostic_events WHERE timestamp < :cutoffMs")
-    suspend fun deleteOlderThan(cutoffMs: Long): Int
+    // R26: bounded batch — at most [limit] rows (lowest ids first) per call; callers loop
+    // until a call returns fewer than [limit] rows.
+    @Query(
+        "DELETE FROM pipeline_diagnostic_events WHERE id IN " +
+            "(SELECT id FROM pipeline_diagnostic_events WHERE timestamp < :cutoffMs ORDER BY id LIMIT :limit)"
+    )
+    suspend fun deleteOlderThan(cutoffMs: Long, limit: Int): Int
 }

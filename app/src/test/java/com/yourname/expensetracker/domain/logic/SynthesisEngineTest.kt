@@ -10,6 +10,7 @@ import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.model.*
 import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.text.DomainTextKeys
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
@@ -540,6 +541,290 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
         // excludedCount is the sum of the per-source exclusions (2 actual + 1 planned + 0 recurring).
         assertEquals(3, forecast.excludedCount)
         assertTrue("confidence stays in [0,1]", forecast.confidence in 0.0..1.0)
+    }
+
+    // ── FORE-01: fallback path must not throw on non-finite history ─────
+
+    @Test
+    fun `fallback forecast sanitises non-finite past history instead of throwing`() = runTest {
+        // currentMonthSpent == null makes synthesizeInternal throw, entering the catch/fallback.
+        val forecast = engine.synthesize(
+            pastSumDaily = listOf(Double.NaN, 5.0, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY),
+            recurringPatterns = emptyList(),
+            plannedExpenses = emptyList(),
+            savingsGoals = emptyList(),
+            budgetStatuses = emptyList(),
+            spendingPace = SpendingPace(
+                currentMonthSpent = null,
+                daysElapsed = 15,
+                daysInMonth = 31,
+                projectedTotal = 0.0,
+                previousMonthTotal = null,
+                averageMonthlyTotal = null,
+                pacePercentage = 0.0f,
+                paceStatus = PaceStatus.NO_BASELINE,
+                displayCurrency = "EUR",
+            )
+        )
+
+        assertEquals("fallback forecast", 0.0, forecast.confidence, 0.0)
+        // Same last-finite-value carry-forward as the normal path.
+        assertEquals(listOf(0.0, 5.0, 5.0, 5.0), forecast.components.pastSpendingPoints)
+    }
+
+    // ── FORE-02: sub-0.70 patterns are not subtracted from the discretionary baseline ──
+
+    @Test
+    fun `pattern below 0-70 confidence is not subtracted from discretionary baseline`() = runTest {
+        fun pace() = SpendingPace(
+            currentMonthSpent = 0.0,
+            daysElapsed = 15,
+            daysInMonth = 31,
+            projectedTotal = 0.0,
+            previousMonthTotal = null,
+            averageMonthlyTotal = 1000.0,
+            pacePercentage = 0.0f,
+            paceStatus = PaceStatus.ON_PACE,
+            displayCurrency = "EUR",
+        )
+        val farDate = millis(2024, Calendar.FEBRUARY, 20) // outside the forecast window
+
+        val weak = engine.synthesize(
+            pastSumDaily = emptyList(),
+            recurringPatterns = listOf(createRecurringPattern(amount = 200.0, confidence = 0.6f, date = farDate)),
+            plannedExpenses = emptyList(), savingsGoals = emptyList(),
+            budgetStatuses = emptyList(), spendingPace = pace()
+        )
+        val strong = engine.synthesize(
+            pastSumDaily = emptyList(),
+            recurringPatterns = listOf(createRecurringPattern(amount = 200.0, confidence = 0.95f, date = farDate)),
+            plannedExpenses = emptyList(), savingsGoals = emptyList(),
+            budgetStatuses = emptyList(), spendingPace = pace()
+        )
+
+        // 31-day month, 16 days remaining: discretionary = baseline / 31 * 16.
+        assertEquals("0.6 not subtracted", 1000.0 / 31 * 16, weak.components.predictedDiscretionary, 0.001)
+        assertEquals("0.95 still subtracted", (1000.0 - 200.0) / 31 * 16, strong.components.predictedDiscretionary, 0.001)
+    }
+
+    // ── FORE-06: insights use the same filters as the reserves / committed window ──
+
+    @Test
+    fun `insights count only unfinished known-currency strict goals and in-window MUST items`() = runTest {
+        val open = createSavingsGoal(1000.0, 100.0, GoalProtectionLevel.STRICT, null)
+        val funded = createSavingsGoal(1000.0, 1000.0, GoalProtectionLevel.STRICT, null)
+        val unknownCurrency = createSavingsGoal(1000.0, 100.0, GoalProtectionLevel.STRICT, null)
+            .copy(currencyAssumption = "LEGACY_DEFAULT")
+        val inWindow = createPlannedExpense(10.0, PlannedExpensePriority.MUST, millis(2024, Calendar.JANUARY, 17))
+        val past = createPlannedExpense(10.0, PlannedExpensePriority.MUST, millis(2024, Calendar.JANUARY, 5))
+        val nextMonth = createPlannedExpense(10.0, PlannedExpensePriority.MUST, millis(2024, Calendar.FEBRUARY, 20))
+
+        val forecast = engine.synthesize(
+            pastSumDaily = emptyList(),
+            recurringPatterns = emptyList(),
+            plannedExpenses = listOf(inWindow, past, nextMonth),
+            savingsGoals = listOf(open, funded, unknownCurrency),
+            budgetStatuses = emptyList(),
+            spendingPace = SpendingPace(
+                currentMonthSpent = 0.0,
+                daysElapsed = 15,
+                daysInMonth = 31,
+                projectedTotal = 0.0,
+                previousMonthTotal = null,
+                averageMonthlyTotal = null,
+                pacePercentage = 0.0f,
+                paceStatus = PaceStatus.ON_PACE,
+                displayCurrency = "EUR",
+            )
+        )
+
+        assertEquals(
+            listOf(
+                UiText.fromKey(DomainTextKeys.SYNTHESIS_STRICT_SAVINGS_GOALS_ACTIVE_FORMAT, 1),
+                UiText.fromKey(DomainTextKeys.SYNTHESIS_MUST_PAY_PLANNED_EXPENSES_FORMAT, 1)
+            ),
+            forecast.actionableInsights
+        )
+    }
+
+    // ── FORE-05: obligations above the limit are CRITICAL even when on pace ──
+
+    private fun onPaceSpending(spent: Double) = SpendingPace(
+        currentMonthSpent = spent,
+        daysElapsed = 15,
+        daysInMonth = 31,
+        projectedTotal = spent * 2,
+        previousMonthTotal = null,
+        averageMonthlyTotal = null,
+        pacePercentage = 100.0f,
+        paceStatus = PaceStatus.ON_PACE,
+        displayCurrency = "EUR",
+    )
+
+    @Test
+    fun `on pace but spent plus committed obligations above the limit is CRITICAL`() = runTest {
+        // 500 spent + 600 committed = 1100 > 1000 limit; no budget row is critical and pace is ON_PACE.
+        val forecast = engine.synthesize(
+            pastSumDaily = emptyList(),
+            recurringPatterns = listOf(createRecurringPattern(600.0, 0.95f, millis(2024, Calendar.JANUARY, 20))),
+            plannedExpenses = emptyList(), savingsGoals = emptyList(),
+            budgetStatuses = listOf(createBudgetStatus(limit = 1000.0)),
+            spendingPace = onPaceSpending(500.0)
+        )
+
+        assertEquals(0.0, forecast.components.discretionaryBudget, 0.0)
+        assertEquals(RiskLevel.CRITICAL, forecast.components.riskLevel)
+    }
+
+    @Test
+    fun `on pace with explicit overall budget and obligations above it is CRITICAL`() = runTest {
+        // Overall 1000 (plus a category row) is the limit source: 500 spent + 600 committed = 1100 > 1000.
+        val forecast = engine.synthesize(
+            pastSumDaily = emptyList(),
+            recurringPatterns = listOf(createRecurringPattern(600.0, 0.95f, millis(2024, Calendar.JANUARY, 20))),
+            plannedExpenses = emptyList(), savingsGoals = emptyList(),
+            budgetStatuses = listOf(
+                createBudgetStatus(limit = 1000.0),
+                createBudgetStatus(limit = 300.0, categoryId = 1L)
+            ),
+            spendingPace = onPaceSpending(500.0)
+        )
+
+        assertEquals(RiskLevel.CRITICAL, forecast.components.riskLevel)
+    }
+
+    @Test
+    fun `on pace without overall budget and obligations above partial category budgets is HIGH not CRITICAL`() = runTest {
+        // No overall budget: limit falls back to the category sum (400 + 300 = 700) while spent is ALL
+        // spending, so 500 + 600 = 1100 > 700 must NOT escalate (previous behaviour): buffer 0 -> HIGH.
+        val forecast = engine.synthesize(
+            pastSumDaily = emptyList(),
+            recurringPatterns = listOf(createRecurringPattern(600.0, 0.95f, millis(2024, Calendar.JANUARY, 20))),
+            plannedExpenses = emptyList(), savingsGoals = emptyList(),
+            budgetStatuses = listOf(
+                createBudgetStatus(limit = 400.0, categoryId = 1L),
+                createBudgetStatus(limit = 300.0, categoryId = 2L)
+            ),
+            spendingPace = onPaceSpending(500.0)
+        )
+
+        assertEquals(0.0, forecast.components.discretionaryBudget, 0.0)
+        assertEquals(RiskLevel.HIGH, forecast.components.riskLevel)
+    }
+
+    @Test
+    fun `on pace but spent plus goal reserve above the limit is CRITICAL`() = runTest {
+        // 500 spent + 700 strict reserve (undated: full remaining) = 1200 > 1000 limit.
+        val forecast = engine.synthesize(
+            pastSumDaily = emptyList(), recurringPatterns = emptyList(),
+            plannedExpenses = emptyList(),
+            savingsGoals = listOf(createSavingsGoal(1000.0, 300.0, GoalProtectionLevel.STRICT, null)),
+            budgetStatuses = listOf(createBudgetStatus(limit = 1000.0)),
+            spendingPace = onPaceSpending(500.0)
+        )
+
+        assertEquals(RiskLevel.CRITICAL, forecast.components.riskLevel)
+    }
+
+    @Test
+    fun `on pace with obligations at or under the limit keeps the buffer based level`() = runTest {
+        // 500 spent + 100 committed = 600 of 1000: buffer 0.4 -> LOW.
+        val under = engine.synthesize(
+            pastSumDaily = emptyList(),
+            recurringPatterns = listOf(createRecurringPattern(100.0, 0.95f, millis(2024, Calendar.JANUARY, 20))),
+            plannedExpenses = emptyList(), savingsGoals = emptyList(),
+            budgetStatuses = listOf(createBudgetStatus(limit = 1000.0)),
+            spendingPace = onPaceSpending(500.0)
+        )
+        assertEquals(RiskLevel.LOW, under.components.riskLevel)
+
+        // 500 spent + 500 committed == limit (not above): buffer 0 -> HIGH, unchanged.
+        val exact = engine.synthesize(
+            pastSumDaily = emptyList(),
+            recurringPatterns = listOf(createRecurringPattern(500.0, 0.95f, millis(2024, Calendar.JANUARY, 20))),
+            plannedExpenses = emptyList(), savingsGoals = emptyList(),
+            budgetStatuses = listOf(createBudgetStatus(limit = 1000.0)),
+            spendingPace = onPaceSpending(500.0)
+        )
+        assertEquals(RiskLevel.HIGH, exact.components.riskLevel)
+    }
+
+    // ── FORE-02: WEEKLY/BIWEEKLY patterns project every remaining in-window occurrence ──
+
+    @Test
+    fun `weekly committed pattern projects every remaining occurrence in the window`() = runTest {
+        // Now Jan 15 (31-day month): Jan 17, 24 and 31 are in the window => 3 x 100.
+        val forecast = engine.synthesize(
+            pastSumDaily = listOf(0.0),
+            recurringPatterns = listOf(
+                createRecurringPattern(100.0, 0.95f, millis(2024, Calendar.JANUARY, 17), RecurrenceFrequency.WEEKLY)
+            ),
+            plannedExpenses = emptyList(), savingsGoals = emptyList(), budgetStatuses = emptyList(),
+            spendingPace = onPaceSpending(0.0)
+        )
+
+        assertEquals(300.0, forecast.components.totalCommitted, 0.001)
+        val points = forecast.components.projectedSpendingPoints // index = day - 15
+        assertEquals(0.0, points[1], 0.001)   // Jan 16
+        assertEquals(100.0, points[2], 0.001) // Jan 17
+        assertEquals(100.0, points[8], 0.001) // Jan 23
+        assertEquals(200.0, points[9], 0.001) // Jan 24
+        assertEquals(300.0, points.last(), 0.001) // Jan 31
+    }
+
+    @Test
+    fun `weekly likely detected pattern projects every remaining occurrence in the window`() = runTest {
+        val weekly = createRecurringPattern(100.0, 0.85f, millis(2024, Calendar.JANUARY, 17), RecurrenceFrequency.WEEKLY)
+
+        val legacyPath = engine.synthesize(
+            pastSumDaily = emptyList(), recurringPatterns = listOf(weekly),
+            plannedExpenses = emptyList(), savingsGoals = emptyList(), budgetStatuses = emptyList(),
+            spendingPace = onPaceSpending(0.0)
+        )
+        assertEquals(300.0, legacyPath.components.totalLikely, 0.001)
+
+        // Detected-only branch (a confirmed occurrence exists elsewhere) uses the same projection.
+        val occurrencePath = engine.synthesize(
+            pastSumDaily = emptyList(), recurringPatterns = listOf(weekly),
+            plannedExpenses = emptyList(), savingsGoals = emptyList(), budgetStatuses = emptyList(),
+            spendingPace = onPaceSpending(0.0),
+            confirmedOccurrences = listOf(
+                ConfirmedOccurrence(
+                    dueDate = millis(2024, Calendar.JANUARY, 20),
+                    expectedAmount = 10.0, expectedCurrency = "EUR", merchant = null, categoryId = null
+                )
+            )
+        )
+        assertEquals(300.0, occurrencePath.components.totalLikely, 0.001)
+        assertEquals(10.0, occurrencePath.components.totalCommitted, 0.001)
+    }
+
+    @Test
+    fun `biweekly pattern projects one or two occurrences depending on the remaining window`() = runTest {
+        suspend fun committedFor(day: Int, frequency: RecurrenceFrequency, amount: Double = 100.0) = engine.synthesize(
+            pastSumDaily = emptyList(),
+            recurringPatterns = listOf(createRecurringPattern(amount, 0.95f, millis(2024, Calendar.JANUARY, day), frequency)),
+            plannedExpenses = emptyList(), savingsGoals = emptyList(), budgetStatuses = emptyList(),
+            spendingPace = onPaceSpending(0.0)
+        ).components.totalCommitted
+
+        // Jan 17 and Jan 31 => 2; Jan 20 (next is Feb 3) => 1.
+        assertEquals(200.0, committedFor(17, RecurrenceFrequency.BIWEEKLY), 0.001)
+        assertEquals(100.0, committedFor(20, RecurrenceFrequency.BIWEEKLY), 0.001)
+        // A next expected date before today is still not projected.
+        assertEquals(0.0, committedFor(10, RecurrenceFrequency.WEEKLY), 0.001)
+    }
+
+    @Test
+    fun `monthly pattern still projects a single occurrence`() = runTest {
+        val forecast = engine.synthesize(
+            pastSumDaily = emptyList(),
+            recurringPatterns = listOf(createRecurringPattern(100.0, 0.95f, millis(2024, Calendar.JANUARY, 17))),
+            plannedExpenses = emptyList(), savingsGoals = emptyList(), budgetStatuses = emptyList(),
+            spendingPace = onPaceSpending(0.0)
+        )
+
+        assertEquals(100.0, forecast.components.totalCommitted, 0.001)
     }
 
     private fun createRecurringPattern(

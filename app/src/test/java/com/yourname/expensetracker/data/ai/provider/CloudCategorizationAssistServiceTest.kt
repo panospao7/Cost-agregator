@@ -8,6 +8,7 @@ import com.yourname.expensetracker.domain.ai.model.CategorizationAssistInput
 import com.yourname.expensetracker.domain.ai.model.CategoryOption
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
+import com.yourname.expensetracker.domain.privacy.PrivacyAuditLogger
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
@@ -71,11 +72,13 @@ class CloudCategorizationAssistServiceTest {
             }
             .build()
 
-        val service = serviceWithAllowedGate(mockKeyStorage, client)
+        val retryDelay = RecordingRetryDelay()
+        val service = serviceWithAllowedGate(mockKeyStorage, client, retryDelay)
 
         val result = service.suggest(defaultInput())
 
         assertEquals(2, attempts.get())
+        retryDelay.assertSchedule(expectedRetries = 1)
         assertTrue(result != null)
         assertEquals(1L, result?.categoryId)
         assertEquals("Groceries", result?.categoryName)
@@ -105,11 +108,13 @@ class CloudCategorizationAssistServiceTest {
             }
             .build()
 
-        val service = serviceWithAllowedGate(mockKeyStorage, client)
+        val retryDelay = RecordingRetryDelay()
+        val service = serviceWithAllowedGate(mockKeyStorage, client, retryDelay)
 
         val result = service.suggest(defaultInput())
 
         assertEquals(2, attempts.get())
+        retryDelay.assertSchedule(expectedRetries = 1)
         assertTrue(result != null)
     }
 
@@ -133,12 +138,14 @@ class CloudCategorizationAssistServiceTest {
             }
             .build()
 
-        val service = serviceWithAllowedGate(mockKeyStorage, client)
+        val retryDelay = RecordingRetryDelay()
+        val service = serviceWithAllowedGate(mockKeyStorage, client, retryDelay)
 
         val result = service.suggest(defaultInput())
 
         assertNull(result)
         assertEquals(1, attempts.get())
+        retryDelay.assertNoRetries()
     }
 
     // TODO: Tautological mock test — consider adding real behavior assertion
@@ -161,12 +168,14 @@ class CloudCategorizationAssistServiceTest {
             }
             .build()
 
-        val service = serviceWithAllowedGate(mockKeyStorage, client)
+        val retryDelay = RecordingRetryDelay()
+        val service = serviceWithAllowedGate(mockKeyStorage, client, retryDelay)
 
         val result = service.suggest(defaultInput())
 
         assertNull(result)
         assertEquals(3, attempts.get())
+        retryDelay.assertSchedule(expectedRetries = 2)
     }
 
     @Test
@@ -403,7 +412,8 @@ class CloudCategorizationAssistServiceTest {
 
     private fun serviceWithAllowedGate(
         keyStorage: SecureKeyStorage,
-        client: OkHttpClient
+        client: OkHttpClient,
+        retryDelay: RecordingRetryDelay = RecordingRetryDelay()
     ): CloudCategorizationAssistService = CloudCategorizationAssistService(
         keyStorage,
         client,
@@ -412,7 +422,9 @@ class CloudCategorizationAssistServiceTest {
         DefaultCloudPayloadPolicy(
             EffectiveCloudAiPolicyResolver.failClosedNoAi(),
             DefaultCloudPayloadRedactor()
-        )
+        ),
+        PrivacyAuditLogger.NO_OP,
+        retryDelay.delayer
     )
 
     private fun defaultInput(): CategorizationAssistInput {

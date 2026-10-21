@@ -249,6 +249,7 @@ class TimePeriodUtilsT4CBatch2BTest {
             WeekCase("Europe/Athens", "2024-06-09T21:00:00Z", "2024-06-16T21:00:00Z"),
             WeekCase("America/New_York", "2024-06-10T04:00:00Z", "2024-06-17T04:00:00Z")
         )
+        assertEquals("normal week table size", 4, cases.size)
         for (case in cases) {
             withZone(case.zoneId) {
                 assertEquals("start ${case.zoneId}", Instant.parse(case.startIso).toEpochMilli(), TimePeriodUtils.getStartOfWeek(mondayNoonUtc))
@@ -614,9 +615,12 @@ class TimePeriodUtilsT4CBatch2BTest {
     // (post-cutover samples only; see class docs for the pre-cutover note)
     // ============================================================================
 
+    // Merged from the former "migrated week boundaries match the legacy Calendar oracle ..."
+    // and "migrated week boundaries match the explicit java time oracle ..." tests; each
+    // oracle keeps its own sample list and its own row-naming message prefix.
     @Test
-    fun `migrated week boundaries match the legacy Calendar oracle across samples and zones`() {
-        val samples = listOf(
+    fun `migrated week boundaries match the legacy Calendar and explicit java time oracles across samples and zones`() {
+        val legacySamples = listOf(
             epochZero,
             minusOneSecond,
             preEpoch1950,
@@ -634,9 +638,10 @@ class TimePeriodUtilsT4CBatch2BTest {
             Instant.parse("2024-11-03T06:30:00Z").toEpochMilli(), // fall-back overlap second occurrence
             Instant.parse("2024-12-31T23:59:59Z").toEpochMilli()  // last instant of the year
         )
+        assertEquals("legacy sample table size", 16, legacySamples.size)
         for (zoneId in ZONES) {
             withZone(zoneId) {
-                for (ts in samples) {
+                for (ts in legacySamples) {
                     assertEquals("legacy getStartOfWeek $zoneId ts=$ts", legacyStartOfWeek(ts), TimePeriodUtils.getStartOfWeek(ts))
                     assertEquals("legacy getEndOfWeek $zoneId ts=$ts", legacyEndOfWeek(ts), TimePeriodUtils.getEndOfWeek(ts))
                     for (offset in listOf(-1, 0, 1)) {
@@ -649,11 +654,8 @@ class TimePeriodUtilsT4CBatch2BTest {
                 }
             }
         }
-    }
 
-    @Test
-    fun `migrated week boundaries match the explicit java time oracle across samples and zones`() {
-        val samples = listOf(
+        val explicitSamples = listOf(
             epochZero,
             minusOneSecond,
             preEpoch1950,
@@ -664,9 +666,10 @@ class TimePeriodUtilsT4CBatch2BTest {
             newYear2025Utc,
             leapDay2024Utc
         )
+        assertEquals("explicit sample table size", 9, explicitSamples.size)
         for (zoneId in ZONES) {
             withZone(zoneId) {
-                for (ts in samples) {
+                for (ts in explicitSamples) {
                     assertEquals("explicit getStartOfWeek $zoneId ts=$ts", explicitStartOfWeek(ts, zoneId), TimePeriodUtils.getStartOfWeek(ts))
                     assertEquals("explicit getEndOfWeek $zoneId ts=$ts", explicitEndOfWeek(ts, zoneId), TimePeriodUtils.getEndOfWeek(ts))
                     for (offset in listOf(-1, 0, 1)) {

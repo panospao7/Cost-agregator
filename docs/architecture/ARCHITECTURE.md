@@ -35,7 +35,7 @@
 - `DatabaseSchemaPolicy` (`data/database/DatabaseSchemaPolicy.kt`) is the single source of truth for migration config: `CURRENT_VERSION`, `MIGRATION_BASELINE = 145`, `UNSUPPORTED_VERSIONS` (1..<145, destructive migration), and `ALL_MIGRATIONS` (delegates to `DatabaseMigrations.ALL`). Production code and tests must reference this, not hardcoded values.
 - ~1075 production Kotlin source files (~1758 including unit tests) across domain, data, ui, di, util, service, startup, and worker packages
 - 68 DAOs (64 in DaoModule + 3 in AiModule + 1 unbound), 70 entities registered in AppDatabase
-- 41 @HiltViewModel (40 *ViewModel.kt files + 1 inline in RecurringExpensesScreen.kt)
+- 42 @HiltViewModel (41 *ViewModel.kt files + 1 inline in RecurringExpensesScreen.kt)
 - 33 @Module Hilt modules
 - SimpleDateFormat → DateTimeFormatter: migration **substantially complete but not 100%** — one production usage remains (chart axis day label in `ui/screens/analytics/AnalyticsScreen.kt`); other matches in main source are KDoc/comments only. Residual `java.util.Calendar` usage is concentrated in `domain/util`, UI screens, `domain/logic` (SynthesisEngine), and debug/diagnostics helpers.
 - Time handling seam: `TimeProvider` (`domain/util/TimeProvider.kt`, epoch-millis `now()`) bound via `TimeModule` to `SystemTimeProvider`; `MonotonicTimeProvider` → `SystemMonotonicTimeProvider`. Callers derive `LocalDate`/`Instant` from `timeProvider.now()` (see `TIME_SEMANTICS.md`). The T1–T4C java.time migration series replaced `Calendar`/`SimpleDateFormat` boundary math with java.time + injected `TimeProvider` in analytics, budget, cashflow, and dashboard pipelines; direct wall-clock reads are policed by the G-TIME-01 guard `scripts/verify_time_boundaries.py` with exact-exception policy `config/guards/time_boundary_exceptions.yml` (4 entries).
@@ -99,7 +99,7 @@
 - Series T1→T4C replaced `Calendar`/`SimpleDateFormat` boundary math with java.time types derived from injected `TimeProvider.now()` in analytics (weekday/DST semantics), budget (`BudgetCalculator` calendar windows), cashflow (day iteration to `LocalDate`), dashboard month cursors, and year/quarter/month boundary helpers. A final sweep commit removed direct wall-clock reads from ~40 files.
 - `TimeProvider` (`domain/util/TimeProvider.kt`) exposes only epoch-millis `now()`; callers derive `LocalDate`/`Instant` via `Instant.ofEpochMilli(now).atZone(...)`. Bound in `TimeModule`: `SystemTimeProvider`, `SystemMonotonicTimeProvider`.
 - SimpleDateFormat is no longer claimed "0 remaining": one production call site remains (`AnalyticsScreen.kt` chart axis label). Residual `Calendar.getInstance()` / `System.currentTimeMillis()` call sites are concentrated in `domain/util`, UI screens, `domain/logic`, debug/diagnostics, and the rescue path.
-- Enforcement: G-TIME-01 guard `scripts/verify_time_boundaries.py` (canonical, replaces the older advisory `scripts/guards/check_direct_time_calls.kts`) with exact-exception policy `config/guards/time_boundary_exceptions.yml` (currently 4 entries: `SystemTimeProvider.now`, `SettlementCalculator.findMinimalTransferPlan` nanoTime budget, and two Room migration lambdas that seed data before Hilt exists).
+- Enforcement: G-TIME-01 guard `scripts/verify_time_boundaries.py` (canonical; it superseded an older advisory Kotlin-script time guard that was never wired into CI and has since been retired) with exact-exception policy `config/guards/time_boundary_exceptions.yml` (currently 4 entries: `SystemTimeProvider.now`, `SettlementCalculator.findMinimalTransferPlan` nanoTime budget, and two Room migration lambdas that seed data before Hilt exists).
 
 #### CI guardrail enforcement suite
 - Static guard suite: `scripts/ci/run_static_guard_suite.py` runs ALL guards regardless of individual failures, emits per-guard logs + `summary.json`/`summary.md`, and computes a deterministic exit code (0 pass / 1 blocking violation / 2 infrastructure). Wired as the `static-guards` CI job in `.github/workflows/ci.yml`.
@@ -107,7 +107,7 @@
 - Ratchet infrastructure: `scripts/ci/guard_ratchet.py` (no-growth baselines with violation fingerprints; new or stale/resolved baseline entries fail), `scripts/ci/generate_baselines.py` (bootstrap; baselines live under `config/baselines/`), `scripts/ci/gradle_db_guard_inputs.py` (Python contract mirror of the `:app:verifyDbAccessBoundaries` Gradle task, PR-GR-01).
 - Registered guards (blocking): source_provenance, ui_dao, worker, receipt_link, import_lifecycle, cloud_payload, pii_logging, di_release, allowlist_compliance, ignored_test_budget, lint_baseline_policy, time_boundaries, deprecation_escalations, db_artifact_sync, known_good_state, guard_docs_truth, raw_money_aggregates, currency_guardrails_ps, release_artifact. (Ratchet with baselines): migration_matrix, cancellation, privacy, db_access, event_writers, money. Policy files: `config/guards/db_ownership_policy.yml` (canonical legal DB writers — exact class/method/DAO/operation contract), `config/guards/db_structural_exceptions.yml`, `config/guards/time_boundary_exceptions.yml`, `config/guards/production_source_roots.yml` (declared production source roots for source-scoped guards); allowlists under `scripts/allowlists/*.yml` (8 files: cancellation, cloud_payload, di_release, import_lifecycle, pii_logging, receipt_link, ui_dao, worker).
 - DB mediation proof gate (GR-13/GR-14/GR-15; a report-only shadow CLI outside the 25-guard registry above): `scripts/ci/inspect_db_mediation_proof.py` builds the exact interprocedural call graph over every `helper`/`workerMediated` active-policy mutation and classifies each entry with the shared GR-12 dominance engine. Amended acceptance criterion (`docs/ci/db-mediation/GR-15_GATE_AMENDMENT.md`): every row ends in `proven_helper` / `proven_worker_mediated` / `proven_restore_internal` / or `owner_accepted` per the tracked acceptance registry `docs/ci/db-mediation/GR-14_OWNER_ACCEPTANCE_RECORD.md`; a row absent from the registry is unproven — fail closed; counterexample tolerance is ZERO and absolute; infrastructure failures are their own exit class (0 pass / 1 unproven-or-registry-mismatch / 2 infrastructure). It never modifies policy, source, or active gate results and is not a ratchet child.
-- Standalone advisory scripts (not wired into the CI manifest): `scripts/guards/check_direct_time_calls.kts`, `scripts/guards/check_lifecycle_bypasses.kts` (flags direct ExpenseDao mutation calls that bypass `TransactionLifecycleCoordinator`), `scripts/guards/check_raw_money_aggregates.kts` (flags raw `sumOf` financial aggregates), `scripts/guardrails/dao-access-check.kts` + `dao-approved-files.txt`, `tools/lifecycle-bypass-guard.groovy`.
+- Standalone advisory scripts (not wired into the CI manifest): `scripts/guardrails/dao-access-check.kts` + `dao-approved-files.txt`, `tools/lifecycle-bypass-guard.groovy`. Three earlier advisory Kotlin scripts (direct time calls, lifecycle bypasses, raw money aggregates) and their file-existence test `GuardSeededViolationTest` were retired; the canonical enforcement is G-TIME-01 (`scripts/verify_time_boundaries.py`), the `db_access` guard, and the `raw_money_aggregates` guard.
 - Guard framework contract (rule IDs, exit codes 0/1/2, allowlist format, fail-closed rules): see `docs/ci/guard-policy.md` and `docs/ci/guard-framework.md`.
 - In-repo architecture guard unit tests live under `app/src/test/java/com/yourname/expensetracker/architecture/`: `BackupRestoreArchitectureGuardTest`, `BankPrivacyModeArchitectureGuardTest`, `BudgetAutopilotArchitectureGuardTest`, `CancellationSafetyArchitectureGuardTest`, `DeprecatedApiArchitectureGuardTest`, `DirectEventDaoInsertGuardTest`, `Engine5PrimitiveGuardTest`, `ExpenseDaoMutationAccessTest` (CI-time hard enforcement of `@RestrictedExpenseDaoMutation` opt-in), `RawDaoArchitectureGuardTest`, `RecurringArchitectureGuardTest`, `SourceScanningArchitectureGuardTest`, `TransactionContextProvenanceGuardTest`, `WorkerGuardArchitectureGuardTest`, `WorkerGuardStaticVerificationTest`, `WriteBarrierArchitectureGuardTest`.
 
@@ -289,8 +289,7 @@
 - `scripts/verify_source_provenance_boundaries.py` — provenance boundary verification
 - `scripts/verify_event_writers.py` — event writer contract verification
 - `scripts/verify_db_access_boundaries.py` — DB access boundary verification
-- `scripts/guards/check_raw_money_aggregates.kts` — raw money aggregate guard
-- `scripts/guards/check_direct_time_calls.kts` — flags direct `System.currentTimeMillis()` / `Instant.now()` calls (enforces `TimeProvider` usage)
+- Retired: the advisory Kotlin-script guards for raw money aggregates and direct time calls (never wired into CI); enforcement is `scripts/verify_raw_money_aggregates.py` and `scripts/verify_time_boundaries.py`.
 
 ### Architecture Drift Updates (2026-05-11 — pipeline evaluation & closure)
 - **Database version upgraded to v129** (from v124) — later superseded by v130→v131 in the currency/privacy overhaul. Migrations 124→129 add durable diagnostics tables (`operation_runs`, `operation_run_events`), expand `pipeline_diagnostic_events` with 9 new columns, add `correlationId`/`causationId` to `transaction_events`, and add `isTerminal`/`eventId` to `operation_run_events`.
@@ -333,7 +332,7 @@
 - **ImportCoordinator** (`util/ImportCoordinator.kt`) — orchestrates CSV/JSON import flows: format detection via content inspection, delegates to `CsvExpenseImporter` or `JsonExpenseImporter`, reports `ImportResult` with summary statistics.
 - **SubscriptionModule deleted** — confirmed removed; `SubscriptionManagerEngine` is auto-provided by `@Singleton @Inject constructor`. No Dagger cycle remaining.
 - **PrivacySettings** — added `receiptImageCloudEnabled` and `bankStatementAiEnabled` boolean fields for fine-grained cloud AI toggles.
-- **Additional CI guard** — `check_direct_time_calls.kts` (`scripts/guards/`) enforces `TimeProvider` usage and flags direct `System.currentTimeMillis()` / `Instant.now()` calls.
+- **Additional time guard** — an advisory Kotlin script flagged direct `System.currentTimeMillis()` / `Instant.now()` calls; it was never wired into CI and has since been retired in favour of the G-TIME-01 guard.
 - **MoneyAmount.kt** — `format()` extension now handles zero, negative, and large amounts correctly (M12 fix). `MoneyAggregate.kt` now guards against division by zero in `perDayAverage()` (M11 fix).
 - **ExportOptionsViewModel** — switched CSV/JSON export to use `ExportTransaction` schema fields (7C/7D), aligned with new `ExpenseExportMapper` and `ExportTransaction` domain model.
 
@@ -511,7 +510,7 @@ domain/
 │   ├── PrivacySettings.kt      # Data class with 10+ privacy toggles + 2 retention settings
 │   ├── PrivacySettingsRepository.kt  # Interface for reading/writing settings
 │   ├── PrivacyAuditContext.kt        # Typed audit context with forCloudCall() factory
-│   ├── PrivacyAuditLogger.kt   # Logs every gate check decision
+│   ├── PrivacyAuditLogger.kt   # Logs gate decisions individually, except repeated ALLOWED NOTIFICATION_CAPTURE (first per 60 min written; repeats counted as coalescedCount on next window row or a coalescedFlush row; approximate)
 │   ├── NotificationPrivacyGate.kt    # Guards notification capture/allowlist
 │   ├── NotificationCaptureGate.kt    # Checks settings + PrivacyGate before extras extraction
 │   ├── CloudAiPrivacyGate.kt         # Guards all CLOUD_AI_* capabilities
@@ -1178,7 +1177,7 @@ backup encryption, and an export anonymizer for the expense tracker database.
 | `PrivacyDecision` | `domain/privacy/PrivacyDecision.kt` | Sealed interface: `Allowed` or `Denied(reason)` |
 | `PrivacySettings` | `domain/privacy/PrivacySettings.kt` | Data class with 10 privacy toggles (notificationCapture, cloudAi, redactBeforeCloud, receiptImageCloud, bankStatementAi, externalGeocoding, backgroundLocationBackfill, deviceGpsLocation, encryptedBackup, debugDataPersistence) + 2 retention day settings |
 | `PrivacySettingsRepository` | `domain/privacy/PrivacySettingsRepository.kt` | Interface for reading/writing settings |
-| `PrivacyAuditLogger` | `domain/privacy/PrivacyAuditLogger.kt` | Logs every gate check decision (capability, decision, reason, context, caller) to the privacy_audit_events table |
+| `PrivacyAuditLogger` | `domain/privacy/PrivacyAuditLogger.kt` | Logs gate decisions (capability, decision, reason, context, caller) to the privacy_audit_events table: every decision is recorded individually except repeated ALLOWED NOTIFICATION_CAPTURE decisions: the first in a 60-minute window is written; repeats are counted and reported as coalescedCount on the next window's first row or on a flush row (marked coalescedFlush) written before any other decision or on eviction; DENIED, FAIL_CLOSED (stored DENIED_FAIL_CLOSED), NOT_APPLICABLE and all other capabilities are always individual rows; counts are approximate (lower bound across process death) |
 | `NotificationPrivacyGate` | `domain/privacy/NotificationPrivacyGate.kt` | Guards NOTIFICATION_CAPTURE and NOTIFICATION_PACKAGE_ALLOWLIST |
 | `LocationPrivacyGate` | `domain/privacy/LocationPrivacyGate.kt` | Guards EXTERNAL_GEOCODING, BACKGROUND_LOCATION_BACKFILL, DEVICE_GPS_LOCATION, OVERPASS_API |
 | `CloudAiPrivacyGate` | `domain/privacy/CloudAiPrivacyGate.kt` | Guards all CLOUD_AI_* capabilities plus RECEIPT_IMAGE_CLOUD_UPLOAD |
@@ -1561,7 +1560,7 @@ The Room schema at v120 (historical reference) included all tables from v106 plu
 
 **Phase 6 additions (migration 102→103→104):**
 
-- **New table:** `privacy_audit_events` — append-only log of every privacy gate decision (capability, decision ALLOWED/DENIED, reason, context JSON, timestampMs, caller).
+- **New table:** `privacy_audit_events` — append-only log of privacy gate decisions: every decision is recorded individually except repeated ALLOWED NOTIFICATION_CAPTURE decisions: the first in a 60-minute window is written; repeats are counted and reported as coalescedCount on the next window's first row or on a flush row (marked coalescedFlush) written before any other decision or on eviction; DENIED, FAIL_CLOSED (stored DENIED_FAIL_CLOSED), NOT_APPLICABLE and all other capabilities are always individual rows; counts are approximate (lower bound across process death) (capability, decision ALLOWED/DENIED/DENIED_FAIL_CLOSED/NOT_APPLICABLE, reason, context JSON, timestampMs, caller).
 - **New columns on `raw_notifications`:** `rawContentPurgedAt` (INTEGER, nullable) — timestamp when raw notification content was purged for data retention.
 - **New columns on `scanned_receipts`:** `rawOcrTextPurgedAt` (INTEGER, nullable) — timestamp when raw OCR text was purged for data retention.
 
@@ -1818,7 +1817,7 @@ Cross-cutting fixes applied after architecture review tightened correctness, con
 - BackupPrivacyMode enum (4 backup privacy levels)
 - CloudPayloadRedactor interface (unified cloud AI redaction contract)
 - ForecastDataQuality data class (additive field for partial-currency forecasting)
-- CI guard: scripts/guards/check_lifecycle_bypasses.kts
+- Lifecycle-bypass guard (an advisory Kotlin script, since retired; enforcement is the `db_access` guard)
 - WorkerContractTest verifying all 7 default workers
 
 ### Stage 2 — CloudPayloadRedactor Migration Complete (2026-05-09)

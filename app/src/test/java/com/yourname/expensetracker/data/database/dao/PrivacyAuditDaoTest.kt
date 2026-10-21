@@ -64,22 +64,29 @@ class PrivacyAuditDaoTest {
     // -------------------------------------------------------------------------
 
     @Test
-    fun `insert an audit event`() = runTest {
-        val event = createEvent()
-        val id = dao.insert(event)
-
+    fun `insert then read back returns every audit event field exactly`() = runTest {
+        val id = dao.insert(
+            createEvent(
+                capability = "CAMERA",
+                decision = "DENIED",
+                reason = "No permission",
+                context = "ctx_code",
+                timestampMs = FIXED_NOW + 1000,
+                caller = "test_caller"
+            )
+        )
         assertTrue(id > 0)
-    }
-
-    @Test
-    fun `getRecent returns all events within limit`() = runTest {
-        dao.insert(createEvent(capability = "LOCATION", timestampMs = FIXED_NOW))
-        dao.insert(createEvent(capability = "CAMERA", timestampMs = FIXED_NOW + 1000))
-        dao.insert(createEvent(capability = "CONTACTS", timestampMs = FIXED_NOW + 2000))
 
         val results = dao.getRecent(10)
 
-        assertEquals(3, results.size)
+        assertEquals(1, results.size)
+        assertEquals(id, results[0].id)
+        assertEquals("CAMERA", results[0].capability)
+        assertEquals("DENIED", results[0].decision)
+        assertEquals("No permission", results[0].reason)
+        assertEquals("ctx_code", results[0].context)
+        assertEquals(FIXED_NOW + 1000, results[0].timestampMs)
+        assertEquals("test_caller", results[0].caller)
     }
 
     @Test
@@ -109,18 +116,6 @@ class PrivacyAuditDaoTest {
     }
 
     @Test
-    fun `insert multiple events and verify content`() = runTest {
-        dao.insert(createEvent(capability = "LOCATION", decision = "ALLOWED"))
-        dao.insert(createEvent(capability = "CAMERA", decision = "DENIED", reason = "No permission"))
-
-        val results = dao.getRecent(10)
-
-        assertEquals(2, results.size)
-        assertEquals("CAMERA", results[0].capability)
-        assertEquals("DENIED", results[0].decision)
-    }
-
-    @Test
     fun `getRecent returns empty list when no events exist`() = runTest {
         val results = dao.getRecent(10)
 
@@ -138,7 +133,7 @@ class PrivacyAuditDaoTest {
         dao.insert(createEvent(timestampMs = cutoff)) // exactly at cutoff — kept
         dao.insert(createEvent(timestampMs = FIXED_NOW))
 
-        val deleted = dao.deleteOlderThan(cutoff)
+        val deleted = dao.deleteOlderThan(cutoff, 5000)
 
         assertEquals(1, deleted)
         assertEquals(2, dao.getRecent(10).size)
@@ -149,7 +144,27 @@ class PrivacyAuditDaoTest {
         val cutoff = FIXED_NOW - 180L * 24 * 60 * 60 * 1000
         dao.insert(createEvent(timestampMs = cutoff - 1))
 
-        assertEquals(1, dao.deleteOlderThan(cutoff))
-        assertEquals(0, dao.deleteOlderThan(cutoff))
+        assertEquals(1, dao.deleteOlderThan(cutoff, 5000))
+        assertEquals(0, dao.deleteOlderThan(cutoff, 5000))
+    }
+
+    @Test
+    fun `deleteOlderThan deletes at most limit rows per call and keeps newer rows`() = runTest {
+        val cutoff = FIXED_NOW - 180L * 24 * 60 * 60 * 1000
+        repeat(5) { dao.insert(createEvent(timestampMs = cutoff - 1 - it)) }
+        repeat(2) { dao.insert(createEvent(timestampMs = FIXED_NOW + it)) }
+
+        // 5 old + 2 new = 7 rows.
+        assertEquals(2, dao.deleteOlderThan(cutoff, 2))
+        assertEquals(5, dao.getRecent(100).size)
+        assertEquals(2, dao.deleteOlderThan(cutoff, 2))
+        assertEquals(3, dao.getRecent(100).size)
+        // Final partial batch is smaller than the limit and signals completion.
+        assertEquals(1, dao.deleteOlderThan(cutoff, 2))
+        assertEquals(0, dao.deleteOlderThan(cutoff, 2))
+
+        val remaining = dao.getRecent(100)
+        assertEquals(2, remaining.size)
+        assertTrue(remaining.all { it.timestampMs >= FIXED_NOW })
     }
 }

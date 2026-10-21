@@ -80,6 +80,10 @@ sealed interface PrivacyBlocked {
         override val capability = PrivacyCapability.DEBUG_DATA_PERSISTENCE
     }
 
+    data class ExchangeRateDownloadDisabled(override val reason: String = "Exchange-rate download is disabled") : PrivacyBlocked {
+        override val capability = PrivacyCapability.EXCHANGE_RATE_DOWNLOAD
+    }
+
     data class Custom(
         override val capability: PrivacyCapability,
         override val reason: String
@@ -131,5 +135,6 @@ private fun privacyBlockedFromCapability(capability: PrivacyCapability): Privacy
     PrivacyCapability.RAWBACKUP_EXPORT -> PrivacyBlocked.RawExportDisabled()
     PrivacyCapability.ENCRYPTED_BACKUP -> PrivacyBlocked.EncryptedBackupDisabled()
     PrivacyCapability.DEBUG_DATA_PERSISTENCE -> PrivacyBlocked.DebugDataPersistenceDisabled()
+    PrivacyCapability.EXCHANGE_RATE_DOWNLOAD -> PrivacyBlocked.ExchangeRateDownloadDisabled()
     else -> PrivacyBlocked.Custom(capability, PrivacyGateReasonCodes.PRIVACY_BLOCKED)
 }

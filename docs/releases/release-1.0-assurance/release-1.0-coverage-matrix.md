@@ -19,6 +19,49 @@ Status: PENDING. Phase 2 regression slices RG-01..RG-17 executed 2026-10-14/15 (
   Rows P-07, P-10, I-01, P-08, E-04, P-01, I-04 carry per-slice notes; for RG-06..RG-16 see the ledgers.
 ```
 
+## 0. Final coverage status (candidate 01fae80c, 2026-10-18)
+
+The planning tables below are kept unchanged as the original plan. This section records what
+was actually done. Detail and dispositions: `release-1.0-phase3-4-consolidated.md`,
+`release-1.0-phase3-4-findings-ledger.md`, `release-1.0-regression-ledger.md`,
+`release-1.0-verification-ledger.md` and `release-1.0-remediation-plan.md`.
+
+- Phase 2 regression: RG-01..RG-17 run (static, with verifiers). RG11-H2 is closed (fixed in R1;
+  the mechanism is confirmed on device by NestedTransactionSemanticsInstrumentedTest). RG17B-1 is
+  closed by R13.
+- Phase 3 horizontal: HZ-01, HZ-01b1, HZ-01b2 and HZ-02..HZ-08 run. Phase 4 vertical: V-A..V-I cover
+  VJ-01..VJ-24. Every slice is PARTIAL (budget caps), and the residual cells are listed per slice
+  in the findings ledger. No cell is claimed fully covered.
+- Remediation: batches R16-R32 fixed the confirmed P1 and selected P2 defects. Each batch went
+  through targeted tests and reviewer-strict. Deferred items are listed in
+  `release-1.0-user-notes.md` (Known limitations) and in the remediation plan follow-ups.
+- Final gate on 01fae80c (clean tree, fingerprint = empty diff, all runs on this exact revision):
+
+  | Profile | Run | Result |
+  | --- | --- | --- |
+  | static-guards | vr-20261018-013948-2a96efea | PASS |
+  | app-check | vr-20261018-015917-fae8ab55 | PASS |
+  | legacy-tests | vr-20261018-181715-c051f10c | PASS, 276/0 |
+  | connected-tests (emulator wave5-api35, API 35) | vr-20261018-182059-2b39c1e1 | PASS, 376 tests / 0 failed / 9 skipped |
+  | assemble-release | vr-20261018-183624-b57e7eb7 | PASS |
+  | release-artifact-evidence | vr-20261018-183848-1a44c46e | PASS |
+
+  - The 9 connected skips are pre-v145 DatabaseMigrationTest chains. Those schemas were never
+    shipped and are below MIGRATION_BASELINE 145.
+  - The release APK is debug-certificate signed (`debug_certificate` true), non-debuggable,
+    minSdk 26, targetSdk 35. Production signing is an owner action.
+- Runtime rows:
+  - RT-01: partial (emulator API 35 and API 26 smoke).
+  - RT-02: owner v145 database upgraded to v151 on the emulator, row counts equal.
+  - RT-03: backup -> uninstall -> install 1.0 -> restore is OPEN (owner manual check).
+  - RT-04: partial.
+  - RT-05: minified-artifact evidence PASS, but full smoke on a production-signed build is OPEN.
+  - RT-06: controlled beta is OPEN (owner decision).
+- Device probes:
+  - PASS: P1, P2, P8, P12, P13, P15.
+  - PARTIAL: P6, P10.
+  - Not automated (owner manual checklist): P3, P4, P5, P9, P14.
+
 This is a plan, not coverage. A file mapped to a cell has not been inspected,
 and a test that exists has not been executed. Every row stays PENDING until a
 slice report and an independent verifier dispose of it.

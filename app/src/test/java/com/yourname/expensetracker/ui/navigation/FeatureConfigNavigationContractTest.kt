@@ -16,13 +16,12 @@ import org.junit.Test
 class FeatureConfigNavigationContractTest {
 
     @Test
-    fun `all feature IDs are unique`() {
+    fun `feature inventory ids are unique and destinations serialize restore and round-trip`() {
+        // Feature IDs are unique
         val ids = FeatureConfig.allFeatures.map { it.id }
         assertEquals("Duplicate feature IDs found", ids.size, ids.distinct().size)
-    }
 
-    @Test
-    fun `all feature destinations serialize to non-blank token`() {
+        // Serialize to non-blank token
         FeatureConfig.allFeatures.forEach { feature ->
             val token = feature.destination.toSaveToken()
             assertTrue(
@@ -30,10 +29,8 @@ class FeatureConfigNavigationContractTest {
                 token.isNotBlank()
             )
         }
-    }
 
-    @Test
-    fun `all feature destinations restore from token`() {
+        // Restore from token
         FeatureConfig.allFeatures.forEach { feature ->
             val token = feature.destination.toSaveToken()
             val restored = destinationFromSaveToken(token)
@@ -42,19 +39,15 @@ class FeatureConfigNavigationContractTest {
                 restored
             )
         }
-    }
 
-    @Test
-    fun `no duplicate destinations in feature list`() {
+        // No duplicate destinations in the feature list
         val tokens = FeatureConfig.allFeatures.map { it.destination.toSaveToken() }
         assertEquals(
             "Duplicate destinations found in FeatureConfig",
             tokens.size, tokens.distinct().size
         )
-    }
 
-    @Test
-    fun `route token round-trip preserves destination type`() {
+        // Route token round-trip preserves destination type
         FeatureConfig.allFeatures.forEach { feature ->
             val token = feature.destination.toSaveToken()
             val restored = destinationFromSaveToken(token)!!
@@ -63,6 +56,54 @@ class FeatureConfigNavigationContractTest {
                 feature.destination::class, restored::class
             )
         }
+    }
+
+    @Test
+    fun `deferred features are hidden from the menu when not available`() {
+        val ids = FeatureConfig.availableFeatures(
+            bankSyncAvailable = true,
+            deferredAvailable = false
+        ).map { it.id }
+        DeferredFeatureGate.DEFERRED_FEATURE_IDS.forEach { id ->
+            assertFalse("Deferred feature '$id' must be hidden", id in ids)
+        }
+        assertTrue("savings must remain", "savings" in ids)
+        assertTrue("privacy must remain", "privacy" in ids)
+    }
+
+    @Test
+    fun `deferred features are shown in the menu when available`() {
+        val ids = FeatureConfig.availableFeatures(
+            bankSyncAvailable = true,
+            deferredAvailable = true
+        ).map { it.id }
+        DeferredFeatureGate.DEFERRED_FEATURE_IDS.forEach { id ->
+            assertTrue("Deferred feature '$id' must be shown", id in ids)
+        }
+    }
+
+    @Test
+    fun `bank and deferred gates are independent`() {
+        val ids = FeatureConfig.availableFeatures(
+            bankSyncAvailable = false,
+            deferredAvailable = true
+        ).map { it.id }
+        assertFalse(FeatureConfig.BANK_CONNECTIONS_FEATURE_ID in ids)
+        assertTrue("tax" in ids)
+    }
+
+    @Test
+    fun `deferred feature ids all exist in feature config`() {
+        DeferredFeatureGate.DEFERRED_FEATURE_IDS.forEach { id ->
+            assertNotNull("Unknown deferred id '$id'", FeatureConfig.getById(id))
+        }
+    }
+
+    @Test
+    fun `privacy feature uses dedicated strings`() {
+        val privacy = FeatureConfig.getById("privacy")!!
+        assertNotEquals(FeatureConfig.getById("backup-restore")!!.titleRes, privacy.titleRes)
+        assertNotEquals(FeatureConfig.getById("backup-restore")!!.descriptionRes, privacy.descriptionRes)
     }
 
     @Test

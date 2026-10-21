@@ -4,13 +4,17 @@ import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy
 import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
+import com.yourname.expensetracker.domain.common.sha256Prefix
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
+import org.json.JSONObject
 import org.junit.Assert.*
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 
 /**
  * PR6 acceptance tests:
@@ -23,6 +27,9 @@ import org.junit.Test
  * new_cloud_purposes_are_available
  */
 class CloudPayloadPolicyTest {
+
+    @get:Rule
+    val tempFolder = TemporaryFolder()
 
     private val redactor = DefaultCloudPayloadRedactor()
 
@@ -151,4 +158,61 @@ class CloudPayloadPolicyTest {
         val payload = policy.prepareText(CloudPayloadPurpose.ITEM_CATEGORIZATION, "items text")
         assertEquals(CloudPayloadPurpose.ITEM_CATEGORIZATION, payload.purpose)
     }
+
+    // ── prepareReceiptAssist image read (B1-5) ────────────────────────────────
+
+    @Test
+    fun receipt_assist_includes_image_bytes_when_file_is_readable() = runTest {
+        val policy = buildPolicy(privacyRedact = false, aiRedact = false)
+        val bytes = byteArrayOf(1, 2, 3, 4, 5)
+        val image = tempFolder.newFile("receipt.jpg").also { it.writeBytes(bytes) }
+
+        val payload = policy.prepareReceiptAssist(
+            rawPrompt = "prompt",
+            imagePath = image.absolutePath,
+            imageMimeType = "image/jpeg",
+            allowImage = true
+        )
+
+        assertTrue(payload.rawImageIncluded)
+        assertArrayEquals(bytes, payload.imageBytes)
+        assertEquals("image/jpeg", payload.imageMimeType)
+    }
+
+    @Test
+    fun receipt_assist_read_failure_yields_no_image_and_rest_of_payload_is_prepared() = runTest {
+        val policy = buildPolicy(privacyRedact = false, aiRedact = false)
+        // A directory passes exists() and the size check but readBytes() throws an IOException.
+        val unreadable = tempFolder.newFolder("not-a-file")
+        // Precondition: the target passes the policy's exists() + size gate (MAX_INLINE_IMAGE_BYTES,
+        // private in DefaultCloudPayloadPolicy, mirrored here), so the read-failure branch is what runs.
+        assertTrue("unreadable target must exist", unreadable.exists())
+        assertTrue(
+            "unreadable target must pass the size gate so the read-failure branch is exercised",
+            unreadable.length() <= 2 * 1024 * 1024
+        )
+
+        val payload = policy.prepareReceiptAssist(
+            rawPrompt = "prompt",
+            imagePath = unreadable.absolutePath,
+            imageMimeType = "image/png",
+            allowImage = true
+        )
+
+        assertNull("Failed read must yield no image bytes", payload.imageBytes)
+        assertFalse("Failed read must not report an included image", payload.rawImageIncluded)
+        assertFalse(
+            "Audit metadata must report no image when the read failed",
+            JSONObject(payload.auditMetadata.toJson()).getBoolean("imageIncluded")
+        )
+        assertEquals(CloudPayloadPurpose.RECEIPT_ASSIST, payload.purpose)
+        assertEquals("prompt", payload.text)
+        assertFalse(payload.redactionApplied)
+        assertTrue(payload.fieldsRedacted.isEmpty())
+        assertTrue(payload.rawTextIncluded)
+        assertEquals("prompt".sha256Prefix(32), payload.payloadHash)
+    }
+
+    // Note: File.readBytes() is blocking and cannot throw CancellationException, so no
+    // cancellation-propagation case is reachable through this path.
 }

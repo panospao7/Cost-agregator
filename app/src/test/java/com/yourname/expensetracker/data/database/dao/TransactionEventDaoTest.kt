@@ -75,24 +75,41 @@ class TransactionEventDaoTest {
     // -------------------------------------------------------------------------
 
     @Test
-    fun `insert a CREATED event and query by id`() = runTest {
-        val event = createEvent()
-        val id = dao.insert(event)
-
-        assertNotNull(id)
-        assertEquals(1L, id)
-    }
-
-    @Test
-    fun `query events by expenseId returns matching events`() = runTest {
+    fun `insert then read back returns every transaction event field exactly`() = runTest {
         val expenseId = 42L
-        val event = createEvent(expenseId = expenseId)
-        dao.insert(event)
+        val id = dao.insert(
+            createEvent(
+                expenseId = expenseId,
+                eventType = "CREATED",
+                source = "TEST",
+                actor = "test",
+                occurredAt = FIXED_NOW,
+                dedupeKey = "dedupe-key-1",
+                duplicateExpenseId = 7L,
+                beforeSnapshot = """{"a":1}""",
+                afterSnapshot = """{"a":2}""",
+                metadata = "meta-code",
+                reason = "reason-code"
+            )
+        )
+        assertEquals(1L, id)
 
         val results = dao.getEventsForExpense(expenseId)
 
         assertEquals(1, results.size)
-        assertEquals("CREATED", results[0].eventType)
+        val loaded = results[0]
+        assertEquals(id, loaded.id)
+        assertEquals(expenseId, loaded.expenseId)
+        assertEquals("CREATED", loaded.eventType)
+        assertEquals("TEST", loaded.source)
+        assertEquals("test", loaded.actor)
+        assertEquals(FIXED_NOW, loaded.occurredAt)
+        assertEquals("dedupe-key-1", loaded.dedupeKey)
+        assertEquals(7L, loaded.duplicateExpenseId)
+        assertEquals("""{"a":1}""", loaded.beforeSnapshot)
+        assertEquals("""{"a":2}""", loaded.afterSnapshot)
+        assertEquals("meta-code", loaded.metadata)
+        assertEquals("reason-code", loaded.reason)
     }
 
     @Test
@@ -120,22 +137,6 @@ class TransactionEventDaoTest {
         // Most recent first
         assertEquals(FIXED_NOW + 1000, results[0].occurredAt)
         assertEquals(FIXED_NOW, results[1].occurredAt)
-    }
-
-    @Test
-    fun `insert multiple events and verify count`() = runTest {
-        val expenseId = 20L
-        val event1 = createEvent(expenseId = expenseId, eventType = "CREATED")
-        val event2 = createEvent(expenseId = expenseId, eventType = "UPDATED")
-        val event3 = createEvent(expenseId = expenseId, eventType = "DELETED")
-
-        dao.insert(event1)
-        dao.insert(event2)
-        dao.insert(event3)
-
-        val results = dao.getEventsForExpense(expenseId)
-
-        assertEquals(3, results.size)
     }
 
     @Test

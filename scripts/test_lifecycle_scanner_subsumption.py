@@ -9,28 +9,28 @@ Gradle KTS inline lifecycle scanners (``checkLifecycleBypasses`` and
 The canonical ``db_access`` D4 guard (scripts/db_guard/scanner.py +
 config/guards/db_ownership_policy.yml + the db_access_v2 ratchet baseline)
 must detect every positive fixture the retired inline scanners caught.
-This suite pins that proof on temporary fixture trees:
+This suite keeps the three subsumption proofs that no other D4 test pins
+(the other three proofs of the original six-test suite -- repo-relative
+deterministic finding paths, receiver-TYPE (not receiver-NAME) discovery and
+fail-closed unresolved receiver scope -- are asserted with equal or stronger
+exactness by scripts/test_db_guard_scanner_d4.py and
+scripts/test_verify_db_access_v2.py, so they were removed from this file):
 
-  1. RULE MAPPING — every textual rule of the retired scanners targets an
+  1. RULE MAPPING -- every textual rule of the retired scanners targets an
      ExpenseDao mutation method (insert/update/delete plus the fourteen
      ``updateXxx`` column mutators), and every one of those methods is a
      discovered Room mutator identity in the D4 inventory;
 
-  2. POSITIVE FIXTURES — a fixture tree containing one unauthorized call
+  2. POSITIVE FIXTURES -- a fixture tree containing one unauthorized call
      site per retired rule produces one ``DB_UNAUTHORIZED_MUTATION`` finding
      per site, covering the exact retired rule surface (the retired
      scanners' file-name allowlists have no canonical counterpart: the
      ownership policy is the single authorization authority);
 
-  3. FALSE-POSITIVE CLASS — the retired scanners' documented false-positive
+  3. FALSE-POSITIVE CLASS -- the retired scanners' documented false-positive
      class (text matches inside comments/KDoc, e.g. ``[ExpenseDao.insert]``
      references) produces NO D4 finding, because D4 masks comments before
-     discovery — retirement loses no real enforcement;
-
-  4. STRICT SUPERIORITY — D4 is receiver-TYPE based while the retired
-     scanners were receiver-NAME based: a mutation call through a receiver
-     NOT named ``expenseDao`` is still discovered, so the canonical guard is
-     strictly broader than the retired textual rules.
+     discovery -- retirement loses no real enforcement.
 
 Run:
     python -m pytest scripts/test_lifecycle_scanner_subsumption.py -v
@@ -196,18 +196,6 @@ def test_every_retired_positive_fixture_is_a_d4_finding(tmp_path):
         assert finding["identity"]["call_form"] == "receiver"
 
 
-def test_retired_finding_paths_are_repo_relative_and_deterministic(tmp_path):
-    root = _source_root(tmp_path)
-    (root / "ProbeExpenseDao.kt").write_text(_dao_fixture(), encoding="utf-8")
-    (root / "RetiredScannerProbe.kt").write_text(_caller_fixture(), encoding="utf-8")
-
-    payload = _scan(tmp_path)
-    paths = {finding["path"] for finding in payload["findings"]}
-    assert paths == {"app/src/main/java/RetiredScannerProbe.kt"}
-    again = _scan(tmp_path)
-    assert again == payload
-
-
 # ── 3. False-positive class: comment/KDoc text matches are not findings ─────
 
 
@@ -231,60 +219,3 @@ def test_comment_and_kdoc_text_matches_produce_no_finding(tmp_path):
     payload = _scan(tmp_path)
     assert payload["diagnostics"] == [], payload["diagnostics"]
     assert payload["findings"] == [], payload["findings"]
-
-
-# ── 4. Strict superiority: receiver-TYPE discovery, not receiver-NAME ───────
-
-
-def test_differently_named_receiver_is_still_discovered(tmp_path):
-    """A mutation call through a receiver NOT named ``expenseDao`` is
-    invisible to the retired name-based regexes but discovered by D4 —
-    the canonical guard is strictly broader."""
-    root = _source_root(tmp_path)
-    (root / "ProbeExpenseDao.kt").write_text(_dao_fixture(), encoding="utf-8")
-    (root / "RenamedReceiver.kt").write_text(
-        "package com.example.probe\n"
-        "\n"
-        "class RenamedReceiver(private val dao: ProbeExpenseDao) {\n"
-        "    fun save(entity: Int) { dao.insert(entity) }\n"
-        "}\n",
-        encoding="utf-8",
-    )
-
-    payload = _scan(tmp_path)
-    assert payload["diagnostics"] == [], payload["diagnostics"]
-    mutations = [
-        finding for finding in payload["findings"]
-        if finding["rule"] == "DB_UNAUTHORIZED_MUTATION"
-    ]
-    assert len(mutations) == 1
-    assert mutations[0]["identity"]["accessor"] == "dao"
-    assert mutations[0]["identity"]["operation"] == "insert"
-
-
-def test_unresolved_receiver_scope_fails_closed_not_silent(tmp_path):
-    """A mutation-shaped call whose receiver scope cannot be resolved is a
-    blocking diagnostic (exit 2 upstream), never a silent pass — the
-    fail-closed property the retired textual scanners did not have."""
-    root = _source_root(tmp_path)
-    (root / "ProbeExpenseDao.kt").write_text(_dao_fixture(), encoding="utf-8")
-    (root / "UnresolvedScope.kt").write_text(
-        "package com.example.probe\n"
-        "\n"
-        "class UnresolvedScope {\n"
-        "    fun save(entity: Int) {\n"
-        "        expenseDao.insert(entity)\n"
-        "    }\n"
-        "}\n",
-        encoding="utf-8",
-    )
-
-    payload = _scan(tmp_path)
-    # No finding may be emitted without resolved identity; the unresolved
-    # scope must surface as a diagnostic so the scan is untrusted.
-    assert payload["findings"] == [], payload["findings"]
-    codes = {item["code"] for item in payload["diagnostics"]}
-    assert "DB_DAO_SCOPE_UNRESOLVED" in codes or "DB_SIGNATURE_UNRESOLVED" in codes, (
-        codes
-    )
-    assert payload["statistics"]["trusted"] is False

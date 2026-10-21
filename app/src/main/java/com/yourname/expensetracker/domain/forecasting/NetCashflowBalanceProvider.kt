@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.forecasting
 
 import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
+import com.yourname.expensetracker.domain.util.CancellationSafe
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
@@ -18,10 +19,10 @@ class NetCashflowBalanceProvider @Inject constructor(
     override suspend fun currentBalance(currency: String): Double? {
         val now = timeProvider.now()
         val ninetyDaysAgo = now - 90 * TimePeriodUtils.DAY_IN_MILLIS
-        val deposits = runCatching {
+        val deposits = CancellationSafe.runCatchingCancellable {
             multiCurrencyRepository.getHomeCurrencyDepositTotal(ninetyDaysAgo, now).displayAmount
         }.getOrDefault(0.0)
-        val expenses = runCatching {
+        val expenses = CancellationSafe.runCatchingCancellable {
             multiCurrencyRepository.getHomeCurrencyPurchaseTotal(ninetyDaysAgo, now).displayAmount
         }.getOrDefault(0.0)
         return (deposits - expenses).coerceAtLeast(0.0)

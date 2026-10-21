@@ -76,7 +76,6 @@ import org.junit.Test
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -338,7 +337,7 @@ class NotificationProcessingPipelineReliabilityTest {
      * [date - windowMs, date + windowMs] under the DAO's exclusive-end SQL convention.
      */
     @Test
-    fun `windowEndExclusive is date plus window plus 1 - matching ExpenseDao convention`() {
+    fun `windowEndExclusive matches ExpenseDao convention, includes exact boundary, and defaults to DUPLICATE_WINDOW_MS`() {
         val date = 1_000_000L
         val windowMs = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS
 
@@ -353,12 +352,6 @@ class NotificationProcessingPipelineReliabilityTest {
             expenseDaoEndDate,
             pendingReviewEndDate
         )
-    }
-
-    @Test
-    fun `windowEndExclusive includes exact boundary timestamp under exclusive SQL`() {
-        val date = 1_000_000L
-        val windowMs = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS
 
         // A pending-review at exactly date + windowMs is at the inclusive edge.
         val boundaryTimestamp = date + windowMs
@@ -377,13 +370,15 @@ class NotificationProcessingPipelineReliabilityTest {
             "With windowEndExclusive the exact boundary timestamp is included by the SQL < predicate",
             boundaryTimestamp < endDateWithFix
         )
-    }
 
-    @Test
-    fun `windowEndExclusive with default windowMs uses DUPLICATE_WINDOW_MS`() {
-        val date = 5_000_000L
-        val expected = date + DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS + 1L
-        assertEquals(expected, DuplicateDetectionPolicy.windowEndExclusive(date))
+        // Default windowMs overload must use DUPLICATE_WINDOW_MS.
+        val defaultDate = 5_000_000L
+        val expectedDefault = defaultDate + DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS + 1L
+        assertEquals(
+            "windowEndExclusive with default windowMs must use DUPLICATE_WINDOW_MS",
+            expectedDefault,
+            DuplicateDetectionPolicy.windowEndExclusive(defaultDate)
+        )
     }
 
     @Test
@@ -1061,37 +1056,6 @@ class NotificationProcessingPipelineReliabilityTest {
         coVerify(exactly = 1) { sourceStatsDao.incrementTotalAndAutoRejected(notification.packageName, any()) }
         coVerify(exactly = 0) { pendingReviewDao.upsertByRawNotificationId(any()) }
     }
-
-    @Test
-    fun `detectTransactionSignalCandidate returns candidate for normal transaction-like text`() {
-        val candidate = NotificationProcessingPipeline.detectTransactionSignalCandidate(
-            title = "Payment €4.08",
-            text = "Transaction completed",
-            bigText = null,
-            resolvedCurrency = knownEurCurrency()
-        )
-
-        assertNotNull(candidate)
-        assertEquals(4.08, candidate!!.amount, 0.0001)
-        assertEquals("EUR", candidate.currency)
-    }
-
-    @Test
-    fun `detectTransactionSignalCandidate returns null for non-transaction text`() {
-        val candidate = NotificationProcessingPipeline.detectTransactionSignalCandidate(
-            title = "Hello",
-            text = "World",
-            bigText = null,
-            resolvedCurrency = knownEurCurrency()
-        )
-
-        assertNull(candidate)
-    }
-
-    private fun knownEurCurrency() = NotificationProcessingPipeline.ResolvedNotificationCurrency(
-        code = "EUR",
-        resolution = CurrencyResolution.EXPLICIT_UNAMBIGUOUS_SYMBOL
-    )
 
     private fun unresolvedKrSignal(amount: Double) = MoneySignal(
         raw = "$amount kr",

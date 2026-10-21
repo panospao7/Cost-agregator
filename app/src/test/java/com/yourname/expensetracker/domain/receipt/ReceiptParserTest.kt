@@ -30,144 +30,63 @@ class ReceiptParserTest {
         assertEquals("EUR", parsed.currency)
     }
 
-    @Test
-    fun testExactHallucinationMap() {
-        // Simulating: ZYNOAO for ΣΥΝΟΛΟ, and oIA for ΦΠΑ
-        val ocr = """
-            ΓΡΗΓΟΡΗΣ
-            KAAAPH ABIA: 20,00
-            oIA 24%: 4,80
-            ZYNOAO 24,80
-        """.trimIndent()
-        
-        val parsed = parser.parse(ocr + "\nCURRENCY: EUR")
-        assertEquals("Exact hallucination map failed.", 24.80, parsed.total?.amount)
-    }
+    /**
+     * Money-parsing table: OCR hallucinations, symbol/spacing noise and decimal-separator
+     * conventions. Every row asserts the exact amount (zero delta) and the resolved currency.
+     */
+    private data class TotalRow(
+        val name: String,
+        val input: String,
+        val total: Double,
+        val currency: String,
+        val lineItemsEmpty: Boolean = false
+    )
+
+    private val totalRows = listOf(
+        // Exact hallucination map: ZYNOAO for ΣΥΝΟΛΟ, oIA for ΦΠΑ
+        TotalRow(
+            "exact hallucination map",
+            "ΓΡΗΓΟΡΗΣ\nKAAAPH ABIA: 20,00\noIA 24%: 4,80\nZYNOAO 24,80\nCURRENCY: EUR",
+            24.80, "EUR"
+        ),
+        // Latin S inside the Greek string: ΠΟSΟ/AMOUNT
+        TotalRow("Latin intrusion strip", "PORTOBELLOS\nΠΟSΟ/AMOUNT: €80,43", 80.43, "EUR"),
+        // Arrow ">" between ΣΥΝΟΛΟ and the amount
+        TotalRow("geometric artifact strip", "ΓΕΛΑΣΤΟ ΚΡΕΜΜΥΔΙ\nΣΥΝΟΛΟ   >    € 6,80\nMETPHTA       € 6,80", 6.80, "EUR"),
+        // Dynamic hallucination ZΥN0/\0 that is not explicitly in the map
+        TotalRow("fuzzy matching fallback", "ΣΚΛΑΒΕΝΙΤΗΣ\nZΥN0/\\0 12,50\nMETEHTA 12,50\nCURRENCY: EUR", 12.50, "EUR"),
+        TotalRow("decimal standard european", "MARKET\nITEMS 10,00\nTOTAL 45,50 €", 45.50, "EUR"),
+        TotalRow("decimal european thousands separator", "TECH STORE\nLAPTOP 1.250,50\nTOTAL 1.250,50 €", 1250.50, "EUR"),
+        TotalRow("decimal US standard", "DINER US\nBURGER 12.50\nTOTAL 12.50\nCURRENCY: USD", 12.50, "USD"),
+        TotalRow("decimal US thousands separator", "CAR DEALER\nDOWNPAYMENT 1,250.00\nTOTAL 1,250.00\nCURRENCY: USD", 1250.00, "USD"),
+        TotalRow("normalization Sigma error EYNONO", "SUPER MARKET\nGALA 1,20\nEYNONO 1,20\nCURRENCY: EUR", 1.20, "EUR"),
+        TotalRow("normalization Z error ZYNOAO", "CAFE\nCOFFEE 2,50\nZYNOAO 2,50\nCURRENCY: EUR", 2.50, "EUR"),
+        TotalRow("normalization 2 error 2YNONO", "BAKERY\nBREAD 0,90\n2YNONO 0,90\nCURRENCY: EUR", 0.90, "EUR"),
+        TotalRow("normalization Lambda error IYNOAO", "STORE\nITEM 10.00\nIYNOAO 10.00\nCURRENCY: EUR", 10.00, "EUR"),
+        TotalRow(
+            "normalization cash keyword METPHTA yields no line items",
+            "COFFEE SHOP\nCAPPUCCINO 3,50\nMETPHTA 3,50\nZYNOAO 3,50\nCURRENCY: EUR",
+            3.50, "EUR", lineItemsEmpty = true
+        ),
+        TotalRow("normalization payable variant NAHPQTEO", "SUPERMARKET\nITEM 1 10.00\nNAHPQTEO 10.00\nCURRENCY: EUR", 10.00, "EUR"),
+        TotalRow("complex OCR number fix 'TOTAL_KEY 4 5 , 5 0'", "STORE\nTOTAL_KEY 4 5 , 5 0\nCURRENCY: EUR", 45.50, "EUR")
+    )
 
     @Test
-    fun testLatinIntrusion() {
-        // Simulating the Latin S inside the Greek string: ΠΟSΟ/AMOUNT
-        val ocr = """
-            PORTOBELLOS
-            ΠΟSΟ/AMOUNT: €80,43
-        """.trimIndent()
-        
-        val parsed = parser.parse(ocr)
-        assertEquals("Latin intrusion strip failed.", 80.43, parsed.total?.amount)
-    }
-
-    @Test
-    fun testGeometricArtifacts() {
-        // Simulating: Arrow points ">" between ΣΥΝΟΛΟ and the amount
-        val ocr = """
-            ΓΕΛΑΣΤΟ ΚΡΕΜΜΥΔΙ
-            ΣΥΝΟΛΟ   >    € 6,80
-            METPHTA       € 6,80
-        """.trimIndent()
-        
-        val parsed = parser.parse(ocr)
-        assertEquals("Geometric artifact strip failed.", 6.80, parsed.total?.amount)
-    }
-
-    @Test
-    fun testFuzzyMatching() {
-        // Simulating a dynamic hallucination: ZΥN0/\0 which is not explicitly in the map
-        val ocr = """
-            ΣΚΛΑΒΕΝΙΤΗΣ
-            ZΥN0/\0 12,50
-            METEHTA 12,50
-        """.trimIndent()
-        
-        val parsed = parser.parse(ocr + "\nCURRENCY: EUR")
-        assertEquals("Fuzzy matching fallback failed.", 12.50, parsed.total?.amount)
-    }
-
-    @Test
-    fun `test decimal parsing - standard european`() {
-        val input = """
-            MARKET
-            ITEMS 10,00
-            TOTAL 45,50 €
-        """.trimIndent()
-        val result = parser.parse(input)
-        assertEquals(45.50, result.total!!.amount, 0.01)
-    }
-
-    @Test
-    fun `test decimal parsing - european with thousands separator`() {
-        val input = """
-            TECH STORE
-            LAPTOP 1.250,50
-            TOTAL 1.250,50 €
-        """.trimIndent()
-        val result = parser.parse(input)
-        assertEquals(1250.50, result.total!!.amount, 0.01)
-    }
-
-    @Test
-    fun `test decimal parsing - US standard`() {
-        val input = """
-            DINER US
-            BURGER 12.50
-            TOTAL 12.50
-        """.trimIndent()
-        val result = parser.parse(input + "\nCURRENCY: USD")
-        assertEquals(12.50, result.total!!.amount, 0.01)
-    }
-
-    @Test
-    fun `test decimal parsing - US with thousands separator`() {
-        val input = """
-            CAR DEALER
-            DOWNPAYMENT 1,250.00
-            TOTAL 1,250.00
-        """.trimIndent()
-        val result = parser.parse(input + "\nCURRENCY: USD")
-        assertEquals(1250.00, result.total!!.amount, 0.01)
-    }
-
-    @Test
-    fun `test greek normalization - Sigma error`() {
-        val input = """
-            SUPER MARKET
-            GALA 1,20
-            EYNONO 1,20
-        """.trimIndent()
-        val result = parser.parse(input + "\nCURRENCY: EUR")
-        assertEquals(1.20, result.total!!.amount, 0.01)
-    }
-
-    @Test
-    fun `test greek normalization - Z error`() {
-        val input = """
-            CAFE
-            COFFEE 2,50
-            ZYNOAO 2,50
-        """.trimIndent()
-        val result = parser.parse(input + "\nCURRENCY: EUR")
-        assertEquals(2.50, result.total!!.amount, 0.01)
-    }
-
-    @Test
-    fun `test greek normalization - 2 error`() {
-        val input = """
-            BAKERY
-            BREAD 0,90
-            2YNONO 0,90
-        """.trimIndent()
-        val result = parser.parse(input + "\nCURRENCY: EUR")
-        assertEquals(0.90, result.total!!.amount, 0.01)
-    }
-
-    @Test
-    fun `test greek normalization - Lambda error`() {
-        val input = """
-            STORE
-            ITEM 10.00
-            IYNOAO 10.00
-        """.trimIndent()
-        val result = parser.parse(input + "\nCURRENCY: EUR")
-        assertEquals(10.00, result.total!!.amount, 0.01)
+    fun `OCR normalization and decimal parsing yield exact amount and currency per row`() {
+        assertEquals("totalRows size guard", 15, totalRows.size)
+        assertEquals("row names must be unique", totalRows.size, totalRows.map { it.name }.toSet().size)
+        for (row in totalRows) {
+            val parsed = parser.parse(row.input)
+            val total = parsed.total
+            assertNotNull("[${row.name}] total must be present", total)
+            assertEquals("[${row.name}] total amount", row.total, total!!.amount, 0.0)
+            assertEquals("[${row.name}] result currency", row.currency, parsed.currency)
+            assertEquals("[${row.name}] total currency", row.currency, total.currency.code)
+            if (row.lineItemsEmpty) {
+                assertTrue("[${row.name}] line items must be empty", parsed.lineItems.isEmpty())
+            }
+        }
     }
 
     @Test
@@ -214,40 +133,6 @@ class ReceiptParserTest {
         """.trimIndent()
         val result = parser.parse(input)
         assertEquals("MY SHOP NAME", result.merchantName)
-    }
-
-    @Test
-    fun `test greek normalization - Cash keyword`() {
-        val input = """
-            COFFEE SHOP
-            CAPPUCCINO 3,50
-            METPHTA 3,50
-            ZYNOAO 3,50
-        """.trimIndent()
-        val result = parser.parse(input + "\nCURRENCY: EUR")
-        assertEquals(3.50, result.total!!.amount, 0.01)
-        assertTrue(result.lineItems.isEmpty())
-    }
-
-    @Test
-    fun `test greek normalization - Payable variant`() {
-        val input = """
-            SUPERMARKET
-            ITEM 1 10.00
-            NAHPQTEO 10.00
-        """.trimIndent()
-        val result = parser.parse(input + "\nCURRENCY: EUR")
-        assertEquals(10.00, result.total!!.amount, 0.01)
-    }
-
-    @Test
-    fun `test complex ocr number fix`() {
-        val input = """
-            STORE
-            TOTAL_KEY 4 5 , 5 0
-        """.trimIndent()
-        val result = parser.parse(input + "\nCURRENCY: EUR")
-        assertEquals(45.50, result.total!!.amount, 0.01)
     }
 
     @Test

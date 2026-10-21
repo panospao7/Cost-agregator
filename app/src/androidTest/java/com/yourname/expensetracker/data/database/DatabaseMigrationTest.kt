@@ -21,7 +21,8 @@ import java.io.IOException
 /**
  * Instrumented tests for database migrations
  * 
- * Tests all 33 migrations to ensure data integrity and schema consistency.
+ * Tests the archived migration chain from the lowest exported schema to ensure
+ * data integrity and schema consistency.
  */
 @RunWith(AndroidJUnit4::class)
 class DatabaseMigrationTest {
@@ -205,20 +206,9 @@ class DatabaseMigrationTest {
         }
     }
 
-    @Test
-    @Throws(IOException::class)
-    fun migrate_all_versions_from_1_to_51() {
-        assumeTrue(hasSchema(1) && hasSchema(51))
-        var db = helper.createDatabase(testDb, 1)
-        db.close()
-
-        db = helper.runMigrationsAndValidate(testDb, 51, true)
-        db.close()
-    }
-
     /**
-     * Full-chain migration from v33 (lowest exported schema JSON) to v114
-     * (current). Validates that all intermediate migrations produce schemas
+     * Full-chain migration from v33 (lowest exported schema JSON) to v114.
+     * Validates that all intermediate migrations produce schemas
      * matching Room's exported JSONs, catching ANY schema drift between
      * fresh-install and migrated database paths.
      */
@@ -481,7 +471,7 @@ class DatabaseMigrationTest {
     }
 
     /**
-     * Full-chain migration from v92 to v115 (current).
+     * Full-chain migration from v92 to v115.
      *
      * ## RSP-R3A: Full migration tests v92–v115
      * Validates that the entire migration chain from version 92 through 115
@@ -495,194 +485,6 @@ class DatabaseMigrationTest {
         var db = helper.createDatabase("migration-92-115", 92)
         db.close()
         db = helper.runMigrationsAndValidate("migration-92-115", 115, true)
-        db.close()
-    }
-
-    @Test
-    @Throws(IOException::class)
-    fun migrate_6_to_7_adds_payment_columns() {
-        assumeTrue(hasSchema(6) && hasSchema(51))
-        var db = helper.createDatabase(testDb, 6)
-        
-        db.execSQL("""
-            INSERT INTO expenses (amount, currency, merchant, transactionType, date, categoryId) 
-            VALUES (10.0, 'EUR', 'Test', 'PURCHASE', ${System.currentTimeMillis()}, NULL)
-        """)
-        db.close()
-
-        db = helper.runMigrationsAndValidate(testDb, 51, true)
-        
-        val cursor = db.query("SELECT paymentMethod, isManualEntry, notes FROM expenses")
-        assertTrue(cursor.moveToFirst())
-        assertEquals("UNKNOWN", cursor.getString(0))
-        assertEquals(0, cursor.getInt(1))
-        assertNull(cursor.getString(2))
-        cursor.close()
-        db.close()
-    }
-
-    @Test
-    @Throws(IOException::class)
-    fun migrate_7_to_8_creates_budgets_table() {
-        assumeTrue(hasSchema(7) && hasSchema(51))
-        var db = helper.createDatabase(testDb, 7)
-        db.close()
-
-        db = helper.runMigrationsAndValidate(testDb, 51, true)
-        
-        val cursor = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='budgets'")
-        assertTrue(cursor.moveToFirst())
-        assertEquals("budgets", cursor.getString(0))
-        cursor.close()
-        
-        val indexCursor = db.query("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'index_budgets_%'")
-        val indexes = mutableListOf<String>()
-        while (indexCursor.moveToNext()) {
-            indexes.add(indexCursor.getString(0))
-        }
-        indexCursor.close()
-        assertTrue(indexes.contains("index_budgets_categoryId"))
-        assertTrue(indexes.contains("index_budgets_isActive"))
-        db.close()
-    }
-
-    @Test
-    @Throws(IOException::class)
-    fun migrate_8_to_9_creates_scanned_receipts_table() {
-        assumeTrue(hasSchema(8) && hasSchema(51))
-        var db = helper.createDatabase(testDb, 8)
-        db.close()
-
-        db = helper.runMigrationsAndValidate(testDb, 51, true)
-        
-        val cursor = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='scanned_receipts'")
-        assertTrue(cursor.moveToFirst())
-        cursor.close()
-        db.close()
-    }
-
-    @Test
-    @Throws(IOException::class)
-    fun migrate_9_to_10_recreates_pending_reviews_with_status() {
-        assumeTrue(hasSchema(9) && hasSchema(51))
-        var db = helper.createDatabase(testDb, 9)
-        
-        db.execSQL("""
-            INSERT INTO pending_reviews 
-            (rawNotificationId, suggestedAmount, suggestedCurrency, suggestedMerchant, suggestedType, 
-            suggestedCategoryId, confidence, packageName, notificationTitle, notificationText, createdAt)
-            VALUES (1, 10.0, 'EUR', 'Test', 'PURCHASE', 1, 0.9, 'com.test', 'Title', 'Text', ${System.currentTimeMillis()})
-        """)
-        db.close()
-
-        db = helper.runMigrationsAndValidate(testDb, 51, true)
-        
-        val cursor = db.query("SELECT status FROM pending_reviews")
-        assertTrue(cursor.moveToFirst())
-        assertEquals("PENDING", cursor.getString(0))
-        cursor.close()
-        db.close()
-    }
-
-    @Test
-    @Throws(IOException::class)
-    fun migration_preserves_expense_data() {
-        assumeTrue(hasSchema(6) && hasSchema(51))
-        var db = helper.createDatabase(testDb, 6)
-        
-        db.execSQL("""
-            INSERT INTO expenses (amount, currency, merchant, transactionType, date, categoryId)
-            VALUES (10.0, 'EUR', 'Starbucks', 'PURCHASE', 1609459200000, 1)
-        """)
-        db.execSQL("""
-            INSERT INTO expenses (amount, currency, merchant, transactionType, date, categoryId)
-            VALUES (25.5, 'EUR', 'Amazon', 'PURCHASE', 1609545600000, 2)
-        """)
-        db.close()
-
-        db = helper.runMigrationsAndValidate(testDb, 51, true)
-        
-        val cursor = db.query("SELECT amount, merchant FROM expenses ORDER BY amount")
-        assertTrue(cursor.moveToFirst())
-        assertEquals(10.0, cursor.getDouble(0), 0.01)
-        assertEquals("Starbucks", cursor.getString(1))
-        
-        assertTrue(cursor.moveToNext())
-        assertEquals(25.5, cursor.getDouble(0), 0.01)
-        assertEquals("Amazon", cursor.getString(1))
-        
-        cursor.close()
-        db.close()
-    }
-
-    @Test
-    @Throws(IOException::class)
-    fun migration_preserves_category_data() {
-        assumeTrue(hasSchema(10) && hasSchema(51))
-        var db = helper.createDatabase(testDb, 10)
-        
-        db.execSQL("""
-            CREATE TABLE IF NOT EXISTS categories (
-                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-                name TEXT NOT NULL,
-                icon TEXT,
-                color TEXT
-            )
-        """)
-        db.execSQL("INSERT INTO categories (name, icon, color) VALUES ('Food', '🍔', '#FF0000')")
-        db.execSQL("INSERT INTO categories (name, icon, color) VALUES ('Transport', '🚗', '#00FF00')")
-        db.close()
-
-        db = helper.runMigrationsAndValidate(testDb, 51, true)
-        
-        val cursor = db.query("SELECT name, icon FROM categories ORDER BY name")
-        assertTrue(cursor.moveToFirst())
-        assertEquals("Food", cursor.getString(0))
-        assertEquals("🍔", cursor.getString(1))
-        cursor.close()
-        db.close()
-    }
-
-    @Test
-    @Throws(IOException::class)
-    fun foreign_key_constraints_maintained_after_migration() {
-        assumeTrue(hasSchema(10) && hasSchema(51))
-        var db = helper.createDatabase(testDb, 10)
-        
-        db.execSQL("""
-            CREATE TABLE IF NOT EXISTS categories (
-                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-                name TEXT NOT NULL
-            )
-        """)
-        db.execSQL("INSERT INTO categories (id, name) VALUES (1, 'Food')")
-        
-        db.execSQL("""
-            CREATE TABLE IF NOT EXISTS expenses (
-                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-                amount REAL NOT NULL,
-                currency TEXT NOT NULL,
-                merchant TEXT NOT NULL,
-                transactionType TEXT NOT NULL,
-                date INTEGER NOT NULL,
-                categoryId INTEGER,
-                FOREIGN KEY(categoryId) REFERENCES categories(id)
-            )
-        """)
-        db.execSQL("INSERT INTO expenses (amount, currency, merchant, transactionType, date, categoryId) VALUES (10.0, 'EUR', 'Test', 'PURCHASE', 123456789, 1)")
-        db.close()
-
-        db = helper.runMigrationsAndValidate(testDb, 51, true)
-        
-        val cursor = db.query("""
-            SELECT e.amount, c.name 
-            FROM expenses e 
-            LEFT JOIN categories c ON e.categoryId = c.id
-        """)
-        assertTrue(cursor.moveToFirst())
-        assertEquals(10.0, cursor.getDouble(0), 0.01)
-        assertEquals("Food", cursor.getString(1))
-        cursor.close()
         db.close()
     }
 
@@ -843,27 +645,6 @@ class DatabaseMigrationTest {
             indices.any { it.contains("ai_artifacts") }
         )
 
-        db.close()
-    }
-
-    @Test
-    @Throws(IOException::class)
-    fun migrate_1_to_34_full_chain() {
-        assumeTrue(hasSchema(1) && hasSchema(34))
-        var db = helper.createDatabase(testDb, 1)
-        db.close()
-        db = helper.runMigrationsAndValidate(
-            testDb,
-            34,
-            true,
-            AppDatabase.MIGRATION_33_34
-        )
-        // Basic smoke check — ai_artifacts table should exist at the end
-        val cursor = db.query(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='ai_artifacts'"
-        )
-        assertTrue("ai_artifacts should exist after 1→34 full chain", cursor.moveToFirst())
-        cursor.close()
         db.close()
     }
 

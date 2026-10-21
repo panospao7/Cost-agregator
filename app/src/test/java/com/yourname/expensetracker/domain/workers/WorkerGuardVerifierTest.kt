@@ -16,14 +16,14 @@ class WorkerGuardVerifierTest {
     private val verifier = WorkerGuardVerifier()
 
     /**
-     * Happy-path: the hardcoded [WorkerGuardVerifier.findWorkerClasses] maps 10 workers
+     * Happy-path: the hardcoded [WorkerGuardVerifier.findWorkerClasses] maps 11 workers
      * whose work names are all returned by [WorkerSpecScheduler.listAllWorkerNames].
      */
     @Test
-    fun `verifyAllWorkersGuarded returns Success when all 10 workers are registered`() {
+    fun `verifyAllWorkersGuarded returns Success when all 11 workers are registered`() {
         val result = verifier.verifyAllWorkersGuarded()
         assertEquals(
-            "All 10 workers should be guarded → Success",
+            "All 11 workers should be guarded → Success",
             WorkerGuardVerifier.VerificationResult.Success::class,
             result::class
         )
@@ -44,10 +44,10 @@ class WorkerGuardVerifierTest {
      * true negative enforcement.
      */
     @Test
-    fun `worker registry contains all 10 workers`() {
+    fun `worker registry contains all 11 workers`() {
         val knownNames = WorkerSpecScheduler.listAllWorkerNames()
 
-        // The 10 expected work names from the spec
+        // The 11 expected work names from the spec
         val expectedNames = setOf(
             "notification_intake",
             "location_backfill",
@@ -57,13 +57,14 @@ class WorkerGuardVerifierTest {
             "data_retention",
             "ai_daily_briefing",
             "bill_reminder_periodic",
+            "recurring_horizon",
             "reminder_action_dismiss",
             "reminder_action_snooze"
         )
 
         assertEquals(
-            "listAllWorkerNames must return exactly 10 work names",
-            10, knownNames.size
+            "listAllWorkerNames must return exactly 11 work names",
+            11, knownNames.size
         )
 
         for (name in expectedNames) {

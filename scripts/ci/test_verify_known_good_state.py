@@ -74,8 +74,8 @@ DURABILITY_CODE = "INVENTORY_DURABILITY_UNCONFIRMED"
 
 def _write_structural_manifest(
     guards: Path,
-    structural_entries: int = 65,
-    expected: int = 60,
+    structural_entries: int = 67,
+    expected: int = 62,
     fixtures: int = 5,
 ) -> None:
     """Write the expected-methods manifest in its REAL schema shape.
@@ -119,7 +119,7 @@ def _write_min_repo(root: Path) -> None:
     (guards / "db_ownership_policy.signatures.candidate.yml").write_text(
         "schemaVersion: 2\nentries:\n" + candidate_entries, encoding="utf-8"
     )
-    structural_entries = "".join(f"  - id: s{i}\n" for i in range(65))
+    structural_entries = "".join(f"  - id: s{i}\n" for i in range(67))
     (guards / "db_structural_exceptions.yml").write_text(
         "entries:\n" + structural_entries, encoding="utf-8"
     )
@@ -333,7 +333,7 @@ class TestAllPass:
         assert "21xDB_SIGNATURE_UNRESOLVED" in vkgs._EXPECTED_GATE
         assert "input=93 resolved=55 unresolved=38" in vkgs._EXPECTED_MIGRATION
         assert "entries=407" in vkgs._EXPECTED_CANDIDATE
-        assert "structural_entries=65" in vkgs._EXPECTED_STRUCTURAL
+        assert "structural_entries=67" in vkgs._EXPECTED_STRUCTURAL
         assert vkgs._EXPECTED_META == "exit=0 silent"
         assert vkgs._EXPECTED_FRESHNESS == (
             "exit=0 verdict=fresh commit_match=true xml_newer=0"
@@ -345,7 +345,7 @@ class TestAllPass:
         row = _row(rows, vkgs.ROW_STRUCTURAL_MANIFEST)
         # Counts only -- never the raw expected/fixtures entry lists.
         assert row.observed == (
-            "structural_entries=65 expected=60 fixtures=5 yaml_entries=65"
+            "structural_entries=67 expected=62 fixtures=5 yaml_entries=67"
         )
         assert row.observed == row.expected
         assert "expected-0" not in row.observed
@@ -665,7 +665,7 @@ class TestCandidateFailBranches:
 
 
 class TestStructuralFailBranches:
-    @pytest.mark.parametrize("entries,fixtures", [(64, 4), (66, 6)])
+    @pytest.mark.parametrize("entries,fixtures", [(66, 4), (68, 6)])
     def test_authorized_cleanup_delta_does_not_accept_old_or_extra_grants(
         self, scorecard_env, entries, fixtures,
     ):
@@ -684,10 +684,10 @@ class TestStructuralFailBranches:
         row = _row(rows, vkgs.ROW_STRUCTURAL_MANIFEST)
         assert row.outcome == vkgs.OUTCOME_FAIL
         assert row.expected == (
-            "structural_entries=65 expected=60 fixtures=5 yaml_entries=65"
+            "structural_entries=67 expected=62 fixtures=5 yaml_entries=67"
         )
         assert row.observed == (
-            f"structural_entries={entries} expected=60 fixtures={fixtures} "
+            f"structural_entries={entries} expected=62 fixtures={fixtures} "
             f"yaml_entries={entries}"
         )
 
@@ -704,12 +704,12 @@ class TestStructuralFailBranches:
     def test_fail_on_expected_list_count_drift(self, scorecard_env):
         repo, scratch = scorecard_env
         guards = repo / "config" / "guards"
-        _write_structural_manifest(guards, expected=59)
+        _write_structural_manifest(guards, expected=58)
         rows, exit_code = _run(repo, scratch, _passing_router())
         assert exit_code == 1
         row = _row(rows, vkgs.ROW_STRUCTURAL_MANIFEST)
         assert row.outcome == vkgs.OUTCOME_FAIL
-        assert "expected=59" in row.observed
+        assert "expected=58" in row.observed
 
     def test_fail_on_fixtures_count_drift(self, scorecard_env):
         repo, scratch = scorecard_env
@@ -727,7 +727,7 @@ class TestStructuralFailBranches:
         repo, scratch = scorecard_env
         manifest = repo / "config" / "guards" / "db_structural_exceptions_expected_methods.yml"
         manifest.write_text(
-            "counts:\n  structural_entries: 65\nexpected: 60\nfixtures: 5\n",
+            "counts:\n  structural_entries: 67\nexpected: 62\nfixtures: 5\n",
             encoding="utf-8",
         )
         rows, exit_code = _run(repo, scratch, _passing_router())

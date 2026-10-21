@@ -2,17 +2,28 @@ package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.AnalyticsEngineTestBase
 import com.yourname.expensetracker.assertApproxEquals
+import com.yourname.expensetracker.assertMoneyEquals
 import com.yourname.expensetracker.createExpense
+import com.yourname.expensetracker.domain.util.PinnedUtcTimeZoneRule
 import com.yourname.expensetracker.toExpenseSnapshots
-import com.yourname.expensetracker.data.database.entity.TransactionType
-import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import io.mockk.every
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Before
+import org.junit.ClassRule
 import org.junit.Test
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.ZoneId
 
 class SpendingPaceCalculatorDeepTest : AnalyticsEngineTestBase() {
+
+    companion object {
+        // Zone pinned to UTC for the whole class (including the base-class date fields).
+        @JvmField
+        @ClassRule
+        val utcZone = PinnedUtcTimeZoneRule()
+    }
 
     private lateinit var calculator: SpendingPaceCalculator
 
@@ -24,160 +35,130 @@ class SpendingPaceCalculatorDeepTest : AnalyticsEngineTestBase() {
 
     @Test
     fun `canonical pace formula calculates daily-rate ratio correctly`() {
-        runTest {
-            every { timeProvider.now() } returns createDate(2026, 4, 16)
+        every { timeProvider.now() } returns createDate(2026, 4, 16)
 
-            val expenses = listOf(
-                createExpense(date = "2026-04-01", amount = 1600.0), // current month
-                createExpense(date = "2026-03-10", amount = 620.0),  // previous month baseline (31-day month)
-                createExpense(date = "2026-03-15", amount = 310.0)
-            )
+        val expenses = listOf(
+            createExpense(date = "2026-04-01", amount = 1600.0), // current month
+            createExpense(date = "2026-03-10", amount = 620.0),  // previous month baseline (31-day month)
+            createExpense(date = "2026-03-15", amount = 310.0)
+        )
 
-            val result = calculator.calculate(
-                currentMonthStart = createDate(2026, 4, 1),
-                previousMonthStart = createDate(2026, 3, 1),
-                previousMonthEnd = createDate(2026, 4, 1),
-                allExpenses = expenses.toExpenseSnapshots(),
-                displayCurrency = "EUR"
-            )
+        val result = calculator.calculate(
+            currentMonthStart = createDate(2026, 4, 1),
+            previousMonthStart = createDate(2026, 3, 1),
+            previousMonthEnd = createDate(2026, 4, 1),
+            allExpenses = expenses.toExpenseSnapshots(),
+            displayCurrency = "EUR"
+        )
 
-            // daysElapsed = 16, currentDailyRate = 100
-            // previousMonthTotal = 930, previousDailyRate = 930/31 = 30
-            // pace% = (100/30)*100 = 333.33
-            assertApproxEquals(333.33f, result.pacePercentage, 0.2f)
-            assertEquals(PaceStatus.OVER_PACE, result.paceStatus)
-            assertApproxEquals(1600.0, result.currentMonthSpent)
-            assertApproxEquals(930.0, result.previousMonthTotal ?: 0.0)
-        }
+        // daysElapsed = 16, currentDailyRate = 100
+        // previousMonthTotal = 930, previousDailyRate = 930/31 = 30
+        // pace% = (100/30)*100 = 333.33
+        assertApproxEquals(333.33f, result.pacePercentage, 0.2f)
+        assertEquals(PaceStatus.OVER_PACE, result.paceStatus)
+        assertMoneyEquals(1600.0, result.currentMonthSpent, "current month spent")
+        assertMoneyEquals(930.0, result.previousMonthTotal, "previous month total")
     }
 
-    @Test
-    fun `projected total uses five day stabilization without baseline`() {
-        runTest {
-            every { timeProvider.now() } returns createDate(2026, 4, 2)
-
-            val result = calculator.calculate(
-                currentMonthStart = createDate(2026, 4, 1),
-                previousMonthStart = createDate(2026, 3, 1),
-                previousMonthEnd = createDate(2026, 4, 1),
-                allExpenses = listOf(createExpense(date = "2026-04-01", amount = 200.0)).toExpenseSnapshots(),
-                displayCurrency = "EUR"
-            )
-
-            // With no historical baseline, the first five days use a stable
-            // five-day denominator: 200 * 30 / 5 = 1200.
-            assertApproxEquals(1200.0, result.projectedTotal)
-            assertEquals(2, result.daysElapsed)
-            assertEquals(30, result.daysInMonth)
-        }
-    }
-
-    @Test
-    fun `projected total keeps five day stabilization through day four`() {
-        runTest {
-            every { timeProvider.now() } returns createDate(2026, 4, 4)
-
-            val result = calculator.calculate(
-                currentMonthStart = createDate(2026, 4, 1),
-                previousMonthStart = createDate(2026, 3, 1),
-                previousMonthEnd = createDate(2026, 4, 1),
-                allExpenses = listOf(createExpense(date = "2026-04-01", amount = 400.0)).toExpenseSnapshots(),
-                displayCurrency = "EUR"
-            )
-
-            // Day four is still inside the five-day stabilization window:
-            // 400 * 30 / 5 = 2400.
-            assertApproxEquals(2400.0, result.projectedTotal)
-        }
-    }
-
-    @Test
-    fun `current month spent excludes non purchase and not mine`() {
-        runTest {
-            every { timeProvider.now() } returns createDate(2026, 4, 10)
-
-            val result = calculator.calculate(
-                currentMonthStart = createDate(2026, 4, 1),
-                previousMonthStart = createDate(2026, 3, 1),
-                previousMonthEnd = createDate(2026, 4, 1),
-                allExpenses = listOf(
-                    createExpense(date = "2026-04-01", amount = 100.0, merchant = "A"),
-                    createExpense(date = "2026-04-02", amount = 80.0, effectiveAmount = 0.0, isNotMine = true, merchant = "B"),
-                    createExpense(date = "2026-04-03", amount = 250.0, type = TransactionType.DEPOSIT, merchant = "C"),
-                    createExpense(date = "2026-04-04", amount = 60.0, merchant = "D")
-                ).toExpenseSnapshots(),
-                displayCurrency = "EUR"
-            )
-
-            assertApproxEquals(160.0, result.currentMonthSpent)
-        }
-    }
+    private data class StatusRow(
+        val name: String,
+        val currentAmount: Double,
+        val previousAmount: Double,
+        val expectedPace: Float,
+        val expectedStatus: PaceStatus
+    )
 
     @Test
     fun `pace status thresholds map correctly`() {
-        runTest {
-            every { timeProvider.now() } returns createDate(2026, 4, 10)
-            val prevStart = createDate(2026, 3, 1)
-            val prevEnd = createDate(2026, 4, 1)
+        // now = 2026-04-10 00:00 -> 10 elapsed days; March baseline spans 31 days.
+        every { timeProvider.now() } returns createDate(2026, 4, 10)
+        val rows = listOf(
+            // current 90 / 10 = 9 per day; baseline 620 / 31 = 20 per day
+            StatusRow("under pace", 90.0, 620.0, 45.0f, PaceStatus.UNDER_PACE),
+            // current 300 / 10 = 30 per day; baseline 930 / 31 = 30 per day
+            StatusRow("on pace", 300.0, 930.0, 100.0f, PaceStatus.ON_PACE),
+            // current 2000 / 10 = 200 per day; baseline 930 / 31 = 30 per day
+            StatusRow("over pace", 2000.0, 930.0, 666.67f, PaceStatus.OVER_PACE)
+        )
+        assertEquals("status table size", 3, rows.size)
 
-            val under = calculator.calculate(
-                currentMonthStart = createDate(2026, 4, 1),
-                previousMonthStart = prevStart,
-                previousMonthEnd = prevEnd,
-                allExpenses = listOf(
-                    createExpense(date = "2026-04-01", amount = 90.0),
-                    createExpense(date = "2026-03-01", amount = 620.0)
-                ).toExpenseSnapshots(),
-                displayCurrency = "EUR"
-            )
-            assertEquals(PaceStatus.UNDER_PACE, under.paceStatus)
-
-            val on = calculator.calculate(
-                currentMonthStart = createDate(2026, 4, 1),
-                previousMonthStart = prevStart,
-                previousMonthEnd = prevEnd,
-                allExpenses = listOf(
-                    createExpense(date = "2026-04-01", amount = 300.0),
-                    createExpense(date = "2026-03-01", amount = 930.0)
-                ).toExpenseSnapshots(),
-                displayCurrency = "EUR"
-            )
-            assertEquals(PaceStatus.ON_PACE, on.paceStatus)
-
-            val over = calculator.calculate(
-                currentMonthStart = createDate(2026, 4, 1),
-                previousMonthStart = prevStart,
-                previousMonthEnd = prevEnd,
-                allExpenses = listOf(
-                    createExpense(date = "2026-04-01", amount = 2000.0),
-                    createExpense(date = "2026-03-01", amount = 930.0)
-                ).toExpenseSnapshots(),
-                displayCurrency = "EUR"
-            )
-            assertEquals(PaceStatus.OVER_PACE, over.paceStatus)
-        }
-    }
-
-    @Test
-    fun `zero baseline returns no baseline status and null previous total`() {
-        runTest {
-            every { timeProvider.now() } returns createDate(2026, 4, 12)
-
+        for (row in rows) {
             val result = calculator.calculate(
                 currentMonthStart = createDate(2026, 4, 1),
                 previousMonthStart = createDate(2026, 3, 1),
                 previousMonthEnd = createDate(2026, 4, 1),
-                allExpenses = listOf(createExpense(date = "2026-04-05", amount = 120.0)).toExpenseSnapshots(),
+                allExpenses = listOf(
+                    createExpense(date = "2026-04-01", amount = row.currentAmount),
+                    createExpense(date = "2026-03-01", amount = row.previousAmount)
+                ).toExpenseSnapshots(),
+                displayCurrency = "EUR"
+            )
+            assertEquals("${row.name} status", row.expectedStatus, result.paceStatus)
+            assertApproxEquals(row.expectedPace, result.pacePercentage, 0.01f, "${row.name} pace: ")
+        }
+    }
+
+    private data class NoBaselineRow(
+        val name: String,
+        val now: LocalDateTime,
+        val currentMonthStart: LocalDate,
+        val previousMonthStart: LocalDate,
+        val currentExpenses: List<Pair<String, Double>>,
+        val expectedSpent: Double
+    )
+
+    @Test
+    fun `no baseline table returns no baseline status and unavailable previous total`() {
+        val rows = listOf(
+            NoBaselineRow(
+                "deep: one current purchase, empty March",
+                LocalDateTime.of(2026, 4, 12, 0, 0, 0),
+                LocalDate.of(2026, 4, 1), LocalDate.of(2026, 3, 1),
+                listOf("2026-04-05" to 120.0),
+                120.0
+            ),
+            NoBaselineRow(
+                "boundary: two current purchases, empty February",
+                LocalDateTime.of(2026, 3, 15, 23, 59, 59),
+                LocalDate.of(2026, 3, 1), LocalDate.of(2026, 2, 1),
+                listOf("2026-03-02" to 300.0, "2026-03-10" to 200.0),
+                500.0
+            ),
+            NoBaselineRow(
+                "validation: 900 current, empty March 2024",
+                LocalDateTime.of(2024, 4, 15, 12, 0, 0),
+                LocalDate.of(2024, 4, 1), LocalDate.of(2024, 3, 1),
+                listOf("2024-04-01" to 900.0),
+                900.0
+            )
+        )
+        assertEquals("no baseline table size", 3, rows.size)
+
+        for (row in rows) {
+            every { timeProvider.now() } returns row.now.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+
+            val result = calculator.calculate(
+                currentMonthStart = row.currentMonthStart.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli(),
+                previousMonthStart = row.previousMonthStart.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli(),
+                previousMonthEnd = row.currentMonthStart.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli(),
+                allExpenses = row.currentExpenses
+                    .map { (date, amount) -> createExpense(date = date, amount = amount) }
+                    .toExpenseSnapshots(),
                 displayCurrency = "EUR"
             )
 
-            assertEquals(PaceStatus.NO_BASELINE, result.paceStatus)
-            assertEquals(-1f, result.pacePercentage)
-            assertNull(result.previousMonthTotal)
+            assertEquals("${row.name} status", PaceStatus.NO_BASELINE, result.paceStatus)
+            assertEquals("${row.name} pace sentinel", -1f, result.pacePercentage, 0f)
+            assertNull("${row.name} previous total", result.previousMonthTotal)
             // Formula list says historical avg should be populated; current implementation returns null
-            assertNull(result.averageMonthlyTotal)
+            assertNull("${row.name} average monthly total", result.averageMonthlyTotal)
+            assertMoneyEquals(row.expectedSpent, result.currentMonthSpent, "${row.name} current month spent")
         }
     }
+
+    // Projection (day 2 / day 4 stabilization) and exclusion (non-purchase, not-mine) cases that
+    // used to live here are rows of SpendingPaceCalculatorValidationTest tables
+    // "projection table" and "exclusion table".
 
     private fun createDate(year: Int, month: Int, day: Int): Long {
         return java.time.LocalDate.of(year, month, day)

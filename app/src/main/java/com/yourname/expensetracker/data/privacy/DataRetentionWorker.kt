@@ -21,6 +21,7 @@ import com.yourname.expensetracker.data.database.entity.PrivacyAuditEvent
 import com.yourname.expensetracker.domain.diagnostics.AppPipeline
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticThrowableSummary
 import com.yourname.expensetracker.domain.diagnostics.EventOutcome
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
@@ -122,6 +123,11 @@ class DataRetentionWorker @AssistedInject constructor(
             // RP-14: column-scoped text-redaction targets keep the historical
             // 30-day window — now routed EXPLICITLY instead of via `else`.
             val textRedactionCutoff = now - TimeUnit.DAYS.toMillis(30)
+            // Owner decision: pending-review notification text is redacted at the
+            // SHORTER of the user's raw notification retention window and 30 days.
+            // A 0-day window means cutoff = now. Other text routes stay at 30 days.
+            val notificationTextDays = minOf(settings.rawNotificationRetentionDays, 30)
+            val notificationTextCutoff = now - TimeUnit.DAYS.toMillis(notificationTextDays.toLong())
 
             val store = RetentionCheckpointStore(prefs)
             val auditDao = appDatabase.privacyAuditDao()
@@ -147,7 +153,7 @@ class DataRetentionWorker @AssistedInject constructor(
                     now - TimeUnit.DAYS.toMillis(RECEIPT_EVENT_RETENTION_DAYS)
                 "50_privacy_audit_events" ->
                     now - TimeUnit.DAYS.toMillis(PRIVACY_AUDIT_RETENTION_DAYS)
-                "pending_reviews.notificationText" -> textRedactionCutoff
+                "pending_reviews.notificationText" -> notificationTextCutoff
                 "background_job_runs.errorMessage" -> textRedactionCutoff
                 "bank_statement_import_items.merchant" -> textRedactionCutoff
                 else -> now - TimeUnit.DAYS.toMillis(30)
@@ -156,6 +162,7 @@ class DataRetentionWorker @AssistedInject constructor(
             fun retentionDaysFor(targetName: String): Int = when (targetName) {
                 "raw_notifications", "notification_intake" -> settings.rawNotificationRetentionDays
                 "scanned_receipts.rawOcrText" -> settings.rawOcrRetentionDays
+                "pending_reviews.notificationText" -> notificationTextDays
                 // RP-14 (D14): fixed policy cutoffs for the new targets.
                 "10_transaction_events.snapshots" -> TRANSACTION_EVENT_SNAPSHOT_RETENTION_DAYS.toInt()
                 "20_transaction_events.rows" -> TRANSACTION_EVENT_ROW_RETENTION_DAYS.toInt()
@@ -249,7 +256,8 @@ class DataRetentionWorker @AssistedInject constructor(
                     target.purge(cutoff)
                 } catch (e: Exception) {
                     if (e is CancellationException) throw e
-                    Log.e(TAG, "RetentionTarget[${target.name}] purge threw — continuing", e)
+                    // DIAG-10 / LOG-02: class name only, no throwable (messages may carry user data)
+                    Log.e(TAG, "RetentionTarget[${target.name}] purge threw — continuing: ${DiagnosticThrowableSummary.className(e)}")
                     // RP-14 14b: retry classification uses the typed
                     // [RetentionPurgeFailure] or controlled DAO/SQLite/IO
                     // exception CLASSES — never exception message substrings.
@@ -321,7 +329,7 @@ class DataRetentionWorker @AssistedInject constructor(
                         ))
                     } catch (e: Exception) {
                         if (e is CancellationException) throw e
-                        Log.w(TAG, "Failed to write retention diagnostic", e)
+                        Log.w(TAG, "Failed to write retention diagnostic: ${DiagnosticThrowableSummary.className(e)}")
                     }
                 }
             }
@@ -444,7 +452,7 @@ class DataRetentionWorker @AssistedInject constructor(
             throw e
         } catch (e: Exception) {
             if (e is CancellationException) throw e
-            Log.w(TAG, "Retention audit emission failed for target ${record.targetName}", e)
+            Log.w(TAG, "Retention audit emission failed for target ${record.targetName}: ${DiagnosticThrowableSummary.className(e)}")
             ctx.addErrors()
             false
         }

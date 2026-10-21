@@ -24,6 +24,9 @@ class ManualRecurringExpenseRepository @Inject constructor(
     /** Returns all rows including inactive — use only when explicitly needed. */
     suspend fun getAllIncludingInactive(): List<ManualRecurringExpense> = dao.getAll()
 
+    /** R21 S2: read-only fresh lookup (active or inactive); used to re-validate a UI snapshot. */
+    suspend fun getById(id: Long): ManualRecurringExpense? = dao.getById(id)
+
     suspend fun insert(expense: ManualRecurringExpense): Long {
         return ruleLifecycleCoordinator.get().createRule(expense)
     }

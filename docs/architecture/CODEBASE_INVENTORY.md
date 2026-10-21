@@ -12,7 +12,7 @@ Snapshot summary only: this inventory tracks the current UI, domain, data, and D
 
 ### Drift Sync (2026-10-02 / Verification Pass)
 
-Verified against production source (`app/src/main/java`): 70 DAO files, 40 ViewModel files, 29 `*Worker*`-named files (including `domain/workers/` infrastructure), DB **v151** with **72** registered entities, 15 registered retention targets. Schema/DAO delta verified 2026-10-13.
+Verified against production source (`app/src/main/java`): 70 DAO files, 41 ViewModel files, 29 `*Worker*`-named files (including `domain/workers/` infrastructure), DB **v151** with **72** registered entities, 15 registered retention targets. Schema/DAO delta verified 2026-10-13.
 
 - **DB v149 to v150** — Wave 5: additive `savings_contribution_ledger` and unique nullable `savings_sweep_plan.acceptanceKey`; sweep acceptance commits balance, ledger, and plan status atomically through `SavingsSweepAcceptanceCoordinator`.
 
@@ -20,9 +20,9 @@ Verified against production source (`app/src/main/java`): 70 DAO files, 40 ViewM
 - **`data/database/DatabaseSchemaPolicy.kt`** — single source of truth for schema version, migration baseline (v145), and the registered migration array; consumed by production, tests, and CI (`scripts/verify_migration_matrix.py`).
 - **Worker-run tracing hardening (PR12H/J)** — new `domain/workers/` infrastructure: `WorkerGuardVerifier`, `WorkerReasonCodes` (exception → safe structured reason-code mapping), `WorkerTerminalDiagnosticSink`/`FileWorkerTerminalDiagnosticSink` (durable fallback when terminal DB status writes fail), `ScheduleResult`.
 - **Reminder action workers** — `SnoozeReminderActionWorker` / `DismissReminderActionWorker` (`service/reminder/`) are one-shot workers enqueued by the reminder receivers so reminder mutations run through `WorkerExecutionGuard` (lease/barrier/run-ledger).
-- **Time seam (java.time migration)** — injected `TimeProvider` remains the wall-clock source; new `domain/util/` seam utilities: `MonotonicTimeProvider`/`SystemMonotonicTimeProvider` (elapsed-time only), `TimeBoundaryTicker` (calendar-day rollover flow), `CancellationSafe` (cancellation-safe wrappers). CI guard `scripts/guards/check_direct_time_calls.kts` blocks direct clock access.
+- **Time seam (java.time migration)** — injected `TimeProvider` remains the wall-clock source; new `domain/util/` seam utilities: `MonotonicTimeProvider`/`SystemMonotonicTimeProvider` (elapsed-time only), `TimeBoundaryTicker` (calendar-day rollover flow), `CancellationSafe` (cancellation-safe wrappers). The registered G-TIME-01 guard (`scripts/verify_time_boundaries.py`) checks direct clock access; the older advisory Kotlin-script time guard was never wired into CI and has been retired.
 - **Data-layer coordinators** — `data/database/GroupTransactionCoordinator.kt` executes the `domain/groups/GroupTransactionCoordinator` contract atomically via `RoomDomainTransactionRunner` (DB ownership policy v2).
-- **Repo-level CI guardrail tooling** — `scripts/ci/` (guard registry + static guard suite + ratchet), `scripts/guards/`, `scripts/guardrails/`, `scripts/allowlists/`, `scripts/verify_*_boundaries.py`, `tools/`, `.github/workflows/ci.yml`; documented as Segment 39 (Static Guardrails & CI Verification) in `CODEBASE_SEGMENTS.md`.
+- **Repo-level CI guardrail tooling** — `scripts/ci/` (guard registry + static guard suite + ratchet), `scripts/guardrails/`, `scripts/allowlists/`, `scripts/verify_*_boundaries.py`, `tools/`, `.github/workflows/ci.yml`; documented as Segment 39 (Static Guardrails & CI Verification) in `CODEBASE_SEGMENTS.md`.
 
 ### Drift Sync (2026-06-01 / Pipeline 5-12 Completion + Universal PRs)
 

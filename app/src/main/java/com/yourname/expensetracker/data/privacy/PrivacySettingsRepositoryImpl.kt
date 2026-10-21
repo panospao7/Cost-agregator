@@ -40,7 +40,8 @@ private const val LOAD_STATE_CORRUPTED = "CORRUPTED"
  * distinguish corruption from a genuine first run.
  * Both produce empty-looking prefs, but only corruption has the sentinel.
  */
-private val Context.privacySettingsDataStore: DataStore<Preferences> by preferencesDataStore(
+@get:VisibleForTesting
+internal val Context.privacySettingsDataStore: DataStore<Preferences> by preferencesDataStore(
     name = "privacy_settings",
     corruptionHandler = ReplaceFileCorruptionHandler {
         mutablePreferencesOf(LOAD_STATE_KEY to LOAD_STATE_CORRUPTED)
@@ -69,6 +70,7 @@ class PrivacySettingsRepositoryImpl @Inject constructor(
         val EXTERNAL_GEOCODING_ENABLED = booleanPreferencesKey("external_geocoding_enabled")
         val BACKGROUND_LOCATION_BACKFILL_ENABLED = booleanPreferencesKey("background_location_backfill_enabled")
         val DEVICE_GPS_LOCATION_ENABLED = booleanPreferencesKey("device_gps_location_enabled")
+        val EXCHANGE_RATE_DOWNLOAD_ENABLED = booleanPreferencesKey("exchange_rate_download_enabled")
         val ENCRYPTED_BACKUP_ENABLED = booleanPreferencesKey("encrypted_backup_enabled")
         val RAW_NOTIFICATION_RETENTION_DAYS = intPreferencesKey("raw_notification_retention_days")
         val RAW_OCR_RETENTION_DAYS = intPreferencesKey("raw_ocr_retention_days")
@@ -127,6 +129,7 @@ class PrivacySettingsRepositoryImpl @Inject constructor(
                 prefs[Keys.EXTERNAL_GEOCODING_ENABLED] = updated.externalGeocodingEnabled
                 prefs[Keys.BACKGROUND_LOCATION_BACKFILL_ENABLED] = updated.backgroundLocationBackfillEnabled
                 prefs[Keys.DEVICE_GPS_LOCATION_ENABLED] = updated.deviceGpsLocationEnabled
+                prefs[Keys.EXCHANGE_RATE_DOWNLOAD_ENABLED] = updated.exchangeRateDownloadEnabled
                 prefs[Keys.ENCRYPTED_BACKUP_ENABLED] = updated.encryptedBackupEnabled
                 prefs[Keys.RAW_NOTIFICATION_RETENTION_DAYS] = updated.rawNotificationRetentionDays
                 prefs[Keys.RAW_OCR_RETENTION_DAYS] = updated.rawOcrRetentionDays
@@ -217,6 +220,7 @@ class PrivacySettingsRepositoryImpl @Inject constructor(
         externalGeocodingEnabled = this[Keys.EXTERNAL_GEOCODING_ENABLED] ?: false,
         backgroundLocationBackfillEnabled = this[Keys.BACKGROUND_LOCATION_BACKFILL_ENABLED] ?: false,
         deviceGpsLocationEnabled = this[Keys.DEVICE_GPS_LOCATION_ENABLED] ?: false,
+        exchangeRateDownloadEnabled = this[Keys.EXCHANGE_RATE_DOWNLOAD_ENABLED] ?: false,
         encryptedBackupEnabled = this[Keys.ENCRYPTED_BACKUP_ENABLED] ?: true,
         rawNotificationRetentionDays = this[Keys.RAW_NOTIFICATION_RETENTION_DAYS] ?: 30,
         rawOcrRetentionDays = this[Keys.RAW_OCR_RETENTION_DAYS] ?: 30,

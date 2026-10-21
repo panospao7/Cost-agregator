@@ -266,7 +266,7 @@ class TimePeriodUtilsT4CBatch2CTest {
     // ============================================================================
 
     @Test
-    fun `normal month boundaries are exact hardcoded instants per zone`() {
+    fun `normal month boundaries are exact hardcoded instants per zone and match both oracles`() {
         // Month June 2024 (post-DST in Europe/Athens and America/New_York):
         //   UTC              06-01T00:00Z … 07-01T00:00Z
         //   Asia/Kolkata     05-31T18:30Z … 06-30T18:30Z  (+05:30)
@@ -279,23 +279,17 @@ class TimePeriodUtilsT4CBatch2CTest {
             MonthCase("Europe/Athens", "2024-05-31T21:00:00Z", "2024-06-30T21:00:00Z"),
             MonthCase("America/New_York", "2024-06-01T04:00:00Z", "2024-07-01T04:00:00Z")
         )
+        assertEquals("normal month cases size", 4, cases.size)
+        assertEquals("zone matrix size", ZONES.size, cases.size)
         for (case in cases) {
             withZone(case.zoneId) {
-                assertEquals("start ${case.zoneId}", Instant.parse(case.startIso).toEpochMilli(), TimePeriodUtils.getStartOfMonth(juneNoonUtc))
-                assertEquals("end ${case.zoneId}", Instant.parse(case.endIso).toEpochMilli(), TimePeriodUtils.getEndOfMonth(juneNoonUtc))
-            }
-        }
-    }
-
-    @Test
-    fun `normal month boundaries match both oracles`() {
-        for (zoneId in ZONES) {
-            withZone(zoneId) {
                 val ts = juneNoonUtc
-                assertEquals("legacy start $zoneId", legacyStartOfMonth(ts), TimePeriodUtils.getStartOfMonth(ts))
-                assertEquals("explicit start $zoneId", explicitStartOfMonth(ts, zoneId), TimePeriodUtils.getStartOfMonth(ts))
-                assertEquals("legacy end $zoneId", legacyEndOfMonth(ts), TimePeriodUtils.getEndOfMonth(ts))
-                assertEquals("explicit end $zoneId", explicitEndOfMonth(ts, zoneId), TimePeriodUtils.getEndOfMonth(ts))
+                assertEquals("start ${case.zoneId}", Instant.parse(case.startIso).toEpochMilli(), TimePeriodUtils.getStartOfMonth(ts))
+                assertEquals("end ${case.zoneId}", Instant.parse(case.endIso).toEpochMilli(), TimePeriodUtils.getEndOfMonth(ts))
+                assertEquals("legacy start ${case.zoneId}", legacyStartOfMonth(ts), TimePeriodUtils.getStartOfMonth(ts))
+                assertEquals("explicit start ${case.zoneId}", explicitStartOfMonth(ts, case.zoneId), TimePeriodUtils.getStartOfMonth(ts))
+                assertEquals("legacy end ${case.zoneId}", legacyEndOfMonth(ts), TimePeriodUtils.getEndOfMonth(ts))
+                assertEquals("explicit end ${case.zoneId}", explicitEndOfMonth(ts, case.zoneId), TimePeriodUtils.getEndOfMonth(ts))
             }
         }
     }
@@ -318,20 +312,6 @@ class TimePeriodUtilsT4CBatch2CTest {
                 for (offset in -2..1) {
                     val idx = offset - (-2)
                     assertEquals("contiguity $offset->${offset + 1} $zoneId", ranges[idx + 1].first, ranges[idx].second)
-                }
-            }
-        }
-    }
-
-    @Test
-    fun `month offset -1 from any reference day lands on the previous month`() {
-        for (zoneId in ZONES) {
-            withZone(zoneId) {
-                // Reference mid-June 2024 and reference Dec 31 2024.
-                for (ts in listOf(juneNoonUtc, dec31Utc)) {
-                    val (start, end) = TimePeriodUtils.getMonthRange(ts, -1)
-                    assertEquals("prev legacy $zoneId ts=$ts", legacyMonthRange(ts, -1), start to end)
-                    assertEquals("prev explicit $zoneId ts=$ts", explicitMonthRange(ts, zoneId, -1), start to end)
                 }
             }
         }
@@ -919,68 +899,59 @@ class TimePeriodUtilsT4CBatch2CTest {
     // ============================================================================
 
     @Test
-    fun `migrated month boundaries match the legacy Calendar oracle across samples and zones`() {
+    fun `migrated month boundaries match the legacy Calendar and explicit java time oracles across samples and zones`() {
+        // Each row is checked against the legacy Calendar oracle; rows with
+        // explicit = true are also checked against the explicit java.time oracle
+        // (the original explicit-oracle sample list was the first 11 rows).
+        data class Sample(val name: String, val ts: Long, val explicit: Boolean)
         val samples = listOf(
-            epochZero,
-            minusOneSecond,
-            preEpoch1950,
-            juneNoonUtc,
-            jan31LeapUtc,
-            jan31NonLeapUtc,
-            mar31LeapUtc,
-            dec31Utc,
-            springMonthUtc,
-            fallMonthUtc,
-            leapDay2024Utc,
-            Instant.parse("2025-01-01T00:00:00Z").toEpochMilli(),
-            Instant.parse("2024-03-10T06:59:59Z").toEpochMilli(), // spring-forward Sunday pre-gap
-            Instant.parse("2024-03-10T07:00:00Z").toEpochMilli(), // spring-forward Sunday post-gap
-            Instant.parse("2024-11-03T05:30:00Z").toEpochMilli(), // fall-back overlap first occurrence
-            Instant.parse("2024-11-03T06:30:00Z").toEpochMilli()  // fall-back overlap second occurrence
+            Sample("epochZero", epochZero, true),
+            Sample("minusOneSecond", minusOneSecond, true),
+            Sample("preEpoch1950", preEpoch1950, true),
+            Sample("juneNoonUtc", juneNoonUtc, true),
+            Sample("jan31LeapUtc", jan31LeapUtc, true),
+            Sample("jan31NonLeapUtc", jan31NonLeapUtc, true),
+            Sample("mar31LeapUtc", mar31LeapUtc, true),
+            Sample("dec31Utc", dec31Utc, true),
+            Sample("springMonthUtc", springMonthUtc, true),
+            Sample("fallMonthUtc", fallMonthUtc, true),
+            Sample("leapDay2024Utc", leapDay2024Utc, true),
+            Sample("2025-01-01T00:00Z", Instant.parse("2025-01-01T00:00:00Z").toEpochMilli(), false),
+            // spring-forward Sunday pre-gap
+            Sample("2024-03-10T06:59:59Z", Instant.parse("2024-03-10T06:59:59Z").toEpochMilli(), false),
+            // spring-forward Sunday post-gap
+            Sample("2024-03-10T07:00:00Z", Instant.parse("2024-03-10T07:00:00Z").toEpochMilli(), false),
+            // fall-back overlap first occurrence
+            Sample("2024-11-03T05:30:00Z", Instant.parse("2024-11-03T05:30:00Z").toEpochMilli(), false),
+            // fall-back overlap second occurrence
+            Sample("2024-11-03T06:30:00Z", Instant.parse("2024-11-03T06:30:00Z").toEpochMilli(), false)
         )
+        assertEquals("migrated samples size", 16, samples.size)
+        assertEquals("explicit-oracle samples size", 11, samples.count { it.explicit })
         for (zoneId in ZONES) {
             withZone(zoneId) {
-                for (ts in samples) {
-                    assertEquals("legacy getStartOfMonth $zoneId ts=$ts", legacyStartOfMonth(ts), TimePeriodUtils.getStartOfMonth(ts))
-                    assertEquals("legacy getEndOfMonth $zoneId ts=$ts", legacyEndOfMonth(ts), TimePeriodUtils.getEndOfMonth(ts))
+                for (sample in samples) {
+                    val ts = sample.ts
+                    val row = "$zoneId ${sample.name} ts=$ts"
+                    assertEquals("legacy getStartOfMonth $row", legacyStartOfMonth(ts), TimePeriodUtils.getStartOfMonth(ts))
+                    assertEquals("legacy getEndOfMonth $row", legacyEndOfMonth(ts), TimePeriodUtils.getEndOfMonth(ts))
                     for (offset in -2..2) {
                         assertEquals(
-                            "legacy getMonthRange $zoneId ts=$ts offset=$offset",
+                            "legacy getMonthRange $row offset=$offset",
                             legacyMonthRange(ts, offset),
                             TimePeriodUtils.getMonthRange(ts, offset)
                         )
                     }
-                }
-            }
-        }
-    }
-
-    @Test
-    fun `migrated month boundaries match the explicit java time oracle across samples and zones`() {
-        val samples = listOf(
-            epochZero,
-            minusOneSecond,
-            preEpoch1950,
-            juneNoonUtc,
-            jan31LeapUtc,
-            jan31NonLeapUtc,
-            mar31LeapUtc,
-            dec31Utc,
-            springMonthUtc,
-            fallMonthUtc,
-            leapDay2024Utc
-        )
-        for (zoneId in ZONES) {
-            withZone(zoneId) {
-                for (ts in samples) {
-                    assertEquals("explicit getStartOfMonth $zoneId ts=$ts", explicitStartOfMonth(ts, zoneId), TimePeriodUtils.getStartOfMonth(ts))
-                    assertEquals("explicit getEndOfMonth $zoneId ts=$ts", explicitEndOfMonth(ts, zoneId), TimePeriodUtils.getEndOfMonth(ts))
-                    for (offset in -2..2) {
-                        assertEquals(
-                            "explicit getMonthRange $zoneId ts=$ts offset=$offset",
-                            explicitMonthRange(ts, zoneId, offset),
-                            TimePeriodUtils.getMonthRange(ts, offset)
-                        )
+                    if (sample.explicit) {
+                        assertEquals("explicit getStartOfMonth $row", explicitStartOfMonth(ts, zoneId), TimePeriodUtils.getStartOfMonth(ts))
+                        assertEquals("explicit getEndOfMonth $row", explicitEndOfMonth(ts, zoneId), TimePeriodUtils.getEndOfMonth(ts))
+                        for (offset in -2..2) {
+                            assertEquals(
+                                "explicit getMonthRange $row offset=$offset",
+                                explicitMonthRange(ts, zoneId, offset),
+                                TimePeriodUtils.getMonthRange(ts, offset)
+                            )
+                        }
                     }
                 }
             }
@@ -992,7 +963,7 @@ class TimePeriodUtilsT4CBatch2CTest {
     // ============================================================================
 
     @Test
-    fun `year and month Int extremes return valid ordered half-open month ranges`() {
+    fun `year and month Int extremes return valid ordered deterministic half-open month ranges`() {
         // The (year, month) overload builds a lenient Calendar from the raw int
         // values, so at the Int extremes the Calendar arithmetic wraps
         // deterministically instead of throwing (verified on the host JDK: none of
@@ -1008,14 +979,19 @@ class TimePeriodUtilsT4CBatch2CTest {
         // Calendar oracle for pre-cutover wrapped timestamps and the explicit
         // java.time oracle (ZonedDateTime/YearMonth) for modern ones — never by
         // re-calling the production month helpers.
+        // Repeatability is also locked on every row: the result depends only on
+        // (year, month) and the default zone, so repeated calls must agree exactly.
         val extremeYears = listOf(Int.MIN_VALUE, Int.MAX_VALUE)
         val extremeMonths = listOf(Int.MIN_VALUE, 0, 1, 12, 13, Int.MAX_VALUE)
+        assertEquals("extreme years size", 2, extremeYears.size)
+        assertEquals("extreme months size", 6, extremeMonths.size)
         for (zoneId in ZONES) {
             withZone(zoneId) {
                 for (year in extremeYears) {
                     for (month in extremeMonths) {
                         val actual = TimePeriodUtils.getMonthRange(year, month)
                         val label = "year=$year month=$month $zoneId"
+                        assertEquals("$label: repeatable", actual, TimePeriodUtils.getMonthRange(year, month))
                         // The year/month overload hands the lenient Calendar's
                         // wrapped timestamp to the pre-Gregorian compatibility
                         // seam, so the oracle family mirrors that seam: legacy
@@ -1068,25 +1044,4 @@ class TimePeriodUtilsT4CBatch2CTest {
         }
     }
 
-    @Test
-    fun `year and month Int extremes are deterministic across repeated calls`() {
-        // Lock repeatability of the lenient Calendar wrap: the result depends only
-        // on (year, month) and the default zone, so every call must agree exactly.
-        val extremeYears = listOf(Int.MIN_VALUE, Int.MAX_VALUE)
-        val extremeMonths = listOf(Int.MIN_VALUE, 0, 1, 12, 13, Int.MAX_VALUE)
-        for (zoneId in ZONES) {
-            withZone(zoneId) {
-                for (year in extremeYears) {
-                    for (month in extremeMonths) {
-                        val label = "year=$year month=$month $zoneId"
-                        assertEquals(
-                            "$label: repeatable",
-                            TimePeriodUtils.getMonthRange(year, month),
-                            TimePeriodUtils.getMonthRange(year, month)
-                        )
-                    }
-                }
-            }
-        }
-    }
 }

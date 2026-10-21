@@ -9,76 +9,159 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.math.BigDecimal
 
 class SplitCalculatorTest {
 
-    @Test
-    fun `equal split of 100 among 3 members distributes remainder to first member`() {
-        val members = members(1L, 2L, 3L)
-        val expense = groupExpense(totalAmount = 100.00, paidById = 1L, splitType = SplitType.EQUAL)
-
-        val splits = SplitCalculator.calculateSplitAmounts(expense, members)
-
-        assertEquals(3, splits.size)
-        assertApproxEquals(33.34, splits[1L] ?: 0.0, 0.01)
-        assertApproxEquals(33.33, splits[2L] ?: 0.0, 0.01)
-        assertApproxEquals(33.33, splits[3L] ?: 0.0, 0.01)
-        assertApproxEquals(100.00, splits.values.sum(), 0.001)
-        assertTrue(SplitCalculator.validateSplits(splits, 100.00))
-    }
+    // B3-4: the 100/3, 100/7 and 33.33-percentage cases that used to open this class
+    // were converted from tolerant to exact-cent assertions (the cases are still
+    // present below). They assert exact cents for the largest-remainder allocation
+    // against the real SplitCalculator.
 
     @Test
-    fun `equal split of 100 among 7 members preserves sum with four one-cent remainders`() {
-        val members = members(1L, 2L, 3L, 4L, 5L, 6L, 7L)
-        val expense = groupExpense(totalAmount = 100.00, paidById = 1L, splitType = SplitType.EQUAL)
-
-        val splits = SplitCalculator.calculateSplitAmounts(expense, members)
-
-        assertEquals(7, splits.size)
-        assertApproxEquals(14.29, splits[1L] ?: 0.0, 0.01)
-        assertApproxEquals(14.29, splits[2L] ?: 0.0, 0.01)
-        assertApproxEquals(14.29, splits[3L] ?: 0.0, 0.01)
-        assertApproxEquals(14.29, splits[4L] ?: 0.0, 0.01)
-        assertApproxEquals(14.28, splits[5L] ?: 0.0, 0.01)
-        assertApproxEquals(14.28, splits[6L] ?: 0.0, 0.01)
-        assertApproxEquals(14.28, splits[7L] ?: 0.0, 0.01)
-        assertApproxEquals(100.00, splits.values.sum(), 0.001)
-    }
-
-    @Test
-    fun `percentage split 33_33 33_33 33_34 maps to exact cent values and preserves sum`() {
-        val members = members(1L, 2L, 3L)
-        val expense = groupExpense(
-            totalAmount = 100.00,
-            paidById = 1L,
-            splitType = SplitType.CUSTOM_PERCENT,
-            customSplitsJson = "1:33.33,2:33.33,3:33.34"
+    fun `equal split of 100 among 3 members allocates exact cents 33_34 33_33 33_33`() {
+        val splits = SplitCalculator.calculateSplitAmounts(
+            groupExpense(totalAmount = 100.00, paidById = 1L, splitType = SplitType.EQUAL),
+            members(1L, 2L, 3L)
         )
 
-        val splits = SplitCalculator.calculateSplitAmounts(expense, members)
-
-        assertApproxEquals(33.33, splits[1L] ?: 0.0, 0.01)
-        assertApproxEquals(33.33, splits[2L] ?: 0.0, 0.01)
-        assertApproxEquals(33.34, splits[3L] ?: 0.0, 0.01)
-        assertApproxEquals(100.00, splits.values.sum(), 0.001)
+        assertEquals(listOf(1L, 2L, 3L), splits.keys.toList())
+        assertEquals(listOf(3334L, 3333L, 3333L), splits.values.map { toExactCents(it) })
+        assertEquals(10_000L, splits.values.sumOf { toExactCents(it) })
     }
 
     @Test
-    fun `percentage split 33_33 each allocates remainder to first member by tie break`() {
-        val members = members(1L, 2L, 3L)
-        val expense = groupExpense(
-            totalAmount = 100.00,
-            paidById = 1L,
-            splitType = SplitType.CUSTOM_PERCENT,
-            customSplitsJson = "1:33.33,2:33.33,3:33.33"
+    fun `equal split of 100 among 7 members gives four 14_29 shares then three 14_28 shares exactly`() {
+        val splits = SplitCalculator.calculateSplitAmounts(
+            groupExpense(totalAmount = 100.00, paidById = 1L, splitType = SplitType.EQUAL),
+            members(1L, 2L, 3L, 4L, 5L, 6L, 7L)
         )
 
-        val splits = SplitCalculator.calculateSplitAmounts(expense, members)
+        assertEquals(
+            listOf(1429L, 1429L, 1429L, 1429L, 1428L, 1428L, 1428L),
+            splits.values.map { toExactCents(it) }
+        )
+        assertEquals(10_000L, splits.values.sumOf { toExactCents(it) })
+    }
 
-        assertApproxEquals(33.34, splits[1L] ?: 0.0, 0.01)
-        assertApproxEquals(33.33, splits[2L] ?: 0.0, 0.01)
-        assertApproxEquals(33.33, splits[3L] ?: 0.0, 0.01)
-        assertApproxEquals(100.00, splits.values.sum(), 0.001)
+    @Test
+    fun `equal split of one cent among 3 members gives the only cent to the first member`() {
+        val splits = SplitCalculator.calculateSplitAmounts(
+            groupExpense(totalAmount = 0.01, paidById = 1L, splitType = SplitType.EQUAL),
+            members(1L, 2L, 3L)
+        )
+
+        assertEquals(listOf(1L, 0L, 0L), splits.values.map { toExactCents(it) })
+    }
+
+    @Test
+    fun `equal split of two cents among 3 members gives one cent each to the first two members`() {
+        val splits = SplitCalculator.calculateSplitAmounts(
+            groupExpense(totalAmount = 0.02, paidById = 1L, splitType = SplitType.EQUAL),
+            members(1L, 2L, 3L)
+        )
+
+        assertEquals(listOf(1L, 1L, 0L), splits.values.map { toExactCents(it) })
+    }
+
+    @Test
+    fun `equal split of 999999_99 among 7 members places the leftover cent on the first member`() {
+        val splits = SplitCalculator.calculateSplitAmounts(
+            groupExpense(totalAmount = 999_999.99, paidById = 1L, splitType = SplitType.EQUAL),
+            members(1L, 2L, 3L, 4L, 5L, 6L, 7L)
+        )
+
+        // 99_999_999 cents = 7 * 14_285_714 + 1
+        assertEquals(
+            listOf(14_285_715L, 14_285_714L, 14_285_714L, 14_285_714L, 14_285_714L, 14_285_714L, 14_285_714L),
+            splits.values.map { toExactCents(it) }
+        )
+        assertEquals(99_999_999L, splits.values.sumOf { toExactCents(it) })
+    }
+
+    @Test
+    fun `percentage split of 100 at 33_33 33_33 33_34 allocates exact cents and preserves total`() {
+        val splits = SplitCalculator.calculateSplitAmounts(
+            groupExpense(
+                totalAmount = 100.00,
+                paidById = 1L,
+                splitType = SplitType.CUSTOM_PERCENT,
+                customSplitsJson = "1:33.33,2:33.33,3:33.34"
+            ),
+            members(1L, 2L, 3L)
+        )
+
+        assertEquals(listOf(3333L, 3333L, 3334L), splits.values.map { toExactCents(it) })
+        assertEquals(10_000L, splits.values.sumOf { toExactCents(it) })
+    }
+
+    @Test
+    fun `percentage split of 0_05 gives leftover cents to largest fractional parts not naive rounding`() {
+        // Raw cents: 1.6665 / 1.6665 / 1.667 -> floors 1/1/1, two cents left. The third
+        // share has the largest fraction, then the first wins the tie by member order.
+        // Naive per-share HALF_UP would give 2+2+2 = 6 cents.
+        val splits = SplitCalculator.calculateSplitAmounts(
+            groupExpense(
+                totalAmount = 0.05,
+                paidById = 1L,
+                splitType = SplitType.CUSTOM_PERCENT,
+                customSplitsJson = "1:33.33,2:33.33,3:33.34"
+            ),
+            members(1L, 2L, 3L)
+        )
+
+        assertEquals(listOf(2L, 1L, 2L), splits.values.map { toExactCents(it) })
+        assertEquals(5L, splits.values.sumOf { toExactCents(it) })
+    }
+
+    @Test
+    fun `percentage split of 0_03 at 50-50 gives the odd cent to the first member`() {
+        val splits = SplitCalculator.calculateSplitAmounts(
+            groupExpense(
+                totalAmount = 0.03,
+                paidById = 1L,
+                splitType = SplitType.CUSTOM_PERCENT,
+                customSplitsJson = "1:50,2:50"
+            ),
+            members(1L, 2L)
+        )
+
+        assertEquals(listOf(2L, 1L), splits.values.map { toExactCents(it) })
+        assertEquals(3L, splits.values.sumOf { toExactCents(it) })
+    }
+
+    @Test
+    fun `percentage split of 100 at 70-20-10 is exact`() {
+        val splits = SplitCalculator.calculateSplitAmounts(
+            groupExpense(
+                totalAmount = 100.00,
+                paidById = 1L,
+                splitType = SplitType.CUSTOM_PERCENT,
+                customSplitsJson = "1:70,2:20,3:10"
+            ),
+            members(1L, 2L, 3L)
+        )
+
+        assertEquals(listOf(7000L, 2000L, 1000L), splits.values.map { toExactCents(it) })
+    }
+
+    @Test
+    fun `percentage split not summing to 100 falls back to exact equal cents`() {
+        // Failing boundary: 60 + 30 + 9.99 = 99.99% is rejected by the parser, so the
+        // calculator falls back to the equal split (3334/3333/3333) instead of the
+        // percentage path (which would give 6000/3000/999).
+        val splits = SplitCalculator.calculateSplitAmounts(
+            groupExpense(
+                totalAmount = 100.00,
+                paidById = 1L,
+                splitType = SplitType.CUSTOM_PERCENT,
+                customSplitsJson = "1:60,2:30,3:9.99"
+            ),
+            members(1L, 2L, 3L)
+        )
+
+        assertEquals(listOf(3334L, 3333L, 3333L), splits.values.map { toExactCents(it) })
+        assertEquals(10_000L, splits.values.sumOf { toExactCents(it) })
     }
 
     @Test
@@ -243,6 +326,10 @@ class SplitCalculatorTest {
         assertApproxEquals(30.0, settlements.sumOf { it.third }, 0.01)
         assertFalse(settlements.any { it.third <= 0.0 })
     }
+
+    /** Unit conversion only: exact integer cents; throws if a value has sub-cent precision. */
+    private fun toExactCents(amount: Double): Long =
+        BigDecimal.valueOf(amount).movePointRight(2).longValueExact()
 
     private fun members(vararg ids: Long): List<GroupMember> =
         ids.map { id ->

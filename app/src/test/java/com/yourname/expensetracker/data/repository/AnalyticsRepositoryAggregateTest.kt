@@ -561,4 +561,46 @@ class AnalyticsRepositoryAggregateTest {
             com.yourname.expensetracker.domain.core.money.FailureReason.MISSING_RATE,
             failure.reason)
     }
+
+    // ── F-R20b-a: month ranges compare against the previous calendar month ────
+
+    @Test
+    fun `spendingSummary_calendarMonthRangeQueriesPreviousCalendarMonth()`() = runTest {
+        com.yourname.expensetracker.domain.util.GlobalTimeZoneTestLock.withLockSuspend {
+            val originalZone = java.util.TimeZone.getDefault()
+            try {
+                java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("Europe/Athens"))
+                val zone = java.time.ZoneId.of("Europe/Athens")
+                fun ms(y: Int, m: Int, d: Int) =
+                    java.time.LocalDate.of(y, m, d).atStartOfDay(zone).toInstant().toEpochMilli()
+
+                val ranges = mutableListOf<Pair<Long, Long>>()
+                coEvery { expenseDao.getExpensesByTypeBetween(any(), any(), any()) } answers {
+                    ranges += firstArg<Long>() to secondArg<Long>()
+                    emptyList()
+                }
+                coEvery { analyticsCurrencyNormalizer.normalizeExpenses(any(), any()) } returns
+                    AnalyticsNormalizationResult(
+                        homeCurrency = homeCurrency,
+                        normalizedExpenses = emptyList(),
+                        includedExpenses = emptyList(),
+                        warnings = emptyList(),
+                        latestRateTimestamp = null,
+                        totalInputCount = 0
+                    )
+
+                // March (31 days): old same-length rule asked for [Jan 29, Mar 1); now the whole of February.
+                repository.getSpendingSummary(ms(2026, 3, 1), ms(2026, 4, 1)).first()
+                assertEquals(ms(2026, 3, 1) to ms(2026, 4, 1), ranges[0])
+                assertEquals(ms(2026, 2, 1) to ms(2026, 3, 1), ranges[1])
+
+                // February (28 days): old rule asked for [Jan 4, Feb 1); now Jan 1..Jan 29 (28 days).
+                ranges.clear()
+                repository.getSpendingSummary(ms(2026, 2, 1), ms(2026, 3, 1)).first()
+                assertEquals(ms(2026, 1, 1) to ms(2026, 1, 29), ranges[1])
+            } finally {
+                java.util.TimeZone.setDefault(originalZone)
+            }
+        }
+    }
 }

@@ -37,8 +37,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -53,7 +51,7 @@ class NotificationIntakeWorkerTimeoutTest {
     /** Helper: creates a real [TimeoutCancellationException] via [withTimeout]. */
     private fun createTimeoutCancellationException(): TimeoutCancellationException = runBlocking {
         try {
-            withTimeout(1) { delay(100) }
+            withTimeout(1) { kotlinx.coroutines.awaitCancellation() } // deterministic: timeout always wins
         } catch (e: TimeoutCancellationException) {
             return@runBlocking e
         }
@@ -91,40 +89,9 @@ class NotificationIntakeWorkerTimeoutTest {
         writeBarrier, readBarrier, restoreMode, runLogger,
         privacyGate, leaseRegistry, diagnosticSink,
         workerTerminalDiagnosticSink, bgJobRunDao,
-        permissionChecker, timeProvider
+        permissionChecker, timeProvider,
+        mockk<Context>(relaxed = true)
     )
-
-    // ═══════════════════════════════════════════════════════════════════════
-    //  Pure type-check tests — no mocks needed
-    // ═══════════════════════════════════════════════════════════════════════
-
-    @Test
-    fun `worker_timeout_marks_retryable_not_terminal`() {
-        val timeoutEx = createTimeoutCancellationException()
-        val isCancellation = timeoutEx is CancellationException
-        val isTimeout = timeoutEx is TimeoutCancellationException
-
-        assertTrue("TimeoutCancellationException must be a CancellationException subclass", isCancellation)
-        assertTrue("TimeoutCancellationException must be a TimeoutCancellationException", isTimeout)
-    }
-
-    @Test
-    fun `worker_system_cancellation_propagates`() {
-        val systemCancel: Throwable = CancellationException("System shutdown")
-        val isTimeout = systemCancel is TimeoutCancellationException
-
-        assertFalse("Plain CancellationException must NOT be a TimeoutCancellationException", isTimeout)
-    }
-
-    @Test
-    fun `timeout_cancellation_exception_is_subclass_of_cancellation_exception`() {
-        val timeoutEx = createTimeoutCancellationException()
-        val isCancellation = timeoutEx is CancellationException
-        val isTimeout = timeoutEx is TimeoutCancellationException
-
-        assertTrue("TimeoutCancellationException must be a CancellationException subclass", isCancellation)
-        assertTrue("TimeoutCancellationException must be a TimeoutCancellationException", isTimeout)
-    }
 
     // ═══════════════════════════════════════════════════════════════════════
     //  Exception routing tests
@@ -267,6 +234,86 @@ class NotificationIntakeWorkerTimeoutTest {
             )
         }
         coVerify(exactly = 1) { intakeDao.purgeAllPayload(intakeId, now) }
+        coVerify(exactly = 0) { repository.processAndSave(any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `transient row with null ciphertext is marked payload unavailable and purged`() = runBlocking {
+        val context = mockk<Context>(relaxed = true)
+        val params = mockk<WorkerParameters>(relaxed = true)
+        val intakeDao = mockk<NotificationIntakeDao>(relaxed = true)
+        val repository = mockk<NotificationRepository>(relaxed = true)
+        val timeProvider = mockk<TimeProvider>(relaxed = true)
+        val crypto = mockk<NotificationTransientPayloadCrypto>(relaxed = true)
+        val restoreMode = mockk<RestoreMaintenanceMode>(relaxed = true)
+        val runLogger = mockk<WorkerRunLogger>(relaxed = true)
+        val privacyGate = mockk<PrivacyGate>(relaxed = true)
+        val leaseRegistry = mockk<WorkerLeaseRegistry>(relaxed = true)
+
+        every { restoreMode.currentMode() } returns RestoreMaintenanceMode.Mode.NORMAL
+        coEvery { leaseRegistry.acquire(any()) } returns mockk(relaxed = true)
+        coEvery { runLogger.start(any()) } returns mockWorkerRunHandle()
+        coEvery { privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE) } returns PrivacyDecision.Allowed
+
+        val executionGuard = buildGuard(
+            restoreMode = restoreMode,
+            runLogger = runLogger,
+            privacyGate = privacyGate,
+            leaseRegistry = leaseRegistry,
+            timeProvider = timeProvider
+        )
+        val intakeId = 42L
+        val now = 1_700_000_000_000L
+        // Non-raw (transient) storage mode with a payload row whose ciphertext is NULL.
+        val metaRow = processingMetadata(
+            id = intakeId,
+            attempts = 1,
+            maxAttempts = 5,
+            now = now,
+            rawStorageMode = "STORE_REDACTED"
+        )
+        val payloadRow = payloadForProcessing(
+            id = intakeId,
+            payloadMode = "TRANSIENT",
+            title = null,
+            text = null,
+            transientPayloadCiphertext = null,
+            transientPayloadNonce = null,
+            transientPayloadVersion = null
+        )
+
+        every { params.inputData } returns Data.Builder().putLong("intakeId", intakeId).build()
+        every { timeProvider.now() } returns now
+        coEvery { intakeDao.getProcessingMetadataById(intakeId) } returns metaRow
+        coEvery { intakeDao.claimForProcessing(intakeId, now, any()) } returns 1
+        coEvery { intakeDao.getPayloadForProcessing(intakeId) } returns payloadRow
+        coEvery { intakeDao.markTerminal(any(), any(), any(), any(), any(), any(), any()) } returns 1
+        coEvery { intakeDao.purgeAllPayload(intakeId, now) } returns 1
+
+        val worker = NotificationIntakeWorker(
+            appContext = context,
+            params = params,
+            intakeDao = intakeDao,
+            repository = repository,
+            timeProvider = timeProvider,
+            crypto = crypto,
+            executionGuard = executionGuard,
+            privacyGate = privacyGate
+        )
+
+        // The worker returns normally after the terminal mark, so the guard yields success().
+        assertEquals(WorkResult.success(), worker.doWork())
+        coVerify(exactly = 1) {
+            intakeDao.markTerminal(
+                id = intakeId,
+                status = NotificationIntakeStatus.PAYLOAD_UNAVAILABLE_PRIVACY.name,
+                rawId = null, expenseId = null, reviewId = null,
+                finalOutcome = "PAYLOAD_UNAVAILABLE_PRIVACY",
+                nowMs = now
+            )
+        }
+        coVerify(exactly = 1) { intakeDao.purgeAllPayload(intakeId, now) }
+        coVerify(exactly = 0) { crypto.decrypt(any(), any(), any()) }
         coVerify(exactly = 0) { repository.processAndSave(any(), any(), any(), any()) }
     }
 
@@ -744,6 +791,67 @@ class NotificationIntakeWorkerTimeoutTest {
     }
 
     @Test
+    fun `purge_payload_is_skipped_when_write_barrier_denies_purge_checkpoint`() = runBlocking {
+        val context = mockk<Context>(relaxed = true)
+        val params = mockk<WorkerParameters>(relaxed = true)
+        val intakeDao = mockk<NotificationIntakeDao>(relaxed = true)
+        val repository = mockk<NotificationRepository>(relaxed = true)
+        val timeProvider = mockk<TimeProvider>(relaxed = true)
+        val crypto = mockk<NotificationTransientPayloadCrypto>(relaxed = true)
+
+        val writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
+        val restoreMode = mockk<RestoreMaintenanceMode>(relaxed = true)
+        val runLogger = mockk<WorkerRunLogger>(relaxed = true)
+        val privacyGate = mockk<PrivacyGate>(relaxed = true)
+        val leaseRegistry = mockk<WorkerLeaseRegistry>(relaxed = true)
+        val permissionChecker = mockk<NotificationPermissionChecker>(relaxed = true)
+
+        every { restoreMode.currentMode() } returns RestoreMaintenanceMode.Mode.NORMAL
+        coEvery { leaseRegistry.acquire(any()) } returns mockk(relaxed = true)
+        coEvery { runLogger.start(any()) } returns mockWorkerRunHandle()
+        every { permissionChecker.areNotificationsEnabled() } returns true
+        coEvery { privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE) } returns PrivacyDecision.Allowed
+
+        val executionGuard = buildGuard(
+            writeBarrier = writeBarrier,
+            restoreMode = restoreMode,
+            runLogger = runLogger,
+            privacyGate = privacyGate,
+            leaseRegistry = leaseRegistry,
+            permissionChecker = permissionChecker,
+            timeProvider = timeProvider
+        )
+
+        val intakeId = 42L
+        val now = 1_700_000_000_000L
+        // attempts >= maxAttempts: markFinalFailure then purgePayloadBestEffort.
+        val metaRow = processingMetadata(
+            id = intakeId, packageName = "com.test.app",
+            attempts = 5, maxAttempts = 5, now = now
+        )
+
+        every { params.inputData } returns Data.Builder().putLong("intakeId", intakeId).build()
+        every { timeProvider.now() } returns now
+        coEvery { intakeDao.getProcessingMetadataById(intakeId) } returns metaRow
+        // Only the purge checkpoint is denied (e.g. maintenance entered after the terminal mark).
+        every { writeBarrier.checkWritesAllowed("intake:purgePayload") } throws RuntimeException("Blocked")
+
+        val worker = NotificationIntakeWorker(
+            appContext = context, params = params,
+            intakeDao = intakeDao, repository = repository,
+            timeProvider = timeProvider, crypto = crypto,
+            executionGuard = executionGuard,
+            privacyGate = privacyGate
+        )
+
+        val result = worker.doWork()
+
+        assertEquals("MAX_ATTEMPTS still fails the run", WorkResult.failure(), result)
+        coVerify(exactly = 1) { intakeDao.markFinalFailure(intakeId, "MAX_ATTEMPTS_EXCEEDED", null, now) }
+        coVerify(exactly = 0) { intakeDao.purgeAllPayload(any(), any()) }
+    }
+
+    @Test
     fun `privacy_disabled_before_payload_load_does_not_call_getPayloadForProcessing`() = runBlocking {
         val context = mockk<Context>(relaxed = true)
         val params = mockk<WorkerParameters>(relaxed = true)
@@ -900,7 +1008,8 @@ class NotificationIntakeWorkerTimeoutTest {
             writeBarrier, readBarrier, restoreMode, runLogger,
             privacyGate, leaseRegistry, diagnosticSink,
             workerTerminalDiagnosticSink, bgJobRunDao,
-            permissionChecker, timeProvider
+            permissionChecker, timeProvider,
+            mockk<Context>(relaxed = true)
         )
 
         val intakeId = 42L
@@ -958,7 +1067,8 @@ class NotificationIntakeWorkerTimeoutTest {
             writeBarrier, readBarrier, restoreMode, runLogger,
             privacyGate, leaseRegistry, diagnosticSink,
             workerTerminalDiagnosticSink, bgJobRunDao,
-            permissionChecker, timeProvider
+            permissionChecker, timeProvider,
+            mockk<Context>(relaxed = true)
         )
         val intakeId = 42L
         val now = 1_700_000_000_000L
@@ -1016,7 +1126,8 @@ class NotificationIntakeWorkerTimeoutTest {
             writeBarrier, readBarrier, restoreMode, runLogger,
             privacyGate, leaseRegistry, diagnosticSink,
             workerTerminalDiagnosticSink, bgJobRunDao,
-            permissionChecker, timeProvider
+            permissionChecker, timeProvider,
+            mockk<Context>(relaxed = true)
         )
 
         val intakeId = 42L

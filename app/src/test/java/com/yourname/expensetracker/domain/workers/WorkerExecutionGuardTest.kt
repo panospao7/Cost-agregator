@@ -5,6 +5,7 @@ import com.yourname.expensetracker.data.backup.DatabaseReadBarrier
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.MaintenanceSafeDiagnosticSink
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.data.database.DatabaseOpenGate
 import com.yourname.expensetracker.data.database.dao.BackgroundJobRunDao
 import com.yourname.expensetracker.data.database.entity.BackgroundJobRun
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
@@ -14,6 +15,8 @@ import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.confirmVerified
+import io.mockk.verify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkObject
@@ -29,6 +32,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.After
 import org.junit.Before
 import org.junit.Test
 
@@ -103,8 +107,49 @@ class WorkerExecutionGuardTest {
             workerTerminalDiagnosticSink = workerTerminalDiagnosticSink,
             backgroundJobRunDao = backgroundJobRunDao,
             notificationPermissionChecker = permissionChecker,
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            appContext = mockk<android.content.Context>(relaxed = true)
         )
+    }
+
+    @After
+    fun resetOpenGate() {
+        DatabaseOpenGate.resetForTests()
+    }
+
+    @Test
+    fun `open gate blocked runGuarded skips with success mapping and touches nothing`() = runTest {
+        DatabaseOpenGate.overrideForTests(DatabaseOpenGate.REASON_SCHEMA_TOO_NEW)
+        var blockRan = false
+
+        val result = guard.runGuarded(request()) { blockRan = true }
+
+        assertTrue(result is WorkerGuardResult.Skipped)
+        assertEquals(DatabaseOpenGate.REASON_SCHEMA_TOO_NEW, (result as WorkerGuardResult.Skipped).reason)
+        assertTrue(result.toWorkerResult() is androidx.work.ListenableWorker.Result.Success)
+        assertFalse("block must not run when the open gate blocks", blockRan)
+        assertNoDatabaseOrLeaseInteraction()
+    }
+
+    @Test
+    fun `open gate blocked runGuardedWithContext skips with success mapping and touches nothing`() = runTest {
+        DatabaseOpenGate.overrideForTests(DatabaseOpenGate.REASON_OPEN_FAILED)
+        var blockRan = false
+
+        val result = guard.runGuardedWithContext(request()) { blockRan = true }
+
+        assertTrue(result is WorkerGuardResult.Skipped)
+        assertTrue(result.toWorkerResult() is androidx.work.ListenableWorker.Result.Success)
+        assertFalse("block must not run when the open gate blocks", blockRan)
+        assertNoDatabaseOrLeaseInteraction()
+    }
+
+    private fun assertNoDatabaseOrLeaseInteraction() {
+        coVerify(exactly = 0) { leaseRegistry.acquire(any()) }
+        coVerify(exactly = 0) { workerRunLogger.start(any(), any(), any(), any(), any(), any()) }
+        confirmVerified(backgroundJobRunDao, diagnosticSink, workerTerminalDiagnosticSink)
+        verify(exactly = 0) { restoreMaintenanceMode.currentMode() }
+        assertEquals(0, permissionChecker.callCount)
     }
 
     private fun request() = WorkerGuardRequest(
@@ -475,8 +520,26 @@ class WorkerExecutionGuardTest {
         try {
             guard.runGuarded(request()) { throw ex }
             throw AssertionError("Expected CancellationException to propagate")
-        } catch (_: kotlinx.coroutines.CancellationException) {
+        } catch (e: kotlinx.coroutines.CancellationException) {
             // expected — cancellation must never be classified as retry/failure
+            assertEquals(ex, e)
+        }
+        coVerify(exactly = 1) { runHandle.cancelled(DiagnosticReasonCode.WORKER_CANCELLED.name, any()) }
+        coVerify(exactly = 0) { runHandle.retry(any(), any(), any()) }
+        coVerify(exactly = 0) { runHandle.failure(any(), any(), any()) }
+    }
+
+    @Test
+    fun `runGuardedWithContext CancellationException is rethrown and finalizes run as cancelled`() = runTest {
+        permissionChecker.enabled = true
+        val ex = kotlinx.coroutines.CancellationException("cancelled")
+
+        try {
+            guard.runGuardedWithContext(request()) { throw ex }
+            throw AssertionError("Expected CancellationException to propagate")
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // expected — cancellation must never be classified as retry/failure
+            assertEquals(ex, e)
         }
         coVerify(exactly = 1) { runHandle.cancelled(DiagnosticReasonCode.WORKER_CANCELLED.name, any()) }
         coVerify(exactly = 0) { runHandle.retry(any(), any(), any()) }
@@ -777,228 +840,189 @@ class WorkerExecutionGuardTest {
         notificationPermissionPolicy = permissionPolicy
     )
 
+    /** Which runHandle terminal method a policy row must end in. */
+    private enum class TerminalKind { SKIPPED, RETRY, FAILED }
+
+    private data class PolicyMatrixRow(
+        val name: String,
+        val request: WorkerGuardRequest,
+        /** null = the privacy gate is not consulted by this row (no capabilities required). */
+        val privacyDecision: PrivacyDecision?,
+        val notificationsEnabled: Boolean,
+        val expectedResultClass: Class<*>,
+        val expectedReason: String,
+        val expectedTerminal: TerminalKind
+    )
+
+    /**
+     * Every privacy / notification-permission policy combination, one row each. R26 (audit write
+     * failure under SKIP_SUCCESS) is deliberately NOT a row: it has its own dedicated tests.
+     */
+    private fun policyMatrixRows(): List<PolicyMatrixRow> {
+        val privacyDenied = DiagnosticReasonCode.WORKER_PRIVACY_DENIED.name
+        val privacyFailClosed = DiagnosticReasonCode.WORKER_PRIVACY_FAIL_CLOSED.name
+        val permissionDenied = DiagnosticReasonCode.WORKER_NOTIFICATION_PERMISSION_DENIED.name
+        return listOf(
+            PolicyMatrixRow(
+                "privacy Denied + SKIP_SUCCESS", privacyRequest(PrivacyPolicy.SKIP_SUCCESS),
+                PrivacyDecision.Denied("privacy opt-out"), true,
+                WorkerGuardResult.Skipped::class.java, privacyDenied, TerminalKind.SKIPPED
+            ),
+            PolicyMatrixRow(
+                "privacy Denied + RETRY", privacyRequest(PrivacyPolicy.RETRY),
+                PrivacyDecision.Denied("privacy opt-out"), true,
+                WorkerGuardResult.Retry::class.java, privacyDenied, TerminalKind.RETRY
+            ),
+            PolicyMatrixRow(
+                "privacy Denied + FAIL", privacyRequest(PrivacyPolicy.FAIL),
+                PrivacyDecision.Denied("privacy opt-out"), true,
+                WorkerGuardResult.Failed::class.java, privacyDenied, TerminalKind.FAILED
+            ),
+            PolicyMatrixRow(
+                "privacy FailClosed + RETRY", privacyRequest(PrivacyPolicy.RETRY),
+                PrivacyDecision.FailClosed("gate error"), true,
+                WorkerGuardResult.Retry::class.java, privacyFailClosed, TerminalKind.RETRY
+            ),
+            PolicyMatrixRow(
+                "notification permission denied + SKIP_SUCCESS", notificationRequest(PermissionPolicy.SKIP_SUCCESS),
+                null, false,
+                WorkerGuardResult.Skipped::class.java, permissionDenied, TerminalKind.SKIPPED
+            ),
+            PolicyMatrixRow(
+                "notification permission denied + RETRY", notificationRequest(PermissionPolicy.RETRY),
+                null, false,
+                WorkerGuardResult.Retry::class.java, permissionDenied, TerminalKind.RETRY
+            ),
+            PolicyMatrixRow(
+                "notification permission denied + FAIL", notificationRequest(PermissionPolicy.FAIL),
+                null, false,
+                WorkerGuardResult.Failed::class.java, permissionDenied, TerminalKind.FAILED
+            )
+        )
+    }
+
+    private fun terminalReasonOf(rowName: String, result: WorkerGuardResult<*>): String = when (result) {
+        is WorkerGuardResult.Skipped -> result.reason
+        is WorkerGuardResult.Retry -> result.reason
+        is WorkerGuardResult.Failed -> result.reason
+        is WorkerGuardResult.BlockedRetry -> result.blockedReasonCode
+        else -> throw AssertionError("[$rowName] result carries no reason: $result")
+    }
+
+    /**
+     * Asserts exactly one terminal write of [kind] with [reason] and zero of every other terminal
+     * method. [checkpointError] selects the error matcher: a [WorkerCheckpointBlockedException]
+     * (checkpoint rows) versus null (policy rows). Failures are prefixed with [rowName].
+     */
+    private fun verifyOnlyTerminal(rowName: String, kind: TerminalKind, reason: String, checkpointError: Boolean) {
+        try {
+            when (kind) {
+                TerminalKind.SKIPPED -> {
+                    coVerify(exactly = 1) { runHandle.skipped(reason, any()) }
+                    coVerify(exactly = 1) { runHandle.skipped(any(), any()) }
+                }
+                TerminalKind.RETRY -> {
+                    if (checkpointError) {
+                        coVerify(exactly = 1) { runHandle.retry(reason, ofType<WorkerCheckpointBlockedException>(), any()) }
+                    } else {
+                        coVerify(exactly = 1) { runHandle.retry(reason, null, any()) }
+                    }
+                    coVerify(exactly = 1) { runHandle.retry(any(), any(), any()) }
+                }
+                TerminalKind.FAILED -> {
+                    if (checkpointError) {
+                        coVerify(exactly = 1) { runHandle.failure(reason, ofType<WorkerCheckpointBlockedException>(), any()) }
+                    } else {
+                        coVerify(exactly = 1) { runHandle.failure(reason, null, any()) }
+                    }
+                    coVerify(exactly = 1) { runHandle.failure(any(), any(), any()) }
+                }
+            }
+            if (kind != TerminalKind.SKIPPED) coVerify(exactly = 0) { runHandle.skipped(any(), any()) }
+            if (kind != TerminalKind.RETRY) coVerify(exactly = 0) { runHandle.retry(any(), any(), any()) }
+            if (kind != TerminalKind.FAILED) coVerify(exactly = 0) { runHandle.failure(any(), any(), any()) }
+            coVerify(exactly = 0) { runHandle.success(any(), any(), any(), any(), any(), any()) }
+            coVerify(exactly = 0) { runHandle.cancelled(any(), any()) }
+            coVerify(exactly = 0) { runHandle.staleAborted(any()) }
+        } catch (e: Throwable) {
+            throw AssertionError("[$rowName] terminal write verification failed: ${e.message}", e)
+        }
+    }
+
+    private suspend fun runPolicyMatrix(withContext: Boolean) {
+        val rows = policyMatrixRows()
+        assertEquals("every privacy/notification policy combination must stay a row", 7, rows.size)
+        for (row in rows) {
+            setup() // fresh mocks and guard per row so verify counts cannot bleed between rows
+            permissionChecker.enabled = row.notificationsEnabled
+            row.privacyDecision?.let { decision ->
+                coEvery { privacyGate.check(any<PrivacyCapability>()) } returns decision
+            }
+            var blockRan = false
+
+            val result = if (withContext) {
+                guard.runGuardedWithContext(row.request) { blockRan = true }
+            } else {
+                guard.runGuarded(row.request) { blockRan = true }
+            }
+
+            assertTrue(
+                "[${row.name}] expected ${row.expectedResultClass.simpleName} but was $result",
+                row.expectedResultClass.isInstance(result)
+            )
+            assertEquals("[${row.name}] reason", row.expectedReason, terminalReasonOf(row.name, result))
+            assertFalse("[${row.name}] block must not run", blockRan)
+            verifyOnlyTerminal(row.name, row.expectedTerminal, row.expectedReason, checkpointError = false)
+        }
+    }
+
     @Test
-    fun `privacy_denied_skip_policy_returns_success`() = runTest {
-        coEvery { privacyGate.check(any<PrivacyCapability>()) } returns
-            PrivacyDecision.Denied("privacy opt-out")
+    fun `privacy_and_notification_policy_matrix_runGuarded`() = runTest {
+        runPolicyMatrix(withContext = false)
+    }
+
+    @Test
+    fun `privacy_and_notification_policy_matrix_runGuardedWithContext`() = runTest {
+        runPolicyMatrix(withContext = true)
+    }
+
+    @Test
+    fun `R26 audit write failure retries even under skip_success privacy policy`() = runTest {
+        coEvery { privacyGate.check(any<PrivacyCapability>()) } returns PrivacyDecision.FailClosed(
+            com.yourname.expensetracker.domain.privacy.PrivacyGateReasonCodes.PRIVACY_AUDIT_WRITE_FAILED
+        )
         var blockRan = false
 
         val result = guard.runGuarded(privacyRequest(PrivacyPolicy.SKIP_SUCCESS)) { blockRan = true }
 
-        assertTrue(result is WorkerGuardResult.Skipped)
-        assertEquals(DiagnosticReasonCode.WORKER_PRIVACY_DENIED.name, (result as WorkerGuardResult.Skipped).reason)
-        assertFalse("block must not run when privacy denied", blockRan)
-        coVerify(exactly = 1) { runHandle.skipped(DiagnosticReasonCode.WORKER_PRIVACY_DENIED.name, any()) }
-    }
-
-    @Test
-    fun `privacy_denied_retry_policy_returns_retry`() = runTest {
-        coEvery { privacyGate.check(any<PrivacyCapability>()) } returns
-            PrivacyDecision.Denied("privacy opt-out")
-        var blockRan = false
-
-        val result = guard.runGuarded(privacyRequest(PrivacyPolicy.RETRY)) { blockRan = true }
-
         assertTrue(result is WorkerGuardResult.Retry)
-        assertEquals(DiagnosticReasonCode.WORKER_PRIVACY_DENIED.name, (result as WorkerGuardResult.Retry).reason)
-        assertFalse("block must not run when privacy denied", blockRan)
-        coVerify(exactly = 1) { runHandle.retry(DiagnosticReasonCode.WORKER_PRIVACY_DENIED.name, null, any()) }
-    }
-
-    @Test
-    fun `privacy_denied_fail_policy_returns_failure`() = runTest {
-        coEvery { privacyGate.check(any<PrivacyCapability>()) } returns
-            PrivacyDecision.Denied("privacy opt-out")
-        var blockRan = false
-
-        val result = guard.runGuarded(privacyRequest(PrivacyPolicy.FAIL)) { blockRan = true }
-
-        assertTrue(result is WorkerGuardResult.Failed)
-        assertEquals(DiagnosticReasonCode.WORKER_PRIVACY_DENIED.name, (result as WorkerGuardResult.Failed).reason)
-        assertFalse("block must not run when privacy denied", blockRan)
-        coVerify(exactly = 1) { runHandle.failure(DiagnosticReasonCode.WORKER_PRIVACY_DENIED.name, null, any()) }
-    }
-
-    @Test
-    fun `privacy_fail_closed_honors_policy`() = runTest {
-        coEvery { privacyGate.check(any<PrivacyCapability>()) } returns
-            PrivacyDecision.FailClosed("gate error")
-        var blockRan = false
-
-        val result = guard.runGuarded(privacyRequest(PrivacyPolicy.RETRY)) { blockRan = true }
-
-        assertTrue(result is WorkerGuardResult.Retry)
-        assertEquals(DiagnosticReasonCode.WORKER_PRIVACY_FAIL_CLOSED.name, (result as WorkerGuardResult.Retry).reason)
-        assertFalse("block must not run when privacy fail-closed", blockRan)
-        coVerify(exactly = 1) { runHandle.retry(DiagnosticReasonCode.WORKER_PRIVACY_FAIL_CLOSED.name, null, any()) }
-    }
-
-    @Test
-    fun `notification_permission_denied_skip_policy_returns_success`() = runTest {
-        permissionChecker.enabled = false
-        var blockRan = false
-
-        val result = guard.runGuarded(notificationRequest(PermissionPolicy.SKIP_SUCCESS)) { blockRan = true }
-
-        assertTrue(result is WorkerGuardResult.Skipped)
-        assertEquals(
-            DiagnosticReasonCode.WORKER_NOTIFICATION_PERMISSION_DENIED.name,
-            (result as WorkerGuardResult.Skipped).reason
-        )
-        assertFalse("block must not run when permission denied", blockRan)
-        coVerify(exactly = 1) {
-            runHandle.skipped(DiagnosticReasonCode.WORKER_NOTIFICATION_PERMISSION_DENIED.name, any())
-        }
-    }
-
-    @Test
-    fun `notification_permission_denied_retry_policy_returns_retry`() = runTest {
-        permissionChecker.enabled = false
-        var blockRan = false
-
-        val result = guard.runGuarded(notificationRequest(PermissionPolicy.RETRY)) { blockRan = true }
-
-        assertTrue(result is WorkerGuardResult.Retry)
-        assertEquals(
-            DiagnosticReasonCode.WORKER_NOTIFICATION_PERMISSION_DENIED.name,
-            (result as WorkerGuardResult.Retry).reason
-        )
-        assertFalse("block must not run when permission denied", blockRan)
-        coVerify(exactly = 1) {
-            runHandle.retry(DiagnosticReasonCode.WORKER_NOTIFICATION_PERMISSION_DENIED.name, null, any())
-        }
-    }
-
-    @Test
-    fun `notification_permission_denied_fail_policy_returns_failure`() = runTest {
-        permissionChecker.enabled = false
-        var blockRan = false
-
-        val result = guard.runGuarded(notificationRequest(PermissionPolicy.FAIL)) { blockRan = true }
-
-        assertTrue(result is WorkerGuardResult.Failed)
-        assertEquals(
-            DiagnosticReasonCode.WORKER_NOTIFICATION_PERMISSION_DENIED.name,
-            (result as WorkerGuardResult.Failed).reason
-        )
-        assertFalse("block must not run when permission denied", blockRan)
-        coVerify(exactly = 1) {
-            runHandle.failure(DiagnosticReasonCode.WORKER_NOTIFICATION_PERMISSION_DENIED.name, null, any())
-        }
+        assertEquals(DiagnosticReasonCode.WORKER_TRANSIENT_ERROR.name, (result as WorkerGuardResult.Retry).reason)
+        assertFalse("block must not run when the audit write failed", blockRan)
+        coVerify(exactly = 1) { runHandle.retry(DiagnosticReasonCode.WORKER_TRANSIENT_ERROR.name, null, any()) }
+        coVerify(exactly = 0) { runHandle.skipped(any(), any()) }
     }
 
     // ══════════════════════════════════════════════════════════════════════
     // PR12C: Privacy & Notification Permission Policy tests — runGuardedWithContext
     // ══════════════════════════════════════════════════════════════════════
 
+    // The runGuardedWithContext privacy/notification policy matrix is covered by
+    // privacy_and_notification_policy_matrix_runGuardedWithContext above (same row list).
+
     @Test
-    fun `runGuardedWithContext privacy_denied_skip_policy_returns_success`() = runTest {
-        coEvery { privacyGate.check(any<PrivacyCapability>()) } returns
-            PrivacyDecision.Denied("privacy opt-out")
+    fun `runGuardedWithContext R26 audit write failure retries even under skip_success privacy policy`() = runTest {
+        coEvery { privacyGate.check(any<PrivacyCapability>()) } returns PrivacyDecision.FailClosed(
+            com.yourname.expensetracker.domain.privacy.PrivacyGateReasonCodes.PRIVACY_AUDIT_WRITE_FAILED
+        )
         var blockRan = false
 
         val result = guard.runGuardedWithContext(privacyRequest(PrivacyPolicy.SKIP_SUCCESS)) { blockRan = true }
 
-        assertTrue(result is WorkerGuardResult.Skipped)
-        assertEquals(DiagnosticReasonCode.WORKER_PRIVACY_DENIED.name, (result as WorkerGuardResult.Skipped).reason)
-        assertFalse("block must not run when privacy denied", blockRan)
-        coVerify(exactly = 1) { runHandle.skipped(DiagnosticReasonCode.WORKER_PRIVACY_DENIED.name, any()) }
-    }
-
-    @Test
-    fun `runGuardedWithContext privacy_denied_retry_policy_returns_retry`() = runTest {
-        coEvery { privacyGate.check(any<PrivacyCapability>()) } returns
-            PrivacyDecision.Denied("privacy opt-out")
-        var blockRan = false
-
-        val result = guard.runGuardedWithContext(privacyRequest(PrivacyPolicy.RETRY)) { blockRan = true }
-
         assertTrue(result is WorkerGuardResult.Retry)
-        assertEquals(DiagnosticReasonCode.WORKER_PRIVACY_DENIED.name, (result as WorkerGuardResult.Retry).reason)
-        assertFalse("block must not run when privacy denied", blockRan)
-        coVerify(exactly = 1) { runHandle.retry(DiagnosticReasonCode.WORKER_PRIVACY_DENIED.name, null, any()) }
-    }
-
-    @Test
-    fun `runGuardedWithContext privacy_denied_fail_policy_returns_failure`() = runTest {
-        coEvery { privacyGate.check(any<PrivacyCapability>()) } returns
-            PrivacyDecision.Denied("privacy opt-out")
-        var blockRan = false
-
-        val result = guard.runGuardedWithContext(privacyRequest(PrivacyPolicy.FAIL)) { blockRan = true }
-
-        assertTrue(result is WorkerGuardResult.Failed)
-        assertEquals(DiagnosticReasonCode.WORKER_PRIVACY_DENIED.name, (result as WorkerGuardResult.Failed).reason)
-        assertFalse("block must not run when privacy denied", blockRan)
-        coVerify(exactly = 1) { runHandle.failure(DiagnosticReasonCode.WORKER_PRIVACY_DENIED.name, null, any()) }
-    }
-
-    @Test
-    fun `runGuardedWithContext privacy_fail_closed_honors_policy`() = runTest {
-        coEvery { privacyGate.check(any<PrivacyCapability>()) } returns
-            PrivacyDecision.FailClosed("gate error")
-        var blockRan = false
-
-        val result = guard.runGuardedWithContext(privacyRequest(PrivacyPolicy.RETRY)) { blockRan = true }
-
-        assertTrue(result is WorkerGuardResult.Retry)
-        assertEquals(DiagnosticReasonCode.WORKER_PRIVACY_FAIL_CLOSED.name, (result as WorkerGuardResult.Retry).reason)
-        assertFalse("block must not run when privacy fail-closed", blockRan)
-        coVerify(exactly = 1) { runHandle.retry(DiagnosticReasonCode.WORKER_PRIVACY_FAIL_CLOSED.name, null, any()) }
-    }
-
-    @Test
-    fun `runGuardedWithContext notification_permission_denied_skip_policy_returns_success`() = runTest {
-        permissionChecker.enabled = false
-        var blockRan = false
-
-        val result = guard.runGuardedWithContext(notificationRequest(PermissionPolicy.SKIP_SUCCESS)) { blockRan = true }
-
-        assertTrue(result is WorkerGuardResult.Skipped)
-        assertEquals(
-            DiagnosticReasonCode.WORKER_NOTIFICATION_PERMISSION_DENIED.name,
-            (result as WorkerGuardResult.Skipped).reason
-        )
-        assertFalse("block must not run when permission denied", blockRan)
-        coVerify(exactly = 1) {
-            runHandle.skipped(DiagnosticReasonCode.WORKER_NOTIFICATION_PERMISSION_DENIED.name, any())
-        }
-    }
-
-    @Test
-    fun `runGuardedWithContext notification_permission_denied_retry_policy_returns_retry`() = runTest {
-        permissionChecker.enabled = false
-        var blockRan = false
-
-        val result = guard.runGuardedWithContext(notificationRequest(PermissionPolicy.RETRY)) { blockRan = true }
-
-        assertTrue(result is WorkerGuardResult.Retry)
-        assertEquals(
-            DiagnosticReasonCode.WORKER_NOTIFICATION_PERMISSION_DENIED.name,
-            (result as WorkerGuardResult.Retry).reason
-        )
-        assertFalse("block must not run when permission denied", blockRan)
-        coVerify(exactly = 1) {
-            runHandle.retry(DiagnosticReasonCode.WORKER_NOTIFICATION_PERMISSION_DENIED.name, null, any())
-        }
-    }
-
-    @Test
-    fun `runGuardedWithContext notification_permission_denied_fail_policy_returns_failure`() = runTest {
-        permissionChecker.enabled = false
-        var blockRan = false
-
-        val result = guard.runGuardedWithContext(notificationRequest(PermissionPolicy.FAIL)) { blockRan = true }
-
-        assertTrue(result is WorkerGuardResult.Failed)
-        assertEquals(
-            DiagnosticReasonCode.WORKER_NOTIFICATION_PERMISSION_DENIED.name,
-            (result as WorkerGuardResult.Failed).reason
-        )
-        assertFalse("block must not run when permission denied", blockRan)
-        coVerify(exactly = 1) {
-            runHandle.failure(DiagnosticReasonCode.WORKER_NOTIFICATION_PERMISSION_DENIED.name, null, any())
-        }
+        assertEquals(DiagnosticReasonCode.WORKER_TRANSIENT_ERROR.name, (result as WorkerGuardResult.Retry).reason)
+        assertFalse("block must not run when the audit write failed", blockRan)
+        coVerify(exactly = 1) { runHandle.retry(DiagnosticReasonCode.WORKER_TRANSIENT_ERROR.name, null, any()) }
+        coVerify(exactly = 0) { runHandle.skipped(any(), any()) }
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -1008,7 +1032,7 @@ class WorkerExecutionGuardTest {
     /** Helper: creates a real [TimeoutCancellationException] via [withTimeout]. */
     private fun createTimeoutCancellationException(): TimeoutCancellationException = runBlocking {
         try {
-            withTimeout(1) { delay(10) }
+            withTimeout(1) { kotlinx.coroutines.awaitCancellation() } // deterministic: timeout always wins
             throw IllegalStateException("Expected TimeoutCancellationException")
         } catch (e: TimeoutCancellationException) {
             return@runBlocking e
@@ -1068,89 +1092,66 @@ class WorkerExecutionGuardTest {
         assertTrue("Stop requested should return BlockedRetry for RETRY policy", result is WorkerGuardResult.BlockedRetry)
         assertEquals(DiagnosticReasonCode.WORKER_STOP_REQUESTED.name, (result as WorkerGuardResult.BlockedRetry).blockedReasonCode)
         // block started running but checkpoint blocked it
-        coVerify(exactly = 1) { runHandle.retry(DiagnosticReasonCode.WORKER_STOP_REQUESTED.name, any<WorkerCheckpointBlockedException>(), any()) }
+        coVerify(exactly = 1) { runHandle.retry(DiagnosticReasonCode.WORKER_STOP_REQUESTED.name, ofType<WorkerCheckpointBlockedException>(), any()) }
     }
 
-    @Test
-    fun `checkpoint_write_barrier_denied_retry_policy_returns_retry`() = runTest {
-        permissionChecker.enabled = true
-        // Let startRunSafely's barrier check pass, but block the checkpoint's barrier check
-        every { writeBarrier.checkWritesAllowed(any<String>()) } answers {
-            val op = firstArg<String>()
-            if (op.startsWith("WorkerRunLogger.start:")) return@answers
-            throw com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException(
-                accessType = com.yourname.expensetracker.data.backup.DatabaseAccessType.WRITE,
-                operation = com.yourname.expensetracker.data.backup.DatabaseAccessOperation(op),
-                mode = RestoreMaintenanceMode.Mode.NORMAL
-            )
-        }
-
-        var blockRan = false
-        val result = guard.runGuardedWithContext(
-            WorkerGuardRequest(
-                workerName = "test_worker",
-                requiresNotificationPermission = false,
-                blockedPolicy = BlockedPolicy.RETRY
-            )
-        ) { ctx -> blockRan = true; ctx.checkpoint("blocked_op") }
-
-        assertTrue("Write barrier denied should return BlockedRetry for RETRY policy", result is WorkerGuardResult.BlockedRetry)
-        assertEquals(DiagnosticReasonCode.WORKER_WRITE_BARRIER_DENIED.name, (result as WorkerGuardResult.BlockedRetry).blockedReasonCode)
-        coVerify(exactly = 1) { runHandle.retry(DiagnosticReasonCode.WORKER_WRITE_BARRIER_DENIED.name, any<WorkerCheckpointBlockedException>(), any()) }
-    }
+    private data class CheckpointBarrierRow(
+        val name: String,
+        val policy: BlockedPolicy,
+        val expectedResultClass: Class<*>,
+        val expectedTerminal: TerminalKind
+    )
 
     @Test
-    fun `checkpoint_write_barrier_denied_skip_policy_returns_success`() = runTest {
-        permissionChecker.enabled = true
-        every { writeBarrier.checkWritesAllowed(any<String>()) } answers {
-            val op = firstArg<String>()
-            if (op.startsWith("WorkerRunLogger.start:")) return@answers
-            throw com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException(
-                accessType = com.yourname.expensetracker.data.backup.DatabaseAccessType.WRITE,
-                operation = com.yourname.expensetracker.data.backup.DatabaseAccessOperation(op),
-                mode = RestoreMaintenanceMode.Mode.NORMAL
+    fun `checkpoint_write_barrier_denied_honors_blocked_policy`() = runTest {
+        val rows = listOf(
+            CheckpointBarrierRow(
+                "RETRY policy returns BlockedRetry", BlockedPolicy.RETRY,
+                WorkerGuardResult.BlockedRetry::class.java, TerminalKind.RETRY
+            ),
+            CheckpointBarrierRow(
+                "SKIP_SUCCESS policy returns Skipped", BlockedPolicy.SKIP_SUCCESS,
+                WorkerGuardResult.Skipped::class.java, TerminalKind.SKIPPED
+            ),
+            CheckpointBarrierRow(
+                "FAIL policy returns Failed", BlockedPolicy.FAIL,
+                WorkerGuardResult.Failed::class.java, TerminalKind.FAILED
             )
+        )
+        assertEquals("every BlockedPolicy must stay a row", BlockedPolicy.values().size, rows.size)
+        val expectedReason = DiagnosticReasonCode.WORKER_WRITE_BARRIER_DENIED.name
+
+        for (row in rows) {
+            setup() // fresh mocks and guard per row so verify counts cannot bleed between rows
+            permissionChecker.enabled = true
+            // Let startRunSafely's barrier check pass, but block the checkpoint's barrier check
+            every { writeBarrier.checkWritesAllowed(any<String>()) } answers {
+                val op = firstArg<String>()
+                if (op.startsWith("WorkerRunLogger.start:")) return@answers
+                throw com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException(
+                    accessType = com.yourname.expensetracker.data.backup.DatabaseAccessType.WRITE,
+                    operation = com.yourname.expensetracker.data.backup.DatabaseAccessOperation(op),
+                    mode = RestoreMaintenanceMode.Mode.NORMAL
+                )
+            }
+
+            var blockRan = false
+            val result = guard.runGuardedWithContext(
+                WorkerGuardRequest(
+                    workerName = "test_worker",
+                    requiresNotificationPermission = false,
+                    blockedPolicy = row.policy
+                )
+            ) { ctx -> blockRan = true; ctx.checkpoint("blocked_op") }
+
+            assertTrue(
+                "[${row.name}] expected ${row.expectedResultClass.simpleName} but was $result",
+                row.expectedResultClass.isInstance(result)
+            )
+            assertEquals("[${row.name}] reason", expectedReason, terminalReasonOf(row.name, result))
+            assertTrue("[${row.name}] block starts and is stopped by the checkpoint", blockRan)
+            verifyOnlyTerminal(row.name, row.expectedTerminal, expectedReason, checkpointError = true)
         }
-
-        var blockRan = false
-        val result = guard.runGuardedWithContext(
-            WorkerGuardRequest(
-                workerName = "test_worker",
-                requiresNotificationPermission = false,
-                blockedPolicy = BlockedPolicy.SKIP_SUCCESS
-            )
-        ) { ctx -> blockRan = true; ctx.checkpoint("blocked_op") }
-
-        assertTrue("Write barrier denied should return Skipped for SKIP_SUCCESS policy", result is WorkerGuardResult.Skipped)
-        assertEquals(DiagnosticReasonCode.WORKER_WRITE_BARRIER_DENIED.name, (result as WorkerGuardResult.Skipped).reason)
-        coVerify(exactly = 1) { runHandle.skipped(DiagnosticReasonCode.WORKER_WRITE_BARRIER_DENIED.name, any()) }
-    }
-
-    @Test
-    fun `checkpoint_write_barrier_denied_fail_policy_returns_failure`() = runTest {
-        permissionChecker.enabled = true
-        every { writeBarrier.checkWritesAllowed(any<String>()) } answers {
-            val op = firstArg<String>()
-            if (op.startsWith("WorkerRunLogger.start:")) return@answers
-            throw com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException(
-                accessType = com.yourname.expensetracker.data.backup.DatabaseAccessType.WRITE,
-                operation = com.yourname.expensetracker.data.backup.DatabaseAccessOperation(op),
-                mode = RestoreMaintenanceMode.Mode.NORMAL
-            )
-        }
-
-        var blockRan = false
-        val result = guard.runGuardedWithContext(
-            WorkerGuardRequest(
-                workerName = "test_worker",
-                requiresNotificationPermission = false,
-                blockedPolicy = BlockedPolicy.FAIL
-            )
-        ) { ctx -> blockRan = true; ctx.checkpoint("blocked_op") }
-
-        assertTrue("Write barrier denied should return Failed for FAIL policy", result is WorkerGuardResult.Failed)
-        assertEquals(DiagnosticReasonCode.WORKER_WRITE_BARRIER_DENIED.name, (result as WorkerGuardResult.Failed).reason)
-        coVerify(exactly = 1) { runHandle.failure(DiagnosticReasonCode.WORKER_WRITE_BARRIER_DENIED.name, any<WorkerCheckpointBlockedException>(), any()) }
     }
 
     @Test

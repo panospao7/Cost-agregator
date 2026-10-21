@@ -30,21 +30,14 @@ import java.time.ZoneId
 class NaturalLanguageSearchEngineDefaultWindowBoundaryTest {
 
     @Test
-    fun `default window on Mar 31 2024 is addMonths now minus 3 with end at now and one keyset call`() = runTest {
-        assertDefaultSearchWindow(toEpochMs(2024, 3, 31, 12, 0))
+    fun `default window on month-end 2024 is now minus 3 months with end at now and one keyset call`() = runTest {
+        // rows: Mar 31, Jan 31, May 31 2024 (month-end coercion)
+        listOf(3, 1, 5).forEach { month ->
+            assertDefaultSearchWindow("2024-%02d-31 12:00".format(month), toEpochMs(2024, month, 31, 12, 0))
+        }
     }
 
-    @Test
-    fun `default window on Jan 31 2024 is addMonths now minus 3 with end at now and one keyset call`() = runTest {
-        assertDefaultSearchWindow(toEpochMs(2024, 1, 31, 12, 0))
-    }
-
-    @Test
-    fun `default window on May 31 2024 is addMonths now minus 3 with end at now and one keyset call`() = runTest {
-        assertDefaultSearchWindow(toEpochMs(2024, 5, 31, 12, 0))
-    }
-
-    private suspend fun assertDefaultSearchWindow(now: Long) {
+    private suspend fun assertDefaultSearchWindow(label: String, now: Long) {
         val timeProvider = mockk<TimeProvider>()
         every { timeProvider.now() } returns now
 
@@ -96,11 +89,11 @@ class NaturalLanguageSearchEngineDefaultWindowBoundaryTest {
         engine.executeSearch(interpretation)
 
         assertEquals(
-            "Default window start must be now minus 3 calendar months (month-end coerced)",
+            "[$label] Default window start must be now minus 3 calendar months (month-end coerced)",
             expectedDefaultWindowStart(now),
             startSlot.captured
         )
-        assertEquals("Default window end must be now", now, endSlot.captured)
+        assertEquals("[$label] Default window end must be now", now, endSlot.captured)
         coVerify(exactly = 1) {
             expenseQueryRepository.getExpensesBetweenFilteredKeyset(
                 startMs = any(), endMs = any(),

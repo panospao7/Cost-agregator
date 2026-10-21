@@ -28,7 +28,26 @@ test, lint, connected-test, and guard execution.
 `compile`, `assemble-debug`, `targeted-unit-test`, `targeted-release-unit-test`, `unit-test-shard`,
 `trusted-tests`, `legacy-tests`, `unit-tests`, `migration-tests`, `lint`,
 `static-guards`, `registered-guard`, `app-check`, `connected-tests`,
-`runner-smoke`, `runner-stall-smoke`.
+`runner-smoke`, `runner-stall-smoke`, `runner-protocol-tests`, `pytest-subset`
+(`-TestFilter scripts[/path][::test_id]`; PASS needs exit 0 and at least one
+passed test, otherwise `E_NO_TESTS_PASSED`).
+
+Standing rule: any change to `scripts/validation-runner.ps1`,
+`scripts/ci/test_validation_runner_protocol.py`, or runner profiles/docs requires
+`runner-protocol-tests` (and `runner-smoke`). `static-guards` no longer runs the
+runner protocol file. Release final acceptance should run `runner-protocol-tests`
+alongside `static-guards`.
+
+`targeted-unit-test` / `targeted-release-unit-test` take `-TestFilter` as one
+filter or a comma-separated list (`"*A*,*B*"`, max 50, no spaces, no empty or
+duplicate items) to validate a batch of test classes in one Gradle run. Invalid
+lists fail with `E_INVALID_TEST_FILTER`; more than 50 items with
+`E_TOO_MANY_TEST_FILTERS`. Gradle fails only when the WHOLE run matches zero
+tests; an item that matches nothing is silently skipped and the run can PASS.
+For a multi-filter run, confirm per-item coverage from JUnit XML
+(`app/build/test-results/<task>/` files newer than the run start); an item with
+zero matched tests is NOT validated (run it alone or fix the name). A
+runner-side per-item check is planned (B4-P1d).
 
 ## Report
 

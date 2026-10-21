@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.transaction.lifecycle
 
 import androidx.room.withTransaction
+import com.yourname.expensetracker.assertMoneyExact
 import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
@@ -29,6 +30,8 @@ import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.slot
 import io.mockk.unmockkStatic
+import io.mockk.verify
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -48,6 +51,11 @@ import kotlin.time.Duration.Companion.seconds
  * the transaction — [Updated] writes the lifecycle event and dispatches
  * post-commit work, [NoChange] is a silent idempotent no-op, [NotFound] is a
  * typed missing-row failure with no event and no dispatch.
+ *
+ * B6-16: the per-method changed / unchanged / missing / collision scenarios and
+ * the CA-P-02-003 idem-key scenarios are tables. Every table row rebuilds ALL
+ * mocks ([buildHarness]) so verify counts never leak between rows, and every row
+ * failure is prefixed with the row name ([inRow]).
  */
 class TransactionLifecycleCoordinatorUpdateTest {
 
@@ -67,6 +75,30 @@ class TransactionLifecycleCoordinatorUpdateTest {
 
     @Before
     fun setup() {
+        // The scoped block opens a Room transaction; a relaxed database mock
+        // would never execute it. withTransaction compiles to the TOP-LEVEL
+        // static facade androidx.room.RoomDatabaseKt.withTransaction (Room
+        // 2.7.2), so the stub only intercepts with mockkStatic — without it,
+        // the real Room body runs against the relaxed AppDatabase mock and
+        // suspends forever (same measured hang family as
+        // TransactionLifecycleCoordinatorTest; see
+        // docs/testing/test-sweep-outcomes-2026-09-18.md §Hangs). The recorded
+        // call args are positional with the RECEIVER as arg 0 and the block as
+        // arg 1, so the block is secondArg (stubbed per database in buildHarness).
+        mockkStatic("androidx.room.RoomDatabaseKt")
+        buildHarness()
+    }
+
+    @After
+    fun tearDown() {
+        unmockkStatic("androidx.room.RoomDatabaseKt")
+    }
+
+    /**
+     * Builds a fresh set of mocks and a fresh coordinator. Called from [setup]
+     * and again at the start of every table row.
+     */
+    private fun buildHarness() {
         database = mockk(relaxed = true)
         expenseDao = mockk(relaxed = true)
         transactionEventDao = mockk(relaxed = true)
@@ -82,17 +114,6 @@ class TransactionLifecycleCoordinatorUpdateTest {
                 any<suspend () -> Any?>()
             )
         } coAnswers { secondArg<suspend () -> Any?>().invoke() }
-        // The scoped block opens a Room transaction; a relaxed database mock
-        // would never execute it. withTransaction compiles to the TOP-LEVEL
-        // static facade androidx.room.RoomDatabaseKt.withTransaction (Room
-        // 2.7.2), so the stub only intercepts with mockkStatic — without it,
-        // the real Room body runs against the relaxed AppDatabase mock and
-        // suspends forever (same measured hang family as
-        // TransactionLifecycleCoordinatorTest; see
-        // docs/testing/test-sweep-outcomes-2026-09-18.md §Hangs). The recorded
-        // call args are positional with the RECEIVER as arg 0 and the block as
-        // arg 1, so the block is secondArg.
-        mockkStatic("androidx.room.RoomDatabaseKt")
         coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
             secondArg<suspend () -> Any>().invoke()
         }
@@ -125,10 +146,15 @@ class TransactionLifecycleCoordinatorUpdateTest {
         )
     }
 
-    @After
-    fun tearDown() {
-        unmockkStatic("androidx.room.RoomDatabaseKt")
-    }
+    /** Prefixes any row failure with the row name; cancellation is never swallowed or rewrapped. */
+    private inline fun <T> inRow(name: String, block: () -> T): T =
+        try {
+            block()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            throw AssertionError("[$name] ${e.message}", e)
+        }
 
     // ── Fixtures ─────────────────────────────────────────────────────────────
 
@@ -160,6 +186,14 @@ class TransactionLifecycleCoordinatorUpdateTest {
         coEvery {
             expenseDao.findBlockingDuplicateIdCurrencyAware(any(), any(), any(), any(), any(), any(), any(), any())
         } returns null
+    }
+
+    private fun stubBlockingCollision() {
+        // 8 positional matchers (see stubNoCollisions note): collision found on
+        // the blocking-consistent (not-mine-INCLUSIVE) collision lookup.
+        coEvery {
+            expenseDao.findBlockingDuplicateIdCurrencyAware(any(), any(), any(), any(), any(), any(), any(), any())
+        } returns 99L
     }
 
     // ── NEW-P2-007 (pre-existing): conversion failure clears stale baseAmount ──
@@ -206,85 +240,175 @@ class TransactionLifecycleCoordinatorUpdateTest {
 
         // Verify baseAmount was cleared (not left as stale 45.0)
         val persisted = updatedSlot.captured
-        assertTrue("baseAmount should be 0.0 after conversion failure, was ${persisted.baseAmount}", persisted.baseAmount == 0.0)
+        assertMoneyExact(0.0, persisted.baseAmount, "baseAmount should be 0.0 after conversion failure")
         assertTrue("baseCurrency should be empty after conversion failure, was '${persisted.baseCurrency}'", persisted.baseCurrency.isEmpty())
         assertTrue("exchangeRateUsed should be 0.0 after conversion failure, was ${persisted.exchangeRateUsed}", persisted.exchangeRateUsed == 0.0)
     }
 
-    // ── P2-005: updateCategory ───────────────────────────────────────────────
+    // ── P2-005: changed -> writes exactly one event; dispatches per kind ─────
+
+    /**
+     * One row per targeted update method (plus P2-007 correlation carry-through
+     * for the transfer edits). [planKind] == null means the method intentionally
+     * never dispatches post-commit work (location edits).
+     */
+    private class ChangedRow(
+        val name: String,
+        val barrierOperation: String,
+        val existing: Expense,
+        val stubCollisions: Boolean,
+        val planKind: TransactionUpdateKind?,
+        /** When false the planned correlation id is not asserted (any value). */
+        val assertPlanCorrelation: Boolean,
+        val planCorrelation: String?,
+        /** null = the event correlation id is not asserted for this row. */
+        val eventCorrelation: String?,
+        val verifyWrite: suspend () -> Unit = {},
+        val call: suspend () -> Unit
+    )
 
     @Test
-    fun `updateCategory changed writes event and dispatches`() = runTest(timeout = 60.seconds) {
-        coEvery { expenseDao.getById(1L) } returns expense(categoryId = 1L)
-        coEvery { transactionEventDao.insert(any()) } returns 1L
+    fun `P2-005 changed update writes exactly one event and plans per kind with caller correlation`() =
+        runTest(timeout = 60.seconds) {
+            val rows = listOf(
+                ChangedRow(
+                    name = "updateCategory",
+                    barrierOperation = "TransactionLifecycleCoordinator.updateCategory",
+                    existing = expense(categoryId = 1L),
+                    stubCollisions = false,
+                    planKind = TransactionUpdateKind.CATEGORY_ONLY,
+                    assertPlanCorrelation = false, planCorrelation = null, eventCorrelation = null,
+                    call = { coordinator.updateCategory(1L, newCategoryId = 2L) }
+                ),
+                ChangedRow(
+                    name = "updateMerchant",
+                    barrierOperation = "TransactionLifecycleCoordinator.updateMerchant",
+                    existing = expense(),
+                    stubCollisions = true,
+                    planKind = TransactionUpdateKind.MERCHANT,
+                    assertPlanCorrelation = false, planCorrelation = null, eventCorrelation = null,
+                    call = { coordinator.updateMerchant(1L, newMerchant = "New Merchant") }
+                ),
+                ChangedRow(
+                    name = "updateType",
+                    barrierOperation = "TransactionLifecycleCoordinator.updateType",
+                    existing = expense(),
+                    stubCollisions = true,
+                    planKind = TransactionUpdateKind.TYPE,
+                    assertPlanCorrelation = false, planCorrelation = null, eventCorrelation = null,
+                    call = { coordinator.updateType(1L, newType = TransactionType.TRANSFER) }
+                ),
+                ChangedRow(
+                    name = "updateTransferDetails without correlation id plans null correlation",
+                    barrierOperation = "TransactionLifecycleCoordinator.updateTransferDetails",
+                    existing = expense(),
+                    stubCollisions = false,
+                    planKind = TransactionUpdateKind.TRANSFER_DETAILS,
+                    assertPlanCorrelation = true, planCorrelation = null, eventCorrelation = null,
+                    call = { coordinator.updateTransferDetails(1L, TransferDirection.OUTGOING, "Acc1") }
+                ),
+                ChangedRow(
+                    name = "updateTypeAndTransferDetails without correlation id plans null correlation",
+                    barrierOperation = "TransactionLifecycleCoordinator.updateTypeAndTransferDetails",
+                    existing = expense(),
+                    stubCollisions = true,
+                    planKind = TransactionUpdateKind.FULL,
+                    assertPlanCorrelation = true, planCorrelation = null, eventCorrelation = null,
+                    call = {
+                        coordinator.updateTypeAndTransferDetails(
+                            1L, TransactionType.TRANSFER, TransferDirection.OUTGOING, "Acc1"
+                        )
+                    }
+                ),
+                // P2-007: one correlation id must appear in BOTH records — the UPDATED
+                // lifecycle event and the planned post-commit batch.
+                ChangedRow(
+                    name = "updateTransferDetails correlation id appears in event and dispatch record",
+                    barrierOperation = "TransactionLifecycleCoordinator.updateTransferDetails",
+                    existing = expense(),
+                    stubCollisions = false,
+                    planKind = TransactionUpdateKind.TRANSFER_DETAILS,
+                    assertPlanCorrelation = true, planCorrelation = "corr-transfer-1",
+                    eventCorrelation = "corr-transfer-1",
+                    call = {
+                        coordinator.updateTransferDetails(
+                            1L, TransferDirection.OUTGOING, "Acc1",
+                            correlationId = "corr-transfer-1"
+                        )
+                    }
+                ),
+                ChangedRow(
+                    name = "updateTypeAndTransferDetails correlation id appears in event and dispatch record",
+                    barrierOperation = "TransactionLifecycleCoordinator.updateTypeAndTransferDetails",
+                    existing = expense(),
+                    stubCollisions = true,
+                    planKind = TransactionUpdateKind.FULL,
+                    assertPlanCorrelation = true, planCorrelation = "corr-type-transfer-1",
+                    eventCorrelation = "corr-type-transfer-1",
+                    call = {
+                        coordinator.updateTypeAndTransferDetails(
+                            1L, TransactionType.TRANSFER, TransferDirection.OUTGOING, "Acc1",
+                            correlationId = "corr-type-transfer-1"
+                        )
+                    }
+                ),
+                // Side effects intentionally skipped for location-only updates.
+                ChangedRow(
+                    name = "updateLocation writes event and never dispatches",
+                    barrierOperation = "TransactionLifecycleCoordinator.updateLocation",
+                    existing = expense(),
+                    stubCollisions = false,
+                    planKind = null,
+                    assertPlanCorrelation = false, planCorrelation = null, eventCorrelation = null,
+                    call = { coordinator.updateLocation(1L, latitude = 37.9, longitude = 23.7) }
+                ),
+                ChangedRow(
+                    name = "clearLocation resets backfill attempts even when location fields are empty",
+                    barrierOperation = "TransactionLifecycleCoordinator.clearLocation",
+                    existing = expense().copy(backfillAttempts = 2),
+                    stubCollisions = false,
+                    planKind = null,
+                    assertPlanCorrelation = false, planCorrelation = null, eventCorrelation = null,
+                    verifyWrite = { coVerify(exactly = 1) { expenseDao.clearLocation(1L) } },
+                    call = { coordinator.clearLocation(1L) }
+                )
+            )
+            assertEquals("changed matrix size guard", 9, rows.size)
 
-        coordinator.updateCategory(1L, newCategoryId = 2L)
+            for (row in rows) {
+                buildHarness()
+                inRow(row.name) {
+                    coEvery { expenseDao.getById(1L) } returns row.existing
+                    if (row.stubCollisions) stubNoCollisions()
+                    val eventSlot = slot<TransactionEvent>()
+                    coEvery { transactionEventDao.insert(capture(eventSlot)) } returns 1L
 
-        coVerify(exactly = 1) { transactionEventDao.insert(any()) }
-        coVerify(exactly = 1) { planner.planUpdated(1L, any(), any(), TransactionUpdateKind.CATEGORY_ONLY) }
-    }
+                    row.call()
 
-    @Test
-    fun `updateCategory unchanged is silent no-op with no event and no dispatch`() = runTest(timeout = 60.seconds) {
-        coEvery { expenseDao.getById(1L) } returns expense(categoryId = 5L)
-
-        coordinator.updateCategory(1L, newCategoryId = 5L)
-
-        coVerify(exactly = 0) { transactionEventDao.insert(any()) }
-        coVerify(exactly = 0) { planner.planUpdated(any(), any(), any(), any()) }
-        coVerify(exactly = 0) { expenseDao.updateCategoryNullable(any(), any()) }
-    }
-
-    @Test
-    fun `updateCategory missing row fails typed with no event and no dispatch`() = runTest(timeout = 60.seconds) {
-        coEvery { expenseDao.getById(1L) } returns null
-
-        assertFailsWith<IllegalArgumentException> {
-            coordinator.updateCategory(1L, newCategoryId = 2L)
+                    verify(exactly = 1) { writeBarrier.checkWritesAllowed(row.barrierOperation) }
+                    coVerify(exactly = 1) { transactionEventDao.insert(any()) }
+                    row.verifyWrite()
+                    val kind = row.planKind
+                    if (kind == null) {
+                        coVerify(exactly = 0) { planner.planUpdated(any(), any(), any(), any()) }
+                    } else if (row.assertPlanCorrelation) {
+                        coVerify(exactly = 1) { planner.planUpdated(1L, any(), row.planCorrelation, kind) }
+                        coVerify(exactly = 1) { planner.planUpdated(any(), any(), any(), any()) }
+                    } else {
+                        coVerify(exactly = 1) { planner.planUpdated(1L, any(), any(), kind) }
+                        coVerify(exactly = 1) { planner.planUpdated(any(), any(), any(), any()) }
+                    }
+                    val expectedEventCorrelation = row.eventCorrelation
+                    if (expectedEventCorrelation != null) {
+                        assertEquals(
+                            "Caller correlation id must be recorded on the UPDATED event",
+                            expectedEventCorrelation,
+                            eventSlot.captured.correlationId
+                        )
+                    }
+                }
+            }
         }
-
-        coVerify(exactly = 0) { transactionEventDao.insert(any()) }
-        coVerify(exactly = 0) { planner.planUpdated(any(), any(), any(), any()) }
-    }
-
-    // ── P2-005: updateLocation ───────────────────────────────────────────────
-
-    @Test
-    fun `updateLocation changed writes event and never dispatches`() = runTest(timeout = 60.seconds) {
-        coEvery { expenseDao.getById(1L) } returns expense()
-        coEvery { transactionEventDao.insert(any()) } returns 1L
-
-        coordinator.updateLocation(1L, latitude = 37.9, longitude = 23.7)
-
-        coVerify(exactly = 1) { transactionEventDao.insert(any()) }
-        // Side effects intentionally skipped for location-only updates.
-        coVerify(exactly = 0) { planner.planUpdated(any(), any(), any(), any()) }
-    }
-
-    @Test
-    fun `updateLocation unchanged is silent no-op with no event`() = runTest(timeout = 60.seconds) {
-        val located = expense().copy(
-            latitude = 37.9, longitude = 23.7,
-            placeId = "p1", resolvedAddress = "addr"
-        )
-        coEvery { expenseDao.getById(1L) } returns located
-
-        coordinator.updateLocation(1L, latitude = 37.9, longitude = 23.7, placeId = "p1", resolvedAddress = "addr")
-
-        coVerify(exactly = 0) { transactionEventDao.insert(any()) }
-        coVerify(exactly = 0) { expenseDao.updateLocation(any(), any(), any(), any(), any(), any()) }
-    }
-
-    @Test
-    fun `updateLocation missing row fails typed with no event`() = runTest(timeout = 60.seconds) {
-        coEvery { expenseDao.getById(1L) } returns null
-
-        assertFailsWith<IllegalArgumentException> {
-            coordinator.updateLocation(1L, latitude = 37.9, longitude = 23.7)
-        }
-
-        coVerify(exactly = 0) { transactionEventDao.insert(any()) }
-    }
 
     @Test
     fun `clearLocation changed writes auditable event and clears columns`() = runTest(timeout = 60.seconds) {
@@ -315,323 +439,346 @@ class TransactionLifecycleCoordinatorUpdateTest {
         assertTrue(eventSlot.captured.afterSnapshot != null)
     }
 
-    @Test
-    fun `clearLocation already clear is silent no-op`() = runTest(timeout = 60.seconds) {
-        coEvery { expenseDao.getById(1L) } returns expense()
+    // ── P2-005: unchanged -> silent no-op (no event, no dispatch, no DAO write) ──
 
-        coordinator.clearLocation(1L)
-
-        coVerify(exactly = 0) { expenseDao.clearLocation(any()) }
-        coVerify(exactly = 0) { transactionEventDao.insert(any()) }
-    }
-
-    @Test
-    fun `clearLocation resets backfill attempts even when location fields are empty`() = runTest(timeout = 60.seconds) {
-        coEvery { expenseDao.getById(1L) } returns expense().copy(backfillAttempts = 2)
-        coEvery { transactionEventDao.insert(any()) } returns 1L
-
-        coordinator.clearLocation(1L)
-
-        coVerify(exactly = 1) { expenseDao.clearLocation(1L) }
-        coVerify(exactly = 1) { transactionEventDao.insert(any()) }
-    }
+    private class NoChangeRow(
+        val name: String,
+        /** Coordinator method name; the write barrier is checked as "TransactionLifecycleCoordinator.<method>". */
+        val method: String,
+        val existing: Expense,
+        val verifyNoWrite: suspend () -> Unit,
+        val call: suspend () -> Unit
+    )
 
     @Test
-    fun `clearLocation missing row fails typed with no event`() = runTest(timeout = 60.seconds) {
-        coEvery { expenseDao.getById(1L) } returns null
+    fun `P2-005 unchanged update is silent no-op with no event no dispatch and no DAO write`() =
+        runTest(timeout = 60.seconds) {
+            val located = expense().copy(
+                latitude = 37.9, longitude = 23.7,
+                placeId = "p1", resolvedAddress = "addr"
+            )
+            val withTransfer = expense().copy(
+                transferDirection = TransferDirection.OUTGOING,
+                transferAccountName = "Acc1"
+            )
+            val canonicalKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
+                amount = 50.0, merchant = "Test", date = now, currency = "EUR",
+                transactionType = TransactionType.PURCHASE
+            )
+            val unchangedTypeAndTransfer = expense(dedupeKey = canonicalKey).copy(
+                transferDirection = TransferDirection.OUTGOING,
+                transferAccountName = "Acc1"
+            )
+            val rows = listOf(
+                NoChangeRow(
+                    name = "updateCategory same category",
+                    method = "updateCategory",
+                    existing = expense(categoryId = 5L),
+                    verifyNoWrite = { coVerify(exactly = 0) { expenseDao.updateCategoryNullable(any(), any()) } },
+                    call = { coordinator.updateCategory(1L, newCategoryId = 5L) }
+                ),
+                NoChangeRow(
+                    name = "updateLocation same coordinates and place",
+                    method = "updateLocation",
+                    existing = located,
+                    verifyNoWrite = {
+                        coVerify(exactly = 0) { expenseDao.updateLocation(any(), any(), any(), any(), any(), any()) }
+                    },
+                    call = {
+                        coordinator.updateLocation(
+                            1L, latitude = 37.9, longitude = 23.7, placeId = "p1", resolvedAddress = "addr"
+                        )
+                    }
+                ),
+                NoChangeRow(
+                    name = "clearLocation already clear",
+                    method = "clearLocation",
+                    existing = expense(),
+                    verifyNoWrite = { coVerify(exactly = 0) { expenseDao.clearLocation(any()) } },
+                    call = { coordinator.clearLocation(1L) }
+                ),
+                NoChangeRow(
+                    name = "updateMerchant same merchant",
+                    method = "updateMerchant",
+                    existing = expense(),
+                    verifyNoWrite = {
+                        coVerify(exactly = 0) { expenseDao.updateMerchantAndKey(any(), any(), any(), any()) }
+                    },
+                    call = { coordinator.updateMerchant(1L, newMerchant = "Test") }
+                ),
+                NoChangeRow(
+                    name = "updateType same type",
+                    method = "updateType",
+                    existing = expense(),
+                    verifyNoWrite = { coVerify(exactly = 0) { expenseDao.updateTransactionType(any(), any(), any()) } },
+                    call = { coordinator.updateType(1L, newType = TransactionType.PURCHASE) }
+                ),
+                NoChangeRow(
+                    name = "updateTransferDetails same direction and account",
+                    method = "updateTransferDetails",
+                    existing = withTransfer,
+                    verifyNoWrite = {
+                        coVerify(exactly = 0) { expenseDao.updateTransferDirection(any(), any()) }
+                        coVerify(exactly = 0) { expenseDao.updateTransferAccountName(any(), any()) }
+                    },
+                    call = { coordinator.updateTransferDetails(1L, TransferDirection.OUTGOING, "Acc1") }
+                ),
+                NoChangeRow(
+                    name = "updateTypeAndTransferDetails same type, transfer and canonical key",
+                    method = "updateTypeAndTransferDetails",
+                    existing = unchangedTypeAndTransfer,
+                    verifyNoWrite = { coVerify(exactly = 0) { expenseDao.updateTransactionType(any(), any(), any()) } },
+                    call = {
+                        coordinator.updateTypeAndTransferDetails(
+                            1L, TransactionType.PURCHASE, TransferDirection.OUTGOING, "Acc1"
+                        )
+                    }
+                )
+            )
+            assertEquals("no-change matrix size guard", 7, rows.size)
 
-        assertFailsWith<IllegalArgumentException> {
-            coordinator.clearLocation(1L)
+            for (row in rows) {
+                buildHarness()
+                inRow(row.name) {
+                    coEvery { expenseDao.getById(1L) } returns row.existing
+
+                    row.call()
+
+                    // B6 nit (47): the no-op path still goes through the write barrier exactly once.
+                    verify(exactly = 1) { writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.${row.method}") }
+                    coVerify(exactly = 0) { transactionEventDao.insert(any()) }
+                    coVerify(exactly = 0) { planner.planUpdated(any(), any(), any(), any()) }
+                    row.verifyNoWrite()
+                }
+            }
         }
 
-        coVerify(exactly = 0) { expenseDao.clearLocation(any()) }
-        coVerify(exactly = 0) { transactionEventDao.insert(any()) }
-    }
+    // ── P2-005: missing row -> typed IllegalArgumentException ────────────────
 
-    // ── P2-005: updateMerchant ───────────────────────────────────────────────
-
-    @Test
-    fun `updateMerchant changed writes event and dispatches`() = runTest(timeout = 60.seconds) {
-        coEvery { expenseDao.getById(1L) } returns expense()
-        stubNoCollisions()
-        coEvery { transactionEventDao.insert(any()) } returns 1L
-
-        coordinator.updateMerchant(1L, newMerchant = "New Merchant")
-
-        coVerify(exactly = 1) { transactionEventDao.insert(any()) }
-        coVerify(exactly = 1) { planner.planUpdated(1L, any(), any(), TransactionUpdateKind.MERCHANT) }
-    }
+    private class MissingRow(
+        val name: String,
+        val verifyNoWrite: suspend () -> Unit = {},
+        val call: suspend () -> Unit
+    )
 
     @Test
-    fun `updateMerchant unchanged is silent no-op with no event and no dispatch`() = runTest(timeout = 60.seconds) {
-        coEvery { expenseDao.getById(1L) } returns expense()
+    fun `P2-005 missing row fails typed with no event and no dispatch`() = runTest(timeout = 60.seconds) {
+        val rows = listOf(
+            MissingRow(
+                name = "updateCategory",
+                call = { coordinator.updateCategory(1L, newCategoryId = 2L) }
+            ),
+            MissingRow(
+                name = "updateLocation",
+                call = { coordinator.updateLocation(1L, latitude = 37.9, longitude = 23.7) }
+            ),
+            MissingRow(
+                name = "clearLocation",
+                verifyNoWrite = { coVerify(exactly = 0) { expenseDao.clearLocation(any()) } },
+                call = { coordinator.clearLocation(1L) }
+            ),
+            MissingRow(
+                name = "updateMerchant",
+                call = { coordinator.updateMerchant(1L, newMerchant = "New Merchant") }
+            ),
+            MissingRow(
+                name = "updateType",
+                call = { coordinator.updateType(1L, newType = TransactionType.TRANSFER) }
+            ),
+            MissingRow(
+                name = "updateTransferDetails",
+                call = { coordinator.updateTransferDetails(1L, TransferDirection.OUTGOING, "Acc1") }
+            ),
+            MissingRow(
+                name = "updateTypeAndTransferDetails",
+                call = {
+                    coordinator.updateTypeAndTransferDetails(
+                        1L, TransactionType.TRANSFER, TransferDirection.OUTGOING, "Acc1"
+                    )
+                }
+            )
+        )
+        assertEquals("missing-row matrix size guard", 7, rows.size)
 
-        coordinator.updateMerchant(1L, newMerchant = "Test")
+        for (row in rows) {
+            buildHarness()
+            inRow(row.name) {
+                coEvery { expenseDao.getById(1L) } returns null
 
-        coVerify(exactly = 0) { transactionEventDao.insert(any()) }
-        coVerify(exactly = 0) { planner.planUpdated(any(), any(), any(), any()) }
-        coVerify(exactly = 0) { expenseDao.updateMerchantAndKey(any(), any(), any(), any()) }
-    }
+                assertFailsWith<IllegalArgumentException> { row.call() }
 
-    @Test
-    fun `updateMerchant missing row fails typed with no event and no dispatch`() = runTest(timeout = 60.seconds) {
-        coEvery { expenseDao.getById(1L) } returns null
-
-        assertFailsWith<IllegalArgumentException> {
-            coordinator.updateMerchant(1L, newMerchant = "New Merchant")
+                // B6 nit (47): the barrier is checked once even when the row is missing
+                // (row.name is the coordinator method name for every MissingRow).
+                verify(exactly = 1) { writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.${row.name}") }
+                coVerify(exactly = 0) { transactionEventDao.insert(any()) }
+                coVerify(exactly = 0) { planner.planUpdated(any(), any(), any(), any()) }
+                row.verifyNoWrite()
+            }
         }
-
-        coVerify(exactly = 0) { transactionEventDao.insert(any()) }
-        coVerify(exactly = 0) { planner.planUpdated(any(), any(), any(), any()) }
     }
 
-    @Test
-    fun `updateMerchant collision throws DuplicateUpdateException and dispatches nothing`() = runTest(timeout = 60.seconds) {
-        coEvery { expenseDao.getById(1L) } returns expense()
-        // 8 positional matchers (see stubNoCollisions note): collision found on
-        // the blocking-consistent (not-mine-INCLUSIVE) collision lookup.
-        coEvery {
-            expenseDao.findBlockingDuplicateIdCurrencyAware(any(), any(), any(), any(), any(), any(), any(), any())
-        } returns 99L
+    // ── P2-005 / RP-11 FIX 2: collisions abort with a typed exception ────────
 
-        assertFailsWith<DuplicateUpdateException> {
-            coordinator.updateMerchant(1L, newMerchant = "Colliding Merchant")
-        }
-
-        coVerify(exactly = 0) { transactionEventDao.insert(any()) }
-        coVerify(exactly = 0) { planner.planUpdated(any(), any(), any(), any()) }
-    }
+    private class CollisionRow(
+        val name: String,
+        val existing: Expense,
+        val verifyNoWrite: suspend () -> Unit,
+        val call: suspend () -> Unit
+    )
 
     /**
      * RP-11 FIX 2: a not-mine row occupying the target identity must abort the
      * rename with a typed DuplicateUpdateException — NOT slip past the
-     * preflight and die on the raw dedupeKey unique-index constraint.
-     */
-    @Test
-    fun `updateMerchant collision against not-mine row throws DuplicateUpdateException`() = runTest(timeout = 60.seconds) {
-        coEvery { expenseDao.getById(1L) } returns expense()
-        // Only the blocking-consistent lookup sees the not-mine row; the fuzzy
-        // resolver keeps its isNotMine = 0 exclusion (relaxed default null).
-        coEvery {
-            expenseDao.findBlockingDuplicateIdCurrencyAware(any(), any(), any(), any(), any(), any(), any(), any())
-        } returns 99L
-
-        assertFailsWith<DuplicateUpdateException> {
-            coordinator.updateMerchant(1L, newMerchant = "NotMine Occupied Merchant")
-        }
-
-        coVerify(exactly = 0) { transactionEventDao.insert(any()) }
-        coVerify(exactly = 0) { planner.planUpdated(any(), any(), any(), any()) }
-        coVerify(exactly = 0) { expenseDao.updateMerchantAndKey(any(), any(), any(), any()) }
-    }
-
-    // ── P2-005: updateType ───────────────────────────────────────────────────
-
-    @Test
-    fun `updateType changed writes event and dispatches`() = runTest(timeout = 60.seconds) {
-        coEvery { expenseDao.getById(1L) } returns expense()
-        stubNoCollisions()
-        coEvery { transactionEventDao.insert(any()) } returns 1L
-
-        coordinator.updateType(1L, newType = TransactionType.TRANSFER)
-
-        coVerify(exactly = 1) { transactionEventDao.insert(any()) }
-        coVerify(exactly = 1) { planner.planUpdated(1L, any(), any(), TransactionUpdateKind.TYPE) }
-    }
-
-    @Test
-    fun `updateType unchanged is silent no-op with no event and no dispatch`() = runTest(timeout = 60.seconds) {
-        coEvery { expenseDao.getById(1L) } returns expense()
-
-        coordinator.updateType(1L, newType = TransactionType.PURCHASE)
-
-        coVerify(exactly = 0) { transactionEventDao.insert(any()) }
-        coVerify(exactly = 0) { planner.planUpdated(any(), any(), any(), any()) }
-        coVerify(exactly = 0) { expenseDao.updateTransactionType(any(), any(), any()) }
-    }
-
-    @Test
-    fun `updateType missing row fails typed with no event and no dispatch`() = runTest(timeout = 60.seconds) {
-        coEvery { expenseDao.getById(1L) } returns null
-
-        assertFailsWith<IllegalArgumentException> {
-            coordinator.updateType(1L, newType = TransactionType.TRANSFER)
-        }
-
-        coVerify(exactly = 0) { transactionEventDao.insert(any()) }
-        coVerify(exactly = 0) { planner.planUpdated(any(), any(), any(), any()) }
-    }
-
-    // ── P2-005: updateTransferDetails ────────────────────────────────────────
-
-    @Test
-    fun `updateTransferDetails changed writes event and dispatches`() = runTest(timeout = 60.seconds) {
-        coEvery { expenseDao.getById(1L) } returns expense()
-        coEvery { transactionEventDao.insert(any()) } returns 1L
-
-        coordinator.updateTransferDetails(1L, TransferDirection.OUTGOING, "Acc1")
-
-        coVerify(exactly = 1) { transactionEventDao.insert(any()) }
-        coVerify(exactly = 1) { planner.planUpdated(1L, any(), null, TransactionUpdateKind.TRANSFER_DETAILS) }
-    }
-
-    @Test
-    fun `updateTransferDetails unchanged is silent no-op with no event and no dispatch`() = runTest(timeout = 60.seconds) {
-        val withTransfer = expense().copy(
-            transferDirection = TransferDirection.OUTGOING,
-            transferAccountName = "Acc1"
-        )
-        coEvery { expenseDao.getById(1L) } returns withTransfer
-
-        coordinator.updateTransferDetails(1L, TransferDirection.OUTGOING, "Acc1")
-
-        coVerify(exactly = 0) { transactionEventDao.insert(any()) }
-        coVerify(exactly = 0) { planner.planUpdated(any(), any(), any(), any()) }
-        coVerify(exactly = 0) { expenseDao.updateTransferDirection(any(), any()) }
-        coVerify(exactly = 0) { expenseDao.updateTransferAccountName(any(), any()) }
-    }
-
-    @Test
-    fun `updateTransferDetails missing row fails typed with no event and no dispatch`() = runTest(timeout = 60.seconds) {
-        coEvery { expenseDao.getById(1L) } returns null
-
-        assertFailsWith<IllegalArgumentException> {
-            coordinator.updateTransferDetails(1L, TransferDirection.OUTGOING, "Acc1")
-        }
-
-        coVerify(exactly = 0) { transactionEventDao.insert(any()) }
-        coVerify(exactly = 0) { planner.planUpdated(any(), any(), any(), any()) }
-    }
-
-    // ── P2-005: updateTypeAndTransferDetails ─────────────────────────────────
-
-    @Test
-    fun `updateTypeAndTransferDetails changed writes event and dispatches`() = runTest(timeout = 60.seconds) {
-        coEvery { expenseDao.getById(1L) } returns expense()
-        stubNoCollisions()
-        coEvery { transactionEventDao.insert(any()) } returns 1L
-
-        coordinator.updateTypeAndTransferDetails(1L, TransactionType.TRANSFER, TransferDirection.OUTGOING, "Acc1")
-
-        coVerify(exactly = 1) { transactionEventDao.insert(any()) }
-        coVerify(exactly = 1) { planner.planUpdated(1L, any(), null, TransactionUpdateKind.FULL) }
-    }
-
-    @Test
-    fun `updateTypeAndTransferDetails unchanged is silent no-op with no event and no dispatch`() = runTest(timeout = 60.seconds) {
-        val canonicalKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
-            amount = 50.0, merchant = "Test", date = now, currency = "EUR",
-            transactionType = TransactionType.PURCHASE
-        )
-        val unchanged = expense(dedupeKey = canonicalKey).copy(
-            transferDirection = TransferDirection.OUTGOING,
-            transferAccountName = "Acc1"
-        )
-        coEvery { expenseDao.getById(1L) } returns unchanged
-
-        coordinator.updateTypeAndTransferDetails(1L, TransactionType.PURCHASE, TransferDirection.OUTGOING, "Acc1")
-
-        coVerify(exactly = 0) { transactionEventDao.insert(any()) }
-        coVerify(exactly = 0) { planner.planUpdated(any(), any(), any(), any()) }
-        coVerify(exactly = 0) { expenseDao.updateTransactionType(any(), any(), any()) }
-    }
-
-    @Test
-    fun `updateTypeAndTransferDetails missing row fails typed with no event and no dispatch`() = runTest(timeout = 60.seconds) {
-        coEvery { expenseDao.getById(1L) } returns null
-
-        assertFailsWith<IllegalArgumentException> {
-            coordinator.updateTypeAndTransferDetails(1L, TransactionType.TRANSFER, TransferDirection.OUTGOING, "Acc1")
-        }
-
-        coVerify(exactly = 0) { transactionEventDao.insert(any()) }
-        coVerify(exactly = 0) { planner.planUpdated(any(), any(), any(), any()) }
-    }
-
-    /**
+     * preflight and die on the raw dedupeKey unique-index constraint. Only the
+     * blocking-consistent lookup sees the row (the fuzzy resolver keeps its
+     * isNotMine = 0 exclusion, relaxed default null).
+     *
      * P2-005: the dedupe-key collision check must run whenever the recomputed
      * key differs from the stored key — even if the transaction type itself is
      * unchanged (e.g. a legacy row whose stored key predates the type-suffixed
      * key format).
      */
     @Test
-    fun `updateTypeAndTransferDetails stale key collision throws even when type unchanged`() = runTest(timeout = 60.seconds) {
-        // Type unchanged (PURCHASE → PURCHASE) but stored key is stale/differs.
-        val staleKeyRow = expense(dedupeKey = "stale-legacy-key")
-        coEvery { expenseDao.getById(1L) } returns staleKeyRow
-        // 8 positional matchers (see stubNoCollisions note): collision found on
-        // the blocking-consistent (not-mine-INCLUSIVE) collision lookup.
-        coEvery {
-            expenseDao.findBlockingDuplicateIdCurrencyAware(any(), any(), any(), any(), any(), any(), any(), any())
-        } returns 99L
-
-        assertFailsWith<DuplicateUpdateException> {
-            coordinator.updateTypeAndTransferDetails(
-                1L, TransactionType.PURCHASE, TransferDirection.OUTGOING, "Acc1"
+    fun `P2-005 collisions throw DuplicateUpdateException with no event no dispatch and no DAO write`() =
+        runTest(timeout = 60.seconds) {
+            val rows = listOf(
+                CollisionRow(
+                    name = "updateMerchant collision throws DuplicateUpdateException and dispatches nothing",
+                    existing = expense(),
+                    verifyNoWrite = {
+                        coVerify(exactly = 0) { expenseDao.updateMerchantAndKey(any(), any(), any(), any()) }
+                    },
+                    call = { coordinator.updateMerchant(1L, newMerchant = "Colliding Merchant") }
+                ),
+                CollisionRow(
+                    name = "updateMerchant collision against not-mine row throws DuplicateUpdateException",
+                    existing = expense(),
+                    verifyNoWrite = {
+                        coVerify(exactly = 0) { expenseDao.updateMerchantAndKey(any(), any(), any(), any()) }
+                    },
+                    call = { coordinator.updateMerchant(1L, newMerchant = "NotMine Occupied Merchant") }
+                ),
+                CollisionRow(
+                    // Type unchanged (PURCHASE -> PURCHASE) but stored key is stale/differs.
+                    name = "updateTypeAndTransferDetails stale key collision throws even when type unchanged",
+                    existing = expense(dedupeKey = "stale-legacy-key"),
+                    verifyNoWrite = {
+                        coVerify(exactly = 0) { expenseDao.updateTransactionType(any(), any(), any()) }
+                    },
+                    call = {
+                        coordinator.updateTypeAndTransferDetails(
+                            1L, TransactionType.PURCHASE, TransferDirection.OUTGOING, "Acc1"
+                        )
+                    }
+                )
             )
-        }
+            assertEquals("collision matrix size guard", 3, rows.size)
 
-        coVerify(exactly = 0) { transactionEventDao.insert(any()) }
-        coVerify(exactly = 0) { planner.planUpdated(any(), any(), any(), any()) }
-        coVerify(exactly = 0) { expenseDao.updateTransactionType(any(), any(), any()) }
-    }
+            for (row in rows) {
+                buildHarness()
+                inRow(row.name) {
+                    coEvery { expenseDao.getById(1L) } returns row.existing
+                    stubBlockingCollision()
+
+                    assertFailsWith<DuplicateUpdateException> { row.call() }
+
+                    coVerify(exactly = 0) { transactionEventDao.insert(any()) }
+                    coVerify(exactly = 0) { planner.planUpdated(any(), any(), any(), any()) }
+                    row.verifyNoWrite()
+                }
+            }
+        }
 
     // ── CA-P-02-003: STRICT_EXTERNAL_ID `idem:` keys survive key-field edits ──
 
     private val idemKey = "idem:NOTIFICATION_AUTO_ACCEPT:ext-123"
 
-    @Test
-    fun `CA-P-02-003 updateExpense key-field edit preserves idem key`() = runTest(timeout = 60.seconds) {
-        coEvery { expenseDao.getById(1L) } returns expense(dedupeKey = idemKey)
-        stubNoCollisions()
-        val updatedSlot = slot<Expense>()
-        coEvery { expenseDao.update(capture(updatedSlot)) } returns Unit
-        coEvery { transactionEventDao.insert(any()) } returns 1L
-
-        coordinator.updateExpense(expense(dedupeKey = idemKey).copy(amount = 75.0, merchant = "Other"))
-
-        assertEquals(idemKey, updatedSlot.captured.dedupeKey)
-    }
+    private class UpdateExpenseKeyRow(
+        val name: String,
+        val existing: Expense,
+        val edited: Expense,
+        val expectedDedupeKey: String?
+    )
 
     @Test
-    fun `CA-P-02-003 updateExpense key-field edit still recomputes content key`() = runTest(timeout = 60.seconds) {
-        coEvery { expenseDao.getById(1L) } returns expense()
-        stubNoCollisions()
-        val updatedSlot = slot<Expense>()
-        coEvery { expenseDao.update(capture(updatedSlot)) } returns Unit
-        coEvery { transactionEventDao.insert(any()) } returns 1L
+    fun `CA-P-02-003 updateExpense key-field edit preserves idem key and recomputes content key`() =
+        runTest(timeout = 60.seconds) {
+            val rows = listOf(
+                UpdateExpenseKeyRow(
+                    name = "idem key is preserved",
+                    existing = expense(dedupeKey = idemKey),
+                    edited = expense(dedupeKey = idemKey).copy(amount = 75.0, merchant = "Other"),
+                    expectedDedupeKey = idemKey
+                ),
+                UpdateExpenseKeyRow(
+                    name = "content key is recomputed",
+                    existing = expense(),
+                    edited = expense().copy(amount = 75.0),
+                    expectedDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
+                        75.0, "Test", now, "EUR", TransactionType.PURCHASE
+                    )
+                )
+            )
+            assertEquals("updateExpense key matrix size guard", 2, rows.size)
 
-        coordinator.updateExpense(expense().copy(amount = 75.0))
+            for (row in rows) {
+                buildHarness()
+                inRow(row.name) {
+                    coEvery { expenseDao.getById(1L) } returns row.existing
+                    stubNoCollisions()
+                    val updatedSlot = slot<Expense>()
+                    coEvery { expenseDao.update(capture(updatedSlot)) } returns Unit
+                    coEvery { transactionEventDao.insert(any()) } returns 1L
 
-        assertEquals(
-            DuplicateDetectionPolicy.generateDedupeKeyWithType(
-                75.0, "Test", now, "EUR", TransactionType.PURCHASE
-            ),
-            updatedSlot.captured.dedupeKey
-        )
-    }
+                    coordinator.updateExpense(row.edited)
+
+                    assertEquals(row.expectedDedupeKey, updatedSlot.captured.dedupeKey)
+                }
+            }
+        }
+
+    private class IdemDaoRow(
+        val name: String,
+        val call: suspend () -> Unit,
+        val verifyWrite: suspend () -> Unit
+    )
 
     @Test
-    fun `CA-P-02-003 updateMerchant preserves idem key`() = runTest(timeout = 60.seconds) {
-        coEvery { expenseDao.getById(1L) } returns expense(dedupeKey = idemKey)
-        stubNoCollisions()
-        coEvery { transactionEventDao.insert(any()) } returns 1L
+    fun `CA-P-02-003 updateMerchant and updateType pass the preserved idem key to the DAO`() =
+        runTest(timeout = 60.seconds) {
+            val rows = listOf(
+                IdemDaoRow(
+                    name = "updateMerchant",
+                    call = { coordinator.updateMerchant(1L, newMerchant = "New Merchant") },
+                    verifyWrite = {
+                        coVerify(exactly = 1) { expenseDao.updateMerchantAndKey(1L, "New Merchant", any(), idemKey) }
+                    }
+                ),
+                IdemDaoRow(
+                    name = "updateType",
+                    call = { coordinator.updateType(1L, newType = TransactionType.TRANSFER) },
+                    verifyWrite = {
+                        coVerify(exactly = 1) {
+                            expenseDao.updateTransactionType(1L, TransactionType.TRANSFER.name, idemKey)
+                        }
+                    }
+                )
+            )
+            assertEquals("idem DAO matrix size guard", 2, rows.size)
 
-        coordinator.updateMerchant(1L, newMerchant = "New Merchant")
+            for (row in rows) {
+                buildHarness()
+                inRow(row.name) {
+                    coEvery { expenseDao.getById(1L) } returns expense(dedupeKey = idemKey)
+                    stubNoCollisions()
+                    coEvery { transactionEventDao.insert(any()) } returns 1L
 
-        coVerify(exactly = 1) { expenseDao.updateMerchantAndKey(1L, "New Merchant", any(), idemKey) }
-    }
+                    row.call()
 
-    @Test
-    fun `CA-P-02-003 updateType preserves idem key`() = runTest(timeout = 60.seconds) {
-        coEvery { expenseDao.getById(1L) } returns expense(dedupeKey = idemKey)
-        stubNoCollisions()
-        coEvery { transactionEventDao.insert(any()) } returns 1L
-
-        coordinator.updateType(1L, newType = TransactionType.TRANSFER)
-
-        coVerify(exactly = 1) { expenseDao.updateTransactionType(1L, TransactionType.TRANSFER.name, idemKey) }
-    }
+                    row.verifyWrite()
+                }
+            }
+        }
 
     @Test
     fun `CA-P-02-003 updateTypeAndTransferDetails type change on idem row is not a no-op`() =
@@ -679,57 +826,6 @@ class TransactionLifecycleCoordinatorUpdateTest {
             }
         }
 
-    // ── P2-007 (11c): transfer edits carry caller correlation ────────────────
-
-    /**
-     * P2-007: one correlation id must appear in BOTH records — the UPDATED
-     * lifecycle event and the planned post-commit batch.
-     */
-    @Test
-    fun `updateTransferDetails correlation id appears in event and dispatch record`() =
-        runTest(timeout = 60.seconds) {
-            coEvery { expenseDao.getById(1L) } returns expense()
-            val eventSlot = slot<TransactionEvent>()
-            coEvery { transactionEventDao.insert(capture(eventSlot)) } returns 1L
-
-            coordinator.updateTransferDetails(
-                1L, TransferDirection.OUTGOING, "Acc1",
-                correlationId = "corr-transfer-1"
-            )
-
-            assertEquals(
-                "Caller correlation id must be recorded on the UPDATED event",
-                "corr-transfer-1",
-                eventSlot.captured.correlationId
-            )
-            coVerify(exactly = 1) {
-                planner.planUpdated(1L, any(), "corr-transfer-1", TransactionUpdateKind.TRANSFER_DETAILS)
-            }
-        }
-
-    @Test
-    fun `updateTypeAndTransferDetails correlation id appears in event and dispatch record`() =
-        runTest(timeout = 60.seconds) {
-            coEvery { expenseDao.getById(1L) } returns expense()
-            stubNoCollisions()
-            val eventSlot = slot<TransactionEvent>()
-            coEvery { transactionEventDao.insert(capture(eventSlot)) } returns 1L
-
-            coordinator.updateTypeAndTransferDetails(
-                1L, TransactionType.TRANSFER, TransferDirection.OUTGOING, "Acc1",
-                correlationId = "corr-type-transfer-1"
-            )
-
-            assertEquals(
-                "Caller correlation id must be recorded on the UPDATED event",
-                "corr-type-transfer-1",
-                eventSlot.captured.correlationId
-            )
-            coVerify(exactly = 1) {
-                planner.planUpdated(1L, any(), "corr-type-transfer-1", TransactionUpdateKind.FULL)
-            }
-        }
-
     // ── NEW-P2-016 (11c): home-currency resolution fails closed ─────────────
 
     /**
@@ -767,10 +863,7 @@ class TransactionLifecycleCoordinatorUpdateTest {
 
             // The update itself completed (bounded, non-blocking).
             val persisted = updatedSlot.captured
-            assertTrue(
-                "baseAmount must be sentinel 0.0 after failed resolution, was ${persisted.baseAmount}",
-                persisted.baseAmount == 0.0
-            )
+            assertMoneyExact(0.0, persisted.baseAmount, "baseAmount must be sentinel 0.0 after failed resolution")
             assertTrue(
                 "baseCurrency must not invent a currency, was '${persisted.baseCurrency}'",
                 persisted.baseCurrency.isEmpty()
@@ -816,7 +909,7 @@ class TransactionLifecycleCoordinatorUpdateTest {
             coordinator.updateExpense(expense().copy(amount = 75.0))
 
             val persisted = updatedSlot.captured
-            assertEquals(75.0, persisted.baseAmount, 0.0)
+            assertMoneyExact(75.0, persisted.baseAmount, "same-currency base amount is the pass-through 75.0")
             assertEquals("EUR", persisted.baseCurrency)
             assertEquals(1.0, persisted.exchangeRateUsed, 0.0)
         }

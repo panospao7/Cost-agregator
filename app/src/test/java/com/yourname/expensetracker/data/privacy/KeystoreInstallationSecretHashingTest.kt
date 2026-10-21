@@ -5,13 +5,11 @@ import com.yourname.expensetracker.domain.common.sha256Prefix
 import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
 import com.yourname.expensetracker.domain.privacy.InstallationSecretHasher
 import com.yourname.expensetracker.domain.privacy.versionedPseudonym
-import java.security.KeyStore
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -347,16 +345,5 @@ class KeystoreInstallationSecretHashingTest {
         // never longer than a full digest).
         assertEquals(1, hasher.hmacPrefix("x", length = 0)!!.length)
         assertEquals(64, hasher.hmacPrefix("x", length = 65)!!.length)
-    }
-
-    @Test
-    fun `keystore_provider_class_exists_with_expected_contract`() {
-        // The production provider is Keystore-backed and cannot run on the JVM;
-        // assert the wiring type contract instead of instantiating it.
-        assertEquals(
-            InstallationSecretKeyProvider::class.java,
-            AndroidKeystoreInstallationSecretKeyProvider().javaClass.interfaces.single()
-        )
-        assertNotNull(KeyStore.getDefaultType())
     }
 }

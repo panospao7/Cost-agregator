@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.golden
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.privacy.PrivacyAuditLoggerImpl
 import com.yourname.expensetracker.domain.privacy.CompositePrivacyGate
 import com.yourname.expensetracker.domain.privacy.LocationPrivacyGate
@@ -45,7 +47,15 @@ class PrivacyGateEnforcementGoldenTest : GoldenTestBase() {
     @Before
     override fun setUp() {
         super.setUp()
-        auditLogger = PrivacyAuditLoggerImpl(database.privacyAuditDao(), timeProvider)
+        // G3-S2/R27-S2e: the audit logger honours the write barrier via runWrite; a real barrier in
+        // NORMAL mode runs the insert (a relaxed mock would never invoke the runWrite block).
+        val normalMode = mockk<RestoreMaintenanceMode>()
+        every { normalMode.currentMode() } returns RestoreMaintenanceMode.Mode.NORMAL
+        auditLogger = PrivacyAuditLoggerImpl(
+            database.privacyAuditDao(),
+            timeProvider,
+            DatabaseWriteBarrier(normalMode)
+        )
     }
 
     @Test

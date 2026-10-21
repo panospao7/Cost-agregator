@@ -20,6 +20,7 @@ import org.junit.Before
 import org.junit.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -597,7 +598,91 @@ class AnalyticsViewModelInsightsTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `allInsightsDoNotCollapseToCurrentMonth`() = runTest(testDispatcher) {
+    fun `result caches stay bounded across many comparison minute changes`() = runTest(testDispatcher) {
+        // F-R20b-c: the cache key embeds the comparison minute, so every minute adds a key.
+        // Stale-minute entries must be evicted so the caches do not grow with elapsed minutes.
+        val baseNow = 1718452800000L // 2024-06-15 12:00:00 UTC (minute aligned)
+        val minuteMs = 60_000L
+
+        // Mirror the successful-compute stubs from AnalyticsViewModelYearOverYearTest: a relaxed engine
+        // mock returns malformed Pairs, the compute fails, and nothing would ever be cached.
+        coEvery { advancedAnalyticsEngine.getCategoryAnalytics(any(), any(), any(), any(), any()) } returns
+            Pair(emptyList(), emptyList())
+        val merchantResult: Pair<List<EnhancedMerchantAnalytics>, List<AnalyticsConversionWarning>> =
+            Pair(emptyList(), emptyList())
+        coEvery {
+            advancedAnalyticsEngine.getMerchantAnalytics(
+                any<NormalizedAnalyticsInput>(),
+                any<NormalizedAnalyticsInput>(),
+                any()
+            )
+        } returns merchantResult
+        val patternResult: Pair<SpendingPatternAnalysis, List<AnalyticsConversionWarning>> =
+            Pair(mockk(relaxed = true), emptyList())
+        coEvery { advancedAnalyticsEngine.getSpendingPatterns(any<NormalizedAnalyticsInput>()) } returns patternResult
+        val statsResult: Pair<StatisticalInsights, List<AnalyticsConversionWarning>> =
+            Pair(mockk(relaxed = true), emptyList())
+        coEvery { advancedAnalyticsEngine.getStatisticalInsights(any<NormalizedAnalyticsInput>()) } returns statsResult
+        every { insightsEngine.getLegacyInsights(any(), any()) } returns emptyList()
+        // Pass-through assembler: empty repository rows become an empty normalized input for the same period.
+        coEvery { analyticsInputAssembler.build(any<List<Expense>>(), any<String>(), any(), any()) } answers {
+            NormalizedAnalyticsInput(
+                period = arg<PeriodRange>(2),
+                homeCurrency = "EUR",
+                includedExpenses = emptyList()
+            )
+        }
+
+        val collectJob = launch { viewModel.state.collect { } }
+
+        val periods = listOf(
+            com.yourname.expensetracker.domain.analytics.TimePeriod.WEEK,
+            com.yourname.expensetracker.domain.analytics.TimePeriod.MONTH
+        )
+        repeat(25) { minute ->
+            every { timeProvider.now() } returns baseNow + minute * minuteMs + 5_000L
+            // Alternate the period so the combined inputs change and the pipeline recomputes.
+            viewModel.selectPeriod(periods[minute % periods.size])
+            testDispatcher.scheduler.advanceTimeBy(400)
+            advanceUntilIdle()
+        }
+
+        assertNull(viewModel.state.value.error)
+        val (analyticsSize, advancedSize) = viewModel.cacheSizesForTest()
+        assertEquals(1, analyticsSize, "only the current-minute analytics entry may remain")
+        assertTrue(advancedSize <= 1, "advanced cache must not retain stale-minute entries")
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `category analytics comparison cut is the end of the current minute so current minute rows count`() = runTest(testDispatcher) {
+        // F-R20b-b symmetry: the category comparison must use the same end-of-minute cut as the prior window.
+        val minuteStart = 1718452800000L // 2024-06-15 12:00:00 UTC (minute aligned)
+        every { timeProvider.now() } returns minuteStart + 5_000L
+        val cutSlot = slot<Long>()
+        coEvery {
+            advancedAnalyticsEngine.getCategoryAnalytics(
+                any(), any(), any(), any(), comparisonCutoffMillisInclusive = capture(cutSlot)
+            )
+        } returns Pair(emptyList(), emptyList())
+
+        val collectJob = launch { viewModel.state.collect { } }
+        viewModel.selectPeriod(com.yourname.expensetracker.domain.analytics.TimePeriod.MONTH)
+        testDispatcher.scheduler.advanceTimeBy(400)
+        advanceUntilIdle()
+
+        assertTrue(cutSlot.isCaptured, "category analytics must be requested with a comparison cutoff")
+        val cut = cutSlot.captured
+        assertEquals(AnalyticsComparisonWindows.comparisonCutInstant(minuteStart + 5_000L), cut)
+        // A row stamped late in the current minute (after the floored minute) is on the current side.
+        assertTrue(minuteStart + 45_000L <= cut, "a row inside the current minute must not be cut")
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `allInsightsDoNotCollapseToCurrentMonth`()= runTest(testDispatcher) {
         // Fix "now" to 2024-06-15 12:00 UTC
         val now = 1718452800000L // 2024-06-15 12:00:00 UTC
         every { timeProvider.now() } returns now

@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.core.content.FileProvider
 import com.yourname.expensetracker.ui.theme.SemanticColors
+import com.yourname.expensetracker.ui.util.UiTimeUtils
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
 import kotlinx.coroutines.Dispatchers
@@ -321,10 +322,14 @@ fun ExportOptionsScreen(
         
         // Date Picker Dialog
         if (showDatePicker) {
+            // V-G-1: the Material3 picker works in UTC-midnight millis of the picked calendar
+            // day. The stored end is exclusive, so the picker/end chip use the last included day.
+            val startPickerMillis = UiTimeUtils.instantToPickerMillis(uiState.startDate)
+            val endPickerMillis = UiTimeUtils.instantToPickerMillis(exportDisplayEndMillis(uiState.endDate))
             val datePickerState = rememberDatePickerState(
-                initialSelectedDateMillis = if (isPickingStartDate) uiState.startDate else uiState.endDate
+                initialSelectedDateMillis = if (isPickingStartDate) startPickerMillis else endPickerMillis
             )
-            
+
             DatePickerDialog(
                 onDismissRequest = { showDatePicker = false },
                 confirmButton = {
@@ -332,9 +337,9 @@ fun ExportOptionsScreen(
                         onClick = {
                             datePickerState.selectedDateMillis?.let { selectedDate ->
                                 if (isPickingStartDate) {
-                                    viewModel.setDateRange(selectedDate, uiState.endDate)
+                                    viewModel.setPickedDateRange(selectedDate, endPickerMillis)
                                 } else {
-                                    viewModel.setDateRange(uiState.startDate, selectedDate)
+                                    viewModel.setPickedDateRange(startPickerMillis, selectedDate)
                                 }
                             }
                             showDatePicker = false
@@ -423,7 +428,8 @@ private fun DateRangeCard(
                         color = SemanticColors.TextSecondary
                     )
                     TextButton(onClick = onEndDateClick) {
-                        Text(Instant.ofEpochMilli(endDate).atZone(ZoneId.systemDefault()).format(dateFormat))
+                        // V-G-1: endDate is exclusive; show the last included day.
+                        Text(Instant.ofEpochMilli(exportDisplayEndMillis(endDate)).atZone(ZoneId.systemDefault()).format(dateFormat))
                     }
                 }
             }

@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.receipt.lifecycle
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.ReceiptEventDao
 import com.yourname.expensetracker.data.database.entity.ReceiptEvent
 import com.yourname.expensetracker.domain.diagnostics.EventMetadataSanitizer
@@ -42,10 +43,12 @@ interface ReceiptLifecycleEventWriter : TransactionalEventWriter {
 class RoomReceiptLifecycleEventWriter @Inject constructor(
     private val dao: ReceiptEventDao,
     private val sanitizer: EventMetadataSanitizer,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val writeBarrier: DatabaseWriteBarrier
 ) : ReceiptLifecycleEventWriter {
 
     override suspend fun write(context: TransactionContext, event: ReceiptLifecycleEvent) {
+        writeBarrier.checkWritesAllowed("ReceiptLifecycleEventWriter.write")
         dao.insert(
             ReceiptEvent(
                 receiptId = event.receiptId,
@@ -58,7 +61,10 @@ class RoomReceiptLifecycleEventWriter @Inject constructor(
                 actor = event.actor ?: context.actor,
                 message = event.message,
                 metadata = buildMetadata(event, context),
-                errorDetails = sanitizer.sanitizeExceptionMessage(event.errorDetails)
+                // Free-text error details may carry raw receipt/OCR/path text: never persisted.
+                // Only code-shaped tokens (reason codes, exception class names, "code=X, class=Y")
+                // are kept; anything else is dropped to null.
+                errorDetails = event.errorDetails?.takeIf { it.length <= MAX_ERROR_DETAILS_LENGTH && SAFE_ERROR_DETAILS.matches(it) }
             )
         )
     }
@@ -81,6 +87,18 @@ class RoomReceiptLifecycleEventWriter @Inject constructor(
             ),
             event
         )
+    }
+
+    private companion object {
+        const val MAX_ERROR_DETAILS_LENGTH = 160
+
+        /**
+         * Reason-code shape only: UPPER_SNAKE code with optional "code=" prefix, optionally followed by
+         * ", class=<qualified ClassName>". Free text, file names, numbers and IBAN-like values never match.
+         * A single uppercase word still passes (accepted; an explicit allowlist would be the next step).
+         */
+        val SAFE_ERROR_DETAILS =
+            Regex("""(?:code=)?[A-Z]+(?:_[A-Z0-9]+)*(?:, class=(?:[a-z][a-z0-9_]*\.)*[A-Z][A-Za-z0-9_$]*)?""")
     }
 
     private fun buildMetadata(event: ReceiptLifecycleEvent, context: TransactionContext): String? {

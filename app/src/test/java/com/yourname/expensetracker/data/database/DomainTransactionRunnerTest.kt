@@ -1,31 +1,77 @@
 package com.yourname.expensetracker.data.database
 
-import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
+import android.content.Context
+import androidx.test.core.app.ApplicationProvider
+import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.domain.transaction.TransactionContext
-import com.yourname.expensetracker.domain.util.CancellationSafe
-import com.yourname.expensetracker.domain.util.TimeProvider
-import io.mockk.every
-import io.mockk.mockk
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
+import com.yourname.expensetracker.testfixtures.database.AppDatabaseTestFactory
 import kotlinx.coroutines.CancellationException
-import org.junit.Assert.*
+import kotlinx.coroutines.test.runTest
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
+import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
 /**
- * PR 3 — Tests for [DomainTransactionRunner], [TransactionContext], and [CancellationSafe].
+ * PR 3 — Tests for [TransactionContext] and the production [RoomDomainTransactionRunner].
  *
- * Verifies:
- * - TransactionContext construction and validation.
- * - CancellationException propagation through CancellationSafe.
- * - DomainTransactionRunner contract: context population, return values.
+ * The runner tests use the REAL [RoomDomainTransactionRunner] over a real in-memory
+ * [AppDatabase] and a real DAO write (synthetic categories), so rollback, commit,
+ * nesting and exception propagation are proven against Room itself rather than a
+ * test-local fake. Only the clock is substituted.
  *
- * Note: Room's `withTransaction` is a top-level extension function that cannot be
- * trivially mocked with mockk. The actual transaction delegation and rollback
- * behavior is verified through integration tests with a real in-memory Room
- * database. This test file covers the domain-level contract.
+ * [com.yourname.expensetracker.domain.util.CancellationSafe] semantics are covered by
+ * CancellationSafeTest; they are intentionally not duplicated here.
  */
+@RunWith(RobolectricTestRunner::class)
+@Config(manifest = Config.NONE, sdk = [33])
 class DomainTransactionRunnerTest {
 
-    private val mockTimeProvider: TimeProvider = mockk()
+    private lateinit var database: AppDatabase
+    private lateinit var timeProvider: FakeTimeProvider
+    private lateinit var runner: RoomDomainTransactionRunner
+
+    @Before
+    fun setUp() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        database = AppDatabaseTestFactory.create(context)
+        timeProvider = FakeTimeProvider(1_700_000_000_000L)
+        runner = RoomDomainTransactionRunner(database, timeProvider)
+    }
+
+    @After
+    fun tearDown() {
+        if (::database.isInitialized) database.close()
+    }
+
+    private suspend fun insertSynthetic(name: String): Long =
+        database.categoryDao().insert(Category(name = name, icon = "T", color = "#123456"))
+
+    private suspend fun exists(name: String): Boolean = database.categoryDao().getByName(name) != null
+
+    /**
+     * kotlinx.coroutines stack-trace recovery may rethrow a COPY of an exception (same
+     * type and message, with the original attached as its cause) when it crosses a
+     * suspension point such as Room's withTransaction. Object identity is therefore not
+     * a stable contract; this asserts the original exception is the thrown one or its
+     * direct cause, with the same type and message.
+     */
+    private fun assertRethrownOriginal(original: Throwable, thrown: Throwable) {
+        assertTrue(
+            "thrown exception must be the original or a stack-trace-recovery copy whose cause is the original",
+            thrown === original || thrown.cause === original
+        )
+        assertEquals(original.javaClass, thrown.javaClass)
+        assertEquals(original.message, thrown.message)
+    }
 
     // --- TransactionContext Tests ---
 
@@ -68,188 +114,125 @@ class DomainTransactionRunnerTest {
         TransactionContext(correlationId = "corr-4", occurredAt = -1L)
     }
 
-    // --- CancellationException Propagation Tests ---
+    // --- RoomDomainTransactionRunner (real Room) ---
 
     @Test
-    fun `CancellationSafe rethrowIfCancellation correctly rethrows CE`() {
-        val ce = CancellationException("cancel")
+    fun `runner returns block value and populates context from arguments and TimeProvider`() = runTest {
+        timeProvider.setTime(1_710_000_000_000L)
+        var captured: TransactionContext? = null
+
+        val result = runner.runInTransaction(
+            correlationId = "corr-ok",
+            causationId = "corr-parent",
+            operationId = "test.op",
+            source = "Test.success",
+            metadata = mapOf("receiptId" to "42", "action" to "approve")
+        ) { ctx ->
+            captured = ctx
+            "success"
+        }
+
+        assertEquals("success", result)
+        val ctx = captured
+        assertNotNull(ctx)
+        assertEquals("corr-ok", ctx!!.correlationId)
+        assertEquals("corr-parent", ctx.causationId)
+        assertEquals("test.op", ctx.operationId)
+        assertEquals("Test.success", ctx.source)
+        assertEquals("system", ctx.actor)
+        assertEquals(1_710_000_000_000L, ctx.occurredAt)
+        assertEquals(1_710_000_000_000L, ctx.startedAtMs)
+        assertEquals("42", ctx.metadata["receiptId"])
+        assertEquals("approve", ctx.metadata["action"])
+    }
+
+    @Test
+    fun `runner reads the clock per call so successive transactions get distinct occurredAt`() = runTest {
+        timeProvider.setTime(1_700_000_000_000L)
+        val first = runner.runInTransaction(correlationId = "c1") { it.occurredAt }
+        timeProvider.advanceTime(5_000L)
+        val second = runner.runInTransaction(correlationId = "c2") { it.occurredAt }
+
+        assertEquals(1_700_000_000_000L, first)
+        assertEquals(1_700_000_005_000L, second)
+    }
+
+    @Test
+    fun `runner commits block writes on success`() = runTest {
+        runner.runInTransaction(correlationId = "corr-commit") {
+            insertSynthetic("Tx Commit A")
+            insertSynthetic("Tx Commit B")
+        }
+
+        assertTrue(exists("Tx Commit A"))
+        assertTrue(exists("Tx Commit B"))
+    }
+
+    @Test
+    fun `runner rolls back earlier writes and rethrows the original non-cancellation exception`() = runTest {
+        val failure = IllegalStateException("synthetic state error")
+
         try {
-            CancellationSafe.rethrowIfCancellation(ce)
-            fail("Expected CancellationException")
+            runner.runInTransaction(correlationId = "corr-ex") {
+                assertTrue("insert must succeed before the throw", insertSynthetic("Tx Rollback Ex") > 0)
+                throw failure
+            }
+            fail("Expected IllegalStateException to propagate")
+        } catch (e: IllegalStateException) {
+            assertRethrownOriginal(failure, e)
+        }
+
+        assertTrue("write before the throw must be rolled back", !exists("Tx Rollback Ex"))
+    }
+
+    @Test
+    fun `runner rolls back earlier writes and rethrows the original CancellationException`() = runTest {
+        val cancellation = CancellationException("synthetic cancel")
+
+        try {
+            runner.runInTransaction(correlationId = "corr-ce") {
+                assertTrue("insert must succeed before the throw", insertSynthetic("Tx Rollback Ce") > 0)
+                throw cancellation
+            }
+            fail("Expected CancellationException to propagate")
         } catch (e: CancellationException) {
-            assertSame(ce, e)
+            assertRethrownOriginal(cancellation, e)
         }
+
+        assertTrue("write before cancellation must be rolled back", !exists("Tx Rollback Ce"))
     }
 
     @Test
-    fun `CancellationSafe rethrowIfCancellation passes through non-CE`() {
-        val ex = IllegalStateException("test")
+    fun `nested runner call joins the outer transaction and commits with it`() = runTest {
+        runner.runInTransaction(correlationId = "outer") {
+            insertSynthetic("Tx Nested Outer")
+            runner.runInTransaction(correlationId = "inner") {
+                insertSynthetic("Tx Nested Inner")
+            }
+        }
+
+        assertTrue(exists("Tx Nested Outer"))
+        assertTrue(exists("Tx Nested Inner"))
+    }
+
+    @Test
+    fun `nested runner call is rolled back when the outer block fails after the inner succeeded`() = runTest {
+        val failure = IllegalStateException("synthetic outer failure")
+
         try {
-            CancellationSafe.rethrowIfCancellation(ex)
-            // Should not throw — proceed normally
-        } catch (e: Exception) {
-            fail("Expected no exception: $e")
-        }
-    }
-
-    // --- RoomDomainTransactionRunner Context Construction Tests ---
-
-    @Test
-    fun `runner constructs TransactionContext from TimeProvider`() {
-        every { mockTimeProvider.now() } returns 1710000000000L
-
-        val runner = RoomDomainTransactionRunner(
-            database = mockk(relaxed = true),
-            timeProvider = mockTimeProvider
-        )
-
-        // Verify the time provider is injected — context construction is verified
-        // indirectly through the TransactionContext tests above. The actual
-        // withTransaction call would require a real Room database.
-        assertNotNull(runner)
-    }
-
-    // --- DomainTransactionRunner Contract Tests (using a fake) ---
-
-    /** Fake runner that executes the block directly without Room. */
-    private class FakeDomainTransactionRunner(
-        private val timeProvider: TimeProvider
-    ) : DomainTransactionRunner {
-        override suspend fun <T> runInTransaction(
-            correlationId: String,
-            causationId: String?,
-            operationId: String,
-            source: String,
-            metadata: Map<String, String>,
-            block: suspend (TransactionContext) -> T
-        ): T {
-            val context = TransactionContext(
-                correlationId = correlationId,
-                causationId = causationId,
-                operationId = operationId,
-                source = source,
-                occurredAt = timeProvider.now(),
-                metadata = metadata
-            )
-            return block(context)
-        }
-    }
-
-    @Test
-    fun `fake runner returns block value on success`() {
-        every { mockTimeProvider.now() } returns 1700000000000L
-        val runner = FakeDomainTransactionRunner(mockTimeProvider)
-
-        runBlockingOnTest {
-            val result = runner.runInTransaction(
-                correlationId = "corr-ok",
-                source = "Test.success"
-            ) { ctx ->
-                assertEquals("corr-ok", ctx.correlationId)
-                assertEquals("Test.success", ctx.source)
-                assertEquals(1700000000000L, ctx.occurredAt)
-                "success"
-            }
-
-            assertEquals("success", result)
-        }
-    }
-
-    @Test
-    fun `fake runner populates TransactionContext with correct occurredAt`() {
-        every { mockTimeProvider.now() } returns 1710000000000L
-        val runner = FakeDomainTransactionRunner(mockTimeProvider)
-
-        runBlockingOnTest {
-            runner.runInTransaction(
-                correlationId = "corr-time",
-                source = "Test.time"
-            ) { ctx ->
-                assertEquals(1710000000000L, ctx.occurredAt)
-            }
-        }
-    }
-
-    @Test
-    fun `fake runner passes causationId to TransactionContext`() {
-        every { mockTimeProvider.now() } returns 1700000000000L
-        val runner = FakeDomainTransactionRunner(mockTimeProvider)
-
-        runBlockingOnTest {
-            runner.runInTransaction(
-                correlationId = "corr-child",
-                causationId = "corr-parent",
-                source = "Test.cause"
-            ) { ctx ->
-                assertEquals("corr-parent", ctx.causationId)
-            }
-        }
-    }
-
-    @Test
-    fun `fake runner passes metadata to TransactionContext`() {
-        every { mockTimeProvider.now() } returns 1700000000000L
-        val runner = FakeDomainTransactionRunner(mockTimeProvider)
-
-        val metadata = mapOf("receiptId" to "42", "action" to "approve")
-        runBlockingOnTest {
-            runner.runInTransaction(
-                correlationId = "corr-meta",
-                source = "Test.meta",
-                metadata = metadata
-            ) { ctx ->
-                assertEquals("42", ctx.metadata["receiptId"])
-                assertEquals("approve", ctx.metadata["action"])
-            }
-        }
-    }
-
-    @Test
-    fun `fake runner rethrows CancellationException from block`() {
-        every { mockTimeProvider.now() } returns 1700000000000L
-        val runner = FakeDomainTransactionRunner(mockTimeProvider)
-        val ce = CancellationException("cancel")
-
-        runBlockingOnTest {
-            try {
-                runner.runInTransaction(
-                    correlationId = "corr-ce",
-                    source = "Test.cancel"
-                ) { ctx ->
-                    throw ce
+            runner.runInTransaction(correlationId = "outer") {
+                runner.runInTransaction(correlationId = "inner") {
+                    assertTrue("inner insert must succeed", insertSynthetic("Tx Nested Inner Done") > 0)
                 }
-                fail("Expected CancellationException to propagate")
-            } catch (e: CancellationException) {
-                assertSame(ce, e)
+                assertTrue("outer insert must succeed", insertSynthetic("Tx Nested Outer Done") > 0)
+                throw failure
             }
+            fail("Expected IllegalStateException to propagate")
+        } catch (e: IllegalStateException) {
+            assertRethrownOriginal(failure, e)
         }
-    }
 
-    @Test
-    fun `fake runner propagates non-CE exceptions from block`() {
-        every { mockTimeProvider.now() } returns 1700000000000L
-        val runner = FakeDomainTransactionRunner(mockTimeProvider)
-        val ex = IllegalStateException("state error")
-
-        runBlockingOnTest {
-            try {
-                runner.runInTransaction(
-                    correlationId = "corr-ex",
-                    source = "Test.error"
-                ) { ctx ->
-                    throw ex
-                }
-                fail("Expected IllegalStateException to propagate")
-            } catch (e: IllegalStateException) {
-                assertSame(ex, e)
-            }
-        }
-    }
-
-    // Helper to bridge suspend into blocking tests without kotlinx-coroutines-test
-    private fun runBlockingOnTest(block: suspend () -> Unit) {
-        kotlinx.coroutines.runBlocking {
-            block()
-        }
+        assertTrue("inner write must not survive the outer rollback", !exists("Tx Nested Inner Done"))
+        assertTrue("outer write must be rolled back", !exists("Tx Nested Outer Done"))
     }
 }

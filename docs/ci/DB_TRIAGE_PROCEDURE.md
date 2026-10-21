@@ -41,8 +41,12 @@ Before triage can begin:
 
 ## 3. Step 1: Generate Triage File
 
-Run the triage builder to crosswalk old entries and create PENDING entries:
+The triage builder script that crosswalked old entries and created PENDING
+entries was retired and removed from the tree; no triage builder command is
+runnable. The command and behavior below are kept only as a historical record
+of the retired tool's interface.
 
+<!-- HISTORICAL_RECORD:BEGIN (as-of: PR-D5 triage tooling; scope: retired builder command only; superseded by removal of the triage builder; not evidence of a runnable tool) -->
 ```bash
 python scripts/ci/build_db_finding_triage.py \
   --v2-report build/guard-v2/db-final-inventory.json \
@@ -51,12 +55,13 @@ python scripts/ci/build_db_finding_triage.py \
   --reference-sha <APPROVED_SHA>
 ```
 
-The tool will:
-- Parse every v1 baseline entry (rule family + path)
-- Crosswalk each to v2 findings by semantic rule/path
-- Build PENDING entries for every current v2 finding
-- Diagnose duplicate exact source occurrences
-- Write deterministic YAML
+The retired tool did the following:
+- Parsed every v1 baseline entry (rule family + path)
+- Crosswalked each to v2 findings by semantic rule/path
+- Built PENDING entries for every current v2 finding
+- Diagnosed duplicate exact source occurrences
+- Wrote deterministic YAML
+<!-- HISTORICAL_RECORD:END -->
 
 **No classification is inferred.** Every entry starts as PENDING.
 
@@ -287,11 +292,21 @@ chore(ci): migrate reviewed DB debt baseline to v2
 
 | File | Purpose |
 |---|---|
-| `scripts/ci/build_db_finding_triage.py` | Triage builder |
 | `scripts/ci/generate_db_baseline_v2.py` | Baseline candidate generator |
-| `scripts/ci/test_db_finding_triage.py` | Tests |
 | `docs/ci/DB_ACCESS_V2_TRIAGE_SCHEMA.md` | Triage schema documentation |
 | `docs/ci/DB_TRIAGE_PROCEDURE.md` | This procedure document |
+
+The triage builder script and its test module were retired and removed from
+the tree. They are listed below only as a historical record of the files that
+once belonged to this procedure; the command in section 3 documents the
+retired tool's historical interface.
+
+<!-- HISTORICAL_RECORD:BEGIN (as-of: PR-D5 triage tooling; scope: retired files only; superseded by removal of the triage builder; not evidence of a runnable tool) -->
+| Retired file | Purpose |
+|---|---|
+| `scripts/ci/build_db_finding_triage.py` | Triage builder |
+| `scripts/ci/test_db_finding_triage.py` | Tests |
+<!-- HISTORICAL_RECORD:END -->
 
 ---
 

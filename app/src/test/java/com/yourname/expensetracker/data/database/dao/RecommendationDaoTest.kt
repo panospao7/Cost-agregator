@@ -119,8 +119,12 @@ class RecommendationDaoTest {
             status = RecommendationStatus.ACTIVE
         )
         dao.insert(recommendation)
+        assertTrue(
+            dao.getActiveByUser("user123", FIXED_NOW).any { it.id == recommendation.id },
+            "recommendation must be listed as active before archive()"
+        )
 
-        val archiveTime = FIXED_NOW
+        val archiveTime = FIXED_NOW + 5_000
         dao.archive(recommendation.id, archiveTime)
 
         val result = dao.getById(recommendation.id)
@@ -128,6 +132,10 @@ class RecommendationDaoTest {
         assertEquals(RecommendationStatus.ARCHIVED, result.status)
         assertEquals(archiveTime, result.dismissedAt)
         assertEquals(archiveTime, result.updatedAt)
+        assertTrue(
+            dao.getActiveByUser("user123", FIXED_NOW).none { it.id == recommendation.id },
+            "archive() must remove the recommendation from the active query"
+        )
     }
 
     @Test

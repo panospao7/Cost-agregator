@@ -288,7 +288,9 @@ class AddExpenseViewModel @Inject constructor(
             return
         }
 
-        val amount = AmountUtils.parseAmount(currentState.amount)
+        // R16: same strict locale-aware parser as AmountInputSanitizer.isValid / OwnershipValidator.
+        // Ambiguous or invalid input keeps the existing invalid-amount error.
+        val amount = com.yourname.expensetracker.ui.util.AmountInputSanitizer.parseOrNull(currentState.amount)
         if (amount == null || amount <= 0) {
             _state.update { it.copy(amountError = "Enter a valid amount") }
             return
@@ -355,7 +357,8 @@ class AddExpenseViewModel @Inject constructor(
                 sharePercentage = parsedSharePercentage
                 shareAmount = null
             } else {
-                val parsedShareAmount = AmountUtils.parseAmount(shareAmountText)!!
+                // OwnershipValidator already accepted this text via the same parser.
+                val parsedShareAmount = com.yourname.expensetracker.ui.util.AmountInputSanitizer.parseOrNull(shareAmountText)!!
                 sharePercentage = null
                 shareAmount = parsedShareAmount
             }
@@ -477,7 +480,15 @@ class AddExpenseViewModel @Inject constructor(
             initialValuesApplied = true
             current.copy(
                 // S5-020: Sanitize prefilled amount — same path as manual input
-                amount = amount?.let { com.yourname.expensetracker.ui.util.AmountInputSanitizer.sanitize(it) } ?: current.amount,
+                // R16: clipboard text is machine-style (ClipboardAmountParser accepts "1,234" as 1234),
+                // so convert to a number first and format locale-independently, as selectSuggestion does.
+                amount = amount?.let { raw ->
+                    AmountUtils.parseAmount(raw)?.let { parsed ->
+                        com.yourname.expensetracker.ui.util.AmountInputSanitizer.sanitize(
+                            String.format(java.util.Locale.US, "%.2f", parsed)
+                        )
+                    }
+                } ?: current.amount,
                 merchant = merchant?.take(100)?.trim() ?: current.merchant
             )
         }

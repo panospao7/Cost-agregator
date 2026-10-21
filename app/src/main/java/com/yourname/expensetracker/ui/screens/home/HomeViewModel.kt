@@ -44,6 +44,7 @@ import com.yourname.expensetracker.service.NavigationTargetResolver
 import com.yourname.expensetracker.service.RecommendationDismissalHandler
 import com.yourname.expensetracker.service.RecommendationStateManager
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.ui.util.guardedWrite
 import com.yourname.expensetracker.domain.widget.model.StyledWidgets
 import com.yourname.expensetracker.domain.widget.model.WidgetStyle
 import com.yourname.expensetracker.domain.widget.model.WidgetStyleConfig
@@ -183,6 +184,14 @@ class HomeViewModel @Inject constructor(
 
     private val _navigationActions = MutableSharedFlow<NavigationAction>(extraBufferCapacity = 1)
     val navigationActions: SharedFlow<NavigationAction> = _navigationActions.asSharedFlow()
+
+    // R18b: one-shot bounded message when a user-started write hits the maintenance write barrier.
+    private val _writeBlockedMessages = MutableSharedFlow<UiText>(extraBufferCapacity = 1)
+    val writeBlockedMessages: SharedFlow<UiText> = _writeBlockedMessages.asSharedFlow()
+
+    private fun emitWriteBlocked(message: UiText) {
+        _writeBlockedMessages.tryEmit(message)
+    }
 
     /** S4-003: Serializes widget config read-modify-write operations */
     private val widgetConfigMutex = kotlinx.coroutines.sync.Mutex()
@@ -555,15 +564,18 @@ class HomeViewModel @Inject constructor(
         priority: PlannedExpensePriority
     ) {
         viewModelScope.launch {
-            plannedExpenseRepository.addPlannedExpense(
-                com.yourname.expensetracker.data.database.entity.PlannedExpense(
-                    description = description,
-                    amount = amount,
-                    date = date,
-                    categoryId = categoryId,
-                    priority = priority
+            // R18b: a backup/restore holding the write barrier surfaces a bounded message.
+            guardedWrite(::emitWriteBlocked) {
+                plannedExpenseRepository.addPlannedExpense(
+                    com.yourname.expensetracker.data.database.entity.PlannedExpense(
+                        description = description,
+                        amount = amount,
+                        date = date,
+                        categoryId = categoryId,
+                        priority = priority
+                    )
                 )
-            )
+            }
         }
     }
 

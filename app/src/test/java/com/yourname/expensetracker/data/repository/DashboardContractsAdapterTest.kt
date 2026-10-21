@@ -94,6 +94,27 @@ class DashboardContractsAdapterTest {
     }
 
     @Test
+    fun `observeCategoryBreakdown compares a calendar month against the previous calendar month`() = runTest {
+        com.yourname.expensetracker.domain.util.GlobalTimeZoneTestLock.withLockSuspend {
+            val originalTz = java.util.TimeZone.getDefault()
+            try {
+                java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("America/New_York"))
+                fun ms(y: Int, m: Int, d: Int) = java.time.LocalDate.of(y, m, d)
+                    .atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+                every { analyticsRepository.getCategoryBreakdown(any(), any()) } returns flowOf(emptyList())
+
+                // F-R20b-a: March previously asked for the same-length block [Jan 29, Mar 1).
+                adapter.observeCategoryBreakdown(ms(2026, 3, 1), ms(2026, 4, 1)).first()
+
+                verify(exactly = 1) { analyticsRepository.getCategoryBreakdown(ms(2026, 3, 1), ms(2026, 4, 1)) }
+                verify(exactly = 1) { analyticsRepository.getCategoryBreakdown(ms(2026, 2, 1), ms(2026, 3, 1)) }
+            } finally {
+                java.util.TimeZone.setDefault(originalTz)
+            }
+        }
+    }
+
+    @Test
     fun `observeBudgetStatuses propagates isPartial and conversionWarning to snapshot`() = runTest {
         val budget = com.yourname.expensetracker.data.database.entity.Budget(
             id = 1L,

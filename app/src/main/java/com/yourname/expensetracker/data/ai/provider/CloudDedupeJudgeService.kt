@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.ai.provider
 
+import androidx.annotation.VisibleForTesting
 import com.yourname.expensetracker.data.ai.provider.internal.CloudCorrelation
 import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy
 import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
@@ -7,6 +8,7 @@ import com.yourname.expensetracker.domain.privacy.CloudPayloadPolicy
 import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
 import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
 import com.yourname.expensetracker.data.ai.provider.internal.CloudRetryPolicy
+import com.yourname.expensetracker.data.ai.provider.internal.SystemRetryDelay
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.data.security.getGeminiKey
 import com.yourname.expensetracker.di.CloudAiHttpClient
@@ -39,7 +41,6 @@ import javax.net.ssl.SSLException
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -58,17 +59,33 @@ import timber.log.Timber
  */
 @Singleton
 // PRIV-43B-01: Now uses CloudPayloadPolicy — no direct redactBeforeCloud access
-class CloudDedupeJudgeService @Inject constructor(
+class CloudDedupeJudgeService @VisibleForTesting internal constructor(
     private val secureKeyStorage: SecureKeyStorage,
-    @CloudAiHttpClient private val client: OkHttpClient,
-    private val aiSettingsRepository: AiSettingsRepository? = null,
+    private val client: OkHttpClient,
+    private val aiSettingsRepository: AiSettingsRepository?,
     private val privacyGate: PrivacyGate,
     private val cloudPayloadPolicy: CloudPayloadPolicy,
-    // P8F-03: cloud-call provenance audit (Hilt resolves; default keeps test ctors fail-closed)
-    private val auditLogger: PrivacyAuditLogger = PrivacyAuditLogger.NO_OP
+    private val auditLogger: PrivacyAuditLogger,
+    // B4-K2: retry-delay seam; production delegates to coroutine delay(), tests record it.
+    private val retryDelay: suspend (Long) -> Unit
 ) : DedupeJudgeService {
 
-    @androidx.annotation.VisibleForTesting
+    // Hilt-visible constructor (unchanged dependency signature).
+    @Inject
+    constructor(
+        secureKeyStorage: SecureKeyStorage,
+        @CloudAiHttpClient client: OkHttpClient,
+        aiSettingsRepository: AiSettingsRepository? = null,
+        privacyGate: PrivacyGate,
+        cloudPayloadPolicy: CloudPayloadPolicy,
+        // P8F-03: cloud-call provenance audit (Hilt resolves; default keeps test ctors fail-closed)
+        auditLogger: PrivacyAuditLogger = PrivacyAuditLogger.NO_OP
+    ) : this(
+        secureKeyStorage, client, aiSettingsRepository, privacyGate, cloudPayloadPolicy,
+        auditLogger, SystemRetryDelay
+    )
+
+    @VisibleForTesting
     internal constructor(secureKeyStorage: SecureKeyStorage) : this(
         secureKeyStorage, OkHttpClient(), null,
         object : PrivacyGate {
@@ -206,7 +223,7 @@ class CloudDedupeJudgeService @Inject constructor(
                 }
 
                 if (attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
-                    delay(CloudRetryPolicy.backoffDelayMs(attempt))
+                    retryDelay(CloudRetryPolicy.backoffDelayMs(attempt))
                 }
             }
 

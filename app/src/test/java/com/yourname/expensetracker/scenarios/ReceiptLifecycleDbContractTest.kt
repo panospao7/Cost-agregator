@@ -16,6 +16,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -159,148 +160,108 @@ class ReceiptLifecycleDbContractTest {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Test 3: Receipt linked to expense
+    // Test 3: Receipt linked to expense (DIRECT_SAVE and AUTO_MATCHED link types)
     // ─────────────────────────────────────────────────────────────────────────
+
+    private class LinkRow(
+        val name: String,
+        val imagePath: String,
+        val merchant: String,
+        val amount: Double,
+        val receiptConfidence: Float,
+        val linkType: String,
+        val linkConfidence: Float,
+        val createdBy: String
+    )
 
     @Test
-    fun `receipt linked to expense`() = runTest {
-        // GIVEN: a scanned receipt AND an expense
+    fun `receipt linked to expense persists link and keeps both parent rows`() = runTest {
         val now = 1714514400000L
-
-        // Insert a scanned receipt
-        val receiptId = db.scannedReceiptDao().insert(
-            ScannedReceipt(
-                imagePath = "file:///tmp/receipt_003.jpg",
-                rawOcrText = "Public\nTotal: 89.99",
-                parsedTotal = 89.99,
-                parsedMerchant = "Public",
-                parsedDate = now,
-                parsedItems = null,
-                parsedTaxAmount = null,
-                currency = "EUR",
-                confidence = 0.90f,
-                sourceType = "CAMERA",
-                documentType = "RETAIL_RECEIPT",
-                processingStatus = "PARSED",
-                createdAt = now,
-                updatedAt = now
-            )
+        val rows = listOf(
+            LinkRow("DIRECT_SAVE", "file:///tmp/receipt_003.jpg", "Public", 89.99, 0.90f, "DIRECT_SAVE", 1.0f, "system:test"),
+            LinkRow("AUTO_MATCHED", "file:///tmp/receipt_004.jpg", "Zara", 55.00, 0.88f, "AUTO_MATCHED", 0.95f, "system:matcher")
         )
-        assertTrue("receiptId should be positive", receiptId > 0L)
+        assertEquals("link rows size", 2, rows.size)
 
-        // Insert an expense
-        val expenseId = db.expenseDao().insert(
-            Expense(
-                amount = 89.99,
-                currency = "EUR",
-                merchant = "Public",
-                transactionType = TransactionType.PURCHASE,
-                date = now,
-                categoryId = shoppingCategoryId,
-                source = "receipt_scan",
-                createdAt = now
-            )
-        )
-        assertTrue("expenseId should be positive", expenseId > 0L)
+        // Each row inserts its own receipt, expense and link and every assertion is scoped to
+        // that row's generated ids, so rows cannot interfere with one another in the shared DB.
+        val failures = mutableListOf<String>()
+        for (row in rows) {
+            try {
+                // GIVEN: a scanned receipt AND an expense
+                val receiptId = db.scannedReceiptDao().insert(
+                    ScannedReceipt(
+                        imagePath = row.imagePath,
+                        rawOcrText = "${row.merchant}\nTotal: ${row.amount}",
+                        parsedTotal = row.amount,
+                        parsedMerchant = row.merchant,
+                        parsedDate = now,
+                        parsedItems = null,
+                        parsedTaxAmount = null,
+                        currency = "EUR",
+                        confidence = row.receiptConfidence,
+                        sourceType = "CAMERA",
+                        documentType = "RETAIL_RECEIPT",
+                        processingStatus = "PARSED",
+                        createdAt = now,
+                        updatedAt = now
+                    )
+                )
+                assertTrue("${row.name}: receiptId should be positive", receiptId > 0L)
 
-        // WHEN: insert a ReceiptExpenseLink
-        val link = ReceiptExpenseLink(
-            receiptId = receiptId,
-            expenseId = expenseId,
-            linkType = "DIRECT_SAVE",
-            confidence = 1.0f,
-            source = "RECEIPT_SCAN",
-            createdAt = now,
-            createdBy = "system:test",
-            isPrimary = true
-        )
-        val linkId = db.receiptExpenseLinkDao().insert(link)
-        assertTrue("linkId should be positive", linkId > 0L)
+                val expenseId = db.expenseDao().insert(
+                    Expense(
+                        amount = row.amount,
+                        currency = "EUR",
+                        merchant = row.merchant,
+                        transactionType = TransactionType.PURCHASE,
+                        date = now,
+                        categoryId = shoppingCategoryId,
+                        source = "receipt_scan",
+                        createdAt = now
+                    )
+                )
+                assertTrue("${row.name}: expenseId should be positive", expenseId > 0L)
 
-        // THEN: link exists connecting receiptId and expenseId
-        val linksForReceipt = db.receiptExpenseLinkDao().getLinksForReceipt(receiptId)
-        assertEquals("Should have exactly 1 link for receipt", 1, linksForReceipt.size)
-        assertEquals("Link receiptId should match", receiptId, linksForReceipt[0].receiptId)
-        assertEquals("Link expenseId should match", expenseId, linksForReceipt[0].expenseId)
-        assertEquals("Link type should match", "DIRECT_SAVE", linksForReceipt[0].linkType)
+                // WHEN: insert a ReceiptExpenseLink
+                val linkId = db.receiptExpenseLinkDao().insert(
+                    ReceiptExpenseLink(
+                        receiptId = receiptId,
+                        expenseId = expenseId,
+                        linkType = row.linkType,
+                        confidence = row.linkConfidence,
+                        source = "RECEIPT_SCAN",
+                        createdAt = now,
+                        createdBy = row.createdBy,
+                        isPrimary = true
+                    )
+                )
+                assertTrue("${row.name}: linkId should be positive", linkId > 0L)
 
-        val linksForExpense = db.receiptExpenseLinkDao().getLinksForExpense(expenseId)
-        assertEquals("Should have exactly 1 link for expense", 1, linksForExpense.size)
-        assertEquals("Link receiptId should match", receiptId, linksForExpense[0].receiptId)
-    }
+                // THEN: link exists connecting receiptId and expenseId (both directions)
+                val linksForReceipt = db.receiptExpenseLinkDao().getLinksForReceipt(receiptId)
+                assertEquals("${row.name}: links for receipt size", 1, linksForReceipt.size)
+                assertEquals("${row.name}: link receiptId", receiptId, linksForReceipt[0].receiptId)
+                assertEquals("${row.name}: link expenseId", expenseId, linksForReceipt[0].expenseId)
+                assertEquals("${row.name}: link type", row.linkType, linksForReceipt[0].linkType)
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Test 4: Receipt link prevents orphaned state
-    // ─────────────────────────────────────────────────────────────────────────
+                val linksForExpense = db.receiptExpenseLinkDao().getLinksForExpense(expenseId)
+                assertEquals("${row.name}: links for expense size", 1, linksForExpense.size)
+                assertEquals("${row.name}: expense-side link receiptId", receiptId, linksForExpense[0].receiptId)
 
-    @Test
-    fun `receipt link prevents orphaned state`() = runTest {
-        // GIVEN: a receipt-expense link (with both parent rows present)
-        val now = 1714514400000L
+                // AND: both parent rows still exist after linking (no orphaned state)
+                val savedReceipt = db.scannedReceiptDao().getById(receiptId)
+                assertNotNull("${row.name}: receipt should still exist", savedReceipt)
+                assertEquals("${row.name}: receipt merchant", row.merchant, savedReceipt!!.parsedMerchant)
 
-        // Insert a scanned receipt
-        val receiptId = db.scannedReceiptDao().insert(
-            ScannedReceipt(
-                imagePath = "file:///tmp/receipt_004.jpg",
-                rawOcrText = "Zara\nTotal: 55.00",
-                parsedTotal = 55.00,
-                parsedMerchant = "Zara",
-                parsedDate = now,
-                parsedItems = null,
-                parsedTaxAmount = null,
-                currency = "EUR",
-                confidence = 0.88f,
-                sourceType = "CAMERA",
-                documentType = "RETAIL_RECEIPT",
-                processingStatus = "PARSED",
-                createdAt = now,
-                updatedAt = now
-            )
-        )
-        assertTrue("receiptId should be positive", receiptId > 0L)
-
-        // Insert an expense
-        val expenseId = db.expenseDao().insert(
-            Expense(
-                amount = 55.00,
-                currency = "EUR",
-                merchant = "Zara",
-                transactionType = TransactionType.PURCHASE,
-                date = now,
-                categoryId = shoppingCategoryId,
-                source = "receipt_scan",
-                createdAt = now
-            )
-        )
-        assertTrue("expenseId should be positive", expenseId > 0L)
-
-        // Insert the link
-        db.receiptExpenseLinkDao().insert(
-            ReceiptExpenseLink(
-                receiptId = receiptId,
-                expenseId = expenseId,
-                linkType = "AUTO_MATCHED",
-                confidence = 0.95f,
-                source = "RECEIPT_SCAN",
-                createdAt = now,
-                createdBy = "system:matcher",
-                isPrimary = true
-            )
-        )
-
-        // WHEN: querying all links for the receipt
-        val links = db.receiptExpenseLinkDao().getLinksForReceipt(receiptId)
-
-        // THEN: link count = 1, receipt exists, expense exists
-        assertEquals("Link count should be 1", 1, links.size)
-
-        val savedReceipt = db.scannedReceiptDao().getById(receiptId)
-        assertNotNull("Receipt should still exist", savedReceipt)
-        assertEquals("Receipt merchant should match", "Zara", savedReceipt!!.parsedMerchant)
-
-        val savedExpense = db.expenseDao().getById(expenseId)
-        assertNotNull("Expense should still exist", savedExpense)
-        assertEquals("Expense merchant should match", "Zara", savedExpense!!.merchant)
-        assertEquals("Expense amount should match", 55.00, savedExpense.amount, 0.001)
+                val savedExpense = db.expenseDao().getById(expenseId)
+                assertNotNull("${row.name}: expense should still exist", savedExpense)
+                assertEquals("${row.name}: expense merchant", row.merchant, savedExpense!!.merchant)
+                assertEquals("${row.name}: expense amount", row.amount, savedExpense.amount, 0.001)
+            } catch (e: AssertionError) {
+                failures += "${row.name}: ${e.message}"
+            }
+        }
+        if (failures.isNotEmpty()) fail(failures.joinToString(separator = "\n"))
     }
 }

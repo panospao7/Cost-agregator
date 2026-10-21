@@ -81,20 +81,6 @@ class RawNotificationDaoTest {
     // -------------------------------------------------------------------------
 
     @Test
-    fun `insert a raw notification and query by id`() = runTest {
-        val notification = createNotification()
-        val id = dao.insert(notification)
-
-        assertTrue(id > 0)
-
-        val loaded = dao.getById(id)
-        assertNotNull(loaded)
-        assertEquals("com.example.app", loaded.packageName)
-        assertEquals("Title", loaded.title)
-        assertEquals("Text body", loaded.text)
-    }
-
-    @Test
     fun `query by package name returns matching notifications`() = runTest {
         dao.insert(createNotification(packageName = "com.example.bank", timestamp = FIXED_NOW, title = "Bank Alert", text = "Spent $50"))
         dao.insert(createNotification(packageName = "com.example.shop", timestamp = FIXED_NOW + 1, title = "Shop Alert", text = "Order shipped"))
@@ -180,7 +166,7 @@ class RawNotificationDaoTest {
     }
 
     @Test
-    fun `verify all fields are persisted correctly`() = runTest {
+    fun `insert then read back returns every raw notification field exactly`() = runTest {
         val notification = createNotification(
             packageName = "com.example.bank",
             appName = "MyBank",
@@ -199,9 +185,11 @@ class RawNotificationDaoTest {
         )
 
         val id = dao.insert(notification)
+        assertTrue(id > 0)
         val loaded = dao.getById(id)
 
         assertNotNull(loaded)
+        assertEquals(id, loaded.id)
         assertEquals("com.example.bank", loaded.packageName)
         assertEquals("MyBank", loaded.appName)
         assertEquals("Transaction Alert", loaded.title)
@@ -214,6 +202,7 @@ class RawNotificationDaoTest {
         assertEquals(true, loaded.isProcessed)
         assertEquals(true, loaded.isRelevant)
         assertEquals("""{"amount":50.0}""", loaded.parseResult)
+        assertEquals(null, loaded.rawContentPurgedAt)
         assertEquals("bank_fp_123", loaded.dedupeFingerprint)
     }
 

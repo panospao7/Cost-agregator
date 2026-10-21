@@ -103,7 +103,7 @@ GROUPS = (
         ("reminderDeliveryDao", "RecurringReminderDeliveryDao", "markFailedFromClaimed", "helper"),
     ), "MIT-DB-08C"),
     _group("service.warranty.WarrantyExpirationWorker", "deliverReminder",
-           (ENTITY + "Warranty", "Int", "Long", "String", "String"), (
+           (PKG + "domain.workers.WorkerRunContext", ENTITY + "Warranty", "Int", "Long", "String", "String"), (
                ("deliveryDao", "WarrantyReminderDeliveryDao", "claim", "workerMediated"),
                ("deliveryDao", "WarrantyReminderDeliveryDao", "insertOrIgnore", "workerMediated"),
                ("deliveryDao", "WarrantyReminderDeliveryDao", "markFailed", "workerMediated"),

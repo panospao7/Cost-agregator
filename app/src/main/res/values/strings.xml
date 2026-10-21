@@ -589,6 +589,8 @@
     <string name="feature_shared_groups_desc">Split expenses with others</string>
     <string name="feature_backup_restore">Backup &amp; Restore</string>
     <string name="feature_backup_restore_desc">Create and restore backups</string>
+    <string name="feature_privacy_settings">Privacy Settings</string>
+    <string name="feature_privacy_settings_desc">Control how your data is used</string>
     
     <!-- Groups -->
     <string name="groups_title">Shared Expense Groups</string>
@@ -671,6 +673,14 @@
     <string name="recurring_delete_confirm_message">Are you sure you want to delete %1$s?</string>
     <string name="recurring_error_load">Failed to load recurring expenses: %1$s</string>
     <string name="recurring_error_add">Failed to add expense: %1$s</string>
+    <string name="recurring_mark_paid_dialog_title">Mark bill as paid</string>
+    <string name="recurring_mark_paid_dialog_body">Do you want to record a payment of %2$s for %1$s, or was this payment already recorded?</string>
+    <string name="recurring_mark_paid_creates_expense">Mark paid (creates expense)</string>
+    <string name="recurring_mark_already_recorded">Already recorded</string>
+    <string name="recurring_mark_paid_no_change_info">Nothing to mark for this bill right now.</string>
+    <string name="recurring_advanced_only_info">No new expense was added. The next date was moved forward.</string>
+    <string name="recurring_error_currency_unavailable">Your home currency could not be read, so the recurring expense was not saved. Please try again.</string>
+    <string name="recurring_error_generic">Something went wrong. Please try again.</string>
     <string name="recurring_error_update">Failed to update status: %1$s</string>
     <string name="recurring_error_delete">Failed to delete: %1$s</string>
     
@@ -800,6 +810,16 @@
     <string name="financial_weather_planned">Planned</string>
     <string name="dashboard_partial_currency_warning">Some amounts could not be converted — totals may be incomplete</string>
     <string name="home_error_currency_unavailable">Currency settings unavailable</string>
+    <!-- R31 -->
+    <string name="widget_safe_to_spend_unavailable">Safe-to-spend isn\'t available yet.</string>
+    <!-- R17 -->
+    <string name="notification_access_title">Notification capture</string>
+    <string name="notification_access_off_body">Notification capture is turned on in the app, but Android notification access is off, so no bank notifications can be read. Turn it on in system settings to use this feature.</string>
+    <string name="notification_access_manage">Manage access</string>
+    <string name="notification_access_active">Android notification access is on.</string>
+    <string name="notification_access_consent_off">Notification capture is turned off in the app. No notifications are read.</string>
+    <string name="notification_access_restricted_hint">If the switch is greyed out, open App info &gt; ⋮ &gt; Allow restricted settings first.</string>
+    <string name="notification_access_open_failed">Couldn\'t open the settings screen. Open Settings and search for \"Notification access\".</string>
     <string name="widget_savings_sweep_title">End-of-month savings sweep</string>
     <string name="widget_savings_sweep_safe_to_sweep">Safe to sweep %s</string>
     <string name="widget_savings_sweep_detail">Underspend %1$s • Buffer %2$s</string>
@@ -846,8 +866,23 @@
     <string name="privacy_toggle_device_gps">Device GPS location</string>
     <string name="privacy_toggle_encrypted_backup">Encrypted backups</string>
     <string name="privacy_toggle_debug_persist">Persist debug data</string>
+    <!-- R18: group-linked expense guard -->
+    <string name="expense_delete_blocked_group_linked">This expense is part of a shared group, so it can\'t be deleted. Deleting it would change the group\'s balances.</string>
+    <string name="expense_edit_blocked_group_linked">This expense is part of a shared group, so its amount, currency, type and sharing can\'t be changed. You can still edit other details, such as category or merchant.</string>
+    <!-- R23 -->
+    <string name="privacy_section_network">Network</string>
+    <string name="privacy_toggle_exchange_rate_download">Download exchange rates (ECB)</string>
+    <string name="privacy_toggle_exchange_rate_download_desc">Fetches daily public rates from the European Central Bank. No expense data is sent; the ECB can see your IP address.</string>
+    <string name="privacy_blocked_exchange_rate_download">Exchange-rate download is disabled.</string>
+    <string name="currency_error_download_disabled">Exchange-rate download is off. Turn it on in Privacy settings &gt; Network.</string>
+    <string name="currency_error_refresh_unavailable">Couldn\'t update exchange rates. Try again later.</string>
+    <string name="currency_error_conversion_unavailable">Conversion is unavailable for these currencies.</string>
+    <string name="currency_error_data_unavailable">Currency data couldn\'t be loaded.</string>
+    <string name="currency_error_unsupported_home">Your home currency isn\'t supported.</string>
+    <string name="backup_contents_notice">Receipt images are not included in backups.</string>
     <string name="privacy_slider_notification_retention">Raw notification retention (days)</string>
     <string name="privacy_slider_ocr_retention">Raw OCR retention (days)</string>
+    <string name="privacy_retention_immediately">Immediately (deleted at next cleanup)</string>
     <string name="privacy_raw_storage_notification_label">Notification raw text storage</string>
     <string name="privacy_raw_storage_ocr_label">OCR raw text storage</string>
     <string name="privacy_raw_storage_email_label">Email receipt storage</string>
@@ -1522,6 +1557,7 @@
     
     <!-- Warranty Tracker -->
     <string name="screen_warranty_tracker">Warranty Tracker</string>
+    <string name="warranty_mutation_failed">Couldn\'t save the change. Please try again.</string>
     <string name="warranty_summary_active">Active</string>
     <string name="warranty_summary_expiring">Expiring Soon</string>
     <string name="warranty_summary_protected_value">Protected Value</string>
@@ -1758,7 +1794,6 @@
     <string name="nlp_search_title">Smart Search</string>
     <string name="nlp_search_label">Ask about your spending…</string>
     <string name="nlp_search_placeholder">e.g., "How much did I spend at restaurants last month?"</string>
-    <string name="nlp_search_voice_cd">Voice search (Coming soon)</string>
     <string name="nlp_try_asking">Try asking:</string>
     <string name="nlp_example_total_week">Total spent this week</string>
     <string name="nlp_example_restaurants">Restaurants over €50</string>
@@ -2534,6 +2569,18 @@
     <string name="backup_restore_dismiss">Dismiss</string>
     <string name="backup_restore_restart_now">Restart Now</string>
 
+    <!-- R25: unsupported database screen -->
+    <string name="unsupported_db_title">Your data can\'t be opened</string>
+    <string name="unsupported_db_reason_too_old">The saved database was created by a version of the app that is too old to be upgraded safely. Nothing has been changed or deleted.</string>
+    <string name="unsupported_db_reason_too_new">The saved database was created by a newer version of the app. Install the latest version of the app to use it. Nothing has been changed or deleted.</string>
+    <string name="unsupported_db_reason_unreadable">The saved database could not be read. Nothing has been changed or deleted.</string>
+    <string name="unsupported_db_export_button">Export database file</string>
+    <string name="unsupported_db_close_button">Close app</string>
+    <string name="unsupported_db_export_success">The database file was exported.</string>
+    <string name="unsupported_db_export_failed">The database file could not be exported. Try a different location.</string>
+    <string name="backup_schema_too_old">This backup is from an app version that is too old to restore.</string>
+    <string name="backup_schema_too_new">This backup was made by a newer app version. Update the app to restore it.</string>
+
     <!-- Status Messages -->
     <string name="status_active">Active</string>
     <string name="status_inactive">Inactive</string>
@@ -2546,5 +2593,11 @@
     <string name="financial_runway_review_budget">Review budget</string>
     <string name="backup_restore_receipt_images_skipped_format">%1$d receipt images could not be restored.</string>
     <string name="restart_required_database_operation">The app must restart to finish a database operation. Changes are paused until it restarts.</string>
+    <!-- R18b: user-started write attempted while backup/restore/reset holds the write barrier -->
+    <string name="ui_write_blocked_maintenance">Changes are paused while a backup or restore is running. Please try again in a moment.</string>
+    <!-- R24b: notification permission dialog button when the system will no longer ask -->
+    <string name="notification_open_settings_button">Open settings</string>
+    <!-- R24c: shown when the receipt currency could not be read and the home currency was assumed -->
+    <string name="receipt_currency_unverified_warning">We couldn\'t read the currency on this receipt. Check it before saving.</string>
 
 </resources>

@@ -71,6 +71,47 @@ class TransactionsViewModelTest : ViewModelTestUtils() {
         )
     }
 
+    private val originalLocale: java.util.Locale = java.util.Locale.getDefault()
+
+    @After fun restoreDefaultLocale() {
+        java.util.Locale.setDefault(originalLocale)
+    }
+
+    @Test fun `el_GR comma share amount is saved as 12_50 by updateOwnership`() = runTest(testDispatcher) {
+        java.util.Locale.setDefault(java.util.Locale("el", "GR"))
+        val expense = mockk<Expense>(relaxed = true)
+        model.updateOwnership(expense, false, "", true, "Anna", "", "12,50")
+        advanceUntilIdle()
+        io.mockk.coVerify(exactly = 1) {
+            expenses.updateOwnership(expense, false, null, true, "Anna", null, 12.5)
+        }
+    }
+
+    @Test fun `el_GR ambiguous comma grouping share amount is rejected and never saved`() = runTest(testDispatcher) {
+        java.util.Locale.setDefault(java.util.Locale("el", "GR"))
+        val expense = mockk<Expense>(relaxed = true)
+        val received = mutableListOf<UiText>()
+        val collection = backgroundScope.launch { model.error.collect { received += it } }
+        runCurrent()
+        model.updateOwnership(expense, false, "", true, "Anna", "", "1,234")
+        advanceUntilIdle()
+        assertEquals("Share amount must be greater than 0", (received.single() as UiText.DynamicString).value)
+        io.mockk.coVerify(exactly = 0) {
+            expenses.updateOwnership(any(), any(), any(), any(), any(), any(), any())
+        }
+        collection.cancel()
+    }
+
+    @Test fun `en_US comma grouping share amount 1,234 is saved as 1234`() = runTest(testDispatcher) {
+        java.util.Locale.setDefault(java.util.Locale.US)
+        val expense = mockk<Expense>(relaxed = true)
+        model.updateOwnership(expense, false, "", true, "Anna", "", "1,234")
+        advanceUntilIdle()
+        io.mockk.coVerify(exactly = 1) {
+            expenses.updateOwnership(expense, false, null, true, "Anna", null, 1234.0)
+        }
+    }
+
     @Test fun `provenance failure is bounded`() = runTest(testDispatcher) {
         coEvery { sourceLinks.getLinksForExpense(any()) } throws hostile
         model.loadProvenanceForExpense(1)
@@ -97,6 +138,45 @@ class TransactionsViewModelTest : ViewModelTestUtils() {
         advanceUntilIdle()
         assertEquals("Failed to delete transaction (TRANSACTION_DELETE_FAILED)", (received.single() as UiText.DynamicString).value)
         assertSafeLog("TRANSACTION_DELETE_FAILED")
+        collection.cancel()
+    }
+
+    @Test fun `R18 group-linked delete block shows bounded resource message`() = runTest(testDispatcher) {
+        val expense = mockk<Expense>(relaxed = true)
+        coEvery { expenses.deleteExpense(expense) } throws com.yourname.expensetracker.domain.transaction.lifecycle.GroupLinkedExpenseException(
+            com.yourname.expensetracker.domain.transaction.lifecycle.GroupLinkedExpenseException.EXPENSE_DELETE_BLOCKED_GROUP_LINKED
+        )
+        val received = mutableListOf<UiText>()
+        val collection = backgroundScope.launch { model.error.collect { received += it } }
+        runCurrent()
+        model.deleteExpense(expense)
+        advanceUntilIdle()
+        assertEquals(
+            UiText.from(com.yourname.expensetracker.R.string.expense_delete_blocked_group_linked),
+            received.single()
+        )
+        assertEquals(
+            listOf(null to "Transactions: TRANSACTION_DELETE_BLOCKED code=EXPENSE_DELETE_BLOCKED_GROUP_LINKED"),
+            logs
+        )
+        collection.cancel()
+    }
+
+    @Test fun `R18 group-linked ownership edit block shows bounded resource message`() = runTest(testDispatcher) {
+        val expense = mockk<Expense>(relaxed = true)
+        coEvery { expenses.updateOwnership(any(), any(), any(), any(), any(), any(), any()) } throws
+            com.yourname.expensetracker.domain.transaction.lifecycle.GroupLinkedExpenseException(
+                com.yourname.expensetracker.domain.transaction.lifecycle.GroupLinkedExpenseException.EXPENSE_EDIT_BLOCKED_GROUP_LINKED
+            )
+        val received = mutableListOf<UiText>()
+        val collection = backgroundScope.launch { model.error.collect { received += it } }
+        runCurrent()
+        model.updateOwnership(expense, false, "", false, "", "", "")
+        advanceUntilIdle()
+        assertEquals(
+            UiText.from(com.yourname.expensetracker.R.string.expense_edit_blocked_group_linked),
+            received.single()
+        )
         collection.cancel()
     }
 

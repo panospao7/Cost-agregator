@@ -57,6 +57,7 @@ class NotificationPipelineScenarioTest {
         val merchantCleaner = mockk<MerchantCleaner>()
 
         every { currencyNormalizer.normalize(any()) } returns "EUR"
+        every { currencyNormalizer.normalizeOrNull(any()) } returns "EUR"
         every { merchantCleaner.clean(any()) } answers { firstArg<String>() }
 
         parser = GreekBankParser(currencyNormalizer, merchantCleaner, homeCurrency = "EUR")

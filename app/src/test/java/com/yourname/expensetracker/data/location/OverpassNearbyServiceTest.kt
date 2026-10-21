@@ -7,7 +7,8 @@ import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.currentTime
+import kotlinx.coroutines.test.runTest
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
@@ -31,7 +32,7 @@ class OverpassNearbyServiceTest {
     }
 
     @Test
-    fun `findNearby returns RateLimited after final 429 retry`() = runBlocking {
+    fun `findNearby returns RateLimited after final 429 retry`() = runTest {
         val attempts = AtomicInteger(0)
         val service = OverpassNearbyService(
             client = fixedResponseClient(attempts, code = 429, body = "{\"remark\":\"rate limited\"}"),
@@ -50,10 +51,12 @@ class OverpassNearbyServiceTest {
         val failure = result as NearbyPoiResult.Failure
         assertEquals(GeocodingError.RateLimited, failure.error)
         assertTrue(failure.error != GeocodingError.NetworkError)
+        // Overpass backoff: initial 400 ms, doubling -> 400 + 800 across the two retry gaps.
+        assertEquals(400L + 800L, currentTime)
     }
 
     @Test
-    fun `findNearby ranks greek merchant names ahead of transliterated fallback`() = runBlocking {
+    fun `findNearby ranks greek merchant names ahead of transliterated fallback`() = runTest {
         val service = OverpassNearbyService(client = fixedResponseClient(attempts = AtomicInteger(0), code = 200, body = greekRankingBody()), privacyGate = mockk<PrivacyGate>(relaxed = true))
 
         val result = service.findNearby(

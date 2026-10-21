@@ -53,7 +53,7 @@ Reviewer notes: Workers are STRICT P0 per AGENTS.md. Key structural fact: domain
 
 ### test/java/com/yourname/expensetracker/domain/workers/P9RemainingWorkerFixesTest.kt
 - Two tests assert on **Kotlin stdlib `maxOf`** (lines 263-271: `assertEquals(60_000L, maxOf(1L, 60_000L))`) — tests nothing production; the real 60s-floor behavior is already covered in #13 (`near-midnight schedule floors initial delay at 60 seconds`). DELETE these two.
-- Spec assertions (default KEEP, merchant_key REPLACE) duplicate #8 (`oneShotPolicy defaults…`, lines 96-115); the 6 Handle-idempotency tests duplicate #12's `duplicate_success_is_noop`/`duplicate_failure_is_noop`/`concurrent_terminal_calls_result_in_exactly_one_write` (only cancelled/staleAborted/skipped sequential no-ops are additive → move into #12).
+- Spec assertions (default KEEP, merchant_key REPLACE) duplicate #8 (`oneShotPolicy defaults…`, lines 96-115); the 6 Handle-idempotency tests duplicate #12's `duplicate_success_is_noop`/`duplicate_failure_is_noop`/`sequential_terminal_calls_on_single_thread_result_in_exactly_one_write` (single-thread bookkeeping only; the genuine multi-thread mutex race is covered by the `real threads - ...` tests added to #12 in B2-5) (only cancelled/staleAborted/skipped sequential no-ops are additive → move into #12).
 - Unique value worth keeping: merchant_key battery-not-low constraint (36-45) and the unexpected-`RuntimeException`-at-checkpoint → `WorkerCheckpointBlockedException` + `diagnosticSink.recordBlockedOperation` fail-safe path (199-253), which #5/#6 do not cover.
 
 ### test/java/com/yourname/expensetracker/domain/workers/WorkerRestoreRegressionTest.kt

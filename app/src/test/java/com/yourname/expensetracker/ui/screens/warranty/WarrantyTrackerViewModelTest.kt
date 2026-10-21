@@ -1,19 +1,23 @@
 package com.yourname.expensetracker.ui.screens.warranty
 
 import app.cash.turbine.test
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.Warranty
+import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.data.database.entity.WarrantyStatus
 import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -248,6 +252,133 @@ class WarrantyTrackerViewModelTest : ViewModelTestUtils() {
         assertTrue(reviewState.showNeedsReviewOnly)
         assertFalse(reviewState.showAutoDetectedOnly)
         assertEquals(null, reviewState.selectedFilter)
+    }
+
+    // ---- R29: fail-closed repository writes must not crash the VM ----
+
+    private val expectedMutationError =
+        UiText.StringResource(R.string.warranty_mutation_failed)
+
+    @Test
+    fun `addManualWarranty repository failure sets bounded error and does not crash`() = runTest(testDispatcher) {
+        coEvery { warrantyRepository.addWarranty(any()) } throws RuntimeException("secret raw detail")
+
+        viewModel.addManualWarranty("Phone", "Store", FIXED_NOW, 12, null)
+        advanceUntilIdle()
+
+        assertEquals(expectedMutationError, viewModel.state.value.mutationError)
+        assertFalse(viewModel.state.value.addWarrantySuccess)
+    }
+
+    @Test
+    fun `addManualWarranty cancellation propagates and is not converted to error`() = runTest(testDispatcher) {
+        coEvery { warrantyRepository.addWarranty(any()) } throws CancellationException("cancelled")
+
+        viewModel.addManualWarranty("Phone", "Store", FIXED_NOW, 12, null)
+        advanceUntilIdle()
+
+        assertNull(viewModel.state.value.mutationError)
+        assertFalse(viewModel.state.value.addWarrantySuccess)
+    }
+
+    @Test
+    fun `confirmWarranty repository failure sets bounded error without raw message`() = runTest(testDispatcher) {
+        val target = warranty(id = 51L, product = "Lamp", warrantyEndDate = FIXED_NOW + DAY_MS)
+        coEvery { warrantyRepository.updateWarranty(any()) } throws RuntimeException("secret raw detail")
+
+        viewModel.confirmWarranty(target)
+        advanceUntilIdle()
+
+        assertEquals(expectedMutationError, viewModel.state.value.mutationError)
+        assertTrue(viewModel.state.value.mutatingWarrantyIds.isEmpty())
+    }
+
+    @Test
+    fun `confirmWarranty cancellation propagates and is not converted to error`() = runTest(testDispatcher) {
+        val target = warranty(id = 52L, product = "Lamp", warrantyEndDate = FIXED_NOW + DAY_MS)
+        coEvery { warrantyRepository.updateWarranty(any()) } throws CancellationException("cancelled")
+
+        viewModel.confirmWarranty(target)
+        advanceUntilIdle()
+
+        assertNull(viewModel.state.value.mutationError)
+        assertTrue(viewModel.state.value.mutatingWarrantyIds.isEmpty())
+    }
+
+    @Test
+    fun `rejectAutoDetectedWarranty repository failure sets bounded error and does not crash`() = runTest(testDispatcher) {
+        val target = warranty(id = 53L, product = "Cam", warrantyEndDate = FIXED_NOW + DAY_MS)
+        coEvery { warrantyRepository.rejectAutoDetectedWarranty(any()) } throws RuntimeException("secret raw detail")
+
+        viewModel.rejectAutoDetectedWarranty(target)
+        advanceUntilIdle()
+
+        assertEquals(expectedMutationError, viewModel.state.value.mutationError)
+    }
+
+    @Test
+    fun `rejectAutoDetectedWarranty cancellation propagates and is not converted to error`() = runTest(testDispatcher) {
+        val target = warranty(id = 54L, product = "Cam", warrantyEndDate = FIXED_NOW + DAY_MS)
+        coEvery { warrantyRepository.rejectAutoDetectedWarranty(any()) } throws CancellationException("cancelled")
+
+        viewModel.rejectAutoDetectedWarranty(target)
+        advanceUntilIdle()
+
+        assertNull(viewModel.state.value.mutationError)
+    }
+
+    @Test
+    fun `markAsClaimed repository failure sets bounded error and does not crash`() = runTest(testDispatcher) {
+        coEvery { warrantyRepository.markWarrantyAsClaimed(any()) } throws RuntimeException("secret raw detail")
+
+        viewModel.markAsClaimed(55L)
+        advanceUntilIdle()
+
+        assertEquals(expectedMutationError, viewModel.state.value.mutationError)
+    }
+
+    @Test
+    fun `markAsClaimed cancellation propagates and is not converted to error`() = runTest(testDispatcher) {
+        coEvery { warrantyRepository.markWarrantyAsClaimed(any()) } throws CancellationException("cancelled")
+
+        viewModel.markAsClaimed(56L)
+        advanceUntilIdle()
+
+        assertNull(viewModel.state.value.mutationError)
+    }
+
+    @Test
+    fun `deleteWarranty repository failure sets bounded error and does not crash`() = runTest(testDispatcher) {
+        val target = warranty(id = 57L, product = "Desk", warrantyEndDate = FIXED_NOW + DAY_MS)
+        coEvery { warrantyRepository.deleteWarranty(any()) } throws RuntimeException("secret raw detail")
+
+        viewModel.deleteWarranty(target)
+        advanceUntilIdle()
+
+        assertEquals(expectedMutationError, viewModel.state.value.mutationError)
+    }
+
+    @Test
+    fun `deleteWarranty cancellation propagates and is not converted to error`() = runTest(testDispatcher) {
+        val target = warranty(id = 58L, product = "Desk", warrantyEndDate = FIXED_NOW + DAY_MS)
+        coEvery { warrantyRepository.deleteWarranty(any()) } throws CancellationException("cancelled")
+
+        viewModel.deleteWarranty(target)
+        advanceUntilIdle()
+
+        assertNull(viewModel.state.value.mutationError)
+    }
+
+    @Test
+    fun `clearMutationError resets the error state`() = runTest(testDispatcher) {
+        coEvery { warrantyRepository.markWarrantyAsClaimed(any()) } throws RuntimeException("x")
+        viewModel.markAsClaimed(59L)
+        advanceUntilIdle()
+        assertEquals(expectedMutationError, viewModel.state.value.mutationError)
+
+        viewModel.clearMutationError()
+
+        assertNull(viewModel.state.value.mutationError)
     }
 
     private fun warranty(

@@ -75,16 +75,19 @@ class EventMetadataSanitizer @Inject constructor() {
         private val BLOCKED_SUBSTRINGS = listOf(
             "raw", "ocr", "prompt", "token", "auth", "password",
             "secret", "path", "iban", "account", "card", "cvv",
-            "pin", "body", "subject", "sender", "bearer"
+            "pin", "body", "subject", "sender", "bearer", "amount"
         )
 
         private val BEARER_PATTERN = Regex("""(?i)bearer\s+\S{8,}""")
         private val JWT_PATTERN = Regex("""[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}""")
         private val FILE_PATH_PATTERN = Regex("""(/[^\s]{10,}|[A-Za-z]:\\[^\s]{10,})""")
         private val IBAN_PATTERN = Regex("""[A-Z]{2}\d{2}[A-Z0-9]{4,30}""")
-        private val LONG_DIGITS_PATTERN = Regex("""\d{12,}""")
+        // DIAG-05: 10+ digits, aligned with CloudPiiSanitizer
+        private val LONG_DIGITS_PATTERN = Regex("""\d{10,}""")
         // DDL-A8-17: only allow hex strings in hash-key slots
         private val HASH_VALUE_PATTERN = Regex("^[a-fA-F0-9]{8,128}$")
+        // DIAG-06: an all-digit value is a raw number (account/phone/id), not a hash
+        private val ALL_DIGITS_PATTERN = Regex("^\\d+$")
     }
 
     /** Canonical key: lowercase, strip non-alphanumeric. */
@@ -122,7 +125,9 @@ class EventMetadataSanitizer @Inject constructor() {
         val canonical = canonicalizeKey(key)
         // DDL-A8-17: validate hash-key values — only allow hex strings, redact plain text
         if (canonical in SAFE_HASH_KEYS) {
-            return if (value is String && HASH_VALUE_PATTERN.matches(value)) value else REDACTED
+            return if (value is String && HASH_VALUE_PATTERN.matches(value) &&
+                !ALL_DIGITS_PATTERN.matches(value)
+            ) value else REDACTED
         }
         return when (value) {
             null -> null

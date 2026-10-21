@@ -2,6 +2,7 @@ package com.yourname.expensetracker.ui.screens.price
 
 import app.cash.turbine.test
 import com.google.common.truth.Truth.assertThat
+import com.google.common.truth.Truth.assertWithMessage
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
@@ -37,10 +38,7 @@ class PriceProtectionViewModelTest {
         coEvery { priceTracker.getPriceProtectedItems() } returns emptyList()
         every { priceTracker.monitorPriceDrops() } returns flowOf(emptyList())
         
-        val currencyRepo = mockk<CurrencySettingsRepository>(relaxed = true)
-        every { currencyRepo.homeCurrency() } returns flowOf("EUR")
-        coEvery { currencyRepo.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
-        viewModel = PriceProtectionViewModel(priceTracker, currencySettingsRepository = currencyRepo, context = mockk<Context>(relaxed = true))
+        viewModel = createViewModel()
     }
 
     @After
@@ -49,7 +47,7 @@ class PriceProtectionViewModelTest {
     }
 
     @Test
-    fun `initial state has empty lists`() = runTest {
+    fun `initial state has empty lists and is not loading`()= runTest {
         viewModel.priceDrops.test {
             assertThat(awaitItem()).isEmpty()
         }
@@ -69,24 +67,49 @@ class PriceProtectionViewModelTest {
         viewModel.creditCardBenefits.test {
             assertThat(awaitItem()).isEmpty()
         }
-    }
 
-    @Test
-    fun `initial loading state is false`() = runTest {
         viewModel.isLoading.test {
             assertThat(awaitItem()).isFalse()
         }
     }
 
     @Test
-    fun `loadData fetches protected items`() = runTest {
-        val mockItems = createMockProtectedItems()
-        coEvery { priceTracker.getPriceProtectedItems() } returns mockItems
-        
-        viewModel.loadData()
-        advanceUntilIdle()
-        
-        coVerify { priceTracker.getPriceProtectedItems() }
+    fun `loadData fetches protected items and exposes them in tracker order`() = runTest {
+        // Row: (label, items supplied by the tracker, exact expected names in supplied order).
+        val rows = listOf(
+            Triple(
+                "two eligible items",
+                listOf(
+                    createProtectedItem("Electronics", true, 30),
+                    createProtectedItem("Furniture", true, 14)
+                ),
+                listOf("Electronics", "Furniture")
+            ),
+            Triple(
+                "mixed eligibility, unsorted input",
+                listOf(
+                    createProtectedItem("Item A", true, 30),
+                    createProtectedItem("Item B", false, 0),
+                    createProtectedItem("Item C", true, 15)
+                ),
+                listOf("Item A", "Item B", "Item C")
+            )
+        )
+        assertThat(rows).hasSize(2) // size guard: do not silently lose a row
+
+        for ((label, items, expectedNames) in rows) {
+            coEvery { priceTracker.getPriceProtectedItems() } returns items
+            viewModel = createViewModel()
+
+            viewModel.loadData()
+            advanceUntilIdle()
+
+            coVerify { priceTracker.getPriceProtectedItems() }
+            assertWithMessage("row '$label'")
+                .that(viewModel.protectedItems.value.map { it.itemName })
+                .containsExactlyElementsIn(expectedNames)
+                .inOrder()
+        }
     }
 
     @Test
@@ -102,21 +125,48 @@ class PriceProtectionViewModelTest {
     }
 
     @Test
-    fun `refreshPriceDrops updates price drops state`() = runTest {
-        val mockDrops = createMockPriceDrops()
-        every { priceTracker.monitorPriceDrops() } returns flowOf(mockDrops)
-        
-        viewModel.priceDrops.test {
-            // Skip initial empty emission
-            val initial = awaitItem()
-            assertThat(initial).isEmpty()
-            
-            viewModel.refreshPriceDrops()
-            advanceUntilIdle()
-            
-            val drops = awaitItem()
-            assertThat(drops).hasSize(2)
-            cancelAndConsumeRemainingEvents()
+    fun `refreshPriceDrops publishes tracker drops with exact savings fields`() = runTest {
+        val rows = listOf(
+            DropRow(
+                label = "two drops",
+                drops = listOf(
+                    createPriceDropAlert("Phone", 50.0, 5.0, 10.0),
+                    createPriceDropAlert("TV", 200.0, 20.0, 10.0)
+                ),
+                expectedItemNames = listOf("Phone", "TV"),
+                expectedPriceDrops = listOf(50.0, 200.0),
+                expectedPercents = listOf(10.0, 10.0)
+            ),
+            DropRow(
+                label = "single drop",
+                drops = listOf(createPriceDropAlert("Laptop", dropAmount = 10.0, savings = 10.0, percent = 10.0)),
+                expectedItemNames = listOf("Laptop"),
+                expectedPriceDrops = listOf(10.0),
+                expectedPercents = listOf(10.0)
+            )
+        )
+        assertThat(rows).hasSize(2) // size guard: do not silently lose a row
+
+        for (row in rows) {
+            every { priceTracker.monitorPriceDrops() } returns flowOf(row.drops)
+            viewModel = createViewModel()
+
+            viewModel.priceDrops.test {
+                // Skip initial empty emission
+                assertWithMessage("row '${row.label}' initial").that(awaitItem()).isEmpty()
+
+                viewModel.refreshPriceDrops()
+                advanceUntilIdle()
+
+                val result = awaitItem()
+                assertWithMessage("row '${row.label}' names").that(result.map { it.item.itemName })
+                    .containsExactlyElementsIn(row.expectedItemNames).inOrder()
+                assertWithMessage("row '${row.label}' priceDrop").that(result.map { it.priceDrop })
+                    .containsExactlyElementsIn(row.expectedPriceDrops).inOrder()
+                assertWithMessage("row '${row.label}' percent").that(result.map { it.priceDropPercent })
+                    .containsExactlyElementsIn(row.expectedPercents).inOrder()
+                cancelAndConsumeRemainingEvents()
+            }
         }
     }
 
@@ -157,56 +207,23 @@ class PriceProtectionViewModelTest {
         }
     }
 
-    @Test
-    fun `protected items are sorted by eligibility`() = runTest {
-        val items = listOf(
-            createProtectedItem("Item A", true, 30),
-            createProtectedItem("Item B", false, 0),
-            createProtectedItem("Item C", true, 15)
-        )
-        coEvery { priceTracker.getPriceProtectedItems() } returns items
-        
-        viewModel.loadData()
-        advanceUntilIdle()
-        
-        viewModel.protectedItems.test {
-            val result = awaitItem()
-            assertThat(result).hasSize(3)
-        }
-    }
-
-    @Test
-    fun `price drops contain savings information`() = runTest {
-        val drops = listOf(
-            createPriceDropAlert("Laptop", dropAmount = 10.0, savings = 10.0, percent = 10.0)
-        )
-        every { priceTracker.monitorPriceDrops() } returns flowOf(drops)
-        
-        viewModel.priceDrops.test {
-            // Skip initial empty emission
-            val initial = awaitItem()
-            assertThat(initial).isEmpty()
-            
-            viewModel.refreshPriceDrops()
-            advanceUntilIdle()
-            
-            val result = awaitItem()
-            assertThat(result).hasSize(1)
-            assertThat(result[0].priceDrop).isEqualTo(10.0)
-            assertThat(result[0].priceDropPercent).isEqualTo(10.0)
-            cancelAndConsumeRemainingEvents()
-        }
-    }
-
     // Helper methods
-    
-    private fun createMockProtectedItems(): List<PriceProtectionTracker.PriceProtectedItem> {
-        return listOf(
-            createProtectedItem("Electronics", true, 30),
-            createProtectedItem("Furniture", true, 14)
-        )
+
+    private fun createViewModel(): PriceProtectionViewModel {
+        val currencyRepo = mockk<CurrencySettingsRepository>(relaxed = true)
+        every { currencyRepo.homeCurrency() } returns flowOf("EUR")
+        coEvery { currencyRepo.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
+        return PriceProtectionViewModel(priceTracker, currencySettingsRepository = currencyRepo, context = mockk<Context>(relaxed = true))
     }
-    
+
+    private data class DropRow(
+        val label: String,
+        val drops: List<PriceProtectionTracker.PriceDropAlert>,
+        val expectedItemNames: List<String>,
+        val expectedPriceDrops: List<Double>,
+        val expectedPercents: List<Double>
+    )
+
     private fun createProtectedItem(
         name: String,
         eligible: Boolean,
@@ -223,13 +240,6 @@ class PriceProtectionViewModelTest {
             returnWindowDays = returnWindow,
             currentBestPrice = null,
             priceHistory = emptyList()
-        )
-    }
-    
-    private fun createMockPriceDrops(): List<PriceProtectionTracker.PriceDropAlert> {
-        return listOf(
-            createPriceDropAlert("Phone", 50.0, 5.0, 10.0),
-            createPriceDropAlert("TV", 200.0, 20.0, 10.0)
         )
     }
     

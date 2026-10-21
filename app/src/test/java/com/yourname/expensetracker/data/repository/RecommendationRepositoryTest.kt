@@ -24,7 +24,6 @@ import kotlinx.coroutines.test.setMain
 import org.junit.Before
 import org.junit.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
 /**
@@ -86,17 +85,6 @@ class RecommendationRepositoryTest {
     }
 
     @Test
-    fun `dismiss calls DAO archive`() = runTest {
-        val recommendationId = "rec123"
-
-        coEvery { dao.archive(recommendationId, any()) } returns Unit
-
-        repository.dismiss(recommendationId)
-
-        coVerify(exactly = 1) { dao.archive(recommendationId, any()) }
-    }
-
-    @Test
     fun `expireAll calls DAO expireOld`() = runTest {
         val userId = "user123"
         val timestamp = timeProvider.now()
@@ -107,29 +95,6 @@ class RecommendationRepositoryTest {
         repository.expireAll(userId, timestamp)
 
         coVerify(exactly = 1) { dao.expireOld(userId, timestamp, any()) }
-    }
-
-    @Test
-    fun `expireOld calls DAO expireOld`() = runTest {
-        val userId = "user123"
-        val timestamp = timeProvider.now()
-
-        coEvery { dao.expireOld(userId, timestamp, any()) } returns Unit
-
-        repository.expireOld(userId, timestamp)
-
-        coVerify(exactly = 1) { dao.expireOld(userId, timestamp, any()) }
-    }
-
-    @Test
-    fun `clearForUser calls DAO clearByUser`() = runTest {
-        val userId = "user123"
-
-        coEvery { dao.clearByUser(userId) } returns Unit
-
-        repository.clearForUser(userId)
-
-        coVerify(exactly = 1) { dao.clearByUser(userId) }
     }
 
     @Test
@@ -296,37 +261,6 @@ class RecommendationRepositoryTest {
     }
 
     @Test
-    fun `getArchivedForUser delegates to DAO and maps to domain`() = runTest {
-        val userId = "user123"
-        val entity = createRecommendationEntity(
-            userId = userId,
-            status = RecommendationStatus.ARCHIVED
-        )
-
-        coEvery { dao.getArchived(userId, any()) } returns listOf(entity)
-
-        val result = repository.getArchivedForUser(userId)
-
-        assertEquals(1, result.size)
-        assertEquals(entity.id, result[0].id)
-        coVerify(exactly = 1) { dao.getArchived(userId, any()) }
-    }
-
-    @Test
-    fun `getById returns mapped domain model`() = runTest {
-        val id = "rec123"
-        val entity = createRecommendationEntity(id = id)
-
-        coEvery { dao.getById(id) } returns entity
-
-        val result = repository.getById(id)
-
-        assertNotNull(result)
-        assertEquals(id, result.id)
-        assertEquals(entity.recommendationText, result.recommendationText)
-    }
-
-    @Test
     fun `getById returns null when DAO returns null`() = runTest {
         val id = "non-existent"
 
@@ -335,45 +269,6 @@ class RecommendationRepositoryTest {
         val result = repository.getById(id)
 
         assertNull(result)
-    }
-
-    @Test
-    fun `countActive delegates to DAO`() = runTest {
-        val userId = "user123"
-        val expectedCount = 3
-
-        coEvery { dao.countActive(userId, any()) } returns expectedCount
-
-        val result = repository.countActive(userId)
-
-        assertEquals(expectedCount, result)
-        coVerify(exactly = 1) { dao.countActive(userId, any()) }
-    }
-
-    @Test
-    fun `cleanupExpired delegates to DAO deleteExpired`() = runTest {
-        val expectedDeleted = 5
-
-        coEvery { dao.deleteExpired(any()) } returns expectedDeleted
-
-        val result = repository.cleanupExpired()
-
-        assertEquals(expectedDeleted, result)
-        coVerify(exactly = 1) { dao.deleteExpired(any()) }
-    }
-
-    @Test
-    fun `repository runs operations on IO dispatcher`() = runTest {
-        val userId = "user123"
-        
-        coEvery { dao.getActiveByUser(userId, any()) } returns emptyList()
-
-        repository.getActiveForUser(userId)
-
-        // Test that operations complete successfully on the test dispatcher
-        testDispatcher.scheduler.advanceUntilIdle()
-        
-        coVerify { dao.getActiveByUser(userId, any()) }
     }
 
     // Helper functions

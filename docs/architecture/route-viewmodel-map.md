@@ -146,4 +146,4 @@ App Chrome (6 tabs)
 | `AnalyticsViewModel` | 15+ dependencies | 🔴 High |
 | Most other VMs | 3-10 dependencies | 🟡 Medium |
 
-**Total `@HiltViewModel` classes:** 41 — 40 in dedicated files (including `MainViewModel`) + 1 inline (`RecurringExpensesViewModel` declared inside `ui/screens/recurring/RecurringExpensesScreen.kt`). Dependency counts above are approximate.
+**Total `@HiltViewModel` classes:** 42 — 41 in dedicated files (including `MainViewModel`) + 1 inline (`RecurringExpensesViewModel` declared inside `ui/screens/recurring/RecurringExpensesScreen.kt`). Dependency counts above are approximate.

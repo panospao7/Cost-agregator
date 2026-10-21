@@ -111,36 +111,7 @@ private fun fakeRecord(
         verify { dao.observeLatest("pending_review:1", AiCapability.REVIEW_EXPLANATION.name) }
     }
 
-    @Test
-    fun `observeLatest passes capability name for DASHBOARD_BRIEFING`() = runTest(testDispatcher) {
-        every {
-            dao.observeLatest("dashboard_home:2026-03-16", AiCapability.DASHBOARD_BRIEFING.name)
-        } returns flowOf(null)
-
-        val result = repository
-            .observeLatest("dashboard_home:2026-03-16", AiCapability.DASHBOARD_BRIEFING)
-            .first()
-
-        assertNull(result)
-        verify { dao.observeLatest("dashboard_home:2026-03-16", AiCapability.DASHBOARD_BRIEFING.name) }
-    }
-
     // ── getLatest ─────────────────────────────────────────────────────────────
-
-    // TODO: Tautological mock test — consider adding real behavior assertion
-    @Test
-    fun `getLatest delegates to dao with capability name`() = runTest(testDispatcher) {
-        val entity = fakeEntity()
-        val expected = fakeRecord()
-        coEvery {
-            dao.getLatest("pending_review:1", AiCapability.REVIEW_EXPLANATION.name)
-        } returns entity
-
-        val result = repository.getLatest("pending_review:1", AiCapability.REVIEW_EXPLANATION)
-
-        assertEquals(expected, result)
-        coVerify { dao.getLatest("pending_review:1", AiCapability.REVIEW_EXPLANATION.name) }
-    }
 
     @Test
     fun `getLatest returns null when dao returns null`() = runTest(testDispatcher) {
@@ -155,18 +126,6 @@ private fun fakeRecord(
 
     // ── upsert (RP-14 P8-004: durable artifacts require a non-null expiry) ────
 
-    // TODO: Tautological mock test — consider adding real behavior assertion
-    @Test
-    fun `upsert delegates to dao and returns row id`() = runTest(testDispatcher) {
-        val record = fakeRecord(expiresAt = 5_000L)
-        coEvery { dao.upsert(any()) } returns 42L
-
-        val id = repository.upsert(record)
-
-        assertEquals(42L, id)
-        coVerify { dao.upsert(any()) }
-    }
-
     @Test
     fun `upsert rejects null-expiry artifacts and never touches the dao`() = runTest(testDispatcher) {
         val record = fakeRecord(expiresAt = null)
@@ -175,22 +134,6 @@ private fun fakeRecord(
 
         assertTrue("null expiry must fail closed", thrown is IllegalArgumentException)
         coVerify(exactly = 0) { dao.upsert(any()) }
-    }
-
-    // ── markDismissed ─────────────────────────────────────────────────────────
-
-    // TODO: Tautological mock test — consider adding real behavior assertion
-    @Test
-    fun `markDismissed delegates to dao`() = runTest(testDispatcher) {
-        repository.markDismissed(7L)
-        coVerify { dao.markDismissed(id = 7L, dismissed = any(), now = any()) }
-    }
-
-    // TODO: Tautological mock test — consider adding real behavior assertion
-    @Test
-    fun `markApplied delegates to dao`() = runTest(testDispatcher) {
-        repository.markApplied(8L)
-        coVerify { dao.markApplied(id = 8L, applied = any(), now = any()) }
     }
 
     // ── deleteExpired (RP-14 P8-004: explicit null-expiry backstop cutoff) ────
@@ -203,15 +146,6 @@ private fun fakeRecord(
         coVerify {
             dao.deleteExpired(now, now - AppConfig.Ai.NULL_EXPIRY_BACKSTOP_MS)
         }
-    }
-
-    // ── deleteByTargetKey ─────────────────────────────────────────────────────
-
-    // TODO: Tautological mock test — consider adding real behavior assertion
-    @Test
-    fun `deleteByTargetKey delegates to dao`() = runTest(testDispatcher) {
-        repository.deleteByTargetKey("pending_review:55")
-        coVerify { dao.deleteByTargetKey("pending_review:55") }
     }
 
     // ── RP-14 P8-004: gateway writer coverage (static source assertion) ──────

@@ -90,7 +90,7 @@ pwsh scripts/currency_guardrails.ps1 -SourceDir app/src/main/java -ProjectRoot .
 
 ```bash
 # Gradle guard (checks count doesn't exceed threshold)
-./gradlew :app:verifyNoIgnoredGrowth -PmaxIgnoredTests=29 --stacktrace
+./gradlew :app:verifyNoIgnoredGrowth -PmaxIgnoredTests=0 --stacktrace
 
 # Python guard (validates reasons, categorizes, checks denylist)
 python3 scripts/verify_ignored_test_budget.py
@@ -106,12 +106,11 @@ Runs all tests whose class name contains `ArchitectureGuard`:
 ./gradlew :app:testDebugUnitTest --tests "*ArchitectureGuard*" --stacktrace
 ```
 
-For the full set of architecture tests (including guards, contracts, seeded violations):
+For the full set of architecture tests (including guards and contracts):
 
 ```bash
 ./gradlew :app:testDebugUnitTest \
   --tests "*ArchitectureGuard*" \
-  --tests "*GuardSeededViolation*" \
   --tests "*MoneyBoundaryGuard*" \
   --tests "*CancellationPropagation*" \
   --tests "*CancellationSafe*" \
@@ -276,7 +275,7 @@ python3 -m pytest scripts/ci/test_gradle_db_guard_contract.py -v
 | `validate-workflow` | `actionlint` |
 | `unit-tests` (Gradle) | `./gradlew :app:testDebugUnitTest --stacktrace` |
 | `unit-tests` (Schema) | `./gradlew :app:verifyRoomSchemaSnapshots -PstrictRoomSchemas=true --stacktrace` |
-| `unit-tests` (Ignored tests) | `./gradlew :app:verifyNoIgnoredGrowth -PmaxIgnoredTests=29 --stacktrace` |
+| `unit-tests` (Ignored tests) | `./gradlew :app:verifyNoIgnoredGrowth -PmaxIgnoredTests=0 --stacktrace` |
 | `unit-tests` (PowerShell) | See **PowerShell guardrails** section above |
 | `static-guards` | See **Python guard scripts** section above |
 | `lint-and-check` | `./gradlew :app:lintDebug :app:assembleDebug :app:check --stacktrace` |

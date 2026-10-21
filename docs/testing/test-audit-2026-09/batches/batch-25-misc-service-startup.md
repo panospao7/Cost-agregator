@@ -19,7 +19,7 @@ Reviewer notes:
 | # | File (app/src/…) | LOC | Tests | @Ign | Style | Class(es) under test | Verdict | Pri | Overlap | Flags/Note |
 |---|---|---|---|---|---|---|---|---|---|---|
 | 1 | test/…/service/NavigationTargetResolverTest.kt | 424 | 32 | 0 | MOCKED | NavigationTargetResolverImpl | KEEP | P2 | HomeViewModelRecommendationTest, HomeViewModelStressTest | Real mapping/period logic asserted |
-| 2 | test/…/service/NotificationCaptureServiceCleanupTest.kt | 185 | 7 | 0 | MOCKED | NotificationCaptureService, NotificationServiceWorkTracker | STRENGTHEN | P1 | NotificationPrivacyHardeningTest, PrivacyStorageContractTest | 2 reflection signature tests FRAGILE |
+| 2 | test/…/service/NotificationCaptureServiceCleanupTest.kt | 185 | 7 | 0 | MOCKED | NotificationCaptureService, NotificationServiceWorkTracker | STRENGTHEN | P1 | NotificationCaptureGatePrivacyContractTest (replaced NotificationPrivacyHardeningTest, B2-2), NotificationCaptureServiceBlockedDecisionTest (service-level capture ordering, B2-2b/B2-2c), PrivacyStorageContractTest | 2 reflection signature tests FRAGILE |
 | 3 | test/…/service/NotificationCaptureServiceFallbackTest.kt | 69 | 5 | 0 | PURE | (none — tautology) | DELETE | P4 | — | Re-implements fallback in test; prior KEEP overturned |
 | 4 | test/…/service/NotificationFilterTest.kt | 345 | 25 | 0 | PURE | NotificationFilter | KEEP | P1 | — | Pins NEW-P1-2026-001 "pos" regression |
 | 5 | test/…/service/RecommendationCacheServiceTest.kt | 383 | 18 | 0 | MOCKED | RecommendationCacheService | STRENGTHEN | P2 | RecommendationLifecycleManagerTest | No resetMain; TTL test is a no-op |

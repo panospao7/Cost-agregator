@@ -11,6 +11,7 @@ import androidx.sqlite.db.SupportSQLiteOpenHelper
 import androidx.test.core.app.ApplicationProvider
 import com.yourname.expensetracker.data.database.APP_DATABASE_SCHEMA_VERSION
 import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.data.database.DatabaseSchemaPolicy
 import com.yourname.expensetracker.data.privacy.BackupEncryptionService
 import com.yourname.expensetracker.data.privacy.ExportAnonymizer
 import com.yourname.expensetracker.data.security.SecureKeyStorage
@@ -36,6 +37,7 @@ import com.yourname.expensetracker.data.backup.RestoreJournal
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.testfixtures.backup.lowIterationBackupEncryptionService
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.diagnostics.OperationRunHandle
 import com.yourname.expensetracker.domain.diagnostics.OperationRunRecorder
@@ -45,8 +47,13 @@ import com.yourname.expensetracker.domain.privacy.PrivacyGateReasonCodes
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CopyableThrowable
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import java.io.ByteArrayOutputStream
 import org.junit.After
@@ -143,7 +150,7 @@ class DatabaseBackupRepositoryImplTest {
         createFullSchemaDatabase(file = dbFile)
         every { context.cacheDir } returns File(tempDir, "cache").apply { mkdirs() }
 
-        val repo = createRepository(encryptionService = BackupEncryptionService())
+        val repo = createRepository(encryptionService = lowIterationBackupEncryptionService())
         val result = repo.createCostBackup(
             password = "allowed_file_password",
             includeReceiptImages = false,
@@ -168,7 +175,7 @@ class DatabaseBackupRepositoryImplTest {
         every { resolver.openOutputStream(destination, "wt") } returns output
 
         val repo = createRepository(
-            encryptionService = BackupEncryptionService()
+            encryptionService = lowIterationBackupEncryptionService()
         )
         val result = repo.createCostBackup(
             destination = destination,
@@ -332,13 +339,248 @@ class DatabaseBackupRepositoryImplTest {
             password = "password", includeReceiptImages = false, redacted = true, privacyMode = null
         )
 
-        assertSame(failure, fileResult.exceptionOrNull())
-        assertSame(failure, safResult.exceptionOrNull())
+        // R26 (owner-approved): the composite gate no longer propagates the audit exception; it
+        // fails closed; the repository surfaces any fail-closed gate decision as the generic bounded
+        // PRIVACY_GATE_FAILURE denial (DatabaseBackupRepositoryImpl :419) and never leaks the audit message.
+        for (result in listOf(fileResult, safResult)) {
+            val denial = result.exceptionOrNull() as PrivacyDeniedException
+            assertEquals(PrivacyCapability.ENCRYPTED_BACKUP, denial.capability)
+            assertEquals(PrivacyGateReasonCodes.PRIVACY_GATE_FAILURE, denial.reasonCode)
+            assertFalse(denial.toString().contains(failure.message!!))
+        }
         coVerify(exactly = 2) { operationRun.failedFinal(DiagnosticReasonCode.PRIVACY_FAIL_CLOSED.name, null) }
         coVerify(exactly = 2) { operationRun.failedFinal(any(), any()) }
         coVerify(exactly = 0) { operationRun.success() }
         assertEquals(recoveryMode, mockRestoreMaintenanceMode.currentMode())
         assertNoExportSideEffects(resolver, cacheDir)
+    }
+
+    @Test
+    fun `operation recorder start failure does not break the export and no locking mode pragma is issued`() = runTest(testDispatcher) {
+        createFullSchemaDatabase(file = dbFile)
+        every { context.cacheDir } returns File(tempDir, "cache").apply { mkdirs() }
+        val operationRecorder = mockk<OperationRunRecorder>()
+        coEvery { operationRecorder.start(any(), any(), any()) } throws
+            IllegalStateException("database is locked /data/secret-path")
+
+        val repo = createRepository(
+            encryptionService = lowIterationBackupEncryptionService(),
+            operationRunRecorder = operationRecorder
+        )
+        val result = repo.createCostBackup(
+            password = "recorder_failure_password",
+            includeReceiptImages = false,
+            redacted = true,
+            privacyMode = null
+        )
+
+        assertTrue(
+            "recorder failure must fall back to the no-op handle, got ${result.exceptionOrNull()}",
+            result.isSuccess
+        )
+        coVerify(exactly = 1) { operationRecorder.start(any(), any(), any()) }
+        // R26: connection-level locking-mode changes blocked later writes (SQLITE_BUSY).
+        // Any spelling, via query or execSQL.
+        verify(exactly = 0) { supportDb.query(match<String> { it.contains("locking_mode", ignoreCase = true) }) }
+        verify(exactly = 0) { supportDb.execSQL(match<String> { it.contains("locking_mode", ignoreCase = true) }) }
+    }
+
+    @Test
+    fun `operation recorder start cancellation propagates from the export`() = runTest(testDispatcher) {
+        val cancellation = IdentityCancellationException("recorder start cancelled")
+        val operationRecorder = mockk<OperationRunRecorder>()
+        coEvery { operationRecorder.start(any(), any(), any()) } throws cancellation
+        every { context.cacheDir } returns File(tempDir, "cache").apply { mkdirs() }
+
+        val repo = createRepository(operationRunRecorder = operationRecorder)
+
+        assertCancellationFromBothExports(repo, cancellation)
+    }
+
+    @Test
+    fun `failing wal checkpoint returns failure without creating a snapshot`() = runTest(testDispatcher) {
+        createFullSchemaDatabase(file = dbFile)
+        val cacheDir = File(tempDir, "cache").apply { mkdirs() }
+        every { context.cacheDir } returns cacheDir
+        // Checkpoint stays busy on every attempt.
+        every { supportDb.query("PRAGMA wal_checkpoint(TRUNCATE)") } answers { checkpointCursor(busyCode = 1) }
+
+        val repo = createRepository(encryptionService = lowIterationBackupEncryptionService())
+        val result = repo.createCostBackup(
+            password = "checkpoint_failure_password",
+            includeReceiptImages = false,
+            redacted = true,
+            privacyMode = null
+        )
+
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull()?.message?.contains("busy", ignoreCase = true) == true)
+        assertTrue(
+            "no snapshot file may remain after a failed checkpoint",
+            cacheDir.listFiles().orEmpty().none { it.name.startsWith("costbackup_snapshot_") }
+        )
+    }
+
+    @Test
+    fun `successful export finalizes the run only after maintenance exit`() = runTest(testDispatcher) {
+        createFullSchemaDatabase(file = dbFile)
+        every { context.cacheDir } returns File(tempDir, "cache").apply { mkdirs() }
+        val callLog = mutableListOf<String>()
+        val operationRun = mockk<OperationRunHandle>(relaxed = true)
+        coEvery { operationRun.success() } coAnswers { callLog.add("success"); Unit }
+        val operationRecorder = mockk<OperationRunRecorder>(relaxed = true)
+        coEvery { operationRecorder.start(any(), any(), any()) } returns operationRun
+        every { mockRestoreMaintenanceMode.exit(forceRestartRequired = false) } answers { callLog.add("exit"); Unit }
+
+        val repo = createRepository(
+            encryptionService = lowIterationBackupEncryptionService(),
+            operationRunRecorder = operationRecorder
+        )
+        val result = repo.createCostBackup(
+            password = "deferred_success_password",
+            includeReceiptImages = false,
+            redacted = true,
+            privacyMode = null
+        )
+
+        assertTrue(result.isSuccess)
+        assertEquals(listOf("exit", "success"), callLog)
+        coVerify(exactly = 1) { operationRun.success() }
+        coVerify(exactly = 0) { operationRun.failedFinal(any(), any()) }
+    }
+
+    @Test
+    fun `in window failure finalizes the run as failed only after maintenance exit`() = runTest(testDispatcher) {
+        createFullSchemaDatabase(file = dbFile)
+        every { context.cacheDir } returns File(tempDir, "cache").apply { mkdirs() }
+        every { supportDb.query("PRAGMA wal_checkpoint(TRUNCATE)") } answers { checkpointCursor(busyCode = 1) }
+        val callLog = mutableListOf<String>()
+        val operationRun = mockk<OperationRunHandle>(relaxed = true)
+        coEvery { operationRun.failedFinal(any(), any()) } coAnswers { callLog.add("failedFinal"); Unit }
+        val operationRecorder = mockk<OperationRunRecorder>(relaxed = true)
+        coEvery { operationRecorder.start(any(), any(), any()) } returns operationRun
+        every { mockRestoreMaintenanceMode.exit(forceRestartRequired = false) } answers { callLog.add("exit"); Unit }
+
+        val repo = createRepository(
+            encryptionService = lowIterationBackupEncryptionService(),
+            operationRunRecorder = operationRecorder
+        )
+        val result = repo.createCostBackup(
+            password = "deferred_failure_password",
+            includeReceiptImages = false,
+            redacted = true,
+            privacyMode = null
+        )
+
+        assertTrue(result.isFailure)
+        assertEquals(listOf("exit", "failedFinal"), callLog)
+        coVerify(exactly = 1) { operationRun.failedFinal("WAL checkpoint failed", any()) }
+        coVerify(exactly = 0) { operationRun.success() }
+    }
+
+    // G3-S2: the privacy audit logger honours the write barrier, so the debug raw export must run
+    // both privacy checks before the BACKUP_EXPORTING window is entered.
+    @Test
+    fun `exportDatabase runs both privacy checks before entering maintenance`() = runTest(testDispatcher) {
+        if (!BuildConfig.DEBUG) {
+            assertRawExportDeniedInRelease()
+            return@runTest
+        }
+        createFullSchemaDatabase(file = dbFile)
+
+        repository.exportDatabase()
+
+        io.mockk.coVerifyOrder {
+            privacyGate.check(PrivacyCapability.RAW_DATABASE_EXPORT, any())
+            privacyGate.check(PrivacyCapability.RAWBACKUP_EXPORT, any())
+            mockRestoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.BACKUP_EXPORTING)
+        }
+    }
+
+    @Test
+    fun `exportDatabase denied privacy check never enters maintenance`() = runTest(testDispatcher) {
+        if (!BuildConfig.DEBUG) {
+            assertRawExportDeniedInRelease()
+            return@runTest
+        }
+        createFullSchemaDatabase(file = dbFile)
+        coEvery { privacyGate.check(PrivacyCapability.RAWBACKUP_EXPORT, any()) } returns PrivacyDecision.Denied("ignored")
+
+        val result = repository.exportDatabase()
+
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull() is PrivacyDeniedException)
+        verify(exactly = 0) { mockRestoreMaintenanceMode.enter(any()) }
+        verify(exactly = 0) { mockRestoreMaintenanceMode.exit(any()) }
+    }
+
+    // G2b: terminal run calls must be replayed after the maintenance exit, because the write
+    // barrier blocks Room run finalization while the window is active.
+    @Test
+    fun `restore pre-swap abort finalizes the run only after maintenance exit`() = runTest(testDispatcher) {
+        stubCacheDir()
+        val callLog = mutableListOf<String>()
+        val operationRun = mockk<OperationRunHandle>(relaxed = true)
+        coEvery { operationRun.failedFinal(any(), any()) } coAnswers { callLog.add("failedFinal"); Unit }
+        val operationRecorder = mockk<OperationRunRecorder>(relaxed = true)
+        coEvery { operationRecorder.start(any(), any(), any()) } returns operationRun
+        every { mockRestoreMaintenanceMode.exit(forceRestartRequired = false) } answers { callLog.add("exit"); Unit }
+        val repo = createRepository(journal = newRealJournal(), operationRunRecorder = operationRecorder)
+        val garbageDb = File(tempDir, "garbage_extracted.sqlite").apply { writeText("not a database") }
+        stubExtractionResult(
+            tier1Manifest(BackupVerifier.requiredManifestTables(1).associateWith { 1 }),
+            dbFile = garbageDb
+        )
+
+        try {
+            val result = repo.restoreCostBackup(File(tempDir, "bundle.costbackup"), "pw")
+
+            assertTrue(result.isFailure)
+            assertEquals(listOf("exit", "failedFinal"), callLog)
+            coVerify(exactly = 1) { operationRun.failedFinal("Staged verification failed", any()) }
+        } finally {
+            unmockkObject(CostbackupBundle)
+        }
+    }
+
+    @Test
+    fun `legacy import abort finalizes the run only after maintenance exit`() = runTest(testDispatcher) {
+        if (!BuildConfig.DEBUG) {
+            assertLegacyImportDeniedInRelease()
+            return@runTest
+        }
+        val callLog = mutableListOf<String>()
+        val operationRun = mockk<OperationRunHandle>(relaxed = true)
+        coEvery { operationRun.failedFinal(any(), any()) } coAnswers { callLog.add("failedFinal"); Unit }
+        val operationRecorder = mockk<OperationRunRecorder>(relaxed = true)
+        coEvery { operationRecorder.start(any(), any(), any()) } returns operationRun
+        every { mockRestoreMaintenanceMode.exit(forceRestartRequired = false) } answers { callLog.add("exit"); Unit }
+        val repo = createRepository(operationRunRecorder = operationRecorder)
+        val emptySource = File(tempDir, "empty_source.db").apply { writeBytes(ByteArray(0)) }
+
+        val result = repo.importDatabase(emptySource)
+
+        assertTrue(result.isFailure)
+        assertEquals(listOf("exit", "failedFinal"), callLog)
+        coVerify(exactly = 1) { operationRun.failedFinal("Source database file is empty", any()) }
+    }
+
+    @Test
+    fun `reset abort finalizes the run only after maintenance exit`() = runTest(testDispatcher) {
+        // No live database file exists, so the pre-destructive safety backup fails and the reset aborts.
+        val callLog = mutableListOf<String>()
+        val operationRun = mockk<OperationRunHandle>(relaxed = true)
+        coEvery { operationRun.failedFinal(any(), any()) } coAnswers { callLog.add("failedFinal"); Unit }
+        val operationRecorder = mockk<OperationRunRecorder>(relaxed = true)
+        coEvery { operationRecorder.start(any(), any(), any()) } returns operationRun
+        every { mockRestoreMaintenanceMode.exit(forceRestartRequired = false) } answers { callLog.add("exit"); Unit }
+        val repo = createRepository(journal = newRealJournal(), operationRunRecorder = operationRecorder)
+
+        val result = repo.resetDatabase()
+
+        assertTrue(result.isFailure)
+        assertEquals(listOf("exit", "failedFinal"), callLog)
+        coVerify(exactly = 1) { operationRun.failedFinal(DiagnosticReasonCode.UNKNOWN_ERROR.name, any()) }
     }
 
     private fun assertNoExportSideEffects(resolver: ContentResolver, cacheDir: File) {
@@ -568,6 +810,41 @@ class DatabaseBackupRepositoryImplTest {
     }
 
     @Test
+    fun `createCostBackup full export does not scrub the snapshot`() = runTest(testDispatcher) {
+        createFullSchemaDatabase(file = dbFile)
+        every { context.cacheDir } returns File(tempDir, "cache").apply { mkdirs() }
+
+        val repo = createRepository(encryptionService = lowIterationBackupEncryptionService())
+        val result = repo.createCostBackup(
+            password = "full_export_password",
+            includeReceiptImages = false,
+            redacted = false,
+            privacyMode = null
+        )
+
+        // Success proves the export ran past the snapshot step where the scrub gate lives.
+        assertTrue(result.isSuccess)
+        verify(exactly = 0) { exportAnonymizer.sanitizeExport(any()) }
+    }
+
+    @Test
+    fun `createCostBackup redacted export scrubs the snapshot exactly once`() = runTest(testDispatcher) {
+        createFullSchemaDatabase(file = dbFile)
+        every { context.cacheDir } returns File(tempDir, "cache").apply { mkdirs() }
+
+        val repo = createRepository(encryptionService = lowIterationBackupEncryptionService())
+        val result = repo.createCostBackup(
+            password = "redacted_export_password",
+            includeReceiptImages = false,
+            redacted = true,
+            privacyMode = null
+        )
+
+        assertTrue(result.isSuccess)
+        verify(exactly = 1) { exportAnonymizer.sanitizeExport(any()) }
+    }
+
+    @Test
     fun `restore from backup works`() = runTest(testDispatcher) {
         if (!BuildConfig.DEBUG) {
             assertLegacyImportDeniedInRelease()
@@ -692,7 +969,7 @@ class DatabaseBackupRepositoryImplTest {
     }
 
     @Test
-    fun `import repairs same version budgets defaults before reopen`() = runTest(testDispatcher) {
+    fun `import rejects schema86 stale budgets backup as legacy and leaves live db unchanged`() = runTest(testDispatcher) {
         if (!BuildConfig.DEBUG) {
             assertLegacyImportDeniedInRelease()
             return@runTest
@@ -705,24 +982,10 @@ class DatabaseBackupRepositoryImplTest {
             pendingCount = 1,
             budgetCount = 1
         )
-
         val sourceBackup = File(tempDir, "source_schema86_stale_budgets.db")
         createSchema86DatabaseWithStaleBudgets(file = sourceBackup, budgetCount = 2)
 
-        every { openHelper.writableDatabase } answers {
-            if (isSchema86WithStaleBudgets(dbFile)) {
-                throw IllegalStateException("Migration didn't properly handle: budgets")
-            }
-            supportDb
-        }
-
-        val result = repository.importDatabase(sourceBackup)
-
-        assertTrue(result.isSuccess)
-        assertFalse(isSchema86WithStaleBudgets(dbFile))
-        assertEquals(2, countRows(dbFile, "budgets"))
-        assertTrue(indexExists(dbFile, "index_budgets_categoryId"))
-        assertTrue(indexExists(dbFile, "index_budgets_isActive"))
+        assertImportRejectedBeforeSwap(sourceBackup, BackupSchemaUnsupportedException.LEGACY)
     }
 
     @Test
@@ -743,7 +1006,7 @@ class DatabaseBackupRepositoryImplTest {
         val sourceBackup = File(tempDir, "source_missing_optional_tables.db")
         createLegacyCompatibleDatabaseMissingOptionalTables(
             file = sourceBackup,
-            schemaVersion = 70,
+            schemaVersion = DatabaseSchemaPolicy.MIGRATION_BASELINE,
             expenseCount = 2,
             categoryCount = 1
         )
@@ -808,11 +1071,8 @@ class DatabaseBackupRepositoryImplTest {
         val sourceBackup = File(tempDir, "source_schema86_invalid_budgets.db")
         createSchema86DatabaseWithInvalidBudgetsColumns(sourceBackup)
 
-        val result = repository.importDatabase(sourceBackup)
-
-        assertTrue(result.isFailure)
-        // Import sanitizes source-validation failures to the controlled code.
-        assertTrue(result.exceptionOrNull()?.message?.contains("SOURCE_VALIDATION_FAILED") == true)
+        // R25-C: v86 is below the supported floor, so it is rejected early as legacy.
+        assertImportRejectedBeforeSwap(sourceBackup, BackupSchemaUnsupportedException.LEGACY)
         assertEquals(1, countRows(dbFile, "expenses"))
     }
 
@@ -834,14 +1094,128 @@ class DatabaseBackupRepositoryImplTest {
         val sourceBackup = File(tempDir, "source_schema86_invalid_budgets_index_uniqueness.db")
         createSchema86DatabaseWithBadBudgetsIndexUniqueness(sourceBackup)
 
-        val result = repository.importDatabase(sourceBackup)
-
-        assertTrue(result.isFailure)
-        // Import sanitizes source-validation failures to the controlled code;
-        // the internal budgets-index detail is no longer part of the public error.
-        assertTrue(result.exceptionOrNull()?.message?.contains("SOURCE_VALIDATION_FAILED") == true)
+        // R25-C: v86 is below the supported floor, so it is rejected early as legacy;
+        // the internal budgets-index detail is never part of the public error.
+        assertImportRejectedBeforeSwap(sourceBackup, BackupSchemaUnsupportedException.LEGACY)
         assertEquals(1, countRows(dbFile, "expenses"))
     }
+
+    @Test
+    fun `import rejects legacy v144 backup before any swap with bounded code`() = runTest(testDispatcher) {
+        if (!BuildConfig.DEBUG) {
+            assertLegacyImportDeniedInRelease()
+            return@runTest
+        }
+        createSqliteDatabase(file = dbFile, expenseCount = 1, categoryCount = 1, merchantCount = 1, pendingCount = 1, budgetCount = 1)
+        val sourceBackup = File(tempDir, "source_v144.db")
+        createSqliteDatabase(
+            file = sourceBackup,
+            schemaVersion = DatabaseSchemaPolicy.MIGRATION_BASELINE - 1,
+            expenseCount = 3, categoryCount = 1, merchantCount = 1, pendingCount = 0, budgetCount = 0
+        )
+
+        assertImportRejectedBeforeSwap(sourceBackup, BackupSchemaUnsupportedException.LEGACY)
+    }
+
+    @Test
+    fun `import rejects newer than current schema backup before any swap with bounded code`() = runTest(testDispatcher) {
+        if (!BuildConfig.DEBUG) {
+            assertLegacyImportDeniedInRelease()
+            return@runTest
+        }
+        createSqliteDatabase(file = dbFile, expenseCount = 1, categoryCount = 1, merchantCount = 1, pendingCount = 1, budgetCount = 1)
+        val sourceBackup = File(tempDir, "source_newer.db")
+        createSqliteDatabase(
+            file = sourceBackup,
+            schemaVersion = APP_DATABASE_SCHEMA_VERSION + 1,
+            expenseCount = 3, categoryCount = 1, merchantCount = 1, pendingCount = 0, budgetCount = 0
+        )
+
+        assertImportRejectedBeforeSwap(sourceBackup, BackupSchemaUnsupportedException.NEWER)
+    }
+
+    @Test
+    fun `import accepts backups at the supported floor and at the current schema`() = runTest(testDispatcher) {
+        if (!BuildConfig.DEBUG) {
+            assertLegacyImportDeniedInRelease()
+            return@runTest
+        }
+        for (version in listOf(DatabaseSchemaPolicy.MIGRATION_BASELINE, APP_DATABASE_SCHEMA_VERSION)) {
+            createSqliteDatabase(file = dbFile, expenseCount = 1, categoryCount = 1, merchantCount = 1, pendingCount = 1, budgetCount = 1)
+            val sourceBackup = File(tempDir, "source_accepted_$version.db")
+            createSqliteDatabase(
+                file = sourceBackup,
+                schemaVersion = version,
+                expenseCount = 4, categoryCount = 2, merchantCount = 1, pendingCount = 0, budgetCount = 0
+            )
+
+            // Fresh repository per version: a successful import hot-swaps the repository's
+            // live Room instance onto the (fake-schema) file, so reusing it would fail the
+            // next import's safety backup for reasons unrelated to the schema floor.
+            val result = createRepository().importDatabase(sourceBackup)
+
+            assertTrue("schema $version must be accepted", result.isSuccess)
+            assertEquals(4, countRows(dbFile, "expenses"))
+            dbFile.delete()
+        }
+    }
+
+    @Test
+    fun `costbackup manifest outside supported schema range aborts before staging and cleans up`() = runTest(testDispatcher) {
+        for ((version, expectedCode) in listOf(
+            DatabaseSchemaPolicy.MIGRATION_BASELINE - 1 to BackupSchemaUnsupportedException.LEGACY,
+            APP_DATABASE_SCHEMA_VERSION + 1 to BackupSchemaUnsupportedException.NEWER
+        )) {
+            stubCacheDir()
+            val callLog = mutableListOf<String>()
+            val operationRun = mockk<OperationRunHandle>(relaxed = true)
+            coEvery { operationRun.failedFinal(any(), any()) } coAnswers { callLog.add("failedFinal"); Unit }
+            val operationRecorder = mockk<OperationRunRecorder>(relaxed = true)
+            coEvery { operationRecorder.start(any(), any(), any()) } returns operationRun
+            every { mockRestoreMaintenanceMode.exit(forceRestartRequired = false) } answers { callLog.add("exit"); Unit }
+            val journal = newRealJournal()
+            val repo = createRepository(journal = journal, operationRunRecorder = operationRecorder)
+            val counts = BackupVerifier.requiredManifestTables(1).associateWith { 1 }
+            stubExtractionResult(
+                CostbackupBundle.BackupManifest(databaseVersion = version, createdAt = fixedTime, tableCounts = counts),
+                dbFile = null
+            )
+
+            try {
+                val result = repo.restoreCostBackup(File(tempDir, "bundle.costbackup"), "pw")
+
+                val error = result.exceptionOrNull()
+                assertTrue("v$version expected typed rejection", error is BackupSchemaUnsupportedException)
+                assertEquals(expectedCode, (error as BackupSchemaUnsupportedException).code)
+                // Mode exits without restart; run is finalized only after the exit.
+                verify { mockRestoreMaintenanceMode.exit(forceRestartRequired = false) }
+                assertEquals(listOf("exit", "failedFinal"), callLog)
+                coVerify(exactly = 1) { operationRun.failedFinal(expectedCode, any()) }
+                assertEquals(expectedCode, journal.readFailureJournal()?.error)
+                verify(exactly = 0) { database.close() }
+                assertTrue(stagedResidueFiles().isEmpty())
+                assertTrue("extraction dir must be deleted", extractionResidueFiles().isEmpty())
+            } finally {
+                unmockkObject(CostbackupBundle)
+            }
+        }
+    }
+
+    private suspend fun assertImportRejectedBeforeSwap(source: File, expectedCode: String) {
+        val liveHashBefore = sha256Hex(dbFile)
+        val result = repository.importDatabase(source)
+
+        val error = result.exceptionOrNull()
+        assertTrue("expected typed rejection, got ${error?.javaClass?.simpleName}", error is BackupSchemaUnsupportedException)
+        assertEquals(expectedCode, (error as BackupSchemaUnsupportedException).code)
+        assertEquals(liveHashBefore, sha256Hex(dbFile))
+        verify(exactly = 0) { database.close() }
+        assertTrue(stagedResidueFiles().isEmpty())
+    }
+
+    private fun sha256Hex(file: File): String =
+        java.security.MessageDigest.getInstance("SHA-256").digest(file.readBytes())
+            .joinToString("") { "%02x".format(it) }
 
     @Test
     fun `temp migration open failure leaves live db untouched`() = runTest(testDispatcher) {
@@ -860,7 +1234,7 @@ class DatabaseBackupRepositoryImplTest {
         val sourceBackup = File(tempDir, "source_stage_failure.db")
         createSqliteDatabase(
             file = sourceBackup,
-            schemaVersion = 37,
+            schemaVersion = DatabaseSchemaPolicy.MIGRATION_BASELINE,
             expenseCount = 5,
             categoryCount = 2,
             merchantCount = 3,
@@ -900,7 +1274,7 @@ class DatabaseBackupRepositoryImplTest {
         val sourceBackup = File(tempDir, "source_stage_success.db")
         createSqliteDatabase(
             file = sourceBackup,
-            schemaVersion = 37,
+            schemaVersion = DatabaseSchemaPolicy.MIGRATION_BASELINE,
             expenseCount = 6,
             categoryCount = 3,
             merchantCount = 2,
@@ -975,7 +1349,7 @@ class DatabaseBackupRepositoryImplTest {
         val sourceBackup = File(tempDir, "source_schema37_fixture.db")
         createSqliteDatabase(
             file = sourceBackup,
-            schemaVersion = 37,
+            schemaVersion = DatabaseSchemaPolicy.MIGRATION_BASELINE,
             expenseCount = fixture.expenseCount,
             categoryCount = fixture.categoryCount,
             merchantCount = fixture.merchantCount,
@@ -986,7 +1360,7 @@ class DatabaseBackupRepositoryImplTest {
         val expectedSummary = fixture.toImportSummary()
         val seamRepository = createRepository(
             stagedVerifier = { _, _, stagedFile, sourceSchemaVersion, summary ->
-                assertEquals(37, sourceSchemaVersion)
+                assertEquals(DatabaseSchemaPolicy.MIGRATION_BASELINE, sourceSchemaVersion)
                 assertEquals(expectedSummary, summary)
                 val stagedSummary = trackedSummary(stagedFile)
                 assertEquals(expectedSummary, stagedSummary)
@@ -998,7 +1372,7 @@ class DatabaseBackupRepositoryImplTest {
                 stagedSummary
             },
             liveVerifier = { _, liveFile, sourceSchemaVersion, summary ->
-                assertEquals(37, sourceSchemaVersion)
+                assertEquals(DatabaseSchemaPolicy.MIGRATION_BASELINE, sourceSchemaVersion)
                 assertEquals(expectedSummary, summary)
                 val liveSummary = trackedSummary(liveFile)
                 assertEquals(expectedSummary, liveSummary)
@@ -1030,7 +1404,7 @@ class DatabaseBackupRepositoryImplTest {
         val sourceBackup = File(tempDir, "source_post_swap_failure.db")
         createSqliteDatabase(
             file = sourceBackup,
-            schemaVersion = 37,
+            schemaVersion = DatabaseSchemaPolicy.MIGRATION_BASELINE,
             expenseCount = 7,
             categoryCount = 2,
             merchantCount = 2,
@@ -1690,6 +2064,8 @@ class DatabaseBackupRepositoryImplTest {
         val image = File(source, "photo.jpg").apply { writeBytes(ASSET_BYTES) }
         val dbSource = File(source, "db.bin").apply { writeBytes(ByteArray(64) { it.toByte() }) }
         val bundle = File(tempDir, "roundtrip.costbackup")
+        // One low-iteration instance for BOTH create and extract (count is not stored in the envelope).
+        val encryption = lowIterationBackupEncryptionService()
         val created = CostbackupBundle.create(
             outputFile = bundle,
             databaseFile = dbSource,
@@ -1699,11 +2075,17 @@ class DatabaseBackupRepositoryImplTest {
             tableCounts = mapOf("expenses" to 1),
             databaseVersion = 1,
             redacted = false,
-            includeReceiptImages = true
+            includeReceiptImages = true,
+            encryptionService = encryption
         )
         assertTrue(created.isSuccess)
         val extractRoot = File(tempDir, "roundtrip_extract")
-        assertTrue(CostbackupBundle.extract(bundle, extractRoot, "pw-roundtrip", nowEpochMs = 1716163200000L).isSuccess)
+        assertTrue(
+            CostbackupBundle.extract(
+                bundle, extractRoot, "pw-roundtrip", nowEpochMs = 1716163200000L,
+                encryptionService = encryption
+            ).isSuccess
+        )
 
         val journal = newRealJournal()
         val (outcome, dao) = runDirectAssetRestore(journal, extractedRoot = extractRoot)
@@ -1760,7 +2142,8 @@ class DatabaseBackupRepositoryImplTest {
         val source = File(directory, "source.db")
         createFullSchemaDatabase(source)
         SQLiteDatabase.openDatabase(source.path, null, SQLiteDatabase.OPEN_READWRITE).use {
-            it.execSQL("PRAGMA user_version = 37")
+            // R25-C: oldest still-supported schema (legacy < 145 is rejected before any swap).
+            it.execSQL("PRAGMA user_version = ${DatabaseSchemaPolicy.MIGRATION_BASELINE}")
         }
         val trace = mutableListOf<String>()
         var mode = RestoreMaintenanceMode.Mode.NORMAL
@@ -2158,6 +2541,87 @@ class DatabaseBackupRepositoryImplTest {
         }
     }
 
+    @Test
+    fun write_drain_timeout_aborts_every_restore_API_with_bounded_failure_and_exits_after_finalization() = runTest(testDispatcher) {
+        for (operation in supportedRestoreOperations()) {
+            val fixture = restoreFixture()
+            try {
+                val before = dbFile.readBytes()
+                // The repository and the stuck writer share ONE barrier over the same mode mock.
+                val barrier = com.yourname.expensetracker.data.backup.DatabaseWriteBarrier(mockRestoreMaintenanceMode)
+                val repo = DatabaseBackupRepositoryImpl(
+                    context = context,
+                    database = database,
+                    ioDispatcher = testDispatcher,
+                    privacyGate = privacyGate,
+                    privacySettingsRepository = privacySettingsRepository,
+                    backupEncryptionService = backupEncryptionService,
+                    exportAnonymizer = exportAnonymizer,
+                    secureKeyStorage = secureKeyStorage,
+                    receiptAssetStore = mockk(relaxed = true),
+                    restoreMaintenanceMode = mockRestoreMaintenanceMode,
+                    restoreJournal = fixture.journal,
+                    workerDrain = com.yourname.expensetracker.domain.workers.NoOpWorkerDrainController(),
+                    restoreDatabaseOpener = object : com.yourname.expensetracker.data.backup.RestoreDatabaseOpener {
+                        override fun openFreshDatabase() = database
+                    },
+                    maintenanceOperationRunner = com.yourname.expensetracker.data.backup.MaintenanceOperationRunner(
+                        mockRestoreMaintenanceMode,
+                        com.yourname.expensetracker.domain.workers.NoOpWorkerDrainController(),
+                        barrier
+                    ),
+                    snapshotCreator = com.yourname.expensetracker.data.backup.SqliteSnapshotCreator(),
+                    restoreInternalWriteScope =
+                        com.yourname.expensetracker.data.backup.RestoreInternalWriteScope(mockRestoreMaintenanceMode),
+                    operationRunRecorder = mockk(relaxed = true),
+                    diagnosticSink = com.yourname.expensetracker.data.backup.TimberMaintenanceSafeDiagnosticSink(),
+                    timeProvider = FakeTimeProvider(fixedTime),
+                    databaseWriteBarrier = barrier
+                )
+
+                val gate = CompletableDeferred<Unit>()
+                val writerStarted = CompletableDeferred<Unit>()
+                val writer = launch {
+                    barrier.runWrite(com.yourname.expensetracker.data.backup.DatabaseAccessOperation("stuck_write")) {
+                        writerStarted.complete(Unit)
+                        gate.await()
+                    }
+                }
+                writerStarted.await()
+
+                val restore = async { invokeRestore(operation, repo, fixture.source) }
+                runCurrent()
+                advanceTimeBy(com.yourname.expensetracker.data.backup.DatabaseWriteBarrier.WRITE_DRAIN_TIMEOUT_MS + 1)
+                runCurrent()
+                val result = restore.await()
+
+                assertTrue(result.isFailure)
+                assertTrue(
+                    result.exceptionOrNull() is com.yourname.expensetracker.data.backup.WriteDrainTimeoutException
+                )
+                assertEquals("MAINTENANCE_WRITE_DRAIN_TIMEOUT", result.exceptionOrNull()?.message)
+                org.junit.Assert.assertArrayEquals(before, dbFile.readBytes())
+                verify(exactly = 0) { database.close() }
+                assertEquals(RestoreJournal.JournalState.FAILED, fixture.journal.readFailureJournal()?.state)
+                assertEquals(RestoreMaintenanceMode.Mode.NORMAL, mockRestoreMaintenanceMode.currentMode())
+                assertTrue(fixture.trace.indexOf("FINALIZED_FAILURE") in 0 until fixture.trace.indexOf("EXIT_NORMAL"))
+                assertTrue(
+                    fixture.directory.listFiles { f -> f.name.startsWith("expense_tracker_db_import_stage_") }
+                        .orEmpty().isEmpty()
+                )
+                assertTrue(
+                    File(fixture.directory, "cache").listFiles { f -> f.name.startsWith("costbackup_extract_") }
+                        .orEmpty().isEmpty()
+                )
+
+                gate.complete(Unit)
+                writer.join()
+            } finally {
+                releaseRestoreFixture()
+            }
+        }
+    }
+
 
     @Test
     fun post_destructive_cancellation_keeps_evidence_and_original_identity_in_all_APIs() = runTest(testDispatcher) {
@@ -2173,23 +2637,201 @@ class DatabaseBackupRepositoryImplTest {
                 } else {
                     every { mockRestoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.RESTORE_VERIFYING) } throws cancellation
                 }
-                every { mockRestoreMaintenanceMode.enterCriticalRecoveryRequired(any()) } answers {
-                    every { mockRestoreMaintenanceMode.currentMode() } returns RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED
-                    throw RestoreMaintenanceMode.PersistenceException()
+                if (operation != RestoreOperation.COSTBACKUP) {
+                    every { mockRestoreMaintenanceMode.enterCriticalRecoveryRequired(any()) } answers {
+                        every { mockRestoreMaintenanceMode.currentMode() } returns RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED
+                        throw RestoreMaintenanceMode.PersistenceException()
+                    }
                 }
                 var observed: Throwable? = null
                 try { invokeRestore(operation, createRepository(journal = fixture.journal), fixture.source) }
                 catch (e: kotlinx.coroutines.CancellationException) { observed = e }
                 org.junit.Assert.assertSame(cancellation, observed)
-                assertEquals(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED, mockRestoreMaintenanceMode.currentMode())
-                verify(exactly = 0) { mockRestoreMaintenanceMode.exit(any()) }
                 val retained = fixture.journal.readJournal()!!
                 assertTrue(File(retained.safetyBackupPath!!).exists())
+                if (operation == RestoreOperation.COSTBACKUP) {
+                    // HZ-03 F1 (Q-R32-1): post-swap restore cancellation behaves like a crash -
+                    // restart-required exit, no CRITICAL latch, journal kept in its post-swap
+                    // state so the next startup runs journal recovery.
+                    verify(exactly = 1) { mockRestoreMaintenanceMode.exit(true) }
+                    verify(exactly = 0) { mockRestoreMaintenanceMode.exit(false) }
+                    verify(exactly = 0) { mockRestoreMaintenanceMode.enterCriticalRecoveryRequired(any()) }
+                    assertFalse(fixture.trace.contains("CRITICAL"))
+                    assertEquals(
+                        RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED,
+                        mockRestoreMaintenanceMode.currentMode()
+                    )
+                    assertEquals(RestoreJournal.JournalState.VERIFYING, retained.state)
+                    assertFalse(fixture.trace.contains("FINALIZED_FAILURE"))
+                    // The cancellation cleanup removes only the staged DB trio (db/-wal/-shm).
+                    assertTrue(
+                        "staged DB trio leaked: ${fixture.directory.list()?.toList()}",
+                        fixture.directory.listFiles { f -> f.name.startsWith("expense_tracker_db_import_stage_") }
+                            .orEmpty().isEmpty()
+                    )
+                } else {
+                    assertEquals(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED, mockRestoreMaintenanceMode.currentMode())
+                    verify(exactly = 0) { mockRestoreMaintenanceMode.exit(any()) }
+                }
                 if (operation == RestoreOperation.COSTBACKUP) {
                     org.junit.Assert.assertArrayEquals(byteArrayOf(9, 8, 7),
                         File(retained.extractTempDirPath!!, "files/receipts/5_photo.jpg").readBytes())
                     assertTrue(File(dbFile.path + ".pre_restore").exists())
                 }
+            } finally { releaseRestoreFixture() }
+        }
+    }
+
+    @Test
+    fun costbackup_cancellation_during_assets_restoring_exits_restart_required_and_keeps_journal_and_workspace() = runTest(testDispatcher) {
+        val fixture = restoreFixture()
+        try {
+            val cancellation = IdentityCancellationException("TEST_ASSETS_PHASE_CANCELLED")
+            every { mockRestoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.ASSETS_RESTORING) } throws cancellation
+            var observed: Throwable? = null
+            try { invokeRestore(RestoreOperation.COSTBACKUP, createRepository(journal = fixture.journal), fixture.source) }
+            catch (e: kotlinx.coroutines.CancellationException) { observed = e }
+            org.junit.Assert.assertSame(cancellation, observed)
+            verify(exactly = 1) { mockRestoreMaintenanceMode.exit(true) }
+            verify(exactly = 0) { mockRestoreMaintenanceMode.exit(false) }
+            verify(exactly = 0) { mockRestoreMaintenanceMode.enterCriticalRecoveryRequired(any()) }
+            assertEquals(RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED, mockRestoreMaintenanceMode.currentMode())
+            val retained = fixture.journal.readJournal()!!
+            assertEquals(RestoreJournal.JournalState.ASSETS_RESTORING, retained.state)
+            assertTrue(File(retained.safetyBackupPath!!).exists())
+            assertTrue(File(retained.extractTempDirPath!!).exists())
+            assertTrue(File(dbFile.path + ".pre_restore").exists())
+        } finally { releaseRestoreFixture() }
+    }
+
+    @Test
+    fun costbackup_post_swap_cancellation_cleanup_failure_latches_cleanup_failed_and_rethrows_cancellation() = runTest(testDispatcher) {
+        val fixture = restoreFixture()
+        try {
+            val cancellation = IdentityCancellationException("TEST_POST_SWAP_CANCELLED")
+            every { mockRestoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.RESTORE_VERIFYING) } throws cancellation
+            every { mockRestoreMaintenanceMode.exit(any()) } throws RestoreMaintenanceMode.PersistenceException()
+            var observed: Throwable? = null
+            try { invokeRestore(RestoreOperation.COSTBACKUP, createRepository(journal = fixture.journal), fixture.source) }
+            catch (e: kotlinx.coroutines.CancellationException) { observed = e }
+            org.junit.Assert.assertSame(cancellation, observed)
+            verify(exactly = 1) { mockRestoreMaintenanceMode.exit(true) }
+            verify(exactly = 1) { mockRestoreMaintenanceMode.enterCriticalRecoveryRequired("RESTORE_CANCELLED_CLEANUP_FAILED") }
+            assertEquals(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED, mockRestoreMaintenanceMode.currentMode())
+            assertTrue(fixture.journal.hasJournal())
+            assertTrue(File(fixture.journal.readJournal()!!.safetyBackupPath!!).exists())
+        } finally { releaseRestoreFixture() }
+    }
+
+    @Test
+    fun restart_required_mode_blocks_every_restore_API_and_leaves_active_post_swap_journal_untouched() = runTest(testDispatcher) {
+        for (operation in supportedRestoreOperations()) {
+            val fixture = restoreFixture()
+            try {
+                val journal = fixture.journal
+                var entry = journal.beginJournal("src", "", dbFile.absolutePath)
+                entry = journal.transitionTo(entry, RestoreJournal.JournalState.VERIFYING, safetyBackupPath = "safety.db")
+                val journalFile = File(fixture.directory, "restore_journal.json")
+                val journalBytes = journalFile.readBytes()
+                val before = dbFile.readBytes()
+                mockRestoreMaintenanceMode.exit(true) // fixture mode -> RESTORE_COMPLETE_RESTART_REQUIRED
+                io.mockk.clearMocks(mockRestoreMaintenanceMode, answers = false, childMocks = false)
+
+                val result = invokeRestore(operation, createRepository(journal = journal), fixture.source)
+
+                val error = result.exceptionOrNull()
+                assertTrue("$operation: $error", error is com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException)
+                assertEquals(
+                    DiagnosticReasonCode.RESTORE_BLOCKED.name,
+                    (error as com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException).operation.reason
+                )
+                org.junit.Assert.assertArrayEquals(journalBytes, journalFile.readBytes())
+                assertEquals(RestoreJournal.JournalState.VERIFYING, journal.readJournal()?.state)
+                assertEquals(entry.operationId, journal.readJournal()?.operationId)
+                org.junit.Assert.assertArrayEquals(before, dbFile.readBytes())
+                verify(exactly = 0) { mockRestoreMaintenanceMode.enter(any()) }
+                verify(exactly = 0) { mockRestoreMaintenanceMode.exit(any()) }
+                verify(exactly = 0) { mockRestoreMaintenanceMode.enterCriticalRecoveryRequired(any()) }
+                verify(exactly = 0) { database.close() }
+                assertEquals(RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED, mockRestoreMaintenanceMode.currentMode())
+            } finally { releaseRestoreFixture() }
+        }
+    }
+
+    @Test
+    fun active_valid_journal_blocks_every_restore_API_even_in_NORMAL_mode() = runTest(testDispatcher) {
+        for (operation in supportedRestoreOperations()) {
+            val fixture = restoreFixture()
+            try {
+                val journal = fixture.journal
+                val entry = journal.beginJournal("src", "", dbFile.absolutePath)
+                val journalFile = File(fixture.directory, "restore_journal.json")
+                val journalBytes = journalFile.readBytes()
+
+                val result = invokeRestore(operation, createRepository(journal = journal), fixture.source)
+
+                assertTrue("$operation", result.exceptionOrNull() is com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException)
+                org.junit.Assert.assertArrayEquals(journalBytes, journalFile.readBytes())
+                assertEquals(entry.operationId, journal.readJournal()?.operationId)
+                verify(exactly = 0) { mockRestoreMaintenanceMode.enter(any()) }
+                verify(exactly = 0) { database.close() }
+                assertEquals(RestoreMaintenanceMode.Mode.NORMAL, mockRestoreMaintenanceMode.currentMode())
+            } finally { releaseRestoreFixture() }
+        }
+    }
+
+    @Test
+    fun restart_required_mode_without_a_journal_blocks_every_restore_API_and_mutates_nothing() = runTest(testDispatcher) {
+        assertRestoreBlockedByModeAlone(RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED) {
+            mockRestoreMaintenanceMode.exit(true) // fixture mode -> RESTORE_COMPLETE_RESTART_REQUIRED
+        }
+    }
+
+    @Test
+    fun critical_recovery_mode_without_a_journal_blocks_every_restore_API_and_mutates_nothing() = runTest(testDispatcher) {
+        assertRestoreBlockedByModeAlone(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED) {
+            mockRestoreMaintenanceMode.enterCriticalRecoveryRequired("TEST_CRITICAL_MODE")
+        }
+    }
+
+    /**
+     * R32 N1 gate (restoreEntryBlockedOrNull): the blocking mode alone, with NO active journal,
+     * must yield RESTORE_BLOCKED and mutate nothing: no journal begun, no mode change, no run recorded.
+     */
+    private suspend fun assertRestoreBlockedByModeAlone(
+        expectedMode: RestoreMaintenanceMode.Mode,
+        enterMode: () -> Unit
+    ) {
+        for (operation in supportedRestoreOperations()) {
+            val fixture = restoreFixture()
+            try {
+                val journal = fixture.journal
+                val journalFile = File(fixture.directory, "restore_journal.json")
+                enterMode()
+                assertEquals(expectedMode, mockRestoreMaintenanceMode.currentMode())
+                assertFalse("$operation: precondition, no journal", journalFile.exists())
+                assertTrue(journal.readJournalResult() is RestoreJournal.JournalReadResult.Absent)
+                val before = dbFile.readBytes()
+                val recorder = mockk<OperationRunRecorder>(relaxed = true)
+                io.mockk.clearMocks(mockRestoreMaintenanceMode, answers = false, childMocks = false)
+
+                val result = invokeRestore(operation, createRepository(journal = journal, operationRunRecorder = recorder), fixture.source)
+
+                val error = result.exceptionOrNull()
+                assertTrue("$operation: $error", error is com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException)
+                assertEquals(
+                    DiagnosticReasonCode.RESTORE_BLOCKED.name,
+                    (error as com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException).operation.reason
+                )
+                verify(exactly = 0) { journal.beginJournal(any(), any(), any()) }
+                assertFalse("$operation: no journal may be created", journalFile.exists())
+                org.junit.Assert.assertArrayEquals(before, dbFile.readBytes())
+                verify(exactly = 0) { mockRestoreMaintenanceMode.enter(any()) }
+                verify(exactly = 0) { mockRestoreMaintenanceMode.exit(any()) }
+                verify(exactly = 0) { mockRestoreMaintenanceMode.enterCriticalRecoveryRequired(any()) }
+                verify(exactly = 0) { database.close() }
+                coVerify(exactly = 0) { recorder.start(any(), any(), any()) }
+                assertEquals(expectedMode, mockRestoreMaintenanceMode.currentMode())
             } finally { releaseRestoreFixture() }
         }
     }
@@ -2671,9 +3313,11 @@ class DatabaseBackupRepositoryImplTest {
         val countingTime = CountingTimeProvider(startTime = fixedTime)
 
         // Real crypto so the produced bundle is extractable and its manifest can be read back.
+        // One low-iteration instance serves both the repository's create and this test's extract.
+        val encryption = lowIterationBackupEncryptionService()
         val repo = createRepository(
             stagedVerifier = { _, _, _, _, summary -> summary },
-            encryptionService = BackupEncryptionService(),
+            encryptionService = encryption,
             timeProvider = countingTime
         )
 
@@ -2710,7 +3354,8 @@ class DatabaseBackupRepositoryImplTest {
         val extractDir = File(tempDir, "extract_created_at")
         val extraction = CostbackupBundle.extract(
             bundleFile, extractDir, "t2b_timestamp_password",
-            nowEpochMs = 0L
+            nowEpochMs = 0L,
+            encryptionService = encryption
         )
         assertTrue("bundle should extract with the same password", extraction.isSuccess)
         assertEquals(

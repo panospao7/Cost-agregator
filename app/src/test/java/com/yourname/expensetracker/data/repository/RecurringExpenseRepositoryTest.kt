@@ -8,6 +8,7 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.logic.RecurrenceCalculator
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator
+import io.mockk.clearMocks
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -42,24 +43,24 @@ class RecurringExpenseRepositoryTest {
     }
 
     @Test
-    fun `addRecurringExpense uses calculator semantics for irregular`() = runTest {
-        assertInsertedNextDateMatchesCalculator(RecurrenceFrequency.IRREGULAR, date(2026, 3, 5))
-    }
-
-    @Test
-    fun `addRecurringExpense uses calculator semantics for semi annually`() = runTest {
-        assertInsertedNextDateMatchesCalculator(RecurrenceFrequency.SEMI_ANNUALLY, date(2026, 2, 10))
-    }
-
-    @Test
-    fun `addRecurringExpense uses calculator semantics for annually`() = runTest {
-        assertInsertedNextDateMatchesCalculator(RecurrenceFrequency.ANNUALLY, date(2026, 1, 15))
+    fun `addRecurringExpense uses calculator semantics for irregular, semi annually and annually`() = runTest {
+        val rows = listOf(
+            RecurrenceFrequency.IRREGULAR to date(2026, 3, 5),
+            RecurrenceFrequency.SEMI_ANNUALLY to date(2026, 2, 10),
+            RecurrenceFrequency.ANNUALLY to date(2026, 1, 15)
+        )
+        assertEquals("frequency rows size", 3, rows.size)
+        rows.forEach { (frequency, lastDate) ->
+            assertInsertedNextDateMatchesCalculator(frequency, lastDate)
+        }
     }
 
     private suspend fun assertInsertedNextDateMatchesCalculator(
         frequency: RecurrenceFrequency,
         lastDate: Long
     ) {
+        // Reset call counts between table rows so exactly = 1 holds per row.
+        clearMocks(ruleLifecycleCoordinator)
         val expenseSlot = slot<ManualRecurringExpense>()
         coEvery { ruleLifecycleCoordinator.createRule(capture(expenseSlot)) } returns 1L
 
@@ -71,6 +72,7 @@ class RecurringExpenseRepositoryTest {
         )
 
         assertEquals(
+            "Row $frequency",
             RecurrenceCalculator.calculateNextDate(lastDate, frequency),
             expenseSlot.captured.nextDate
         )

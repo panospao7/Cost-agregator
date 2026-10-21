@@ -32,9 +32,44 @@ class BankStatementParser @Inject constructor(
     companion object {
         // ParsedTransaction requires a three-letter code; XXX is never supported money.
         private const val UNKNOWN_CURRENCY = "XXX"
+        // Mirrors the ParsedTransaction amount invariant (amount <= 1_000_000).
+        private const val GENERIC_ROW_MAX_AMOUNT = 1_000_000.0
         // ── Header / footer pre-filter constants ─────────────────────────────
         /** Minimum line length (characters) to be considered a real transaction row. */
         const val MIN_LINE_LENGTH: Int = 15
+
+        /** Day/month/year token; 4-digit years are 20xx only, 2-digit years map to 20xx. */
+        private val STATEMENT_DATE_REGEX =
+            Regex("""(?<!\d)(\d{1,2})[/.-](\d{1,2})[/.-](20\d{2}|\d{2})(?!\d)""")
+
+        /** Decimal amount token with exactly two fraction digits ("45,00", "1.500,00"). */
+        private val DECIMAL_AMOUNT_REGEX = Regex("""\d[.,]\d{2}(?!\d)""")
+
+        /**
+         * Summary keywords (uppercase, both accented and unaccented Greek forms) that still
+         * drop a transaction-shaped row, but only as whole words.
+         */
+        private val SUMMARY_KEYWORDS: Set<String> = setOf(
+            "TOTAL", "SUBTOTAL", "BALANCE",
+            "ΥΠΟΛΟΙΠΟ", "ΥΠΌΛΟΙΠΟ",
+            "ΣΥΝΟΛΟ", "ΣΎΝΟΛΟ",
+            // Card-statement summary/limit/print-date rows
+            "LIMIT", "MINIMUM", "DUE", "AVAILABLE",
+            "ΟΡΙΟ", "ΌΡΙΟ",
+            "ΕΛΑΧΙΣΤΗ", "ΕΛΆΧΙΣΤΗ", "ΕΛΑΧΙΣΤΟ", "ΕΛΆΧΙΣΤΟ",
+            "ΠΟΣΟ", "ΠΟΣΌ",
+            "ΕΚΤΥΠΩΣΗΣ", "ΕΚΤΎΠΩΣΗΣ"
+        )
+
+        /** Whole-word match (Unicode letter/digit boundaries) on the uppercased line. */
+        private val SUMMARY_KEYWORD_REGEX = Regex(
+            "(?<![\\p{L}\\p{N}])(?:" +
+                SUMMARY_KEYWORDS.joinToString("|") { Regex.escape(it) } +
+                ")(?![\\p{L}\\p{N}])"
+        )
+
+        private val AM_WORD_REGEX = Regex("\\bAM\\b")
+        private val PM_WORD_REGEX = Regex("\\bPM\\b")
 
         /** Bank-specific keywords that identify header, footer, or metadata lines. */
         val HEADER_KEYWORDS: Set<String> = setOf(
@@ -167,6 +202,9 @@ class BankStatementParser @Inject constructor(
         val filteredRows = preFiltered.first
         rowStrings = preFiltered.second
 
+        // Statement-wide day/month order, resolved once over every candidate date.
+        val dayFirst = detectDayFirst(rowStrings)
+
         val transactions = mutableListOf<ParsedTransaction>()
 
         for (i in filteredRows.indices) {
@@ -206,9 +244,15 @@ class BankStatementParser @Inject constructor(
                         }
                     }
                     "generic" -> {
-                        val genericTx = extractTransactionFromRow(rowText, columnInfo, resolvedHomeCurrency)
+                        val genericTx = extractTransactionFromRow(
+                            rowText,
+                            columnInfo,
+                            resolvedHomeCurrency,
+                            dayFirst
+                        )
                         if (genericTx != null) {
                             transactions.add(genericTx)
+                            break
                         }
                     }
                 }
@@ -330,10 +374,22 @@ class BankStatementParser @Inject constructor(
             if (!hasDateForStep1b && line.matches(Regex(".*[πμ]\\.[μ]\\.\\s*\\d+.*|.*[πμ]μ\\s*\\d+.*|\\d+:\\d+.*"))) continue
 
             // 2. Skip lines containing bank-specific keywords
+            //    Transaction-shaped rows (a date plus a decimal amount) ignore the substring header
+            //    keywords, so merchants such as "TOTALENERGIES", "SEPA MANDATE" or
+            //    "ΠΛΗΡΩΜΗ ΚΑΡΤΑΣ" and "CREDIT TRANSFER"/"DIRECT DEBIT" rows are not lost. They are
+            //    dropped only for a whole-word summary keyword (TOTAL, BALANCE, ΥΠΟΛΟΙΠΟ, ...)
+            //    or an AM/PM marker. Every other row keeps the substring behaviour.
             val upper = line.uppercase()
-            if (HEADER_KEYWORDS.any { keyword ->
-                    if (keyword == "AM" || keyword == "PM") {
-                        Regex("\\b$keyword\\b").containsMatchIn(upper)
+            val txShaped = isTransactionShaped(line)
+            if (txShaped) {
+                if (SUMMARY_KEYWORD_REGEX.containsMatchIn(upper) ||
+                    AM_WORD_REGEX.containsMatchIn(upper) ||
+                    PM_WORD_REGEX.containsMatchIn(upper)) continue
+            } else if (HEADER_KEYWORDS.any { keyword ->
+                    if (keyword == "AM") {
+                        AM_WORD_REGEX.containsMatchIn(upper)
+                    } else if (keyword == "PM") {
+                        PM_WORD_REGEX.containsMatchIn(upper)
                     } else upper.contains(keyword.uppercase())
                 }) continue
 
@@ -369,6 +425,11 @@ class BankStatementParser @Inject constructor(
         val filteredStrings = keptIndices.map { rowStrings[it] }
         return Pair(filteredRows, filteredStrings)
     }
+
+    /** A row is transaction-shaped when it has a statement date and a decimal amount outside it. */
+    private fun isTransactionShaped(line: String): Boolean =
+        STATEMENT_DATE_REGEX.containsMatchIn(line) &&
+            DECIMAL_AMOUNT_REGEX.containsMatchIn(STATEMENT_DATE_REGEX.replace(line, " "))
 
     /**
      * Heuristic to determine if two text blocks belong to the same horizontal row.
@@ -821,7 +882,12 @@ class BankStatementParser @Inject constructor(
         }
     }
 
-    private fun extractTransactionFromRow(rowText: String, columnInfo: DateColumnInfo = DateColumnInfo(false, false), homeCurrency: String): ParsedTransaction? {
+    private fun extractTransactionFromRow(
+        rowText: String,
+        columnInfo: DateColumnInfo = DateColumnInfo(false, false),
+        homeCurrency: String,
+        dayFirst: Boolean = true
+    ): ParsedTransaction? {
         // 1. Clean noise
         val cleanRow = rowText.replace('\u00A0', ' ').trim()
         
@@ -848,7 +914,9 @@ class BankStatementParser @Inject constructor(
         val candidates = mutableListOf<AmountCandidate>()
         while (amountMatcher.find()) {
             val rawToken = amountMatcher.group(2)?.replace(" ", "") ?: continue
-            val parsed = AmountUtils.parseAmount(rawToken) ?: continue
+            // R22b: parseAmount strips a leading "-" but not "+", which broke thousands grouping
+            // for "+1.500,00"; the signed rawToken is kept for the deposit sign and score bonus.
+            val parsed = AmountUtils.parseAmount(rawToken.removePrefix("+").trimStart()) ?: continue
             if (parsed == 0.0 || !parsed.isFinite()) continue
             val leadingCurrency = amountMatcher.group(1)
             val trailingCurrency = amountMatcher.group(3)
@@ -901,24 +969,21 @@ class BankStatementParser @Inject constructor(
             candidates.first()
         }
         
-        // Robust European & US decimal parsing
+        // R16: statement amounts are 2-decimal currencies, so a single separator kind with
+        // exactly 3 trailing digits is thousands grouping ("1,234" -> 1234), except a leading-zero
+        // token ("0,123" / "0.123"), which both separators read as the decimal 0.123.
         val rawAmount = bestCandidate.rawToken
-        
-        val lastSep = rawAmount.findLastAnyOf(listOf(".", ","))
-        
-        val amountStr = if (lastSep != null) {
-            val (sepIndex, sepChar) = lastSep
-            val integerPart = rawAmount.substring(0, sepIndex).replace(".", "").replace(",", "")
-            val decimalPart = rawAmount.substring(sepIndex + 1)
-            "$integerPart.$decimalPart"
-        } else {
-            rawAmount
-        }
-        
-        val absAmount = kotlin.math.abs(amountStr.toDoubleOrNull() ?: return null)
+        val amountStr = rawAmount
+
+        val absAmount = kotlin.math.abs(
+            AmountUtils.parseStatementAmount(rawAmount.removePrefix("+").trimStart()) ?: return null
+        )
         
         if (absAmount <= 0.0 || !absAmount.isFinite()) return null
-        
+        // R16: ParsedTransaction rejects amounts above 1,000,000 by throwing; skip such a row
+        // instead of failing the whole statement import.
+        if (absAmount > GENERIC_ROW_MAX_AMOUNT) return null
+
         // Use more specific currency check.
         // RP-13 Gate B: explicit token/symbol → PARSED_FROM_SOURCE; home default
         // stays an assumption so downstream policy never treats it as known.
@@ -931,26 +996,23 @@ class BankStatementParser @Inject constructor(
         }
 
         // 3. Detect Transaction Type
+        // V-I-2: an explicit "+" amount is a credit. "CREDIT CARD" names the instrument, not a
+        // credit, so it is removed before deposit keywords are matched.
         val upperRow = cleanRow.uppercase()
-        val isPurchase = upperRow.contains("ΑΓΟΡΑ") || upperRow.contains("PURCHASE") || 
-                         upperRow.contains("ΧΡΕΩΣΗ") || upperRow.contains("DEBIT") ||
-                         upperRow.contains("PAYMENT") || upperRow.contains("CARD")
-        
-        val isDeposit = upperRow.contains("ΚΑΤΑΘΕΣΗ") || upperRow.contains("DEPOSIT") ||
-                        upperRow.contains("ΠΙΣΤΩΣΗ") || upperRow.contains("ΠΙΣΤΩΣH") || upperRow.contains("CREDIT") ||
-                        upperRow.contains("REFUND") || upperRow.contains("MISTHODOSIA") ||
-                        upperRow.contains("SALARY") || upperRow.contains("WAGES") || upperRow.contains("ΜΙΣΘΟΔΟΣΙΑ")
+        val depositRow = upperRow.replace("CREDIT CARD", " ")
+        val hasPlusSign = amountStr.startsWith("+")
 
-        val type = when {
-            isDeposit -> ParsedTransactionType.DEPOSIT
-            isPurchase -> ParsedTransactionType.PURCHASE
-            amountStr.contains("-") -> ParsedTransactionType.PURCHASE
-            else -> ParsedTransactionType.PURCHASE 
-        }
+        val isDeposit = hasPlusSign ||
+                        depositRow.contains("ΚΑΤΑΘΕΣΗ") || depositRow.contains("DEPOSIT") ||
+                        depositRow.contains("ΠΙΣΤΩΣΗ") || depositRow.contains("ΠΙΣΤΩΣH") || depositRow.contains("CREDIT") ||
+                        depositRow.contains("REFUND") || depositRow.contains("MISTHODOSIA") ||
+                        depositRow.contains("SALARY") || depositRow.contains("WAGES") || depositRow.contains("ΜΙΣΘΟΔΟΣΙΑ")
+
+        val type = if (isDeposit) ParsedTransactionType.DEPOSIT else ParsedTransactionType.PURCHASE
 
         // 4. Extract dates — use header-derived transaction-date order when
         //    two dates are present.
-        val allDates = extractAllDates(cleanRow)
+        val allDates = extractAllDates(cleanRow, dayFirst)
 
         val dateValue = when (columnInfo.transactionDateOrder) {
             // Header tells us transaction date is the first date column
@@ -996,35 +1058,33 @@ class BankStatementParser @Inject constructor(
      * Extract all dates from a row and identify which is transaction date vs value date
      * Based on position: first date is typically transaction date, second is value date
      */
-    private fun extractAllDates(text: String): AllDatesResult {
-        val datePatterns = listOf(
-            Regex("""(\d{1,2})[/.-](\d{1,2})[/.-](20\d{2})"""),
-            Regex("""(\d{1,2})[/.-](\d{1,2})[/.-](\d{2})""")
-        )
-
-        val dateFormatter = DateTimeFormatter.ofPattern("dd/MM/yyyy", Locale.US)
-
+    private fun extractAllDates(text: String, dayFirst: Boolean = true): AllDatesResult {
         val now = timeProvider.now()
         val currentYear = TimePeriodUtils.getYear(now)
         val minYear = currentYear - 20
+        // ParsedTransaction rejects dates later than now + 1 day; such a candidate is a misread,
+        // so it is treated as not found instead of failing the whole import.
+        val latestAllowedMillis = now + 86_400_000L
 
         val foundDates = mutableListOf<Long>()
 
-        for (pattern in datePatterns) {
-            val matches = pattern.findAll(text)
-            for (match in matches) {
-                val (d, m, y) = match.destructured
-                val year = if (y.length == 2) "20$y" else y
-                val yearInt = year.toIntOrNull() ?: 0
-                
-                if (yearInt in minYear..currentYear) {
-                    try {
-                        val parsedDate = LocalDate.parse("${d.padStart(2, '0')}/${m.padStart(2, '0')}/$year", dateFormatter)
-                        foundDates.add(parsedDate.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli())
-                    } catch (e: Exception) {
-                        if (e is kotlinx.coroutines.CancellationException) throw e
-                        // Skip invalid dates
-                    }
+        // N1: one positional pattern, so a 4-digit-year date is matched once and its
+        // trailing digits are never re-read as a 2-digit year.
+        for (match in STATEMENT_DATE_REGEX.findAll(text)) {
+            val (first, second, y) = match.destructured
+            val year = if (y.length == 2) "20$y" else y
+            val yearInt = year.toIntOrNull() ?: 0
+
+            if (yearInt in minYear..currentYear) {
+                val day = (if (dayFirst) first else second).toIntOrNull() ?: continue
+                val month = (if (dayFirst) second else first).toIntOrNull() ?: continue
+                try {
+                    val parsedDate = LocalDate.of(yearInt, month, day)
+                    val parsedMillis = parsedDate.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                    if (parsedMillis <= latestAllowedMillis) foundDates.add(parsedMillis)
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    // Skip invalid dates
                 }
             }
         }
@@ -1037,41 +1097,36 @@ class BankStatementParser @Inject constructor(
         )
     }
 
+    /**
+     * V-I-3: statement-wide day/month order. Any first part above 12 proves dd/MM; otherwise any
+     * second part above 12 proves MM/dd; otherwise dd/MM (the default). Returns true for dd/MM.
+     */
+    private fun detectDayFirst(rowStrings: List<String>): Boolean {
+        // Dotted times ("09.45.30") and references ("12.34.56") match the date regex, so a token
+        // counts only when both parts are valid day/month numbers and the year is in the same
+        // range extractAllDates accepts.
+        val currentYear = TimePeriodUtils.getYear(timeProvider.now())
+        val minYear = currentYear - 20
+        var secondAbove12 = false
+        for (row in rowStrings) {
+            for (match in STATEMENT_DATE_REGEX.findAll(row)) {
+                val first = match.groupValues[1].toIntOrNull() ?: continue
+                val second = match.groupValues[2].toIntOrNull() ?: continue
+                if (first !in 1..31 || second !in 1..31) continue
+                val y = match.groupValues[3]
+                val yearInt = (if (y.length == 2) "20$y" else y).toIntOrNull() ?: continue
+                if (yearInt !in minYear..currentYear) continue
+                if (first > 12) return true
+                if (second > 12) secondAbove12 = true
+            }
+        }
+        return !secondAbove12
+    }
+
     data class AllDatesResult(
         val firstDate: Long?,
         val transactionDate: Long?,
         val valueDate: Long?
     )
 
-    private fun extractDate(text: String): Long? {
-        val datePatterns = listOf(
-            Regex("""(\d{1,2})[/.-](\d{1,2})[/.-](20\d{2})"""),
-            Regex("""(\d{1,2})[/.-](\d{1,2})[/.-](\d{2})""")
-        )
-
-        val dateFormatter = DateTimeFormatter.ofPattern("dd/MM/yyyy", Locale.US)
-
-        val now = timeProvider.now()
-        val currentYear = TimePeriodUtils.getYear(now)
-        val minYear = currentYear - 20 // Allow up to 20 years of historical data
-
-        for (pattern in datePatterns) {
-            pattern.find(text)?.let { match ->
-                val (d, m, y) = match.destructured
-                val year = if (y.length == 2) "20$y" else y
-                val yearInt = year.toIntOrNull() ?: 0
-                
-                if (yearInt in minYear..currentYear) {
-                    try {
-                        val parsed = LocalDate.parse("${d.padStart(2, '0')}/${m.padStart(2, '0')}/$year", dateFormatter)
-                        return parsed.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
-                    } catch (e: Exception) {
-                        if (e is kotlinx.coroutines.CancellationException) throw e
-                        if (BuildConfig.DEBUG) Timber.d("BANK_STATEMENT_DATE_INVALID")
-                    }
-                }
-            }
-        }
-        return null
-    }
 }

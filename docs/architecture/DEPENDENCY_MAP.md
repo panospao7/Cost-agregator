@@ -697,7 +697,7 @@ CompositePrivacyGate                      [domain/privacy/CompositePrivacyGate.k
 
 PrivacyAuditLogger                        [domain/privacy/PrivacyAuditLogger.kt]
   │  Interface + impl (PrivacyAuditLoggerImpl in data/privacy/)
-  │  (logs every gate check → PrivacyAuditEvent entity → PrivacyAuditDao)
+  │  (logs every gate decision → PrivacyAuditEvent entity → PrivacyAuditDao; every decision is recorded individually except repeated ALLOWED NOTIFICATION_CAPTURE decisions: the first in a 60-minute window is written; repeats are counted and reported as coalescedCount on the next window's first row or on a flush row (marked coalescedFlush) written before any other decision or on eviction; DENIED, FAIL_CLOSED (stored DENIED_FAIL_CLOSED), NOT_APPLICABLE and all other capabilities are always individual rows; counts are approximate (lower bound across process death))
   │  (now logs PrivacyBlocked subclass type via `privacyBlockedType: String`)
   │
   ▼
@@ -1302,7 +1302,7 @@ All Hybrid services use:
 ---
 
 > **Generated:** Manual analysis of 1100+ source files across 3 layers (UI/Domain/Data),  
-> 33 Hilt @Module files (32 in `di/` + 1 `EmptyStatePresentationModule.kt`), 41 @HiltViewModel (40 files + 1 inline), 46+ repositories, ~68 DAOs, 70 entities.  
+> 33 Hilt @Module files (32 in `di/` + 1 `EmptyStatePresentationModule.kt`), 42 @HiltViewModel (41 files + 1 inline), 46+ repositories, ~68 DAOs, 70 entities.  
 > DB schema version: v148 (via `DatabaseSchemaPolicy.CURRENT_VERSION`)  
 > **Last updated:** 2026-09-21  
 > **Next update:** Regenerate when significant architectural changes occur (new module, major refactor).
@@ -1328,8 +1328,9 @@ excludedActualCount, excludedPlannedCount, excludedRecurringCount,
 conversionWarnings, confidencePenalty.
 
 ### CI Guard (Segment 9)
-scripts/guards/check_lifecycle_bypasses.kts — scans for 14 forbidden
-direct ExpenseDao calls, with documented allowlist.
+The advisory Kotlin-script lifecycle-bypass guard (never wired into CI) has been
+retired; direct ExpenseDao mutation checks are owned by the registered
+`db_access` guard and its ownership policy.
 
 ### Rate Staleness
 CurrencyConverter.convert() checks rate.lastUpdated against 24h threshold.

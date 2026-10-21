@@ -1,7 +1,7 @@
 package com.yourname.expensetracker.data.repository
 
+import com.yourname.expensetracker.assertMoneyExact
 import com.yourname.expensetracker.data.database.dao.BudgetDao
-import com.yourname.expensetracker.data.database.dao.CategoryCurrencyTotal
 import com.yourname.expensetracker.data.database.dao.CategoryDao
 import com.yourname.expensetracker.data.database.dao.CurrencyTotal
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
@@ -14,9 +14,9 @@ import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.MultiConversionAggregate
 import com.yourname.expensetracker.domain.groups.SharedExpenseBudgetOffsetEngine
+import com.yourname.expensetracker.domain.util.PinnedUtcTimeZoneRule
 import com.yourname.expensetracker.domain.util.TimeBoundaryTicker
 import com.yourname.expensetracker.domain.util.TimeProvider
-import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.BudgetForecastDao
@@ -30,20 +30,26 @@ import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 import java.util.Calendar
 import java.util.TimeZone
 
 /**
- * Budget repository stress & validation tests.
+ * Budget repository large-history / rollover regression tests.
  *
- * A.9 Batch 2: The @Ignore annotation has been removed. These tests now run in CI.
- * Large-history regression proofs (Section 5) verify that getBudgetStatuses()
- * uses aggregate SQL queries instead of capped row-level reads, so budget
- * correctness is independent of the number of expense rows.
+ * Large-history regression proofs verify that getBudgetStatuses() uses aggregate SQL
+ * queries instead of capped row-level reads, so budget correctness is independent of
+ * the number of expense rows. Budget add/update validation lives in
+ * [BudgetRepositoryHistoricalStatusTest]; wallet/category aggregate scenarios live in
+ * [BudgetRepositoryTruncationTest].
  */
 @Suppress("DEPRECATION_ERROR")
 class BudgetRepositoryStressTest {
+
+    // The real BudgetCalculator (rollover table) derives period windows from ZoneId.systemDefault().
+    @get:Rule
+    val utcZone = PinnedUtcTimeZoneRule()
 
     private val budgetDao = mockk<BudgetDao>(relaxed = true)
     private val categoryDao = mockk<CategoryDao>(relaxed = true)
@@ -115,401 +121,132 @@ class BudgetRepositoryStressTest {
     }
 
     // ============================================================================
-    // SECTION 1: VALIDATION EDGE CASES
+    // LARGE-HISTORY AGGREGATE REGRESSION (A.9 Batch 2) — compounding rollover
     // ============================================================================
+    // These rows prove that getBudgetStatuses() relies on aggregate SQL queries
+    // (one grouped-by-currency query per period window) and NOT on capped row-level
+    // reads, and that the compounding rollover arithmetic uses every completed window.
 
+    private data class RolloverRow(
+        val name: String,
+        val anchor: Triple<Int, Int, Int>,
+        val now: Triple<Int, Int, Int>,
+        val baseLimit: Double,
+        val spentPerWindow: Double,
+        /** Completed periods between the anchor and the active window. */
+        val completedPeriods: Int,
+        val expectedEffectiveLimit: Double,
+        val expectedRemaining: Double
+    )
+
+    /**
+     * Rollover: base limit B, constant spend S in every window (completed and active).
+     * Each completed period folds: running = B + max(0, running - S), starting at B.
+     * The aggregate query must be issued exactly once per completed window plus once for
+     * the active window, and no row-level expense read may ever happen.
+     */
     @Test
-    fun `stress - addBudget with zero amount fails`() = runTest(UnconfinedTestDispatcher()) {
-        val budget = Budget(
-            id = 0,
-            categoryId = null,
-            amount = 0.0,
-            period = BudgetPeriod.MONTHLY,
-            startDate = System.currentTimeMillis(),
-            isActive = true,
-            rollover = false,
-            notifyAtWarning = 0.8f,
-            notifyAtCritical = 0.95f
+    fun `large history - rollover compounds from per-window aggregate queries`() = runTest(UnconfinedTestDispatcher()) {
+        val rows = listOf(
+            // B=2000 S=1800: limits 2000 -> 2200 -> 2400 -> ... -> after 12 periods 4400
+            RolloverRow(
+                name = "12 periods anchor 2025-01-01 now 2026-01-10",
+                anchor = Triple(2025, 1, 1), now = Triple(2026, 1, 10),
+                baseLimit = 2_000.0, spentPerWindow = 1_800.0, completedPeriods = 12,
+                expectedEffectiveLimit = 4_400.0, expectedRemaining = 2_600.0
+            ),
+            // B=5000 S=4800: 5000 -> 5200 -> 5400 -> 5600 over Jan, Feb, Mar
+            RolloverRow(
+                name = "3 periods anchor 2026-01-01 now 2026-04-10",
+                anchor = Triple(2026, 1, 1), now = Triple(2026, 4, 10),
+                baseLimit = 5_000.0, spentPerWindow = 4_800.0, completedPeriods = 3,
+                expectedEffectiveLimit = 5_600.0, expectedRemaining = 800.0
+            ),
+            // B=1000 S=800: 1000 -> 1200 -> 1400 over Jan, Feb
+            RolloverRow(
+                name = "2 periods anchor 2026-01-01 now 2026-03-15",
+                anchor = Triple(2026, 1, 1), now = Triple(2026, 3, 15),
+                baseLimit = 1_000.0, spentPerWindow = 800.0, completedPeriods = 2,
+                expectedEffectiveLimit = 1_400.0, expectedRemaining = 600.0
+            ),
         )
+        assertEquals("rollover table size", 3, rows.size)
 
-        val result = repository.addBudget(budget)
-        assertTrue(result is com.yourname.expensetracker.domain.model.Result.Error)
-    }
+        val failures = mutableListOf<String>()
+        for (row in rows) {
+            try {
+                // Fresh mocks per row so coVerify counts never leak between rows.
+                val rowTime = mockk<TimeProvider>(relaxed = true)
+                every { rowTime.now() } returns makeUtcMs(row.now.first, row.now.second, row.now.third)
 
-    @Test
-    fun `stress - addBudget with negative amount fails`() = runTest(UnconfinedTestDispatcher()) {
-        val budget = Budget(
-            id = 0,
-            categoryId = null,
-            amount = -100.0,
-            period = BudgetPeriod.MONTHLY,
-            startDate = System.currentTimeMillis(),
-            isActive = true,
-            rollover = false,
-            notifyAtWarning = 0.8f,
-            notifyAtCritical = 0.95f
-        )
+                val rowExpenseDao = mockk<ExpenseDao>(relaxed = true)
+                every { rowExpenseDao.getTotalSpentFlow() } returns flowOf(0.0)
+                every { rowExpenseDao.observeExpenseMutationClock() } returns flowOf(0)
+                coEvery { rowExpenseDao.getTotalForPeriod(any(), any()) } returns row.spentPerWindow
+                coEvery { rowExpenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns
+                    listOf(CurrencyTotal("EUR", row.spentPerWindow, 1))
 
-        val result = repository.addBudget(budget)
-        assertTrue(result is com.yourname.expensetracker.domain.model.Result.Error)
-    }
+                val rowMultiCurrency = MultiCurrencyRepository(
+                    expenseDao = rowExpenseDao,
+                    currencyConverter = currencyConverter,
+                    timeProvider = rowTime,
+                    currencySettingsRepository = currencySettingsRepository,
+                    applicationScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined)
+                )
 
-    @Test
-    fun `stress - addBudget with zero startDate fails`() = runTest(UnconfinedTestDispatcher()) {
-        val budget = Budget(
-            id = 0,
-            categoryId = null,
-            amount = 100.0,
-            period = BudgetPeriod.MONTHLY,
-            startDate = 0,
-            isActive = true,
-            rollover = false,
-            notifyAtWarning = 0.8f,
-            notifyAtCritical = 0.95f
-        )
+                val budget = Budget(
+                    id = 3L,
+                    categoryId = null,
+                    amount = row.baseLimit,
+                    period = BudgetPeriod.MONTHLY,
+                    startDate = makeUtcMs(row.anchor.first, row.anchor.second, row.anchor.third),
+                    isActive = true,
+                    rollover = true,
+                    notifyAtWarning = 0.75f,
+                    notifyAtCritical = 0.90f
+                )
+                every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(budget))
+                every { categoryDao.getAllFlow() } returns flowOf(emptyList<Category>())
 
-        val result = repository.addBudget(budget)
-        assertTrue(result is com.yourname.expensetracker.domain.model.Result.Error)
-    }
+                // Real BudgetCalculator so rollover window iteration works correctly.
+                val repo = BudgetRepository(
+                    budgetDao, categoryDao, rowExpenseDao, BudgetCalculator(rowTime),
+                    rowTime, offsetEngine, TimeBoundaryTicker(rowTime),
+                    currencyConverter, currencySettingsRepository, rowMultiCurrency,
+                    writeBarrier, database, budgetForecastDao
+                )
 
-    @Test
-    fun `stress - addBudget with negative startDate fails`() = runTest(UnconfinedTestDispatcher()) {
-        val budget = Budget(
-            id = 0,
-            categoryId = null,
-            amount = 100.0,
-            period = BudgetPeriod.MONTHLY,
-            startDate = -1000,
-            isActive = true,
-            rollover = false,
-            notifyAtWarning = 0.8f,
-            notifyAtCritical = 0.95f
-        )
+                val statuses = repo.getBudgetStatuses().first()
 
-        val result = repository.addBudget(budget)
-        assertTrue(result is com.yourname.expensetracker.domain.model.Result.Error)
-    }
+                assertEquals("statuses size", 1, statuses.size)
+                // Integer-valued compounding arithmetic is exact in IEEE-754 doubles.
+                assertMoneyExact(row.expectedEffectiveLimit, statuses[0].effectiveLimit, "effectiveLimit")
+                assertMoneyExact(row.spentPerWindow, statuses[0].spentAmount, "active-period spend")
+                assertMoneyExact(row.expectedRemaining, statuses[0].remainingAmount, "remainingAmount")
 
-    @Test
-    fun `stress - addBudget with valid data succeeds`() = runTest(UnconfinedTestDispatcher()) {
-        val budget = Budget(
-            id = 0,
-            categoryId = 1,
-            amount = 500.0,
-            period = BudgetPeriod.MONTHLY,
-            startDate = System.currentTimeMillis(),
-            isActive = true,
-            rollover = false,
-            notifyAtWarning = 0.8f,
-            notifyAtCritical = 0.95f
-        )
-
-        val result = repository.addBudget(budget)
-        assertTrue(result is com.yourname.expensetracker.domain.model.Result.Success)
-    }
-
-    // ============================================================================
-    // SECTION 2: UPDATE VALIDATION
-    // ============================================================================
-
-    @Test
-    fun `stress - updateBudget with zero amount fails`() = runTest(UnconfinedTestDispatcher()) {
-        val budget = Budget(
-            id = 1,
-            categoryId = null,
-            amount = 0.0,
-            period = BudgetPeriod.MONTHLY,
-            startDate = System.currentTimeMillis(),
-            isActive = true,
-            rollover = false,
-            notifyAtWarning = 0.8f,
-            notifyAtCritical = 0.95f
-        )
-
-        val result = repository.updateBudget(budget)
-        assertTrue(result is com.yourname.expensetracker.domain.model.Result.Error)
-    }
-
-    @Test
-    fun `stress - updateBudget with negative amount fails`() = runTest(UnconfinedTestDispatcher()) {
-        val budget = Budget(
-            id = 1,
-            categoryId = null,
-            amount = -50.0,
-            period = BudgetPeriod.MONTHLY,
-            startDate = System.currentTimeMillis(),
-            isActive = true,
-            rollover = false,
-            notifyAtWarning = 0.8f,
-            notifyAtCritical = 0.95f
-        )
-
-        val result = repository.updateBudget(budget)
-        assertTrue(result is com.yourname.expensetracker.domain.model.Result.Error)
-    }
-
-    // ============================================================================
-    // SECTION 3: BULK OPERATIONS
-    // ============================================================================
-
-    @Test
-    fun `stress - add many budgets`() = runTest(UnconfinedTestDispatcher()) {
-        repeat(50) { i ->
-            val budget = Budget(
-                id = 0,
-                categoryId = null,
-                amount = 100.0 + i,
-                period = BudgetPeriod.MONTHLY,
-                startDate = System.currentTimeMillis(),
-                isActive = true,
-                rollover = false,
-                notifyAtWarning = 0.8f,
-                notifyAtCritical = 0.95f
-            )
-            repository.addBudget(budget)
+                // One aggregate query per completed window + one for the active window.
+                coVerify(exactly = row.completedPeriods + 1) {
+                    rowExpenseDao.getTotalSpentBetweenByCurrency(any(), any())
+                }
+                // No row-level reads.
+                coVerify(exactly = 0) { rowExpenseDao.getExpensesBetween(any(), any(), any(), any()) }
+                coVerify(exactly = 0) { rowExpenseDao.getExpensesBetweenUncapped(any(), any()) }
+            } catch (e: AssertionError) {
+                failures += "[${row.name}] ${e.message}"
+            }
+        }
+        if (failures.isNotEmpty()) {
+            fail("rollover rows failed:\n" + failures.joinToString("\n"))
         }
     }
 
-    @Test
-    fun `stress - toggle many budgets`() = runTest(UnconfinedTestDispatcher()) {
-        repeat(50) { i ->
-            repository.toggleBudget(i.toLong() + 1, i % 2 == 0)
-        }
-    }
-
-    // ============================================================================
-    // SECTION 4: EDGE CASES
-    // ============================================================================
-
-    @Test
-    fun `stress - very large budget amount`() = runTest(UnconfinedTestDispatcher()) {
-        val budget = Budget(
-            id = 0,
-            categoryId = null,
-            amount = 1_000_000_000.0,
-            period = BudgetPeriod.YEARLY,
-            startDate = System.currentTimeMillis(),
-            isActive = true,
-            rollover = false,
-            notifyAtWarning = 0.8f,
-            notifyAtCritical = 0.95f
-        )
-
-        val result = repository.addBudget(budget)
-        assertTrue(result is com.yourname.expensetracker.domain.model.Result.Success)
-    }
-
-    @Test
-    fun `stress - very small budget amount`() = runTest(UnconfinedTestDispatcher()) {
-        val budget = Budget(
-            id = 0,
-            categoryId = null,
-            amount = 0.01,
-            period = BudgetPeriod.MONTHLY,
-            startDate = System.currentTimeMillis(),
-            isActive = true,
-            rollover = false,
-            notifyAtWarning = 0.8f,
-            notifyAtCritical = 0.95f
-        )
-
-        val result = repository.addBudget(budget)
-        assertTrue(result is com.yourname.expensetracker.domain.model.Result.Success)
-    }
-
-    // ============================================================================
-    // SECTION 5: LARGE-HISTORY AGGREGATE REGRESSION (A.9 Batch 2)
-    // ============================================================================
-    // These tests prove that getBudgetStatuses() relies on aggregate SQL queries
-    // (getTotalForPeriod / getCategorySpentInPeriod) and NOT on capped row-level
-    // reads. The aggregate mock returns a total that would require >2000 individual
-    // rows (the old DAO default cap), proving the result is independent of row count.
-
     /**
-     * Regression: whole-wallet budget with aggregate spend equivalent to >2000 rows.
-     *
-     * If the old row-level code were still in use, a LIMIT 2000 cap on
-     * getExpensesBetween would produce a lower total. The aggregate query
-     * returns the correct sum regardless of row count.
-     */
-    @Test
-    fun `large history - whole-wallet budget uses aggregate query not capped rows`() = runTest(UnconfinedTestDispatcher()) {
-        val now = makeUtcMs(2026, 4, 10)
-        every { timeProvider.now() } returns now
-
-        val startOfMonth = makeUtcMs(2026, 4, 1)
-        val endOfMonth = makeUtcMs(2026, 5, 1)
-
-        val budget = Budget(
-            id = 1L,
-            categoryId = null,
-            amount = 50_000.0,
-            period = BudgetPeriod.MONTHLY,
-            startDate = startOfMonth,
-            isActive = true,
-            rollover = false,
-            notifyAtWarning = 0.75f,
-            notifyAtCritical = 0.90f
-        )
-
-        every { budgetCalculator.calculatePeriodRange(any(), any()) } returns (startOfMonth to endOfMonth)
-        every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(budget))
-        every { categoryDao.getAllFlow() } returns flowOf(emptyList<Category>())
-        every { expenseDao.getTotalSpentFlow() } returns flowOf(30_000.0)
-
-        // Aggregate sum = 30 000.  If 3 000 rows × €10 each = €30 000, the old
-        // LIMIT 2000 would have produced only €20 000.  The aggregate returns the
-        // correct total regardless of how many rows exist.
-        coEvery { expenseDao.getTotalForPeriod(startOfMonth, endOfMonth) } returns 30_000.0
-        coEvery { expenseDao.getTotalSpentBetweenByCurrency(startOfMonth, endOfMonth) } returns listOf(CurrencyTotal("EUR", 30_000.0, 1))
-
-        val statuses = repository.getBudgetStatuses().first()
-
-        assertEquals(1, statuses.size)
-        assertEquals(30_000.0, statuses[0].spentAmount, 0.001)
-        assertEquals(20_000.0, statuses[0].remainingAmount, 0.001)
-        assertEquals(0.6f, statuses[0].percentUsed, 0.001f)
-        assertEquals(BudgetHealthStatus.ON_TRACK, statuses[0].healthStatus)
-    }
-
-    /**
-     * Regression: category-scoped budget with large-history aggregate.
-     *
-     * Proves getCategorySpentInPeriod is used (not a capped row scan + filter).
-     */
-    @Test
-    fun `large history - category budget uses aggregate query not capped rows`() = runTest(UnconfinedTestDispatcher()) {
-        val now = makeUtcMs(2026, 4, 10)
-        every { timeProvider.now() } returns now
-
-        val startOfMonth = makeUtcMs(2026, 4, 1)
-        val endOfMonth = makeUtcMs(2026, 5, 1)
-        val categoryId = 42L
-
-        val category = Category(categoryId, "Groceries", "🛒", "#00FF00", false)
-        val budget = Budget(
-            id = 2L,
-            categoryId = categoryId,
-            amount = 5_000.0,
-            period = BudgetPeriod.MONTHLY,
-            startDate = startOfMonth,
-            isActive = true,
-            rollover = false,
-            notifyAtWarning = 0.75f,
-            notifyAtCritical = 0.90f
-        )
-
-        every { budgetCalculator.calculatePeriodRange(any(), any()) } returns (startOfMonth to endOfMonth)
-        every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(budget))
-        every { categoryDao.getAllFlow() } returns flowOf(listOf(category))
-        every { expenseDao.getTotalSpentFlow() } returns flowOf(4_500.0)
-
-        // 4 500 from 2500 rows × €1.80 each — old LIMIT 2000 would cap at €3 600.
-        coEvery { expenseDao.getCategoryTotalsBetweenByCurrency(any(), any()) } returns listOf(
-            CategoryCurrencyTotal(categoryId = categoryId, currency = "EUR", total = 4_500.0, txCount = 1)
-        )
-        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 4_500.0, 1))
-
-        val statuses = repository.getBudgetStatuses().first()
-
-        assertEquals(1, statuses.size)
-        assertEquals(4_500.0, statuses[0].spentAmount, 0.001)
-        assertEquals(500.0, statuses[0].remainingAmount, 0.001)
-        assertEquals(BudgetHealthStatus.CRITICAL, statuses[0].healthStatus)
-    }
-
-    /**
-     * Regression: rollover budget with large-history across multiple periods.
-     *
-     * Simulates 12 completed monthly periods each with aggregate totals that would
-     * require thousands of rows. Verifies the compounding rollover arithmetic uses
-     * aggregate queries for every historical window.
-     */
-    @Test
-    fun `large history - rollover across 12 periods uses aggregate queries per window`() = runTest(UnconfinedTestDispatcher()) {
-        // Budget: anchor Jan 1 2025, monthly, €2 000, rollover = true
-        // "Now" = Jan 10 2026 → 12 completed periods (Jan→Dec 2025), active = Jan 2026
-        val now = makeUtcMs(2026, 1, 10)
-        every { timeProvider.now() } returns now
-
-        val anchorMs = makeUtcMs(2025, 1, 1)
-        val activeStart = makeUtcMs(2026, 1, 1)
-        val activeEnd = makeUtcMs(2026, 2, 1)
-
-        val budget = Budget(
-            id = 3L,
-            categoryId = null,
-            amount = 2_000.0,
-            period = BudgetPeriod.MONTHLY,
-            startDate = anchorMs,
-            isActive = true,
-            rollover = true,
-            notifyAtWarning = 0.75f,
-            notifyAtCritical = 0.90f
-        )
-
-        // Use real BudgetCalculator so rollover window iteration works correctly.
-        val realCalc = BudgetCalculator(timeProvider)
-        val repo = BudgetRepository(
-            budgetDao, categoryDao, expenseDao, realCalc,
-            timeProvider, offsetEngine, TimeBoundaryTicker(timeProvider),
-            currencyConverter, currencySettingsRepository, multiCurrencyRepository,
-            writeBarrier, database, budgetForecastDao
-        )
-
-        every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(budget))
-        every { categoryDao.getAllFlow() } returns flowOf(emptyList<Category>())
-        every { expenseDao.getTotalSpentFlow() } returns flowOf(0.0)
-
-        // Each completed period: spent 1 800 out of effective limit → surplus 200
-        // (first period surplus = 2000 - 1800 = 200, compounding adds surplus each period).
-        // For simplicity, use 1800 for every period query.
-        coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 1_800.0
-        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 1_800.0, 1))
-
-        val statuses = repo.getBudgetStatuses().first()
-
-        assertEquals(1, statuses.size)
-
-        // After 12 periods of compounding rollover (each period spent = 1800, base = 2000):
-        // Period 1: effectiveLimit = 2000, surplus = 200, next effectiveLimit = 2200
-        // Period 2: effectiveLimit = 2200, surplus = 400, next effectiveLimit = 2400
-        // Period 3: effectiveLimit = 2400, surplus = 600, next effectiveLimit = 2600
-        // ...each period adds 200 more to surplus since getTotalForPeriod returns constant 1800
-        // Period N: effectiveLimit = 2000 + (N-1)*200, surplus = effectiveLimit - 1800
-        // After 12 periods: effectiveLimit = 2000 + 12*200 = 4400
-        // (because surplus after period 12 = (2000 + 11*200) - 1800 = 4200 - 1800 = 2400,
-        //  effectiveLimit for active = 2000 + 2400 = 4400)
-        // Actually let me re-derive:
-        // Period 1: eff=2000, surplus=max(0, 2000-1800)=200, next eff=2000+200=2200
-        // Period 2: eff=2200, surplus=max(0, 2200-1800)=400, next eff=2000+400=2400
-        // Period 3: eff=2400, surplus=600, next eff=2000+600=2600
-        // Period 4: eff=2600, surplus=800, next eff=2000+800=2800
-        // Period 5: eff=2800, surplus=1000, next eff=2000+1000=3000
-        // Period 6: eff=3000, surplus=1200, next eff=2000+1200=3200
-        // Period 7: eff=3200, surplus=1400, next eff=2000+1400=3400
-        // Period 8: eff=3400, surplus=1600, next eff=2000+1600=3600
-        // Period 9: eff=3600, surplus=1800, next eff=2000+1800=3800
-        // Period 10: eff=3800, surplus=2000, next eff=2000+2000=4000
-        // Period 11: eff=4000, surplus=2200, next eff=2000+2200=4200
-        // Period 12: eff=4200, surplus=2400, next eff=2000+2400=4400
-        val expectedEffectiveLimit = 4_400.0
-        assertEquals(expectedEffectiveLimit, statuses[0].effectiveLimit, 0.01)
-
-        // Active period spend = 1800 (from aggregate)
-        assertEquals(1_800.0, statuses[0].spentAmount, 0.001)
-        assertEquals(expectedEffectiveLimit - 1_800.0, statuses[0].remainingAmount, 0.01)
-
-        // Verify aggregate queries were called — not row-level reads
-        coVerify(atLeast = 13) { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) }
-        // Ensure no row-level reads were made
-        coVerify(exactly = 0) { expenseDao.getExpensesBetween(any(), any(), any(), any()) }
-        coVerify(exactly = 0) { expenseDao.getExpensesBetweenUncapped(any(), any()) }
-    }
-
-    /**
-     * Proves that the invalidation trigger (getTotalSpentFlow) is what causes
+     * Proves that the invalidation trigger (observeExpenseMutationClock) is what causes
      * the combine block to re-run — not direct expense-row observation.
+     *
+     * Also pins the whole-wallet status derived through the flow path: 500 spent of a
+     * 1000 limit is 50% (carries the percentUsed check formerly in the 50 000 / 30 000
+     * large-history wallet test).
      */
     @Test
     fun `aggregate contract - getTotalSpentFlow is used as invalidation trigger`() = runTest(UnconfinedTestDispatcher()) {
@@ -534,7 +271,9 @@ class BudgetRepositoryStressTest {
 
         val statuses = repository.getBudgetStatuses().first()
 
-        assertEquals(500.0, statuses[0].spentAmount, 0.001)
+        assertMoneyExact(500.0, statuses[0].spentAmount, "spent pass-through")
+        assertEquals(0.5f, statuses[0].percentUsed, 1e-6f)
+        assertEquals(BudgetHealthStatus.ON_TRACK, statuses[0].healthStatus)
         // Confirm aggregate invalidation trigger was observed
         verify(atLeast = 1) { expenseDao.observeExpenseMutationClock() }
     }

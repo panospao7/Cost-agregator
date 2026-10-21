@@ -195,7 +195,10 @@ class SynthesisEngine @Inject constructor(
                     recurringExpenses = emptyList(),
                     plannedExpenses = emptyList(),
                     goalReserves = 0.0,
-                    pastSpendingPoints = pastSumDaily,
+                    // FORE-01: sanitise on the fallback path exactly like the normal path; the raw
+                    // list could hold NaN/Infinity and trip FinancialForecast's finite-values
+                    // require() inside this catch block.
+                    pastSpendingPoints = sanitizePastSumDaily(pastSumDaily),
                     projectedSpendingPoints = emptyList(),
                     totalCommitted = 0.0,
                     totalLikely = 0.0,
@@ -275,17 +278,20 @@ class SynthesisEngine @Inject constructor(
                     }.sum()
                 }
         } else {
-            recurringPatterns.filter {
-                it.confidence >= 0.90f && it.nextExpectedDate >= startOfToday && it.nextExpectedDate < endOfMonthExclusive
-            }.groupBy { pattern ->
-                Instant.ofEpochMilli(pattern.nextExpectedDate).atZone(ZoneId.systemDefault()).dayOfMonth
-            }.mapValues { (_, patterns) ->
-                patterns.mapNotNull { p ->
-                    if (displayCurrency.isBlank()) p.averageAmount
-                    else convertAmount(p.averageAmount, p.currency, displayCurrency)
-                        ?: run { recurringConversionFailures++; null }
-                }.sum()
+            // FORE-02: WEEKLY/BIWEEKLY patterns project every occurrence left in the window
+            // (the baseline subtracts them at 4.33x / 2.17x), converted once per pattern.
+            val byDay = mutableMapOf<Int, Double>()
+            for (p in recurringPatterns.filter { it.confidence >= 0.90f }) {
+                val dueDays = remainingOccurrenceDays(p, startOfToday, endOfMonthExclusive)
+                if (dueDays.isEmpty()) continue
+                val amount = if (displayCurrency.isBlank()) p.averageAmount
+                else convertAmount(p.averageAmount, p.currency, displayCurrency)
+                    ?: run { recurringConversionFailures++; null }
+                for (day in dueDays) {
+                    byDay[day] = (byDay[day] ?: 0.0) + (amount ?: 0.0)
+                }
             }
+            byDay
         }
 
         val committedUpcomingBills = committedRecurringByDay.values.sum()
@@ -304,29 +310,31 @@ class SynthesisEngine @Inject constructor(
         // 2. Calculate Likely (Probable behavior)
         // Fix: Confidence Interval Gap (0.89-0.90 was missing)
         // I1: Detected-only patterns (id == null) do not have confirmed
-        // occurrences. Fall back to simple single-date estimation without
-        // WEEKLY/BIWEEKLY multiplication (occurrences are the new source of
-        // truth for multiple-in-month repetitions).
+        // occurrences. Fall back to estimating from nextExpectedDate; WEEKLY/BIWEEKLY
+        // repeat inside the window (FORE-02, see remainingOccurrenceDays).
         val detectedPatterns = recurringPatterns.filter { it.id == null }
         val likelyUpcomingBills = if (confirmedOccurrences.isNotEmpty()) {
+            // FORE-02: WEEKLY/BIWEEKLY detected patterns count every occurrence left in the window.
             detectedPatterns.filter {
-                it.confidence >= 0.70f && it.confidence < 0.90f &&
-                    it.nextExpectedDate >= startOfToday &&
-                    it.nextExpectedDate < endOfMonthExclusive
+                it.confidence >= 0.70f && it.confidence < 0.90f
             }.mapNotNull { p ->
-                if (displayCurrency.isBlank()) p.averageAmount
+                val occurrences = remainingOccurrenceDays(p, startOfToday, endOfMonthExclusive).size
+                if (occurrences == 0) return@mapNotNull null
+                val amount = if (displayCurrency.isBlank()) p.averageAmount
                 else convertAmount(p.averageAmount, p.currency, displayCurrency)
                     ?: run { recurringConversionFailures++; null }
+                amount?.let { it * occurrences }
             }.sum()
         } else {
             recurringPatterns.filter {
-                it.confidence >= 0.70f && it.confidence < 0.90f &&
-                    it.nextExpectedDate >= startOfToday &&
-                    it.nextExpectedDate < endOfMonthExclusive
+                it.confidence >= 0.70f && it.confidence < 0.90f
             }.mapNotNull { p ->
-                if (displayCurrency.isBlank()) p.averageAmount
+                val occurrences = remainingOccurrenceDays(p, startOfToday, endOfMonthExclusive).size
+                if (occurrences == 0) return@mapNotNull null
+                val amount = if (displayCurrency.isBlank()) p.averageAmount
                 else convertAmount(p.averageAmount, p.currency, displayCurrency)
                     ?: run { recurringConversionFailures++; null }
+                amount?.let { it * occurrences }
             }.sum()
         }
         
@@ -341,7 +349,11 @@ class SynthesisEngine @Inject constructor(
         
         // RP-06 6b slice 2 (P5-CURRENT-009): failures here already exclude (mapNotNull,
         // no raw fallback) — count them so excludedCount/isPartial stay truthful.
-        val monthlyRecurringTotal = recurringPatterns.mapNotNull { pattern ->
+        //
+        // FORE-02: patterns below the 0.70 projection confidence floor (see likelyUpcomingBills)
+        // are not treated as real recurring spend, so they are not subtracted from the baseline.
+        // (Weekly/biweekly monthly-amount handling intentionally unchanged.)
+        val monthlyRecurringTotal = recurringPatterns.filter { it.confidence >= 0.70f }.mapNotNull { pattern ->
             when (pattern.frequency) {
                 RecurrenceFrequency.IRREGULAR -> null
                 else -> {
@@ -502,11 +514,18 @@ class SynthesisEngine @Inject constructor(
         }
 
         // 6. Determine Risk Level
+        // FORE-05: discretionaryBudget is clamped to 0, which hides how far the month is over
+        // the limit. Read the un-clamped sum so over-committed months are CRITICAL even on pace.
+        // Only against an explicit OVERALL budget: the category-budget-sum fallback compares ALL
+        // spending with a partial limit, so it must not escalate (previous behaviour kept).
+        val obligationsExceedLimit = overallBudget > 0 && budgetLimit > 0 &&
+            (spentSoFar + projectedObligations + goalReserves) > budgetLimit
         val riskLevel = determineRiskLevel(
-            spendingPace, 
-            budgetStatuses, 
-            discretionaryBudget, 
-            budgetLimit
+            spendingPace,
+            budgetStatuses,
+            discretionaryBudget,
+            budgetLimit,
+            obligationsExceedLimit
         )
 
         // Dynamic Confidence Calculation based on data quality
@@ -544,7 +563,7 @@ class SynthesisEngine @Inject constructor(
                 confirmedOccurrences = confirmedOccurrences,
                 goalReserveExclusions = goalReserveExclusions
             ),
-            actionableInsights = buildInsights(riskLevel, budgetStatuses, spendingPace, filteredPlannedExpenses, savingsGoals),
+            actionableInsights = buildInsights(riskLevel, budgetStatuses, spendingPace, filteredPlannedExpenses, savingsGoals, startOfToday, endOfMonthExclusive),
             // RP-06 6b slice 2: planned-expense projection day-map conversion failures now
             // feed the same exclusion accounting as recurring failures (U-MONEY-01).
             excludedCount = recurringConversionFailures + plannedConversionFailures,
@@ -955,11 +974,42 @@ class SynthesisEngine @Inject constructor(
         return result
     }
 
+    /**
+     * FORE-02: days of month on which [pattern] is projected to occur inside
+     * [windowStart, windowEndExclusive). Counting starts at nextExpectedDate (it must itself be
+     * in the window, as before); WEEKLY repeats every 7 days and BIWEEKLY every 14 days
+     * (calendar days in the system zone, DST-safe). Every other frequency yields one occurrence.
+     */
+    private fun remainingOccurrenceDays(
+        pattern: RecurringPattern,
+        windowStart: Long,
+        windowEndExclusive: Long
+    ): List<Int> {
+        if (pattern.nextExpectedDate < windowStart || pattern.nextExpectedDate >= windowEndExclusive) {
+            return emptyList()
+        }
+        val stepDays = when (pattern.frequency) {
+            RecurrenceFrequency.WEEKLY -> 7L
+            RecurrenceFrequency.BIWEEKLY -> 14L
+            else -> 0L
+        }
+        val first = Instant.ofEpochMilli(pattern.nextExpectedDate).atZone(ZoneId.systemDefault())
+        if (stepDays == 0L) return listOf(first.dayOfMonth)
+        val days = mutableListOf<Int>()
+        var occurrence = first
+        while (occurrence.toInstant().toEpochMilli() < windowEndExclusive) {
+            days += occurrence.dayOfMonth
+            occurrence = occurrence.plusDays(stepDays)
+        }
+        return days
+    }
+
     private fun determineRiskLevel(
         pace: SpendingPace,
         budgets: List<BudgetStatusSnapshot>,
         discretionary: Double,
-        limit: Double
+        limit: Double,
+        obligationsExceedLimit: Boolean
     ): RiskLevel {
         val criticalBudgets = budgets.count { it.healthStatus == BudgetHealthStatus.CRITICAL || it.healthStatus == BudgetHealthStatus.EXCEEDED }
         val overPace = pace.paceStatus == PaceStatus.OVER_PACE
@@ -976,6 +1026,8 @@ class SynthesisEngine @Inject constructor(
         return when {
             // Priority 1: Critical Budget Issues or Severe Overspending with no buffer
             criticalBudgets > 0 -> RiskLevel.CRITICAL
+            // FORE-05: spent + obligations + goal reserves above the limit is CRITICAL even on pace.
+            obligationsExceedLimit -> RiskLevel.CRITICAL
             overPace && bufferRatio <= 0.05 -> RiskLevel.CRITICAL
             
             // Priority 2: High Risk (Overspending or Low Buffer)
@@ -995,7 +1047,9 @@ class SynthesisEngine @Inject constructor(
         budgets: List<BudgetStatusSnapshot>,
         pace: SpendingPace,
         planned: List<PlannedExpense>,
-        goals: List<SavingsGoal>
+        goals: List<SavingsGoal>,
+        windowStart: Long,
+        windowEndExclusive: Long
     ): List<UiText> {
         val insights = mutableListOf<UiText>()
         if (pace.paceStatus == PaceStatus.OVER_PACE) {
@@ -1006,12 +1060,21 @@ class SynthesisEngine @Inject constructor(
             insights.add(UiText.fromKey(DomainTextKeys.SYNTHESIS_BUDGETS_EXCEEDED_FORMAT, exceeded))
         }
         
-        val strictGoalCount = goals.count { it.protectionLevel == GoalProtectionLevel.STRICT }
+        // FORE-06: same reserve filter as the goal reserves (STRICT, unfinished, known currency),
+        // so funded or unknown-currency STRICT goals are not reported as active reserves.
+        val strictGoalCount = goals.count {
+            it.protectionLevel == GoalProtectionLevel.STRICT &&
+                SavingsGoalCurrencyPolicy.isUnfinished(it) &&
+                SavingsGoalCurrencyPolicy.knownCurrencyOrNull(it) != null
+        }
         if (strictGoalCount > 0) {
             insights.add(UiText.fromKey(DomainTextKeys.SYNTHESIS_STRICT_SAVINGS_GOALS_ACTIVE_FORMAT, strictGoalCount))
         }
         
-        val mustPlannedCount = planned.count { it.priority == PlannedExpensePriority.MUST }
+        // FORE-06: count only MUST items inside the forecast window (same window as committedPlanned).
+        val mustPlannedCount = planned.count {
+            it.priority == PlannedExpensePriority.MUST && it.date >= windowStart && it.date < windowEndExclusive
+        }
         if (mustPlannedCount > 0) {
             insights.add(UiText.fromKey(DomainTextKeys.SYNTHESIS_MUST_PAY_PLANNED_EXPENSES_FORMAT, mustPlannedCount))
         }

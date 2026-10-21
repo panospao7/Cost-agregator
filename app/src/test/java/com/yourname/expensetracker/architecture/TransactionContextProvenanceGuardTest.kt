@@ -33,12 +33,6 @@ class TransactionContextProvenanceGuardTest {
             "Canonical TransactionContext factory in production",
             "MIT-031", LocalDate.of(2026, 12, 31)
         ),
-        // DomainTransactionRunner interface definition references context in KDoc
-        ProvenanceAllowlistEntry(
-            "DomainTransactionRunner.kt", "Transaction",
-            "Interface definition references context in KDoc and parameter types",
-            "MIT-031", LocalDate.of(2026, 12, 31)
-        ),
         // TransactionContext data class itself — copy() calls its own constructor
         ProvenanceAllowlistEntry(
             "TransactionContext.kt", "Transaction",
@@ -66,6 +60,9 @@ class TransactionContextProvenanceGuardTest {
 
     )
 
+    /** Matches any `TransactionContext(` constructor call. */
+    private val constructorPattern = Regex("""\bTransactionContext\s*\(""")
+
     private val sourceRoot: File by lazy { resolveSourceRoot() }
 
     private fun resolveSourceRoot(): File {
@@ -88,7 +85,7 @@ class TransactionContextProvenanceGuardTest {
     @Test
     fun `manual TransactionContext construction outside allowlist fails`() {
         val mainDir = sourceRoot
-        val pattern = Regex("""\bTransactionContext\s*\(""")
+        val pattern = constructorPattern
 
         val allKtFiles = mainDir.walkTopDown()
             .filter { it.isFile && it.extension == "kt" }
@@ -144,6 +141,29 @@ class TransactionContextProvenanceGuardTest {
                 ". Remove stale/renamed entries.",
             stale.isEmpty()
         )
+    }
+
+    @Test
+    fun `every allowlist entry still matches the provenance pattern`() {
+        val pattern = constructorPattern
+        val ktFilesByName = sourceRoot.walkTopDown()
+            .filter { it.isFile && it.extension == "kt" }
+            .groupBy { it.name }
+
+        for (entry in ALLOWLIST) {
+            val files = ktFilesByName[entry.fileName].orEmpty()
+            assertTrue(
+                "Allowlist entry ${entry.fileName} does not map to a source file under " +
+                    "${sourceRoot.absolutePath}. Remove the stale exemption.",
+                files.isNotEmpty()
+            )
+            assertTrue(
+                "Allowlist entry ${entry.fileName} no longer contains a " +
+                    "`TransactionContext(` construction matching the provenance pattern. " +
+                    "Remove the stale exemption.",
+                files.any { pattern.containsMatchIn(it.readText()) }
+            )
+        }
     }
 
     @Test

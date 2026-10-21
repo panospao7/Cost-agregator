@@ -62,6 +62,17 @@ class AppStartupCoordinator @Inject constructor(
         }
     }
 
+    /**
+     * R25 D-M2: runs ONLY the restore-journal crash-recovery stage (raw SQLite and the unwrapped
+     * restore opener; no worker scheduling, no DAO use). Invoked by the application when the open
+     * gate reports DB_OPEN_FAILED while a restore journal is still active, before the gate is
+     * re-probed. Idempotent: a recovered journal is renamed away, so the later full [initialize]
+     * sees NoAction. Failures are fail-closed inside [checkRestoreJournalState].
+     */
+    fun recoverRestoreJournalOnly() {
+        checkRestoreJournalState()
+    }
+
     private suspend fun resumeMaintenanceAndScheduleStartup(application: Application) {
         try {
             restoreMaintenanceMode.resetCancellable()

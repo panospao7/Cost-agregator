@@ -62,32 +62,21 @@ class RecommendationCacheServiceTest {
     }
 
     @Test
-    fun `getById fetches from repository on cache miss`() = runTest {
+    fun `getById fetches from repository on cache miss and caches the result`() = runTest {
         val recommendation = createRecommendation(id = "rec1")
 
         coEvery { repository.getById("rec1") } returns recommendation
 
-        val result = cacheService.getById("rec1")
-
-        assertNotNull(result)
-        assertEquals("rec1", result.id)
+        // First call - cache miss, must hit the repository
+        val first = cacheService.getById("rec1")
+        assertNotNull(first)
+        assertEquals("rec1", first.id)
         coVerify(exactly = 1) { repository.getById("rec1") }
-    }
 
-    @Test
-    fun `getById caches result from repository`() = runTest {
-        val recommendation = createRecommendation(id = "rec1")
-
-        coEvery { repository.getById("rec1") } returns recommendation
-
-        // First call - should hit repository
-        cacheService.getById("rec1")
-
-        // Second call - should use cache
-        val result = cacheService.getById("rec1")
-
-        assertNotNull(result)
-        // Repository should only be called once
+        // Second call - must be served from cache
+        val second = cacheService.getById("rec1")
+        assertNotNull(second)
+        assertEquals("rec1", second.id)
         coVerify(exactly = 1) { repository.getById("rec1") }
     }
 
@@ -135,20 +124,6 @@ class RecommendationCacheServiceTest {
         assertEquals(refreshed, cacheService.getById("rec1"))
         assertEquals(refreshed, cacheService.getById("rec1"))
         coVerify(exactly = 1) { repository.getById("rec1") }
-    }
-
-    @Test
-    fun `put adds recommendation to cache`() = runTest {
-        val recommendation = createRecommendation(id = "rec1")
-
-        cacheService.put(recommendation)
-
-        // Verify it's in cache by getting it without repository call
-        val result = cacheService.getById("rec1")
-        
-        assertNotNull(result)
-        assertEquals("rec1", result.id)
-        coVerify(exactly = 0) { repository.getById(any()) }
     }
 
     @Test
@@ -295,17 +270,23 @@ class RecommendationCacheServiceTest {
     }
 
     @Test
-    fun `getStats returns accurate cache statistics`() = runTest {
-        val recs = (1..10).map { i ->
-            createRecommendation(id = "rec$i")
+    fun `getStats returns accurate cache statistics for putAll and for individual puts`() = runTest {
+        // Rows: bulk insert via putAll, and 10 sequential puts (single-writer stand-in for
+        // concurrent access; no real concurrency is exercised here).
+        for (name in listOf("putAll", "sequential put")) {
+            setup() // fresh cache per row
+            val recs = (1..10).map { i -> createRecommendation(id = "rec$i") }
+            if (name == "putAll") {
+                cacheService.putAll(recs)
+            } else {
+                recs.forEach { cacheService.put(it) }
+            }
+
+            val stats = cacheService.getStats()
+
+            assertEquals(10, stats.size, "row '$name': size")
+            assertEquals(50, stats.maxSize, "row '$name': maxSize")
         }
-
-        cacheService.putAll(recs)
-
-        val stats = cacheService.getStats()
-
-        assertEquals(10, stats.size)
-        assertEquals(50, stats.maxSize)
     }
 
     @Test
@@ -356,20 +337,108 @@ class RecommendationCacheServiceTest {
         coVerify(exactly = 0) { repository.getById(any()) }
     }
 
+    // ========== RecommendationDeduplicator (merged from RecommendationDeduplicatorTest) ==========
+
+    private class DedupInput(
+        val id: String,
+        val navTarget: String,
+        val filterJson: String,
+        val category: String,
+        val priority: RecommendationPriority = RecommendationPriority.MEDIUM
+    )
+
+    private class DedupRow(val name: String, val inputs: List<DedupInput>, val expectedIds: List<String>)
+
+    private fun dedupRec(input: DedupInput): DashboardFollowThroughRecommendation =
+        createRecommendation(id = input.id).copy(
+            userId = "test-user",
+            navigationTarget = input.navTarget,
+            filterCriteria = input.filterJson,
+            category = input.category,
+            priority = input.priority
+        )
+
     @Test
-    fun `concurrent access is thread-safe`() = runTest {
-        // Test that mutex prevents race conditions
-        val recs = (1..10).map { i ->
-            createRecommendation(id = "rec$i")
-        }
+    fun `deduplicate keeps first occurrence per logical filter target and preserves distinct targets`() {
+        val deduplicator = RecommendationDeduplicator(TransactionFilterSerializer())
+        val list = "TRANSACTION_LIST"
+        val cat5 = "{\"categoryId\":5}"
+        val day = "{\"dateRangeStart\":0,\"dateRangeEnd\":86400000}"
+        val complexBase = "{\"categoryId\":5,\"merchantName\":\"Amazon\",\"minAmount\":%d,\"dateRangeStart\":1000,\"dateRangeEnd\":2000}"
 
-        // Simulate concurrent puts
-        recs.forEach { rec ->
-            cacheService.put(rec)
-        }
+        val rows = listOf(
+            DedupRow("removes exact duplicates, keeps first occurrence",
+                listOf(DedupInput("1", list, cat5, "cat:5"), DedupInput("2", list, cat5, "cat:5"), DedupInput("3", list, cat5, "cat:5")),
+                listOf("1")),
+            DedupRow("preserves different navigation targets",
+                listOf(
+                    DedupInput("1", list, cat5, "cat:5"),
+                    DedupInput("2", "CATEGORY_DETAIL", cat5, "cat:5"),
+                    DedupInput("3", "BUDGET_DETAIL", cat5, "cat:5")
+                ),
+                listOf("1", "2", "3")),
+            DedupRow("preserves different categories",
+                listOf(
+                    DedupInput("1", list, "{\"categoryId\":5}", "FOOD"),
+                    DedupInput("2", list, "{\"categoryId\":6}", "TRANSPORT"),
+                    DedupInput("3", list, "{\"categoryId\":7}", "ENTERTAINMENT")
+                ),
+                listOf("1", "2", "3")),
+            DedupRow("ignores category label when filter target is otherwise identical",
+                listOf(DedupInput("1", list, cat5, "FOOD"), DedupInput("2", list, cat5, "TRANSPORT")),
+                listOf("1")),
+            DedupRow("preserves different merchants",
+                listOf(
+                    DedupInput("1", list, "{\"merchantName\":\"Amazon\"}", "cat:1"),
+                    DedupInput("2", list, "{\"merchantName\":\"Walmart\"}", "cat:1"),
+                    DedupInput("3", list, "{\"merchantName\":\"Target\"}", "cat:1")
+                ),
+                listOf("1", "2", "3")),
+            // AIML-21 identifies logical spans, not generation timestamps: 1 day, 7 days, 31 days stay distinct.
+            DedupRow("preserves different semantic date ranges",
+                listOf(
+                    DedupInput("1", list, day, "cat:1"),
+                    DedupInput("2", list, "{\"dateRangeStart\":0,\"dateRangeEnd\":604800000}", "cat:1"),
+                    DedupInput("3", list, "{\"dateRangeStart\":0,\"dateRangeEnd\":2678400000}", "cat:1")
+                ),
+                listOf("1", "2", "3")),
+            DedupRow("ignores generation timestamp shifts within a semantic span",
+                listOf(
+                    DedupInput("1", list, day, "cat:1"),
+                    DedupInput("2", list, "{\"dateRangeStart\":1000,\"dateRangeEnd\":86401000}", "cat:1"),
+                    DedupInput("3", list, "{\"dateRangeStart\":2000,\"dateRangeEnd\":86402000}", "cat:1")
+                ),
+                listOf("1")),
+            DedupRow("empty list stays empty", emptyList(), emptyList()),
+            DedupRow("single item is kept", listOf(DedupInput("1", list, cat5, "cat:5")), listOf("1")),
+            DedupRow("keeps first occurrence regardless of priority order",
+                listOf(
+                    DedupInput("2", list, cat5, "cat:5", RecommendationPriority.MEDIUM),
+                    DedupInput("1", list, cat5, "cat:5", RecommendationPriority.HIGH),
+                    DedupInput("3", list, cat5, "cat:5", RecommendationPriority.LOW)
+                ),
+                listOf("2")),
+            DedupRow("complex filter: only the identical one collapses, differing minAmount survives",
+                listOf(
+                    DedupInput("1", list, complexBase.format(100), "cat:5"),
+                    DedupInput("2", list, complexBase.format(100), "cat:5"),
+                    DedupInput("3", list, complexBase.format(150), "cat:5")
+                ),
+                listOf("1", "3")),
+            // Both fall back to the same default filter, so they collapse to the first.
+            DedupRow("identical fallback filters (version-only) collapse",
+                listOf(
+                    DedupInput("1", list, "{\"version\":1}", "cat:5"),
+                    DedupInput("2", list, "{\"version\":1}", "cat:5")
+                ),
+                listOf("1"))
+        )
+        assertEquals(12, rows.size, "dedup table size")
 
-        val stats = cacheService.getStats()
-        assertEquals(10, stats.size)
+        for (row in rows) {
+            val actual = deduplicator.deduplicate(row.inputs.map { dedupRec(it) }).map { it.id }
+            assertEquals(row.expectedIds, actual, "row '${row.name}'")
+        }
     }
 
     // Helper function

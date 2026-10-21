@@ -22,12 +22,26 @@ window. Report PASS only when result.json says PASS and complete.marker exists.
 Treat FAIL, TIMEOUT, STALE_RESULT, or INFRA_FAILURE as non-green and route the
 run ID/logs to ci-build-debugger or the coder. After a fix, create a new run.
 
-Profiles: compile, assemble-debug, targeted-unit-test (-TestFilter),
+Profiles: compile, assemble-debug, targeted-unit-test and
+targeted-release-unit-test (-TestFilter: one filter or a comma-separated list,
+max 50, no spaces/empty/duplicate items; one Gradle run for the whole batch;
+Gradle fails only if the whole run matches zero tests, so confirm per-item
+coverage from JUnit XML in app/build/test-results/<task>/ newer than the run
+start - an item with zero matched tests is NOT validated; runner-side per-item
+check planned in B4-P1d),
 unit-test-shard (-Shard), trusted-tests, legacy-tests, unit-tests,
 migration-tests, lint, static-guards, registered-guard (-GuardId), app-check,
-connected-tests, and runner-smoke. Use heartbeat/output timestamps and byte
+connected-tests, runner-smoke, runner-protocol-tests, and pytest-subset
+(-TestFilter scripts[/path][::test_id]; PASS needs exit 0 and at least one
+passed test). Use heartbeat/output timestamps and byte
 counters to assess progress. The wrapper enforces absolute and no-output
 timeouts.
+
+Standing rule: any change to scripts/validation-runner.ps1,
+scripts/ci/test_validation_runner_protocol.py, or runner profiles/docs requires
+runner-protocol-tests (and runner-smoke). static-guards no longer runs the runner
+protocol file. Release final acceptance should run runner-protocol-tests alongside
+static-guards.
 
 app-check and static-guards are distinct gates; run both when required. Do not
 use -AllowOverlap just to bypass duplicate detection. Shard/trusted routing comes from config/validation/test-shards.json;

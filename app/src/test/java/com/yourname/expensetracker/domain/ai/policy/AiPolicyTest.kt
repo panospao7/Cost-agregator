@@ -2,7 +2,7 @@ package com.yourname.expensetracker.domain.ai.policy
 
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiSettings
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
 
@@ -15,135 +15,175 @@ class AiPolicyTest {
         policy = AiPolicyImpl()
     }
 
+    private data class CloudRow(val name: String, val settings: AiSettings, val expected: Boolean)
+
+    private data class CapabilityRow(
+        val name: String,
+        val settings: AiSettings,
+        val capability: AiCapability,
+        val expected: Boolean
+    )
+
+    private data class RedactRow(
+        val name: String,
+        val settings: AiSettings,
+        val capabilities: List<AiCapability>,
+        val expected: Boolean
+    )
+
     // ── canUseCloud ───────────────────────────────────────────────────────────
 
     @Test
-    fun `canUseCloud returns false when both aiEnabled and allowCloudAi are false`() {
-        val settings = AiSettings(aiEnabled = false, allowCloudAi = false)
-        assertFalse(policy.canUseCloud(settings))
-    }
-
-    @Test
-    fun `canUseCloud returns false when aiEnabled is false but allowCloudAi is true`() {
-        val settings = AiSettings(aiEnabled = false, allowCloudAi = true)
-        assertFalse(policy.canUseCloud(settings))
-    }
-
-    @Test
-    fun `canUseCloud returns false when aiEnabled is true but allowCloudAi is false`() {
-        val settings = AiSettings(aiEnabled = true, allowCloudAi = false)
-        assertFalse(policy.canUseCloud(settings))
-    }
-
-    @Test
-    fun `canUseCloud returns true when both aiEnabled and allowCloudAi are true`() {
-        val settings = AiSettings(aiEnabled = true, allowCloudAi = true)
-        assertTrue(policy.canUseCloud(settings))
-    }
-
-    @Test
-    fun `canUseCloudFor returns false when capability flag is off`() {
-        val settings = AiSettings(aiEnabled = true, allowCloudAi = true, reviewExplanationEnabled = false)
-        assertFalse(policy.canUseCloudFor(settings, AiCapability.REVIEW_EXPLANATION))
-    }
-
-    @Test
-    fun `canUseCloudFor returns true when cloud and capability are enabled`() {
-        val settings = AiSettings(aiEnabled = true, allowCloudAi = true, reviewExplanationEnabled = true)
-        assertTrue(policy.canUseCloudFor(settings, AiCapability.REVIEW_EXPLANATION))
-    }
-
-    @Test
-    fun `canUseCloudFor receipt extraction does not require image toggle`() {
-        val settings = AiSettings(
-            aiEnabled = true,
-            allowCloudAi = true,
-            receiptAssistEnabled = true,
-            receiptImageCloudEnabled = false
+    fun `canUseCloud requires both aiEnabled and allowCloudAi and defaults to false`() {
+        val rows = listOf(
+            CloudRow("aiEnabled=false allowCloudAi=false", AiSettings(aiEnabled = false, allowCloudAi = false), false),
+            CloudRow("aiEnabled=false allowCloudAi=true", AiSettings(aiEnabled = false, allowCloudAi = true), false),
+            CloudRow("aiEnabled=true allowCloudAi=false", AiSettings(aiEnabled = true, allowCloudAi = false), false),
+            CloudRow("aiEnabled=true allowCloudAi=true", AiSettings(aiEnabled = true, allowCloudAi = true), true),
+            CloudRow("default AiSettings", AiSettings(), false)
         )
+        assertEquals("canUseCloud table size guard", 5, rows.size)
 
-        assertTrue(policy.canUseCloudFor(settings, AiCapability.RECEIPT_EXTRACTION))
+        rows.forEach { row ->
+            assertEquals("[${row.name}] canUseCloud", row.expected, policy.canUseCloud(row.settings))
+        }
     }
 
+    // ── canUseCloudFor ────────────────────────────────────────────────────────
+
     @Test
-    fun `canUseCloudFor warranty extraction follows warranty extraction toggle`() {
-        val enabled = AiSettings(
+    fun `canUseCloudFor follows the per-capability toggle only when cloud is enabled`() {
+        val warrantyEnabled = AiSettings(
             aiEnabled = true,
             allowCloudAi = true,
             receiptAssistEnabled = true,
             warrantyExtractionEnabled = true
         )
-        val disabled = enabled.copy(warrantyExtractionEnabled = false)
-
-        assertTrue(policy.canUseCloudFor(enabled, AiCapability.WARRANTY_EXTRACTION))
-        assertFalse(policy.canUseCloudFor(disabled, AiCapability.WARRANTY_EXTRACTION))
-    }
-
-    @Test
-    fun `canUseCloudFor warranty extraction stays disabled when receipt assist is enabled`() {
-        val settings = AiSettings(
-            aiEnabled = true,
-            allowCloudAi = true,
-            receiptAssistEnabled = true,
-            warrantyExtractionEnabled = false
+        val rows = listOf(
+            CapabilityRow(
+                "review explanation toggle off",
+                AiSettings(aiEnabled = true, allowCloudAi = true, reviewExplanationEnabled = false),
+                AiCapability.REVIEW_EXPLANATION,
+                false
+            ),
+            CapabilityRow(
+                "review explanation toggle on",
+                AiSettings(aiEnabled = true, allowCloudAi = true, reviewExplanationEnabled = true),
+                AiCapability.REVIEW_EXPLANATION,
+                true
+            ),
+            CapabilityRow(
+                "receipt extraction does not require image toggle",
+                AiSettings(
+                    aiEnabled = true,
+                    allowCloudAi = true,
+                    receiptAssistEnabled = true,
+                    receiptImageCloudEnabled = false
+                ),
+                AiCapability.RECEIPT_EXTRACTION,
+                true
+            ),
+            CapabilityRow(
+                "warranty extraction toggle on",
+                warrantyEnabled,
+                AiCapability.WARRANTY_EXTRACTION,
+                true
+            ),
+            CapabilityRow(
+                "warranty extraction toggle off stays disabled even when receipt assist is enabled",
+                warrantyEnabled.copy(warrantyExtractionEnabled = false),
+                AiCapability.WARRANTY_EXTRACTION,
+                false
+            )
         )
+        assertEquals("canUseCloudFor table size guard", 5, rows.size)
 
-        assertFalse(policy.canUseCloudFor(settings, AiCapability.WARRANTY_EXTRACTION))
+        rows.forEach { row ->
+            assertEquals(
+                "[${row.name}] canUseCloudFor(${row.capability})",
+                row.expected,
+                policy.canUseCloudFor(row.settings, row.capability)
+            )
+        }
     }
 
-    @Test
-    fun `shouldAllowOnDevice returns false when on-device is disabled`() {
-        val settings = AiSettings(aiEnabled = true, allowOnDeviceAi = false, receiptAssistEnabled = true)
-        assertFalse(policy.shouldAllowOnDevice(settings, AiCapability.RECEIPT_EXTRACTION))
-    }
+    // ── shouldAllowOnDevice ───────────────────────────────────────────────────
 
     @Test
-    fun `shouldAllowOnDevice returns true when on-device and capability are enabled`() {
-        val settings = AiSettings(aiEnabled = true, allowOnDeviceAi = true, receiptAssistEnabled = true)
-        assertTrue(policy.shouldAllowOnDevice(settings, AiCapability.RECEIPT_EXTRACTION))
+    fun `shouldAllowOnDevice requires on-device toggle and capability toggle`() {
+        val rows = listOf(
+            CapabilityRow(
+                "on-device disabled",
+                AiSettings(aiEnabled = true, allowOnDeviceAi = false, receiptAssistEnabled = true),
+                AiCapability.RECEIPT_EXTRACTION,
+                false
+            ),
+            CapabilityRow(
+                "on-device and capability enabled",
+                AiSettings(aiEnabled = true, allowOnDeviceAi = true, receiptAssistEnabled = true),
+                AiCapability.RECEIPT_EXTRACTION,
+                true
+            )
+        )
+        assertEquals("shouldAllowOnDevice table size guard", 2, rows.size)
+
+        rows.forEach { row ->
+            assertEquals(
+                "[${row.name}] shouldAllowOnDevice(${row.capability})",
+                row.expected,
+                policy.shouldAllowOnDevice(row.settings, row.capability)
+            )
+        }
     }
 
     // ── shouldRedact ──────────────────────────────────────────────────────────
 
     @Test
-    fun `shouldRedact returns true when redactBeforeCloud is true regardless of capability`() {
-        val settings = AiSettings(redactBeforeCloud = true)
-        for (capability in AiCapability.entries) {
-            assertTrue(
-                "Expected shouldRedact=true for capability $capability",
-                policy.shouldRedact(settings, capability)
+    fun `shouldRedact depends only on redactBeforeCloud and defaults to true`() {
+        val rows = listOf(
+            RedactRow(
+                "redactBeforeCloud=true for every capability",
+                AiSettings(redactBeforeCloud = true),
+                AiCapability.entries.toList(),
+                true
+            ),
+            RedactRow(
+                "redactBeforeCloud=false for every capability",
+                AiSettings(redactBeforeCloud = false),
+                AiCapability.entries.toList(),
+                false
+            ),
+            // redactBeforeCloud=true wins even if AI cloud is fully enabled
+            RedactRow(
+                "redact true with aiEnabled and allowCloudAi on",
+                AiSettings(aiEnabled = true, allowCloudAi = true, redactBeforeCloud = true),
+                listOf(AiCapability.REVIEW_EXPLANATION),
+                true
+            ),
+            // redactBeforeCloud=false gives false even if AI is disabled
+            RedactRow(
+                "redact false with aiEnabled and allowCloudAi off",
+                AiSettings(aiEnabled = false, allowCloudAi = false, redactBeforeCloud = false),
+                listOf(AiCapability.REVIEW_EXPLANATION),
+                false
+            ),
+            RedactRow(
+                "default AiSettings",
+                AiSettings(),
+                listOf(AiCapability.REVIEW_EXPLANATION),
+                true
             )
+        )
+        assertEquals("shouldRedact table size guard", 5, rows.size)
+
+        rows.forEach { row ->
+            row.capabilities.forEach { capability ->
+                assertEquals(
+                    "[${row.name}] shouldRedact for capability $capability",
+                    row.expected,
+                    policy.shouldRedact(row.settings, capability)
+                )
+            }
         }
-    }
-
-    @Test
-    fun `shouldRedact returns false when redactBeforeCloud is false regardless of capability`() {
-        val settings = AiSettings(redactBeforeCloud = false)
-        for (capability in AiCapability.entries) {
-            assertFalse(
-                "Expected shouldRedact=false for capability $capability",
-                policy.shouldRedact(settings, capability)
-            )
-        }
-    }
-
-    @Test
-    fun `shouldRedact is not influenced by aiEnabled or allowCloudAi flags`() {
-        // redactBeforeCloud=true should win even if AI cloud is fully enabled
-        val allOn = AiSettings(aiEnabled = true, allowCloudAi = true, redactBeforeCloud = true)
-        assertTrue(policy.shouldRedact(allOn, AiCapability.REVIEW_EXPLANATION))
-
-        // redactBeforeCloud=false should give false even if AI is disabled
-        val allOff = AiSettings(aiEnabled = false, allowCloudAi = false, redactBeforeCloud = false)
-        assertFalse(policy.shouldRedact(allOff, AiCapability.REVIEW_EXPLANATION))
-    }
-
-    // ── defaults ──────────────────────────────────────────────────────────────
-
-    @Test
-    fun `default AiSettings result in canUseCloud false and shouldRedact true`() {
-        val defaults = AiSettings() // aiEnabled=false, allowCloudAi=false, redactBeforeCloud=true
-        assertFalse(policy.canUseCloud(defaults))
-        assertTrue(policy.shouldRedact(defaults, AiCapability.REVIEW_EXPLANATION))
     }
 }

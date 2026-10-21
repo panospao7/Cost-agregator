@@ -1,14 +1,25 @@
 package com.yourname.expensetracker.ui.util
 
+import com.yourname.expensetracker.domain.util.AmountUtils
+import com.yourname.expensetracker.domain.util.UserAmountResult
+import java.text.DecimalFormatSymbols
+import java.util.Locale
+
 /**
  * Sanitizes amount input for money fields.
  *
  * Rules:
- * - Only digits and one decimal separator (period) allowed
- * - Maximum 2 decimal places
- * - No leading zeros (except "0." prefix)
- * - Maximum reasonable length (10 integer digits)
+ * - Only ASCII digits, '.' and ',' are kept; digit runs are never joined across a separator
+ *   (repeated separators collapse to one, e.g. "1,,5" -> "1,5")
+ * - A leading separator becomes "0," / "0." (".5" -> "0.5")
+ * - No leading zeros (except a single "0")
+ * - At most 2 digits after the locale decimal separator, 3 after the other separator
+ *   (the 3 allows thousands groups such as "1.234" / "1,234" to be typed)
+ * - Maximum 10 integer digits
  * - Empty/blank input returns empty string
+ * - Separators come from the current default locale at call time
+ *
+ * Validity is decided by [AmountUtils.parseUserAmount], the same function the save path uses.
  *
  * Usage:
  * ```kotlin
@@ -22,46 +33,115 @@ object AmountInputSanitizer {
 
     private const val MAX_INTEGER_DIGITS = 10
     private const val MAX_FRACTION_DIGITS = 2
+    private const val MAX_GROUP_DIGITS = 3
 
     /**
-     * Sanitizes raw input into a valid money amount string.
+     * Sanitizes raw input into a money amount string that keeps the user's separators.
      *
      * @param raw The raw user input
-     * @param maxFractionDigits Maximum decimal places (default 2)
-     * @return Sanitized string that can be parsed as a valid amount
+     * @param maxFractionDigits Maximum decimal places after the locale decimal separator (default 2)
+     * @return Sanitized string that [isValid] / [AmountUtils.parseUserAmount] can evaluate
      */
     fun sanitize(raw: String, maxFractionDigits: Int = MAX_FRACTION_DIGITS): String {
         if (raw.isBlank()) return ""
 
-        val cleaned = raw.filter { it.isDigit() || it == '.' }
+        val cleaned = raw.filter { it in '0'..'9' || it == '.' || it == ',' }
         if (cleaned.isEmpty()) return ""
 
-        // S2-002: Leading decimal → prepend "0" so ".5" becomes "0.5"
-        val normalized = if (cleaned.startsWith('.')) "0$cleaned" else cleaned
+        // Leading separator -> prepend "0" so ".5" becomes "0.5" and ",5" becomes "0,5".
+        val normalized = if (cleaned[0] == '.' || cleaned[0] == ',') "0$cleaned" else cleaned
 
-        val parts = normalized.split('.')
+        val localeDecimal = if (currentSymbols().decimalSeparator == ',') ',' else '.'
 
-        val rawInteger = parts[0].take(MAX_INTEGER_DIGITS)
-        val integerPart = if (rawInteger.all { it == '0' }) {
-            if (rawInteger.isEmpty()) "" else "0"
-        } else {
-            rawInteger.trimStart('0').ifEmpty { "0" }
+        // Split into digit runs separated by single separators (repeated separators collapse).
+        val runs = mutableListOf(StringBuilder())
+        val separators = mutableListOf<Char>()
+        for (c in normalized) {
+            if (c in '0'..'9') {
+                runs.last().append(c)
+            } else if (runs.last().isNotEmpty()) {
+                separators.add(c)
+                runs.add(StringBuilder())
+            }
         }
 
-        return if (parts.size > 1) {
-            val fractionPart = parts[1].take(maxFractionDigits)
-            "$integerPart.$fractionPart"
+        val rawFirst = runs[0].toString()
+        val first = if (rawFirst.all { it == '0' }) "0" else rawFirst.trimStart('0')
+        var integerBudget = MAX_INTEGER_DIGITS
+        val firstPart = first.take(integerBudget)
+        integerBudget -= firstPart.length
+        val out = StringBuilder(firstPart)
+
+        val lastIndex = runs.lastIndex
+        if (lastIndex == 0) return out.toString()
+
+        val lastLimit = if (separators.last() == localeDecimal) {
+            maxFractionDigits.coerceAtLeast(0)
         } else {
-            integerPart
+            MAX_GROUP_DIGITS
         }
+        for (i in 1..lastIndex) {
+            val run = runs[i].toString()
+            if (i == lastIndex) {
+                out.append(separators[i - 1]).append(run.take(lastLimit))
+            } else {
+                val part = run.take(MAX_GROUP_DIGITS).take(integerBudget)
+                if (part.isEmpty()) break
+                integerBudget -= part.length
+                out.append(separators[i - 1]).append(part)
+            }
+        }
+        return out.toString()
     }
 
     /**
-     * Checks if the input is a valid amount (can be parsed to Double > 0).
+     * Single entry point for parsing a user-typed amount, using the separators of the current
+     * default locale at call time. Validation and save paths must both use this (or [parseOrNull])
+     * so they cannot disagree.
      */
-    fun isValid(input: String): Boolean {
-        if (input.isBlank()) return false
-        val amount = input.toDoubleOrNull() ?: return false
-        return amount > 0
+    fun parse(input: String, maxFractionDigits: Int = MAX_FRACTION_DIGITS): UserAmountResult {
+        val symbols = currentSymbols()
+        return AmountUtils.parseUserAmount(
+            text = input,
+            decimalSep = symbols.decimalSeparator,
+            groupingSep = symbols.groupingSeparator,
+            maxFractionDigits = maxFractionDigits
+        )
     }
+
+    /**
+     * Parsed amount, or null when the input is empty, ambiguous or invalid. The value is NOT
+     * checked for positivity; callers keep their own range checks.
+     */
+    fun parseOrNull(input: String, maxFractionDigits: Int = MAX_FRACTION_DIGITS): Double? =
+        (parse(input, maxFractionDigits) as? UserAmountResult.Valid)?.value
+
+    /**
+     * Checks if the input is a valid amount (parses to Double > 0).
+     * Ambiguous and invalid input are both rejected.
+     */
+    fun isValid(input: String, maxFractionDigits: Int = MAX_FRACTION_DIGITS): Boolean {
+        if (input.isBlank()) return false
+        val value = parseOrNull(input, maxFractionDigits) ?: return false
+        return value > 0
+    }
+
+    /**
+     * Text to prefill an editable amount field with: always [maxFractionDigits] decimals, no
+     * grouping, no exponent, ASCII digits, and the decimal mark of the current default locale
+     * (same rule [sanitize] uses). Using the locale mark keeps the text round-tripping through
+     * [sanitize] + [parseOrNull], and typing one more digit is capped by [sanitize] instead of
+     * being read as a thousands group (e.g. "150.005" in el_GR). Non-finite input yields "".
+     */
+    fun formatForInput(value: Double, maxFractionDigits: Int = MAX_FRACTION_DIGITS): String {
+        if (!value.isFinite()) return ""
+        val digits = maxFractionDigits.coerceAtLeast(0)
+        var text = String.format(Locale.US, "%.${digits}f", value)
+        if (text.startsWith("-") && text.none { it in '1'..'9' }) text = text.substring(1)
+        val localeDecimal = if (currentSymbols().decimalSeparator == ',') ',' else '.'
+        return if (localeDecimal == ',') text.replace('.', ',') else text
+    }
+
+    private fun currentSymbols(): DecimalFormatSymbols =
+        DecimalFormatSymbols.getInstance(Locale.getDefault())
 }

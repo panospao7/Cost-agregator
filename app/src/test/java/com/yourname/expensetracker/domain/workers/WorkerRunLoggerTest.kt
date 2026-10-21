@@ -7,19 +7,38 @@ import com.yourname.expensetracker.domain.diagnostics.EventMetadataSanitizer
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.MockKMatcherScope
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.sql.SQLException
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
+import kotlin.test.assertFailsWith
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class WorkerRunLoggerTest {
@@ -201,10 +220,16 @@ class WorkerRunLoggerTest {
         }
     }
 
-    // ── PR12B: Mutex ensures exactly one terminal DB write under race ──
+    // ── PR12B: Single-thread bookkeeping - only the first terminal call reaches the DAO ──
 
+    /**
+     * NOT a thread-level race: runTest runs the four asyncs on ONE thread and the DAO mock
+     * never suspends, so each terminal call runs to completion before the next starts.
+     * This only checks the "already completed" bookkeeping. The real mutex race is covered by
+     * the `real threads` tests at the end of this class.
+     */
     @Test
-    fun concurrent_terminal_calls_result_in_exactly_one_write() = runTest {
+    fun sequential_terminal_calls_on_single_thread_result_in_exactly_one_write() = runTest {
         coEvery { dao.insert(any()) } returns 1L
         coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
         val handle = logger.start("test_worker")
@@ -220,29 +245,44 @@ class WorkerRunLoggerTest {
         coVerify(exactly = 1) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
     }
 
-    @Test
-    fun duplicate_success_is_noop() = runTest {
-        coEvery { dao.insert(any()) } returns 1L
-        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
-        val handle = logger.start("test_worker")
-
-        handle.success()
-        handle.success()
-        handle.success()
-
-        coVerify(exactly = 1) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
-    }
+    private data class DuplicateTerminalRow(
+        val name: String,
+        val calls: List<suspend (WorkerRunHandle) -> TerminalWriteOutcome>
+    )
 
     @Test
-    fun duplicate_failure_is_noop() = runTest {
-        coEvery { dao.insert(any()) } returns 1L
-        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
-        val handle = logger.start("test_worker")
+    fun duplicate_terminal_call_is_noop_table() = runTest {
+        val rows = listOf(
+            DuplicateTerminalRow(
+                "duplicate success",
+                listOf<suspend (WorkerRunHandle) -> TerminalWriteOutcome>(
+                    { it.success() }, { it.success() }, { it.success() }
+                )
+            ),
+            DuplicateTerminalRow(
+                "duplicate failure",
+                listOf<suspend (WorkerRunHandle) -> TerminalWriteOutcome>(
+                    { it.failure("BOOM") }, { it.failure("BOOM2") }
+                )
+            )
+        )
+        assertEquals("every duplicate-terminal case must stay a row", 2, rows.size)
 
-        handle.failure("BOOM")
-        handle.failure("BOOM2")
+        for (row in rows) {
+            val rowDao = mockk<BackgroundJobRunDao>(relaxed = true) // fresh mock per row
+            val rowLogger = WorkerRunLoggerImpl(rowDao, sanitizer, timeProvider)
+            coEvery { rowDao.insert(any()) } returns 1L
+            coEvery { rowDao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
+            val handle = rowLogger.start("test_worker")
 
-        coVerify(exactly = 1) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+            for (call in row.calls) call(handle)
+
+            try {
+                coVerify(exactly = 1) { rowDao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+            } catch (e: AssertionError) {
+                throw AssertionError("[${row.name}] only the first terminal call may reach the DAO: ${e.message}", e)
+            }
+        }
     }
 
     @Test
@@ -381,64 +421,39 @@ class WorkerRunLoggerTest {
     // PR12H-3: TerminalWriteOutcome return value tests
     // ══════════════════════════════════════════════════════════════════════
 
-    @Test
-    fun `terminal success returns Durable when db write succeeds`() = runTest {
-        coEvery { dao.insert(any()) } returns 1L
-        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
-        val handle = logger.start("test_worker")
-
-        val outcome = handle.success()
-        assertTrue(outcome is TerminalWriteOutcome.Durable)
-    }
+    private data class TerminalMethodRow(
+        val name: String,
+        val call: suspend (WorkerRunHandle) -> TerminalWriteOutcome
+    )
 
     @Test
-    fun `terminal skipped returns Durable when db write succeeds`() = runTest {
-        coEvery { dao.insert(any()) } returns 1L
-        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
-        val handle = logger.start("test_worker")
+    fun `every terminal method returns Durable when db write succeeds`() = runTest {
+        val rows = listOf(
+            TerminalMethodRow("success") { it.success() },
+            TerminalMethodRow("skipped") { it.skipped("privacy_denied") },
+            TerminalMethodRow("retry") { it.retry("timeout", error = RuntimeException("boom")) },
+            TerminalMethodRow("failure") { it.failure("permanent", error = RuntimeException("boom")) },
+            TerminalMethodRow("cancelled") { it.cancelled("system_shutdown") },
+            TerminalMethodRow("staleAborted") { it.staleAborted() }
+        )
+        assertEquals("every terminal method must stay a row", 6, rows.size)
 
-        val outcome = handle.skipped("privacy_denied")
-        assertTrue(outcome is TerminalWriteOutcome.Durable)
-    }
+        for (row in rows) {
+            val rowDao = mockk<BackgroundJobRunDao>(relaxed = true) // fresh mock per row
+            val rowLogger = WorkerRunLoggerImpl(rowDao, sanitizer, timeProvider)
+            coEvery { rowDao.insert(any()) } returns 1L
+            coEvery { rowDao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
+            val handle = rowLogger.start("test_worker")
 
-    @Test
-    fun `terminal retry returns Durable when db write succeeds`() = runTest {
-        coEvery { dao.insert(any()) } returns 1L
-        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
-        val handle = logger.start("test_worker")
+            val outcome = row.call(handle)
 
-        val outcome = handle.retry("timeout", error = RuntimeException("boom"))
-        assertTrue(outcome is TerminalWriteOutcome.Durable)
-    }
-
-    @Test
-    fun `terminal failure returns Durable when db write succeeds`() = runTest {
-        coEvery { dao.insert(any()) } returns 1L
-        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
-        val handle = logger.start("test_worker")
-
-        val outcome = handle.failure("permanent", error = RuntimeException("boom"))
-        assertTrue(outcome is TerminalWriteOutcome.Durable)
-    }
-
-    @Test
-    fun `terminal cancelled returns Durable when db write succeeds`() = runTest {
-        coEvery { dao.insert(any()) } returns 1L
-        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
-        val handle = logger.start("test_worker")
-
-        val outcome = handle.cancelled("system_shutdown")
-        assertTrue(outcome is TerminalWriteOutcome.Durable)
-    }
-
-    @Test
-    fun `terminal staleAborted returns Durable when db write succeeds`() = runTest {
-        coEvery { dao.insert(any()) } returns 1L
-        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
-        val handle = logger.start("test_worker")
-
-        val outcome = handle.staleAborted()
-        assertTrue(outcome is TerminalWriteOutcome.Durable)
+            assertTrue("[${row.name}] expected Durable but was $outcome", outcome is TerminalWriteOutcome.Durable)
+            try {
+                coVerify(exactly = 1) { rowDao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+            } catch (e: AssertionError) {
+                throw AssertionError("[${row.name}] expected exactly one completeTerminal DAO write: ${e.message}", e)
+            }
+        }
     }
 
     @Test
@@ -598,97 +613,108 @@ class WorkerRunLoggerTest {
     // PR12I-2: Terminal reason-code persistence for all states
     // ══════════════════════════════════════════════════════════════════════
 
-    @Test
-    fun `skipped_persists_terminal_reason_code`() = runTest {
-        coEvery { dao.insert(any()) } returns 1L
-        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
-        val handle = logger.start("test_worker")
-        handle.skipped("PRIVACY_DENIED")
-
-        coVerify(exactly = 1) {
-            dao.completeTerminal(
-                eq(1L), eq("SKIPPED"), any(),
-                any(), any(), any(), any(), any(),
-                eq("PRIVACY_DENIED"), any(), any(), any(), any(),
-                eq("PRIVACY_DENIED"), eq("PRIVACY_DENIED"), any(), any()
-            )
-        }
-    }
-
-    @Test
-    fun `retry_persists_terminal_reason_code_and_classifies_diagnostic`() = runTest {
-        coEvery { dao.insert(any()) } returns 1L
-        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
-        val handle = logger.start("test_worker")
-        val timeoutEx = kotlinx.coroutines.runBlocking {
+    /**
+     * A real [kotlinx.coroutines.TimeoutCancellationException]. The body must never finish
+     * first: the timeout fires on a different thread than runBlocking's delay queue, so a
+     * finite delay races it.
+     */
+    private fun realTimeoutCancellation(): kotlinx.coroutines.TimeoutCancellationException =
+        kotlinx.coroutines.runBlocking {
             try {
-                // The body must never finish first: the timeout fires on a different
-                // thread than runBlocking's delay queue, so a finite delay races it.
                 kotlinx.coroutines.withTimeout(1L) { kotlinx.coroutines.delay(Long.MAX_VALUE) }
                 throw IllegalStateException("Expected TimeoutCancellationException")
             } catch (e: kotlinx.coroutines.TimeoutCancellationException) { e }
         }
-        handle.retry("pipeline timeout", error = timeoutEx)
 
-        coVerify(exactly = 1) {
-            dao.completeTerminal(
-                eq(1L), eq("RETRY"), any(),
-                any(), any(), any(), any(), any(),
-                // retry() persists the safe reason in retry_reason; status_reason stays null.
-                isNull(), eq("WORKER_UNHANDLED_EXCEPTION"), any(), eq("TimeoutCancellationException"), any(),
-                eq("WORKER_UNHANDLED_EXCEPTION"), eq("TIMEOUT"), any(), any()
-            )
-        }
+    /** Expected value of one persisted column: unchecked (any), null, or an exact string. */
+    private data class FieldExpectation(val checked: Boolean, val value: String?)
+
+    private fun anyField() = FieldExpectation(checked = false, value = null)
+    private fun nullField() = FieldExpectation(checked = true, value = null)
+    private fun exactField(value: String) = FieldExpectation(checked = true, value = value)
+
+    private fun MockKMatcherScope.matchField(expectation: FieldExpectation): String? = when {
+        !expectation.checked -> any<String>()
+        expectation.value == null -> isNull<String>()
+        else -> eq(expectation.value)
     }
 
-    @Test
-    fun `failure_persists_terminal_reason_code_and_classifies_diagnostic`() = runTest {
-        coEvery { dao.insert(any()) } returns 1L
-        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
-        val handle = logger.start("test_worker")
-        handle.failure("WORKER_UNHANDLED_EXCEPTION", error = IllegalStateException("boom"))
-
-        coVerify(exactly = 1) {
-            dao.completeTerminal(
-                eq(1L), eq("FAILED"), any(),
-                any(), any(), any(), any(), any(),
-                eq("WORKER_UNHANDLED_EXCEPTION"), any(), any(), eq("IllegalStateException"), any(),
-                eq("WORKER_UNHANDLED_EXCEPTION"), eq("WORKER_UNHANDLED_EXCEPTION"), any(), any()
-            )
-        }
-    }
+    private data class TerminalPersistRow(
+        val name: String,
+        val status: String,
+        val statusReason: FieldExpectation,
+        val retryReason: FieldExpectation,
+        val errorClass: FieldExpectation,
+        val cancellationReason: FieldExpectation,
+        val terminalReasonCode: String,
+        val terminalDiagnosticCode: String,
+        val call: suspend (WorkerRunHandle) -> TerminalWriteOutcome
+    )
 
     @Test
-    fun `cancelled_persists_terminal_reason_code`() = runTest {
-        coEvery { dao.insert(any()) } returns 1L
-        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
-        val handle = logger.start("test_worker")
-        handle.cancelled("CANCELLED_BY_SYSTEM")
-
-        coVerify(exactly = 1) {
-            dao.completeTerminal(
-                eq(1L), eq("CANCELLED"), any(),
-                any(), any(), any(), any(), any(),
-                eq("CANCELLED_BY_SYSTEM"), any(), any(), any(), eq("CANCELLED_BY_SYSTEM"),
-                eq("CANCELLED_BY_SYSTEM"), eq("CANCELLED_BY_SYSTEM"), any(), any()
+    fun `terminal_methods_persist_terminal_reason_code_table`() = runTest {
+        val rows = listOf(
+            TerminalPersistRow(
+                name = "skipped", status = "SKIPPED",
+                statusReason = exactField("PRIVACY_DENIED"), retryReason = anyField(),
+                errorClass = anyField(), cancellationReason = anyField(),
+                terminalReasonCode = "PRIVACY_DENIED", terminalDiagnosticCode = "PRIVACY_DENIED",
+                call = { it.skipped("PRIVACY_DENIED") }
+            ),
+            // retry() persists the safe reason in retry_reason; status_reason stays null.
+            TerminalPersistRow(
+                name = "retry classifies the diagnostic", status = "RETRY",
+                statusReason = nullField(), retryReason = exactField("WORKER_UNHANDLED_EXCEPTION"),
+                errorClass = exactField("TimeoutCancellationException"), cancellationReason = anyField(),
+                terminalReasonCode = "WORKER_UNHANDLED_EXCEPTION", terminalDiagnosticCode = "TIMEOUT",
+                call = { it.retry("pipeline timeout", error = realTimeoutCancellation()) }
+            ),
+            TerminalPersistRow(
+                name = "failure classifies the diagnostic", status = "FAILED",
+                statusReason = exactField("WORKER_UNHANDLED_EXCEPTION"), retryReason = anyField(),
+                errorClass = exactField("IllegalStateException"), cancellationReason = anyField(),
+                terminalReasonCode = "WORKER_UNHANDLED_EXCEPTION", terminalDiagnosticCode = "WORKER_UNHANDLED_EXCEPTION",
+                call = { it.failure("WORKER_UNHANDLED_EXCEPTION", error = IllegalStateException("boom")) }
+            ),
+            TerminalPersistRow(
+                name = "cancelled", status = "CANCELLED",
+                statusReason = exactField("CANCELLED_BY_SYSTEM"), retryReason = anyField(),
+                errorClass = anyField(), cancellationReason = exactField("CANCELLED_BY_SYSTEM"),
+                terminalReasonCode = "CANCELLED_BY_SYSTEM", terminalDiagnosticCode = "CANCELLED_BY_SYSTEM",
+                call = { it.cancelled("CANCELLED_BY_SYSTEM") }
+            ),
+            TerminalPersistRow(
+                name = "staleAborted", status = "STALE_ABORTED",
+                statusReason = exactField("STALE_RUNNING_ABORTED"), retryReason = anyField(),
+                errorClass = anyField(), cancellationReason = anyField(),
+                terminalReasonCode = "STALE_RUNNING_ABORTED", terminalDiagnosticCode = "STALE_RUNNING_ABORTED",
+                call = { it.staleAborted() }
             )
-        }
-    }
+        )
+        assertEquals("every terminal state must stay a row", 5, rows.size)
 
-    @Test
-    fun `stale_aborted_persists_terminal_reason_code`() = runTest {
-        coEvery { dao.insert(any()) } returns 1L
-        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
-        val handle = logger.start("test_worker")
-        handle.staleAborted()
+        for (row in rows) {
+            val rowDao = mockk<BackgroundJobRunDao>(relaxed = true) // fresh mock per row
+            val rowLogger = WorkerRunLoggerImpl(rowDao, sanitizer, timeProvider)
+            coEvery { rowDao.insert(any()) } returns 1L
+            coEvery { rowDao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
+            val handle = rowLogger.start("test_worker")
 
-        coVerify(exactly = 1) {
-            dao.completeTerminal(
-                eq(1L), eq("STALE_ABORTED"), any(),
-                any(), any(), any(), any(), any(),
-                eq("STALE_RUNNING_ABORTED"), any(), any(), any(), any(),
-                eq("STALE_RUNNING_ABORTED"), eq("STALE_RUNNING_ABORTED"), any(), any()
-            )
+            row.call(handle)
+
+            try {
+                coVerify(exactly = 1) {
+                    rowDao.completeTerminal(
+                        eq(1L), eq(row.status), any(),
+                        any(), any(), any(), any(), any(),
+                        matchField(row.statusReason), matchField(row.retryReason), any(),
+                        matchField(row.errorClass), matchField(row.cancellationReason),
+                        eq(row.terminalReasonCode), eq(row.terminalDiagnosticCode), any(), any()
+                    )
+                }
+            } catch (e: AssertionError) {
+                throw AssertionError("[${row.name}] persisted terminal columns mismatch: ${e.message}", e)
+            }
         }
     }
 
@@ -707,73 +733,105 @@ class WorkerRunLoggerTest {
                 any(), any(), any(), any()
             )
         }
-        // verify sanitizer was called with raw exception message only (not "reason: message")
-        coVerify(exactly = 1) {
-            sanitizer.sanitizeExceptionMessage("sensitive db path")
+        // The exception message is never read for storage: only the class name is persisted,
+        // so the sanitizer must not be handed the raw message at all.
+        coVerify(exactly = 0) {
+            sanitizer.sanitizeExceptionMessage(any())
         }
     }
 
     @Test
-    fun `classifyDiagnostic_timeout_returns_TIMEOUT`() {
-        val timeoutEx = kotlinx.coroutines.runBlocking {
-            try {
-                // See retry_persists_terminal_reason_code_and_classifies_diagnostic.
-                kotlinx.coroutines.withTimeout(1L) { kotlinx.coroutines.delay(Long.MAX_VALUE) }
-                throw IllegalStateException("Expected TimeoutCancellationException")
-            } catch (e: kotlinx.coroutines.TimeoutCancellationException) { e }
+    fun `retry_and_failure_store_only_exception_class_never_message_text`() = runTest {
+        // An echoing sanitizer would leak the message if production still routed it through.
+        every { sanitizer.sanitizeExceptionMessage(any()) } answers { firstArg() }
+        val secret = "secret-789"
+
+        val rows = listOf(
+            TerminalMethodRow("retry") { it.retry("TIMEOUT", error = IllegalStateException(secret)) },
+            TerminalMethodRow("failure") { it.failure("PERMANENT", error = IllegalStateException(secret)) }
+        )
+        for (row in rows) {
+            val rowDao = mockk<BackgroundJobRunDao>(relaxed = true) // fresh mock per row
+            val rowLogger = WorkerRunLoggerImpl(rowDao, sanitizer, timeProvider)
+            coEvery { rowDao.insert(any()) } returns 1L
+            val errorMessage = slot<String>()
+            val errorClass = slot<String>()
+            val terminalReason = slot<String>()
+            val terminalDiagnostic = slot<String>()
+            coEvery {
+                rowDao.completeTerminal(
+                    any(), any(), any(), any(), any(), any(), any(), any(),
+                    any(), any(), capture(errorMessage), capture(errorClass), any(),
+                    capture(terminalReason), capture(terminalDiagnostic), any(), any()
+                )
+            } returns 1
+            val handle = rowLogger.start("test_worker")
+
+            row.call(handle)
+
+            assertEquals("[${row.name}] errorMessage is the class name only", "IllegalStateException", errorMessage.captured)
+            listOf(errorMessage, errorClass, terminalReason, terminalDiagnostic).forEach {
+                assertTrue("[${row.name}] stored field leaks message text: ${it.captured}", !it.captured.contains(secret))
+            }
         }
-        assertEquals("TIMEOUT", WorkerRunLoggerImpl.classifyDiagnostic("any", timeoutEx))
     }
 
-    @Test
-    fun `classifyDiagnostic_retryable_returns_message`() {
-        assertEquals("TIMEOUT", WorkerRunLoggerImpl.classifyDiagnostic("any", RetryableWorkerException(DiagnosticReasonCode.WORKER_TIMEOUT.name)))
-    }
+    private data class ClassifyDiagnosticRow(
+        val name: String,
+        val reason: String,
+        val error: Throwable?,
+        val expected: String
+    )
 
     @Test
-    fun `classifyDiagnostic_checkpoint_returns_reasonCode`() {
-        val ex = WorkerCheckpointBlockedException("STOP_REQUESTED", "msg")
-        assertEquals("STOP_REQUESTED", WorkerRunLoggerImpl.classifyDiagnostic("any", ex))
-    }
+    fun `classifyDiagnostic_table_maps_every_reason_and_error_shape`() {
+        val rows = listOf(
+            ClassifyDiagnosticRow("timeout exception returns TIMEOUT", "any", realTimeoutCancellation(), "TIMEOUT"),
+            ClassifyDiagnosticRow(
+                "retryable exception returns its message", "any",
+                RetryableWorkerException(DiagnosticReasonCode.WORKER_TIMEOUT.name), "TIMEOUT"
+            ),
+            ClassifyDiagnosticRow(
+                "checkpoint exception returns its reasonCode", "any",
+                WorkerCheckpointBlockedException("STOP_REQUESTED", "msg"), "STOP_REQUESTED"
+            ),
+            ClassifyDiagnosticRow(
+                "security exception with notification context returns permission denied",
+                "notification permission revoked", SecurityException(), "NOTIFICATION_PERMISSION_DENIED"
+            ),
+            ClassifyDiagnosticRow(
+                "reason containing TIMEOUT returns TIMEOUT", "pipeline TIMEOUT occurred", null, "TIMEOUT"
+            ),
+            ClassifyDiagnosticRow(
+                "security exception without notification returns SECURITY_EXCEPTION",
+                "generic failure", SecurityException(), "SECURITY_EXCEPTION"
+            ),
+            ClassifyDiagnosticRow(
+                "reason containing BLOCKED returns BLOCKED", "WRITE_BARRIER_BLOCKED", null, "BLOCKED"
+            ),
+            ClassifyDiagnosticRow(
+                "reason containing PRIVACY returns PRIVACY", "PRIVACY_DENIED", null, "PRIVACY"
+            ),
+            ClassifyDiagnosticRow(
+                "reason containing RESTORE returns RESTORE_BLOCKED", "RESTORE_PREPARING", null, "RESTORE_BLOCKED"
+            ),
+            ClassifyDiagnosticRow(
+                "reason containing NETWORK returns NETWORK_UNAVAILABLE",
+                "NETWORK_UNAVAILABLE", null, "NETWORK_UNAVAILABLE"
+            ),
+            ClassifyDiagnosticRow(
+                "fallback returns the reason", "UNKNOWN_ERROR", null, "UNKNOWN_ERROR"
+            )
+        )
+        assertEquals("every classifyDiagnostic case must stay a row", 11, rows.size)
 
-    @Test
-    fun `classifyDiagnostic_security_with_notification_context_returns_permission_denied`() {
-        assertEquals("NOTIFICATION_PERMISSION_DENIED", WorkerRunLoggerImpl.classifyDiagnostic("notification permission revoked", SecurityException()))
-    }
-
-    @Test
-    fun `classifyDiagnostic_reason_contains_TIMEOUT_returns_TIMEOUT`() {
-        assertEquals("TIMEOUT", WorkerRunLoggerImpl.classifyDiagnostic("pipeline TIMEOUT occurred", null))
-    }
-
-    @Test
-    fun `classifyDiagnostic_security_without_notification_returns_security_exception`() {
-        assertEquals("SECURITY_EXCEPTION", WorkerRunLoggerImpl.classifyDiagnostic("generic failure", SecurityException()))
-    }
-
-    @Test
-    fun `classifyDiagnostic_reason_contains_BLOCKED_returns_BLOCKED`() {
-        assertEquals("BLOCKED", WorkerRunLoggerImpl.classifyDiagnostic("WRITE_BARRIER_BLOCKED", null))
-    }
-
-    @Test
-    fun `classifyDiagnostic_reason_contains_PRIVACY_returns_PRIVACY`() {
-        assertEquals("PRIVACY", WorkerRunLoggerImpl.classifyDiagnostic("PRIVACY_DENIED", null))
-    }
-
-    @Test
-    fun `classifyDiagnostic_reason_contains_RESTORE_returns_RESTORE_BLOCKED`() {
-        assertEquals("RESTORE_BLOCKED", WorkerRunLoggerImpl.classifyDiagnostic("RESTORE_PREPARING", null))
-    }
-
-    @Test
-    fun `classifyDiagnostic_reason_contains_NETWORK_returns_NETWORK_UNAVAILABLE`() {
-        assertEquals("NETWORK_UNAVAILABLE", WorkerRunLoggerImpl.classifyDiagnostic("NETWORK_UNAVAILABLE", null))
-    }
-
-    @Test
-    fun `classifyDiagnostic_fallback_returns_reason`() {
-        assertEquals("UNKNOWN_ERROR", WorkerRunLoggerImpl.classifyDiagnostic("UNKNOWN_ERROR", null))
+        for (row in rows) {
+            assertEquals(
+                "[${row.name}]",
+                row.expected,
+                WorkerRunLoggerImpl.classifyDiagnostic(row.reason, row.error)
+            )
+        }
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -1057,5 +1115,296 @@ class WorkerRunLoggerTest {
                 any(), any()
             )
         }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Real multi-threaded terminal-mutex tests
+    //
+    // Production owner: WorkerRunLoggerImpl.Handle.terminalMutex, taken with
+    // terminalMutex.lock() at the top of Handle.terminal() and released in its `finally`.
+    // The `completed` flag is read right after the lock and set only after the DB write
+    // succeeded (or the row was confirmed already terminal).
+    //
+    // Race window: the DAO fake SUSPENDS inside completeTerminal (until every contender has
+    // BEGUN its terminal call, then a further real delay(10)). `probe.started` is incremented
+    // by each contender immediately BEFORE it calls into the handle, so "started == contenders"
+    // means every contender is at most a few instructions away from the mutex; the delay(10)
+    // closes that remaining gap with near-certainty (it is a real delay, not a happens-before
+    // edge). Because the suspension is inside the critical section, the mutex is what stops the
+    // other contenders from also seeing `completed == false` and also reaching the DAO. If the
+    // mutex were removed (or lock() was not held across the DAO call), any contender that
+    // reaches the `completed` check while the first write is still suspended becomes an extra
+    // writer, and ONE extra writer fails the test (writeAttempts > 1 and maxInFlight > 1).
+    // Detection of that mutant is therefore near-certain over 20 iterations on 8 threads, not
+    // strictly deterministic; the correct code passes deterministically. Fixed 8-thread pool
+    // with a start latch; no Thread.sleep; every run is bounded by withTimeout so a deadlock
+    // fails. No mutant run is recorded.
+    // ══════════════════════════════════════════════════════════════════════
+
+    private class RaceProbe(val contenders: Int) {
+        val inFlight = AtomicInteger(0)
+        val maxInFlight = AtomicInteger(0)
+        val writeAttempts = AtomicInteger(0)
+        val attemptedStatuses = ConcurrentLinkedQueue<String>()
+        val started = AtomicInteger(0)
+    }
+
+    private fun stubRacingDao(raceDao: BackgroundJobRunDao, probe: RaceProbe, failFirstWrite: Boolean) {
+        coEvery { raceDao.insert(any()) } returns 1L
+        coEvery {
+            raceDao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        } coAnswers {
+            val attempt = probe.writeAttempts.incrementAndGet()
+            probe.attemptedStatuses.add(secondArg<String>())
+            val now = probe.inFlight.incrementAndGet()
+            probe.maxInFlight.accumulateAndGet(now) { a, b -> maxOf(a, b) }
+            try {
+                // Keep the write suspended until every contender has BEGUN its terminal call
+                // (`started` is incremented just before each call), then a real delay(10) that
+                // closes the remaining gap so late contenders are at the gate (near-certain,
+                // not a happens-before guarantee).
+                while (probe.started.get() < probe.contenders) yield()
+                delay(10)
+                if (failFirstWrite && attempt == 1) throw SQLException("synthetic first-write failure")
+                1
+            } finally {
+                probe.inFlight.decrementAndGet()
+            }
+        }
+    }
+
+    private fun call(
+        intendedStatus: String,
+        block: suspend () -> TerminalWriteOutcome
+    ): Pair<String, suspend () -> TerminalWriteOutcome> = intendedStatus to block
+
+    private fun contenders(handle: WorkerRunHandle): List<Pair<String, suspend () -> TerminalWriteOutcome>> = listOf(
+        call("SUCCESS") { handle.success() },
+        call("FAILED") { handle.failure("RACE_FAILURE") },
+        call("RETRY") { handle.retry("RACE_RETRY") },
+        call("SKIPPED") { handle.skipped("RACE_SKIPPED") },
+        call("CANCELLED") { handle.cancelled("RACE_CANCELLED") },
+        call("STALE_ABORTED") { handle.staleAborted() },
+        call("SUCCESS") { handle.success(rowsScanned = 7) },
+        call("FAILED") { handle.failure("RACE_FAILURE_2") }
+    )
+
+    private fun <T> runOnRealThreads(
+        threads: Int,
+        block: suspend CoroutineScope.(CoroutineDispatcher) -> T
+    ): T {
+        val executor = Executors.newFixedThreadPool(threads)
+        try {
+            val pool = executor.asCoroutineDispatcher()
+            return runBlocking { withTimeout(REAL_THREAD_TEST_TIMEOUT_MS) { block(this, pool) } }
+        } finally {
+            executor.shutdownNow()
+        }
+    }
+
+    private suspend fun CoroutineScope.raceAll(
+        pool: CoroutineDispatcher,
+        probe: RaceProbe,
+        calls: List<Pair<String, suspend () -> TerminalWriteOutcome>>
+    ): List<TerminalWriteOutcome> {
+        val ready = AtomicInteger(0)
+        val go = CompletableDeferred<Unit>()
+        val results = calls.map { (_, call) ->
+            async(pool) {
+                ready.incrementAndGet()
+                go.await()
+                probe.started.incrementAndGet()
+                call()
+            }
+        }
+        while (ready.get() < calls.size) yield()
+        go.complete(Unit)
+        return results.awaitAll()
+    }
+
+    @Test
+    fun `real threads - terminalMutex lets exactly one of N racing terminal calls reach the DAO`() {
+        repeat(20) { iteration ->
+            val raceDao = mockk<BackgroundJobRunDao>(relaxed = true)
+            val raceLogger = WorkerRunLoggerImpl(raceDao, sanitizer, timeProvider)
+            runOnRealThreads(threads = 8) { pool ->
+                val probe = RaceProbe(CONTENDER_COUNT)
+                stubRacingDao(raceDao, probe, failFirstWrite = false)
+                val handle = raceLogger.start("race_worker")
+                val calls = contenders(handle)
+                assertEquals(CONTENDER_COUNT, calls.size)
+
+                val outcomes = raceAll(pool, probe, calls)
+
+                assertEquals("iteration $iteration: exactly one terminal write", 1, probe.writeAttempts.get())
+                assertEquals("iteration $iteration: never two writers inside the critical section", 1, probe.maxInFlight.get())
+                val winners = outcomes.withIndex().filter { it.value == TerminalWriteOutcome.Durable }
+                assertEquals("iteration $iteration: exactly one Durable outcome", 1, winners.size)
+                // Persisted status is the single winner's intended status (no mixed final state).
+                assertEquals(calls[winners.single().index].first, probe.attemptedStatuses.single())
+                outcomes.filterIndexed { i, _ -> i != winners.single().index }.forEach {
+                    assertEquals(TerminalWriteOutcome.AlreadyTerminal("LOCAL_COMPLETED"), it)
+                }
+                // affected == 1 path never needs a read-back.
+                coVerify(exactly = 0) { raceDao.getById(any()) }
+            }
+        }
+    }
+
+    @Test
+    fun `real threads - failed first write does not burn the handle under contention`() {
+        repeat(20) { iteration ->
+            val raceDao = mockk<BackgroundJobRunDao>(relaxed = true)
+            val raceLogger = WorkerRunLoggerImpl(raceDao, sanitizer, timeProvider)
+            runOnRealThreads(threads = 8) { pool ->
+                val probe = RaceProbe(CONTENDER_COUNT)
+                stubRacingDao(raceDao, probe, failFirstWrite = true)
+                val handle = raceLogger.start("race_worker")
+                val calls = contenders(handle)
+                assertEquals(CONTENDER_COUNT, calls.size)
+
+                val outcomes = raceAll(pool, probe, calls)
+
+                // First writer fails (handle must stay retryable), the next contender through the
+                // mutex writes durably, everyone after sees the handle completed.
+                assertEquals("iteration $iteration", 2, probe.writeAttempts.get())
+                assertEquals(1, probe.maxInFlight.get())
+                val notDurable = outcomes.filterIsInstance<TerminalWriteOutcome.NotDurable>()
+                assertEquals(1, notDurable.size)
+                assertEquals("TERMINAL_WRITE_FAILED", notDurable.single().failureCode)
+                assertEquals("SQLException", notDurable.single().errorClass)
+                val attempted = probe.attemptedStatuses.toList()
+                assertEquals(attempted[0], notDurable.single().intendedStatus)
+                val winners = outcomes.withIndex().filter { it.value == TerminalWriteOutcome.Durable }
+                assertEquals(1, winners.size)
+                assertEquals(attempted[1], calls[winners.single().index].first)
+                val rest = outcomes.filter {
+                    it !is TerminalWriteOutcome.NotDurable && it != TerminalWriteOutcome.Durable
+                }
+                assertEquals(calls.size - 2, rest.size)
+                rest.forEach { assertEquals(TerminalWriteOutcome.AlreadyTerminal("LOCAL_COMPLETED"), it) }
+            }
+        }
+    }
+
+    /**
+     * Cancelling the coroutine that currently holds the terminal mutex (suspended inside the
+     * DAO write) must release the mutex (`finally { terminalMutex.unlock() }` in
+     * `Handle.terminal()`), must NOT mark the handle completed, and the holder must end by
+     * CancellationException (never return a NotDurable outcome): a queued second terminal call
+     * then writes durably.
+     *
+     * Deterministic queueing: the waiter is started with CoroutineStart.UNDISPATCHED, so it
+     * runs on this thread until its first suspension. Every step of `failure()` before
+     * `terminalMutex.lock()` (sanitizeReasonCode, the mocked sanitizer, classifyDiagnostic,
+     * building TerminalArgs) is non-suspending, and the holder already owns the mutex (it
+     * completed `entered` from inside the DAO call, which runs inside the critical section), so
+     * lock() enqueues the waiter and suspends. When `async` returns the waiter is therefore
+     * already queued on terminalMutex, strictly before the holder is cancelled; there is no
+     * scheduling race.
+     *
+     * Mutations (all deterministic): removing the unlock-in-finally makes the waiter wait
+     * forever and the bounded timeout fails the test; marking `completed` early makes the waiter
+     * return AlreadyTerminal instead of Durable; dropping `if (e is CancellationException) throw e`
+     * in terminal() turns the cancelled holder's CancellationException into a NotDurable
+     * return, so `holderOutcome` is non-null and the assertNull below fails.
+     */
+    @Test
+    fun `real threads - cancelling the mutex holder releases the lock and keeps the handle retryable`() {
+        runOnRealThreads(threads = 4) { pool ->
+            val attempts = AtomicInteger(0)
+            val entered = CompletableDeferred<Unit>()
+            val holderOutcome = AtomicReference<TerminalWriteOutcome?>(null)
+            coEvery { dao.insert(any()) } returns 1L
+            coEvery {
+                dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+            } coAnswers {
+                if (attempts.incrementAndGet() == 1) {
+                    entered.complete(Unit)
+                    awaitCancellation()
+                }
+                1
+            }
+            val handle = logger.start("cancel_worker")
+
+            val holder = launch(pool) { holderOutcome.set(handle.success()) }
+            entered.await()
+            val waiter = async(pool, start = CoroutineStart.UNDISPATCHED) { handle.failure("WAITER_FAILURE") }
+            holder.cancelAndJoin()
+
+            assertEquals(TerminalWriteOutcome.Durable, waiter.await())
+            assertEquals(2, attempts.get())
+            assertNull(
+                "the cancelled holder must end by CancellationException, never by returning an outcome",
+                holderOutcome.get()
+            )
+            // And now the handle really is terminal.
+            assertEquals(TerminalWriteOutcome.AlreadyTerminal("LOCAL_COMPLETED"), handle.skipped("AFTER_DONE"))
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // FG-10: CancellationException from the terminal write / snapshot must propagate
+    // (single-threaded; the caller is still active, so the CE is not a real caller cancel).
+    // ══════════════════════════════════════════════════════════════════════
+
+    /**
+     * The DAO write throws a CancellationException while the CALLER IS STILL ACTIVE (no job
+     * was cancelled). terminal() must rethrow it (`if (e is CancellationException) throw e`),
+     * not convert it into NotDurable, and must not burn the handle: the mutex is released and a
+     * subsequent terminal call writes durably (exactly 2 DAO attempts overall).
+     * Deterministic. Mutation: replacing the rethrow with `return NotDurableFailure(e)` makes
+     * `handle.success()` return instead of throwing, so assertFailsWith fails.
+     */
+    @Test
+    fun `terminal write CancellationException propagates and does not burn the handle`() = runTest {
+        coEvery { dao.insert(any()) } returns 1L
+        coEvery {
+            dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        } throws CancellationException("synthetic cancellation from the dao write") andThen 1
+        val handle = logger.start("test_worker")
+
+        assertFailsWith<CancellationException> { handle.success() }
+
+        // Not burned and not wedged: the mutex was released and the handle is still retryable.
+        assertEquals(TerminalWriteOutcome.Durable, handle.failure("AFTER_CANCELLATION"))
+        coVerify(exactly = 2) {
+            dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        }
+    }
+
+    /**
+     * The snapshotProvider (invoked under the terminal mutex, before persistence) throws a
+     * CancellationException while the caller is still active. terminal() must rethrow it
+     * (`catch (e: CancellationException) { throw e }`), must NOT reach the DAO, and must leave
+     * the handle retryable. Deterministic. Mutation: dropping that rethrow lets the generic
+     * `catch (e: Exception) { null }` swallow it, the write proceeds, `success()` returns and
+     * assertFailsWith plus the never-called DAO check fail.
+     */
+    @Test
+    fun `snapshotProvider CancellationException propagates before the dao write and keeps the handle retryable`() = runTest {
+        coEvery { dao.insert(any()) } returns 1L
+        coEvery {
+            dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        } returns 1
+        val handle = logger.start("test_worker")
+
+        assertFailsWith<CancellationException> {
+            handle.success(snapshotProvider = { throw CancellationException("synthetic cancellation from the snapshot") })
+        }
+        coVerify(exactly = 0) {
+            dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        }
+
+        // Handle not burned, mutex released: a later terminal call persists durably.
+        assertEquals(TerminalWriteOutcome.Durable, handle.failure("AFTER_CANCELLATION"))
+        coVerify(exactly = 1) {
+            dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        }
+    }
+
+    private companion object {
+        const val REAL_THREAD_TEST_TIMEOUT_MS = 60_000L
+        const val CONTENDER_COUNT = 8
     }
 }

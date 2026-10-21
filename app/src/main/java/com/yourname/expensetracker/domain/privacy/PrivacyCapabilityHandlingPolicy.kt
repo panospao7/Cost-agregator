@@ -38,7 +38,8 @@ object PrivacyCapabilityHandlingPolicy {
         PrivacyCapability.EXPENSE_EXPORT_REDACTED,
         PrivacyCapability.EXPENSE_EXPORT_ENCRYPTED,
         PrivacyCapability.DEBUG_RAW_EXPORT,
-        PrivacyCapability.RAW_DATABASE_EXPORT
+        PrivacyCapability.RAW_DATABASE_EXPORT,
+        PrivacyCapability.EXCHANGE_RATE_DOWNLOAD
     )
 
     /**

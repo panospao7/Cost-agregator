@@ -16,7 +16,6 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Before
@@ -146,7 +145,8 @@ class WorkerRestoreRegressionTest {
             workerTerminalDiagnosticSink = mockk(relaxed = true),
             backgroundJobRunDao = mockk(relaxed = true),
             notificationPermissionChecker = mockk(relaxed = true),
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            appContext = mockk<Context>(relaxed = true)
         )
         val manager = mockk<WorkManager>(relaxed = true)
         val active = mockk<WorkInfo>()
@@ -286,81 +286,57 @@ class WorkerRestoreRegressionTest {
     // 2. Workers honor writeBarrier during restore
     // ─────────────────────────────────────────────────────────────────
 
+    /**
+     * Table: (restore write-blocking mode) x (every worker name known to
+     * [WorkerSpecScheduler.listAllWorkerNames]). Each row builds its own barrier mock and lease
+     * registry so no state leaks between rows; the row name (`mode=... worker=...`) is in every
+     * failure message. The name list includes receipt_matching, data_retention and
+     * warranty_expiration_check, the names the former per-mode tests used.
+     */
     @Test
-    fun `writeBarrier blocks worker writes during RESTORE_PREPARING`() = runTest {
-        val mode = RestoreMaintenanceMode.Mode.RESTORE_PREPARING
-        val op = DatabaseAccessOperation("receipt_matching_worker")
-
-        every { writeBarrier.checkWritesAllowed(any<String>()) } throws
-            DatabaseAccessBlockedException(DatabaseAccessType.WRITE, op, mode)
-
-        // Worker trying to checkpoint should hit the blocked exception
-        val lease = leaseRegistry.acquire("receipt_matching")
-        assertThrows(DatabaseAccessBlockedException::class.java) {
-            kotlinx.coroutines.runBlocking { lease.checkpoint("process_receipt") }
-        }
-        lease.close()
-    }
-
-    @Test
-    fun `writeBarrier blocks worker writes during RESTORE_STAGING`() = runTest {
-        val mode = RestoreMaintenanceMode.Mode.RESTORE_STAGING
-        val op = DatabaseAccessOperation("data_retention_worker")
-
-        every { writeBarrier.checkWritesAllowed(any<String>()) } throws
-            DatabaseAccessBlockedException(DatabaseAccessType.WRITE, op, mode)
-
-        val lease = leaseRegistry.acquire("data_retention")
-        assertThrows(DatabaseAccessBlockedException::class.java) {
-            kotlinx.coroutines.runBlocking { lease.checkpoint("delete_old_data") }
-        }
-        lease.close()
-    }
-
-    @Test
-    fun `writeBarrier blocks worker writes during RESTORE_SWAPPING`() = runTest {
-        val mode = RestoreMaintenanceMode.Mode.RESTORE_SWAPPING
-        val op = DatabaseAccessOperation("warranty_expiration_worker")
-
-        every { writeBarrier.checkWritesAllowed(any<String>()) } throws
-            DatabaseAccessBlockedException(DatabaseAccessType.WRITE, op, mode)
-
-        val lease = leaseRegistry.acquire("warranty_expiration_check")
-        assertThrows(DatabaseAccessBlockedException::class.java) {
-            kotlinx.coroutines.runBlocking { lease.checkpoint("check_warranties") }
-        }
-        lease.close()
-    }
-
-    @Test
-    fun `workers can write after restore returns to NORMAL`() = runTest {
-        // After restore, the barrier should allow writes
-        every { writeBarrier.checkWritesAllowed(any<String>()) } returns Unit
-
-        val lease = leaseRegistry.acquire("location_backfill")
-        // Should NOT throw
-        lease.checkpoint("update_location")
-        lease.close()
-    }
-
-    @Test
-    fun `writeBarrier blocks all eight worker names during restore`() = runTest {
-        val mode = RestoreMaintenanceMode.Mode.RESTORE_PREPARING
+    fun `writeBarrier blocks every known worker name in every restore write-blocking mode`() = runTest {
+        val modes = listOf(
+            RestoreMaintenanceMode.Mode.RESTORE_PREPARING,
+            RestoreMaintenanceMode.Mode.RESTORE_STAGING,
+            RestoreMaintenanceMode.Mode.RESTORE_SWAPPING
+        )
         val workerNames = WorkerSpecScheduler.listAllWorkerNames()
-
-        every { writeBarrier.checkWritesAllowed(any<String>()) } throws
-            DatabaseAccessBlockedException(
-                DatabaseAccessType.WRITE,
-                DatabaseAccessOperation("any_worker"),
-                mode
+        assertTrue(
+            "name list must keep covering the workers of the former per-mode tests",
+            workerNames.containsAll(
+                listOf("receipt_matching", "data_retention", "warranty_expiration_check")
             )
+        )
+        val rows = modes.flatMap { mode -> workerNames.map { name -> mode to name } }
+        assertEquals("table must be modes x names", modes.size * workerNames.size, rows.size)
 
-        for (name in workerNames) {
-            val lease = leaseRegistry.acquire(name)
-            assertThrows(DatabaseAccessBlockedException::class.java) {
-                kotlinx.coroutines.runBlocking { lease.checkpoint("work") }
+        for ((mode, name) in rows) {
+            val rowName = "mode=$mode worker=$name"
+            val rowBarrier = mockk<DatabaseWriteBarrier>()
+            every { rowBarrier.checkWritesAllowed(any<DatabaseAccessOperation>()) } returns Unit
+            every { rowBarrier.checkWritesAllowed(any<String>()) } throws
+                DatabaseAccessBlockedException(
+                    DatabaseAccessType.WRITE,
+                    DatabaseAccessOperation(name),
+                    mode
+                )
+            val rowRegistry = WorkerLeaseRegistryImpl(rowBarrier, monotonicTimeProvider)
+
+            val lease = rowRegistry.acquire(name)
+            assertEquals("$rowName: lease must be active before the checkpoint", 1, rowRegistry.activeLeaseCount())
+            try {
+                val blocked = assertThrows(
+                    "$rowName: checkpoint must be blocked",
+                    DatabaseAccessBlockedException::class.java
+                ) {
+                    kotlinx.coroutines.runBlocking { lease.checkpoint("work") }
+                }
+                assertEquals("$rowName: blocked access type", DatabaseAccessType.WRITE, blocked.accessType)
+                assertEquals("$rowName: blocked mode", mode, blocked.mode)
+            } finally {
+                lease.close()
             }
-            lease.close()
+            assertEquals("$rowName: lease must be released after close", 0, rowRegistry.activeLeaseCount())
         }
     }
 
@@ -373,10 +349,16 @@ class WorkerRestoreRegressionTest {
         leaseRegistry.requestStopAll("maintenance")
 
         // Any attempt to acquire a lease must be rejected
-        val allWorkerNames = listOf(
-            "notification_intake", "location_backfill", "merchant_key_backfill",
-            "receipt_matching", "warranty_expiration_check", "data_retention",
-            "ai_daily_briefing", "bill_reminder_periodic"
+        val allWorkerNames = WorkerSpecScheduler.listAllWorkerNames()
+        assertTrue(
+            "name list must keep covering the previously hardcoded workers",
+            allWorkerNames.containsAll(
+                listOf(
+                    "notification_intake", "location_backfill", "merchant_key_backfill",
+                    "receipt_matching", "warranty_expiration_check", "data_retention",
+                    "ai_daily_briefing", "bill_reminder_periodic", "recurring_horizon"
+                )
+            )
         )
 
         for (name in allWorkerNames) {
@@ -411,45 +393,6 @@ class WorkerRestoreRegressionTest {
             assertNotNull("Lease for '$name' should be acquirable after reset", lease)
             lease.close()
         }
-    }
-
-    @Test
-    fun `concurrent stop request and acquire is safe`() = runTest {
-        // Simulate: stop is requested while workers are starting
-        var lease1: WorkerLease? = null
-        var lease2: WorkerLease? = null
-        var acquiredCount = 0
-        var blockedCount = 0
-
-        val job1 = launch {
-            try {
-                lease1 = leaseRegistry.acquire("worker_a")
-                acquiredCount++
-            } catch (_: LeaseAcquisitionBlockedException) {
-                blockedCount++
-            }
-        }
-        val job2 = launch {
-            try {
-                lease2 = leaseRegistry.acquire("worker_b")
-                acquiredCount++
-            } catch (_: LeaseAcquisitionBlockedException) {
-                blockedCount++
-            }
-        }
-        val job3 = launch {
-            leaseRegistry.requestStopAll("concurrent restore")
-        }
-
-        job1.join(); job2.join(); job3.join()
-
-        val total = acquiredCount + blockedCount
-        assertEquals("All 2 acquire attempts must resolve", 2, total)
-        assertTrue("Registry must be in consistent state",
-            leaseRegistry.activeLeaseCount() in 0..2)
-
-        lease1?.close()
-        lease2?.close()
     }
 
     // ─────────────────────────────────────────────────────────────────

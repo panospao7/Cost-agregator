@@ -1,13 +1,15 @@
 package com.yourname.expensetracker.domain.analytics
 
-import com.yourname.expensetracker.toAnalyticsCategoryRefs
+import com.yourname.expensetracker.assertMoneyEquals
 import com.yourname.expensetracker.toExpenseSnapshots
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.domain.util.PinnedUtcTimeZoneRule
 import com.yourname.expensetracker.domain.util.TimeProvider
 import org.junit.Assert.*
 import org.junit.Before
+import org.junit.ClassRule
 import org.junit.Test
 import io.mockk.mockk
 import io.mockk.every
@@ -16,19 +18,31 @@ import kotlinx.coroutines.test.runTest
 import kotlin.coroutines.cancellation.CancellationException
 import timber.log.Timber
 import org.junit.After
+import java.time.Instant
 import kotlin.test.assertFailsWith
 
 class InsightsEngineTest {
+
+    companion object {
+        // Zone pinned to UTC for the whole class: buildDailyTotals buckets by system-default days.
+        @JvmField
+        @ClassRule
+        val utcZone = PinnedUtcTimeZoneRule()
+
+        /** Fixed "now" (2026-03-15T12:00:00Z) so day buckets never depend on the wall clock. */
+        private val fixedNow: Long = Instant.parse("2026-03-15T12:00:00Z").toEpochMilli()
+    }
+
     private var nextExpenseId = 1L
     private lateinit var engine: InsightsEngine
-    private val timeProvider = mockk<TimeProvider>(relaxed = true)
-    private val recurringEngine = mockk<com.yourname.expensetracker.domain.logic.RecurringExpenseEngine>(relaxed = true)
-    private val monthlyCalculator = mockk<MonthlyComparisonCalculator>(relaxed = true)
-    private val categoryCalculator = mockk<CategoryInsightEngine>(relaxed = true)
-    private val merchantCalculator = mockk<MerchantInsightEngine>(relaxed = true)
-    private val paceCalculator = mockk<SpendingPaceCalculator>(relaxed = true)
-    private val anomalyCalculator = mockk<AnomalyDetector>(relaxed = true)
-    private val weekdayCalculator = mockk<DayOfWeekAnalyzer>(relaxed = true)
+    private lateinit var timeProvider: TimeProvider
+    private lateinit var recurringEngine: com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
+    private lateinit var monthlyCalculator: MonthlyComparisonCalculator
+    private lateinit var categoryCalculator: CategoryInsightEngine
+    private lateinit var merchantCalculator: MerchantInsightEngine
+    private lateinit var paceCalculator: SpendingPaceCalculator
+    private lateinit var anomalyCalculator: AnomalyDetector
+    private lateinit var weekdayCalculator: DayOfWeekAnalyzer
     private val logs = mutableListOf<Pair<Throwable?, String>>()
     private val logTree = object : Timber.Tree() {
         override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
@@ -40,12 +54,26 @@ class InsightsEngineTest {
 
     @Before
     fun setup() {
-        val expenseRepository = mockk<ExpenseRepository>(relaxed = true)
         Timber.plant(logTree)
+        rebuild()
+    }
+
+    /** Creates a fresh set of mocks, a fresh engine and an empty log; used per table row too. */
+    private fun rebuild() {
+        logs.clear()
+        val expenseRepository = mockk<ExpenseRepository>(relaxed = true)
+        timeProvider = mockk(relaxed = true)
+        recurringEngine = mockk(relaxed = true)
+        monthlyCalculator = mockk(relaxed = true)
+        categoryCalculator = mockk(relaxed = true)
+        merchantCalculator = mockk(relaxed = true)
+        paceCalculator = mockk(relaxed = true)
+        anomalyCalculator = mockk(relaxed = true)
+        weekdayCalculator = mockk(relaxed = true)
         coEvery { recurringEngine.getPatterns(any()) } returns emptyList()
         coEvery { recurringEngine.getPatternsFromSnapshots(any()) } returns emptyList()
-        every { timeProvider.now() } returns System.currentTimeMillis()
-        
+        every { timeProvider.now() } returns fixedNow
+
         engine = InsightsEngine(
             expenseRepository = expenseRepository,
             recurringExpenseEngine = recurringEngine,
@@ -61,53 +89,69 @@ class InsightsEngineTest {
 
     private val dayMs = 86_400_000L
 
-    private suspend fun assertCancellationWithoutFallbackLog() {
-        assertFailsWith<CancellationException> { engine.generateInsights(emptyList(), emptyList(), "EUR") }
-        assertTrue(logs.none { it.first != null || it.second.contains("UNKNOWN_ERROR") || it.second.contains("private") })
-    }
+    private class CancellationRow(
+        val stage: String,
+        /** When true the propagated exception must be exactly [CancellationException], not a subclass. */
+        val exactClass: Boolean = false,
+        val stub: () -> Unit
+    )
 
     @Test
-    fun `monthly comparison cancellation propagates without fallback log`() = runTest {
-        every { monthlyCalculator.calculate(any(), any(), any<List<com.yourname.expensetracker.domain.model.ExpenseSnapshot>>(), any()) } throws CancellationException("private receipt")
-        assertCancellationWithoutFallbackLog()
-    }
+    fun `cancellation at every insight stage propagates without fallback log`() = runTest {
+        // One row per async insight stage. INV: CancellationException is never swallowed into a
+        // degraded (null/zero) section and never produces an UNKNOWN_ERROR fallback log.
+        val rows = listOf(
+            CancellationRow("monthlyComparison") {
+                every { monthlyCalculator.calculate(any(), any(), any<List<com.yourname.expensetracker.domain.model.ExpenseSnapshot>>(), any()) } throws CancellationException("private receipt")
+            },
+            CancellationRow("categoryInsights") {
+                every { categoryCalculator.calculate(any(), any(), any(), any<List<com.yourname.expensetracker.domain.model.ExpenseSnapshot>>(), any()) } throws CancellationException("private receipt")
+            },
+            CancellationRow("topMerchants") {
+                every { merchantCalculator.calculate(any(), any()) } throws CancellationException("private receipt")
+            },
+            CancellationRow("spendingPace") {
+                every { paceCalculator.calculate(any(), any(), any(), any<List<com.yourname.expensetracker.domain.model.ExpenseSnapshot>>(), any(), any()) } throws CancellationException("private receipt")
+            },
+            CancellationRow("anomalies") {
+                every { anomalyCalculator.detect(any(), any(), any(), any(), any()) } throws CancellationException("private receipt")
+            },
+            CancellationRow("dayOfWeekPattern") {
+                every {
+                    weekdayCalculator.analyze(
+                        any(),
+                        any(),
+                        any<NormalizedAnalyticsInput>(),
+                        any(),
+                        any()
+                    )
+                } throws CancellationException("private receipt")
+            },
+            CancellationRow("recurringExpenses", exactClass = true) {
+                coEvery { recurringEngine.getPatternsFromSnapshots(any()) } throws CancellationException("private receipt cancellation")
+            }
+        )
+        assertEquals(
+            "row table must cover all seven insight stages",
+            listOf("monthlyComparison", "categoryInsights", "topMerchants", "spendingPace", "anomalies", "dayOfWeekPattern", "recurringExpenses"),
+            rows.map { it.stage }
+        )
 
-    @Test
-    fun `category insights cancellation propagates without fallback log`() = runTest {
-        every { categoryCalculator.calculate(any(), any(), any(), any<List<com.yourname.expensetracker.domain.model.ExpenseSnapshot>>(), any()) } throws CancellationException("private receipt")
-        assertCancellationWithoutFallbackLog()
-    }
+        for (row in rows) {
+            rebuild() // fresh mocks, engine and log per row
+            row.stub()
 
-    @Test
-    fun `top merchants cancellation propagates without fallback log`() = runTest {
-        every { merchantCalculator.calculate(any(), any()) } throws CancellationException("private receipt")
-        assertCancellationWithoutFallbackLog()
-    }
-
-    @Test
-    fun `spending pace cancellation propagates without fallback log`() = runTest {
-        every { paceCalculator.calculate(any(), any(), any(), any<List<com.yourname.expensetracker.domain.model.ExpenseSnapshot>>(), any(), any()) } throws CancellationException("private receipt")
-        assertCancellationWithoutFallbackLog()
-    }
-
-    @Test
-    fun `anomalies cancellation propagates without fallback log`() = runTest {
-        every { anomalyCalculator.detect(any(), any(), any(), any(), any()) } throws CancellationException("private receipt")
-        assertCancellationWithoutFallbackLog()
-    }
-
-    @Test
-    fun `weekday cancellation propagates without fallback log`() = runTest {
-        every {
-            weekdayCalculator.analyze(
-                any(),
-                any(),
-                any<NormalizedAnalyticsInput>(),
-                any(),
-                any()
+            val thrown = assertFailsWith<CancellationException>("stage=${row.stage}: CancellationException must propagate") {
+                engine.generateInsights(emptyList(), emptyList(), "EUR")
+            }
+            if (row.exactClass) {
+                assertEquals("stage=${row.stage}: exact exception class", CancellationException::class.java, thrown::class.java)
+            }
+            assertTrue(
+                "stage=${row.stage}: no fallback/private log expected but was $logs",
+                logs.none { it.first != null || it.second.contains("UNKNOWN_ERROR") || it.second.contains("private") }
             )
-        } throws CancellationException("private receipt")
-        assertCancellationWithoutFallbackLog()
+        }
     }
 
     @Test
@@ -130,6 +174,7 @@ class InsightsEngineTest {
         } throws hostile
 
         val snapshot = engine.generateInsights(emptyList(), emptyList(), "EUR")
+        // unavailable-not-zero: a failed monthly stage must stay null, never become 0.0.
         org.junit.Assert.assertNull(snapshot.monthlyComparison.currentTotal)
         assertTrue(snapshot.categoryInsights.isEmpty())
         assertTrue(snapshot.topMerchants.isEmpty())
@@ -149,7 +194,7 @@ class InsightsEngineTest {
         currency = "EUR",
         merchant = merchant,
         transactionType = TransactionType.PURCHASE,
-        date = System.currentTimeMillis() - daysAgo * dayMs
+        date = fixedNow - daysAgo * dayMs
     )
 
     @Test
@@ -164,54 +209,23 @@ class InsightsEngineTest {
 
     @Test
     fun `buildDailyTotals sums same-day purchases`() {
-        val now = System.currentTimeMillis()
         val expenses = listOf(
-            Expense(id = 1, amount = 10.0, currency = "EUR", merchant = "A", transactionType = TransactionType.PURCHASE, date = now),
-            Expense(id = 2, amount = 20.0, currency = "EUR", merchant = "B", transactionType = TransactionType.PURCHASE, date = now)
+            Expense(id = 1, amount = 10.0, currency = "EUR", merchant = "A", transactionType = TransactionType.PURCHASE, date = fixedNow),
+            Expense(id = 2, amount = 20.0, currency = "EUR", merchant = "B", transactionType = TransactionType.PURCHASE, date = fixedNow)
         )
         val totals = engine.buildDailyTotals(expenses.toExpenseSnapshots(), 1)
         val todayTotal = totals.values.last()
-        assertEquals(30.0, todayTotal, 0.01)
+        assertMoneyEquals(30.0, todayTotal, "same-day purchases sum")
     }
 
     @Test
     fun `buildDailyTotals ignores non-purchase types`() {
-        val now = System.currentTimeMillis()
         val expenses = listOf(
-            Expense(id = 1, amount = 10.0, currency = "EUR", merchant = "A", transactionType = TransactionType.PURCHASE, date = now),
-            Expense(id = 2, amount = 100.0, currency = "EUR", merchant = "B", transactionType = TransactionType.DEPOSIT, date = now)
+            Expense(id = 1, amount = 10.0, currency = "EUR", merchant = "A", transactionType = TransactionType.PURCHASE, date = fixedNow),
+            Expense(id = 2, amount = 100.0, currency = "EUR", merchant = "B", transactionType = TransactionType.DEPOSIT, date = fixedNow)
         )
         val totals = engine.buildDailyTotals(expenses.toExpenseSnapshots(), 1)
         val todayTotal = totals.values.last()
-        assertEquals(10.0, todayTotal, 0.01)
-    }
-
-    @Test
-    fun `generateInsights propagates CancellationException instead of returning degraded snapshot`() = runTest {
-        // Arrange: make a repository call throw CancellationException
-        val expenseRepository = mockk<ExpenseRepository>(relaxed = true)
-        val cancellation = CancellationException("private receipt cancellation")
-        coEvery { recurringEngine.getPatternsFromSnapshots(any()) } throws cancellation
-
-        val cancelEngine = InsightsEngine(
-            expenseRepository = expenseRepository,
-            recurringExpenseEngine = recurringEngine,
-            timeProvider = timeProvider,
-            spendingPaceCalculator = mockk(relaxed = true),
-            anomalyDetector = mockk(relaxed = true),
-            monthlyComparisonCalculator = mockk(relaxed = true),
-            categoryInsightEngine = mockk(relaxed = true),
-            merchantInsightEngine = mockk(relaxed = true),
-            dayOfWeekAnalyzer = mockk(relaxed = true)
-        )
-
-        // Act + Assert: CancellationException must propagate, not be swallowed
-        try {
-            cancelEngine.generateInsights(emptyList(), emptyList(), "EUR")
-            fail("Expected CancellationException to propagate")
-        } catch (e: CancellationException) {
-            assertEquals(CancellationException::class.java, e::class.java)
-        }
-        assertTrue(logs.none { it.second.contains("private") || it.second.contains("UNKNOWN_ERROR") || it.first != null })
+        assertMoneyEquals(10.0, todayTotal, "deposit must not count as spending")
     }
 }
