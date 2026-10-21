@@ -544,6 +544,38 @@ class GreekBankParserAmountGroupTest {
         assertNull(parse("Αγορά 1.234.567 EUR στο SHOP"))
     }
 
+    /**
+     * Ceiling semantics are `amount > 50000` -> null, so 50000 itself is accepted. A dot followed by
+     * exactly three digits is Greek thousands: "49.999" is 49999 (not 49.999) and "50.001" is 50001,
+     * which is above the ceiling and rejected.
+     */
+    @Test
+    fun `dot thousands around the 50000 ceiling accept at or below and reject above`() {
+        val below = parse("Αγορά 49.999 EUR στο SHOP")
+        assertNotNull(below)
+        assertEquals(49999.0, below!!.amount, 0.001)
+
+        val atCeiling = parse("Αγορά 50.000 EUR στο SHOP")
+        assertNotNull(atCeiling)
+        assertEquals(50000.0, atCeiling!!.amount, 0.001)
+
+        assertNull(parse("Αγορά 50.001 EUR στο SHOP"))
+    }
+
+    /**
+     * A leading-zero token is not Greek thousands grouping (GREEK_DOT_THOUSANDS requires [1-9] first),
+     * so "0.500" stays the decimal 0.5 via AmountUtils.parseAmount, never 500.
+     */
+    @Test
+    fun `leading zero dot three digits stays a decimal`() {
+        val result = parse("Αγορά 0.500 EUR στο SHOP")
+
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.PURCHASE, result!!.type)
+        assertEquals(0.5, result.amount, 0.001)
+        assertEquals("SHOP", result.merchant)
+    }
+
     @Test
     fun `transaction code transfer with thousands grouping keeps the full amount`() {
         // "Χ" is the Greek debit code letter.

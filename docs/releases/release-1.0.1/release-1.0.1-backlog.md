@@ -175,6 +175,16 @@ Review follow-ups (P3 unless noted; detail in the lead log and the phase3-4 find
     (grouping), not 1.5. Greek notifications use comma as the decimal separator, so this could
     over-record by 1000x if a bank writes "1,500" for 1.50 (unlikely: banks write two decimals).
     Not changed in 1.0.1; revisit with F-H1-a evidence.
+  - **F-H1-f:** Greek three-decimal currencies (KWD, BHD, JOD, OMR, TND) written with a dot amount are read
+    as thousands, because the currency token is not recognised by the parser (`CURRENCY_TOKEN` is
+    EUR/USD/GBP only). Bounded by the 50000 parser ceiling.
+- **Forecast follow-ups (from the FORE-05 / FORE-02 reviews, P3):**
+  - **FORE-05-a:** the rainy narrative in `NarrativeGenerator.kt:36` (HIGH && discretionary <= 0) is now
+    reachable only on exact equality, because over-committed months escalate to CRITICAL.
+  - **FORE-02-a:** weekly projection tests across a DST change and with a non-blank `displayCurrency` are
+    missing.
+  - **FORE-02-b:** the fallback branch can overcount weekly manual rules when all PLANNED occurrences were
+    skipped.
 - **CURR-6 scoping (S0 check):** no schema change is needed. `baseAmount`/`baseCurrency` are fixed at
   save time. Preferred fix: a guarded re-normalisation worker through the TransactionLifecycle
   coordinator when the home currency changes; rows without a rate stay flagged. Planner-first; money

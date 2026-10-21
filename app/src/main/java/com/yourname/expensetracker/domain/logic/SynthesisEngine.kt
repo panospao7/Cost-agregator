@@ -516,7 +516,9 @@ class SynthesisEngine @Inject constructor(
         // 6. Determine Risk Level
         // FORE-05: discretionaryBudget is clamped to 0, which hides how far the month is over
         // the limit. Read the un-clamped sum so over-committed months are CRITICAL even on pace.
-        val obligationsExceedLimit = budgetLimit > 0 &&
+        // Only against an explicit OVERALL budget: the category-budget-sum fallback compares ALL
+        // spending with a partial limit, so it must not escalate (previous behaviour kept).
+        val obligationsExceedLimit = overallBudget > 0 && budgetLimit > 0 &&
             (spentSoFar + projectedObligations + goalReserves) > budgetLimit
         val riskLevel = determineRiskLevel(
             spendingPace,

@@ -677,6 +677,42 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
     }
 
     @Test
+    fun `on pace with explicit overall budget and obligations above it is CRITICAL`() = runTest {
+        // Overall 1000 (plus a category row) is the limit source: 500 spent + 600 committed = 1100 > 1000.
+        val forecast = engine.synthesize(
+            pastSumDaily = emptyList(),
+            recurringPatterns = listOf(createRecurringPattern(600.0, 0.95f, millis(2024, Calendar.JANUARY, 20))),
+            plannedExpenses = emptyList(), savingsGoals = emptyList(),
+            budgetStatuses = listOf(
+                createBudgetStatus(limit = 1000.0),
+                createBudgetStatus(limit = 300.0, categoryId = 1L)
+            ),
+            spendingPace = onPaceSpending(500.0)
+        )
+
+        assertEquals(RiskLevel.CRITICAL, forecast.components.riskLevel)
+    }
+
+    @Test
+    fun `on pace without overall budget and obligations above partial category budgets is HIGH not CRITICAL`() = runTest {
+        // No overall budget: limit falls back to the category sum (400 + 300 = 700) while spent is ALL
+        // spending, so 500 + 600 = 1100 > 700 must NOT escalate (previous behaviour): buffer 0 -> HIGH.
+        val forecast = engine.synthesize(
+            pastSumDaily = emptyList(),
+            recurringPatterns = listOf(createRecurringPattern(600.0, 0.95f, millis(2024, Calendar.JANUARY, 20))),
+            plannedExpenses = emptyList(), savingsGoals = emptyList(),
+            budgetStatuses = listOf(
+                createBudgetStatus(limit = 400.0, categoryId = 1L),
+                createBudgetStatus(limit = 300.0, categoryId = 2L)
+            ),
+            spendingPace = onPaceSpending(500.0)
+        )
+
+        assertEquals(0.0, forecast.components.discretionaryBudget, 0.0)
+        assertEquals(RiskLevel.HIGH, forecast.components.riskLevel)
+    }
+
+    @Test
     fun `on pace but spent plus goal reserve above the limit is CRITICAL`() = runTest {
         // 500 spent + 700 strict reserve (undated: full remaining) = 1200 > 1000 limit.
         val forecast = engine.synthesize(

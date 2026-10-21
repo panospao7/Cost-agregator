@@ -437,8 +437,9 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
         // monthly recurring total 500 x 10 = 5000 reduces the 8000 baseline: (8000 - 5000) / 29 * 14 remaining days
         assertMoneyEquals(1448.28, c.predictedDiscretionary, "predictedDiscretionary")
         assertEquals("discretionary clamped at zero", 0.0, c.discretionaryBudget, 0.0)
-        // FORE-05 rule: spent 5000 + obligations 4165 + 3669 + reserves 26583 exceed the 7500 limit => CRITICAL
-        assertEquals("risk", RiskLevel.CRITICAL, c.riskLevel)
+        // FORE-05 does not apply here: only category budgets exist, so the 7500 limit is the category-budget-sum
+        // fallback (no overall budget) and the obligationsExceedLimit escalation is skipped. Pre-FORE-05 level kept.
+        assertEquals("risk", RiskLevel.HIGH, c.riskLevel)
         assertEquals("past point count", 1000, c.pastSpendingPoints.size)
         assertEquals("last past point", 50000.0, c.pastSpendingPoints.last(), 0.0)
         assertEquals("projected point count (day 15..29)", 15, c.projectedSpendingPoints.size)
@@ -659,7 +660,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
         assertEquals("past points", listOf(0.01, 0.02), c.pastSpendingPoints)
         assertMoneyEquals(0.02, c.totalCommitted, "totalCommitted (0.01 pattern + 0.01 MUST)")
         assertEquals("discretionary", 0.0, c.discretionaryBudget, 0.0)
-        // FORE-05: spent 0.01 + obligations 0.02 + goal reserve 0.01 exceed the 0.01 limit while on pace (was HIGH).
+        // FORE-05: spent 0.01 + obligations 0.02 + goal reserve 0.01 * 29/30 (about 0.00967) exceed the 0.01 limit while on pace (was HIGH).
         assertEquals("risk", RiskLevel.CRITICAL, c.riskLevel)
     }
 
