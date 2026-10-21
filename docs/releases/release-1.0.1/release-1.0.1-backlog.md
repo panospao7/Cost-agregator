@@ -190,6 +190,12 @@ Review follow-ups (P3 unless noted; detail in the lead log and the phase3-4 find
     missing.
   - **FORE-02-b:** the fallback branch can overcount weekly manual rules when all PLANNED occurrences were
     skipped.
+- **PRIV-03 follow-ups (1.0.2):**
+  - `RawPersistencePolicy.kt:13` KDoc says amount/date/currency are kept even in DO_NOT_STORE but the
+    resolver keeps them only for EMAIL_RECEIPT (comment wrong since before 1.0.2).
+  - Optional test: with corrupted privacy settings, the email dedupe hash
+    (sourceFingerprint == messageIdHash) is still stored while rawOcrText is null
+    (ReceiptLifecycleCoordinatorTest).
 - **CURR-6 scoping (S0 check):** no schema change is needed. `baseAmount`/`baseCurrency` are fixed at
   save time. Preferred fix: a guarded re-normalisation worker through the TransactionLifecycle
   coordinator when the home currency changes; rows without a rate stay flagged. Planner-first; money
@@ -230,7 +236,7 @@ ID.
 | DIAG-11 | Low | TEST-BRANCH | NEW | P2 with MISC-01 | See B5 |
 | PRIV-01 | High | PRESENT | NEW | P3 | Statement import is debug-only in release; the merchant is also in `expenses` |
 | PRIV-02 | Med | PRESENT | NEW | P3 | Fixed 30-day text cutoff, not the user window |
-| PRIV-03 | Med | PRESENT | NEW | P3 | `allowParsedMerchant` never read; removed in 1.0.2 (owner-approved) |
+| PRIV-03 | Med | PRESENT | NEW | P3 | accepted: PendingReview.suggestedMerchant is persisted in every storage mode by design; the unused flags were removed in 1.0.2 (owner-approved) |
 | PRIV-04 | Med | PRESENT | NEW | P3 | Uncalled payload builders (test debt) |
 | PRIV-05 | Med | PARTIAL | NEW | P3 | One null-input rule; the notification part of the claim is wrong |
 | PRIV-06 | Low | PRESENT | NEW | P3 | Dead sanitizers |
