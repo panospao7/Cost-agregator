@@ -423,7 +423,8 @@ class ExportAnonymizer @Inject constructor() {
         val where = present.joinToString(" OR ") { "$it IS NOT NULL" }
         val count = countWhere(db, table, where)
         if (count == 0) return 0
-        db.execSQL("UPDATE $table SET ${present.joinToString(", ") { "$it = NULL" }} WHERE $where")
+        val values = android.content.ContentValues().apply { present.forEach { putNull(it) } }
+        db.update(table, values, where, null)
         Timber.d("$TAG: Nulled diagnostic free text in $count $table rows")
         return count
     }
