@@ -123,6 +123,11 @@ class DataRetentionWorker @AssistedInject constructor(
             // RP-14: column-scoped text-redaction targets keep the historical
             // 30-day window — now routed EXPLICITLY instead of via `else`.
             val textRedactionCutoff = now - TimeUnit.DAYS.toMillis(30)
+            // Owner decision: pending-review notification text is redacted at the
+            // SHORTER of the user's raw notification retention window and 30 days.
+            // A 0-day window means cutoff = now. Other text routes stay at 30 days.
+            val notificationTextDays = minOf(settings.rawNotificationRetentionDays, 30)
+            val notificationTextCutoff = now - TimeUnit.DAYS.toMillis(notificationTextDays.toLong())
 
             val store = RetentionCheckpointStore(prefs)
             val auditDao = appDatabase.privacyAuditDao()
@@ -148,7 +153,7 @@ class DataRetentionWorker @AssistedInject constructor(
                     now - TimeUnit.DAYS.toMillis(RECEIPT_EVENT_RETENTION_DAYS)
                 "50_privacy_audit_events" ->
                     now - TimeUnit.DAYS.toMillis(PRIVACY_AUDIT_RETENTION_DAYS)
-                "pending_reviews.notificationText" -> textRedactionCutoff
+                "pending_reviews.notificationText" -> notificationTextCutoff
                 "background_job_runs.errorMessage" -> textRedactionCutoff
                 "bank_statement_import_items.merchant" -> textRedactionCutoff
                 else -> now - TimeUnit.DAYS.toMillis(30)
@@ -157,6 +162,7 @@ class DataRetentionWorker @AssistedInject constructor(
             fun retentionDaysFor(targetName: String): Int = when (targetName) {
                 "raw_notifications", "notification_intake" -> settings.rawNotificationRetentionDays
                 "scanned_receipts.rawOcrText" -> settings.rawOcrRetentionDays
+                "pending_reviews.notificationText" -> notificationTextDays
                 // RP-14 (D14): fixed policy cutoffs for the new targets.
                 "10_transaction_events.snapshots" -> TRANSACTION_EVENT_SNAPSHOT_RETENTION_DAYS.toInt()
                 "20_transaction_events.rows" -> TRANSACTION_EVENT_ROW_RETENTION_DAYS.toInt()

@@ -435,6 +435,72 @@ class DataRetentionWorkerTest {
         assertEquals(now - 180 * dayMs, cutoffs["50_privacy_audit_events"])
     }
 
+    private fun textRedactionTargets(): Set<RetentionTarget> = setOf(
+        target("pending_reviews.notificationText", 0),
+        target("background_job_runs.errorMessage", 0),
+        target("bank_statement_import_items.merchant", 0)
+    )
+
+    @Test
+    fun `pending review notification text cutoff follows a shorter raw notification window`() = runTest {
+        val dayMs = 24L * 60 * 60 * 1000
+        coEvery { privacySettingsRepository.getSettings() } returns
+            PrivacySettings(rawNotificationRetentionDays = 7)
+        every { retentionRegistry.allTargets() } returns textRedactionTargets()
+
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        val cutoffs = purgeCalls.toMap()
+        assertEquals(
+            timeProvider.now() - 7 * dayMs,
+            cutoffs["pending_reviews.notificationText"]
+        )
+    }
+
+    @Test
+    fun `pending review notification text cutoff is never longer than 30 days`() = runTest {
+        val dayMs = 24L * 60 * 60 * 1000
+        coEvery { privacySettingsRepository.getSettings() } returns
+            PrivacySettings(rawNotificationRetentionDays = 90)
+        every { retentionRegistry.allTargets() } returns textRedactionTargets()
+
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        val cutoffs = purgeCalls.toMap()
+        assertEquals(
+            timeProvider.now() - 30 * dayMs,
+            cutoffs["pending_reviews.notificationText"]
+        )
+    }
+
+    @Test
+    fun `other text redaction routes keep the fixed 30 day cutoff regardless of the window`() = runTest {
+        val dayMs = 24L * 60 * 60 * 1000
+        every { retentionRegistry.allTargets() } returns textRedactionTargets()
+
+        for (days in listOf(0, 7, 90)) {
+            purgeCalls.clear()
+            context.getSharedPreferences(DataRetentionWorker.PREFS_NAME, Context.MODE_PRIVATE)
+                .edit().clear().commit()
+            coEvery { privacySettingsRepository.getSettings() } returns
+                PrivacySettings(rawNotificationRetentionDays = days)
+
+            assertEquals(Result.success(), buildWorker().doWork())
+
+            val cutoffs = purgeCalls.toMap()
+            assertEquals(
+                "[window=$days] background_job_runs.errorMessage",
+                timeProvider.now() - 30 * dayMs,
+                cutoffs["background_job_runs.errorMessage"]
+            )
+            assertEquals(
+                "[window=$days] bank_statement_import_items.merchant",
+                timeProvider.now() - 30 * dayMs,
+                cutoffs["bank_statement_import_items.merchant"]
+            )
+        }
+    }
+
     @Test
     fun `target_failure_records_sanitized_diagnostic`() = runTest {
         // One target throws a permanent failure → diagnostic event should be emitted
