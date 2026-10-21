@@ -3,6 +3,7 @@ package com.yourname.expensetracker.data.backup
 import com.yourname.expensetracker.domain.diagnostics.AppPipeline
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticThrowableSummary
 import com.yourname.expensetracker.domain.diagnostics.EventMetadataSanitizer
 import com.yourname.expensetracker.domain.diagnostics.EventOutcome
 import com.yourname.expensetracker.domain.diagnostics.EventSeverity
@@ -60,7 +61,7 @@ class RestoreDiagnosticsSink(
                     reasonCode = reasonCode?.name,
                     metadataJson = safeMetadataJson,
                     exceptionClass = exception?.javaClass?.simpleName,
-                    exceptionMessageSafe = sanitizer.sanitizeExceptionMessage(exception?.message),
+                    exceptionMessageSafe = exception?.let { DiagnosticThrowableSummary.className(it) },
                     isTerminal = isTerminal
                 )
             } else {
@@ -73,7 +74,7 @@ class RestoreDiagnosticsSink(
                     reasonCode = reasonCode?.name,
                     metadataJson = safeMetadataJson,
                     exceptionClass = exception?.javaClass?.simpleName,
-                    exceptionMessageSafe = sanitizer.sanitizeExceptionMessage(exception?.message),
+                    exceptionMessageSafe = exception?.let { DiagnosticThrowableSummary.className(it) },
                     isTerminal = isTerminal
                 )
             }

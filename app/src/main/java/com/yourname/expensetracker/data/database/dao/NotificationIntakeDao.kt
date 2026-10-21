@@ -197,7 +197,7 @@ interface NotificationIntakeDao {
         SET title = NULL, text = NULL, bigText = NULL,
             subText = NULL, extrasJson = NULL,
             rawPayloadPurgedAt = :nowMs, updatedAt = :nowMs
-        WHERE id = :id
+        WHERE id = :id AND rawPayloadPurgedAt IS NULL
     """)
     suspend fun purgeRawPayload(id: Long, nowMs: Long): Int
 
@@ -215,7 +215,7 @@ interface NotificationIntakeDao {
         SET title = NULL, text = NULL, bigText = NULL,
             subText = NULL, extrasJson = NULL,
             rawPayloadPurgedAt = :nowMs, updatedAt = :nowMs
-        WHERE id = :id
+        WHERE id = :id AND rawPayloadPurgedAt IS NULL
     """)
     suspend fun purgeVisiblePayload(id: Long, nowMs: Long): Int
 
@@ -226,7 +226,7 @@ interface NotificationIntakeDao {
             transientPayloadVersion = :version,
             title = NULL, text = NULL, bigText = NULL,
             subText = NULL, extrasJson = NULL, updatedAt = :nowMs
-        WHERE id = :id
+        WHERE id = :id AND rawPayloadPurgedAt IS NULL
     """)
     suspend fun encryptAndClearVisiblePayload(
         id: Long, ciphertext: String, nonce: String, version: Int, nowMs: Long

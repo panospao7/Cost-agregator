@@ -193,6 +193,74 @@ class ExportAnonymizerTest {
         assertEquals("KEEP_MERCHANT2", queryString(file, "SELECT suggestedMerchant FROM pending_reviews WHERE id=2"))
     }
 
+    // ── S5: diagnostic free-text scrub (redacted mode only) ──────────────────
+
+    @Test
+    fun sanitizeExport_nulls_pipeline_diagnostic_event_free_text_and_keeps_rows() {
+        val file = tempFolder.newFile("pipeline_diag.db")
+        val db = SQLiteDatabase.openOrCreateDatabase(file, null)
+        db.execSQL("CREATE TABLE pipeline_diagnostic_events (id INTEGER PRIMARY KEY, pipeline TEXT NOT NULL, stage TEXT NOT NULL, message TEXT, exceptionClass TEXT, exceptionMessage TEXT)")
+        db.execSQL("INSERT INTO pipeline_diagnostic_events(id, pipeline, stage, message, exceptionClass, exceptionMessage) VALUES (1, 'NOTIFICATION', 'PARSE', 'secret-456 message', 'IllegalStateException', 'secret-456 exception')")
+        db.execSQL("INSERT INTO pipeline_diagnostic_events(id, pipeline, stage, message, exceptionClass, exceptionMessage) VALUES (2, 'NOTIFICATION', 'SAVE', NULL, NULL, NULL)")
+        db.close()
+
+        anonymizer.sanitizeExport(file)
+
+        assertEquals(null, queryString(file, "SELECT message FROM pipeline_diagnostic_events WHERE id=1"))
+        assertEquals(null, queryString(file, "SELECT exceptionMessage FROM pipeline_diagnostic_events WHERE id=1"))
+        assertEquals(0.0, queryDouble(file, "SELECT COUNT(*) FROM pipeline_diagnostic_events WHERE message LIKE '%secret-456%' OR exceptionMessage LIKE '%secret-456%'"), 0.0)
+        assertEquals(2.0, queryDouble(file, "SELECT COUNT(*) FROM pipeline_diagnostic_events"), 0.0)
+        assertEquals("IllegalStateException", queryString(file, "SELECT exceptionClass FROM pipeline_diagnostic_events WHERE id=1"))
+        assertEquals("PARSE", queryString(file, "SELECT stage FROM pipeline_diagnostic_events WHERE id=1"))
+    }
+
+    @Test
+    fun sanitizeExport_nulls_operation_run_event_exception_message_and_keeps_rows() {
+        val file = tempFolder.newFile("run_events_diag.db")
+        val db = SQLiteDatabase.openOrCreateDatabase(file, null)
+        db.execSQL("CREATE TABLE operation_run_events (id INTEGER PRIMARY KEY, stage TEXT NOT NULL, exceptionClass TEXT, exceptionMessage TEXT)")
+        db.execSQL("INSERT INTO operation_run_events(id, stage, exceptionClass, exceptionMessage) VALUES (1, 'VERIFY', 'IOException', 'secret-456 path')")
+        db.execSQL("INSERT INTO operation_run_events(id, stage, exceptionClass, exceptionMessage) VALUES (2, 'DONE', NULL, NULL)")
+        db.close()
+
+        anonymizer.sanitizeExport(file)
+
+        assertEquals(null, queryString(file, "SELECT exceptionMessage FROM operation_run_events WHERE id=1"))
+        assertEquals(0.0, queryDouble(file, "SELECT COUNT(*) FROM operation_run_events WHERE exceptionMessage LIKE '%secret-456%'"), 0.0)
+        assertEquals(2.0, queryDouble(file, "SELECT COUNT(*) FROM operation_run_events"), 0.0)
+        assertEquals("IOException", queryString(file, "SELECT exceptionClass FROM operation_run_events WHERE id=1"))
+    }
+
+    @Test
+    fun sanitizeExport_nulls_operation_run_error_summary_and_keeps_rows() {
+        val file = tempFolder.newFile("runs_diag.db")
+        val db = SQLiteDatabase.openOrCreateDatabase(file, null)
+        db.execSQL("CREATE TABLE operation_runs (id INTEGER PRIMARY KEY, correlationId TEXT NOT NULL, status TEXT NOT NULL, errorSummary TEXT)")
+        db.execSQL("INSERT INTO operation_runs(id, correlationId, status, errorSummary) VALUES (1, 'c1', 'FAILED_FINAL', 'secret-456 summary')")
+        db.execSQL("INSERT INTO operation_runs(id, correlationId, status, errorSummary) VALUES (2, 'c2', 'SUCCESS', NULL)")
+        db.close()
+
+        anonymizer.sanitizeExport(file)
+
+        assertEquals(null, queryString(file, "SELECT errorSummary FROM operation_runs WHERE id=1"))
+        assertEquals(0.0, queryDouble(file, "SELECT COUNT(*) FROM operation_runs WHERE errorSummary LIKE '%secret-456%'"), 0.0)
+        assertEquals(2.0, queryDouble(file, "SELECT COUNT(*) FROM operation_runs"), 0.0)
+        assertEquals("FAILED_FINAL", queryString(file, "SELECT status FROM operation_runs WHERE id=1"))
+    }
+
+    @Test
+    fun sanitizeExport_diagnostic_scrub_tolerates_tables_without_the_columns() {
+        val file = tempFolder.newFile("diag_old_schema.db")
+        val db = SQLiteDatabase.openOrCreateDatabase(file, null)
+        db.execSQL("CREATE TABLE operation_runs (id INTEGER PRIMARY KEY, status TEXT NOT NULL)")
+        db.execSQL("INSERT INTO operation_runs(id, status) VALUES (1, 'SUCCESS')")
+        db.close()
+
+        anonymizer.sanitizeExport(file)
+
+        assertEquals("SUCCESS", queryString(file, "SELECT status FROM operation_runs WHERE id=1"))
+    }
+
     @Test
     fun sanitizeExport_redacts_bank_statement_import_items_merchant() {
         val file = tempFolder.newFile("bank_items.db")

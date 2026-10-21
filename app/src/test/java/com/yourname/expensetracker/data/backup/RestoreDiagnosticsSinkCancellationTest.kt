@@ -159,6 +159,43 @@ class RestoreDiagnosticsSinkCancellationTest {
     }
 
     @Test
+    fun journal_event_stores_exception_class_never_message_text() {
+        val directory: File = temporaryFolder.newFolder()
+        val context = object : ContextWrapper(ApplicationProvider.getApplicationContext<android.content.Context>()) {
+            override fun getFilesDir(): File = directory
+        }
+        val timeProvider = FakeTimeProvider(1716163200000L)
+        val journal = RestoreJournal(context, timeProvider)
+        val entry = journal.beginJournal(
+            sourceBackupPath = "/cache/s.costbackup",
+            stagedDbPath = "/data/staged.db",
+            liveDbPath = "/data/live.db"
+        )
+        val sink = RestoreDiagnosticsSink(
+            operationRunHandle = null,
+            restoreJournal = journal,
+            safeSink = RecordingSafeSink(),
+            maintenanceMode = RestoreMaintenanceMode(context, timeProvider),
+            correlationId = entry.operationCorrelationId,
+            operationType = "RESTORE_COSTBACKUP"
+        )
+
+        runBlocking {
+            sink.event(
+                stage = "STAGE",
+                outcome = EventOutcome.FAILED_FINAL,
+                exception = IllegalStateException("secret-456")
+            )
+        }
+
+        val stored = journal.getAllDiagnosticEvents().single { it.stage == "STAGE" }
+        assertEquals("IllegalStateException", stored.exceptionClass)
+        assertEquals("IllegalStateException", stored.exceptionMessageSafe)
+        org.junit.Assert.assertFalse(stored.toString().contains("secret-456"))
+        org.junit.Assert.assertFalse(File(directory, "restore_journal.json").readText().contains("secret-456"))
+    }
+
+    @Test
     fun room_handle_is_not_called_after_live_db_swap_started() {
         val handle = ThrowingHandle(CancellationException("must-not-be-reached"))
         val sink = newSink(handle, RecordingSafeSink())

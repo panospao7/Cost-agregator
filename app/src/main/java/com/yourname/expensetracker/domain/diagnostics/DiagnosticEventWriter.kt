@@ -65,7 +65,8 @@ class RoomDiagnosticEventWriter @Inject constructor(
             isTerminal = event.isTerminal,
             elapsedMs = event.elapsedMs,
             exceptionClass = event.exception?.javaClass?.simpleName,
-            exceptionMessage = sanitizer.sanitizeExceptionMessage(event.exception?.message),
+            // DIAG-01: exception messages are never stored, only the class name
+            exceptionMessage = event.exception?.let { DiagnosticThrowableSummary.className(it) },
             metadataJson = safeMetadataJson,
             metadataSchemaVersion = 1
         )

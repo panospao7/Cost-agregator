@@ -43,28 +43,30 @@ class NotificationIntakePayloadRepairer @Inject constructor(
                 try {
                     val isTerminal = row.terminalAt != null
                     if (isTerminal) {
-                        writeBarrier.runWrite(
+                        val updated = writeBarrier.runWrite(
                             DatabaseAccessOperation(
                                 "NotificationIntakePayloadRepairer.repairLegacyPlaintextTransientRows"
                             )
                         ) {
                             intakeDao.purgeVisiblePayload(row.id, now)
                         }
-                        totalRepaired++
+                        // F-R28-d: count a repair only when a row actually changed.
+                        if (updated > 0) totalRepaired++
                     } else if (row.title != null || row.text != null || row.bigText != null) {
                         val payload = NotificationTransientPayload(
                             title = row.title, text = row.text, bigText = row.bigText,
                             subText = row.subText, extrasJson = row.extrasJson
                         )
                         val encrypted = crypto.encrypt(payload)
-                        writeBarrier.runWrite(
+                        val updated = writeBarrier.runWrite(
                             DatabaseAccessOperation(
                                 "NotificationIntakePayloadRepairer.repairLegacyPlaintextTransientRows"
                             )
                         ) {
                             intakeDao.encryptAndClearVisiblePayload(row.id, encrypted.ciphertext, encrypted.nonce, encrypted.version, now)
                         }
-                        totalRepaired++
+                        // F-R28-d: count a repair only when a row actually changed.
+                        if (updated > 0) totalRepaired++
                     }
                 } catch (blocked: DatabaseAccessBlockedException) {
                     Timber.w("Legacy payload repair aborted: database writes blocked during restore")

@@ -71,15 +71,20 @@ All background-work diagnostics use controlled, structured fields — never raw 
 - `TransactionClassifier` and `ExpenseCategoryClassifier` use encryption for all on-device ML data
 
 ### Exception message redaction
-- All exception messages written to durable storage are sanitized by `EventMetadataSanitizer.sanitizeExceptionMessage()`
+- Room diagnostics (`RoomDiagnosticEventWriter`, `RoomOperationRunRecorder`, `CompositeOperationRunRecorder`), the restore journal (`RestoreJournal`), the DataStore maintenance sink (`DataStoreMaintenanceSafeDiagnosticSink`), the journal importer (`RestoreJournalImporter`) and the redacted-export scrub (`ExportAnonymizer.sanitizeExport()`, applied only to redacted exports) do NOT store exception messages. Only the exception class simple name is stored (`DiagnosticThrowableSummary.className()`), both in `exceptionMessage` columns and in run `errorSummary` / status reasons derived from a throwable. The redacted-export scrub additionally nulls previously persisted `exceptionMessage` / `errorSummary` text in the exported copy; full (non-redacted) exports are not scrubbed.
+- Other durable sinks that still persist a message sanitize it with `EventMetadataSanitizer.sanitizeExceptionMessage()`
 - Patterns redacted (via `sanitizeStringValue()`):
-  - Digit sequences (12+), IBANs, JWT tokens, Bearer authorization headers → `[REDACTED]`
+  - Digit sequences (10+), IBANs, JWT tokens, Bearer authorization headers → `[REDACTED]`
   - File paths (`/path/to/file`, `C:\path`) → `[PATH]`
   - URLs and email addresses are NOT explicitly matched (caught incidentally if at all)
   - Any value matching blocked key substrings (`raw`, `ocr`, `prompt`, `token`, `secret`, etc.)
 - Strings longer than `2 × MAX_STRING_LENGTH` (512 chars) are replaced entirely with `[REDACTED]`
 - Messages truncated to `MAX_STRING_LENGTH` (256 chars)
 - Null messages remain null (no redaction needed)
+
+> Known residuals: `WorkerRunLogger.kt` (about :309, :322) and `ReceiptLifecycleEventWriter.kt` (about :64) still persist
+> regex-sanitized exception messages (not class name only). The read path `DiagnosticsRepository.kt` (about :139, :162)
+> surfaces messages stored in old records; there is no UI consumer of it in the release build.
 
 > Note: Separate from `EventMetadataSanitizer`, the `ReceiptRepository.debugReceipt()` and PII sanitizers
 > in `CloudPiiSanitizer` / input builders use `[REDACTED_URI]`, `[REDACTED_PATH]`, `[REDACTED_URL]`,

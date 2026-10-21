@@ -21,6 +21,7 @@ import com.yourname.expensetracker.data.database.entity.PrivacyAuditEvent
 import com.yourname.expensetracker.domain.diagnostics.AppPipeline
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticThrowableSummary
 import com.yourname.expensetracker.domain.diagnostics.EventOutcome
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
@@ -249,7 +250,8 @@ class DataRetentionWorker @AssistedInject constructor(
                     target.purge(cutoff)
                 } catch (e: Exception) {
                     if (e is CancellationException) throw e
-                    Log.e(TAG, "RetentionTarget[${target.name}] purge threw — continuing", e)
+                    // DIAG-10 / LOG-02: class name only, no throwable (messages may carry user data)
+                    Log.e(TAG, "RetentionTarget[${target.name}] purge threw — continuing: ${DiagnosticThrowableSummary.className(e)}")
                     // RP-14 14b: retry classification uses the typed
                     // [RetentionPurgeFailure] or controlled DAO/SQLite/IO
                     // exception CLASSES — never exception message substrings.
@@ -321,7 +323,7 @@ class DataRetentionWorker @AssistedInject constructor(
                         ))
                     } catch (e: Exception) {
                         if (e is CancellationException) throw e
-                        Log.w(TAG, "Failed to write retention diagnostic", e)
+                        Log.w(TAG, "Failed to write retention diagnostic: ${DiagnosticThrowableSummary.className(e)}")
                     }
                 }
             }
@@ -444,7 +446,7 @@ class DataRetentionWorker @AssistedInject constructor(
             throw e
         } catch (e: Exception) {
             if (e is CancellationException) throw e
-            Log.w(TAG, "Retention audit emission failed for target ${record.targetName}", e)
+            Log.w(TAG, "Retention audit emission failed for target ${record.targetName}: ${DiagnosticThrowableSummary.className(e)}")
             ctx.addErrors()
             false
         }

@@ -5,6 +5,7 @@ import androidx.work.*
 import com.yourname.expensetracker.domain.diagnostics.AppPipeline
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticThrowableSummary
 import com.yourname.expensetracker.domain.diagnostics.EventOutcome
 import com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -167,8 +168,9 @@ object WorkerSpecScheduler {
             }
         } catch (e: Exception) {
             if (e is CancellationException) throw e
-            val errorMsg = e.message ?: "Unknown error"
-            android.util.Log.e("WorkerSpecScheduler", "Failed to enqueue worker '$workerName'", e)
+            // DIAG-10 / LOG-02: class name only; exception messages may carry user data.
+            val errorMsg = DiagnosticThrowableSummary.className(e)
+            android.util.Log.e("WorkerSpecScheduler", "Failed to enqueue worker '$workerName': $errorMsg")
 
             emitScheduleDiagnostic(
                 diagnosticEventWriter = diagnosticEventWriter,
@@ -236,7 +238,10 @@ object WorkerSpecScheduler {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                android.util.Log.w("WorkerSpecScheduler", "Failed to cancel disabled worker '$workerName'", e)
+                android.util.Log.w(
+                    "WorkerSpecScheduler",
+                    "Failed to cancel disabled worker '$workerName': ${DiagnosticThrowableSummary.className(e)}"
+                )
             }
             return ScheduleResult(workerName = workerName, scheduled = false, policyUsed = "", versionChanged = false, error = "Worker '$workerName' is disabled")
         }
@@ -312,8 +317,9 @@ object WorkerSpecScheduler {
             )
         } catch (e: Exception) {
             if (e is CancellationException) throw e
-            val errorMsg = e.message ?: "Unknown error"
-            android.util.Log.e("WorkerSpecScheduler", "Failed to enqueue midnight worker '$workerName'", e)
+            // DIAG-10 / LOG-02: class name only; exception messages may carry user data.
+            val errorMsg = DiagnosticThrowableSummary.className(e)
+            android.util.Log.e("WorkerSpecScheduler", "Failed to enqueue midnight worker '$workerName': $errorMsg")
 
             emitScheduleDiagnostic(
                 diagnosticEventWriter = diagnosticEventWriter,

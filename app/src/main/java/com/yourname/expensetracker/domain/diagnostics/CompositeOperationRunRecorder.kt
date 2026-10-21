@@ -66,7 +66,7 @@ class CompositeOperationRunRecorder @Inject constructor(
             throw e
         } catch (e: Exception) {
             kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
-                runCatching { run.failedFinal(e.message ?: "Exception", e) }
+                runCatching { run.failedFinal(DiagnosticThrowableSummary.className(e), e) }
             }
             throw e
         }

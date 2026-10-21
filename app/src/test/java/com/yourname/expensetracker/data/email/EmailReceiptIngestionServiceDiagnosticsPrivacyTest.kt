@@ -41,7 +41,7 @@ import org.junit.Test
  * merchant / path sentinel appears in any non-exception field of any emitted event.
  *
  * Production references (EmailReceiptIngestionService.kt):
- *  - front_door RECEIVED metadata: putHashed("messageId"), putHashed("sender")
+ *  - front_door RECEIVED metadata: putHashed("messageId") only (no sender slot)
  *  - provider_detection metadata: put("provider")
  *  - coordinator FAILED_FINAL metadata: put("retryable", false)
  *  - ingestion FAILED_FINAL: sourceIdHash = hmacSha256Prefix(messageId, ..., 16), exception = e
@@ -64,7 +64,7 @@ class EmailReceiptIngestionServiceDiagnosticsPrivacyTest {
     private val sentinelPath = "/data/user/0/x/SENTINEL_PATH_9k.txt"
 
     /** Explicit allow-list of metadata keys the email path may emit. */
-    private val allowedMetadataKeys = setOf("messageId", "sender", "provider", "retryable")
+    private val allowedMetadataKeys = setOf("messageId", "provider", "retryable")
     private val allowedProviders = setOf("amazon", "uber", "apple", "unknown")
     private val allowedReasonCodes = setOf(
         null,
@@ -185,7 +185,7 @@ class EmailReceiptIngestionServiceDiagnosticsPrivacyTest {
     }
 
     @Test
-    fun `front door RECEIVED event hashes messageId and sender to 16 hex and never carries raw values`() = runTest {
+    fun `front door RECEIVED event hashes messageId to 16 hex and carries no sender slot`() = runTest {
         parsersReturn(null)
 
         ingest()
@@ -194,11 +194,11 @@ class EmailReceiptIngestionServiceDiagnosticsPrivacyTest {
         assertEquals("front_door", received.stage)
         assertEquals("email", received.sourceType)
         val json = JSONObject(received.metadata.toJson())
-        assertEquals(setOf("messageId", "sender"), json.keys().asSequence().toSet())
+        // DIAG-06: the sender slot was always [REDACTED] at persistence, so it is no longer emitted.
+        assertEquals(setOf("messageId"), json.keys().asSequence().toSet())
+        assertFalse(json.has("sender"))
         assertTrue(json.getString("messageId").matches(hex16))
-        assertTrue(json.getString("sender").matches(hex16))
         assertTrue(json.getString("messageId") != sentinelMessageId)
-        assertTrue(json.getString("sender") != sentinelSender)
         assertNoSentinels(writer.events)
         assertMetadataWithinAllowList(writer.events)
     }

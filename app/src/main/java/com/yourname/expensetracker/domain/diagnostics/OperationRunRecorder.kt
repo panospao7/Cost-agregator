@@ -160,7 +160,7 @@ class RoomOperationRunRecorder @Inject constructor(
             withContext(NonCancellable) { runCatching { run.cancelled(DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name) } }
             throw e
         } catch (e: Exception) {
-            withContext(NonCancellable) { runCatching { run.failedFinal(e.message ?: "Exception", e) } }
+            withContext(NonCancellable) { runCatching { run.failedFinal(DiagnosticThrowableSummary.className(e), e) } }
             throw e
         }
     }
@@ -206,7 +206,8 @@ class RoomOperationRunRecorder @Inject constructor(
                     entityId = entityId,
                     metadataJson = sanitizer.sanitizeJsonString(if (metadata.isEmpty()) null else metadata.toJson()),
                     exceptionClass = exception?.javaClass?.simpleName,
-                    exceptionMessage = sanitizer.sanitizeExceptionMessage(exception?.message),
+                    // DIAG-01: exception messages are never stored, only the class name
+                    exceptionMessage = exception?.let { DiagnosticThrowableSummary.className(it) },
                     isTerminal = isTerminal,
                     eventId = CorrelationIds.newId()  // DDL-F876-14: every event gets a stable ID
                 )
@@ -284,7 +285,8 @@ class RoomOperationRunRecorder @Inject constructor(
                 runCatching {
                     writeBarrier.checkWritesAllowed("OperationRunRecorder.finalize")
                     val finalizedAt = timeProvider.now()
-                    val finalizeSummary = summary ?: sanitizer.sanitizeExceptionMessage(error?.message)
+                    // DIAG-01: never persist exception message text, only the class name
+                    val finalizeSummary = summary ?: error?.let { DiagnosticThrowableSummary.className(it) }
                     val updated = writeBarrier.runWrite(DatabaseAccessOperation("OperationRunRecorder.finalize")) {
                         runDao.finalizeIfRunning(
                             id = runId,

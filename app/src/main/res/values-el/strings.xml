@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="privacy_raw_storage_bank_statement_label">Αποθήκευση τραπεζικών κινήσεων/API</string>
+    <string name="privacy_retention_immediately">Άμεσα (διαγράφεται στον επόμενο καθαρισμό)</string>
     <string name="receipt_partial_ocr_warning">Ορισμένες σελίδες δεν ήταν δυνατό να διαβαστούν ή δεν υποβλήθηκαν σε επεξεργασία. Η απόδειξη είναι ελλιπής· ελέγξτε το πρωτότυπο πριν την αποθηκεύσετε.</string>
     <string name="receipt_ocr_coverage_unverified_warning">Δεν ήταν δυνατό να επαληθευτεί η κάλυψη των σελίδων αυτής της αποθηκευμένης απόδειξης. Ελέγξτε το πρωτότυπο πριν βασιστείτε στα αναγνωρισμένα στοιχεία.</string>
     <string name="privacy_blocked_generic">Αυτή η λειτουργία έχει αποκλειστεί από τις ρυθμίσεις απορρήτου σας.</string>

@@ -112,7 +112,9 @@ class RestoreJournalImporter @Inject constructor(
                             reasonCode = event.reasonCode,
                             occurredAt = event.occurredAt,
                             exceptionClass = event.exceptionClass,
-                            exceptionMessage = event.exceptionMessageSafe,
+                            // DIAG-03: journal message text (incl. legacy journals) is never
+                            // copied into the queryable ledger; the class column carries the type.
+                            exceptionMessage = null,
                             isTerminal = event.isTerminal,
                             eventId = event.eventId
                         )
@@ -219,7 +221,8 @@ class RestoreJournalImporter @Inject constructor(
                             reasonCode = event.reasonCode,
                             occurredAt = event.occurredAt,
                             exceptionClass = event.exceptionClass,
-                            exceptionMessage = event.exceptionMessageSafe,
+                            // DIAG-03: see success-journal import above.
+                            exceptionMessage = null,
                             isTerminal = event.isTerminal,
                             eventId = event.eventId
                         )

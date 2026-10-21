@@ -810,6 +810,41 @@ class DatabaseBackupRepositoryImplTest {
     }
 
     @Test
+    fun `createCostBackup full export does not scrub the snapshot`() = runTest(testDispatcher) {
+        createFullSchemaDatabase(file = dbFile)
+        every { context.cacheDir } returns File(tempDir, "cache").apply { mkdirs() }
+
+        val repo = createRepository(encryptionService = lowIterationBackupEncryptionService())
+        val result = repo.createCostBackup(
+            password = "full_export_password",
+            includeReceiptImages = false,
+            redacted = false,
+            privacyMode = null
+        )
+
+        // Success proves the export ran past the snapshot step where the scrub gate lives.
+        assertTrue(result.isSuccess)
+        verify(exactly = 0) { exportAnonymizer.sanitizeExport(any()) }
+    }
+
+    @Test
+    fun `createCostBackup redacted export scrubs the snapshot exactly once`() = runTest(testDispatcher) {
+        createFullSchemaDatabase(file = dbFile)
+        every { context.cacheDir } returns File(tempDir, "cache").apply { mkdirs() }
+
+        val repo = createRepository(encryptionService = lowIterationBackupEncryptionService())
+        val result = repo.createCostBackup(
+            password = "redacted_export_password",
+            includeReceiptImages = false,
+            redacted = true,
+            privacyMode = null
+        )
+
+        assertTrue(result.isSuccess)
+        verify(exactly = 1) { exportAnonymizer.sanitizeExport(any()) }
+    }
+
+    @Test
     fun `restore from backup works`() = runTest(testDispatcher) {
         if (!BuildConfig.DEBUG) {
             assertLegacyImportDeniedInRelease()

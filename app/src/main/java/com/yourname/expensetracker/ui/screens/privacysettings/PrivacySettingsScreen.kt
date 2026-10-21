@@ -428,8 +428,15 @@ private fun RetentionSlider(
     onValueChange: (Float) -> Unit
 ) {
     Column(modifier = Modifier.padding(vertical = 6.dp)) {
+        // F-R28-b: 0 days means the cutoff is "now" (data is deleted at the next run), so say so.
+        val days = value.toInt()
+        val valueText = if (days == 0) {
+            stringResource(R.string.privacy_retention_immediately)
+        } else {
+            days.toString()
+        }
         Text(
-            text = "$label: ${value.toInt()}",
+            text = "$label: $valueText",
             style = MaterialTheme.typography.bodyMedium,
             color = SemanticColors.TextPrimary
         )

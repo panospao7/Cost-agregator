@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticThrowableSummary
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
@@ -125,9 +126,9 @@ class DataStoreMaintenanceSafeDiagnosticSink @Inject constructor(
                             if (event.metadata.isEmpty()) null else event.metadata.toJson()
                         ),
                         exceptionClass = event.exception?.javaClass?.simpleName,
-                        exceptionMessageSafe = sanitizer.sanitizeExceptionMessage(event.exception?.message),
+                        exceptionMessageSafe = event.exception?.let { DiagnosticThrowableSummary.className(it) },
                         writeFailureClass = writeFailure?.javaClass?.simpleName,
-                        writeFailureMessageSafe = sanitizer.sanitizeExceptionMessage(writeFailure?.message),
+                        writeFailureMessageSafe = writeFailure?.let { DiagnosticThrowableSummary.className(it) },
                         isTerminal = event.isTerminal
                     )
                 )

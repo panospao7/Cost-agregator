@@ -7,6 +7,8 @@ import androidx.work.ListenableWorker
 import androidx.work.OneTimeWorkRequest
 import androidx.work.WorkManager
 import com.yourname.expensetracker.data.location.MerchantKeyBackfillWorker
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.every
 import io.mockk.mockk
@@ -15,6 +17,7 @@ import io.mockk.mockkStatic
 import io.mockk.slot
 import io.mockk.unmockkAll
 import io.mockk.verify
+import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -25,6 +28,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowLog
 
 /**
  * Robolectric-style contract tests for [WorkerSpecScheduler.scheduleAtMidnight]
@@ -398,10 +402,92 @@ class WorkerSpecSchedulerTest {
 
         assertFalse("WorkManager failure should return scheduled=false", result.scheduled)
         assertNotNull("Error message must be set on failure", result.error)
+        // DIAG-10: only the exception class name is surfaced, never the message text.
         assertEquals(
-            "Error message should match simulated failure",
-            simulatedError, result.error
+            "Error must be the exception class name only",
+            "RuntimeException", result.error
         )
+        assertFalse(result.error!!.contains(simulatedError))
+    }
+
+    @Test
+    fun `scheduleFromSpec failure keeps exception message out of result diagnostics and logs`() {
+        val name = "failing_worker_privacy"
+        val spec = WorkerSpec(
+            name = name,
+            version = 1,
+            enabled = true,
+            repeatIntervalHours = null,
+            oneShotPolicy = ExistingWorkPolicy.REPLACE
+        )
+        every { WorkerSpec.DEFAULTS } returns mapOf(name to spec)
+        context.getSharedPreferences("worker_spec_versions", Context.MODE_PRIVATE)
+            .edit().putInt(name, spec.version).commit()
+        val secret = "secret-123"
+        every {
+            workManager.enqueueUniqueWork(eq(name), any(), any<OneTimeWorkRequest>())
+        } throws IllegalStateException("merchant Lidl $secret")
+        val events = java.util.concurrent.CopyOnWriteArrayList<DiagnosticEvent>()
+        val latch = java.util.concurrent.CountDownLatch(1)
+        val writer = object : DiagnosticEventWriter {
+            override suspend fun emit(event: DiagnosticEvent) {
+                events.add(event)
+                latch.countDown()
+            }
+        }
+        ShadowLog.clear()
+
+        val result = WorkerSpecScheduler.scheduleFromSpec(context, name, workerClass, null, writer)
+
+        assertEquals("IllegalStateException", result.error)
+        assertTrue("diagnostic event must be emitted", latch.await(5, java.util.concurrent.TimeUnit.SECONDS))
+        val stored = events.single()
+        assertEquals("IllegalStateException", JSONObject(stored.metadata.toJson()).getString("error"))
+        assertFalse(stored.metadata.toJson().contains(secret))
+        assertFalse(result.toString().contains(secret))
+        ShadowLog.getLogs().forEach { item ->
+            assertFalse("log must not contain message text", item.msg.contains(secret))
+            assertTrue("log must not attach the throwable", item.throwable == null)
+        }
+    }
+
+    @Test
+    fun `scheduleAtMidnight failure keeps exception message out of result diagnostics and logs`() {
+        val name = "failing_midnight_worker_privacy"
+        val spec = WorkerSpec(
+            name = name,
+            version = 1,
+            enabled = true,
+            repeatIntervalHours = null,
+            oneShotPolicy = ExistingWorkPolicy.REPLACE
+        )
+        every { WorkerSpec.DEFAULTS } returns mapOf(name to spec)
+        context.getSharedPreferences("worker_spec_versions", Context.MODE_PRIVATE)
+            .edit().putInt(name, spec.version).commit()
+        val secret = "secret-123"
+        every {
+            workManager.enqueueUniqueWork(eq(name), any(), any<OneTimeWorkRequest>())
+        } throws IllegalStateException("account 4242 $secret")
+        val events = java.util.concurrent.CopyOnWriteArrayList<DiagnosticEvent>()
+        val latch = java.util.concurrent.CountDownLatch(1)
+        val writer = object : DiagnosticEventWriter {
+            override suspend fun emit(event: DiagnosticEvent) {
+                events.add(event)
+                latch.countDown()
+            }
+        }
+        ShadowLog.clear()
+
+        val result = WorkerSpecScheduler.scheduleAtMidnight(context, name, workerClass, timeProvider, writer)
+
+        assertEquals("IllegalStateException", result.error)
+        assertTrue("diagnostic event must be emitted", latch.await(5, java.util.concurrent.TimeUnit.SECONDS))
+        assertEquals("IllegalStateException", JSONObject(events.single().metadata.toJson()).getString("error"))
+        assertFalse(events.single().metadata.toJson().contains(secret))
+        ShadowLog.getLogs().forEach { item ->
+            assertFalse("log must not contain message text", item.msg.contains(secret))
+            assertTrue("log must not attach the throwable", item.throwable == null)
+        }
     }
 
     // ── G-TIME-01: deterministic next-midnight delay via injected TimeProvider ──

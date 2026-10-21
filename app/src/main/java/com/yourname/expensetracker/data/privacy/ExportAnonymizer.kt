@@ -30,6 +30,8 @@ import javax.inject.Singleton
  *   `emailMessageId` → NULL; dedup hashes/fingerprint preserved)
  * - `pending_reviews` notification text (`notificationText`, `notificationTitle` → NULL)
  * - `bank_statement_import_items` merchant names (`merchant` → '[REDACTED]')
+ * - `pipeline_diagnostic_events` (`message`, `exceptionMessage`), `operation_run_events`
+ *   (`exceptionMessage`) and `operation_runs` (`errorSummary`) → NULL (rows retained)
  *
  * The operation is performed **in-place** on the provided file, so callers
  * must pass a **temporary copy** — never the live database file.
@@ -82,6 +84,7 @@ class ExportAnonymizer @Inject constructor() {
                 val emailPurged = sanitizeEmailReceiptSources(db)
                 val pendingReviewsPurged = sanitizePendingReviews(db)
                 val bankItemsPurged = sanitizeBankStatementImportItems(db)
+                val diagnosticTextPurged = sanitizeDiagnosticFreeText(db)
                 db.setTransactionSuccessful()
 
                 Timber.d(
@@ -89,7 +92,7 @@ class ExportAnonymizer @Inject constructor() {
                         "notificationIntake=$intakePurged aiArtifacts=$aiArtifactsPurged " +
                         "aiChat=$aiChatPurged merchantLocations=$merchantLocPurged " +
                         "emailSources=$emailPurged pendingReviews=$pendingReviewsPurged " +
-                        "bankImportItems=$bankItemsPurged"
+                        "bankImportItems=$bankItemsPurged diagnosticText=$diagnosticTextPurged"
                 )
             } finally {
                 db.endTransaction()
@@ -394,6 +397,34 @@ class ExportAnonymizer @Inject constructor() {
             "UPDATE bank_statement_import_items SET merchant = '[REDACTED]' WHERE $where"
         )
         Timber.d("$TAG: Redacted bank import item merchants in $count rows")
+        return count
+    }
+
+    /**
+     * Redacted-mode scrub of free-text diagnostic columns. Rows are never deleted so
+     * backup row-count verification still matches; only the message / exception /
+     * summary columns (all nullable) are set to NULL. Columns absent from older
+     * schemas are skipped.
+     *
+     * @return number of rows updated across the three diagnostic tables
+     */
+    private fun sanitizeDiagnosticFreeText(db: SQLiteDatabase): Int {
+        var total = 0
+        total += nullifyColumnsWhereSet(db, "pipeline_diagnostic_events", listOf("message", "exceptionMessage"))
+        total += nullifyColumnsWhereSet(db, "operation_run_events", listOf("exceptionMessage"))
+        total += nullifyColumnsWhereSet(db, "operation_runs", listOf("errorSummary"))
+        return total
+    }
+
+    private fun nullifyColumnsWhereSet(db: SQLiteDatabase, table: String, columns: List<String>): Int {
+        if (!tableExists(db, table)) return 0
+        val present = columns.filter { columnExists(db, table, it) }
+        if (present.isEmpty()) return 0
+        val where = present.joinToString(" OR ") { "$it IS NOT NULL" }
+        val count = countWhere(db, table, where)
+        if (count == 0) return 0
+        db.execSQL("UPDATE $table SET ${present.joinToString(", ") { "$it = NULL" }} WHERE $where")
+        Timber.d("$TAG: Nulled diagnostic free text in $count $table rows")
         return count
     }
 

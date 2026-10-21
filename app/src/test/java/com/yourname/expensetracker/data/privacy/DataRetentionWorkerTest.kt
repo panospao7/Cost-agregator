@@ -44,6 +44,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.shadows.ShadowLog
 
 /**
  * P9-S4 unit tests for [DataRetentionWorker.doWork].
@@ -575,6 +576,54 @@ class DataRetentionWorkerTest {
                 event.metadata.toJson().contains("IllegalArgumentException")
             })
         }
+    }
+
+    // ── DIAG-10 / LOG-02: release logs carry the exception class name only ───
+
+    private fun assertNoSecretOrThrowableLogged(secret: String) {
+        val logs = ShadowLog.getLogs().filter { it.tag == "DataRetentionWorker" }
+        assertTrue("worker must have logged something", logs.isNotEmpty())
+        logs.forEach { item ->
+            assertFalse("log must not contain exception message text", item.msg.contains(secret))
+            assertNull("log must not attach the throwable", item.throwable)
+        }
+    }
+
+    @Test
+    fun `purge and diagnostic failure logs carry class name only and no exception message`() = runTest {
+        val secret = "secret-123"
+        every { retentionRegistry.allTargets() } returns setOf(
+            throwingTarget("target_b", IllegalArgumentException("merchant Lidl $secret"))
+        )
+        coEvery { diagnosticEventWriter.emit(any()) } throws IllegalStateException("writer $secret")
+        ShadowLog.clear()
+
+        buildWorker().doWork()
+
+        assertNoSecretOrThrowableLogged(secret)
+        assertTrue(
+            ShadowLog.getLogs().any { it.msg.contains("IllegalArgumentException") }
+        )
+        assertTrue(
+            ShadowLog.getLogs().any { it.msg.contains("IllegalStateException") }
+        )
+    }
+
+    @Test
+    fun `audit emission failure log carries class name only and no exception message`() = runTest {
+        val secret = "secret-123"
+        val auditDao = mockk<PrivacyAuditDao>(relaxed = true)
+        every { appDatabase.privacyAuditDao() } returns auditDao
+        coEvery { auditDao.insert(any()) } throws RuntimeException("row $secret")
+        every { retentionRegistry.allTargets() } returns setOf(target("raw_notifications", 5))
+        ShadowLog.clear()
+
+        buildWorker().doWork()
+
+        assertNoSecretOrThrowableLogged(secret)
+        assertTrue(
+            ShadowLog.getLogs().any { it.msg.contains("Retention audit emission failed") && it.msg.contains("RuntimeException") }
+        )
     }
 
     // ── RP-02 U-004: per-insert barrier ownership for audit writes ───

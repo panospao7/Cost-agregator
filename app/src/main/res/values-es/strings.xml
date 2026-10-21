@@ -262,6 +262,7 @@
     <string name="receipt_partial_ocr_warning">Algunas páginas no se pudieron leer o no se procesaron. Este recibo está incompleto; comprueba el original antes de guardarlo.</string>
     <string name="receipt_ocr_coverage_unverified_warning">No se pudo verificar la cobertura de páginas de este recibo guardado. Comprueba el original antes de confiar en los datos reconocidos.</string>
     <string name="privacy_blocked_generic">Esta función está bloqueada por tu configuración de privacidad.</string>
+    <string name="privacy_retention_immediately">Inmediatamente (se elimina en la próxima limpieza)</string>
     <string name="privacy_blocked_cloud_ai">La IA en la nube está desactivada en la configuración de privacidad o de IA.</string>
     <string name="privacy_blocked_receipt_image_upload">La carga de imágenes de recibos a la nube está desactivada.</string>
     <string name="privacy_blocked_external_geocoding">La geocodificación externa (búsqueda de direcciones) está desactivada.</string>

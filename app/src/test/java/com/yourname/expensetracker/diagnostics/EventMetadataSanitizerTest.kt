@@ -151,11 +151,13 @@ class EventMetadataSanitizerTest {
             KeyRow("K60", "mapping", true),
             KeyRow("K61", "discard", true),
             KeyRow("K62", "authority", true),
-            // Policy gap - release follow-up (SENSITIVE_DIAGNOSTICS_POLICY forbids merchant names/amounts);
+            // Policy gap - release follow-up (SENSITIVE_DIAGNOSTICS_POLICY forbids merchant names);
             // pins CURRENT behaviour only
             KeyRow("K65", "description", false),
             KeyRow("K66", "merchant", false),
-            KeyRow("K67", "amount", false),
+            // DIAG-06: amounts are forbidden in diagnostics metadata
+            KeyRow("K67", "amount", true),
+            KeyRow("K98", "totalAmount", true),
             // empty / punctuation-only keys canonicalize to "" and are not dangerous
             KeyRow("K68", "", false),
             KeyRow("K69", "___", false),
@@ -187,7 +189,7 @@ class EventMetadataSanitizerTest {
             // hash is only special as a suffix
             KeyRow("K97", "sourceIdHashX", false)
         )
-        checkRows("key classification", rows, 82, { it.id }) { r ->
+        checkRows("key classification", rows, 83,{ it.id }) { r ->
             assertEquals("isDangerousKey('${r.key}')", r.dangerous, sanitizer.isDangerousKey(r.key))
         }
     }
@@ -267,12 +269,14 @@ class EventMetadataSanitizerTest {
             ValueRow("H30", "assetRelativePathHash", "abcdef0123456789", "abcdef0123456789"),
             ValueRow("H31", "payloadHash", "abcdef0123456789", "abcdef0123456789"),
             ValueRow("H32", "userHash", "abcdef0123456789", redacted),
-            // hex-only validation: an all-digit 18-char hash is kept (no long-digit redaction in hash slots)
-            // Policy gap - release follow-up (inconsistent with the 12+ digit redaction documented in
-            // SENSITIVE_DIAGNOSTICS_POLICY.md:76); pins CURRENT behaviour only
-            ValueRow("H33", "sourceIdHash", "123456789012345678", "123456789012345678")
+            // DIAG-06: an all-digit value is a raw number, not a hash, and is rejected in hash slots
+            ValueRow("H33", "sourceIdHash", "123456789012345678", redacted),
+            ValueRow("H34", "sourceIdHash", "12345678", redacted),
+            ValueRow("H35", "payloadHash", "0123456789", redacted),
+            // mixed digits and hex letters still pass
+            ValueRow("H36", "sourceIdHash", "1234567a", "1234567a")
         )
-        checkRows("hash key values", rows, 33, { it.id }) { r ->
+        checkRows("hash key values", rows, 36,{ it.id }) { r ->
             assertEquals("sanitizeValue('${r.key}', ...)", r.expected, sanitizer.sanitizeValue(r.key, r.input))
         }
     }
@@ -296,9 +300,11 @@ class EventMetadataSanitizerTest {
             StringRow("S10", "AB12CDEF", "[REDACTED]"),
             StringRow("S11", "AB12CDE", "AB12CDE"),
             StringRow("S12", "Account 1234567890123456 not found", "Account [REDACTED] not found"),
-            // long-digit boundary: 11 kept, 12 redacted
-            StringRow("S13", "id 12345678901 ok", "id 12345678901 ok"),
+            // long-digit boundary (DIAG-05, aligned with CloudPiiSanitizer): 9 kept, 10+ redacted
+            StringRow("S13", "id 123456789 ok", "id 123456789 ok"),
             StringRow("S14", "id 123456789012 ok", "id [REDACTED] ok"),
+            StringRow("S34", "id 1234567890 ok", "id [REDACTED] ok"),
+            StringRow("S35", "id 12345678901 ok", "id [REDACTED] ok"),
             StringRow("S15", "Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig", "[REDACTED]"),
             StringRow("S16", "Bearer eyJhbGciOiJIUzI1NiJ9.payload.signature", "[REDACTED]"),
             StringRow("S17", "bearer abcdefgh", "[REDACTED]"),
@@ -324,7 +330,7 @@ class EventMetadataSanitizerTest {
             // path replacement runs before the long-digit replacement
             StringRow("S33", "/tmp/1234567890123456", "[PATH]")
         )
-        checkRows("string values", rows, 33, { it.id }) { r ->
+        checkRows("string values", rows, 35,{ it.id }) { r ->
             assertEquals("sanitizeValue('note', String)", r.expected, sanitizer.sanitizeValue("note", r.input))
             assertEquals("sanitizeExceptionMessage(String)", r.expected, sanitizer.sanitizeExceptionMessage(r.input))
         }

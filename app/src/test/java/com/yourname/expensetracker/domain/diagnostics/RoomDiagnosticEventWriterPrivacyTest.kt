@@ -58,8 +58,7 @@ class RoomDiagnosticEventWriterPrivacyTest {
             outcome = EventOutcome.FAILED_FINAL,
             severity = EventSeverity.ERROR,
             reasonCode = DiagnosticReasonCode.UNKNOWN_ERROR,
-            // KNOWN GAP P1 - free text survives pattern sanitization; do not assert it is stored
-            // (nor absent). Only the path sentinel is asserted below.
+            // DIAG-01: the message is never stored (free text used to survive pattern sanitization).
             exception = IllegalStateException("cannot open $sentinelPath while handling FREE_TEXT_BODY_SENTINEL_9k"),
             isTerminal = true
         )
@@ -70,7 +69,27 @@ class RoomDiagnosticEventWriterPrivacyTest {
         val row = stored.single()
         assertEquals("IllegalStateException", row.exceptionClass)
         assertFalse(allStoredText(row).contains("SENTINEL_PATH_9k"))
+        assertFalse(allStoredText(row).contains("FREE_TEXT_BODY_SENTINEL_9k"))
         assertEquals("UNKNOWN_ERROR", row.reasonCode)
+    }
+
+    @Test
+    fun `stored exceptionMessage is the class name only and never the exception message text`() = runTest {
+        val event = DiagnosticEvent(
+            pipeline = AppPipeline.EMAIL,
+            stage = "ingestion",
+            outcome = EventOutcome.FAILED_FINAL,
+            exception = IllegalStateException("merchant Lidl paid secret-123"),
+            isTerminal = true
+        )
+
+        writer().emit(event)
+
+        val row = stored.single()
+        assertEquals("IllegalStateException", row.exceptionClass)
+        assertEquals("IllegalStateException", row.exceptionMessage)
+        assertFalse(allStoredText(row).contains("secret-123"))
+        assertFalse(allStoredText(row).contains("Lidl"))
     }
 
     @Test
@@ -129,6 +148,48 @@ class RoomDiagnosticEventWriterPrivacyTest {
         assertEquals("[REDACTED]", json.getString("sender"))
         assertFalse(allStoredText(row).contains("SENTINEL_SENDER_9k"))
         assertFalse(allStoredText(row).contains("SENTINEL_MSGID_9k"))
+    }
+
+    @Test
+    fun `stored metadata redacts amount key and values with 10 or more digits`() = runTest {
+        val event = DiagnosticEvent(
+            pipeline = AppPipeline.EMAIL,
+            stage = "ingestion",
+            outcome = EventOutcome.FAILED_FINAL,
+            metadata = SafeEventMetadata.builder()
+                .put("amount", 4242.99)
+                .put("note", "account 6912345678 rejected")
+                .put("count", 3)
+                .build()
+        )
+
+        writer().emit(event)
+
+        val row = stored.single()
+        val json = JSONObject(row.metadataJson!!)
+        assertEquals("[REDACTED]", json.getString("amount"))
+        assertEquals("account [REDACTED] rejected", json.getString("note"))
+        assertEquals(3, json.getInt("count"))
+        assertFalse(allStoredText(row).contains("4242"))
+        assertFalse(allStoredText(row).contains("6912345678"))
+    }
+
+    @Test
+    fun `stored all-digit hash slot value is redacted`() = runTest {
+        val event = DiagnosticEvent(
+            pipeline = AppPipeline.EMAIL,
+            stage = "ingestion",
+            outcome = EventOutcome.FAILED_FINAL,
+            metadata = SafeEventMetadata.builder()
+                .put("payloadHash", "1234567890123456")
+                .build()
+        )
+
+        writer().emit(event)
+
+        val row = stored.single()
+        assertEquals("[REDACTED]", JSONObject(row.metadataJson!!).getString("payloadHash"))
+        assertFalse(allStoredText(row).contains("1234567890123456"))
     }
 
     @Test
