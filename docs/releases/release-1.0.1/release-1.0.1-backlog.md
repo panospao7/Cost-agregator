@@ -178,6 +178,11 @@ Review follow-ups (P3 unless noted; detail in the lead log and the phase3-4 find
   - **F-H1-f:** Greek three-decimal currencies (KWD, BHD, JOD, OMR, TND) written with a dot amount are read
     as thousands, because the currency token is not recognised by the parser (`CURRENCY_TOKEN` is
     EUR/USD/GBP only). Bounded by the 50000 parser ceiling.
+  - **F-H1-g (deferred):** a currency symbol/code BEFORE the amount is never captured (purchase pattern 1,
+    deposit patterns, transfer pattern 1 and 4), so e.g. "Πληρωμή $6.30 σε STEAM" is stored in the home
+    currency. Also, `homeCurrency` is read once with `runBlocking` when the singleton is created
+    (`ParserModule.kt:26-28`) and goes stale if the user changes it. Fix = capture the leading token and
+    resolve leading, then trailing, then tail token.
 - **Forecast follow-ups (from the FORE-05 / FORE-02 reviews, P3):**
   - **FORE-05-a:** the rainy narrative in `NarrativeGenerator.kt:36` (HIGH && discretionary <= 0) is now
     reachable only on exact equality, because over-committed months escalate to CRITICAL.

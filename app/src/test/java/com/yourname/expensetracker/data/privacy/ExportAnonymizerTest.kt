@@ -249,6 +249,41 @@ class ExportAnonymizerTest {
     }
 
     @Test
+    fun sanitizeExport_nulls_background_job_run_error_message_and_keeps_rows() {
+        val file = tempFolder.newFile("job_runs_diag.db")
+        val db = SQLiteDatabase.openOrCreateDatabase(file, null)
+        db.execSQL("CREATE TABLE background_job_runs (id INTEGER PRIMARY KEY, workerName TEXT NOT NULL, status TEXT NOT NULL, errorMessage TEXT, errorClass TEXT)")
+        db.execSQL("INSERT INTO background_job_runs(id, workerName, status, errorMessage, errorClass) VALUES (1, 'w', 'FAILED', 'secret-789 path', 'IOException')")
+        db.execSQL("INSERT INTO background_job_runs(id, workerName, status, errorMessage, errorClass) VALUES (2, 'w', 'SUCCESS', NULL, NULL)")
+        db.close()
+
+        anonymizer.sanitizeExport(file)
+
+        assertEquals(null, queryString(file, "SELECT errorMessage FROM background_job_runs WHERE id=1"))
+        assertEquals(0.0, queryDouble(file, "SELECT COUNT(*) FROM background_job_runs WHERE errorMessage LIKE '%secret-789%'"), 0.0)
+        assertEquals(2.0, queryDouble(file, "SELECT COUNT(*) FROM background_job_runs"), 0.0)
+        assertEquals("IOException", queryString(file, "SELECT errorClass FROM background_job_runs WHERE id=1"))
+        assertEquals("FAILED", queryString(file, "SELECT status FROM background_job_runs WHERE id=1"))
+    }
+
+    @Test
+    fun sanitizeExport_nulls_receipt_event_error_details_and_keeps_rows() {
+        val file = tempFolder.newFile("receipt_events_diag.db")
+        val db = SQLiteDatabase.openOrCreateDatabase(file, null)
+        db.execSQL("CREATE TABLE receipt_events (id INTEGER PRIMARY KEY, eventType TEXT NOT NULL, errorDetails TEXT)")
+        db.execSQL("INSERT INTO receipt_events(id, eventType, errorDetails) VALUES (1, 'ASSET_DELETE_FAILED', 'secret-789 /data/user/0/file.jpg')")
+        db.execSQL("INSERT INTO receipt_events(id, eventType, errorDetails) VALUES (2, 'CREATED', NULL)")
+        db.close()
+
+        anonymizer.sanitizeExport(file)
+
+        assertEquals(null, queryString(file, "SELECT errorDetails FROM receipt_events WHERE id=1"))
+        assertEquals(0.0, queryDouble(file, "SELECT COUNT(*) FROM receipt_events WHERE errorDetails LIKE '%secret-789%'"), 0.0)
+        assertEquals(2.0, queryDouble(file, "SELECT COUNT(*) FROM receipt_events"), 0.0)
+        assertEquals("ASSET_DELETE_FAILED", queryString(file, "SELECT eventType FROM receipt_events WHERE id=1"))
+    }
+
+    @Test
     fun sanitizeExport_diagnostic_scrub_tolerates_tables_without_the_columns() {
         val file = tempFolder.newFile("diag_old_schema.db")
         val db = SQLiteDatabase.openOrCreateDatabase(file, null)

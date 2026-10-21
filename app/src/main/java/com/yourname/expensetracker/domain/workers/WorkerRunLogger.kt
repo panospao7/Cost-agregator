@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.database.dao.BackgroundJobRunDao
 import com.yourname.expensetracker.data.database.entity.BackgroundJobRun
 import com.yourname.expensetracker.domain.diagnostics.CorrelationIds
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticThrowableSummary
 import com.yourname.expensetracker.domain.diagnostics.EventMetadataSanitizer
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.CancellationException
@@ -306,7 +307,7 @@ class WorkerRunLoggerImpl @Inject constructor(
             val safeReason = WorkerReasonCodes.sanitizeReasonCode(reason)
             val result = terminal("RETRY", TerminalArgs(
                 retryReason = safeReason,
-                errorMessage = sanitizer.sanitizeExceptionMessage(error?.message),
+                errorMessage = error?.let { DiagnosticThrowableSummary.className(it) },
                 errorClass = error?.javaClass?.simpleName,
                 terminalReasonCode = safeReason,
                 terminalDiagnosticCode = classifyDiagnostic(safeReason, error),
@@ -319,7 +320,7 @@ class WorkerRunLoggerImpl @Inject constructor(
             val safeReason = WorkerReasonCodes.sanitizeReasonCode(reason)
             val result = terminal("FAILED", TerminalArgs(
                 statusReason = safeReason,
-                errorMessage = sanitizer.sanitizeExceptionMessage(error?.message),
+                errorMessage = error?.let { DiagnosticThrowableSummary.className(it) },
                 errorClass = error?.javaClass?.simpleName,
                 terminalReasonCode = safeReason,
                 terminalDiagnosticCode = classifyDiagnostic(safeReason, error),

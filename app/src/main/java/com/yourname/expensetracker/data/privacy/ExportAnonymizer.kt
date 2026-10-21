@@ -31,7 +31,8 @@ import javax.inject.Singleton
  * - `pending_reviews` notification text (`notificationText`, `notificationTitle` → NULL)
  * - `bank_statement_import_items` merchant names (`merchant` → '[REDACTED]')
  * - `pipeline_diagnostic_events` (`message`, `exceptionMessage`), `operation_run_events`
- *   (`exceptionMessage`) and `operation_runs` (`errorSummary`) → NULL (rows retained)
+ *   (`exceptionMessage`), `operation_runs` (`errorSummary`), `background_job_runs`
+ *   (`errorMessage`) and `receipt_events` (`errorDetails`) → NULL (rows retained)
  *
  * The operation is performed **in-place** on the provided file, so callers
  * must pass a **temporary copy** — never the live database file.
@@ -413,6 +414,9 @@ class ExportAnonymizer @Inject constructor() {
         total += nullifyColumnsWhereSet(db, "pipeline_diagnostic_events", listOf("message", "exceptionMessage"))
         total += nullifyColumnsWhereSet(db, "operation_run_events", listOf("exceptionMessage"))
         total += nullifyColumnsWhereSet(db, "operation_runs", listOf("errorSummary"))
+        // Legacy rows may still hold exception message text written before class-name-only storage.
+        total += nullifyColumnsWhereSet(db, "background_job_runs", listOf("errorMessage"))
+        total += nullifyColumnsWhereSet(db, "receipt_events", listOf("errorDetails"))
         return total
     }
 

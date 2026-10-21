@@ -666,4 +666,62 @@ class GreekBankParserAmountGroupTest {
         assertEquals(HOME_CURRENCY, coded.currency)
         assertEquals("Eurospar", coded.merchant)
     }
+
+    // ---- C1: a card number or store number is never the amount ---------------------------------
+    // Before the fix the bare "amount στο MERCHANT" transfer pattern read the masked card number
+    // ("4***1234" -> 1234) because the real amount was not directly followed by the keyword.
+
+    @Test
+    fun `purchase with amount word and card number keeps the real amount and currency`() {
+        val result = parse("Αγορά ποσού 15,20 EUR με την κάρτα 4***1234 στο ΜΑΣΟΥΤΗΣ")
+
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.PURCHASE, result!!.type)
+        assertEquals(15.20, result.amount, 0.001)
+        assertEquals("EUR", result.currency)
+        assertEquals("ΜΑΣΟΥΤΗΣ", result.merchant)
+    }
+
+    @Test
+    fun `purchase with fully masked card number keeps the real amount`() {
+        val result = parse("Αγορά ποσού 15,20 EUR με την κάρτα ****1234 στο ΜΑΣΟΥΤΗΣ")
+
+        assertNotNull(result)
+        assertEquals(15.20, result!!.amount, 0.001)
+        assertEquals("EUR", result.currency)
+    }
+
+    @Test
+    fun `masked card number with no amount in the message is never an amount`() {
+        assertNull(parse("Πληρωμή με κάρτα *1234 στο ΜΑΣΟΥΤΗΣ"))
+    }
+
+    @Test
+    fun `card charge with masked card number still reads the real amount`() {
+        val result = parse("Χρέωση κάρτας *1234: 45,00 EUR - SKLAVENITIS")
+
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.PURCHASE, result!!.type)
+        assertEquals(45.00, result.amount, 0.001)
+        assertEquals("EUR", result.currency)
+    }
+
+    @Test
+    fun `bare store number is never an amount`() {
+        assertNull(parse("Αγορά στο ΚΑΤΑΣΤΗΜΑ 24"))
+    }
+
+    @Test
+    fun `bare integer before a preposition needs a currency marker`() {
+        assertNull(parse("500 στο SHOP"))
+
+        val withCode = parse("500 EUR στο SHOP")
+        assertNotNull(withCode)
+        assertEquals(500.0, withCode!!.amount, 0.001)
+    }
+
+    @Test
+    fun `transaction code in the middle of free text does not start an amount`() {
+        assertNull(parse("Ref P 77 κάτι άλλο"))
+    }
 }

@@ -54,7 +54,7 @@ class GreekBankParser(
         // (the optional leading currency token before the amount stays non-capturing)
         AmountPattern(
             Pattern.compile(
-                """(?:αγορ[άα]|χρ[έε]ωσ|συναλλαγ[ήη]|πληρ[ώω]σ?(?:ατε|μ[ήη])?|payment|purchase)\s+(?:[€$£]|EUR|USD|GBP)?\s*${AMOUNT_SPACED}\s*((?:EUR|USD|GBP)(?![\p{L}\p{N}])|€)?\s*(?:απ[όο]\s+τ[ηι]ν?\s+κ[άα]ρτ[αά]\s*[*0-9]*\s*)?(?:στ[οη]ν?|σε|at|-)?\s*(.+?)(?:\s*(?:με|with)\s*κ[άα]ρτ|$)""",
+                """(?:αγορ[άα]|χρ[έε]ωσ|συναλλαγ[ήη]|πληρ[ώω]σ?(?:ατε|μ[ήη])?|payment|purchase)\s+(?:ποσο[ύυ]\s+)?(?:[€$£]|EUR|USD|GBP)?\s*${AMOUNT_SPACED}\s*((?:EUR|USD|GBP)(?![\p{L}\p{N}])|€)?\s*(?:(?:απ[όο]|με)\s+τ[ηι]ν?\s+κ[άα]ρτ[αά]\s*[*0-9]*\s*)?(?:στ[οη]ν?|σε|at|-)?\s*(.+?)(?:\s*(?:με|with)\s*κ[άα]ρτ|$)""",
                 Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
             ),
             amountGroup = 1,
@@ -126,12 +126,13 @@ class GreekBankParser(
             currencyGroup = 2,
             merchantGroup = 3
         ),
-        // Transaction code patterns: "Χ 50,00" or "Π 100,00"
+        // Transaction code patterns: "Χ 50,00" or "Π 100,00" (the code must start the field, so a
+        // stray "P"/"X" inside free text can never start an amount)
         // group 1 = direction code letter (metadata, not amount), group 2 = amount,
         // group 3 = optional currency token, group 4 = tail (merchant)
         AmountPattern(
             Pattern.compile(
-                """(?:^|\s)([ΧΠXDP])\s*[:\-\s]?\s*${AMOUNT}\s*((?:EUR|USD|GBP)(?![\p{L}\p{N}])|€)?\s*(.*)""",
+                """^([ΧΠXDP])\s*[:\-\s]?\s*${AMOUNT}\s*((?:EUR|USD|GBP)(?![\p{L}\p{N}])|€)?\s*(.*)""",
                 Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
             ),
             amountGroup = 2,
@@ -148,10 +149,13 @@ class GreekBankParser(
             amountGroup = 1
         ),
         // "€12,50 στο MERCHANT" (amount first, then location - common Greek format)
-        // group 1 = amount, group 2 = merchant
+        // group 1 = amount, group 2 = merchant. A bare number cannot be the amount (a card or
+        // store number such as "4***1234" or "ΚΑΤΑΣΤΗΜΑ 24" must never be read as money): the amount
+        // needs a leading currency symbol, a trailing currency symbol/code, or a decimal fraction
+        // (existing "12,50 στο SHOP" shape). The markers are non-capturing, group indices unchanged.
         AmountPattern(
             Pattern.compile(
-                """[€$£]?\s*${AMOUNT}\s*(?:EUR|€)?\s*(?:στ[οη]ν?|σε|at)\s+(.+?)(?:\s*(?:με|with)|$)""",
+                """(?:[€$£]\s*|(?=\d[\d.,]*[.,]\d{1,2}(?!\d))|(?=[\d.,]+\s*(?:(?:EUR|USD|GBP)(?![\p{L}\p{N}])|€)))${AMOUNT}\s*(?:EUR|USD|GBP|€)?\s*(?:στ[οη]ν?|σε|at)\s+(.+?)(?:\s*(?:με|with)|$)""",
                 Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
             ),
             amountGroup = 1,
@@ -400,8 +404,9 @@ class GreekBankParser(
         const val AMOUNT_NUM = """\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?"""
         const val AMOUNT_NUM_SPACED = """\d{1,3}(?:[.,\s]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?"""
         // Atomic (?>...) so a failing tail can never backtrack into the amount and shorten it.
-        const val AMOUNT = """(?<![\d.,])(?>(${AMOUNT_NUM})(?![.,]?\d))"""
-        const val AMOUNT_SPACED = """(?<![\d.,])(?>(${AMOUNT_NUM_SPACED})(?![.,]?\d))"""
+        // '*' is also a forbidden predecessor: "****1234" / "4***1234" is a masked card number.
+        const val AMOUNT = """(?<![\d.,*])(?>(${AMOUNT_NUM})(?![.,]?\d))"""
+        const val AMOUNT_SPACED = """(?<![\d.,*])(?>(${AMOUNT_NUM_SPACED})(?![.,]?\d))"""
     }
     
     /**

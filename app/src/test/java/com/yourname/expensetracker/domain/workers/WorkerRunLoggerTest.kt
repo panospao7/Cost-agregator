@@ -733,9 +733,46 @@ class WorkerRunLoggerTest {
                 any(), any(), any(), any()
             )
         }
-        // verify sanitizer was called with raw exception message only (not "reason: message")
-        coVerify(exactly = 1) {
-            sanitizer.sanitizeExceptionMessage("sensitive db path")
+        // The exception message is never read for storage: only the class name is persisted,
+        // so the sanitizer must not be handed the raw message at all.
+        coVerify(exactly = 0) {
+            sanitizer.sanitizeExceptionMessage(any())
+        }
+    }
+
+    @Test
+    fun `retry_and_failure_store_only_exception_class_never_message_text`() = runTest {
+        // An echoing sanitizer would leak the message if production still routed it through.
+        every { sanitizer.sanitizeExceptionMessage(any()) } answers { firstArg() }
+        val secret = "secret-789"
+
+        val rows = listOf(
+            TerminalMethodRow("retry") { it.retry("TIMEOUT", error = IllegalStateException(secret)) },
+            TerminalMethodRow("failure") { it.failure("PERMANENT", error = IllegalStateException(secret)) }
+        )
+        for (row in rows) {
+            val rowDao = mockk<BackgroundJobRunDao>(relaxed = true) // fresh mock per row
+            val rowLogger = WorkerRunLoggerImpl(rowDao, sanitizer, timeProvider)
+            coEvery { rowDao.insert(any()) } returns 1L
+            val errorMessage = slot<String>()
+            val errorClass = slot<String>()
+            val terminalReason = slot<String>()
+            val terminalDiagnostic = slot<String>()
+            coEvery {
+                rowDao.completeTerminal(
+                    any(), any(), any(), any(), any(), any(), any(), any(),
+                    any(), any(), capture(errorMessage), capture(errorClass), any(),
+                    capture(terminalReason), capture(terminalDiagnostic), any(), any()
+                )
+            } returns 1
+            val handle = rowLogger.start("test_worker")
+
+            row.call(handle)
+
+            assertEquals("[${row.name}] errorMessage is the class name only", "IllegalStateException", errorMessage.captured)
+            listOf(errorMessage, errorClass, terminalReason, terminalDiagnostic).forEach {
+                assertTrue("[${row.name}] stored field leaks message text: ${it.captured}", !it.captured.contains(secret))
+            }
         }
     }
 
