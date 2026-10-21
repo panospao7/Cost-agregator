@@ -243,8 +243,8 @@ class AnalyticsViewModelYearOverYearTest : ViewModelTestUtils() {
         assertEquals("Jun", yoy.deltaByMonth.single().first)
         assertEquals(120.0, yoy.deltaByMonth.single().second, 0.001)
         assertEquals(75.0, yoy.deltaByMonth.single().third, 0.001)
-        // NOW is minute-aligned, so the comparison minute equals NOW.
-        coVerify { advancedAnalyticsEngine.getCategoryAnalytics(any(), any(), any(), any(), NOW) }
+        // NOW is minute-aligned; F-R20b-b cuts at the inclusive end of the minute (:59.999).
+        coVerify { advancedAnalyticsEngine.getCategoryAnalytics(any(), any(), any(), any(), NOW + 59_999L) }
         collectJob.cancel()
     }
 
