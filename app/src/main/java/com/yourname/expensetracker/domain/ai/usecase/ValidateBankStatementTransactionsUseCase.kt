@@ -205,8 +205,8 @@ class ValidateBankStatementTransactionsUseCase @Inject constructor(
      * raw-text cap. Inside a call the identity contract is positional (ids 0..n-1), so each chunk is
      * sent with local ids and the caller's candidateIds are restored on the way back; ownership is
      * still by id, never by response position. A chunk whose call is unusable (or throws a non
-     * cancellation exception) falls back to the parser echo for THAT chunk only; cancellation always
-     * propagates.
+     * cancellation exception) falls back to the parser echo for that chunk AND every later chunk (no
+     * further AI calls are made after the first unusable one); cancellation always propagates.
      */
     private suspend fun validateInBatches(
         rawOcrText: String,
@@ -216,7 +216,15 @@ class ValidateBankStatementTransactionsUseCase @Inject constructor(
         var anyValidated = false
         var mismatchDetail: String? = null
         var parserOnlyReason: String? = null
+        // Privacy/cost: once one chunk is not usable (unavailable, blocked or contract violation) the
+        // remaining chunks are NOT sent: every further call would resend the same statement header to
+        // the same unavailable or misbehaving provider. They get the parser echo directly.
+        var stopCalling = false
         for (chunk in candidates.chunked(StatementValidationContracts.MAX_CANDIDATES_PER_AI_CALL)) {
+            if (stopCalling) {
+                merged += parserEcho(chunk)
+                continue
+            }
             val localChunk = chunk.mapIndexed { localId, tx -> tx.copy(candidateId = localId) }
             val outcome = try {
                 validateBatch(rawOcrText, localChunk)
@@ -235,9 +243,11 @@ class ValidateBankStatementTransactionsUseCase @Inject constructor(
                 }
                 is StatementValidationOutcome.IdentityMismatch -> {
                     if (mismatchDetail == null) mismatchDetail = outcome.detailCode
+                    stopCalling = true
                 }
                 is StatementValidationOutcome.ParserOnly -> {
                     if (parserOnlyReason == null) parserOnlyReason = outcome.reasonCode
+                    stopCalling = true
                 }
             }
             outcome.transactions.forEach { tx ->

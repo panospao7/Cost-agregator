@@ -49,11 +49,10 @@ class BankStatementCompletionStatusTest {
     // Owner decision O2 (statement-import plan): skipped rows no longer fail a run by themselves.
     // This assertion previously pinned (0 failed, 1 skipped, partial) => FAILED regardless of
     // reviews. A run now FAILS only when an item failed or nothing usable came out of it; skipped
-    // rows next to at least one created review end COMPLETED_WITH_SKIPS. The test keeps its name
-    // (it is listed in the test-suite audit inventory); the failure semantics it used to pin now
-    // live in skippedItemsWithoutAnyUsableOutcomeStillFailTheRun.
+    // rows next to at least one created review end COMPLETED_WITH_SKIPS. The failure semantics it
+    // used to pin now live in skippedItemsWithoutAnyUsableOutcomeStillFailTheRun.
     @Test
-    fun skippedItemsRetainFailureSemantics() {
+    fun skippedItemsNextToAtLeastOneCreatedReviewCompleteWithSkips() {
         assertEquals(
             BankStatementImportRun.STATUS_COMPLETED_WITH_SKIPS,
             bankStatementCompletionStatus(0, 1, 0, true, createdItemCount = 1)

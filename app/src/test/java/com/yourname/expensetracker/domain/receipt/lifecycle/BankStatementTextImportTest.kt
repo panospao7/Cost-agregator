@@ -193,9 +193,160 @@ class BankStatementTextImportTest {
 
         assertEquals(11, result.reviewsCreated)
         assertEquals(mapOf("NOT_SETTLED" to 2), result.skippedByReason)
-        assertEquals(3, harness.reviews.count { it.suggestedMerchant == "Revolut top-up" })
+        // The fixture holds FOUR identical EUR12.00 top-ups: three on Mar 10 and a fourth on Mar 18.
+        // All four are real transactions and each creates its own review (the code was right; the
+        // old expectation of 3 only matched the same-day trio).
+        val topUps = harness.reviews.filter { it.suggestedMerchant == "Revolut top-up" }
+        assertEquals(4, topUps.size)
+        assertEquals(3, topUps.count { it.suggestedDate == StatementTextFixtures.day(2031, 3, 10) })
+        assertEquals(1, topUps.count { it.suggestedDate == StatementTextFixtures.day(2031, 3, 18) })
+        assertTrue(topUps.all { it.suggestedAmount == 12.0 && it.suggestedType == "DEPOSIT" })
         assertTrue(harness.reviews.all { it.suggestedCurrency == "EUR" })
         assertNoIbanOrLongDigitRun(harness)
+    }
+
+    @Test
+    fun currencyExchangeRowIsATransferReviewWithAnAccountNameSoItCanBeApproved() = runTest {
+        val harness = Harness(textPages = StatementTextFixtures.REVOLUT_PAGES)
+        harness.process().getOrThrow()
+
+        val exchange = harness.reviews.single { it.suggestedMerchant == "Currency exchange" }
+        assertEquals("TRANSFER", exchange.suggestedType)
+        assertEquals("INCOMING", exchange.suggestedDirection)
+        assertEquals("Currency exchange", exchange.suggestedAccountName)
+    }
+
+    // ── AI authority and privacy of the AI boundary ───────────────────────────────
+
+    @Test
+    fun recognisedLayoutKeepsParserAmountDateAndRowsEvenWhenTheAiCorrectsOrRejects() = runTest {
+        val harness = Harness(textPages = StatementTextFixtures.EUROBANK_CARD_PAGES, home = null)
+        harness.validate = { candidates ->
+            StatementValidationOutcome.Validated(candidates.map { tx ->
+                when {
+                    tx.amount == 2.10 -> CleanTransaction(
+                        tx.candidateId, "OTHER SHOP CORRECTED", 99.0, "USD",
+                        StatementTextFixtures.day(2031, 1, 1), 0.9f,
+                        StatementValidationContracts.SOURCE_AI_CORRECTED
+                    )
+                    tx.amount == 12.5 -> CleanTransaction(
+                        tx.candidateId, tx.merchant, tx.amount, tx.currency, tx.date, tx.confidence,
+                        StatementValidationContracts.SOURCE_AI_REJECTED
+                    )
+                    else -> CleanTransaction(
+                        tx.candidateId, tx.merchant, tx.amount, tx.currency, tx.date, tx.confidence,
+                        StatementValidationContracts.SOURCE_PARSER_ONLY
+                    )
+                }
+            })
+        }
+        val result = harness.process().getOrThrow()
+
+        // The AI rejection does not drop the layout row, and nothing is recorded as AI_REJECTED.
+        assertEquals(7, result.reviewsCreated)
+        assertEquals(0, result.skippedCount)
+        assertTrue(harness.items.none { it.errorReason == "AI_REJECTED" })
+        val refund = harness.reviews.single { it.suggestedType == "DEPOSIT" }
+        assertEquals(12.5, refund.suggestedAmount!!, 0.0001)
+        assertEquals("INCOMING", refund.suggestedDirection)
+        assertEquals(StatementTextFixtures.day(2031, 11, 9), refund.suggestedDate)
+
+        // The AI-corrected amount, currency and date are ignored; only the merchant correction is used.
+        val corrected = harness.reviews.single { it.suggestedMerchant == "OTHER SHOP CORRECTED" }
+        assertEquals(2.10, corrected.suggestedAmount!!, 0.0001)
+        assertEquals("EUR", corrected.suggestedCurrency)
+        assertEquals(StatementTextFixtures.day(2031, 11, 10), corrected.suggestedDate)
+        assertTrue(harness.reviews.none { it.suggestedAmount == 99.0 })
+    }
+
+    @Test
+    fun transferRowKeepsItsParserMerchantAndLabelWhateverMerchantTheAiReturns() = runTest {
+        val harness = Harness(textPages = StatementTextFixtures.EUROBANK_TRANSFERS_PAGES)
+        harness.validate = { candidates ->
+            StatementValidationOutcome.Validated(candidates.map { tx ->
+                CleanTransaction(
+                    tx.candidateId, "FAKE SHOP", 999.0, tx.currency, tx.date, 0.9f,
+                    StatementValidationContracts.SOURCE_AI_CORRECTED
+                )
+            })
+        }
+        harness.process().getOrThrow()
+
+        assertEquals(
+            listOf("SOME BANK SA ****5678", "EUROBANK TEST SA ****7778", "SOME BANK SA ****2468"),
+            harness.reviews.map { it.suggestedMerchant }
+        )
+        assertEquals(listOf(11.0, 6.75, 8.25), harness.reviews.map { it.suggestedAmount })
+        assertTrue(harness.reviews.none { it.suggestedMerchant == "FAKE SHOP" })
+    }
+
+    @Test
+    fun aiMerchantCorrectionOnANonTransferRowIsScrubbedOfIbanAndDigitRuns() = runTest {
+        val harness = Harness(textPages = StatementTextFixtures.EUROBANK_CARD_PAGES, home = null)
+        harness.validate = { candidates ->
+            StatementValidationOutcome.Validated(candidates.map { tx ->
+                if (tx.amount == 2.10) {
+                    CleanTransaction(
+                        tx.candidateId, "PAY ${StatementTextFixtures.RECIPIENT_IBAN_1} 164500000000 SHOP",
+                        tx.amount, tx.currency, tx.date, 0.9f, StatementValidationContracts.SOURCE_AI_CORRECTED
+                    )
+                } else {
+                    CleanTransaction(
+                        tx.candidateId, tx.merchant, tx.amount, tx.currency, tx.date, tx.confidence,
+                        StatementValidationContracts.SOURCE_PARSER_ONLY
+                    )
+                }
+            })
+        }
+        harness.process().getOrThrow()
+
+        val corrected = harness.reviews.single { it.suggestedMerchant!!.startsWith("PAY ") }
+        assertFalse(corrected.suggestedMerchant!!, corrected.suggestedMerchant!!.contains("GR11"))
+        assertFalse(Regex("""\d{12}""").containsMatchIn(corrected.suggestedMerchant!!))
+        assertTrue(corrected.suggestedMerchant!!.contains("****"))
+        assertEquals(2.10, corrected.suggestedAmount!!, 0.0001)
+    }
+
+    @Test
+    fun transferRowsNeverReachTheMerchantNormalizerButPurchasesStillDo() = runTest {
+        val harness = Harness(textPages = StatementTextFixtures.NBG_PAGES)
+        harness.process().getOrThrow()
+
+        val transferMerchants = harness.reviews.filter { it.suggestedType == "TRANSFER" }.map { it.suggestedMerchant!! }
+        assertTrue(transferMerchants.isNotEmpty())
+        for (merchant in transferMerchants) {
+            assertFalse("transfer label was normalised", merchant in harness.normalizedNames)
+        }
+        coVerify(exactly = 0) { harness.normalizer.normalize(match { it in transferMerchants }, true, any()) }
+        // Non-transfer rows keep the existing normalisation (alias/merchant learning).
+        assertTrue(harness.normalizedNames.contains("SOME SHOP"))
+    }
+
+    @Test
+    fun aiValidationTextIsScrubbedOfIbansIncludingSpacedOnesAndLongDigitRuns() = runTest {
+        val harness = Harness(
+            textPages = StatementTextFixtures.EUROBANK_TRANSFERS_PAGES,
+            extraFullText = "\nPAY GR96 0000 0000 0000 0000 0000 123 REF 164500000000 END"
+        )
+        harness.process().getOrThrow()
+
+        val text = harness.validatorTexts.single()
+        assertTrue(text.isNotBlank())
+        assertFalse(text.contains(StatementTextFixtures.OWN_IBAN))
+        assertFalse(text.contains(StatementTextFixtures.RECIPIENT_IBAN_1))
+        assertFalse(text, text.contains("GR96 0000"))
+        assertFalse(text, text.contains("164500000000"))
+        assertFalse(text, Regex("""\d{12}""").containsMatchIn(text))
+    }
+
+    @Test
+    fun aiValidationTextIsCappedBeforeItLeavesTheProcessor() = runTest {
+        val harness = Harness(
+            ocrRows = listOf("10/05/2031 SHOP -12.50 USD"), extraFullText = "x".repeat(300_000)
+        )
+        harness.process().getOrThrow()
+
+        assertTrue(harness.validatorTexts.single().length <= STATEMENT_AI_TEXT_SLICE)
     }
 
     // ── Boundary scrub, direction source, NO_DATE, ceiling ────────────────────────
@@ -345,9 +496,10 @@ class BankStatementTextImportTest {
     }
 
     @Test
-    fun ocrPathBehaviourIsUnchanged() = runTest {
-        // No pdfTextPages: the generic parser runs as before, a null date is still dated "now",
-        // and an unknown currency is still skipped as CURRENCY_UNKNOWN.
+    fun ocrPathRowWithoutADateStillGetsTheImportTimeAndTheNewRunStatusApplies() = runTest {
+        // No pdfTextPages: the generic parser runs as before, a null date is still dated "now" (the
+        // import time), and an unknown currency is still skipped as CURRENCY_UNKNOWN; the skipped row
+        // next to a created review now ends COMPLETED_WITH_SKIPS.
         val harness = Harness(ocrRows = listOf("SHOP -12.50 USD", "11/05/2031 SHOP -15.00"))
         val result = harness.process()
 
@@ -445,6 +597,11 @@ class BankStatementTextImportTest {
         val reviews = mutableListOf<PendingReview>()
         val savedReceipts = mutableListOf<ScannedReceipt>()
         val validatorCalls = mutableListOf<List<DebugTransaction>>()
+        /** Raw text handed to AI validation, one entry per call. */
+        val validatorTexts = mutableListOf<String>()
+        /** Names passed to the merchant normalizer (auto-create learning), in call order. */
+        val normalizedNames = mutableListOf<String>()
+        val normalizer = mockk<MerchantNormalizer>()
         val runs = mockk<BankStatementImportRunDao>(relaxed = true)
         var validate: ((List<DebugTransaction>) -> StatementValidationOutcome)? = null
         private val finalizations = mutableListOf<Finalization>()
@@ -538,9 +695,9 @@ class BankStatementTextImportTest {
                 ReceiptRecordWriteResult.Inserted(receipt)
             }
 
-            val normalizer = mockk<MerchantNormalizer>()
             coEvery { normalizer.normalize(any(), any(), any()) } coAnswers {
                 val name = firstArg<String>()
+                normalizedNames += name
                 val lookup = mockk<MerchantLookupResult>()
                 every { lookup.canonical } returns MerchantCanonical(
                     normalizedName = name, searchKey = name.lowercase(),
@@ -557,6 +714,7 @@ class BankStatementTextImportTest {
             val validator = mockk<ValidateBankStatementTransactionsUseCase>()
             coEvery { validator.validateTransactions(any(), any(), any()) } answers {
                 val candidates = secondArg<List<DebugTransaction>>()
+                validatorTexts += firstArg<String>()
                 validatorCalls += candidates
                 validate?.invoke(candidates) ?: StatementValidationOutcome.Validated(candidates.map { tx ->
                     CleanTransaction(

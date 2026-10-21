@@ -24,9 +24,23 @@ class StatementImportSummaryTest {
 
     @Test
     fun plainResultKeepsTheExistingCompletionText() {
+        // Imported = reviews created + duplicates (8 + 1); the headline is not transactionsFound.
         assertEquals(
-            "Imported 10 transactions from statement! (8 reviews created, 1 duplicates skipped)",
+            "Imported 9 transactions from statement! (8 reviews created, 1 duplicates skipped)",
             statementImportSummary(result())
+        )
+    }
+
+    @Test
+    fun skippedRowsAreNotCountedInTheImportedHeadline() {
+        // 11 rows parsed: 8 reviews + 1 duplicate + 2 skipped (e.g. no date, amount too large).
+        val message = statementImportSummary(
+            result(found = 11, reviews = 8, duplicates = 1, skipped = 2, byReason = mapOf("NO_DATE" to 1, "AMOUNT_ABOVE_CEILING" to 1))
+        )
+        assertEquals(
+            "Imported 9 transactions from statement! (8 reviews created, 1 duplicates skipped) " +
+                "2 skipped (no date: 1, amount too large: 1).",
+            message
         )
     }
 
@@ -36,7 +50,7 @@ class StatementImportSummaryTest {
             result(skipped = 5, byReason = mapOf("CANCELLED" to 2, "NO_DATE" to 3), pages = 48, total = 48)
         )
         assertEquals(
-            "Imported 10 transactions from statement! (8 reviews created, 1 duplicates skipped) " +
+            "Imported 9 transactions from statement! (8 reviews created, 1 duplicates skipped) " +
                 "5 skipped (no date: 3, cancelled: 2). Read 48 of 48 pages.",
             message
         )
@@ -45,10 +59,10 @@ class StatementImportSummaryTest {
     @Test
     fun partialRunKeepsItsLeadAndCarriesTheNumbers() {
         val message = statementImportSummary(
-            result(found = 3, reviews = 2, partial = true, pages = 5, total = 8)
+            result(found = 3, reviews = 2, duplicates = 1, partial = true, pages = 5, total = 8)
         )
         assertTrue(message, message.startsWith("Statement partially imported; some pages were not processed (Read 5 of 8 pages). "))
-        assertTrue(message.contains("3 transactions"))
+        assertTrue(message.contains("Imported 3 transactions"))
         assertTrue(message.contains("2 reviews created"))
         // The page numbers appear once, in the lead.
         assertEquals(1, Regex("Read 5 of 8 pages").findAll(message).count())
@@ -57,7 +71,7 @@ class StatementImportSummaryTest {
     @Test
     fun partialRunWithoutPageNumbersHasNoParentheses() {
         val message = statementImportSummary(result(partial = true))
-        assertTrue(message.startsWith("Statement partially imported; some pages were not processed. Imported 10"))
+        assertTrue(message.startsWith("Statement partially imported; some pages were not processed. Imported 9"))
         assertFalse(message.contains("(Read"))
     }
 

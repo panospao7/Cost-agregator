@@ -122,7 +122,7 @@ class ValidateBankStatementTransactionsBatchingTest {
     }
 
     @Test
-    fun `a chunk with an identity mismatch degrades only that chunk to the parser echo`() = runBlocking {
+    fun `a chunk with an identity mismatch degrades that chunk and every later chunk to the parser echo`() = runBlocking {
         onDeviceAnswers { index, prompt ->
             // The second call answers with too few entries: a contract violation.
             if (index == 1) AiServiceResult.Success("[]") else AiServiceResult.Success(acceptEverything(prompt))
@@ -130,10 +130,12 @@ class ValidateBankStatementTransactionsBatchingTest {
 
         val outcome = useCase.validateTransactions("raw", candidates(95), "EUR")
 
+        // No third call: after the first unusable chunk the AI is not asked again.
+        assertEquals(2, prompts.size)
         assertTrue(outcome is StatementValidationOutcome.Validated)
         assertEquals((0 until 95).toList(), outcome.transactions.map { it.candidateId })
         for (tx in outcome.transactions) {
-            val expected = if (tx.candidateId in 40 until 80) {
+            val expected = if (tx.candidateId >= 40) {
                 StatementValidationContracts.SOURCE_PARSER_ONLY
             } else {
                 StatementValidationContracts.SOURCE_AI_VALIDATED
@@ -144,7 +146,7 @@ class ValidateBankStatementTransactionsBatchingTest {
     }
 
     @Test
-    fun `a chunk whose call throws falls back for that chunk only`() = runBlocking {
+    fun `a chunk whose call throws falls back for that chunk and the remaining chunks without more AI calls`() = runBlocking {
         onDeviceAnswers { index, prompt ->
             if (index == 1) AiServiceResult.Failure(AiServiceError.Unknown("unavailable"))
             else AiServiceResult.Success(acceptEverything(prompt))
@@ -157,8 +159,27 @@ class ValidateBankStatementTransactionsBatchingTest {
         assertTrue(outcome is StatementValidationOutcome.Validated)
         assertEquals((0 until 95).toList(), outcome.transactions.map { it.candidateId })
         val parserOnly = outcome.transactions.filter { it.source == StatementValidationContracts.SOURCE_PARSER_ONLY }
-        assertEquals((40 until 80).toList(), parserOnly.map { it.candidateId })
+        assertEquals((40 until 95).toList(), parserOnly.map { it.candidateId })
         assertTrue(parserOnly.all { it.currency == "EUR" })
+        assertEquals(2, prompts.size)
+    }
+
+    @Test
+    fun `after the first unusable chunk the remaining chunks are never sent and carry the parser values`() = runBlocking {
+        // 125 candidates = chunks of 40, 40, 40, 5. The very first call fails.
+        onDeviceAnswers { _, _ -> AiServiceResult.Failure(AiServiceError.Unknown("unavailable")) }
+
+        val outcome = useCase.validateTransactions("header text", candidates(125), "EUR")
+
+        // The header text is sent once, not once per chunk.
+        assertEquals(1, prompts.size)
+        assertTrue(outcome is StatementValidationOutcome.ParserOnly)
+        assertEquals((0 until 125).toList(), outcome.transactions.map { it.candidateId })
+        for (tx in outcome.transactions) {
+            assertEquals("M${tx.candidateId}", tx.merchant)
+            assertEquals(1.0 + tx.candidateId, tx.amount, 0.0001)
+            assertEquals(StatementValidationContracts.SOURCE_PARSER_ONLY, tx.source)
+        }
     }
 
     @Test

@@ -180,10 +180,11 @@ object RevolutTextLayout : TextStatementLayout {
             }
             upper.startsWith("EXCHANGED") -> {
                 // A currency exchange moves money between the user's own pockets: a transfer whose
-                // direction is the EUR balance movement, with no counterparty to name.
+                // direction is the EUR balance movement. There is no counterparty, so the fixed label names
+                // the account: a TRANSFER review without an account name cannot be approved.
                 type = ParsedTransactionType.TRANSFER
                 merchant = CURRENCY_EXCHANGE_LABEL
-                accountName = null
+                accountName = CURRENCY_EXCHANGE_LABEL
                 txDirection = direction
             }
             direction == ParsedTransferDirection.INCOMING -> {

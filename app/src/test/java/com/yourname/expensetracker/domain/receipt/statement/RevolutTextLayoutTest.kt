@@ -75,7 +75,8 @@ class RevolutTextLayoutTest {
         assertEquals(ParsedTransactionType.TRANSFER, tx.type)
         assertEquals(ParsedTransferDirection.INCOMING, tx.transferDirection)
         assertEquals("Currency exchange", tx.merchant)
-        assertNull(tx.transferAccountName)
+        // A transfer needs an account name to be approvable: the fixed label stands in for it.
+        assertEquals("Currency exchange", tx.transferAccountName)
         assertEquals(11.0, tx.amount, 0.0001)
     }
 
@@ -93,7 +94,7 @@ class RevolutTextLayoutTest {
         assertEquals(ParsedTransactionType.TRANSFER, tx.type)
         assertEquals(ParsedTransferDirection.OUTGOING, tx.transferDirection)
         assertEquals("Currency exchange", tx.merchant)
-        assertNull(tx.transferAccountName)
+        assertEquals("Currency exchange", tx.transferAccountName)
     }
 
     @Test

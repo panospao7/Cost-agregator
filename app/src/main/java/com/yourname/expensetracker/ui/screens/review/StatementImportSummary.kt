@@ -6,13 +6,19 @@ import com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementResult
  * User-facing summary of one statement import, built from counts only (never a merchant, amount,
  * IBAN or any statement text). Pure: no Android, no resources, no clock.
  *
- * Shape: "Imported F transactions from statement! (X reviews created, Y duplicates skipped)" followed,
+ * Shape: "Imported F transactions from statement! (X reviews created, Y duplicates skipped)" where
+ * F = X + Y (rows skipped by the run are not part of F), followed,
  * when there is something to report, by " Z skipped (no date: a, cancelled: b)." and
  * " Read N of M pages.". A partial run keeps its "partially imported" lead and now carries the page
  * numbers when they are known.
  */
 internal fun statementImportSummary(result: BankStatementResult): String {
-    val core = "Imported ${result.transactionsFound} transactions from statement! " +
+    // "Imported" counts rows that became a review or were recognised as a duplicate. Rows the run
+    // skipped (layout skips, pre-AI skips such as no date or amount ceiling, AI rejections) are
+    // reported only in the "skipped" sentence, never in both numbers: transactionsFound also holds
+    // parsed rows that were later skipped, so it is not used for the headline.
+    val handled = result.reviewsCreated + result.duplicatesSkipped
+    val core = "Imported $handled transactions from statement! " +
         "(${result.reviewsCreated} reviews created, ${result.duplicatesSkipped} duplicates skipped)"
     val pages = pagesPhrase(result.pagesProcessed, result.totalPages)
 

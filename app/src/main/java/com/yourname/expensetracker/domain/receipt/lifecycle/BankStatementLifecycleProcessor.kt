@@ -52,6 +52,7 @@ import com.yourname.expensetracker.domain.privacy.RawPersistencePolicyResolver
 import com.yourname.expensetracker.domain.privacy.RawSourceType
 import com.yourname.expensetracker.domain.util.TimeProvider
 import timber.log.Timber
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -87,6 +88,12 @@ data class BankStatementResult(
 
 /** Per-item amount ceiling for statement rows; one source of truth with [StatementImportGate]. */
 internal const val STATEMENT_ITEM_AMOUNT_CEILING: Double = StatementImportGate.AMOUNT_CEILING
+
+/**
+ * Statement text head handed to AI validation (chars) before scrubbing; slightly above the use case's
+ * own 4000-char prompt cap so an IBAN straddling the cap is masked whole.
+ */
+internal const val STATEMENT_AI_TEXT_SLICE: Int = 4_100
 
 /** Persisted statement text cap (chars) before sanitising, so a huge text PDF cannot overflow a CursorWindow. */
 internal const val STATEMENT_RAW_PERSIST_CAP: Int = 200_000
@@ -327,7 +334,11 @@ class BankStatementLifecycleProcessor @Inject constructor(
                 StatementValidationOutcome.Validated(emptyList())
             } else {
                 transactionValidator.validateTransactions(
-                    rawOcrText = ocrResult.fullText,
+                    // Privacy: the AI prompt gets only a bounded, scrubbed head of the statement text
+                    // (IBANs incl. spaced ones and 12+ digit runs masked). The slice is a little wider
+                    // than the use-case cap of 4000 so an identifier straddling the cap is masked whole
+                    // before the use case truncates.
+                    rawOcrText = scrubStatementText(ocrResult.fullText.take(STATEMENT_AI_TEXT_SLICE)),
                     candidateTransactions = debugTransactions,
                     homeCurrency = homeCurrency
                 )
@@ -410,6 +421,38 @@ class BankStatementLifecycleProcessor @Inject constructor(
                 val parserMerchant = scrubStatementText(originalTx.merchant)
                 val label = originalTx.transferAccountName?.let { scrubStatementText(it) }
                 when {
+                    statementParse.layoutRecognised -> {
+                        // Money authority: a recognised layout read the row deterministically, so the
+                        // parser's amount, currency, date, type, direction and label are final. The AI
+                        // may only offer a scrubbed merchant correction, never for a TRANSFER (its
+                        // merchant is a masked counterparty label), and its rejection never drops the row.
+                        val aiMerchant = if (
+                            originalTx.type != ParsedTransactionType.TRANSFER &&
+                            cleanTx.source != StatementValidationContracts.SOURCE_AI_REJECTED &&
+                            cleanTx.source.startsWith("AI_") &&
+                            cleanTx.confidence > 0.5f
+                        ) {
+                            scrubStatementText(cleanTx.merchant).takeIf { it.isNotBlank() }
+                        } else {
+                            null
+                        }
+                        MergedTransaction(
+                            candidateId = candidateId,
+                            merchant = aiMerchant ?: parserMerchant,
+                            amount = originalTx.amount,
+                            currency = parserPolicyCurrency(originalTx, rowSourceEvidence),
+                            date = originalTx.date,
+                            confidence = originalTx.confidence,
+                            type = originalTx.type,
+                            source = if (cleanTx.source == StatementValidationContracts.SOURCE_AI_REJECTED) {
+                                StatementValidationContracts.SOURCE_PARSER_ONLY
+                            } else {
+                                cleanTx.source
+                            },
+                            direction = originalTx.transferDirection,
+                            accountLabel = label
+                        )
+                    }
                     cleanTx.source == StatementValidationContracts.SOURCE_AI_REJECTED ->
                         // Identity-proven AI rejection: parser fields remain the
                         // authoritative description of the skipped row.
@@ -822,9 +865,14 @@ class BankStatementLifecycleProcessor @Inject constructor(
                         continue
                     }
 
-                    // Normalize merchant
-                    val lookupResult = merchantNormalizer.normalize(tx.merchant, autoCreate = true)
-                    val normalizedMerchant = lookupResult.canonical.normalizedName
+                    // Normalize merchant. A TRANSFER merchant is a masked counterparty label (a person or
+                    // account), never a shop: it must not be auto-created as a merchant/alias, so it is
+                    // used verbatim and the normalizer is not called.
+                    val normalizedMerchant = if (tx.type == ParsedTransactionType.TRANSFER) {
+                        tx.merchant
+                    } else {
+                        merchantNormalizer.normalize(tx.merchant, autoCreate = true).canonical.normalizedName
+                    }
 
                     // Auto-categorize
                     val classification = hybridClassifier.classify(
@@ -1354,7 +1402,13 @@ class BankStatementLifecycleProcessor @Inject constructor(
             val parsed: List<StatementRow.Parsed>,
             val skipped: List<StatementRow.Skipped>,
             /** True when the PDF text path produced the rows (NO_DATE gating applies only there). */
-            val textPath: Boolean
+            val textPath: Boolean,
+            /**
+             * True when a recognised text layout (not the generic fallback, not the OCR path) produced
+             * the rows: the parser is then the authority for amount, currency, date, type, direction
+             * and counterparty label, and the AI may only offer a scrubbed non-transfer merchant.
+             */
+            val layoutRecognised: Boolean = false
         ) : StatementParse
 
         /** A recognised text layout threw while parsing: no rows, and no generic fallback. */
@@ -1366,7 +1420,11 @@ class BankStatementLifecycleProcessor @Inject constructor(
      * text layout falls back to the generic parser with a mandatory date; the OCR/image path keeps
      * the generic parser unchanged (null dates allowed, O3).
      */
-    private fun parseStatementRows(ocrResult: OcrResult, homeCurrency: String): StatementParse {
+    private suspend fun parseStatementRows(ocrResult: OcrResult, homeCurrency: String): StatementParse =
+        // Text parsing and sanitising of a large statement is CPU work: never on the caller's (Main) thread.
+        withContext(Dispatchers.Default) { parseStatementRowsBlocking(ocrResult, homeCurrency) }
+
+    private fun parseStatementRowsBlocking(ocrResult: OcrResult, homeCurrency: String): StatementParse {
         val pages = ocrResult.pdfTextPages
         if (pages == null) {
             return StatementParse.Rows(
@@ -1387,7 +1445,8 @@ class BankStatementLifecycleProcessor @Inject constructor(
         return StatementParse.Rows(
             parsed = textResult.parsedRows,
             skipped = textResult.skippedRows,
-            textPath = true
+            textPath = true,
+            layoutRecognised = textResult.layout != null
         )
     }
 
