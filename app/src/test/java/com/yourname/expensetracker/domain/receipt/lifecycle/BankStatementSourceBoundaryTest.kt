@@ -314,8 +314,7 @@ class BankStatementSourceBoundaryTest {
             val policy = mockk<RawPersistencePolicyResolver>()
             coEvery { policy.forSource(any()) } returns RawPersistencePolicy(
                 RawStorageMode.DO_NOT_STORE, RawSourceType.BANK_STATEMENT,
-                allowParsedAmountDateCurrency = true, allowParsedMerchant = true,
-                allowParsedItems = false, allowExternalIdHash = true, allowDebugBody = false
+                allowParsedAmountDateCurrency = true
             )
             coEvery { validator.validateTransactions(any(), any(), any()) } answers {
                 StatementValidationOutcome.Validated(secondArg<List<DebugTransaction>>().map { tx ->

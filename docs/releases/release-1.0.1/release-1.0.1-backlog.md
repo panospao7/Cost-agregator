@@ -230,7 +230,7 @@ ID.
 | DIAG-11 | Low | TEST-BRANCH | NEW | P2 with MISC-01 | See B5 |
 | PRIV-01 | High | PRESENT | NEW | P3 | Statement import is debug-only in release; the merchant is also in `expenses` |
 | PRIV-02 | Med | PRESENT | NEW | P3 | Fixed 30-day text cutoff, not the user window |
-| PRIV-03 | Med | PRESENT | NEW | P3 | `allowParsedMerchant` never read |
+| PRIV-03 | Med | PRESENT | NEW | P3 | `allowParsedMerchant` never read; removed in 1.0.2 (owner-approved) |
 | PRIV-04 | Med | PRESENT | NEW | P3 | Uncalled payload builders (test debt) |
 | PRIV-05 | Med | PARTIAL | NEW | P3 | One null-input rule; the notification part of the claim is wrong |
 | PRIV-06 | Low | PRESENT | NEW | P3 | Dead sanitizers |

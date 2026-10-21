@@ -60,10 +60,6 @@ class RawPersistencePolicyResolver @Inject constructor(
             sourceType = sourceType,
             allowParsedAmountDateCurrency = mode != RawStorageMode.DO_NOT_STORE ||
                 sourceType == RawSourceType.EMAIL_RECEIPT,  // email always keeps parsed amount/date for dedup
-            allowParsedMerchant = mode == RawStorageMode.STORE_RAW || mode == RawStorageMode.STORE_REDACTED,
-            allowParsedItems = mode == RawStorageMode.STORE_RAW || mode == RawStorageMode.STORE_REDACTED,
-            allowExternalIdHash = mode != RawStorageMode.DO_NOT_STORE || sourceType.needsDedupeHash(),
-            allowDebugBody = mode == RawStorageMode.STORE_RAW && settings.debugDataPersistenceEnabled
         )
     }
 
@@ -83,12 +79,3 @@ class RawPersistencePolicyResolver @Inject constructor(
                 else -> RawStorageMode.DO_NOT_STORE
             }
         }}
-
-/** Sources that always need a keyed hash for deduplication even under DO_NOT_STORE. */
-private fun RawSourceType.needsDedupeHash(): Boolean = when (this) {
-    RawSourceType.NOTIFICATION,
-    RawSourceType.EMAIL_RECEIPT,
-    RawSourceType.BANK_API,
-    RawSourceType.BANK_STATEMENT -> true
-    else -> false
-}

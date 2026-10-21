@@ -72,18 +72,8 @@ class RawPersistencePolicyConsolidationTest {
         return RawPersistencePolicy(
             mode = mode,
             sourceType = source,
-            allowParsedAmountDateCurrency = mode != RawStorageMode.DO_NOT_STORE || source == RawSourceType.EMAIL_RECEIPT,
-            allowParsedMerchant = mode == RawStorageMode.STORE_RAW || mode == RawStorageMode.STORE_REDACTED,
-            allowParsedItems = mode == RawStorageMode.STORE_RAW || mode == RawStorageMode.STORE_REDACTED,
-            allowExternalIdHash = mode != RawStorageMode.DO_NOT_STORE || needsDedupeHashForTest(source),
-            allowDebugBody = mode == RawStorageMode.STORE_RAW && settings.debugDataPersistenceEnabled
+            allowParsedAmountDateCurrency = mode != RawStorageMode.DO_NOT_STORE || source == RawSourceType.EMAIL_RECEIPT
         )
-    }
-
-    private fun needsDedupeHashForTest(source: RawSourceType): Boolean = when (source) {
-        RawSourceType.NOTIFICATION, RawSourceType.EMAIL_RECEIPT,
-        RawSourceType.BANK_STATEMENT, RawSourceType.BANK_API -> true
-        else -> false
     }
 
     // ── 1. Truth-table matrix (§2) — forSourceSync, complete policy ───────────
@@ -109,10 +99,6 @@ class RawPersistencePolicyConsolidationTest {
                         "allowParsedAmountDateCurrency($source,$mode)",
                         expected.allowParsedAmountDateCurrency, actual.allowParsedAmountDateCurrency
                     )
-                    assertEquals("allowParsedMerchant($source,$mode)", expected.allowParsedMerchant, actual.allowParsedMerchant)
-                    assertEquals("allowParsedItems($source,$mode)", expected.allowParsedItems, actual.allowParsedItems)
-                    assertEquals("allowExternalIdHash($source,$mode)", expected.allowExternalIdHash, actual.allowExternalIdHash)
-                    assertEquals("allowDebugBody($source,$mode,dbg=$debug)", expected.allowDebugBody, actual.allowDebugBody)
                     assertEquals("sourceType($source)", source, actual.sourceType)
                 }
             }
@@ -120,38 +106,20 @@ class RawPersistencePolicyConsolidationTest {
     }
 
     @Test
-    fun `debug_conjunction_pins_rows_25_26`() {
-        // Row 25: RECEIPT_OCR + STORE_RAW + dbg=true → allowDebugBody true.
-        val row25 = resolver.forSourceSync(
-            RawSourceType.RECEIPT_OCR,
-            PrivacySettings(rawOcrStorageMode = RawStorageMode.STORE_RAW, debugDataPersistenceEnabled = true)
-        )
-        assertTrue(row25.allowDebugBody)
-
-        // Row 26: NOTIFICATION + STORE_RAW + dbg=false → allowDebugBody false.
-        val row26 = resolver.forSourceSync(
-            RawSourceType.NOTIFICATION,
-            PrivacySettings(rawNotificationStorageMode = RawStorageMode.STORE_RAW, debugDataPersistenceEnabled = false)
-        )
-        assertFalse(row26.allowDebugBody)
-    }
-
-    @Test
     fun `debug_flag_driven_sources_rows_21_to_24`() {
-        // AI_ARTIFACT: dbg=true → STORE_REDACTED (allowDebugBody stays false: mode != STORE_RAW).
+        // AI_ARTIFACT: dbg=true → STORE_REDACTED.
         val aiOn = resolver.forSourceSync(RawSourceType.AI_ARTIFACT, PrivacySettings(debugDataPersistenceEnabled = true))
         assertEquals(RawStorageMode.STORE_REDACTED, aiOn.mode)
-        assertFalse(aiOn.allowDebugBody)
         assertTrue(aiOn.allowRedactedBody)
 
         // AI_ARTIFACT: dbg=false → DO_NOT_STORE.
         val aiOff = resolver.forSourceSync(RawSourceType.AI_ARTIFACT, PrivacySettings(debugDataPersistenceEnabled = false))
         assertEquals(RawStorageMode.DO_NOT_STORE, aiOff.mode)
 
-        // EXPORT_DEBUG: dbg=true → STORE_RAW with allowDebugBody true.
+        // EXPORT_DEBUG: dbg=true → STORE_RAW.
         val exportOn = resolver.forSourceSync(RawSourceType.EXPORT_DEBUG, PrivacySettings(debugDataPersistenceEnabled = true))
         assertEquals(RawStorageMode.STORE_RAW, exportOn.mode)
-        assertTrue(exportOn.allowDebugBody)
+        assertTrue(exportOn.allowRawBody)
 
         // EXPORT_DEBUG: dbg=false → DO_NOT_STORE.
         val exportOff = resolver.forSourceSync(RawSourceType.EXPORT_DEBUG, PrivacySettings(debugDataPersistenceEnabled = false))
@@ -159,16 +127,13 @@ class RawPersistencePolicyConsolidationTest {
     }
 
     @Test
-    fun `email_keeps_amount_date_currency_and_hash_under_do_not_store_rows_12`() {
+    fun `email_keeps_amount_date_currency_under_do_not_store_rows_12`() {
         val policy = resolver.forSourceSync(
             RawSourceType.EMAIL_RECEIPT,
             PrivacySettings(emailReceiptStorageMode = RawStorageMode.DO_NOT_STORE)
         )
         assertEquals(RawStorageMode.DO_NOT_STORE, policy.mode)
         assertTrue("Email dedupe requires parsed amount/date/currency even under DO_NOT_STORE", policy.allowParsedAmountDateCurrency)
-        assertTrue("Email dedupe requires the external id hash even under DO_NOT_STORE", policy.allowExternalIdHash)
-        assertFalse(policy.allowParsedMerchant)
-        assertFalse(policy.allowParsedItems)
     }
 
     // ── 2. Fail-closed normalization (§3) ─────────────────────────────────────
@@ -183,9 +148,6 @@ class RawPersistencePolicyConsolidationTest {
             val policy = resolver.forSource(source)
             assertEquals("mode($source) must fail closed", RawStorageMode.DO_NOT_STORE, policy.mode)
             assertFalse("no raw body($source)", policy.allowRawBody)
-            assertFalse("no debug body($source)", policy.allowDebugBody)
-            assertFalse("no parsed items($source)", policy.allowParsedItems)
-            assertFalse("no parsed merchant($source)", policy.allowParsedMerchant)
         }
     }
 
@@ -196,22 +158,7 @@ class RawPersistencePolicyConsolidationTest {
             val policy = resolver.forSource(source)
             assertEquals("mode($source) must fail closed on repository failure", RawStorageMode.DO_NOT_STORE, policy.mode)
             assertFalse(policy.allowRawBody)
-            assertFalse(policy.allowDebugBody)
         }
-    }
-
-    @Test
-    fun `forSource_fail_closed_still_allows_dedupe_hash_for_dedupe_sources`() = runTest {
-        repo.loadState = PrivacySettingsLoadState.CorruptedFailClosed(
-            settings = PrivacySettings.FAIL_CLOSED_DEFAULTS, reason = "corrupt"
-        )
-        // Truth table rows 4/12/16/20: dedupe-hash sources keep the hash under DO_NOT_STORE.
-        assertTrue(resolver.forSource(RawSourceType.NOTIFICATION).allowExternalIdHash)
-        assertTrue(resolver.forSource(RawSourceType.EMAIL_RECEIPT).allowExternalIdHash)
-        assertTrue(resolver.forSource(RawSourceType.BANK_STATEMENT).allowExternalIdHash)
-        assertTrue(resolver.forSource(RawSourceType.BANK_API).allowExternalIdHash)
-        // RECEIPT_OCR (row 8) does not.
-        assertFalse(resolver.forSource(RawSourceType.RECEIPT_OCR).allowExternalIdHash)
     }
 
     @Test
@@ -372,8 +319,7 @@ class RawPersistencePolicyConsolidationTest {
         )
         assertNotNull(policyText)
         for (field in listOf(
-            "allowParsedAmountDateCurrency", "allowParsedMerchant", "allowParsedItems",
-            "allowExternalIdHash", "allowDebugBody", "allowRawBody", "allowRedactedBody"
+            "allowParsedAmountDateCurrency", "allowRawBody", "allowRedactedBody"
         )) {
             assertTrue("RawPersistencePolicy must declare $field", policyText.contains(field))
         }

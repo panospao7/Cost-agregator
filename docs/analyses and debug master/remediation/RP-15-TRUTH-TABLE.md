@@ -4,6 +4,14 @@ Derived from source truth of `RawPersistencePolicyResolver`, `RawPersistencePoli
 `PrivacySettings`, `PrivacySettingsRepositoryImpl`, `RawContentSanitizer`, and the three
 call sites. This table is the spec the 15-A implementation and its tests are built from.
 
+> **1.0.2 update (PRIV-03, owner-approved):** the flags `allowParsedMerchant`, `allowParsedItems`,
+> `allowExternalIdHash` and `allowDebugBody` were removed from `RawPersistencePolicy` because no
+> production code enforced or read them. The corresponding rules (§1) and the merchant / items /
+> extIdHash / debugBody columns and rows 25-26 (§2) below are historical. Persistence privacy is
+> governed by the remaining decision fields: `mode`, `sourceType`, `allowRawBody`,
+> `allowRedactedBody` and `allowParsedAmountDateCurrency`. The dedupe hash itself is computed by
+> the call sites and was never gated by `allowExternalIdHash`.
+
 ## 1. Policy derivation rules (unchanged semantics)
 
 For settings `s` and source `t`:
