@@ -4,7 +4,8 @@
 Date:     2026-10-21 (owner-requested full investigation, real statements used locally)
 Branch:   fix/statement-import (from bug-fixes 0a52b066)
 Scope:    BankStatementParser / ReceiptOcrService text-PDF path / BankStatementLifecycleProcessor
-Status:   FINDINGS + PLAN. Statement import is DEBUG-ONLY in release builds today (ReviewScreen
+Status:   IMPLEMENTED on fix/statement-import (S1–S6); see "Outcome" at the end. Statement import
+          is DEBUG-ONLY in release builds today (ReviewScreen
           import menu is inside `if (debugActionsEnabled)`; DeferredFeatureGate.available = DEBUG).
 Privacy:  This document contains NO real data: only counts, shapes and invented examples. The real
           statements stay in the owner's Downloads folder and are never committed. Repository tests
@@ -102,3 +103,28 @@ D9. **Processor/UX:** any skipped item makes the run FAILED even when reviews we
 * Own-account transfer detection and netting; two-leg transfer linking; income table.
 * Revolut multi-currency statements beyond EUR (not exercised).
 * Statement import stays debug-only until the owner decides to enable it.
+
+## 6. Outcome (2026-10-21)
+
+Implemented on `fix/statement-import` (not pushed): S1 layouts, S2 text path, S3 generic-parser
+hardening, S4 processor, S5 review summary, S6 docs. Real-data acceptance (aggregates only; local probe,
+not committed): Eurobank card 100% on 5 files, 0 junk rows, 6 refunds typed DEPOSIT; NBG 933/933 rows
+matched, 0 balance-as-amount, 0 undated rows, transfers typed with direction and label; Revolut 778/779
+matched, 0 sign errors, net difference equals the fees (statement amounts include fees); transfers export
+39 imported + 1 cancelled with no IBAN stored; overview PDF 0 rows; every PDF parses in under 100 ms.
+Validation on `689da384`: targeted 328/0/1, static-guards 25/25, app-check 15,319/0/3.
+
+Follow-ups (not part of this work):
+
+* N1: the pending-duplicate lookup is LIMIT 1 (residual with same-run exclusion).
+* N2: the 5-minute expense dedupe window versus midnight statement dates.
+* O11: ExportAnonymizer does not cover `expenses.merchant`, `expenses.transferAccountName`,
+  `pending_reviews.suggestedMerchant/suggestedMerchantKey/suggestedAccountName`,
+  `bank_statement_import_items.transactionFingerprint`, or the merchant canonical/alias tables.
+* O12: raw statement text cap (200,000 chars) and retention.
+* F-H1-g: a currency symbol before the amount is not captured.
+* Domestic account numbers under 12 digits in NBG descriptions are not masked.
+* Possible leftover IBAN digits in the Eurobank bank name when an IBAN wraps.
+* A Revolut P2P row carrying a fee is unlabelled.
+* CSV/XLSX statement import is not implemented (owner decision).
+* Own-account transfer detection and netting.

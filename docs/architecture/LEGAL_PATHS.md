@@ -888,7 +888,26 @@ PROCESS bank statement (image/PDF):
   → PendingReviewDao.batchInsert() all validated items
   → Full lifecycle: import is NOT a separate step — everything happens in processBankStatement()
 
+TEXT-PDF ROUTING (statement-import, debug-only feature):
+  → ReceiptOcrService.processStatementUri() reads every text page (<= 200 pages / 2M chars) and
+    exposes OcrResult.pdfTextPages; non-text PDFs and images keep the OCR path (5-page cap)
+  → processor routes pdfTextPages through domain/receipt/statement/TextStatementParser
+    (Revolut, NBG account, Eurobank card, Eurobank transfers layouts). A recognised layout that
+    fails fails the run cleanly; an unknown layout uses BankStatementParser with requireDate = true
+  → parser output is authoritative for amount, currency, date, type, direction and counterparty
+    label on recognised layouts; AI may only offer a scrubbed merchant on non-TRANSFER rows and
+    never drops a row. AI validation is batched (40 candidates per call)
+  → unreadable/undated/cancelled/unsettled/over-ceiling (100,000) rows become STATUS_SKIPPED
+    ledger items with bounded reason codes; run status COMPLETED_WITH_SKIPS (FAILED only if an
+    item failed or every row was skipped)
+  → transfers: TRANSFER with direction and label; IBANs are never stored (label is
+    "<BANK> ****last4"); TRANSFER rows skip merchant learning
+  → pending-duplicate check excludes reviews created by the same run
+
 FORBIDDEN:
+  ❌ Dating a row without a date as "today" on the text path (skip it as NO_DATE)
+  ❌ Persisting an IBAN, card number or long digit run in any merchant/label/account field
+  ❌ Letting AI output override parser money on a recognised layout
   ❌ BankStatementImportItemDao.insert outside processor
   ❌ BankStatementImportRunDao.insertRun outside processor
   ❌ Bypassing pre-OCR dedup (creates duplicate import runs)
