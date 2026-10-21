@@ -22,6 +22,7 @@ import com.yourname.expensetracker.data.repository.toDbTransactionType
 import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
+import com.yourname.expensetracker.domain.ai.usecase.CleanTransaction
 import com.yourname.expensetracker.domain.ai.usecase.DebugTransaction
 import com.yourname.expensetracker.domain.ai.usecase.StatementValidationContracts
 import com.yourname.expensetracker.domain.ai.usecase.StatementValidationOutcome
@@ -31,10 +32,18 @@ import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.debug.DebugData
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
 import com.yourname.expensetracker.domain.parser.ParsedTransactionType
+import com.yourname.expensetracker.domain.parser.ParsedTransferDirection
 import com.yourname.expensetracker.domain.receipt.BankStatementParser
+import com.yourname.expensetracker.domain.receipt.OcrResult
 import com.yourname.expensetracker.domain.receipt.ReceiptDocumentType
 import com.yourname.expensetracker.domain.receipt.ReceiptProcessingStatus
 import com.yourname.expensetracker.domain.receipt.ReceiptSourceType
+import com.yourname.expensetracker.domain.receipt.statement.CounterpartyLabel
+import com.yourname.expensetracker.domain.receipt.statement.CurrencyEvidence
+import com.yourname.expensetracker.domain.receipt.statement.StatementImportGate
+import com.yourname.expensetracker.domain.receipt.statement.StatementRow
+import com.yourname.expensetracker.domain.receipt.statement.StatementSkipReason
+import com.yourname.expensetracker.domain.receipt.statement.TextStatementParser
 import com.yourname.expensetracker.domain.util.CancellationSafe
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
@@ -44,6 +53,7 @@ import com.yourname.expensetracker.domain.privacy.RawPersistencePolicyResolver
 import com.yourname.expensetracker.domain.privacy.RawSourceType
 import com.yourname.expensetracker.domain.util.TimeProvider
 import timber.log.Timber
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -58,6 +68,10 @@ import javax.inject.Singleton
  * @property reviewsCreated  Number of [PendingReview] entries created.
  * @property duplicatesSkipped  Number of transactions skipped as duplicates.
  * @property debugData Optional debug data for the debug viewer (OCR text, parsed transactions, logs).
+ * @property skippedCount Number of rows recorded as SKIPPED ledger items (never merchant text).
+ * @property skippedByReason Skipped rows per bounded reason code (e.g. NO_DATE, CANCELLED); counts only.
+ * @property pagesProcessed Pages read successfully, when the source is a PDF.
+ * @property totalPages Pages in the source PDF, when known.
  */
 data class BankStatementResult(
     val receiptId: Long,
@@ -66,18 +80,102 @@ data class BankStatementResult(
     val duplicatesSkipped: Int,
     val debugData: DebugData? = null,
     val duplicateOfReceiptId: Long? = null,
-    val isPartial: Boolean = false
+    val isPartial: Boolean = false,
+    val skippedCount: Int = 0,
+    val skippedByReason: Map<String, Int> = emptyMap(),
+    val pagesProcessed: Int? = null,
+    val totalPages: Int? = null
 )
 
-/** Pure terminal policy; page failures do not invent failed transaction counts. */
+/** Per-item amount ceiling for statement rows; one source of truth with [StatementImportGate]. */
+internal const val STATEMENT_ITEM_AMOUNT_CEILING: Double = StatementImportGate.AMOUNT_CEILING
+
+/**
+ * Statement text head handed to AI validation (chars) before scrubbing; slightly above the use case's
+ * own 4000-char prompt cap so an IBAN straddling the cap is masked whole.
+ */
+internal const val STATEMENT_AI_TEXT_SLICE: Int = 4_100
+
+/** The raw-text window the AI use case keeps (chars); the text handed over is already cut to it. */
+internal const val STATEMENT_AI_PROMPT_WINDOW: Int = 4_000
+
+/** True for any whitespace or Unicode space/zero-width separator (NBSP U+00A0, U+202F, newlines, ...). */
+private fun isStatementSpace(c: Char): Boolean =
+    c.isWhitespace() || Character.isSpaceChar(c) || Character.getType(c) == Character.FORMAT.toInt()
+
+/**
+ * Statement text for the AI prompt, in this order: (1) collapse every whitespace/Unicode space run to
+ * one space (so an IBAN or card number split by NBSP, newlines or runs of spaces is one scannable
+ * token), over a head slightly wider than the window; (2) mask IBANs, then 12+ digit runs; (3) cut to
+ * [STATEMENT_AI_PROMPT_WINDOW] at the last whitespace boundary, dropping a trailing partial token, so
+ * no cut-off identifier fragment reaches the prompt. Returns blank when the window holds no complete
+ * token. Pure and linear in the input head.
+ */
+internal fun statementTextForAi(fullText: String): String {
+    val collapsed = StringBuilder(STATEMENT_AI_TEXT_SLICE + 1)
+    var pendingSpace = false
+    for (c in fullText) {
+        if (isStatementSpace(c)) {
+            pendingSpace = true
+            continue
+        }
+        if (pendingSpace && collapsed.isNotEmpty()) collapsed.append(' ')
+        pendingSpace = false
+        if (collapsed.length > STATEMENT_AI_TEXT_SLICE) break
+        collapsed.append(c)
+        if (collapsed.length > STATEMENT_AI_TEXT_SLICE) break
+    }
+    // The source text continues past the head unless it was fully consumed; the head ends on a token
+    // boundary only when the character right after it is the collapsed space.
+    val headEndsOnBoundary = collapsed.length <= STATEMENT_AI_TEXT_SLICE ||
+        collapsed[STATEMENT_AI_TEXT_SLICE] == ' '
+    val scrubbed = CounterpartyLabel.scrubLongDigitRuns(
+        CounterpartyLabel.maskIbans(collapsed.substring(0, minOf(collapsed.length, STATEMENT_AI_TEXT_SLICE)))
+    )
+    val window: String
+    val endsOnBoundary: Boolean
+    if (scrubbed.length > STATEMENT_AI_PROMPT_WINDOW) {
+        window = scrubbed.substring(0, STATEMENT_AI_PROMPT_WINDOW)
+        endsOnBoundary = scrubbed[STATEMENT_AI_PROMPT_WINDOW] == ' '
+    } else {
+        window = scrubbed
+        endsOnBoundary = headEndsOnBoundary
+    }
+    if (endsOnBoundary) return window.trimEnd()
+    val lastSpace = window.lastIndexOf(' ')
+    return if (lastSpace > 0) window.substring(0, lastSpace).trimEnd() else ""
+}
+
+/**
+ * Failure of a run whose rows were ALL skipped (nothing created, no duplicate, no failed item). The run
+ * is still FAILED; this carries the bounded, counts-only [result] so the summary can say why. The message
+ * is a fixed code, never statement text.
+ */
+class StatementAllRowsSkippedException(val result: BankStatementResult) : Exception("STATEMENT_ALL_ROWS_SKIPPED")
+
+/** Persisted statement text cap (chars) before sanitising, so a huge text PDF cannot overflow a CursorWindow. */
+internal const val STATEMENT_RAW_PERSIST_CAP: Int = 200_000
+
+/**
+ * Pure terminal policy; page failures do not invent failed transaction counts.
+ *
+ * O2: skipped rows alone no longer fail a run. A run FAILS when an item failed, or when rows were
+ * skipped and nothing at all was created or recognised as a duplicate (no usable outcome).
+ * Skips, duplicates or partial recognition next to at least one usable outcome end as
+ * COMPLETED_WITH_SKIPS. [createdItemCount] defaults to 0 for callers that only classify failures.
+ */
 internal fun bankStatementCompletionStatus(
     failedItemCount: Int,
     skippedItemCount: Int,
     duplicateItemCount: Int,
-    pdfPartial: Boolean
+    pdfPartial: Boolean,
+    createdItemCount: Int = 0
 ): String = when {
-    (failedItemCount + skippedItemCount) > 0 -> BankStatementImportRun.STATUS_FAILED
-    pdfPartial || duplicateItemCount > 0 -> BankStatementImportRun.STATUS_COMPLETED_WITH_SKIPS
+    failedItemCount > 0 -> BankStatementImportRun.STATUS_FAILED
+    skippedItemCount > 0 && createdItemCount == 0 && duplicateItemCount == 0 ->
+        BankStatementImportRun.STATUS_FAILED
+    pdfPartial || skippedItemCount > 0 || duplicateItemCount > 0 ->
+        BankStatementImportRun.STATUS_COMPLETED_WITH_SKIPS
     else -> BankStatementImportRun.STATUS_COMPLETED
 }
 
@@ -129,6 +227,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
     private val receiptLinkService: ReceiptLinkService,
     private val timeProvider: TimeProvider,
     private val bankStatementParser: BankStatementParser,
+    private val textStatementParser: TextStatementParser,
     private val pendingReviewDao: PendingReviewDao,
     private val expenseDao: ExpenseDao,
     private val merchantNormalizer: MerchantNormalizer,
@@ -205,17 +304,52 @@ class BankStatementLifecycleProcessor @Inject constructor(
             // Explicit source rows can proceed without settings; unknown rows are
             // represented by the parser and skipped at the existing item boundary.
             val homeCurrency = bankStatementParser.resolveHomeCurrencySuspend().orEmpty()
-            val parsedTransactions = bankStatementParser.parse(ocrResult.blocks, homeCurrency)
+            val statementParse: StatementParse.Rows = when (val parsed = parseStatementRows(ocrResult, homeCurrency)) {
+                is StatementParse.LayoutFailed -> {
+                    // A recognised layout threw: fail cleanly, never feed it to the generic parser.
+                    parsingLogs.add("Statement layout could not be read")
+                    return Result.failure(IllegalStateException("STATEMENT_LAYOUT_FAILED"))
+                }
+                is StatementParse.Rows -> parsed
+            }
+            val parsedRows = statementParse.parsed
+            val layoutSkippedRows = statementParse.skipped
+            val parsedTransactions = parsedRows.map { it.tx }
 
             val transactionsFound = parsedTransactions.size
             Timber.d("BankStatementLifecycleProcessor: %d transactions found", transactionsFound)
 
-            if (parsedTransactions.isEmpty()) {
+            // A recognised layout that yielded only skipped rows (all cancelled, all pending, ...) is not
+            // "no transactions": it continues into a ledger run so the skipped counts reach the result.
+            if (parsedTransactions.isEmpty() && layoutSkippedRows.isEmpty()) {
                 parsingLogs.add("No transactions found in bank statement")
                 return Result.failure(
                     IllegalStateException("No transactions found in bank statement")
                 )
             }
+
+            // Source-currency evidence per row (O1): a currency printed on the row or declared once in
+            // the statement header is source evidence; only CurrencyEvidence.NONE stays an assumption.
+            // Text-path rows additionally pass the pure gate: a row without a date is never dated "now"
+            // (O3, text path only: the OCR path keeps its null-date behaviour) and an amount above the
+            // ceiling never reaches AI validation. Skipped rows keep their parsed index as ledger index.
+            val sourceCurrencyEvidence = BooleanArray(parsedRows.size)
+            val preAiSkipReasons = arrayOfNulls<StatementSkipReason>(parsedRows.size)
+            parsedRows.forEachIndexed { rowIndex, row ->
+                sourceCurrencyEvidence[rowIndex] = row.currencyEvidence != CurrencyEvidence.NONE
+                if (statementParse.textPath) {
+                    when (val decision = StatementImportGate.evaluate(row)) {
+                        is StatementImportGate.Decision.Skip -> {
+                            preAiSkipReasons[rowIndex] = decision.reason
+                        }
+                        is StatementImportGate.Decision.Accept -> {
+                            sourceCurrencyEvidence[rowIndex] = decision.currencyIsSourceEvidence
+                        }
+                    }
+                }
+            }
+            val aiEligibleIndexes = parsedRows.indices.filter { preAiSkipReasons[it] == null }
+            val statementItemTotal = parsedRows.size + layoutSkippedRows.size
 
             // ── Step 3b: Create durable import run ledger row ─────────────────
             // P3-REG-010: Re-check write barrier before DB write after long OCR/parse.
@@ -231,7 +365,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                         correlationId = correlationId,
                         status = BankStatementImportRun.STATUS_RUNNING,
                         startedAt = now,
-                        totalItems = parsedTransactions.size
+                        totalItems = statementItemTotal
                     )
                 )
             }
@@ -242,16 +376,42 @@ class BankStatementLifecycleProcessor @Inject constructor(
             // Use ValidateBankStatementTransactionsUseCase to validate/correct
             // parser candidates with on-device (or cloud) AI.
             // RP-13 Gate A (P3-002 / D10): every candidate carries an immutable
-            // candidateId derived from the parser source-line identity; results
-            // merge back BY candidateId — never by response position.
-            val debugTransactions = parsedTransactions.mapIndexed { index, tx ->
-                DebugTransaction.fromParsedTransaction(tx, candidateId = index)
+            // candidateId (dense 0..n-1 over the rows sent to AI; mapped back to the
+            // parser source-line index through aiEligibleIndexes); results merge back
+            // BY candidateId — never by response position. The use case splits large
+            // candidate lists into bounded AI calls itself.
+            // On a recognised layout a TRANSFER row is never an AI candidate: its merchant is a masked
+            // counterparty label and any AI output for it is discarded anyway. It still proceeds to the
+            // ledger/review as a parser-only row below. Every candidate merchant string (all paths,
+            // including the generic fallback and OCR path) is scrubbed of IBANs and long digit runs.
+            val aiCandidateIndexes = aiEligibleIndexes.filter { rowIndex ->
+                !(statementParse.layoutRecognised &&
+                    parsedTransactions[rowIndex].type == ParsedTransactionType.TRANSFER)
             }
-            val validationOutcome = transactionValidator.validateTransactions(
-                rawOcrText = ocrResult.fullText,
-                candidateTransactions = debugTransactions,
-                homeCurrency = homeCurrency
-            )
+            val debugTransactions = aiCandidateIndexes.mapIndexed { candidateId, rowIndex ->
+                val tx = parsedTransactions[rowIndex]
+                DebugTransaction.fromParsedTransaction(tx, candidateId = candidateId).copy(
+                    merchant = scrubStatementText(tx.merchant),
+                    currencyAssumption = if (sourceCurrencyEvidence[rowIndex]) {
+                        CurrencyAssumption.PARSED_FROM_SOURCE
+                    } else {
+                        tx.currencyAssumption
+                    }
+                )
+            }
+            val validationOutcome = if (debugTransactions.isEmpty()) {
+                StatementValidationOutcome.Validated(emptyList())
+            } else {
+                transactionValidator.validateTransactions(
+                    // Privacy: the AI prompt gets only a bounded, scrubbed head of the statement text.
+                    // Whitespace is collapsed first (NBSP, narrow NBSP, newlines, space runs), then IBANs
+                    // and 12+ digit runs are masked, then the text is cut to the use case's 4000-char
+                    // window at a whitespace boundary so no identifier fragment is sent.
+                    rawOcrText = statementTextForAi(ocrResult.fullText),
+                    candidateTransactions = debugTransactions,
+                    homeCurrency = homeCurrency
+                )
+            }
             val validatedTransactions = validationOutcome.transactions
 
             when (validationOutcome) {
@@ -287,6 +447,8 @@ class BankStatementLifecycleProcessor @Inject constructor(
             // Build a merged list: use AI-validated values when confidence > 0.5,
             // fall back to parser-only values otherwise.
             // Gate A: ownership is proven by candidateId — never merge by position.
+            // [candidateId] is the parser source-line index (the ledger itemIndex), not the dense AI id.
+            // [direction] and [accountLabel] come ONLY from the parsed row, never from AI output.
             data class MergedTransaction(
                 val candidateId: Int,
                 val merchant: String,
@@ -295,62 +457,134 @@ class BankStatementLifecycleProcessor @Inject constructor(
                 val date: Long?,
                 val confidence: Float,
                 val type: ParsedTransactionType,
-                val source: String
+                val source: String,
+                val direction: ParsedTransferDirection?,
+                val accountLabel: String?
             )
 
             // Gate B currency policy for parser-derived values (P3-010 / D11):
-            // an explicitly parsed source currency is kept; a home/unknown
-            // assumption is never treated as known — the typed CURRENCY_UNKNOWN
-            // blank reaches the ledger skip instead of a fabricated currency.
-            fun parserPolicyCurrency(originalTx: ParsedTransaction): String =
-                if (originalTx.currencyAssumption == CurrencyAssumption.PARSED_FROM_SOURCE) {
+            // an explicitly parsed source currency (row symbol or single statement-header
+            // currency, O1) is kept; a home/unknown assumption is never treated as known —
+            // the typed CURRENCY_UNKNOWN blank reaches the ledger skip instead of a
+            // fabricated currency.
+            fun parserPolicyCurrency(originalTx: ParsedTransaction, sourceEvidence: Boolean): String =
+                if (sourceEvidence ||
+                    originalTx.currencyAssumption == CurrencyAssumption.PARSED_FROM_SOURCE
+                ) {
                     CurrencyCode.parse(originalTx.currency)?.takeIf { it in CurrencyCode.ALL_SUPPORTED }?.code
                         ?: StatementValidationContracts.CURRENCY_UNKNOWN
                 } else {
                     StatementValidationContracts.CURRENCY_UNKNOWN
                 }
 
-            val mergedTransactions = validatedTransactions.map { cleanTx ->
-                val candidateId = cleanTx.candidateId
-                require(candidateId in parsedTransactions.indices) {
+            // AI outcomes keyed by parser row index; rows that were never AI candidates (TRANSFER rows on a
+            // recognised layout) get a parser-only echo so they still flow to the ledger in row order.
+            val aiOutcomeByRow = HashMap<Int, CleanTransaction>()
+            validatedTransactions.forEach { cleanTx ->
+                require(cleanTx.candidateId in aiCandidateIndexes.indices) {
                     "AI candidateId outside proven candidate range"
                 }
+                aiOutcomeByRow[aiCandidateIndexes[cleanTx.candidateId]] = cleanTx
+            }
+            val aiCandidateRowSet = aiCandidateIndexes.toHashSet()
+            val rowOutcomes = aiEligibleIndexes.mapNotNull { rowIndex ->
+                aiOutcomeByRow[rowIndex]?.let { rowIndex to it }
+                    ?: if (rowIndex !in aiCandidateRowSet) {
+                        val echoTx = parsedTransactions[rowIndex]
+                        rowIndex to CleanTransaction(
+                            candidateId = rowIndex,
+                            merchant = echoTx.merchant,
+                            amount = echoTx.amount,
+                            currency = echoTx.currency,
+                            date = echoTx.date ?: 0L,
+                            confidence = echoTx.confidence,
+                            source = StatementValidationContracts.SOURCE_PARSER_ONLY
+                        )
+                    } else {
+                        null
+                    }
+            }
+
+            val mergedTransactions = rowOutcomes.map { (candidateId, cleanTx) ->
                 val originalTx = parsedTransactions[candidateId]
+                val rowSourceEvidence = sourceCurrencyEvidence[candidateId]
+                // Boundary scrub: no IBAN or long digit run reaches a stored merchant or label,
+                // including a merchant an AI correction wrote.
+                val parserMerchant = scrubStatementText(originalTx.merchant)
+                val label = originalTx.transferAccountName?.let { scrubStatementText(it) }
                 when {
+                    statementParse.layoutRecognised -> {
+                        // Money authority: a recognised layout read the row deterministically, so the
+                        // parser's amount, currency, date, type, direction and label are final. The AI
+                        // may only offer a scrubbed merchant correction, never for a TRANSFER (its
+                        // merchant is a masked counterparty label), and its rejection never drops the row.
+                        val aiMerchant = if (
+                            originalTx.type != ParsedTransactionType.TRANSFER &&
+                            cleanTx.source != StatementValidationContracts.SOURCE_AI_REJECTED &&
+                            cleanTx.source.startsWith("AI_") &&
+                            cleanTx.confidence > 0.5f
+                        ) {
+                            scrubStatementText(cleanTx.merchant).takeIf { it.isNotBlank() }
+                        } else {
+                            null
+                        }
+                        MergedTransaction(
+                            candidateId = candidateId,
+                            merchant = aiMerchant ?: parserMerchant,
+                            amount = originalTx.amount,
+                            currency = parserPolicyCurrency(originalTx, rowSourceEvidence),
+                            date = originalTx.date,
+                            confidence = originalTx.confidence,
+                            type = originalTx.type,
+                            source = if (cleanTx.source == StatementValidationContracts.SOURCE_AI_REJECTED) {
+                                StatementValidationContracts.SOURCE_PARSER_ONLY
+                            } else {
+                                cleanTx.source
+                            },
+                            direction = originalTx.transferDirection,
+                            accountLabel = label
+                        )
+                    }
                     cleanTx.source == StatementValidationContracts.SOURCE_AI_REJECTED ->
                         // Identity-proven AI rejection: parser fields remain the
                         // authoritative description of the skipped row.
                         MergedTransaction(
                             candidateId = candidateId,
-                            merchant = originalTx.merchant,
+                            merchant = parserMerchant,
                             amount = originalTx.amount,
-                            currency = parserPolicyCurrency(originalTx),
+                            currency = parserPolicyCurrency(originalTx, rowSourceEvidence),
                             date = originalTx.date,
                             confidence = originalTx.confidence,
                             type = originalTx.type,
-                            source = cleanTx.source
+                            source = cleanTx.source,
+                            direction = originalTx.transferDirection,
+                            accountLabel = label
                         )
                     cleanTx.source.startsWith("AI_") && cleanTx.confidence > 0.5f ->
                         MergedTransaction(
                             candidateId = candidateId,
-                            merchant = cleanTx.merchant,
+                            merchant = scrubStatementText(cleanTx.merchant),
                             amount = cleanTx.amount,
                             currency = cleanTx.currency,
                             date = if (cleanTx.date > 0L) cleanTx.date else originalTx.date,
                             confidence = cleanTx.confidence,
                             type = originalTx.type,
-                            source = cleanTx.source
+                            source = cleanTx.source,
+                            direction = originalTx.transferDirection,
+                            accountLabel = label
                         )
                     else ->
                         MergedTransaction(
                             candidateId = candidateId,
-                            merchant = originalTx.merchant,
+                            merchant = parserMerchant,
                             amount = originalTx.amount,
-                            currency = parserPolicyCurrency(originalTx),
+                            currency = parserPolicyCurrency(originalTx, rowSourceEvidence),
                             date = originalTx.date,
                             confidence = originalTx.confidence,
                             type = originalTx.type,
-                            source = cleanTx.source
+                            source = cleanTx.source,
+                            direction = originalTx.transferDirection,
+                            accountLabel = label
                         )
                 }
             }
@@ -377,8 +611,10 @@ class BankStatementLifecycleProcessor @Inject constructor(
                 // Fail-closed note: if settings are corrupt/unavailable the resolver
                 // yields DO_NOT_STORE and the raw OCR text is not persisted at all
                 // (previously a settings-read failure aborted the whole import).
+                // The text is capped BEFORE sanitising: a text PDF can carry up to 2M chars and a
+                // single stored row that large overflows the Room CursorWindow on read-back.
                 rawOcrText = RawContentSanitizer.sanitizeRawOcr(
-                    ocrResult.fullText,
+                    ocrResult.fullText.take(STATEMENT_RAW_PERSIST_CAP),
                     rawPersistencePolicyResolver.forSource(RawSourceType.BANK_STATEMENT).mode
                 ),
                 parsedTotal = null, // varies per transaction
@@ -488,6 +724,66 @@ class BankStatementLifecycleProcessor @Inject constructor(
             var reviewsCreated = 0
             var duplicatesSkipped = 0
             var failedItemCount = 0
+            // Skipped rows per bounded reason code (counts only; never row content).
+            val skippedByReason = sortedMapOf<String, Int>()
+            // Ids of the pending reviews THIS run created (O4: excluded from its own duplicate check).
+            val sameRunReviewIds = HashSet<Long>()
+
+            // ── Step 6a: ledger rows for rows that never reach AI ──────────────
+            // Parsed rows gated out before AI keep their parsed index; rows the layout itself
+            // could not turn into transactions (cancelled, unknown status, ...) follow the parsed
+            // ones. Bounded reason code only; layout-skipped rows carry no merchant/amount/date.
+            for (rowIndex in preAiSkipReasons.indices) {
+                val reason = preAiSkipReasons[rowIndex] ?: continue
+                val skippedTx = parsedTransactions[rowIndex]
+                val reasonCode = skipReasonCode(reason)
+                writeBarrier.runWrite(DatabaseAccessOperation("BankStatementLifecycleProcessor.skipItem")) {
+                    bankStatementImportItemDao.insert(
+                        BankStatementImportItem(
+                            runId = importRunId,
+                            itemIndex = rowIndex,
+                            transactionFingerprint = null,
+                            status = BankStatementImportItem.STATUS_SKIPPED,
+                            merchant = sanitizeMerchant(skippedTx.merchant),
+                            amount = skippedTx.amount,
+                            currency = skippedTx.currency.takeIf { sourceCurrencyEvidence[rowIndex] },
+                            transactionDate = skippedTx.date,
+                            errorReason = reasonCode,
+                            duplicateReason = null,
+                            expenseId = null,
+                            createdAt = now,
+                            updatedAt = now
+                        )
+                    )
+                }
+                skippedByReason.merge(reasonCode, 1, Int::plus)
+                parsingLogs.add("Skipped item $rowIndex: $reasonCode")
+            }
+            layoutSkippedRows.forEachIndexed { skipPosition, skippedRow ->
+                val reasonCode = skipReasonCode(skippedRow.reason)
+                val skipItemIndex = parsedRows.size + skipPosition
+                writeBarrier.runWrite(DatabaseAccessOperation("BankStatementLifecycleProcessor.skipItem")) {
+                    bankStatementImportItemDao.insert(
+                        BankStatementImportItem(
+                            runId = importRunId,
+                            itemIndex = skipItemIndex,
+                            transactionFingerprint = null,
+                            status = BankStatementImportItem.STATUS_SKIPPED,
+                            merchant = null,
+                            amount = null,
+                            currency = null,
+                            transactionDate = null,
+                            errorReason = reasonCode,
+                            duplicateReason = null,
+                            expenseId = null,
+                            createdAt = now,
+                            updatedAt = now
+                        )
+                    )
+                }
+                skippedByReason.merge(reasonCode, 1, Int::plus)
+                parsingLogs.add("Skipped item $skipItemIndex: $reasonCode")
+            }
 
             for (tx in mergedTransactions) {
                 // RP-13 Gate A: the ledger index is the parser source-line
@@ -518,6 +814,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                                 )
                             )
                         }
+                        skippedByReason.merge("AI_REJECTED", 1, Int::plus)
                         parsingLogs.add("Skipped item $index: AI_REJECTED")
                         continue
                     }
@@ -544,6 +841,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                             )
                         }
                         failedItemCount++
+                        skippedByReason.merge("INVALID_AMOUNT", 1, Int::plus)
                         parsingLogs.add("Skipped item $index: invalid amount (${tx.amount})")
                         continue
                     }
@@ -569,7 +867,35 @@ class BankStatementLifecycleProcessor @Inject constructor(
                             )
                         }
                         failedItemCount++
+                        skippedByReason.merge("NON_POSITIVE_AMOUNT", 1, Int::plus)
                         parsingLogs.add("Skipped item $index: non-positive amount (${tx.amount})")
+                        continue
+                    }
+
+                    // Per-item amount ceiling (O5): applies to the merged amount, so an AI-corrected
+                    // amount cannot slip past the parser/layout ceiling.
+                    if (tx.amount > STATEMENT_ITEM_AMOUNT_CEILING) {
+                        writeBarrier.runWrite(DatabaseAccessOperation("BankStatementLifecycleProcessor.skipItem")) {
+                            bankStatementImportItemDao.insert(
+                                BankStatementImportItem(
+                                    runId = importRunId,
+                                    itemIndex = index,
+                                    transactionFingerprint = null,
+                                    status = BankStatementImportItem.STATUS_SKIPPED,
+                                    merchant = sanitizeMerchant(tx.merchant),
+                                    amount = tx.amount,
+                                    currency = tx.currency.ifBlank { null },
+                                    transactionDate = tx.date,
+                                    errorReason = "AMOUNT_ABOVE_CEILING",
+                                    duplicateReason = null,
+                                    expenseId = null,
+                                    createdAt = now,
+                                    updatedAt = now
+                                )
+                            )
+                        }
+                        skippedByReason.merge("AMOUNT_ABOVE_CEILING", 1, Int::plus)
+                        parsingLogs.add("Skipped item $index: AMOUNT_ABOVE_CEILING")
                         continue
                     }
 
@@ -598,6 +924,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                             )
                         }
                         failedItemCount++
+                        skippedByReason.merge("CURRENCY_UNKNOWN", 1, Int::plus)
                         parsingLogs.add("Skipped item $index: CURRENCY_UNKNOWN")
                         continue
                     }
@@ -625,13 +952,19 @@ class BankStatementLifecycleProcessor @Inject constructor(
                             )
                         }
                         failedItemCount++
+                        skippedByReason.merge("UNREASONABLE_DATE", 1, Int::plus)
                         parsingLogs += "Skipped item $index: unreasonable date (${transactionDate})"
                         continue
                     }
 
-                    // Normalize merchant
-                    val lookupResult = merchantNormalizer.normalize(tx.merchant, autoCreate = true)
-                    val normalizedMerchant = lookupResult.canonical.normalizedName
+                    // Normalize merchant. A TRANSFER merchant is a masked counterparty label (a person or
+                    // account), never a shop: it must not be auto-created as a merchant/alias, so it is
+                    // used verbatim and the normalizer is not called.
+                    val normalizedMerchant = if (tx.type == ParsedTransactionType.TRANSFER) {
+                        tx.merchant
+                    } else {
+                        merchantNormalizer.normalize(tx.merchant, autoCreate = true).canonical.normalizedName
+                    }
 
                     // Auto-categorize
                     val classification = hybridClassifier.classify(
@@ -725,7 +1058,11 @@ class BankStatementLifecycleProcessor @Inject constructor(
                         continue
                     }
 
-                    // Check existing pending reviews with proper tolerance window
+                    // Check existing pending reviews with proper tolerance window.
+                    // O4: reviews created by THIS import run are not duplicates of their own later rows:
+                    // identical rows inside one statement are separate real transactions (repeated
+                    // top-ups, repeated purchases). The exclusion is in memory by this run's review ids
+                    // (no new DAO surface / schema change); cross-run duplicates are still detected.
                     val duplicateReview = pendingReviewDao.getPendingDuplicateCandidateInRangeTypeAware(
                         merchantKey = merchantKey,
                         merchantName = normalizedMerchant,
@@ -735,7 +1072,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                         maxAmount = maxAmount,
                         currency = tx.currency,
                         transactionType = txType.name
-                    )
+                    )?.takeUnless { it.id in sameRunReviewIds }
 
                     if (duplicateReview != null) {
                         duplicatesSkipped++
@@ -782,7 +1119,11 @@ class BankStatementLifecycleProcessor @Inject constructor(
                         notificationTitle = "Bank Statement Transaction",
                         // PR15: PII fix — do not embed raw merchant in notification text
                         notificationText = "New transaction: ${tx.amount} ${tx.currency}",
-                        createdAt = timeProvider.now()
+                        createdAt = timeProvider.now(),
+                        // Direction and counterparty label come from the parsed row (never AI output);
+                        // the label is IBAN-masked and digit-run scrubbed at the merge boundary.
+                        suggestedDirection = tx.direction?.name,
+                        suggestedAccountName = tx.accountLabel
                     )
 
                     // P3-REG-005: Wrap review creation and item row in a single
@@ -832,6 +1173,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                         revId
                     }
                     }
+                    sameRunReviewIds.add(reviewId)
                     reviewsCreated++
                     parsingLogs.add("INSERT: Pending review created [REDACTED]")
 
@@ -879,7 +1221,8 @@ class BankStatementLifecycleProcessor @Inject constructor(
                 failedItemCount = finalFailedItemCount,
                 skippedItemCount = skippedItemCount,
                 duplicateItemCount = expDupCount + pendDupCount,
-                pdfPartial = ocrResult.isPartial
+                pdfPartial = ocrResult.isPartial,
+                createdItemCount = createdCount
             )
             val endTime = timeProvider.now()
 
@@ -906,7 +1249,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                         runId = importRunId,
                         status = finalStatus,
                         completedAt = endTime,
-                        totalItems = transactionsFound,
+                        totalItems = statementItemTotal,
                         processedItems = totalItems,
                         createdReviewCount = createdCount,
                         duplicateExpenseCount = expDupCount,
@@ -935,6 +1278,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                             .put("transactionsFound", transactionsFound)
                             .put("reviewsCreated", reviewsCreated)
                             .put("duplicatesSkipped", duplicatesSkipped)
+                            .put("skippedCount", skippedItemCount)
                             .build()
                     ))
                 }
@@ -952,7 +1296,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                         runId = importRunId,
                         status = BankStatementImportRun.STATUS_FAILED,
                         completedAt = endTime,
-                        totalItems = transactionsFound,
+                        totalItems = statementItemTotal,
                         processedItems = totalItems,
                         createdReviewCount = createdCount,
                         duplicateExpenseCount = expDupCount,
@@ -973,11 +1317,33 @@ class BankStatementLifecycleProcessor @Inject constructor(
                         metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
                             .put("transactionsFound", transactionsFound)
                             .put("failedItemCount", finalFailedItemCount)
+                            .put("skippedCount", skippedItemCount)
                             .build()
                     ))
                 }
                 }
-                return Result.failure(Exception("Bank statement import had $finalFailedItemCount failed items"))
+                if (finalFailedItemCount == 0 && skippedItemCount > 0) {
+                    // Every row was skipped and nothing was created: still a failed run, but the bounded
+                    // counts travel with the failure so the summary can show why (counts only).
+                    return Result.failure(
+                        StatementAllRowsSkippedException(
+                            BankStatementResult(
+                                receiptId = receiptId,
+                                transactionsFound = transactionsFound,
+                                reviewsCreated = 0,
+                                duplicatesSkipped = 0,
+                                isPartial = ocrResult.isPartial,
+                                skippedCount = skippedItemCount,
+                                skippedByReason = skippedByReason.toMap(),
+                                pagesProcessed = ocrResult.pagesProcessed,
+                                totalPages = ocrResult.totalPages
+                            )
+                        )
+                    )
+                }
+                return Result.failure(
+                    Exception("Bank statement import had $finalFailedItemCount failed and $skippedItemCount skipped items")
+                )
             }
 
             val debugData = null // P3-33D-05: DebugData redacted by default
@@ -988,7 +1354,11 @@ class BankStatementLifecycleProcessor @Inject constructor(
                 reviewsCreated = reviewsCreated,
                 duplicatesSkipped = duplicatesSkipped,
                 debugData = debugData,
-                isPartial = ocrResult.isPartial
+                isPartial = ocrResult.isPartial,
+                skippedCount = skippedItemCount,
+                skippedByReason = skippedByReason.toMap(),
+                pagesProcessed = ocrResult.pagesProcessed,
+                totalPages = ocrResult.totalPages
             )
 
             Timber.d("BankStatementLifecycleProcessor: receiptId=%d, txs=%d, reviews=%d, dups=%d",
@@ -1117,9 +1487,100 @@ class BankStatementLifecycleProcessor @Inject constructor(
      */
     private fun sanitizeMerchant(raw: String?): String? {
         if (raw == null) return null
-        // Remove control characters (except common whitespace) and truncate
-        val sanitized = raw.replace(Regex("[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F\\x7F]"), "")
+        // Remove control characters (except common whitespace), mask any IBAN / long digit run
+        // (an AI-corrected merchant must not carry one into a ledger row) and truncate.
+        val sanitized = scrubStatementText(raw.replace(Regex("[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F\\x7F]"), ""))
             .take(200)
         return sanitized.ifBlank { null }
+    }
+
+    /** Boundary scrub for any statement-derived text that is stored: IBANs, then long digit runs. */
+    private fun scrubStatementText(text: String): String =
+        CounterpartyLabel.scrubLongDigitRuns(CounterpartyLabel.maskIbans(text))
+
+    /** Bounded ledger/summary code for a layout skip reason; exhaustive so a new reason cannot be dropped. */
+    private fun skipReasonCode(reason: StatementSkipReason): String = when (reason) {
+        StatementSkipReason.NO_DATE -> "NO_DATE"
+        StatementSkipReason.CANCELLED -> "CANCELLED"
+        StatementSkipReason.UNKNOWN_STATUS -> "UNKNOWN_STATUS"
+        StatementSkipReason.NOT_SETTLED -> "NOT_SETTLED"
+        StatementSkipReason.AMOUNT_ABOVE_CEILING -> "AMOUNT_ABOVE_CEILING"
+        StatementSkipReason.INCOMPLETE_ROW -> "INCOMPLETE_ROW"
+        StatementSkipReason.UNREASONABLE_DATE -> "UNREASONABLE_DATE"
+    }
+
+    private sealed interface StatementParse {
+        data class Rows(
+            val parsed: List<StatementRow.Parsed>,
+            val skipped: List<StatementRow.Skipped>,
+            /** True when the PDF text path produced the rows (NO_DATE gating applies only there). */
+            val textPath: Boolean,
+            /**
+             * True when a recognised text layout (not the generic fallback, not the OCR path) produced
+             * the rows: the parser is then the authority for amount, currency, date, type, direction
+             * and counterparty label, and the AI may only offer a scrubbed non-transfer merchant.
+             */
+            val layoutRecognised: Boolean = false
+        ) : StatementParse
+
+        /** A recognised text layout threw while parsing: no rows, and no generic fallback. */
+        object LayoutFailed : StatementParse
+    }
+
+    /**
+     * Routes one statement to its parser. The PDF text path uses the matched layout; an unknown
+     * text layout falls back to the generic parser with a mandatory date; the OCR/image path keeps
+     * the generic parser unchanged (null dates allowed, O3).
+     */
+    private suspend fun parseStatementRows(ocrResult: OcrResult, homeCurrency: String): StatementParse =
+        // Text parsing and sanitising of a large statement is CPU work: never on the caller's (Main) thread.
+        withContext(Dispatchers.Default) { parseStatementRowsBlocking(ocrResult, homeCurrency) }
+
+    private fun parseStatementRowsBlocking(ocrResult: OcrResult, homeCurrency: String): StatementParse {
+        val pages = ocrResult.pdfTextPages
+        if (pages == null) {
+            return StatementParse.Rows(
+                parsed = genericRows(ocrResult, homeCurrency, requireDate = false),
+                skipped = emptyList(),
+                textPath = false
+            )
+        }
+        val textResult = textStatementParser.parse(pages, homeCurrency)
+        if (textResult.failed) return StatementParse.LayoutFailed
+        if (textResult.layout == null) {
+            return StatementParse.Rows(
+                parsed = genericRows(ocrResult, homeCurrency, requireDate = true),
+                skipped = emptyList(),
+                textPath = true
+            )
+        }
+        return StatementParse.Rows(
+            parsed = textResult.parsedRows,
+            skipped = textResult.skippedRows,
+            textPath = true,
+            layoutRecognised = textResult.layout != null
+        )
+    }
+
+    private fun genericRows(
+        ocrResult: OcrResult,
+        homeCurrency: String,
+        requireDate: Boolean
+    ): List<StatementRow.Parsed> {
+        val transactions = if (requireDate) {
+            bankStatementParser.parse(ocrResult.blocks, homeCurrency, requireDate = true)
+        } else {
+            bankStatementParser.parse(ocrResult.blocks, homeCurrency)
+        }
+        return transactions.map { tx ->
+            StatementRow.Parsed(
+                tx = tx,
+                currencyEvidence = if (tx.currencyAssumption == CurrencyAssumption.PARSED_FROM_SOURCE) {
+                    CurrencyEvidence.ROW
+                } else {
+                    CurrencyEvidence.NONE
+                }
+            )
+        }
     }
 }

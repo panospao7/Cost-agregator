@@ -32,6 +32,7 @@ import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.ui.util.guardedWrite
 import com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementResult
+import com.yourname.expensetracker.domain.receipt.lifecycle.StatementAllRowsSkippedException
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
 import timber.log.Timber
 // ...
@@ -1108,11 +1109,8 @@ class ReviewViewModel @Inject constructor(
                 when (val result = receiptLifecycleCoordinator.processBankStatement(uri)) {
                     is Result.Success<*> -> {
                         val bankResult = result.data as BankStatementResult
-                        val summary = "Imported ${bankResult.transactionsFound} transactions from statement! " +
-                            "(${bankResult.reviewsCreated} reviews created, ${bankResult.duplicatesSkipped} duplicates skipped)"
-                        _errorMessage.value = if (bankResult.isPartial) {
-                            "Statement partially imported; some pages were not processed. $summary"
-                        } else summary
+                        // Counts only (pages, reviews, duplicates, skipped by bounded reason); never row text.
+                        _errorMessage.value = statementImportSummary(bankResult)
                         bankResult.debugData?.let { data ->
                             _debugData.value = data
                             debugDataStorage.save(data)
@@ -1120,7 +1118,11 @@ class ReviewViewModel @Inject constructor(
                     }
                     is Result.Error -> {
                         // RP-15: bounded message only — decision/exception text is never rendered.
-                        _errorMessage.value = "Failed to parse statement"
+                        // An all-rows-skipped run carries counts-only data (bounded reason codes).
+                        val allSkipped = result.exception as? StatementAllRowsSkippedException
+                        _errorMessage.value = allSkipped
+                            ?.let { statementAllSkippedSummary(it.result) }
+                            ?: "Failed to parse statement"
                     }
                     is Result.Duplicate -> {
                         _errorMessage.value = "Statement already processed (duplicate)"
