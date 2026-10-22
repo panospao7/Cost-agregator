@@ -57,7 +57,9 @@ import com.yourname.expensetracker.domain.ai.model.AiCapabilityRuntimeStatus
 import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.routeDisplayText
+import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
+import com.yourname.expensetracker.ui.components.asString
 import com.yourname.expensetracker.ui.theme.SemanticColors
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -126,7 +128,7 @@ fun AiSettingsScreen(
                     // S11-002: Show effective cloud policy status
                     uiState.effectiveCloudBlocked?.let { reason ->
                         Text(
-                            text = "⚠ Cloud AI blocked: $reason",
+                            text = "⚠ " + stringResource(R.string.ai_cloud_blocked_format, reason.asString()),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.error,
                             modifier = androidx.compose.ui.Modifier.padding(start = 16.dp, bottom = 4.dp)
@@ -134,7 +136,7 @@ fun AiSettingsScreen(
                     }
                     if (uiState.effectiveCloudBlocked == null && settings.allowCloudAi && settings.aiEnabled) {
                         Text(
-                            text = "✓ Cloud AI is active",
+                            text = "✓ " + stringResource(R.string.ai_cloud_active),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary,
                             modifier = androidx.compose.ui.Modifier.padding(start = 16.dp, bottom = 4.dp)
@@ -143,7 +145,7 @@ fun AiSettingsScreen(
                     // S11-007: Show settings write error
                     uiState.settingsWriteError?.let { err ->
                         Text(
-                            text = err,
+                            text = err.asString(),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.error,
                             modifier = androidx.compose.ui.Modifier
@@ -432,9 +434,9 @@ private fun ProviderAndApiKeySection(
     providerName: String,
     apiKeyInput: String,
     hasStoredApiKey: Boolean,
-    apiKeyValidationMessage: String?,
+    apiKeyValidationMessage: UiText?,
     isTestingConnection: Boolean,
-    connectionTestMessage: String?,
+    connectionTestMessage: UiText?,
     isConnectionTestSuccess: Boolean?,
     onApiKeyChange: (String) -> Unit,
     onSaveApiKey: () -> Unit,
@@ -501,7 +503,7 @@ private fun ProviderAndApiKeySection(
 
             apiKeyValidationMessage?.let {
                 Text(
-                    text = it,
+                    text = it.asString(),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.error
                 )
@@ -529,7 +531,7 @@ private fun ProviderAndApiKeySection(
                     null -> MaterialTheme.colorScheme.onSurfaceVariant
                 }
                 Text(
-                    text = message,
+                    text = message.asString(),
                     style = MaterialTheme.typography.bodySmall,
                     color = feedbackColor
                 )

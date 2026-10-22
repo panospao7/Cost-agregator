@@ -144,3 +144,31 @@ impact-map stale line + release note; PC-15 T3 overall.
 | C1, C2, C3, C4, C5, CX | planned (approved 2026-10-16) |
 
 - 2026-10-16 (cloud-alias-hashing Gate 1 Q-E): follow-up owned by ai-fixes — migrate 5 builders' redaction decision (ReviewExplanation, ReceiptItemCategorization, ReceiptAssist, DedupeJudge, CategorizationAssist ×2) to EffectiveCloudAiPolicyResolver; must keep canUseCloudFor conjunct (INV-C18) and match caller-snapshot semantics (critique: resolver reads settings().first(), builders read caller settings). Not in Part C scope (PC-10).
+
+## S0 results (2026-10-23, orchestrator; worktree C:\Users\panos\Desktop\Cost-agregator-af, branch feature/ai-fixes from 681d49a3)
+Base: Release 1.0.2 merged (044be2c8) + money-correctness 681d49a3 (touches no ai-fixes production file; shifts LEGAL_PATHS / ENGINE_INTERACTION_MAP anchors). Drift vs C* 53824bcd confirmed by git: WarrantyExpirationWorker.kt (+16), DailyBriefingWorker.kt (6), WarrantyTrackerViewModel.kt (111, R24/R29/R18b landed), db_ownership_policy.yml (126). AiSettingsViewModel, router, AiPolicyImpl unchanged vs C* (router/policy line offsets are plan off-by-N).
+Discovery (scout, Sonnet) — plan corrections to apply when executing each slice:
+- WarrantyDaoTest is JVM Robolectric at T/data/database/dao/WarrantyDaoTest.kt (not androidTest): B1a/final gate use targeted-unit-test "*WarrantyDaoTest*", no connected-test-class/AVD.
+- Missing classes named by plan: ReceiptSideEffectPlannerWarrantyTest (use/extend T/domain/receipt/lifecycle/ReceiptSideEffectPlannerTest.kt), WarrantyExtractionModelsTest (new), *EffectiveCloudAiPolicy* (matches nothing; B2a filter).
+- B1a unlisted test breakage: WarrantyTrackerRepositoryTest :221, :911 (+ helper ~:890-908), :859 repositoryWith ctor; WarrantyTrackerRepositoryTransactionTest :109-120 ctor. Plan delete/retarget cites are ~4 lines above the fun lines (consistent offset).
+- B1a policy row toWarrantyEntityOrNull: db_ownership_policy.yml :3389 (plan ~:3433), also in signatures.candidate.yml :3372, signatures.accounting.json, legacy snapshots; NOT in GR-08-seeds.yml / legacy.yml by grep. Extra pins: scripts/test_migrate_db_policy_seed_rows.py :2786/:2894/:2929/:2933/:3089; docs/ci/db-mediation/GR-14_OWNER_ACCEPTANCE_REGISTRY.yml:24; docs/ci/db-structural/GR-11_CORPUS.yml:1051 -> B1a is needs-sonnet-confirm; R7 Pattern E sequence per wave2-db-guard-repair-20260927-handoff.md:80-92 (generate with --seed-rows, then --verify; never --force-repromote; run LAST on a tree with only that change uncommitted).
+- D-1 KNOWN_VIOLATIONS (CancellationSafetyArchitectureGuardTest): :79 DefaultAiEnvironmentMonitor, :92 ManualExpenseRepository, :126 WarrantyExpirationWorker (FALSE_POSITIVE entry; worker already rethrows CE :150), :151 AssistantViewModel, :170 WarrantyTrackerViewModel (VM now rethrows CE -> likely removable in A), :150 AiSettingsViewModel (A), :113 AutoCreateWarrantyFromReceiptUseCase (B1a).
+- D-3 confirmed: AssistantViewModel.kt:535 passes only QUERY_INTERPRETATION -> no B1c addition.
+- D-4: only updateWarranty use is confirmWarranty (:221) -> guard (c) full form.
+- D-7 anchors: ARCHITECTURE.md :1268/:1270/:1826/:1977 (-1); LEGAL_PATHS Privacy/Cloud AI :400, Workers :544, Warranty Auto-Create :1112; ENGINE_INTERACTION_MAP PrivacyGate :188-198, HybridRouter :167-173.
+- D-8: JVM Room harness exists (Robolectric + inMemoryDatabaseBuilder).
+- D-10: CODEBASE_INVENTORY is hand-maintained (dated Drift Sync sections).
+- Slice A scope shrinks: WarrantyTrackerViewModel/Screen already have CE rethrow, bounded error and SnackbarHost (R24) -> A's warranty part = AE-3 interim test + KNOWN_VIOLATIONS :170 removal if guard agrees. AiSettingsViewModel closed literal set must also cover :108, :109, :111, :246, :264, :265, :267; broad catch :127 (Timber.e(e) :129) and :281 Timber.e(e) also in INV-3 scope.
+- Expired 2026-09-30 broad-catch allowlist entries (SourceScanningArchitectureGuardTest ~:545-588) appear unenforced (expiry check applies to the first allowlist only) — confirmed by baseline below.
+Baselines:
+- targeted "*SourceScanningArchitectureGuardTest*,*CancellationSafetyArchitectureGuardTest*,*AiSettingsViewModelTest*,*WarrantyTrackerViewModelTest*,*DataRetentionWorkerTest*" vr-20261022-211416-b7cd6e9e PASS (expired entry not enforced).
+- static-guards vr-20261022-211619-cd7ab4cc STALE_RESULT (orchestrator edited this handoff mid-run); rerun after ff to bcd8e921: vr-20261022-213819-94e2ad10 PASS.
+- registered-guard db_access vr-20261022-213139-9fa5158b PASS; db_artifact_sync vr-20261022-213412-82199f14 PASS; lint vr-20261022-213428-05af4ce9 PASS (on 681d49a3).
+- Branch fast-forwarded to feature/money-aggregates bcd8e921 (2026-10-23) so the lane sits on all committed money work.
+S0 DONE. Next: A.
+
+## Slice A (2026-10-23) DONE
+Implemented (feature-implementer): FEATURES.md AI relabel + warranty section (local regex detection; cloud service "retained but not active"); DataRetentionWorker header; AiSettingsViewModel/Screen all user-visible literals -> UiText.StringResource (27 keys en/es/el), CE-first catches, class-name-only logs (INV-3 incl. :127/:281); CancellationSafetyArchitectureGuardTest KNOWN_VIOLATIONS removed for AiSettingsViewModel and WarrantyTrackerViewModel (no suspend fun in either -> not scanned violations). WarrantyTracker VM/Screen unchanged (R24 already landed; AE-3 interim tests already exist :285/:297).
+Validation: targeted "*AiSettingsViewModelTest*,*WarrantyTrackerViewModelTest*,*DataRetentionWorkerTest*,*CancellationSafetyArchitectureGuardTest*,*SourceScanningArchitectureGuardTest*" vr-20261022-222651-0476f3ea PASS; static-guards vr-20261022-223911-7a32dec9 PASS; lint vr-20261022-225429-60d77bc6 PASS.
+Review (cheap, Sonnet): ACCEPT-WITH-MINORS, no required fixes. Follow-ups: FEATURES.md :20 "AI Forecasting" / :225 "AI suggestions" (optional wording); AiSettingsViewModel :130 fully-qualified CE (cosmetic); glyph prefixes in Screen; OkHttpCloudProviderConnectionTester.kt:50 Timber.w(e) -> later INV-3 sweep; testGemini messages English-only; WarrantyTrackerViewModel.kt:93 raw runCatching in launch swallows CE -> fix in B1b.
+Next: B1a (guard regeneration approved; needs-sonnet-confirm per S0 notes; must run LAST on a tree with only that change uncommitted; never interleaved with loan regeneration).

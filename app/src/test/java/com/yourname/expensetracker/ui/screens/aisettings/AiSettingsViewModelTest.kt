@@ -1,7 +1,10 @@
 package com.yourname.expensetracker.ui.screens.aisettings
 
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.cancelAndJoin
+import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.ai.service.CloudProviderConnectionTester
 import com.yourname.expensetracker.domain.ai.model.AiRuntimeStatusSummary
 import com.yourname.expensetracker.domain.ai.model.AiRoute
@@ -25,9 +28,12 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import timber.log.Timber
+import java.io.IOException
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AiSettingsViewModelTest : ViewModelTestUtils() {
@@ -154,7 +160,7 @@ class AiSettingsViewModelTest : ViewModelTestUtils() {
         advanceUntilIdle()
 
         io.mockk.verify(exactly = 0) { secureKeyStorage.storeKey(SecureKeyStorage.KEY_GEMINI, any()) }
-        assertEquals("Run a successful connection test before saving this API key.", viewModel.uiState.value.connectionTestMessage)
+        assertEquals(UiText.StringResource(R.string.ai_key_test_before_save), viewModel.uiState.value.connectionTestMessage)
         assertEquals(false, viewModel.uiState.value.isConnectionTestSuccess)
         assertEquals("AIza12345678901234567890", viewModel.uiState.value.apiKeyInput)
     }
@@ -168,7 +174,7 @@ class AiSettingsViewModelTest : ViewModelTestUtils() {
         advanceUntilIdle()
 
         io.mockk.verify(exactly = 0) { secureKeyStorage.storeKey(SecureKeyStorage.KEY_GEMINI, any()) }
-        assertEquals("Enable AI first, then run connection test again.", viewModel.uiState.value.connectionTestMessage)
+        assertEquals(UiText.StringResource(R.string.ai_key_enable_ai_first), viewModel.uiState.value.connectionTestMessage)
         assertEquals(false, viewModel.uiState.value.isConnectionTestSuccess)
         assertEquals("AIza12345678901234567890", viewModel.uiState.value.apiKeyInput)
         assertFalse(viewModel.uiState.value.hasStoredApiKey)
@@ -212,7 +218,228 @@ class AiSettingsViewModelTest : ViewModelTestUtils() {
         }
         assertTrue(viewModel.uiState.value.hasStoredApiKey)
         assertEquals("", viewModel.uiState.value.apiKeyInput)
-        assertEquals("API key saved securely.", viewModel.uiState.value.connectionTestMessage)
+        assertEquals(UiText.StringResource(R.string.ai_key_saved), viewModel.uiState.value.connectionTestMessage)
         assertEquals(true, viewModel.uiState.value.isConnectionTestSuccess)
     }
+
+    // ---- ai-fixes Part A: bounded, localized errors (INV-2/3/4; AE-2, AE-4, AE-5) ----
+
+    /** Captures what Timber receives so tests can prove logs carry no throwable and no raw exception text. */
+    private class CapturingTree : Timber.Tree() {
+        val messages = mutableListOf<String>()
+        val throwables = mutableListOf<Throwable>()
+        override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+            messages += message
+            if (t != null) throwables += t
+        }
+    }
+
+    private inline fun withCapturedLogs(block: (CapturingTree) -> Unit) {
+        val tree = CapturingTree()
+        Timber.plant(tree)
+        try {
+            block(tree)
+        } finally {
+            Timber.uproot(tree)
+        }
+    }
+
+    private val rawPath = "/data/user/0/x/files/datastore/ai_settings.preferences_pb"
+
+    // AE-2
+    @Test
+    fun `settings write failure shows localized resource without path or exception text and logs class name only`() = runTest(testDispatcher) {
+        withCapturedLogs { tree ->
+            coEvery { aiSettingsRepository.update(any()) } throws IOException(rawPath)
+
+            viewModel.setDashboardBriefingEnabled(true)
+            advanceUntilIdle()
+
+            val error = viewModel.uiState.value.settingsWriteError
+            assertEquals(UiText.StringResource(R.string.ai_error_settings_save_failed), error)
+            assertTrue((error as UiText.StringResource).args.isEmpty())
+            assertTrue(tree.throwables.isEmpty())
+            assertTrue(tree.messages.any { it.contains("IOException") })
+            assertTrue(tree.messages.none { it.contains(rawPath) || it.contains("datastore") })
+            // The failed write must not arm/disarm the proactive-briefing work.
+            coVerify(exactly = 0) { syncProactiveBriefingWorkUseCase(any()) }
+        }
+    }
+
+    // AE-4
+    @Test
+    fun `settings write cancellation propagates and sets no settings error`() = runTest(testDispatcher) {
+        withCapturedLogs { tree ->
+            coEvery { aiSettingsRepository.update(any()) } throws CancellationException("cancelled")
+
+            viewModel.setAiEnabled(false)
+            advanceUntilIdle()
+
+            assertNull(viewModel.uiState.value.settingsWriteError)
+            assertTrue(tree.messages.none { it.contains("write failed") })
+            coVerify(exactly = 0) { syncProactiveBriefingWorkUseCase(any()) }
+        }
+    }
+
+    // AE-4 (sync step after a successful write)
+    @Test
+    fun `proactive briefing sync cancellation propagates and sets no settings error`() = runTest(testDispatcher) {
+        coEvery { syncProactiveBriefingWorkUseCase(any()) } throws CancellationException("cancelled")
+
+        viewModel.setProactiveBriefingsEnabled(true)
+        advanceUntilIdle()
+
+        assertNull(viewModel.uiState.value.settingsWriteError)
+    }
+
+    @Test
+    fun `clearSettingsWriteError clears the localized error`() = runTest(testDispatcher) {
+        coEvery { aiSettingsRepository.update(any()) } throws IOException(rawPath)
+        viewModel.setAllowCloudAi(true)
+        advanceUntilIdle()
+        assertEquals(UiText.StringResource(R.string.ai_error_settings_save_failed), viewModel.uiState.value.settingsWriteError)
+
+        viewModel.clearSettingsWriteError()
+
+        assertNull(viewModel.uiState.value.settingsWriteError)
+    }
+
+    // AE-5 (VM half: a failing status refresh surfaces no exception text anywhere in UI state or logs)
+    @Test
+    fun `runtime refresh failure keeps exception text out of ui state and logs`() = runTest(testDispatcher) {
+        withCapturedLogs { tree ->
+            coEvery { getAiRuntimeStatusUseCase(any()) } throws RuntimeException("token=abc123")
+
+            viewModel.refreshRuntimeStatus()
+            advanceUntilIdle()
+
+            val state = viewModel.uiState.value
+            assertFalse(state.isRefreshingRuntime)
+            assertNull(state.runtimeSummary.highestPriorityMessage)
+            assertFalse(state.toString().contains("abc123"))
+            assertTrue(tree.throwables.isEmpty())
+            assertTrue(tree.messages.none { it.contains("abc123") })
+            assertTrue(tree.messages.any { it.contains("RuntimeException") })
+        }
+    }
+
+    @Test
+    fun `runtime refresh cancellation propagates and clears refreshing flag without logging`() = runTest(testDispatcher) {
+        withCapturedLogs { tree ->
+            coEvery { getAiRuntimeStatusUseCase(any()) } throws CancellationException("cancelled")
+
+            viewModel.refreshRuntimeStatus()
+            advanceUntilIdle()
+
+            assertFalse(viewModel.uiState.value.isRefreshingRuntime)
+            assertTrue(tree.messages.none { it.contains("Runtime refresh failed") })
+        }
+    }
+
+    // AE-2 closed set: cloud-blocked reasons are string resources, one per cause
+    @Test
+    fun `effective cloud blocked reasons are string resources`() = runTest(testDispatcher) {
+        settingsFlow.value = AiSettings(aiEnabled = false)
+        advanceUntilIdle()
+        assertEquals(UiText.StringResource(R.string.ai_blocked_ai_off), viewModel.uiState.value.effectiveCloudBlocked)
+
+        settingsFlow.value = AiSettings(aiEnabled = true, allowCloudAi = false)
+        advanceUntilIdle()
+        assertEquals(UiText.StringResource(R.string.ai_blocked_cloud_off), viewModel.uiState.value.effectiveCloudBlocked)
+
+        settingsFlow.value = AiSettings(aiEnabled = true, allowCloudAi = true)
+        every { secureKeyStorage.hasKey(SecureKeyStorage.KEY_GEMINI) } returns false
+        advanceUntilIdle()
+        assertEquals(UiText.StringResource(R.string.ai_blocked_no_key), viewModel.uiState.value.effectiveCloudBlocked)
+
+        every { secureKeyStorage.hasKey(SecureKeyStorage.KEY_GEMINI) } returns true
+        coEvery { getAiRuntimeStatusUseCase(any()) } returns offlineSummary(networkAvailable = false, wifiConnected = false)
+        viewModel.refreshRuntimeStatus()
+        advanceUntilIdle()
+        assertEquals(UiText.StringResource(R.string.ai_blocked_no_network), viewModel.uiState.value.effectiveCloudBlocked)
+
+        settingsFlow.value = AiSettings(aiEnabled = true, allowCloudAi = true, wifiOnlyForCloud = true)
+        coEvery { getAiRuntimeStatusUseCase(any()) } returns offlineSummary(networkAvailable = true, wifiConnected = false)
+        advanceUntilIdle()
+        assertEquals(UiText.StringResource(R.string.ai_blocked_wifi_only), viewModel.uiState.value.effectiveCloudBlocked)
+    }
+
+    // AE-2 closed set: connection-test failures are string resources and never carry exception text
+    @Test
+    fun `testConnection unexpected failure shows localized resource and logs class name only`() = runTest(testDispatcher) {
+        withCapturedLogs { tree ->
+            settingsFlow.value = AiSettings(aiEnabled = true, allowCloudAi = true)
+            coEvery { getAiRuntimeStatusUseCase(listOf(AiCapability.QUERY_INTERPRETATION)) } throws IllegalStateException("token=abc123")
+            advanceUntilIdle()
+
+            viewModel.updateApiKeyInput("AIza12345678901234567890")
+            viewModel.testConnection()
+            advanceUntilIdle()
+
+            val state = viewModel.uiState.value
+            assertEquals(UiText.StringResource(R.string.ai_test_failed), state.connectionTestMessage)
+            assertEquals(false, state.isConnectionTestSuccess)
+            assertFalse(state.isTestingConnection)
+            assertTrue(tree.throwables.isEmpty())
+            assertTrue(tree.messages.none { it.contains("abc123") })
+            assertTrue(tree.messages.any { it.contains("IllegalStateException") })
+        }
+    }
+
+    // AE-4: cancellation during the connection test is not turned into a failure message
+    @Test
+    fun `testConnection cancellation propagates and is not converted to a failure message`() = runTest(testDispatcher) {
+        settingsFlow.value = AiSettings(aiEnabled = true, allowCloudAi = true)
+        coEvery { getAiRuntimeStatusUseCase(listOf(AiCapability.QUERY_INTERPRETATION)) } throws CancellationException("cancelled")
+        advanceUntilIdle()
+
+        viewModel.updateApiKeyInput("AIza12345678901234567890")
+        viewModel.testConnection()
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertNull(state.connectionTestMessage)
+        assertNull(state.isConnectionTestSuccess)
+        assertFalse(state.isTestingConnection)
+    }
+
+    @Test
+    fun `testConnection runtime failures map to string resources`() = runTest(testDispatcher) {
+        settingsFlow.value = AiSettings(aiEnabled = true, allowCloudAi = false)
+        advanceUntilIdle()
+        viewModel.updateApiKeyInput("AIza12345678901234567890")
+        viewModel.testConnection()
+        advanceUntilIdle()
+        assertEquals(UiText.StringResource(R.string.ai_key_enable_cloud_to_test), viewModel.uiState.value.connectionTestMessage)
+
+        settingsFlow.value = AiSettings(aiEnabled = true, allowCloudAi = true)
+        coEvery { getAiRuntimeStatusUseCase(listOf(AiCapability.QUERY_INTERPRETATION)) } returns
+            offlineSummary(networkAvailable = false, wifiConnected = false)
+        advanceUntilIdle()
+        viewModel.testConnection()
+        advanceUntilIdle()
+        assertEquals(UiText.StringResource(R.string.ai_test_no_network), viewModel.uiState.value.connectionTestMessage)
+        assertEquals(false, viewModel.uiState.value.isConnectionTestSuccess)
+    }
+
+    @Test
+    fun `api key validation and removal messages are string resources`() = runTest(testDispatcher) {
+        viewModel.updateApiKeyInput("short")
+        assertEquals(UiText.StringResource(R.string.ai_key_too_short), viewModel.uiState.value.apiKeyValidationMessage)
+
+        viewModel.updateApiKeyInput("BBBB5678901234567890123")
+        assertEquals(UiText.StringResource(R.string.ai_key_format_invalid), viewModel.uiState.value.apiKeyValidationMessage)
+
+        viewModel.removeApiKey()
+        assertEquals(UiText.StringResource(R.string.ai_key_removed), viewModel.uiState.value.connectionTestMessage)
+        assertNull(viewModel.uiState.value.apiKeyValidationMessage)
+    }
+
+    private fun offlineSummary(networkAvailable: Boolean, wifiConnected: Boolean) = AiRuntimeStatusSummary(
+        capabilities = emptyList(),
+        highestPriorityMessage = null,
+        networkAvailable = networkAvailable,
+        wifiConnected = wifiConnected,
+        lastRefreshedAt = 1L
+    )
 }

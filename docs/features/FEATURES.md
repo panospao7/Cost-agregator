@@ -33,16 +33,16 @@ This document describes all **22 features** implemented in the ExpenseTracker An
 **Status:** ✅ Complete | **Commit:** `3aa2ad8` | **Migration:** 37→38
 
 #### Description
-Automatically tracks warranty periods and return windows for purchased items using AI extraction from receipts.
+Automatically tracks warranty periods and return windows for purchased items using local (regex) detection on receipt text. Return windows use merchant defaults. Warranty AI is not active: no cloud or on-device AI model is used for warranties.
 
 #### Key Components
-- **CloudWarrantyExtractionService** - AI-powered warranty extraction using Gemini
+- **CloudWarrantyExtractionService** - Legacy cloud extraction component; retained but not active (warranty AI is not active)
 - **WarrantyTrackerRepository** - Database operations for warranties and return windows
 - **WarrantyTrackerScreen** - UI for viewing active/expired warranties
 - **WarrantyTrackerViewModel** - State management
 
 #### Features
-- ✅ AI extraction of warranty periods from receipts
+- ✅ Local (regex) detection of warranty periods from receipt text (warranty AI is not active)
 - ✅ Automatic return window tracking (30/90 days)
 - ✅ Background worker for expiration checks
 - ✅ Push notifications 7 days before expiration
@@ -129,7 +129,7 @@ cashFlowCalculator.calculateCashFlow(
 **Status:** ✅ Complete | **Commit:** `16b8549` | **Migration:** 38→39
 
 #### Description
-AI-powered matching between scanned receipts and recorded transactions.
+Rule-based (fuzzy, on-device) matching between scanned receipts and recorded transactions. No machine-learning model is involved.
 
 #### Key Components
 - **ReceiptTransactionMatcher** - Fuzzy matching algorithm
@@ -163,7 +163,7 @@ ReceiptMatchingScreen(
 **Status:** ✅ Complete | **Commit:** `9337657`
 
 #### Description
-AI-powered savings goal system with smart recommendations and automated rules.
+Rule-based savings goal system with computed recommendations and automated rules (deterministic, on-device; no machine-learning model).
 
 #### Key Components
 - **SmartSavingsEngine** - Calculates safe-to-save amounts using budget surplus, spending pace, and Monte Carlo forecasting
@@ -385,19 +385,19 @@ val settlements = settlementCalculator.calculateSettlements(balances)
 
 ---
 
-### Feature #2: Budget Forecasting with AI
+### Feature #2: Budget Forecasting (statistical)
 **Status:** ✅ Complete | **Commit:** `e830b0d` | **Migration:** 43→44
 
 #### Description
-AI-powered budget prediction and recommendation system using historical spending patterns.
+Statistical budget prediction and recommendation system using historical spending patterns (deterministic, on-device; no machine-learning model).
 
 #### Key Components
-- **BudgetForecast entity** - Stores AI-generated forecasts
-- **BudgetForecastingEngine** - AI forecasting logic
+- **BudgetForecast entity** - Stores computed forecasts
+- **BudgetForecastingEngine** - Statistical forecasting logic
 - **BudgetRecommendationEngine** - Actionable recommendations
 
 #### Features
-- ✅ **AI predicts spending** based on historical patterns (min 3 months data)
+- ✅ **Predicts spending** from historical patterns (min 3 months data)
 - ✅ **Trend analysis** - INCREASING, DECREASING, STABLE
 - ✅ **Confidence scores** (0-100%) based on data quality
 - ✅ **Risk levels:** LOW, MEDIUM, HIGH, CRITICAL
@@ -407,7 +407,7 @@ AI-powered budget prediction and recommendation system using historical spending
   - PAUSE_NON_ESSENTIAL: Discretionary spending freeze
   - REVIEW_SUBSCRIPTIONS: Identify recurring cost savings
   - INCREASE_BUDGET: Suggest budget adjustments
-- ✅ **Forecast accuracy tracking** to improve AI over time
+- ✅ **Forecast accuracy tracking** to compare forecasts with actual spending over time
 - ✅ **Seasonal adjustments** (e.g., December holiday spending)
 
 #### Usage
@@ -565,7 +565,7 @@ BankConnectionsScreen(
 **Status:** ✅ Complete | **Commit:** `84986dc`
 
 #### Description
-Comprehensive analytics dashboard with AI-powered insights and spending pattern analysis.
+Comprehensive analytics dashboard with rule-based insights and spending pattern analysis (deterministic, on-device; no machine-learning model).
 
 #### Key Components
 - **AdvancedAnalyticsDashboard** - Core analytics engine
@@ -578,7 +578,7 @@ Comprehensive analytics dashboard with AI-powered insights and spending pattern 
 - ✅ **Top merchants** spending analysis
 - ✅ **Monthly trend** analysis over time
 - ✅ **Weekly patterns** - day of week spending habits
-- ✅ **AI-powered insights:**
+- ✅ **Rule-based insights:**
   - Weekend spending detection
   - High spending alerts
   - Savings rate tracking
@@ -898,7 +898,7 @@ LifestyleInflationScreen(onNavigateBack = { /* navigation */ })
 **Status:** ✅ Complete
 
 #### Description
-AI-powered bill negotiation assistant with market rate comparisons and script generation.
+Rule-based bill negotiation assistant with market rate comparisons and template-based script generation (deterministic, on-device; no machine-learning model).
 
 #### Key Components
 - **SmartBillNegotiationEngine** - Rate comparison and script generation
@@ -908,7 +908,7 @@ AI-powered bill negotiation assistant with market rate comparisons and script ge
 #### Features
 - ✅ Market rate database for utilities, telecom, insurance
 - ✅ Negotiation opportunity detection
-- ✅ AI-generated negotiation scripts
+- ✅ Template-based negotiation scripts
 - ✅ Retention offer suggestions
 - ✅ Success probability scoring
 - ✅ Alternative provider recommendations

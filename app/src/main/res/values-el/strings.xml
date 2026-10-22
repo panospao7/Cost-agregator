@@ -100,6 +100,34 @@
     </plurals>
     <string name="feature_privacy_settings">Ρυθμίσεις απορρήτου</string>
     <string name="feature_privacy_settings_desc">Ελέγξτε πώς χρησιμοποιούνται τα δεδομένα σας</string>
+    <!-- ai-fixes Part A (INV-2): bounded, localized AI settings messages. Best-effort translation, pending owner review. -->
+    <string name="ai_cloud_blocked_format">Το cloud AI είναι αποκλεισμένο: %1$s</string>
+    <string name="ai_cloud_active">Το cloud AI είναι ενεργό</string>
+    <string name="ai_blocked_ai_off">Το AI είναι απενεργοποιημένο</string>
+    <string name="ai_blocked_cloud_off">Το cloud AI είναι απενεργοποιημένο στις ρυθμίσεις</string>
+    <string name="ai_blocked_no_key">Δεν έχει ρυθμιστεί κλειδί API</string>
+    <string name="ai_blocked_no_network">Δεν υπάρχει σύνδεση δικτύου</string>
+    <string name="ai_blocked_wifi_only">Απαιτείται Wi-Fi (λειτουργία μόνο Wi-Fi)</string>
+    <string name="ai_blocked_privacy">Αποκλείστηκε από τις Ρυθμίσεις απορρήτου</string>
+    <string name="ai_error_settings_save_failed">Δεν ήταν δυνατή η αποθήκευση των ρυθμίσεων. Δοκιμάστε ξανά.</string>
+    <string name="ai_key_too_short">Το κλειδί API φαίνεται πολύ σύντομο</string>
+    <string name="ai_key_format_invalid">Η μορφή του κλειδιού API δεν φαίνεται έγκυρη για το Gemini</string>
+    <string name="ai_key_enter_valid_before_save">Εισαγάγετε έγκυρο κλειδί API πριν την αποθήκευση.</string>
+    <string name="ai_key_enter_new_or_remove">Εισαγάγετε νέο κλειδί ή χρησιμοποιήστε την Αφαίρεση κλειδιού για να διαγράψετε το αποθηκευμένο κλειδί.</string>
+    <string name="ai_key_test_before_save">Εκτελέστε μια επιτυχημένη δοκιμή σύνδεσης πριν αποθηκεύσετε αυτό το κλειδί API.</string>
+    <string name="ai_key_saved">Το κλειδί API αποθηκεύτηκε με ασφάλεια.</string>
+    <string name="ai_key_removed">Το κλειδί API αφαιρέθηκε.</string>
+    <string name="ai_key_required_cloud">Απαιτείται κλειδί API για τον πάροχο cloud.</string>
+    <string name="ai_key_enter_before_test">Εισαγάγετε κλειδί API πριν τη δοκιμή σύνδεσης.</string>
+    <string name="ai_key_enter_valid_before_test">Εισαγάγετε έγκυρο κλειδί API πριν τη δοκιμή σύνδεσης.</string>
+    <string name="ai_key_enable_ai_first">Ενεργοποιήστε πρώτα το AI και εκτελέστε ξανά τη δοκιμή σύνδεσης.</string>
+    <string name="ai_key_enable_cloud_to_test">Ενεργοποιήστε το cloud AI για να δοκιμάσετε τη συνδεσιμότητα του παρόχου.</string>
+    <string name="ai_test_no_network">Δεν υπάρχει σύνδεση δικτύου. Ελέγξτε το διαδίκτυο και δοκιμάστε ξανά.</string>
+    <string name="ai_test_wifi_only">Το cloud AI περιορίζεται σε Wi-Fi βάσει των ρυθμίσεων.</string>
+    <string name="ai_test_status_unavailable">Δεν ήταν δυνατή η φόρτωση της κατάστασης λειτουργίας. Δοκιμάστε ξανά.</string>
+    <string name="ai_test_cloud_unavailable">Το cloud AI δεν είναι διαθέσιμο αυτή τη στιγμή.</string>
+    <string name="ai_test_passed">Η δοκιμή σύνδεσης ολοκληρώθηκε. Ο πάροχος cloud έχει ρυθμιστεί και είναι προσβάσιμος.</string>
+    <string name="ai_test_failed">Η δοκιμή σύνδεσης απέτυχε. Δοκιμάστε ξανά.</string>
     <!-- R24b: notification permission dialog button when the system will no longer ask -->
     <string name="notification_open_settings_button">Άνοιγμα ρυθμίσεων</string>
     <!-- R24c: shown when the receipt currency could not be read and the home currency was assumed -->

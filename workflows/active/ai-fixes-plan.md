@@ -1,7 +1,7 @@
 # Feature plan: ai-fixes
 
 Author: feature-planner (stage 6, attempt 2; attempt 1 hit its turn limit with no output). Persisted by the orchestrator. Date 2026-10-16.
-Status: AWAITING OWNER PLAN APPROVAL (Gate 3). Implementation only after Release 1.0 accepted + `release-1.0-wt` merged.
+Status: PLAN APPROVED 2026-10-16 (Gate 3; header corrected 2026-10-21 by orchestrator, see handoff). Guard regeneration (B1a) approved by owner 2026-10-22 (build/release-lead-notes/owner-approvals-20261022.md). Implementation only after Release 1.0 accepted + `release-1.0-wt` merged.
 
 - Risk tier: **T3 overall** (Part A T1 with mild T2 edge: CE rethrow in 2 VMs; B1, B2, B3, OD-2 each T3).
 - Basis: `docs/features/ai-fixes/impact-map.md` (trusted), `gate2-decisions.md` (all DECIDED = Recommended), `domain-spec.md` §2/§4–§9, `ux-flows.md`.

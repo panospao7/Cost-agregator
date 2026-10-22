@@ -2053,7 +2053,35 @@
     <string name="ai_toggle_enabled">enabled</string>
     <string name="ai_toggle_disabled">disabled</string>
     <string name="ai_capability_cd_format">%1$s, %2$s, Status: %3$s</string>
-    
+    <!-- ai-fixes Part A (INV-2): bounded, localized AI settings messages. No key takes an exception argument. -->
+    <string name="ai_cloud_blocked_format">Cloud AI blocked: %1$s</string>
+    <string name="ai_cloud_active">Cloud AI is active</string>
+    <string name="ai_blocked_ai_off">AI is turned off</string>
+    <string name="ai_blocked_cloud_off">Cloud AI is turned off in settings</string>
+    <string name="ai_blocked_no_key">No API key configured</string>
+    <string name="ai_blocked_no_network">No network connection</string>
+    <string name="ai_blocked_wifi_only">Wi-Fi required (Wi-Fi-only mode)</string>
+    <string name="ai_blocked_privacy">Blocked by Privacy Settings</string>
+    <string name="ai_error_settings_save_failed">Settings couldn\'t be saved. Please try again.</string>
+    <string name="ai_key_too_short">API key looks too short</string>
+    <string name="ai_key_format_invalid">API key format looks invalid for Gemini</string>
+    <string name="ai_key_enter_valid_before_save">Enter a valid API key before saving.</string>
+    <string name="ai_key_enter_new_or_remove">Enter a new key or use Remove Key to delete the stored key.</string>
+    <string name="ai_key_test_before_save">Run a successful connection test before saving this API key.</string>
+    <string name="ai_key_saved">API key saved securely.</string>
+    <string name="ai_key_removed">API key removed.</string>
+    <string name="ai_key_required_cloud">API key is required for cloud provider.</string>
+    <string name="ai_key_enter_before_test">Enter an API key before testing connection.</string>
+    <string name="ai_key_enter_valid_before_test">Enter a valid API key before testing connection.</string>
+    <string name="ai_key_enable_ai_first">Enable AI first, then run connection test again.</string>
+    <string name="ai_key_enable_cloud_to_test">Enable cloud AI to test provider connectivity.</string>
+    <string name="ai_test_no_network">No network connection. Check internet and retry.</string>
+    <string name="ai_test_wifi_only">Cloud AI is limited to Wi-Fi by settings.</string>
+    <string name="ai_test_status_unavailable">Couldn\'t load runtime status. Please retry.</string>
+    <string name="ai_test_cloud_unavailable">Cloud AI is currently unavailable.</string>
+    <string name="ai_test_passed">Connection test passed. Cloud provider is configured and reachable.</string>
+    <string name="ai_test_failed">Connection test failed. Please retry.</string>
+
     <!-- Analytics Screen -->
     <string name="analytics_insufficient_data">Insufficient data for visualization</string>
     <string name="analytics_insufficient_data_short">Insufficient data</string>

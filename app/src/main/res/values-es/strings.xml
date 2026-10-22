@@ -218,6 +218,34 @@
 
     <!-- Screen Titles -->
     <string name="ai_settings_title">Configuración de IA</string>
+    <!-- ai-fixes Part A (INV-2): mensajes de IA acotados y localizados. Ninguna clave recibe argumentos de excepción. -->
+    <string name="ai_cloud_blocked_format">IA en la nube bloqueada: %1$s</string>
+    <string name="ai_cloud_active">La IA en la nube está activa</string>
+    <string name="ai_blocked_ai_off">La IA está desactivada</string>
+    <string name="ai_blocked_cloud_off">La IA en la nube está desactivada en los ajustes</string>
+    <string name="ai_blocked_no_key">No hay clave de API configurada</string>
+    <string name="ai_blocked_no_network">Sin conexión de red</string>
+    <string name="ai_blocked_wifi_only">Se requiere Wi-Fi (modo solo Wi-Fi)</string>
+    <string name="ai_blocked_privacy">Bloqueado por los ajustes de privacidad</string>
+    <string name="ai_error_settings_save_failed">No se pudieron guardar los ajustes. Inténtalo de nuevo.</string>
+    <string name="ai_key_too_short">La clave de API parece demasiado corta</string>
+    <string name="ai_key_format_invalid">El formato de la clave de API no parece válido para Gemini</string>
+    <string name="ai_key_enter_valid_before_save">Introduce una clave de API válida antes de guardar.</string>
+    <string name="ai_key_enter_new_or_remove">Introduce una clave nueva o usa Eliminar clave para borrar la clave guardada.</string>
+    <string name="ai_key_test_before_save">Realiza una prueba de conexión correcta antes de guardar esta clave de API.</string>
+    <string name="ai_key_saved">Clave de API guardada de forma segura.</string>
+    <string name="ai_key_removed">Clave de API eliminada.</string>
+    <string name="ai_key_required_cloud">Se requiere una clave de API para el proveedor en la nube.</string>
+    <string name="ai_key_enter_before_test">Introduce una clave de API antes de probar la conexión.</string>
+    <string name="ai_key_enter_valid_before_test">Introduce una clave de API válida antes de probar la conexión.</string>
+    <string name="ai_key_enable_ai_first">Activa primero la IA y vuelve a ejecutar la prueba de conexión.</string>
+    <string name="ai_key_enable_cloud_to_test">Activa la IA en la nube para probar la conectividad del proveedor.</string>
+    <string name="ai_test_no_network">Sin conexión de red. Comprueba tu conexión a internet y vuelve a intentarlo.</string>
+    <string name="ai_test_wifi_only">La IA en la nube está limitada a Wi-Fi según los ajustes.</string>
+    <string name="ai_test_status_unavailable">No se pudo cargar el estado de ejecución. Inténtalo de nuevo.</string>
+    <string name="ai_test_cloud_unavailable">La IA en la nube no está disponible en este momento.</string>
+    <string name="ai_test_passed">Prueba de conexión superada. El proveedor en la nube está configurado y accesible.</string>
+    <string name="ai_test_failed">Falló la prueba de conexión. Inténtalo de nuevo.</string>
     <string name="screen_manage_categories">Gestionar Categorías</string>
     <string name="analytics_screen_title">Informes Financieros</string>
     <string name="recurring_screen_title">Gestionar Recurrentes</string>
