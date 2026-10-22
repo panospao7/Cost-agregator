@@ -43,6 +43,9 @@
 | **AdvancedAnalyticsEngine** | 6 (Analytics views: category/merchant/pattern/statistical insights) — requires `NormalizedAnalyticsInput` | 🟡 HIGH |
 | **TotalsAggregationEngine** | 5 (Dashboard totals) — aggregation routes through `MultiCurrencyRepository` | 🟡 HIGH |
 | **MoneyNormalizationEngine** | Money pipelines (conversion outcomes, rate basis, bucket policy) via `domain/core/money/` | 🟡 HIGH |
+| **ComparableHomeValue** | Transactions amount sort/filter/count in home currency (read-only rule owner in `domain/core/money/`; SQL mirror `ExpenseDao.COMPARABLE_HOME_VALUE_E_SQL`; parity-tested). Assistant queries (`getAssistantExpensesFiltered`/`getAssistantExpenseCountFiltered`) stay on raw `EFFECTIVE_AMOUNT_E_SQL`. Shared builder semantics: `ExpenseRepository.buildExpenseDynamicQueryParts` requires `AmountSemantics` (`RawEffective` for the assistant = byte-identical SQL/args, unescaped search; `HomeComparable(H)` = CV WHERE/ORDER BY + tiebreak + escaped search; `AmountOpsDisabled` = no amount SQL); excluded count = `ExpenseRepository.countExpensesWithoutHomeValue`. Consumer: `TransactionsViewModel` (ALL tab via `AmountSemantics`; time-range tabs in memory via `ComparableHomeValue`; reads repositories only, no writes); `Expense.normalizedEffectiveAmount` delegates to `ComparableHomeValue.snapshotValue` (date header only) | 🟡 HIGH |
+| **roundSnapshot / CurrencyFractionDigits** (`domain/core/money`) | Sole snapshot rounding rule (HALF_EVEN on `BigDecimal.valueOf`, home minor-unit digits, one-minor-unit floor, `Unavailable(NON_FINITE_OR_NON_POSITIVE \| DIGITS_UNAVAILABLE)`) and the single minor-unit digits accessor; pure, no logging. Consumers (F9): `TransactionLifecycleCoordinator` is the sole consumer of `roundSnapshot` (create and `updateExpense` converted outcomes via `convertedSnapshot`: rounded amount + home currency + unrounded rate; Unavailable or no rate stores the sentinel `0.0`/`""`/`0.0` plus one best-effort `MISSING_RATE`, home Failed gives `HOME_CURRENCY_UNAVAILABLE`); `SourceCurrencyAllocation` delegates its digits lookup. No other code rounds a snapshot | 🟡 HIGH |
+| **ReadHomeCurrencyState** (`CurrencySettingsRepository.observeReadHomeCurrency`) | Typed read-time home currency for Transactions amount ordering: `Loading` (consumer-prepended) / `Available(code)` / `Unavailable(reason)` with reason READ_ERROR, TIMEOUT or INVALID_CODE; bounded codes only, no raw reason text. `TransactionsViewModel` prepends `Loading`, applies a 5 s `TIMEOUT`, drops same-code `Available` repeats, and maps non-Available to `AmountOpsDisabled` (INV-9) | 🟡 HIGH |
 | **SubscriptionManagerEngine** | Subscriptions (validate/create, price history, usage, candidates, health, savings) | 🟡 HIGH |
 | **SynthesisEngine** | 6 (Month-end forecast, read-only) | 🟢 LOW |
 | **BudgetForecastingEngine** | 5/6 (Budget forecast generation + `BudgetForecastDao` persistence via `insertForecast`/`insertWithDeactivation`) | 🟢 LOW |
@@ -72,7 +75,9 @@ CurrencyConverter.convert() / convertAsOf()
   ├── FinancialStressForecastEngine (starting balance)
   ├── BudgetForecastingEngine (limit conversion)
   ├── ExpenseExportMapper (conversion audit fields)
-  └── TransactionLifecycleCoordinator (create-time snapshot)
+  └── TransactionLifecycleCoordinator (create-time snapshot; update re-snapshots against current H;
+        converted amount rounded via roundSnapshot, rate stored unrounded, no-rate/rounding-Unavailable
+        stores sentinel 0.0/""/0.0 + one best-effort MISSING_RATE)
 ```
 
 ### MerchantNormalizer changes affect:

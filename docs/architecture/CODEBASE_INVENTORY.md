@@ -10,6 +10,16 @@
 
 Snapshot summary only: this inventory tracks the current UI, domain, data, and DI surfaces without freezing volatile counts.
 
+### Drift Sync (2026-10-22 / money-correctness 1a + 1b, branch feature/money-correctness)
+
+Re-verified against production source: 70 DAO files, 41 ViewModel files, 31 `*Worker*`-named files (the 2026-10-02 count of 29 was already stale; money-correctness adds none), DB **v151** unchanged (no schema change, no migration).
+
+- **`domain/core/money/`** — new `ComparableHomeValue` (the single comparable-home-value rule; SQL mirror `COMPARABLE_HOME_VALUE_E_SQL` in `ExpenseDao`, parity-tested), `ComparableValue`, `CurrencyFractionDigits` (single minor-unit accessor), `SnapshotRounding` (`roundSnapshot`, HALF_EVEN, one-minor-unit floor). `SourceCurrencyAllocation` delegates to `CurrencyFractionDigits`.
+- **`domain/currency/ReadHomeCurrencyState`** — typed Loading/Ready/Unavailable home-currency read state, exposed by `CurrencySettingsRepository.observeReadHomeCurrency`.
+- **`ExpenseDao.countExpensesWithoutHomeValueDynamic`** — new `@RawQuery` read (classified `read` in `config/guards/db_raw_query_classification.yml`); `ExpenseRepository` gains `AmountSemantics` (RawEffective / HomeComparable / AmountOpsDisabled) and `countExpensesWithoutHomeValue`.
+- **`ui/screens/transactions/TransactionsAmountUi.kt`** — amount-ops UI state; Transactions and Currency Management add the home-switch warning and "without a home value" count.
+- **TLC snapshot write rule** — converted rows store a rounded home snapshot with the unrounded rate; no-rate rows store the sentinel triple (`0.0` / `""` / `0.0`) plus one `MISSING_RATE` diagnostic. `FinancialRescueCoordinator` uses `rescueSnapshotFields` (no fabricated snapshot).
+
 ### Drift Sync (2026-10-02 / Verification Pass)
 
 Verified against production source (`app/src/main/java`): 70 DAO files, 41 ViewModel files, 29 `*Worker*`-named files (including `domain/workers/` infrastructure), DB **v151** with **72** registered entities, 15 registered retention targets. Schema/DAO delta verified 2026-10-13.

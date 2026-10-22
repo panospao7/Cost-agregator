@@ -1,7 +1,10 @@
 package com.yourname.expensetracker.domain.currency
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
@@ -87,4 +90,24 @@ interface CurrencySettingsRepository {
             HomeCurrencyResolution.Failed(e.message ?: "Unknown error reading home currency")
         }
     }
+
+    /**
+     * Typed read-time home currency (MC 1a-3a). Read-only; behaviour-neutral.
+     *
+     * Emits only [ReadHomeCurrencyState.Available] or [ReadHomeCurrencyState.Unavailable]
+     * ([ReadHomeFailure.READ_ERROR] / [ReadHomeFailure.INVALID_CODE]); never raw error text.
+     * [ReadHomeCurrencyState.Loading] and [ReadHomeFailure.TIMEOUT] are applied by the consumer.
+     * CancellationException is always rethrown. After a read error the flow emits
+     * Unavailable and completes.
+     *
+     * Default maps [homeCurrency]; implementations that can distinguish "unset" from
+     * a stored value should override.
+     */
+    fun observeReadHomeCurrency(): Flow<ReadHomeCurrencyState> =
+        homeCurrency()
+            .map { raw -> ReadHomeCurrencyState.fromStoredValue(raw) }
+            .catch { e ->
+                if (e is CancellationException) throw e
+                emit(ReadHomeCurrencyState.Unavailable(ReadHomeFailure.READ_ERROR))
+            }
 }

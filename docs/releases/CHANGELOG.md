@@ -1,3 +1,9 @@
+## [Unreleased]
+### Behaviour Changes - Money Correctness (MC part 1b)
+
+- **Exports (G2-12, AE-25):** Rows without an exchange rate now export empty base currency and home currency cells instead of EUR (also accounting CSV and FreshBooks exports). This covers rows saved from this release on whenever no rate (or no rounded home value) is available; their base amount and exchange rate cells are 0 or empty. Existing rows are not rewritten, so rows saved earlier keep the values they were stored with.
+- **Snapshots (INV-14/15/17):** New converted expenses, and full edits of foreign-currency expenses, store a home-currency snapshot rounded HALF_EVEN to the home currency's minor unit; the exchange rate is stored unrounded. When no rate is available, or the rounded value cannot be computed, the row stores an empty snapshot and records one bounded MISSING_RATE diagnostic.
+
 ## [2.2.0] - 2026-05-31
 ### Bug Fixes — Coroutine Safety (U-PR1)
 

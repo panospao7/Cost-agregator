@@ -3,13 +3,18 @@ package com.yourname.expensetracker.ui.screens.currency
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.repository.CurrencyDataRepository
+import com.yourname.expensetracker.data.repository.ExpenseCountFilter
+import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.currency.ConversionResult
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencyRateRefreshOutcome
 import com.yourname.expensetracker.domain.currency.CurrencyRatesRepository
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.ReadHomeCurrencyState
+import com.yourname.expensetracker.domain.currency.ReadHomeFailure
 import com.yourname.expensetracker.domain.currency.SupportedCurrency
 import com.yourname.expensetracker.domain.core.money.ConversionOutcome
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.RateBasis
 import com.yourname.expensetracker.domain.core.money.StaleRatePolicy
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
@@ -18,22 +23,56 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import timber.log.Timber
 import javax.inject.Inject
+
+/** Bounded reasons for [HomeSwitchUi.Error]. */
+enum class HomeSwitchError { WRITE_FAILED, UNSUPPORTED_HOME_CURRENCY }
+
+/**
+ * Home-currency switch flow (MC 1a-4). The only path that writes the home currency from this
+ * screen: [CurrencyManagementViewModel.request] -> [PendingConfirm] -> [CurrencyManagementViewModel.confirm].
+ */
+sealed interface HomeSwitchUi {
+    data object Idle : HomeSwitchUi
+
+    /**
+     * Awaiting the user's confirmation. [predictedCount] is the number of existing transactions
+     * that will have no comparable value in [target] (rows without a home value, no filters), or
+     * null when the count is not yet known or could not be read (omitted, never shown as zero).
+     * The dialog opens immediately with a null count; the count is filled in when it arrives.
+     */
+    data class PendingConfirm(val target: CurrencyCode, val predictedCount: Int?) : HomeSwitchUi
+
+    data object Writing : HomeSwitchUi
+
+    data class Error(val reason: HomeSwitchError) : HomeSwitchUi
+}
 
 /**
  * UI state for currency management screen.
  */
 data class CurrencyManagementUiState(
-    /** Placeholder default; immediately overridden by [CurrencySettingsRepository.homeCurrency] during init. */
-    val homeCurrency: String = "EUR",
+    /**
+     * Typed read-time home currency. Starts as [ReadHomeCurrencyState.Loading]; no default
+     * currency is ever assumed while it is Loading or Unavailable.
+     */
+    val homeState: ReadHomeCurrencyState = ReadHomeCurrencyState.Loading,
+    val homeSwitch: HomeSwitchUi = HomeSwitchUi.Idle,
+    /** Static active catalog; built up front, independent of the home currency state. */
     val supportedCurrencies: List<CurrencyInfo> = emptyList(),
     val exchangeRates: List<ExchangeRateInfo> = emptyList(),
+    /** True once a rates load has completed successfully at least once. */
+    val ratesLoaded: Boolean = false,
     val lastUpdated: Long? = null,
     val isRatesStale: Boolean = false,
     val isOffline: Boolean = false,
@@ -45,7 +84,11 @@ data class CurrencyManagementUiState(
      */
     val rateDownloadDisabled: Boolean = true,
     val conversionResult: ConversionResult? = null
-)
+) {
+    /** The resolved home currency code, or null while [homeState] is Loading or Unavailable. */
+    val homeCurrency: String?
+        get() = (homeState as? ReadHomeCurrencyState.Available)?.code?.code
+}
 
 data class CurrencyInfo(
     val code: String,
@@ -68,24 +111,50 @@ class CurrencyManagementViewModel @Inject constructor(
     private val currencyRatesRepository: CurrencyRatesRepository,
     private val settingsRepository: CurrencySettingsRepository,
     private val hybridClassifier: HybridExpenseClassifier,
-    private val privacySettingsRepository: PrivacySettingsRepository
+    private val privacySettingsRepository: PrivacySettingsRepository,
+    private val expenseRepository: ExpenseRepository
 ) : ViewModel() {
-    
+
     private companion object {
         const val ERROR_RATE_DOWNLOAD_DISABLED = "CURRENCY_RATE_DOWNLOAD_DISABLED"
         const val ERROR_RATE_REFRESH_UNAVAILABLE = "CURRENCY_RATE_REFRESH_UNAVAILABLE"
+        const val ERROR_UNSUPPORTED_HOME_CURRENCY = "UNSUPPORTED_HOME_CURRENCY"
+        const val ERROR_HOME_SWITCH_WRITE_FAILED = "HOME_SWITCH_WRITE_FAILED"
+
+        /** No typed emission within this window -> Unavailable(TIMEOUT) (consumer-applied). */
+        const val HOME_READ_TIMEOUT_MS = 5_000L
     }
 
-    private val _uiState = MutableStateFlow(CurrencyManagementUiState())
+    // The currency catalog is static, so the picker is usable while the home currency is still
+    // Loading or Unavailable (the switch warning is shown in those states too).
+    private val _uiState = MutableStateFlow(CurrencyManagementUiState(supportedCurrencies = buildCurrencyCatalog()))
     val uiState: StateFlow<CurrencyManagementUiState> = _uiState.asStateFlow()
-    
+
+    /** In-flight predicted-count lookup for the pending home switch. */
+    private var requestJob: Job? = null
+
     init {
         viewModelScope.launch {
-            // Load home currency from preferences
-            settingsRepository.homeCurrency().collect { homeCurrency ->
-                _uiState.value = _uiState.value.copy(homeCurrency = homeCurrency)
-                loadCurrencyData()
+            // Typed read-time home currency (MC 1a-4): Loading first, never a placeholder code.
+            val readTimeout = launch {
+                delay(HOME_READ_TIMEOUT_MS)
+                _uiState.update { state ->
+                    if (state.homeState is ReadHomeCurrencyState.Loading) {
+                        state.copy(homeState = ReadHomeCurrencyState.Unavailable(ReadHomeFailure.TIMEOUT))
+                    } else {
+                        state
+                    }
+                }
             }
+            settingsRepository.observeReadHomeCurrency()
+                .catch { e ->
+                    if (e is CancellationException) throw e
+                    emit(ReadHomeCurrencyState.Unavailable(ReadHomeFailure.READ_ERROR))
+                }
+                .collect { state ->
+                    readTimeout.cancel()
+                    applyHomeState(state)
+                }
         }
         viewModelScope.launch {
             // Mirror the exchange-rate download privacy switch. Corrupted/fail-closed load state
@@ -98,9 +167,9 @@ class CurrencyManagementViewModel @Inject constructor(
                         state.copy(
                             rateDownloadDisabled = disabled,
                             // Switch off is never "offline". Switch on re-derives offline only once
-                            // a load has completed (currencies populated).
+                            // a load has completed.
                             isOffline = !disabled &&
-                                state.supportedCurrencies.isNotEmpty() &&
+                                state.ratesLoaded &&
                                 !hasUsableRates(state.exchangeRates)
                         )
                     }
@@ -108,23 +177,36 @@ class CurrencyManagementViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Publishes the typed home state. When it becomes Available the data load starts (the
+     * loading flag is raised in the same update). A pending switch confirmation is dropped only
+     * when the new state is Available and already equals the target; a home that becomes
+     * Unavailable keeps the dialog open (the warning is shown while the home is unknown).
+     */
+    private fun applyHomeState(state: ReadHomeCurrencyState) {
+        _uiState.update { current ->
+            val pending = current.homeSwitch as? HomeSwitchUi.PendingConfirm
+            val stalePending = pending != null &&
+                state is ReadHomeCurrencyState.Available && state.code == pending.target
+            current.copy(
+                homeState = state,
+                isLoading = if (state is ReadHomeCurrencyState.Available) true else current.isLoading,
+                homeSwitch = if (stalePending) HomeSwitchUi.Idle else current.homeSwitch
+            )
+        }
+        if (state is ReadHomeCurrencyState.Available) {
+            loadCurrencyData()
+        }
+    }
+
     private fun loadCurrencyData() {
         viewModelScope.launch {
+            // Rates are always read against the resolved home currency, never a placeholder.
+            val homeCurrency = _uiState.value.homeCurrency ?: return@launch
             _uiState.value = _uiState.value.copy(isLoading = true)
             
             try {
-                // Load supported currencies
-                val currencies = SupportedCurrency.activeCatalog.map { currency ->
-                    CurrencyInfo(
-                        code = currency.code,
-                        name = currency.displayName,
-                        symbol = currency.symbol,
-                        flag = getCurrencyFlag(currency.code)
-                    )
-                }
-                
-                // Load exchange rates
-                val homeCurrency = _uiState.value.homeCurrency
+                // Load exchange rates (the currency catalog is static and already in the state)
                 val rates = currencyDataRepository.getRatesToCurrency(homeCurrency).first()
                     .map { rate ->
                         ExchangeRateInfo(
@@ -150,8 +232,8 @@ class CurrencyManagementViewModel @Inject constructor(
                 val isOffline = !_uiState.value.rateDownloadDisabled && !hasUsableRates(rates)
 
                 _uiState.value = _uiState.value.copy(
-                    supportedCurrencies = currencies,
                     exchangeRates = rates,
+                    ratesLoaded = true,
                     lastUpdated = lastUpdated,
                     isRatesStale = isRatesStale,
                     isOffline = isOffline,
@@ -180,7 +262,79 @@ class CurrencyManagementViewModel @Inject constructor(
     }
 
     /**
-     * Set the home currency.
+     * Ask to switch the home currency (MC 1a-4). Never writes: a switch is only written by
+     * [confirm] after the user has seen the warning ([HomeSwitchUi.PendingConfirm]).
+     *
+     * - Code not in the active catalog: the existing UNSUPPORTED_HOME_CURRENCY error (no dialog,
+     *   no write), whatever the home state.
+     * - Code equal to the home currency, only when the home is Available: nothing happens (no
+     *   dialog, no write).
+     * - Otherwise, including while the home is Loading or Unavailable (INV-12, AE-14, G2-6: the
+     *   warning is always shown while the home is unknown): [HomeSwitchUi.PendingConfirm] opens
+     *   immediately with a null count, then is updated with the number of existing transactions
+     *   that would have no comparable value in the target. A slow, failed or absent count never
+     *   blocks the dialog.
+     */
+    fun request(currencyCode: String) {
+        val current = _uiState.value
+        if (current.homeSwitch is HomeSwitchUi.Writing) return
+        val home = (current.homeState as? ReadHomeCurrencyState.Available)?.code
+
+        val selectedCurrency = SupportedCurrency.fromActiveCode(currencyCode)
+        if (selectedCurrency == null) {
+            requestJob?.cancel()
+            _uiState.update { state ->
+                if (state.homeSwitch is HomeSwitchUi.Writing) {
+                    state
+                } else {
+                    state.copy(
+                        isLoading = false,
+                        error = ERROR_UNSUPPORTED_HOME_CURRENCY,
+                        homeSwitch = HomeSwitchUi.Error(HomeSwitchError.UNSUPPORTED_HOME_CURRENCY)
+                    )
+                }
+            }
+            return
+        }
+
+        val target = CurrencyCode(selectedCurrency.code)
+        if (home != null && target == home) return
+
+        requestJob?.cancel()
+        // Open the dialog at once with static text; the count line arrives later (or never).
+        _uiState.update { state ->
+            val stillHome = (state.homeState as? ReadHomeCurrencyState.Available)?.code
+            if (state.homeSwitch is HomeSwitchUi.Writing || stillHome == target) {
+                state
+            } else {
+                state.copy(homeSwitch = HomeSwitchUi.PendingConfirm(target, null))
+            }
+        }
+        requestJob = viewModelScope.launch {
+            val predictedCount = predictedCountWithoutHomeValue(target)
+            _uiState.update { state ->
+                val pending = state.homeSwitch as? HomeSwitchUi.PendingConfirm
+                if (pending != null && pending.target == target) {
+                    state.copy(homeSwitch = HomeSwitchUi.PendingConfirm(target, predictedCount))
+                } else {
+                    state
+                }
+            }
+        }
+    }
+
+    /** Dismiss the home-switch dialog or error. Ignored while the write is in progress. */
+    fun cancel() {
+        requestJob?.cancel()
+        _uiState.update { state ->
+            if (state.homeSwitch is HomeSwitchUi.Writing) state else state.copy(homeSwitch = HomeSwitchUi.Idle)
+        }
+    }
+
+    /**
+     * Confirm the pending switch: exactly one [CurrencySettingsRepository.setHomeCurrency] call.
+     * Ignored unless a switch is pending, so a second confirm while [HomeSwitchUi.Writing] does
+     * nothing. This is the only home-currency write on this screen.
      *
      * ## CURR-6: Trigger re-normalization after home currency change
      * After saving the new home currency, the following re-normalization steps
@@ -199,32 +353,74 @@ class CurrencyManagementViewModel @Inject constructor(
      * a future step. Until then, existing amounts remain in their original
      * currency and only newly entered transactions will use the new setting.
      */
-    fun setHomeCurrency(currencyCode: String) {
+    fun confirm() {
+        var target: CurrencyCode? = null
+        _uiState.update { state ->
+            val pending = state.homeSwitch as? HomeSwitchUi.PendingConfirm
+            target = pending?.target
+            if (pending == null) state else state.copy(homeSwitch = HomeSwitchUi.Writing)
+        }
+        val switchTo = target ?: return
+        requestJob?.cancel()
+
         viewModelScope.launch {
-            val selectedCurrency = SupportedCurrency.fromActiveCode(currencyCode)
-            if (selectedCurrency == null) {
-                _uiState.value = _uiState.value.copy(
-                    isLoading = false,
-                    error = "UNSUPPORTED_HOME_CURRENCY"
-                )
+            try {
+                // Persist to settings
+                settingsRepository.setHomeCurrency(switchTo.code)
+            } catch (e: CancellationException) {
+                _uiState.update { state ->
+                    if (state.homeSwitch is HomeSwitchUi.Writing) state.copy(homeSwitch = HomeSwitchUi.Idle) else state
+                }
+                throw e
+            } catch (e: Exception) {
+                Timber.w("CurrencyManagement: HOME_SWITCH_WRITE_FAILED")
+                _uiState.update { state ->
+                    state.copy(
+                        isLoading = false,
+                        error = ERROR_HOME_SWITCH_WRITE_FAILED,
+                        homeSwitch = HomeSwitchUi.Error(HomeSwitchError.WRITE_FAILED)
+                    )
+                }
                 return@launch
             }
-
-            // Persist to settings
-            settingsRepository.setHomeCurrency(selectedCurrency.code)
 
             // CURR-6: Invalidate caches so re-classification uses fresh data
             hybridClassifier.invalidateCategorySnapshot()
             // CurrencyConverter does not have a clearRateCache() method;
             // full amount re-normalization is a future step.
 
-            // State will be updated by the flow collector in init
-            _uiState.value = _uiState.value.copy(
-                isLoading = true
-            )
+            // State will be updated by the flow collector in init. If it has already
+            // delivered the new home currency, the reload is under way: do not raise
+            // the loading flag again.
+            // When the home is not Available (Loading/Unavailable) no reload is under way yet:
+            // applyHomeState raises the flag itself once Available arrives.
+            _uiState.update { state ->
+                val homeAvailable = state.homeState is ReadHomeCurrencyState.Available
+                val homeAlreadyDelivered =
+                    (state.homeState as? ReadHomeCurrencyState.Available)?.code == switchTo
+                state.copy(
+                    isLoading = state.isLoading || (homeAvailable && !homeAlreadyDelivered),
+                    homeSwitch = HomeSwitchUi.Idle
+                )
+            }
         }
     }
-    
+
+    /**
+     * Number of existing transactions (no filters) with no comparable value in [target], or null
+     * when it cannot be read. Only a bounded reason code is logged; no exception text.
+     */
+    private suspend fun predictedCountWithoutHomeValue(target: CurrencyCode): Int? {
+        return try {
+            expenseRepository.countExpensesWithoutHomeValue(ExpenseCountFilter(), target)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.w("CurrencyManagement: HOME_SWITCH_COUNT_FAILED")
+            null
+        }
+    }
+
     /**
      * Convert an amount between currencies.
      */
@@ -274,10 +470,20 @@ class CurrencyManagementViewModel @Inject constructor(
      */
     fun refreshRates() {
         viewModelScope.launch {
+            // Never refresh against a placeholder: with the home currency Loading/Unavailable
+            // the refresh is unavailable (the screen shows the home state).
+            val homeCurrency = _uiState.value.homeCurrency
+            if (homeCurrency == null) {
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    error = ERROR_RATE_REFRESH_UNAVAILABLE
+                )
+                return@launch
+            }
             _uiState.value = _uiState.value.copy(isLoading = true)
-            
+
             try {
-                when (val outcome = currencyRatesRepository.refresh(_uiState.value.homeCurrency)) {
+                when (val outcome = currencyRatesRepository.refresh(homeCurrency)) {
                     is CurrencyRateRefreshOutcome.DisabledByPrivacy -> {
                         // Privacy switch is off: not a network problem, so never present as offline or retryable.
                         _uiState.value = _uiState.value.copy(
@@ -331,7 +537,12 @@ class CurrencyManagementViewModel @Inject constructor(
      * switch and is intentionally not reset here.
      */
     fun clearError() {
-        _uiState.value = _uiState.value.copy(error = null)
+        _uiState.update { state ->
+            state.copy(
+                error = null,
+                homeSwitch = if (state.homeSwitch is HomeSwitchUi.Error) HomeSwitchUi.Idle else state.homeSwitch
+            )
+        }
     }
     
     /**
@@ -341,6 +552,16 @@ class CurrencyManagementViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(conversionResult = null)
     }
     
+    private fun buildCurrencyCatalog(): List<CurrencyInfo> =
+        SupportedCurrency.activeCatalog.map { currency ->
+            CurrencyInfo(
+                code = currency.code,
+                name = currency.displayName,
+                symbol = currency.symbol,
+                flag = getCurrencyFlag(currency.code)
+            )
+        }
+
     private fun getCurrencyFlag(code: String): String {
         return when (code) {
             "USD" -> "🇺🇸"

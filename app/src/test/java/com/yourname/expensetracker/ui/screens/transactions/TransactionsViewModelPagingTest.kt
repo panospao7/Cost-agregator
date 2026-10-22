@@ -8,9 +8,12 @@ import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.MerchantLocationRepository
 import com.yourname.expensetracker.data.repository.NotificationRepository
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
+import com.yourname.expensetracker.data.repository.AmountSemantics
 import com.yourname.expensetracker.data.repository.OwnershipFilter as RepositoryOwnershipFilter
 import com.yourname.expensetracker.data.repository.SortOrder
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.ReadHomeCurrencyState
 import com.yourname.expensetracker.domain.location.GeocodingService
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -68,7 +71,9 @@ class TransactionsViewModelPagingTest : ViewModelTestUtils() {
 
         every { timeProvider.now() } returns 1_700_000_000_000L
         every { categoryRepository.allCategories } returns flowOf(emptyList())
-        every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
+        // MC 1a-3b: the VM reads the typed observable; Available(EUR) is resolved before any test action.
+        every { currencySettingsRepository.observeReadHomeCurrency() } returns
+            flowOf(ReadHomeCurrencyState.Available(CurrencyCode.EUR, firstRunDefault = false))
 
         viewModel = TransactionsViewModel(
             mockk<NotificationRepository>(relaxed = true),
@@ -82,12 +87,14 @@ class TransactionsViewModelPagingTest : ViewModelTestUtils() {
             sourceLinkQueryService = mockk(relaxed = true),
             transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true),
         )
+        // Let the Eagerly-started home-currency collection reach Available(EUR) (no virtual-time skip).
+        testDispatcher.scheduler.runCurrent()
     }
 
     /** Pages are returned in call order; calls past the end return an empty page. */
     private fun stubPages(vararg pages: List<ExpenseWithCategory>) {
         coEvery {
-            expenseRepository.getExpensesPagedDynamic(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+            expenseRepository.getExpensesPagedDynamic(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         } answers {
             pageCalls += PagedCall(
                 limit = arg<Int>(0),
@@ -160,7 +167,7 @@ class TransactionsViewModelPagingTest : ViewModelTestUtils() {
 
         assertEquals(2, pageCalls.size)
         coVerify(exactly = 2) {
-            expenseRepository.getExpensesPagedDynamic(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+            expenseRepository.getExpensesPagedDynamic(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         }
     }
 
@@ -240,7 +247,9 @@ class TransactionsViewModelPagingTest : ViewModelTestUtils() {
                 ownershipFilter = RepositoryOwnershipFilter.ALL,
                 minAmount = 10.0,
                 maxAmount = 50.0,
-                sortOrder = SortOrder.DATE_DESC
+                sortOrder = SortOrder.DATE_DESC,
+                // MC 1a-3b: H is the typed Available code; the VM never passes RawEffective.
+                amountSemantics = AmountSemantics.HomeComparable(CurrencyCode.EUR)
             )
         }
         assertEquals(2, pageCalls.size)

@@ -379,6 +379,11 @@ Owns currency normalization, exchange-rate handling, multi-currency calculations
 - `domain/core/money/BucketDatePolicy.kt` — Policy for bucket date assignment
 - `domain/core/money/HomeCurrencyForMoneyMath.kt` — Home currency resolution for money math
 - `domain/core/money/TransactionTypeFilter.kt` — Filter for transaction type in aggregates
+- `domain/core/money/ComparableHomeValue.kt` — Sole Kotlin owner of the comparable-home-value (CV) rule for amount sort/filter/count against home currency H; SQL mirror `ExpenseDao.COMPARABLE_HOME_VALUE_E_SQL`
+- `domain/core/money/ComparableValue.kt` — Sealed `Value` / `None(NoComparableValueReason)` result of the CV rule
+- `domain/core/money/CurrencyFractionDigits.kt` — Single accessor for a currency's minor-unit digits (null when unknown or negative); delegated to by `SourceCurrencyAllocation` and `roundSnapshot`
+- `domain/core/money/SnapshotRounding.kt` — Sole snapshot rounding rule `roundSnapshot(value, home)` (HALF_EVEN, one-minor-unit floor) with sealed `Rounded` / `Unavailable(reason)`
+- `domain/currency/ReadHomeCurrencyState.kt` — Typed read-time home currency (`Loading` / `Available` / `Unavailable(ReadHomeFailure)`), source of H for the CV rule; bounded failure codes only
 
 **Representative files — legacy + new**
 - `domain/currency/CurrencyConverter.kt` — Currency conversion engine

@@ -6,7 +6,9 @@ import com.yourname.expensetracker.data.database.dao.DailyTotal
 import com.yourname.expensetracker.data.database.dao.DayOfWeekTotal
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.RestrictedExpenseDaoMutation
+import com.yourname.expensetracker.data.database.dao.ExpenseDao.Companion.COMPARABLE_HOME_VALUE_E_SQL
 import com.yourname.expensetracker.data.database.dao.ExpenseDao.Companion.EFFECTIVE_AMOUNT_E_SQL
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.data.database.dao.MerchantStats
 import com.yourname.expensetracker.data.database.dao.UserCorrectionDao
 import com.yourname.expensetracker.data.database.entity.Expense
@@ -52,6 +54,11 @@ enum class SortOrder(val sql: String, val displayName: String) {
     // S5-008R: Amount sorts use ownership-adjusted normalized base amount.
     // When baseAmount > 0 (home-currency-normalized at save time), apply ownership rules.
     // Falls back to effectiveAmount for legacy rows where baseAmount = 0.
+    /**
+     * Assistant-only (RawEffective): the `sql` text is used only when the shared query
+     * builder runs with [AmountSemantics.RawEffective]. In the home-comparable modes the
+     * builder emits its own fixed ORDER BY templates and never reads this text.
+     */
     AMOUNT_DESC("""(CASE
         WHEN e.isNotMine = 1 THEN 0.0
         WHEN e.baseAmount > 0 AND e.isSharedExpense = 1 AND e.myShareAmount IS NOT NULL AND e.exchangeRateUsed > 0
@@ -61,6 +68,7 @@ enum class SortOrder(val sql: String, val displayName: String) {
         WHEN e.baseAmount > 0 THEN e.baseAmount
         ELSE ($EFFECTIVE_AMOUNT_E_SQL)
     END) DESC""", "Amount High to Low"),
+    /** Assistant-only (RawEffective); see [AMOUNT_DESC]. */
     AMOUNT_ASC("""(CASE
         WHEN e.isNotMine = 1 THEN 0.0
         WHEN e.baseAmount > 0 AND e.isSharedExpense = 1 AND e.myShareAmount IS NOT NULL AND e.exchangeRateUsed > 0
@@ -75,6 +83,43 @@ enum class SortOrder(val sql: String, val displayName: String) {
 enum class OwnershipFilter {
     ALL, MINE, NOT_MINE, SHARED, TRANSFER
 }
+
+/**
+ * Closed selector for how the shared dynamic query builder treats amounts. It is a
+ * required builder parameter with no default, so a caller must choose.
+ *
+ * - [RawEffective]: assistant and interim behaviour. The WHERE min/max uses the raw
+ *   ownership-adjusted effective amount and the ORDER BY is `SortOrder.sql`; the SQL text and
+ *   bound arguments are byte-identical to the pre-comparable-value builder (pinned by
+ *   `ExpenseRepositoryAssistantSqlGoldenTest`). Search LIKE patterns are not escaped.
+ * - [HomeComparable]: Transactions ALL tab. Min/max compare the comparable home value (CV,
+ *   `ExpenseDao.COMPARABLE_HOME_VALUE_E_SQL`, owner `ComparableHomeValue`) in [home]; rows
+ *   without a CV sort last and drop out of any bound. The home currency is only ever a bound
+ *   argument. Search LIKE patterns escape `%`, `_` and `\`.
+ * - [AmountOpsDisabled]: home currency unavailable. No amount SQL and no amount arguments are
+ *   emitted: min/max are not applied and an amount sort falls back to `date DESC, id DESC`.
+ *   Search LIKE patterns are escaped as in [HomeComparable].
+ */
+sealed interface AmountSemantics {
+    object RawEffective : AmountSemantics
+    data class HomeComparable(val home: CurrencyCode) : AmountSemantics
+    object AmountOpsDisabled : AmountSemantics
+}
+
+/**
+ * Non-amount filter for [ExpenseRepository.countExpensesWithoutHomeValue]. Mirrors the
+ * non-amount parameters of [ExpenseRepository.getExpensesPagedDynamic] so list and count share
+ * one WHERE. The default is the empty filter. Min/max are deliberately absent.
+ */
+data class ExpenseCountFilter(
+    val searchQuery: String? = null,
+    val startDate: Long? = null,
+    val endDate: Long? = null,
+    val transactionType: TransactionType? = null,
+    val categoryId: Long? = null,
+    val merchantName: String? = null,
+    val ownershipFilter: OwnershipFilter = OwnershipFilter.ALL
+)
 
 /**
  * ## C1 LIFECYCLE MIGRATION — PARTIALLY COMPLETE
@@ -206,7 +251,8 @@ class ExpenseRepository @Inject constructor(
         ownershipFilter: OwnershipFilter = OwnershipFilter.ALL,
         minAmount: Double? = null,
         maxAmount: Double? = null,
-        sortOrder: SortOrder = SortOrder.DATE_DESC
+        sortOrder: SortOrder = SortOrder.DATE_DESC,
+        amountSemantics: AmountSemantics
     ): List<ExpenseWithCategory> {
         val (sql, args) = buildExpenseDynamicQueryParts(
             searchQuery = searchQuery,
@@ -222,9 +268,38 @@ class ExpenseRepository @Inject constructor(
             includePagination = true,
             limit = limit,
             offset = offset,
-            selectClause = "SELECT e.*"
+            selectClause = "SELECT e.*",
+            amountSemantics = amountSemantics
         )
         return expenseDao.getExpensesDynamic(SimpleSQLiteQuery(sql, args.toTypedArray()))
+    }
+
+    /**
+     * Number of rows matching the non-amount [filter] that have no comparable value in [home]
+     * (`COMPARABLE_HOME_VALUE_E_SQL IS NULL`). Same WHERE as [getExpensesPagedDynamic] without
+     * min/max; sort and paging are ignored. The home currency is a bound argument. Returns an
+     * integer only. Used by the Transactions ALL tab and the home-switch warning (empty filter).
+     */
+    suspend fun countExpensesWithoutHomeValue(filter: ExpenseCountFilter, home: CurrencyCode): Int {
+        val (sql, args) = buildExpenseDynamicQueryParts(
+            searchQuery = filter.searchQuery,
+            startDate = filter.startDate,
+            endDate = filter.endDate,
+            transactionTypes = filter.transactionType?.let(::setOf).orEmpty(),
+            categoryIds = filter.categoryId?.let(::setOf).orEmpty(),
+            merchantNames = filter.merchantName?.let(::setOf).orEmpty(),
+            ownershipFilter = filter.ownershipFilter,
+            minAmount = null,
+            maxAmount = null,
+            sortOrder = SortOrder.DATE_DESC,
+            includePagination = false,
+            limit = null,
+            offset = null,
+            selectClause = "SELECT COUNT(*)",
+            amountSemantics = AmountSemantics.HomeComparable(home),
+            onlyRowsWithoutHomeValue = true
+        )
+        return expenseDao.countExpensesWithoutHomeValueDynamic(SimpleSQLiteQuery(sql, args.toTypedArray()))
     }
 
     /**
@@ -261,7 +336,8 @@ class ExpenseRepository @Inject constructor(
             includePagination = false,
             limit = null,
             offset = null,
-            selectClause = "SELECT e.*"
+            selectClause = "SELECT e.*",
+            amountSemantics = AmountSemantics.RawEffective
         )
         return expenseDao.getAssistantExpensesDynamic(SimpleSQLiteQuery(sql, args.toTypedArray()))
     }
@@ -295,7 +371,8 @@ class ExpenseRepository @Inject constructor(
             includePagination = false,
             limit = null,
             offset = null,
-            selectClause = "SELECT COUNT(*)"
+            selectClause = "SELECT COUNT(*)",
+            amountSemantics = AmountSemantics.RawEffective
         )
         return expenseDao.getAssistantExpenseCountDynamic(SimpleSQLiteQuery(sql, args.toTypedArray()))
     }
@@ -314,16 +391,32 @@ class ExpenseRepository @Inject constructor(
         includePagination: Boolean,
         limit: Int?,
         offset: Int?,
-        selectClause: String
+        selectClause: String,
+        amountSemantics: AmountSemantics,
+        onlyRowsWithoutHomeValue: Boolean = false
     ): Pair<String, MutableList<Any>> {
+        require(!onlyRowsWithoutHomeValue || amountSemantics is AmountSemantics.HomeComparable) {
+            "Counting rows without a home value requires HomeComparable semantics"
+        }
         val args = mutableListOf<Any>()
         val whereClauses = mutableListOf<String>()
 
         if (!searchQuery.isNullOrBlank()) {
-            whereClauses.add("(e.merchant LIKE ? OR e.categoryId IN (SELECT id FROM categories WHERE name LIKE ?))")
-            val searchPattern = "%$searchQuery%"
-            args.add(searchPattern)
-            args.add(searchPattern)
+            if (amountSemantics is AmountSemantics.RawEffective) {
+                // Assistant contract (INV-11): unescaped pattern, no ESCAPE clause. Byte-identical.
+                whereClauses.add("(e.merchant LIKE ? OR e.categoryId IN (SELECT id FROM categories WHERE name LIKE ?))")
+                val searchPattern = "%$searchQuery%"
+                args.add(searchPattern)
+                args.add(searchPattern)
+            } else {
+                // Transactions modes (G2-4): the user text is a literal; %, _ and \ are escaped.
+                whereClauses.add(
+                    "(e.merchant LIKE ? ESCAPE '\\' OR e.categoryId IN (SELECT id FROM categories WHERE name LIKE ? ESCAPE '\\'))"
+                )
+                val searchPattern = "%${escapeLikeLiteral(searchQuery)}%"
+                args.add(searchPattern)
+                args.add(searchPattern)
+            }
         }
 
         if (startDate != null) {
@@ -353,14 +446,36 @@ class ExpenseRepository @Inject constructor(
             }
         }
 
-        val effectiveAmountExpr = EFFECTIVE_AMOUNT_E_SQL
-        if (minAmount != null) {
-            whereClauses.add("$effectiveAmountExpr >= ?")
-            args.add(minAmount)
-        }
-        if (maxAmount != null) {
-            whereClauses.add("$effectiveAmountExpr <= ?")
-            args.add(maxAmount)
+        when (amountSemantics) {
+            is AmountSemantics.RawEffective -> {
+                val effectiveAmountExpr = EFFECTIVE_AMOUNT_E_SQL
+                if (minAmount != null) {
+                    whereClauses.add("$effectiveAmountExpr >= ?")
+                    args.add(minAmount)
+                }
+                if (maxAmount != null) {
+                    whereClauses.add("$effectiveAmountExpr <= ?")
+                    args.add(maxAmount)
+                }
+            }
+            is AmountSemantics.HomeComparable -> {
+                // The without-home-value count ignores min/max by definition.
+                if (!onlyRowsWithoutHomeValue) {
+                    if (minAmount != null) {
+                        whereClauses.add("$COMPARABLE_HOME_VALUE_E_SQL >= ?")
+                        args.add(amountSemantics.home.code)
+                        args.add(amountSemantics.home.code)
+                        args.add(minAmount)
+                    }
+                    if (maxAmount != null) {
+                        whereClauses.add("$COMPARABLE_HOME_VALUE_E_SQL <= ?")
+                        args.add(amountSemantics.home.code)
+                        args.add(amountSemantics.home.code)
+                        args.add(maxAmount)
+                    }
+                }
+            }
+            is AmountSemantics.AmountOpsDisabled -> Unit // INV-9: no amount SQL, no amount args.
         }
 
         when (ownershipFilter) {
@@ -369,6 +484,13 @@ class ExpenseRepository @Inject constructor(
             OwnershipFilter.SHARED -> whereClauses.add("e.isSharedExpense = 1")
             OwnershipFilter.TRANSFER -> whereClauses.add("e.transactionType = 'TRANSFER'")
             OwnershipFilter.ALL -> Unit
+        }
+
+        if (onlyRowsWithoutHomeValue && amountSemantics is AmountSemantics.HomeComparable) {
+            // Last clause: ownership adds no arguments, so the textual `?` order is preserved.
+            whereClauses.add("$COMPARABLE_HOME_VALUE_E_SQL IS NULL")
+            args.add(amountSemantics.home.code)
+            args.add(amountSemantics.home.code)
         }
 
         val whereClause = if (whereClauses.isNotEmpty()) {
@@ -384,9 +506,15 @@ class ExpenseRepository @Inject constructor(
                 appendLine(whereClause)
             }
             if (selectClause != "SELECT COUNT(*)") {
-                appendLine("-- Safety invariant: sortOrder.sql comes from the closed SortOrder enum above.")
-                appendLine("-- Do not populate it from user input or remote config.")
-                appendLine("ORDER BY ${sortOrder.sql}")
+                if (amountSemantics is AmountSemantics.RawEffective) {
+                    appendLine("-- Safety invariant: sortOrder.sql comes from the closed SortOrder enum above.")
+                    appendLine("-- Do not populate it from user input or remote config.")
+                    appendLine("ORDER BY ${sortOrder.sql}")
+                } else {
+                    appendLine("-- Safety invariant: the ORDER BY is a fixed template chosen from the closed SortOrder enum.")
+                    appendLine("-- The home currency is only ever a bound argument.")
+                    appendLine("ORDER BY ${nonRawOrderBy(sortOrder, amountSemantics, args)}")
+                }
             }
             if (includePagination) {
                 require(limit != null && offset != null) { "Paged dynamic query requires limit and offset" }
@@ -398,6 +526,43 @@ class ExpenseRepository @Inject constructor(
 
         return sql to args
     }
+
+    /**
+     * Fixed ORDER BY templates for the non-[AmountSemantics.RawEffective] modes (spec 2.3).
+     * Appends the bound home-currency arguments (4 for an amount sort under
+     * [AmountSemantics.HomeComparable], none otherwise) to [args] in textual `?` order.
+     * No `NULLS LAST` (SQLite 3.30+ only): rows without a comparable value sort last via
+     * `(CV IS NULL) ASC`. [AmountSemantics.AmountOpsDisabled] turns an amount sort into the
+     * date-descending order and emits no amount SQL.
+     */
+    private fun nonRawOrderBy(
+        sortOrder: SortOrder,
+        amountSemantics: AmountSemantics,
+        args: MutableList<Any>
+    ): String {
+        val dateDescTiebreak = "e.date DESC, e.id DESC"
+        // INV-9: Loading/Unavailable forces DATE_DESC for every sort, including date sorts.
+        if (amountSemantics is AmountSemantics.AmountOpsDisabled) return dateDescTiebreak
+        return when (sortOrder) {
+            SortOrder.DATE_DESC -> dateDescTiebreak
+            SortOrder.DATE_ASC -> "e.date ASC, e.id ASC"
+            SortOrder.AMOUNT_DESC, SortOrder.AMOUNT_ASC -> when (amountSemantics) {
+                is AmountSemantics.HomeComparable -> {
+                    repeat(4) { args.add(amountSemantics.home.code) }
+                    val direction = if (sortOrder == SortOrder.AMOUNT_DESC) "DESC" else "ASC"
+                    "($COMPARABLE_HOME_VALUE_E_SQL IS NULL) ASC, " +
+                        "$COMPARABLE_HOME_VALUE_E_SQL $direction, $dateDescTiebreak"
+                }
+                is AmountSemantics.AmountOpsDisabled -> dateDescTiebreak
+                is AmountSemantics.RawEffective ->
+                    error("RawEffective orders by SortOrder.sql and never reaches the fixed templates")
+            }
+        }
+    }
+
+    /** Escapes `\`, `%` and `_` so user search text is a literal under `LIKE ? ESCAPE '\'`. */
+    private fun escapeLikeLiteral(text: String): String =
+        text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
     private fun <T> Collection<T>.toSqlInClause(
         columnName: String,

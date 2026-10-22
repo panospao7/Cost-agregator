@@ -47,3 +47,14 @@ methods:
     reason: "Read-only assistant exact-count dynamic expense query"
     owner: "@panospao7"
     linked_issue: "MIT-003"
+
+  - dao: com.yourname.expensetracker.data.database.dao.ExpenseDao
+    method: countExpensesWithoutHomeValueDynamic
+    signature:
+      receiver: null
+      parameters:
+        - androidx.sqlite.db.SupportSQLiteQuery
+    classification: read
+    reason: "Read-only count of expenses without a comparable home-currency value"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"

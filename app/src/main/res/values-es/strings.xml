@@ -31,6 +31,7 @@
     <string name="action_create">Crear</string>
     <string name="action_update">Actualizar</string>
     <string name="action_retry">Reintentar</string>
+    <string name="action_got_it">Entendido</string>
     <string name="action_ok">Aceptar</string>
     <string name="action_confirm">Confirmar</string>
     <string name="action_dismiss">Descartar</string>
@@ -337,4 +338,42 @@
     <string name="notification_open_settings_button">Abrir ajustes</string>
     <!-- R24c: shown when the receipt currency could not be read and the home currency was assumed -->
     <string name="receipt_currency_unverified_warning">No pudimos leer la moneda de este recibo. Compruébala antes de guardar.</string>
+    <!-- MC 1a-3b: Transactions amount ordering. Best-effort translation, pending native review. -->
+    <string name="transactions_filter_min_money_format">Mín.: %1$s</string>
+    <string name="transactions_filter_max_money_format">Máx.: %1$s</string>
+    <string name="transactions_filter_paused_suffix">" (en pausa)"</string>
+    <string name="transactions_empty_filtered_title">Ninguna transacción coincide con los filtros</string>
+    <string name="transactions_empty_filtered_subtitle">Quita un filtro para ver más.</string>
+    <plurals name="transactions_amount_notice_sort">
+        <item quantity="one">%1$d transacción sin valor en %2$s se muestra al final</item>
+        <item quantity="many">%1$d de transacciones sin valor en %2$s se muestran al final</item>
+        <item quantity="other">%1$d transacciones sin valor en %2$s se muestran al final</item>
+    </plurals>
+    <plurals name="transactions_amount_notice_filter">
+        <item quantity="one">%1$d transacción sin valor en %2$s no se muestra</item>
+        <item quantity="many">%1$d de transacciones sin valor en %2$s no se muestran</item>
+        <item quantity="other">%1$d transacciones sin valor en %2$s no se muestran</item>
+    </plurals>
+    <string name="transactions_amount_notice_filter_unknown">Puede que se oculten transacciones porque no tienen valor en %1$s</string>
+    <string name="transactions_amount_notice_action_cd">Por qué algunas transacciones no tienen valor en %1$s</string>
+    <string name="transactions_amount_divider">Sin valor en %1$s</string>
+    <string name="transactions_amount_explain_title">Sin valor en %1$s</string>
+    <string name="transactions_amount_explain_body">Estas transacciones se registraron en una moneda distinta de %1$s y no hay un tipo de cambio guardado a %1$s. La ordenación y los filtros de mínimo/máximo solo usan importes en %1$s, por eso aparecen al final o se omiten. Los importes y monedas originales no cambian.</string>
+    <string name="transactions_amount_paused_loading">Comprobando tu moneda principal. Se muestran primero las más recientes.</string>
+    <string name="transactions_amount_paused_unavailable">Ahora no se puede leer tu moneda principal. La ordenación por importe y los filtros de mínimo/máximo están en pausa. Se muestran primero las más recientes.</string>
+    <string name="transactions_sort_amount_disabled_hint">Requiere tu moneda principal</string>
+    <string name="transactions_sort_amount_disabled_cd">Ordenar por %1$s, no disponible, requiere tu moneda principal</string>
+    <!-- MC 1a-4: home-currency switch warning. Best-effort translation, pending native review. -->
+    <string name="currency_home_switch_title">¿Cambiar la moneda principal a %1$s?</string>
+    <string name="currency_home_switch_body">A partir de ahora, la ordenación y los filtros de mínimo/máximo usan importes en %1$s. Las transacciones en otras monedas y su historial no tendrán un valor comparable hasta que vuelvas a usar su moneda como moneda principal. Tus transacciones conservan sus importes y monedas originales.</string>
+    <plurals name="currency_home_switch_count">
+        <item quantity="one">%1$d transacción no tiene valor en %2$s por ahora. Se mostrará al final o se omitirá en los filtros de mínimo/máximo.</item>
+        <item quantity="many">%1$d de transacciones no tienen valor en %2$s por ahora. Se mostrarán al final o se omitirán en los filtros de mínimo/máximo.</item>
+        <item quantity="other">%1$d transacciones no tienen valor en %2$s por ahora. Se mostrarán al final o se omitirán en los filtros de mínimo/máximo.</item>
+    </plurals>
+    <string name="currency_home_switch_confirm">Cambiar a %1$s</string>
+    <string name="currency_home_switch_writing">Cambiando la moneda principal…</string>
+    <string name="currency_home_switch_loading">Comprobando tu moneda principal…</string>
+    <string name="currency_home_switch_unavailable">Ahora no se puede leer tu moneda principal. Aun así, puedes elegir una nueva; primero se te pedirá confirmación.</string>
+    <string name="currency_home_switch_error_write_failed">No se pudo cambiar tu moneda principal. Inténtalo de nuevo.</string>
 </resources>

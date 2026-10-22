@@ -92,4 +92,40 @@
     <string name="notification_open_settings_button">Άνοιγμα ρυθμίσεων</string>
     <!-- R24c: shown when the receipt currency could not be read and the home currency was assumed -->
     <string name="receipt_currency_unverified_warning">Δεν μπορέσαμε να διαβάσουμε το νόμισμα της απόδειξης. Ελέγξτε το πριν την αποθήκευση.</string>
+    <!-- MC 1a-3b: Transactions amount ordering. Best-effort translation, pending owner review. -->
+    <string name="action_got_it">Εντάξει</string>
+    <string name="transactions_filter_min_money_format">Ελάχ.: %1$s</string>
+    <string name="transactions_filter_max_money_format">Μέγ.: %1$s</string>
+    <string name="transactions_filter_paused_suffix">" (σε παύση)"</string>
+    <string name="transactions_empty_filtered_title">Καμία συναλλαγή δεν ταιριάζει με τα φίλτρα</string>
+    <string name="transactions_empty_filtered_subtitle">Καθαρίστε ένα φίλτρο για περισσότερα.</string>
+    <plurals name="transactions_amount_notice_sort">
+        <item quantity="one">%1$d συναλλαγή χωρίς τιμή σε %2$s εμφανίζεται τελευταία</item>
+        <item quantity="other">%1$d συναλλαγές χωρίς τιμή σε %2$s εμφανίζονται τελευταίες</item>
+    </plurals>
+    <plurals name="transactions_amount_notice_filter">
+        <item quantity="one">%1$d συναλλαγή χωρίς τιμή σε %2$s δεν εμφανίζεται</item>
+        <item quantity="other">%1$d συναλλαγές χωρίς τιμή σε %2$s δεν εμφανίζονται</item>
+    </plurals>
+    <string name="transactions_amount_notice_filter_unknown">Ορισμένες συναλλαγές μπορεί να κρύβονται επειδή δεν έχουν τιμή σε %1$s</string>
+    <string name="transactions_amount_notice_action_cd">Γιατί ορισμένες συναλλαγές δεν έχουν τιμή σε %1$s</string>
+    <string name="transactions_amount_divider">Χωρίς τιμή σε %1$s</string>
+    <string name="transactions_amount_explain_title">Χωρίς τιμή σε %1$s</string>
+    <string name="transactions_amount_explain_body">Αυτές οι συναλλαγές καταγράφηκαν σε νόμισμα διαφορετικό από %1$s και δεν υπάρχει αποθηκευμένη ισοτιμία προς %1$s. Η ταξινόμηση και τα φίλτρα ελάχιστου/μέγιστου χρησιμοποιούν μόνο ποσά σε %1$s, γι\' αυτό εμφανίζονται τελευταίες ή παραλείπονται. Τα αρχικά ποσά και νομίσματα δεν αλλάζουν.</string>
+    <string name="transactions_amount_paused_loading">Έλεγχος του κύριου νομίσματος. Εμφάνιση πρώτα των πιο πρόσφατων.</string>
+    <string name="transactions_amount_paused_unavailable">Δεν είναι δυνατή η ανάγνωση του κύριου νομίσματος. Η ταξινόμηση ποσού και τα φίλτρα ελάχιστου/μέγιστου έχουν παύσει. Εμφάνιση πρώτα των πιο πρόσφατων.</string>
+    <string name="transactions_sort_amount_disabled_hint">Απαιτεί το κύριο νόμισμα</string>
+    <string name="transactions_sort_amount_disabled_cd">Ταξινόμηση κατά %1$s, μη διαθέσιμη, απαιτεί το κύριο νόμισμα</string>
+    <!-- MC 1a-4: home-currency switch warning. Best-effort translation, pending owner review. -->
+    <string name="currency_home_switch_title">Αλλαγή κύριου νομίσματος σε %1$s;</string>
+    <string name="currency_home_switch_body">Από εδώ και πέρα, η ταξινόμηση και τα φίλτρα ελάχιστου/μέγιστου χρησιμοποιούν ποσά σε %1$s. Οι συναλλαγές σε άλλα νομίσματα και το ιστορικό τους δεν θα έχουν συγκρίσιμη αξία μέχρι να επαναφέρετε ως κύριο το νόμισμά τους. Οι συναλλαγές σας διατηρούν τα αρχικά τους ποσά και νομίσματα.</string>
+    <plurals name="currency_home_switch_count">
+        <item quantity="one">%1$d συναλλαγή δεν έχει τιμή σε %2$s προς το παρόν. Θα εμφανίζεται τελευταία ή θα παραλείπεται από τα φίλτρα ελάχιστου/μέγιστου.</item>
+        <item quantity="other">%1$d συναλλαγές δεν έχουν τιμή σε %2$s προς το παρόν. Θα εμφανίζονται τελευταίες ή θα παραλείπονται από τα φίλτρα ελάχιστου/μέγιστου.</item>
+    </plurals>
+    <string name="currency_home_switch_confirm">Αλλαγή σε %1$s</string>
+    <string name="currency_home_switch_writing">Αλλαγή κύριου νομίσματος…</string>
+    <string name="currency_home_switch_loading">Έλεγχος του κύριου νομίσματος…</string>
+    <string name="currency_home_switch_unavailable">Δεν είναι δυνατή η ανάγνωση του κύριου νομίσματος αυτή τη στιγμή. Μπορείτε να επιλέξετε νέο· θα σας ζητηθεί πρώτα επιβεβαίωση.</string>
+    <string name="currency_home_switch_error_write_failed">Δεν ήταν δυνατή η αλλαγή του κύριου νομίσματος. Δοκιμάστε ξανά.</string>
 </resources>

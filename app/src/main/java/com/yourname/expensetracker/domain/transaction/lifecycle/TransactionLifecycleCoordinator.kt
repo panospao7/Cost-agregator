@@ -12,6 +12,10 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.TransactionEvent
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.SnapshotRounding
+import com.yourname.expensetracker.domain.core.money.roundSnapshot
+import com.yourname.expensetracker.domain.currency.ConversionResult
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.diagnostics.AppPipeline
@@ -324,6 +328,78 @@ class TransactionLifecycleCoordinator @Inject constructor(
     }
 
     /**
+     * MC INV-15: exactly one bounded best-effort [DiagnosticReasonCode.MISSING_RATE]
+     * per snapshot attempt whose converted branch stored no snapshot (no rate, or
+     * rounding unavailable). Metadata is `{operation, reason}` only, with [reason] a
+     * [SnapshotFailureReason] constant. The failure log carries no exception text,
+     * currency, amount or date. Preserves caller cancellation.
+     */
+    private suspend fun emitMissingRateDiagnosticBestEffort(
+        operation: String,
+        entityType: String,
+        entityId: Long?,
+        reason: String
+    ): Boolean {
+        return try {
+            diagnosticEventWriter.emit(
+                DiagnosticEvent(
+                    pipeline = AppPipeline.TRANSACTION,
+                    stage = operation,
+                    outcome = EventOutcome.FAILED_FINAL,
+                    severity = EventSeverity.WARNING,
+                    reasonCode = DiagnosticReasonCode.MISSING_RATE,
+                    entityType = entityType,
+                    entityId = entityId,
+                    metadata = SafeEventMetadata.builder()
+                        .put("operation", operation)
+                        .put("reason", reason)
+                        .build(),
+                    isTerminal = false
+                )
+            )
+            true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.w("Failed to emit missing-rate diagnostic")
+            false
+        }
+    }
+
+    /** MC INV-14/16/17: decision for the Converted branch of a snapshot (create and update). */
+    private sealed class ConvertedSnapshot {
+        data class Stored(
+            val baseAmount: Double,
+            val baseCurrency: String,
+            val exchangeRateUsed: Double
+        ) : ConvertedSnapshot()
+
+        data class NotStored(val reason: String) : ConvertedSnapshot()
+    }
+
+    /**
+     * Pure. Rounds [conversion]'s converted amount with the single snapshot rounding
+     * helper; the rate is stored unrounded. A null conversion is a missing rate; an
+     * unusable home code or an unavailable rounding is SNAPSHOT_ROUNDING_UNAVAILABLE.
+     */
+    private fun convertedSnapshot(conversion: ConversionResult?, homeCurrency: String): ConvertedSnapshot {
+        if (conversion == null) {
+            return ConvertedSnapshot.NotStored(SnapshotFailureReason.MISSING_RATE)
+        }
+        val home = CurrencyCode.parse(homeCurrency)
+            ?: return ConvertedSnapshot.NotStored(SnapshotFailureReason.SNAPSHOT_ROUNDING_UNAVAILABLE)
+        return when (val rounded = roundSnapshot(conversion.convertedAmount, home)) {
+            is SnapshotRounding.Rounded -> ConvertedSnapshot.Stored(
+                baseAmount = rounded.amount,
+                baseCurrency = homeCurrency,
+                exchangeRateUsed = conversion.rateUsed
+            )
+            is SnapshotRounding.Unavailable ->
+                ConvertedSnapshot.NotStored(SnapshotFailureReason.SNAPSHOT_ROUNDING_UNAVAILABLE)
+        }
+    }
+
+    /**
      * Best-effort event write that preserves caller cancellation (U-001).
      *
      * [transactionEventDao.insert] is suspend, so a raw [runCatching] would
@@ -533,8 +609,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
         // FirstRunDefault proceed as before; Failed (including DataStore read
         // timeout) fails CLOSED: no silent DEFAULT_BASE_CURRENCY substitution
         // and no fabricated base snapshot. Conversion fields are marked with the
-        // existing sentinels (baseAmount <= 0.0 → downstream fallback to raw
-        // effectiveAmount) and a bounded controlled diagnostic is recorded.
+        // existing sentinels (baseAmount <= 0.0 → no comparable home value,
+        // ComparableHomeValue → None) and a bounded controlled diagnostic is recorded.
         val homeCurrency = when (val resolution = currencySettingsRepository.resolveHomeCurrency()) {
             is HomeCurrencyResolution.Resolved -> resolution.currency.code
             is HomeCurrencyResolution.FirstRunDefault -> resolution.currency.code
@@ -563,18 +639,31 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 if (e is CancellationException) throw e
                 null
             }
-            if (conversion != null) {
-                expense = expense.copy(
-                    baseAmount = conversion.convertedAmount,
-                    baseCurrency = homeCurrency,
-                    exchangeRateUsed = conversion.rateUsed
-                )
-            } else {
-                Timber.w(
-                    "Cannot convert %s %.2f to %s for expense creation (as of %d); " +
-                    "baseAmount/baseCurrency/exchangeRateUsed left at defaults",
-                    expense.currency, expense.amount, homeCurrency, expense.date
-                )
+            // MC INV-14/15/17: converted -> rounded snapshot with the UNROUNDED
+            // rate; no rate or rounding unavailable -> explicit sentinel triple
+            // plus one bounded MISSING_RATE diagnostic. No log carries the
+            // currency pair, amount or date.
+            when (val snapshot = convertedSnapshot(conversion, homeCurrency)) {
+                is ConvertedSnapshot.Stored -> {
+                    expense = expense.copy(
+                        baseAmount = snapshot.baseAmount,
+                        baseCurrency = snapshot.baseCurrency,
+                        exchangeRateUsed = snapshot.exchangeRateUsed
+                    )
+                }
+                is ConvertedSnapshot.NotStored -> {
+                    expense = expense.copy(
+                        baseAmount = 0.0,
+                        baseCurrency = "",
+                        exchangeRateUsed = 0.0
+                    )
+                    emitMissingRateDiagnosticBestEffort(
+                        operation = "createExpense",
+                        entityType = "Expense",
+                        entityId = null,
+                        reason = snapshot.reason
+                    )
+                }
             }
         } else {
             expense = expense.copy(
@@ -1021,6 +1110,22 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 null
             }
         } else null
+        // MC INV-14/15/17: round the converted amount (rate stays unrounded) and, when the
+        // converted branch stores no snapshot, emit exactly one bounded MISSING_RATE here,
+        // OUTSIDE database.withTransaction. Identity and Home Failed emit nothing new.
+        val preComputedSnapshot: ConvertedSnapshot? =
+            if (homeCurrencyUpdate != null && expense.currency != homeCurrencyUpdate) {
+                convertedSnapshot(preComputedConversion, homeCurrencyUpdate).also { snapshot ->
+                    if (snapshot is ConvertedSnapshot.NotStored) {
+                        emitMissingRateDiagnosticBestEffort(
+                            operation = "updateExpense",
+                            entityType = "Expense",
+                            entityId = expense.id,
+                            reason = snapshot.reason
+                        )
+                    }
+                }
+            } else null
 
         // 3. Persist inside a single transaction (TOCTOU-safe: read + write atomic)
         // GR-14p-a: canonical direct scope — the mutations' proof is local
@@ -1113,13 +1218,11 @@ class TransactionLifecycleCoordinator @Inject constructor(
             // Apply currency conversion (pre-computed outside txn).
             // NEW-P2-016: homeCurrencyUpdate == null (Failed resolution) falls
             // through to the sentinel-clearing branch below — no invented base.
-            val finalExpense = if (homeCurrencyUpdate != null &&
-                expense.currency != homeCurrencyUpdate && preComputedConversion != null
-            ) {
+            val finalExpense = if (preComputedSnapshot is ConvertedSnapshot.Stored) {
                 updatedExpense.copy(
-                    baseAmount = preComputedConversion.convertedAmount,
-                    baseCurrency = homeCurrencyUpdate,
-                    exchangeRateUsed = preComputedConversion.rateUsed
+                    baseAmount = preComputedSnapshot.baseAmount,
+                    baseCurrency = preComputedSnapshot.baseCurrency,
+                    exchangeRateUsed = preComputedSnapshot.exchangeRateUsed
                 )
             } else if (expense.currency == homeCurrencyUpdate) {
                 updatedExpense.copy(
@@ -1130,8 +1233,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
             } else {
                 // P2-PR1 (NEW-P2-007): Conversion failed and currency differs from home.
                 // Clear stale baseAmount/baseCurrency/exchangeRateUsed to sentinel values
-                // so downstream consumers fall back to raw effectiveAmount (baseAmount <= 0.0
-                // triggers fallback — see Expense.normalizedAmount).
+                // so the row has no comparable home value (baseAmount <= 0.0 →
+                // ComparableHomeValue → None); raw-amount fallback is forbidden (LEGAL_PATHS).
                 updatedExpense.copy(
                     baseAmount = 0.0,
                     baseCurrency = "",
@@ -2390,6 +2493,15 @@ class TransactionLifecycleCoordinator @Inject constructor(
      */
     object HomeCurrencyFailureReason {
         const val HOME_CURRENCY_UNAVAILABLE = "HOME_CURRENCY_UNAVAILABLE"
+    }
+
+    /**
+     * MC INV-15: bounded metadata `reason` constants for a converted-branch snapshot
+     * that stored no value. Controlled constants only.
+     */
+    object SnapshotFailureReason {
+        const val MISSING_RATE = "MISSING_RATE"
+        const val SNAPSHOT_ROUNDING_UNAVAILABLE = "SNAPSHOT_ROUNDING_UNAVAILABLE"
     }
 
     /**

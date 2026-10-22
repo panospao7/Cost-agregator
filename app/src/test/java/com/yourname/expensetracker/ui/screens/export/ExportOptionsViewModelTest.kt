@@ -621,6 +621,38 @@ class ExportOptionsViewModelTest {
     }
 
     @Test
+    fun `no-rate row exports empty home and base currency cells in csv and json`() = runBlocking {
+        // MC 1b-3 / AE-25 / G2-12: sentinel snapshot rows never export the legacy "EUR".
+        val expense = createExpense(merchant = "NoRateCafe", currency = "USD").copy(
+            baseAmount = 0.0,
+            baseCurrency = "",
+            exchangeRateUsed = 0.0
+        )
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns 1
+        coEvery { exportDataRepository.getExpensesBetween(any(), any()) } returns listOf(expense)
+        stubPagedExpenses(listOf(expense), emptyList())
+        val csvOut = createTempFile(prefix = "export_norate_csv_", suffix = ".csv")
+        every { exportDataRepository.createExportFile(any(), any()) } returns csvOut
+
+        viewModel.generateExport()
+        val csvRow = csvOut.readLines().single { it.contains("NoRateCafe") }
+        // originalAmount, homeCurrency (empty), baseAmount, baseCurrency (empty)
+        assertTrue(csvRow, csvRow.contains(",,0.0,,"))
+        assertFalse(csvRow, csvRow.contains("EUR"))
+
+        stubPagedExpenses(listOf(expense), emptyList())
+        val jsonOut = createTempFile(prefix = "export_norate_json_", suffix = ".json")
+        every { exportDataRepository.createExportFile(any(), any()) } returns jsonOut
+
+        viewModel.selectFormat("json")
+        viewModel.generateExport()
+        val jsonText = jsonOut.readText()
+        assertTrue(jsonText.contains("\"homeCurrency\":\"\""))
+        assertTrue(jsonText.contains("\"baseCurrency\":\"\""))
+        assertFalse(jsonText.contains("\"EUR\""))
+    }
+
+    @Test
     fun `generate export reports repository file creation failure`() = runBlocking {
         val failure = IllegalStateException("cache dir unavailable")
         every { exportDataRepository.createExportFile(any(), any()) } throws failure

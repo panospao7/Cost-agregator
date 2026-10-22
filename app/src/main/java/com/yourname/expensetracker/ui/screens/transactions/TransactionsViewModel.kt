@@ -6,7 +6,9 @@ import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
+import com.yourname.expensetracker.data.repository.AmountSemantics
 import com.yourname.expensetracker.data.repository.CategoryRepository
+import com.yourname.expensetracker.data.repository.ExpenseCountFilter
 import com.yourname.expensetracker.data.repository.NotificationRepository
 import com.yourname.expensetracker.data.repository.OwnershipFilter as RepositoryOwnershipFilter
 import com.yourname.expensetracker.data.repository.SortOrder
@@ -17,8 +19,14 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.yourname.expensetracker.domain.core.money.ComparableHomeValue
+import com.yourname.expensetracker.domain.core.money.ComparableValue
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.currency.ReadHomeCurrencyState
+import com.yourname.expensetracker.domain.currency.ReadHomeFailure
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
@@ -54,7 +62,40 @@ class TransactionsViewModel @Inject constructor(
 
     companion object {
         const val PAGE_SIZE = 50
+
+        /** INV-9 / spec 5.1: no typed home-currency emission within this window -> TIMEOUT. */
+        const val HOME_READ_TIMEOUT_MS = 5_000L
+
+        /** Date order with the id tiebreak (D-4); also the INV-9 order while amount ops are paused. */
+        private val DATE_DESC_COMPARATOR: Comparator<Expense> =
+            compareByDescending<Expense> { it.date }.thenByDescending { it.id }
+        private val DATE_ASC_COMPARATOR: Comparator<Expense> =
+            compareBy<Expense> { it.date }.thenBy { it.id }
     }
+
+    /** Result of the in-memory / SQL count of rows without a home value, tagged with what it was for. */
+    private sealed interface CountStatus {
+        data class Loaded(val count: Int) : CountStatus
+        data object Failed : CountStatus
+    }
+
+    private data class UnrankedCount(
+        val tab: TransactionTab,
+        val home: CurrencyCode,
+        val status: CountStatus
+    )
+
+    /**
+     * INV-10 query key of an ALL-tab page or count request: `(H, sort, filters, search)`.
+     * [semantics] carries H (Available code) or the amount-ops-disabled marker; a result whose
+     * key differs from the current key is discarded.
+     */
+    private data class AllQueryKey(
+        val semantics: AmountSemantics,
+        val sortOrder: SortOrder,
+        val filter: TransactionFilter?,
+        val search: String
+    )
 
     // Tab definitions with lazy label computation
     enum class TransactionTab(val label: String, val daysBack: Int? = null) {
@@ -110,7 +151,12 @@ class TransactionsViewModel @Inject constructor(
     /** S5-028: Debounce job for search */
     private var searchDebounceJob: Job? = null
     private var loadInitialAllRequestId: Long = 0L
-    
+    /** Count of rows without a home value (ALL: SQL count; other tabs: in-memory over the period list). */
+    private val _unrankedCount = MutableStateFlow<UnrankedCount?>(null)
+    private var allCountJob: Job? = null
+    /** H component of the key the current ALL-tab data was requested with (INV-10 reset on change). */
+    private var lastAllRequestSemantics: AmountSemantics? = null
+
     // Loading states - using StateFlow for thread-safe observable loading state
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
@@ -199,14 +245,136 @@ class TransactionsViewModel @Inject constructor(
  // Refresh trigger for pull-to-refresh
  private val _refreshTrigger = MutableStateFlow(0)
 
- /** Placeholder initial value "EUR"; immediately replaced by [CurrencySettingsRepository.homeCurrency]. */
- private val _homeCurrency = currencySettingsRepository.homeCurrency()
- .stateIn(viewModelScope, SharingStarted.Lazily, "EUR")
- val homeCurrency: StateFlow<String> = _homeCurrency
+    // ============================================================
+    // READ-TIME HOME CURRENCY (MC 1a-3b; INV-9, spec 5.1)
+    // ============================================================
+
+    /** Bumped by [retryHomeCurrency]; re-subscribes the typed home-currency read. */
+    private val homeRetryTrigger = MutableStateFlow(0)
+
+    /**
+     * Typed read-time home currency. Starts in [ReadHomeCurrencyState.Loading] (never a guessed
+     * code); no emission within [HOME_READ_TIMEOUT_MS] -> `Unavailable(TIMEOUT)`; a repeated
+     * `Available` with the same code is dropped so paging is not reset (INV-10, review note N3).
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val homeCurrencyState: StateFlow<ReadHomeCurrencyState> = homeRetryTrigger
+        .flatMapLatest { readHomeCurrencyStates() }
+        .distinctUntilChanged { old, new ->
+            old is ReadHomeCurrencyState.Available &&
+                new is ReadHomeCurrencyState.Available &&
+                old.code == new.code
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, ReadHomeCurrencyState.Loading)
+
+    /** Bounded UI summary of [homeCurrencyState] (INV-9, INV-22). */
+    val amountOrderingState: StateFlow<AmountOrderingState> = homeCurrencyState
+        .map { state ->
+            when (state) {
+                is ReadHomeCurrencyState.Available -> AmountOrderingState.AVAILABLE
+                is ReadHomeCurrencyState.Loading -> AmountOrderingState.HOME_CURRENCY_LOADING
+                is ReadHomeCurrencyState.Unavailable -> AmountOrderingState.HOME_CURRENCY_UNAVAILABLE
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, AmountOrderingState.HOME_CURRENCY_LOADING)
+
+    /**
+     * Notice state for amount sort / min-max / unranked count (ux-flows section 4).
+     * Integers and bounded codes only; no transaction content.
+     */
+    val amountUi: StateFlow<TransactionsAmountUi> = combine(
+        homeCurrencyState,
+        _sortOrder,
+        _filter,
+        _selectedTab,
+        _unrankedCount
+    ) { home, sort, filter, tab, unranked ->
+        when (home) {
+            is ReadHomeCurrencyState.Loading -> TransactionsAmountUi.HomeLoading
+            is ReadHomeCurrencyState.Unavailable -> TransactionsAmountUi.HomeUnavailable(home.reason)
+            is ReadHomeCurrencyState.Available -> {
+                if (!isAmountEngaged(sort, filter)) {
+                    TransactionsAmountUi.Inactive
+                } else {
+                    val hidesRows = filter?.minAmount != null || filter?.maxAmount != null
+                    val matching = unranked?.takeIf { it.tab == tab && it.home == home.code }
+                    when (val status = matching?.status) {
+                        null -> TransactionsAmountUi.CountPending
+                        is CountStatus.Loaded -> TransactionsAmountUi.Ready(status.count, home.code, hidesRows)
+                        is CountStatus.Failed -> TransactionsAmountUi.CountUnavailable(home.code, hidesRows)
+                    }
+                }
+            }
+        }
+    }.stateIn<TransactionsAmountUi>(viewModelScope, SharingStarted.Eagerly, TransactionsAmountUi.HomeLoading)
+
+    init {
+        // INV-10: a change of the amount semantics (Available code A -> B, or Available <-> not
+        // Available) resets ALL-tab paging. Same-code Available emissions never reach here.
+        viewModelScope.launch {
+            homeCurrencyState
+                .map { it.toAmountSemantics() }
+                .distinctUntilChanged()
+                .collect { semantics ->
+                    if (_selectedTab.value == TransactionTab.ALL && semantics != lastAllRequestSemantics) {
+                        resetAllPagingState()
+                        loadInitialAll()
+                    }
+                }
+        }
+    }
+
+    /** Re-subscribes the home-currency read after [ReadHomeCurrencyState.Unavailable] ("Try Again"). */
+    fun retryHomeCurrency() {
+        if (homeCurrencyState.value is ReadHomeCurrencyState.Unavailable) {
+            homeRetryTrigger.update { it + 1 }
+        }
+    }
+
+    /**
+     * Loading first, then the repository's typed states. No typed emission within
+     * [HOME_READ_TIMEOUT_MS] -> `Unavailable(TIMEOUT)`; a repository failure -> `READ_ERROR`.
+     * Only bounded codes are produced; no exception text is kept.
+     */
+    private fun readHomeCurrencyStates(): Flow<ReadHomeCurrencyState> = channelFlow {
+        send(ReadHomeCurrencyState.Loading)
+        val timeout = launch {
+            delay(HOME_READ_TIMEOUT_MS)
+            send(ReadHomeCurrencyState.Unavailable(ReadHomeFailure.TIMEOUT))
+        }
+        currencySettingsRepository.observeReadHomeCurrency()
+            .catch { e ->
+                if (e is CancellationException) throw e
+                emit(ReadHomeCurrencyState.Unavailable(ReadHomeFailure.READ_ERROR))
+            }
+            .collect { state ->
+                if (state !is ReadHomeCurrencyState.Loading) timeout.cancel()
+                send(state)
+            }
+    }
+
+    /** H is only ever the typed Available code; Loading/Unavailable disable amount operations (H-1). */
+    private fun ReadHomeCurrencyState.toAmountSemantics(): AmountSemantics = when (this) {
+        is ReadHomeCurrencyState.Available -> AmountSemantics.HomeComparable(code)
+        is ReadHomeCurrencyState.Loading,
+        is ReadHomeCurrencyState.Unavailable -> AmountSemantics.AmountOpsDisabled
+    }
+
+    private fun isAmountEngaged(sort: SortOrder, filter: TransactionFilter?): Boolean =
+        sort == SortOrder.AMOUNT_DESC || sort == SortOrder.AMOUNT_ASC ||
+            filter?.minAmount != null || filter?.maxAmount != null
+
+    private fun currentQueryKey(): AllQueryKey = AllQueryKey(
+        semantics = homeCurrencyState.value.toAmountSemantics(),
+        sortOrder = _sortOrder.value,
+        filter = _filter.value,
+        search = _searchQuery.value
+    )
 
     /**
      * Main transactions flow with reactive filtering.
-     * Combines tab selection, search query, filter, ownership filter, and refresh triggers.
+     * Combines tab selection, search query, filter, ownership filter, and refresh triggers;
+     * the read-time home currency is applied to in-memory amount bounds (INV-7, INV-9).
      */
     @OptIn(ExperimentalCoroutinesApi::class)
     val transactions: StateFlow<List<ExpenseWithCategory>> = combine(
@@ -238,16 +406,16 @@ class TransactionsViewModel @Inject constructor(
                 expenseRepository.getExpensesWithCategoryInPeriod(range.first, range.second)
             }
 
-            baseExpenses.map { expenses ->
-                var filtered = if (params.tab == TransactionTab.ALL) {
-                    expenses
-                } else {
-                    applyAmountConstraints(expenses, params.filter)
-                }
+            combine(baseExpenses, homeCurrencyState) { expenses, home ->
+                var filtered = expenses
                 if (params.query.isNotBlank()) {
                     filtered = filtered.filter { matchesSearch(it, params.query) }
                 }
                 filtered = filterByOwnership(filtered, toUiOwnershipFilter(params.filter?.ownership))
+                if (params.tab != TransactionTab.ALL) {
+                    // ALL: min/max are applied in SQL (HomeComparable) or not at all (AmountOpsDisabled).
+                    filtered = applyAmountConstraints(params.tab, filtered, params.filter, home)
+                }
                 filtered
             }
         }
@@ -281,21 +449,23 @@ class TransactionsViewModel @Inject constructor(
      * Grouped transactions by date for UI display.
      * Returns a map of date string to list of transactions.
      */
-    val groupedTransactions: StateFlow<Map<String, List<ExpenseWithCategory>>> = combine(transactions, _sortOrder) { expenseList, order ->
-        val sortedList = if (_selectedTab.value == TransactionTab.ALL) {
+    val groupedTransactions: StateFlow<Map<String, List<ExpenseWithCategory>>> = combine(
+        transactions,
+        _sortOrder,
+        homeCurrencyState,
+        _selectedTab
+    ) { expenseList, order, home, tab ->
+        val homeCode = (home as? ReadHomeCurrencyState.Available)?.code
+        val sortedList = if (tab == TransactionTab.ALL) {
             // Already sorted and filtered via backend pagination
             expenseList
         } else {
-            // Needs sorting in-memory
-            when (order) {
-                SortOrder.DATE_DESC -> expenseList.sortedByDescending { it.expense.date }
-                SortOrder.DATE_ASC -> expenseList.sortedBy { it.expense.date }
-                SortOrder.AMOUNT_DESC -> expenseList.sortedByDescending { it.expense.normalizedEffectiveAmount }
-                SortOrder.AMOUNT_ASC -> expenseList.sortedBy { it.expense.normalizedEffectiveAmount }
-            }
+            // Needs sorting in-memory, by the same rule owner as the SQL ORDER BY (INV-5, INV-7)
+            sortInMemory(expenseList, order, homeCode)
         }
 
-        if (order == SortOrder.AMOUNT_DESC || order == SortOrder.AMOUNT_ASC) {
+        // INV-9: with amount operations paused the effective order is date, so no amount group.
+        if (homeCode != null && (order == SortOrder.AMOUNT_DESC || order == SortOrder.AMOUNT_ASC)) {
             mapOf("Sorted By Amount" to sortedList)
         } else {
             groupTransactionsByDate(sortedList)
@@ -434,7 +604,9 @@ class TransactionsViewModel @Inject constructor(
     fun refresh() {
         _isRefreshing.value = true
         _refreshTrigger.value += 1
-        
+        // Spec 5.1: pull-to-refresh re-subscribes a failed home-currency read.
+        retryHomeCurrency()
+
         if (_selectedTab.value == TransactionTab.ALL) {
             resetAllPagingState()
             loadInitialAll()
@@ -453,9 +625,12 @@ class TransactionsViewModel @Inject constructor(
             try {
                 if (_hasReachedEnd.value || _selectedTab.value != TransactionTab.ALL) return@launch
                 _isLoadingMoreState.value = true
+                // INV-10: the page is requested and accepted under one (H, sort, filters, search) key.
+                val key = currentQueryKey()
                 val nextPage = _currentPage.value + 1
                 val offset = nextPage * PAGE_SIZE
-                val nextItems = loadPagedExpensesPage(limit = PAGE_SIZE, offset = offset)
+                val nextItems = loadPagedExpensesPage(key, limit = PAGE_SIZE, offset = offset)
+                if (key != currentQueryKey() || _selectedTab.value != TransactionTab.ALL) return@launch
                 if (nextItems.isNotEmpty()) {
                     _pagedExpenses.update { current ->
                         current + nextItems.distinctBy { it.expense.id }
@@ -794,11 +969,16 @@ class TransactionsViewModel @Inject constructor(
         _isLoadingMoreState.value = false
         loadInitialAllJob?.cancel()
         val requestId = ++loadInitialAllRequestId
+        // INV-10: page and count are requested under this key; a result under another key is dropped.
+        val key = currentQueryKey()
+        lastAllRequestSemantics = key.semantics
+        _unrankedCount.value = null
+        launchAllCount(key)
         loadInitialAllJob = viewModelScope.launch {
             _isLoading.value = true
             try {
-                val initial = loadPagedExpensesPage(limit = PAGE_SIZE, offset = 0)
-                if (requestId != loadInitialAllRequestId) return@launch
+                val initial = loadPagedExpensesPage(key, limit = PAGE_SIZE, offset = 0)
+                if (requestId != loadInitialAllRequestId || key != currentQueryKey()) return@launch
                 _pagedExpenses.value = initial
                 _currentPage.value = 0
                 _hasReachedEnd.value = initial.size < PAGE_SIZE
@@ -817,29 +997,78 @@ class TransactionsViewModel @Inject constructor(
 
     private fun resetAllPagingState() {
         loadMoreJob?.cancel()
+        allCountJob?.cancel()
         _isLoadingMoreState.value = false
         _currentPage.value = 0
         _pagedExpenses.value = emptyList()
         _hasReachedEnd.value = false
+        _unrankedCount.value = null
     }
 
-    private suspend fun loadPagedExpensesPage(limit: Int, offset: Int): List<ExpenseWithCategory> {
+    /**
+     * One ALL-tab page under [key]. H comes only from the key's amount semantics: the typed
+     * Available code (HomeComparable) or the amount-ops-disabled mode (Loading/Unavailable, H-1).
+     * The VM never requests the assistant-only raw amount mode. While amount operations are
+     * disabled no min/max is passed at all.
+     */
+    private suspend fun loadPagedExpensesPage(key: AllQueryKey, limit: Int, offset: Int): List<ExpenseWithCategory> {
         return withContext(Dispatchers.IO) {
-            val activeFilter = _filter.value
+            val activeFilter = key.filter
+            val amountOpsActive = key.semantics is AmountSemantics.HomeComparable
             expenseRepository.getExpensesPagedDynamic(
                 limit = limit,
                 offset = offset,
-                searchQuery = _searchQuery.value.takeIf { it.isNotBlank() },
+                searchQuery = key.search.takeIf { it.isNotBlank() },
                 startDate = activeFilter?.dateRange?.first,
                 endDate = activeFilter?.dateRange?.second,
                 transactionType = activeFilter?.transactionType,
                 categoryId = activeFilter?.categoryId,
                 merchantName = activeFilter?.merchantName,
                 ownershipFilter = activeFilter?.ownership ?: RepositoryOwnershipFilter.ALL,
-                minAmount = activeFilter?.minAmount,
-                maxAmount = activeFilter?.maxAmount,
-                sortOrder = _sortOrder.value
+                minAmount = activeFilter?.minAmount?.takeIf { amountOpsActive },
+                maxAmount = activeFilter?.maxAmount?.takeIf { amountOpsActive },
+                sortOrder = key.sortOrder,
+                amountSemantics = key.semantics
             )
+        }
+    }
+
+    /**
+     * ALL-tab count of rows without a home value in H (INV-8, INV-9). Runs only for Available H
+     * with an amount sort or bound; otherwise clears the count. A result is applied only if the
+     * request key is still current (INV-10). A failure becomes `CountStatus.Failed` with a
+     * bounded log; cancellation is rethrown.
+     */
+    private fun launchAllCount(key: AllQueryKey) {
+        allCountJob?.cancel()
+        val home = (key.semantics as? AmountSemantics.HomeComparable)?.home
+        if (home == null || !isAmountEngaged(key.sortOrder, key.filter)) {
+            _unrankedCount.value = null
+            return
+        }
+        val countFilter = ExpenseCountFilter(
+            searchQuery = key.search.takeIf { it.isNotBlank() },
+            startDate = key.filter?.dateRange?.first,
+            endDate = key.filter?.dateRange?.second,
+            transactionType = key.filter?.transactionType,
+            categoryId = key.filter?.categoryId,
+            merchantName = key.filter?.merchantName,
+            ownershipFilter = key.filter?.ownership ?: RepositoryOwnershipFilter.ALL
+        )
+        allCountJob = viewModelScope.launch {
+            val status: CountStatus = try {
+                CountStatus.Loaded(
+                    withContext(Dispatchers.IO) {
+                        expenseRepository.countExpensesWithoutHomeValue(countFilter, home)
+                    }
+                )
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Timber.w("Transactions: TRANSACTION_COUNT_FAILED class=%s", e::class.java.simpleName)
+                CountStatus.Failed
+            }
+            if (key != currentQueryKey() || _selectedTab.value != TransactionTab.ALL) return@launch
+            _unrankedCount.value = UnrankedCount(TransactionTab.ALL, home, status)
         }
     }
 
@@ -852,7 +1081,11 @@ class TransactionsViewModel @Inject constructor(
             return
         }
 
-        val refreshedPage = loadPagedExpensesPage(limit = loadedCount + 1, offset = 0)
+        val key = currentQueryKey()
+        val refreshedPage = loadPagedExpensesPage(key, limit = loadedCount + 1, offset = 0)
+        // INV-10: a refresh built under another key (H, sort, filters, search) is stale.
+        if (key != currentQueryKey()) return
+        launchAllCount(key) // the mutation may have changed how many rows lack a home value
         val visibleItems = refreshedPage.take(loadedCount)
 
         _pagedExpenses.value = visibleItems
@@ -899,21 +1132,55 @@ class TransactionsViewModel @Inject constructor(
         }
     }
 
+    /**
+     * In-memory min/max for time-range tabs (INV-7): membership by the rule owner
+     * [ComparableHomeValue] against the typed Available H; a row without a comparable value is
+     * excluded whenever a bound is set. While H is Loading/Unavailable no bound is applied
+     * (INV-9). Also publishes the count of rows without a home value over the period list
+     * (after the non-amount filters), which is exact because this list is not paged.
+     */
     private fun applyAmountConstraints(
+        tab: TransactionTab,
         expenses: List<ExpenseWithCategory>,
-        filter: TransactionFilter?
+        filter: TransactionFilter?,
+        home: ReadHomeCurrencyState
     ): List<ExpenseWithCategory> {
-        if (filter == null) return expenses
-        val minAmount = filter.minAmount
-        val maxAmount = filter.maxAmount
-        if (minAmount == null && maxAmount == null) return expenses
+        val homeCode = (home as? ReadHomeCurrencyState.Available)?.code ?: return expenses
 
-        // S5-008R-A: Use normalizedEffectiveAmount for currency-aware comparison
+        _unrankedCount.value = UnrankedCount(
+            tab = tab,
+            home = homeCode,
+            status = CountStatus.Loaded(
+                expenses.count { ComparableHomeValue.comparableValue(it.expense, homeCode) is ComparableValue.None }
+            )
+        )
+
+        val minAmount = filter?.minAmount
+        val maxAmount = filter?.maxAmount
+        if (minAmount == null && maxAmount == null) return expenses
         return expenses.filter { item ->
-            val amount = item.expense.normalizedEffectiveAmount
-            (minAmount == null || amount >= minAmount) &&
-                (maxAmount == null || amount <= maxAmount)
+            ComparableHomeValue.withinBounds(item.expense, homeCode, minAmount, maxAmount)
         }
+    }
+
+    /**
+     * In-memory ordering for time-range tabs, mirroring the SQL ORDER BY of the ALL tab.
+     * [home] null (Loading/Unavailable) forces `date DESC, id DESC` for every sort (INV-9).
+     * Rows without a comparable value sort last in both amount directions (INV-5).
+     */
+    private fun sortInMemory(
+        expenses: List<ExpenseWithCategory>,
+        order: SortOrder,
+        home: CurrencyCode?
+    ): List<ExpenseWithCategory> {
+        val comparator: Comparator<Expense> = when {
+            home == null || order == SortOrder.DATE_DESC -> DATE_DESC_COMPARATOR
+            order == SortOrder.DATE_ASC -> DATE_ASC_COMPARATOR
+            order == SortOrder.AMOUNT_DESC ->
+                ComparableHomeValue.comparator(home, ComparableHomeValue.Direction.DESCENDING)
+            else -> ComparableHomeValue.comparator(home, ComparableHomeValue.Direction.ASCENDING)
+        }
+        return expenses.sortedWith { a, b -> comparator.compare(a.expense, b.expense) }
     }
 
     /**

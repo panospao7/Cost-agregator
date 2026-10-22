@@ -14,6 +14,7 @@
     <string name="action_create">Create</string>
     <string name="action_update">Update</string>
     <string name="action_retry">Try Again</string>
+    <string name="action_got_it">Got it</string>
     <string name="action_ok">OK</string>
     <string name="action_confirm">Confirm</string>
     <string name="action_dismiss">Dismiss</string>
@@ -228,6 +229,10 @@
     <string name="transactions_filter_ownership_format">Ownership: %1$s</string>
     <string name="transactions_filter_min_format">Min: %1$.2f</string>
     <string name="transactions_filter_max_format">Max: %1$.2f</string>
+    <!-- MC 1a-3b: bounds are home-currency amounts; %1$s is the formatted money, e.g. "EUR 15.00" -->
+    <string name="transactions_filter_min_money_format">Min: %1$s</string>
+    <string name="transactions_filter_max_money_format">Max: %1$s</string>
+    <string name="transactions_filter_paused_suffix">" (paused)"</string>
     <string name="transactions_ownership_mine">Mine</string>
     <string name="transactions_ownership_not_mine">Not mine</string>
     <string name="transactions_ownership_shared">Shared</string>
@@ -246,7 +251,28 @@
     <string name="transactions_empty_no_transactions_cd">No transactions yet. Add your first expense to get started.</string>
     <string name="transactions_add_first_expense_cd">Add your first expense</string>
     <string name="transactions_add_expense_button">Add Expense</string>
-    
+    <string name="transactions_empty_filtered_title">No transactions match these filters</string>
+    <string name="transactions_empty_filtered_subtitle">Clear a filter to see more.</string>
+
+    <!-- Transactions Screen - Amount ordering (MC 1a-3b). %2$s / %1$s in these strings is the home currency code. -->
+    <plurals name="transactions_amount_notice_sort">
+        <item quantity="one">%1$d transaction without a %2$s value is shown last</item>
+        <item quantity="other">%1$d transactions without a %2$s value are shown last</item>
+    </plurals>
+    <plurals name="transactions_amount_notice_filter">
+        <item quantity="one">%1$d transaction without a %2$s value is not shown</item>
+        <item quantity="other">%1$d transactions without a %2$s value are not shown</item>
+    </plurals>
+    <string name="transactions_amount_notice_filter_unknown">Some transactions may be hidden because they have no %1$s value</string>
+    <string name="transactions_amount_notice_action_cd">Why some transactions have no %1$s value</string>
+    <string name="transactions_amount_divider">Without a %1$s value</string>
+    <string name="transactions_amount_explain_title">No %1$s value</string>
+    <string name="transactions_amount_explain_body">These transactions were recorded in a currency other than %1$s, and no exchange rate to %1$s is saved for them. Sorting and min/max filters can only use %1$s amounts, so they are listed last or left out. Their original amounts and currencies are unchanged.</string>
+    <string name="transactions_amount_paused_loading">Checking your home currency. Showing newest first.</string>
+    <string name="transactions_amount_paused_unavailable">Can\'t read your home currency right now. Amount sorting and min/max filters are paused. Showing newest first.</string>
+    <string name="transactions_sort_amount_disabled_hint">Needs your home currency</string>
+    <string name="transactions_sort_amount_disabled_cd">Sort by %1$s, not available, needs your home currency</string>
+
     <!-- Transactions Screen - Date Header -->
     <string name="transactions_date_header_count_format">%1$d transaction%2$s</string>
     <string name="transactions_date_header_count_suffix_single"></string>
@@ -879,6 +905,18 @@
     <string name="currency_error_conversion_unavailable">Conversion is unavailable for these currencies.</string>
     <string name="currency_error_data_unavailable">Currency data couldn\'t be loaded.</string>
     <string name="currency_error_unsupported_home">Your home currency isn\'t supported.</string>
+    <!-- MC 1a-4: home-currency switch warning. %1$s / %2$s are currency codes. -->
+    <string name="currency_home_switch_title">Change home currency to %1$s?</string>
+    <string name="currency_home_switch_body">From now on, sorting and min/max filters use %1$s amounts. Transactions in other currencies, and their history, will show no comparable value until your home currency is switched back to their currency. Your transactions keep their original amounts and currencies.</string>
+    <plurals name="currency_home_switch_count">
+        <item quantity="one">%1$d transaction has no %2$s value for now. It will be listed last or left out of min/max filters.</item>
+        <item quantity="other">%1$d transactions have no %2$s value for now. They will be listed last or left out of min/max filters.</item>
+    </plurals>
+    <string name="currency_home_switch_confirm">Switch to %1$s</string>
+    <string name="currency_home_switch_writing">Changing home currency…</string>
+    <string name="currency_home_switch_loading">Checking your home currency…</string>
+    <string name="currency_home_switch_unavailable">Can\'t read your home currency right now. You can still choose a new one; you will be asked to confirm first.</string>
+    <string name="currency_home_switch_error_write_failed">Couldn\'t change your home currency. Try again.</string>
     <string name="backup_contents_notice">Receipt images are not included in backups.</string>
     <string name="privacy_slider_notification_retention">Raw notification retention (days)</string>
     <string name="privacy_slider_ocr_retention">Raw OCR retention (days)</string>

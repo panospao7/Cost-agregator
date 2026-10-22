@@ -53,6 +53,8 @@ UPDATE expense:
   → TransactionLifecycleCoordinator.updateCategory/updateMerchant/updateType/etc.
   → TransactionEvent with LifecycleEventType.UPDATED
   → Post-update side effects via TransactionSideEffectPlanner.planUpdated()
+  → Full-row update re-snapshots against current H (TransactionLifecycleCoordinator.updateExpense
+    recomputes baseAmount/baseCurrency/exchangeRateUsed; see "SNAPSHOT rounding" under Money / Currency)
 
 FORBIDDEN:
   ❌ ExpenseDao.update() from repositories directly
@@ -604,10 +606,80 @@ DASHBOARD display:
   → Propagate quality through adapter chain
   → Show warning when isPartial=true
 
+COMPARE (sort / min-max filter / excluded count of an expense list by amount in the home currency H):
+  → Rule owner: ComparableHomeValue (domain/core/money) — pure, read-only;
+    comparableValue(expense, H) = ComparableValue.Value | None(NoComparableValueReason),
+    snapshotValue(expense) for the mixed-currency date header, comparator(H, direction), withinBounds
+  → SQL mirror: ExpenseDao.COMPARABLE_HOME_VALUE_E_SQL (ExpenseDao companion, next to
+    EFFECTIVE_AMOUNT_E_SQL); exactly two '?' placeholders, both bound to H
+  → Parity test: ComparableHomeValueSqlParityTest, with ComparableHomeValueFixture shared by the
+    Kotlin owner test; neither mirror changes without the fixture
+  → Shared builder: ExpenseRepository.buildExpenseDynamicQueryParts takes a required AmountSemantics
+    (RawEffective | HomeComparable(H) | AmountOpsDisabled); HomeComparable emits CV >= ? / CV <= ?,
+    (CV IS NULL) ASC amount ordering with a date/id tiebreak, args in textual '?' order; list =
+    ExpenseRepository.getExpensesPagedDynamic(..., amountSemantics)
+  → Excluded count: ExpenseRepository.countExpensesWithoutHomeValue(filter, home) →
+    ExpenseDao.countExpensesWithoutHomeValueDynamic (read-classified @RawQuery); same non-amount WHERE
+    plus CV IS NULL, ignores min/max and sort, returns an integer only
+  → Assistant queries stay on raw EFFECTIVE_AMOUNT_E_SQL (pinned by ExpenseRepositoryAssistantSqlGoldenTest)
+  → H comes from the typed read-time resolution CurrencySettingsRepository.observeReadHomeCurrency()
+    (ReadHomeCurrencyState: Loading | Available(code) | Unavailable(ReadHomeFailure)), bound as a
+    parameter. TransactionsViewModel prepends Loading and applies a 5 s timeout (Unavailable(TIMEOUT));
+    Available(H) → AmountSemantics.HomeComparable(H) (ALL tab) and ComparableHomeValue (time-range tabs
+    in memory); Loading/Unavailable → AmountSemantics.AmountOpsDisabled / date order, min/max not
+    applied, no count. The ViewModel never uses AmountSemantics.RawEffective (assistant-only).
+
+SNAPSHOT rounding (a converted amount stored in the home currency H; sole consumer = TransactionLifecycleCoordinator create and updateExpense):
+  → Rule owner: roundSnapshot(value, home) (domain/core/money/SnapshotRounding.kt) =
+    SnapshotRounding.Rounded(amount) | Unavailable(NON_FINITE_OR_NON_POSITIVE | DIGITS_UNAVAILABLE);
+    HALF_EVEN on BigDecimal.valueOf(value), H minor-unit digits, a positive value never stores 0
+    (one minor unit minimum); pure, no logging
+  → Digits: CurrencyFractionDigits.of(code) (domain/core/money) is the single accessor over the JDK
+    currency digits (null for unknown or negative); SourceCurrencyAllocation delegates to it
+  → Writer (TransactionLifecycleCoordinator only; createExpense and updateExpense share
+    convertedSnapshot): a converted create or update stores the rounded amount (roundSnapshot) in
+    baseAmount, the home currency in baseCurrency and the UNROUNDED rate in exchangeRateUsed
+  → No conversion, or roundSnapshot Unavailable: stores the sentinel 0.0 / "" / 0.0 and emits one
+    best-effort DiagnosticReasonCode.MISSING_RATE (metadata operation + reason only; reason =
+    MISSING_RATE or SNAPSHOT_ROUNDING_UNAVAILABLE); the update emit happens outside
+    database.withTransaction
+  → Home currency Failed (HomeCurrencyResolution.Failed): sentinel 0.0 / "" / 0.0 on create and
+    one best-effort HOME_CURRENCY_UNAVAILABLE diagnostic (also emitted on update); never a
+    fabricated default home
+  → Identity (expense currency == H) stores amount / H / 1.0 unchanged (no rounding)
+  → Existing rows are never rewritten or migrated; only new converted writes use HALF_EVEN rounding
+
+FORBIDDEN (SNAPSHOT rounding):
+  ❌ A second snapshot rounding rule (any other code rounding a stored base/home snapshot amount)
+  ❌ A second minor-unit digits accessor in domain/core/money
+
+HOME CURRENCY SWITCH (Currency Management screen):
+  → home write = CurrencySettingsRepository.setHomeCurrency only via CurrencyManagementViewModel.confirm()
+    after request(code) produced HomeSwitchUi.PendingConfirm (both entry points call request, never write)
+  → the warning (PendingConfirm) is shown while H is Loading or Unavailable (ReadHomeCurrencyState from
+    observeReadHomeCurrency), never skipped; the only no-op is a request equal to an Available H
+    (unsupported codes give UNSUPPORTED_HOME_CURRENCY, no dialog, no write)
+  → the dialog opens immediately with static text; the optional predicted count
+    (ExpenseRepository.countExpensesWithoutHomeValue(empty filter, candidate H)) is added when it
+    arrives and omitted when unreadable or slow; confirm = exactly one setHomeCurrency, then the
+    classifier invalidation
+
 FORBIDDEN:
+  ❌ Calling CurrencySettingsRepository.setHomeCurrency from the Currency Management screen/ViewModel
+     other than in CurrencyManagementViewModel.confirm() (no unconfirmed home-currency write)
   ❌ sumOf { effectiveAmount } across currencies without conversion
   ❌ Raw Double totals in public domain/UI models without currency context
   ❌ Dropping MoneyAggregate.isPartial/warningMessage in adapter mapping
+  ❌ Raw-amount fallback when comparing a foreign-currency row without a valid snapshot for H
+     (it has no comparable value; it sorts last and is excluded by min/max)
+  ❌ Interpolating H (a currency code) into SQL; bind it as a parameter
+  ❌ A second Kotlin or SQL implementation of the comparable-home-value rule
+  ❌ Amount operations (sort, min/max, count) against a placeholder or guessed home currency
+     (the "EUR" stateIn default, an untyped homeCurrency() string, or a Loading/Unavailable state)
+  ❌ Expense.normalizedEffectiveAmount in a sort, filter or count (it is the date-header snapshot
+     value only and delegates to ComparableHomeValue.snapshotValue)
+  ❌ Writing base fields (baseAmount/baseCurrency/exchangeRateUsed) outside TLC (Rescue restore
+     excepted: identity/sentinel only, via FinancialRescueCoordinator.rescueSnapshotFields)
 ```
 
 ---

@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.ui.screens.transactions
 
+import androidx.annotation.StringRes
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -35,7 +36,13 @@ fun TransactionFilterSheet(
     referenceNowMs: Long,
     onDismiss: () -> Unit,
     onApply: (TransactionFilter?, VMOwnershipFilter) -> Unit,
-    onClear: () -> Unit
+    onClear: () -> Unit,
+    /**
+     * Disabled-state hint (MC 1a-3b, INV-9): non-null while a stored min/max bound is paused
+     * because the home currency is Loading/Unavailable. The sheet has no min/max editor; the
+     * bounds are kept and re-apply when the home currency is Available.
+     */
+    @StringRes amountPausedHintRes: Int? = null
 ) {
     var selectedCategoryId by remember { mutableStateOf(currentFilter?.categoryId) }
     var selectedType by remember { mutableStateOf(currentFilter?.transactionType) }
@@ -254,6 +261,14 @@ fun TransactionFilterSheet(
                         }
                     }
                 }
+            }
+
+            if (amountPausedHintRes != null) {
+                Text(
+                    text = stringResource(amountPausedHintRes),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
 
             Spacer(modifier = Modifier.height(8.dp))

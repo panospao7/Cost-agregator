@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.ui.screens.transactions
 
+import androidx.annotation.StringRes
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
@@ -36,7 +37,11 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -57,7 +62,10 @@ import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.data.database.entity.EntitySourceLink
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import com.yourname.expensetracker.data.database.model.formattedTime
+import com.yourname.expensetracker.domain.core.money.ComparableHomeValue
+import com.yourname.expensetracker.domain.core.money.ComparableValue
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.ReadHomeCurrencyState
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.screens.transactions.TransactionsViewModel.OwnershipFilter
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
@@ -70,6 +78,7 @@ import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.ui.components.TransferDirectionBadge
 import com.yourname.expensetracker.ui.components.LocationSearchPicker
 import com.yourname.expensetracker.ui.components.common.ListSkeleton
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.*
 
@@ -132,7 +141,15 @@ fun TransactionsScreen(
     val isLoadingMore by viewModel.isLoadingMoreState.collectAsState()
     val hasReachedEnd by viewModel.hasReachedEnd.collectAsState()
     val tabCounts by viewModel.tabTransactionCounts.collectAsState()
- val homeCurrency by viewModel.homeCurrency.collectAsState()
+    // MC 1a-3b: typed read-time home currency; Loading/Unavailable pause amount operations (INV-9).
+    val homeState by viewModel.homeCurrencyState.collectAsState()
+    val amountUi by viewModel.amountUi.collectAsState()
+    val homeAvailable = homeState is ReadHomeCurrencyState.Available
+    // Last Available code, kept only to label a paused min/max bound ("Min: EUR 15.00 (paused)").
+    var lastKnownHome by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(homeState) {
+        (homeState as? ReadHomeCurrencyState.Available)?.let { lastKnownHome = it.code.code }
+    }
     val ownershipFilter by viewModel.ownershipFilter.collectAsState()
     val sortOrder by viewModel.sortOrder.collectAsState()
     val debugActionsEnabled = BuildConfig.DEBUG
@@ -163,7 +180,31 @@ fun TransactionsScreen(
     var showSearch by remember { mutableStateOf(false) }
     var showSortMenu by remember { mutableStateOf(false) }
     var showFilterSheet by remember { mutableStateOf(false) }
-    
+    var showAmountExplanation by remember { mutableStateOf(false) }
+    // ux-flows 2: show the "Checking..." notice only if Loading lasts longer than 400 ms (no flash).
+    val homeLoading = amountUi is TransactionsAmountUi.HomeLoading
+    var showHomeLoadingNotice by remember { mutableStateOf(false) }
+    LaunchedEffect(homeLoading) {
+        showHomeLoadingNotice = false
+        if (homeLoading) {
+            delay(400)
+            showHomeLoadingNotice = true
+        }
+    }
+    // The unranked divider (sort by amount, H Available) sits before the first row without a value.
+    val unrankedDividerBeforeId: Long? = remember(groupedTransactions, sortOrder, homeState) {
+        val home = (homeState as? ReadHomeCurrencyState.Available)?.code
+        val amountSort = sortOrder == com.yourname.expensetracker.data.repository.SortOrder.AMOUNT_DESC ||
+            sortOrder == com.yourname.expensetracker.data.repository.SortOrder.AMOUNT_ASC
+        if (home == null || !amountSort) {
+            null
+        } else {
+            groupedTransactions.values.singleOrNull()
+                ?.firstOrNull { ComparableHomeValue.comparableValue(it.expense, home) is ComparableValue.None }
+                ?.expense?.id
+        }
+    }
+
     // Pull-to-refresh state
     val pullToRefreshState = rememberPullToRefreshState()
     
@@ -282,28 +323,48 @@ fun TransactionsScreen(
                             ) {
                                 val sortSelected = stringResource(R.string.transactions_sort_selected)
                                 val sortNotSelected = stringResource(R.string.transactions_sort_not_selected)
+                                val amountDisabledHint = stringResource(R.string.transactions_sort_amount_disabled_hint)
                                 com.yourname.expensetracker.data.repository.SortOrder.values().forEach { order ->
-                                    val sortByCd = stringResource(R.string.transactions_sort_by_cd, order.displayName, if (sortOrder == order) sortSelected else sortNotSelected)
+                                    // INV-9: amount sorts need an Available home currency. The chosen sort is kept
+                                    // (and still ticked) while paused; it re-applies when H becomes Available.
+                                    val isAmountOrder = order == com.yourname.expensetracker.data.repository.SortOrder.AMOUNT_DESC ||
+                                        order == com.yourname.expensetracker.data.repository.SortOrder.AMOUNT_ASC
+                                    val itemEnabled = homeAvailable || !isAmountOrder
+                                    val sortByCd = if (itemEnabled) {
+                                        stringResource(R.string.transactions_sort_by_cd, order.displayName, if (sortOrder == order) sortSelected else sortNotSelected)
+                                    } else {
+                                        stringResource(R.string.transactions_sort_amount_disabled_cd, order.displayName)
+                                    }
                                     DropdownMenuItem(
-                                        text = { 
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Text(order.displayName)
-                                                if (sortOrder == order) {
-                                                    Spacer(modifier = Modifier.width(8.dp))
-                                                    Icon(
-                                                        Icons.Rounded.Check, 
-                                                        contentDescription = null,
-                                                        modifier = Modifier.size(16.dp),
-                                                        tint = MaterialTheme.colorScheme.primary
+                                        text = {
+                                            Column {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Text(order.displayName)
+                                                    if (sortOrder == order) {
+                                                        Spacer(modifier = Modifier.width(8.dp))
+                                                        Icon(
+                                                            Icons.Rounded.Check,
+                                                            contentDescription = null,
+                                                            modifier = Modifier.size(16.dp),
+                                                            tint = MaterialTheme.colorScheme.primary
+                                                        )
+                                                    }
+                                                }
+                                                if (!itemEnabled) {
+                                                    Text(
+                                                        text = amountDisabledHint,
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = SemanticColors.TextMuted
                                                     )
                                                 }
                                             }
                                         },
+                                        enabled = itemEnabled,
                                         onClick = {
                                             viewModel.setSortOrder(order)
                                             showSortMenu = false
                                         },
-                                        modifier = Modifier.semantics { 
+                                        modifier = Modifier.semantics {
                                             contentDescription = sortByCd
                                         }
                                     )
@@ -447,8 +508,14 @@ fun TransactionsScreen(
                                 }
                                 parts.add(stringResource(R.string.transactions_filter_ownership_format, label))
                             }
-                            activeFilter?.minAmount?.let { parts.add(stringResource(R.string.transactions_filter_min_format, it)) }
-                            activeFilter?.maxAmount?.let { parts.add(stringResource(R.string.transactions_filter_max_format, it)) }
+                            // Bounds are home-currency amounts: label them with H, and mark them paused when H is not Available.
+                            val boundHome = (homeState as? ReadHomeCurrencyState.Available)?.code?.code ?: lastKnownHome
+                            activeFilter?.minAmount?.let {
+                                parts.add(amountBoundLabel(R.string.transactions_filter_min_money_format, R.string.transactions_filter_min_format, it, boundHome, paused = !homeAvailable))
+                            }
+                            activeFilter?.maxAmount?.let {
+                                parts.add(amountBoundLabel(R.string.transactions_filter_max_money_format, R.string.transactions_filter_max_format, it, boundHome, paused = !homeAvailable))
+                            }
                             append(parts.joinToString(", "))
                         }
                             
@@ -475,6 +542,14 @@ fun TransactionsScreen(
                         }
                     }
                 }
+
+                // MC 1a-3b: amount-ordering notice (unranked count, or paused with Try Again).
+                AmountOrderingNotice(
+                    state = amountUi,
+                    showHomeLoading = showHomeLoadingNotice,
+                    onExplain = { showAmountExplanation = true },
+                    onRetry = { viewModel.retryHomeCurrency() }
+                )
             }
         },
         contentWindowInsets = WindowInsets(0, 0, 0, 0)
@@ -500,6 +575,9 @@ fun TransactionsScreen(
                     // Empty state with illustration
                     EmptyTransactionsState(
                         hasSearch = searchQuery.isNotBlank(),
+                        // UX-Q-2: min/max bounds can hide every row; do not say "no transactions yet".
+                        isFilteredEmpty = homeAvailable &&
+                            (activeFilter?.minAmount != null || activeFilter?.maxAmount != null),
                         onAddClick = onAddExpense
                     )
                 }
@@ -528,11 +606,17 @@ fun TransactionsScreen(
                                     totalAmount = items.sumOf { it.expense.signedEffectiveAmount() }
                                     displayCurrency = groupCurrency
                                 } else {
-                                    // S5-024R-A/B: Mixed — use normalizedEffectiveAmount with baseCurrency
+                                    // S5-024R-A/B: Mixed — sum the snapshot values (owner: ComparableHomeValue.snapshotValue)
+                                    // with the common stored baseCurrency. A row without a usable snapshot gives no
+                                    // total (never a raw-amount fallback).
                                     val baseCurrencies = items.map { it.expense.baseCurrency.uppercase() }.toSet()
                                     val commonBase = baseCurrencies.singleOrNull()
-                                    if (commonBase != null && items.all { it.expense.baseAmount > 0 }) {
-                                        totalAmount = items.sumOf { it.expense.normalizedEffectiveAmount }
+                                    val snapshotValues = items.mapNotNull { it.expense.normalizedEffectiveAmount }
+                                    if (commonBase != null &&
+                                        items.all { it.expense.baseAmount > 0 } &&
+                                        snapshotValues.size == items.size
+                                    ) {
+                                        totalAmount = snapshotValues.sum()
                                         displayCurrency = commonBase // use stored baseCurrency, not current homeCurrency
                                     } else {
                                         totalAmount = null
@@ -553,23 +637,30 @@ fun TransactionsScreen(
                                 key = { item -> item.expense.id },
                                 contentType = { "transaction" }
                             ) { item ->
-                                TransactionItem(
-                                    transaction = item,
-                                    isHighlighted = highlightedExpenseId == item.expense.id,
-                                    onDelete = { expenseToDelete = item.expense },
-                                    onEditCategory = { expenseToCategorize = item.expense },
-                                    onMarkRecurring = { expenseToRecurring = item.expense },
-                                    onRename = { expenseToRename = item.expense },
-                                    onChangeType = { expenseToChangeType = item.expense },
-                                    onEditOwnership = { expenseToEditOwnership = item.expense },
-                                    onDebug = {
-                                        if (debugActionsEnabled) {
-                                            expenseToDebug = item.expense
-                                        }
-                                    },
-                                    onEditLocation = { expenseToEditLocation = item.expense },
-                                    onViewProvenance = { expenseToViewProvenance = item.expense }
-                                )
+                                Column {
+                                    if (item.expense.id == unrankedDividerBeforeId) {
+                                        UnrankedDivider(
+                                            home = (homeState as? ReadHomeCurrencyState.Available)?.code?.code
+                                        )
+                                    }
+                                    TransactionItem(
+                                        transaction = item,
+                                        isHighlighted = highlightedExpenseId == item.expense.id,
+                                        onDelete = { expenseToDelete = item.expense },
+                                        onEditCategory = { expenseToCategorize = item.expense },
+                                        onMarkRecurring = { expenseToRecurring = item.expense },
+                                        onRename = { expenseToRename = item.expense },
+                                        onChangeType = { expenseToChangeType = item.expense },
+                                        onEditOwnership = { expenseToEditOwnership = item.expense },
+                                        onDebug = {
+                                            if (debugActionsEnabled) {
+                                                expenseToDebug = item.expense
+                                            }
+                                        },
+                                        onEditLocation = { expenseToEditLocation = item.expense },
+                                        onViewProvenance = { expenseToViewProvenance = item.expense }
+                                    )
+                                }
                             }
                         }
                         
@@ -663,6 +754,26 @@ fun TransactionsScreen(
             )
         }
 
+        // Explanation of rows without a home value (opened from the amount notice)
+        val explainHome = (homeState as? ReadHomeCurrencyState.Available)?.code?.code
+        if (showAmountExplanation && explainHome != null) {
+            AlertDialog(
+                onDismissRequest = { showAmountExplanation = false },
+                title = { Text(stringResource(R.string.transactions_amount_explain_title, explainHome)) },
+                text = {
+                    Text(
+                        text = stringResource(R.string.transactions_amount_explain_body, explainHome),
+                        modifier = Modifier.verticalScroll(rememberScrollState())
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { showAmountExplanation = false }) {
+                        Text(stringResource(R.string.action_got_it))
+                    }
+                }
+            )
+        }
+
         // Filter bottom sheet
         if (showFilterSheet) {
             TransactionFilterSheet(
@@ -670,6 +781,13 @@ fun TransactionsScreen(
                 currentFilter = activeFilter,
                 currentOwnershipFilter = ownershipFilter,
                 referenceNowMs = viewModel.referenceNow(),
+                // Disabled-state hint: stored min/max bounds are paused while H is Loading/Unavailable.
+                amountPausedHintRes = when {
+                    homeAvailable -> null
+                    activeFilter?.minAmount == null && activeFilter?.maxAmount == null -> null
+                    homeState is ReadHomeCurrencyState.Loading -> R.string.transactions_amount_paused_loading
+                    else -> R.string.transactions_amount_paused_unavailable
+                },
                 onDismiss = { showFilterSheet = false },
                 onApply = { filter, ownership ->
                     if (filter != null || ownership != OwnershipFilter.ALL) {
@@ -954,16 +1072,25 @@ fun TransactionsScreen(
 @Composable
 private fun EmptyTransactionsState(
     hasSearch: Boolean,
+    isFilteredEmpty: Boolean = false,
     onAddClick: () -> Unit
 ) {
     val emptySearchCd = stringResource(R.string.transactions_empty_search_cd)
     val emptyNoTransactionsCd = stringResource(R.string.transactions_empty_no_transactions_cd)
     val addFirstExpenseCd = stringResource(R.string.transactions_add_first_expense_cd)
+    val filteredTitle = stringResource(R.string.transactions_empty_filtered_title)
+    val filteredSubtitle = stringResource(R.string.transactions_empty_filtered_subtitle)
+    // Search keeps priority; the filtered variant replaces "no transactions yet" (and the Add button).
+    val showFiltered = isFilteredEmpty && !hasSearch
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .semantics { 
-                contentDescription = if (hasSearch) emptySearchCd else emptyNoTransactionsCd
+            .semantics {
+                contentDescription = when {
+                    hasSearch -> emptySearchCd
+                    showFiltered -> "$filteredTitle. $filteredSubtitle"
+                    else -> emptyNoTransactionsCd
+                }
             },
         contentAlignment = Alignment.Center
     ) {
@@ -984,32 +1111,36 @@ private fun EmptyTransactionsState(
             )
             
             Icon(
-                imageVector = if (hasSearch) Icons.Rounded.SearchOff else Icons.Rounded.ReceiptLong,
+                imageVector = if (hasSearch || showFiltered) Icons.Rounded.SearchOff else Icons.Rounded.ReceiptLong,
                 contentDescription = null,
                 modifier = Modifier
                     .size(100.dp)
                     .offset(y = offsetY.dp),
                 tint = SemanticColors.TextMuted
             )
-            
+
             Text(
-                text = if (hasSearch) stringResource(R.string.transactions_no_search_results_title) else stringResource(R.string.no_transactions_title),
+                text = when {
+                    hasSearch -> stringResource(R.string.transactions_no_search_results_title)
+                    showFiltered -> filteredTitle
+                    else -> stringResource(R.string.no_transactions_title)
+                },
                 style = MaterialTheme.typography.titleMedium,
                 color = SemanticColors.TextPrimary
             )
-            
+
             Text(
-                text = if (hasSearch) {
-                    stringResource(R.string.transactions_no_search_results_subtitle)
-                } else {
-                    stringResource(R.string.no_transactions_subtitle)
+                text = when {
+                    hasSearch -> stringResource(R.string.transactions_no_search_results_subtitle)
+                    showFiltered -> filteredSubtitle
+                    else -> stringResource(R.string.no_transactions_subtitle)
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = SemanticColors.TextSecondary,
                 textAlign = TextAlign.Center
             )
-            
-            if (!hasSearch) {
+
+            if (!hasSearch && !showFiltered) {
                 FilledTonalButton(
                     onClick = onAddClick,
                     colors = ButtonDefaults.filledTonalButtonColors(
@@ -1025,6 +1156,163 @@ private fun EmptyTransactionsState(
             }
         }
     }
+}
+
+// ============================================================
+// AMOUNT ORDERING (MC 1a-3b: INV-9, INV-19, INV-22)
+// ============================================================
+
+/** "Min: EUR 15.00" with H; plain "Min: 15.00" only when no home currency was ever read; " (paused)" suffix when paused. */
+@Composable
+private fun amountBoundLabel(
+    @StringRes moneyFormatRes: Int,
+    @StringRes plainFormatRes: Int,
+    amount: Double,
+    home: String?,
+    paused: Boolean
+): String {
+    val base = if (home != null) {
+        stringResource(moneyFormatRes, CurrencyFormatter.formatMoney(amount, home))
+    } else {
+        stringResource(plainFormatRes, amount)
+    }
+    return if (paused) base + stringResource(R.string.transactions_filter_paused_suffix) else base
+}
+
+/**
+ * Notice for rows without a home value (count only, INV-22) or for paused amount operations.
+ * Hidden while the count is pending; never shows a placeholder or "0".
+ */
+@Composable
+private fun AmountOrderingNotice(
+    state: TransactionsAmountUi,
+    showHomeLoading: Boolean,
+    onExplain: () -> Unit,
+    onRetry: () -> Unit
+) {
+    val resources = LocalContext.current.resources
+    when (state) {
+        is TransactionsAmountUi.Ready -> if (state.count > 0) {
+            AmountNoticeRow(
+                text = resources.getQuantityString(
+                    if (state.hidesRows) R.plurals.transactions_amount_notice_filter
+                    else R.plurals.transactions_amount_notice_sort,
+                    state.count,
+                    state.count,
+                    state.home.code
+                ),
+                actionLabel = stringResource(R.string.transactions_amount_notice_action_cd, state.home.code),
+                onClick = onExplain
+            )
+        }
+        is TransactionsAmountUi.CountUnavailable -> if (state.hidesRows) {
+            AmountNoticeRow(
+                text = stringResource(R.string.transactions_amount_notice_filter_unknown, state.home.code),
+                actionLabel = stringResource(R.string.transactions_amount_notice_action_cd, state.home.code),
+                onClick = onExplain
+            )
+        }
+        is TransactionsAmountUi.HomeLoading -> if (showHomeLoading) {
+            AmountPausedRow(
+                text = stringResource(R.string.transactions_amount_paused_loading),
+                onRetry = null
+            )
+        }
+        is TransactionsAmountUi.HomeUnavailable -> AmountPausedRow(
+            text = stringResource(R.string.transactions_amount_paused_unavailable),
+            onRetry = onRetry
+        )
+        is TransactionsAmountUi.Inactive,
+        is TransactionsAmountUi.CountPending -> Unit
+    }
+}
+
+@Composable
+private fun AmountNoticeRow(
+    text: String,
+    actionLabel: String,
+    onClick: () -> Unit
+) {
+    Surface(
+        color = SemanticColors.PrimaryIndigo.copy(alpha = 0.1f),
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = Dimens.TouchTargetMin)
+            .clickable(onClickLabel = actionLabel, role = Role.Button, onClick = onClick)
+            .semantics { liveRegion = LiveRegionMode.Polite }
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Icon(
+                Icons.Rounded.Info,
+                contentDescription = null,
+                tint = SemanticColors.PrimaryIndigo,
+                modifier = Modifier.size(20.dp)
+            )
+            Text(
+                text = text,
+                style = MaterialTheme.typography.labelMedium,
+                color = SemanticColors.TextSecondary,
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun AmountPausedRow(
+    text: String,
+    onRetry: (() -> Unit)?
+) {
+    Surface(
+        color = SemanticColors.Warning.copy(alpha = 0.12f),
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = Dimens.TouchTargetMin)
+            .semantics { liveRegion = LiveRegionMode.Polite }
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Icon(
+                Icons.Rounded.Info,
+                contentDescription = null,
+                tint = SemanticColors.Warning,
+                modifier = Modifier.size(20.dp)
+            )
+            Text(
+                text = text,
+                style = MaterialTheme.typography.labelMedium,
+                color = SemanticColors.TextSecondary,
+                modifier = Modifier.weight(1f)
+            )
+            if (onRetry != null) {
+                TextButton(onClick = onRetry) {
+                    Text(stringResource(R.string.action_retry))
+                }
+            }
+        }
+    }
+}
+
+/** Heading before the rows that have no value in [home]; position is the only "unavailable" signal (INV-19). */
+@Composable
+private fun UnrankedDivider(home: String?) {
+    if (home == null) return
+    Text(
+        text = stringResource(R.string.transactions_amount_divider, home),
+        style = MaterialTheme.typography.labelMedium,
+        color = SemanticColors.TextSecondary,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 12.dp, bottom = 4.dp)
+            .semantics { heading() }
+    )
 }
 
 // ============================================================

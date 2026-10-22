@@ -2,7 +2,7 @@
 
 Feature id: `money-correctness` (roadmap item 2a of the `ai-evolution` program; split out of manual-entry-currency at its Gate 1 as "increment 0")
 Branch at start: release-1.0-remediation
-Status: PLAN APPROVED — PARKED until Release 1.0 accepted + release-1.0-wt merged + ai-fixes landed; next S0. DOCS-ONLY (Release 1.0 frozen; implementation post-1.0).
+Status: IMPLEMENTED in worktree C:\Users\panos\Desktop\Cost-agregator-mc (branch feature/money-correctness from 044be2c8, uncommitted). 1a-G and 1b-G PASSED (2026-10-22). Release preconditions still owed by the owner: Greek (values-el) review, Spanish native review (values-es), device query timing (G2-13). No commit/merge yet.
 
 ## Origin
 Owner 2026-10-16 (verbatim, Greek letters): "οκ γο" = "ok go", in reply to the orchestrator's suggestion "say 'go money correctness' to start its brief".
@@ -62,7 +62,7 @@ Owner 2026-10-16 (verbatim, Greek letters): "οκ γο" = "ok go", in reply to t
   MC-N1..N15 stand.
 
 ## Next action
-After Release 1.0 + release-1.0-wt merge + ai-fixes landed: run S0 (branch feature/money-correctness; D-1..D-16; query-plan measurement; baselines). Then 1a-1 … per plan.
+Owner: Greek + Spanish string review, device query timing; then commit/merge feature/money-correctness on explicit request. Evidence: build/release-lead-notes/mc-1a1-record-20261022.md (main checkout). MEC S0 may start after merge and must apply RF-10 (see manual-entry-currency-handoff.md).
 
 ## Domain-spec findings needing owner (Gate 2)
 - OD-1 ORDER CYCLE: MEC A1 waits for money-correctness, but 1b's rounding helper needs the fraction-digits accessor MEC A1 was to create.
@@ -83,7 +83,14 @@ After Release 1.0 + release-1.0-wt merge + ai-fixes landed: run S0 (branch featu
 ## Slice statuses
 | Slice | Status |
 |---|---|
-| S0, 1a-1, 1a-2, 1a-3a, 1a-3b, 1a-4, 1a-5, 1a-G, 1b-1, 1b-2, 1b-3, 1b-G/Z | planned |
+| S0 | done (baselines, D-1..D-16; query timing on python sqlite3, device timing owed) |
+| 1a-1, 1a-2, 1a-3a, 1a-3b, 1a-4, 1a-5 | done, validated |
+| 1a-G | PASSED; fresh RS ACCEPT |
+| 1b-1, 1b-2, 1b-3 | done, validated (1b-2 strict review fixes applied) |
+| 1b-G | PASSED (app-check vr-20261022-170122-e42ad82c); fresh RS ACCEPT-WITH-MINORS, minors fixed |
+| Z | done: CODEBASE_INVENTORY drift sync, this handoff, MEC RF-10 notice |
+
+Follow-ups (routed, not in MC scope): MISSING_RATE correlation id (NIT-2); AE-21 recurring-materialisation dedicated test; CurrencyConverter.kt :190/:223/:622/:651 currency-pair logs; CurrencySettingsRepositoryImpl ~:118 catch swallowing cancellation; Engine5PrimitiveGuardTest relPath bug (N4); MC-N10 sweep of tests pinning 'EUR' for no-rate rows; create-path MISSING_RATE lost if an outer caller transaction rolls back.
 
 ## Routing update (2026-10-16, orchestrator bookkeeping)
 - Dead private `assistantFilteredExpenses` + stale "raw" KDocs (RF-3 residue) now owned by assistant-follow-ups inc 1 (not ai-fixes/SRH-7).
