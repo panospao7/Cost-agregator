@@ -10,6 +10,8 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.GroupDetailsAggregate
 import com.yourname.expensetracker.data.repository.GroupsRepository
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException
+import com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode
 import com.yourname.expensetracker.domain.currency.ConversionResult
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
@@ -18,6 +20,7 @@ import dagger.Lazy
 import io.mockk.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
@@ -26,6 +29,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertFalse
 import timber.log.Timber
+import java.io.IOException
 import org.robolectric.shadows.ShadowLog
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
@@ -241,6 +245,59 @@ class SharedExpenseBudgetOffsetEngineTest {
 
         assertFailsWith<CancellationException> {
             engine.calculateEffectiveBudgetSpend(start, FIXED_NOW)
+        }
+    }
+
+    // AE-15 (INV-15): a home-currency read failure is "effective spend unavailable", never a literal "EUR".
+    @Test
+    fun `AE-15 home currency read failure throws typed unavailable before any conversion`() = runTest {
+        val start = FIXED_NOW - 7L * DAY_MS
+        every { currencySettingsRepository.homeCurrency() } returns flow { throw IOException("settings read failed") }
+        coEvery { expenseRepository.getExpensesBetween(start, FIXED_NOW) } returns listOf(
+            expense(id = 1L, amount = 25.0, categoryId = 1L, isShared = false)
+        )
+        coEvery { groupsRepository.getActiveGroupsWithDetails() } returns emptyList()
+
+        val thrown = assertFailsWith<MoneyDisplayUnavailableException> {
+            engine.calculateEffectiveBudgetSpend(start, FIXED_NOW)
+        }
+
+        assertEquals(MoneyDisplayUnavailableReasonCode.HOME_CURRENCY_UNAVAILABLE, thrown.reasonCode)
+        assertEquals("HOME_CURRENCY_UNAVAILABLE", thrown.message)
+        coVerify(exactly = 0) {
+            converter.convertAsOf(any<Double>(), any<String>(), any<String>(), any<Long>())
+        }
+    }
+
+    @Test
+    fun `AE-15 home currency call throwing synchronously also maps to typed unavailable`() = runTest {
+        val start = FIXED_NOW - 7L * DAY_MS
+        every { currencySettingsRepository.homeCurrency() } throws IOException("settings unavailable")
+        coEvery { expenseRepository.getExpensesBetween(start, FIXED_NOW) } returns emptyList()
+        coEvery { groupsRepository.getActiveGroupsWithDetails() } returns emptyList()
+
+        val thrown = assertFailsWith<MoneyDisplayUnavailableException> {
+            engine.calculateEffectiveBudgetSpend(start, FIXED_NOW)
+        }
+
+        assertEquals(MoneyDisplayUnavailableReasonCode.HOME_CURRENCY_UNAVAILABLE, thrown.reasonCode)
+        coVerify(exactly = 0) {
+            converter.convertAsOf(any<Double>(), any<String>(), any<String>(), any<Long>())
+        }
+    }
+
+    @Test
+    fun `AE-15 home currency read cancellation propagates and is not mapped to unavailable`() = runTest {
+        val start = FIXED_NOW - 7L * DAY_MS
+        every { currencySettingsRepository.homeCurrency() } returns flow { throw CancellationException("cancelled") }
+        coEvery { expenseRepository.getExpensesBetween(start, FIXED_NOW) } returns emptyList()
+        coEvery { groupsRepository.getActiveGroupsWithDetails() } returns emptyList()
+
+        assertFailsWith<CancellationException> {
+            engine.calculateEffectiveBudgetSpend(start, FIXED_NOW)
+        }
+        coVerify(exactly = 0) {
+            converter.convertAsOf(any<Double>(), any<String>(), any<String>(), any<Long>())
         }
     }
 

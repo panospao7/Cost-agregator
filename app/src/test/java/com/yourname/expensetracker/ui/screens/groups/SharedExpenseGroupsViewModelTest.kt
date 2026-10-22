@@ -10,8 +10,14 @@ import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.GroupDetailsAggregate
 import com.yourname.expensetracker.data.repository.GroupsRepository
 import com.yourname.expensetracker.data.repository.ManualExpenseRepository
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import com.yourname.expensetracker.domain.groups.GroupCreationResult
 import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
+import com.yourname.expensetracker.domain.groups.GroupSettlementBalancePolicy
+import com.yourname.expensetracker.domain.groups.SharedGroupSettlement
+import com.yourname.expensetracker.domain.logic.SplitCalculator
 import com.yourname.expensetracker.domain.logic.CustomSplitJsonCodec
 import com.yourname.expensetracker.domain.groups.usecase.AddGroupMemberUseCase
 import com.yourname.expensetracker.domain.groups.usecase.AddGroupExpenseUseCase
@@ -23,6 +29,7 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
@@ -160,7 +167,7 @@ class SharedExpenseGroupsViewModelTest : ViewModelTestUtils() {
             val afterAdd = awaitItem()
             assertFalse(afterAdd.isLoading)
             assertEquals(1, afterAdd.groups.first().expenses.size)
-            assertEquals(24.5, afterAdd.groups.first().totalSpent, 0.0)
+            assertEquals(24.5, afterAdd.groups.first().displayed.includedTotal!!, 0.0)
             assertFalse(afterAdd.addingExpense)
 
             cancelAndIgnoreRemainingEvents()
@@ -417,7 +424,7 @@ class SharedExpenseGroupsViewModelTest : ViewModelTestUtils() {
         assertTrue(refreshedState.addingExpense)
         assertEquals(1L, refreshedState.selectedGroup?.group?.id)
         assertEquals(1, refreshedState.selectedGroup?.expenses?.size)
-        assertEquals(50.0, refreshedState.selectedGroup?.totalSpent ?: 0.0, 0.0)
+        assertEquals(50.0, refreshedState.selectedGroup?.displayed?.includedTotal ?: 0.0, 0.0)
     }
 
     @Test
@@ -678,6 +685,12 @@ class SharedExpenseGroupsViewModelTest : ViewModelTestUtils() {
     private fun createViewModel(): SharedExpenseGroupsViewModel {
         val currencyRepo = mockk<CurrencySettingsRepository>(relaxed = true)
         every { currencyRepo.homeCurrency() } returns flowOf("EUR")
+        // loadGroups reads the home currency through resolveHomeCurrency() (INV-10/INV-20).
+        coEvery { currencyRepo.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
+        return createViewModel(currencyRepo)
+    }
+
+    private fun createViewModel(currencyRepo: CurrencySettingsRepository): SharedExpenseGroupsViewModel {
         return SharedExpenseGroupsViewModel(
             groupsRepository = groupsRepository,
             addGroupMemberUseCase = addGroupMemberUseCase,
@@ -703,17 +716,17 @@ class SharedExpenseGroupsViewModelTest : ViewModelTestUtils() {
             settlements = listOf(payment, payment.copy(currency = "USD"), payment.copy(status = "CANCELLED"))))
         viewModel = createViewModel()
         advanceUntilIdle()
-        val displayed = viewModel.uiState.value.groups.single()
-        assertEquals(30.0, displayed.memberBalances.getValue(11L), 0.0)
-        assertEquals(-30.0, displayed.memberBalances.getValue(12L), 0.0)
-        assertEquals(100.0, displayed.totalSpent, 0.0)
-        assertEquals(mapOf(11L to 50.0, 12L to 50.0), displayed.expenses.single().splitAmounts)
+        val shown = viewModel.uiState.value.groups.single()
+        assertEquals(30.0, shown.displayed.memberBalances.getValue(11L), 0.0)
+        assertEquals(-30.0, shown.displayed.memberBalances.getValue(12L), 0.0)
+        assertEquals(100.0, shown.displayed.includedTotal!!, 0.0)
+        assertEquals(mapOf(11L to 50.0, 12L to 50.0), shown.expenses.single().splitAmounts)
 
         coEvery { groupsRepository.getActiveGroupsWithDetails() } returns listOf(aggregate.copy(
             settlements = listOf(payment.copy(amount = 50.0, status = "COMPLETED"))))
         viewModel = createViewModel()
         advanceUntilIdle()
-        assertTrue(viewModel.uiState.value.groups.single().memberBalances.values.all { it == 0.0 })
+        assertTrue(viewModel.uiState.value.groups.single().displayed.memberBalances.values.all { it == 0.0 })
     }
 
     @Test
@@ -728,6 +741,187 @@ class SharedExpenseGroupsViewModelTest : ViewModelTestUtils() {
         advanceUntilIdle()
         assertTrue(requireNotNull(loadJob).isCancelled)
         assertNull(viewModel.uiState.value.error)
+    }
+
+    // ==================== money-aggregates-sweep S2 ====================
+
+    private fun twoMembers(): List<GroupMember> = listOf(
+        GroupMember(id = 11L, groupId = 1L, name = "Alex", isCurrentUser = true),
+        GroupMember(id = 12L, groupId = 1L, name = "Sam")
+    )
+
+    @Test
+    fun `AE-1 displayed group figures equal the policy output for a partial group`() = runTest(testDispatcher) {
+        advanceUntilIdle()
+        val members = twoMembers()
+        val expenses = listOf(
+            createGroupExpense(100L, 1L, 11L, 30.0),
+            createGroupExpense(101L, 1L, 12L, 20.0, currency = "USD")
+        )
+        val settlements = listOf(
+            SharedGroupSettlement(1L, 12L, 11L, 5.0, "EUR", "RECORDED"),
+            SharedGroupSettlement(1L, 12L, 11L, 7.0, "GBP", "COMPLETED")
+        )
+        val aggregate = createAggregate(1L, "Trip", members = members, expenses = expenses)
+            .copy(settlements = settlements)
+        coEvery { groupsRepository.getActiveGroupsWithDetails() } returns listOf(aggregate)
+
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        val shown = viewModel.uiState.value.groups.single()
+        val expected = GroupSettlementBalancePolicy.displayedBalances(1L, "EUR", expenses, members, settlements)
+        assertEquals(expected, shown.displayed)
+        assertEquals(GroupSettlementBalancePolicy.Availability.PARTIAL, shown.displayed.availability)
+        assertEquals(30.0, shown.displayed.includedTotal!!, 0.0)
+        assertEquals(1, shown.displayed.excludedExpenseCount)
+        assertEquals(1, shown.displayed.excludedSettlementCount)
+        assertFalse(shown.displayed.settlementPlanAllowed)
+        assertEquals("EUR", shown.currency)
+    }
+
+    @Test
+    fun `AE-1 available group keeps the previous total and balances`() = runTest(testDispatcher) {
+        advanceUntilIdle()
+        val members = twoMembers()
+        val expenses = listOf(
+            createGroupExpense(100L, 1L, 11L, 10.10),
+            createGroupExpense(101L, 1L, 12L, 20.20)
+        )
+        val settlements = listOf(SharedGroupSettlement(1L, 12L, 11L, 5.0, "EUR", "RECORDED"))
+        val aggregate = createAggregate(1L, "Trip", members = members, expenses = expenses)
+            .copy(settlements = settlements)
+        coEvery { groupsRepository.getActiveGroupsWithDetails() } returns listOf(aggregate)
+
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        val shown = viewModel.uiState.value.groups.single().displayed
+        assertEquals(GroupSettlementBalancePolicy.Availability.AVAILABLE, shown.availability)
+        assertEquals(listOf(10.10, 20.20).sumOf { it }, shown.includedTotal!!, 0.0)
+        assertEquals(
+            GroupSettlementBalancePolicy.applyToBalances(
+                SplitCalculator.calculateBalances(expenses, members), settlements, 1L, "EUR"
+            ),
+            shown.memberBalances
+        )
+        assertEquals(0, shown.excludedExpenseCount)
+        assertEquals(0, shown.excludedSettlementCount)
+        assertTrue(shown.settlementPlanAllowed)
+    }
+
+    @Test
+    fun `AE-10 home currency read failure leaves it null and the list still loads without error`() =
+        runTest(testDispatcher) {
+            advanceUntilIdle()
+            coEvery { groupsRepository.getActiveGroupsWithDetails() } returns
+                listOf(createAggregate(1L, "Trip"))
+            val repo = mockk<CurrencySettingsRepository>(relaxed = true)
+            every { repo.homeCurrency() } returns flowOf("EUR")
+            coEvery { repo.resolveHomeCurrency() } throws java.io.IOException("home read failed")
+
+            viewModel = createViewModel(repo)
+            advanceUntilIdle()
+
+            val state = viewModel.uiState.value
+            assertNull(state.homeCurrency)
+            assertEquals(1, state.groups.size)
+            assertNull(state.error)
+            assertFalse(state.isLoading)
+        }
+
+    @Test
+    fun `AE-10 failed home resolution leaves it null and never substitutes a currency`() =
+        runTest(testDispatcher) {
+            advanceUntilIdle()
+            coEvery { groupsRepository.getActiveGroupsWithDetails() } returns
+                listOf(createAggregate(1L, "Trip"))
+            val repo = mockk<CurrencySettingsRepository>(relaxed = true)
+            every { repo.homeCurrency() } returns flowOf("EUR")
+            coEvery { repo.resolveHomeCurrency() } returns HomeCurrencyResolution.Failed("unreadable")
+
+            viewModel = createViewModel(repo)
+            advanceUntilIdle()
+
+            val state = viewModel.uiState.value
+            assertNull(state.homeCurrency)
+            assertEquals(1, state.groups.size)
+            assertNull(state.error)
+        }
+
+    @Test
+    fun `home currency state carries the resolved non-EUR code`() = runTest(testDispatcher) {
+        advanceUntilIdle()
+        val repo = mockk<CurrencySettingsRepository>(relaxed = true)
+        every { repo.homeCurrency() } returns flowOf("EUR")
+        coEvery { repo.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("GBP"))
+
+        viewModel = createViewModel(repo)
+        advanceUntilIdle()
+
+        assertEquals("GBP", viewModel.uiState.value.homeCurrency)
+    }
+
+    @Test
+    fun `AE-10 INV-20 home read cancellation propagates and commits no state`() = runTest(testDispatcher) {
+        advanceUntilIdle()
+        coEvery { groupsRepository.getActiveGroupsWithDetails() } returns
+            listOf(createAggregate(1L, "Trip"))
+        val repo = mockk<CurrencySettingsRepository>(relaxed = true)
+        every { repo.homeCurrency() } returns flowOf("EUR")
+        coEvery { repo.resolveHomeCurrency() } throws kotlinx.coroutines.CancellationException("cancelled-by-test")
+
+        viewModel = createViewModel(repo)
+        advanceUntilIdle()
+
+        // Not swallowed: no list was published, no error was set, loading never started.
+        assertEquals(GroupsUiState(), viewModel.uiState.value)
+    }
+
+    @Test
+    fun `INV-20 cancellation swallowed by the repository as Failed still propagates`() =
+        runTest(testDispatcher) {
+            advanceUntilIdle()
+            coEvery { groupsRepository.getActiveGroupsWithDetails() } returns
+                listOf(createAggregate(1L, "Trip"))
+            // Real CurrencySettingsRepositoryImpl catches Exception (incl. cancellation) and
+            // returns Failed; the job is cancelled by then, so ensureActive() must stop the load.
+            val repo = mockk<CurrencySettingsRepository>(relaxed = true)
+            every { repo.homeCurrency() } returns flowOf("EUR")
+            coEvery { repo.resolveHomeCurrency() } coAnswers {
+                kotlinx.coroutines.currentCoroutineContext().cancel()
+                HomeCurrencyResolution.Failed("cancelled")
+            }
+
+            viewModel = createViewModel(repo)
+            advanceUntilIdle()
+
+            assertEquals(GroupsUiState(), viewModel.uiState.value)
+        }
+
+    @Test
+    fun `AE-11 createGroup forwards the explicitly picked currency unchanged`() = runTest(testDispatcher) {
+        advanceUntilIdle()
+        coEvery {
+            groupsRepository.createGroup(
+                name = "Trip",
+                description = null,
+                currency = "GBP",
+                currentUserName = "You"
+            )
+        } returns GroupCreationResult.Error("test stop")
+
+        viewModel.createGroup("Trip", null, "GBP")
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) {
+            groupsRepository.createGroup(
+                name = "Trip",
+                description = null,
+                currency = "GBP",
+                currentUserName = "You"
+            )
+        }
     }
 
     private fun createAggregate(
@@ -758,7 +952,8 @@ class SharedExpenseGroupsViewModelTest : ViewModelTestUtils() {
         id: Long,
         groupId: Long,
         paidById: Long,
-        amount: Double
+        amount: Double,
+        currency: String = "EUR"
     ): GroupExpense {
         return GroupExpense(
             id = id,
@@ -768,7 +963,7 @@ class SharedExpenseGroupsViewModelTest : ViewModelTestUtils() {
             date = 1_700_000_000_000L,
             description = "Dinner",
             totalAmount = amount,
-            currency = "EUR",
+            currency = currency,
             splitType = SplitType.EQUAL
         )
     }

@@ -12,10 +12,14 @@ import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.recurring.usecase.MarkPaidResult
 import com.yourname.expensetracker.domain.recurring.usecase.MarkRecurringBillPaidUseCase
+import com.yourname.expensetracker.domain.util.CancellationSafe
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.ui.screens.subscription.SubscriptionTotalStatus
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
@@ -30,7 +34,16 @@ data class ManualRecurringExpenseUiState(
     val recurringExpenses: List<ManualRecurringExpense> = emptyList(),
     val isLoading: Boolean = false,
     val error: String? = null,
-    val totalMonthly: Double = 0.0,
+    /**
+     * INV-12/13: monthly total in [totalCurrency] over the active rules in that currency only.
+     * Null iff [totalStatus] is UNAVAILABLE (home currency read failed); never rendered as zero.
+     */
+    val totalMonthly: Double? = null,
+    /** INV-14: the home code that decided inclusion; the total card label uses this. */
+    val totalCurrency: String? = null,
+    val totalStatus: SubscriptionTotalStatus = SubscriptionTotalStatus.UNAVAILABLE,
+    /** Active rules left out of [totalMonthly] because their currency differs from [totalCurrency]. */
+    val excludedRuleCount: Int = 0,
     val activeCount: Int = 0,
     val upcomingCount: Int = 0,
     val referenceNowMillis: Long = 0L,
@@ -89,11 +102,10 @@ class ManualRecurringExpenseViewModel @Inject constructor(
                 val expenses = recurringExpenseRepository.getAll()
                 val activeExpenses = expenses.filter { it.isActive }
                 
-                // Calculate monthly total
-                val totalMonthly = activeExpenses.sumOf { expense ->
-                    calculateMonthlyAmount(expense.amount, expense.frequency)
-                }
-                
+                // INV-12/13: home currency read once, behind its own boundary; the total only
+                // includes active rules in that currency (no conversion, no literal fallback).
+                val monthlyTotal = computeMonthlyTotal(activeExpenses, readHomeCurrencyCode())
+
                 // Count upcoming (next 7 days)
                 val oneWeekFromNow = timeProvider.now() + (7L * TimePeriodUtils.DAY_IN_MILLIS)
                 val upcomingCount = activeExpenses.count { it.nextDate <= oneWeekFromNow }
@@ -102,7 +114,10 @@ class ManualRecurringExpenseViewModel @Inject constructor(
                     recurringExpenses = expenses.sortedBy { it.nextDate },
                     isLoading = false,
                     error = null,
-                    totalMonthly = totalMonthly,
+                    totalMonthly = monthlyTotal.monthly,
+                    totalCurrency = monthlyTotal.currency,
+                    totalStatus = monthlyTotal.status,
+                    excludedRuleCount = monthlyTotal.excludedRuleCount,
                     activeCount = activeExpenses.size,
                     upcomingCount = upcomingCount,
                     referenceNowMillis = timeProvider.now(),
@@ -121,8 +136,59 @@ class ManualRecurringExpenseViewModel @Inject constructor(
         }
     }
     
-    private fun calculateMonthlyAmount(amount: Double, frequency: RecurrenceFrequency): Double {
-        return RecurrenceCalculator.toMonthlyAmount(amount, frequency)
+    private data class MonthlyTotal(
+        val monthly: Double?,
+        val currency: String?,
+        val status: SubscriptionTotalStatus,
+        val excludedRuleCount: Int
+    )
+
+    /**
+     * INV-12/13: sums [RecurrenceCalculator.toMonthlyAmount] over the active rules whose stored
+     * currency equals [homeCode] (exact string equality). Active rules in any other currency are
+     * left out and counted. A null [homeCode] means the home read was unavailable: no total
+     * (never 0.0) and no count. Inactive rules are neither summed nor counted. No conversion.
+     */
+    private fun computeMonthlyTotal(activeExpenses: List<ManualRecurringExpense>, homeCode: String?): MonthlyTotal {
+        if (homeCode == null) {
+            return MonthlyTotal(
+                monthly = null,
+                currency = null,
+                status = SubscriptionTotalStatus.UNAVAILABLE,
+                excludedRuleCount = 0
+            )
+        }
+        val included = activeExpenses.filter { it.currency == homeCode }
+        val excludedRuleCount = activeExpenses.size - included.size
+        val monthly = included.sumOf { rule ->
+            RecurrenceCalculator.toMonthlyAmount(rule.amount, rule.frequency)
+        }
+        return MonthlyTotal(
+            monthly = monthly,
+            currency = homeCode,
+            status = if (excludedRuleCount > 0) {
+                SubscriptionTotalStatus.PARTIAL
+            } else {
+                SubscriptionTotalStatus.AVAILABLE
+            },
+            excludedRuleCount = excludedRuleCount
+        )
+    }
+
+    /**
+     * INV-13/INV-20: the home currency code, or null when the read threw (other than
+     * cancellation) or resolved as [HomeCurrencyResolution.Failed]. Cancellation always
+     * propagates; it is never turned into an unavailable total or an error text. The first-run
+     * default counts as a real home currency (D-HOME).
+     */
+    private suspend fun readHomeCurrencyCode(): String? {
+        val resolution = CancellationSafe.runCatchingCancellable {
+            currencySettingsRepository.resolveHomeCurrency()
+        }.getOrNull()
+        // The repository implementation catches Exception and reports Failed, so a cancelled
+        // coroutine must not carry on with an "unavailable" result.
+        currentCoroutineContext().ensureActive()
+        return resolution?.currencyOrNull?.code
     }
     
     /**

@@ -159,7 +159,8 @@ class BudgetViewModel @Inject constructor(
 
     /**
      * Calculate adjusted spend breakdown for a budget status.
-     * Uses the offset engine to compute net shared liability.
+     * Uses the offset engine to compute net shared liability. Fallback only: mirrors
+     * [BudgetRepository]'s mapping (null = effective spend unavailable).
      */
     private suspend fun calculateAdjustedSpend(status: BudgetStatus): AdjustedSpendBreakdown? {
         return try {
@@ -178,7 +179,9 @@ class BudgetViewModel @Inject constructor(
                 pendingReimbursements = breakdown.getPendingReimbursement()
             )
         } catch (e: Exception) {
-            // Return null on error; UI will fall back to raw spend
+            // INV-16/INV-20: cancellation propagates; any other failure means
+            // "effective spend unavailable" (null), same mapping as BudgetRepository.
+            if (e is kotlinx.coroutines.CancellationException) throw e
             null
         }
     }

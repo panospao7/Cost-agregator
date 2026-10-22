@@ -680,6 +680,7 @@ FORBIDDEN:
      value only and delegates to ComparableHomeValue.snapshotValue)
   ❌ Writing base fields (baseAmount/baseCurrency/exchangeRateUsed) outside TLC (Rescue restore
      excepted: identity/sentinel only, via FinancialRescueCoordinator.rescueSnapshotFields)
+  ❌ Substituting a literal currency for an unavailable home currency in any displayed total
 ```
 
 ---
@@ -823,7 +824,8 @@ CREATE system expense AND link to group (atomic):
 
 RECORD settlement:
   → REMOVED — no production settlement writer exists; GroupSettlementDao is
-    read-only (consumed by GroupBalanceCalculator / SettlementCalculator)
+    read-only (consumed for display by GroupSettlementBalancePolicy.displayedBalances;
+    GroupBalanceCalculator / SettlementCalculator have no production caller)
 
 ARCHIVE / RESTORE / DELETE group:
   → SharedExpenseManager.archiveGroup() / restoreGroup() / deleteGroup()
@@ -833,11 +835,13 @@ ARCHIVE / RESTORE / DELETE group:
       GroupMemberDao + ExpenseGroupDao), clears shared-expense flags on linked
       system expenses, writes TransactionLifecycleEvent (BULK_UPDATED)
 
-CALCULATE balances:
-  → GroupBalanceCalculator.calculateMemberBalance(groupId, memberId)
-  → Read-only: sums paidTotal, owedShareTotal via SplitCalculator, settlements
-  → Returns GroupMemberBalance (isSettled when |netBalance| <= 0.01)
-  → SharedExpenseManager.calculateBalances() for the all-member snapshot
+CALCULATE balances (display):
+  → GroupSettlementBalancePolicy.displayedBalances(groupId, groupCurrency, expenses, members, settlements)
+  → Read-only, pure. Includes only rows/settlements in the group currency; excludes and counts the rest.
+  → Returns availability (AVAILABLE/PARTIAL/UNAVAILABLE), included-only total, balances, excluded counts.
+  → Suggested settlement plan only when AVAILABLE.
+  GroupBalanceCalculator.calculateMemberBalance / SharedExpenseManager.calculateBalances():
+  → no production caller; no new callers; pending owner decision (Inc 3).
 
 FORBIDDEN:
   ❌ ExpenseGroupDao.insert() outside GroupTransactionCoordinator
@@ -850,6 +854,8 @@ FORBIDDEN:
   ❌ Any group mutation without a barrier-checked entry (SharedExpenseManager
      facade or GroupTransactionCoordinator)
   ❌ Hard-deleting a group without checking for linked system expenses
+  ❌ Summing group amounts or calling SplitCalculator.calculateBalances for display outside
+     GroupSettlementBalancePolicy
 
 ENFORCEMENT:
   • The domain `GroupTransactionCoordinator` interface is implemented by

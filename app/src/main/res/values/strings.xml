@@ -639,6 +639,9 @@
     <string name="groups_split_type_label">Split Type</string>
     <string name="groups_settlement_plan_title">Suggested transfers</string>
     <string name="groups_suggested_transfers_hint">Suggested payments to even out balances. Payments are not recorded in the app.</string>
+    <string name="groups_total_unavailable">Unavailable</string>
+    <string name="groups_balances_unavailable">Balances unavailable</string>
+    <string name="groups_currency_not_selected">Select a currency</string>
     <string name="groups_member_fallback_format">Member #%1$d</string>
     <string name="groups_split_hint_enter_percent">Enter each member\'s percentage</string>
     <string name="groups_split_hint_enter_amount">Enter each member\'s amount</string>
@@ -707,6 +710,13 @@
     <string name="recurring_advanced_only_info">No new expense was added. The next date was moved forward.</string>
     <string name="recurring_error_currency_unavailable">Your home currency could not be read, so the recurring expense was not saved. Please try again.</string>
     <string name="recurring_error_generic">Something went wrong. Please try again.</string>
+    <!-- Monthly total card (money-aggregates-sweep S3): counts only, no description, amount or currency.
+         money_total_partial_notice is shared by the recurring monthly total and the group total cards (S2). -->
+    <string name="recurring_total_unavailable">Monthly total unavailable</string>
+    <plurals name="money_total_partial_notice">
+        <item quantity="one">%1$d item left out of the total</item>
+        <item quantity="other">%1$d items left out of the total</item>
+    </plurals>
     <string name="recurring_error_update">Failed to update status: %1$s</string>
     <string name="recurring_error_delete">Failed to delete: %1$s</string>
     
@@ -2175,6 +2185,11 @@
     <string name="budget_reimbursed_amount">Reimbursed</string>
     <string name="budget_net_liability">Net Liability</string>
     <string name="budget_effective_spend">Effective Spend</string>
+    <!-- Money aggregates sweep INV-17: effective spend unavailable. Neutral copy: no amount, percent or currency. -->
+    <string name="budget_effective_spend_unavailable">Effective spend unavailable</string>
+    <string name="budget_remaining_unavailable">Remaining unavailable</string>
+    <string name="budget_usage_unavailable">Usage and status unavailable</string>
+    <string name="budget_cd_spend_unavailable_format">%1$s budget, %2$s, spending unavailable</string>
     <!-- Month Short Names -->
     <string name="month_jan_short">Jan</string>
     <string name="month_feb_short">Feb</string>

@@ -183,6 +183,33 @@ class BudgetRepositoryDiagnosticsTest {
         assertEquals(3L, event.entityId)
     }
 
+    // AE-16 (INV-16): an unavailable effective spend is a read-side null, not a write: the status read
+    // emits no durable diagnostic and issues no DAO write, and the failure is not rethrown.
+    @Test
+    fun `AE-16 offset engine unavailable yields null breakdown with no diagnostic event and no write`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val budget = validBudget(amount = 1_000.0).copy(id = 5L)
+            val evaluationTime = 1_000_000L
+            val start = 0L
+            val end = 2_000_000L
+            coEvery { budgetDao.getActiveBudgets() } returns listOf(budget)
+            coEvery { categoryDao.getAll() } returns emptyList()
+            every { budgetCalculator.calculatePeriodRange(budget, evaluationTime) } returns (start to end)
+            coEvery { offsetEngine.calculateEffectiveBudgetSpend(start, end, null) } throws
+                com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableException(
+                    com.yourname.expensetracker.domain.core.money.MoneyDisplayUnavailableReasonCode
+                        .HOME_CURRENCY_UNAVAILABLE
+                )
+
+            val status = repository.getBudgetStatusesAt(evaluationTime).single()
+
+            assertEquals(null, status.adjustedSpendBreakdown)
+            assertTrue("A status read must not emit durable diagnostics", emitted.isEmpty())
+            coVerify(exactly = 0) { budgetDao.insert(any()) }
+            coVerify(exactly = 0) { budgetDao.update(any()) }
+            coVerify(exactly = 0) { budgetDao.delete(any()) }
+        }
+
     @Test
     fun `event writer failure does not fail the budget mutation`() = runTest(UnconfinedTestDispatcher()) {
         // Best-effort contract: a throwing writer must be swallowed and the mutation must succeed.

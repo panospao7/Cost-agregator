@@ -71,12 +71,19 @@
     <string name="receipt_reopened_existing_notice">Αυτή η απόδειξη έχει ήδη σαρωθεί. Εμφανίζεται η αποθηκευμένη απόδειξη.</string>
     <string name="budget_currency_display_format">Νόμισμα: %1$s</string>
     <string name="budget_confirm_currency_action">Επιβεβαίωση νομίσματος</string>
+    <string name="budget_effective_spend_unavailable">Η πραγματική δαπάνη δεν είναι διαθέσιμη</string>
+    <string name="budget_remaining_unavailable">Το υπόλοιπο δεν είναι διαθέσιμο</string>
+    <string name="budget_usage_unavailable">Η χρήση και η κατάσταση δεν είναι διαθέσιμες</string>
+    <string name="budget_cd_spend_unavailable_format">Προϋπολογισμός %1$s, %2$s, η δαπάνη δεν είναι διαθέσιμη</string>
     <string name="financial_runway_review_budget">Έλεγχος προϋπολογισμού</string>
     <string name="backup_restore_receipt_images_skipped_format">Δεν ήταν δυνατή η επαναφορά %1$d εικόνων αποδείξεων.</string>
     <string name="restart_required_database_operation">Η εφαρμογή πρέπει να επανεκκινηθεί για να ολοκληρωθεί μια λειτουργία της βάσης δεδομένων. Οι αλλαγές είναι σε παύση μέχρι την επανεκκίνηση.</string>
     <!-- R18b: user-started write attempted while backup/restore/reset holds the write barrier -->
     <string name="ui_write_blocked_maintenance">Οι αλλαγές είναι σε παύση όσο εκτελείται αντίγραφο ασφαλείας ή επαναφορά. Δοκιμάστε ξανά σε λίγο.</string>
     <string name="groups_suggested_transfers_hint">Προτεινόμενες πληρωμές για την εξισορρόπηση των υπολοίπων. Οι πληρωμές δεν καταγράφονται στην εφαρμογή.</string>
+    <string name="groups_total_unavailable">Μη διαθέσιμο</string>
+    <string name="groups_balances_unavailable">Τα υπόλοιπα δεν είναι διαθέσιμα</string>
+    <string name="groups_currency_not_selected">Επιλέξτε νόμισμα</string>
     <string name="warranty_mutation_failed">Δεν ήταν δυνατή η αποθήκευση της αλλαγής. Δοκιμάστε ξανά.</string>
     <string name="recurring_mark_paid_dialog_title">Σήμανση λογαριασμού ως πληρωμένου</string>
     <string name="recurring_mark_paid_dialog_body">Θέλετε να καταγράψετε πληρωμή %2$s για %1$s ή η πληρωμή έχει ήδη καταγραφεί;</string>
@@ -86,6 +93,11 @@
     <string name="recurring_advanced_only_info">Δεν προστέθηκε νέο έξοδο. Η επόμενη ημερομηνία μετακινήθηκε μπροστά.</string>
     <string name="recurring_error_currency_unavailable">Δεν ήταν δυνατή η ανάγνωση του βασικού σας νομίσματος, γι\' αυτό το επαναλαμβανόμενο έξοδο δεν αποθηκεύτηκε. Δοκιμάστε ξανά.</string>
     <string name="recurring_error_generic">Κάτι πήγε στραβά. Δοκιμάστε ξανά.</string>
+    <string name="recurring_total_unavailable">Το μηνιαίο σύνολο δεν είναι διαθέσιμο</string>
+    <plurals name="money_total_partial_notice">
+        <item quantity="one">%1$d στοιχείο έμεινε εκτός του συνόλου</item>
+        <item quantity="other">%1$d στοιχεία έμειναν εκτός του συνόλου</item>
+    </plurals>
     <string name="feature_privacy_settings">Ρυθμίσεις απορρήτου</string>
     <string name="feature_privacy_settings_desc">Ελέγξτε πώς χρησιμοποιούνται τα δεδομένα σας</string>
     <!-- R24b: notification permission dialog button when the system will no longer ask -->

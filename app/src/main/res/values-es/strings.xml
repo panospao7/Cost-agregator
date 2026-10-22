@@ -319,12 +319,19 @@
     <string name="receipt_reopened_existing_notice">Este recibo ya fue escaneado. Se muestra el recibo guardado.</string>
     <string name="budget_currency_display_format">Moneda: %1$s</string>
     <string name="budget_confirm_currency_action">Confirmar moneda</string>
+    <string name="budget_effective_spend_unavailable">El gasto efectivo no está disponible</string>
+    <string name="budget_remaining_unavailable">El restante no está disponible</string>
+    <string name="budget_usage_unavailable">El uso y el estado no están disponibles</string>
+    <string name="budget_cd_spend_unavailable_format">Presupuesto %1$s, %2$s, gasto no disponible</string>
     <string name="financial_runway_review_budget">Revisar presupuesto</string>
     <string name="backup_restore_receipt_images_skipped_format">No se pudieron restaurar %1$d imágenes de recibos.</string>
     <string name="restart_required_database_operation">La aplicación debe reiniciarse para terminar una operación de la base de datos. Los cambios están en pausa hasta que se reinicie.</string>
     <!-- R18b: user-started write attempted while backup/restore/reset holds the write barrier -->
     <string name="ui_write_blocked_maintenance">Los cambios están en pausa mientras se realiza una copia de seguridad o una restauración. Inténtalo de nuevo en un momento.</string>
     <string name="groups_suggested_transfers_hint">Pagos sugeridos para equilibrar los saldos. Los pagos no se registran en la aplicación.</string>
+    <string name="groups_total_unavailable">No disponible</string>
+    <string name="groups_balances_unavailable">Los saldos no están disponibles</string>
+    <string name="groups_currency_not_selected">Selecciona una moneda</string>
     <string name="warranty_mutation_failed">No se pudo guardar el cambio. Inténtalo de nuevo.</string>
     <string name="recurring_mark_paid_dialog_title">Marcar factura como pagada</string>
     <string name="recurring_mark_paid_dialog_body">¿Quieres registrar un pago de %2$s para %1$s o este pago ya estaba registrado?</string>
@@ -334,6 +341,12 @@
     <string name="recurring_advanced_only_info">No se añadió ningún gasto nuevo. La próxima fecha se adelantó.</string>
     <string name="recurring_error_currency_unavailable">No se pudo leer tu moneda principal, por lo que el gasto recurrente no se guardó. Inténtalo de nuevo.</string>
     <string name="recurring_error_generic">Algo salió mal. Inténtalo de nuevo.</string>
+    <string name="recurring_total_unavailable">El total mensual no está disponible</string>
+    <plurals name="money_total_partial_notice">
+        <item quantity="one">%1$d elemento queda fuera del total</item>
+        <item quantity="many">%1$d de elementos quedan fuera del total</item>
+        <item quantity="other">%1$d elementos quedan fuera del total</item>
+    </plurals>
     <!-- R24b: notification permission dialog button when the system will no longer ask -->
     <string name="notification_open_settings_button">Abrir ajustes</string>
     <!-- R24c: shown when the receipt currency could not be read and the home currency was assumed -->

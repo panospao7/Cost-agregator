@@ -232,18 +232,22 @@ class BudgetMonitor @Inject constructor(
             }
         }
 
-        // P6-P1-2: Use adjustedSpendBreakdown.effectiveSpend when available (shared-expense offset),
-        // falling back to raw spentAmount.BudgetStatus.spentAmount is gross spend and does not
-        // account for shared-expense reimbursements, which can trigger false threshold alerts.
+        // P6-P1-2: Use adjustedSpendBreakdown.effectiveSpend (shared-expense offset).
+        // BudgetStatus.spentAmount is gross spend and does not account for shared-expense
+        // reimbursements, which can trigger false threshold alerts; it never drives an alert
+        // (money-aggregates INV-18: a null breakdown skips with EFFECTIVE_SPEND_UNAVAILABLE).
         //
         // P6-CURRENT-002 (RESOLVED): adjustedSpendBreakdown is now populated by
         // BudgetRepository.createBudgetStatus(), so the monitor and UI share the same
-        // effective spend. The gross spentAmount fallback only applies if the offset
-        // engine failed (breakdown null), which is logged in the repository.
-        val spent = status.adjustedSpendBreakdown?.effectiveSpend ?: status.spentAmount
-        // P6-CURRENT-027(b): record when the monitor falls back to gross spend because the
-        // shared-expense offset breakdown was unavailable (offset engine failed in the repo).
-        val grossFallback = status.adjustedSpendBreakdown == null
+        // effective spend.
+        //
+        // INV-18 (money-aggregates-sweep): a null breakdown means effective spend is
+        // unavailable (offset engine failed in the repo). Gross spentAmount never reaches an
+        // alert: the budget is skipped below, so `spent` is always the effective spend.
+        val adjustedBreakdown = status.adjustedSpendBreakdown
+        // P6-CURRENT-027(b): record when the shared-expense offset breakdown was unavailable
+        // (offset engine failed in the repo).
+        val grossFallback = adjustedBreakdown == null
         val categoryName = status.category?.name ?: "Overall"
         val periodStart = status.periodStart
 
@@ -278,6 +282,38 @@ class BudgetMonitor @Inject constructor(
             }
             return
         }
+
+        // INV-18: effective spend unavailable (breakdown null). Run no threshold comparison, send
+        // no notification and update no notified-at timestamp; nothing is persisted, so the next
+        // cycle re-evaluates. Emit one durable SKIPPED diagnostic with a bounded reason and no
+        // amount keys. Check order: PERCENT_UNKNOWN, this skip, NO_SPEND_OR_LIMIT.
+        if (adjustedBreakdown == null) {
+            withContext(ioDispatcher) {
+                try {
+                    writeBarrier.checkWritesAllowed("BudgetMonitor.diagnostic")
+                    diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                        pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.BUDGET,
+                        stage = "STATUS_SKIPPED",
+                        outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.SKIPPED,
+                        entityType = "BudgetStatus",
+                        entityId = budget.id,
+                        metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                            .put("grossFallback", grossFallback)
+                            .put("reason", "EFFECTIVE_SPEND_UNAVAILABLE")
+                            .build()
+                    ))
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    if (e is com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException) {
+                        diagnosticSink.recordBlockedOperation("BudgetMonitor.diagnostic", e.mode, "P6")
+                    } else {
+                        Timber.w(e, "BudgetMonitor: skipping diagnostic insert")
+                    }
+                }
+            }
+            return
+        }
+        val spent = adjustedBreakdown.effectiveSpend
 
         // P6-CURRENT-027(a): the early no-op return previously emitted nothing, leaving a gap
         // in the budget-check audit trail. Emit a durable SKIPPED diagnostic so a non-positive

@@ -36,7 +36,8 @@
 | **WorkerExecutionGuard** | ALL workers (all 10 CoroutineWorkers run through it, incl. `NotificationIntakeWorker` + snooze/dismiss reminder action workers), 7 (Backup restore gating) | 🟡 HIGH |
 | **WorkerRegistry** | 12 (Startup scheduling), 7 (Backup resume via spec lookup) | 🟢 LOW |
 | **SharedExpenseManager** | Groups, shared expenses (domain facade over `SharedExpenseDataPort` → `SharedExpenseDataPortAdapter` → `GroupTransactionCoordinator`; the GroupLifecycleCoordinator wrapper was removed, GR-14u36) | 🟡 HIGH |
-| **GroupBalanceCalculator** | Groups, Settlements | 🟢 LOW |
+| **GroupSettlementBalancePolicy** | Groups screen (displayed totals/balances, settlement plan gate), Settlements | 🟢 LOW |
+| **GroupBalanceCalculator** | none in production (no caller; pending owner decision, Inc 3) | 🟢 LOW |
 | **HybridRouter** | 8 (AI cloud/on-device routing), 10 (Bank statement), 3 (Receipt) | 🟡 HIGH |
 | **AccountingExportPolicy** | 12 (Export), Tax reports | 🟢 LOW |
 | **NetCashflowBalanceProvider** | 6 (Budget/Forecast/Cashflow) | 🟢 LOW |
@@ -161,7 +162,8 @@ SharedExpenseManager.createGroup() / addMember() / removeMember() / addExpense()
   ├── GroupTransactionCoordinator (atomic group/member/expense writes via DomainTransactionRunner)
   ├── TransactionLifecycleCoordinator (createExpenseDbOnlyV2 + updateOwnershipDbOnlyV2)
   ├── PostCommitActionRunner (post-commit side effects)
-  └── GroupBalanceCalculator / SplitCalculator (read-time balances)
+  └── GroupSettlementBalancePolicy.displayedBalances (read-time display balances; uses SplitCalculator;
+      GroupBalanceCalculator has no production caller, Inc 3)
 ```
 
 ### HybridRouter changes affect:

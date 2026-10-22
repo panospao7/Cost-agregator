@@ -552,11 +552,46 @@ class BudgetMonitorTest {
     fun monitor_flags_gross_fallback_when_adjusted_null() = runTest(testDispatcher) {
         val now = atDateTime(2026, 4, 10, 12, 0)
         every { timeProvider.now() } returns now
-        // adjustedSpendBreakdown defaults to null in budgetStatus(), forcing the gross-spend fallback.
+        // INV-18 (OPEN-6): the breakdown is explicitly null here (effective spend unavailable). The monitor
+        // no longer falls back to gross spend: it records a STATUS_SKIPPED with grossFallback=true.
         every { budgetRepository.getBudgetStatuses() } returns flowOf(
             listOf(
                 budgetStatus(
                     budget = budget(id = 55L, period = BudgetPeriod.MONTHLY),
+                    spentAmount = 80.0,
+                    percentUsed = 0.80f,
+                    periodStart = at(2026, 4, 1),
+                    adjustedSpendBreakdown = null
+                )
+            )
+        )
+
+        monitor.checkBudgets()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        // P6-CURRENT-027(b): the skip must carry a grossFallback=true flag when the
+        // shared-expense breakdown was unavailable.
+        val skipped = emittedEvents.singleOrNull { it.stage == "STATUS_SKIPPED" }
+        assertTrue("Expected a STATUS_SKIPPED diagnostic event", skipped != null)
+        val parsed = org.json.JSONObject(skipped!!.metadata.toJson())
+        assertTrue("STATUS_SKIPPED must include grossFallback flag", parsed.has("grossFallback"))
+        assertTrue(
+            "grossFallback must be true when adjusted breakdown is null",
+            parsed.getBoolean("grossFallback")
+        )
+        assertEquals("EFFECTIVE_SPEND_UNAVAILABLE", parsed.getString("reason"))
+        assertEquals("no STATUS_COMPUTED for an unavailable effective spend", 0, emittedEvents.count { it.stage == "STATUS_COMPUTED" })
+    }
+
+    @Test
+    fun `status computed records grossFallback false when the breakdown is present`() = runTest(testDispatcher) {
+        // Keeps the P6-CURRENT-027(b) flag coverage that the null-breakdown case no longer reaches.
+        val now = atDateTime(2026, 4, 10, 12, 0)
+        every { timeProvider.now() } returns now
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(
+            listOf(
+                budgetStatus(
+                    budget = budget(id = 56L, period = BudgetPeriod.MONTHLY),
                     spentAmount = 80.0,
                     percentUsed = 0.80f,
                     periodStart = at(2026, 4, 1)
@@ -567,16 +602,167 @@ class BudgetMonitorTest {
         monitor.checkBudgets()
         testDispatcher.scheduler.advanceUntilIdle()
 
-        // P6-CURRENT-027(b): STATUS_COMPUTED must carry a grossFallback=true flag when the
-        // shared-expense breakdown was unavailable.
         val computed = emittedEvents.singleOrNull { it.stage == "STATUS_COMPUTED" }
         assertTrue("Expected a STATUS_COMPUTED diagnostic event", computed != null)
         val parsed = org.json.JSONObject(computed!!.metadata.toJson())
         assertTrue("STATUS_COMPUTED must include grossFallback flag", parsed.has("grossFallback"))
-        assertTrue(
-            "grossFallback must be true when adjusted breakdown is null",
-            parsed.getBoolean("grossFallback")
+        assertEquals(false, parsed.getBoolean("grossFallback"))
+    }
+
+    // AE-18 (INV-18): breakdown == null is "effective spend unavailable". No threshold comparison, no
+    // notification, no notified-at update; exactly one bounded STATUS_SKIPPED and no amounts.
+    @Test
+    fun `AE-18 null breakdown with known percent skips with one bounded diagnostic and never alerts`() = runTest(testDispatcher) {
+        val now = atDateTime(2026, 4, 10, 12, 0)
+        every { timeProvider.now() } returns now
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(
+            listOf(
+                budgetStatus(
+                    budget = budget(id = 91L, period = BudgetPeriod.MONTHLY),
+                    spentAmount = 95.0,
+                    percentUsed = 0.95f,
+                    periodStart = at(2026, 4, 1),
+                    adjustedSpendBreakdown = null
+                ).copy(percentKnown = true)
+            )
         )
+
+        monitor.checkBudgets()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 0) { budgetRepository.updateWarningNotification(any(), any()) }
+        coVerify(exactly = 0) { budgetRepository.updateCriticalNotification(any(), any()) }
+        coVerify(exactly = 0) { budgetRepository.updateExceededNotification(any(), any()) }
+        val skipped = emittedEvents.filter { it.stage == "STATUS_SKIPPED" }
+        assertEquals("exactly one STATUS_SKIPPED", 1, skipped.size)
+        val skip = skipped.single()
+        assertEquals(EventOutcome.SKIPPED, skip.outcome)
+        assertEquals(91L, skip.entityId)
+        val parsed = org.json.JSONObject(skip.metadata.toJson())
+        assertEquals(true, parsed.getBoolean("grossFallback"))
+        assertEquals("EFFECTIVE_SPEND_UNAVAILABLE", parsed.getString("reason"))
+        // Bounded metadata: the two keys only, no amount, limit or percent.
+        val keys = parsed.keys().asSequence().toSet()
+        assertEquals(setOf("grossFallback", "reason"), keys)
+        assertEquals(0, emittedEvents.count { it.stage == "STATUS_COMPUTED" })
+        val alertStages = setOf("WARNING", "WARNING_THROTTLED", "CRITICAL", "CRITICAL_THROTTLED", "EXCEEDED", "EXCEEDED_THROTTLED")
+        assertEquals(0, emittedEvents.count { it.stage in alertStages })
+    }
+
+    @Test
+    fun `AE-18 null breakdown over the limit still never alerts on gross spend`() = runTest(testDispatcher) {
+        val now = atDateTime(2026, 4, 10, 12, 0)
+        every { timeProvider.now() } returns now
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(
+            listOf(
+                budgetStatus(
+                    budget = budget(id = 92L, period = BudgetPeriod.MONTHLY),
+                    spentAmount = 130.0,
+                    percentUsed = 1.3f,
+                    periodStart = at(2026, 4, 1),
+                    adjustedSpendBreakdown = null
+                )
+            )
+        )
+
+        monitor.checkBudgets()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 0) { budgetRepository.updateExceededNotification(any(), any()) }
+        assertEquals(1, emittedEvents.count { it.stage == "STATUS_SKIPPED" })
+    }
+
+    @Test
+    fun `AE-18 unknown percent with null breakdown records only PERCENT_UNKNOWN`() = runTest(testDispatcher) {
+        val now = atDateTime(2026, 4, 11, 9, 0)
+        every { timeProvider.now() } returns now
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(
+            listOf(
+                budgetStatus(
+                    budget = budget(id = 93L, period = BudgetPeriod.MONTHLY),
+                    spentAmount = 80.0,
+                    percentUsed = 0.95f,
+                    periodStart = at(2026, 4, 1),
+                    adjustedSpendBreakdown = null
+                ).copy(percentKnown = false)
+            )
+        )
+
+        monitor.checkBudgets()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val skipped = emittedEvents.filter { it.stage == "STATUS_SKIPPED" }
+        assertEquals("a single event, PERCENT_UNKNOWN first in the check order", 1, skipped.size)
+        val parsed = org.json.JSONObject(skipped.single().metadata.toJson())
+        assertEquals("PERCENT_UNKNOWN", parsed.getString("reason"))
+        assertEquals(true, parsed.getBoolean("grossFallback"))
+        verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
+    }
+
+    @Test
+    fun `AE-18 present breakdown alerts on effective spend not on gross spend`() = runTest(testDispatcher) {
+        val now = atDateTime(2026, 4, 10, 12, 0)
+        every { timeProvider.now() } returns now
+        // Gross spentAmount is only 50 (50%); the shared-expense-adjusted effective spend is 95 (95%).
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(
+            listOf(
+                budgetStatus(
+                    budget = budget(id = 94L, period = BudgetPeriod.MONTHLY),
+                    spentAmount = 50.0,
+                    percentUsed = 0.5f,
+                    periodStart = at(2026, 4, 1),
+                    adjustedSpendBreakdown = breakdownWithEffectiveSpend(95.0)
+                )
+            )
+        )
+
+        monitor.checkBudgets()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        coVerify(exactly = 1) { budgetRepository.updateCriticalNotification(94L, now) }
+        verify(exactly = 1) {
+            notificationService.sendBudgetAlert(
+                94,
+                "Critical Budget Warning",
+                "You've spent €95.00 (95%) of your Groceries budget (€100.00)."
+            )
+        }
+        assertEquals(0, emittedEvents.count { it.stage == "STATUS_SKIPPED" })
+    }
+
+    @Test
+    fun `AE-18 skip persists nothing so the next cycle re-evaluates and alerts once effective spend is available`() = runTest(testDispatcher) {
+        val first = atDateTime(2026, 4, 10, 12, 0)
+        val second = first + MIN_CHECK_INTERVAL_MS
+        every { timeProvider.now() } returnsMany listOf(first, second)
+        val periodStart = at(2026, 4, 1)
+        val unavailable = budgetStatus(
+            budget = budget(id = 95L, period = BudgetPeriod.MONTHLY),
+            spentAmount = 95.0,
+            percentUsed = 0.95f,
+            periodStart = periodStart,
+            adjustedSpendBreakdown = null
+        )
+        val available = budgetStatus(
+            budget = budget(id = 95L, period = BudgetPeriod.MONTHLY),
+            spentAmount = 95.0,
+            percentUsed = 0.95f,
+            periodStart = periodStart
+        )
+        every { budgetRepository.getBudgetStatuses() } returnsMany listOf(flowOf(listOf(unavailable)), flowOf(listOf(available)))
+
+        monitor.checkBudgets()
+        testDispatcher.scheduler.advanceUntilIdle()
+        coVerify(exactly = 0) { budgetRepository.updateCriticalNotification(any(), any()) }
+        verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
+
+        monitor.checkBudgets()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        coVerify(exactly = 1) { budgetRepository.updateCriticalNotification(95L, second) }
+        verify(exactly = 1) { notificationService.sendBudgetAlert(any(), any(), any()) }
     }
 
     @Test
@@ -681,11 +867,26 @@ class BudgetMonitorTest {
         )
     }
 
+    /**
+     * OPEN-6 / INV-18: a status without an adjusted-spend breakdown is "effective spend unavailable" and
+     * is skipped by the monitor, so the default fixture carries a breakdown whose effectiveSpend equals
+     * [spentAmount]. Pass `adjustedSpendBreakdown = null` explicitly to model the unavailable case.
+     */
+    private fun breakdownWithEffectiveSpend(effectiveSpend: Double) = AdjustedSpendBreakdown(
+        personalSpend = effectiveSpend,
+        sharedSpend = 0.0,
+        reimbursedAmount = 0.0,
+        netSharedLiability = 0.0,
+        effectiveSpend = effectiveSpend,
+        pendingReimbursements = 0.0
+    )
+
     private fun budgetStatus(
         budget: Budget,
         spentAmount: Double,
         percentUsed: Float,
-        periodStart: Long
+        periodStart: Long,
+        adjustedSpendBreakdown: AdjustedSpendBreakdown? = breakdownWithEffectiveSpend(spentAmount)
     ): BudgetStatus {
         val remainingAmount = (budget.amount - spentAmount).coerceAtLeast(0.0)
         return BudgetStatus(
@@ -697,7 +898,8 @@ class BudgetMonitorTest {
             healthStatus = BudgetHealthStatus.WARNING,
             periodStart = periodStart,
             periodEnd = periodStart + (7L * 24L * 60L * 60L * 1000L),
-            effectiveLimit = budget.amount
+            effectiveLimit = budget.amount,
+            adjustedSpendBreakdown = adjustedSpendBreakdown
         )
     }
 }

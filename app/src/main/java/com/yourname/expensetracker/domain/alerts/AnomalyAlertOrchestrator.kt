@@ -14,6 +14,7 @@ import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.DomainTransferDirection
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.service.NotificationService
+import com.yourname.expensetracker.domain.util.CancellationSafe
 import com.yourname.expensetracker.domain.util.NotificationId
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -98,7 +99,7 @@ class AnomalyAlertOrchestrator @Inject constructor(
                     emptyList()
                 }
                 val allExpenses = historicalExpenses + listOf(expense.expense)
-                val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }.getOrDefault(expense.expense.currency)
+                val homeCurrency = CancellationSafe.runCatchingCancellable { currencySettingsRepository.homeCurrency().first() }.getOrDefault(expense.expense.currency)
                 val normalizedHistory = analyticsCurrencyNormalizer.normalizeSnapshots(
                     allExpenses.map { it.toSnapshot() },
                     homeCurrency

@@ -375,7 +375,10 @@ class BudgetRepository @Inject constructor(
      * the monitor fell back to gross [BudgetStatus.spentAmount] and could fire
      * false alerts when shared-expense reimbursements applied.
      *
-     * Returns null on offset-engine failure; callers fall back to gross spend.
+     * Returns null on any non-cancellation offset-engine failure (including
+     * MoneyDisplayUnavailableException when the home currency is unavailable). Null means
+     * "effective spend unavailable": consumers must not substitute gross
+     * [BudgetStatus.spentAmount] for it. CancellationException propagates.
      */
     private suspend fun computeAdjustedSpend(
         budget: Budget,

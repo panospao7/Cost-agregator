@@ -20,7 +20,12 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import com.yourname.expensetracker.ui.screens.subscription.SubscriptionTotalStatus
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
@@ -49,19 +54,32 @@ class ManualRecurringExpenseViewModelTest : ViewModelTestUtils() {
         viewModel = newViewModel()
     }
 
-    private fun currencyRepo(resolution: HomeCurrencyResolution): CurrencySettingsRepository {
+    private fun currencyRepo(
+        resolution: HomeCurrencyResolution,
+        homeFlowValue: String = "EUR"
+    ): CurrencySettingsRepository {
+        val repo = mockk<CurrencySettingsRepository>(relaxed = true)
+        every { repo.homeCurrency() } returns flowOf(homeFlowValue)
+        coEvery { repo.resolveHomeCurrency() } returns resolution
+        return repo
+    }
+
+    /** Home currency read that throws [failure] (real objects only: CurrencyCode is a value class). */
+    private fun throwingCurrencyRepo(failure: Throwable): CurrencySettingsRepository {
         val repo = mockk<CurrencySettingsRepository>(relaxed = true)
         every { repo.homeCurrency() } returns flowOf("EUR")
-        coEvery { repo.resolveHomeCurrency() } returns resolution
+        coEvery { repo.resolveHomeCurrency() } throws failure
         return repo
     }
 
     private fun newViewModel(
         resolution: HomeCurrencyResolution = HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
-    ) = ManualRecurringExpenseViewModel(
+    ) = newViewModel(currencyRepo(resolution))
+
+    private fun newViewModel(repo: CurrencySettingsRepository) = ManualRecurringExpenseViewModel(
         recurringExpenseRepository,
         timeProvider,
-        currencySettingsRepository = currencyRepo(resolution),
+        currencySettingsRepository = repo,
         markRecurringBillPaid = markPaidUseCase
     )
 
@@ -261,7 +279,7 @@ class ManualRecurringExpenseViewModelTest : ViewModelTestUtils() {
             assertEquals(2, state.recurringExpenses.size)
             assertEquals(1L, state.recurringExpenses.first().id) // sorted by nextDate
             assertEquals(1, state.activeCount)
-            assertTrue(state.totalMonthly > 0.0)
+            assertTrue(state.totalMonthly!! > 0.0)
             cancelAndIgnoreRemainingEvents()
         }
     }
@@ -396,17 +414,222 @@ class ManualRecurringExpenseViewModelTest : ViewModelTestUtils() {
         coVerify(exactly = 1) { recurringExpenseRepository.deleteById(7L) }
     }
 
+    // ---- money-aggregates-sweep S3: monthly total is home-currency-only and fail-closed ----
+
+    private fun mixedCurrencyRules() = listOf(
+        recurringExpense(1L, "R1", 10.0, RecurrenceFrequency.MONTHLY, fixedNow + DAY_MS, true, "GBP"),
+        recurringExpense(2L, "R2", 12.0, RecurrenceFrequency.MONTHLY, fixedNow + DAY_MS, true, "EUR"),
+        recurringExpense(3L, "R3", 5.0, RecurrenceFrequency.MONTHLY, fixedNow + DAY_MS, true, "USD"),
+        recurringExpense(4L, "R4", 99.0, RecurrenceFrequency.MONTHLY, fixedNow + DAY_MS, false, "EUR")
+    )
+
+    @Test
+    fun `AE-12 total sums only active home currency rules and counts the rest as left out`() =
+        runTest(testDispatcher) {
+            coEvery { recurringExpenseRepository.getAll() } returns mixedCurrencyRules()
+
+            viewModel = newViewModel(HomeCurrencyResolution.Resolved(CurrencyCode("GBP")))
+            advanceUntilIdle()
+
+            val state = viewModel.uiState.value
+            assertEquals(10.0, state.totalMonthly!!, 0.0)
+            assertEquals("GBP", state.totalCurrency)
+            assertEquals(SubscriptionTotalStatus.PARTIAL, state.totalStatus)
+            // R2 (EUR) and R3 (USD) are left out; inactive R4 is neither summed nor counted.
+            assertEquals(2, state.excludedRuleCount)
+            assertEquals(4, state.recurringExpenses.size)
+            assertEquals(null, state.errorText)
+        }
+
+    @Test
+    fun `AE-12 weekly rule in home currency uses the existing monthly multiplier`() =
+        runTest(testDispatcher) {
+            coEvery { recurringExpenseRepository.getAll() } returns listOf(
+                recurringExpense(1L, "Weekly", 10.0, RecurrenceFrequency.WEEKLY, fixedNow + DAY_MS, true, "GBP"),
+                recurringExpense(2L, "Monthly", 10.0, RecurrenceFrequency.MONTHLY, fixedNow + DAY_MS, true, "GBP")
+            )
+
+            viewModel = newViewModel(HomeCurrencyResolution.Resolved(CurrencyCode("GBP")))
+            advanceUntilIdle()
+
+            val state = viewModel.uiState.value
+            assertEquals(10.0 * 4.33 + 10.0, state.totalMonthly!!, 1e-9)
+            assertEquals(SubscriptionTotalStatus.AVAILABLE, state.totalStatus)
+            assertEquals(0, state.excludedRuleCount)
+        }
+
+    @Test
+    fun `AE-12 every active rule in another currency gives a partial zero total not unavailable`() =
+        runTest(testDispatcher) {
+            coEvery { recurringExpenseRepository.getAll() } returns listOf(
+                recurringExpense(1L, "R1", 12.0, RecurrenceFrequency.MONTHLY, fixedNow + DAY_MS, true, "EUR"),
+                recurringExpense(2L, "R2", 5.0, RecurrenceFrequency.MONTHLY, fixedNow + DAY_MS, true, "USD")
+            )
+
+            viewModel = newViewModel(HomeCurrencyResolution.Resolved(CurrencyCode("GBP")))
+            advanceUntilIdle()
+
+            val state = viewModel.uiState.value
+            assertEquals(0.0, state.totalMonthly!!, 0.0)
+            assertEquals("GBP", state.totalCurrency)
+            assertEquals(SubscriptionTotalStatus.PARTIAL, state.totalStatus)
+            assertEquals(2, state.excludedRuleCount)
+        }
+
+    @Test
+    fun `AE-12 currency match is exact so a lower case code is left out`() = runTest(testDispatcher) {
+        coEvery { recurringExpenseRepository.getAll() } returns listOf(
+            recurringExpense(1L, "R1", 12.0, RecurrenceFrequency.MONTHLY, fixedNow + DAY_MS, true, "eur")
+        )
+
+        viewModel = newViewModel(HomeCurrencyResolution.Resolved(CurrencyCode("EUR")))
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertEquals(0.0, state.totalMonthly!!, 0.0)
+        assertEquals(SubscriptionTotalStatus.PARTIAL, state.totalStatus)
+        assertEquals(1, state.excludedRuleCount)
+    }
+
+    @Test
+    fun `AE-13 home read failure makes the total unavailable and keeps the list without an error`() =
+        runTest(testDispatcher) {
+            coEvery { recurringExpenseRepository.getAll() } returns mixedCurrencyRules()
+
+            viewModel = newViewModel(throwingCurrencyRepo(java.io.IOException("datastore-secret-detail")))
+            advanceUntilIdle()
+
+            val state = viewModel.uiState.value
+            assertEquals(SubscriptionTotalStatus.UNAVAILABLE, state.totalStatus)
+            assertEquals(null, state.totalMonthly)
+            assertEquals(null, state.totalCurrency)
+            assertEquals(4, state.recurringExpenses.size)
+            assertEquals(null, state.errorText)
+            assertEquals(null, state.error)
+            assertFalse(state.isLoading)
+            assertFalse(state.toString().contains("datastore-secret-detail"))
+        }
+
+    @Test
+    fun `AE-13 a Failed home resolution makes the total unavailable and never falls back to EUR`() =
+        runTest(testDispatcher) {
+            coEvery { recurringExpenseRepository.getAll() } returns mixedCurrencyRules()
+
+            viewModel = newViewModel(HomeCurrencyResolution.Failed("datastore-secret-detail"))
+            advanceUntilIdle()
+
+            val state = viewModel.uiState.value
+            assertEquals(SubscriptionTotalStatus.UNAVAILABLE, state.totalStatus)
+            assertEquals(null, state.totalMonthly)
+            assertEquals(null, state.totalCurrency)
+            assertEquals(4, state.recurringExpenses.size)
+            assertEquals(null, state.errorText)
+        }
+
+    @Test
+    fun `AE-13 first run EUR default is a real home currency and only EUR rules are available`() =
+        runTest(testDispatcher) {
+            coEvery { recurringExpenseRepository.getAll() } returns listOf(
+                recurringExpense(1L, "R1", 12.0, RecurrenceFrequency.MONTHLY, fixedNow + DAY_MS, true, "EUR"),
+                recurringExpense(2L, "R2", 8.0, RecurrenceFrequency.MONTHLY, fixedNow + DAY_MS, true, "EUR")
+            )
+
+            viewModel = newViewModel(HomeCurrencyResolution.FirstRunDefault(CurrencyCode("EUR")))
+            advanceUntilIdle()
+
+            val state = viewModel.uiState.value
+            assertEquals(20.0, state.totalMonthly!!, 0.0)
+            assertEquals("EUR", state.totalCurrency)
+            assertEquals(SubscriptionTotalStatus.AVAILABLE, state.totalStatus)
+            assertEquals(0, state.excludedRuleCount)
+        }
+
+    @Test
+    fun `AE-13 no active rules is an available zero total`() = runTest(testDispatcher) {
+        coEvery { recurringExpenseRepository.getAll() } returns emptyList()
+
+        viewModel = newViewModel(HomeCurrencyResolution.Resolved(CurrencyCode("GBP")))
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertEquals(0.0, state.totalMonthly!!, 0.0)
+        assertEquals("GBP", state.totalCurrency)
+        assertEquals(SubscriptionTotalStatus.AVAILABLE, state.totalStatus)
+        assertEquals(0, state.excludedRuleCount)
+    }
+
+    @Test
+    fun `AE-14 total currency comes from the state and not from the separate home flow`() =
+        runTest(testDispatcher) {
+            coEvery { recurringExpenseRepository.getAll() } returns mixedCurrencyRules()
+            // The screen's own flow has not emitted a real code yet ("" is its initial value).
+            val repo = currencyRepo(
+                HomeCurrencyResolution.Resolved(CurrencyCode("GBP")),
+                homeFlowValue = ""
+            )
+
+            viewModel = newViewModel(repo)
+            advanceUntilIdle()
+
+            assertEquals("", viewModel.homeCurrency.first())
+            assertEquals("GBP", viewModel.uiState.value.totalCurrency)
+        }
+
+    @Test
+    fun `INV-20 home read cancellation propagates and sets no error or partial state`() =
+        runTest(testDispatcher) {
+            coEvery { recurringExpenseRepository.getAll() } returns mixedCurrencyRules()
+
+            viewModel = newViewModel(throwingCurrencyRepo(CancellationException("cancelled-by-test")))
+            advanceUntilIdle()
+
+            val state = viewModel.uiState.value
+            // Not swallowed: no UNAVAILABLE total was committed and no list was published.
+            assertEquals(null, state.errorText)
+            assertEquals(null, state.error)
+            assertEquals(null, state.actionMessage)
+            assertTrue(state.recurringExpenses.isEmpty())
+            assertEquals(null, state.totalMonthly)
+            assertEquals(null, state.totalCurrency)
+        }
+
+    @Test
+    fun `INV-20 cancellation swallowed by the repository as Failed still propagates`() =
+        runTest(testDispatcher) {
+            coEvery { recurringExpenseRepository.getAll() } returns mixedCurrencyRules()
+            // Real CurrencySettingsRepositoryImpl catches Exception (incl. cancellation) and
+            // returns Failed; the job is cancelled by then, so ensureActive() must stop the load.
+            val repo = mockk<CurrencySettingsRepository>(relaxed = true)
+            every { repo.homeCurrency() } returns flowOf("EUR")
+            coEvery { repo.resolveHomeCurrency() } coAnswers {
+                currentCoroutineContext().cancel()
+                HomeCurrencyResolution.Failed("cancelled")
+            }
+
+            viewModel = newViewModel(repo)
+            advanceUntilIdle()
+
+            val state = viewModel.uiState.value
+            assertEquals(null, state.errorText)
+            assertTrue(state.recurringExpenses.isEmpty())
+            assertEquals(null, state.totalMonthly)
+            assertEquals(null, state.totalCurrency)
+            assertEquals(0, state.excludedRuleCount)
+        }
+
     private fun recurringExpense(
         id: Long,
         merchant: String,
         amount: Double,
         frequency: RecurrenceFrequency,
         nextDate: Long,
-        isActive: Boolean
+        isActive: Boolean,
+        currency: String = "EUR"
     ) = ManualRecurringExpense(
         id = id,
         merchant = merchant,
         amount = amount,
+        currency = currency,
         frequency = frequency,
         nextDate = nextDate,
         note = null,

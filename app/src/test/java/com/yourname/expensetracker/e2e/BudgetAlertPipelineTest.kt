@@ -5,6 +5,7 @@ import com.yourname.expensetracker.data.database.dao.PipelineDiagnosticEventDao
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.repository.BudgetRepository
+import com.yourname.expensetracker.domain.budget.AdjustedSpendBreakdown
 import com.yourname.expensetracker.domain.budget.BudgetCalculator
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
@@ -146,6 +147,16 @@ class BudgetAlertPipelineTest : AnalyticsEngineTestBase() {
             periodStart = periodStart,
             periodEnd = periodEnd,
             effectiveLimit = amount,
+            // INV-18: a status without a breakdown is "effective spend unavailable" and is skipped by the
+            // monitor. This fixture models an available breakdown whose effectiveSpend equals `spent`.
+            adjustedSpendBreakdown = AdjustedSpendBreakdown(
+                personalSpend = spent,
+                sharedSpend = 0.0,
+                reimbursedAmount = 0.0,
+                netSharedLiability = 0.0,
+                effectiveSpend = spent,
+                pendingReimbursements = 0.0
+            ),
         )
     }
 

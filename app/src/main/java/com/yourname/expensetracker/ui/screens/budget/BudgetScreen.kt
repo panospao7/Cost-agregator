@@ -469,16 +469,19 @@ fun BudgetCard(
     val budgetActiveString = stringResource(R.string.budget_status_active)
     val budgetInactiveString = stringResource(R.string.budget_status_inactive)
     val adjustedSpend = status.adjustedSpendBreakdown
-    val displaySpend = adjustedSpend?.effectiveSpend ?: status.spentAmount
-    // S8-001: Use repository-provided percent/health — never recompute from potentially mixed currencies
-    val displayPercentUsed = status.percentUsed
-    val displayRemainingAmount = status.effectiveLimit - displaySpend
+    // INV-17: a null breakdown means effective spend is unavailable. Gross status.spentAmount is
+    // never shown in its place, and percent/health (repository-owned, S8-001) are not displayed.
+    val display = BudgetCardDisplay.from(status)
+    val displaySpend = display.spend
+    val displayPercentUsed = display.percentUsed
     val hasPendingReimbursements = adjustedSpend?.pendingReimbursements?.let { it > 0.01 } == true
-    val displayHealthStatus = status.healthStatus
-    
+    val displayHealthStatus = display.healthStatus
+    val neutralColor = MaterialTheme.colorScheme.onSurfaceVariant
+
     // Remember expensive calculations
-    val progressColor = remember(displayHealthStatus) {
+    val progressColor = remember(displayHealthStatus, neutralColor) {
         when (displayHealthStatus) {
+            null -> neutralColor
             BudgetHealthStatus.ON_TRACK -> SemanticColors.SuccessGreen
             BudgetHealthStatus.WARNING -> SemanticColors.WarningOrange
             BudgetHealthStatus.CRITICAL -> SemanticColors.WarningOrange
@@ -489,15 +492,21 @@ fun BudgetCard(
 
     val cardDescription = remember(displaySpend, status.effectiveLimit, status.budget.amount, displayPercentUsed, displayHealthStatus) {
         val statusText = if (status.budget.isActive) budgetActiveString else budgetInactiveString
-        context.getString(
-            R.string.budget_cd_format,
-            status.category?.name ?: "Overall Budget",
-            statusText,
-            displaySpend,
-            status.effectiveLimit,
-            (displayPercentUsed * 100).toInt(),
-            displayHealthStatus.name.lowercase().replaceFirstChar { it.titlecase() }
-        )
+        val categoryName = status.category?.name ?: "Overall Budget"
+        if (displaySpend == null || displayPercentUsed == null || displayHealthStatus == null) {
+            // INV-17: no amount and no percent in the unavailable description.
+            context.getString(R.string.budget_cd_spend_unavailable_format, categoryName, statusText)
+        } else {
+            context.getString(
+                R.string.budget_cd_format,
+                categoryName,
+                statusText,
+                displaySpend,
+                status.effectiveLimit,
+                (displayPercentUsed * 100).toInt(),
+                displayHealthStatus.name.lowercase().replaceFirstChar { it.titlecase() }
+            )
+        }
     }
     
     val monthYearFormat = remember { DateTimeFormatter.ofPattern("MMMM yyyy", Locale.getDefault()) }
@@ -598,15 +607,17 @@ fun BudgetCard(
 
             Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                 // F11: Show adjusted spend if available
-                val spendText = if (adjustedSpend != null) {
+                // INV-17: with no breakdown, effective spend is unavailable; gross spentAmount is never shown.
+                val spendText = if (displaySpend != null) {
                     stringResource(R.string.budget_adjusted_spent_format, displaySpend)
                 } else {
-                    stringResource(R.string.budget_spent_format, status.spentAmount)
+                    stringResource(R.string.budget_effective_spend_unavailable)
                 }
                 Text(
                     text = spendText,
                     fontWeight = FontWeight.Medium,
-                    fontSize = 14.sp
+                    fontSize = 14.sp,
+                    color = if (displaySpend != null) Color.Unspecified else neutralColor
                 )
                 Text(
                     text = stringResource(R.string.budget_limit_format, status.effectiveLimit),
@@ -624,12 +635,21 @@ fun BudgetCard(
             }
 
             Spacer(Modifier.height(8.dp))
-            LinearProgressIndicator(
-                progress = { displayPercentUsed.coerceIn(0f, 1f) },
-                modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
-                color = progressColor,
-                trackColor = progressColor.copy(alpha = 0.2f)
-            )
+            if (displayPercentUsed != null) {
+                LinearProgressIndicator(
+                    progress = { displayPercentUsed.coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
+                    color = progressColor,
+                    trackColor = progressColor.copy(alpha = 0.2f)
+                )
+            } else {
+                // INV-17: percent and health are not displayed without an effective-spend breakdown.
+                Text(
+                    text = stringResource(R.string.budget_usage_unavailable),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = neutralColor
+                )
+            }
 
             Spacer(Modifier.height(8.dp))
             LinearProgressIndicator(
@@ -676,18 +696,26 @@ fun BudgetCard(
             // to home currency, so percent/remaining are placeholders (0f / 0.0) — never
             // present them as a real "0 remaining" or over-budget figure. The data-quality
             // chip above carries the explanation.
-            if (status.percentKnown) {
-                if (displayPercentUsed > 1f) {
+            when (display.remainingSlot) {
+                BudgetCardRemainingSlot.HIDDEN -> Unit
+                BudgetCardRemainingSlot.UNAVAILABLE -> Text(
+                    text = stringResource(R.string.budget_remaining_unavailable),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = neutralColor,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+                BudgetCardRemainingSlot.OVER_BUDGET -> display.overBudgetAmount?.let { overBy ->
                     Text(
-                        text = stringResource(R.string.budget_over_format, displaySpend - status.effectiveLimit),
+                        text = stringResource(R.string.budget_over_format, overBy),
                         color = SemanticColors.DangerRed,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.padding(top = 4.dp)
                     )
-                } else {
+                }
+                BudgetCardRemainingSlot.REMAINING -> display.remaining?.let { remaining ->
                     Text(
-                        text = stringResource(R.string.budget_remaining_format, displayRemainingAmount),
+                        text = stringResource(R.string.budget_remaining_format, remaining),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.secondary,
                         modifier = Modifier.padding(top = 4.dp)
