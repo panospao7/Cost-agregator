@@ -160,6 +160,10 @@ Binds:
   AiEnvironmentMonitor                        → DefaultAiEnvironmentMonitor
   AiWorkScheduler                             → AiWorkSchedulerImpl
   DashboardBriefingService                    → HybridDashboardBriefingService
+                                                (briefing only; GenerateTransactionInsightUseCase no longer injects it -
+                                                 it takes OnDeviceDashboardBriefingService, AiCapabilityRouter,
+                                                 AppForegroundState, AiSettingsRepository, input builder, TimeProvider
+                                                 and AiRuntimeDiagnostics; ai-fixes B2d)
   ReviewExplanationService                    → HybridReviewExplanationService
   ReceiptAssistService                        → SmartReceiptAssistService
   CategorizationAssistService                 → HybridCategorizationAssistService

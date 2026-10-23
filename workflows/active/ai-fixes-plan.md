@@ -163,7 +163,8 @@ Order: S0 → A → B1a → B1b → B1c → B2a → B2b/B2c → B2d → B2e → 
 | New guard (a): cloud warranty service referenced only from DI | B1a |
 | GR-08 `db_ownership_policy.yml` rows + R7 Pattern E regeneration | B1a only (serialize with loan-installments regeneration) |
 | New guard (c): VM does not build status | B1b |
-| New guard (b): insight imports | B2d |
+| New guard (b): insight imports (forbids Hybrid/Cloud briefing services and the bare `DashboardBriefingService` interface via `\bDashboardBriefingService\b`) | B2d |
+| B2c registration pin: foreground observer registered once in `AppStartupCoordinator.registerLifecycleObserver` (`SourceScanningArchitectureGuardTest`; added in B2d; strengthening) | B2d |
 | `SourceScanning:408` allowlist (both workers) + expired broad-catch removal | B3a |
 | CancellationSafety KNOWN_VIOLATIONS | removals only, by the slice fixing the file (D-1) |
 New guards are `@Test`s in the existing `SourceScanningArchitectureGuardTest.kt`.

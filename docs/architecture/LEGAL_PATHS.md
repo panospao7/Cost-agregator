@@ -420,6 +420,20 @@ TRANSACTION_INSIGHT):
   → TRANSACTION_INSIGHT has no PrivacyCapability / CloudPayloadPurpose / EffectiveCloudAiPolicy
     row (ai-fixes B2a)
 
+Transaction insight (GenerateTransactionInsightUseCase, ai-fixes B2d):
+  → on-device only: gated by aiEnabled AND transactionInsightEnabled AND allowOnDeviceAi,
+    then a foreground-only short-circuit (AppForegroundState) BEFORE any router or AICore call,
+    then router.decide(TRANSACTION_INSIGHT); a CLOUD decision is rejected (ROUTE_REJECTED) with
+    zero provider calls; input is unredacted because nothing leaves the device
+  → uses OnDeviceDashboardBriefingService only; it must not reference HybridDashboardBriefingService or
+    CloudDashboardBriefingService (SourceScanningArchitectureGuardTest)
+  → returns TransactionInsightOutcome (Generated | Skipped(reason)); never written to ai_artifacts:
+    the artifact is an in-memory hand-off to DashboardFollowThroughEngine only; its summaryText may
+    become recommendation text persisted via the existing RecommendationRepository.saveAll path
+    (7-day expiresAt, INV-20); recommendations are generated for every outcome when aiEnabled by the
+    existing caller path (ManualExpenseRepository / NotificationProcessingPipeline)
+  → diagnostics: bounded reason code only (recordInteraction("transaction_insight", reason.name))
+
 RAW DATA storage:
   → Check RawStorageMode (STORE_RAW / STORE_REDACTED / STORE_METADATA_ONLY / DO_NOT_STORE)
   → RawContentSanitizer applies per-mode sanitization for every source:

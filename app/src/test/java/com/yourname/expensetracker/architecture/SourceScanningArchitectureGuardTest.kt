@@ -1082,4 +1082,208 @@ class SourceScanningArchitectureGuardTest {
             interpretationInputBypassSites(sources)
         )
     }
+
+    // ── ai-fixes B2d guard (b): the transaction insight use case is on-device only ────
+    // INV-15 / AE-39. GenerateTransactionInsightUseCase.kt must not import or reference the
+    // hybrid or cloud dashboard-briefing services: the per-transaction insight has no cloud path.
+    // Fail-closed: a missing file is reported as a failure. Reuses forbiddenTokensPresent (comments stripped).
+
+    private val transactionInsightUseCasePath =
+        "com/yourname/expensetracker/domain/ai/usecase/GenerateTransactionInsightUseCase.kt"
+
+    private val transactionInsightForbidden = listOf(
+        "HybridDashboardBriefingService",
+        "CloudDashboardBriefingService"
+    )
+
+    // The bare DashboardBriefingService interface is also forbidden (it can be bound to the hybrid or
+    // cloud implementation). Word-boundary match so OnDeviceDashboardBriefingService is not flagged.
+    private val bareBriefingServiceInterface = Regex("""\bDashboardBriefingService\b""")
+
+    private fun transactionInsightBriefingViolations(source: String): List<String> {
+        val tokens = forbiddenTokensPresent(source, transactionInsightForbidden)
+        val bare = if (bareBriefingServiceInterface.containsMatchIn(stripComments(source))) {
+            listOf("DashboardBriefingService")
+        } else {
+            emptyList()
+        }
+        return tokens + bare
+    }
+
+    @Test
+    fun `B2d (b) negative_fixture_bare_dashboard_briefing_service_interface_is_caught`() {
+        assertEquals(
+            listOf("DashboardBriefingService"),
+            transactionInsightBriefingViolations(
+                "import com.yourname.expensetracker.domain.ai.service.DashboardBriefingService\nclass U"
+            )
+        )
+        assertEquals(
+            listOf("DashboardBriefingService"),
+            transactionInsightBriefingViolations("class U(private val svc: DashboardBriefingService)")
+        )
+        assertTrue(
+            "OnDeviceDashboardBriefingService and comments must not be flagged by the bare-interface rule",
+            transactionInsightBriefingViolations(
+                "// DashboardBriefingService\n" +
+                    "import com.yourname.expensetracker.domain.ai.service.OnDeviceDashboardBriefingService\n" +
+                    "class U(private val svc: OnDeviceDashboardBriefingService)"
+            ).isEmpty()
+        )
+    }
+
+    @Test
+    fun `B2d (b) negative_fixture_transaction_insight_cloud_or_hybrid_reference_is_caught`() {
+        assertEquals(
+            listOf("HybridDashboardBriefingService"),
+            forbiddenTokensPresent(
+                "import com.yourname.expensetracker.domain.ai.service.HybridDashboardBriefingService\nclass U",
+                transactionInsightForbidden
+            )
+        )
+        assertEquals(
+            listOf("CloudDashboardBriefingService"),
+            forbiddenTokensPresent(
+                "class U(private val svc: CloudDashboardBriefingService)",
+                transactionInsightForbidden
+            )
+        )
+        assertTrue(
+            "the on-device service and comments must not be flagged",
+            forbiddenTokensPresent(
+                "// HybridDashboardBriefingService CloudDashboardBriefingService\n" +
+                    "import com.yourname.expensetracker.domain.ai.service.OnDeviceDashboardBriefingService\nclass U",
+                transactionInsightForbidden
+            ).isEmpty()
+        )
+    }
+
+    @Test
+    fun `B2d (b) generate_transaction_insight_use_case_imports_neither_hybrid_nor_cloud_briefing_service`() {
+        val sources = relativeSources()
+        assertTrue("Source scan found too few files (${sources.size}); source root may be wrong", sources.size > 100)
+        assertTrue("GenerateTransactionInsightUseCase.kt not found by the scan", transactionInsightUseCasePath in sources)
+
+        val violations = transactionInsightBriefingViolations(sources.getValue(transactionInsightUseCasePath))
+        assertTrue(
+            "GenerateTransactionInsightUseCase must not reference the hybrid, cloud or bare briefing service " +
+                "(INV-15, AE-39): $violations",
+            violations.isEmpty()
+        )
+    }
+
+    // ── ai-fixes B2c carry-forward: foreground observer registration is pinned ────
+    // ProcessAppForegroundState is the only source of the foreground signal that gates the transaction
+    // insight (INV-17). It must be added as a process lifecycle observer exactly once, and only inside
+    // AppStartupCoordinator.registerLifecycleObserver, which initialize() must still call. Removing that
+    // line would silently skip every insight, so it is pinned here. Fail-closed on a missing file/body.
+
+    private val appStartupCoordinatorPath =
+        "com/yourname/expensetracker/startup/AppStartupCoordinator.kt"
+
+    private val foregroundObserverRegistration =
+        Regex("""addObserver\(\s*(foregroundStateObserver|ProcessAppForegroundState)\b""")
+
+    /** Returns the brace-matched body of the named function, or null when absent or unbalanced. */
+    private fun functionBody(text: String, functionName: String): String? {
+        val declaration = Regex("""\bfun\s+""" + Regex.escape(functionName) + """\s*\(""").find(text) ?: return null
+        val open = text.indexOf('{', declaration.range.last)
+        if (open < 0) return null
+        var depth = 0
+        for (i in open until text.length) {
+            when (text[i]) {
+                '{' -> depth++
+                '}' -> {
+                    depth--
+                    if (depth == 0) return text.substring(open + 1, i)
+                }
+            }
+        }
+        return null
+    }
+
+    /** Pure scan: returns human-readable violations of the foreground-observer registration rule. */
+    private fun foregroundObserverRegistrationViolations(sources: Map<String, String>): List<String> {
+        val violations = mutableListOf<String>()
+        sources
+            .filter { (path, _) -> path != appStartupCoordinatorPath }
+            .filter { (_, text) -> foregroundObserverRegistration.containsMatchIn(stripComments(text)) }
+            .keys.sorted()
+            .forEach { violations += "registered outside AppStartupCoordinator: $it" }
+
+        val coordinator = sources[appStartupCoordinatorPath]?.let { stripComments(it) }
+        if (coordinator == null) {
+            violations += "AppStartupCoordinator.kt not found"
+            return violations
+        }
+        val body = functionBody(coordinator, "registerLifecycleObserver")
+        if (body == null) {
+            violations += "registerLifecycleObserver body not found"
+            return violations
+        }
+        val inBody = foregroundObserverRegistration.findAll(body).count()
+        val inFile = foregroundObserverRegistration.findAll(coordinator).count()
+        if (inBody != 1) violations += "registerLifecycleObserver must register the foreground observer exactly once (found $inBody)"
+        if (inFile != inBody) violations += "foreground observer also registered outside registerLifecycleObserver"
+        val callSites = Regex("""\bregisterLifecycleObserver\s*\(\s*\)""").findAll(coordinator).count()
+        if (callSites < 2) violations += "registerLifecycleObserver() is declared but never called"
+        return violations
+    }
+
+    @Test
+    fun `B2c negative_fixture_foreground_observer_registration_violations_are_caught`() {
+        val okCoordinator = "class C { fun initialize() { registerLifecycleObserver() }\n" +
+            "private fun registerLifecycleObserver() {\n" +
+            "  ProcessLifecycleOwner.get().lifecycle.addObserver(backgroundLifecycleObserver)\n" +
+            "  ProcessLifecycleOwner.get().lifecycle.addObserver(foregroundStateObserver)\n}\n}"
+        assertTrue(
+            "the legitimate registration must not be flagged",
+            foregroundObserverRegistrationViolations(mapOf(appStartupCoordinatorPath to okCoordinator)).isEmpty()
+        )
+
+        val removed = okCoordinator.replace("  ProcessLifecycleOwner.get().lifecycle.addObserver(foregroundStateObserver)\n", "")
+        assertEquals(
+            listOf("registerLifecycleObserver must register the foreground observer exactly once (found 0)"),
+            foregroundObserverRegistrationViolations(mapOf(appStartupCoordinatorPath to removed))
+        )
+
+        val moved = okCoordinator.replace(
+            "  ProcessLifecycleOwner.get().lifecycle.addObserver(foregroundStateObserver)\n", ""
+        ) + "\nfun other() { x.addObserver(foregroundStateObserver) }"
+        assertEquals(
+            listOf(
+                "registerLifecycleObserver must register the foreground observer exactly once (found 0)",
+                "foreground observer also registered outside registerLifecycleObserver"
+            ),
+            foregroundObserverRegistrationViolations(mapOf(appStartupCoordinatorPath to moved))
+        )
+
+        val uncalled = okCoordinator.replace("registerLifecycleObserver() }", "}")
+        assertEquals(
+            listOf("registerLifecycleObserver() is declared but never called"),
+            foregroundObserverRegistrationViolations(mapOf(appStartupCoordinatorPath to uncalled))
+        )
+
+        val elsewhere = mapOf(
+            appStartupCoordinatorPath to okCoordinator,
+            "com/yourname/expensetracker/ui/Other.kt" to "fun f() { lifecycle.addObserver(foregroundStateObserver) }",
+            "com/yourname/expensetracker/ui/Commented.kt" to "// lifecycle.addObserver(foregroundStateObserver)\nclass Ok"
+        )
+        assertEquals(
+            listOf("registered outside AppStartupCoordinator: com/yourname/expensetracker/ui/Other.kt"),
+            foregroundObserverRegistrationViolations(elsewhere)
+        )
+    }
+
+    @Test
+    fun `B2c foreground_state_observer_is_registered_only_in_app_startup_coordinator_register_lifecycle_observer`() {
+        val sources = relativeSources()
+        assertTrue("Source scan found too few files (${sources.size}); source root may be wrong", sources.size > 100)
+        val violations = foregroundObserverRegistrationViolations(sources)
+        assertTrue(
+            "ProcessAppForegroundState must be added as a lifecycle observer exactly once, only inside " +
+                "AppStartupCoordinator.registerLifecycleObserver (INV-17). Violations: $violations",
+            violations.isEmpty()
+        )
+    }
 }

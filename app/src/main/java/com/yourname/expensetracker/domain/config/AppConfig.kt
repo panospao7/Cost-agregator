@@ -117,6 +117,12 @@ object AppConfig {
         /** How long a dashboard briefing artifact stays fresh before regeneration. */
         const val DASHBOARD_BRIEFING_TTL_MS = 24L * 60 * 60 * 1000L      // 24 hours
 
+        /**
+         * Expiry stamped on the in-memory per-transaction insight record (INV-20). The record is
+         * never written to `ai_artifacts`; the explicit TTL keeps the artifact-expiry guard happy.
+         */
+        const val TRANSACTION_INSIGHT_TTL_MS = 24L * 60 * 60 * 1000L     // 24 hours
+
         /** How long a review explanation artifact stays fresh before regeneration. */
         const val REVIEW_EXPLANATION_TTL_MS = 30L * 24 * 60 * 60 * 1000L // 30 days
 
@@ -146,6 +152,19 @@ object AppConfig {
 
         /** Max characters for any single AI briefing response stored in the artifact. */
         const val MAX_BRIEFING_LENGTH_CHARS = 600
+
+        /**
+         * Upper bound for one on-device per-transaction insight (INV-18). Its own expiry yields a
+         * Skipped(TIMEOUT) outcome. Nano warm-up fitting this budget is unverified.
+         */
+        const val TRANSACTION_INSIGHT_TIMEOUT_MS = 3_000L
+
+        /**
+         * Outer bound for a post-commit recommendation job (INV-18). Must stay at least
+         * [TRANSACTION_INSIGHT_TIMEOUT_MS] + 2_000 so a slow insight cannot starve the
+         * deterministic recommendations. Single source for every caller.
+         */
+        const val RECOMMENDATION_JOB_TIMEOUT_MS = 5_000L
 
         // Prompt versioning — bump to invalidate cached artifacts for that capability
         const val PROMPT_VERSION_DASHBOARD = "v1"

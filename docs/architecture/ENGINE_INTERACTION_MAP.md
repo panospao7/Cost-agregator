@@ -169,7 +169,9 @@ SharedExpenseManager.createGroup() / addMember() / removeMember() / addExpense()
 ### HybridRouter changes affect:
 ```
 HybridRouter.execute()
-  ├── HybridDashboardBriefingService (cloud/on-device/fallback)
+  ├── HybridDashboardBriefingService (cloud/on-device/fallback; DASHBOARD_BRIEFING only - the per-transaction
+  │     insight no longer uses it: GenerateTransactionInsightUseCase is on-device only via
+  │     OnDeviceDashboardBriefingService, ai-fixes B2d)
   ├── HybridCategorizationAssistService
   ├── HybridDedupeJudgeService
   ├── HybridQueryInterpretationService
