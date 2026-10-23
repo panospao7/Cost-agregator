@@ -863,4 +863,223 @@ class SourceScanningArchitectureGuardTest {
             violations.isEmpty()
         )
     }
+
+    // ── ai-fixes Part C guard (Ca): redaction policy is resolved only in the input builder ────
+    // AE-C30. AssistantViewModel must not decide redaction (`redactBeforeCloud`); the
+    // FinancialQueryInterpretationInputBuilder must not read privacy settings, call any `.shouldRedact(`
+    // or read `settings.redactBeforeCloud` (its only legitimate source is the effective-policy resolver).
+    // Fail-closed: a missing file is reported as a violation.
+
+    private val partCAssistantViewModelPath =
+        "com/yourname/expensetracker/ui/screens/assistant/AssistantViewModel.kt"
+    private val partCInputBuilderPath =
+        "com/yourname/expensetracker/domain/ai/usecase/FinancialQueryInterpretationInputBuilder.kt"
+
+    private val partCViewModelForbidden = listOf("redactBeforeCloud")
+    private val partCBuilderForbidden = listOf(
+        "privacySettingsRepository",
+        "PrivacySettingsRepository",
+        "aiPolicy.shouldRedact",
+        ".shouldRedact(",
+        "settings.redactBeforeCloud"
+    )
+
+    /** Pure scan: returns the forbidden tokens present in the comment-stripped source. */
+    private fun forbiddenTokensPresent(source: String, forbidden: List<String>): List<String> {
+        val text = stripComments(source)
+        return forbidden.filter { text.contains(it) }
+    }
+
+    @Test
+    fun `Part C (Ca) negative_fixture_forbidden_redaction_tokens_are_caught`() {
+        assertEquals(
+            listOf("redactBeforeCloud"),
+            forbiddenTokensPresent("val r = policy.redactBeforeCloud", partCViewModelForbidden)
+        )
+        assertEquals(
+            listOf("privacySettingsRepository", "aiPolicy.shouldRedact"),
+            forbiddenTokensPresent(
+                "class B(private val privacySettingsRepository: X) { fun f() = aiPolicy.shouldRedact }",
+                partCBuilderForbidden
+            )
+        )
+        assertEquals(
+            listOf("PrivacySettingsRepository"),
+            forbiddenTokensPresent("class B(r: PrivacySettingsRepository)", partCBuilderForbidden)
+        )
+        assertEquals(
+            listOf(".shouldRedact("),
+            forbiddenTokensPresent("val r = policy.shouldRedact(settings)", partCBuilderForbidden)
+        )
+        assertEquals(
+            listOf("aiPolicy.shouldRedact", ".shouldRedact("),
+            forbiddenTokensPresent("val r = aiPolicy.shouldRedact(settings)", partCBuilderForbidden)
+        )
+        assertEquals(
+            listOf("settings.redactBeforeCloud"),
+            forbiddenTokensPresent("val r = settings.redactBeforeCloud", partCBuilderForbidden)
+        )
+        assertTrue(
+            "the builder's legitimate resolver read and local shouldRedact flag must not be flagged",
+            forbiddenTokensPresent(
+                "val shouldRedact = a && effectiveCloudAiPolicyResolver.resolve().redactBeforeCloud\n" +
+                    "private fun f(value: String, shouldRedact: Boolean) = g(value, shouldRedact = true)",
+                partCBuilderForbidden
+            ).isEmpty()
+        )
+        assertTrue(
+            "comments must not be flagged",
+            forbiddenTokensPresent(
+                "// redactBeforeCloud privacySettingsRepository aiPolicy.shouldRedact " +
+                    "x.shouldRedact( settings.redactBeforeCloud\nclass Ok",
+                partCViewModelForbidden + partCBuilderForbidden
+            ).isEmpty()
+        )
+    }
+
+    @Test
+    fun `Part C (Ca) assistant_view_model_and_input_builder_do_not_resolve_redaction_policy_themselves`() {
+        val sources = relativeSources()
+        assertTrue("Source scan found too few files (${sources.size}); source root may be wrong", sources.size > 100)
+        assertTrue("AssistantViewModel.kt not found by the scan", partCAssistantViewModelPath in sources)
+        assertTrue(
+            "FinancialQueryInterpretationInputBuilder.kt not found by the scan",
+            partCInputBuilderPath in sources
+        )
+
+        val viewModelViolations =
+            forbiddenTokensPresent(sources.getValue(partCAssistantViewModelPath), partCViewModelForbidden)
+        assertTrue(
+            "AssistantViewModel must not reference redactBeforeCloud (AE-C30): $viewModelViolations",
+            viewModelViolations.isEmpty()
+        )
+
+        val builderViolations =
+            forbiddenTokensPresent(sources.getValue(partCInputBuilderPath), partCBuilderForbidden)
+        assertTrue(
+            "FinancialQueryInterpretationInputBuilder must not read privacy settings, call .shouldRedact( " +
+                "or read settings.redactBeforeCloud (AE-C30): $builderViolations",
+            builderViolations.isEmpty()
+        )
+    }
+
+    // ── ai-fixes Part C guard (Cb): single construction site for the interpretation input ────
+    // PC-9 item 2 / spec §8 guard (b). Within app/src/main/java the only file that constructs
+    // FinancialQueryInterpretationInput (directly, via `::FinancialQueryInterpretationInput`, or by
+    // `.copy(priorUserQueries = ...)` / a named `priorUserQueries =` argument) is
+    // FinancialQueryInterpretationInputBuilder.kt. The data class declaration in
+    // FinancialQueryModels.kt (`priorUserQueries: List<String> = ...`) is exempt.
+
+    private val interpretationInputConstructorCall =
+        Regex("""(?<!data class )\bFinancialQueryInterpretationInput\(""")
+
+    /** Constructor reference form, e.g. `.map(::FinancialQueryInterpretationInput)`. */
+    private val interpretationInputConstructorReference =
+        Regex("""::FinancialQueryInterpretationInput\b""")
+
+    /**
+     * Assigns `priorUserQueries` (copy(...) or named ctor arg). The declaration form
+     * `priorUserQueries: List<String> = ...` has a `:` before the `=`, and `==` comparisons are excluded.
+     */
+    private val priorUserQueriesAssignment = Regex("""\bpriorUserQueries\s*=(?!=)""")
+
+    /** Pure scan: returns relative paths whose comment-stripped text constructs the input type. */
+    private fun interpretationInputConstructionSites(sources: Map<String, String>): List<String> = sources
+        .filter { (_, text) -> interpretationInputConstructorCall.containsMatchIn(stripComments(text)) }
+        .keys
+        .sorted()
+
+    /**
+     * Pure scan: returns relative paths, other than the builder, that reference the input constructor
+     * or assign `priorUserQueries` (bypassing the builder's USER-only/redaction handling).
+     */
+    private fun interpretationInputBypassSites(sources: Map<String, String>): List<String> = sources
+        .filter { (path, _) -> path != partCInputBuilderPath }
+        .filter { (_, text) ->
+            val stripped = stripComments(text)
+            interpretationInputConstructorReference.containsMatchIn(stripped) ||
+                priorUserQueriesAssignment.containsMatchIn(stripped)
+        }
+        .keys
+        .sorted()
+
+    @Test
+    fun `Part C (Cb) negative_fixture_extra_interpretation_input_construction_site_is_caught`() {
+        val sources = mapOf(
+            partCInputBuilderPath to "return FinancialQueryInterpretationInput(rawQuery = q)",
+            "com/yourname/expensetracker/domain/ai/model/FinancialQueryModels.kt" to
+                "data class FinancialQueryInterpretationInput(val rawQuery: String)",
+            "com/yourname/expensetracker/ui/screens/assistant/BadViewModel.kt" to
+                "val i = FinancialQueryInterpretationInput(rawQuery = q)",
+            "com/yourname/expensetracker/ui/screens/assistant/OkViewModel.kt" to
+                "// FinancialQueryInterpretationInput(rawQuery = q)\nclass OkViewModel"
+        )
+        assertEquals(
+            "Scanner must flag the builder and the planted caller, but not the declaration or comments",
+            listOf(
+                partCInputBuilderPath,
+                "com/yourname/expensetracker/ui/screens/assistant/BadViewModel.kt"
+            ).sorted(),
+            interpretationInputConstructionSites(sources)
+        )
+    }
+
+    @Test
+    fun `Part C (Cb) financial_query_interpretation_input_is_constructed_only_by_the_input_builder`() {
+        val sources = relativeSources()
+        assertTrue("Source scan found too few files (${sources.size}); source root may be wrong", sources.size > 100)
+
+        val sites = interpretationInputConstructionSites(sources)
+        assertTrue(
+            "Fail closed: FinancialQueryInterpretationInputBuilder.kt must construct the input (found: $sites)",
+            partCInputBuilderPath in sites
+        )
+        val offenders = sites.filter { it != partCInputBuilderPath }
+        assertTrue(
+            "FinancialQueryInterpretationInput may be constructed in app/src/main only by " +
+                "FinancialQueryInterpretationInputBuilder (PC-9 item 2 / spec §8 guard (b)). " +
+                "Offending files: $offenders",
+            offenders.isEmpty()
+        )
+
+        val bypassSites = interpretationInputBypassSites(sources)
+        assertTrue(
+            "No file other than FinancialQueryInterpretationInputBuilder may assign priorUserQueries " +
+                "(copy(priorUserQueries = ...) / named argument) or reference " +
+                "::FinancialQueryInterpretationInput (PC-9 item 2 / spec §8 guard (b)). " +
+                "Offending files: $bypassSites",
+            bypassSites.isEmpty()
+        )
+    }
+
+    @Test
+    fun `Part C (Cb) negative_fixture_prior_user_queries_assignment_and_constructor_reference_are_caught`() {
+        val modelsPath = "com/yourname/expensetracker/domain/ai/model/FinancialQueryModels.kt"
+        val copyPath = "com/yourname/expensetracker/data/ai/provider/BadCopyService.kt"
+        val namedArgPath = "com/yourname/expensetracker/ui/screens/assistant/BadNamedArg.kt"
+        val referencePath = "com/yourname/expensetracker/ui/screens/assistant/BadReference.kt"
+        val okLookupCopyPath = "com/yourname/expensetracker/data/ai/provider/OkLookupCopy.kt"
+        val okCommentPath = "com/yourname/expensetracker/ui/screens/assistant/OkComment.kt"
+        val okComparisonPath = "com/yourname/expensetracker/ui/screens/assistant/OkComparison.kt"
+        val sources = mapOf(
+            // The builder is the one allowed assigner.
+            partCInputBuilderPath to "return Input(priorUserQueries = userRows)",
+            // The declaration (`name: Type = default`) is exempt.
+            modelsPath to "data class FinancialQueryInterpretationInput(\n" +
+                "    val priorUserQueries: List<String> = emptyList()\n)",
+            copyPath to "fun f(i: Input) = i.copy(priorUserQueries = emptyList())",
+            namedArgPath to "fun g() = Other(rawQuery = q, priorUserQueries   =   assistantTexts)",
+            referencePath to "val make = ::FinancialQueryInterpretationInput",
+            // copy() that sets only lookup maps is the legitimate CloudQueryInterpretationService shape.
+            okLookupCopyPath to "fun f(i: Input) = i.copy(merchantLookupMap = m, categoryLookupMap = c)",
+            okCommentPath to "// copy(priorUserQueries = x) and ::FinancialQueryInterpretationInput\nclass Ok",
+            okComparisonPath to "fun same(a: Input, b: Input) = a.priorUserQueries == b.priorUserQueries"
+        )
+        assertEquals(
+            "Scanner must flag copy/named-arg/constructor-reference bypasses only; " +
+                "not the builder, the declaration, lookup-map copies, comments or == comparisons",
+            listOf(copyPath, namedArgPath, referencePath).sorted(),
+            interpretationInputBypassSites(sources)
+        )
+    }
 }

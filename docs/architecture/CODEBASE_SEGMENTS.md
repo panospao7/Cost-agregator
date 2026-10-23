@@ -460,6 +460,9 @@ Owns the app-wide AI platform surface: policy, assistant sheet, AI settings, pro
 - `domain/ai/policy/AiPolicy.kt`
 - `domain/ai/HybridRouter.kt` — Consolidates routing logic previously duplicated across 6 hybrid AI services (cloud/on-device/fallback routing; AID-4)
 - `ui/screens/assistant/AssistantSheet.kt`
+- `ui/screens/assistant/AssistantViewModel.kt` — snapshots prior chat rows before persisting the current turn; does not shape or redact model history
+- `domain/ai/usecase/FinancialQueryInterpretationInputBuilder.kt` — sole constructor of `FinancialQueryInterpretationInput`; model history = prior USER queries only (last `MAX_QUERY_HISTORY_USER_TURNS_FOR_MODEL` = 4), redaction source = `EffectiveCloudAiPolicyResolver`
+- `data/ai/provider/OnDeviceQueryInterpretationService.kt` / `CloudQueryInterpretationService.kt` — share `buildPrompt`; history rendered as `- USER:` lines only
 - `domain/ai/model/AssistantHistoryMode.kt` — Enum (OFF/REDACTED/RAW) for conversation history redaction in AiChatRepositoryImpl
 - `ui/screens/aisettings/AiSettingsScreen.kt`
 - `data/ai/provider/DefaultAiEnvironmentMonitor.kt`

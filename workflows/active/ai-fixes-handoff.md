@@ -197,3 +197,35 @@ Validation (fixed tree): targeted vr-20261023-034048-ba1248a8 PASS, lint vr-2026
 ### Order correction (orchestrator, 2026-10-23)
 The approved order is S0 → A → C1..C5 → CX → B1a.. (PC-12). B1a/B1b/B1c ran before Part C. That dependency is ordering-only, and B1 shares only serial docs (LEGAL_PATHS Privacy block, SourceScanning guard) with C1, so nothing is invalidated. The order is restored from here: C1 → C2 → C3 → C4 → C5 → CX, then B2a.
 Next: C1 (assistant prior turns: USER-only, K=4, cloud + on-device; guard (a)).
+
+## Part C S0 (2026-10-23, scout Sonnet, read-only, on 11d169a0)
+D-11 OK (Hybrid passes the same input; Unsupported producers all plan-listed, no N16). D-12 OK (AiChatMessageDao.kt:20 ORDER BY createdAt, id ASC; Room Flow .first() sees committed rows; no N11). Today the VM reads history AFTER persistUserTurn (:236 vs :238-250), so C1 must move the snapshot before persist. D-13 OK (no QUERY_INTERPRETATION pin; no N9). D-14 hilt-bindings-map lists no assistant ctor deps, so no edit. D-15/D-16 green (see the baselines below). D-17: field-wise asserts, so C3 probably needs no periodGranularity edit. D-18 no drift beyond Part A (+1 line). D-21 clock = TimeProvider via builder → input.currentTimeMs; verify_time_boundaries.py:138 flags System.currentTimeMillis; no N13. D-22 docs/releases/CHANGELOG.md [Unreleased]. D-20 docs: no architecture doc references the old names (only feature docs, FUTURE-WORK, archive).
+C1 plan corrections:
+(1) Add InterpretFinancialQueryUseCase.kt:32/:41 (the conversationHistory pass-through) to the write set.
+(2) Test filters: use *HybridRoutingTest* (constructs the input :561), *OnDeviceQueryInterpretationServiceTest*, *CloudProviderTransportPayloadTest*. CloudQueryPreparedPayloadTest and HybridServiceDelegationTest do not exist; HybridRouterIntegrationTest does not construct the input.
+(3) CloudQueryInterpretationServiceTest.kt exists, so (Cc) is an added test (request-body capture pattern :302-345).
+(4) The cloud call is at CloudQueryInterpretationService.kt:110 (plan :78); the cloud file is still not edited.
+Baselines (11d169a0): cloud_payload vr-20261023-043212-22fc0351 PASS; pii_logging vr-20261023-043230-202a7d82 PASS; time_boundaries vr-20261023-043248-64b11e56 PASS; cancellation vr-20261023-043306-fce845b6 PASS; targeted (Engine5, builder, AssistantVM, Execute, Interpret, OnDevice, Cloud) vr-20261023-043321-35d039d3 PASS.
+Next: C1 implement.
+
+## C1 (2026-10-23) — implemented, review round 1
+Source (feature-implementer): FinancialQueryInterpretationInput.priorUserQueries: List<String>; AppConfig MAX_QUERY_HISTORY_USER_TURNS_FOR_MODEL = 4 (old constant deleted); builder takes EffectiveCloudAiPolicyResolver (shouldRedact = canUseCloudFor && resolve().redactBeforeCloud; OR removed), USER-only, last 4, sanitized, blanks dropped; InterpretFinancialQueryUseCase param renamed priorMessages (same arity); OnDevice buildPrompt renders "- USER:" / "none" (the cloud file is NOT edited); AssistantViewModel snapshots history BEFORE persistUserTurn, unfiltered, only if storeConversationHistory && sessionId != null; privacySettingsRepository ctor param removed. Docs: LEGAL_PATHS (2 Privacy FORBIDDEN lines + new "Assistant / Financial Query" section), DEPENDENCY_MAP, VIEWMODEL_INJECTION_MAP (9→8 deps), CODEBASE_SEGMENTS Seg 20.
+Tests (test-author, 2 passes after an API timeout): builder (AE-C3, AE-C29, AE-C1, AE-C4, INV-C18, blanks, caps), VM (AE-C1 VM half, AE-C5 ×2, AE-C6), OnDevice AE-C2/AE-C5, cloud (Cc), SourceScanning (Ca)/(Cb) + negative fixtures.
+**PC-7 deletion recorded:** AssistantViewModelTest `submitQuery strips history payloadJson when privacy requires redaction even though ai redaction is off` DELETED (VM redaction branch removed; coverage moved to the builder AE-C1/AE-C4). This is the only deleted test.
+Validation round 1: targeted vr-20261023-052126-04ffab66 FAIL (only (Cc): redaction collapses newlines, so the line-based asserts can't work); cloud_payload vr-20261023-052900-b3a6da82 PASS (no N8); pii_logging vr-20261023-052918-5f7ff269 PASS; static-guards vr-20261023-052936-73d92515 PASS (known_good_state 21 unchanged).
+Reviews: reviewer-strict REJECT (MAJOR (Cc) only; minors: Room-faithful flow stub, handoff PC-7 record, labels); architecture-guardian ACCEPT-WITH-MINORS ((Cb) copy/:: evasion, (Ca) token list, LEGAL_PATHS nits); privacy-security-guardian ACCEPT-WITH-MINORS (no end-to-end AE-C1 test, no resolver-failure test, same scan gaps, labels).
+Fix batch (test-only) + docs nit pass: DONE (see below).
+Info/follow-ups: unredacted prior queries keep internal newlines (user's own text; possible follow-up: collapse newlines); a failed history read now skips persisting the USER turn (benign); builder canUseCloudFor uses an earlier settings snapshot than the resolver (cloud gate + prepareText still apply). C2 owns InterpretFinancialQueryUseCase :48-51 / OnDevice :58/:63/:125 throwable logs.
+C1 fix batch DONE (test-only):
+- (Cc) uses a non-redacting real resolver, with a redaction-on substring variant.
+- VM store stub uses `flow { emit(...) }`.
+- (Ca) also forbids `.shouldRedact(` and `settings.redactBeforeCloud`; (Cb) also forbids `priorUserQueries =` and `::FinancialQueryInterpretationInput` outside the builder; both have negative fixtures; labels fixed.
+- Builder: IOException/ISE/CE resolver-failure tests; AE-C1 end-to-end builder→buildPrompt test.
+LEGAL_PATHS Assistant section nits applied by the orchestrator, using the reviewers' wording: sessionId condition, chat-row writes via appendMessage, local fallback.
+
+## C1 DONE (2026-10-23)
+Validation on the final production code: cloud_payload vr-20261023-052900-b3a6da82 PASS (no N8; proof unedited); pii_logging vr-20261023-052918-5f7ff269 PASS; static-guards vr-20261023-052936-73d92515 PASS. After the test/doc fixes: targeted (9 classes) vr-20261023-062011-462543d1 PASS; guard_docs_truth vr-20261023-062344-3d7d3cf9 PASS (LEGAL_PATHS edit). Last edit: "(4)" dropped from LEGAL_PATHS (reviewer minor; prose only).
+Reviews: reviewer-strict iteration 2 ACCEPT-WITH-MINORS (all round-1 findings fixed; INFO: the redaction-on (Cc) ASSISTANT check is near-unfailable by type, so the real proof is the builder end-to-end test + the non-redacting exact lines; known scanner limits: typealias, whitespace before "("). PSG and AG ACCEPT-WITH-MINORS (round 1; all minors addressed).
+N-items fired: none. KNOWN_VIOLATIONS: unchanged. Deleted tests: only the PC-7 one.
+Follow-ups: collapse newlines in unredacted prior queries (optional); C2 owns the throwable logs.
+Next: C2 (typed bounded unsupported reasons + log hygiene; res EN/es/el).

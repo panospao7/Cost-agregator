@@ -4,6 +4,12 @@ import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy
 import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
 import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
+import com.yourname.expensetracker.domain.privacy.FakePrivacySettingsRepository
+import com.yourname.expensetracker.domain.privacy.PrivacySettings
+import com.yourname.expensetracker.domain.ai.model.AiSettings
+import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationInput
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationResult
 import com.yourname.expensetracker.domain.privacy.PrivacyAuditLogger
@@ -344,6 +350,114 @@ class CloudQueryInterpretationServiceTest {
         assertTrue(prompt.contains("category_a"))
         assertFalse(prompt.contains("Lidl"))
         assertFalse(prompt.contains("Groceries"))
+    }
+
+    /**
+     * Real resolver over fakes with cloud allowed and redaction OFF in both privacy and AI
+     * settings, so the prompt reaches the wire unredacted (line structure preserved).
+     */
+    private fun nonRedactingPayloadPolicy() = DefaultCloudPayloadPolicy(
+        EffectiveCloudAiPolicyResolver(
+            FakePrivacySettingsRepository(
+                PrivacySettings(cloudAiEnabled = true, redactBeforeCloud = false)
+            ),
+            FixedAiSettingsRepository(AiSettings(allowCloudAi = true, redactBeforeCloud = false))
+        ),
+        DefaultCloudPayloadRedactor()
+    )
+
+    private class FixedAiSettingsRepository(initial: AiSettings) : AiSettingsRepository {
+        private val state = MutableStateFlow(initial)
+        override fun settings(): Flow<AiSettings> = state
+        override suspend fun update(transform: (AiSettings) -> AiSettings) {
+            state.value = transform(state.value)
+        }
+    }
+
+    /** Runs a clarification round-trip with two prior USER turns and returns the wire prompt text. */
+    private fun capturePromptWithHistory(payloadPolicy: DefaultCloudPayloadPolicy): String {
+        val mockKeyStorage = mockk<SecureKeyStorage>(relaxed = true)
+        every { mockKeyStorage.getKey(SecureKeyStorage.KEY_GEMINI) } returns "test-key"
+
+        val cloudModelText =
+            """{"kind":"clarification","clarification":{"prompt":"Need period?","options":["This month"]}}"""
+        val cloudResponseBody = JSONObject().put(
+            "candidates",
+            JSONArray().put(
+                JSONObject().put(
+                    "content",
+                    JSONObject().put(
+                        "parts",
+                        JSONArray().put(JSONObject().put("text", cloudModelText))
+                    )
+                )
+            )
+        ).toString()
+
+        val capturedRequests = mutableListOf<Request>()
+        val response = Response.Builder()
+            .request(Request.Builder().url("https://example.com").build())
+            .protocol(Protocol.HTTP_1_1)
+            .code(200)
+            .message("OK")
+            .body(cloudResponseBody.toResponseBody("application/json".toMediaType()))
+            .build()
+
+        val mockClient = mockk<OkHttpClient>()
+        val mockCall = mockk<Call>()
+        every { mockClient.newCall(capture(capturedRequests)) } returns mockCall
+        every { mockCall.execute() } returns response
+
+        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, allowedGate(), payloadPolicy)
+
+        kotlinx.coroutines.runBlocking {
+            service.interpret(
+                FinancialQueryInterpretationInput(
+                    rawQuery = "and last month",
+                    currentTimeMs = 1_000L,
+                    localeTag = "en-US",
+                    priorUserQueries = listOf("food last week", "and transport")
+                )
+            )
+        }
+
+        val requestJson = JSONObject(capturedRequests.single().body!!.bodyToString())
+        return requestJson
+            .getJSONArray("contents")
+            .getJSONObject(0)
+            .getJSONArray("parts")
+            .getJSONObject(0)
+            .getString("text")
+    }
+
+    @Test
+    fun `Part C Cc cloud prompt history contains only USER lines and no ASSISTANT lines`() {
+        // Redaction OFF: the prompt keeps its line structure, so assert line-based.
+        val prompt = capturePromptWithHistory(nonRedactingPayloadPolicy())
+
+        val lines = prompt.lines()
+        val headerIndex = lines.indexOf("Conversation history:")
+        assertTrue("Conversation history header must be present", headerIndex >= 0)
+        val historyLines = lines.drop(headerIndex + 1).takeWhile { it.isNotBlank() }
+
+        assertEquals(2, historyLines.size)
+        assertTrue(historyLines.all { it.startsWith("- USER:") })
+        assertEquals("- USER: food last week", historyLines[0])
+        assertEquals("- USER: and transport", historyLines[1])
+        assertTrue(prompt.contains("- USER:"))
+        assertFalse(prompt.lines().any { it.trimStart().startsWith("- ASSISTANT:") })
+        assertFalse(prompt.contains("ASSISTANT:"))
+    }
+
+    @Test
+    fun `Part C Cc cloud prompt history has only USER entries and no ASSISTANT text when redaction is on`() {
+        // Redaction ON (fail-closed resolver): the sanitizer collapses whitespace to a single
+        // line, so assert on whitespace-collapsed substrings rather than line structure.
+        val prompt = capturePromptWithHistory(testPayloadPolicy())
+
+        assertTrue(prompt.contains("Conversation history:"))
+        assertTrue(prompt.contains("- USER:"))
+        assertFalse(prompt.contains("ASSISTANT"))
     }
 
     // ──────────────────────────────────────────────────────────────────────────

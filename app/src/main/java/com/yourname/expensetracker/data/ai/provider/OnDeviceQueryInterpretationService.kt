@@ -74,8 +74,8 @@ class OnDeviceQueryInterpretationService @Inject constructor() : QueryInterpreta
     }
 
     internal fun buildPrompt(input: FinancialQueryInterpretationInput): String {
-        val history = input.conversationHistory.takeLast(8).joinToString("\n") { message ->
-            "- ${message.role.name}: ${message.text}"
+        val history = input.priorUserQueries.joinToString("\n") { text ->
+            "- USER: $text"
         }.ifBlank { "none" }
         val visibleCategoryLookupKeys = visibleCategoryLookupKeys(input)
         val visibleMerchantLookupKeys = visibleMerchantLookupKeys(input)

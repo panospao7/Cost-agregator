@@ -29,7 +29,7 @@ class InterpretFinancialQueryUseCase @Inject constructor(
 
     suspend operator fun invoke(
         rawQuery: String,
-        conversationHistory: List<AiChatMessage> = emptyList()
+        priorMessages: List<AiChatMessage> = emptyList()
     ): FinancialQueryInterpretationResult {
         val settings = aiSettingsRepository.settings().first()
         if (!settings.aiEnabled || !settings.assistantEnabled || !settings.queryInterpretationEnabled) {
@@ -38,7 +38,7 @@ class InterpretFinancialQueryUseCase @Inject constructor(
             )
         }
 
-        val input = inputBuilder.build(rawQuery, settings, conversationHistory)
+        val input = inputBuilder.build(rawQuery, settings, priorMessages)
 
         val providerResult = try {
             queryInterpretationService.interpret(input)

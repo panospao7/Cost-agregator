@@ -115,7 +115,13 @@ data class FinancialQueryInterpretationInput(
      * names/aliases back to [ExpenseQueryFilters.categoryIds].
      */
     val categoryNameToIdMap: Map<String, Long> = emptyMap(),
-    val conversationHistory: List<AiChatMessage> = emptyList()
+    /**
+     * Prior USER queries only (oldest first, at most
+     * `AppConfig.Ai.MAX_QUERY_HISTORY_USER_TURNS_FOR_MODEL`), already sanitized/redacted by
+     * `FinancialQueryInterpretationInputBuilder`, the sole constructor of this type.
+     * Never carries ASSISTANT/SYSTEM text or message payloads.
+     */
+    val priorUserQueries: List<String> = emptyList()
 )
 
 sealed interface FinancialQueryInterpretationResult {

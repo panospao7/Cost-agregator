@@ -103,7 +103,6 @@ class AssistantViewModel @Inject constructor(
     private val interpretFinancialQueryUseCase: InterpretFinancialQueryUseCase,
     private val executeFinancialQueryUseCase: ExecuteFinancialQueryUseCase,
     private val mapFinancialQueryToNavigationUseCase: MapFinancialQueryToNavigationUseCase,
-    private val privacySettingsRepository: com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository,
     private val monotonicTimeProvider: MonotonicTimeProvider
 ) : ViewModel() {
 
@@ -233,21 +232,15 @@ class AssistantViewModel @Inject constructor(
                     currentSessionId = sessionId ?: _uiState.value.currentSessionId
                 )
 
-                persistUserTurn(sessionId, query)
-
+                // C1: snapshot the PRIOR turns before this query is persisted. Shaping (USER-only,
+                // last K, redaction) is owned solely by FinancialQueryInterpretationInputBuilder.
                 val historyMessages = if (settings.storeConversationHistory && sessionId != null) {
-                    val raw = aiChatRepository.observeMessages(sessionId).first()
-                    // S11-019: Sanitize history for cloud — strip payloadJson under redaction,
-                    // limit to last 10 turns to avoid stale/excessive context
-                    val limited = raw.takeLast(10)
-                    if (settings.redactBeforeCloud || privacySettingsRepository.getSettings().redactBeforeCloud) {
-                        limited.map { msg -> msg.copy(payloadJson = null) }
-                    } else {
-                        limited
-                    }
+                    aiChatRepository.observeMessages(sessionId).first()
                 } else {
                     emptyList()
                 }
+
+                persistUserTurn(sessionId, query)
 
                 // AID-10: Capture interpretation timing
                 val interpretationStart = monotonicTimeProvider.nowNanos()

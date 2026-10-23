@@ -449,6 +449,10 @@ FORBIDDEN:
   ❌ Using raw strings instead of typed PrivacyBlocked for UI states
   ❌ Silently proceeding when PrivacyDecision.FailClosed is returned
   ❌ Gating non-AI network calls by CLOUD_AI_* capabilities
+  ❌ ASSISTANT/SYSTEM turns or app-computed answers in any query-interpretation prompt
+     (model history = prior USER queries, shaped only by FinancialQueryInterpretationInputBuilder)
+  ❌ Assistant query interpretation reading PrivacySettings.redactBeforeCloud directly or OR-ing
+     redaction flags outside EffectiveCloudAiPolicyResolver
 ```
 
 ---
@@ -1491,4 +1495,39 @@ FORBIDDEN:
   ❌ SpendingChallengeRepository.deactivateChallenges() without a write-barrier check
   ❌ Adding new raw Double SUM aggregation paths for challenge progress
      (must migrate to MultiCurrencyRepository — ownership- and currency-safe)
+```
+
+---
+
+## Assistant / Financial Query
+
+```
+SUBMIT assistant query (no expense/receipt/recurring writes; the only writes are the
+chat rows via AiChatRepository.appendMessage, which checks the write barrier):
+  → AssistantViewModel.submitQuery
+      snapshots prior chat rows BEFORE persisting the current user turn
+      (only when AiSettings.storeConversationHistory is on AND a session id exists;
+      otherwise empty)
+  → InterpretFinancialQueryUseCase (passes the raw prior rows through unchanged;
+    falls back to local interpretation when no provider answers)
+  → FinancialQueryInterpretationInputBuilder (SOLE constructor of
+    FinancialQueryInterpretationInput):
+      priorUserQueries = USER rows only, last
+      AppConfig.Ai.MAX_QUERY_HISTORY_USER_TURNS_FOR_MODEL, oldest first,
+      each sanitized, blanks dropped; no ASSISTANT/SYSTEM text, no payloadJson
+      redaction = AiPolicy.canUseCloudFor(QUERY_INTERPRETATION)
+                  && EffectiveCloudAiPolicyResolver.resolve().redactBeforeCloud
+  → HybridRouter / providers
+      on-device: OnDeviceQueryInterpretationService (renders "- USER: <text>" lines)
+      cloud: CloudQueryInterpretationService → CloudAiPrivacyGate →
+             DefaultCloudPayloadPolicy.prepareText → audit
+  → ExecuteFinancialQueryUseCase (read-only)
+
+FORBIDDEN:
+  ❌ Constructing FinancialQueryInterpretationInput outside FinancialQueryInterpretationInputBuilder
+  ❌ ASSISTANT/SYSTEM turns, app-computed answers or message payloadJson in any
+     query-interpretation prompt (on-device or cloud)
+  ❌ AssistantViewModel (or any UI layer) shaping, filtering or redacting model history
+  ❌ Assistant query interpretation reading PrivacySettings.redactBeforeCloud directly or OR-ing
+     redaction flags outside EffectiveCloudAiPolicyResolver
 ```

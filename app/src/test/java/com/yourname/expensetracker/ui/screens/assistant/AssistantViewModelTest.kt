@@ -23,8 +23,6 @@ import com.yourname.expensetracker.domain.ai.usecase.GetAiRuntimeStatusUseCase
 import com.yourname.expensetracker.domain.ai.usecase.InterpretFinancialQueryUseCase
 import com.yourname.expensetracker.domain.ai.usecase.MapFinancialQueryToNavigationUseCase
 import com.yourname.expensetracker.domain.model.UiText
-import com.yourname.expensetracker.domain.privacy.FakePrivacySettingsRepository
-import com.yourname.expensetracker.domain.privacy.PrivacySettings
 import com.yourname.expensetracker.domain.util.FakeMonotonicTimeProvider
 import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
 import com.yourname.expensetracker.util.ViewModelTestUtils
@@ -33,6 +31,7 @@ import java.util.UUID
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
@@ -56,7 +55,6 @@ class AssistantViewModelTest : ViewModelTestUtils() {
     private lateinit var interpretFinancialQueryUseCase: InterpretFinancialQueryUseCase
     private lateinit var executeFinancialQueryUseCase: ExecuteFinancialQueryUseCase
     private lateinit var mapFinancialQueryToNavigationUseCase: MapFinancialQueryToNavigationUseCase
-    private lateinit var privacySettingsRepository: FakePrivacySettingsRepository
     private lateinit var monotonicTimeProvider: FakeMonotonicTimeProvider
     private lateinit var viewModel: AssistantViewModel
 
@@ -70,9 +68,6 @@ class AssistantViewModelTest : ViewModelTestUtils() {
         interpretFinancialQueryUseCase = mockk(relaxed = true)
         executeFinancialQueryUseCase = mockk(relaxed = true)
         mapFinancialQueryToNavigationUseCase = mockk(relaxed = true)
-        privacySettingsRepository = FakePrivacySettingsRepository(
-            PrivacySettings(redactBeforeCloud = false)
-        )
         monotonicTimeProvider = FakeMonotonicTimeProvider()
 
         every { aiSettingsRepository.settings() } returns flowOf(
@@ -93,7 +88,6 @@ class AssistantViewModelTest : ViewModelTestUtils() {
             interpretFinancialQueryUseCase,
             executeFinancialQueryUseCase,
             mapFinancialQueryToNavigationUseCase,
-            privacySettingsRepository,
             monotonicTimeProvider
         )
     }
@@ -112,7 +106,6 @@ class AssistantViewModelTest : ViewModelTestUtils() {
             interpretFinancialQueryUseCase,
             executeFinancialQueryUseCase,
             mapFinancialQueryToNavigationUseCase,
-            privacySettingsRepository,
             monotonicTimeProvider
         )
 
@@ -138,7 +131,6 @@ class AssistantViewModelTest : ViewModelTestUtils() {
             interpretFinancialQueryUseCase,
             executeFinancialQueryUseCase,
             mapFinancialQueryToNavigationUseCase,
-            privacySettingsRepository,
             monotonicTimeProvider
         )
 
@@ -176,7 +168,6 @@ class AssistantViewModelTest : ViewModelTestUtils() {
             interpretFinancialQueryUseCase,
             executeFinancialQueryUseCase,
             mapFinancialQueryToNavigationUseCase,
-            privacySettingsRepository,
             monotonicTimeProvider
         )
 
@@ -201,7 +192,6 @@ class AssistantViewModelTest : ViewModelTestUtils() {
             interpretFinancialQueryUseCase,
             executeFinancialQueryUseCase,
             mapFinancialQueryToNavigationUseCase,
-            privacySettingsRepository,
             monotonicTimeProvider
         )
 
@@ -454,7 +444,6 @@ class AssistantViewModelTest : ViewModelTestUtils() {
             interpretFinancialQueryUseCase,
             executeFinancialQueryUseCase,
             mapFinancialQueryToNavigationUseCase,
-            privacySettingsRepository,
             monotonicTimeProvider
         )
 
@@ -481,20 +470,95 @@ class AssistantViewModelTest : ViewModelTestUtils() {
         assertEquals(5L, viewModel.uiState.value.currentSessionId)
     }
 
+    // PC-7: the VM-level "strip payloadJson under privacy redaction" test was removed because the VM
+    // no longer shapes history; the builder owns it (see FinancialQueryInterpretationInputBuilderTest
+    // AE-C1 / AE-C4 coverage).
+
     @Test
-    fun `submitQuery strips history payloadJson when privacy requires redaction even though ai redaction is off`() = runTest(testDispatcher) {
-        // AiSettings.redactBeforeCloud=false but PrivacySettings.redactBeforeCloud=true -> privacy authoritative.
+    fun `AE-C1 INV-C3 submitQuery passes the full unfiltered prior snapshot and excludes the current query`() = runTest(testDispatcher) {
+        useHistoryEnabledViewModel()
+        val seeded = seededSessionRows()
+        val store = stubSessionStore(seeded)
+        val capturedHistories = stubStructuredInterpretation()
+
+        viewModel.submitQuery("transport last month")
+        advanceUntilIdle()
+
+        val history = capturedHistories.single()
+        assertEquals(12, history.size)
+        assertEquals(seeded, history)
+        assertTrue(history.any { it.role == AssistantMessageRole.ASSISTANT })
+        assertTrue(history.any { it.role == AssistantMessageRole.USER })
+        assertTrue(history.any { it.payloadJson != null })
+        assertTrue(history.none { it.text == "transport last month" })
+        // The snapshot was taken before persistence: the store has since grown, the snapshot has not.
+        assertEquals(14, store.size)
+    }
+
+    @Test
+    fun `AE-C5 INV-C3 submitQuery passes empty history when storeConversationHistory is false`() = runTest(testDispatcher) {
+        // setUp settings: storeConversationHistory = false. A session id exists but must not be read.
+        val seeded = seededSessionRows()
+        stubSessionStore(seeded)
+        val capturedHistories = stubStructuredInterpretation()
+
+        viewModel.submitQuery("transport last month")
+        advanceUntilIdle()
+
+        assertTrue(capturedHistories.single().isEmpty())
+        verify(exactly = 0) { aiChatRepository.observeMessages(any()) }
+    }
+
+    @Test
+    fun `AE-C5 INV-C3 submitQuery passes empty history when history is enabled but no session exists`() = runTest(testDispatcher) {
+        useHistoryEnabledViewModel()
+        coEvery { aiChatRepository.createSession(any()) } returns null
+        val capturedHistories = stubStructuredInterpretation(createSession = false)
+
+        viewModel.submitQuery("transport last month")
+        advanceUntilIdle()
+
+        assertTrue(capturedHistories.single().isEmpty())
+        verify(exactly = 0) { aiChatRepository.observeMessages(any()) }
+    }
+
+    @Test
+    fun `AE-C6 INV-C4 submitQuery persists exactly one USER and one ASSISTANT row`() = runTest(testDispatcher) {
+        useHistoryEnabledViewModel()
+        val store = stubSessionStore(seededSessionRows())
+        stubStructuredInterpretation()
+
+        viewModel.submitQuery("transport last month")
+        advanceUntilIdle()
+
+        coVerify(exactly = 2) { aiChatRepository.appendMessage(any(), any(), any(), any(), any()) }
+        coVerify(exactly = 1) {
+            aiChatRepository.appendMessage(
+                5L, AssistantMessageRole.USER, AssistantMessageKind.QUERY, "transport last month", null
+            )
+        }
+        coVerify(exactly = 1) {
+            aiChatRepository.appendMessage(5L, AssistantMessageRole.ASSISTANT, AssistantMessageKind.RESULT, any(), any())
+        }
+        val added = store.drop(12)
+        assertEquals(listOf(AssistantMessageRole.USER, AssistantMessageRole.ASSISTANT), added.map { it.role })
+        assertEquals("transport last month", added[0].text)
+        assertEquals(null, added[0].payloadJson)
+        assertEquals("Total spending\n42.00 EUR", added[1].text)
+        val payload = added[1].payloadJson
+        assertNotNull(payload)
+        assertTrue(payload!!.contains("\"type\":\"summary\""))
+        assertTrue(payload.contains("42.00 EUR"))
+    }
+
+    private fun useHistoryEnabledViewModel() {
         every { aiSettingsRepository.settings() } returns flowOf(
             AiSettings(
                 aiEnabled = true,
                 assistantEnabled = true,
                 queryInterpretationEnabled = true,
-                storeConversationHistory = true,
-                redactBeforeCloud = false
+                storeConversationHistory = true
             )
-        )
-        privacySettingsRepository = FakePrivacySettingsRepository(
-            PrivacySettings(redactBeforeCloud = true)
         )
         viewModel = AssistantViewModel(
             application,
@@ -504,30 +568,59 @@ class AssistantViewModelTest : ViewModelTestUtils() {
             interpretFinancialQueryUseCase,
             executeFinancialQueryUseCase,
             mapFinancialQueryToNavigationUseCase,
-            privacySettingsRepository,
             monotonicTimeProvider
         )
+    }
 
-        val storedHistory = listOf(
-            AiChatMessage(
-                id = 1L,
-                sessionId = 5L,
-                role = AssistantMessageRole.ASSISTANT,
-                kind = AssistantMessageKind.RESULT,
-                text = "Previous answer",
-                payloadJson = "{\"type\":\"summary\",\"primaryText\":\"sensitive\"}",
-                createdAt = 100L
-            )
+    /** Session 5 with 6 USER and 6 ASSISTANT rows (AE-C1 Given, scaled to 12 rows). */
+    private fun seededSessionRows(): List<AiChatMessage> = (1..12).map { index ->
+        val isUser = index % 2 == 1
+        AiChatMessage(
+            id = index.toLong(),
+            sessionId = 5L,
+            role = if (isUser) AssistantMessageRole.USER else AssistantMessageRole.ASSISTANT,
+            kind = if (isUser) AssistantMessageKind.QUERY else AssistantMessageKind.RESULT,
+            text = if (isUser) "user query $index" else "Total spending\n123.45 EUR (7)",
+            payloadJson = if (isUser) null else "{\"type\":\"summary\",\"primaryText\":\"123.45 EUR\"}",
+            createdAt = 100L + index
         )
+    }
+
+    /**
+     * Backs session 5 with an in-memory store: observeMessages returns a cold flow whose snapshot
+     * is taken at collection time (like Room) and appendMessage appends to the store, so a snapshot taken after persistence would
+     * visibly contain the current query.
+     */
+    private fun stubSessionStore(seed: List<AiChatMessage>): MutableList<AiChatMessage> {
+        val store = seed.toMutableList()
+        coEvery { aiChatRepository.createSession(any()) } returns 5L
+        every { aiChatRepository.observeMessages(5L) } answers { flow { emit(store.toList()) } }
+        coEvery { aiChatRepository.appendMessage(any(), any(), any(), any(), any()) } coAnswers {
+            store += AiChatMessage(
+                id = store.size + 1L,
+                sessionId = firstArg(),
+                role = secondArg(),
+                kind = thirdArg(),
+                text = arg(3),
+                payloadJson = arg(4),
+                createdAt = 1_000L + store.size
+            )
+            store.size.toLong()
+        }
+        return store
+    }
+
+    private fun stubStructuredInterpretation(createSession: Boolean = true): MutableList<List<AiChatMessage>> {
         val capturedHistories = mutableListOf<List<AiChatMessage>>()
         val intent = FinancialQueryIntent(
-            rawQuery = "total this month",
-            normalizedQuery = "total this month",
+            rawQuery = "transport last month",
+            normalizedQuery = "transport last month",
             filters = ExpenseQueryFilters(),
             metric = QueryMetric.TOTAL
         )
-        coEvery { aiChatRepository.createSession(any()) } returns 5L
-        every { aiChatRepository.observeMessages(5L) } returns flowOf(storedHistory)
+        if (createSession) {
+            coEvery { aiChatRepository.createSession(any()) } returns 5L
+        }
         coEvery { interpretFinancialQueryUseCase(any(), capture(capturedHistories)) } returns
             FinancialQueryInterpretationResult.Structured(intent)
         coEvery { executeFinancialQueryUseCase(intent) } returns FinancialQueryResult.Summary(
@@ -535,12 +628,7 @@ class AssistantViewModelTest : ViewModelTestUtils() {
             primaryText = "42.00 EUR"
         )
         coEvery { mapFinancialQueryToNavigationUseCase(intent) } returns null
-
-        viewModel.submitQuery("total this month")
-        advanceUntilIdle()
-
-        assertTrue(capturedHistories.isNotEmpty())
-        assertTrue(capturedHistories.last().all { it.payloadJson == null })
+        return capturedHistories
     }
 
     @Test
@@ -561,7 +649,6 @@ class AssistantViewModelTest : ViewModelTestUtils() {
             interpretFinancialQueryUseCase,
             executeFinancialQueryUseCase,
             mapFinancialQueryToNavigationUseCase,
-            privacySettingsRepository,
             monotonicTimeProvider
         )
 

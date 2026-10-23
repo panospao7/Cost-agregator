@@ -55,6 +55,39 @@ class OnDeviceQueryInterpretationServiceTest {
         assertTrue(!prompt.contains("Known merchant lookup keys: Lidl"))
     }
 
+    private fun historySectionLines(prompt: String): List<String> {
+        val lines = prompt.lines()
+        val headerIndex = lines.indexOf("Conversation history:")
+        assertTrue("Conversation history header must be present", headerIndex >= 0)
+        return lines.drop(headerIndex + 1).takeWhile { it.isNotBlank() }
+    }
+
+    @Test
+    fun `AE-C2 buildPrompt renders prior user queries as USER lines only`() {
+        val input = sampleInput.copy(
+            priorUserQueries = listOf("food last week", "and transport")
+        )
+
+        val prompt = service.buildPrompt(input)
+        val history = historySectionLines(prompt)
+
+        assertEquals(listOf("- USER: food last week", "- USER: and transport"), history)
+        assertTrue(!prompt.contains("ASSISTANT"))
+        assertTrue(!prompt.contains("SYSTEM"))
+        assertTrue(!prompt.contains("payloadJson"))
+    }
+
+    @Test
+    fun `AE-C5 buildPrompt renders none when prior user queries are empty`() {
+        val input = sampleInput.copy(priorUserQueries = emptyList())
+
+        val prompt = service.buildPrompt(input)
+        val history = historySectionLines(prompt)
+
+        assertEquals(listOf("none"), history)
+        assertTrue(!prompt.contains("- USER:"))
+    }
+
     @Test
     fun `parseResponse handles structured result`() {
         val result = service.parseResponse(

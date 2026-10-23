@@ -220,7 +220,7 @@ object AppConfig {
 
         // Query interpretation / assistant limits
         const val MAX_QUERY_INPUT_CHARS = 400
-        const val MAX_QUERY_HISTORY_TURNS_FOR_MODEL = 8
+        const val MAX_QUERY_HISTORY_USER_TURNS_FOR_MODEL = 4
         const val MAX_QUERY_RESULT_ROWS = 8
         const val MAX_QUERY_GROUP_BUCKETS = 8
         const val MAX_QUERY_CLARIFICATION_OPTIONS = 4
