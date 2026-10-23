@@ -85,6 +85,19 @@
     <string name="groups_balances_unavailable">Τα υπόλοιπα δεν είναι διαθέσιμα</string>
     <string name="groups_currency_not_selected">Επιλέξτε νόμισμα</string>
     <string name="warranty_mutation_failed">Δεν ήταν δυνατή η αποθήκευση της αλλαγής. Δοκιμάστε ξανά.</string>
+    <!-- ai-fixes B1b: warranty review states, reject confirmation, filtered-empty states, bounded errors -->
+    <string name="warranty_badge_expired_unconfirmed">Έληξε - δεν επιβεβαιώθηκε</string>
+    <string name="warranty_expired_date">Έληξε στις %1$s</string>
+    <string name="warranty_action_keep_expired">Διατήρηση στο ιστορικό</string>
+    <string name="warranty_expired_unconfirmed_count">Έληξαν χωρίς επιβεβαίωση: %1$d</string>
+    <string name="warranty_reject_confirm_title">Αφαίρεση αυτής της εγγύησης;</string>
+    <string name="warranty_reject_confirm_body">Θα διαγραφεί από τις εγγυήσεις σας. Η απόδειξή σας δεν επηρεάζεται.</string>
+    <string name="warranty_reject_confirm_action">Αφαίρεση</string>
+    <string name="warranty_empty_filtered_title">Δεν υπάρχει τίποτα εδώ</string>
+    <string name="warranty_empty_filtered_message">Καμία εγγύηση δεν ταιριάζει με αυτό το φίλτρο.</string>
+    <string name="warranty_empty_review_message">Δεν απομένει τίποτα προς έλεγχο.</string>
+    <string name="warranty_error_confirm_failed">Δεν ήταν δυνατή η επιβεβαίωση αυτής της εγγύησης. Δοκιμάστε ξανά.</string>
+    <string name="warranty_error_not_found">Αυτή η εγγύηση δεν υπάρχει πλέον.</string>
     <string name="recurring_mark_paid_dialog_title">Σήμανση λογαριασμού ως πληρωμένου</string>
     <string name="recurring_mark_paid_dialog_body">Θέλετε να καταγράψετε πληρωμή %2$s για %1$s ή η πληρωμή έχει ήδη καταγραφεί;</string>
     <string name="recurring_mark_paid_creates_expense">Πληρωμένο (δημιουργεί έξοδο)</string>

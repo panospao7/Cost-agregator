@@ -59,8 +59,9 @@ class WarrantyTrackerViewModelWriteBlockedTest : ViewModelTestUtils() {
     @Test
     fun `blocked confirmWarranty shows maintenance message and releases the mutation guard`() =
         runTest(testDispatcher) {
-            coEvery { warrantyRepository.updateWarranty(any()) } throws blockedWriteException()
-            viewModel.confirmWarranty(warranty())
+            // AE-20: the repository rejects the confirm behind the write barrier.
+            coEvery { warrantyRepository.confirmWarranty(1L) } throws blockedWriteException()
+            viewModel.confirmWarranty(1L)
             advanceUntilIdle()
 
             assertEquals(blockedMessage, viewModel.state.value.mutationError)

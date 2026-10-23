@@ -1633,6 +1633,19 @@
     <string name="warranty_confidence_format">Confidence: %1$d%%</string>
     <string name="warranty_action_confirm">Confirm</string>
     <string name="warranty_action_reject">Reject</string>
+    <!-- ai-fixes B1b: warranty review states, reject confirmation, filtered-empty states, bounded errors -->
+    <string name="warranty_badge_expired_unconfirmed">Expired - not confirmed</string>
+    <string name="warranty_expired_date">Expired on %1$s</string>
+    <string name="warranty_action_keep_expired">Keep in history</string>
+    <string name="warranty_expired_unconfirmed_count">%1$d expired without confirmation</string>
+    <string name="warranty_reject_confirm_title">Remove this warranty?</string>
+    <string name="warranty_reject_confirm_body">It will be deleted from your warranties. Your receipt is not affected.</string>
+    <string name="warranty_reject_confirm_action">Remove</string>
+    <string name="warranty_empty_filtered_title">Nothing here</string>
+    <string name="warranty_empty_filtered_message">No warranties match this filter.</string>
+    <string name="warranty_empty_review_message">Nothing left to review.</string>
+    <string name="warranty_error_confirm_failed">Couldn\'t confirm this warranty. Please try again.</string>
+    <string name="warranty_error_not_found">This warranty no longer exists.</string>
     <string name="warranty_manual_add_title">Add Warranty Manually</string>
     <string name="warranty_manual_product_name">Product name</string>
     <string name="warranty_manual_merchant_name">Merchant</string>

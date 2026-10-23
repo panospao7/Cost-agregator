@@ -361,6 +361,19 @@
     <string name="groups_balances_unavailable">Los saldos no están disponibles</string>
     <string name="groups_currency_not_selected">Selecciona una moneda</string>
     <string name="warranty_mutation_failed">No se pudo guardar el cambio. Inténtalo de nuevo.</string>
+    <!-- ai-fixes B1b: warranty review states, reject confirmation, filtered-empty states, bounded errors -->
+    <string name="warranty_badge_expired_unconfirmed">Caducada: sin confirmar</string>
+    <string name="warranty_expired_date">Caducó el %1$s</string>
+    <string name="warranty_action_keep_expired">Conservar en el historial</string>
+    <string name="warranty_expired_unconfirmed_count">Caducadas sin confirmar: %1$d</string>
+    <string name="warranty_reject_confirm_title">¿Eliminar esta garantía?</string>
+    <string name="warranty_reject_confirm_body">Se eliminará de tus garantías. Tu recibo no se verá afectado.</string>
+    <string name="warranty_reject_confirm_action">Eliminar</string>
+    <string name="warranty_empty_filtered_title">Nada por aquí</string>
+    <string name="warranty_empty_filtered_message">Ninguna garantía coincide con este filtro.</string>
+    <string name="warranty_empty_review_message">No queda nada por revisar.</string>
+    <string name="warranty_error_confirm_failed">No se pudo confirmar esta garantía. Inténtalo de nuevo.</string>
+    <string name="warranty_error_not_found">Esta garantía ya no existe.</string>
     <string name="recurring_mark_paid_dialog_title">Marcar factura como pagada</string>
     <string name="recurring_mark_paid_dialog_body">¿Quieres registrar un pago de %2$s para %1$s o este pago ya estaba registrado?</string>
     <string name="recurring_mark_paid_creates_expense">Marcar como pagada (crea un gasto)</string>

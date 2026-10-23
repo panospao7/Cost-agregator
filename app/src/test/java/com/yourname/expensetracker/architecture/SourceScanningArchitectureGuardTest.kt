@@ -774,4 +774,93 @@ class SourceScanningArchitectureGuardTest {
             present.isEmpty()
         )
     }
+
+    // ── ai-fixes B1b guard (c): the warranty ViewModel never builds review/status transitions ────
+    // INV-13 / FG-12. The only legal user-driven exits from review are
+    // WarrantyTrackerRepository.confirmWarranty(id) and rejectAutoDetectedWarranty. The ViewModel
+    // must not call updateWarranty(...) (its only former use was the confirm copy; S0 D-4) and must
+    // not build a copy(...) that sets `status =` or `needsReview =`. Fail-closed: a missing file or
+    // an unbalanced copy( call is reported as a violation.
+
+    private val warrantyViewModelPath =
+        "com/yourname/expensetracker/ui/screens/warranty/WarrantyTrackerViewModel.kt"
+
+    private val reviewFieldAssignment = Regex("""\b(status|needsReview)\s*=(?!=)""")
+    private val copyCall = Regex("""\bcopy\s*\(""")
+
+    /** Pure scan: returns bounded violation codes for a ViewModel source text. */
+    private fun warrantyViewModelReviewViolations(source: String): List<String> {
+        val text = stripComments(source)
+        val violations = mutableListOf<String>()
+        if (text.contains("updateWarranty(")) violations += "UPDATE_WARRANTY_CALL"
+
+        for (match in copyCall.findAll(text)) {
+            var depth = 1
+            var index = match.range.last + 1
+            val start = index
+            while (index < text.length && depth > 0) {
+                when (text[index]) {
+                    '(' -> depth++
+                    ')' -> depth--
+                }
+                index++
+            }
+            if (depth != 0) {
+                violations += "UNBALANCED_COPY_CALL"
+                continue
+            }
+            val args = text.substring(start, index - 1)
+            if (reviewFieldAssignment.containsMatchIn(args)) violations += "COPY_SETS_STATUS_OR_NEEDS_REVIEW"
+        }
+        return violations
+    }
+
+    @Test
+    fun `negative_fixture_warranty_view_model_review_transition_is_caught`() {
+        assertEquals(
+            listOf("UPDATE_WARRANTY_CALL"),
+            warrantyViewModelReviewViolations("repo.updateWarranty(w)")
+        )
+        assertEquals(
+            listOf("COPY_SETS_STATUS_OR_NEEDS_REVIEW"),
+            warrantyViewModelReviewViolations("val u = w.copy(status = WarrantyStatus.ACTIVE, updatedAt = 1L)")
+        )
+        assertEquals(
+            listOf("COPY_SETS_STATUS_OR_NEEDS_REVIEW"),
+            warrantyViewModelReviewViolations("val u = w.copy(\n    needsReview = false\n)")
+        )
+        assertEquals(
+            "implicit-receiver copy must also be scanned",
+            listOf("COPY_SETS_STATUS_OR_NEEDS_REVIEW"),
+            warrantyViewModelReviewViolations("fun S.f() = copy(needsReview = false)")
+        )
+        assertEquals(
+            "fail-closed on an unbalanced copy call",
+            listOf("UNBALANCED_COPY_CALL"),
+            warrantyViewModelReviewViolations("val u = w.copy(status = X")
+                .filter { it == "UNBALANCED_COPY_CALL" }
+        )
+        assertTrue(
+            "comments and unrelated copy arguments must not be flagged",
+            warrantyViewModelReviewViolations(
+                "// repo.updateWarranty(w) and w.copy(status = X)\n" +
+                    "val s = state.copy(selectedFilter = status, showNeedsReviewOnly = true, needsReviewCount = 2)"
+            ).isEmpty()
+        )
+    }
+
+    @Test
+    fun `warranty_view_model_never_builds_status_or_needs_review_transitions`() {
+        val sources = relativeSources()
+        assertTrue("Source scan found too few files (${sources.size}); source root may be wrong", sources.size > 100)
+        assertTrue("WarrantyTrackerViewModel.kt not found by the scan", warrantyViewModelPath in sources)
+
+        val violations = warrantyViewModelReviewViolations(sources.getValue(warrantyViewModelPath))
+        assertTrue(
+            "WarrantyTrackerViewModel must delegate review transitions to WarrantyTrackerRepository " +
+                "(confirmWarranty / rejectAutoDetectedWarranty): no updateWarranty( and no copy( setting " +
+                "status/needsReview (INV-13, FG-12). Violations: $violations",
+            violations.isEmpty()
+        )
+    }
 }
