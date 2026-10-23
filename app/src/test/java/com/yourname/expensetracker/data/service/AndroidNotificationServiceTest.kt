@@ -4,10 +4,20 @@ import android.app.NotificationManager
 import android.content.Context
 import android.content.ContextWrapper
 import androidx.test.core.app.ApplicationProvider
+import com.yourname.expensetracker.domain.notification.presentation.NotificationPresentationResolver
+import com.yourname.expensetracker.domain.privacy.applock.AppLockPrivacySettings
+import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsLoadState
+import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsRepository
+import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsWriteResult
+import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticsEmitter
 import com.yourname.expensetracker.domain.service.NotificationService
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
@@ -30,7 +40,7 @@ class AndroidNotificationServiceTest {
     fun `sendAiBriefingReady returns not delivered when notifications are disabled`() {
         every { notificationManager.areNotificationsEnabled() } returns false
 
-        val service = AndroidNotificationService(testContext())
+        val service = newService(testContext())
 
         val result = service.sendAiBriefingReadyWithResult(
             notificationId = 42,
@@ -47,7 +57,7 @@ class AndroidNotificationServiceTest {
     fun `sendAiBriefingReady returns delivered after dispatch`() {
         every { notificationManager.areNotificationsEnabled() } returns true
 
-        val service = AndroidNotificationService(testContext())
+        val service = newService(testContext())
 
         val result = service.sendAiBriefingReadyWithResult(
             notificationId = 42,
@@ -58,6 +68,30 @@ class AndroidNotificationServiceTest {
 
         assertEquals(NotificationService.DeliveryResult.DELIVERED, result)
         verify(exactly = 1) { notificationManager.notify(42, any()) }
+    }
+
+    /** Fake settings store (same shape as the S4 resolver test fake); the legacy methods never read it. */
+    private class FakeSettingsRepository : AppLockSettingsRepository {
+        override suspend fun getLoadState(): AppLockSettingsLoadState =
+            AppLockSettingsLoadState.Loaded(AppLockPrivacySettings(discreetNotifications = false))
+
+        override fun observeLoadState(): Flow<AppLockSettingsLoadState> = emptyFlow()
+
+        override suspend fun setDiscreetNotifications(enabled: Boolean): AppLockSettingsWriteResult =
+            error("not used by the notification service")
+
+        override suspend fun reviewSave(record: AppLockPrivacySettings): AppLockSettingsWriteResult =
+            error("not used by the notification service")
+    }
+
+    private fun newService(context: Context): AndroidNotificationService {
+        val resolver = NotificationPresentationResolver(
+            FakeSettingsRepository(),
+            mockk<PrivacyDiagnosticsEmitter>(relaxed = true),
+            CoroutineScope(Job())
+        )
+        val applier = NotificationPresentationApplier(context, NotificationPresentationTexts(context))
+        return AndroidNotificationService(context, resolver, applier)
     }
 
     private fun testContext(): Context {

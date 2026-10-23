@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Spanish notification presentation copy (app-lock-privacy-mode, S5a).
+  DRAFT, owner spot-check required before release. Same constraints as the English file: kind only,
+  no amount, merchant, product, severity, date, count or AI text, and no emoji.
+-->
+<resources>
+    <string name="notif_discreet_bill_title">Factura por pagar</string>
+    <string name="notif_discreet_bill_text">Abre la app para ver los detalles.</string>
+
+    <string name="notif_discreet_anomaly_title">Cargo inusual detectado</string>
+    <string name="notif_discreet_anomaly_text">Abre la app para revisarlo.</string>
+
+    <string name="notif_discreet_budget_title">Alerta de presupuesto</string>
+    <string name="notif_discreet_budget_text">Un presupuesto necesita tu atención. Abre la app para revisarlo.</string>
+
+    <string name="notif_discreet_warranty_title">Recordatorio de garantía</string>
+    <string name="notif_discreet_warranty_text">Una garantía necesita tu atención. Abre la app para revisarla.</string>
+
+    <string name="notif_discreet_receipt_match_title">Recibo asociado</string>
+    <string name="notif_discreet_receipt_match_text">Abre la app para revisarlo.</string>
+
+    <!-- Translation of the existing English notification_briefing_ready_title (used for Normal and Discreet) -->
+    <string name="notification_briefing_ready_title">Tu resumen de IA está listo</string>
+    <string name="notif_discreet_briefing_text">Abre la app para leerlo.</string>
+
+    <string name="notif_public_title">Recordatorio</string>
+    <string name="notif_public_text">Abre la app para ver los detalles.</string>
+
+    <string name="notif_action_snooze">Posponer</string>
+</resources>

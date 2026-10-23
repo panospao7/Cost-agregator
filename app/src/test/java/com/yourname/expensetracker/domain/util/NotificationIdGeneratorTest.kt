@@ -258,6 +258,38 @@ class NotificationIdGeneratorTest {
         override fun sendAnomalyAlert(notificationId: Int, title: String, message: String, expenseId: Long) {
             lastPostedId = notificationId
         }
+
+        override suspend fun sendBudgetAlertForKind(
+            kind: com.yourname.expensetracker.domain.notification.presentation.NotificationKind,
+            notificationId: Int,
+            title: String,
+            message: String
+        ): com.yourname.expensetracker.domain.service.NotificationService.DeliveryResult {
+            lastPostedId = notificationId
+            return com.yourname.expensetracker.domain.service.NotificationService.DeliveryResult.DELIVERED
+        }
+
+        override suspend fun sendAiBriefingReadyForKind(
+            kind: com.yourname.expensetracker.domain.notification.presentation.NotificationKind,
+            notificationId: Int,
+            title: String,
+            message: String,
+            targetKey: String
+        ): com.yourname.expensetracker.domain.service.NotificationService.DeliveryResult {
+            lastPostedId = notificationId
+            return com.yourname.expensetracker.domain.service.NotificationService.DeliveryResult.DELIVERED
+        }
+
+        override suspend fun sendAnomalyAlertForKind(
+            kind: com.yourname.expensetracker.domain.notification.presentation.NotificationKind,
+            notificationId: Int,
+            title: String,
+            message: String,
+            expenseId: Long
+        ): com.yourname.expensetracker.domain.service.NotificationService.DeliveryResult {
+            lastPostedId = notificationId
+            return com.yourname.expensetracker.domain.service.NotificationService.DeliveryResult.DELIVERED
+        }
     }
 
     @Test

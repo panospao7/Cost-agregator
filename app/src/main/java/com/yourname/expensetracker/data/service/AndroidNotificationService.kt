@@ -6,18 +6,25 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.util.Log
 import androidx.core.app.NotificationCompat
+import com.yourname.expensetracker.domain.notification.presentation.NotificationKind
+import com.yourname.expensetracker.domain.notification.presentation.NotificationPresentationResolver
 import com.yourname.expensetracker.domain.service.NotificationService
+import com.yourname.expensetracker.ui.MainActivity
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class AndroidNotificationService @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val presentationResolver: NotificationPresentationResolver,
+    private val presentationApplier: NotificationPresentationApplier
 ) : NotificationService {
 
     companion object {
+        private const val TAG = "AndroidNotificationService"
         private const val BUDGET_CHANNEL_ID = "budget_alerts"
         private const val BUDGET_CHANNEL_NAME = "Budget Alerts"
         private const val BUDGET_CHANNEL_DESC = "Notifications when budget thresholds are exceeded"
@@ -166,6 +173,159 @@ class AndroidNotificationService @Inject constructor(
             .build()
 
         notificationManager.notify(notificationId, notification)
+    }
+
+    // ── Kind-aware methods (S5a: TECH-2 option a, TECH-9, TECH-12) ────────────────────────────────
+    // resolve(kind) -> build -> NotificationPresentationApplier -> notify. The legacy methods above are
+    // unchanged in this pass. A SecurityException from notify() is returned as PERMISSION_DENIED; every
+    // other exception, including CancellationException, propagates to the caller.
+
+    override suspend fun sendBudgetAlertForKind(
+        kind: NotificationKind,
+        notificationId: Int,
+        title: String,
+        message: String
+    ): NotificationService.DeliveryResult =
+        postForKind(
+            kind = kind,
+            notificationId = notificationId,
+            channelId = BUDGET_CHANNEL_ID,
+            smallIcon = android.R.drawable.ic_dialog_alert,
+            priority = NotificationCompat.PRIORITY_HIGH,
+            category = NotificationCompat.CATEGORY_REMINDER,
+            title = title,
+            message = message,
+            contentIntent = { homeTapIntent() }
+        )
+
+    override suspend fun sendAiBriefingReadyForKind(
+        kind: NotificationKind,
+        notificationId: Int,
+        title: String,
+        message: String,
+        targetKey: String
+    ): NotificationService.DeliveryResult =
+        postForKind(
+            kind = kind,
+            notificationId = notificationId,
+            channelId = AI_CHANNEL_ID,
+            smallIcon = android.R.drawable.ic_dialog_info,
+            priority = NotificationCompat.PRIORITY_DEFAULT,
+            category = NotificationCompat.CATEGORY_REMINDER,
+            title = title,
+            message = message,
+            contentIntent = { briefingTapIntent(notificationId, targetKey) }
+        )
+
+    override suspend fun sendAnomalyAlertForKind(
+        kind: NotificationKind,
+        notificationId: Int,
+        title: String,
+        message: String,
+        expenseId: Long
+    ): NotificationService.DeliveryResult =
+        postForKind(
+            kind = kind,
+            notificationId = notificationId,
+            channelId = ANOMALY_CHANNEL_ID,
+            smallIcon = android.R.drawable.ic_dialog_alert,
+            priority = NotificationCompat.PRIORITY_HIGH,
+            category = NotificationCompat.CATEGORY_ALARM,
+            title = title,
+            message = message,
+            contentIntent = { anomalyTapIntent(notificationId, expenseId) }
+        )
+
+    /**
+     * The one post path for every kind-aware method. The enabled check comes first, as in the legacy
+     * methods, so a disabled app never reads the settings. The decision is resolved once per post
+     * (bounded, fail-closed to DISCREET inside the resolver) and applied by the shared applier. The log
+     * line carries the kind token and exception class only, never notification text.
+     */
+    private suspend fun postForKind(
+        kind: NotificationKind,
+        notificationId: Int,
+        channelId: String,
+        smallIcon: Int,
+        priority: Int,
+        category: String,
+        title: String,
+        message: String,
+        contentIntent: () -> PendingIntent
+    ): NotificationService.DeliveryResult {
+        if (!notificationManager.areNotificationsEnabled()) {
+            return NotificationService.DeliveryResult.NOT_DELIVERED
+        }
+
+        val decision = presentationResolver.resolve(kind, Build.VERSION.SDK_INT)
+
+        val builder = NotificationCompat.Builder(context, channelId)
+            .setSmallIcon(smallIcon)
+            .setPriority(priority)
+            .setAutoCancel(true)
+            .setContentIntent(contentIntent())
+            .setCategory(category)
+        val notification = presentationApplier.apply(
+            builder = builder,
+            decision = decision,
+            channelId = channelId,
+            smallIcon = smallIcon,
+            detailedTitle = title,
+            detailedText = message
+        ).build()
+
+        return try {
+            notificationManager.notify(notificationId, notification)
+            NotificationService.DeliveryResult.DELIVERED
+        } catch (e: SecurityException) {
+            Log.w(TAG, "NOTIFICATION_PERMISSION_DENIED kind=${kind.stableToken} class=${e::class.java.simpleName}")
+            NotificationService.DeliveryResult.PERMISSION_DENIED
+        }
+    }
+
+    // Explicit-component tap targets for the kind-aware path (TECH-6): same data URI, flags, request
+    // codes and FLAG_IMMUTABLE as the legacy intents, ACTION_VIEW kept so DeepLinkPolicy accepts the tap.
+
+    private fun homeTapIntent(): PendingIntent {
+        val intent = Intent(context, MainActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            data = android.net.Uri.parse("expensetracker://home")
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        }
+        return PendingIntent.getActivity(
+            context,
+            0,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
+    private fun briefingTapIntent(notificationId: Int, targetKey: String): PendingIntent {
+        val intent = Intent(context, MainActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            data = android.net.Uri.parse("expensetracker://dashboard?briefingKey=$targetKey")
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        return PendingIntent.getActivity(
+            context,
+            notificationId,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
+    private fun anomalyTapIntent(notificationId: Int, expenseId: Long): PendingIntent {
+        val intent = Intent(context, MainActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            data = android.net.Uri.parse("expensetracker://activity?expenseId=$expenseId")
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        return PendingIntent.getActivity(
+            context,
+            notificationId,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
     }
 
     private fun mainActivityIntent(): PendingIntent {

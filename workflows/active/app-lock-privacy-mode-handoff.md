@@ -128,3 +128,45 @@ First validation: DeepLinkApplierTest NPE (relaxed mockk of AiRuntimeDiagnostics
 Review (reviewer-strict) ACCEPT-WITH-MINORS: ISSUE-1 ACTION_VIEW requirement added to the plan's S5 bullet (+ AE-32 test must assert it); ISSUE-2 sentinel test now advances the monotonic clock past the 60 s window per link. DL_APPLIED on degraded outcomes accepted (spec §5.7 "link applied"). R18 HZ-03 F1 status not traced (follow-up check before S20/S21).
 Validation: targeted (S4+S10 filters) vr-20261023-022316-72183a7a PASS; static-guards vr-20261023-022804-6f78a941 PASS; ui_dao/pii_logging/cancellation PASS (vr-20261023-0155..).
 Next: S5 (blocked on owner C6 decision) → wave D {S6 ∥ S7 ∥ S8 ∥ S11}.
+
+## Owner decisions 2026-10-23 (verbatim: "i agree with c6 and i agree to them all")
+- C6: FOLD IN (§9 option (i); TECH-9 shape). S5's new kind-aware methods catch SecurityException → DeliveryResult.PERMISSION_DENIED; parity tests per caller land with S6/S7; the S9 sweep always catches.
+- USE_BIOMETRIC + androidx.biometric 1.1.0 (USE_FINGERPRINT stripped) + explicit androidx.fragment: APPROVED (for S15).
+- C7: folded into S6 as one bounded-message hunk (orchestrator decision under the standing instruction; privacy-positive, no behaviour change).
+- Still open: TECH-10/APP-1 (before S16/S20), APP-3 (before G1b), APP-4, C5.
+Record: Cost-agregator/build/release-lead-notes/owner-approvals-20261022.md items 8-10.
+Next: S5 (unblocked).
+
+## S5a (2026-10-23) — implemented (plan split seam: S5a contract/applier/marker/texts/new methods; S5b legacy hardening + explicit PendingIntents next)
+- NotificationService: DeliveryResult.PERMISSION_DENIED (C6 / TECH-9) + 5 kind-aware suspend methods (sendBudgetAlertForKind / postBudgetAlertForKind (NotificationId), sendAiBriefingReadyForKind, sendAnomalyAlertForKind / postAnomalyAlertForKind (NotificationId)).
+- AndroidNotificationService(context, resolver, applier):
+  - New methods: areNotificationsEnabled → resolve(kind, SDK_INT) (outside any catch, so CE propagates) → build → applier → notify.
+  - notify wrapped in catch(SecurityException) only → PERMISSION_DENIED, with a bounded Log.w (kind token + class).
+  - The new methods already use explicit MainActivity + ACTION_VIEW + FLAG_IMMUTABLE tap targets. Legacy methods are untouched (S5b).
+- New NotificationPresentationApplier (PRIVATE, generic public version, discreet constants, BigText only in FULL, action policy, marker), NotificationKindMarker (EXTRA_KEY com.yourname.expensetracker.extra.NOTIFICATION_KIND; value = NotificationKind.stableToken; deviation from "enum name": S4 tokens are pinned literals), NotificationPresentationTexts.
+- strings_notification_presentation.xml in en/es/el (es/el DRAFT, owner spot-check); added the missing el action_dismiss and es/el notification_briefing_ready_title.
+- No DeliveryResult `when` exists; every caller compares == DELIVERED. Warranty already maps PERMISSION_DENIED → markFailed (retryable). **S7 must add ReceiptMatchingWorker's explicit PERMISSION_DENIED → RECEIPT_MATCH_NOTIFICATION_SUPPRESSED_PERMISSION_REVOKED branch** (TECH-9 parity).
+- Layering note for architecture-guardian: data/service now imports ui.MainActivity (TECH-6 explicit component).
+- Tests: pass 1 (existing fixes + applier/marker/texts) running; pass 2 (AndroidNotificationServicePresentationTest + C6 tests) next.
+- S5a tests: pass 1 (applier/marker/texts + existing fixes) and pass 2 (AndroidNotificationServicePresentation contract on SDK 26/28/30/31/34 + C6 tests via a ContextWrapper NotificationManager seam).
+- S5a validation:
+  - targeted (incl. caller regressions) vr-20261023-085445-a21e2ca9 PASS;
+  - lint vr-20261023-090348-99bb5cdf PASS;
+  - pii_logging vr-20261023-090806-86f423bd PASS;
+  - cancellation vr-20261023-090824-49f34033 PASS.
+- Reviews:
+  - PSG ACCEPT-WITH-MINORS (action titles unscanned in DISCREET; briefing URI concatenation; AE-32 extras assert).
+  - AG ACCEPT-WITH-MINORS (S7 receipt branch, S6 anomaly diagnostic, S5b helper consolidation) → plan carry-forwards.
+- Test-only fix batch running; then reviewer-strict on S5a.
+
+## S5a DONE (2026-10-23)
+- Validation:
+  - targeted vr-20261023-085445-a21e2ca9;
+  - lint vr-20261023-090348-99bb5cdf;
+  - pii_logging vr-20261023-090806-86f423bd;
+  - cancellation vr-20261023-090824-49f34033;
+  - after the test-only fixes: targeted (Applier + Presentation SDK 26-34) vr-20261023-093609-794cbaa2.
+  - All PASS.
+- Reviews: AG, PSG and reviewer-strict all ACCEPT-WITH-MINORS; carry-forwards in the plan ("Orchestrator carry-forwards from the S5a reviews"), incl. S8 now depends on S5b.
+- KNOWN GAP test pins caller-supplied action titles passing through in DISCREET (no S5a caller passes actions); S5b/S8 flips it.
+- Next: S5b (legacy hardening + explicit PendingIntents onto the S5a helpers, Uri.Builder briefing URI, resource-only action titles, fixtures object), then the S5 end shards data + domain-n-z.

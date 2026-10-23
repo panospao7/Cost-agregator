@@ -1456,3 +1456,11 @@ Notes for the orchestrator:
 3. **Possible owner escalations.**
    - If architecture-guardian picks TECH-13 (b), that narrows OD-8a and needs the owner's acknowledgement.
    - If architecture-guardian refuses the `data/service → service/reminder` import, S8/S9 need an approved write-set extension for a shared channel-constant holder.
+
+## Orchestrator carry-forwards from the S5a reviews (2026-10-23; binding on later slices)
+- **S5b:** move the legacy methods onto the S5a tap-intent helpers (one builder per tap target). Build the briefing URI with `Uri.Builder().appendQueryParameter("briefingKey", key)` (both paths; update expectedData). Use resource-only (`@StringRes`) action titles, or document that the caller must pass resource strings. S5 "Done when" / FG-22 / AE-32 for the legacy methods close only at S5b.
+- **S6:** today a SecurityException from anomaly posting reaches AnomalyAlertOrchestrator's `catch (e: Exception)` (~:210). After rewiring it returns PERMISSION_DENIED silently, so S6 parity must choose the diagnostic and keep insert-then-post (TECH-9). C7 is folded into S6 (owner record item 8 note).
+- **S7:** replace "the SecurityException catch … all stay" in the receipt bullet with an explicit branch PERMISSION_DENIED → RECEIPT_MATCH_NOTIFICATION_SUPPRESSED_PERMISSION_REVOKED (constant errorClass = "SecurityException", no addRowsSkipped), plus an AE-11 parity test where the manager throws.
+- **Ordering (S5a reviewer-strict):** S8 depends on **S5b** (not just S5): BillReminderWorker is the first caller passing actions, so the resource-only action-title fix must land first. Whichever slice lands it flips the KNOWN GAP test (NotificationPresentationApplierTest ~:379) to assert absence. Wave D = {S6 ∥ S7 ∥ S11} after S5b, S8 after S5b.
+- **S5 validation:** shards `data` and `domain-n-z` run once at the S5 end (after S5b), together with S5b's targeted tests.
+- **S5b test hygiene:** wrap the public top-level test fixtures in AndroidNotificationServicePresentationTest.kt (ScriptedSettingsRepository, PostCase, POST_CASES, SENTINEL_*, BRIEFING_KEY, EXPENSE_ID) in one fixtures object to avoid package collisions.
