@@ -85,8 +85,8 @@
 
 ### AssistantViewModel
 **File:** `ui/screens/assistant/AssistantViewModel.kt`
-**Injections:** Application, AiSettingsRepository, AiChatRepository, GetAiRuntimeStatusUseCase, InterpretFinancialQueryUseCase, ExecuteFinancialQueryUseCase, MapFinancialQueryToNavigationUseCase, MonotonicTimeProvider
-**Complexity:** 🟡 Medium (8 dependencies)
+**Injections:** Application, AiSettingsRepository, AiChatRepository, GetAiRuntimeStatusUseCase, InterpretFinancialQueryUseCase, ExecuteFinancialQueryUseCase, CompleteFinancialQueryClarificationUseCase, MapFinancialQueryToNavigationUseCase, MonotonicTimeProvider
+**Complexity:** 🟡 Medium (9 dependencies)
 
 ---
 
@@ -254,7 +254,7 @@
 | Complexity | # VMs | ViewModels |
 |-----------|-------|------------|
 | 🔴 High (10+) | 6 | HomeViewModel (20), ReviewViewModel (18), AnalyticsViewModel (18), ReceiptScanViewModel (18), SpendingMapViewModel (12), DebugViewModel (16) |
-| 🟡 Medium (3-9) | 21 | TransactionsViewModel (9), BudgetViewModel (7), AddExpenseViewModel (5), RecurringExpensesViewModel (7), ManualRecurringExpenseViewModel (3), AssistantViewModel (8), BudgetForecastingViewModel (3), SavingsGoalsViewModel (8), CarbonFootprintViewModel (3), PriceProtectionViewModel (3), NaturalLanguageSearchViewModel (4), ReceiptMatchingViewModel (4), SpendingChallengesViewModel (3), AdvancedAnalyticsViewModel (3), CashFlowCalendarViewModel (3), CurrencyManagementViewModel (5), SubscriptionManagementViewModel (5), ExportOptionsViewModel (9), SharedExpenseGroupsViewModel (7), BackupRestoreViewModel (4), AiSettingsViewModel (7) |
+| 🟡 Medium (3-9) | 21 | TransactionsViewModel (9), BudgetViewModel (7), AddExpenseViewModel (5), RecurringExpensesViewModel (7), ManualRecurringExpenseViewModel (3), AssistantViewModel (9), BudgetForecastingViewModel (3), SavingsGoalsViewModel (8), CarbonFootprintViewModel (3), PriceProtectionViewModel (3), NaturalLanguageSearchViewModel (4), ReceiptMatchingViewModel (4), SpendingChallengesViewModel (3), AdvancedAnalyticsViewModel (3), CashFlowCalendarViewModel (3), CurrencyManagementViewModel (5), SubscriptionManagementViewModel (5), ExportOptionsViewModel (9), SharedExpenseGroupsViewModel (7), BackupRestoreViewModel (4), AiSettingsViewModel (7) |
 | 🟢 Low (1-2) | 14 | MainViewModel (2), WarrantyTrackerViewModel (2), BillRemindersViewModel (2), InvestmentViewModel (2), BankConnectionsViewModel (1), LifestyleInflationViewModel (2), VisualSplitViewModel (2), TaxConfigurationViewModel (2), BillNegotiationViewModel (2), CategoryViewModel (1), PrivacySettingsViewModel (1), CategorizationDebugViewModel (2), SourceLinkDebugViewModel (1), SourceLinkBackfillViewModel (1) |
 
 ### Most-Injected Dependencies

@@ -7,12 +7,15 @@ import com.yourname.expensetracker.domain.ai.model.AiCapabilityRuntimeStatus
 import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.AssistantMessageKind
 import com.yourname.expensetracker.domain.ai.model.AssistantMessageRole
+import com.yourname.expensetracker.domain.ai.model.ClarificationCompletion
+import com.yourname.expensetracker.domain.ai.model.FinancialQueryIntent
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationResult
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryResult
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.routeDisplayText
 import com.yourname.expensetracker.domain.ai.service.AiChatRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
+import com.yourname.expensetracker.domain.ai.usecase.CompleteFinancialQueryClarificationUseCase
 import com.yourname.expensetracker.domain.ai.usecase.ExecuteFinancialQueryUseCase
 import com.yourname.expensetracker.domain.ai.usecase.GetAiRuntimeStatusUseCase
 import com.yourname.expensetracker.domain.ai.usecase.InterpretFinancialQueryUseCase
@@ -20,6 +23,7 @@ import com.yourname.expensetracker.domain.ai.usecase.MapFinancialQueryToNavigati
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.util.MonotonicTimeProvider
+import com.yourname.expensetracker.ui.components.ai.assistantClarificationChoiceLabelRes
 import com.yourname.expensetracker.ui.components.ai.assistantUnsupportedReasonMessageRes
 import com.yourname.expensetracker.ui.components.asString
 import com.yourname.expensetracker.ui.util.guardedWrite
@@ -48,6 +52,10 @@ import javax.inject.Inject
 /** AID-10: Nanoseconds per millisecond for elapsed-duration diagnostics. */
 private const val NANOS_PER_MILLI = 1_000_000L
 
+/** C4 (INV-C14): bounded log-only token for a clarification tap that is no longer live. Never carries option text. */
+private const val CLARIFICATION_EXPIRED = "CLARIFICATION_EXPIRED"
+private const val CLARIFICATION_COMPLETION_UNAVAILABLE = "CLARIFICATION_COMPLETION_UNAVAILABLE"
+
 data class AssistantUiState(
     val messages: List<AssistantConversationItem> = emptyList(),
     val input: String = "",
@@ -62,7 +70,12 @@ data class AssistantUiState(
     val canPersistHistory: Boolean = false,
     val currentSessionId: Long? = null,
     /** S11-020: true when clear-all-history confirmation dialog should be shown */
-    val showClearHistoryConfirm: Boolean = false
+    val showClearHistoryConfirm: Boolean = false,
+    /**
+     * C4 (INV-C14): the single live structured clarification as (clarification item id, completion).
+     * In-memory only, never persisted; options of any other clarification card render disabled.
+     */
+    val livePendingClarification: Pair<String, ClarificationCompletion>? = null
 )
 
 private data class AssistantRuntimePresentation(
@@ -73,7 +86,9 @@ private data class AssistantRuntimePresentation(
 sealed interface AssistantConversationItem {
     data class User(
         val id: String,
-        val text: String
+        val text: String,
+        /** C4 (INV-C16): set only for structured-clarification taps; `retryLast` re-executes it without interpretation. */
+        val completedIntent: FinancialQueryIntent? = null
     ) : AssistantConversationItem
 
     data class Result(
@@ -103,6 +118,7 @@ class AssistantViewModel @Inject constructor(
     private val getAiRuntimeStatusUseCase: GetAiRuntimeStatusUseCase,
     private val interpretFinancialQueryUseCase: InterpretFinancialQueryUseCase,
     private val executeFinancialQueryUseCase: ExecuteFinancialQueryUseCase,
+    private val completeFinancialQueryClarificationUseCase: CompleteFinancialQueryClarificationUseCase,
     private val mapFinancialQueryToNavigationUseCase: MapFinancialQueryToNavigationUseCase,
     private val monotonicTimeProvider: MonotonicTimeProvider
 ) : ViewModel() {
@@ -202,6 +218,9 @@ class AssistantViewModel @Inject constructor(
         if (query.isBlank()) return
         if (!_isSubmitting.compareAndSet(false, true)) return
 
+        // C4 (INV-C14): any new submitted query expires the live pending clarification.
+        clearPendingClarification()
+
         _currentQueryJob?.cancel()
         val queryStartedAt = monotonicTimeProvider.nowNanos()
 
@@ -274,7 +293,8 @@ class AssistantViewModel @Inject constructor(
                         )
                         _uiState.value = _uiState.value.copy(
                             isLoading = false,
-                            messages = _uiState.value.messages + resultItem
+                            messages = _uiState.value.messages + resultItem,
+                            livePendingClarification = pendingClarificationFor(resultItem)
                         )
                         persistAssistantTurn(sessionId, result)
                     }
@@ -282,7 +302,8 @@ class AssistantViewModel @Inject constructor(
                     is FinancialQueryInterpretationResult.Clarification -> {
                         val result = FinancialQueryResult.Clarification(
                             prompt = interpretation.prompt,
-                            options = interpretation.options
+                            options = interpretation.options,
+                            completion = interpretation.completion
                         )
                         val resultItem = AssistantConversationItem.Result(
                             id = "clarification-${UUID.randomUUID().toString()}",
@@ -295,7 +316,8 @@ class AssistantViewModel @Inject constructor(
                         )
                         _uiState.value = _uiState.value.copy(
                             isLoading = false,
-                            messages = _uiState.value.messages + resultItem
+                            messages = _uiState.value.messages + resultItem,
+                            livePendingClarification = pendingClarificationFor(resultItem)
                         )
                         persistAssistantTurn(sessionId, result)
                     }
@@ -316,7 +338,8 @@ class AssistantViewModel @Inject constructor(
                         )
                         _uiState.value = _uiState.value.copy(
                             isLoading = false,
-                            messages = _uiState.value.messages + resultItem
+                            messages = _uiState.value.messages + resultItem,
+                            livePendingClarification = pendingClarificationFor(resultItem)
                         )
                         persistAssistantTurn(sessionId, result)
                     }
@@ -324,44 +347,186 @@ class AssistantViewModel @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                // S11-009: Log only controlled reason code + exception class; never raw
-                // exception messages, SQL text, paths, or stack traces.
-                val failureCode = assistantFailureCode(e)
-                Timber.e("Assistant query pipeline failed: reasonCode=%s errorClass=%s", failureCode, e::class.simpleName)
-                val friendlyMessage = mapAssistantExceptionToUserMessage(e)
-                lastDiagnostics = QueryDiagnostics(
-                    totalDurationMs = elapsedMillis(queryStartedAt),
-                    error = "$failureCode [${e::class.simpleName}]"
-                )
-                _uiState.value = _uiState.value.copy(
-                    isLoading = false,
-                    errorMessage = friendlyMessage,
-                    messages = _uiState.value.messages + AssistantConversationItem.Error(
-                        id = "error-${UUID.randomUUID().toString()}",
-                        text = friendlyMessage
-                    ),
-                    input = if (_uiState.value.input.isBlank()) query else _uiState.value.input
-                )
+                lastDiagnostics = reportQueryFailure(e, queryStartedAt, restoreInput = query)
             } finally {
-                // AID-10: Update runtime diagnostics with per-request details
-                if (lastDiagnostics != null) {
-                    _uiState.value = _uiState.value.copy(
-                        runtimeDiagnostics = lastDiagnostics.toDisplayString()
-                    )
-                }
-                if (_uiState.value.isLoading) {
-                    _uiState.value = _uiState.value.copy(isLoading = false)
-                }
-                _isSubmitting.value = false
-                _currentQueryJob = null
+                finishQuery(lastDiagnostics)
             }
         }
+    }
+
+    /** S11-009: shared failure path; adds a bounded Error item (which also expires any pending clarification). */
+    private fun reportQueryFailure(
+        e: Exception,
+        queryStartedAt: Long,
+        restoreInput: String?
+    ): QueryDiagnostics {
+        // S11-009: Log only controlled reason code + exception class; never raw
+        // exception messages, SQL text, paths, or stack traces.
+        val failureCode = assistantFailureCode(e)
+        Timber.e("Assistant query pipeline failed: reasonCode=%s errorClass=%s", failureCode, e::class.simpleName)
+        val friendlyMessage = mapAssistantExceptionToUserMessage(e)
+        val diagnostics = QueryDiagnostics(
+            totalDurationMs = elapsedMillis(queryStartedAt),
+            error = "$failureCode [${e::class.simpleName}]"
+        )
+        _uiState.value = _uiState.value.copy(
+            isLoading = false,
+            errorMessage = friendlyMessage,
+            messages = _uiState.value.messages + AssistantConversationItem.Error(
+                id = "error-${UUID.randomUUID().toString()}",
+                text = friendlyMessage
+            ),
+            input = if (restoreInput != null && _uiState.value.input.isBlank()) restoreInput else _uiState.value.input,
+            livePendingClarification = null
+        )
+        return diagnostics
+    }
+
+    private fun finishQuery(lastDiagnostics: QueryDiagnostics?) {
+        // AID-10: Update runtime diagnostics with per-request details
+        if (lastDiagnostics != null) {
+            _uiState.value = _uiState.value.copy(
+                runtimeDiagnostics = lastDiagnostics.toDisplayString()
+            )
+        }
+        if (_uiState.value.isLoading) {
+            _uiState.value = _uiState.value.copy(isLoading = false)
+        }
+        _isSubmitting.value = false
+        _currentQueryJob = null
+    }
+
+    private fun pendingClarificationFor(item: AssistantConversationItem.Result): Pair<String, ClarificationCompletion>? =
+        (item.result as? FinancialQueryResult.Clarification)?.completion?.let { item.id to it }
+
+    private fun clearPendingClarification() {
+        if (_uiState.value.livePendingClarification != null) {
+            _uiState.value = _uiState.value.copy(livePendingClarification = null)
+        }
+    }
+
+    /**
+     * C4 (INV-C13/C14): tap on option [optionIndex] of the structured clarification card [itemId].
+     *
+     * Consume first, then execute. The pending intent is completed by the pure completer and executed
+     * directly: no interpreter, provider or network call. A tap on a card that is not the live one (or
+     * after consumption) is a no-op that logs the bounded [CLARIFICATION_EXPIRED] token. A tap while a
+     * query is in flight is ignored and leaves the pending entry untouched.
+     */
+    fun onClarificationOptionSelected(itemId: String, optionIndex: Int) {
+        if (_isSubmitting.value) return
+
+        val pending = _uiState.value.livePendingClarification
+        val completion = pending?.takeIf { it.first == itemId }?.second
+        val choice = completion?.choices?.getOrNull(optionIndex)
+        if (completion == null || choice == null) {
+            Timber.w("Assistant clarification tap ignored: reasonCode=%s", CLARIFICATION_EXPIRED)
+            return
+        }
+
+        // Compute label + completed intent BEFORE taking the submit gate / consuming the pending entry,
+        // so a throwing resource lookup or completer cannot leave _isSubmitting stuck at true.
+        val label: String
+        val completedIntent: FinancialQueryIntent
+        try {
+            label = application.getString(assistantClarificationChoiceLabelRes(choice))
+            completedIntent = completeFinancialQueryClarificationUseCase(completion, choice)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // Bounded reason code only: no exception message, stack trace or payload.
+            Timber.w("Assistant clarification tap ignored: reasonCode=%s", CLARIFICATION_COMPLETION_UNAVAILABLE)
+            return
+        }
+
+        if (!_isSubmitting.compareAndSet(false, true)) return
+        clearPendingClarification()
+        launchCompletedIntent(label, completedIntent)
     }
 
     fun retryLast() {
         val lastUser = _uiState.value.messages.lastOrNull { it is AssistantConversationItem.User } as? AssistantConversationItem.User
             ?: return
+        val completedIntent = lastUser.completedIntent
+        if (completedIntent != null) {
+            // C4 (INV-C16): re-execute the completed intent; never re-interpret the option label.
+            if (!_isSubmitting.compareAndSet(false, true)) return
+            clearPendingClarification()
+            launchCompletedIntent(lastUser.text, completedIntent)
+            return
+        }
         submitQuery(lastUser.text)
+    }
+
+    /**
+     * Executes an already-completed intent. The caller must have acquired [_isSubmitting] and consumed
+     * the pending clarification. Never calls the interpreter. [CancellationException] propagates (INV-4);
+     * the User item keeps [AssistantConversationItem.User.completedIntent] so retry stays possible.
+     */
+    private fun launchCompletedIntent(label: String, intent: FinancialQueryIntent) {
+        _currentQueryJob?.cancel()
+        val queryStartedAt = monotonicTimeProvider.nowNanos()
+
+        _currentQueryJob = viewModelScope.launch {
+            var lastDiagnostics: QueryDiagnostics? = null
+            try {
+                val settings = aiSettingsRepository.settings().first()
+                if (!settings.aiEnabled || !settings.assistantEnabled || !settings.queryInterpretationEnabled) {
+                    _uiState.value = _uiState.value.copy(
+                        isDisabled = true,
+                        disabledReason = "Enable AI assistant to use this feature",
+                        isLoading = false
+                    )
+                    return@launch
+                }
+
+                val userItem = AssistantConversationItem.User(
+                    id = "user-${UUID.randomUUID().toString()}",
+                    text = label,
+                    completedIntent = intent
+                )
+
+                val sessionId = ensureSessionIfNeeded()
+
+                _uiState.value = _uiState.value.copy(
+                    isLoading = true,
+                    errorMessage = null,
+                    messages = _uiState.value.messages + userItem,
+                    currentSessionId = sessionId ?: _uiState.value.currentSessionId
+                )
+
+                persistUserTurn(sessionId, label)
+
+                val execStart = monotonicTimeProvider.nowNanos()
+                val result = executeFinancialQueryUseCase(intent)
+                val executionDuration = elapsedMillis(execStart)
+                val navigationFilter = mapFinancialQueryToNavigationUseCase(intent)?.toUi()
+                val resultItem = AssistantConversationItem.Result(
+                    id = "result-${UUID.randomUUID().toString()}",
+                    queryText = label,
+                    result = result,
+                    drilldownFilter = navigationFilter
+                )
+                lastDiagnostics = QueryDiagnostics(
+                    totalDurationMs = elapsedMillis(queryStartedAt),
+                    executionDurationMs = executionDuration,
+                    resultType = result::class.simpleName,
+                    route = _uiState.value.runtimeDiagnostics
+                )
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    messages = _uiState.value.messages + resultItem,
+                    livePendingClarification = pendingClarificationFor(resultItem)
+                )
+                persistAssistantTurn(sessionId, result)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                lastDiagnostics = reportQueryFailure(e, queryStartedAt, restoreInput = null)
+            } finally {
+                finishQuery(lastDiagnostics)
+            }
+        }
     }
 
     fun cancelCurrentQuery() {
@@ -393,6 +558,7 @@ class AssistantViewModel @Inject constructor(
 
     fun clearSession() {
         cancelCurrentQuery()
+        clearPendingClarification()
         viewModelScope.launch {
             val sessionToClear = _uiState.value.currentSessionId
             if (sessionToClear != null) {
@@ -423,6 +589,7 @@ class AssistantViewModel @Inject constructor(
     fun clearAllHistory() {
         _uiState.value = _uiState.value.copy(showClearHistoryConfirm = false)
         cancelCurrentQuery()
+        clearPendingClarification()
         viewModelScope.launch {
             guardedWrite(::showWriteBlocked) {
                 aiChatRepository.clearAllHistory()

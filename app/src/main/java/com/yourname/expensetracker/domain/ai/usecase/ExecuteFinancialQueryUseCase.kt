@@ -5,6 +5,10 @@ import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import com.yourname.expensetracker.domain.ai.model.AssistantUnsupportedReason
+import com.yourname.expensetracker.domain.ai.model.ClarificationChoice
+import com.yourname.expensetracker.domain.ai.model.ClarificationCompletion
+import com.yourname.expensetracker.domain.ai.model.ClarificationSlot
+import com.yourname.expensetracker.domain.ai.model.PeriodChoice
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryIntent
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryResult
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryDataQuality
@@ -46,7 +50,17 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
     suspend operator fun invoke(intent: FinancialQueryIntent): FinancialQueryResult {
         val period = intent.filters.period ?: return FinancialQueryResult.Clarification(
             prompt = "Which time period should I use?",
-            options = listOf("This month", "This week", "Last month")
+            options = listOf("This month", "This week", "Last month"),
+            // C4: typed completion so a tap fills the period slot without re-interpretation.
+            completion = ClarificationCompletion(
+                baseIntent = intent,
+                slot = ClarificationSlot.PERIOD,
+                choices = listOf(
+                    ClarificationChoice.Period(PeriodChoice.THIS_MONTH),
+                    ClarificationChoice.Period(PeriodChoice.THIS_WEEK),
+                    ClarificationChoice.Period(PeriodChoice.LAST_MONTH)
+                )
+            )
         )
 
         return when {

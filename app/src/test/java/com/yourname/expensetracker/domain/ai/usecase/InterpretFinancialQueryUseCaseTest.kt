@@ -4,6 +4,10 @@ import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.AssistantUnsupportedReason
+import com.yourname.expensetracker.domain.ai.model.ClarificationChoice
+import com.yourname.expensetracker.domain.ai.model.ClarificationSlot
+import com.yourname.expensetracker.domain.ai.model.PresentationChoice
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationResult
 import com.yourname.expensetracker.domain.ai.model.ExpenseQueryFilters
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryIntent
@@ -387,6 +391,86 @@ class InterpretFinancialQueryUseCaseTest {
         assertEquals(null, filters.maxAmount)
         assertTrue(logs.none { it.second.contains("7654") || it.second.contains("7,654") })
         assertTrue(logs.none { it.second.contains("NaN") })
+    }
+
+    // ---- ai-fixes C4: structured presentation clarification (INV-C13, INV-C15, AE-C21) -----------
+
+    private val averageSpendPerMerchantQuery = "average spend per merchant this month"
+
+    /** Runs [query] through the local fallback (provider unsupported) and returns the raw result. */
+    private suspend fun fallbackResultFor(query: String): FinancialQueryInterpretationResult {
+        every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
+        val built = stubInputAtNow(query)
+        coEvery { categoryRepository.getAll() } returns emptyList()
+        coEvery { queryInterpretationService.interpret(built) } returns
+            FinancialQueryInterpretationResult.Unsupported(AssistantUnsupportedReason.PROVIDER_UNAVAILABLE)
+        return useCase(query)
+    }
+
+    @Test
+    fun `INV-C13 presentation clarification carries a PRESENTATION completion with breakdown then list`() = runTest(timeout = 30.seconds) {
+        val result = fallbackResultFor(averageSpendPerMerchantQuery)
+
+        assertTrue("expected Clarification but was $result", result is FinancialQueryInterpretationResult.Clarification)
+        result as FinancialQueryInterpretationResult.Clarification
+        val completion = result.completion
+        assertNotNull("a presentation clarification must carry a completion", completion)
+        assertEquals(ClarificationSlot.PRESENTATION, completion!!.slot)
+        assertEquals(
+            listOf(
+                ClarificationChoice.Presentation(PresentationChoice.BREAKDOWN),
+                ClarificationChoice.Presentation(PresentationChoice.TRANSACTION_LIST)
+            ),
+            completion.choices
+        )
+        // Legacy labels are unchanged and line up one to one with the typed choices.
+        assertEquals("Do you want a total breakdown or a transaction list?", result.prompt)
+        assertEquals(listOf("Breakdown", "Transaction list"), result.options)
+        assertEquals(result.options.size, completion.choices.size)
+    }
+
+    @Test
+    fun `AE-C21 presentation clarification base intent is the built average per merchant October purchase intent`() = runTest(timeout = 30.seconds) {
+        val result = fallbackResultFor(averageSpendPerMerchantQuery) as FinancialQueryInterpretationResult.Clarification
+
+        val expectedBase = FinancialQueryIntent(
+            rawQuery = averageSpendPerMerchantQuery,
+            normalizedQuery = averageSpendPerMerchantQuery,
+            filters = ExpenseQueryFilters(
+                period = PeriodRange(athensMs(2026, 10, 1), athensMs(2026, 11, 1)),
+                periodGranularity = PeriodGranularity.MONTH,
+                transactionTypes = setOf(DomainTransactionType.PURCHASE)
+            ),
+            metric = QueryMetric.AVERAGE,
+            grouping = QueryGrouping.MERCHANT,
+            comparison = QueryComparison.NONE
+        )
+        assertEquals(expectedBase, result.completion!!.baseIntent)
+    }
+
+    @Test
+    fun `INV-C15 a provider clarification without a completion is passed through unchanged`() = runTest(timeout = 30.seconds) {
+        every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
+        val built = stubInputAtNow(averageSpendPerMerchantQuery)
+        coEvery { categoryRepository.getAll() } returns emptyList()
+        val providerClarification = FinancialQueryInterpretationResult.Clarification(
+            prompt = "Which month?",
+            options = listOf("This month", "Last month")
+        )
+        coEvery { queryInterpretationService.interpret(built) } returns providerClarification
+
+        val result = useCase(averageSpendPerMerchantQuery)
+
+        // The local fallback is itself a Clarification here, so the provider's clarification is shown as is.
+        assertEquals(providerClarification, result)
+        assertNull((result as FinancialQueryInterpretationResult.Clarification).completion)
+    }
+
+    @Test
+    fun `INV-C13 control a total per merchant query stays Structured with no clarification`() = runTest(timeout = 30.seconds) {
+        val result = fallbackResultFor("top merchants this month")
+
+        assertTrue("expected Structured but was $result", result is FinancialQueryInterpretationResult.Structured)
     }
 
     // ---- ai-fixes C3: calendar period vocabulary (INV-C8..C10, AE-C11, C13, C14, C19) -----------

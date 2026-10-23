@@ -4,9 +4,13 @@ import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.domain.ai.model.AiChatMessage
 import com.yourname.expensetracker.domain.ai.model.AssistantUnsupportedReason
+import com.yourname.expensetracker.domain.ai.model.ClarificationChoice
+import com.yourname.expensetracker.domain.ai.model.ClarificationCompletion
+import com.yourname.expensetracker.domain.ai.model.ClarificationSlot
 import com.yourname.expensetracker.domain.ai.model.ExpenseQueryFilters
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryIntent
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationResult
+import com.yourname.expensetracker.domain.ai.model.PresentationChoice
 import com.yourname.expensetracker.domain.ai.model.QueryComparison
 import com.yourname.expensetracker.domain.ai.model.QueryGrouping
 import com.yourname.expensetracker.domain.ai.model.QueryMetric
@@ -263,7 +267,16 @@ class InterpretFinancialQueryUseCase @Inject constructor(
         if (grouping != QueryGrouping.NONE && metric !in setOf(QueryMetric.TOTAL, QueryMetric.LIST)) {
             return FinancialQueryInterpretationResult.Clarification(
                 prompt = "Do you want a total breakdown or a transaction list?",
-                options = listOf("Breakdown", "Transaction list")
+                options = listOf("Breakdown", "Transaction list"),
+                // C4: typed completion so a tap fills the presentation slot without re-interpretation.
+                completion = ClarificationCompletion(
+                    baseIntent = intent,
+                    slot = ClarificationSlot.PRESENTATION,
+                    choices = listOf(
+                        ClarificationChoice.Presentation(PresentationChoice.BREAKDOWN),
+                        ClarificationChoice.Presentation(PresentationChoice.TRANSACTION_LIST)
+                    )
+                )
             )
         }
 

@@ -2453,6 +2453,12 @@
     <string name="assistant_unsupported_model_declined">That kind of question is not supported yet.</string>
     <string name="assistant_unsupported_metric_not_supported">This query type is not supported yet.</string>
     <string name="assistant_unsupported_no_matching_transactions">No matching transactions found.</string>
+    <!-- Assistant structured clarification options (labels for typed choices; also the transcript USER turn) -->
+    <string name="assistant_clarification_period_this_month">This month</string>
+    <string name="assistant_clarification_period_this_week">This week</string>
+    <string name="assistant_clarification_period_last_month">Last month</string>
+    <string name="assistant_clarification_presentation_breakdown">Breakdown</string>
+    <string name="assistant_clarification_presentation_transaction_list">Transaction list</string>
     <string name="assistant_open_transactions">Open Transactions</string>
     
     <!-- Domain: Lifestyle Inflation -->

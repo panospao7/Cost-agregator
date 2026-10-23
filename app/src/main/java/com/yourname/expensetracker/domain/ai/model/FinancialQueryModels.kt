@@ -62,6 +62,35 @@ enum class PeriodChoice {
     LAST_MONTH
 }
 
+/** Presentation options offered by a presentation clarification. */
+enum class PresentationChoice {
+    BREAKDOWN,
+    TRANSACTION_LIST
+}
+
+/** The intent slot a structured clarification fills. */
+enum class ClarificationSlot {
+    PERIOD,
+    PRESENTATION
+}
+
+/** One typed option of a structured clarification; its label is a localized resource, never free text. */
+sealed interface ClarificationChoice {
+    data class Period(val choice: PeriodChoice) : ClarificationChoice
+    data class Presentation(val choice: PresentationChoice) : ClarificationChoice
+}
+
+/**
+ * Pending intent plus the typed options that complete it (ai-fixes INV-C13). A clarification that
+ * carries this is completed by `CompleteFinancialQueryClarificationUseCase` and executed directly;
+ * it is never re-interpreted. In-memory only: never persisted.
+ */
+data class ClarificationCompletion(
+    val baseIntent: FinancialQueryIntent,
+    val slot: ClarificationSlot,
+    val choices: List<ClarificationChoice>
+)
+
 /**
  * Filter parameters for financial queries.
  *
@@ -115,6 +144,20 @@ data class ExpenseQueryFilters(
     val status: String? = null
 )
 
+/**
+ * Returns a copy whose period is the half-open `[startMs, endMs)` and whose granularity is
+ * [granularity]. Lives here (an Engine5-allowlisted holder of the legacy `PeriodRange`) so callers
+ * that only have plain resolver values never import the deprecated type.
+ */
+fun ExpenseQueryFilters.withPeriod(
+    startMs: Long,
+    endMs: Long,
+    granularity: PeriodGranularity?
+): ExpenseQueryFilters = copy(
+    period = PeriodRange(start = startMs, end = endMs),
+    periodGranularity = granularity
+)
+
 data class FinancialQueryIntent(
     val rawQuery: String,
     val normalizedQuery: String,
@@ -157,7 +200,9 @@ sealed interface FinancialQueryInterpretationResult {
 
     data class Clarification(
         val prompt: String,
-        val options: List<String> = emptyList()
+        val options: List<String> = emptyList(),
+        /** Non-null for structured clarifications (completed without re-interpretation). */
+        val completion: ClarificationCompletion? = null
     ) : FinancialQueryInterpretationResult
 
     data class Unsupported(
@@ -199,7 +244,9 @@ sealed interface FinancialQueryResult {
 
     data class Clarification(
         val prompt: String,
-        val options: List<String> = emptyList()
+        val options: List<String> = emptyList(),
+        /** Non-null for structured clarifications (completed without re-interpretation). */
+        val completion: ClarificationCompletion? = null
     ) : FinancialQueryResult
 
     data class Unsupported(

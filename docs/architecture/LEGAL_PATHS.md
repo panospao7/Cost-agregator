@@ -1523,6 +1523,13 @@ chat rows via AiChatRepository.appendMessage, which checks the write barrier):
              DefaultCloudPayloadPolicy.prepareText → audit
   → ExecuteFinancialQueryUseCase (read-only)
 
+Clarification completion (structured clarification option tap; in-memory pending state only):
+  → AssistantViewModel.onClarificationOptionSelected(itemId, optionIndex)
+      consume the live pending clarification FIRST, then execute
+  → CompleteFinancialQueryClarificationUseCase (pure slot fill; PERIOD via AssistantPeriodResolver)
+  → ExecuteFinancialQueryUseCase (read-only; no re-interpretation)
+  retryLast on a completed turn re-executes the completed intent the same way.
+
 Assistant period ranges and comparison cue only via AssistantPeriodResolver.
 
 FORBIDDEN:
@@ -1532,4 +1539,8 @@ FORBIDDEN:
   ❌ AssistantViewModel (or any UI layer) shaping, filtering or redacting model history
   ❌ Assistant query interpretation reading PrivacySettings.redactBeforeCloud directly or OR-ing
      redaction flags outside EffectiveCloudAiPolicyResolver
+  ❌ Re-interpreting a structured clarification tap (calling InterpretFinancialQueryUseCase with the
+     option label)
+  ❌ Calling providers or the network on clarification completion
+  ❌ Persisting pending clarification state (it is in-memory only; restored transcripts never regain it)
 ```

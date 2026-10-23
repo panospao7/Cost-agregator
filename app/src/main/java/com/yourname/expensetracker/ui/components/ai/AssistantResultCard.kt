@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.OpenInNew
@@ -36,7 +37,11 @@ fun AssistantResultCard(
     canDrilldown: Boolean,
     onOpenTransactions: () -> Unit,
     onClarificationSelected: (String) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** C4: index of the tapped typed option of a structured clarification (`completion != null`). */
+    onClarificationOptionSelected: (Int) -> Unit = {},
+    /** C4: false when this card is not the live pending clarification (options render disabled). */
+    clarificationOptionsEnabled: Boolean = true
 ) {
     Card(
         modifier = modifier.fillMaxWidth(),
@@ -98,7 +103,22 @@ fun AssistantResultCard(
 
                 is FinancialQueryResult.Clarification -> {
                     Text(result.prompt, style = MaterialTheme.typography.titleMedium)
-                    if (result.options.isNotEmpty()) {
+                    val completion = result.completion
+                    if (completion != null) {
+                        // C4: structured clarification. Typed choices, localized labels, routed by
+                        // index; non-live (consumed or superseded) options render disabled.
+                        if (completion.choices.isNotEmpty()) {
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                itemsIndexed(completion.choices) { index, choice ->
+                                    SuggestionChip(
+                                        onClick = { onClarificationOptionSelected(index) },
+                                        enabled = clarificationOptionsEnabled,
+                                        label = { Text(stringResource(assistantClarificationChoiceLabelRes(choice))) }
+                                    )
+                                }
+                            }
+                        }
+                    } else if (result.options.isNotEmpty()) {
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             items(result.options) { option ->
                                 SuggestionChip(

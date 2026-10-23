@@ -302,3 +302,22 @@ Tests: pass 1 (AssistantPeriodResolverTest) running; pass 2 (Interpret/Execute/O
 - Carried to C4: clarification completion must set periodGranularity from resolveChoice(...).granularity whenever it replaces period.
 - Optional cleanup: containsRichIntentCue still lists "compare"/"vs" substrings (dead after the exact-phrase check).
 - Next: C4 (clarification completion, live pending state, disabled stale options; T2; RS gate).
+
+## C4 DONE (2026-10-23)
+Source:
+- ClarificationSlot/Choice/Completion; Clarification.completion.
+- New CompleteFinancialQueryClarificationUseCase: pure, TimeProvider default nowMs; PERIOD sets period + periodGranularity via resolveChoice.
+- Executor period / fallback presentation clarifications carry the completion.
+- VM livePendingClarification (consume-first; expires on submit/result/error/clear/disabled; never persisted); retryLast re-executes completedIntent; stale tap → bounded CLARIFICATION_EXPIRED.
+- Both UI surfaces route by (itemId, index) and disable non-live options.
+- 5 labels en/es/el (es/el draft).
+- Docs: LEGAL_PATHS block + 3 FORBIDDEN, maps, Segment 20.
+- Deviations accepted by reviewer-strict: AssistantClarificationChoiceText mapping file; AiRecommendationCard.applyEnabled; completer injects TimeProvider; ExpenseQueryFilters.withPeriod in the Engine5-allowlisted model file (legitimate, not a loophole).
+Validation:
+- targeted vr-20261023-105543-ffe1ddc2, time_boundaries vr-20261023-111018-de55bee0, pii_logging vr-20261023-111036-e3ccffd9, lint vr-20261023-111052-93a24965, static-guards vr-20261023-111456-0e254bb1;
+- after the lock-up fix: targeted vr-20261023-120345-cb2b6b13, pii_logging vr-20261023-120833-564d9528.
+- All PASS.
+Review: reviewer-strict ACCEPT-WITH-MINORS. MINOR fixed: a throwing label lookup/completer after a tap could leave _isSubmitting stuck; both are now computed before the gate, with a bounded CLARIFICATION_COMPLETION_UNAVAILABLE log and a regression test.
+- PC-4 question answered: legacy model clarifications (completion == null) stay on the legacy text flow per INV-C15 (intended).
+Notes: a tap during persistAssistantTurn is ignored (spec); cancellation before the User append loses the consumed completion (acceptable edge).
+Next: C5 (MIN executor; must retarget/remove the C2 MIN→METRIC_NOT_SUPPORTED test and make the metric `when` exhaustive), then CX.

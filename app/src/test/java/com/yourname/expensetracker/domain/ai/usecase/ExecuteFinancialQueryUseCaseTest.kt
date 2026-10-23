@@ -8,6 +8,9 @@ import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.OwnershipFilter
 import com.yourname.expensetracker.domain.ai.model.AssistantUnsupportedReason
+import com.yourname.expensetracker.domain.ai.model.ClarificationChoice
+import com.yourname.expensetracker.domain.ai.model.ClarificationSlot
+import com.yourname.expensetracker.domain.ai.model.PeriodChoice
 import com.yourname.expensetracker.domain.ai.model.ExpenseQueryFilters
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryIntent
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryResult
@@ -29,6 +32,7 @@ import io.mockk.mockk
 import kotlinx.coroutines.flow.flowOf
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -464,6 +468,77 @@ class ExecuteFinancialQueryUseCaseTest {
                 sortOrder = any()
             )
         } returns rows
+    }
+
+    // ---- ai-fixes C4: structured period clarification (INV-C13, AE-C20) ----------------------------
+
+    private fun periodlessFoodIntent() = FinancialQueryIntent(
+        rawQuery = "how much on food",
+        normalizedQuery = "how much on food",
+        filters = ExpenseQueryFilters(categoryIds = setOf(1L), merchants = setOf("Bakery")),
+        metric = QueryMetric.TOTAL,
+        grouping = QueryGrouping.NONE,
+        comparison = QueryComparison.NONE
+    )
+
+    @Test
+    fun `INV-C13 period clarification carries a PERIOD completion with the three choices in order`() = runTest(timeout = 30.seconds) {
+        val intent = periodlessFoodIntent()
+
+        val result = useCase(intent)
+
+        assertTrue("expected Clarification but was $result", result is FinancialQueryResult.Clarification)
+        result as FinancialQueryResult.Clarification
+        val completion = result.completion
+        assertNotNull("a period clarification must carry a completion", completion)
+        assertEquals(ClarificationSlot.PERIOD, completion!!.slot)
+        assertEquals(
+            listOf(
+                ClarificationChoice.Period(PeriodChoice.THIS_MONTH),
+                ClarificationChoice.Period(PeriodChoice.THIS_WEEK),
+                ClarificationChoice.Period(PeriodChoice.LAST_MONTH)
+            ),
+            completion.choices
+        )
+    }
+
+    @Test
+    fun `INV-C13 period clarification base intent is exactly the incoming intent`() = runTest(timeout = 30.seconds) {
+        val intent = periodlessFoodIntent()
+
+        val result = useCase(intent) as FinancialQueryResult.Clarification
+
+        assertEquals(intent, result.completion!!.baseIntent)
+        assertNull("the base intent must still lack a period", result.completion!!.baseIntent.filters.period)
+        assertEquals(setOf(1L), result.completion!!.baseIntent.filters.categoryIds)
+        assertEquals(setOf("Bakery"), result.completion!!.baseIntent.filters.merchants)
+    }
+
+    @Test
+    fun `INV-C13 period clarification keeps its legacy prompt and option labels`() = runTest(timeout = 30.seconds) {
+        val result = useCase(periodlessFoodIntent()) as FinancialQueryResult.Clarification
+
+        assertEquals("Which time period should I use?", result.prompt)
+        assertEquals(listOf("This month", "This week", "Last month"), result.options)
+        // The typed choices line up one to one with the legacy labels (tap index maps to the choice).
+        assertEquals(result.options.size, result.completion!!.choices.size)
+    }
+
+    @Test
+    fun `INV-C13 control an intent that already has a period yields no clarification`() = runTest(timeout = 30.seconds) {
+        val result = useCase(
+            FinancialQueryIntent(
+                rawQuery = "total this month",
+                normalizedQuery = "total this month",
+                filters = ExpenseQueryFilters(
+                    period = PeriodRange(athensMs(2026, 10, 1), athensMs(2026, 11, 1)),
+                    periodGranularity = PeriodGranularity.MONTH
+                ),
+                metric = QueryMetric.TOTAL
+            )
+        )
+
+        assertTrue("expected no Clarification but was $result", result !is FinancialQueryResult.Clarification)
     }
 
     private fun octoberComparisonIntent(granularity: PeriodGranularity?) = FinancialQueryIntent(

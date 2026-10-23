@@ -1280,7 +1280,7 @@ All Hybrid services use:
 | `BankConnectionsViewModel` | BankConnectionLifecycleCoordinator |
 | `ReceiptMatchingViewModel` | ReceiptRepository, ReceiptTransactionMatcher, ReceiptLinkService, ReceiptMatchLifecycleService |
 | `AiSettingsViewModel` | AiSettingsRepository, GetAiRuntimeStatusUseCase, AiRuntimeDiagnostics, SyncProactiveBriefingWorkUseCase, SecureKeyStorage, PrivacyGate, CloudProviderConnectionTester |
-| `AssistantViewModel` | Application, AiSettingsRepository, AiChatRepository, GetAiRuntimeStatusUseCase, InterpretFinancialQueryUseCase, ExecuteFinancialQueryUseCase, MapFinancialQueryToNavigationUseCase, MonotonicTimeProvider |
+| `AssistantViewModel` | Application, AiSettingsRepository, AiChatRepository, GetAiRuntimeStatusUseCase, InterpretFinancialQueryUseCase, ExecuteFinancialQueryUseCase, CompleteFinancialQueryClarificationUseCase, MapFinancialQueryToNavigationUseCase, MonotonicTimeProvider |
 | `BillRemindersViewModel` | BillReminderManager, CurrencySettingsRepository |
 | `RecurringExpensesViewModel` (inline in RecurringExpensesScreen.kt) | FinancialWeatherRepository, RecurringExpenseRepository, PlannedExpenseRepository, RecurringExpenseEngine, ExpenseRepository, CurrencySettingsRepository, TimeProvider |
 | `ManualRecurringExpenseViewModel` | ManualRecurringExpenseRepository, TimeProvider, CurrencySettingsRepository |
