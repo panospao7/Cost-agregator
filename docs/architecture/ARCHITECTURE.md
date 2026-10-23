@@ -36,7 +36,7 @@
 - ~1075 production Kotlin source files (~1758 including unit tests) across domain, data, ui, di, util, service, startup, and worker packages
 - 68 DAOs (64 in DaoModule + 3 in AiModule + 1 unbound), 70 entities registered in AppDatabase
 - 42 @HiltViewModel (41 *ViewModel.kt files + 1 inline in RecurringExpensesScreen.kt)
-- 33 @Module Hilt modules
+- 34 @Module Hilt modules
 - SimpleDateFormat → DateTimeFormatter: migration **substantially complete but not 100%** — one production usage remains (chart axis day label in `ui/screens/analytics/AnalyticsScreen.kt`); other matches in main source are KDoc/comments only. Residual `java.util.Calendar` usage is concentrated in `domain/util`, UI screens, `domain/logic` (SynthesisEngine), and debug/diagnostics helpers.
 - Time handling seam: `TimeProvider` (`domain/util/TimeProvider.kt`, epoch-millis `now()`) bound via `TimeModule` to `SystemTimeProvider`; `MonotonicTimeProvider` → `SystemMonotonicTimeProvider`. Callers derive `LocalDate`/`Instant` from `timeProvider.now()` (see `TIME_SEMANTICS.md`). The T1–T4C java.time migration series replaced `Calendar`/`SimpleDateFormat` boundary math with java.time + injected `TimeProvider` in analytics, budget, cashflow, and dashboard pipelines; direct wall-clock reads are policed by the G-TIME-01 guard `scripts/verify_time_boundaries.py` with exact-exception policy `config/guards/time_boundary_exceptions.yml` (4 entries).
 - REPLACE → IGNORE: **14 of 14 DAOs converted** (3 kept with KDoc: ExchangeRateDao ×2, AiArtifactDao ×1) (verified 2026-09-07)
@@ -45,7 +45,7 @@
 - Destination-driven navigation via `NavigationDestination`
 - 6 shell destinations in the app chrome; Assistant is an overlay/entry surface, not a bottom tab
 - Deep links are handled in `ui/MainActivity.kt` (`handleIntent` / `onNewIntent`); saved navigation state stays in `NavigationController`
-- Startup/background pipeline: `MainApplication` → `AppStartupDelegate` → `AppStartupCoordinator` → `AppBackgroundLifecycleObserver`; restore journal checked before any work is scheduled
+- Startup/background pipeline: `MainApplication` → `AppStartupDelegate` → `AppStartupCoordinator` → `AppBackgroundLifecycleObserver` + `ProcessAppForegroundState` (process foreground flag behind the `AppForegroundState` port, default not-foreground); restore journal checked before any work is scheduled
 - Worker instrumentation: `WorkerRunLogger` (`domain/workers/WorkerRunLogger.kt`) provides per-run success/skipped/retry/failure tracking via `BackgroundJobRunDao`. `WorkerExecutionGuard` (`domain/workers/WorkerExecutionGuard.kt`) provides structured guarded execution with logging, exception handling, and restore-mode gating. `WorkerRunLogger` is bound via `DiagnosticsModule` (`di/DiagnosticsModule.kt`); `WorkerExecutionGuard` is auto-provided (`@Singleton @Inject`). All production `CoroutineWorker`s — including `NotificationIntakeWorker` — route through the guard; the guard's allowlist is now empty.
 - **Worker retry contract (P9-NEW-13):** a worker that wants WorkManager to retry must throw `RetryableWorkerException` (`domain/workers/RetryableWorkerException.kt`). The guard's catch precedence is: timeout policy handling (`WorkerTimeoutPolicy` — RETRY records `WORKER_TIMEOUT`, PROPAGATE_CANCELLATION records `WORKER_CANCELLED` and rethrows) → `CancellationException` (recorded CANCELLED, rethrown) → `WorkerCheckpointBlockedException` (applies `BlockedPolicy`) → `RetryableWorkerException` (Retry; its sanitized `reasonCode` takes precedence over message heuristics — PR12J-1) → `classifyTransient(...)` (Retry, `WORKER_TRANSIENT_ERROR`) → otherwise **permanent Failed** (`WORKER_UNHANDLED_EXCEPTION`). `classifyTransient` only matches the keyword set `timeout` / `interrupted` / `deadlock` / `SQLITE_BUSY` / `database is locked` (case-insensitive) or an `IOException`. A plain `RuntimeException` with a non-transient message is therefore classified as a permanent failure and burns the attempt budget. `LocationBackfillWorker` and `MerchantKeyBackfillWorker` use `RetryableWorkerException` for their no-progress/transient paths.
 - **Worker notification-permission gate (P9-NEW-04):** `WorkerExecutionGuard` enforces `WorkerGuardRequest.requiresNotificationPermission` via an injected `NotificationPermissionChecker` (`AndroidNotificationPermissionChecker`, bound in `WorkerModule`). When notifications are disabled the run is durably skipped with `DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED`. `WarrantyExpirationWorker` sets this flag.
@@ -893,8 +893,8 @@ FinancialWeatherRepository
 
 ## Dependency Injection
 
-### Hilt Modules (33 total)
-- **Core:** `DatabaseModule`, `DaoModule`, `DispatchersModule`, `ApplicationScope`, `TimeModule`, `ServiceModule`, `WorkerModule`
+### Hilt Modules (34 total)
+- **Core:** `DatabaseModule`, `DaoModule`, `DispatchersModule`, `ApplicationScope`, `TimeModule`, `ServiceModule`, `WorkerModule`, `AppForegroundModule`
 - **AI:** `AiModule`, `OcrImprovementsModule`, `NaturalLanguageModule`
 - **Dashboard:** `DashboardContractsModule`, `DashboardAnomalyModule`
 - **Finance:** `CashFlowModule`, `SavingsModule`, `SavingsRepositoryBindingsModule`, `CurrencyModule`, `TaxModule`, `ExportModule`

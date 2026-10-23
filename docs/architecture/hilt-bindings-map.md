@@ -1,6 +1,6 @@
 # Hilt Module Bindings Map
 
-> Complete interface → implementation binding map for all 33 Hilt @Module files (+ 1 @EntryPoint).
+> Complete interface → implementation binding map for all 34 Hilt @Module files (+ 1 @EntryPoint).
 > **Last updated:** 2026-10-01 (verified against source; DB schema v149).
 >
 > **Note:** `SubscriptionModule.kt` was deleted in 2026-05-09 refactoring — `SubscriptionManagerEngine`
@@ -109,6 +109,12 @@ Provides:
 `WorkerGuardRequest.requiresNotificationPermission` (durable skip with
 `NOTIFICATION_PERMISSION_DENIED` when notifications are disabled).
 Note: `WorkerRunLogger` → `WorkerRunLoggerImpl` is bound by `DiagnosticsModule`, not here.
+
+### `AppForegroundModule` — `di/AppForegroundModule.kt`
+```
+Binds:
+  AppForegroundState                          → ProcessAppForegroundState (@Singleton; same instance is registered as a ProcessLifecycleOwner observer by AppStartupCoordinator)
+```
 
 ### `ServiceModule` — `di/ServiceModule.kt`
 ```
@@ -490,4 +496,4 @@ BackupRepositoryModule ──► Backup/Restore
 ```
 
 ---
-**Stats:** 33 Hilt @Module files · 65+ repositories · 68 DAOs (64 DaoModule + 3 AiModule + 1 unbound) · 70 entities · DB v149 (DatabaseSchemaPolicy.CURRENT_VERSION)
+**Stats:** 34 Hilt @Module files · 65+ repositories · 68 DAOs (64 DaoModule + 3 AiModule + 1 unbound) · 70 entities · DB v149 (DatabaseSchemaPolicy.CURRENT_VERSION)

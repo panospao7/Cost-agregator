@@ -412,3 +412,19 @@ Validation request: targeted-unit-test filters AiSettingsRepositoryImplTest, Ins
 - B2d check (binding): GenerateTransactionInsightUseCase still requires dashboardBriefingEnabled and routes as DASHBOARD_BRIEFING; B2d must gate on aiEnabled ∧ transactionInsightEnabled ∧ allowOnDeviceAi (plan ~:128), add INSIGHT_DISABLED (AE-32), and enforce INV-16/INV-17.
 - Product note (spec §1.5 / §4 rule 2b, owner decision already taken): new installs get the on-device insight on by default; corruption on a never-updated install re-enables it (rule 6 reworded).
 Next: B2c (AppForegroundState port + startup registration).
+
+## B2c (2026-10-23) — implemented (NOT validated; awaiting compile + targeted-unit-test)
+- NEW port `domain/ai/service/AppForegroundState.kt` (`isAppInForeground(): Boolean`, non-suspending, never throws, default false = fail-safe skip; spec 1.7).
+- NEW impl `startup/ProcessAppForegroundState.kt` (`@Singleton`, `@Inject constructor()`, `DefaultLifecycleObserver`, `@Volatile` flag: onStart true, onStop false).
+- `AppStartupCoordinator`: new constructor param `foregroundStateObserver: ProcessAppForegroundState`; `registerLifecycleObserver` adds it after the existing `backgroundLifecycleObserver` registration (existing order unchanged).
+- NEW `di/AppForegroundModule.kt` (`@Binds @Singleton` AppForegroundState to ProcessAppForegroundState; same singleton instance as the registered observer).
+- No consumer yet (B2d consumes it for INV-17).
+- Tests: NEW `startup/AppForegroundStateTest`; constructor-only update (added `foregroundStateObserver = mockk(relaxed = true)`) in `AppStartupCoordinatorRecoveryTest`, `RestoreCancelAfterSwapRecoveryTest`, `RestoreMaintenanceModeConfirmationFaultTest`.
+- Docs: CODEBASE_SEGMENTS (Segments 12 and 20), hilt-bindings-map (AppForegroundModule), docs/architecture/ARCHITECTURE.md startup line.
+- Validation request: targeted-unit-test `*AppForegroundState*`, `*Startup*`, plus `RestoreCancelAfterSwapRecoveryTest`, `RestoreMaintenanceModeConfirmationFaultTest`; then static-guards.
+
+## B2c DONE (2026-10-23)
+- Review: reviewer-strict (also covering the architecture-guardian lane; small slice) ACCEPT-WITH-MINORS. Minor applied by the orchestrator (docs-only, after validation): Hilt module count 33 → 34 in hilt-bindings-map.md (:3, :499) and ARCHITECTURE.md (:39, :896) plus AppForegroundModule in the Core list.
+- Validation: targeted vr-20261023-180715-b45919d1 PASS, static-guards vr-20261023-181219-f89027b5 PASS.
+- B2d carry-forwards: pin the registration (verify the foregroundStateObserver gets registered in an initialize() test, or a source-scan assertion that ProcessAppForegroundState is registered only in registerLifecycleObserver), otherwise removing that line would silently skip every insight; keep the INV-17 backstop mapping BACKGROUND_USE_BLOCKED → Skipped(BACKGROUND_USE_BLOCKED) (ProcessLifecycleOwner ON_STOP is delayed ~700 ms). Optional docs: CODEBASE_INVENTORY DI list and a separate Segment 12 bullet for di/AppForegroundModule.kt.
+Next: B2d (rewire GenerateTransactionInsightUseCase onto TRANSACTION_INSIGHT; gates aiEnabled ∧ transactionInsightEnabled ∧ allowOnDeviceAi; INSIGHT_DISABLED AE-32; INV-16/17).

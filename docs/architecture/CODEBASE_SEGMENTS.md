@@ -288,6 +288,7 @@ Owns startup wiring, service lifecycle recovery, and background runtime jobs.
 - `startup/AppStartupDelegate.kt`
 - `startup/AppStartupCoordinator.kt`
 - `startup/AppBackgroundLifecycleObserver.kt`
+- `startup/ProcessAppForegroundState.kt` — process-lifecycle observer (onStart → true, onStop → false, default false) implementing the `domain/ai/service/AppForegroundState` port (ai-fixes B2c); registered only in `AppStartupCoordinator.registerLifecycleObserver`; bound by `di/AppForegroundModule.kt`; no consumer until B2d
 - `data/ai/worker/DailyBriefingWorker.kt`
 - `data/location/LocationBackfillWorker.kt`
 - `data/location/MerchantKeyBackfillWorker.kt`
@@ -474,6 +475,7 @@ Owns the app-wide AI platform surface: policy, assistant sheet, AI settings, pro
 - `data/repository/AiSettingsRepositoryImpl.kt` — `ai_settings` DataStore; `produceMigrations` registers the sole resolver of `ai_transaction_insight_enabled`
 - `data/repository/AiInsightSettingsMigration.kt` — the one never-throwing `DataMigration` (INV-23): stored briefing value wins, else `InstallProvenance` (NEW_INSTALL → on, UPGRADE/UNKNOWN → off); runs before first read and first edit; never overwrites an existing key
 - `domain/ai/service/InstallProvenance.kt` — port (`InstallOrigin` NEW_INSTALL/UPGRADE/UNKNOWN); `data/repository/PackageInstallProvenance.kt` — own-package install/update times only, any failure → UNKNOWN; not Hilt-bound (built from the application context inside `produceMigrations`)
+- `domain/ai/service/AppForegroundState.kt` — port (`isAppInForeground()`, default false = fail-safe skip) for the INV-17 foreground short-circuit; impl `startup/ProcessAppForegroundState.kt` (Segment 12); not consumed before B2d
 - `data/ai/provider/StrictAiJsonParsing.kt`
 - `data/ai/provider/DashboardBriefingPromptFormatter.kt`
 - `data/ai/provider/DashboardBriefingResponseParser.kt`
