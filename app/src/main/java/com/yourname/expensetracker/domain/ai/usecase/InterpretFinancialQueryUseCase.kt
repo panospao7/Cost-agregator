@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.ai.usecase
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.domain.ai.model.AiChatMessage
+import com.yourname.expensetracker.domain.ai.model.AssistantUnsupportedReason
 import com.yourname.expensetracker.domain.ai.model.ExpenseQueryFilters
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryIntent
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationResult
@@ -34,7 +35,7 @@ class InterpretFinancialQueryUseCase @Inject constructor(
         val settings = aiSettingsRepository.settings().first()
         if (!settings.aiEnabled || !settings.assistantEnabled || !settings.queryInterpretationEnabled) {
             return FinancialQueryInterpretationResult.Unsupported(
-                "Assistant query interpretation is disabled"
+                AssistantUnsupportedReason.INTERPRETATION_DISABLED
             )
         }
 
@@ -45,9 +46,14 @@ class InterpretFinancialQueryUseCase @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Timber.w(e, "InterpretFinancialQueryUseCase: query interpretation provider failed")
+            // Bounded log: code + exception class only (never the throwable or its message).
+            Timber.w(
+                "InterpretFinancialQueryUseCase: %s class=%s",
+                AssistantUnsupportedReason.INTERPRETATION_FAILED.name,
+                e::class.java.simpleName
+            )
             FinancialQueryInterpretationResult.Unsupported(
-                e.message ?: "Query interpretation failed"
+                AssistantUnsupportedReason.INTERPRETATION_FAILED
             )
         }
 
@@ -257,7 +263,7 @@ class InterpretFinancialQueryUseCase @Inject constructor(
 
         if (!supported) {
             return FinancialQueryInterpretationResult.Unsupported(
-                "This kind of query is not supported yet"
+                AssistantUnsupportedReason.METRIC_NOT_SUPPORTED
             )
         }
 
@@ -315,16 +321,16 @@ class InterpretFinancialQueryUseCase @Inject constructor(
     private fun validateAmountBound(value: Double?, fieldName: String): Double? {
         if (value == null) return null
         if (value.isNaN() || value.isInfinite()) {
-            Timber.w("InterpretFinancialQueryUseCase: AI returned invalid %s=%s — rejecting", fieldName, value)
+            Timber.w("InterpretFinancialQueryUseCase: AI returned invalid %s — rejecting", fieldName)
             return null
         }
         if (value < 0.0) {
-            Timber.w("InterpretFinancialQueryUseCase: AI returned negative %s=%.2f — clamping to 0", fieldName, value)
+            Timber.w("InterpretFinancialQueryUseCase: AI returned negative %s — clamping to 0", fieldName)
             return 0.0
         }
         val MAX_AMOUNT = 1_000_000_000.0
         if (value > MAX_AMOUNT) {
-            Timber.w("InterpretFinancialQueryUseCase: AI returned excessive %s=%.2f — clamping to %.0f", fieldName, value, MAX_AMOUNT)
+            Timber.w("InterpretFinancialQueryUseCase: AI returned excessive %s — clamping to maximum", fieldName)
             return MAX_AMOUNT
         }
         return value

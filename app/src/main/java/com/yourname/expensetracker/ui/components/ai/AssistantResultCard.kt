@@ -112,7 +112,10 @@ fun AssistantResultCard(
 
                 is FinancialQueryResult.Unsupported -> {
                     Text(stringResource(R.string.assistant_unsupported), style = MaterialTheme.typography.titleMedium)
-                    Text(result.reason, style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        stringResource(assistantUnsupportedReasonMessageRes(result.reason)),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
                 }
             }
 

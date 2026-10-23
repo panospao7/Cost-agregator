@@ -3,6 +3,7 @@ package com.yourname.expensetracker.data.ai.provider
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.domain.ai.model.*
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.privacy.*
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import io.mockk.*
@@ -257,7 +258,9 @@ class CloudProviderTransportPayloadTest(private val entry: Entry) {
         coEvery { harness.gate.check(any(), any()) } returns PrivacyDecision.Denied("test_denied")
         val result = harness.invoke()
         if (entry == Entry.QUERY) {
-            assertEquals("PROVIDER_DISABLED", (result as FinancialQueryInterpretationResult.Unsupported).reason)
+            val unsupported = result as FinancialQueryInterpretationResult.Unsupported
+            assertEquals(AssistantUnsupportedReason.PROVIDER_UNAVAILABLE, unsupported.reason)
+            assertEquals(DiagnosticReasonCode.PROVIDER_DISABLED, unsupported.diagnostic)
         }
         harness.assertNoPreparationOrTransport()
     }
@@ -268,7 +271,9 @@ class CloudProviderTransportPayloadTest(private val entry: Entry) {
         coEvery { harness.gate.check(any(), any()) } returns PrivacyDecision.FailClosed("test_failure")
         val result = harness.invoke()
         if (entry == Entry.QUERY) {
-            assertEquals("PROVIDER_DISABLED", (result as FinancialQueryInterpretationResult.Unsupported).reason)
+            val unsupported = result as FinancialQueryInterpretationResult.Unsupported
+            assertEquals(AssistantUnsupportedReason.PROVIDER_UNAVAILABLE, unsupported.reason)
+            assertEquals(DiagnosticReasonCode.PROVIDER_DISABLED, unsupported.diagnostic)
         }
         harness.assertNoPreparationOrTransport()
     }
@@ -317,7 +322,9 @@ class CloudProviderTransportPayloadTest(private val entry: Entry) {
             val outcome = runCatching { harness.invoke() }
             if (entry == Entry.QUERY) {
                 val result = outcome.getOrThrow()
-                assertEquals("UNKNOWN_ERROR", (result as FinancialQueryInterpretationResult.Unsupported).reason)
+                val unsupported = result as FinancialQueryInterpretationResult.Unsupported
+                assertEquals(AssistantUnsupportedReason.PROVIDER_UNAVAILABLE, unsupported.reason)
+                assertEquals(DiagnosticReasonCode.UNKNOWN_ERROR, unsupported.diagnostic)
                 assertTrue(logs.any { it.second.contains("stage=payload_policy") })
             }
             assertTrue("$entry: no log may carry a throwable", logs.all { it.first == null })

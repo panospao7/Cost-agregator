@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.ai.model
 
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.PeriodRange
 import com.yourname.expensetracker.domain.model.UiText
@@ -135,7 +136,9 @@ sealed interface FinancialQueryInterpretationResult {
     ) : FinancialQueryInterpretationResult
 
     data class Unsupported(
-        val reason: String
+        val reason: AssistantUnsupportedReason,
+        /** Bounded diagnostic code; never rendered or persisted. The producing site logs it. */
+        val diagnostic: DiagnosticReasonCode? = null
     ) : FinancialQueryInterpretationResult
 }
 
@@ -175,7 +178,9 @@ sealed interface FinancialQueryResult {
     ) : FinancialQueryResult
 
     data class Unsupported(
-        val reason: String
+        val reason: AssistantUnsupportedReason,
+        /** Bounded diagnostic code; never rendered or persisted. The producing site logs it. */
+        val diagnostic: DiagnosticReasonCode? = null
     ) : FinancialQueryResult
 }
 

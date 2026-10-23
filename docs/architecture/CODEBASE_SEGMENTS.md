@@ -463,6 +463,8 @@ Owns the app-wide AI platform surface: policy, assistant sheet, AI settings, pro
 - `ui/screens/assistant/AssistantViewModel.kt` — snapshots prior chat rows before persisting the current turn; does not shape or redact model history
 - `domain/ai/usecase/FinancialQueryInterpretationInputBuilder.kt` — sole constructor of `FinancialQueryInterpretationInput`; model history = prior USER queries only (last `MAX_QUERY_HISTORY_USER_TURNS_FOR_MODEL` = 4), redaction source = `EffectiveCloudAiPolicyResolver`
 - `data/ai/provider/OnDeviceQueryInterpretationService.kt` / `CloudQueryInterpretationService.kt` — share `buildPrompt`; history rendered as `- USER:` lines only
+- `domain/ai/model/AssistantUnsupportedReason.kt` — closed 7-code enum; the only value `Unsupported` results carry (optional bounded `DiagnosticReasonCode`, never rendered or persisted; the producing site logs it); the model's own unsupported text is discarded
+- `ui/components/ai/AssistantUnsupportedReasonText.kt` — single exhaustive reason → `@StringRes` mapping, used by `AssistantResultCard` and `AssistantViewModel` (persisted text; payload `{"type":"unsupported","reason":"<CODE_NAME>"}`)
 - `domain/ai/model/AssistantHistoryMode.kt` — Enum (OFF/REDACTED/RAW) for conversation history redaction in AiChatRepositoryImpl
 - `ui/screens/aisettings/AiSettingsScreen.kt`
 - `data/ai/provider/DefaultAiEnvironmentMonitor.kt`

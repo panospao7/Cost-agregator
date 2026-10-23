@@ -2445,6 +2445,14 @@
     <!-- Assistant Result Card -->
     <string name="assistant_transactions_found_format">Found %1$d matching transactions.</string>
     <string name="assistant_unsupported">Unsupported</string>
+    <!-- Assistant unsupported reasons (one per AssistantUnsupportedReason code; never echo user text) -->
+    <string name="assistant_unsupported_interpretation_disabled">The assistant is turned off in AI settings.</string>
+    <string name="assistant_unsupported_interpretation_failed">Something went wrong while reading your question. Please try again.</string>
+    <string name="assistant_unsupported_provider_unavailable">The assistant is not available right now. Please try again later.</string>
+    <string name="assistant_unsupported_response_invalid">I could not understand the assistant response. Try rephrasing your question.</string>
+    <string name="assistant_unsupported_model_declined">That kind of question is not supported yet.</string>
+    <string name="assistant_unsupported_metric_not_supported">This query type is not supported yet.</string>
+    <string name="assistant_unsupported_no_matching_transactions">No matching transactions found.</string>
     <string name="assistant_open_transactions">Open Transactions</string>
     
     <!-- Domain: Lifestyle Inflation -->

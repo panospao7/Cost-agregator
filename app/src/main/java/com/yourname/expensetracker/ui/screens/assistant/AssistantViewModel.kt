@@ -20,6 +20,7 @@ import com.yourname.expensetracker.domain.ai.usecase.MapFinancialQueryToNavigati
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.util.MonotonicTimeProvider
+import com.yourname.expensetracker.ui.components.ai.assistantUnsupportedReasonMessageRes
 import com.yourname.expensetracker.ui.components.asString
 import com.yourname.expensetracker.ui.util.guardedWrite
 import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
@@ -300,7 +301,10 @@ class AssistantViewModel @Inject constructor(
                     }
 
                     is FinancialQueryInterpretationResult.Unsupported -> {
-                        val result = FinancialQueryResult.Unsupported(interpretation.reason)
+                        val result = FinancialQueryResult.Unsupported(
+                            reason = interpretation.reason,
+                            diagnostic = interpretation.diagnostic
+                        )
                         val resultItem = AssistantConversationItem.Result(
                             id = "unsupported-${UUID.randomUUID().toString()}",
                             queryText = query,
@@ -473,7 +477,8 @@ class AssistantViewModel @Inject constructor(
         is FinancialQueryResult.Breakdown -> title.asString(application)
         is FinancialQueryResult.TransactionList -> "${title.asString(application)} ($previewCount)"
         is FinancialQueryResult.Clarification -> prompt
-        is FinancialQueryResult.Unsupported -> reason
+        is FinancialQueryResult.Unsupported ->
+            application.getString(assistantUnsupportedReasonMessageRes(reason))
     }
 
     private fun FinancialQueryResult.toPayloadJson(): String? = when (this) {
@@ -517,7 +522,7 @@ class AssistantViewModel @Inject constructor(
 
         is FinancialQueryResult.Unsupported -> JSONObject()
             .put("type", "unsupported")
-            .put("reason", reason)
+            .put("reason", reason.name)
             .toString()
     }
 

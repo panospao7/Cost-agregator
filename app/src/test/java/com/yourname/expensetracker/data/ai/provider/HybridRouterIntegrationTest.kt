@@ -5,6 +5,7 @@ import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.AiRouteDecision
 import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.AiSettings
+import com.yourname.expensetracker.domain.ai.model.AssistantUnsupportedReason
 import com.yourname.expensetracker.domain.ai.model.CategorizationAssistInput
 import com.yourname.expensetracker.domain.ai.model.CategoryAssistSuggestion
 import com.yourname.expensetracker.domain.ai.model.DashboardBriefing
@@ -134,9 +135,9 @@ class HybridRouterIntegrationTest(private val route: AiRoute) {
         val device = mockk<OnDeviceQueryInterpretationService>()
         val fallback = mockk<NoOpQueryInterpretationService>()
         val input = mockk<FinancialQueryInterpretationInput>()
-        val cloudResult = FinancialQueryInterpretationResult.Unsupported("test_result")
-        val deviceResult = FinancialQueryInterpretationResult.Unsupported("test_result")
-        val fallbackResult = FinancialQueryInterpretationResult.Unsupported("test_result")
+        val cloudResult = FinancialQueryInterpretationResult.Unsupported(AssistantUnsupportedReason.PROVIDER_UNAVAILABLE)
+        val deviceResult = FinancialQueryInterpretationResult.Unsupported(AssistantUnsupportedReason.PROVIDER_UNAVAILABLE)
+        val fallbackResult = FinancialQueryInterpretationResult.Unsupported(AssistantUnsupportedReason.PROVIDER_UNAVAILABLE)
         coEvery { cloud.interpret(input) } returns cloudResult
         coEvery { device.interpret(input) } returns deviceResult
         coEvery { fallback.interpret(input) } returns fallbackResult

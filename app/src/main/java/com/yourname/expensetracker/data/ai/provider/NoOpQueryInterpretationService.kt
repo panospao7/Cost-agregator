@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.ai.provider
 
+import com.yourname.expensetracker.domain.ai.model.AssistantUnsupportedReason
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationInput
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationResult
 import com.yourname.expensetracker.domain.ai.service.QueryInterpretationService
@@ -11,7 +12,7 @@ class NoOpQueryInterpretationService @Inject constructor() : QueryInterpretation
         input: FinancialQueryInterpretationInput
     ): FinancialQueryInterpretationResult {
         return FinancialQueryInterpretationResult.Unsupported(
-            "Query interpretation provider is not configured"
+            AssistantUnsupportedReason.PROVIDER_UNAVAILABLE
         )
     }
 }

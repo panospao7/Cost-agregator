@@ -7,6 +7,7 @@ import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.OwnershipFilter
+import com.yourname.expensetracker.domain.ai.model.AssistantUnsupportedReason
 import com.yourname.expensetracker.domain.ai.model.ExpenseQueryFilters
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryIntent
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryResult
@@ -31,6 +32,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import kotlinx.coroutines.test.runTest
+import kotlin.time.Duration.Companion.seconds
 
 class ExecuteFinancialQueryUseCaseTest {
 
@@ -263,6 +265,55 @@ class ExecuteFinancialQueryUseCaseTest {
         assertTrue(result is FinancialQueryResult.Summary)
         result as FinancialQueryResult.Summary
         assertEquals("Amazon: 120.00 EUR", result.primaryText)
+    }
+
+    @Test
+    fun `AE-C9 largest metric with zero matching rows returns NO_MATCHING_TRANSACTIONS code`() = runTest(timeout = 30.seconds) {
+        coEvery {
+            expenseRepository.getAssistantExpensesFiltered(
+                startDate = 100L,
+                endDate = 200L,
+                transactionTypes = emptySet(),
+                categoryIds = emptySet(),
+                merchantNames = emptySet(),
+                ownershipFilter = OwnershipFilter.ALL,
+                minAmount = null,
+                maxAmount = null,
+                sortOrder = any()
+            )
+        } returns emptyList()
+
+        val result = useCase(
+            FinancialQueryIntent(
+                rawQuery = "largest purchase this month",
+                normalizedQuery = "largest purchase this month",
+                filters = ExpenseQueryFilters(period = PeriodRange(100L, 200L)),
+                metric = QueryMetric.MAX
+            )
+        )
+
+        assertEquals(
+            FinancialQueryResult.Unsupported(AssistantUnsupportedReason.NO_MATCHING_TRANSACTIONS),
+            result
+        )
+    }
+
+    @Test
+    fun `INV-C5 metric without an executor returns METRIC_NOT_SUPPORTED code`() = runTest(timeout = 30.seconds) {
+        // MIN is part of the model schema but has no executor branch.
+        val result = useCase(
+            FinancialQueryIntent(
+                rawQuery = "smallest purchase this month",
+                normalizedQuery = "smallest purchase this month",
+                filters = ExpenseQueryFilters(period = PeriodRange(100L, 200L)),
+                metric = QueryMetric.MIN
+            )
+        )
+
+        assertEquals(
+            FinancialQueryResult.Unsupported(AssistantUnsupportedReason.METRIC_NOT_SUPPORTED),
+            result
+        )
     }
 
     @Test

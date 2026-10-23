@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
+import com.yourname.expensetracker.domain.ai.model.AssistantUnsupportedReason
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryIntent
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryResult
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryDataQuality
@@ -56,7 +57,7 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
             intent.metric == QueryMetric.TOTAL -> executeTotal(intent, period)
             intent.metric == QueryMetric.COUNT -> executeCount(intent, period)
             intent.metric == QueryMetric.AVERAGE -> executeAverage(intent, period)
-            else -> FinancialQueryResult.Unsupported("This query type is not supported yet")
+            else -> FinancialQueryResult.Unsupported(AssistantUnsupportedReason.METRIC_NOT_SUPPORTED)
         }
     }
 
@@ -273,7 +274,7 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
     ): FinancialQueryResult {
         val (expenses, amountFilterDataQuality) = assistantFilteredExpensesCurrencyAware(intent, period)
         if (expenses.isEmpty()) {
-            return FinancialQueryResult.Unsupported("No matching transactions found")
+            return FinancialQueryResult.Unsupported(AssistantUnsupportedReason.NO_MATCHING_TRANSACTIONS)
         }
 
         // W32: Normalize amounts to home currency before maxByOrNull to avoid
@@ -306,7 +307,7 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
                 normalizedAmount?.let { expenseWithCategory to it }
             }
             withNormalized.maxByOrNull { it.second }?.first
-        } ?: return FinancialQueryResult.Unsupported("No matching transactions found")
+        } ?: return FinancialQueryResult.Unsupported(AssistantUnsupportedReason.NO_MATCHING_TRANSACTIONS)
 
         val totalFailed = amountFilterDataQuality.excludedCount + failedConversions
         val dataQuality = FinancialQueryDataQuality(

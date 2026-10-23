@@ -229,3 +229,42 @@ Reviews: reviewer-strict iteration 2 ACCEPT-WITH-MINORS (all round-1 findings fi
 N-items fired: none. KNOWN_VIOLATIONS: unchanged. Deleted tests: only the PC-7 one.
 Follow-ups: collapse newlines in unredacted prior queries (optional); C2 owns the throwable logs.
 Next: C2 (typed bounded unsupported reasons + log hygiene; res EN/es/el).
+
+## C2 (2026-10-23) — implemented, validating
+Source:
+- New AssistantUnsupportedReason (7 codes: INTERPRETATION_DISABLED, INTERPRETATION_FAILED, PROVIDER_UNAVAILABLE, PROVIDER_RESPONSE_INVALID, MODEL_DECLINED, METRIC_NOT_SUPPORTED, NO_MATCHING_TRANSACTIONS).
+- Unsupported(reason, diagnostic: DiagnosticReasonCode?); no new DiagnosticReasonCode values.
+- Bounded logs (code + class only) at Interpret :48 and OnDevice :58/:63/:125. parseResponse CE rethrow. The model's unsupportedReason is discarded (MODEL_DECLINED) and removed from the schema line.
+- Cloud: 8 sites map their codes to `diagnostic` (prepareText/gate/audit untouched).
+- validateAmountBound logs no amounts (both copies).
+- New AssistantUnsupportedReasonText mapping; ResultCard renders it; VM payload {"type":"unsupported","reason":"<CODE>"}.
+- 7 strings EN/es/el (es/el marked "best-effort, pending review": owner reviews before Z, PC-13).
+- N16 check: no other reader of Unsupported.reason / payloadJson.reason (ExportAnonymizer nulls payloadJson; BackupVerifier does not parse reason).
+Tests:
+- Pass 1: mechanical retargets of String reasons → typed reason + diagnostic in 6 files.
+- Pass 2: AE-C7 (bounded logs; the result is the local fallback per spec P5, so INTERPRETATION_FAILED appears in the log only), AE-C8 (on-device + cloud MODEL_DECLINED), AE-C9 (payload keys exactly {type, reason}), AE-C10 (class-only log, CE propagates via a throwing categoryLookupMap seam), PC-11 both places, mapping test, cloud empty-candidates → PROVIDER_RESPONSE_INVALID + UNKNOWN_ERROR.
+Notes:
+- Interpret's METRIC_NOT_SUPPORTED branch is unreachable (resolveMetric never yields an unsupported metric).
+- **C5 must retarget** ExecuteFinancialQueryUseCaseTest "INV-C5 metric without an executor returns METRIC_NOT_SUPPORTED code", which uses MIN (C5 adds the MIN executor; the plan's done-when says "no current metric reaches else").
+- Not covered: executeLargest all-conversions-fail NO_MATCHING path; el locale rendering.
+Validation: see C2 DONE below.
+
+## C2 DONE (2026-10-23)
+Validation:
+- targeted (13 classes) vr-20261023-071309-cec25b0f PASS;
+- lint vr-20261023-072642-34efe90b PASS (no MissingTranslation);
+- cloud_payload vr-20261023-073045-46bea6aa, pii_logging vr-20261023-073103-52081e15, cancellation vr-20261023-073121-d6bfb896 PASS;
+- static-guards vr-20261023-073139-2bee8fa4 PASS.
+- After the minors (KDoc/docs wording + one test): targeted (OnDevice, Cloud, AssistantVM, Interpret) vr-20261023-083237-79a4abec PASS; cloud_payload vr-20261023-083725-6237077f PASS.
+Reviews (all ACCEPT-WITH-MINORS): PSG, AG, RS. Minors applied:
+- `diagnostic` wording → "bounded; never rendered or persisted; the producing site logs it" (FinancialQueryModels ×2, Cloud KDoc, CODEBASE_SEGMENTS).
+- Malformed-JSON test documented as non-probative on the JVM; new AE-C10 test throws a JSONException carrying the sentinel via the ThrowingCategoryLookup seam.
+Accepted gaps: the AE-C9 rendering half (card) and el-locale rendering are not unit-tested (lint MissingTranslation + the exhaustive mapping test cover the risk); executeLargest all-conversions-fail NO_MATCHING path; OnDevice GenAiException log not unit-testable (GenerativeModel not injectable; reviewed clean).
+Carried to C5:
+- AG medium: once MIN has an executor, replace ExecuteFinancialQueryUseCase's `else` with an exhaustive `when (intent.metric)`.
+- The C2 test "INV-C5 metric without an executor returns METRIC_NOT_SUPPORTED code" (uses MIN) is then removed: it was created in C2, so this is not an N14 case per RS. Note it explicitly in C5.
+- METRIC_NOT_SUPPORTED then becomes defensive-only (Interpret branch unreachable too).
+Follow-ups:
+- CancellationSafety KNOWN_VIOLATIONS :81 (OnDeviceQueryInterpretationService, MIT-034) may now be removable; the GenAiException catch is still present. Removal = baseline shrink; propose at CX/Z.
+- Cloud PROVIDER_RESPONSE_INVALID pairs with UNKNOWN_ERROR for empty candidates (faithful to old codes).
+Next: C3 (AssistantPeriodResolver, periodGranularity, calendar previous period; T2).

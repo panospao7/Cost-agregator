@@ -7,6 +7,8 @@ import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
 import com.yourname.expensetracker.domain.privacy.FakePrivacySettingsRepository
 import com.yourname.expensetracker.domain.privacy.PrivacySettings
 import com.yourname.expensetracker.domain.ai.model.AiSettings
+import com.yourname.expensetracker.domain.ai.model.AssistantUnsupportedReason
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -62,6 +64,16 @@ class CloudQueryInterpretationServiceTest {
         coEvery { gate.check(PrivacyCapability.CLOUD_AI_GENERAL) } returns PrivacyDecision.Allowed
     }
 
+    private fun assertUnsupported(
+        result: FinancialQueryInterpretationResult,
+        reason: AssistantUnsupportedReason,
+        diagnostic: DiagnosticReasonCode
+    ) {
+        val unsupported = result as FinancialQueryInterpretationResult.Unsupported
+        assertEquals(reason, unsupported.reason)
+        assertEquals(diagnostic, unsupported.diagnostic)
+    }
+
     private fun testPayloadPolicy() = DefaultCloudPayloadPolicy(
         EffectiveCloudAiPolicyResolver.failClosedNoAi(), DefaultCloudPayloadRedactor()
     )
@@ -99,8 +111,8 @@ class CloudQueryInterpretationServiceTest {
     @Test
     fun `timeout and retryable IO preserve success and exhaustion attempt limits`() = runBlocking {
         for ((failure, code) in listOf(
-            SocketTimeoutException("/private/receipt") to "TIMEOUT",
-            IOException("connection reset /private/receipt") to "NETWORK_UNAVAILABLE"
+            SocketTimeoutException("/private/receipt") to DiagnosticReasonCode.TIMEOUT,
+            IOException("connection reset /private/receipt") to DiagnosticReasonCode.NETWORK_UNAVAILABLE
         )) {
             for (recover in listOf(true, false)) {
                 val client = mockk<OkHttpClient>()
@@ -114,7 +126,7 @@ class CloudQueryInterpretationServiceTest {
                 val retryDelay = RecordingRetryDelay()
                 val result = service(client, retryDelay).interpret(input())
                 if (recover) assertFalse(result is FinancialQueryInterpretationResult.Unsupported)
-                else assertEquals(code, (result as FinancialQueryInterpretationResult.Unsupported).reason)
+                else assertUnsupported(result, AssistantUnsupportedReason.PROVIDER_UNAVAILABLE, code)
                 verify(exactly = if (recover) 2 else 3) { call.execute() }
                 retryDelay.assertSchedule(expectedRetries = if (recover) 1 else 2)
             }
@@ -136,7 +148,7 @@ class CloudQueryInterpretationServiceTest {
                 val retryDelay = RecordingRetryDelay()
                 val result = service(client, retryDelay).interpret(input())
                 if (recover && status != 400) assertFalse(result is FinancialQueryInterpretationResult.Unsupported)
-                else assertEquals("UNKNOWN_ERROR", (result as FinancialQueryInterpretationResult.Unsupported).reason)
+                else assertUnsupported(result, AssistantUnsupportedReason.PROVIDER_UNAVAILABLE, DiagnosticReasonCode.UNKNOWN_ERROR)
                 verify(exactly = if (status == 400) 1 else if (recover) 2 else 3) { call.execute() }
                 retryDelay.assertSchedule(expectedRetries = if (status == 400) 0 else if (recover) 1 else 2)
             }
@@ -150,9 +162,69 @@ class CloudQueryInterpretationServiceTest {
             val call = mockk<Call>()
             every { client.newCall(any()) } returns call
             every { call.execute() } answers { response(body) }
-            assertEquals("PARSER_FAILED", (service(client).interpret(input()) as FinancialQueryInterpretationResult.Unsupported).reason)
+            assertUnsupported(
+                service(client).interpret(input()),
+                AssistantUnsupportedReason.PROVIDER_RESPONSE_INVALID,
+                DiagnosticReasonCode.PARSER_FAILED
+            )
             verify(exactly = 1) { call.execute() }
         }
+    }
+
+    @Test
+    fun `INV-C5 empty candidates or missing text map to PROVIDER_RESPONSE_INVALID with the default UNKNOWN_ERROR diagnostic`() = runBlocking {
+        // The reason is the bounded code (PROVIDER_RESPONSE_INVALID). The log-only diagnostic is
+        // whatever the code produces for these shapes: the unsupported() default, UNKNOWN_ERROR
+        // (PARSER_FAILED is reserved for a null body / JSONException).
+        val shapes = listOf(
+            """{"candidates":[]}""",
+            """{}""",
+            """{"candidates":[{}]}""",
+            """{"candidates":[{"content":{"parts":[]}}]}""",
+            """{"candidates":[{"content":{"parts":[{}]}}]}"""
+        )
+        for (body in shapes) {
+            val client = mockk<OkHttpClient>()
+            val call = mockk<Call>()
+            every { client.newCall(any()) } returns call
+            every { call.execute() } answers { response(body) }
+            val retryDelay = RecordingRetryDelay()
+
+            val result = service(client, retryDelay).interpret(input())
+
+            assertUnsupported(
+                result,
+                AssistantUnsupportedReason.PROVIDER_RESPONSE_INVALID,
+                DiagnosticReasonCode.UNKNOWN_ERROR
+            )
+            verify(exactly = 1) { call.execute() }
+            retryDelay.assertSchedule(expectedRetries = 0)
+        }
+    }
+
+    @Test
+    fun `AE-C8 cloud model unsupported text is discarded and result carries MODEL_DECLINED only`() = runBlocking {
+        val modelText = """{"kind":"unsupported","unsupportedReason":"rent 4242 4242 4242 4242 at Lidl"}"""
+        val body = JSONObject().put(
+            "candidates",
+            JSONArray().put(
+                JSONObject().put(
+                    "content",
+                    JSONObject().put("parts", JSONArray().put(JSONObject().put("text", modelText)))
+                )
+            )
+        ).toString()
+        val client = mockk<OkHttpClient>()
+        val call = mockk<Call>()
+        every { client.newCall(any()) } returns call
+        every { call.execute() } answers { response(body) }
+
+        val result = service(client).interpret(input())
+
+        val unsupported = result as FinancialQueryInterpretationResult.Unsupported
+        assertEquals(AssistantUnsupportedReason.MODEL_DECLINED, unsupported.reason)
+        assertTrue(!result.toString().contains("Lidl"))
+        assertTrue(!result.toString().contains("4242"))
     }
 
     // TODO: Tautological mock test — consider adding real behavior assertion
@@ -514,7 +586,7 @@ class CloudQueryInterpretationServiceTest {
         }
 
         assertTrue(result is FinancialQueryInterpretationResult.Unsupported)
-        assertEquals("NETWORK_UNAVAILABLE", (result as FinancialQueryInterpretationResult.Unsupported).reason)
+        assertUnsupported(result, AssistantUnsupportedReason.PROVIDER_UNAVAILABLE, DiagnosticReasonCode.NETWORK_UNAVAILABLE)
     }
 
     @Test
@@ -531,7 +603,7 @@ class CloudQueryInterpretationServiceTest {
                 .interpret(FinancialQueryInterpretationInput("top merchants", 1_000L, "en-US"))
         }
 
-        assertEquals("UNKNOWN_ERROR", (result as FinancialQueryInterpretationResult.Unsupported).reason)
+        assertUnsupported(result, AssistantUnsupportedReason.PROVIDER_UNAVAILABLE, DiagnosticReasonCode.UNKNOWN_ERROR)
         verify(exactly = 1) { call.execute() }
     }
 
@@ -600,7 +672,7 @@ class CloudQueryInterpretationServiceTest {
             ).interpret(FinancialQueryInterpretationInput("top merchants", 1_000L, "en-US"))
         }
 
-        assertEquals("UNKNOWN_ERROR", (result as FinancialQueryInterpretationResult.Unsupported).reason)
+        assertUnsupported(result, AssistantUnsupportedReason.PROVIDER_UNAVAILABLE, DiagnosticReasonCode.UNKNOWN_ERROR)
         verify(exactly = 3) { call.execute() }
         retryDelay.assertSchedule(expectedRetries = 2)
     }
@@ -621,7 +693,7 @@ class CloudQueryInterpretationServiceTest {
                 .interpret(FinancialQueryInterpretationInput("top merchants", 1_000L, "en-US"))
         }
 
-        assertEquals("UNKNOWN_ERROR", (result as FinancialQueryInterpretationResult.Unsupported).reason)
+        assertUnsupported(result, AssistantUnsupportedReason.PROVIDER_UNAVAILABLE, DiagnosticReasonCode.UNKNOWN_ERROR)
         verify(exactly = 1) { call.execute() }
     }
 
@@ -657,7 +729,7 @@ class CloudQueryInterpretationServiceTest {
         }
 
         assertTrue(result is FinancialQueryInterpretationResult.Unsupported)
-        assertEquals("PARSER_FAILED", (result as FinancialQueryInterpretationResult.Unsupported).reason)
+        assertUnsupported(result, AssistantUnsupportedReason.PROVIDER_RESPONSE_INVALID, DiagnosticReasonCode.PARSER_FAILED)
     }
 
     @Test

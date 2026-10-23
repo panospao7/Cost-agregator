@@ -431,4 +431,12 @@
     <string name="currency_home_switch_unavailable">Ahora no se puede leer tu moneda principal. Aun así, puedes elegir una nueva; primero se te pedirá confirmación.</string>
     <string name="currency_home_switch_error_write_failed">No se pudo cambiar tu moneda principal. Inténtalo de nuevo.</string>
     <string name="ai_warranty_local_note">Los periodos de garantía se leen en tu dispositivo a partir del texto del recibo. No se usa IA ni la nube para las garantías.</string>
+    <!-- Assistant unsupported reasons. Best-effort translation, pending native review. -->
+    <string name="assistant_unsupported_interpretation_disabled">El asistente está desactivado en los ajustes de IA.</string>
+    <string name="assistant_unsupported_interpretation_failed">Algo salió mal al leer tu pregunta. Inténtalo de nuevo.</string>
+    <string name="assistant_unsupported_provider_unavailable">El asistente no está disponible en este momento. Inténtalo de nuevo más tarde.</string>
+    <string name="assistant_unsupported_response_invalid">No pude entender la respuesta del asistente. Prueba a reformular tu pregunta.</string>
+    <string name="assistant_unsupported_model_declined">Este tipo de pregunta aún no es compatible.</string>
+    <string name="assistant_unsupported_metric_not_supported">Este tipo de consulta aún no es compatible.</string>
+    <string name="assistant_unsupported_no_matching_transactions">No se encontraron transacciones coincidentes.</string>
 </resources>

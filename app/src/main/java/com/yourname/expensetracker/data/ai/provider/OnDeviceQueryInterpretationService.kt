@@ -6,6 +6,7 @@ import com.google.mlkit.genai.prompt.Generation
 import com.google.mlkit.genai.prompt.GenerativeModel
 import com.google.mlkit.genai.prompt.TextPart
 import com.yourname.expensetracker.domain.ai.model.AnswerMode
+import com.yourname.expensetracker.domain.ai.model.AssistantUnsupportedReason
 import com.yourname.expensetracker.domain.ai.model.ExpenseQueryFilters
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryIntent
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationInput
@@ -50,18 +51,30 @@ class OnDeviceQueryInterpretationService @Inject constructor() : QueryInterpreta
                 model.generateContent(request)
             } ?: run {
                 Timber.w("OnDeviceQueryInterpretationService: timeout after ${AppConfig.Ai.ON_DEVICE_QUERY_TIMEOUT_MS}ms")
-                return unsupported("Query interpretation timed out")
+                return unsupported(AssistantUnsupportedReason.PROVIDER_UNAVAILABLE)
             }
-            val text = response.candidates.firstOrNull()?.text ?: return unsupported()
-            parseResponse(input, text) ?: unsupported()
+            val text = response.candidates.firstOrNull()?.text
+                ?: return unsupported(AssistantUnsupportedReason.PROVIDER_RESPONSE_INVALID)
+            parseResponse(input, text)
+                ?: unsupported(AssistantUnsupportedReason.PROVIDER_RESPONSE_INVALID)
         } catch (e: GenAiException) {
-            Timber.w(e, "OnDeviceQueryInterpretationService: GenAI error (code=%d)", e.errorCode)
-            unsupported()
+            // Bounded log: class name + numeric error code only (never the throwable or message).
+            Timber.w(
+                "OnDeviceQueryInterpretationService: %s class=%s code=%d",
+                AssistantUnsupportedReason.PROVIDER_UNAVAILABLE.name,
+                e::class.java.simpleName,
+                e.errorCode
+            )
+            unsupported(AssistantUnsupportedReason.PROVIDER_UNAVAILABLE)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Timber.w(e, "OnDeviceQueryInterpretationService: unexpected error")
-            unsupported()
+            Timber.w(
+                "OnDeviceQueryInterpretationService: %s class=%s",
+                AssistantUnsupportedReason.PROVIDER_UNAVAILABLE.name,
+                e::class.java.simpleName
+            )
+            unsupported(AssistantUnsupportedReason.PROVIDER_UNAVAILABLE)
         }
     }
 
@@ -95,7 +108,7 @@ class OnDeviceQueryInterpretationService @Inject constructor() : QueryInterpreta
             appendLine(history)
             appendLine()
             appendLine("JSON schema:")
-            appendLine("""{"kind":"structured|clarification|unsupported","intent":{"metric":"LIST|TOTAL|COUNT|AVERAGE|MAX|MIN","grouping":"NONE|CATEGORY|MERCHANT|DAY|WEEK|MONTH","comparison":"NONE|PREVIOUS_EQUIVALENT_PERIOD","answerMode":"INLINE_ANSWER|NAVIGATE|BOTH","ownership":"ALL|MINE|NOT_MINE|SHARED|TRANSFER","categoryNames":["name-or-alias"],"merchantNames":["name-or-alias"],"transactionTypes":["PURCHASE|WITHDRAWAL|TRANSFER|DEPOSIT"],"periodKeyword":"TODAY|THIS_WEEK|THIS_MONTH|LAST_MONTH|THIS_QUARTER|THIS_YEAR|null","period":{"startMs":0,"endMs":0}},"clarification":{"prompt":"text","options":["a","b"]},"unsupportedReason":"text"}""")
+            appendLine("""{"kind":"structured|clarification|unsupported","intent":{"metric":"LIST|TOTAL|COUNT|AVERAGE|MAX|MIN","grouping":"NONE|CATEGORY|MERCHANT|DAY|WEEK|MONTH","comparison":"NONE|PREVIOUS_EQUIVALENT_PERIOD","answerMode":"INLINE_ANSWER|NAVIGATE|BOTH","ownership":"ALL|MINE|NOT_MINE|SHARED|TRANSFER","categoryNames":["name-or-alias"],"merchantNames":["name-or-alias"],"transactionTypes":["PURCHASE|WITHDRAWAL|TRANSFER|DEPOSIT"],"periodKeyword":"TODAY|THIS_WEEK|THIS_MONTH|LAST_MONTH|THIS_QUARTER|THIS_YEAR|null","period":{"startMs":0,"endMs":0}},"clarification":{"prompt":"text","options":["a","b"]}}""")
             appendLine()
             appendLine("Rules:")
             appendLine("- categoryNames and merchantNames MUST be arrays, even for a single value.")
@@ -116,13 +129,20 @@ class OnDeviceQueryInterpretationService @Inject constructor() : QueryInterpreta
             when (root.optString("kind").trim().lowercase(Locale.ROOT)) {
                 "structured" -> parseStructured(input, root.optJSONObject("intent") ?: return null)
                 "clarification" -> parseClarification(root.optJSONObject("clarification") ?: return null)
+                // Any model-provided reason text is discarded (INV-C5).
                 "unsupported" -> FinancialQueryInterpretationResult.Unsupported(
-                    root.optString("unsupportedReason").trim().ifBlank { "Query interpretation unavailable" }
+                    AssistantUnsupportedReason.MODEL_DECLINED
                 )
                 else -> null
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            Timber.w(e, "OnDeviceQueryInterpretationService: JSON parse failure")
+            Timber.w(
+                "OnDeviceQueryInterpretationService: %s class=%s",
+                AssistantUnsupportedReason.PROVIDER_RESPONSE_INVALID.name,
+                e::class.java.simpleName
+            )
             null
         }
     }
@@ -313,16 +333,16 @@ class OnDeviceQueryInterpretationService @Inject constructor() : QueryInterpreta
     private fun validateAmountBound(value: Double?, fieldName: String): Double? {
         if (value == null) return null
         if (value.isNaN() || value.isInfinite()) {
-            Timber.w("OnDeviceQueryInterpretationService: AI returned invalid %s=%s — rejecting", fieldName, value)
+            Timber.w("OnDeviceQueryInterpretationService: AI returned invalid %s — rejecting", fieldName)
             return null
         }
         if (value < 0.0) {
-            Timber.w("OnDeviceQueryInterpretationService: AI returned negative %s=%.2f — clamping to 0", fieldName, value)
+            Timber.w("OnDeviceQueryInterpretationService: AI returned negative %s — clamping to 0", fieldName)
             return 0.0
         }
         val MAX_AMOUNT = 1_000_000_000.0
         if (value > MAX_AMOUNT) {
-            Timber.w("OnDeviceQueryInterpretationService: AI returned excessive %s=%.2f — clamping to %.0f", fieldName, value, MAX_AMOUNT)
+            Timber.w("OnDeviceQueryInterpretationService: AI returned excessive %s — clamping to maximum", fieldName)
             return MAX_AMOUNT
         }
         return value
@@ -335,7 +355,7 @@ class OnDeviceQueryInterpretationService @Inject constructor() : QueryInterpreta
         )
     }
 
-    private fun unsupported(reason: String = "Query interpretation provider unavailable") = 
+    private fun unsupported(reason: AssistantUnsupportedReason) =
         FinancialQueryInterpretationResult.Unsupported(reason)
 
     private fun extractFirstJsonObject(text: String): String? {

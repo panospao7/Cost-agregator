@@ -182,4 +182,12 @@
     <string name="currency_home_switch_unavailable">Δεν είναι δυνατή η ανάγνωση του κύριου νομίσματος αυτή τη στιγμή. Μπορείτε να επιλέξετε νέο· θα σας ζητηθεί πρώτα επιβεβαίωση.</string>
     <string name="currency_home_switch_error_write_failed">Δεν ήταν δυνατή η αλλαγή του κύριου νομίσματος. Δοκιμάστε ξανά.</string>
     <string name="ai_warranty_local_note">Οι περίοδοι εγγύησης διαβάζονται στη συσκευή σας από το κείμενο της απόδειξης. Δεν χρησιμοποιείται AI ή cloud για τις εγγυήσεις.</string>
+    <!-- Assistant unsupported reasons. Best-effort translation, pending owner review. -->
+    <string name="assistant_unsupported_interpretation_disabled">Ο βοηθός είναι απενεργοποιημένος στις ρυθμίσεις AI.</string>
+    <string name="assistant_unsupported_interpretation_failed">Παρουσιάστηκε πρόβλημα κατά την ανάγνωση της ερώτησής σας. Δοκιμάστε ξανά.</string>
+    <string name="assistant_unsupported_provider_unavailable">Ο βοηθός δεν είναι διαθέσιμος αυτή τη στιγμή. Δοκιμάστε ξανά αργότερα.</string>
+    <string name="assistant_unsupported_response_invalid">Δεν κατάλαβα την απάντηση του βοηθού. Δοκιμάστε να αναδιατυπώσετε την ερώτησή σας.</string>
+    <string name="assistant_unsupported_model_declined">Αυτός ο τύπος ερώτησης δεν υποστηρίζεται ακόμη.</string>
+    <string name="assistant_unsupported_metric_not_supported">Αυτός ο τύπος αναζήτησης δεν υποστηρίζεται ακόμη.</string>
+    <string name="assistant_unsupported_no_matching_transactions">Δεν βρέθηκαν αντίστοιχες συναλλαγές.</string>
 </resources>

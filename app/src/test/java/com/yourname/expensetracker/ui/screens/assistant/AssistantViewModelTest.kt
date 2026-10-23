@@ -2,6 +2,10 @@ package com.yourname.expensetracker.ui.screens.assistant
 
 import android.app.Application
 import app.cash.turbine.test
+import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
+import org.json.JSONObject
+import kotlin.time.Duration.Companion.seconds
 import com.yourname.expensetracker.domain.ai.model.AiChatMessage
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.AiCapabilityRuntimeStatus
@@ -9,6 +13,7 @@ import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.AiRuntimeStatusSummary
 import com.yourname.expensetracker.domain.ai.model.AssistantMessageKind
 import com.yourname.expensetracker.domain.ai.model.AssistantMessageRole
+import com.yourname.expensetracker.domain.ai.model.AssistantUnsupportedReason
 import com.yourname.expensetracker.domain.ai.model.ExpenseQueryFilters
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryIntent
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationResult
@@ -289,7 +294,7 @@ class AssistantViewModelTest : ViewModelTestUtils() {
     @Test
     fun `submitQuery handles unsupported result`() = runTest(testDispatcher) {
         coEvery { interpretFinancialQueryUseCase(any(), any()) } returns FinancialQueryInterpretationResult.Unsupported(
-            "Unsupported query"
+            AssistantUnsupportedReason.METRIC_NOT_SUPPORTED
         )
 
         viewModel.submitQuery("do something unsupported")
@@ -336,7 +341,7 @@ class AssistantViewModelTest : ViewModelTestUtils() {
                 prompt = "Which month?",
                 options = listOf("This month", "Last month")
             ),
-            FinancialQueryInterpretationResult.Unsupported("Unsupported query")
+            FinancialQueryInterpretationResult.Unsupported(AssistantUnsupportedReason.METRIC_NOT_SUPPORTED)
         )
 
         viewModel.submitQuery("first query")
@@ -550,6 +555,119 @@ class AssistantViewModelTest : ViewModelTestUtils() {
         assertTrue(payload!!.contains("\"type\":\"summary\""))
         assertTrue(payload.contains("42.00 EUR"))
     }
+
+    @Test
+    fun `AE-C9 INV-C6 executor NO_MATCHING_TRANSACTIONS persists localized text and code-only payload`() =
+        runTest(testDispatcher, timeout = 30.seconds) {
+            useHistoryEnabledViewModel()
+            val store = stubSessionStore(emptyList())
+            val localizedMessage = "No matching transactions found."
+            every {
+                application.getString(R.string.assistant_unsupported_no_matching_transactions)
+            } returns localizedMessage
+            val intent = FinancialQueryIntent(
+                rawQuery = "largest purchase last week",
+                normalizedQuery = "largest purchase last week",
+                filters = ExpenseQueryFilters(),
+                metric = QueryMetric.MAX
+            )
+            coEvery { interpretFinancialQueryUseCase(any(), any()) } returns
+                FinancialQueryInterpretationResult.Structured(intent)
+            coEvery { executeFinancialQueryUseCase(intent) } returns
+                FinancialQueryResult.Unsupported(AssistantUnsupportedReason.NO_MATCHING_TRANSACTIONS)
+            coEvery { mapFinancialQueryToNavigationUseCase(intent) } returns null
+
+            viewModel.submitQuery("largest purchase last week")
+            advanceUntilIdle()
+
+            // Rendered state carries the bounded code.
+            val resultItem = viewModel.uiState.value.messages.last() as AssistantConversationItem.Result
+            assertEquals(
+                FinancialQueryResult.Unsupported(AssistantUnsupportedReason.NO_MATCHING_TRANSACTIONS),
+                resultItem.result
+            )
+
+            // Persisted ASSISTANT row: kind ERROR, localized text resolved from the code's resource.
+            coVerify(exactly = 1) {
+                aiChatRepository.appendMessage(
+                    5L, AssistantMessageRole.ASSISTANT, AssistantMessageKind.ERROR, localizedMessage, any()
+                )
+            }
+            verify { application.getString(R.string.assistant_unsupported_no_matching_transactions) }
+            val assistantRow = store.last()
+            assertEquals(AssistantMessageRole.ASSISTANT, assistantRow.role)
+            assertEquals(AssistantMessageKind.ERROR, assistantRow.kind)
+            assertEquals(localizedMessage, assistantRow.text)
+
+            // Payload is {"type":"unsupported","reason":"NO_MATCHING_TRANSACTIONS"} and nothing else.
+            val payload = JSONObject(assistantRow.payloadJson!!)
+            assertEquals(setOf("type", "reason"), payload.keys().asSequence().toSet())
+            assertEquals("unsupported", payload.getString("type"))
+            assertEquals("NO_MATCHING_TRANSACTIONS", payload.getString("reason"))
+            assertFalse(assistantRow.payloadJson!!.contains(localizedMessage))
+            assertFalse(assistantRow.payloadJson!!.contains("largest purchase"))
+        }
+
+    @Test
+    fun `AE-C9 INV-C6 interpretation unsupported persists code name only and never the log diagnostic`() =
+        runTest(testDispatcher, timeout = 30.seconds) {
+            useHistoryEnabledViewModel()
+            val store = stubSessionStore(emptyList())
+            every {
+                application.getString(R.string.assistant_unsupported_response_invalid)
+            } returns "I could not understand the assistant response."
+            coEvery { interpretFinancialQueryUseCase(any(), any()) } returns
+                FinancialQueryInterpretationResult.Unsupported(
+                    reason = AssistantUnsupportedReason.PROVIDER_RESPONSE_INVALID,
+                    diagnostic = DiagnosticReasonCode.UNKNOWN_ERROR
+                )
+
+            viewModel.submitQuery("something odd")
+            advanceUntilIdle()
+
+            val assistantRow = store.last()
+            assertEquals(AssistantMessageRole.ASSISTANT, assistantRow.role)
+            assertEquals(AssistantMessageKind.ERROR, assistantRow.kind)
+            assertEquals("I could not understand the assistant response.", assistantRow.text)
+            val payload = JSONObject(assistantRow.payloadJson!!)
+            assertEquals(setOf("type", "reason"), payload.keys().asSequence().toSet())
+            assertEquals("unsupported", payload.getString("type"))
+            assertEquals("PROVIDER_RESPONSE_INVALID", payload.getString("reason"))
+            assertFalse(assistantRow.payloadJson!!.contains("UNKNOWN_ERROR"))
+        }
+
+    @Test
+    fun `INV-C6 every unsupported code persists its own code name and a message from its own resource`() =
+        runTest(testDispatcher, timeout = 30.seconds) {
+            useHistoryEnabledViewModel()
+            // Independent expectation table: code -> its dedicated string resource.
+            val expectedResources = mapOf(
+                AssistantUnsupportedReason.INTERPRETATION_DISABLED to R.string.assistant_unsupported_interpretation_disabled,
+                AssistantUnsupportedReason.INTERPRETATION_FAILED to R.string.assistant_unsupported_interpretation_failed,
+                AssistantUnsupportedReason.PROVIDER_UNAVAILABLE to R.string.assistant_unsupported_provider_unavailable,
+                AssistantUnsupportedReason.PROVIDER_RESPONSE_INVALID to R.string.assistant_unsupported_response_invalid,
+                AssistantUnsupportedReason.MODEL_DECLINED to R.string.assistant_unsupported_model_declined,
+                AssistantUnsupportedReason.METRIC_NOT_SUPPORTED to R.string.assistant_unsupported_metric_not_supported,
+                AssistantUnsupportedReason.NO_MATCHING_TRANSACTIONS to R.string.assistant_unsupported_no_matching_transactions
+            )
+            assertEquals(AssistantUnsupportedReason.values().toSet(), expectedResources.keys)
+            expectedResources.forEach { (reason, resId) ->
+                every { application.getString(resId) } returns "message-for-${reason.name}"
+            }
+
+            expectedResources.keys.forEach { reason ->
+                val store = stubSessionStore(emptyList())
+                coEvery { interpretFinancialQueryUseCase(any(), any()) } returns
+                    FinancialQueryInterpretationResult.Unsupported(reason)
+
+                viewModel.submitQuery("query for ${reason.name}")
+                advanceUntilIdle()
+
+                val assistantRow = store.last()
+                assertEquals("message-for-${reason.name}", assistantRow.text)
+                assertEquals(reason.name, JSONObject(assistantRow.payloadJson!!).getString("reason"))
+            }
+        }
 
     private fun useHistoryEnabledViewModel() {
         every { aiSettingsRepository.settings() } returns flowOf(
