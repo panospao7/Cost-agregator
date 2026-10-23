@@ -7,6 +7,7 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.core.app.NotificationCompat
 import androidx.test.core.app.ApplicationProvider
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.notification.presentation.NotificationActionPolicy
 import com.yourname.expensetracker.domain.notification.presentation.NotificationKind
 import com.yourname.expensetracker.domain.notification.presentation.NotificationPresentationDecision
@@ -24,8 +25,10 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * S5a: [NotificationPresentationApplier] (INV-4, INV-5, INV-7, INV-8, INV-10, INV-12, INV-13 post side;
+ * S5a/S5b: [NotificationPresentationApplier] (INV-4, INV-5, INV-7, INV-8, INV-10, INV-12, INV-13 post side;
  * AE-109, AE-111, AE-112, AE-121). Real builder, real string resources, a sentinel as the only caller PII.
+ * Action titles are string resource ids (S5b), so the only title text that can ever reach a notification
+ * is a resolved resource string; the sentinel can only enter through the detailed title and text.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -71,13 +74,16 @@ class NotificationPresentationApplierTest {
         )
 
     private fun specs(): List<NotificationActionSpec> = listOf(
-        NotificationActionSpec(android.R.drawable.ic_menu_agenda, "Action one", pendingIntent(1)),
-        NotificationActionSpec(android.R.drawable.ic_menu_close_clear_cancel, "Action two", pendingIntent(2)),
-        NotificationActionSpec(android.R.drawable.ic_menu_add, "Action three", pendingIntent(3))
+        NotificationActionSpec(android.R.drawable.ic_menu_agenda, SPEC_TITLE_RES[0], pendingIntent(1)),
+        NotificationActionSpec(android.R.drawable.ic_menu_close_clear_cancel, SPEC_TITLE_RES[1], pendingIntent(2)),
+        NotificationActionSpec(android.R.drawable.ic_menu_add, SPEC_TITLE_RES[2], pendingIntent(3))
     )
 
-    private fun sentinelActionSpec() =
-        NotificationActionSpec(android.R.drawable.ic_menu_agenda, SENTINEL_ACTION_TITLE, pendingIntent(9))
+    /** The strings the three [specs] titles must resolve to, in order, read straight from the resources. */
+    private fun expectedSpecTitles(): List<String> = SPEC_TITLE_RES.map { context.getString(it) }
+
+    private fun singleActionSpec() =
+        NotificationActionSpec(android.R.drawable.ic_menu_agenda, SINGLE_ACTION_TITLE_RES, pendingIntent(9))
 
     private fun apply(
         decision: NotificationPresentationDecision,
@@ -156,15 +162,19 @@ class NotificationPresentationApplierTest {
     }
 
     @Test
-    fun `INV-8 control the leak scan sees a sentinel in an action title so the action scan is not vacuous`() {
-        val n = apply(
-            decision(NotificationKind.BILL, NotificationPresentationMode.FULL, policy = NotificationActionPolicy.UNCHANGED),
-            actions = listOf(sentinelActionSpec())
-        )
+    fun `INV-8 control the leak scan reads action titles so the action scan is not vacuous`() {
+        val resolved = context.getString(SINGLE_ACTION_TITLE_RES)
+        val decision = decision(NotificationKind.BILL, NotificationPresentationMode.FULL, policy = NotificationActionPolicy.UNCHANGED)
 
-        assertEquals(listOf(SENTINEL_ACTION_TITLE), actionTitles(n))
-        assertTrue(everyString(n).any { it.contains("Lidl") && it.contains("4242") })
-        assertTrue(SENTINELS.any { sentinel -> everyString(n).any { it.contains(sentinel) } })
+        val without = apply(decision)
+        val with = apply(decision, actions = listOf(singleActionSpec()))
+
+        // The resolved resource string is the action title, and only the notification with the action has it.
+        assertEquals(listOf(resolved), actionTitles(with))
+        assertTrue("the scan must include the resolved action title", everyString(with).any { it == resolved })
+        assertFalse("without the action the scan must not hold the title", everyString(without).any { it == resolved })
+        // The detailed sentinels still reach the FULL notification, so the surrounding scan is live.
+        assertTrue(everyString(with).any { it.contains("Lidl") && it.contains("4242") })
     }
 
     // --- DISCREET ------------------------------------------------------------------------------
@@ -338,7 +348,8 @@ class NotificationPresentationApplierTest {
             actions = specs()
         )
 
-        assertEquals(listOf("Action one", "Action two", "Action three"), actionTitles(n))
+        assertEquals(expectedSpecTitles(), actionTitles(n))
+        assertEquals("the three spec titles are distinct, so the order assertion is meaningful", 3, expectedSpecTitles().toSet().size)
         n.actions.forEach { assertFalse(it.isAuthenticationRequired) }
     }
 
@@ -350,7 +361,7 @@ class NotificationPresentationApplierTest {
             actions = specs()
         )
 
-        assertEquals(listOf("Action one", "Action two", "Action three"), actionTitles(n))
+        assertEquals(expectedSpecTitles(), actionTitles(n))
         n.actions.forEach { assertTrue(it.title.toString(), it.isAuthenticationRequired) }
     }
 
@@ -368,29 +379,48 @@ class NotificationPresentationApplierTest {
     }
 
     /**
-     * KNOWN GAP, carried forward to S5b (resource-only action titles). The applier does not sanitize action
-     * titles: they are caller supplied and attached verbatim in DISCREET, so a caller passing a title with
-     * PII leaks it onto the lock screen. Today's only caller (BILL) supplies constant resource strings, so
-     * no leak is reachable. This test documents the CURRENT behaviour; when S5b makes titles resource-only
-     * (or the applier replaces them in DISCREET) this assertion must flip to assert absence.
+     * S5b closed the S5a gap: an action title is a string resource id resolved by the applier, so no caller
+     * supplied free text can become an action title. In DISCREET the titles are exactly the resolved
+     * resources, under both policies that keep actions, and no merchant sentinel appears anywhere.
      */
     @Test
     @Config(sdk = [34])
-    fun `KNOWN GAP S5b action titles are caller supplied and pass through in DISCREET`() {
-        val n = apply(
-            decision(NotificationKind.BILL, NotificationPresentationMode.DISCREET, policy = NotificationActionPolicy.UNCHANGED),
-            actions = listOf(sentinelActionSpec())
-        )
-        val authRequired = apply(
-            decision(NotificationKind.BILL, NotificationPresentationMode.DISCREET, policy = NotificationActionPolicy.AUTH_REQUIRED),
-            actions = listOf(sentinelActionSpec())
-        )
+    fun `INV-8 DISCREET action titles come only from string resources`() {
+        val policies = listOf(NotificationActionPolicy.UNCHANGED, NotificationActionPolicy.AUTH_REQUIRED)
+        for (policy in policies) {
+            val label = "policy=$policy"
+            val single = apply(
+                decision(NotificationKind.BILL, NotificationPresentationMode.DISCREET, policy = policy),
+                actions = listOf(singleActionSpec())
+            )
+            val several = apply(
+                decision(NotificationKind.BILL, NotificationPresentationMode.DISCREET, policy = policy),
+                actions = specs()
+            )
 
-        assertEquals(listOf(SENTINEL_ACTION_TITLE), actionTitles(n))
-        assertEquals(listOf(SENTINEL_ACTION_TITLE), actionTitles(authRequired))
-        // The title and text are still the discreet constants; only the action title is the gap.
-        assertEquals(texts.discreet(NotificationKind.BILL).title, n.titleText())
-        assertEquals(texts.discreet(NotificationKind.BILL).text, n.contentText())
+            assertEquals(label, listOf(context.getString(SINGLE_ACTION_TITLE_RES)), actionTitles(single))
+            assertEquals(label, expectedSpecTitles(), actionTitles(several))
+            assertNoSentinel(single, "$label single action")
+            assertNoSentinel(several, "$label several actions")
+            actionTitles(several).forEach { title ->
+                SENTINELS.forEach { sentinel -> assertFalse("$label '$sentinel' in action title '$title'", title.contains(sentinel)) }
+            }
+            // The title and text are still the discreet constants.
+            assertEquals(label, texts.discreet(NotificationKind.BILL).title, single.titleText())
+            assertEquals(label, texts.discreet(NotificationKind.BILL).text, single.contentText())
+        }
+    }
+
+    @Test
+    @Config(sdk = [34])
+    fun `INV-8 FULL action titles are the same resolved resources as DISCREET`() {
+        for (policy in listOf(NotificationActionPolicy.UNCHANGED, NotificationActionPolicy.AUTH_REQUIRED)) {
+            val full = apply(decision(NotificationKind.BILL, NotificationPresentationMode.FULL, policy = policy), actions = specs())
+            val discreet = apply(decision(NotificationKind.BILL, NotificationPresentationMode.DISCREET, policy = policy), actions = specs())
+
+            assertEquals(policy.toString(), expectedSpecTitles(), actionTitles(full))
+            assertEquals(policy.toString(), actionTitles(full), actionTitles(discreet))
+        }
     }
 
     @Test
@@ -401,7 +431,7 @@ class NotificationPresentationApplierTest {
             actions = specs()
         )
 
-        assertEquals(listOf("Action one", "Action two", "Action three"), actionTitles(n))
+        assertEquals(expectedSpecTitles(), actionTitles(n))
     }
 
     @Test
@@ -485,11 +515,128 @@ class NotificationPresentationApplierTest {
         assertTrue((n.flags and Notification.FLAG_AUTO_CANCEL) != 0)
     }
 
+    // --- hardenLegacy (S5b) ---------------------------------------------------------------------------------
+
+    private val legacyContentIntent: PendingIntent by lazy { pendingIntent(77) }
+
+    /** A builder shaped like the legacy methods: own title, text, BigText, tap target, no visibility. */
+    private fun legacyBuilder(withAction: Boolean = false): NotificationCompat.Builder =
+        callerBuilder()
+            .setContentTitle(LEGACY_TITLE)
+            .setContentText(LEGACY_TEXT)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(LEGACY_TEXT))
+            .setContentIntent(legacyContentIntent)
+            .setCategory(NotificationCompat.CATEGORY_REMINDER)
+            .apply {
+                if (withAction) addAction(android.R.drawable.ic_menu_agenda, "Pre-existing", pendingIntent(78))
+            }
+
+    private fun hardened(builder: NotificationCompat.Builder = legacyBuilder()): Notification =
+        applier.hardenLegacy(builder, CHANNEL_ID, android.R.drawable.ic_dialog_info).build()
+
+    @Test
+    fun `INV-7 hardenLegacy sets private visibility and never public even over a public caller setting`() {
+        val callerPublic = legacyBuilder().setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+        // Control: without hardenLegacy the caller's PUBLIC setting stands, so the PRIVATE below is the applier's doing.
+        assertEquals(Notification.VISIBILITY_PUBLIC, callerPublic.build().visibility)
+
+        val n = hardened(callerPublic)
+
+        assertEquals(Notification.VISIBILITY_PRIVATE, n.visibility)
+        assertNotEquals(Notification.VISIBILITY_PUBLIC, n.visibility)
+    }
+
+    @Test
+    fun `control a legacy builder without hardenLegacy has no public version`() {
+        val n = legacyBuilder().build()
+
+        assertNull(n.publicVersion)
+    }
+
+    @Test
+    fun `INV-7 hardenLegacy attaches the generic public version with no actions style marker or content intent`() {
+        val generic = texts.genericPublic()
+        val n = hardened(legacyBuilder(withAction = true))
+        val pub = n.publicVersion
+
+        assertNotNull(pub)
+        assertEquals(generic.title, pub!!.titleText())
+        assertEquals(generic.text, pub.contentText())
+        assertTrue(pub.actions == null || pub.actions.isEmpty())
+        assertNull(pub.extras.getString(Notification.EXTRA_TEMPLATE))
+        assertNull(pub.extras.getCharSequence(Notification.EXTRA_BIG_TEXT))
+        assertNull(NotificationKindMarker.read(pub))
+        assertFalse(pub.extras.containsKey(NotificationKindMarker.EXTRA_KEY))
+        assertNull(pub.contentIntent)
+        assertNull(pub.tickerText)
+        assertFalse(LEGACY_PUBLIC_CHECK, everyString(pub).any { it.contains(LEGACY_TITLE) || it.contains(LEGACY_TEXT) })
+    }
+
+    @Test
+    fun `AE-121 hardenLegacy stamps no kind marker`() {
+        val n = hardened()
+
+        assertNull(NotificationKindMarker.read(n))
+        assertFalse(n.extras.containsKey(NotificationKindMarker.EXTRA_KEY))
+    }
+
+    @Test
+    fun `INV-7 hardenLegacy adds no action and keeps the callers own`() {
+        val none = hardened(legacyBuilder(withAction = false))
+        val one = hardened(legacyBuilder(withAction = true))
+
+        assertTrue(none.actions == null || none.actions.isEmpty())
+        assertEquals(listOf("Pre-existing"), actionTitles(one))
+    }
+
+    @Test
+    fun `INV-7 hardenLegacy leaves the visible title text style and tap target as built`() {
+        val n = hardened()
+
+        assertEquals(LEGACY_TITLE, n.titleText())
+        assertEquals(LEGACY_TEXT, n.contentText())
+        assertEquals(LEGACY_TEXT, n.extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString())
+        assertTrue(n.extras.getString(Notification.EXTRA_TEMPLATE)!!.contains("BigTextStyle"))
+        assertTrue(n.contentIntent === legacyContentIntent)
+        assertEquals(CHANNEL_ID, n.channelId)
+        assertEquals(NotificationCompat.CATEGORY_REMINDER, n.category)
+    }
+
+    @Test
+    fun `INV-4 hardenLegacy returns the same builder it was given`() {
+        val builder = legacyBuilder()
+
+        val returned = applier.hardenLegacy(builder, CHANNEL_ID, android.R.drawable.ic_dialog_info)
+
+        assertTrue(returned === builder)
+    }
+
+    @Test
+    @Config(sdk = [26])
+    fun `INV-7 hardenLegacy also holds on sdk 26`() {
+        val n = hardened()
+
+        assertEquals(Notification.VISIBILITY_PRIVATE, n.visibility)
+        assertEquals(texts.genericPublic().title, n.publicVersion!!.titleText())
+        assertNull(NotificationKindMarker.read(n))
+        assertEquals(LEGACY_TITLE, n.titleText())
+    }
+
     private companion object {
         const val CHANNEL_ID = "applier_test_channel"
         const val SENTINEL_TITLE = "Lidl 4242 John"
         const val SENTINEL_TEXT = "Lidl 4242 John spent 42.50 EUR"
-        const val SENTINEL_ACTION_TITLE = "Lidl 4242"
+        const val LEGACY_TITLE = "Legacy budget exceeded"
+        const val LEGACY_TEXT = "Legacy detail for Groceries: 120 of 100"
+        const val LEGACY_PUBLIC_CHECK = "the public version must not repeat the legacy title or text"
         val SENTINELS = listOf("Lidl", "4242", "John", "42.50")
+
+        /** Three distinct existing string resources used as action titles (resolved by the applier). */
+        val SPEC_TITLE_RES = listOf(
+            R.string.action_dismiss,
+            R.string.notif_action_snooze,
+            R.string.bill_reminders_mark_paid
+        )
+        val SINGLE_ACTION_TITLE_RES = R.string.action_cancel
     }
 }

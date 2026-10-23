@@ -18,8 +18,24 @@ import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsReposit
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsWriteResult
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticsEmitter
 import com.yourname.expensetracker.domain.privacy.applock.SettingsUnreadableCause
+import com.yourname.expensetracker.domain.privacy.deeplink.DeepLinkRequest
+import com.yourname.expensetracker.domain.privacy.deeplink.DeepLinkHost
 import com.yourname.expensetracker.domain.service.NotificationService
+import com.yourname.expensetracker.data.service.PresentationFixtures.BRIEFING_DATA
+import com.yourname.expensetracker.data.service.PresentationFixtures.BRIEFING_KEY
+import com.yourname.expensetracker.data.service.PresentationFixtures.EXPENSE_ID
+import com.yourname.expensetracker.data.service.PresentationFixtures.LEGACY_POST_CASES
+import com.yourname.expensetracker.data.service.PresentationFixtures.LegacyPostCase
+import com.yourname.expensetracker.data.service.PresentationFixtures.POST_CASES
+import com.yourname.expensetracker.data.service.PresentationFixtures.PostCase
+import com.yourname.expensetracker.data.service.PresentationFixtures.SENTINELS
+import com.yourname.expensetracker.data.service.PresentationFixtures.SENTINEL_TEXT
+import com.yourname.expensetracker.data.service.PresentationFixtures.SENTINEL_TITLE
+import com.yourname.expensetracker.data.service.PresentationFixtures.ScriptedSettingsRepository
 import com.yourname.expensetracker.ui.MainActivity
+import com.yourname.expensetracker.ui.navigation.DeepLinkDrops
+import com.yourname.expensetracker.ui.navigation.DeepLinkPolicy
+import com.yourname.expensetracker.ui.navigation.DeepLinkPolicyResult
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
@@ -60,75 +76,144 @@ import kotlin.time.Duration.Companion.seconds
 
 // --- shared doubles and data ---------------------------------------------------------------------
 
-/** Scripted settings store. Counts reads so a test can observe whether the resolver was consulted. */
-class ScriptedSettingsRepository(
-    private val onRead: suspend () -> AppLockSettingsLoadState
-) : AppLockSettingsRepository {
-    var reads: Int = 0
-        private set
+/**
+ * Every fixture of this file in one namespace, so no top-level name leaks into the package. Public (not
+ * internal) because the public abstract contract class below exposes [PresentationFixtures.PostCase] in
+ * protected helper signatures.
+ */
+object PresentationFixtures {
 
-    override suspend fun getLoadState(): AppLockSettingsLoadState {
-        reads++
-        return onRead()
+    /** Scripted settings store. Counts reads so a test can observe whether the resolver was consulted. */
+    class ScriptedSettingsRepository(
+        private val onRead: suspend () -> AppLockSettingsLoadState
+    ) : AppLockSettingsRepository {
+        var reads: Int = 0
+            private set
+
+        override suspend fun getLoadState(): AppLockSettingsLoadState {
+            reads++
+            return onRead()
+        }
+
+        override fun observeLoadState(): Flow<AppLockSettingsLoadState> = emptyFlow()
+
+        override suspend fun setDiscreetNotifications(enabled: Boolean): AppLockSettingsWriteResult =
+            error("not used by the notification service")
+
+        override suspend fun reviewSave(record: AppLockPrivacySettings): AppLockSettingsWriteResult =
+            error("not used by the notification service")
     }
 
-    override fun observeLoadState(): Flow<AppLockSettingsLoadState> = emptyFlow()
-
-    override suspend fun setDiscreetNotifications(enabled: Boolean): AppLockSettingsWriteResult =
-        error("not used by the notification service")
-
-    override suspend fun reviewSave(record: AppLockPrivacySettings): AppLockSettingsWriteResult =
-        error("not used by the notification service")
-}
-
-/** One service kind and the kind-aware method that posts it, with the tap target it must produce. */
-class PostCase(
-    val label: String,
-    val kind: NotificationKind,
-    val expectedData: String,
-    val expectedIntentFlags: Int,
-    val post: suspend (NotificationService, Int, String, String) -> NotificationService.DeliveryResult
-) {
-    override fun toString(): String = label
-}
-
-const val BRIEFING_KEY = "dashboard_home:2026-03-17"
-const val EXPENSE_ID = 77L
-const val SENTINEL_TITLE = "Lidl 4242 John"
-const val SENTINEL_TEXT = "Lidl 4242 John spent 42.50 EUR"
-val SENTINELS = listOf("Lidl", "4242", "John", "42.50")
-
-private const val HOME_FLAGS = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-private const val DEEP_LINK_FLAGS = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-
-/** The five service kinds, in the form the production callers post them. */
-val POST_CASES: List<PostCase> = listOf(
-    PostCase("BUDGET", NotificationKind.BUDGET, "expensetracker://home", HOME_FLAGS) { s, id, t, m ->
-        s.sendBudgetAlertForKind(NotificationKind.BUDGET, id, t, m)
-    },
-    PostCase("WARRANTY", NotificationKind.WARRANTY, "expensetracker://home", HOME_FLAGS) { s, id, t, m ->
-        s.sendBudgetAlertForKind(NotificationKind.WARRANTY, id, t, m)
-    },
-    PostCase("RECEIPT_MATCH", NotificationKind.RECEIPT_MATCH, "expensetracker://home", HOME_FLAGS) { s, id, t, m ->
-        s.sendBudgetAlertForKind(NotificationKind.RECEIPT_MATCH, id, t, m)
-    },
-    PostCase(
-        "ANOMALY",
-        NotificationKind.ANOMALY,
-        "expensetracker://activity?expenseId=$EXPENSE_ID",
-        DEEP_LINK_FLAGS
-    ) { s, id, t, m ->
-        s.sendAnomalyAlertForKind(NotificationKind.ANOMALY, id, t, m, EXPENSE_ID)
-    },
-    PostCase(
-        "BRIEFING",
-        NotificationKind.BRIEFING,
-        "expensetracker://dashboard?briefingKey=$BRIEFING_KEY",
-        DEEP_LINK_FLAGS
-    ) { s, id, t, m ->
-        s.sendAiBriefingReadyForKind(NotificationKind.BRIEFING, id, t, m, BRIEFING_KEY)
+    /** One service kind and the kind-aware method that posts it, with the tap target it must produce. */
+    class PostCase(
+        val label: String,
+        val kind: NotificationKind,
+        val expectedData: String,
+        val expectedIntentFlags: Int,
+        val expectedRequest: DeepLinkRequest,
+        /** The PendingIntent request code expected for a given notification id: 0 for home, the id otherwise. */
+        val expectedRequestCode: (Int) -> Int,
+        val post: suspend (NotificationService, Int, String, String) -> NotificationService.DeliveryResult
+    ) {
+        override fun toString(): String = label
     }
-)
+
+    /**
+     * One legacy kind-less method with the tap target it must produce. [post] returns the delivery result
+     * for the methods that have one and null for the two that return Unit. [hasBigText] is true where the
+     * legacy builder sets a BigTextStyle (briefing and anomaly), which hardening must leave as built.
+     */
+    class LegacyPostCase(
+        val label: String,
+        val expectedData: String,
+        val expectedIntentFlags: Int,
+        val expectedRequest: DeepLinkRequest,
+        /** The PendingIntent request code expected for a given notification id: 0 for home, the id otherwise. */
+        val expectedRequestCode: (Int) -> Int,
+        val hasBigText: Boolean,
+        val post: (NotificationService, Int, String, String) -> NotificationService.DeliveryResult?
+    ) {
+        override fun toString(): String = label
+    }
+
+    const val BRIEFING_KEY = "dashboard_home:2026-10-23"
+
+    /** The briefing tap data as the Uri builder must emit it: the key's ':' is percent-encoded. A literal, not derived. */
+    const val BRIEFING_DATA = "expensetracker://dashboard?briefingKey=dashboard_home%3A2026-10-23"
+    const val EXPENSE_ID = 77L
+    const val SENTINEL_TITLE = "Lidl 4242 John"
+    const val SENTINEL_TEXT = "Lidl 4242 John spent 42.50 EUR"
+    val SENTINELS = listOf("Lidl", "4242", "John", "42.50")
+
+    private const val HOME_FLAGS = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+    private const val DEEP_LINK_FLAGS = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+
+    private val HOME_REQUEST = DeepLinkRequest(DeepLinkHost.HOME)
+    private val ANOMALY_REQUEST = DeepLinkRequest(DeepLinkHost.ACTIVITY, expenseId = EXPENSE_ID)
+    private val BRIEFING_REQUEST = DeepLinkRequest(DeepLinkHost.DASHBOARD, briefingKey = BRIEFING_KEY)
+
+    /** Home taps use request code 0; briefing and anomaly taps use the notification id. Literals, not derived. */
+    private val HOME_REQUEST_CODE: (Int) -> Int = { 0 }
+    private val NOTIFICATION_ID_REQUEST_CODE: (Int) -> Int = { notificationId -> notificationId }
+
+    /** The five service kinds, in the form the production callers post them. */
+    val POST_CASES: List<PostCase> = listOf(
+        PostCase("BUDGET", NotificationKind.BUDGET, "expensetracker://home", HOME_FLAGS, HOME_REQUEST, HOME_REQUEST_CODE) { s, id, t, m ->
+            s.sendBudgetAlertForKind(NotificationKind.BUDGET, id, t, m)
+        },
+        PostCase("WARRANTY", NotificationKind.WARRANTY, "expensetracker://home", HOME_FLAGS, HOME_REQUEST, HOME_REQUEST_CODE) { s, id, t, m ->
+            s.sendBudgetAlertForKind(NotificationKind.WARRANTY, id, t, m)
+        },
+        PostCase("RECEIPT_MATCH", NotificationKind.RECEIPT_MATCH, "expensetracker://home", HOME_FLAGS, HOME_REQUEST, HOME_REQUEST_CODE) { s, id, t, m ->
+            s.sendBudgetAlertForKind(NotificationKind.RECEIPT_MATCH, id, t, m)
+        },
+        PostCase(
+            "ANOMALY",
+            NotificationKind.ANOMALY,
+            "expensetracker://activity?expenseId=$EXPENSE_ID",
+            DEEP_LINK_FLAGS,
+            ANOMALY_REQUEST,
+            NOTIFICATION_ID_REQUEST_CODE
+        ) { s, id, t, m ->
+            s.sendAnomalyAlertForKind(NotificationKind.ANOMALY, id, t, m, EXPENSE_ID)
+        },
+        PostCase(
+            "BRIEFING",
+            NotificationKind.BRIEFING,
+            BRIEFING_DATA,
+            DEEP_LINK_FLAGS,
+            BRIEFING_REQUEST,
+            NOTIFICATION_ID_REQUEST_CODE
+        ) { s, id, t, m ->
+            s.sendAiBriefingReadyForKind(NotificationKind.BRIEFING, id, t, m, BRIEFING_KEY)
+        }
+    )
+
+    /** The four legacy kind-less methods, in the form the production callers still use them (S5b). */
+    val LEGACY_POST_CASES: List<LegacyPostCase> = listOf(
+        LegacyPostCase("sendBudgetAlert", "expensetracker://home", HOME_FLAGS, HOME_REQUEST, HOME_REQUEST_CODE, hasBigText = false) { s, id, t, m ->
+            s.sendBudgetAlert(id, t, m)
+        },
+        LegacyPostCase("sendAiBriefingReadyWithResult", BRIEFING_DATA, DEEP_LINK_FLAGS, BRIEFING_REQUEST, NOTIFICATION_ID_REQUEST_CODE, hasBigText = true) { s, id, t, m ->
+            s.sendAiBriefingReadyWithResult(id, t, m, BRIEFING_KEY)
+        },
+        LegacyPostCase("sendAiBriefingReady", BRIEFING_DATA, DEEP_LINK_FLAGS, BRIEFING_REQUEST, NOTIFICATION_ID_REQUEST_CODE, hasBigText = true) { s, id, t, m ->
+            s.sendAiBriefingReady(id, t, m, BRIEFING_KEY)
+            null
+        },
+        LegacyPostCase(
+            "sendAnomalyAlert",
+            "expensetracker://activity?expenseId=$EXPENSE_ID",
+            DEEP_LINK_FLAGS,
+            ANOMALY_REQUEST,
+            NOTIFICATION_ID_REQUEST_CODE,
+            hasBigText = true
+        ) { s, id, t, m ->
+            s.sendAnomalyAlert(id, t, m, EXPENSE_ID)
+            null
+        }
+    )
+}
 
 // --- the SDK independent contract -----------------------------------------------------------------
 
@@ -205,6 +290,24 @@ abstract class AndroidNotificationServicePresentationContract {
             result = case.post(service, id, title, message)
         }
         assertEquals("${case.label} $mode", NotificationService.DeliveryResult.DELIVERED, result)
+        return posted(id)
+    }
+
+    /**
+     * Posts [case] through a legacy kind-less method and returns what the platform now holds. The store is
+     * scripted DISCREET on purpose: a legacy post must not follow it.
+     */
+    protected fun postLegacyAndRead(
+        case: LegacyPostCase,
+        id: Int,
+        title: String = SENTINEL_TITLE,
+        message: String = SENTINEL_TEXT
+    ): StatusBarNotification {
+        val service = newService(appContext, repoFor(NotificationPresentationMode.DISCREET))
+        val result = case.post(service, id, title, message)
+        if (result != null) {
+            assertEquals(case.label, NotificationService.DeliveryResult.DELIVERED, result)
+        }
         return posted(id)
     }
 
@@ -477,11 +580,14 @@ abstract class AndroidNotificationServicePresentationContract {
         for (case in POST_CASES) {
             for (mode in NotificationPresentationMode.entries) {
                 val label = "${case.label} $mode sdk=$expectedSdk"
-                val pending = postAndRead(case, mode, id++).notification.contentIntent
+                val notificationId = id++
+                val pending = postAndRead(case, mode, notificationId).notification.contentIntent
                 assertNotNull(label, pending)
 
                 val shadow = shadowOf(pending)
                 val intent = shadow.savedIntent
+
+                assertEquals("$label PendingIntent request code", case.expectedRequestCode(notificationId), shadow.requestCode)
 
                 assertTrue(label, shadow.isActivityIntent)
                 assertNotNull("$label component (explicit intent)", intent.component)
@@ -516,6 +622,207 @@ abstract class AndroidNotificationServicePresentationContract {
             assertEquals(case.label, full.action, discreet.action)
             assertEquals(case.label, full.component, discreet.component)
         }
+    }
+
+    // --- AE-32 / DeepLinkPolicy round trip ------------------------------------------------------------------
+
+    private fun assertAcceptedBy(policy: String, intent: Intent, expected: DeepLinkRequest) {
+        val result = DeepLinkPolicy.evaluate(intent.action, intent.dataString)
+        assertTrue("$policy must be Accepted but was $result", result is DeepLinkPolicyResult.Accepted)
+        result as DeepLinkPolicyResult.Accepted
+        assertEquals(policy, expected, result.request)
+        assertEquals("$policy nothing dropped", DeepLinkDrops.NONE, result.drops)
+    }
+
+    @Test
+    fun `AE-32 every kind-aware tap intent is accepted by DeepLinkPolicy with the expected request`() {
+        var id = 5300
+        for (case in POST_CASES) {
+            for (mode in NotificationPresentationMode.entries) {
+                val label = "${case.label} $mode sdk=$expectedSdk"
+                val intent = shadowOf(postAndRead(case, mode, id++).notification.contentIntent).savedIntent
+
+                assertAcceptedBy(label, intent, case.expectedRequest)
+            }
+        }
+    }
+
+    @Test
+    fun `AE-32 the briefing data string is percent encoded and decodes to the briefing key for both paths`() {
+        val forKind = shadowOf(
+            postAndRead(POST_CASES.single { it.kind == NotificationKind.BRIEFING }, NotificationPresentationMode.FULL, 5400)
+                .notification.contentIntent
+        ).savedIntent
+        val legacy = shadowOf(
+            postLegacyAndRead(LEGACY_POST_CASES.single { it.label == "sendAiBriefingReadyWithResult" }, 5401)
+                .notification.contentIntent
+        ).savedIntent
+
+        listOf("kind-aware" to forKind, "legacy" to legacy).forEach { (path, intent) ->
+            val label = "$path sdk=$expectedSdk"
+            assertEquals(label, BRIEFING_DATA, intent.dataString)
+            assertFalse("$label the raw ':' of the key must be encoded", intent.dataString!!.contains("dashboard_home:"))
+            assertTrue(label, intent.dataString!!.contains("briefingKey=dashboard_home%3A2026-10-23"))
+
+            val result = DeepLinkPolicy.evaluate(Intent.ACTION_VIEW, intent.dataString)
+            assertTrue("$label $result", result is DeepLinkPolicyResult.Accepted)
+            assertEquals(label, "dashboard_home:2026-10-23", (result as DeepLinkPolicyResult.Accepted).request.briefingKey)
+            assertEquals(label, DeepLinkHost.DASHBOARD, result.request.host)
+            assertEquals(label, DeepLinkDrops.NONE, result.drops)
+        }
+    }
+
+    @Test
+    fun `AE-32 control the briefing round trip rejects a key the policy does not accept`() {
+        // Not vacuous: the same builder shape with a malformed key is dropped, so the tests above prove a real decode.
+        val result = DeepLinkPolicy.evaluate(
+            Intent.ACTION_VIEW,
+            "expensetracker://dashboard?briefingKey=dashboard_home%3A2026-13-45"
+        )
+
+        assertTrue("$result", result is DeepLinkPolicyResult.Accepted)
+        assertNull((result as DeepLinkPolicyResult.Accepted).request.briefingKey)
+    }
+
+    // --- AE-32 legacy tap intents (S5b) -------------------------------------------------------------------------
+
+    @Test
+    fun `AE-32 legacy tap intents are explicit to MainActivity with ACTION_VIEW the expected data flags and FLAG_IMMUTABLE`() {
+        var id = 5500
+        for (case in LEGACY_POST_CASES) {
+            val label = "${case.label} sdk=$expectedSdk"
+            val notificationId = id++
+            val pending = postLegacyAndRead(case, notificationId).notification.contentIntent
+            assertNotNull(label, pending)
+
+            val shadow = shadowOf(pending)
+            val intent = shadow.savedIntent
+
+            assertEquals("$label PendingIntent request code", case.expectedRequestCode(notificationId), shadow.requestCode)
+
+            assertTrue(label, shadow.isActivityIntent)
+            assertNotNull("$label component (explicit intent)", intent.component)
+            assertEquals(label, MainActivity::class.java.name, intent.component!!.className)
+            assertEquals(label, appContext.packageName, intent.component!!.packageName)
+            assertEquals(label, Intent.ACTION_VIEW, intent.action)
+            assertEquals(label, case.expectedData, intent.dataString)
+            assertEquals(label, case.expectedIntentFlags, intent.flags)
+            assertTrue("$label the tap intent carries no extras", intent.extras == null || intent.extras!!.isEmpty())
+            assertTrue("$label FLAG_IMMUTABLE", (shadow.flags and android.app.PendingIntent.FLAG_IMMUTABLE) != 0)
+        }
+    }
+
+    @Test
+    fun `AE-32 legacy tap intents are accepted by DeepLinkPolicy with the expected request`() {
+        var id = 5600
+        for (case in LEGACY_POST_CASES) {
+            val label = "${case.label} sdk=$expectedSdk"
+            val intent = shadowOf(postLegacyAndRead(case, id++).notification.contentIntent).savedIntent
+
+            assertAcceptedBy(label, intent, case.expectedRequest)
+        }
+    }
+
+    @Test
+    fun `AE-32 control the legacy cases cover home clear task and the two clear top targets`() {
+        assertEquals(
+            setOf(
+                Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK,
+                Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            ),
+            LEGACY_POST_CASES.map { it.expectedIntentFlags }.toSet()
+        )
+        assertEquals(4, LEGACY_POST_CASES.size)
+        assertEquals(4, LEGACY_POST_CASES.map { it.label }.toSet().size)
+    }
+
+    // --- S5b legacy hardening ------------------------------------------------------------------------------------
+
+    @Test
+    fun `INV-7 legacy notifications are PRIVATE and never PUBLIC`() {
+        var id = 5700
+        for (case in LEGACY_POST_CASES) {
+            val label = "${case.label} sdk=$expectedSdk"
+            val n = postLegacyAndRead(case, id++).notification
+
+            assertEquals(label, Notification.VISIBILITY_PRIVATE, n.visibility)
+            assertNotEquals(label, Notification.VISIBILITY_PUBLIC, n.visibility)
+        }
+    }
+
+    @Test
+    fun `INV-7 legacy notifications carry the generic public version with no actions style marker or content intent`() {
+        val generic = texts.genericPublic()
+        var id = 5800
+        for (case in LEGACY_POST_CASES) {
+            val label = "${case.label} sdk=$expectedSdk"
+            val pub = postLegacyAndRead(case, id++).notification.publicVersion
+
+            assertNotNull(label, pub)
+            assertEquals(label, generic.title, pub!!.titleText())
+            assertEquals(label, generic.text, pub.contentText())
+            assertNoSentinel(pub, "$label public")
+            assertNull(label, pub.extras.getCharSequence(Notification.EXTRA_BIG_TEXT))
+            assertNull(label, pub.extras.getString(Notification.EXTRA_TEMPLATE))
+            assertNull(label, pub.contentIntent)
+            assertNull(label, pub.tickerText)
+            assertTrue(label, pub.actions == null || pub.actions.isEmpty())
+            assertNull(label, NotificationKindMarker.read(pub))
+            assertFalse(label, pub.extras.containsKey(NotificationKindMarker.EXTRA_KEY))
+        }
+    }
+
+    @Test
+    fun `AE-121 legacy notifications carry no kind marker on the private or public notification`() {
+        var id = 5900
+        for (case in LEGACY_POST_CASES) {
+            val label = "${case.label} sdk=$expectedSdk"
+            val n = postLegacyAndRead(case, id++).notification
+
+            assertNull(label, NotificationKindMarker.read(n))
+            assertFalse(label, n.extras.containsKey(NotificationKindMarker.EXTRA_KEY))
+            NotificationKind.entries.forEach { kind ->
+                assertTrue(
+                    "$label token ${kind.stableToken} found on the legacy notification",
+                    keysHoldingToken(n.extras, kind.stableToken).isEmpty()
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `INV-7 legacy visible title text and BigText stay exactly as supplied`() {
+        var id = 6200
+        for (case in LEGACY_POST_CASES) {
+            val label = "${case.label} sdk=$expectedSdk"
+            val n = postLegacyAndRead(case, id++).notification
+
+            assertEquals(label, SENTINEL_TITLE, n.titleText())
+            assertEquals(label, SENTINEL_TEXT, n.contentText())
+            if (case.hasBigText) {
+                assertEquals(label, SENTINEL_TEXT, n.extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString())
+                assertTrue(label, n.extras.getString(Notification.EXTRA_TEMPLATE)!!.contains("BigTextStyle"))
+            } else {
+                assertNull(label, n.extras.getCharSequence(Notification.EXTRA_BIG_TEXT))
+                assertNull(label, n.extras.getString(Notification.EXTRA_TEMPLATE))
+            }
+            assertTrue("$label legacy adds no action", n.actions == null || n.actions.isEmpty())
+            // Control: the private notification does carry the sentinel, so the public-version scan above is live.
+            assertTrue(label, everyString(n).any { it.contains("Lidl") })
+        }
+    }
+
+    @Test
+    fun `INV-7 control the legacy path keeps the FULL text while its public version equals the kind-aware one`() {
+        // The kind-aware DISCREET path hides the text; the legacy path must not (FULL behaviour kept), and neither
+        // path may give the public version any of the supplied text.
+        val legacy = postLegacyAndRead(LEGACY_POST_CASES.first(), 6300).notification
+        val discreet = postAndRead(POST_CASES.first(), NotificationPresentationMode.DISCREET, 6301).notification
+
+        assertEquals(SENTINEL_TITLE, legacy.titleText())
+        assertNotEquals(SENTINEL_TITLE, discreet.titleText())
+        assertEquals(legacy.publicVersion!!.titleText(), discreet.publicVersion!!.titleText())
+        assertEquals(legacy.publicVersion!!.contentText(), discreet.publicVersion!!.contentText())
     }
 
     // --- fail-closed through the real resolver ------------------------------------------------------------
@@ -733,7 +1040,8 @@ class AndroidNotificationServicePresentationTest : AndroidNotificationServicePre
         assertEquals(texts.discreet(NotificationKind.BUDGET).title, posted(8300).notification.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString())
     }
 
-    // --- legacy methods: unchanged, no marker ---------------------------------------------------------------
+    // --- legacy methods: visible text unchanged, no marker, never read the settings --------------------------
+    // (S5b hardening, tap intents and the public version are asserted in the SDK matrix above.)
 
     @Test
     fun `legacy sendBudgetAlert posts the supplied text with no marker and never reads the settings`() {

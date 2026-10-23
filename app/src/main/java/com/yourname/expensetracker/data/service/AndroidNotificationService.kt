@@ -78,15 +78,19 @@ class AndroidNotificationService @Inject constructor(
             return NotificationService.DeliveryResult.NOT_DELIVERED
         }
 
-        val notification = NotificationCompat.Builder(context, BUDGET_CHANNEL_ID)
+        val builder = NotificationCompat.Builder(context, BUDGET_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_dialog_alert)
             .setContentTitle(title)
             .setContentText(message)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
-            .setContentIntent(mainActivityIntent())
+            .setContentIntent(homeTapIntent())
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
-            .build()
+        val notification = presentationApplier.hardenLegacy(
+            builder = builder,
+            channelId = BUDGET_CHANNEL_ID,
+            smallIcon = android.R.drawable.ic_dialog_alert
+        ).build()
 
         notificationManager.notify(notificationId, notification)
         return NotificationService.DeliveryResult.DELIVERED
@@ -116,26 +120,20 @@ class AndroidNotificationService @Inject constructor(
             return NotificationService.DeliveryResult.NOT_DELIVERED
         }
 
-        val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("expensetracker://dashboard?briefingKey=$targetKey")).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
-        val pendingIntent = PendingIntent.getActivity(
-            context,
-            notificationId,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val notification = NotificationCompat.Builder(context, AI_CHANNEL_ID)
+        val builder = NotificationCompat.Builder(context, AI_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle(title)
             .setContentText(message)
             .setStyle(NotificationCompat.BigTextStyle().bigText(message))
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setAutoCancel(true)
-            .setContentIntent(pendingIntent)
+            .setContentIntent(briefingTapIntent(notificationId, targetKey))
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
-            .build()
+        val notification = presentationApplier.hardenLegacy(
+            builder = builder,
+            channelId = AI_CHANNEL_ID,
+            smallIcon = android.R.drawable.ic_dialog_info
+        ).build()
 
         notificationManager.notify(notificationId, notification)
         return NotificationService.DeliveryResult.DELIVERED
@@ -151,34 +149,30 @@ class AndroidNotificationService @Inject constructor(
             return
         }
 
-        val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("expensetracker://activity?expenseId=$expenseId")).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
-        val pendingIntent = PendingIntent.getActivity(
-            context,
-            notificationId,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val notification = NotificationCompat.Builder(context, ANOMALY_CHANNEL_ID)
+        val builder = NotificationCompat.Builder(context, ANOMALY_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_dialog_alert)
             .setContentTitle(title)
             .setContentText(message)
             .setStyle(NotificationCompat.BigTextStyle().bigText(message))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
-            .setContentIntent(pendingIntent)
+            .setContentIntent(anomalyTapIntent(notificationId, expenseId))
             .setCategory(NotificationCompat.CATEGORY_ALARM)
-            .build()
+        val notification = presentationApplier.hardenLegacy(
+            builder = builder,
+            channelId = ANOMALY_CHANNEL_ID,
+            smallIcon = android.R.drawable.ic_dialog_alert
+        ).build()
 
         notificationManager.notify(notificationId, notification)
     }
 
     // ── Kind-aware methods (S5a: TECH-2 option a, TECH-9, TECH-12) ────────────────────────────────
-    // resolve(kind) -> build -> NotificationPresentationApplier -> notify. The legacy methods above are
-    // unchanged in this pass. A SecurityException from notify() is returned as PERMISSION_DENIED; every
-    // other exception, including CancellationException, propagates to the caller.
+    // resolve(kind) -> build -> NotificationPresentationApplier -> notify. The legacy methods above keep
+    // their visible text and behaviour; S5b only hardens them (private visibility, generic public version,
+    // no marker) and moves them onto the same tap-intent builders below. A SecurityException from
+    // notify() is returned as PERMISSION_DENIED; every other exception, including
+    // CancellationException, propagates to the caller.
 
     override suspend fun sendBudgetAlertForKind(
         kind: NotificationKind,
@@ -283,8 +277,9 @@ class AndroidNotificationService @Inject constructor(
         }
     }
 
-    // Explicit-component tap targets for the kind-aware path (TECH-6): same data URI, flags, request
-    // codes and FLAG_IMMUTABLE as the legacy intents, ACTION_VIEW kept so DeepLinkPolicy accepts the tap.
+    // Explicit-component tap targets (TECH-6), shared by the legacy and kind-aware paths: one builder
+    // per target, same data URI, flags, request codes and FLAG_IMMUTABLE as before; ACTION_VIEW kept so
+    // DeepLinkPolicy accepts the tap.
 
     private fun homeTapIntent(): PendingIntent {
         val intent = Intent(context, MainActivity::class.java).apply {
@@ -303,7 +298,7 @@ class AndroidNotificationService @Inject constructor(
     private fun briefingTapIntent(notificationId: Int, targetKey: String): PendingIntent {
         val intent = Intent(context, MainActivity::class.java).apply {
             action = Intent.ACTION_VIEW
-            data = android.net.Uri.parse("expensetracker://dashboard?briefingKey=$targetKey")
+            data = briefingUri(targetKey)
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         return PendingIntent.getActivity(
@@ -328,15 +323,12 @@ class AndroidNotificationService @Inject constructor(
         )
     }
 
-    private fun mainActivityIntent(): PendingIntent {
-        val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("expensetracker://home")).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-        }
-        return PendingIntent.getActivity(
-            context,
-            0,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-    }
+    // `expensetracker://dashboard?briefingKey=<key>`, with the key percent-encoded by the Uri builder
+    // (":" becomes "%3A"). DeepLinkPolicy reads it with getQueryParameter, which decodes it.
+    private fun briefingUri(targetKey: String): android.net.Uri =
+        android.net.Uri.Builder()
+            .scheme("expensetracker")
+            .authority("dashboard")
+            .appendQueryParameter("briefingKey", targetKey)
+            .build()
 }

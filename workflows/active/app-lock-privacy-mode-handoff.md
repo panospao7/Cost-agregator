@@ -170,3 +170,19 @@ Next: S5 (unblocked).
 - Reviews: AG, PSG and reviewer-strict all ACCEPT-WITH-MINORS; carry-forwards in the plan ("Orchestrator carry-forwards from the S5a reviews"), incl. S8 now depends on S5b.
 - KNOWN GAP test pins caller-supplied action titles passing through in DISCREET (no S5a caller passes actions); S5b/S8 flips it.
 - Next: S5b (legacy hardening + explicit PendingIntents onto the S5a helpers, Uri.Builder briefing URI, resource-only action titles, fixtures object), then the S5 end shards data + domain-n-z.
+
+## S5b DONE (2026-10-23) — S5 complete
+- Legacy methods use the shared explicit tap helpers + presentationApplier.hardenLegacy (PRIVATE + generic public version, no marker, visible text unchanged).
+- Briefing URI via Uri.Builder (briefingKey percent-encoded; DeepLinkPolicy decodes via getQueryParameter; pre-upgrade raw ':' links still accepted).
+- NotificationActionSpec titles are @StringRes only (closes the DISCREET action-title gap; the KNOWN GAP test flipped to assert absence).
+- Test fixtures wrapped in PresentationFixtures.
+Validation (S5-end batch):
+- targeted vr-20261023-101942-4f74dc9d;
+- lint vr-20261023-102444-edd147b3;
+- pii_logging vr-20261023-102847-ad8b5f2a;
+- shards data vr-20261023-102903-47726589 and domain-n-z vr-20261023-103249-acf74a16;
+- static-guards vr-20261023-103438-6d979bad;
+- after the minors (request-code asserts + comment wording): targeted vr-20261023-112959-aa4a87d2.
+- All PASS.
+Review: reviewer-strict (covering arch + privacy for the S5b half) ACCEPT-WITH-MINORS; both minors fixed. S5 "Done when" met.
+Next: wave D {S6 ∥ S7 ∥ S11} (S8 after S5b, now satisfied). C7 folds into S6; S7 adds the receipt PERMISSION_DENIED branch.

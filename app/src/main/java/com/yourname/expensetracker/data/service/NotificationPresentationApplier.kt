@@ -3,6 +3,7 @@ package com.yourname.expensetracker.data.service
 import android.app.PendingIntent
 import android.content.Context
 import androidx.annotation.DrawableRes
+import androidx.annotation.StringRes
 import androidx.core.app.NotificationCompat
 import com.yourname.expensetracker.domain.notification.presentation.NotificationActionPolicy
 import com.yourname.expensetracker.domain.notification.presentation.NotificationPresentationDecision
@@ -13,11 +14,12 @@ import javax.inject.Singleton
 
 /**
  * One action button supplied by a caller (only BILL supplies actions today). The applier decides, from
- * the decision's [NotificationActionPolicy], whether and how it is attached.
+ * the decision's [NotificationActionPolicy], whether and how it is attached. The title is a string
+ * resource, resolved by the applier, so no caller-supplied free text can become an action title.
  */
 data class NotificationActionSpec(
     @DrawableRes val iconRes: Int,
-    val title: CharSequence,
+    @StringRes val titleRes: Int,
     val pendingIntent: PendingIntent
 )
 
@@ -77,8 +79,7 @@ class NotificationPresentationApplier @Inject constructor(
         builder
             .setContentTitle(visibleTitle)
             .setContentText(visibleText)
-            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-            .setPublicVersion(buildPublicVersion(channelId, smallIcon))
+        applyPrivateFrame(builder, channelId, smallIcon)
 
         if (decision.expandedStyleAllowed && decision.mode == NotificationPresentationMode.FULL) {
             builder.setStyle(NotificationCompat.BigTextStyle().bigText(detailedText))
@@ -89,6 +90,32 @@ class NotificationPresentationApplier @Inject constructor(
         return NotificationKindMarker.stamp(builder, decision.kind)
     }
 
+    /**
+     * Hardens a notification built by a legacy kind-less method (S5b): `VISIBILITY_PRIVATE` plus the same
+     * generic public version as [apply]. Nothing else changes: the caller's title, text, style and tap
+     * target stay as built, no actions are added, and NO kind marker is stamped (legacy posts have no
+     * kind; the re-post sweep's fallback classifies them). Removed together with the legacy methods (S9).
+     */
+    fun hardenLegacy(
+        builder: NotificationCompat.Builder,
+        channelId: String,
+        @DrawableRes smallIcon: Int
+    ): NotificationCompat.Builder {
+        applyPrivateFrame(builder, channelId, smallIcon)
+        return builder
+    }
+
+    /** PRIVATE visibility and the generic public version: the part of the rule shared by [apply] and [hardenLegacy]. */
+    private fun applyPrivateFrame(
+        builder: NotificationCompat.Builder,
+        channelId: String,
+        @DrawableRes smallIcon: Int
+    ) {
+        builder
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(buildPublicVersion(channelId, smallIcon))
+    }
+
     private fun applyActions(
         builder: NotificationCompat.Builder,
         policy: NotificationActionPolicy,
@@ -97,11 +124,11 @@ class NotificationPresentationApplier @Inject constructor(
         when (policy) {
             NotificationActionPolicy.NONE -> Unit
             NotificationActionPolicy.UNCHANGED ->
-                actions.forEach { builder.addAction(it.iconRes, it.title, it.pendingIntent) }
+                actions.forEach { builder.addAction(it.iconRes, context.getString(it.titleRes), it.pendingIntent) }
             NotificationActionPolicy.AUTH_REQUIRED ->
                 actions.forEach { spec ->
                     builder.addAction(
-                        NotificationCompat.Action.Builder(spec.iconRes, spec.title, spec.pendingIntent)
+                        NotificationCompat.Action.Builder(spec.iconRes, context.getString(spec.titleRes), spec.pendingIntent)
                             .setAuthenticationRequired(true)
                             .build()
                     )
