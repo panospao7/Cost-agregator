@@ -231,8 +231,15 @@ class AppLockPrivacySettingsViewModel @Inject constructor(
             // The committed value arrives through the store observer (INV-46). A failed sweep is
             // silent by design (spec 4.6) and already recorded by the trigger.
             is UpdateDiscreetNotificationsResult.Committed -> Unit
-            // The store became unreadable under us: the observer reports it, re-read to be sure.
-            is UpdateDiscreetNotificationsResult.Rejected -> resubscribeOnMain()
+            // The store became unreadable under us and nothing was written (owner decision 2026-10-24:
+            // the tap must not be silently ignored). Show the save-failed notice and re-read so the
+            // observer reports the true state. No diagnostic: nothing was written. The notice survives
+            // a re-read that lands in the same readable category; applyLoadState clears it on a category
+            // change, and beginWrite clears it on the next write.
+            is UpdateDiscreetNotificationsResult.Rejected -> {
+                notice.value = AppLockPrivacySectionNotice.SAVE_FAILED
+                resubscribeOnMain()
+            }
             // AE-105: the committed value is unchanged; the use case recorded the diagnostic.
             is UpdateDiscreetNotificationsResult.Failed ->
                 notice.value = AppLockPrivacySectionNotice.SAVE_FAILED

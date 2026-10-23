@@ -164,16 +164,45 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
         }
 
     @Test
-    fun `rejected write clears nothing and re-reads the store`() = runTest(testDispatcher) {
-        coEvery { useCase(true) } returns UpdateDiscreetNotificationsResult.Rejected(AppLockWriteRejection.UNREADABLE)
+    fun `rejected write shows SAVE_FAILED, survives the same category re-read and records no diagnostic`() =
+        runTest(testDispatcher) {
+            coEvery { useCase(true) } returns UpdateDiscreetNotificationsResult.Rejected(AppLockWriteRejection.UNREADABLE)
+            val repository = FakeRepository(AppLockSettingsLoadState.Loaded(off))
+            val viewModel = viewModel(repository)
+            advanceUntilIdle()
+
+            viewModel.setDiscreetNotifications(true)
+            advanceUntilIdle()
+
+            assertEquals(2, repository.observeCalls)
+            assertEquals(
+                AppLockPrivacySectionState.Ready(false, false, AppLockPrivacySectionNotice.SAVE_FAILED),
+                viewModel.uiState.value
+            )
+            coVerify(exactly = 0) { emitter.emit(PrivacyDiagnosticCode.LOCK_SETTING_PERSIST_FAILED, any()) }
+        }
+
+    @Test
+    fun `SAVE_FAILED from a rejected write clears on the next successful write`() = runTest(testDispatcher) {
+        coEvery { useCase(true) } returnsMany listOf(
+            UpdateDiscreetNotificationsResult.Rejected(AppLockWriteRejection.UNREADABLE),
+            UpdateDiscreetNotificationsResult.Committed(true, DiscreetRepostOutcome.SWEPT)
+        )
         val repository = FakeRepository(AppLockSettingsLoadState.Loaded(off))
         val viewModel = viewModel(repository)
         advanceUntilIdle()
 
         viewModel.setDiscreetNotifications(true)
         advanceUntilIdle()
+        assertEquals(
+            AppLockPrivacySectionState.Ready(false, false, AppLockPrivacySectionNotice.SAVE_FAILED),
+            viewModel.uiState.value
+        )
 
-        assertEquals(2, repository.observeCalls)
+        viewModel.setDiscreetNotifications(true)
+        advanceUntilIdle()
+        assertEquals(AppLockPrivacySectionState.Ready(false, false, null), viewModel.uiState.value)
+        coVerify(exactly = 2) { useCase(true) }
     }
 
     @Test
