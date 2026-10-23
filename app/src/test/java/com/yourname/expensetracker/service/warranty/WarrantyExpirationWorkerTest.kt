@@ -256,7 +256,7 @@ class WarrantyExpirationWorkerTest {
         }
         val resolver = NotificationPresentationResolver(repo, mockk<PrivacyDiagnosticsEmitter>(relaxed = true), scope)
         val applier = NotificationPresentationApplier(context, NotificationPresentationTexts(context))
-        return AndroidNotificationService(serviceContext, resolver, applier)
+        return AndroidNotificationService(serviceContext, resolver, applier, mockk<PrivacyDiagnosticsEmitter>(relaxed = true))
     }
 
     /** Inserts a parent warranty (so the FK is satisfied) and returns it with its real id. */
@@ -323,7 +323,7 @@ class WarrantyExpirationWorkerTest {
     // -------------------------------------------------------------------------
 
     @Test
-    fun `AE-5 AE-13 worker declares kind WARRANTY with unchanged id and text and never the legacy or BUDGET path`() = runTest {
+    fun `AE-5 AE-13 worker declares kind WARRANTY with unchanged id and text and never BUDGET or the other ForKind form`() = runTest {
         val warranty = seedWarranty()
         coEvery { warrantyRepository.getWarrantiesExpiringSoon(7) } returns listOf(warranty)
         coEvery { warrantyRepository.getWarrantiesExpiringSoon(30) } returns emptyList()

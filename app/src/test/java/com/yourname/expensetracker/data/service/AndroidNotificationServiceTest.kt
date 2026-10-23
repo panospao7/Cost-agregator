@@ -139,7 +139,7 @@ class AndroidNotificationServiceTest {
             CoroutineScope(Job())
         )
         val applier = NotificationPresentationApplier(context, NotificationPresentationTexts(context))
-        return AndroidNotificationService(context, resolver, applier)
+        return AndroidNotificationService(context, resolver, applier, mockk<PrivacyDiagnosticsEmitter>(relaxed = true))
     }
 
     private fun testContext(): Context {

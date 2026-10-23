@@ -243,7 +243,7 @@ abstract class AndroidNotificationServicePresentationContract {
             diagnosticsScope
         )
         val applier = NotificationPresentationApplier(appContext, texts)
-        return AndroidNotificationService(context, resolver, applier)
+        return AndroidNotificationService(context, resolver, applier, mockk<PrivacyDiagnosticsEmitter>(relaxed = true))
     }
 
     /** A context whose notification manager is [manager]; everything else is the real application context. */

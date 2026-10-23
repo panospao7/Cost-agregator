@@ -63,6 +63,29 @@ interface NotificationService {
         expenseId: Long
     ): DeliveryResult
 
+    /**
+     * Re-posts every currently active notification of the six kinds in its discreet form, in place (spec 4.6,
+     * INV-13, AMD-7). Queries the active notifications once, detects each kind from channel and id range (and
+     * the hidden marker), and rebuilds a silent notification from the DISCREET decision; no detailed content
+     * is copied. It is not a delivery: no sent counters, claims, marks or cooldowns change. The sweep is
+     * total per notification: any non-cancellation `Exception` while reading the marker, classifying,
+     * rebuilding or posting one notification skips only that notification, counts it as failed and records
+     * `NOTIF_REPOST_FAILED` (class name only); the rest are still re-posted. `CancellationException`
+     * propagates. Callers invoke it only after a committed write that turned discreet on (INV-46).
+     */
+    suspend fun repostActiveAsDiscreet(): RepostResult
+
+    /**
+     * Bounded outcome of [repostActiveAsDiscreet]: counts only. [failed] counts each notification that could
+     * not be re-posted, and counts a failure of the active-notifications query itself as 1 (with
+     * [reposted] 0 and one `NOTIF_REPOST_FAILED`).
+     */
+    data class RepostResult(val reposted: Int, val failed: Int) {
+        companion object {
+            val NONE = RepostResult(reposted = 0, failed = 0)
+        }
+    }
+
     /** Typed-id caller form of [sendAnomalyAlertForKind]. */
     suspend fun postAnomalyAlertForKind(
         kind: NotificationKind,

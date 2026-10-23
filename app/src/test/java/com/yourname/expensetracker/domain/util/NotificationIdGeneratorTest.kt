@@ -283,6 +283,9 @@ class NotificationIdGeneratorTest {
             lastPostedId = notificationId
             return com.yourname.expensetracker.domain.service.NotificationService.DeliveryResult.DELIVERED
         }
+
+        override suspend fun repostActiveAsDiscreet(): com.yourname.expensetracker.domain.service.NotificationService.RepostResult =
+            com.yourname.expensetracker.domain.service.NotificationService.RepostResult.NONE
     }
 
     @Test

@@ -97,6 +97,42 @@ class NotificationContentPolicyTest {
     }
 
     @Test
+    fun `decideDiscreet gives DISCREET without fallback for every kind and sdk`() {
+        for (kind in NotificationKind.entries) for (sdk in sdkLevels) {
+            val decision = NotificationContentPolicy.decideDiscreet(kind, sdk)
+            assertEquals(kind, decision.kind)
+            assertEquals(NotificationPresentationMode.DISCREET, decision.mode)
+            assertFalse(decision.usesCallerText)
+            assertFalse(decision.expandedStyleAllowed)
+            assertNull(decision.fallbackReason)
+            assertEquals(NotificationDecisionVisibility.PRIVATE, decision.visibility)
+            assertEquals(NotificationPublicVersion.GENERIC, decision.publicVersion)
+        }
+    }
+
+    @Test
+    fun `decideDiscreet equals the decide result for a discreet on state for every kind and sdk`() {
+        for (kind in NotificationKind.entries) for (sdk in sdkLevels) {
+            assertEquals(
+                NotificationContentPolicy.decide(kind, discreetOn, sdk),
+                NotificationContentPolicy.decideDiscreet(kind, sdk)
+            )
+        }
+    }
+
+    @Test
+    fun `decideDiscreet applies the action policy per sdk`() {
+        for (kind in NotificationKind.entries) for (sdk in sdkLevels) {
+            val expected = if (kind == NotificationKind.BILL && sdk >= 31) {
+                NotificationActionPolicy.AUTH_REQUIRED
+            } else {
+                NotificationActionPolicy.UNCHANGED
+            }
+            assertEquals(expected, NotificationContentPolicy.decideDiscreet(kind, sdk).actionPolicy)
+        }
+    }
+
+    @Test
     fun `fail closed bill decision keeps the api level action policy`() {
         for (reason in NotificationFallbackReason.entries) {
             for (sdk in listOf(31, 34)) {

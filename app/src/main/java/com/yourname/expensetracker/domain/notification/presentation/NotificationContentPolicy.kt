@@ -49,6 +49,13 @@ object NotificationContentPolicy {
         reason: NotificationFallbackReason
     ): NotificationPresentationDecision = build(kind, discreet = true, sdkInt = sdkInt, fallbackReason = reason)
 
+    /**
+     * DISCREET decision for the in-place re-post sweep (spec 4.6, INV-13): the sweep runs only after a
+     * committed write made discreet effective, so it does not read the settings again. No fallback reason.
+     */
+    fun decideDiscreet(kind: NotificationKind, sdkInt: Int): NotificationPresentationDecision =
+        build(kind, discreet = true, sdkInt = sdkInt, fallbackReason = null)
+
     private fun fallbackReasonFor(loadState: AppLockSettingsLoadState?): NotificationFallbackReason? =
         when (loadState) {
             null -> NotificationFallbackReason.READ_TIMEOUT

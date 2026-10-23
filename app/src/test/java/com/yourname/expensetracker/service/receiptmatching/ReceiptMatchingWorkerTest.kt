@@ -435,7 +435,7 @@ class ReceiptMatchingWorkerTest {
 
     @Test
     fun `notification_service_exception_records_suppression_and_worker_succeeds`() = runTest {
-        // When sendBudgetAlert throws a non-cancellation, non-SecurityException,
+        // When postBudgetAlertForKind throws a non-cancellation, non-SecurityException,
         // the worker must catch it, record a SERVICE_FAILURE suppression diagnostic,
         // and still succeed.
         val receipt = sampleReceipt(id = 82L)
@@ -467,7 +467,7 @@ class ReceiptMatchingWorkerTest {
 
     @Test
     fun `notification_service_cancellation_rethrows`() = runTest {
-        // When sendBudgetAlert throws CancellationException, it must propagate
+        // When postBudgetAlertForKind throws CancellationException, it must propagate
         // through the notification catch, the worker's outer catch and the guard
         // (which rethrows cancellation), so doWork() throws instead of returning a Result.
         val receipt = sampleReceipt(id = 83L)
@@ -761,7 +761,7 @@ class ReceiptMatchingWorkerTest {
     }
 
     @Test
-    fun `AE-13 worker declares kind RECEIPT_MATCH with the unchanged receipt id and never the legacy or BUDGET path`() = runTest {
+    fun `AE-13 worker declares kind RECEIPT_MATCH with the unchanged receipt id and never BUDGET or the other ForKind form`() = runTest {
         val receipt = sampleReceipt(id = 120L, parsedMerchant = "SentinelMerchant")
         val expense = sampleExpense(id = 940L)
         stubAutoMatchLinkSuccess(receipt, expense)
@@ -995,7 +995,7 @@ class ReceiptMatchingWorkerTest {
         }
         val resolver = NotificationPresentationResolver(repo, mockk<PrivacyDiagnosticsEmitter>(relaxed = true), scope)
         val applier = NotificationPresentationApplier(context, NotificationPresentationTexts(context))
-        return AndroidNotificationService(serviceContext, resolver, applier)
+        return AndroidNotificationService(serviceContext, resolver, applier, mockk<PrivacyDiagnosticsEmitter>(relaxed = true))
     }
 
     /**

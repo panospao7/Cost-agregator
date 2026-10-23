@@ -1,40 +1,79 @@
 package com.yourname.expensetracker.data.service
 
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.service.notification.StatusBarNotification
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.notification.presentation.NotificationContentPolicy
 import com.yourname.expensetracker.domain.notification.presentation.NotificationKind
 import com.yourname.expensetracker.domain.notification.presentation.NotificationPresentationResolver
+import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticCode
+import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticKey
+import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticMetadata
+import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticsEmitter
 import com.yourname.expensetracker.domain.service.NotificationService
 import com.yourname.expensetracker.ui.MainActivity
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
 
 @Singleton
 class AndroidNotificationService @Inject constructor(
     @ApplicationContext private val context: Context,
     private val presentationResolver: NotificationPresentationResolver,
-    private val presentationApplier: NotificationPresentationApplier
+    private val presentationApplier: NotificationPresentationApplier,
+    private val privacyDiagnostics: PrivacyDiagnosticsEmitter
 ) : NotificationService {
 
     companion object {
         private const val TAG = "AndroidNotificationService"
-        private const val BUDGET_CHANNEL_ID = "budget_alerts"
+
+        // The three channel ids are read by NotificationKindClassifier (S9b); one literal each.
+        internal const val BUDGET_CHANNEL_ID = "budget_alerts"
         private const val BUDGET_CHANNEL_NAME = "Budget Alerts"
         private const val BUDGET_CHANNEL_DESC = "Notifications when budget thresholds are exceeded"
-        private const val AI_CHANNEL_ID = "ai_briefings"
+        internal const val AI_CHANNEL_ID = "ai_briefings"
         private const val AI_CHANNEL_NAME = "AI Briefings"
         private const val AI_CHANNEL_DESC = "Read-only notifications for proactive AI finance briefings"
-        private const val ANOMALY_CHANNEL_ID = "anomaly_alerts"
+        internal const val ANOMALY_CHANNEL_ID = "anomaly_alerts"
         private const val ANOMALY_CHANNEL_NAME = "Unusual Activity Alerts"
         private const val ANOMALY_CHANNEL_DESC = "Real-time alerts for anomalous or suspicious charges"
+
+        // Per-channel builder shape, shared by the kind-aware posts and the discreet re-post sweep so the two
+        // cannot drift. The bill shape mirrors the one BillReminderWorker builds (the second builder owner).
+        private val BUDGET_SHAPE = PostShape(
+            android.R.drawable.ic_dialog_alert, NotificationCompat.PRIORITY_HIGH, NotificationCompat.CATEGORY_REMINDER
+        )
+        private val AI_SHAPE = PostShape(
+            android.R.drawable.ic_dialog_info, NotificationCompat.PRIORITY_DEFAULT, NotificationCompat.CATEGORY_REMINDER
+        )
+        private val ANOMALY_SHAPE = PostShape(
+            android.R.drawable.ic_dialog_alert, NotificationCompat.PRIORITY_HIGH, NotificationCompat.CATEGORY_ALARM
+        )
+        private val BILL_SHAPE = PostShape(
+            android.R.drawable.ic_dialog_info, NotificationCompat.PRIORITY_DEFAULT, category = null
+        )
+
+        /** BILL action templates in the order the worker adds them: Snooze, then Dismiss. */
+        private val BILL_ACTION_TEMPLATES = listOf(
+            R.drawable.ic_snooze to R.string.notif_action_snooze,
+            R.drawable.ic_dismiss to R.string.action_dismiss
+        )
     }
+
+    private class PostShape(
+        val smallIcon: Int,
+        val priority: Int,
+        val category: String?
+    )
 
     private val notificationManager: NotificationManager by lazy {
         context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -84,9 +123,7 @@ class AndroidNotificationService @Inject constructor(
             kind = kind,
             notificationId = notificationId,
             channelId = BUDGET_CHANNEL_ID,
-            smallIcon = android.R.drawable.ic_dialog_alert,
-            priority = NotificationCompat.PRIORITY_HIGH,
-            category = NotificationCompat.CATEGORY_REMINDER,
+            shape = BUDGET_SHAPE,
             title = title,
             message = message,
             contentIntent = { homeTapIntent() }
@@ -103,9 +140,7 @@ class AndroidNotificationService @Inject constructor(
             kind = kind,
             notificationId = notificationId,
             channelId = AI_CHANNEL_ID,
-            smallIcon = android.R.drawable.ic_dialog_info,
-            priority = NotificationCompat.PRIORITY_DEFAULT,
-            category = NotificationCompat.CATEGORY_REMINDER,
+            shape = AI_SHAPE,
             title = title,
             message = message,
             contentIntent = { briefingTapIntent(notificationId, targetKey) }
@@ -122,9 +157,7 @@ class AndroidNotificationService @Inject constructor(
             kind = kind,
             notificationId = notificationId,
             channelId = ANOMALY_CHANNEL_ID,
-            smallIcon = android.R.drawable.ic_dialog_alert,
-            priority = NotificationCompat.PRIORITY_HIGH,
-            category = NotificationCompat.CATEGORY_ALARM,
+            shape = ANOMALY_SHAPE,
             title = title,
             message = message,
             contentIntent = { anomalyTapIntent(notificationId, expenseId) }
@@ -140,9 +173,7 @@ class AndroidNotificationService @Inject constructor(
         kind: NotificationKind,
         notificationId: Int,
         channelId: String,
-        smallIcon: Int,
-        priority: Int,
-        category: String,
+        shape: PostShape,
         title: String,
         message: String,
         contentIntent: () -> PendingIntent
@@ -154,16 +185,16 @@ class AndroidNotificationService @Inject constructor(
         val decision = presentationResolver.resolve(kind, Build.VERSION.SDK_INT)
 
         val builder = NotificationCompat.Builder(context, channelId)
-            .setSmallIcon(smallIcon)
-            .setPriority(priority)
+            .setSmallIcon(shape.smallIcon)
+            .setPriority(shape.priority)
             .setAutoCancel(true)
             .setContentIntent(contentIntent())
-            .setCategory(category)
+        shape.category?.let { builder.setCategory(it) }
         val notification = presentationApplier.apply(
             builder = builder,
             decision = decision,
             channelId = channelId,
-            smallIcon = smallIcon,
+            smallIcon = shape.smallIcon,
             detailedTitle = title,
             detailedText = message
         ).build()
@@ -175,6 +206,107 @@ class AndroidNotificationService @Inject constructor(
             Log.w(TAG, "NOTIFICATION_PERMISSION_DENIED kind=${kind.stableToken} class=${e::class.java.simpleName}")
             NotificationService.DeliveryResult.PERMISSION_DENIED
         }
+    }
+
+    // ── Discreet re-post sweep (S9b, INV-13, AMD-7, AMD-21, AMD-22, spec 4.6) ────────────────────────
+    // Reads the active notifications once, never recovers a builder from a posted notification, and
+    // rebuilds each one from the DISCREET decision for its detected kind. From the original it reuses
+    // only the id, tag, channel, content intent, action PendingIntents (action policy re-applied) and the
+    // post time. Titles come from resources per kind. It copies no text, extra or style. The marker is
+    // read only to classify, and the rebuilt notification gets a fresh marker from the applier.
+
+    override suspend fun repostActiveAsDiscreet(): NotificationService.RepostResult {
+        val active: Array<StatusBarNotification> = try {
+            notificationManager.activeNotifications
+        } catch (e: SecurityException) {
+            emitRepostFailed(e)
+            return NotificationService.RepostResult(reposted = 0, failed = 1)
+        }
+
+        var reposted = 0
+        var failed = 0
+        for (original in active) {
+            // Totality: one notification's failure (marker read, classify, rebuild or notify) never stops the
+            // rest of the sweep. Cancellation is rethrown; the log and the diagnostic carry the class only.
+            try {
+                // The system may post its own group summary (ranker_group) on one of our channels. The app never
+                // posts summaries, so one is never ours to rebuild: skipped, neither reposted nor failed.
+                if ((original.notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0) continue
+
+                val kind = NotificationKindClassifier.classify(
+                    channelId = original.notification.channelId,
+                    notificationId = original.id,
+                    rawMarker = NotificationKindMarker.read(original.notification)
+                ) ?: continue
+
+                notificationManager.notify(original.tag, original.id, rebuildDiscreet(original, kind))
+                reposted++
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                failed++
+                Log.w(TAG, "NOTIFICATION_REPOST_FAILED class=${e::class.java.simpleName}")
+                emitRepostFailed(e)
+            }
+        }
+
+        if (reposted > 0) {
+            privacyDiagnostics.emit(
+                PrivacyDiagnosticCode.NOTIF_REPOSTED_DISCREET,
+                PrivacyDiagnosticMetadata.builder().put(PrivacyDiagnosticKey.COUNT, reposted).build()
+            )
+        }
+        return NotificationService.RepostResult(reposted = reposted, failed = failed)
+    }
+
+    private fun rebuildDiscreet(original: StatusBarNotification, kind: NotificationKind): Notification {
+        val old = original.notification
+        val channelId = old.channelId
+        val shape = shapeFor(kind)
+        val decision = NotificationContentPolicy.decideDiscreet(kind, Build.VERSION.SDK_INT)
+
+        val builder = NotificationCompat.Builder(context, channelId)
+            .setSmallIcon(shape.smallIcon)
+            .setPriority(shape.priority)
+            .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
+            .setWhen(old.`when`)
+        shape.category?.let { builder.setCategory(it) }
+        old.contentIntent?.let { builder.setContentIntent(it) }
+
+        return presentationApplier.apply(
+            builder = builder,
+            decision = decision,
+            channelId = channelId,
+            smallIcon = shape.smallIcon,
+            // Never read in DISCREET; empty on purpose so no detailed content can reach the rebuild.
+            detailedTitle = "",
+            detailedText = "",
+            actions = if (kind == NotificationKind.BILL) billActionSpecs(old) else emptyList()
+        ).build()
+    }
+
+    /** Reuses only the PendingIntents of the original actions, mapped by position to the resource-titled templates. */
+    private fun billActionSpecs(old: Notification): List<NotificationActionSpec> {
+        val originalActions = old.actions ?: return emptyList()
+        return BILL_ACTION_TEMPLATES.mapIndexedNotNull { index, (iconRes, titleRes) ->
+            originalActions.getOrNull(index)?.actionIntent?.let { NotificationActionSpec(iconRes, titleRes, it) }
+        }
+    }
+
+    private fun shapeFor(kind: NotificationKind): PostShape =
+        when (kind) {
+            NotificationKind.BUDGET, NotificationKind.WARRANTY, NotificationKind.RECEIPT_MATCH -> BUDGET_SHAPE
+            NotificationKind.ANOMALY -> ANOMALY_SHAPE
+            NotificationKind.BRIEFING -> AI_SHAPE
+            NotificationKind.BILL -> BILL_SHAPE
+        }
+
+    private suspend fun emitRepostFailed(e: Exception) {
+        privacyDiagnostics.emit(
+            PrivacyDiagnosticCode.NOTIF_REPOST_FAILED,
+            PrivacyDiagnosticMetadata.builder().exceptionClass(e).build()
+        )
     }
 
     // Explicit-component tap targets (TECH-6): one builder per target, same data URI, flags, request
