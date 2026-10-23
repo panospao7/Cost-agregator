@@ -172,6 +172,10 @@ Provides:
   OnDeviceReceiptItemCategorizationService    → new instance
   CloudReceiptItemCategorizationService       → SecureKeyStorage + OkHttpClient + PrivacyGate + CloudPayloadPolicy + PrivacyAuditLogger
   CloudWarrantyExtractionService              → SecureKeyStorage + OkHttpClient + PrivacyGate + CloudPayloadPolicy + PrivacyAuditLogger
+                                                (provider retained; no production consumer since ai-fixes B1a —
+                                                 WarrantyTrackerRepository no longer injects it or the
+                                                 AiSettingsRepository / AiPolicy / AiCapabilityRouter trio;
+                                                 AutoCreateWarrantyFromReceiptUseCase no longer injects PrivacyGate)
 
 Note: Hybrid services route via `AiCapabilityRouter` + `AiSettingsRepository` directly.
 `HybridRouter` (domain/ai/HybridRouter.kt) is a plain generic helper class (no @Inject

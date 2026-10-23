@@ -683,4 +683,95 @@ class SourceScanningArchitectureGuardTest {
             expiredEntry.expires.isBefore(today)
         )
     }
+
+    // ── ai-fixes B1a guard (a): cloud warranty extraction has no production caller ────
+    // INV-5 / AE-22 / G2-4. `CloudWarrantyExtractionService` is retained but unreachable: in
+    // app/src/main it may be referenced only from di/AiModule.kt (the Hilt provider). Its own
+    // file and WarrantyExtractionModels.kt are exempt. Reintroducing a caller needs a new reviewed
+    // increment (A6), not an allowlist edit here.
+
+    private val cloudWarrantyServiceToken = "CloudWarrantyExtractionService"
+
+    /** Source-root-relative paths (forward slashes) that may mention the service token. */
+    private val cloudWarrantyServiceAllowedFiles = setOf(
+        "com/yourname/expensetracker/di/AiModule.kt",
+        // Exempt: the service's own file and its model types.
+        "com/yourname/expensetracker/data/ai/provider/CloudWarrantyExtractionService.kt",
+        "com/yourname/expensetracker/domain/ai/model/WarrantyExtractionModels.kt"
+    )
+
+    /**
+     * Pure scan used by the production test and its negative fixture: returns the relative paths
+     * (outside [allowed]) whose comment-stripped text mentions the service token.
+     */
+    private fun cloudWarrantyServiceReferences(
+        sources: Map<String, String>,
+        allowed: Set<String>
+    ): List<String> = sources
+        .filter { (path, _) -> path !in allowed }
+        .filter { (_, text) -> stripComments(text).contains(cloudWarrantyServiceToken) }
+        .keys
+        .sorted()
+
+    private fun relativeSources(): Map<String, String> = kotlinFiles().associate { file ->
+        file.relativeTo(sourceRoot).path.replace('\\', '/') to file.readText()
+    }
+
+    @Test
+    fun `negative_fixture_cloud_warranty_service_reference_outside_di_is_caught`() {
+        val sources = mapOf(
+            "com/yourname/expensetracker/di/AiModule.kt" to
+                "fun provide(): CloudWarrantyExtractionService = CloudWarrantyExtractionService()",
+            "com/yourname/expensetracker/data/repository/BadRepository.kt" to
+                "class BadRepository @Inject constructor(private val svc: CloudWarrantyExtractionService)",
+            "com/yourname/expensetracker/data/repository/OkRepository.kt" to
+                "// CloudWarrantyExtractionService is not used here\nclass OkRepository"
+        )
+        val violations = cloudWarrantyServiceReferences(sources, cloudWarrantyServiceAllowedFiles)
+        assertEquals(
+            "Scanner must flag only the non-DI, non-exempt reference (comments are stripped)",
+            listOf("com/yourname/expensetracker/data/repository/BadRepository.kt"),
+            violations
+        )
+    }
+
+    @Test
+    fun `cloud_warranty_extraction_service_is_referenced_in_production_only_from_AiModule`() {
+        val sources = relativeSources()
+        // Fail closed: the scan must actually see the files it relies on.
+        assertTrue("Source scan found too few files (${sources.size}); source root may be wrong", sources.size > 100)
+        for (required in cloudWarrantyServiceAllowedFiles) {
+            assertTrue("Expected production file not found by the scan: $required", required in sources)
+        }
+        assertTrue(
+            "di/AiModule.kt must still provide CloudWarrantyExtractionService (retained, unreachable)",
+            stripComments(sources.getValue("com/yourname/expensetracker/di/AiModule.kt")).contains(cloudWarrantyServiceToken)
+        )
+
+        val violations = cloudWarrantyServiceReferences(sources, cloudWarrantyServiceAllowedFiles)
+        assertTrue(
+            "CloudWarrantyExtractionService may be referenced in app/src/main only from di/AiModule.kt " +
+                "(INV-5, AE-22). Offending files: $violations",
+            violations.isEmpty()
+        )
+    }
+
+    @Test
+    fun `warranty_tracker_repository_has_no_cloud_or_ai_extraction_references`() {
+        val sources = relativeSources()
+        val repoPath = "com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt"
+        assertTrue("WarrantyTrackerRepository.kt not found by the scan", repoPath in sources)
+        val text = stripComments(sources.getValue(repoPath))
+        val forbidden = listOf(
+            cloudWarrantyServiceToken,
+            "AiCapabilityRouter",
+            "WarrantyExtractionResult",
+            "AUTO_ACCEPT_CLOUD_CONFIDENCE"
+        )
+        val present = forbidden.filter { text.contains(it) }
+        assertTrue(
+            "WarrantyTrackerRepository must not reference cloud/AI warranty extraction (INV-5, AE-22): $present",
+            present.isEmpty()
+        )
+    }
 }

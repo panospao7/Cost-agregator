@@ -406,7 +406,9 @@ CLOUD AI call:
   → If redactBeforeCloud: apply CloudPayloadPolicy via DefaultCloudPayloadPolicy.prepareText()
     / prepareReceiptAssist() / prepareBankStatementValidation() (no generic prepare())
   → PreparedCloudPayload contract used by all 8 cloud providers
-    (data/ai/provider/Cloud*Service)
+    (data/ai/provider/Cloud*Service). CloudWarrantyExtractionService remains one of the 8 but has
+    no production caller (retired from the warranty path by ai-fixes B1a; only di/AiModule.kt may
+    reference it, enforced by SourceScanningArchitectureGuardTest)
   → Audit via CompositePrivacyGate final decision
 
 RAW DATA storage:
@@ -434,9 +436,10 @@ PRIVACY BLOCKED states:
     OverpassDisabled, DebugDataPersistenceDisabled, ExchangeRateDownloadDisabled, Custom
   → PrivacyDecision.FailClosed: never proceed; blocks execution unconditionally
   → toPrivacyBlocked() maps any denial + capability to a typed PrivacyBlocked
-  → 39 call sites across 27 files use blocksExecution() before proceeding
+  → 38 call sites across 26 files use blocksExecution() before proceeding
     (blocksExecution() metric; `PrivacyGate.check(...)` itself is invoked from
-    51 call sites across 34 production files — different metric, both current)
+    50 call sites across 33 production files — different metric; both reduced by one by
+    ai-fixes B1a removing the AutoCreateWarrantyFromReceiptUseCase cloud gate)
 
 FORBIDDEN:
   ❌ Cloud HTTP without privacy gate check (must pass through CompositePrivacyGate)
@@ -1119,21 +1122,55 @@ FORBIDDEN:
 
 ```
 AUTO-CREATE warranty from receipt:
-  → AutoCreateWarrantyFromReceiptUseCase.execute(receiptId, ocrText)
-  → WarrantyTextExtractor extracts warranty terms via regex patterns
-  → Confidence threshold: high ≥ 70%, medium ≥ 40%, low < 40%
-  → Checks existing warranties on same receipt (dedup)
-  → High confidence → auto-create Warranty record
-  → Low/medium confidence → creates WarrantyReviewDraft for user approval
+  → ReceiptSideEffectPlanner (Policy A: ephemeral raw OCR only) →
+    AutoCreateWarrantyFromReceiptUseCase.execute(receiptId, ephemeralOcrText)
+  → WarrantyTextExtractor extracts warranty terms via regex patterns (local only)
+  → Confidence bands (independent of cloud/privacy settings):
+      c ≥ 0.70          → Warranty with status=ACTIVE, needsReview=false
+      0.40 ≤ c < 0.70   → Warranty with status=PENDING_REVIEW, needsReview=true,
+                          extractionSource="ocr" (no separate draft entity)
+      c < 0.40          → nothing persisted
+  → Checks existing warranties on same receipt (dedup; AlreadyExists only upserts the return window)
   → Half-open (exclusive) end-date semantics
-  → PrivacyGate.check() before accessing receipt data
+  → Receipt OCR text reaches the use case only as ephemeral raw text via
+    ReceiptSideEffectPlanner Policy A. There is no fallback to persisted or sanitized text; when
+    the ephemeral text is unavailable the side effect is Skipped (SIDE_EFFECT_SKIPPED_PRIVACY) and
+    the use case is not invoked. Receipt rows are read only through ReceiptRepository.
+    No PrivacyGate capability applies to local regex extraction. Any future cloud or model step
+    requires PrivacyGate.check(CLOUD_AI_*) before data leaves the device.
+  → WarrantyTrackerRepository is the sole warranty writer (addWarrantyIgnoreConflicts → WarrantyDao)
+
+RETURN WINDOW (receipt-driven):
+  → WarrantyTrackerRepository.upsertReturnWindowForReceipt(receiptId, warranty?)
+  → writeBarrier.checkWritesAllowed → structured receipt fields via ReceiptRepository
+    (parsedMerchant, parsedDate/createdAt, expenseId, sourceType, documentType, processingStatus)
+  → returnDays = merchant default table (Amazon 30, Best Buy 15, Apple 14, else 30);
+    returnConditions / returnPolicyUrl are never produced (null on insert)
+  → insert, or update preserving status, returnedAt, refundAmount, createdAt and existing
+    conditions / policy URL
+
+CONFIRM / EXPIRE (review lifecycle):
+  → WarrantyTrackerRepository.confirmWarranty(warrantyId): barrier check first → one transaction:
+    fresh read by id → NotFound | AlreadyConfirmed (no write, no event) | needsReview=false,
+    status = EXPIRED if already EXPIRED or warrantyEndDate < now, else ACTIVE → CONFIRMED
+    lifecycle event (fail-closed in transaction). Never moves EXPIRED → ACTIVE.
+  → WarrantyTrackerRepository.reconcileExpiredItems(now): barrier check first → sole writer of any
+    transition into EXPIRED: status ACTIVE/PENDING_REVIEW with warrantyEndDate < now → EXPIRED
+    (needsReview unchanged; expired pending = "expired unconfirmed"); one batch EXPIRED event with
+    counts only; idempotent
+  → rejectAutoDetectedWarranty (existing): deletes warranty + return window atomically
+  → Review state for UI is derived only by WarrantyReviewState.of(warranty, now)
+  → Reminders consider status='ACTIVE' only (PENDING_REVIEW / EXPIRED never get reminders)
 
 FORBIDDEN:
   ❌ Creating warranty without confidence assessment
-  ❌ Auto-creating warranty below 70% confidence threshold
+  ❌ Auto-creating an ACTIVE warranty below 70% confidence threshold
   ❌ Creating duplicate warranties for same receipt
-  ❌ Accessing receipt data without PrivacyGate check
   ❌ Using inclusive end-date semantics for warranty expiry
+  ❌ Cloud/AI extraction in the warranty or return-window path
+  ❌ Reminders for non-ACTIVE warranties
+  ❌ Reading persisted rawOcrText for warranty or return-window derivation
+  ❌ ViewModel-built warranty status/needsReview changes (use confirm/reject/claim)
 ```
 
 ---

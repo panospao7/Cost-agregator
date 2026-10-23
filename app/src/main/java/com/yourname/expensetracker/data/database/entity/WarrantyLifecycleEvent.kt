@@ -30,6 +30,8 @@ object WarrantyLifecycleEventTypes {
     const val UPDATED = "UPDATED"
     const val DELETED = "DELETED"
     const val EXPIRED = "EXPIRED"
+    /** ai-fixes INV-13: user confirmed an auto-detected warranty out of review. */
+    const val CONFIRMED = "CONFIRMED"
     const val AI_WARRANTY_CREATED = "AI_WARRANTY_CREATED"
     const val AI_EXTRACTION_DISCARDED = "AI_EXTRACTION_DISCARDED"
     const val RETURN_WINDOW_RETURNED = "RETURN_WINDOW_RETURNED"

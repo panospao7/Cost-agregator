@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.database.entity.Warranty
 import com.yourname.expensetracker.data.database.entity.WarrantyStatus
 import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
+import com.yourname.expensetracker.domain.receipt.WarrantyExtractionData
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -18,6 +19,9 @@ import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
 import java.util.Calendar
 
 class AutoCreateWarrantyFromReceiptUseCaseTest {
@@ -36,9 +40,151 @@ class AutoCreateWarrantyFromReceiptUseCaseTest {
         useCase = AutoCreateWarrantyFromReceiptUseCase(
             warrantyTrackerRepository = warrantyTrackerRepository,
             receiptRepository = receiptRepository,
-            timeProvider = timeProvider,
-            privacyGate = mockk(relaxed = true)
+            timeProvider = timeProvider
         )
+    }
+
+    // ai-fixes B1a: local confidence bands are independent of cloud/privacy settings (INV-8).
+
+    @Test
+    fun `use case has no PrivacyGate or other cloud gate dependency`() {
+        // AE-11 / OD-1(a): the receipt-text guard is ReceiptSideEffectPlanner Policy A, not a cloud gate.
+        val parameterTypes = AutoCreateWarrantyFromReceiptUseCase::class.java.constructors
+            .flatMap { it.parameterTypes.toList() }
+            .map { it.name }
+        assertTrue(
+            "Unexpected cloud/privacy dependency in constructor: $parameterTypes",
+            parameterTypes.none { it.contains("PrivacyGate") || it.contains("AiCapabilityRouter") || it.contains("Cloud") }
+        )
+    }
+
+    @Test
+    fun `execute with 0_40 to 0_70 confidence creates a PENDING_REVIEW ocr draft with a return window and no gate`() = runTest {
+        // AE-11 (retarget of `extractWarrantyFromReceipt skips cloud extraction when route is not cloud`)
+        val receiptId = 1101L
+        val ocr = """
+            MERCHANT: CORNER SHOP
+            DATE: ${recentDate()}
+            PRODUCT: USB C CABLE
+        """.trimIndent()
+        coEvery { warrantyTrackerRepository.getWarrantyByReceiptId(receiptId) } returns null
+        val draftSlot = slot<Warranty>()
+        coEvery { warrantyTrackerRepository.addWarrantyIgnoreConflicts(capture(draftSlot)) } returns 801L
+        coEvery { warrantyTrackerRepository.upsertReturnWindowForReceipt(receiptId, any()) } returns 1L
+
+        val result = useCase.execute(receiptId, ocr)
+
+        assertTrue(result is WarrantyCreationResult.LowConfidence)
+        assertEquals(WarrantyStatus.PENDING_REVIEW, draftSlot.captured.status)
+        assertEquals(true, draftSlot.captured.needsReview)
+        assertEquals("ocr", draftSlot.captured.extractionSource)
+        assertEquals(true, draftSlot.captured.autoDetected)
+        coVerify(exactly = 1) {
+            warrantyTrackerRepository.upsertReturnWindowForReceipt(receiptId, match { it.id == 801L && it.needsReview })
+        }
+    }
+
+    @Test
+    fun `execute with confidence below 0_40 persists no warranty and no return window`() = runTest {
+        // AE-12
+        val receiptId = 1102L
+        coEvery { warrantyTrackerRepository.getWarrantyByReceiptId(receiptId) } returns null
+
+        val result = useCase.execute(receiptId, "@@@ ### ??? -- not a receipt --")
+
+        assertTrue(result is WarrantyCreationResult.Failure)
+        coVerify(exactly = 0) { warrantyTrackerRepository.addWarrantyIgnoreConflicts(any()) }
+        coVerify(exactly = 0) { warrantyTrackerRepository.upsertReturnWindowForReceipt(any(), any()) }
+    }
+
+    @Test
+    fun `execute with high confidence creates an ACTIVE warranty and its return window`() = runTest {
+        // AE-10 (use-case side; the zero-cloud-call proof is the constructor pin above plus guard AE-22)
+        val receiptId = 1103L
+        val ocr = """
+            MERCHANT: TECH STORE
+            DATE: ${recentDate()}
+            PRODUCT: ULTRA LAPTOP PRO 15
+            WARRANTY: 24 MONTHS
+            SUPPORT: support@techstore.com
+        """.trimIndent()
+        coEvery { warrantyTrackerRepository.getWarrantyByReceiptId(receiptId) } returns null
+        val inserted = slot<Warranty>()
+        coEvery { warrantyTrackerRepository.addWarrantyIgnoreConflicts(capture(inserted)) } returns 802L
+        coEvery { warrantyTrackerRepository.upsertReturnWindowForReceipt(receiptId, any()) } returns 2L
+
+        val result = useCase.execute(receiptId, ocr)
+
+        assertTrue(result is WarrantyCreationResult.Success)
+        assertEquals(WarrantyStatus.ACTIVE, inserted.captured.status)
+        assertEquals(false, inserted.captured.needsReview)
+        coVerify(exactly = 1) { warrantyTrackerRepository.upsertReturnWindowForReceipt(receiptId, any()) }
+    }
+
+    @Test
+    fun `execute for an existing warranty only upserts the return window`() = runTest {
+        // AE-9 (use-case side): AlreadyExists, one return-window upsert, no new warranty.
+        val receiptId = 1104L
+        val existing = Warranty(
+            id = 60L,
+            receiptId = receiptId,
+            productName = "Existing Item",
+            merchantName = "Best Buy",
+            purchaseDate = FIXED_NOW - 1_000L,
+            warrantyDurationMonths = 12,
+            warrantyEndDate = FIXED_NOW + 1_000L
+        )
+        coEvery { warrantyTrackerRepository.getWarrantyByReceiptId(receiptId) } returns existing
+        coEvery { warrantyTrackerRepository.upsertReturnWindowForReceipt(receiptId, existing) } returns 3L
+
+        val result = useCase.execute(receiptId, "Returns accepted within 60 days")
+
+        assertTrue(result is WarrantyCreationResult.AlreadyExists)
+        coVerify(exactly = 1) { warrantyTrackerRepository.upsertReturnWindowForReceipt(receiptId, existing) }
+        coVerify(exactly = 0) { warrantyTrackerRepository.addWarrantyIgnoreConflicts(any()) }
+    }
+
+    @Test
+    fun `production end date adds calendar months - Jan 31 plus one month is covered through Feb 29`() = runTest {
+        // AE-24 (retarget of `extractWarrantyFromReceipt uses calendar month addition for warranty end date`):
+        // exercised through the production calculateWarrantyEndDate via the review-draft promote path.
+        val receiptId = 1105L
+        val zone = ZoneId.systemDefault()
+        val purchase = LocalDate.of(2024, 1, 31).atStartOfDay(zone).toInstant().toEpochMilli()
+        val draft = Warranty(
+            id = 92L,
+            receiptId = receiptId,
+            productName = "Camera",
+            merchantName = "Calendar Store",
+            purchaseDate = purchase,
+            warrantyDurationMonths = 12,
+            warrantyEndDate = purchase + 1_000L,
+            status = WarrantyStatus.PENDING_REVIEW,
+            needsReview = true
+        )
+        coEvery { warrantyTrackerRepository.getWarrantyByReceiptId(receiptId) } returns draft
+        val promoted = slot<Warranty>()
+        coEvery { warrantyTrackerRepository.updateWarranty(capture(promoted)) } returns Unit
+        coEvery { warrantyTrackerRepository.upsertReturnWindowForReceipt(receiptId, any()) } returns null
+
+        val result = useCase.createWarrantyForReview(
+            receiptId,
+            WarrantyExtractionData(
+                productName = "Camera",
+                merchantName = "Calendar Store",
+                purchaseDate = purchase,
+                warrantyDurationMonths = 1,
+                warrantyEndDate = null,
+                confidence = 0.9
+            )
+        )
+
+        assertTrue(result is WarrantyCreationResult.Success)
+        // Stored warranty ends are exclusive: Jan 31 plus one calendar month is covered through
+        // Feb 29, so the stored boundary is Mar 1 at 00:00 local.
+        val exclusiveEnd = Instant.ofEpochMilli(promoted.captured.warrantyEndDate).atZone(zone)
+        assertEquals(LocalDate.of(2024, 3, 1), exclusiveEnd.toLocalDate())
+        assertEquals(LocalDate.of(2024, 2, 29), Instant.ofEpochMilli(promoted.captured.warrantyEndDate - 1L).atZone(zone).toLocalDate())
     }
 
     @Test

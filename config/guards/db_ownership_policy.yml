@@ -3229,6 +3229,38 @@ entries:
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
   kind: function
+  method: confirmWarranty
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: warrantyDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.WarrantyDao
+  operation: updateWarranty
+  barrierMode: helper
+  reason: 'ai-fixes B1a EXACT_POLICY: user-confirm status/needsReview transition (sole
+    review-clearing writer besides rejectAutoDetectedWarranty) applied to the row freshly
+    read by id inside the confirmWarranty transaction, behind the write barrier (INV-13)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
+  kind: function
+  method: confirmWarranty
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: warrantyLifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.WarrantyLifecycleEventDao
+  operation: insert
+  barrierMode: helper
+  reason: 'ai-fixes B1a EXACT_POLICY: CONFIRMED provenance event after the status update,
+    inside the confirmWarranty transaction (fail-closed in-transaction write, R29);
+    description is a constant, no payloads'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
+  kind: function
   method: deleteWarranty
   receiver: null
   parameterTypes:
@@ -3381,24 +3413,6 @@ entries:
     S12-009 atomic-reject transaction (fail-closed in-transaction write, R29); accessor
     normalized to the injected warrantyLifecycleEventDao constructor property by the
     GR-08e source change (was database-chained)'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08E
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
-  kind: function
-  method: toWarrantyEntityOrNull
-  receiver: com.yourname.expensetracker.domain.ai.model.WarrantyExtractionResult
-  parameterTypes:
-  - com.yourname.expensetracker.data.database.entity.ScannedReceipt
-  daoAccessor: warrantyLifecycleEventDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.WarrantyLifecycleEventDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08e2 EXACT_POLICY: AI_EXTRACTION_DISCARDED diagnostic event (PR4-FINALGATE)
-    written only when cloud confidence falls below the review band and the warranty
-    is discarded (warrantyId=-1 sentinel, bounded description; cancellation-safe best-effort
-    write); accessor normalized to the injected warrantyLifecycleEventDao constructor
-    property by the GR-08e source change (was database-chained)'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08E
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt

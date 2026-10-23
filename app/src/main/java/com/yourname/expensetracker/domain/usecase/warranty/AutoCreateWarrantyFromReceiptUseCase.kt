@@ -5,9 +5,6 @@ import com.yourname.expensetracker.data.database.entity.WarrantyStatus
 import com.yourname.expensetracker.data.database.entity.WarrantyType
 import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
-import com.yourname.expensetracker.domain.privacy.PrivacyCapability
-import com.yourname.expensetracker.domain.privacy.PrivacyDecision
-import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.receipt.WarrantyExtractionData
 import com.yourname.expensetracker.domain.receipt.WarrantyTextExtractor
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -38,26 +35,27 @@ sealed class WarrantyCreationResult {
  * 3. Creates a new warranty if confidence is high enough
  * 4. Flags for review if confidence is low
  *
- * ## WRN-15: HybridWarrantyExtraction pattern (planned)
- * The current implementation uses local-only extraction via [WarrantyTextExtractor].
- * When local extraction confidence is below threshold, a cloud-based AI fallback
- * is planned:
+ * ## Local-only extraction (ai-fixes INV-1, INV-5, INV-8, INV-9)
+ * Extraction is local-only: regex patterns via [WarrantyTextExtractor]. There is no cloud or
+ * model step anywhere in this path, and no cloud `PrivacyCapability` is consulted on any band.
+ * Confidence bands are independent of cloud/privacy settings:
  *
- * 1. **Local extraction** (regex patterns on OCR text) — fast, free, always runs.
- * 2. **Cloud fallback** (Gemini or similar) — attempted when local confidence is
- *    below [HIGH_CONFIDENCE_THRESHOLD] but >= [MINIMUM_CONFIDENCE_THRESHOLD] AND
- *    cloud AI is enabled in settings.
- * 3. **Review draft** — if both local and cloud fail, create a PENDING_REVIEW draft.
+ * - c >= [HIGH_CONFIDENCE_THRESHOLD] (0.70): ACTIVE warranty (`needsReview=false`).
+ * - [MINIMUM_CONFIDENCE_THRESHOLD] (0.40) <= c < 0.70: PENDING_REVIEW draft (`needsReview=true`,
+ *   `extractionSource="ocr"`) via [createReviewDraftWarranty].
+ * - c < 0.40: nothing is persisted.
  *
- * This local-first → cloud-fallback pattern is the standard HybridWarrantyExtraction
- * approach used across the app's AI features.
+ * The receipt-text guard is upstream: OCR text reaches [execute] only as the ephemeral raw text
+ * passed by `ReceiptSideEffectPlanner` (Policy A). When it is unavailable the side effect is
+ * skipped before this use case runs; this class never reads persisted `rawOcrText`. Any future
+ * cloud or model step would need `PrivacyGate.check(CLOUD_AI_*)` before data leaves the device
+ * (a reviewed increment; see `CloudWarrantyExtractionService`, which has no production caller).
  */
 @Singleton
 class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
     private val warrantyTrackerRepository: WarrantyTrackerRepository,
     private val receiptRepository: ReceiptRepository,
-    private val timeProvider: TimeProvider,
-    private val privacyGate: PrivacyGate
+    private val timeProvider: TimeProvider
 ) {
     companion object {
         private const val HIGH_CONFIDENCE_THRESHOLD = 0.70
@@ -107,11 +105,9 @@ class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
             // Step 2: Extract warranty data from OCR text
             val extractionData = warrantyTextExtractor.extract(receiptText)
             
+            // INV-3: bounded diagnostics only (id + confidence); never product or merchant text.
             Timber.tag(TAG).d(
-                "Extracted warranty data for receipt $receiptId: " +
-                "product=${extractionData.productName}, " +
-                "merchant=${extractionData.merchantName}, " +
-                "confidence=${extractionData.confidence}"
+                "Extracted warranty data for receipt $receiptId: confidence=${extractionData.confidence}"
             )
 
             // Step 3: Determine if extraction quality is sufficient
@@ -121,16 +117,9 @@ class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
                     createWarranty(receiptId, extractionData, autoDetect = true)
                 }
                 extractionData.confidence >= MINIMUM_CONFIDENCE_THRESHOLD -> {
-                    // Medium confidence - flag for review
-                    Timber.tag(TAG).d("Low confidence extraction (${extractionData.confidence}%) for receipt $receiptId, creating review draft")
-                    // WRN-15: Future cloud fallback — when local confidence is below threshold
-                    // AND cloud AI is enabled in settings, attempt cloud-based extraction here.
-                    val cloudDecision = privacyGate.check(PrivacyCapability.CLOUD_AI_WARRANTY_EXTRACTION)
-                    if (cloudDecision.blocksExecution()) {
-                        Timber.tag(TAG).d("Cloud warranty extraction denied: ${cloudDecision.reason()}")
-                        return WarrantyCreationResult.Failure("Cloud AI warranty extraction disabled by privacy settings")
-                    }
-                    Timber.tag(TAG).d("WRN-15: Local confidence=%.1f%% below threshold=%.1f%% — cloud fallback would be attempted here if enabled", extractionData.confidence, HIGH_CONFIDENCE_THRESHOLD)
+                    // Medium confidence (0.40 <= c < 0.70) - local PENDING_REVIEW draft.
+                    // INV-8: independent of any cloud/privacy setting.
+                    Timber.tag(TAG).d("Low confidence extraction (${extractionData.confidence}) for receipt $receiptId, creating review draft")
                     val persistResult = createReviewDraftWarranty(receiptId, extractionData)
                     when (persistResult) {
                         is WarrantyCreationResult.AlreadyExists,
@@ -148,7 +137,12 @@ class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Timber.tag(TAG).e(e, "Failed to create warranty from receipt $receiptId")
+            // INV-3: class name only; never the throwable (its message/stack may carry receipt text or SQL).
+            Timber.tag(TAG).e(
+                "Failed to create warranty from receipt %d (%s)",
+                receiptId,
+                e::class.simpleName ?: "UnknownException"
+            )
             return WarrantyCreationResult.Failure(e.message ?: "Unknown error")
         }
     }
@@ -416,10 +410,12 @@ class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
      *
      * All warranty creation paths must converge on this same half-open contract:
      * - AutoCreateWarrantyFromReceiptUseCase.calculateWarrantyEndDate (this method)
-     * - WarrantyTrackerRepository.toCalendarMonthEndDate (toWarrantyEntityOrNull path)
      * - Manual warranty entry (future UI)
      *
-     * W20-VERIFIED: All 3 paths use identical half-open semantics.
+     * (The former cloud-extraction end-date path in WarrantyTrackerRepository was retired by
+     * ai-fixes; this is now the single production end-date computation.)
+     *
+     * W20-VERIFIED: All paths use identical half-open semantics.
      * This method uses getEndOfDay(dayStart) which produces an exclusive
      * upper bound. The Warranty entity stores this as warrantyEndDate. Expiry checks
      * use `warrantyEndDate < now()` which correctly evaluates the half-open interval.

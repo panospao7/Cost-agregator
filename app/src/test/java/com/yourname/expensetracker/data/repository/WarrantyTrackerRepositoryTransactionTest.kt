@@ -114,10 +114,6 @@ class WarrantyTrackerRepositoryTransactionTest {
             receiptRepository = object : Lazy<ReceiptRepository> {
                 override fun get() = receiptRepository
             },
-            cloudExtractionService = mockk(relaxed = true),
-            aiSettingsRepository = mockk(relaxed = true),
-            aiPolicy = mockk(relaxed = true),
-            aiCapabilityRouter = mockk(relaxed = true),
             timeProvider = timeProvider,
             currencyConverter = mockk(relaxed = true),
             currencySettingsRepository = mockk(relaxed = true),
@@ -236,6 +232,85 @@ class WarrantyTrackerRepositoryTransactionTest {
         assertTrue("claim must fail", failure is IllegalStateException)
         val stored = database.warrantyDao().getAllWarranties().first().single()
         assertEquals("status change must be rolled back", WarrantyStatus.ACTIVE, stored.status)
+    }
+
+    // ------------------------------------------------------ confirmWarranty (ai-fixes B1a)
+
+    private val dayMs = 86_400_000L
+
+    private fun pendingWarranty(endDate: Long) = warranty(autoDetected = true).copy(
+        status = WarrantyStatus.PENDING_REVIEW,
+        needsReview = true,
+        warrantyEndDate = endDate
+    )
+
+    @Test
+    fun confirmWarranty_success_clearsReviewActivatesAndWritesConfirmedEvent() = runTest {
+        val id = repository.addWarranty(pendingWarranty(endDate = now + 5 * dayMs))
+
+        val result = repository.confirmWarranty(id)
+
+        assertEquals(
+            WarrantyTrackerRepository.ConfirmWarrantyResult.Confirmed(id, WarrantyStatus.ACTIVE),
+            result
+        )
+        val stored = database.warrantyDao().getWarrantyById(id)!!
+        assertEquals(WarrantyStatus.ACTIVE, stored.status)
+        assertEquals(false, stored.needsReview)
+        val eventTypes = database.warrantyLifecycleEventDao().getByWarrantyId(id).map { it.eventType }
+        assertTrue(eventTypes.contains(WarrantyLifecycleEventTypes.CONFIRMED))
+    }
+
+    @Test
+    fun confirmWarranty_eventWriteFailure_throwsAndRollsBackReviewClear() = runTest {
+        val id = repository.addWarranty(pendingWarranty(endDate = now + 5 * dayMs))
+        eventDao.failInserts = true
+
+        val thrown = runCatching { repository.confirmWarranty(id) }
+
+        assertTrue("confirm must fail", thrown.exceptionOrNull() is IllegalStateException)
+        val stored = database.warrantyDao().getWarrantyById(id)!!
+        assertEquals("status change must be rolled back", WarrantyStatus.PENDING_REVIEW, stored.status)
+        assertEquals("review flag must be rolled back", true, stored.needsReview)
+    }
+
+    // ------------------------------------------------- reconcileExpiredItems (ai-fixes B1a)
+
+    @Test
+    fun reconcileExpiredItems_expiresActiveAndPendingKeepsNeedsReviewAndIsIdempotent() = runTest {
+        val w1 = repository.addWarranty(pendingWarranty(endDate = now - dayMs))
+        val w2 = repository.addWarranty(warranty().copy(warrantyEndDate = now - 2 * dayMs))
+        val w3 = repository.addWarranty(pendingWarranty(endDate = now + 5 * dayMs))
+
+        val result = repository.reconcileExpiredItems(now)
+
+        assertEquals(2, result.expiredWarrantyCount)
+        assertEquals(1, result.expiredPendingWarrantyCount)
+        val dao = database.warrantyDao()
+        val s1 = dao.getWarrantyById(w1)!!
+        assertEquals(WarrantyStatus.EXPIRED, s1.status)
+        assertEquals("expired pending stays unconfirmed", true, s1.needsReview)
+        assertEquals(WarrantyStatus.EXPIRED, dao.getWarrantyById(w2)!!.status)
+        val s3 = dao.getWarrantyById(w3)!!
+        assertEquals(WarrantyStatus.PENDING_REVIEW, s3.status)
+        assertEquals(true, s3.needsReview)
+        val batchEvents = database.warrantyLifecycleEventDao().getByWarrantyId(-1L)
+            .filter { it.eventType == WarrantyLifecycleEventTypes.EXPIRED }
+        assertEquals(1, batchEvents.size)
+        assertEquals(
+            "Batch expired: 2 warranties (1 unconfirmed), 0 return windows",
+            batchEvents.single().description
+        )
+
+        // Second run: nothing changes, no new event.
+        val second = repository.reconcileExpiredItems(now)
+        assertEquals(0, second.expiredWarrantyCount)
+        assertEquals(0, second.expiredPendingWarrantyCount)
+        assertEquals(
+            1,
+            database.warrantyLifecycleEventDao().getByWarrantyId(-1L)
+                .count { it.eventType == WarrantyLifecycleEventTypes.EXPIRED }
+        )
     }
 
     // ------------------------------------------------- rejectAutoDetectedWarranty

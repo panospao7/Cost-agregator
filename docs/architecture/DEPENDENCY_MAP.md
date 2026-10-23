@@ -588,7 +588,7 @@ PrivacyDecision.FailClosed(reason)         [domain/privacy/PrivacyDecision.kt]
   ├──► CloudReceiptAssistService
   ├──► CloudReceiptItemCategorizationService
   ├──► CloudReviewExplanationService
-  ├──► CloudWarrantyExtractionService
+  ├──► CloudWarrantyExtractionService        (retained; no production caller since ai-fixes B1a)
   ├──► SmartReceiptAssistService
   ├──► DailyBriefingWorker                   (via WorkerExecutionGuard)
   ├──► DataRetentionWorker                   (via WorkerExecutionGuard)
@@ -797,7 +797,7 @@ PrivacyAuditContext                        [domain/privacy/PrivacyAuditContext.k
 | `BACKGROUND_LOCATION_BACKFILL` | `LocationBackfillWorker` | `data/location/LocationBackfillWorker.kt` |
 | `RAWBACKUP_EXPORT` | `DatabaseBackupRepositoryImpl` | `data/repository/DatabaseBackupRepositoryImpl.kt` |
 | `ENCRYPTED_BACKUP` | `DatabaseBackupRepositoryImpl` | `data/repository/DatabaseBackupRepositoryImpl.kt` |
-| `CLOUD_AI_WARRANTY_EXTRACTION` | `CloudWarrantyExtractionService` | `data/ai/provider/CloudWarrantyExtractionService.kt` |
+| `CLOUD_AI_WARRANTY_EXTRACTION` | `CloudWarrantyExtractionService` (retained, no production caller since ai-fixes B1a; `WarrantyTrackerRepository` and `AutoCreateWarrantyFromReceiptUseCase` no longer inject it or call `PrivacyGate`) | `data/ai/provider/CloudWarrantyExtractionService.kt` |
 | `CLOUD_AI_RECEIPT_ITEM_CATEGORIZATION` | `HybridReceiptItemCategorizationService` | `data/ai/provider/HybridReceiptItemCategorizationService.kt` |
 | `DEVICE_GPS_LOCATION` | `LocationResolver` | `domain/location/LocationResolver.kt` |
 | `OVERPASS_API` | `OverpassNearbyService` | `data/location/OverpassNearbyService.kt` |

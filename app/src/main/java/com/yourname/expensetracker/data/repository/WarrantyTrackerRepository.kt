@@ -1,20 +1,12 @@
 package com.yourname.expensetracker.data.repository
 
 import androidx.room.withTransaction
-import com.yourname.expensetracker.data.ai.provider.CloudWarrantyExtractionService
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ReturnWindowDao
 import com.yourname.expensetracker.data.database.dao.WarrantyDao
 import com.yourname.expensetracker.data.database.dao.WarrantyLifecycleEventDao
 import com.yourname.expensetracker.data.database.entity.*
-import com.yourname.expensetracker.domain.ai.model.AiCapability
-import com.yourname.expensetracker.domain.ai.model.AiRoute
-import com.yourname.expensetracker.domain.ai.model.WarrantyExtractionInput
-import com.yourname.expensetracker.domain.ai.model.WarrantyExtractionResult
-import com.yourname.expensetracker.domain.ai.policy.AiPolicy
-import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
-import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.core.money.ConversionQuality
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
@@ -24,13 +16,10 @@ import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
 import com.yourname.expensetracker.domain.transaction.TransactionContext
-import kotlinx.coroutines.flow.first
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.Lazy
 import org.json.JSONObject
-import java.time.Instant
-import java.time.ZoneId
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flatMapLatest
@@ -57,10 +46,6 @@ class WarrantyTrackerRepository @Inject constructor(
     private val returnWindowDao: ReturnWindowDao,
     private val warrantyLifecycleEventDao: WarrantyLifecycleEventDao,
     private val receiptRepository: Lazy<ReceiptRepository>,
-    private val cloudExtractionService: CloudWarrantyExtractionService,
-    private val aiSettingsRepository: AiSettingsRepository,
-    private val aiPolicy: AiPolicy,
-    private val aiCapabilityRouter: AiCapabilityRouter,
     private val timeProvider: TimeProvider,
     private val currencyConverter: CurrencyConverter,
     private val currencySettingsRepository: CurrencySettingsRepository,
@@ -70,10 +55,6 @@ class WarrantyTrackerRepository @Inject constructor(
 ) {
     private companion object {
         private const val ACTIVE_ITEMS_REFRESH_INTERVAL_MS = 60 * 60 * 1000L // 1 hour
-        /** Confidence threshold above which warranties are auto-accepted without review. */
-        private const val AUTO_ACCEPT_CLOUD_CONFIDENCE = 0.75f
-        /** Confidence threshold below which cloud-extracted warranties are discarded entirely. */
-        private const val REVIEW_CLOUD_CONFIDENCE = 0.30f
     }
 
     private fun activeItemsTickerFlow(intervalMs: Long = ACTIVE_ITEMS_REFRESH_INTERVAL_MS): Flow<Unit> = flow {
@@ -284,6 +265,59 @@ class WarrantyTrackerRepository @Inject constructor(
         }
     }
 
+    /**
+     * ai-fixes INV-13/INV-14: the single legal path out of review for the user.
+     * (The other exit is [rejectAutoDetectedWarranty].) The ViewModel passes the id only and
+     * never builds `status` / `needsReview` itself.
+     *
+     * One transaction: barrier check (first) -> fresh read by id -> decide -> write -> event.
+     * - Row missing -> [ConfirmWarrantyResult.NotFound] (no write, no event).
+     * - Row not in review (`needsReview=false` and not PENDING_REVIEW, or CLAIMED/TRANSFERRED)
+     *   -> [ConfirmWarrantyResult.AlreadyConfirmed] (no write, no event); idempotent.
+     * - Otherwise `needsReview=false`, `status = EXPIRED` when the row is already EXPIRED or
+     *   `warrantyEndDate < now` (same predicate as the expiry sweep), else ACTIVE.
+     *   An EXPIRED row is never moved back to ACTIVE. A [WarrantyLifecycleEventTypes.CONFIRMED]
+     *   event is written in the same transaction.
+     *
+     * R29: the event write is fail-closed. A failed nested write marks the outer Room transaction
+     * as failed, so the failure must surface instead of reporting a confirm that was rolled back.
+     */
+    suspend fun confirmWarranty(warrantyId: Long): ConfirmWarrantyResult {
+        writeBarrier.checkWritesAllowed("WarrantyTrackerRepository.confirmWarranty")
+        return database.withTransaction {
+            val current = warrantyDao.getWarrantyById(warrantyId)
+            if (current == null) {
+                ConfirmWarrantyResult.NotFound
+            } else if (
+                current.status == WarrantyStatus.CLAIMED ||
+                current.status == WarrantyStatus.TRANSFERRED ||
+                (!current.needsReview && current.status != WarrantyStatus.PENDING_REVIEW)
+            ) {
+                ConfirmWarrantyResult.AlreadyConfirmed
+            } else {
+                val now = timeProvider.now()
+                val newStatus =
+                    if (current.status == WarrantyStatus.EXPIRED || current.warrantyEndDate < now) {
+                        WarrantyStatus.EXPIRED
+                    } else {
+                        WarrantyStatus.ACTIVE
+                    }
+                warrantyDao.updateWarranty(
+                    current.copy(needsReview = false, status = newStatus, updatedAt = now)
+                )
+                warrantyLifecycleEventDao.insert(
+                    WarrantyLifecycleEvent(
+                        warrantyId = current.id,
+                        eventType = WarrantyLifecycleEventTypes.CONFIRMED,
+                        occurredAt = now,
+                        description = "WARRANTY_CONFIRMED"
+                    )
+                )
+                ConfirmWarrantyResult.Confirmed(warrantyId = current.id, status = newStatus)
+            }
+        }
+    }
+
     suspend fun getActiveWarrantyCount(): Int = warrantyDao.getActiveWarrantyCount(timeProvider.now())
     
     @Deprecated(
@@ -345,9 +379,22 @@ class WarrantyTrackerRepository @Inject constructor(
     suspend fun getReturnWindowByReceiptId(receiptId: Long): ReturnWindow? =
         returnWindowDao.getReturnWindowByReceiptId(receiptId)
 
+    /**
+     * ai-fixes INV-11: sole writer of any transition into EXPIRED.
+     *
+     * Expires ACTIVE and PENDING_REVIEW warranties whose `warrantyEndDate < now` (pending rows keep
+     * `needsReview=true`, i.e. "expired unconfirmed") plus RETURNABLE return windows past their
+     * deadline. Idempotent: a second run with the same [now] changes nothing and writes no event.
+     * The pending count is read and the sweep is applied in one transaction so the counts agree.
+     * The batch EXPIRED event description carries counts only.
+     */
     suspend fun reconcileExpiredItems(now: Long = timeProvider.now()): ExpiryReconciliationResult {
         writeBarrier.checkWritesAllowed("WarrantyTrackerRepository.reconcileExpiredItems")
-        val expiredWarranties = warrantyDao.markExpiredWarranties(currentTime = now, updatedAt = now)
+        val (expiredWarranties, expiredPendingWarranties) = database.withTransaction {
+            val pending = warrantyDao.getExpirablePendingWarrantyCount(currentTime = now)
+            val total = warrantyDao.markExpiredWarranties(currentTime = now, updatedAt = now)
+            total to pending.coerceAtMost(total)
+        }
         val expiredReturnWindows = returnWindowDao.markExpiredReturnWindows(currentTime = now, updatedAt = now)
         val resultNow = now
         if (expiredWarranties > 0 || expiredReturnWindows > 0) {
@@ -357,20 +404,31 @@ class WarrantyTrackerRepository @Inject constructor(
                         warrantyId = -1L,
                         eventType = WarrantyLifecycleEventTypes.EXPIRED,
                         occurredAt = resultNow,
-                        description = "Batch expired: $expiredWarranties warranties, $expiredReturnWindows return windows"
+                        description = "Batch expired: $expiredWarranties warranties " +
+                            "($expiredPendingWarranties unconfirmed), $expiredReturnWindows return windows"
                     )
                 )
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                Timber.w(e, "Failed to write EXPIRED batch lifecycle event")
+                Timber.w("Failed to write EXPIRED batch lifecycle event (%s)", e::class.simpleName ?: "UnknownException")
             }
         }
         return ExpiryReconciliationResult(
             expiredWarrantyCount = expiredWarranties,
-            expiredReturnWindowCount = expiredReturnWindows
+            expiredReturnWindowCount = expiredReturnWindows,
+            expiredPendingWarrantyCount = expiredPendingWarranties
         )
     }
 
+    /**
+     * ai-fixes INV-5/INV-6: return windows derive only from local structured receipt fields
+     * (read through [ReceiptRepository]) and the merchant-default day table. No AI or cloud
+     * call, and persisted `rawOcrText` is never read here.
+     *
+     * Write barrier first -> structured receipt fields -> merchant-default `returnDays` ->
+     * insert, or update preserving status, returnedAt, refundAmount, createdAt and (when the new
+     * value is null, which is always the case locally) the existing conditions / policy URL.
+     */
     suspend fun upsertReturnWindowForReceipt(receiptId: Long, fallbackWarranty: Warranty? = null): Long? {
         writeBarrier.checkWritesAllowed("WarrantyTrackerRepository.upsertReturnWindowForReceipt")
         val receipt = receiptRepository.get().getReceiptById(receiptId) ?: return null
@@ -379,10 +437,7 @@ class WarrantyTrackerRepository @Inject constructor(
             receipt.processingStatus == "OCR_FAILED") {
             return null
         }
-        val extractionResult = extractWarrantyResult(receipt)
-        val extractedWarranty = extractionResult?.toWarrantyEntityOrNull(receipt)
-        val resolvedWarranty = fallbackWarranty ?: extractedWarranty
-        val returnWindow = extractReturnWindow(receipt, resolvedWarranty, extractionResult) ?: return null
+        val returnWindow = extractReturnWindow(receipt, fallbackWarranty) ?: return null
         val existingReturnWindow = returnWindowDao.getReturnWindowByReceiptId(receiptId)
 
         return if (existingReturnWindow == null) {
@@ -410,118 +465,17 @@ class WarrantyTrackerRepository @Inject constructor(
         }
     }
     
-    // AI extraction
-    suspend fun extractWarrantyFromReceipt(receipt: ScannedReceipt): Warranty? {
-        val extractionResult = extractWarrantyResult(receipt) ?: return null
-        return extractionResult.toWarrantyEntityOrNull(receipt)
-    }
-
-    private suspend fun extractWarrantyResult(receipt: ScannedReceipt): WarrantyExtractionResult? {
-        val settings = aiSettingsRepository.settings().first()
-        val routeDecision = aiCapabilityRouter.decide(AiCapability.WARRANTY_EXTRACTION, settings)
-        Timber.d(
-            "WarrantyTrackerRepository: warranty extraction route=%s reason=%s provider=%s model=%s",
-            routeDecision.route,
-            routeDecision.reason,
-            routeDecision.providerName,
-            routeDecision.modelName
-        )
-
-        if (routeDecision.route != AiRoute.CLOUD) {
-            Timber.d(
-                "WarrantyTrackerRepository: skipping cloud warranty extraction route=%s receiptId=%d",
-                routeDecision.route,
-                receipt.id
-            )
-            return null
-        }
-
-        val input = WarrantyExtractionInput(
-            receiptText = receipt.rawOcrText,
-            merchant = receipt.parsedMerchant,
-            totalAmount = receipt.parsedTotal,
-            purchaseDate = receipt.parsedDate,
-            currency = receipt.currency
-        )
-
-        return cloudExtractionService.extractWarranty(input)
-    }
-
     /**
-     * Three-band cloud extraction confidence threshold enforcement.
-     *
-     * - confidence >= AUTO_ACCEPT_CLOUD_CONFIDENCE (0.75): auto-accepted, status = ACTIVE
-     * - REVIEW_CLOUD_CONFIDENCE (0.30) <= confidence < AUTO_ACCEPT_CLOUD_CONFIDENCE (0.75):
-     *     created as a needs-review draft, status = PENDING_REVIEW
-     * - confidence < REVIEW_CLOUD_CONFIDENCE (0.30): discarded entirely (returns null)
+     * ai-fixes INV-6: derive a return window from local structured receipt fields only.
+     * `returnDays` is the merchant default; `returnConditions` / `returnPolicyUrl` are never
+     * produced here (null on insert; existing values are preserved on update by
+     * [upsertReturnWindowForReceipt]).
      */
-    private suspend fun WarrantyExtractionResult.toWarrantyEntityOrNull(receipt: ScannedReceipt): Warranty? {
-        if (confidence < REVIEW_CLOUD_CONFIDENCE) {
-            Timber.d("Cloud warranty extraction discarded: confidence $confidence below review threshold $REVIEW_CLOUD_CONFIDENCE for receiptId=${receipt.id}")
-            // PR4-FINALGATE: Write discard diagnostic to warranty lifecycle events.
-            // We use warrantyId = -1 as a sentinel to indicate this is not tied to a specific warranty.
-            // Best-effort: if the write barrier denies the audit, nothing is written and the
-            // extraction result is unchanged, so the catch below may swallow the denial.
-            try {
-                writeBarrier.checkWritesAllowed("WarrantyTrackerRepository.extractWarrantyFromReceipt.discard")
-                warrantyLifecycleEventDao.insert(
-                    WarrantyLifecycleEvent(
-                        warrantyId = -1L,
-                        eventType = WarrantyLifecycleEventTypes.AI_EXTRACTION_DISCARDED,
-                        occurredAt = timeProvider.now(),
-                        description = "Cloud warranty extraction discarded: confidence=$confidence below threshold=$REVIEW_CLOUD_CONFIDENCE receiptId=${receipt.id}"
-                    )
-                )
-            } catch (e: Exception) {
-                if (e is CancellationException) throw e
-                Timber.w(e, "Failed to write AI_EXTRACTION_DISCARDED diagnostic for receiptId=${receipt.id}")
-            }
-            return null
-        }
-
-        val needsReview = confidence < AUTO_ACCEPT_CLOUD_CONFIDENCE
-        val status = if (needsReview) WarrantyStatus.PENDING_REVIEW else WarrantyStatus.ACTIVE
-
-        val durationMonths = warrantyMonths ?: return null
-        val purchaseDate = receipt.parsedDate ?: receipt.createdAt
-        val warrantyEndDate = purchaseDate.toCalendarMonthEndDate(durationMonths)
-
-        return Warranty(
-            receiptId = receipt.id,
-            expenseId = receipt.expenseId,
-            productName = productName,
-            // WRN-18: Use actual merchant from receipt; fallback includes context.
-            merchantName = receipt.parsedMerchant ?: receipt.sourceType?.let { "Receipt ($it)" } ?: "Unknown merchant",
-            purchaseDate = purchaseDate,
-            warrantyDurationMonths = durationMonths,
-            warrantyEndDate = warrantyEndDate,
-            warrantyType = parseWarrantyType(warrantyType),
-            autoDetected = true,
-            extractionSource = "cloud",
-            supportPhone = supportPhone,
-            supportEmail = supportEmail,
-            notes = returnConditions,
-            extractionConfidence = confidence.toDouble(),
-            needsReview = needsReview,
-            status = status
-        )
-    }
-
-    private fun parseWarrantyType(type: String): WarrantyType {
-        return try {
-            WarrantyType.valueOf(type.uppercase())
-        } catch (_: IllegalArgumentException) {
-            WarrantyType.MANUFACTURER
-        }
-    }
-    
-    // Extract return window from warranty extraction result
     suspend fun extractReturnWindow(
         receipt: ScannedReceipt,
-        warranty: Warranty?,
-        extractionResult: WarrantyExtractionResult? = null
+        warranty: Warranty?
     ): ReturnWindow? {
-        val returnDays = extractionResult?.returnDays ?: defaultReturnDaysForMerchant(receipt.parsedMerchant)
+        val returnDays = defaultReturnDaysForMerchant(receipt.parsedMerchant)
         if (returnDays <= 0) return null
         
         val purchaseDate = receipt.parsedDate ?: receipt.createdAt
@@ -544,21 +498,12 @@ class WarrantyTrackerRepository @Inject constructor(
             purchaseDate = purchaseDate,
             returnDays = returnDays,
             returnDeadline = returnDeadline,
-            returnConditions = extractionResult?.returnConditions,
+            returnConditions = null,
             createdAt = timestamps.createdAt,
             updatedAt = timestamps.updatedAt
         )
     }
     
-    // Batch operations for receipt scanning
-    suspend fun processReceiptForWarranty(receipt: ScannedReceipt): Pair<Warranty?, ReturnWindow?> {
-        val extractionResult = extractWarrantyResult(receipt)
-        val warranty = extractionResult?.toWarrantyEntityOrNull(receipt)
-        val returnWindow = extractReturnWindow(receipt, warranty, extractionResult)
-        
-        return Pair(warranty, returnWindow)
-    }
-
     private fun defaultReturnDaysForMerchant(merchant: String?): Int {
         return when {
             merchant?.contains("Amazon", ignoreCase = true) == true -> 30
@@ -568,38 +513,28 @@ class WarrantyTrackerRepository @Inject constructor(
         }
     }
 
-    // W20-FIXED: Half-open warranty dates used for new paths (exclusive end boundary).
     /**
-     * Returns the exclusive end-boundary of the calendar date [durationMonths]
-     * after the date represented by this timestamp.
-     *
-     * The result is the **start of the next day** after the last valid day,
-     * maintaining half-open interval semantics throughout the system.
-     *
-     * Before this fix, `atStartOfDay` was used, which caused warranties to
-     * be marked expired at 00:00:00 of their last valid day — losing a full
-     * day of coverage. The half-open fix means:
-     *   - A warranty expiring May 5 has endDate = May 6 00:00:00
-     *   - `warrantyEndDate < now()` is false all day on May 5, true on May 6
-     *
-     * See also: `createReturnWindowDeadline` which uses the same half-open pattern.
+     * @property expiredWarrantyCount total ACTIVE + PENDING_REVIEW warranties expired by this run.
+     * @property expiredPendingWarrantyCount subset of [expiredWarrantyCount] that were
+     *   PENDING_REVIEW (now "expired unconfirmed": status=EXPIRED, needsReview=true).
      */
-    private fun Long.toCalendarMonthEndDate(durationMonths: Int): Long {
-        val zoneId = ZoneId.systemDefault()
-        val endDate = Instant.ofEpochMilli(this)
-            .atZone(zoneId)
-            .toLocalDate()
-            .plusMonths(durationMonths.toLong())
-
-        // Use end-of-day (exclusive next-day start) for half-open correctness
-        val dayStart = endDate.atStartOfDay(zoneId).toInstant().toEpochMilli()
-        return TimePeriodUtils.getEndOfDay(dayStart)
-    }
-
     data class ExpiryReconciliationResult(
         val expiredWarrantyCount: Int,
-        val expiredReturnWindowCount: Int
+        val expiredReturnWindowCount: Int,
+        val expiredPendingWarrantyCount: Int = 0
     )
+
+    /** ai-fixes INV-13: outcome of [confirmWarranty]. */
+    sealed class ConfirmWarrantyResult {
+        /** Review cleared; [status] is EXPIRED when the row was already past its end date, else ACTIVE. */
+        data class Confirmed(val warrantyId: Long, val status: WarrantyStatus) : ConfirmWarrantyResult()
+
+        /** Row exists but is not in review (idempotent no-op, no write, no event). */
+        object AlreadyConfirmed : ConfirmWarrantyResult()
+
+        /** No row with that id (no write, no event). */
+        object NotFound : ConfirmWarrantyResult()
+    }
 
     private fun createReturnWindowTimestamps(): ReturnWindowTimestamps {
         val now = timeProvider.now()

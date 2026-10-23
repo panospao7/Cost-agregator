@@ -197,9 +197,12 @@ PrivacyGate.check(capability, context)
   ├── LocationBackfillWorker (background location)
   ├── DataRetentionWorker (data purging)
   └── DailyBriefingWorker (AI briefing)
-  ↑ PrivacyDecision.FailClosed: 39 call sites across 27 files now use blocksExecution()
-    (blocksExecution() metric; `PrivacyGate.check(...)` itself: 51 call sites
-    across 34 production files — different metric, both current)
+  (AutoCreateWarrantyFromReceiptUseCase no longer calls PrivacyGate: ai-fixes B1a removed the
+   CLOUD_AI_WARRANTY_EXTRACTION gate; warranty extraction is local-only and guarded upstream by
+   ReceiptSideEffectPlanner Policy A. CloudWarrantyExtractionService has no production caller.)
+  ↑ PrivacyDecision.FailClosed: 38 call sites across 26 files now use blocksExecution()
+    (blocksExecution() metric; `PrivacyGate.check(...)` itself: 50 call sites
+    across 33 production files — different metric; both reduced by one by ai-fixes B1a)
     which returns true for both Denied and FailClosed variants,
     providing consistent fail-closed behavior across all pipelines.
 ```

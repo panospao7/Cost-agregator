@@ -672,7 +672,9 @@ Owns global configuration, hot-path performance helpers, and accessibility polis
 Owns warranty tracking, subscription management, bill negotiation, and price protection surfaces.
 
 **Representative files**
-- `data/repository/WarrantyTrackerRepository.kt`
+- `data/repository/WarrantyTrackerRepository.kt` — sole warranty writer (`confirmWarranty`, `reconcileExpiredItems`); no AI/cloud dependency (ai-fixes B1a)
+- `domain/usecase/warranty/AutoCreateWarrantyFromReceiptUseCase.kt` — local-only extraction, no `PrivacyGate`
+- `domain/usecase/warranty/WarrantyReviewState.kt` — single derived review state (`NOT_IN_REVIEW`/`AWAITING_REVIEW`/`EXPIRED_UNCONFIRMED`); never persisted
 - `ui/screens/warranty/WarrantyTrackerScreen.kt`
 - `data/repository/SubscriptionManagementRepository.kt`
 - `ui/screens/subscription/SubscriptionManagementScreen.kt`

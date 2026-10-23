@@ -192,7 +192,7 @@ Format: statement → **Owner** (the single component that holds the rule) → e
 - **INV-13 Confirm ownership (FG-12).**
   - The only legal user-driven exits from review are `WarrantyTrackerRepository.confirmWarranty(warrantyId)` (NEW) and the existing `rejectAutoDetectedWarranty`.
   - The VM passes the id only. It never builds `status` or `needsReview` and never calls `updateWarranty` for that purpose.
-  - Confirm runs one transaction: barrier check → fresh read by id → if the row is missing → `NotFound`; if `needsReview=false` and status ≠ PENDING_REVIEW → `AlreadyConfirmed` (no write, no event); else set `needsReview=false`, `status = EXPIRED` if `warrantyEndDate < now` else `ACTIVE`, `updatedAt=now`, and write a `CONFIRMED` lifecycle event (event failure is non-fatal, as at `Repo:135-138`).
+  - Confirm runs one transaction: barrier check → fresh read by id → if the row is missing → `NotFound`; if `needsReview=false` and status ≠ PENDING_REVIEW → `AlreadyConfirmed` (no write, no event); else set `needsReview=false`, `status = EXPIRED` if `warrantyEndDate < now` else `ACTIVE`, `updatedAt=now`, and write a `CONFIRMED` lifecycle event (event failure fails the whole transaction closed — no confirm without its CONFIRMED event — matching R29 and the sibling in-transaction writers; amended 2026-10-23 at B1a).
   - Confirm never moves EXPIRED → ACTIVE.
   - **Owner:** `WarrantyTrackerRepository`. AE-17 to AE-20.
 - **INV-14 Status/review consistency.**

@@ -110,7 +110,6 @@ class CancellationSafetyArchitectureGuardTest {
             ArchitectureAllowlistEntry("ComputeDashboardWidgetsUseCase.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "Domain", "Domain use-case with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("ComputeMoneyRadarUseCase.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "Domain", "Domain use-case with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("MonthlySavingsSweepUseCase.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "Domain", "Domain use-case with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("AutoCreateWarrantyFromReceiptUseCase.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "Domain", "Domain use-case with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
             // ── Infrastructure (false positives from regex — catches preceded by CE catch) ──
             ArchitectureAllowlistEntry("CompositeSideEffectEventWriter.kt", "FALSE_POSITIVE_CE_RETHROW", category = "INFRASTRUCTURE", owner = "Infrastructure", "False positive — broad catch preceded by CE catch", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("CompositeDiagnosticEventWriter.kt", "FALSE_POSITIVE_CE_RETHROW", category = "INFRASTRUCTURE", owner = "Infrastructure", "False positive — broad catch preceded by CE catch", "MIT-034", LocalDate.of(2026, 12, 31)),
