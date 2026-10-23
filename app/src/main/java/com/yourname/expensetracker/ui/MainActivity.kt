@@ -36,8 +36,6 @@ import androidx.activity.viewModels
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.lifecycleScope
 import com.google.gson.Gson
-import com.yourname.expensetracker.domain.ai.service.AiEngagementRepository
-import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.backup.AppOperationalState
 import com.yourname.expensetracker.data.backup.RestoreRestartSignal
@@ -83,6 +81,9 @@ import com.yourname.expensetracker.ui.screens.subscription.SubscriptionManagemen
 import com.yourname.expensetracker.ui.screens.tax.TaxConfigurationScreen
 import com.yourname.expensetracker.ui.theme.ExpenseTrackerTheme
 import com.yourname.expensetracker.ui.components.emptystate.ContextualActionRegistry
+import com.yourname.expensetracker.ui.navigation.DeepLinkApplier
+import com.yourname.expensetracker.ui.navigation.DeepLinkPolicy
+import com.yourname.expensetracker.ui.navigation.DeepLinkPolicyResult
 import com.yourname.expensetracker.ui.navigation.NavigationDestination
 import com.yourname.expensetracker.ui.navigation.NavigationResult
 import com.yourname.expensetracker.ui.navigation.ProvideNavigationController
@@ -104,11 +105,9 @@ import kotlin.math.roundToInt
 class MainActivity : ComponentActivity() {
     private val mainViewModel: MainViewModel by viewModels()
 
+    /** Applies validated deep links (INV-14..INV-22); the activity itself never parses a link. */
     @Inject
-    lateinit var aiRuntimeDiagnostics: AiRuntimeDiagnostics
-
-    @Inject
-    lateinit var aiEngagementRepository: AiEngagementRepository
+    lateinit var deepLinkApplier: DeepLinkApplier
 
     @Inject
     lateinit var actionRegistry: ContextualActionRegistry
@@ -122,10 +121,6 @@ class MainActivity : ComponentActivity() {
     /** R27-S3: in-memory (non-persisted) automatic-restart request after an in-process restore. */
     @Inject
     lateinit var restoreRestartSignal: RestoreRestartSignal
-
-    /** RP-17 17-A: central bank-sync availability gate (D1). */
-    @Inject
-    lateinit var bankFeatureAvailability: com.yourname.expensetracker.domain.bank.BankFeatureAvailability
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -182,98 +177,22 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * PRV-16: Deep links exported without auth.
+     * Deep-link entry point (INV-14). Every `expensetracker:` intent, internal notification taps
+     * included, is untrusted: it is evaluated only by [DeepLinkPolicy] (pure, no IO) and acted on only
+     * by [DeepLinkApplier]. This function never parses or logs the link, so no raw URI, host or
+     * parameter value can reach a log or a diagnostic (INV-18; closes advisory C4).
      *
-     * TODO: Add authentication confirmation prompt before processing deep links.
-     * Currently deep links are processed without any auth gate, which could allow
-     * other apps on the device to trigger navigation without user consent.
-     * Consider showing a confirmation dialog for sensitive deep link actions
-     * (e.g. navigating to specific expense IDs, triggering bulk navigation).
+     * PRV-16 (links without an auth gate): the lock gate for held links belongs to the app-lock
+     * increment (spec 5.5, plan Inc 1b); until it lands, links apply immediately.
      *
-     * Security recommendation: Integrate with BiometricPrompt or
-     * DevicePolicyManager to verify user identity before handling deep links
-     * that expose personal financial data.
+     * @return true when the intent carried an `expensetracker:` link (even a rejected one), so the
+     * caller consumes the data one-shot; false when it was not a link at all.
      */
     private fun handleIntent(intent: Intent?): Boolean {
-        val data = intent?.data ?: return false
-        if (data.scheme != "expensetracker") return false
+        val result = DeepLinkPolicy.evaluate(intent?.action, intent?.dataString)
+        if (result is DeepLinkPolicyResult.NotADeepLink) return false
 
-        // RP-17 17-A: bank deep-link hosts are recognized and REJECTED at the
-        // contract boundary. There is intentionally no bank deep-link route and
-        // none may appear implicitly: routing a bank host later requires
-        // consciously removing it from BANK_DEEP_LINK_HOSTS and passing the
-        // central availability gate (D1). Rejection lands on Home — never a
-        // silent no-op, never provider integration.
-        if (com.yourname.expensetracker.domain.bank.BankFeatureAvailability.isBankDeepLinkHost(data.host)) {
-            Timber.w(
-                "Bank deep link rejected: reason=FEATURE_UNAVAILABLE available=%s",
-                bankFeatureAvailability.isBankSyncAvailable
-            )
-            mainViewModel.navigateTo(NavigationDestination.Home)
-            return true
-        }
-
-        when (data.host) {
-            "home", "dashboard" -> {
-                mainViewModel.navigateTo(NavigationDestination.Home)
-                data.getQueryParameter("briefingKey")?.let { briefingKey ->
-                    lifecycleScope.launch {
-                        aiEngagementRepository.setLastOpenedDashboardBriefingKey(briefingKey)
-                    }
-                }
-                aiRuntimeDiagnostics.recordInteraction(
-                    type = "phase4_open",
-                    message = "dashboard deep link opened${data.getQueryParameter("briefingKey")?.let { " ($it)" } ?: ""}"
-                )
-            }
-            "activity" -> {
-                val expenseId = data.getQueryParameter("expenseId")?.toLongOrNull()
-                if (expenseId != null) {
-                    lifecycleScope.launch {
-                        val expense = expenseRepository.getExpenseById(expenseId)
-                        if (expense != null) {
-                            // G-TIME-01: pure derivation from expense.date (java.time,
-                            // system default timezone — same day boundaries the Calendar produced).
-                            val zone = java.time.ZoneId.systemDefault()
-                            val expenseDate = java.time.Instant.ofEpochMilli(expense.date).atZone(zone).toLocalDate()
-                            val startOfDay = expenseDate.atStartOfDay(zone).toInstant().toEpochMilli()
-                            val endOfNextDayStart = expenseDate.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
-                            mainViewModel.navigateToTransactions(
-                                TransactionFilter(dateRange = startOfDay to endOfNextDayStart)
-                            )
-                        } else {
-                            mainViewModel.navigateTo(NavigationDestination.Transactions(initialExpenseId = expenseId))
-                        }
-                    }
-                } else {
-                    mainViewModel.navigateTo(NavigationDestination.Transactions())
-                }
-            }
-            "review" -> mainViewModel.navigateTo(NavigationDestination.Review)
-            "plan" -> mainViewModel.navigateTo(NavigationDestination.Budget)
-            "add" -> {
-                mainViewModel.triggerAddExpense()
-            }
-            "analytics" -> {
-                mainViewModel.navigateTo(
-                    NavigationDestination.Analytics(
-                        initialPeriod = data.getQueryParameter("period")
-                    )
-                )
-            }
-            "map" -> {
-                mainViewModel.navigateTo(
-                    NavigationDestination.SpendingMap(
-                        initialLocationQuery = data.getQueryParameter("location")
-                    )
-                )
-            }
-            else -> {
-                Timber.w("Ignoring unsupported deep link host: ${data.host}")
-                mainViewModel.navigateTo(NavigationDestination.Home)
-            }
-        }
-
+        lifecycleScope.launch { deepLinkApplier.apply(result, mainViewModel) }
         return true
     }
 }

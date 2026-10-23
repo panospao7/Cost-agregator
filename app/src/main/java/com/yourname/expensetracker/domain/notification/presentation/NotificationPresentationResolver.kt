@@ -53,9 +53,9 @@ class NotificationPresentationResolver @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            reportFailure(PrivacyDiagnosticCode.NOTIF_POLICY_FALLBACK_EXCEPTION) {
+            reportFailure(PrivacyDiagnosticCode.NOTIF_POLICY_FALLBACK_EXCEPTION, PrivacyDiagnosticMetadata.builder().apply {
                 exceptionClass(e)
-            }
+            }.build())
             return NotificationContentPolicy.decideFailClosed(
                 kind = kind,
                 sdkInt = sdkInt,
@@ -73,18 +73,17 @@ class NotificationPresentationResolver @Inject constructor(
     }
 
     private fun reportUnreadable(cause: SettingsUnreadableCause) {
-        reportFailure(PrivacyDiagnosticCode.NOTIF_POLICY_SETTINGS_UNREADABLE) {
+        reportFailure(PrivacyDiagnosticCode.NOTIF_POLICY_SETTINGS_UNREADABLE, PrivacyDiagnosticMetadata.builder().apply {
             put(PrivacyDiagnosticKey.CAUSE, cause)
-        }
+        }.build())
     }
 
     /** Fire and forget: the post path never awaits the diagnostic. */
     private fun reportFailure(
         code: PrivacyDiagnosticCode,
-        metadata: PrivacyDiagnosticMetadata.Builder.() -> Unit
+        metadata: PrivacyDiagnosticMetadata
     ) {
-        val built = PrivacyDiagnosticMetadata.builder().apply(metadata).build()
-        diagnosticsScope.launch { diagnostics.emit(code, built) }
+        diagnosticsScope.launch { diagnostics.emit(code, metadata) }
     }
 
     companion object {

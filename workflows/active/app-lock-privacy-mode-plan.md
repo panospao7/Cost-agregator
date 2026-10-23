@@ -378,7 +378,7 @@ Context: budget alerts post with the raw `budget.id.toInt()` (`BudgetMonitor.kt:
   - `M/data/service/AndroidNotificationService.kt`
     - inject the resolver and the applier; implement the new methods;
     - harden the legacy methods (they stamp no marker, because they have no kind; the 4.6 fallback covers their posts);
-    - explicit-component PendingIntents at `:112, :147, :172`, keeping the data URI, CLEAR_TOP/CLEAR_TASK, request codes and FLAG_IMMUTABLE.
+    - explicit-component PendingIntents at `:112, :147, :172`, keeping the data URI, CLEAR_TOP/CLEAR_TASK, request codes and FLAG_IMMUTABLE, and keeping `Intent.ACTION_VIEW` (S10's DeepLinkPolicy rejects any other action with no navigation — every notification tap would be ignored); the AE-32 test asserts `intent.action == Intent.ACTION_VIEW` next to the component and FLAG_IMMUTABLE checks.
   - `M/data/service/NotificationPresentationApplier.kt` (new). One rule for both builder owners:
     - visibility PRIVATE;
     - a generic public version with no actions, no style and no marker;
