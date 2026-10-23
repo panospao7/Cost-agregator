@@ -471,6 +471,9 @@ Owns the app-wide AI platform surface: policy, assistant sheet, AI settings, pro
 - `domain/ai/model/AssistantHistoryMode.kt` — Enum (OFF/REDACTED/RAW) for conversation history redaction in AiChatRepositoryImpl
 - `ui/screens/aisettings/AiSettingsScreen.kt`
 - `data/ai/provider/DefaultAiEnvironmentMonitor.kt`
+- `data/repository/AiSettingsRepositoryImpl.kt` — `ai_settings` DataStore; `produceMigrations` registers the sole resolver of `ai_transaction_insight_enabled`
+- `data/repository/AiInsightSettingsMigration.kt` — the one never-throwing `DataMigration` (INV-23): stored briefing value wins, else `InstallProvenance` (NEW_INSTALL → on, UPGRADE/UNKNOWN → off); runs before first read and first edit; never overwrites an existing key
+- `domain/ai/service/InstallProvenance.kt` — port (`InstallOrigin` NEW_INSTALL/UPGRADE/UNKNOWN); `data/repository/PackageInstallProvenance.kt` — own-package install/update times only, any failure → UNKNOWN; not Hilt-bound (built from the application context inside `produceMigrations`)
 - `data/ai/provider/StrictAiJsonParsing.kt`
 - `data/ai/provider/DashboardBriefingPromptFormatter.kt`
 - `data/ai/provider/DashboardBriefingResponseParser.kt`

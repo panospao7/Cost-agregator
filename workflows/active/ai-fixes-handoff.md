@@ -379,3 +379,36 @@ Next: B2b / B2c.
 - Release-note caution (PSG): until B2d rewires GenerateTransactionInsightUseCase, per-expense insights still route as DASHBOARD_BRIEFING (cloud-capable); do not claim "insights are on-device" for a build with B2a but not B2d.
 - Owner review: es/el strings ai_capability_transaction_insight ("Análisis de transacción" / "Ανάλυση συναλλαγής").
 Next: B2b (insight key + DataMigration + InstallProvenance; includes the binding §1.6 router/policy switch) and B2c (AppForegroundState port).
+
+## B2b (2026-10-23) — implemented (NOT validated; awaiting compile + targeted-unit-test)
+- INV-22 (new field), INV-23, INV-15/16 (binding §1.6 amendment). AE-33..37 (+AE-38 still holds). Schema NONE (DataStore key + DataMigration only).
+- Source: AiModels.kt (`transactionInsightEnabled = false`, last field); AiSettingsRepositoryImpl.kt (key via shared `AiSettingsMigrationKeys`, mapper fallback `defaults.transactionInsightEnabled`, `update()` writes key, `produceMigrations` = `[AiInsightSettingsMigration(PackageInstallProvenance(appContext))]`; class now has an internal `() -> DataStore<Preferences>` primary constructor + the `@Inject (@ApplicationContext Context)` secondary, so tests can drive a real DataStore); NEW data/repository/AiInsightSettingsMigration.kt (internal; keys object + DataMigration); NEW domain/ai/service/InstallProvenance.kt (port + `InstallOrigin`); NEW data/repository/PackageInstallProvenance.kt (internal impl); AiPolicyImpl.shouldAllowOnDevice and DefaultAiCapabilityRouter.isCapabilityEnabled TRANSACTION_INSIGHT arms -> `settings.transactionInsightEnabled` (interim comments replaced).
+- DI: NO Hilt binding added (provenance is built from the application context handed to `produceMigrations`; the top-level delegate lives outside the Hilt graph). hilt-bindings-map.md unchanged.
+- Never-throw / ordering: DataStore runs migrations before first read AND first edit; `shouldMigrate` = key absent; `migrate` rethrows only CancellationException from provenance, any other Exception -> UNKNOWN -> false; `PackageInstallProvenance.classify()` itself catches Exception -> UNKNOWN. Stored briefing value wins (rule 2a), provenance not consulted then.
+- Tests: AiSettingsRepositoryImplTest (+AE-33..37, UNKNOWN, migration-before-first-edit via real PreferenceDataStoreFactory, throwing provenance -> settings() emits, update() toggle stays); NEW InstallProvenanceTest (NEW_INSTALL/UPGRADE/anomaly/zero/NameNotFound/SecurityException/failing packageManager/own-package-only); DefaultAiCapabilityRouterTest (+insight off -> DISABLED, briefing off + insight on -> not DISABLED; `fullyCloudEnabledSettings` now sets transactionInsightEnabled = true); AiPolicyTest (TRANSACTION_INSIGHT rows now set the toggle; +2 rows: insight off, insight off with briefing on; size guard 4 -> 6).
+- Docs: CODEBASE_SEGMENTS.md Segment 20.
+- Ordering check carried: grep app/src/main for "TRANSACTION_INSIGHT -> settings.aiEnabled" returns 0 (done here).
+Next: B2c (AppForegroundState port), then B2d.
+
+## B2b review fixes (2026-10-23) — test/comment/doc only, NOT validated
+1. INV-7 / spec §4 rule 5: AiSettingsRepositoryImplTest now seeds ai_warranty_extraction_enabled = true and false plus unrelated keys, runs the real migration with NEW_INSTALL and UPGRADE, and asserts stored prefs == seed + only ai_transaction_insight_enabled (4 tests). Fulfils the AE-8 "never rewritten" promise (B1c note above).
+2. Production wiring: source-scan test in AiSettingsRepositoryImplTest asserts the `ai_settings` preferencesDataStore delegate declares `produceMigrations = { ctx -> listOf(AiInsightSettingsMigration(PackageInstallProvenance(ctx))) }`.
+3a. DefaultAiCapabilityRouterTest "TRANSACTION_INSIGHT is DISABLED when AI is off" now uses aiEnabled = false with allowOnDeviceAi = true and transactionInsightEnabled = true, and asserts the reason names the global AI switch.
+3b. AiPolicyTest canUseCloudFor(TRANSACTION_INSIGHT) matrix gained a transactionInsightEnabled dimension (64 -> 128, count guard updated).
+4a. AiSettingsRepositoryImpl.kt comment (comment-only) and the DI line in the B2b section above: reason for no Hilt binding is that the top-level delegate is outside the Hilt graph.
+4b. AiSettingsRepositoryImplTest class doc corrected (B2b tests use a real file-backed DataStore in a TemporaryFolder).
+4c. The vacuous `assertNull(emptyPreferences()[insightKey])` was replaced by a real check that cleanUp() leaves stored prefs unchanged; test renamed.
+5. PSG: domain-spec §4 rule 6 reworded (corruption re-resolution: NEW_INSTALL -> true; UPGRADE or UNKNOWN -> false; a never-updated install re-enables). Migration KDoc did not repeat the claim; unchanged.
+6. PSG hardening: InstallProvenanceTest plants a capturing Timber tree and asserts only the fixed message is logged, with no throwable and no exception text, for a throwing PackageManager.
+Follow-ups (NOT B2b):
+- Optional dataExtractionRules excluding device-to-device transfer of ai_settings (pre-existing; allowBackup=false does not stop D2D transfer on Android 12+).
+- AiSettingsRepositoryImpl settings() `Timber.e(error, ...)` logs the IOException (debug-only logging; consider a bounded message without the throwable).
+Validation request: targeted-unit-test filters AiSettingsRepositoryImplTest, InstallProvenanceTest, AiPolicyTest, DefaultAiCapabilityRouterTest.
+
+## B2b DONE (2026-10-23)
+- Reviews: reviewer-strict ACCEPT-WITH-MINORS, privacy-security-guardian PASS (ACCEPT-WITH-MINORS), architecture-guardian ACCEPT-WITH-MINORS. Minors applied (see "B2b review fixes").
+- Validation (final tree): targeted vr-20261023-171633-5308b883 PASS, static-guards vr-20261023-172207-d3633291 PASS, lint vr-20261023-173710-231f9d75 PASS.
+- Not taken (optional, recorded): AG finding 1 — add a CancellationException rethrow before the broad catch in PackageInstallProvenance.classify() (synchronous, non-suspend, outside the CANCEL-01 scanner; wording-only fit with FG-10). Docs for the Z pass: CODEBASE_INVENTORY (~:403) and COMPLETE-BACKEND-MAP (~:1151) don't list InstallProvenance/InstallOrigin, PackageInstallProvenance, AiInsightSettingsMigration; CODEBASE_SEGMENTS :476 puts port + impl in one bullet.
+- B2d check (binding): GenerateTransactionInsightUseCase still requires dashboardBriefingEnabled and routes as DASHBOARD_BRIEFING; B2d must gate on aiEnabled ∧ transactionInsightEnabled ∧ allowOnDeviceAi (plan ~:128), add INSIGHT_DISABLED (AE-32), and enforce INV-16/INV-17.
+- Product note (spec §1.5 / §4 rule 2b, owner decision already taken): new installs get the on-device insight on by default; corruption on a never-updated install re-enables it (rule 6 reworded).
+Next: B2c (AppForegroundState port + startup registration).

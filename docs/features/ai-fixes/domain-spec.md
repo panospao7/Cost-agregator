@@ -375,7 +375,7 @@ guard(CLOUD_AI_DAILY_BRIEFING, requiresNotificationPermission=false)
 3. **Never throw.** Any failure in provenance → UNKNOWN. The migration must not throw: an exception other than IOException would surface through `settings()` (`AiSettingsRepositoryImpl.kt:67-76`).
 4. **Explicit values win forever.** Once the key exists, no later version re-derives it.
 5. **Warranty flag.** There is no migration and no rewrite. Absent → false by INV-22 default. Explicit true/false is kept (owner decision). Because of F1, an explicit `true` usually means "materialized default", but it is harmless: the flag is inert (INV-7).
-6. **Read fallback.** `transactionInsightEnabled` falls back to `false`. That is only reachable on an IOException read (`emptyPreferences()`) or corruption replacement (`ReplaceFileCorruptionHandler`); after corruption, the migration re-runs and resolves via provenance (UPGRADE → false). The product default "on for new installs" lives only in rule 2(b).
+6. **Read fallback.** `transactionInsightEnabled` falls back to `false`. That is only reachable on an IOException read (`emptyPreferences()`) or corruption replacement (`ReplaceFileCorruptionHandler`); after corruption, the migration re-runs and resolves via provenance (NEW_INSTALL → true; UPGRADE or UNKNOWN → false; so a never-updated install re-enables the insight after corruption). The product default "on for new installs" lives only in rule 2(b).
 7. **Backup and restore.** These do not affect the migration (F12).
 8. **Edge accepted.** If the user installs this version and an update lands before first launch, provenance says UPGRADE and the insight starts off. This fails safe. The user can enable it.
 

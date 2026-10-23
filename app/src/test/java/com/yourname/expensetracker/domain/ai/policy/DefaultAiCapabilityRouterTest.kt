@@ -18,6 +18,7 @@ import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -408,6 +409,7 @@ class DefaultAiCapabilityRouterTest {
         allowOnDeviceAi = true,
         wifiOnlyForCloud = false,
         dashboardBriefingEnabled = true,
+        transactionInsightEnabled = true, // B2b: TRANSACTION_INSIGHT has its own toggle (spec §1.6)
         preferredMode = mode
     )
 
@@ -492,8 +494,43 @@ class DefaultAiCapabilityRouterTest {
 
     @Test
     fun `TRANSACTION_INSIGHT is DISABLED when AI is off`() = runTest {
-        val result = router.decide(AiCapability.TRANSACTION_INSIGHT, AiSettings(aiEnabled = false))
+        // Insight toggle and on-device are on, so only aiEnabled = false can be the cause.
+        val result = router.decide(
+            AiCapability.TRANSACTION_INSIGHT,
+            AiSettings(aiEnabled = false, allowOnDeviceAi = true, transactionInsightEnabled = true)
+        )
 
         assertEquals(AiRoute.DISABLED, result.route)
+        assertTrue(result.reason.contains("AI is disabled", ignoreCase = true))
+        assertFalse(
+            "reason must name the global AI switch, not the capability toggle",
+            result.reason.contains("TRANSACTION_INSIGHT")
+        )
+    }
+
+    @Test
+    fun `B2b TRANSACTION_INSIGHT is DISABLED when insight toggle is off even with briefing and AI on`() = runTest {
+        listOf(AiMode.AUTO, AiMode.CLOUD, AiMode.ON_DEVICE).forEach { mode ->
+            val result = router.decide(
+                AiCapability.TRANSACTION_INSIGHT,
+                fullyCloudEnabledSettings(mode).copy(transactionInsightEnabled = false, dashboardBriefingEnabled = true)
+            )
+
+            assertEquals("[$mode] route", AiRoute.DISABLED, result.route)
+        }
+    }
+
+    @Test
+    fun `B2b TRANSACTION_INSIGHT is not DISABLED when briefing is off but insight toggle is on`() = runTest {
+        every { environmentMonitor.isNetworkAvailable() } returns true
+        every { environmentMonitor.isWifiConnected() } returns true
+        coEvery { environmentMonitor.getOnDeviceModelStatus(AiCapability.TRANSACTION_INSIGHT) } returns OnDeviceModelStatus.AVAILABLE
+
+        val result = router.decide(
+            AiCapability.TRANSACTION_INSIGHT,
+            fullyCloudEnabledSettings(AiMode.AUTO).copy(dashboardBriefingEnabled = false, transactionInsightEnabled = true)
+        )
+
+        assertTrue("route must not be DISABLED", result.route != AiRoute.DISABLED)
     }
 }

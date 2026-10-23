@@ -111,7 +111,10 @@ data class AiSettings(
     // INV-7/INV-22: warranty detection is local-only; the flag gates no data flow and
     // defaults to off. This data class is the ONLY source of settings defaults — the
     // DataStore mapper must fall back to AiSettings() values, never to its own literals.
-    val warrantyExtractionEnabled: Boolean = false
+    val warrantyExtractionEnabled: Boolean = false,
+    // INV-22/INV-23: read fallback is off (fail-safe). The product default for new installs (on)
+    // is applied once by the AiSettings DataStore migration, never by this default.
+    val transactionInsightEnabled: Boolean = false
 )
 
 data class AiEngagementState(

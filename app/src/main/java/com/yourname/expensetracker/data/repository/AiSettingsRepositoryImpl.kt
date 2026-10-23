@@ -23,13 +23,26 @@ import timber.log.Timber
 
 private val Context.aiDataStore: DataStore<Preferences> by preferencesDataStore(
     name = "ai_settings",
-    corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() }
+    corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
+    // INV-23: the sole resolver of ai_transaction_insight_enabled. DataStore runs migrations before the
+    // first read and the first edit. This top-level delegate lives outside the Hilt graph (it is a file-level
+    // property, not an injected member), so the provenance is built from the application context handed to
+    // produceMigrations rather than from a Hilt binding.
+    produceMigrations = { appContext ->
+        listOf(AiInsightSettingsMigration(PackageInstallProvenance(appContext)))
+    }
 )
 
 @Singleton
-class AiSettingsRepositoryImpl @Inject constructor(
-    @ApplicationContext private val context: Context
+class AiSettingsRepositoryImpl internal constructor(
+    private val dataStoreProvider: () -> DataStore<Preferences>
 ) : AiSettingsRepository {
+
+    @Inject
+    constructor(@ApplicationContext context: Context) : this({ context.aiDataStore })
+
+    private val dataStore: DataStore<Preferences>
+        get() = dataStoreProvider()
 
     // -------------------------------------------------------------------------
     // Keys
@@ -41,7 +54,8 @@ class AiSettingsRepositoryImpl @Inject constructor(
         val ALLOW_ON_DEVICE_AI          = booleanPreferencesKey("ai_allow_on_device")
         val ASSISTANT_ENABLED           = booleanPreferencesKey("ai_assistant_enabled")
         val QUERY_INTERPRETATION_ENABLED = booleanPreferencesKey("ai_query_interpretation_enabled")
-        val DASHBOARD_BRIEFING_ENABLED  = booleanPreferencesKey("ai_dashboard_briefing_enabled")
+        val DASHBOARD_BRIEFING_ENABLED  = AiSettingsMigrationKeys.DASHBOARD_BRIEFING_ENABLED
+        val TRANSACTION_INSIGHT_ENABLED = AiSettingsMigrationKeys.TRANSACTION_INSIGHT_ENABLED
         val REVIEW_EXPLANATION_ENABLED  = booleanPreferencesKey("ai_review_explanation_enabled")
         val RECEIPT_ASSIST_ENABLED      = booleanPreferencesKey("ai_receipt_assist_enabled")
         val WARRANTY_EXTRACTION_ENABLED = booleanPreferencesKey("ai_warranty_extraction_enabled")
@@ -63,7 +77,7 @@ class AiSettingsRepositoryImpl @Inject constructor(
     // -------------------------------------------------------------------------
 
     override fun settings(): Flow<AiSettings> =
-        context.aiDataStore.data
+        dataStore.data
             .catch { error ->
                 when (error) {
                     is IOException -> {
@@ -77,7 +91,7 @@ class AiSettingsRepositoryImpl @Inject constructor(
             .map { prefs -> prefs.toAiSettings() }
 
     override suspend fun update(transform: (AiSettings) -> AiSettings) {
-        context.aiDataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             val current = prefs.toAiSettings()
             val updated = transform(current)
             prefs[Keys.AI_ENABLED]                 = updated.aiEnabled
@@ -100,6 +114,7 @@ class AiSettingsRepositoryImpl @Inject constructor(
             prefs[Keys.WIFI_ONLY_FOR_CLOUD]        = updated.wifiOnlyForCloud
             prefs[Keys.STORE_CONVERSATION_HISTORY] = updated.storeConversationHistory
             prefs[Keys.PREFERRED_MODE]             = updated.preferredMode.name
+            prefs[Keys.TRANSACTION_INSIGHT_ENABLED] = updated.transactionInsightEnabled
         }
     }
 
@@ -139,6 +154,9 @@ class AiSettingsRepositoryImpl @Inject constructor(
         preferredMode             = this[Keys.PREFERRED_MODE]
             ?.let { runCatching { AiMode.valueOf(it) }.getOrNull() }
             ?: defaults.preferredMode,
-        warrantyExtractionEnabled = this[Keys.WARRANTY_EXTRACTION_ENABLED] ?: defaults.warrantyExtractionEnabled
+        warrantyExtractionEnabled = this[Keys.WARRANTY_EXTRACTION_ENABLED] ?: defaults.warrantyExtractionEnabled,
+        // Read fallback only (false); the product default for new installs is applied by
+        // AiInsightSettingsMigration, the sole resolver of this key (INV-23).
+        transactionInsightEnabled = this[Keys.TRANSACTION_INSIGHT_ENABLED] ?: defaults.transactionInsightEnabled
     )
 }

@@ -265,8 +265,8 @@ class DefaultAiCapabilityRouter @Inject constructor(
             AiCapability.REVIEW_PRIORITIZATION -> settings.aiEnabled // Uses general AI toggle
             AiCapability.SEMANTIC_DEDUPE -> settings.aiEnabled // Uses general AI toggle
             AiCapability.RECEIPT_ITEM_CATEGORIZATION -> settings.receiptItemCategorizationEnabled
-            // Interim: aiEnabled until B2b adds transactionInsightEnabled (spec §1.6); the use case also gates INSIGHT_DISABLED (AE-32).
-            AiCapability.TRANSACTION_INSIGHT -> settings.aiEnabled
+            // Own toggle, independent of the briefing flag (spec §1.6, INV-15); the use case also gates INSIGHT_DISABLED (AE-32).
+            AiCapability.TRANSACTION_INSIGHT -> settings.transactionInsightEnabled
         }
     }
 

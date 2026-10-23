@@ -47,7 +47,7 @@ class AiPolicyImpl @Inject constructor() : AiPolicy {
             AiCapability.REVIEW_PRIORITIZATION -> settings.aiEnabled
             AiCapability.SEMANTIC_DEDUPE -> settings.aiEnabled
             AiCapability.RECEIPT_ITEM_CATEGORIZATION -> settings.receiptItemCategorizationEnabled
-            AiCapability.TRANSACTION_INSIGHT -> settings.aiEnabled // Interim until B2b adds transactionInsightEnabled (spec §1.6); allowOnDeviceAi already required above
+            AiCapability.TRANSACTION_INSIGHT -> settings.transactionInsightEnabled // Own toggle, independent of the briefing flag (spec §1.6, INV-15); aiEnabled and allowOnDeviceAi already required above
         }
     }
 
