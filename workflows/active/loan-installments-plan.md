@@ -718,3 +718,7 @@ Owner decisions from this amendment: only the A6 test-shards.json edit (at S5). 
   - re-read the plan status in-txn before claimEntryForExpense;
   - pass only bounded enum names as statusReason/adjustReason;
   - map ABORT constraint exceptions to reason codes, never persisting/logging messages.
+
+**A11. (owner 2026-10-24, owner-approvals items 17, 18; binding)**
+- **S6c:** must run plan reconcile R1–R5 under the backup barrier before the snapshot verify (S6a exposes the reconcile entry point), so a backup right after an expense delete/update never fails on a not-yet-reconciled plan; genuine unrepairable orphans still fail closed.
+- **Rescue:** FinancialRescueCoordinator clears orphan INSTALLMENT_PURCHASE flags AND orphan INSTALLMENT_REVERSED flags (not the non-null linkedExpenseId of any REVERSED entry) in the import transaction, also when installmentTables is empty. Accepted cost: in that corrupted-source case the refunded installment counts as spending again.

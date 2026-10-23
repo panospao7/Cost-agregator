@@ -535,16 +535,22 @@ class FinancialRescueCoordinator(
     }
 
     /**
-     * Clears INSTALLMENT_PURCHASE flags on expenses that no imported plan references as its
+     * Clears orphan installment spending-exclusion flags in the rescue transaction. Runs even
+     * when no installment tables were captured. Only the cleared counts are logged.
+     *
+     * INSTALLMENT_PURCHASE is cleared on expenses that no imported plan references as its
      * purchase expense (the rescue-time mirror of "deletePlanById clears the purchase flag").
-     * Runs even when no installment tables were captured. INSTALLMENT_REVERSED orphans are
-     * deliberately kept: clearing them would count a refunded purchase as spending again, and
-     * that trade-off is a pending owner decision. Only the cleared count is logged.
+     *
+     * INSTALLMENT_REVERSED (owner decision 2026-10-24, owner-approvals item 18) is cleared on
+     * expenses whose id is not the non-null linkedExpenseId of an installment entry with
+     * status REVERSED. Accepted cost: when the rescued source is corrupted in that way, the
+     * refunded installment counts as spending again. A REVERSED flag that a REVERSED entry
+     * still references is kept.
      */
     private fun clearOrphanInstallmentPurchaseFlags(db: SupportSQLiteDatabase) {
         val values = android.content.ContentValues()
         values.putNull("spendingExclusionReason")
-        val cleared = db.update(
+        val clearedPurchase = db.update(
             TABLE_EXPENSES,
             SQLiteDatabase.CONFLICT_NONE,
             values,
@@ -552,7 +558,17 @@ class FinancialRescueCoordinator(
                 "(SELECT purchaseExpenseId FROM `$TABLE_INSTALLMENT_PLANS` WHERE purchaseExpenseId IS NOT NULL)",
             arrayOf<Any?>(SpendingExclusionReason.INSTALLMENT_PURCHASE.name)
         )
-        log("Cleared $cleared orphan installment purchase flags")
+        log("Cleared $clearedPurchase orphan installment purchase flags")
+        val clearedReversed = db.update(
+            TABLE_EXPENSES,
+            SQLiteDatabase.CONFLICT_NONE,
+            values,
+            "spendingExclusionReason = ? AND id NOT IN " +
+                "(SELECT linkedExpenseId FROM `$TABLE_INSTALLMENT_ENTRIES` " +
+                "WHERE linkedExpenseId IS NOT NULL AND status = ?)",
+            arrayOf<Any?>(SpendingExclusionReason.INSTALLMENT_REVERSED.name, "REVERSED")
+        )
+        log("Cleared $clearedReversed orphan installment reversed flags")
     }
 
     private fun importExpenseGroups(db: SupportSQLiteDatabase, groups: List<RescueExpenseGroup>) {
