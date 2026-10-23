@@ -7,6 +7,7 @@ import android.content.ContextWrapper
 import android.content.Intent
 import androidx.test.core.app.ApplicationProvider
 import com.yourname.expensetracker.ui.MainActivity
+import com.yourname.expensetracker.domain.notification.presentation.NotificationKind
 import com.yourname.expensetracker.domain.notification.presentation.NotificationPresentationResolver
 import com.yourname.expensetracker.domain.privacy.applock.AppLockPrivacySettings
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsLoadState
@@ -22,6 +23,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Before
@@ -43,12 +45,13 @@ class AndroidNotificationServiceTest {
     }
 
     @Test
-    fun `sendAiBriefingReady returns not delivered when notifications are disabled`() {
+    fun `sendAiBriefingReadyForKind returns not delivered when notifications are disabled`() = runTest {
         every { notificationManager.areNotificationsEnabled() } returns false
 
         val service = newService(testContext())
 
-        val result = service.sendAiBriefingReadyWithResult(
+        val result = service.sendAiBriefingReadyForKind(
+            kind = NotificationKind.BRIEFING,
             notificationId = 42,
             title = "Your AI briefing is ready",
             message = "Spending is calm today.",
@@ -60,12 +63,13 @@ class AndroidNotificationServiceTest {
     }
 
     @Test
-    fun `sendAiBriefingReady returns delivered after dispatch`() {
+    fun `sendAiBriefingReadyForKind returns delivered after dispatch`() = runTest {
         every { notificationManager.areNotificationsEnabled() } returns true
 
         val service = newService(testContext())
 
-        val result = service.sendAiBriefingReadyWithResult(
+        val result = service.sendAiBriefingReadyForKind(
+            kind = NotificationKind.BRIEFING,
             notificationId = 42,
             title = "Your AI briefing is ready",
             message = "Spending is calm today.",
@@ -77,12 +81,13 @@ class AndroidNotificationServiceTest {
     }
 
     @Test
-    fun `S5b legacy sendAiBriefingReadyWithResult hands the manager a private notification with a generic public version`() {
+    fun `S9a sendAiBriefingReadyForKind hands the manager a private notification with a generic public version and the kind marker`() = runTest {
         every { notificationManager.areNotificationsEnabled() } returns true
         val captured = slot<Notification>()
         every { notificationManager.notify(42, capture(captured)) } returns Unit
 
-        newService(testContext()).sendAiBriefingReadyWithResult(
+        newService(testContext()).sendAiBriefingReadyForKind(
+            kind = NotificationKind.BRIEFING,
             notificationId = 42,
             title = "Your AI briefing is ready",
             message = "Spending is calm today.",
@@ -95,16 +100,17 @@ class AndroidNotificationServiceTest {
         assertEquals("Your AI briefing is ready", posted.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString())
         assertEquals(generic.title, posted.publicVersion?.extras?.getCharSequence(Notification.EXTRA_TITLE)?.toString())
         assertEquals(generic.text, posted.publicVersion?.extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString())
-        assertNull(NotificationKindMarker.read(posted))
+        assertEquals(NotificationKind.BRIEFING.stableToken, NotificationKindMarker.read(posted))
+        assertNull(NotificationKindMarker.read(posted.publicVersion))
     }
 
     @Test
-    fun `S5b legacy sendBudgetAlert hands the manager an explicit MainActivity tap target`() {
+    fun `S9a sendBudgetAlertForKind hands the manager an explicit MainActivity tap target`() = runTest {
         every { notificationManager.areNotificationsEnabled() } returns true
         val captured = slot<Notification>()
         every { notificationManager.notify(7, capture(captured)) } returns Unit
 
-        newService(testContext()).sendBudgetAlert(7, "Budget title", "Budget message")
+        newService(testContext()).sendBudgetAlertForKind(NotificationKind.BUDGET, 7, "Budget title", "Budget message")
 
         val intent = shadowOf(captured.captured.contentIntent).savedIntent
         assertEquals(MainActivity::class.java.name, intent.component?.className)
@@ -112,7 +118,7 @@ class AndroidNotificationServiceTest {
         assertEquals("expensetracker://home", intent.dataString)
     }
 
-    /** Fake settings store (same shape as the S4 resolver test fake); the legacy methods never read it. */
+    /** Fake settings store (same shape as the S4 resolver test fake): FULL mode, so the supplied text is shown. */
     private class FakeSettingsRepository : AppLockSettingsRepository {
         override suspend fun getLoadState(): AppLockSettingsLoadState =
             AppLockSettingsLoadState.Loaded(AppLockPrivacySettings(discreetNotifications = false))

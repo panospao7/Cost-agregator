@@ -515,120 +515,97 @@ class NotificationPresentationApplierTest {
         assertTrue((n.flags and Notification.FLAG_AUTO_CANCEL) != 0)
     }
 
-    // --- hardenLegacy (S5b) ---------------------------------------------------------------------------------
+    // --- S9a: the former hardenLegacy tests, migrated onto apply ----------------------------------------------
+    // hardenLegacy is gone with the kind-less methods. Its visibility, public-version, marker and builder-contract
+    // assertions are now made against apply(); the equivalents that are not already covered above follow.
 
-    private val legacyContentIntent: PendingIntent by lazy { pendingIntent(77) }
+    private val callerContentIntent: PendingIntent by lazy { pendingIntent(77) }
 
-    /** A builder shaped like the legacy methods: own title, text, BigText, tap target, no visibility. */
-    private fun legacyBuilder(withAction: Boolean = false): NotificationCompat.Builder =
+    /** A builder shaped like the production callers: own tap target and category, no visibility. */
+    private fun callerBuilderWithTapTarget(): NotificationCompat.Builder =
         callerBuilder()
-            .setContentTitle(LEGACY_TITLE)
-            .setContentText(LEGACY_TEXT)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(LEGACY_TEXT))
-            .setContentIntent(legacyContentIntent)
+            .setContentIntent(callerContentIntent)
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
-            .apply {
-                if (withAction) addAction(android.R.drawable.ic_menu_agenda, "Pre-existing", pendingIntent(78))
-            }
 
-    private fun hardened(builder: NotificationCompat.Builder = legacyBuilder()): Notification =
-        applier.hardenLegacy(builder, CHANNEL_ID, android.R.drawable.ic_dialog_info).build()
+    private fun applyTo(builder: NotificationCompat.Builder, decision: NotificationPresentationDecision): Notification =
+        applier.apply(
+            builder = builder,
+            decision = decision,
+            channelId = CHANNEL_ID,
+            smallIcon = android.R.drawable.ic_dialog_info,
+            detailedTitle = SENTINEL_TITLE,
+            detailedText = SENTINEL_TEXT
+        ).build()
 
     @Test
-    fun `INV-7 hardenLegacy sets private visibility and never public even over a public caller setting`() {
-        val callerPublic = legacyBuilder().setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-        // Control: without hardenLegacy the caller's PUBLIC setting stands, so the PRIVATE below is the applier's doing.
-        assertEquals(Notification.VISIBILITY_PUBLIC, callerPublic.build().visibility)
+    fun `INV-7 apply sets private visibility and never public even over a public caller setting`() {
+        for (mode in NotificationPresentationMode.entries) {
+            val callerPublic = callerBuilderWithTapTarget().setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            // Control: without apply the caller's PUBLIC setting stands, so the PRIVATE below is the applier's doing.
+            assertEquals(Notification.VISIBILITY_PUBLIC, callerPublic.build().visibility)
 
-        val n = hardened(callerPublic)
+            val n = applyTo(callerPublic, decision(NotificationKind.BUDGET, mode))
 
-        assertEquals(Notification.VISIBILITY_PRIVATE, n.visibility)
-        assertNotEquals(Notification.VISIBILITY_PUBLIC, n.visibility)
+            assertEquals("$mode", Notification.VISIBILITY_PRIVATE, n.visibility)
+            assertNotEquals("$mode", Notification.VISIBILITY_PUBLIC, n.visibility)
+        }
     }
 
     @Test
-    fun `control a legacy builder without hardenLegacy has no public version`() {
-        val n = legacyBuilder().build()
+    fun `control a caller builder without apply has no public version`() {
+        val n = callerBuilderWithTapTarget().build()
 
         assertNull(n.publicVersion)
     }
 
     @Test
-    fun `INV-7 hardenLegacy attaches the generic public version with no actions style marker or content intent`() {
+    fun `INV-7 apply with a pre-existing caller action keeps no action on the public version and no leak of the detailed text`() {
         val generic = texts.genericPublic()
-        val n = hardened(legacyBuilder(withAction = true))
-        val pub = n.publicVersion
+        val builder = callerBuilderWithTapTarget().addAction(android.R.drawable.ic_menu_agenda, "Pre-existing", pendingIntent(78))
+        val pub = applyTo(builder, decision(NotificationKind.BUDGET, NotificationPresentationMode.FULL)).publicVersion
 
         assertNotNull(pub)
         assertEquals(generic.title, pub!!.titleText())
         assertEquals(generic.text, pub.contentText())
         assertTrue(pub.actions == null || pub.actions.isEmpty())
-        assertNull(pub.extras.getString(Notification.EXTRA_TEMPLATE))
-        assertNull(pub.extras.getCharSequence(Notification.EXTRA_BIG_TEXT))
-        assertNull(NotificationKindMarker.read(pub))
-        assertFalse(pub.extras.containsKey(NotificationKindMarker.EXTRA_KEY))
         assertNull(pub.contentIntent)
         assertNull(pub.tickerText)
-        assertFalse(LEGACY_PUBLIC_CHECK, everyString(pub).any { it.contains(LEGACY_TITLE) || it.contains(LEGACY_TEXT) })
+        assertNoSentinel(pub, "public version")
     }
 
     @Test
-    fun `AE-121 hardenLegacy stamps no kind marker`() {
-        val n = hardened()
+    fun `INV-7 apply leaves the callers tap target category and channel as built in both modes`() {
+        for (mode in NotificationPresentationMode.entries) {
+            val n = applyTo(callerBuilderWithTapTarget(), decision(NotificationKind.BUDGET, mode))
 
-        assertNull(NotificationKindMarker.read(n))
-        assertFalse(n.extras.containsKey(NotificationKindMarker.EXTRA_KEY))
+            assertTrue("$mode", n.contentIntent === callerContentIntent)
+            assertEquals("$mode", CHANNEL_ID, n.channelId)
+            assertEquals("$mode", NotificationCompat.CATEGORY_REMINDER, n.category)
+        }
     }
 
     @Test
-    fun `INV-7 hardenLegacy adds no action and keeps the callers own`() {
-        val none = hardened(legacyBuilder(withAction = false))
-        val one = hardened(legacyBuilder(withAction = true))
+    fun `INV-7 apply adds no action of its own when no specs are supplied`() {
+        val n = applyTo(callerBuilderWithTapTarget(), decision(NotificationKind.BUDGET, NotificationPresentationMode.FULL))
 
-        assertTrue(none.actions == null || none.actions.isEmpty())
-        assertEquals(listOf("Pre-existing"), actionTitles(one))
-    }
-
-    @Test
-    fun `INV-7 hardenLegacy leaves the visible title text style and tap target as built`() {
-        val n = hardened()
-
-        assertEquals(LEGACY_TITLE, n.titleText())
-        assertEquals(LEGACY_TEXT, n.contentText())
-        assertEquals(LEGACY_TEXT, n.extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString())
-        assertTrue(n.extras.getString(Notification.EXTRA_TEMPLATE)!!.contains("BigTextStyle"))
-        assertTrue(n.contentIntent === legacyContentIntent)
-        assertEquals(CHANNEL_ID, n.channelId)
-        assertEquals(NotificationCompat.CATEGORY_REMINDER, n.category)
-    }
-
-    @Test
-    fun `INV-4 hardenLegacy returns the same builder it was given`() {
-        val builder = legacyBuilder()
-
-        val returned = applier.hardenLegacy(builder, CHANNEL_ID, android.R.drawable.ic_dialog_info)
-
-        assertTrue(returned === builder)
+        assertTrue(n.actions == null || n.actions.isEmpty())
     }
 
     @Test
     @Config(sdk = [26])
-    fun `INV-7 hardenLegacy also holds on sdk 26`() {
-        val n = hardened()
+    fun `INV-7 apply also holds on sdk 26 with private visibility the generic public version and the marker`() {
+        val n = applyTo(callerBuilderWithTapTarget(), decision(NotificationKind.BUDGET, NotificationPresentationMode.FULL))
 
         assertEquals(Notification.VISIBILITY_PRIVATE, n.visibility)
         assertEquals(texts.genericPublic().title, n.publicVersion!!.titleText())
-        assertNull(NotificationKindMarker.read(n))
-        assertEquals(LEGACY_TITLE, n.titleText())
+        assertEquals("BUDGET", NotificationKindMarker.read(n))
+        assertEquals(SENTINEL_TITLE, n.titleText())
     }
 
     private companion object {
         const val CHANNEL_ID = "applier_test_channel"
         const val SENTINEL_TITLE = "Lidl 4242 John"
         const val SENTINEL_TEXT = "Lidl 4242 John spent 42.50 EUR"
-        const val LEGACY_TITLE = "Legacy budget exceeded"
-        const val LEGACY_TEXT = "Legacy detail for Groceries: 120 of 100"
-        const val LEGACY_PUBLIC_CHECK = "the public version must not repeat the legacy title or text"
         val SENTINELS = listOf("Lidl", "4242", "John", "42.50")
 
         /** Three distinct existing string resources used as action titles (resolved by the applier). */

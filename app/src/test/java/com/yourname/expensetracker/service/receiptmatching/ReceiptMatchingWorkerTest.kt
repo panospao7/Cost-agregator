@@ -786,8 +786,8 @@ class ReceiptMatchingWorkerTest {
         coVerify(exactly = 0) {
             notificationService.postBudgetAlertForKind(NotificationKind.BUDGET, any(), any(), any())
         }
-        verify(exactly = 0) { notificationService.postBudgetAlert(any(), any(), any()) }
-        verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        // S9a: the legacy kind-less methods no longer exist; the raw-id kind-aware form is the other path.
+        coVerify(exactly = 0) { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) }
     }
 
     @Test

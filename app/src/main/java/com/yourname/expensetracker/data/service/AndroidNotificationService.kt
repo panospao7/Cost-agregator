@@ -69,110 +69,10 @@ class AndroidNotificationService @Inject constructor(
         notificationManager.createNotificationChannels(listOf(budgetChannel, aiChannel, anomalyChannel))
     }
 
-    override fun sendBudgetAlert(
-        notificationId: Int,
-        title: String,
-        message: String
-    ): NotificationService.DeliveryResult {
-        if (!notificationManager.areNotificationsEnabled()) {
-            return NotificationService.DeliveryResult.NOT_DELIVERED
-        }
-
-        val builder = NotificationCompat.Builder(context, BUDGET_CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_dialog_alert)
-            .setContentTitle(title)
-            .setContentText(message)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setAutoCancel(true)
-            .setContentIntent(homeTapIntent())
-            .setCategory(NotificationCompat.CATEGORY_REMINDER)
-        val notification = presentationApplier.hardenLegacy(
-            builder = builder,
-            channelId = BUDGET_CHANNEL_ID,
-            smallIcon = android.R.drawable.ic_dialog_alert
-        ).build()
-
-        notificationManager.notify(notificationId, notification)
-        return NotificationService.DeliveryResult.DELIVERED
-    }
-
-    override fun sendAiBriefingReady(
-        notificationId: Int,
-        title: String,
-        message: String,
-        targetKey: String
-    ) {
-        sendAiBriefingReadyWithResult(
-            notificationId = notificationId,
-            title = title,
-            message = message,
-            targetKey = targetKey
-        )
-    }
-
-    override fun sendAiBriefingReadyWithResult(
-        notificationId: Int,
-        title: String,
-        message: String,
-        targetKey: String
-    ): NotificationService.DeliveryResult {
-        if (!notificationManager.areNotificationsEnabled()) {
-            return NotificationService.DeliveryResult.NOT_DELIVERED
-        }
-
-        val builder = NotificationCompat.Builder(context, AI_CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setContentTitle(title)
-            .setContentText(message)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(message))
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .setAutoCancel(true)
-            .setContentIntent(briefingTapIntent(notificationId, targetKey))
-            .setCategory(NotificationCompat.CATEGORY_REMINDER)
-        val notification = presentationApplier.hardenLegacy(
-            builder = builder,
-            channelId = AI_CHANNEL_ID,
-            smallIcon = android.R.drawable.ic_dialog_info
-        ).build()
-
-        notificationManager.notify(notificationId, notification)
-        return NotificationService.DeliveryResult.DELIVERED
-    }
-
-    override fun sendAnomalyAlert(
-        notificationId: Int,
-        title: String,
-        message: String,
-        expenseId: Long
-    ) {
-        if (!notificationManager.areNotificationsEnabled()) {
-            return
-        }
-
-        val builder = NotificationCompat.Builder(context, ANOMALY_CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_dialog_alert)
-            .setContentTitle(title)
-            .setContentText(message)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(message))
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setAutoCancel(true)
-            .setContentIntent(anomalyTapIntent(notificationId, expenseId))
-            .setCategory(NotificationCompat.CATEGORY_ALARM)
-        val notification = presentationApplier.hardenLegacy(
-            builder = builder,
-            channelId = ANOMALY_CHANNEL_ID,
-            smallIcon = android.R.drawable.ic_dialog_alert
-        ).build()
-
-        notificationManager.notify(notificationId, notification)
-    }
-
     // ── Kind-aware methods (S5a: TECH-2 option a, TECH-9, TECH-12) ────────────────────────────────
-    // resolve(kind) -> build -> NotificationPresentationApplier -> notify. The legacy methods above keep
-    // their visible text and behaviour; S5b only hardens them (private visibility, generic public version,
-    // no marker) and moves them onto the same tap-intent builders below. A SecurityException from
-    // notify() is returned as PERMISSION_DENIED; every other exception, including
-    // CancellationException, propagates to the caller.
+    // resolve(kind) -> build -> NotificationPresentationApplier -> notify. These are the only posting
+    // methods (S9a removed the kind-less legacy forms). A SecurityException from notify() is returned as
+    // PERMISSION_DENIED; every other exception, including CancellationException, propagates to the caller.
 
     override suspend fun sendBudgetAlertForKind(
         kind: NotificationKind,
@@ -231,8 +131,8 @@ class AndroidNotificationService @Inject constructor(
         )
 
     /**
-     * The one post path for every kind-aware method. The enabled check comes first, as in the legacy
-     * methods, so a disabled app never reads the settings. The decision is resolved once per post
+     * The one post path for every kind-aware method. The enabled check comes first, so a disabled app
+     * never reads the settings. The decision is resolved once per post
      * (bounded, fail-closed to DISCREET inside the resolver) and applied by the shared applier. The log
      * line carries the kind token and exception class only, never notification text.
      */
@@ -277,9 +177,8 @@ class AndroidNotificationService @Inject constructor(
         }
     }
 
-    // Explicit-component tap targets (TECH-6), shared by the legacy and kind-aware paths: one builder
-    // per target, same data URI, flags, request codes and FLAG_IMMUTABLE as before; ACTION_VIEW kept so
-    // DeepLinkPolicy accepts the tap.
+    // Explicit-component tap targets (TECH-6): one builder per target, same data URI, flags, request
+    // codes and FLAG_IMMUTABLE as before; ACTION_VIEW kept so DeepLinkPolicy accepts the tap.
 
     private fun homeTapIntent(): PendingIntent {
         val intent = Intent(context, MainActivity::class.java).apply {

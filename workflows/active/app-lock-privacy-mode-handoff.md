@@ -308,3 +308,44 @@ Next: S9 (needs the CHANNEL_ID import ruling).
 ## S8 DONE (2026-10-23)
 - Post-fix validation: targeted *BillReminderWorker* (SDK 26/28/29/30/31/34 matrix) vr-20261023-174351-c574eee3 PASS. Pre-fix runs (runtime-ui, worker, cancellation, pii_logging) listed above; review fixes were test/doc-only.
 Next: S9 (discreet re-post sweep + write use case; remove legacy kind-less methods). The S9 architecture gate must check the classifier imports only BillReminderWorker.CHANNEL_ID.
+
+## S9a (2026-10-23) — implemented (validation pending)
+Scope: remove the legacy kind-less send*/post* methods and migrate their tests. S9b (classifier, sweep, trigger) NOT started.
+
+Removed from `domain/service/NotificationService.kt` and `data/service/AndroidNotificationService.kt`:
+- `sendBudgetAlert`, `postBudgetAlert`, `sendAiBriefingReady`, `sendAiBriefingReadyWithResult`, `postAiBriefingReady`, `sendAnomalyAlert`, `postAnomalyAlert` (kind-less forms). Only the `*ForKind` methods remain (INV-12: no kind-less method exists).
+- Removed helpers: `NotificationPresentationApplier.hardenLegacy` and the legacy-only post path in `AndroidNotificationService`. No production caller of any removed name remains in app/src/main (grep of main, test, androidTest).
+
+Migrated tests (old -> new, no assertion dropped without an equivalent):
+| Old | New |
+|---|---|
+| AndroidNotificationServiceTest: sendAiBriefingReady returns not delivered when notifications are disabled | sendAiBriefingReadyForKind ... (kind BRIEFING, runTest) |
+| AndroidNotificationServiceTest: sendAiBriefingReady returns delivered after dispatch | sendAiBriefingReadyForKind returns delivered after dispatch |
+| AndroidNotificationServiceTest: S5b legacy sendAiBriefingReadyWithResult private + generic public version (asserted no marker) | S9a sendAiBriefingReadyForKind ... and the kind marker (marker now equals BRIEFING token, absent on the public version) |
+| AndroidNotificationServiceTest: S5b legacy sendBudgetAlert explicit MainActivity tap target | S9a sendBudgetAlertForKind explicit MainActivity tap target |
+| PresentationTest: LEGACY_POST_CASES / LegacyPostCase / postLegacyAndRead fixtures | removed (POST_CASES already covers every kind) |
+| PresentationTest: AE-32 briefing data string, both paths | kind-aware FULL and DISCREET |
+| PresentationTest: AE-32 legacy tap intents explicit / accepted by DeepLinkPolicy | covered by the existing kind-aware tests (all 5 kinds x FULL/DISCREET); legacy copies were duplicates |
+| PresentationTest: AE-32 control legacy cases cover flags (4 cases) | control kind cases cover flags (5 cases) |
+| PresentationTest: INV-7 legacy PRIVATE and never PUBLIC | INV-7 kind-aware PRIVATE and never PUBLIC, FULL and DISCREET |
+| PresentationTest: INV-7 legacy generic public version, no actions/style/marker/content intent | INV-7 public version has no ticker/action/style/marker/content intent, FULL and DISCREET |
+| PresentationTest: AE-121 legacy carries no kind marker | AE-121 each kind carries only its own token and no other kind token |
+| PresentationTest: INV-7 legacy visible title/text/BigText as supplied | INV-7 FULL visible title/text/BigText as supplied (BigText only for BRIEFING and ANOMALY) |
+| PresentationTest: INV-7 control legacy FULL text vs kind-aware DISCREET public version | control FULL vs DISCREET same kind, same public version |
+| PresentationTest: legacy sendBudgetAlert / sendAiBriefingReadyWithResult / sendAiBriefingReady / sendAnomalyAlert posts supplied text, no marker, never reads settings | FULL posts the supplied text with the kind marker and reads the settings exactly once, every kind (the "never reads the settings" and "no marker" properties belong to the removed methods) |
+| NotificationPresentationApplierTest: 7 hardenLegacy tests (+ control) | apply-based: private over caller PUBLIC (both modes, with control), control builder without apply has no public version, public version of a builder with a pre-existing action, caller tap target/category/channel kept, no action when no specs, sdk 26 holds. "returns same builder" and "stamps no marker" are already covered by apply tests (INV-4, AE-112) |
+| WarrantyExpirationWorkerTest, ReceiptMatchingWorkerTest, NotificationIdGeneratorTest | partially migrated by the first S9a attempt; legacy-method verify(exactly = 0) lines replaced by verifies on the other ForKind form |
+
+Removed "never legacy" verifies: the verify(exactly = 0) lines on the removed legacy methods in the worker tests (the methods no longer exist; the other-ForKind-form verify remains).
+Test fixture note: `SourceScanningArchitectureGuardTest` keeps the text `sendBudgetAlert` inside a negative-fixture source string and in the scanner's contains check (line ~147); it is data, not a call. Left unchanged (guard files are out of S9a scope); S9b/architecture gate may decide whether the scanner token needs `sendBudgetAlertForKind`.
+
+Cross-lane (see build/release-lead-notes/lanes-board.md CROSS-LANE): the ai-fixes branch still calls the legacy methods (for example the briefing use case). Whichever lane lands second must use the `*ForKind` forms (`sendAiBriefingReadyForKind` with kind BRIEFING).
+Validation requested: targeted *AndroidNotificationService*, *NotificationPresentationApplier*, *WarrantyExpirationWorker*, *ReceiptMatchingWorker*, NotificationIdGeneratorTest, compile of main + test + androidTest.
+
+## S9a DONE (2026-10-23)
+- Validation: targeted (*AndroidNotificationService*, applier, warranty/receipt/bill workers, NotificationIdGenerator, briefing use case, BudgetMonitor, BudgetAlertPipeline, AnomalyAlert, SourceScanning) vr-20261023-185650-29c58b86 PASS; cancellation vr-20261023-190254-51abe6a1 PASS; data vr-20261023-190309-de79b4b5 PASS; domain-n-z vr-20261023-190656-efcf3b2f PASS.
+- Reviews: reviewer-strict ACCEPT-WITH-MINORS (verified row by row that every removed legacy test/assertion is covered by a cited kind-aware test or is obsolete with the removed API; nothing to restore); architecture-guardian ACCEPT-WITH-MINORS. privacy-security-guardian (S9 lead) runs on S9b (classifier/sweep), where the privacy surface is; S9a is pure API removal.
+- S9b carry-forwards: rename ReceiptMatchingWorkerTest ~:764 / WarrantyExpirationWorkerTest ~:326 "never the legacy or BUDGET path" → "never BUDGET or the other ForKind form"; ReceiptMatchingWorkerTest ~:438/:470 comments "sendBudgetAlert throws" → postBudgetAlertForKind.
+- S13 docs carry-forwards: LEGAL_PATHS ~:1075 "NotificationService.send()" → postAnomalyAlertForKind(ANOMALY, …); add a notification-posting legal-path entry (kind-aware methods only, INV-12; NotificationPresentationApplier shared presentation owner; exactly two builder owners: AndroidNotificationService.postForKind and BillReminderWorker); ENGINE_INTERACTION_MAP ~:129-133 add NotificationService/applier rows; CODEBASE_SEGMENTS / CODEBASE_INVENTORY list NotificationPresentationApplier/Resolver/NotificationKind.
+- Cross-lane: see lanes-board (expanded list of ai-fixes legacy call sites; B3a requirement).
+Next: S9b (NotificationKindClassifier, repost sweep, DiscreetRepostTrigger, UpdateDiscreetNotificationsUseCase).

@@ -347,7 +347,8 @@ class WarrantyExpirationWorkerTest {
         coVerify(exactly = 0) {
             notificationService.sendBudgetAlertForKind(NotificationKind.BUDGET, any(), any(), any())
         }
-        verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        // S9a: the legacy kind-less method no longer exists; the typed-id kind-aware form is the other path.
+        coVerify(exactly = 0) { notificationService.postBudgetAlertForKind(any(), any(), any(), any()) }
     }
 
     @Test

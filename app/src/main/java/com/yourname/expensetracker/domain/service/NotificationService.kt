@@ -17,83 +17,10 @@ interface NotificationService {
         PERMISSION_DENIED
     }
 
-    fun sendBudgetAlert(
-        notificationId: Int,
-        title: String,
-        message: String
-    ): DeliveryResult
-
-    fun sendAiBriefingReady(
-        notificationId: Int,
-        title: String,
-        message: String,
-        targetKey: String
-    )
-
-    fun sendAiBriefingReadyWithResult(
-        notificationId: Int,
-        title: String,
-        message: String,
-        targetKey: String
-    ): DeliveryResult {
-        sendAiBriefingReady(
-            notificationId = notificationId,
-            title = title,
-            message = message,
-            targetKey = targetKey
-        )
-        return DeliveryResult.DELIVERED
-    }
-
-    /**
-     * Send an anomaly alert notification for unusual charges.
-     *
-     * @param notificationId Unique ID for the notification
-     * @param title Notification title
-     * @param message Notification message describing the anomaly
-     * @param expenseId The expense ID for deep linking to transaction detail
-     */
-    fun sendAnomalyAlert(
-        notificationId: Int,
-        title: String,
-        message: String,
-        expenseId: Long
-    )
-
-    // ── RP-16 16-A: typed allocation boundary ────────────────────────────
-    // Kind-specific posting helpers: these accept [NotificationId], whose value
-    // can only originate from NotificationIdGenerator, so raw Int IDs cannot be
-    // posted through this path. Distinct names (post*) keep the mediated path
-    // unambiguous against the legacy Int-based methods.
-
-    fun postBudgetAlert(
-        notificationId: NotificationId,
-        title: String,
-        message: String
-    ): DeliveryResult = sendBudgetAlert(notificationId.value, title, message)
-
-    fun postAiBriefingReady(
-        notificationId: NotificationId,
-        title: String,
-        message: String,
-        targetKey: String
-    ) = sendAiBriefingReady(notificationId.value, title, message, targetKey)
-
-    fun postAiBriefingReadyWithResult(
-        notificationId: NotificationId,
-        title: String,
-        message: String,
-        targetKey: String
-    ): DeliveryResult = sendAiBriefingReadyWithResult(notificationId.value, title, message, targetKey)
-
-    fun postAnomalyAlert(
-        notificationId: NotificationId,
-        title: String,
-        message: String,
-        expenseId: Long
-    ) = sendAnomalyAlert(notificationId.value, title, message, expenseId)
-
     // ── Kind-aware methods (TECH-2 option a, INV-4, INV-12) ──────────────
+    // These are the only posting API (INV-12: no kind-less method exists; S9a removed the legacy
+    // send*/post* forms). The typed-id forms accept [NotificationId], whose value can only originate
+    // from NotificationIdGenerator (RP-16 16-A), so raw Int ids cannot be posted through that path.
     // The caller declares exactly one NotificationKind plus its detailed text. The implementation
     // resolves the presentation decision once per post (bounded, fail-closed to DISCREET), applies it
     // through the shared presentation applier, and posts. The caller still decides whether and when to
@@ -127,7 +54,7 @@ interface NotificationService {
         targetKey: String
     ): DeliveryResult
 
-    /** Anomaly-channel alert (kind ANOMALY). Raw-id form; returns the outcome the legacy form dropped. */
+    /** Anomaly-channel alert (kind ANOMALY). Raw-id caller form. */
     suspend fun sendAnomalyAlertForKind(
         kind: NotificationKind,
         notificationId: Int,

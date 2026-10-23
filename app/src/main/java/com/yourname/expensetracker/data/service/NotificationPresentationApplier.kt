@@ -90,22 +90,7 @@ class NotificationPresentationApplier @Inject constructor(
         return NotificationKindMarker.stamp(builder, decision.kind)
     }
 
-    /**
-     * Hardens a notification built by a legacy kind-less method (S5b): `VISIBILITY_PRIVATE` plus the same
-     * generic public version as [apply]. Nothing else changes: the caller's title, text, style and tap
-     * target stay as built, no actions are added, and NO kind marker is stamped (legacy posts have no
-     * kind; the re-post sweep's fallback classifies them). Removed together with the legacy methods (S9).
-     */
-    fun hardenLegacy(
-        builder: NotificationCompat.Builder,
-        channelId: String,
-        @DrawableRes smallIcon: Int
-    ): NotificationCompat.Builder {
-        applyPrivateFrame(builder, channelId, smallIcon)
-        return builder
-    }
-
-    /** PRIVATE visibility and the generic public version: the part of the rule shared by [apply] and [hardenLegacy]. */
+    /** PRIVATE visibility and the generic public version. */
     private fun applyPrivateFrame(
         builder: NotificationCompat.Builder,
         channelId: String,

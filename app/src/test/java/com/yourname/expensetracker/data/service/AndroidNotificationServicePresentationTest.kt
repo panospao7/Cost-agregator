@@ -24,8 +24,6 @@ import com.yourname.expensetracker.domain.service.NotificationService
 import com.yourname.expensetracker.data.service.PresentationFixtures.BRIEFING_DATA
 import com.yourname.expensetracker.data.service.PresentationFixtures.BRIEFING_KEY
 import com.yourname.expensetracker.data.service.PresentationFixtures.EXPENSE_ID
-import com.yourname.expensetracker.data.service.PresentationFixtures.LEGACY_POST_CASES
-import com.yourname.expensetracker.data.service.PresentationFixtures.LegacyPostCase
 import com.yourname.expensetracker.data.service.PresentationFixtures.POST_CASES
 import com.yourname.expensetracker.data.service.PresentationFixtures.PostCase
 import com.yourname.expensetracker.data.service.PresentationFixtures.SENTINELS
@@ -70,7 +68,7 @@ import kotlin.time.Duration.Companion.seconds
  * test doubles. A merchant sentinel is the only caller PII.
  *
  * The matrix tests live in [AndroidNotificationServicePresentationContract] and run once per supported
- * SDK level through the subclasses below. SDK independent tests (disabled, C6, legacy) run once, in
+ * SDK level through the subclasses below. SDK independent tests (disabled, C6, FULL text) run once, in
  * [AndroidNotificationServicePresentationTest].
  */
 
@@ -114,24 +112,6 @@ object PresentationFixtures {
         /** The PendingIntent request code expected for a given notification id: 0 for home, the id otherwise. */
         val expectedRequestCode: (Int) -> Int,
         val post: suspend (NotificationService, Int, String, String) -> NotificationService.DeliveryResult
-    ) {
-        override fun toString(): String = label
-    }
-
-    /**
-     * One legacy kind-less method with the tap target it must produce. [post] returns the delivery result
-     * for the methods that have one and null for the two that return Unit. [hasBigText] is true where the
-     * legacy builder sets a BigTextStyle (briefing and anomaly), which hardening must leave as built.
-     */
-    class LegacyPostCase(
-        val label: String,
-        val expectedData: String,
-        val expectedIntentFlags: Int,
-        val expectedRequest: DeepLinkRequest,
-        /** The PendingIntent request code expected for a given notification id: 0 for home, the id otherwise. */
-        val expectedRequestCode: (Int) -> Int,
-        val hasBigText: Boolean,
-        val post: (NotificationService, Int, String, String) -> NotificationService.DeliveryResult?
     ) {
         override fun toString(): String = label
     }
@@ -216,31 +196,6 @@ object PresentationFixtures {
             s.sendAiBriefingReadyForKind(NotificationKind.BRIEFING, id, t, m, BRIEFING_KEY)
         }
     )
-
-    /** The four legacy kind-less methods, in the form the production callers still use them (S5b). */
-    val LEGACY_POST_CASES: List<LegacyPostCase> = listOf(
-        LegacyPostCase("sendBudgetAlert", "expensetracker://home", HOME_FLAGS, HOME_REQUEST, HOME_REQUEST_CODE, hasBigText = false) { s, id, t, m ->
-            s.sendBudgetAlert(id, t, m)
-        },
-        LegacyPostCase("sendAiBriefingReadyWithResult", BRIEFING_DATA, DEEP_LINK_FLAGS, BRIEFING_REQUEST, NOTIFICATION_ID_REQUEST_CODE, hasBigText = true) { s, id, t, m ->
-            s.sendAiBriefingReadyWithResult(id, t, m, BRIEFING_KEY)
-        },
-        LegacyPostCase("sendAiBriefingReady", BRIEFING_DATA, DEEP_LINK_FLAGS, BRIEFING_REQUEST, NOTIFICATION_ID_REQUEST_CODE, hasBigText = true) { s, id, t, m ->
-            s.sendAiBriefingReady(id, t, m, BRIEFING_KEY)
-            null
-        },
-        LegacyPostCase(
-            "sendAnomalyAlert",
-            "expensetracker://activity?expenseId=$EXPENSE_ID",
-            DEEP_LINK_FLAGS,
-            ANOMALY_REQUEST,
-            NOTIFICATION_ID_REQUEST_CODE,
-            hasBigText = true
-        ) { s, id, t, m ->
-            s.sendAnomalyAlert(id, t, m, EXPENSE_ID)
-            null
-        }
-    )
 }
 
 // --- the SDK independent contract -----------------------------------------------------------------
@@ -318,24 +273,6 @@ abstract class AndroidNotificationServicePresentationContract {
             result = case.post(service, id, title, message)
         }
         assertEquals("${case.label} $mode", NotificationService.DeliveryResult.DELIVERED, result)
-        return posted(id)
-    }
-
-    /**
-     * Posts [case] through a legacy kind-less method and returns what the platform now holds. The store is
-     * scripted DISCREET on purpose: a legacy post must not follow it.
-     */
-    protected fun postLegacyAndRead(
-        case: LegacyPostCase,
-        id: Int,
-        title: String = SENTINEL_TITLE,
-        message: String = SENTINEL_TEXT
-    ): StatusBarNotification {
-        val service = newService(appContext, repoFor(NotificationPresentationMode.DISCREET))
-        val result = case.post(service, id, title, message)
-        if (result != null) {
-            assertEquals(case.label, NotificationService.DeliveryResult.DELIVERED, result)
-        }
         return posted(id)
     }
 
@@ -651,17 +588,16 @@ abstract class AndroidNotificationServicePresentationContract {
     }
 
     @Test
-    fun `AE-32 the briefing data string is percent encoded and decodes to the briefing key for both paths`() {
-        val forKind = shadowOf(
-            postAndRead(POST_CASES.single { it.kind == NotificationKind.BRIEFING }, NotificationPresentationMode.FULL, 5400)
-                .notification.contentIntent
+    fun `AE-32 the briefing data string is percent encoded and decodes to the briefing key in FULL and DISCREET`() {
+        val briefing = POST_CASES.single { it.kind == NotificationKind.BRIEFING }
+        val full = shadowOf(
+            postAndRead(briefing, NotificationPresentationMode.FULL, 5400).notification.contentIntent
         ).savedIntent
-        val legacy = shadowOf(
-            postLegacyAndRead(LEGACY_POST_CASES.single { it.label == "sendAiBriefingReadyWithResult" }, 5401)
-                .notification.contentIntent
+        val discreet = shadowOf(
+            postAndRead(briefing, NotificationPresentationMode.DISCREET, 5401).notification.contentIntent
         ).savedIntent
 
-        listOf("kind-aware" to forKind, "legacy" to legacy).forEach { (path, intent) ->
+        listOf("FULL" to full, "DISCREET" to discreet).forEach { (path, intent) ->
             val label = "$path sdk=$expectedSdk"
             assertEquals(label, BRIEFING_DATA, intent.dataString)
             assertFalse("$label the raw ':' of the key must be encoded", intent.dataString!!.contains("dashboard_home:"))
@@ -687,145 +623,113 @@ abstract class AndroidNotificationServicePresentationContract {
         assertNull((result as DeepLinkPolicyResult.Accepted).request.briefingKey)
     }
 
-    // --- AE-32 legacy tap intents (S5b) -------------------------------------------------------------------------
+    // --- S9a: the former legacy tap-intent and hardening tests, migrated onto the kind-aware methods -----------------
+    // The kind-aware matrix above already asserts the tap intent shape and DeepLinkPolicy acceptance for every
+    // kind in FULL and DISCREET (the legacy copies were duplicates of it), so only the unique intents remain.
 
     @Test
-    fun `AE-32 legacy tap intents are explicit to MainActivity with ACTION_VIEW the expected data flags and FLAG_IMMUTABLE`() {
-        var id = 5500
-        for (case in LEGACY_POST_CASES) {
-            val label = "${case.label} sdk=$expectedSdk"
-            val notificationId = id++
-            val pending = postLegacyAndRead(case, notificationId).notification.contentIntent
-            assertNotNull(label, pending)
-
-            val shadow = shadowOf(pending)
-            val intent = shadow.savedIntent
-
-            assertEquals("$label PendingIntent request code", case.expectedRequestCode(notificationId), shadow.requestCode)
-
-            assertTrue(label, shadow.isActivityIntent)
-            assertNotNull("$label component (explicit intent)", intent.component)
-            assertEquals(label, MainActivity::class.java.name, intent.component!!.className)
-            assertEquals(label, appContext.packageName, intent.component!!.packageName)
-            assertEquals(label, Intent.ACTION_VIEW, intent.action)
-            assertEquals(label, case.expectedData, intent.dataString)
-            assertEquals(label, case.expectedIntentFlags, intent.flags)
-            assertTrue("$label the tap intent carries no extras", intent.extras == null || intent.extras!!.isEmpty())
-            assertTrue("$label FLAG_IMMUTABLE", (shadow.flags and android.app.PendingIntent.FLAG_IMMUTABLE) != 0)
-        }
-    }
-
-    @Test
-    fun `AE-32 legacy tap intents are accepted by DeepLinkPolicy with the expected request`() {
-        var id = 5600
-        for (case in LEGACY_POST_CASES) {
-            val label = "${case.label} sdk=$expectedSdk"
-            val intent = shadowOf(postLegacyAndRead(case, id++).notification.contentIntent).savedIntent
-
-            assertAcceptedBy(label, intent, case.expectedRequest)
-        }
-    }
-
-    @Test
-    fun `AE-32 control the legacy cases cover home clear task and the two clear top targets`() {
+    fun `AE-32 control the kind cases cover home clear task and the two clear top targets`() {
         assertEquals(
             setOf(
                 Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK,
                 Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             ),
-            LEGACY_POST_CASES.map { it.expectedIntentFlags }.toSet()
+            POST_CASES.map { it.expectedIntentFlags }.toSet()
         )
-        assertEquals(4, LEGACY_POST_CASES.size)
-        assertEquals(4, LEGACY_POST_CASES.map { it.label }.toSet().size)
+        assertEquals(5, POST_CASES.size)
+        assertEquals(5, POST_CASES.map { it.label }.toSet().size)
     }
 
-    // --- S5b legacy hardening ------------------------------------------------------------------------------------
-
     @Test
-    fun `INV-7 legacy notifications are PRIVATE and never PUBLIC`() {
+    fun `INV-7 kind-aware notifications are PRIVATE and never PUBLIC in FULL and DISCREET`() {
         var id = 5700
-        for (case in LEGACY_POST_CASES) {
-            val label = "${case.label} sdk=$expectedSdk"
-            val n = postLegacyAndRead(case, id++).notification
+        for (case in POST_CASES) {
+            for (mode in NotificationPresentationMode.entries) {
+                val label = "${case.label} $mode sdk=$expectedSdk"
+                val n = postAndRead(case, mode, id++).notification
 
-            assertEquals(label, Notification.VISIBILITY_PRIVATE, n.visibility)
-            assertNotEquals(label, Notification.VISIBILITY_PUBLIC, n.visibility)
-        }
-    }
-
-    @Test
-    fun `INV-7 legacy notifications carry the generic public version with no actions style marker or content intent`() {
-        val generic = texts.genericPublic()
-        var id = 5800
-        for (case in LEGACY_POST_CASES) {
-            val label = "${case.label} sdk=$expectedSdk"
-            val pub = postLegacyAndRead(case, id++).notification.publicVersion
-
-            assertNotNull(label, pub)
-            assertEquals(label, generic.title, pub!!.titleText())
-            assertEquals(label, generic.text, pub.contentText())
-            assertNoSentinel(pub, "$label public")
-            assertNull(label, pub.extras.getCharSequence(Notification.EXTRA_BIG_TEXT))
-            assertNull(label, pub.extras.getString(Notification.EXTRA_TEMPLATE))
-            assertNull(label, pub.contentIntent)
-            assertNull(label, pub.tickerText)
-            assertTrue(label, pub.actions == null || pub.actions.isEmpty())
-            assertNull(label, NotificationKindMarker.read(pub))
-            assertFalse(label, pub.extras.containsKey(NotificationKindMarker.EXTRA_KEY))
-        }
-    }
-
-    @Test
-    fun `AE-121 legacy notifications carry no kind marker on the private or public notification`() {
-        var id = 5900
-        for (case in LEGACY_POST_CASES) {
-            val label = "${case.label} sdk=$expectedSdk"
-            val n = postLegacyAndRead(case, id++).notification
-
-            assertNull(label, NotificationKindMarker.read(n))
-            assertFalse(label, n.extras.containsKey(NotificationKindMarker.EXTRA_KEY))
-            NotificationKind.entries.forEach { kind ->
-                assertTrue(
-                    "$label token ${kind.stableToken} found on the legacy notification",
-                    keysHoldingToken(n.extras, kind.stableToken).isEmpty()
-                )
+                assertEquals(label, Notification.VISIBILITY_PRIVATE, n.visibility)
+                assertNotEquals(label, Notification.VISIBILITY_PUBLIC, n.visibility)
             }
         }
     }
 
     @Test
-    fun `INV-7 legacy visible title text and BigText stay exactly as supplied`() {
+    fun `INV-7 the public version has no ticker action style marker or content intent in FULL and DISCREET`() {
+        val generic = texts.genericPublic()
+        var id = 5800
+        for (case in POST_CASES) {
+            for (mode in NotificationPresentationMode.entries) {
+                val label = "${case.label} $mode sdk=$expectedSdk"
+                val pub = postAndRead(case, mode, id++).notification.publicVersion
+
+                assertNotNull(label, pub)
+                assertEquals(label, generic.title, pub!!.titleText())
+                assertEquals(label, generic.text, pub.contentText())
+                assertNoSentinel(pub, "$label public")
+                assertNull(label, pub.extras.getCharSequence(Notification.EXTRA_BIG_TEXT))
+                assertNull(label, pub.extras.getString(Notification.EXTRA_TEMPLATE))
+                assertNull(label, pub.contentIntent)
+                assertNull(label, pub.tickerText)
+                assertTrue(label, pub.actions == null || pub.actions.isEmpty())
+                assertNull(label, NotificationKindMarker.read(pub))
+                assertFalse(label, pub.extras.containsKey(NotificationKindMarker.EXTRA_KEY))
+            }
+        }
+    }
+
+    @Test
+    fun `AE-121 each kind-aware notification carries only its own kind token and no other kind token`() {
+        var id = 5900
+        for (case in POST_CASES) {
+            for (mode in NotificationPresentationMode.entries) {
+                val label = "${case.label} $mode sdk=$expectedSdk"
+                val n = postAndRead(case, mode, id++).notification
+
+                assertEquals(label, case.kind.stableToken, NotificationKindMarker.read(n))
+                NotificationKind.entries.filter { it != case.kind }.forEach { other ->
+                    assertTrue(
+                        "$label foreign token ${other.stableToken} found on the notification",
+                        keysHoldingToken(n.extras, other.stableToken).isEmpty()
+                    )
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `INV-7 FULL visible title text and BigText stay exactly as supplied with no actions`() {
         var id = 6200
-        for (case in LEGACY_POST_CASES) {
+        for (case in POST_CASES) {
             val label = "${case.label} sdk=$expectedSdk"
-            val n = postLegacyAndRead(case, id++).notification
+            val n = postAndRead(case, NotificationPresentationMode.FULL, id++).notification
+            val expectsBigText = case.kind == NotificationKind.BRIEFING || case.kind == NotificationKind.ANOMALY
 
             assertEquals(label, SENTINEL_TITLE, n.titleText())
             assertEquals(label, SENTINEL_TEXT, n.contentText())
-            if (case.hasBigText) {
+            if (expectsBigText) {
                 assertEquals(label, SENTINEL_TEXT, n.extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString())
                 assertTrue(label, n.extras.getString(Notification.EXTRA_TEMPLATE)!!.contains("BigTextStyle"))
             } else {
                 assertNull(label, n.extras.getCharSequence(Notification.EXTRA_BIG_TEXT))
                 assertNull(label, n.extras.getString(Notification.EXTRA_TEMPLATE))
             }
-            assertTrue("$label legacy adds no action", n.actions == null || n.actions.isEmpty())
+            assertTrue("$label adds no action", n.actions == null || n.actions.isEmpty())
             // Control: the private notification does carry the sentinel, so the public-version scan above is live.
             assertTrue(label, everyString(n).any { it.contains("Lidl") })
         }
     }
 
     @Test
-    fun `INV-7 control the legacy path keeps the FULL text while its public version equals the kind-aware one`() {
-        // The kind-aware DISCREET path hides the text; the legacy path must not (FULL behaviour kept), and neither
-        // path may give the public version any of the supplied text.
-        val legacy = postLegacyAndRead(LEGACY_POST_CASES.first(), 6300).notification
-        val discreet = postAndRead(POST_CASES.first(), NotificationPresentationMode.DISCREET, 6301).notification
+    fun `INV-7 control FULL keeps the supplied text while DISCREET hides it and both share the same public version`() {
+        val case = POST_CASES.first()
+        val full = postAndRead(case, NotificationPresentationMode.FULL, 6300).notification
+        val discreet = postAndRead(case, NotificationPresentationMode.DISCREET, 6301).notification
 
-        assertEquals(SENTINEL_TITLE, legacy.titleText())
+        assertEquals(SENTINEL_TITLE, full.titleText())
         assertNotEquals(SENTINEL_TITLE, discreet.titleText())
-        assertEquals(legacy.publicVersion!!.titleText(), discreet.publicVersion!!.titleText())
-        assertEquals(legacy.publicVersion!!.contentText(), discreet.publicVersion!!.contentText())
+        assertEquals(full.publicVersion!!.titleText(), discreet.publicVersion!!.titleText())
+        assertEquals(full.publicVersion!!.contentText(), discreet.publicVersion!!.contentText())
     }
 
     // --- fail-closed through the real resolver ------------------------------------------------------------
@@ -1043,65 +947,32 @@ class AndroidNotificationServicePresentationTest : AndroidNotificationServicePre
         assertEquals(texts.discreet(NotificationKind.BUDGET).title, posted(8300).notification.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString())
     }
 
-    // --- legacy methods: visible text unchanged, no marker, never read the settings --------------------------
-    // (S5b hardening, tap intents and the public version are asserted in the SDK matrix above.)
+    // --- S9a: the former legacy-method tests, migrated onto the kind-aware methods ---------------------------
+    // The kind-less legacy methods are gone. Each kind now posts the supplied text in FULL, carries its own
+    // marker, and consults the settings exactly once (the legacy form never read them).
 
     @Test
-    fun `legacy sendBudgetAlert posts the supplied text with no marker and never reads the settings`() {
-        val repo = repoFor(NotificationPresentationMode.DISCREET)
-        val service = newService(appContext, repo)
+    fun `FULL posts the supplied text with the kind marker and reads the settings exactly once for every kind`() {
+        var id = 9000
+        for (case in POST_CASES) {
+            val repo = repoFor(NotificationPresentationMode.FULL)
+            val service = newService(appContext, repo)
+            val notificationId = id++
+            val title = "${case.label} title"
+            val message = "${case.label} message"
 
-        val result = service.sendBudgetAlert(9001, "Budget title", "Budget message")
-        val n = posted(9001).notification
+            var result: NotificationService.DeliveryResult? = null
+            runTest(timeout = 10.seconds) {
+                result = case.post(service, notificationId, title, message)
+            }
+            val n = posted(notificationId).notification
 
-        assertEquals(NotificationService.DeliveryResult.DELIVERED, result)
-        assertNull(NotificationKindMarker.read(n))
-        assertFalse(n.extras.containsKey(NotificationKindMarker.EXTRA_KEY))
-        assertEquals("Budget title", n.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString())
-        assertEquals("Budget message", n.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString())
-        assertEquals(0, repo.reads)
-    }
-
-    @Test
-    fun `legacy sendAiBriefingReadyWithResult posts the supplied text with no marker and never reads the settings`() {
-        val repo = repoFor(NotificationPresentationMode.DISCREET)
-        val service = newService(appContext, repo)
-
-        val result = service.sendAiBriefingReadyWithResult(9002, "Briefing title", "Briefing message", BRIEFING_KEY)
-        val n = posted(9002).notification
-
-        assertEquals(NotificationService.DeliveryResult.DELIVERED, result)
-        assertNull(NotificationKindMarker.read(n))
-        assertFalse(n.extras.containsKey(NotificationKindMarker.EXTRA_KEY))
-        assertEquals("Briefing title", n.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString())
-        assertEquals("Briefing message", n.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString())
-        assertEquals(0, repo.reads)
-    }
-
-    @Test
-    fun `legacy sendAiBriefingReady posts with no marker`() {
-        val service = newService(appContext, repoFor(NotificationPresentationMode.DISCREET))
-
-        service.sendAiBriefingReady(9003, "Briefing title", "Briefing message", BRIEFING_KEY)
-        val n = posted(9003).notification
-
-        assertNull(NotificationKindMarker.read(n))
-        assertEquals("Briefing title", n.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString())
-    }
-
-    @Test
-    fun `legacy sendAnomalyAlert posts the supplied text with no marker and never reads the settings`() {
-        val repo = repoFor(NotificationPresentationMode.DISCREET)
-        val service = newService(appContext, repo)
-
-        service.sendAnomalyAlert(9004, "Anomaly title", "Anomaly message", EXPENSE_ID)
-        val n = posted(9004).notification
-
-        assertNull(NotificationKindMarker.read(n))
-        assertFalse(n.extras.containsKey(NotificationKindMarker.EXTRA_KEY))
-        assertEquals("Anomaly title", n.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString())
-        assertEquals("Anomaly message", n.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString())
-        assertEquals(0, repo.reads)
+            assertEquals(case.label, NotificationService.DeliveryResult.DELIVERED, result)
+            assertEquals(case.label, case.kind.stableToken, NotificationKindMarker.read(n))
+            assertEquals(case.label, title, n.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString())
+            assertEquals(case.label, message, n.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString())
+            assertEquals(case.label, 1, repo.reads)
+        }
     }
 }
 
