@@ -445,4 +445,6 @@
     <string name="assistant_clarification_period_last_month">El mes pasado</string>
     <string name="assistant_clarification_presentation_breakdown">Desglose</string>
     <string name="assistant_clarification_presentation_transaction_list">Lista de transacciones</string>
+    <!-- Assistant MIN result title. Best-effort translation, pending native review. -->
+    <string name="domain_ai_smallest_purchase">Compra más pequeña</string>
 </resources>

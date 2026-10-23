@@ -2519,6 +2519,7 @@
     <string name="domain_ai_top_categories">Top categories</string>
     <string name="domain_ai_top_merchants">Top merchants</string>
     <string name="domain_ai_largest_purchase">Largest purchase</string>
+    <string name="domain_ai_smallest_purchase">Smallest purchase</string>
     <string name="domain_ai_total_spending">Total spending</string>
     <string name="domain_ai_transaction_count">Transaction count</string>
     <string name="domain_ai_average_spending">Average spending</string>

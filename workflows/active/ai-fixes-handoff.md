@@ -321,3 +321,28 @@ Review: reviewer-strict ACCEPT-WITH-MINORS. MINOR fixed: a throwing label lookup
 - PC-4 question answered: legacy model clarifications (completion == null) stay on the legacy text flow per INV-C15 (intended).
 Notes: a tap during persistAssistantTurn is ignored (spec); cancellation before the User append loses the consumed completion (acceptable edge).
 Next: C5 (MIN executor; must retarget/remove the C2 MIN→METRIC_NOT_SUPPORTED test and make the metric `when` exhaustive), then CX.
+
+## C5 DONE (2026-10-23)
+Source:
+- ExecuteFinancialQueryUseCase: one executeExtreme helper (ExtremeSelection LARGEST/SMALLEST) behind executeLargest/executeSmallest. MAX is byte-identical (same maxByOrNull, title key, data-quality, drilldown).
+- MIN uses minByOrNull; mixed currency via the same single convertAsOf(atMillis = expense.date) site (FG-17 untouched), no-rate rows excluded (isPartial/excludedCount).
+- An exhaustive `when (intent.metric)` after the LIST/grouping checks.
+- Interpret: smallest|cheapest|lowest|minimum → MIN.
+- MapFinancialQueryToNavigationUseCase allows MIN (drilldown parity with MAX; reviewer finding; one-line widening of the write set, orchestrator decision).
+- domain_ai_smallest_purchase en/es/el (es/el pending review).
+- money-correctness impact-map §9 (c2): MIN is the second consumer of the convertAsOf vs snapshot gap (RF-C3).
+METRIC_NOT_SUPPORTED is now DEFENSIVE-ONLY: unreachable in the executor and Interpret; the enum value and UI text are kept.
+SPEC DEVIATION to reconcile at Z (domain-modeler): domain-spec-part-c.md ~:50 and ~:200 still describe an executor `else` → METRIC_NOT_SUPPORTED; replaced by an exhaustive when (authorised by the C2 AG note).
+Tests:
+- the C2 test "INV-C5 metric without an executor…" was RETARGETED (not deleted) to "INV-C17 every QueryMetric has an executor and none returns METRIC_NOT_SUPPORTED";
+- AE-C27 single/mixed/no-rate/order-by-converted/empty/all-no-rate/routing;
+- AE-C28 4 cues + clarification + bare-period + enrich;
+- convertAsOf date pinned to expense.date;
+- the mapper returns an equal filter for MIN and MAX.
+Validation:
+- targeted vr-20261023-123734-23631cfd PASS, lint vr-20261023-124335-0b288f1c PASS;
+- after the follow-up: targeted vr-20261023-125858-92d24758 PASS.
+Review: reviewer-strict ACCEPT-WITH-MINORS (3 minors: drilldown fixed, date test fixed, spec deviation recorded).
+Notes: es/el lack domain_ai_largest_purchase (pre-existing; MAX title in English) → Z follow-up.
+RELEASE-NOTE LINE (staged for Z, plan §8): "Assistant: 'last week', 'last month', 'last quarter' and 'last year' now mean the previous calendar period (previously the current one was used, e.g. 'food last month' showed this month). Comparisons now use the previous calendar week/month/quarter/year instead of a same-length window. Choosing an option in a clarification keeps your original filters. Smallest-purchase questions are now answered."
+Next: CX (Part C exit checkpoint, validation only): shards domain-a-m, data, runtime-ui, architecture-contracts; registered-guard cloud_payload, pii_logging, time_boundaries, cancellation; static-guards; lint.

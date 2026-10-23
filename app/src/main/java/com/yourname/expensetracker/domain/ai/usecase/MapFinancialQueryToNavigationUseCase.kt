@@ -14,7 +14,7 @@ class MapFinancialQueryToNavigationUseCase @Inject constructor(
 ) {
 
     suspend operator fun invoke(intent: FinancialQueryIntent): DomainTransactionFilter? {
-        if (intent.metric != QueryMetric.LIST && intent.metric != QueryMetric.TOTAL && intent.metric != QueryMetric.COUNT && intent.metric != QueryMetric.AVERAGE && intent.metric != QueryMetric.MAX) {
+        if (intent.metric != QueryMetric.LIST && intent.metric != QueryMetric.TOTAL && intent.metric != QueryMetric.COUNT && intent.metric != QueryMetric.AVERAGE && intent.metric != QueryMetric.MAX && intent.metric != QueryMetric.MIN) {
             return null
         }
 

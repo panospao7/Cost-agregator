@@ -717,4 +717,119 @@ class InterpretFinancialQueryUseCaseTest {
 
         assertPeriod(intent.filters, providerStart, providerEnd, PeriodGranularity.MONTH)
     }
+
+    // ---- ai-fixes C5: MIN cues map to MIN in the local fallback (INV-C17, AE-C28) ----------------
+
+    private val minCues = listOf("smallest", "cheapest", "lowest", "minimum")
+
+    @Test
+    fun `AE-C28 INV-C17 each MIN cue in the provider unavailable fallback yields a MIN metric not TOTAL`() = runTest(timeout = 30.seconds) {
+        minCues.forEach { cue ->
+            val query = "$cue purchase this month"
+
+            val intent = interpretViaFallback(query)
+
+            assertEquals("cue '$cue' must map to MIN", QueryMetric.MIN, intent.metric)
+            assertTrue("cue '$cue' must not be re-mapped to TOTAL", intent.metric != QueryMetric.TOTAL)
+            assertEquals(QueryGrouping.NONE, intent.grouping)
+            assertEquals(QueryComparison.NONE, intent.comparison)
+            assertEquals(setOf(DomainTransactionType.PURCHASE), intent.filters.transactionTypes)
+            assertPeriod(intent.filters, athensMs(2026, 10, 1), athensMs(2026, 11, 1), PeriodGranularity.MONTH)
+        }
+    }
+
+    @Test
+    fun `AE-C28 INV-C17 smallest purchase this month is a MIN metric and stays Structured`() = runTest(timeout = 30.seconds) {
+        val result = fallbackResultFor("smallest purchase this month")
+
+        assertTrue("expected Structured but was $result", result is FinancialQueryInterpretationResult.Structured)
+        result as FinancialQueryInterpretationResult.Structured
+        assertEquals(QueryMetric.MIN, result.intent.metric)
+        assertEquals("smallest purchase this month", result.intent.normalizedQuery)
+    }
+
+    @Test
+    fun `AE-C28 INV-C17 a MIN cue with a grouping word returns the presentation clarification as MAX does`() = runTest(timeout = 30.seconds) {
+        val groupedQueries = minCues.flatMap { cue ->
+            listOf(
+                "$cue purchase per merchant this month" to QueryGrouping.MERCHANT,
+                "$cue purchase by category this month" to QueryGrouping.CATEGORY
+            )
+        }
+
+        groupedQueries.forEach { (query, expectedGrouping) ->
+            val result = fallbackResultFor(query)
+
+            assertTrue("expected Clarification for '$query' but was $result", result is FinancialQueryInterpretationResult.Clarification)
+            result as FinancialQueryInterpretationResult.Clarification
+            val completion = result.completion
+            assertNotNull("'$query' must carry a presentation completion", completion)
+            assertEquals(ClarificationSlot.PRESENTATION, completion!!.slot)
+            assertEquals(
+                listOf(
+                    ClarificationChoice.Presentation(PresentationChoice.BREAKDOWN),
+                    ClarificationChoice.Presentation(PresentationChoice.TRANSACTION_LIST)
+                ),
+                completion.choices
+            )
+            assertEquals("Do you want a total breakdown or a transaction list?", result.prompt)
+            assertEquals(QueryMetric.MIN, completion.baseIntent.metric)
+            assertEquals(expectedGrouping, completion.baseIntent.grouping)
+        }
+    }
+
+    @Test
+    fun `AE-C28 INV-C17 control the largest cue with a grouping word returns the same presentation clarification`() = runTest(timeout = 30.seconds) {
+        val result = fallbackResultFor("largest purchase per merchant this month")
+
+        assertTrue("expected Clarification but was $result", result is FinancialQueryInterpretationResult.Clarification)
+        result as FinancialQueryInterpretationResult.Clarification
+        assertEquals(ClarificationSlot.PRESENTATION, result.completion!!.slot)
+        assertEquals(QueryMetric.MAX, result.completion!!.baseIntent.metric)
+    }
+
+    @Test
+    fun `AE-C28 INV-C17 smallest is not treated as a bare period only query`() = runTest(timeout = 30.seconds) {
+        // A bare period query resolves to TOTAL with no other filters; "smallest ..." must not take that path.
+        val smallestThisMonth = interpretViaFallback("smallest this month")
+        assertEquals(QueryMetric.MIN, smallestThisMonth.metric)
+
+        val smallestOnly = interpretViaFallback("smallest")
+        assertEquals(QueryMetric.MIN, smallestOnly.metric)
+        assertTrue("a period-less MIN query still resolves a concrete period", smallestOnly.filters.period != null)
+
+        // Control: the genuinely bare period query keeps its TOTAL meaning.
+        val bare = interpretViaFallback("this month")
+        assertEquals(QueryMetric.TOTAL, bare.metric)
+        assertPeriod(bare.filters, athensMs(2026, 10, 1), athensMs(2026, 11, 1), PeriodGranularity.MONTH)
+    }
+
+    @Test
+    fun `AE-C28 INV-C17 control a query with no extreme cue stays TOTAL and a highest cue stays MAX`() = runTest(timeout = 30.seconds) {
+        assertEquals(QueryMetric.TOTAL, interpretViaFallback("purchases this month").metric)
+        assertEquals(QueryMetric.MAX, interpretViaFallback("highest purchase this month").metric)
+    }
+
+    @Test
+    fun `AE-C28 INV-C17 enrich keeps a provider MIN metric and fills the missing period`() = runTest(timeout = 30.seconds) {
+        every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
+        val built = stubInputAtNow("smallest purchase this month")
+        coEvery { categoryRepository.getAll() } returns emptyList()
+        coEvery { queryInterpretationService.interpret(built) } returns FinancialQueryInterpretationResult.Structured(
+            FinancialQueryIntent(
+                rawQuery = "smallest purchase this month",
+                normalizedQuery = "smallest purchase this month",
+                filters = ExpenseQueryFilters(),
+                metric = QueryMetric.MIN,
+                grouping = QueryGrouping.NONE
+            )
+        )
+
+        val result = useCase("smallest purchase this month")
+
+        assertTrue("expected Structured but was $result", result is FinancialQueryInterpretationResult.Structured)
+        val intent = (result as FinancialQueryInterpretationResult.Structured).intent
+        assertEquals(QueryMetric.MIN, intent.metric)
+        assertPeriod(intent.filters, athensMs(2026, 10, 1), athensMs(2026, 11, 1), PeriodGranularity.MONTH)
+    }
 }

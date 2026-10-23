@@ -253,6 +253,7 @@ class InterpretFinancialQueryUseCase @Inject constructor(
             metric == QueryMetric.COUNT -> true
             metric == QueryMetric.AVERAGE -> true
             metric == QueryMetric.MAX -> true
+            metric == QueryMetric.MIN -> true
             grouping == QueryGrouping.MERCHANT -> true
             grouping == QueryGrouping.CATEGORY -> true
             else -> false
@@ -285,6 +286,8 @@ class InterpretFinancialQueryUseCase @Inject constructor(
 
     private fun resolveMetric(query: String): QueryMetric = when {
         query.contains("largest") || query.contains("biggest") || query.contains("highest") -> QueryMetric.MAX
+        // C5 (INV-C17): MIN is answered by the executor, never re-mapped to TOTAL.
+        query.contains("smallest") || query.contains("cheapest") || query.contains("lowest") || query.contains("minimum") -> QueryMetric.MIN
         query.contains("average") || query.contains("avg") || query.contains("mean") -> QueryMetric.AVERAGE
         query.contains("count") || query.contains("how many") || query.contains("number of") -> QueryMetric.COUNT
         query.contains("show me") || query.contains("list") || query.contains("show ") -> QueryMetric.LIST
@@ -348,6 +351,10 @@ class InterpretFinancialQueryUseCase @Inject constructor(
             "largest",
             "biggest",
             "highest",
+            "smallest",
+            "cheapest",
+            "lowest",
+            "minimum",
             "average",
             "avg",
             "count",
