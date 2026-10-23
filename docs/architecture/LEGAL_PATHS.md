@@ -90,17 +90,29 @@ FORBIDDEN:
 ```
 
 ```
-SPENDING INCLUSION (planned — loan-installments S3; no code exists yet):
+SPENDING INCLUSION (implemented — loan-installments S3; the first caller arrives with the plan coordinator, S6a):
   → TransactionLifecycleCoordinator.setSpendingExclusionDbOnly(expenseId, reason)
-    (proposed name; any sibling setSpendingExclusion* op follows the same rules)
+    (any sibling setSpendingExclusion* op follows the same rules)
     with reason in { INSTALLMENT_PURCHASE, INSTALLMENT_REVERSED, null }
-  → DbOnly op: runs INSIDE the caller's writeBarrier.runWrite { database.withTransaction { … } },
-    returns a MutationResult whose post-commit batch the caller dispatches after commit
-    (same contract as createExpenseDbOnlyV2)
-  → Writes expenses.spendingExclusionReason and one TransactionEvent with
-    LifecycleEventType.UPDATED and the new TransactionUpdateKind.SPENDING_INCLUSION
+  → DbOnly op: runs INSIDE the caller's writeBarrier.runWrite { database.withTransaction { … } }
+    (DatabaseWriteBarrier.runWrite is re-entrant; Room joins the open transaction),
+    returns a MutationResult<SpendingInclusionResult> (Updated / NoOp / NotFound, never throws for these)
+    whose post-commit batch the caller dispatches after commit (same contract as createExpenseDbOnlyV2)
+  → Writes expenses.spendingExclusionReason (ExpenseDao.updateSpendingExclusionReason, TLC-only) and one
+    TransactionEvent with LifecycleEventType.UPDATED and the new TransactionUpdateKind.SPENDING_INCLUSION
+    (snapshots, metadata and reason are bounded: row id + reason name only, no amount, merchant or notes;
+    the event row keeps the expense dedupeKey like every UPDATED event)
   → The ONLY legal caller is InstallmentPlanLifecycleCoordinator (see "Installment Plan Mutations");
     this op is the ONLY writer of the spendingExclusionReason column
+  → Purchase lock (INV-22): while the column is non-null, TLC updateExpense / updateType /
+    updateTypeAndTransferDetails / updateOwnershipDbOnlyV2 refuse amount, currency, transactionType and
+    money-affecting ownership (isNotMine, shared flag, share percentage, share amount) changes with
+    InstallmentLockedExpenseException
+    (code EXPENSE_LOCKED_BY_INSTALLMENT_PLAN) before any write or event; merchant, date, category and
+    notes and owner/shared-with names stay editable. TLC has no duplicate-merge operation today; any future one must apply the lock
+  → updateExpense always keeps the column value read inside its transaction (a stale editor copy cannot
+    reset the flag)
+  → The spending predicate is never added to the duplicate BLOCKING / RESOLVER families (INV-8)
   → ExpenseDao.insertAtomic() stays the sole expense insert. Plan-created expenses
     (declareWithNewExpense, confirmEntry, recordDueEntries) use createExpenseDbOnlyV2 → insertAtomic()
     with a new bounded ExpenseSource value (never free text) and no notes text

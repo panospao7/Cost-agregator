@@ -36,7 +36,7 @@ The owner approved the slice plan (`workflows/active/loan-installments-plan.md`:
 [amended S5-R, 2026-10-23] These edits align the spec with decisions made in the S5 review
 (`workflows/active/loan-installments-handoff.md`, "S5 review fixes"). Changed: sections 3.1, 3.2, 5.4 R4, 7.0, 7.5 and
 11.1, and INV-14, INV-20, INV-33. There are no new invariants and no schema impact. The Delete source set is
-OWNER CONFIRMATION PENDING (section 7.5). Each change carries the tag `[amended S5-R, 2026-10-23]`.
+OWNER CONFIRMED 2026-10-23 (section 7.5). Each change carries the tag `[amended S5-R, 2026-10-23]`.
 
 Source facts re-checked for this spec (beyond those cited in the brief/critique):
 - `Expense.effectiveAmount` / `normalizedEffectiveAmount` (`data/database/entity/Expense.kt:163-185`) zero
@@ -184,7 +184,7 @@ and declaration is atomic.
 | ACTIVE | CANCELLED | Stop | user | SCHEDULED → CANCELLED(`PLAN_STOPPED`). PAID entries stay counted. Purchase stays at 0 |
 | ACTIVE, COMPLETED | REFUNDED | Refund/return ("reverse everything") | user | SCHEDULED → CANCELLED(`PLAN_REFUNDED`). PAID → REVERSED and their expenses flagged `INSTALLMENT_REVERSED`. Purchase stays at 0 |
 | ACTIVE | PAID_OFF | Pay off early (amount, date) | user | SCHEDULED → CANCELLED(`PAID_OFF_EARLY`). One PAYOFF entry created PAID, linked to an expense |
-| ACTIVE, CANCELLED (no PAID/REVERSED entries; PAID_BEFORE_TRACKING entries don't block) | deleted | Delete (undo declaration) | user | entries (PAID_BEFORE_TRACKING included) and plan removed. Purchase flag cleared, so the purchase counts in full again on its own date. Only these two source states (section 7.5, OWNER CONFIRMATION PENDING) [amended S5-R, 2026-10-23] |
+| ACTIVE, CANCELLED (no PAID/REVERSED entries; PAID_BEFORE_TRACKING entries don't block) | deleted | Delete (undo declaration) | user | entries (PAID_BEFORE_TRACKING included) and plan removed. Purchase flag cleared, so the purchase counts in full again on its own date. Only these two source states (section 7.5, OWNER CONFIRMED 2026-10-23) [amended S5-R, 2026-10-23] |
 
 Illegal: any transition out of CANCELLED, REFUNDED or PAID_OFF other than the delete row above. Deleting a plan that
 has PAID/REVERSED entries (`PLAN_HAS_PAYMENTS`). PAID_OFF from COMPLETED (nothing left). Any transition on a plan
@@ -352,7 +352,7 @@ name, OD-1). "TLC" means `TransactionLifecycleCoordinator`. AE-n refers to secti
   amount comes from its linked expense. Owner: plan coordinator. (AE-21)
 - **INV-20 Terminal plans.** CANCELLED, REFUNDED and PAID_OFF plans accept no transitions, except that a CANCELLED
   plan with no PAID/REVERSED entries may be deleted. REFUNDED and PAID_OFF plans can't be deleted (section 7.5,
-  OWNER CONFIRMATION PENDING) [amended S5-R, 2026-10-23]. PAID_BEFORE_TRACKING entries are not payments for this
+  OWNER CONFIRMED 2026-10-23) [amended S5-R, 2026-10-23]. PAID_BEFORE_TRACKING entries are not payments for this
   rule. Only COMPLETED may reopen (to ACTIVE). Owner: plan coordinator. (AE-7, AE-11, AE-27, AE-28) [amended AMD-1]
 - **INV-21 Automatic completion.** An ACTIVE plan with zero SCHEDULED entries becomes COMPLETED in the same
   transaction as the change that removed the last one. PAID_BEFORE_TRACKING counts as non-SCHEDULED, and this
@@ -730,7 +730,7 @@ edits the plan, or deletes it (7.5, only without payments) and declares again.
 - With payments: refused (`PLAN_HAS_PAYMENTS`). The user picks Stop, Refund or Pay off. Alternatively, the user
   first deletes or unlinks the installment expenses on standard paths, which reopens the entries, and then deletes.
 - Never deletes expenses (INV-23).
-- **OWNER CONFIRMATION PENDING** [amended S5-R, 2026-10-23]. The S5 code follows the fail-closed reading of this
+- **OWNER CONFIRMED 2026-10-23** [amended S5-R, 2026-10-23]. The S5 code follows the fail-closed reading of this
   section (ACTIVE or CANCELLED only). The earlier INV-20 wording allowed REFUNDED and PAID_OFF without payments too.
   - REFUNDED is excluded because Delete clears the purchase flag. A refunded purchase (the money came back) would
     then count in full again on its original date.

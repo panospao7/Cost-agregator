@@ -63,6 +63,11 @@ class TransactionSideEffectPlanner @Inject constructor(
             TransactionUpdateKind.LOCATION_ONLY -> {
                 return PostCommitActionBatch.empty(corrId)
             }
+            TransactionUpdateKind.SPENDING_INCLUSION -> {
+                // The flag changes what counts toward budgets; the row itself (merchant,
+                // amount, category) is unchanged, so only the budget recheck is needed.
+                actions.add(makeBudgetCheckAction(expenseId, ExpenseSource.UNKNOWN, corrId, SideEffectTriggerType.EXPENSE_UPDATED))
+            }
             TransactionUpdateKind.CATEGORY_ONLY, TransactionUpdateKind.BUSINESS_FLAGS_ONLY -> {
                 actions.add(makeBudgetCheckAction(expenseId, ExpenseSource.UNKNOWN, corrId, SideEffectTriggerType.EXPENSE_UPDATED))
                 actions.add(makeAnomalyAlertAction(expenseId, source, corrId, SideEffectTriggerType.EXPENSE_UPDATED))

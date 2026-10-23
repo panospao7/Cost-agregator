@@ -56,6 +56,7 @@ import com.yourname.expensetracker.domain.transaction.RateRefusal
 import com.yourname.expensetracker.domain.transaction.RateRefusalCodes
 import com.yourname.expensetracker.domain.transaction.RateRefusalReason
 import com.yourname.expensetracker.domain.transaction.SideEffectMode
+import com.yourname.expensetracker.domain.transaction.SpendingExclusionReason
 import com.yourname.expensetracker.domain.transaction.UserPresentRateRequirement
 import com.yourname.expensetracker.domain.transaction.validation.TransactionValidationError
 import com.yourname.expensetracker.domain.transaction.validation.TransactionValidationException
@@ -765,6 +766,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 ExpenseSource.DEBUG_TOOL -> ExpenseSource.DEBUG_TOOL.name
                 ExpenseSource.MIGRATION -> ExpenseSource.MIGRATION.name
                 ExpenseSource.UNKNOWN -> ExpenseSource.UNKNOWN.name
+                ExpenseSource.INSTALLMENT_PLAN -> ExpenseSource.INSTALLMENT_PLAN.name
             }
         ).normalizeOwnership()
 
@@ -1338,6 +1340,20 @@ class TransactionLifecycleCoordinator @Inject constructor(
             val existing = expenseDao.getById(expense.id)
                 ?: throw IllegalArgumentException("Expense not found: ${expense.id}")
 
+            // INV-22 purchase lock: a flagged row keeps its amount, currency, type and
+            // ownership. Thrown before any write or event, so nothing is persisted.
+            if (existing.spendingExclusionReason != null &&
+                (existing.amount != expense.amount ||
+                    existing.currency != expense.currency ||
+                    existing.transactionType != expense.transactionType ||
+                    existing.isNotMine != expense.isNotMine ||
+                    existing.isSharedExpense != expense.isSharedExpense ||
+                    existing.mySharePercentage != expense.mySharePercentage ||
+                    existing.myShareAmount != expense.myShareAmount)
+            ) {
+                throw InstallmentLockedExpenseException()
+            }
+
             // R18: money / ownership-share edits are blocked for a group-linked expense;
             // non-money edits (note, merchant, category, ...) stay allowed. Thrown before
             // any write or event, so nothing is persisted.
@@ -1417,7 +1433,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
             // Apply currency conversion (pre-computed outside txn).
             // NEW-P2-016: homeCurrencyUpdate == null (Failed resolution) falls
             // through to the sentinel-clearing branch below — no invented base.
-            val finalExpense = if (preComputedSnapshot is ConvertedSnapshot.Stored) {
+            val convertedExpense = if (preComputedSnapshot is ConvertedSnapshot.Stored) {
                 updatedExpense.copy(
                     baseAmount = preComputedSnapshot.baseAmount,
                     baseCurrency = preComputedSnapshot.baseCurrency,
@@ -1440,6 +1456,13 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     exchangeRateUsed = 0.0
                 )
             }
+
+            // Loan-installments A10: this method writes the caller's whole row, so a stale
+            // editor copy must never reset the spending-exclusion flag. The flag is owned by
+            // setSpendingExclusionDbOnly; always keep the value read in this transaction.
+            val finalExpense = convertedExpense.copy(
+                spendingExclusionReason = existing.spendingExclusionReason
+            )
 
             // Validate final expense state
             val finalValidationErrors = transactionValidator.validateFinalExpenseState(
@@ -2046,6 +2069,9 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     return@withTransaction
                 }
 
+                // INV-22: the type actually changes — refuse on a flagged installment row.
+                failIfInstallmentLocked(existing)
+
                 // R18: the type actually changes — block on a group-linked expense.
                 failIfGroupLinkedForEdit(expenseId)
 
@@ -2261,6 +2287,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
             // R18: a type change on a group-linked expense is blocked (transfer-detail-only
             // edits with an unchanged type are not money edits and stay allowed).
             if (existing.transactionType != newType) {
+                // INV-22: a type change on a flagged installment row is refused.
+                failIfInstallmentLocked(existing)
                 failIfGroupLinkedForEdit(expenseId)
             }
 
@@ -2536,6 +2564,17 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 return@withTransaction
             }
 
+            // INV-22: a money-affecting ownership change (not-mine, shared flag, share
+            // percentage or share amount) on a flagged installment row is refused before
+            // any write or event. A name-only change stays allowed, matching updateExpense.
+            if (existing.isNotMine != normalized.isNotMine ||
+                existing.isSharedExpense != normalized.isSharedExpense ||
+                existing.mySharePercentage != normalized.mySharePercentage ||
+                existing.myShareAmount != normalized.myShareAmount
+            ) {
+                failIfInstallmentLocked(existing)
+            }
+
             val beforeSnapshot = expenseToSnapshot(existing)
 
             expenseDao.updateIsNotMine(expenseId, normalized.isNotMine)
@@ -2568,6 +2607,107 @@ class TransactionLifecycleCoordinator @Inject constructor(
         val batch = planner.planUpdated(expenseId, source, corrId, TransactionUpdateKind.FULL)
         return MutationResult(OwnershipUpdateResult.Updated(expenseId), batch)
     }
+
+    /**
+     * DB-only spending-exclusion flag write (loan-installments INV-2): sets or clears
+     * `expenses.spendingExclusionReason` and writes one UPDATED lifecycle event atomically,
+     * then returns the post-commit batch (kind [TransactionUpdateKind.SPENDING_INCLUSION])
+     * WITHOUT running it. This is the only writer of the column.
+     *
+     * Safe inside a caller-held `writeBarrier.runWrite { database.withTransaction { ... } }`:
+     * [DatabaseWriteBarrier.runWrite] is re-entrant and Room joins the open transaction, so
+     * the flag, the event and the caller's other writes commit or roll back together. The
+     * caller runs [MutationResult.postCommitActions] only after its outer transaction commits.
+     *
+     * The call returns a typed result instead of throwing, so a [SpendingInclusionResult.NotFound]
+     * or [SpendingInclusionResult.NoOp] never marks the caller's transaction for rollback.
+     * Setting the flag the row already has is a NoOp (no write, no event, empty batch).
+     *
+     * The snapshots, metadata and reason are bounded (reason name, row id and update kind; no
+     * amount, merchant, notes or free text). The event row keeps the expense dedupeKey like
+     * every UPDATED event.
+     *
+     * @param expenseId     The expense to flag or unflag.
+     * @param reason        The bounded reason to set, or null to count as spending again.
+     * @param source        The origin recorded on the event (default the installment plan source).
+     * @param correlationId Correlation ID for traceability (generated if null).
+     */
+    suspend fun setSpendingExclusionDbOnly(
+        expenseId: Long,
+        reason: SpendingExclusionReason?,
+        source: String = ExpenseSource.INSTALLMENT_PLAN.name,
+        correlationId: String? = null
+    ): MutationResult<SpendingInclusionResult> {
+        writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.setSpendingExclusionDbOnly")
+
+        val corrId = correlationId ?: com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
+        val now = timeProvider.now()
+        val newValue = reason?.name
+
+        var result: MutationResult<SpendingInclusionResult>? = null
+
+        // GR-14p-a: canonical direct scope; re-entrant inside a caller-held write scope.
+        writeBarrier.runWrite(
+            DatabaseAccessOperation(
+                "TransactionLifecycleCoordinator.setSpendingExclusionDbOnly"
+            )
+        ) {
+            database.withTransaction {
+                val existing = expenseDao.getById(expenseId)
+                if (existing == null) {
+                    result = MutationResult(
+                        SpendingInclusionResult.NotFound,
+                        PostCommitActionBatch.empty(corrId)
+                    )
+                    return@withTransaction
+                }
+                if (existing.spendingExclusionReason == newValue) {
+                    result = MutationResult(
+                        SpendingInclusionResult.NoOp,
+                        PostCommitActionBatch.empty(corrId)
+                    )
+                    return@withTransaction
+                }
+
+                expenseDao.updateSpendingExclusionReason(expenseId, newValue)
+                transactionEventDao.insert(
+                    TransactionEvent(
+                        expenseId = expenseId,
+                        eventType = LifecycleEventType.UPDATED.name,
+                        source = source,
+                        actor = null,
+                        occurredAt = now,
+                        dedupeKey = existing.dedupeKey,
+                        duplicateExpenseId = null,
+                        beforeSnapshot = spendingInclusionSnapshot(expenseId, existing.spendingExclusionReason),
+                        afterSnapshot = spendingInclusionSnapshot(expenseId, newValue),
+                        metadata = JSONObject()
+                            .put("updateKind", TransactionUpdateKind.SPENDING_INCLUSION.name)
+                            .toString(),
+                        reason = newValue ?: SPENDING_INCLUSION_CLEARED_REASON,
+                        correlationId = corrId
+                    )
+                )
+            }
+        }
+
+        if (result != null) return result!!
+
+        val batch = planner.planUpdated(
+            expenseId,
+            source,
+            corrId,
+            TransactionUpdateKind.SPENDING_INCLUSION
+        )
+        return MutationResult(SpendingInclusionResult.Updated(expenseId), batch)
+    }
+
+    /** Bounded snapshot of the flag only (no amount, merchant or notes). */
+    private fun spendingInclusionSnapshot(id: Long, reasonName: String?): String =
+        JSONObject().apply {
+            put("id", id)
+            put("spendingExclusionReason", reasonName ?: JSONObject.NULL)
+        }.toString()
 
     /**
      * Bulk-updates the category for all expenses matching a merchant key.
@@ -2824,6 +2964,17 @@ class TransactionLifecycleCoordinator @Inject constructor(
     }
 
     /**
+     * INV-22 purchase lock probe. Throws [InstallmentLockedExpenseException] when [existing]
+     * carries a spending-exclusion flag. Pure read of the caller's own row (no DAO access);
+     * callers run it inside the write transaction before any write or event.
+     */
+    private fun failIfInstallmentLocked(existing: Expense) {
+        if (existing.spendingExclusionReason != null) {
+            throw InstallmentLockedExpenseException()
+        }
+    }
+
+    /**
      * R18: read-only group-link probe. Throws [GroupLinkedExpenseException] with the
      * bounded edit code when the expense is linked to a shared group. Callers inside a
      * write transaction run this before any write/event so nothing is persisted.
@@ -3076,6 +3227,9 @@ class TransactionLifecycleCoordinator @Inject constructor(
 
 /** MEC RF-1: constant, payload-free `reason` of every CREATE_ATTEMPTED event. */
 private const val CREATE_ATTEMPTED_REASON = "Create attempted"
+
+/** Constant, payload-free `reason` of the SPENDING_INCLUSION event when the flag is cleared. */
+private const val SPENDING_INCLUSION_CLEARED_REASON = "SPENDING_INCLUSION_CLEARED"
 
 /**
  * Exception thrown when an update would create a duplicate expense.

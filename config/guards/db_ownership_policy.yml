@@ -6629,6 +6629,42 @@ entries:
 - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
   ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
   kind: function
+  method: setSpendingExclusionDbOnly
+  receiver: null
+  parameterTypes:
+  - Long
+  - com.yourname.expensetracker.domain.transaction.SpendingExclusionReason?
+  - String
+  - String?
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: updateSpendingExclusionReason
+  barrierMode: helper
+  reason: "Loan-installments INV-2 sole writer of expenses.spendingExclusionReason;\
+    \ barrier via checkWritesAllowed helper plus re-entrant runWrite"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: setSpendingExclusionDbOnly
+  receiver: null
+  parameterTypes:
+  - Long
+  - com.yourname.expensetracker.domain.transaction.SpendingExclusionReason?
+  - String
+  - String?
+  daoAccessor: transactionEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "Spending-inclusion change — UPDATED lifecycle event insert; barrier\
+    \ via checkWritesAllowed helper"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
   method: updateBusinessExpensePatch
   receiver: null
   parameterTypes:

@@ -404,6 +404,15 @@ suspend fun updateDedupeKey(expenseId: Long, dedupeKey: String)
     @Query("UPDATE expenses SET isNotMine = :isNotMine WHERE id = :expenseId")
     suspend fun updateIsNotMine(expenseId: Long, isNotMine: Boolean)
 
+    /**
+     * Sets or clears the denormalised spending-exclusion flag (loan-installments INV-2).
+     * [reason] is a bounded SpendingExclusionReason name, or null to count as spending again.
+     * The only legal caller is TransactionLifecycleCoordinator.setSpendingExclusionDbOnly.
+     */
+    @RestrictedExpenseDaoMutation
+    @Query("UPDATE expenses SET spendingExclusionReason = :reason WHERE id = :expenseId")
+    suspend fun updateSpendingExclusionReason(expenseId: Long, reason: String?)
+
     @RestrictedExpenseDaoMutation
     @Query("UPDATE expenses SET ownerName = :name WHERE id = :expenseId")
     suspend fun updateOwnerName(expenseId: Long, name: String?)
