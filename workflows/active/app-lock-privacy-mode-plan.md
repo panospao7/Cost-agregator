@@ -633,7 +633,7 @@ Context: budget alerts post with the raw `budget.id.toInt()` (`BudgetMonitor.kt:
 ### S11 — Manifest: remove BROWSABLE (OD-3a)
 - **Goal / invariants:** INV-20.
 - **Acceptance examples:** AE-16 (device check at G1a).
-- **Write set (source):** `app/src/main/AndroidManifest.xml`: remove `android.intent.category.BROWSABLE` (`:77`). The VIEW filter and the exported LAUNCHER stay.
+- **Write set (source):** `app/src/main/AndroidManifest.xml`: remove `android.intent.category.BROWSABLE` (`:85`; orchestrator correction, was `:77`). The VIEW filter and the exported LAUNCHER stay.
 - **Write set (tests):** none. Do not add a manifest guard (APP-1).
 - **Depends on:** the S0 caller check; S10 (ordering preference only). Release: re-check R17 ("stop if manifest changes") and C5 `<application>` edits.
 - **Guards:** FG-22 (evidence at G1a).

@@ -238,3 +238,20 @@ Next: S11, then S8.
 - Reviews: reviewer-strict ACCEPT-WITH-MINORS (warranty part) + ACCEPT (receipt part; whole-slice attempts died twice on API timeouts, so it was split), architecture-guardian ACCEPT-WITH-MINORS, privacy-security-guardian ACCEPT-WITH-MINORS. Minors applied. Optional nit not taken: helper to dedupe the PERMISSION_REVOKED mapping between the new branch and the defensive catch.
 - Pre-existing follow-ups (log hygiene): ReceiptMatchingWorker Timber.w(e, …) at ~:151/:162/:254 log full exceptions (debug-only trees).
 Next: S11 (manifest: remove BROWSABLE, OD-3a), then S8 (bill reminder worker applies the decision).
+
+## S11 (2026-10-23) — implemented
+- Changed: `app/src/main/AndroidManifest.xml` only. Removed `<category android:name="android.intent.category.BROWSABLE" />` from the MainActivity VIEW filter (expensetracker, 8 hosts; was :85). VIEW action, DEFAULT category, all 8 `<data>` entries and the exported MAIN/LAUNCHER filter unchanged. INV-20 (not BROWSABLE) / OD-3a. No tests, no manifest guard (APP-1).
+- Caller check: BROWSABLE occurs once under app/src (that line). All in-repo `expensetracker://` uses are internal: notification PendingIntents (AndroidNotificationService, ReceiptMatchingWorker, tests) and MainActivity handleIntent; remaining hits are docs (UI_REFERENCE_INDEX, NAVIGATION_ARCHITECTURE, COMPREHENSIVE_UI_MAP, feature docs) describing the scheme, none tells users to open links from a browser. No external-looking caller found. Explicit-component notification intents and implicit VIEW from installed apps still resolve (F9); validation (INV-14..INV-16) remains the boundary.
+- Doc drift (not edited, outside write set): docs/architecture/COMPREHENSIVE_UI_MAP.md:1117 still shows BROWSABLE in a manifest snippet; refresh with the architecture-doc pass.
+- Validation needed: compile (manifest merge). FG-22 exported-components evidence deferred to G1a. R17/C5 re-check: confirm at G1a that the merged manifest has no BROWSABLE for the expensetracker scheme and that deep-link runtime proof (safe links do not crash, invalid fail safely; AE-16 browser link is a no-op) still holds.
+Next: S8.
+
+## S11 DONE (2026-10-23)
+- Validation: compile vr-20261023-163650-081e2194 PASS. FG-22 / AE-16 evidence deferred to G1a.
+- Reviews: reviewer-strict ACCEPT, privacy-security-guardian PASS, architecture-guardian (INV-20 owner) ACCEPT-WITH-MINORS.
+- Correction: only AndroidNotificationService builds expensetracker:// intents (explicit MainActivity component, FLAG_IMMUTABLE); ReceiptMatchingWorker posts through it and builds none itself.
+- G1a carry-forward (binding): scripts/verify_release_artifact.py has no intent-filter/BROWSABLE check, so release-artifact-evidence alone does NOT prove INV-20. G1a must show the merged release manifest (e.g. aapt2 xmltree dump) with no BROWSABLE on the expensetracker filter, plus the AE-16 browser no-op and the malformed `am start` no-crash device checks. Evidence only, no new guard (APP-1).
+- S13 carry-forwards: COMPREHENSIVE_UI_MAP.md ~:1117 manifest snippet — remove BROWSABLE AND add the missing DEFAULT line; add a DEEP LINKS section to LEGAL_PATHS.md (none today).
+- Release-note wording (APP-4): "links from web browsers no longer open the app" — not "links can't open the app" (other installed apps can still send VIEW; validation is the boundary).
+- Pre-existing, outside S11 (log hygiene follow-up): MainActivity.kt ~:839 Timber.e(error, "...expenseId=%s") logs the full exception plus an expense id.
+Next: S8 (BillReminderWorker applies the decision; builder owner 2).
