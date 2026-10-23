@@ -146,7 +146,17 @@ data class Expense(
     // Historical conversion snapshot fields (D.19) — Populated at creation and update time by TransactionLifecycleCoordinator when expense currency differs from home currency. Identity values (amount, currency, 1.0) are set when expense currency matches home currency.
     @ColumnInfo(defaultValue = "0.0") val baseAmount: Double = 0.0,
     @ColumnInfo(defaultValue = "'EUR'") val baseCurrency: String = "EUR",
-    @ColumnInfo(defaultValue = "0.0") val exchangeRateUsed: Double = 0.0
+    @ColumnInfo(defaultValue = "0.0") val exchangeRateUsed: Double = 0.0,
+
+    /**
+     * Bounded [com.yourname.expensetracker.domain.transaction.SpendingExclusionReason]
+     * name (schema 152), stored as TEXT like [source]. Null counts as spending today.
+     * Denormalised flag: installment plan rows are the source of truth (loan-installments
+     * INV-2). Intentionally NOT indexed: the column is mostly NULL and low-selectivity, so
+     * an index adds write cost for no read gain (and adding one later costs a schema bump).
+     * No writer exists yet; `effectiveAmount` ignores it until the S3 slice.
+     */
+    @ColumnInfo(defaultValue = "NULL") val spendingExclusionReason: String? = null
 ) {
     /**
      * The amount that should be counted toward the user's own spending.

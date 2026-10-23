@@ -37,14 +37,17 @@ object BackupVerifier {
     private const val SAVINGS_CONTRIBUTION_LEDGER_SCHEMA_VERSION = 150
     private const val SAVINGS_SWEEP_MONTH_SCHEMA_VERSION = 151
 
-    // ── Verification tier assignment for all 59 tables ──────────
+    /** Loan installments (INV-30): plan and entry tables exist from schema 152. */
+    private const val INSTALLMENT_TABLES_SCHEMA_VERSION = 152
+
+    // ── Verification tier assignment for all 63 tables ──────────
 
     /**
-     * All 59 tracked table names with their verification tier.
+     * All 63 tracked table names with their verification tier.
      */
     private val TABLE_TIERS: Map<String, VerificationTier> = mapOf(
-        // ── Tier 1: Exact row count required (39 total) ──
-        // 32 listed here + 7 event/link tables grouped under the Tier 2 comment
+        // ── Tier 1: Exact row count required (44 total) ──
+        // 37 listed here + 7 event/link tables grouped under the Tier 2 comment
         // below (transaction_events, receipt_events, receipt_expense_links,
         // recurring_occurrences, recurring_reminder_deliveries,
         // recurring_lifecycle_events, warranty_reminder_deliveries) which are also
@@ -64,6 +67,10 @@ object BackupVerifier {
         "savings_goals"                  to VerificationTier.TIER_1_EXACT,
         "savings_contribution_ledger"    to VerificationTier.TIER_1_EXACT,
         "savings_sweep_month_acceptance" to VerificationTier.TIER_1_EXACT,
+        // Loan installments (INV-30, schema 152): exact-count verified so plans
+        // and entries survive backup/restore. Gated by databaseVersion below.
+        "installment_plans"              to VerificationTier.TIER_1_EXACT,
+        "installment_entries"            to VerificationTier.TIER_1_EXACT,
         "warranties"                     to VerificationTier.TIER_1_EXACT,
         "return_windows"                 to VerificationTier.TIER_1_EXACT,
         "mileage_tracking"               to VerificationTier.TIER_1_EXACT,
@@ -203,6 +210,8 @@ object BackupVerifier {
                     databaseVersion >= SAVINGS_CONTRIBUTION_LEDGER_SCHEMA_VERSION
                 "savings_sweep_month_acceptance" -> databaseVersion == null ||
                     databaseVersion >= SAVINGS_SWEEP_MONTH_SCHEMA_VERSION
+                "installment_plans", "installment_entries" -> databaseVersion == null ||
+                    databaseVersion >= INSTALLMENT_TABLES_SCHEMA_VERSION
                 else -> true
             }
         }
@@ -250,6 +259,11 @@ object BackupVerifier {
             "savings_sweep_month_acceptance" !in expectedCounts
         ) {
             migrated["savings_sweep_month_acceptance"] = 1
+        }
+        // Pre-152 restores create the installment tables empty (additive migration).
+        if (sourceDatabaseVersion != null && sourceDatabaseVersion < INSTALLMENT_TABLES_SCHEMA_VERSION) {
+            if ("installment_plans" !in expectedCounts) migrated["installment_plans"] = 0
+            if ("installment_entries" !in expectedCounts) migrated["installment_entries"] = 0
         }
         return migrated
     }

@@ -1,7 +1,7 @@
 # ExpenseTracker Android Codebase - Ground-Truth Inventory
 
 **Generated:** 2026-10-02 (verified snapshot; re-verified against source)
-**Database Version:** v151
+**Database Version:** v152
 **Architecture:** Clean Architecture + MVVM + Jetpack Compose + Room + Hilt DI
 
 ---
@@ -9,6 +9,10 @@
 ## EXECUTIVE SUMMARY
 
 Snapshot summary only: this inventory tracks the current UI, domain, data, and DI surfaces without freezing volatile counts.
+
+### Drift Sync (2026-10-23 / loan-installments S2)
+
+2026-10-23 loan-installments S2: schema 152 (installment_plans, installment_entries, expenses.spendingExclusionReason); InstallmentPlanDao. Current counts: 71 DAO files (excluding the non-DAO `RestrictedExpenseDaoMutation.kt`, same counting as the entries below), 74 registered entities, DB **v152**. No writer exists yet (the plan coordinator lands in S6a).
 
 ### Drift Sync (2026-10-22 / money-correctness 1a + 1b, branch feature/money-correctness)
 

@@ -16,21 +16,21 @@ import com.yourname.expensetracker.data.security.BankTokenCipher
  * ## Supported schema range (no destructive fallback)
  * The app opens ONLY databases whose schema version is within
  * [DatabaseSchemaPolicy.MIGRATION_BASELINE] (v145) through
- * [APP_DATABASE_SCHEMA_VERSION] (v151); the registered migrations in
+ * [APP_DATABASE_SCHEMA_VERSION] (v152); the registered migrations in
  * [DatabaseSchemaPolicy.ALL_MIGRATIONS] carry data forward within that range.
  *
  * ### Older, newer, or unreadable databases
- * A database below v145, above v151, or unreadable is REFUSED by
+ * A database below v145, above v152, or unreadable is REFUSED by
  * `DatabaseOpenGate` before Room opens it. There is no destructive migration
  * fallback: user data is never dropped or recreated. The
  * `UnsupportedDatabaseActivity` explains the state and offers an export of the
  * untouched file (user-started SAF export only).
  *
  * ### Backups
- * Backups whose schema is below v145 or above v151 are rejected before any
+ * Backups whose schema is below v145 or above v152 are rejected before any
  * swap with BACKUP_SCHEMA_UNSUPPORTED_LEGACY / BACKUP_SCHEMA_UNSUPPORTED_NEWER.
  */
-const val APP_DATABASE_SCHEMA_VERSION = 151
+const val APP_DATABASE_SCHEMA_VERSION = 152
 
 @Database(
     entities = [
@@ -105,7 +105,9 @@ const val APP_DATABASE_SCHEMA_VERSION = 151
         NotificationIntakeEntity::class,
         BankStatementImportRun::class,
         BankStatementImportItem::class,
-        NegotiationOutcomeEntity::class
+        NegotiationOutcomeEntity::class,
+        InstallmentPlan::class,
+        InstallmentEntry::class
     ],
     version = APP_DATABASE_SCHEMA_VERSION,
     exportSchema = true
@@ -183,6 +185,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun bankStatementImportRunDao(): BankStatementImportRunDao
     abstract fun bankStatementImportItemDao(): BankStatementImportItemDao
     abstract fun negotiationOutcomeDao(): NegotiationOutcomeDao
+    abstract fun installmentPlanDao(): InstallmentPlanDao
 
     companion object {
         const val DATABASE_NAME = "expense_tracker_db"

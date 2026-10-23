@@ -703,3 +703,18 @@ Owner decisions from this amendment: only the A6 test-shards.json edit (at S5). 
 - **S2/S2b/S6c (Low):** LEGAL_PATHS "ALL plan/entry writes" and "ONLY writer of spendingExclusionReason" must name the infrastructure exceptions (migrations, rescue copy, export anonymizer, wipe) and get db_ownership_policy entries. If plans carry `categoryId`, a CategoryDao-style reassign would be a second writer and must be fenced.
 - **S5 (Low):** `domain/schedule/ExpenseScheduleLinkPolicy.kt` sits outside `domain/installment/`, so add that exact file to `PLAN_CODE_PREFIXES` (~:627-631) in the arch guard test. Segment 40 now lists it.
 - **Info:** `stripCommentsKeepStrings` doesn't handle nested quotes inside string templates (`"${f("a//b")}"`); it affects the raw-SQL rules only. Optional hardening.
+
+**A10. Carry-forwards from the S2 reviews (2026-10-23; binding)**
+- **S2 policy rows moved to S6a:** the S2 write-set item "db_ownership_policy.yml + signatures accounting for InstallmentPlanDao" moves to S6a. db_access skips *Dao.kt and is deny-by-default per caller, so the first caller (the coordinator) must add its rows. Evidence: architecture-guardian + room-migration-guardian.
+- **S3 (Medium, binding):** TransactionLifecycleCoordinator.updateExpense writes the caller's whole row (`expenseDao.update(finalExpense)`, ~:1420-1462). A stale editor save would silently reset spendingExclusionReason. Fix in S3: `finalExpense.copy(spendingExclusionReason = existing.spendingExclusionReason)` (existing is read in-txn ~:1338), plus a stale-save regression test. The other TLC partial updates use existing.copy (safe); create paths correctly start NULL.
+- **S2b:**
+  - FinancialRescueCoordinator (~:385-398) copies a fixed baseCols list that omits spendingExclusionReason and does not copy the plan tables. A rescued purchase would become full spending again (double count). S2b must copy the flag + plan tables together, or deliberately drop both and document it.
+  - The ExportAnonymizer stripping test must cover ANONYMIZED_EXPORT and every redactsRawText mode for displayName/lenderLabel.
+  - ExportAnonymizer is on the cloud-guard surface: use no Kotlin identifier containing "installment" (SQL strings are masked and fine), or ask the owner before any exemption.
+  - Wipe / anonymizer infrastructure exceptions per A9.
+- **S6a:**
+  - insert entries only as SCHEDULED + unlinked (test it);
+  - deletePlanById must clear the purchase expense flag in the same transaction;
+  - re-read the plan status in-txn before claimEntryForExpense;
+  - pass only bounded enum names as statusReason/adjustReason;
+  - map ABORT constraint exceptions to reason codes, never persisting/logging messages.

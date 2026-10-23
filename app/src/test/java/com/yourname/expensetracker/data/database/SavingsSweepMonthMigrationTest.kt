@@ -127,6 +127,8 @@ class SavingsSweepMonthMigrationTest {
         }
         helper.runMigrationsAndValidate(name, 151, true, SavingsSweepMonthMigration(FakeTimeProvider(now))).close()
         val database = Room.databaseBuilder(context, AppDatabase::class.java, name)
+            // S2: AppDatabase is v152 now; reopen through the real 151->152 migration (Room validates the 152 schema)
+            .addMigrations(DatabaseMigrations.MIGRATION_151_152)
             .allowMainThreadQueries().build()
         try {
             val writeBarrier = mockk<DatabaseWriteBarrier>()

@@ -443,6 +443,114 @@ class InstallmentPlanArchitectureGuardTest {
         )
     }
 
+    /**
+     * A9 (S2): the additive S2 schema DDL lives in DatabaseMigrations.kt (and could be echoed in
+     * AppDatabase.kt). `CREATE TABLE/INDEX installment_*` and `ALTER TABLE expenses ADD COLUMN` are
+     * schema creation, not plan-table row writes, so PLAN_TABLE_RAW_SQL_WRITE must not flag them even
+     * though they mention installment_* tables. Row writes (INSERT/UPDATE/DELETE) at the same location
+     * are still flagged by the matcher itself (control below, planted at a non-exempt path).
+     */
+    @Test
+    fun `self-check A9 S2 schema DDL is not flagged by the raw SQL write rule`() {
+        val s2Ddl = """
+            val MIGRATION_151_152 = object : Migration(151, 152) {
+                override fun migrate(database: SupportSQLiteDatabase) {
+                    database.execSQL(
+                        "CREATE TABLE IF NOT EXISTS `installment_plans` (" +
+                            "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                            "`planUuid` TEXT NOT NULL, " +
+                            "`purchaseExpenseId` INTEGER, " +
+                            "`status` TEXT NOT NULL)"
+                    )
+                    database.execSQL(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS `index_installment_plans_planUuid` " +
+                            "ON `installment_plans` (`planUuid`)"
+                    )
+                    database.execSQL(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS `index_installment_plans_purchaseExpenseId` " +
+                            "ON `installment_plans` (`purchaseExpenseId`)"
+                    )
+                    database.execSQL(
+                        "CREATE INDEX IF NOT EXISTS `index_installment_plans_status` " +
+                            "ON `installment_plans` (`status`)"
+                    )
+                    database.execSQL(
+                        "CREATE TABLE IF NOT EXISTS `installment_entries` (" +
+                            "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                            "`planId` INTEGER NOT NULL, " +
+                            "FOREIGN KEY(`planId`) REFERENCES `installment_plans`(`id`) " +
+                            "ON UPDATE NO ACTION ON DELETE CASCADE )"
+                    )
+                    database.execSQL(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS `index_installment_entries_planId_kind_seq` " +
+                            "ON `installment_entries` (`planId`, `kind`, `seq`)"
+                    )
+                    database.execSQL(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS `index_installment_entries_linkedExpenseId` " +
+                            "ON `installment_entries` (`linkedExpenseId`)"
+                    )
+                    database.execSQL(
+                        "CREATE INDEX IF NOT EXISTS `index_installment_entries_dueDate` " +
+                            "ON `installment_entries` (`dueDate`)"
+                    )
+                    database.execSQL("ALTER TABLE `expenses` ADD COLUMN `spendingExclusionReason` TEXT DEFAULT NULL")
+                }
+            }
+        """.trimIndent()
+        val migrationsPath = "$ROOT/data/database/DatabaseMigrations.kt"
+        val appDatabasePath = "$ROOT/data/database/AppDatabase.kt"
+
+        assertClean("S2 DDL block at the DatabaseMigrations.kt path", planDaoWrites(migrationsPath, s2Ddl))
+        assertClean("S2 DDL block at the AppDatabase.kt path", planDaoWrites(appDatabasePath, s2Ddl))
+
+        val singleStatements = listOf(
+            "CREATE TABLE IF NOT EXISTS `installment_plans` (`id` INTEGER NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS `installment_entries` (`id` INTEGER NOT NULL, " +
+                "FOREIGN KEY(`planId`) REFERENCES `installment_plans`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+            "CREATE UNIQUE INDEX IF NOT EXISTS `index_installment_plans_planUuid` ON `installment_plans` (`planUuid`)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS `index_installment_entries_linkedExpenseId` " +
+                "ON `installment_entries` (`linkedExpenseId`)",
+            "CREATE INDEX IF NOT EXISTS `index_installment_entries_status` ON `installment_entries` (`status`)",
+            "ALTER TABLE `expenses` ADD COLUMN `spendingExclusionReason` TEXT DEFAULT NULL"
+        )
+        for (statement in singleStatements) {
+            val snippet = "fun f(database: SupportSQLiteDatabase) { database.execSQL(\"$statement\") }"
+            assertClean(statement, planDaoWrites(migrationsPath, snippet))
+        }
+
+        // Control: the matcher is not blind. Row writes next to the same DDL are flagged at a
+        // non-exempt path, so the clean results above cannot come from a dead rule.
+        val nonExempt = "$ROOT/data/repository/InstallmentPlanRepository.kt"
+        assertFlagged("DDL plus INSERT at a non-exempt path", planDaoWrites(nonExempt, s2Ddl + "\n" +
+            "fun g(db: SupportSQLiteDatabase) { db.execSQL(\"INSERT INTO installment_plans (id) VALUES (1)\") }"),
+            "PLAN_TABLE_RAW_SQL_WRITE")
+        assertFlagged("DDL plus UPDATE at a non-exempt path", planDaoWrites(nonExempt, s2Ddl + "\n" +
+            "fun g(db: SupportSQLiteDatabase) { db.execSQL(\"UPDATE installment_entries SET status = 'X'\") }"),
+            "PLAN_TABLE_RAW_SQL_WRITE")
+        assertFlagged("DDL plus DELETE at a non-exempt path", planDaoWrites(nonExempt, s2Ddl + "\n" +
+            "fun g(db: SupportSQLiteDatabase) { db.execSQL(\"DELETE FROM installment_entries\") }"),
+            "PLAN_TABLE_RAW_SQL_WRITE")
+    }
+
+    @Test
+    fun `A9 live S2 schema DDL in DatabaseMigrations is present and not flagged by the plan DAO write rule`() {
+        val files = requireScan()
+        val migrations = files.singleOrNull { it.rel == "$ROOT/data/database/DatabaseMigrations.kt" }
+        assertTrue("DatabaseMigrations.kt must be in the scan (else this check is vacuous)", migrations != null)
+        val text = migrations!!.raw
+        assertTrue("S2 plans DDL must be present", text.contains("CREATE TABLE IF NOT EXISTS `installment_plans`"))
+        assertTrue("S2 entries DDL must be present", text.contains("CREATE TABLE IF NOT EXISTS `installment_entries`"))
+        assertTrue(
+            "S2 expenses column DDL must be present",
+            text.contains("ALTER TABLE `expenses` ADD COLUMN `spendingExclusionReason`")
+        )
+        assertClean("real DatabaseMigrations.kt", planDaoWrites(migrations.rel, text))
+
+        val appDatabase = files.singleOrNull { it.rel == "$ROOT/data/database/AppDatabase.kt" }
+        assertTrue("AppDatabase.kt must be in the scan", appDatabase != null)
+        assertClean("real AppDatabase.kt", planDaoWrites(appDatabase!!.rel, appDatabase.raw))
+    }
+
     @Test
     fun `self-check INV-24 ExpenseDao detector flags planted references in every plan package and ignores benign text`() {
         val planPaths = listOf(

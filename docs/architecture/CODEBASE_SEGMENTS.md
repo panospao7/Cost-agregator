@@ -759,7 +759,7 @@ Owns the repo-level static architecture guard suite, boundary verification scrip
 
 ## SEGMENT 40: Installment Plans
 
-Owns installment plans (loan and pay-in-installments tracking): plan and entry state, schedule generation and date arithmetic, the plan coordinator (the single writer of the plan tables), the read-only read model and projection port, due-installment recording, and plan presentation. Planned feature (loan-installments): only the cloud reachability guard exists today; the plan code lands in later slices of `workflows/active/loan-installments-plan.md`.
+Owns installment plans (loan and pay-in-installments tracking): plan and entry state, schedule generation and date arithmetic, the plan coordinator (the single writer of the plan tables), the read-only read model and projection port, due-installment recording, and plan presentation. Planned feature (loan-installments): the cloud reachability guard exists, and (S2) the `installment_plans` / `installment_entries` tables, their entities and `InstallmentPlanDao` exist with no writer yet (the plan coordinator lands in S6a); the remaining plan code lands in later slices of `workflows/active/loan-installments-plan.md`.
 
 **Owner:** `InstallmentPlanLifecycleCoordinator` (planned) for every plan/entry write; `InstallmentScheduleCalculator` (planned, pure) for schedules; `InstallmentPlanReadModel` / `InstallmentProjectionPort` (planned, read-only) for reads. Legal path: `docs/architecture/LEGAL_PATHS.md` "Installment Plan Mutations".
 
@@ -769,7 +769,7 @@ Owns installment plans (loan and pay-in-installments tracking): plan and entry s
 - `domain/installment/lifecycle/` — `InstallmentPlanLifecycleCoordinator` (S6a; sole writer of plan tables)
 - `data/repository/` — `InstallmentPlanReadRepositoryImpl` (read-only); `di/InstallmentModule.kt` wiring (S6a)
 - `service/installment/` — `InstallmentDueRecordingWorker` only (S7a); no coordinator, read model or port lives here
-- `data/database/` — `installment_plans` / `installment_entries` entities and DAOs (schema change in S2)
+- `data/database/` — `installment_plans` / `installment_entries` entities (`InstallmentPlan`, `InstallmentEntry`) and `InstallmentPlanDao` exist (schema 152, S2); no writer yet, the plan coordinator lands in S6a
 - `ui/screens/installments/` — overview, detail, history, create/edit screens (hidden entry until final enablement)
 
 **Boundary notes**
@@ -825,7 +825,7 @@ File-to-segment mapping for all 40 segments:
 | 37 | Spending Challenges | `domain/challenge/`, `SpendingChallengeManager` |
 | 38 | Receipt Matching | `domain/receiptmatching/`, `ReceiptTransactionMatcher`, `ReceiptMatchLifecycleService` |
 | 39 | Static Guardrails & CI Verification | `scripts/ci/`, `scripts/guardrails/`, `scripts/allowlists/`, `scripts/verify_*_boundaries.py`, `scripts/verify_installment_cloud_reachability.py`, `tools/`, `.github/workflows/ci.yml` |
-| 40 | Installment Plans | (planned) `domain/installment/`, `service/installment/`, `ui/screens/installments/`, `InstallmentPlanLifecycleCoordinator`, `InstallmentScheduleCalculator`, `InstallmentProjectionPort`, `installment_plans`, `installment_entries` |
+| 40 | Installment Plans | `installment_plans`, `installment_entries`, `InstallmentPlan`, `InstallmentEntry`, `InstallmentPlanDao` (exist, S2, no writer yet); (planned) `domain/installment/`, `service/installment/`, `ui/screens/installments/`, `InstallmentPlanLifecycleCoordinator` (S6a), `InstallmentScheduleCalculator`, `InstallmentProjectionPort` |
 
 ### Quick checks
 - Forecast issues → Segment 1
