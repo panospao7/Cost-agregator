@@ -200,4 +200,9 @@
     <string name="domain_ai_smallest_purchase">Μικρότερη αγορά</string>
     <!-- AI capability label (transaction insight). Best-effort translation, pending owner review. -->
     <string name="ai_capability_transaction_insight">Ανάλυση συναλλαγής</string>
+    <!-- B2e insight row. Best-effort translations, pending owner review. -->
+    <string name="ai_insight_label">Ανάλυση συναλλαγής (στη συσκευή)</string>
+    <string name="ai_insight_desc">Προσθέτει μία φράση που δημιουργείται στη συσκευή σε μια νέα πρόταση ενέργειας όταν προσθέτετε μια δαπάνη ενώ η εφαρμογή είναι ανοιχτή. Δεν χρησιμοποιεί ποτέ το cloud.</string>
+    <string name="ai_insight_needs_ai">Ενεργοποιήστε το AI παραπάνω για να το χρησιμοποιήσετε.</string>
+    <string name="ai_insight_needs_on_device">Ενεργοποιήστε το AI στη συσκευή παραπάνω για να το χρησιμοποιήσετε.</string>
 </resources>

@@ -22,6 +22,7 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.slot
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -311,6 +312,112 @@ class AiSettingsViewModelTest : ViewModelTestUtils() {
         advanceUntilIdle()
 
         assertNull(viewModel.uiState.value.settingsWriteError)
+    }
+
+    // ---- ai-fixes B2e: insight setter (AE-32, INV-2/4) ----
+
+    // AE-32 / B2e: the setter persists through the repository and only flips its own field.
+    @Test
+    fun `setTransactionInsightEnabled persists only the insight flag via repository update`() = runTest(testDispatcher) {
+        val transform = slot<(AiSettings) -> AiSettings>()
+        coEvery { aiSettingsRepository.update(capture(transform)) } returns Unit
+        val before = AiSettings(
+            aiEnabled = true,
+            dashboardBriefingEnabled = true,
+            proactiveBriefingsEnabled = true,
+            transactionInsightEnabled = false
+        )
+
+        viewModel.setTransactionInsightEnabled(true)
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { aiSettingsRepository.update(any()) }
+        assertEquals(before.copy(transactionInsightEnabled = true), transform.captured(before))
+        assertNull(viewModel.uiState.value.settingsWriteError)
+    }
+
+    @Test
+    fun `setTransactionInsightEnabled false clears the flag and leaves briefing settings untouched`() = runTest(testDispatcher) {
+        val transform = slot<(AiSettings) -> AiSettings>()
+        coEvery { aiSettingsRepository.update(capture(transform)) } returns Unit
+        val before = AiSettings(
+            dashboardBriefingEnabled = true,
+            proactiveBriefingsEnabled = true,
+            transactionInsightEnabled = true
+        )
+
+        viewModel.setTransactionInsightEnabled(false)
+        advanceUntilIdle()
+
+        assertEquals(before.copy(transactionInsightEnabled = false), transform.captured(before))
+    }
+
+    // AE-32: insight toggling never arms or disarms the daily briefing work.
+    @Test
+    fun `setTransactionInsightEnabled never invokes SyncProactiveBriefingWorkUseCase`() = runTest(testDispatcher) {
+        viewModel.setTransactionInsightEnabled(true)
+        advanceUntilIdle()
+        viewModel.setTransactionInsightEnabled(false)
+        advanceUntilIdle()
+
+        coVerify(exactly = 2) { aiSettingsRepository.update(any()) }
+        coVerify(exactly = 0) { syncProactiveBriefingWorkUseCase(any()) }
+    }
+
+    // INV-2/3: bounded error, class name only in logs, no work sync.
+    @Test
+    fun `setTransactionInsightEnabled write failure shows bounded resource and logs class name only`() = runTest(testDispatcher) {
+        withCapturedLogs { tree ->
+            coEvery { aiSettingsRepository.update(any()) } throws IOException(rawPath)
+
+            viewModel.setTransactionInsightEnabled(true)
+            advanceUntilIdle()
+
+            val error = viewModel.uiState.value.settingsWriteError
+            assertEquals(UiText.StringResource(R.string.ai_error_settings_save_failed), error)
+            assertTrue((error as UiText.StringResource).args.isEmpty())
+            assertTrue(tree.throwables.isEmpty())
+            assertTrue(tree.messages.any { it.contains("IOException") })
+            assertTrue(tree.messages.none { it.contains(rawPath) || it.contains("datastore") })
+            coVerify(exactly = 0) { syncProactiveBriefingWorkUseCase(any()) }
+        }
+    }
+
+    // INV-4: cancellation is not a settings error.
+    @Test
+    fun `setTransactionInsightEnabled cancellation propagates and sets no settings error`() = runTest(testDispatcher) {
+        withCapturedLogs { tree ->
+            coEvery { aiSettingsRepository.update(any()) } throws CancellationException("cancelled")
+
+            viewModel.setTransactionInsightEnabled(true)
+            advanceUntilIdle()
+
+            assertNull(viewModel.uiState.value.settingsWriteError)
+            assertTrue(tree.messages.none { it.contains("write failed") })
+            coVerify(exactly = 0) { syncProactiveBriefingWorkUseCase(any()) }
+        }
+    }
+
+    // B2e: the insight row needs a runtime status, appended last (the use case excludes it from highestPriorityMessage).
+    @Test
+    fun `runtime capability list ends with TRANSACTION_INSIGHT`() = runTest(testDispatcher) {
+        val requested = mutableListOf<List<AiCapability>>()
+        coEvery { getAiRuntimeStatusUseCase(capture(requested)) } returns AiRuntimeStatusSummary(
+            capabilities = emptyList(),
+            highestPriorityMessage = null,
+            networkAvailable = true,
+            wifiConnected = true,
+            lastRefreshedAt = 1L
+        )
+
+        viewModel.refreshRuntimeStatus()
+        advanceUntilIdle()
+
+        assertTrue(requested.isNotEmpty())
+        requested.forEach { capabilities ->
+            assertEquals(AiCapability.TRANSACTION_INSIGHT, capabilities.last())
+            assertEquals(1, capabilities.count { it == AiCapability.TRANSACTION_INSIGHT })
+        }
     }
 
     @Test

@@ -449,4 +449,9 @@
     <string name="domain_ai_smallest_purchase">Compra más pequeña</string>
     <!-- AI capability label (transaction insight). Best-effort translation, pending native review. -->
     <string name="ai_capability_transaction_insight">Análisis de transacción</string>
+    <!-- B2e insight row. Best-effort translations, pending native review. -->
+    <string name="ai_insight_label">Análisis de transacción (en el dispositivo)</string>
+    <string name="ai_insight_desc">Añade una frase generada en el dispositivo a una nueva recomendación cuando registras un gasto mientras la app está abierta. Nunca usa la nube.</string>
+    <string name="ai_insight_needs_ai">Activa la IA arriba para usar esto.</string>
+    <string name="ai_insight_needs_on_device">Activa la IA en el dispositivo arriba para usar esto.</string>
 </resources>

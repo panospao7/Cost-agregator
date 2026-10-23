@@ -101,7 +101,9 @@ class AiSettingsViewModel @Inject constructor(
                         AiCapability.RECEIPT_EXTRACTION,
                         AiCapability.CATEGORIZATION_FALLBACK,
                         AiCapability.DEDUPE_JUDGE,
-                        AiCapability.RECEIPT_ITEM_CATEGORIZATION
+                        AiCapability.RECEIPT_ITEM_CATEGORIZATION,
+                        // B2e: appended last; the use case excludes it from highestPriorityMessage (own row).
+                        AiCapability.TRANSACTION_INSIGHT
                     )
                 )
                 // S11-006: Discard stale result
@@ -312,6 +314,15 @@ class AiSettingsViewModel @Inject constructor(
     fun setDashboardBriefingEnabled(enabled: Boolean) = update(
         transform = { it.copy(dashboardBriefingEnabled = enabled) },
         syncProactiveBriefings = true
+    )
+
+    /**
+     * AE-32: the on-device transaction insight toggle is independent of the daily briefing.
+     * It deliberately does NOT request proactive-briefing work syncing (no
+     * [SyncProactiveBriefingWorkUseCase] call), so briefing arming is unaffected.
+     */
+    fun setTransactionInsightEnabled(enabled: Boolean) = update(
+        transform = { it.copy(transactionInsightEnabled = enabled) }
     )
     fun setReviewExplanationEnabled(enabled: Boolean) = update(transform = { it.copy(reviewExplanationEnabled = enabled) })
     fun setReceiptAssistEnabled(enabled: Boolean) = update(transform = { it.copy(receiptAssistEnabled = enabled) })

@@ -491,3 +491,29 @@ Follow-ups (pre-existing, not changed here):
 - Validation: targeted vr-20261023-195250-3491d310 PASS; static-guards vr-20261023-195739-37dbfe31 PASS (cancellation baseline ratcheted 92 → 90 by removing the two resolved entries). Earlier: targeted vr-20261023-192448-5a646edf FAIL (missing currentTime import; orchestrator one-line fix), static-guards vr-20261023-192906-81d0d3d7 FAIL (ratchet DECREASED, fixed).
 - Owner-visible at Z: GenAI BUSY/QUOTA_EXCEEDED/MODEL_UNAVAILABLE/BACKGROUND_USE_BLOCKED collapse to PROVIDER_ERROR (INV-19); INV-17 last bullet not met word-for-word; widening AiServiceError is a separate owner decision.
 Next: B2e (insight settings row UI; cheap reviewer + PSG copy check; lint).
+
+## B2e (2026-10-23) — implemented (NOT compiled/validated)
+- UX 2.1/2.2, INV-15/16, AE-32. Schema NONE. Legal path: settings write via `AiSettingsRepository.update` only; no worker/arming path.
+- `AiSettingsViewModel`: `setTransactionInsightEnabled(enabled)` = `update(transform)` with NO `syncProactiveBriefings` (never invokes `SyncProactiveBriefingWorkUseCase`, AE-32); reuses slice A's bounded error (`ai_error_settings_save_failed`, class-name-only log, CE rethrow). `TRANSACTION_INSIGHT` appended LAST to the explicit runtime capability list (needed: the row's badge/status come from its runtime entry; last position keeps it out of `highestPriorityMessage` precedence).
+- `AiSettingsScreen`: new private `TransactionInsightRow` directly after "Dashboard briefing". State is a pure internal function `transactionInsightRowState(settings, runtime)` (permanent platform limit -> switch disabled + on-device message; else AI off -> `ai_insight_needs_ai`; on-device off -> `ai_insight_needs_on_device`; insight off -> `ai_status_disabled`; no runtime -> `ai_status_not_loaded`; AVAILABLE -> Ready; other -> Needs attention + `onDeviceMessage`). Never renders a route line or cloud-fallback hint; always shows `ai_insight_desc` as its own text node. It uses the on-device status text (`onDeviceMessage`), never the router's combined reason (which names cloud).
+- `GetAiRuntimeStatusUseCase` (B2a heads-up, outside the nominal write set, small): for `TRANSACTION_INSIGHT` with `DETERMINISTIC_FALLBACK` the message is `onDeviceMessage ?: "On-device AI is turned off in settings."` instead of the router route reason (keeps the bottom runtime list, `highestPriorityMessage` and guidance card free of cloud wording). Other capabilities unchanged.
+- Label decision: BOTH keys kept deliberately. `ai_insight_label` ("Transaction insight (on-device)", UX 9) is the matrix-row label; B2a's `ai_capability_transaction_insight` ("Transaction insight") stays for the runtime status list / debug labels where the qualifier is redundant.
+- Strings (values/es/el): `ai_insight_label`, `ai_insight_desc`, `ai_insight_needs_ai`, `ai_insight_needs_on_device`. es/el are best-effort, OWNER REVIEW needed.
+- Tests: `AiSettingsViewModelTest` +6 (persists only the insight flag; false path; never invokes Sync (AE-32); bounded failure; CE propagates; runtime list ends with TRANSACTION_INSIGHT); NEW `AiSettingsInsightRowStateTest` (7, pure state table); `GetAiRuntimeStatusUseCaseTest` +3 (insight fallback message x2, other capability unchanged). No test deleted/weakened.
+- Not done: no Compose UI test of the row (none exist for this screen); verify TalkBack order and 200% font manually.
+- Suggested validation: targeted-unit-test `"*AiSettingsViewModelTest*"`, `"*AiSettingsInsightRowStateTest*"`, `"*GetAiRuntimeStatusUseCaseTest*"`; `lint`; static-guards if the reviewer asks.
+
+## B2e review fixes (2026-10-24) — NOT compiled/validated
+- Summary message: `GetAiRuntimeStatusUseCase` now excludes `TRANSACTION_INSIGHT` from `highestPriorityMessage` (firstOrNull filter), so the insight's own DISABLED reason never feeds the shared guidance card; the insight row keeps its own message. New test: insight DISABLED + every other capability ready gives a null summary message while the insight row keeps its message.
+- Runtime label is singular: "transaction insight" (use case label and the two existing test expectations updated from "transaction insights").
+- el wording: `ai_insight_desc` uses "μία φράση" for the generated sentence (the "cloud" / "AI" terms already matched the nearby el ai_* strings).
+- Style: blank line between `setDashboardBriefingEnabled` and the new KDoc is in place.
+- Note: the insight switch is disabled only on permanent platform limits per UX 2.2; the stored `transactionInsightEnabled` value is never touched by that state.
+- es/el strings remain best-effort and need owner review.
+- Suggested validation unchanged: targeted-unit-test `"*GetAiRuntimeStatusUseCaseTest*"`, `"*AiSettingsViewModelTest*"`, `"*AiSettingsInsightRowStateTest*"`; `lint`.
+
+## B2e DONE (2026-10-24)
+- Review: cheap review + PSG copy check (privacy-security-guardian, sonnet) ACCEPT-WITH-MINORS; minors applied (summary message excludes TRANSACTION_INSIGHT; singular runtime label; el "μία φράση"). Out-of-write-set GetAiRuntimeStatusUseCase change accepted by the orchestrator (insight DETERMINISTIC_FALLBACK shows the on-device message, never cloud wording).
+- Validation (final tree): targeted vr-20261023-212703-1400d4f5 PASS; lint vr-20261023-213150-8c6853fc PASS. Earlier: targeted vr-20261023-203543-d4635d86 PASS, lint vr-20261023-204345-f0c1a3ea PASS (pre-minors).
+- Owner review: es/el strings ai_insight_label/_desc/_needs_ai/_needs_on_device (and B2a ai_capability_transaction_insight).
+Next: B3a (briefing delivery outcome; OD-2) — MUST honour the CROSS-LANE requirement on build/release-lead-notes/lanes-board.md (use sendAiBriefingReadyForKind(BRIEFING) / sendBudgetAlertForKind(WARRANTY, …) forms at merge; 3-value DeliveryResult; addNotificationsSent only on DELIVERED).

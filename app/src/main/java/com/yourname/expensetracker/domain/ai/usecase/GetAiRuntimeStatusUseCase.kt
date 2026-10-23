@@ -35,7 +35,7 @@ class GetAiRuntimeStatusUseCase @Inject constructor(
                 AiCapabilityRuntimeStatus(
                     capability = capability,
                     status = status,
-                    message = runtimeMessageFor(routeDecision.route, routeDecision.reason, onDeviceMessage),
+                    message = runtimeMessageFor(capability, routeDecision.route, routeDecision.reason, onDeviceMessage),
                     actionLabel = routeActionLabel(routeDecision.route, status),
                     route = routeDecision.route,
                     routeReason = routeDecision.reason,
@@ -46,8 +46,10 @@ class GetAiRuntimeStatusUseCase @Inject constructor(
             }
         }.awaitAll()
 
+        // B2e: TRANSACTION_INSIGHT has its own settings row, so its message (for example the router's
+        // DISABLED reason when the insight toggle is off) must not feed the shared summary/guidance card.
         val highestPriorityMessage = statuses
-            .firstOrNull { it.message != null }
+            .firstOrNull { it.capability != AiCapability.TRANSACTION_INSIGHT && it.message != null }
             ?.message
 
         AiRuntimeStatusSummary(
@@ -68,14 +70,24 @@ private fun routeActionLabel(route: AiRoute?, status: OnDeviceModelStatus): Stri
     null -> status.actionLabel()
 }
 
+private const val INSIGHT_ON_DEVICE_OFF_MESSAGE = "On-device AI is turned off in settings."
+
 private fun runtimeMessageFor(
+    capability: AiCapability,
     route: AiRoute?,
     routeReason: String,
     onDeviceMessage: String?
 ): String? = when (route) {
     AiRoute.CLOUD -> null
     AiRoute.ON_DEVICE -> null
-    AiRoute.DETERMINISTIC_FALLBACK,
+    // B2e (UX 2.2): the insight is on-device only, so its fallback message must never carry the
+    // router's combined reason (which names cloud). Use the on-device status text instead.
+    AiRoute.DETERMINISTIC_FALLBACK ->
+        if (capability == AiCapability.TRANSACTION_INSIGHT) {
+            onDeviceMessage ?: INSIGHT_ON_DEVICE_OFF_MESSAGE
+        } else {
+            routeReason
+        }
     AiRoute.DISABLED -> routeReason
     null -> onDeviceMessage
 }
@@ -104,5 +116,5 @@ private fun AiCapability.runtimeLabel(): String = when (this) {
     AiCapability.REVIEW_PRIORITIZATION -> "review prioritization"
     AiCapability.SEMANTIC_DEDUPE -> "semantic duplicate detection"
     AiCapability.RECEIPT_ITEM_CATEGORIZATION -> "receipt item categorization"
-    AiCapability.TRANSACTION_INSIGHT -> "transaction insights"
+    AiCapability.TRANSACTION_INSIGHT -> "transaction insight"
 }

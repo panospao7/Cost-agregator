@@ -2028,6 +2028,11 @@
     <string name="ai_capability_receipt_item_cat">Receipt item categorization</string>
     <string name="ai_capability_receipt_item_categorization">Receipt item categorization</string>
     <string name="ai_capability_transaction_insight">Transaction insight</string>
+    <!-- B2e insight row (UX 2.1/2.2). ai_insight_label carries the on-device qualifier; the shorter ai_capability_transaction_insight stays for the runtime status list. -->
+    <string name="ai_insight_label">Transaction insight (on-device)</string>
+    <string name="ai_insight_desc">Adds one on-device sentence to a new recommendation when you add an expense while the app is open. Never uses the cloud.</string>
+    <string name="ai_insight_needs_ai">Turn on AI above to use this.</string>
+    <string name="ai_insight_needs_on_device">Turn on on-device AI above to use this.</string>
     <string name="ai_warranty_local_note">Warranty periods are read on your device from receipt text. No AI or cloud is used for warranties.</string>
     <string name="assistant_cancel_query">Cancel</string>
     <string name="assistant_clear_history_title">Clear all history?</string>
