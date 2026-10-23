@@ -669,6 +669,8 @@ Context: budget alerts post with the raw `budget.id.toInt()` (`BudgetMonitor.kt:
 - **Release state:** 1a is live.
 - **Rollback:** after release, prefer a forward fix. Reverting the UI alone leaves users who enabled discreet with no way to turn it off (the privacy-safe direction). A revert before release is clean.
 
+- **Orchestrator amendment (S12 review, 2026-10-24):** S12 write set also includes `M/ui/screens/privacysettings/AppLockSettingsWriteSerializer.kt` (interim write serializer). **S18** write set must include moving that serializer to the domain owner and editing `AppLockPrivacySettingsViewModel.kt` before AppLockController writes settings; S18 also owns review-save diagnostics.
+
 ### S13 — Docs (1a)
 - **Write set (docs):**
   - `docs/architecture/LEGAL_PATHS.md`: new NOTIFICATION PRESENTATION and DEEP LINKS sections, as implemented. NOTIFICATION PRESENTATION includes the applier stamping the hidden kind marker, and the sweep's marker-first classification with the channel/id-range fallback (spec 4.6). In the edited Anomaly Alerting step, correct the stale `NotificationService.send()` reference (`:938`). This correction is flagged as in-section only.
