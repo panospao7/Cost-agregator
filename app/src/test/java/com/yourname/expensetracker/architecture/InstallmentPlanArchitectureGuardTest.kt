@@ -158,7 +158,8 @@ class InstallmentPlanArchitectureGuardTest {
     // ---------------------------------------------------------------- matchers
 
     /**
-     * INV-25 / check 1. Plan DAO write calls (insert/update/delete/upsert/replace families) through ANY
+     * INV-25 / check 1. Plan DAO write calls (every verb prefix in [MUTATION_VERB_PREFIXES], which mirrors
+     * MUTATION_VERBS in scripts/verify_db_access_boundaries.py, so claim/release link owners are covered) through ANY
      * receiver typed or named as an Installment*Dao, the DAO accessor chain, or a local alias; plus a plan
      * DAO declared outside data/database/dao; plus raw SQL writes to installment_* tables. Exempt: the plan
      * coordinator (exact relative path, never basename) and DAO declarations under data/database/dao.
@@ -172,7 +173,7 @@ class InstallmentPlanArchitectureGuardTest {
         Regex("""\b(?:val|var)\s+([A-Za-z_]\w*)\s*=\s*[\w.?]*?installment\w*Dao\s*\(\s*\)""", RegexOption.IGNORE_CASE)
             .findAll(code).forEach { receivers += Regex.escape(it.groupValues[1]) }
         val call = Regex(
-            """(?<!\w)(?:${receivers.joinToString("|")})\s*\??\.\s*(?:insert|update|delete|upsert|replace)\w*\s*\(""",
+            """(?<!\w)(?:${receivers.joinToString("|")})\s*\??\.\s*(?:${MUTATION_VERB_PREFIXES.joinToString("|")})\w*\s*\(""",
             RegexOption.IGNORE_CASE
         )
         val hits = mutableListOf<Hit>()
@@ -366,7 +367,13 @@ class InstallmentPlanArchitectureGuardTest {
             "safe call" to
                 "class R(private val planDao: InstallmentPlanDao?) { suspend fun f(p: P) { planDao?.insert(p) } }",
             "mock-prefixed property" to
-                "class R { lateinit var mockInstallmentPlanDao: Any; suspend fun f() { mockInstallmentPlanDao.update(x) } }"
+                "class R { lateinit var mockInstallmentPlanDao: Any; suspend fun f() { mockInstallmentPlanDao.update(x) } }",
+            "claim verb on the canonical name" to
+                "suspend fun f() { installmentPlanDao.claimEntryForExpense(1L, 2L, \"AUTO\", false, 0L) }",
+            "release verb on an arbitrary property name" to
+                "class R(private val dao: InstallmentPlanDao) { suspend fun f() { dao.releaseEntryLink(1L, 2L, null, 0L) } }",
+            "claim verb through the accessor chain" to
+                "suspend fun f() { database.installmentPlanDao().claimEntryForExpense(1L, 2L, \"AUTO\", false, 0L) }"
         )
         for ((label, snippet) in violating) {
             assertFlagged(label, planDaoWrites(nonCoordinator, snippet), "PLAN_DAO_WRITE_CALL")
@@ -412,6 +419,10 @@ class InstallmentPlanArchitectureGuardTest {
         val benign = listOf(
             "plan DAO reads" to
                 "class R(private val planDao: InstallmentPlanDao) { suspend fun f() = planDao.getById(1L) }",
+            "entry read getEntryById" to
+                "class R(private val dao: InstallmentPlanDao) { suspend fun f() = dao.getEntryById(1L) }",
+            "entry read getEntryByLinkedExpenseId via canonical name" to
+                "suspend fun f() = installmentPlanDao.getEntryByLinkedExpenseId(2L)",
             "accessor read" to "suspend fun f() = database.installmentPlanDao().observeAll()",
             "line comment mention" to
                 "class R(private val planDao: InstallmentPlanDao) { // planDao.insert(p)\n suspend fun f() = planDao.getById(1L) }",
@@ -427,6 +438,20 @@ class InstallmentPlanArchitectureGuardTest {
             assertClean(label, planDaoWrites(nonCoordinator, snippet))
         }
         // Exempt: the coordinator itself and DAO declarations in the dao package.
+        assertClean(
+            "coordinator may claim an entry link",
+            planDaoWrites(
+                COORDINATOR_PATH,
+                "suspend fun f() { installmentPlanDao.claimEntryForExpense(1L, 2L, \"AUTO\", false, 0L) }"
+            )
+        )
+        assertClean(
+            "coordinator may release an entry link",
+            planDaoWrites(
+                COORDINATOR_PATH,
+                "class C(private val dao: InstallmentPlanDao) { suspend fun f() { dao.releaseEntryLink(1L, 2L, null, 0L) } }"
+            )
+        )
         assertClean(
             "coordinator may write",
             planDaoWrites(
@@ -502,6 +527,11 @@ class InstallmentPlanArchitectureGuardTest {
 
         assertClean("S2 DDL block at the DatabaseMigrations.kt path", planDaoWrites(migrationsPath, s2Ddl))
         assertClean("S2 DDL block at the AppDatabase.kt path", planDaoWrites(appDatabasePath, s2Ddl))
+
+        // Future-proofing: the DDL non-match must hold on its own, independent of any path exemption.
+        // DDL ALONE (no INSERT/UPDATE/DELETE) at a path that is neither exempt nor a migrations file.
+        val nonExemptPath = "$ROOT/data/repository/InstallmentPlanRepository.kt"
+        assertClean("S2 DDL alone at a NON-exempt path", planDaoWrites(nonExemptPath, s2Ddl))
 
         val singleStatements = listOf(
             "CREATE TABLE IF NOT EXISTS `installment_plans` (`id` INTEGER NOT NULL)",
@@ -763,6 +793,18 @@ class InstallmentPlanArchitectureGuardTest {
             "$ROOT/domain/installment/",
             "$ROOT/service/installment/",
             "$ROOT/ui/screens/installments/"
+        )
+
+        /** Mirrors MUTATION_VERBS in scripts/verify_db_access_boundaries.py (detection grammar, prefix match). */
+        val MUTATION_VERB_PREFIXES = listOf(
+            "insert", "update", "delete", "clear", "mark", "set", "claim",
+            "archive", "restore", "unlink", "link", "block", "unblock", "purge",
+            "redact", "suppress", "fulfill", "approve", "reject", "dismiss",
+            "expire", "deactivate", "finalize", "transition", "repair", "seed",
+            "increment", "decrement", "upsert", "replace", "merge", "reassign",
+            "record", "recover", "release", "reopen", "refresh", "reset", "cancel",
+            "attach", "disconnect", "complete", "accept", "encrypt",
+            "cleanup", "bulk", "add", "conditionally"
         )
 
         const val MIN_SCANNED_FILES = 100

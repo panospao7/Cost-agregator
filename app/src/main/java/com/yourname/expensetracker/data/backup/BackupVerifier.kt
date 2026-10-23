@@ -7,7 +7,7 @@ import timber.log.Timber
 /**
  * Verifies database integrity and table row counts for restore operations.
  *
- * Replaces the old 5-table verification with full 58-table verification.
+ * Replaces the old 5-table verification with full per-table verification (see TABLE_TIERS for the current count).
  *
  * ## Tier definitions
  *
@@ -40,14 +40,16 @@ object BackupVerifier {
     /** Loan installments (INV-30): plan and entry tables exist from schema 152. */
     private const val INSTALLMENT_TABLES_SCHEMA_VERSION = 152
 
-    // ── Verification tier assignment for all 63 tables ──────────
+    // ── Verification tier assignment for all 61 tables ──────────
 
     /**
-     * All 63 tracked table names with their verification tier.
+     * All 61 tracked table names with their verification tier.
+     * 61 = 42 exact (35 listed in the Tier 1 block + 7 event/link) + 10 validity
+     * + 9 optional. TABLE_TIERS is a single literal mapOf (no merged maps/sets).
      */
     private val TABLE_TIERS: Map<String, VerificationTier> = mapOf(
-        // ── Tier 1: Exact row count required (44 total) ──
-        // 37 listed here + 7 event/link tables grouped under the Tier 2 comment
+        // ── Tier 1: Exact row count required (42 total) ──
+        // 35 listed here + 7 event/link tables grouped under the Tier 2 comment
         // below (transaction_events, receipt_events, receipt_expense_links,
         // recurring_occurrences, recurring_reminder_deliveries,
         // recurring_lifecycle_events, warranty_reminder_deliveries) which are also
