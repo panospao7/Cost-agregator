@@ -104,7 +104,10 @@ data class AiSettings(
     val wifiOnlyForCloud: Boolean = false,
     val storeConversationHistory: Boolean = false,
     val preferredMode: AiMode = AiMode.AUTO,
-    val warrantyExtractionEnabled: Boolean = true
+    // INV-7/INV-22: warranty detection is local-only; the flag gates no data flow and
+    // defaults to off. This data class is the ONLY source of settings defaults — the
+    // DataStore mapper must fall back to AiSettings() values, never to its own literals.
+    val warrantyExtractionEnabled: Boolean = false
 )
 
 data class AiEngagementState(

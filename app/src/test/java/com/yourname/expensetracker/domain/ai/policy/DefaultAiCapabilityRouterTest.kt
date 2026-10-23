@@ -186,6 +186,8 @@ class DefaultAiCapabilityRouterTest {
             allowCloudAi = true,
             allowOnDeviceAi = true,
             receiptAssistEnabled = true,
+            // ai-fixes B1c: the default is now false (INV-7); the router table entry is kept.
+            warrantyExtractionEnabled = true,
             preferredMode = AiMode.AUTO
         )
 

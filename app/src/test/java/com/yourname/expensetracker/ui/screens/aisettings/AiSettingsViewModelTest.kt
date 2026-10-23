@@ -153,6 +153,27 @@ class AiSettingsViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
+    fun `runtime capability list excludes WARRANTY_EXTRACTION so the hidden row cannot drive guidance`() = runTest(testDispatcher) {
+        val requested = mutableListOf<List<AiCapability>>()
+        coEvery { getAiRuntimeStatusUseCase(capture(requested)) } returns AiRuntimeStatusSummary(
+            capabilities = emptyList(),
+            highestPriorityMessage = null,
+            networkAvailable = true,
+            wifiConnected = true,
+            lastRefreshedAt = 1L
+        )
+
+        viewModel.refreshRuntimeStatus()
+        advanceUntilIdle()
+
+        assertTrue(requested.isNotEmpty())
+        requested.forEach { capabilities ->
+            assertFalse(AiCapability.WARRANTY_EXTRACTION in capabilities)
+            assertTrue(AiCapability.QUERY_INTERPRETATION in capabilities)
+        }
+    }
+
+    @Test
     fun `saveApiKey requires successful connection test before storing typed key`() = runTest(testDispatcher) {
         viewModel.updateApiKeyInput("AIza12345678901234567890")
 

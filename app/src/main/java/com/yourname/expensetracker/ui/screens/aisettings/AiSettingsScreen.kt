@@ -243,13 +243,6 @@ fun AiSettingsScreen(
                         runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.RECEIPT_EXTRACTION },
                         cloudFallbackAvailable = settings.aiEnabled && settings.allowCloudAi
                     )
-                    CapabilityMatrixRow(
-                        label = stringResource(R.string.ai_capability_warranty_extraction),
-                        enabled = settings.warrantyExtractionEnabled,
-                        onEnabledChange = viewModel::setWarrantyExtractionEnabled,
-                        runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.WARRANTY_EXTRACTION },
-                        cloudFallbackAvailable = settings.aiEnabled && settings.allowCloudAi
-                    )
                     ToggleRow(
                         stringResource(R.string.ai_toggle_receipt_image),
                         settings.receiptImageCloudEnabled,
@@ -281,6 +274,13 @@ fun AiSettingsScreen(
                         onEnabledChange = viewModel::setReceiptItemCategorizationEnabled,
                         runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.RECEIPT_ITEM_CATEGORIZATION },
                         cloudFallbackAvailable = settings.aiEnabled && settings.allowCloudAi
+                    )
+                    // INV-7: warranty detection is local-only; the former toggle gated no data flow, so the
+                    // row is hidden and replaced by this static caption (UX 2.3). The stored flag is untouched.
+                    Text(
+                        text = stringResource(R.string.ai_warranty_local_note),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }

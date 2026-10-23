@@ -181,4 +181,5 @@
     <string name="currency_home_switch_loading">Έλεγχος του κύριου νομίσματος…</string>
     <string name="currency_home_switch_unavailable">Δεν είναι δυνατή η ανάγνωση του κύριου νομίσματος αυτή τη στιγμή. Μπορείτε να επιλέξετε νέο· θα σας ζητηθεί πρώτα επιβεβαίωση.</string>
     <string name="currency_home_switch_error_write_failed">Δεν ήταν δυνατή η αλλαγή του κύριου νομίσματος. Δοκιμάστε ξανά.</string>
+    <string name="ai_warranty_local_note">Οι περίοδοι εγγύησης διαβάζονται στη συσκευή σας από το κείμενο της απόδειξης. Δεν χρησιμοποιείται AI ή cloud για τις εγγυήσεις.</string>
 </resources>

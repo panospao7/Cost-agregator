@@ -430,4 +430,5 @@
     <string name="currency_home_switch_loading">Comprobando tu moneda principal…</string>
     <string name="currency_home_switch_unavailable">Ahora no se puede leer tu moneda principal. Aun así, puedes elegir una nueva; primero se te pedirá confirmación.</string>
     <string name="currency_home_switch_error_write_failed">No se pudo cambiar tu moneda principal. Inténtalo de nuevo.</string>
+    <string name="ai_warranty_local_note">Los periodos de garantía se leen en tu dispositivo a partir del texto del recibo. No se usa IA ni la nube para las garantías.</string>
 </resources>

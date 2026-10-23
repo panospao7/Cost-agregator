@@ -2027,6 +2027,7 @@
     <string name="ai_capability_semantic_dedupe">Semantic duplicate detection</string>
     <string name="ai_capability_receipt_item_cat">Receipt item categorization</string>
     <string name="ai_capability_receipt_item_categorization">Receipt item categorization</string>
+    <string name="ai_warranty_local_note">Warranty periods are read on your device from receipt text. No AI or cloud is used for warranties.</string>
     <string name="assistant_cancel_query">Cancel</string>
     <string name="assistant_clear_history_title">Clear all history?</string>
     <string name="assistant_clear_history_message">This will permanently delete all conversation history. This cannot be undone.</string>

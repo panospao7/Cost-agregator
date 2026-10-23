@@ -107,28 +107,38 @@ class AiSettingsRepositoryImpl @Inject constructor(
     // Helpers
     // -------------------------------------------------------------------------
 
-    private fun Preferences.toAiSettings(): AiSettings = AiSettings(
-        aiEnabled                 = this[Keys.AI_ENABLED]                 ?: true,
-        allowCloudAi              = this[Keys.ALLOW_CLOUD_AI]             ?: false,
-        allowOnDeviceAi           = this[Keys.ALLOW_ON_DEVICE_AI]         ?: true,
-        assistantEnabled          = this[Keys.ASSISTANT_ENABLED]          ?: false,
-        queryInterpretationEnabled = this[Keys.QUERY_INTERPRETATION_ENABLED] ?: false,
-        dashboardBriefingEnabled  = this[Keys.DASHBOARD_BRIEFING_ENABLED] ?: false,
-        reviewExplanationEnabled  = this[Keys.REVIEW_EXPLANATION_ENABLED] ?: false,
-        receiptAssistEnabled      = this[Keys.RECEIPT_ASSIST_ENABLED]      ?: false,
-        receiptImageCloudEnabled  = this[Keys.RECEIPT_IMAGE_CLOUD_ENABLED] ?: false,
-        receiptItemCategorizationEnabled = this[Keys.RECEIPT_ITEM_CATEGORIZATION_ENABLED] ?: false,
-        categorizationFallbackEnabled = this[Keys.CATEGORIZATION_FALLBACK_ENABLED] ?: false,
-        dedupeJudgeEnabled        = this[Keys.DEDUPE_JUDGE_ENABLED]        ?: false,
-        proactiveBriefingsEnabled = this[Keys.PROACTIVE_BRIEFINGS]        ?: false,
-        receiptQuickSaveEnabled   = this[Keys.RECEIPT_QUICK_SAVE]         ?: false,
-        reviewQuickApproveEnabled = this[Keys.REVIEW_QUICK_APPROVE]       ?: false,
-        redactBeforeCloud         = this[Keys.REDACT_BEFORE_CLOUD]        ?: true,
-        wifiOnlyForCloud          = this[Keys.WIFI_ONLY_FOR_CLOUD]        ?: false,
-        storeConversationHistory  = this[Keys.STORE_CONVERSATION_HISTORY] ?: false,
+    /**
+     * Single source of defaults (INV-22): every missing/invalid key falls back to the value of
+     * this [AiSettings] instance. No literal default may be duplicated in the mapper below.
+     * A stored explicit value (including warranty=true from an older install) is never rewritten.
+     */
+    private val defaults = AiSettings()
+
+    // internal (not private) so AiSettingsRepositoryImplTest can pin emptyPreferences() parity (AE-38).
+    internal fun Preferences.toAiSettings(): AiSettings = AiSettings(
+        aiEnabled                 = this[Keys.AI_ENABLED]                 ?: defaults.aiEnabled,
+        allowCloudAi              = this[Keys.ALLOW_CLOUD_AI]             ?: defaults.allowCloudAi,
+        allowOnDeviceAi           = this[Keys.ALLOW_ON_DEVICE_AI]         ?: defaults.allowOnDeviceAi,
+        assistantEnabled          = this[Keys.ASSISTANT_ENABLED]          ?: defaults.assistantEnabled,
+        queryInterpretationEnabled = this[Keys.QUERY_INTERPRETATION_ENABLED] ?: defaults.queryInterpretationEnabled,
+        dashboardBriefingEnabled  = this[Keys.DASHBOARD_BRIEFING_ENABLED] ?: defaults.dashboardBriefingEnabled,
+        reviewExplanationEnabled  = this[Keys.REVIEW_EXPLANATION_ENABLED] ?: defaults.reviewExplanationEnabled,
+        receiptAssistEnabled      = this[Keys.RECEIPT_ASSIST_ENABLED]      ?: defaults.receiptAssistEnabled,
+        receiptImageCloudEnabled  = this[Keys.RECEIPT_IMAGE_CLOUD_ENABLED] ?: defaults.receiptImageCloudEnabled,
+        receiptItemCategorizationEnabled = this[Keys.RECEIPT_ITEM_CATEGORIZATION_ENABLED]
+            ?: defaults.receiptItemCategorizationEnabled,
+        categorizationFallbackEnabled = this[Keys.CATEGORIZATION_FALLBACK_ENABLED]
+            ?: defaults.categorizationFallbackEnabled,
+        dedupeJudgeEnabled        = this[Keys.DEDUPE_JUDGE_ENABLED]        ?: defaults.dedupeJudgeEnabled,
+        proactiveBriefingsEnabled = this[Keys.PROACTIVE_BRIEFINGS]        ?: defaults.proactiveBriefingsEnabled,
+        receiptQuickSaveEnabled   = this[Keys.RECEIPT_QUICK_SAVE]         ?: defaults.receiptQuickSaveEnabled,
+        reviewQuickApproveEnabled = this[Keys.REVIEW_QUICK_APPROVE]       ?: defaults.reviewQuickApproveEnabled,
+        redactBeforeCloud         = this[Keys.REDACT_BEFORE_CLOUD]        ?: defaults.redactBeforeCloud,
+        wifiOnlyForCloud          = this[Keys.WIFI_ONLY_FOR_CLOUD]        ?: defaults.wifiOnlyForCloud,
+        storeConversationHistory  = this[Keys.STORE_CONVERSATION_HISTORY] ?: defaults.storeConversationHistory,
         preferredMode             = this[Keys.PREFERRED_MODE]
             ?.let { runCatching { AiMode.valueOf(it) }.getOrNull() }
-            ?: AiMode.AUTO,
-        warrantyExtractionEnabled = this[Keys.WARRANTY_EXTRACTION_ENABLED] ?: true
+            ?: defaults.preferredMode,
+        warrantyExtractionEnabled = this[Keys.WARRANTY_EXTRACTION_ENABLED] ?: defaults.warrantyExtractionEnabled
     )
 }

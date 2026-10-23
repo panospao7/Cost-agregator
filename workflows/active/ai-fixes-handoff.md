@@ -187,3 +187,13 @@ WarrantyTrackerViewModel.confirmWarranty(id) → repository.confirmWarranty (no 
 Review (reviewer-strict) ACCEPT-WITH-MINORS → fixed: loadStats no longer moves referenceNowMillis (single clock); es/el count strings rephrased to avoid N=1 agreement; confirmed EXPIRED cards show "Expired on". Notes: Greek dialog Cancel shows English (no el action_cancel; UX-Q-5 backfill follow-up); totalProtectedValue still 0.0 on aggregate failure (pre-existing, follow-up: nullable "unavailable").
 Validation: targeted vr-20261023-021112-b450f5f0 PASS (before minors); after minors targeted vr-20261023-024307-c8087a8e PASS, lint vr-20261023-024609-34d87a9a PASS, static-guards vr-20261023-024957-f80b027c PASS.
 Next: B1c (single-source AI-settings defaults, hidden warranty row).
+
+## B1c DONE (2026-10-23)
+Single-source AI-settings defaults: AiSettings.warrantyExtractionEnabled default false (INV-7); AiSettingsRepositoryImpl reads every missing key as `?: defaults.x` from one `AiSettings()` instance (toAiSettings internal for tests); warranty toggle row removed from AiSettingsScreen + local-only caption `ai_warranty_local_note` (en/es/el); dead VM setter removed. Router table entry for WARRANTY_EXTRACTION kept (R7: never remove the enum).
+Tests: new AiSettingsRepositoryImplTest (defaults parity, AE-8 stored explicit true survives mapping; "never rewritten" half is pinned with the B2b DataMigration, spec §4.5 item 5); AiSettingsViewModelTest UX-Q-4 pin; DefaultAiCapabilityRouterTest warranty cloud case now sets warrantyExtractionEnabled = true explicitly.
+reviewer-strict: MAJOR (router test relied on old default) + 2 minors (dead setter, a non-failing assertion) → all fixed before validation.
+Validation (fixed tree): targeted vr-20261023-034048-ba1248a8 PASS, lint vr-20261023-034604-599a17d7 PASS, static-guards vr-20261023-034953-8ca9ed6f PASS.
+
+### Order correction (orchestrator, 2026-10-23)
+The approved order is S0 → A → C1..C5 → CX → B1a.. (PC-12). B1a/B1b/B1c ran before Part C. That dependency is ordering-only, and B1 shares only serial docs (LEGAL_PATHS Privacy block, SourceScanning guard) with C1, so nothing is invalidated. The order is restored from here: C1 → C2 → C3 → C4 → C5 → CX, then B2a.
+Next: C1 (assistant prior turns: USER-only, K=4, cloud + on-device; guard (a)).
