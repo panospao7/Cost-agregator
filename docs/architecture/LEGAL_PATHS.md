@@ -1,6 +1,6 @@
 # Legal Paths — Architecture Law
 
-> **Last updated:** 2026-10-13 (schema/savings delta verified against code: DB v151; prior guarded-worker/CI verification retained)
+> **Last updated:** 2026-10-23 (installment-plan paths added as planned contracts: loan-installments S1; earlier 2026-10-13 schema/savings delta verified against code: DB v151; prior guarded-worker/CI verification retained)
 >
 > **Purpose:** Define the ONE allowed implementation path for each major operation.  
 > **Rule:** Any code that uses a different path is a bug, regardless of whether it "works."  
@@ -90,6 +90,31 @@ FORBIDDEN:
 ```
 
 ```
+SPENDING INCLUSION (planned — loan-installments S3; no code exists yet):
+  → TransactionLifecycleCoordinator.setSpendingExclusionDbOnly(expenseId, reason)
+    (proposed name; any sibling setSpendingExclusion* op follows the same rules)
+    with reason in { INSTALLMENT_PURCHASE, INSTALLMENT_REVERSED, null }
+  → DbOnly op: runs INSIDE the caller's writeBarrier.runWrite { database.withTransaction { … } },
+    returns a MutationResult whose post-commit batch the caller dispatches after commit
+    (same contract as createExpenseDbOnlyV2)
+  → Writes expenses.spendingExclusionReason and one TransactionEvent with
+    LifecycleEventType.UPDATED and the new TransactionUpdateKind.SPENDING_INCLUSION
+  → The ONLY legal caller is InstallmentPlanLifecycleCoordinator (see "Installment Plan Mutations");
+    this op is the ONLY writer of the spendingExclusionReason column
+  → ExpenseDao.insertAtomic() stays the sole expense insert. Plan-created expenses
+    (declareWithNewExpense, confirmEntry, recordDueEntries) use createExpenseDbOnlyV2 → insertAtomic()
+    with a new bounded ExpenseSource value (never free text) and no notes text
+
+FORBIDDEN:
+  ❌ Writing spendingExclusionReason from anywhere except TLC setSpendingExclusion*
+  ❌ Calling setSpendingExclusion* from anywhere except the plan coordinator (only the plan coordinator
+     calls TLC setSpendingExclusionDbOnly; the TLC's own DAO setter call inside that op is the
+     implementation, not a second caller)
+  ❌ A second expense insert path for plan-created expenses (insertAtomic() only)
+  ❌ Any spending-exclusion change without a TransactionEvent (UPDATED / SPENDING_INCLUSION)
+```
+
+```
 DELETE expense:
   → TransactionLifecycleCoordinator.deleteExpense(id)
   → Loads snapshot INSIDE transaction
@@ -154,6 +179,9 @@ FORBIDDEN:
   ❌ Using the resolver family (findDuplicateIdCurrencyAware) for mutation collision
      preflights or post-blocking duplicate audit lookups
   ❌ Adding an isNotMine filter to the blocking family
+  ❌ Adding the spending-inclusion predicate (spendingExclusionReason) to either family
+     (INV-8 of loan-installments: a flagged installment purchase row stays a duplicate
+     target, so a re-captured purchase notification is still blocked)
   ❌ Collision checks outside the coordinator transaction (TOCTOU)
 ```
 
@@ -436,6 +464,35 @@ CLOUD AI call:
     (data/ai/provider/Cloud*Service)
   → Audit via CompositePrivacyGate final decision
 
+INSTALLMENT PLAN DATA is NOT cloud payload input (loan-installments INV-31; guard registered in S1,
+payload exclusion seam planned for S8a):
+  → Plan fields (displayName, lenderLabel, amounts, counts, dates, status), plan repositories, plan DAOs
+    and the installment projection port (InstallmentProjectionPort) must not be reachable from any cloud
+    payload assembly (CloudPayloadPurpose.*, including DASHBOARD_BRIEFING and the transaction-insight and
+    financial-query/assistant inputs)
+  → Any cash-flow / forecast / upcoming-item output that feeds a cloud payload is computed WITHOUT the
+    installment projection (explicit exclusion at assembly), or that payload stays out of scope
+  → Carve-out: the rule covers values read from the plan tables or the projection port. The purchase
+    expense's merchant (= a copy of the plan displayName, INV-28) is an ordinary expense field and
+    follows the existing cloud/export policy
+  → Installment expenses are ordinary expenses and follow the existing cloud/export policy; plan-created
+    expenses carry no notes text
+  → Enforced by the registered static guard installment_cloud_reachability
+    (scripts/verify_installment_cloud_reachability.py), three rule families over the cloud AI payload
+    surface (data/ai, domain/ai, domain/privacy, data/privacy, the AI and privacy DI modules, cloud
+    payload and briefing/insight/assistant input-builder files):
+      G-INSTALLMENT-CLOUD-01  import of domain.installment, service.installment or
+                              ui.screens.installments (wildcard and alias imports included)
+      G-INSTALLMENT-CLOUD-02  any other qualified reference to those packages (backticks and
+                              whitespace/newlines around "." are normalised away)
+      G-INSTALLMENT-CLOUD-03  any identifier containing "installment" (case-insensitive) in executable
+                              code, e.g. InstallmentPlan*, installmentPlanDao(), UpcomingItem.Installment
+    A surface directory or exact-file entry that matches no scanned file is an infrastructure failure
+    (E_INSTALLMENT_CLOUD_SURFACE_ENTRY_UNMATCHED). No allowlist and no baseline. Direct references only:
+    transitive reach through a shared upstream model is closed by the S8a exclusion seam and its
+    payload test. Known limit: a simple string template "$identifier" (e.g. "$installmentPlans") is
+    masked with the string literal, so rule 03 does not see it; ${...} expressions are scanned
+
 RAW DATA storage:
   → Check RawStorageMode (STORE_RAW / STORE_REDACTED / STORE_METADATA_ONLY / DO_NOT_STORE)
   → RawContentSanitizer applies per-mode sanitization for every source:
@@ -473,6 +530,8 @@ FORBIDDEN:
   ❌ Using raw strings instead of typed PrivacyBlocked for UI states
   ❌ Silently proceeding when PrivacyDecision.FailClosed is returned
   ❌ Gating non-AI network calls by CLOUD_AI_* capabilities
+  ❌ Referencing installment plan types, repositories, DAOs or the projection port from cloud payload
+     assembly (INV-31; installment_cloud_reachability)
 ```
 
 ---
@@ -530,8 +589,27 @@ BACKUP SCHEMA FLOOR (R25-C):
     temp dir deleted), with BackupSchemaUnsupportedException(code):
       BACKUP_SCHEMA_UNSUPPORTED_LEGACY (< v145), BACKUP_SCHEMA_UNSUPPORTED_NEWER (> v151).
 
+INSTALLMENT PLAN TABLES (planned — loan-installments S2/S2b; tables installment_plans and
+installment_entries do not exist yet):
+  → Included in the encrypted backup and verified by BackupVerifier at TIER_1_EXACT (financial records),
+    with semantic orphan checks reported as fixed strings with counts only: entries without a plan;
+    entries whose linkedExpenseId has no expense; plans whose purchaseExpenseId has no expense;
+    expenses flagged INSTALLMENT_PURCHASE that no plan references; expenses flagged
+    INSTALLMENT_REVERSED that no REVERSED entry references
+  → Fail-closed default: every BackupPrivacyMode with redactsRawText = true (REDACT_RAW_TEXT,
+    REDACT_RAW_TEXT_EXCLUDE_IMAGES, ANONYMIZED_EXPORT) blanks plan displayName and lenderLabel. Owner
+    confirms at the S2b stop-and-ask. ExportAnonymizer (data/privacy, on the cloud-guard surface) must
+    reference plan tables by SQL table/column strings, not plan entity types (installment_cloud_reachability)
+  → Plan and entry rows are never retention-worker targets (RetentionPolicyContract registers no target)
+  → Restore: plan writes are blocked by the restore barrier like every write; after restore the plan
+    coordinator runs reconcile() BEFORE the first recordDueEntries. Restore replay of plan rows goes
+    through the existing restore path only (single writer, INV-25)
+  → Erase-all / reset / FinancialRescue allow-list paths must cover the plan tables
+
 FORBIDDEN:
   ❌ Any DB write outside NORMAL mode (DatabaseWriteBarrier blocks all non-NORMAL modes)
+  ❌ Plan/entry table writes during restore other than the existing restore path
+  ❌ Running recordDueEntries after a restore before reconcile() has run
   ❌ Opening the live DB while the open gate blocks it, or during RESTORE_SWAPPING
   ❌ Destructive fallback / auto-reset of an unsupported, newer, or unreadable DB
   ❌ Any raw-file export of a blocked DB other than the user-started SAF export in UnsupportedDatabaseActivity
@@ -615,6 +693,27 @@ FORBIDDEN:
   ❌ Throwing a plain RuntimeException to mean "retry" (it is PERMANENT)
   ❌ Bypassing WorkerExecutionGuard in any CoroutineWorker
        (enforced by WorkerGuardArchitectureGuardTest; its allowlist is empty)
+```
+
+```
+INSTALLMENT DUE RECORDING (planned — loan-installments S7a; no worker exists yet):
+  → A dedicated InstallmentDueRecordingWorker (CoroutineWorker) with its own WorkerRegistry entry,
+    routed through WorkerExecutionGuard.runGuarded() like every worker; the production worker count
+    above grows by one when it lands
+  → worker or foreground catch-up trigger → InstallmentPlanLifecycleCoordinator.recordDueEntries(today)
+    → reconcile() first, then one transaction per entry (writeBarrier.runWrite + database.withTransaction),
+      expense created via TransactionLifecycleCoordinator.createExpenseDbOnlyV2 (STRICT_EXTERNAL_ID)
+      and the entry compare-and-set to PAID in the same transaction
+  → Cancellation propagates (never swallowed); retries use RetryableWorkerException
+  → Reminders for due installments reuse the existing BillReminderManager / BillReminderWorker
+    (existing enabled / quiet-hours settings, delivery dedupe key per entry); no new reminder system
+    and no new reminder worker (planned S7b)
+
+FORBIDDEN:
+  ❌ Any worker, ViewModel or reminder code writing plan/entry tables or creating plan expenses
+     other than through the plan coordinator
+  ❌ A second worker or scheduler path that records due installments
+  ❌ Plan field values (name, lender, amount, date) in worker logs, run logs or reason codes
 ```
 
 ---
@@ -749,10 +848,19 @@ Exception messages sanitized via EventMetadataSanitizer.sanitizeExceptionMessage
   → Messages truncated to MAX_STRING_LENGTH (256 chars)
   → URLs and email addresses are NOT explicitly matched (may be caught incidentally)
 
+INSTALLMENT PLAN diagnostics (planned — loan-installments, with the plan coordinator in S6a; INV-31):
+  → Plan expense changes are audited by the expense TransactionEvents (CREATED / UPDATED with
+    TransactionUpdateKind.SPENDING_INCLUSION); no separate plan event table exists in v1
+  → Plan coordinator diagnostics, refusals, reconcile results and worker logs carry bounded reason codes
+    (refusal codes, AUTO_RECORD_DEFERRED_*, reconcile rule IDs R1..R6) and integer counts ONLY
+  → Never plan displayName, lenderLabel, amounts, dates, schedule, merchant or IDs in free-text messages,
+    logs, reason-code payloads or cloud payloads
+
 FORBIDDEN:
   ❌ Timber-only logging for pipeline decisions (must also write durable event)
   ❌ Swallowing CancellationException (always rethrow)
   ❌ Logging unsanitized exception messages to durable storage
+  ❌ Plan field values in any diagnostic, log or reason-code payload (INV-31)
 ```
 
 ---
@@ -773,6 +881,23 @@ DIAGNOSTIC event (informational — REMINDER_SCHEDULE_SKIPPED, etc.):
 FORBIDDEN:
   ❌ Writing lifecycle events directly through DAO insert
   ❌ Swallowing writeCritical() failures (must fail the operation)
+```
+
+```
+EXPENSE LIFECYCLE → INSTALLMENT PLAN reaction (planned — loan-installments S6c):
+  → TransactionSideEffectPlanner.planUpdated() / planDeleted() add a post-commit effect for expenses
+    that a plan references
+  → TransactionSideEffectDispatcher runs it AFTER commit →
+    InstallmentPlanLifecycleCoordinator.onExpenseChanged / onExpenseDeleted
+    (unlink, reopen or detach, per the plan's link rules)
+  → The plan reconcile() (rules R1..R6) backs this up on every recordDueEntries run and after restore
+  → The reaction never deletes or edits the expense; expense removal is always the standard
+    TransactionLifecycleCoordinator.deleteExpense path chosen by the user
+
+FORBIDDEN:
+  ❌ Plan code reacting to expense changes by writing expenses or calling deleteExpense
+  ❌ Reacting to expense update/delete from anywhere except the TransactionSideEffectPlanner /
+     Dispatcher hook
 ```
 
 ---
@@ -1471,6 +1596,92 @@ FORBIDDEN:
      RecurringPlanProjectionService inside a rule-mutation transaction
   ❌ Projecting occurrences without validating rule is active
   ❌ Duplicate planned rows (must check sourceOccurrenceKey first)
+
+SIBLING PROJECTION (planned — loan-installments S8b; OQ-25):
+  → Installment schedule entries are NOT recurring occurrences. They are never written to
+    recurring_occurrences, manual_recurring_expenses or planned_expenses, and the RECURRING_RULE
+    projection contract above is unchanged
+  → Future SCHEDULED installment entries are exposed read-only through InstallmentProjectionPort
+    (InstallmentUpcomingProjection), a sibling of this service, merged at the readers' own
+    upcoming/forecast points (see ENGINE_INTERACTION_MAP.md)
+  → The projection has no write-barrier check (read-only) and is excluded from every cloud payload
+    assembly (see "Privacy / Cloud AI")
+```
+
+---
+
+## Installment Plan Mutations
+
+> **Planned contract (loan-installments).** Plan code lands in slices S2-S10 of
+> `workflows/active/loan-installments-plan.md`; the plan tables, coordinator and TLC op named below do not exist
+> yet. This section is the single legal path those slices implement and the architecture tests and guards enforce.
+> What exists today: the cloud reachability guard `installment_cloud_reachability` (S1).
+
+```
+OWNERS (one each):
+  Plan and entry state, ALL plan/entry writes → InstallmentPlanLifecycleCoordinator (planned, S6a)
+  Schedule generation and date arithmetic     → InstallmentScheduleCalculator (pure, no I/O)
+  Expense rows (create, update, spending flag)→ TransactionLifecycleCoordinator → ExpenseDao.insertAtomic()
+                                                 / TLC update ops
+  Overview, detail, history, projections      → InstallmentPlanReadModel / InstallmentProjectionPort (read-only)
+
+EVERY plan coordinator write:
+  → writeBarrier.checkWritesAllowed(...) on entry
+  → writeBarrier.runWrite { database.withTransaction { … } }
+  → expense creation / flag changes ONLY through TLC DbOnly ops inside that same transaction
+    (createExpenseDbOnlyV2, setSpendingExclusionDbOnly); post-commit batches dispatched after commit
+  → compare-and-set on entry state; bounded refusal codes; no free text
+
+OPERATIONS (all on InstallmentPlanLifecycleCoordinator):
+  declareOnExpense            → [txn: load purchase, validate, insert plan + entries,
+                                 TLC setSpendingExclusionDbOnly(purchase, INSTALLMENT_PURCHASE)] → post-commit batch
+  declareWithNewExpense       → [txn: TLC createExpenseDbOnlyV2 (standard dedupe) + the declare steps]
+                                 → post-commit batches
+  createStandalone            → [txn: validate category, insert plan + entries]
+  paid-before-tracking count  → the first k regular entries are inserted as PAID_BEFORE_TRACKING in the
+                                 same transaction (declare / createStandalone)
+  markPaidBeforeTracking / revertPaidBeforeTracking (proposed names)
+                              → [txn: compare-and-set per entry]; no TLC call, no expense touched
+  confirmEntry                → [txn: TLC createExpenseDbOnlyV2 (STRICT_EXTERNAL_ID) + entry → PAID] → post-commit batch
+  linkExpense                 → [txn: policy check, compare-and-set]
+  unlinkExpense               → [txn: entry → SCHEDULED, recordGeneration + 1]; the expense is untouched
+  skip / unskip / adjust / edit / extend / shorten
+                              → coordinator ops (plan-internal; no expense writes)
+  stop / refund / pay off / delete
+                              → coordinator ops; refund also calls TLC setSpendingExclusionDbOnly(…,
+                                 INSTALLMENT_REVERSED) per paid expense in the same txn; delete calls
+                                 setSpendingExclusionDbOnly(purchase, null)
+  recordDueEntries(today)     → worker / foreground trigger (see "Workers / Background Jobs"); one txn per entry
+  onExpenseChanged / onExpenseDeleted
+                              → TransactionSideEffectPlanner / Dispatcher hook (see "Lifecycle Events")
+  reconcile()                 → start of each recordDueEntries run and after restore (rules R1..R6)
+
+FORBIDDEN:
+  ❌ Plan/entry DAO insert, update or delete outside InstallmentPlanLifecycleCoordinator
+     (restore replay goes through the existing restore path only)
+  ❌ Any ExpenseDao call from plan-feature code (domain/installment, service/installment,
+     ui/screens/installments) — INV-24
+  ❌ Plan code calling TransactionLifecycleCoordinator.deleteExpense, or any plan operation lowering the
+     expense row count — INV-23 (expenses are unlinked, never deleted, by plan actions)
+  ❌ Writing installment schedules into recurring_occurrences, manual_recurring_expenses or planned_expenses
+  ❌ Setting spendingExclusionReason from anywhere except TLC setSpendingExclusion*, or calling that op from
+     anywhere except the plan coordinator (only the plan coordinator calls TLC
+     setSpendingExclusionDbOnly; the TLC's own DAO setter call inside that op is the implementation,
+     not a second caller)
+  ❌ Adding the spending predicate to the dedupe BLOCKING / RESOLVER query families (INV-8)
+  ❌ Plan repositories, DAOs or the projection port reachable from cloud payload assembly (INV-31)
+  ❌ Plan field values in diagnostics, logs or reason-code payloads (INV-31)
+
+ENFORCEMENT:
+  • Registered static guard installment_cloud_reachability (S1; rules G-INSTALLMENT-CLOUD-01..03) for the
+    cloud reachability rule. It passes vacuously until plan code exists
+  • In-repo architecture guard test InstallmentPlanArchitectureGuardTest (S1; same style as
+    RecurringArchitectureGuardTest): plan DAO writes only in the plan coordinator; no ExpenseDao
+    reference and no deleteExpense call from plan code; no writes to the recurring tables from plan code;
+    only the plan coordinator calls TLC setSpendingExclusionDbOnly; the TLC's own DAO setter call inside
+    that op is the implementation, not a second caller
+  • config/guards/db_ownership_policy.yml entries for the plan DAOs and the new TLC op (S2/S3)
+  • Canonical spending-predicate guard and parity tests (S3/S4)
 ```
 
 ---

@@ -1713,6 +1713,18 @@ LEGACY_GUARD_MANIFEST_FIXTURE: List[Tuple[str, List[str], str]] = [
         ],
         "blocking",
     ),
+    # ── Loan-installments S1 addition (NOT verbatim pre-migration) ────────────
+    # installment_cloud_reachability is a NEW blocking direct guard (INV-31).
+    # It sits last in SUITE_GUARD_ORDER (after migration_matrix) so the derived
+    # leg sequence matches.  Semantics pinned from its registry execution
+    # section: engine python-direct, entrypoint
+    # scripts/verify_installment_cloud_reachability.py, arguments
+    # ("--fail-on-violation",), mode blocking, no baseline, no allowlist.
+    (
+        "installment_cloud_reachability",
+        ["python3", "scripts/verify_installment_cloud_reachability.py", "--fail-on-violation"],
+        "blocking",
+    ),
     # CL-22 deliberately expands this infrastructure leg beyond the historical
     # migration fixture; registry-derived guard commands stay unchanged.
     (
@@ -1765,9 +1777,13 @@ LEGACY_GUARD_TIME_BUDGETS_FIXTURE = {
 # PR-GR-10D budget addition: the guard_docs_truth leg is pinned inline in
 # LEGACY_GUARD_MANIFEST_FIXTURE the same way (registry-order position after
 # known_good_state) with its standard-profile 300s budget.
+# Loan-installments S1 budget addition: the installment_cloud_reachability leg
+# is pinned inline in LEGACY_GUARD_MANIFEST_FIXTURE (last guard, after
+# migration_matrix) with its standard-profile 300s budget.
 POST_SLICE2_SUITE_BUDGET_ADDITIONS: Dict[str, float] = {
     "raw_money_aggregates": 300.0,
     "guard_docs_truth": 300.0,
+    "installment_cloud_reachability": 300.0,
 }
 
 
@@ -2186,13 +2202,14 @@ class TestDerivedSuitePlanFailClosed:
 
     def test_suite_order_gap_fails_derivation(self, monkeypatch):
         fresh = _load_fresh_runner(f"failclosed_order_{id(self)}")
+        dropped = fresh.SUITE_GUARD_ORDER[-1]
         monkeypatch.setattr(
             fresh, "SUITE_GUARD_ORDER", fresh.SUITE_GUARD_ORDER[:-1]
         )
         legs, _budgets, _plans, errors = fresh._derive_default_suite_plan(REPO_ROOT)
         assert legs == []
         assert any("E_SUITE_ORDER_GAP" in error for error in errors)
-        assert any("migration_matrix" in error for error in errors)
+        assert any(dropped in error for error in errors)
 
     def test_unknown_order_name_fails_derivation(self, monkeypatch):
         fresh = _load_fresh_runner(f"failclosed_order2_{id(self)}")

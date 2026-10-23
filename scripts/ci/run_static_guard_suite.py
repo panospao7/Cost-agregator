@@ -209,7 +209,7 @@ SUITE_GUARD_ORDER: Tuple[str, ...] = (
     "time_boundaries", "deprecation_escalations", "db_artifact_sync",
     "known_good_state", "guard_docs_truth", "cancellation", "privacy",
     "db_access", "event_writers", "money", "raw_money_aggregates",
-    "migration_matrix",
+    "migration_matrix", "installment_cloud_reachability",
 )
 
 # Ratchet child-budget adapter policy: only the db_access ratchet leg

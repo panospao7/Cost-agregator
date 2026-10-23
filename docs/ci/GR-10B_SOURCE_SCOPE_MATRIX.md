@@ -91,7 +91,7 @@ guessed at). Only `.kts` build files are inspected.
   (repository-config, test-source, artifact, or external-tool scope), so
   the production manifest does not apply.
 
-## Matrix (25 rows — one per registry guard; no implicit scope)
+## Matrix (26 rows — one per registry guard; no implicit scope)
 
 | Guard ID | Scope classification | Scan surface | Source authority | Migration status | Fail-closed contract |
 |---|---|---|---|---|---|
@@ -118,6 +118,7 @@ guessed at). Only `.kts` build files are inspected.
 | event_writers | production-kotlin-filtered | All declared production Kotlin enumerated, then event-construction relevance filter (canonical writers) | guardrails.production_source_scope (checked-in manifest) | S2-MIGRATED | Scope diagnostic exits 2. Ratchet baseline v1 blocks growth (exit 1). |
 | money | production-kotlin-filtered | All declared production Kotlin enumerated, then money-relevance filter (conversion, aggregation, trend rules) | guardrails.production_source_scope (checked-in manifest) | S2-MIGRATED | Scope diagnostic exits 2. Ratchet baseline v1 blocks growth (exit 1). |
 | raw_money_aggregates | production-kotlin-filtered | All declared production Kotlin enumerated, then raw-aggregate relevance filter (G-MONEY-RAW rules) | guardrails.production_source_scope (checked-in manifest) | S2-MIGRATED | Scope diagnostic exits 2. Violations exit 1. |
+| installment_cloud_reachability | production-kotlin-filtered | All declared production Kotlin enumerated, then cloud AI payload surface filter (data/ai, domain/ai, domain/privacy, data/privacy, AI and privacy DI modules, cloud payload and input-builder file names) for installment-plan references (G-INSTALLMENT-CLOUD rules) | guardrails.production_source_scope (checked-in manifest) | S2-MIGRATED | Unresolved scope, missing source root, unreadable or unparseable source file, an empty surface, or an unmatched surface entry exits 2. Violations exit 1 (strict zero, no allowlist, no baseline). |
 | currency_guardrails_ps | external-tool | PowerShell CI unit-tests job: blocking raw-aggregate check plus advisory report | Registry-declared external engine contract. The declared -SourceDir app/src/main/java argument is a tracked hard-coded scope input pending the GR-10B plan Step 9 disposition | N/A | Registered external engine. Never executed by the Python runner bridge. The CI job fails on a nonzero guard exit. |
 | release_artifact | artifact | Assembled release APK only (signing, package, version) in the separate release-check CI job | Build output artifact. Explicitly outside the static guard suite | N/A | Violations exit 1. Missing or unreadable artifact exits 2. |
 

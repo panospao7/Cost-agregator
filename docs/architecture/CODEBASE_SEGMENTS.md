@@ -55,6 +55,7 @@ Canonical guide for segment ownership and AI analysis.
 | 37 | Spending Challenges | spending challenge creation, tracking, and challenge UI |
 | 38 | Receipt Matching | receipt-to-transaction matching and reconciliation UI |
 | 39 | Static Guardrails & CI Verification | repo-level static guard suite, boundary verifiers, allowlists, CI workflow wiring |
+| 40 | Installment Plans | installment plan and entry state, schedule generation, plan coordinator (sole writer of plan tables), read model and projection port, due-installment recording, plan UI (planned — loan-installments; code lands in slices S2-S10) |
 
 ---
 
@@ -747,6 +748,7 @@ Owns the repo-level static architecture guard suite, boundary verification scrip
 - Retired advisory Kotlin-script guards (lifecycle bypasses, direct time calls, raw money aggregates; never wired into CI) and their file-existence test `GuardSeededViolationTest`; enforcement lives in the `db_access`, `time_boundaries` (G-TIME-01) and `raw_money_aggregates` registered guards
 - `scripts/guardrails/dao-access-check.kts` + `dao-approved-files.txt` — DAO access guardrail with approved-file allowlist
 - `scripts/verify_*_boundaries.py` — Standalone boundary verifiers (privacy, DB access, money, time, UI→DAO, worker, receipt link, cloud payload, cancellation, import lifecycle, source provenance, event writers, migration matrix, DI release, PII logging)
+- `scripts/verify_installment_cloud_reachability.py` — Registered guard `installment_cloud_reachability` (G-INSTALLMENT-CLOUD-01..03): installment plan code must not be referenced from the cloud AI payload surface (no allowlist, no baseline); owning segment of the plan code is Segment 40
 - `scripts/allowlists/*.yml` — Per-guard allowlists
 - `tools/lifecycle-bypass-guard.groovy` — Gradle-side lifecycle bypass guard
 - `docs/ci/guard-policy.md`, `docs/ci/guard-framework.md` — Guard policy and framework documentation
@@ -755,11 +757,32 @@ Owns the repo-level static architecture guard suite, boundary verification scrip
 
 **Boundary note:** `AGENTS.md` at the repo root governs agent behavior across all segments; `DatabaseSchemaPolicy.kt` (Segment 9/16-adjacent, in `data/database/`) is the single source of truth for schema version and migration baseline consumed by CI (`scripts/verify_migration_matrix.py`).
 
+## SEGMENT 40: Installment Plans
+
+Owns installment plans (loan and pay-in-installments tracking): plan and entry state, schedule generation and date arithmetic, the plan coordinator (the single writer of the plan tables), the read-only read model and projection port, due-installment recording, and plan presentation. Planned feature (loan-installments): only the cloud reachability guard exists today; the plan code lands in later slices of `workflows/active/loan-installments-plan.md`.
+
+**Owner:** `InstallmentPlanLifecycleCoordinator` (planned) for every plan/entry write; `InstallmentScheduleCalculator` (planned, pure) for schedules; `InstallmentPlanReadModel` / `InstallmentProjectionPort` (planned, read-only) for reads. Legal path: `docs/architecture/LEGAL_PATHS.md` "Installment Plan Mutations".
+
+**Planned files (proposed locations)**
+- `domain/installment/` — pure domain: `schedule/` (schedule calculator), `model/` (state transitions), `readmodel/` (`InstallmentPlanReadModel`, plan math), `projection/` (`InstallmentProjectionPort`, `InstallmentUpcomingProjection`), `InstallmentPlanReadRepository`, money/date/category policies
+- `domain/schedule/ExpenseScheduleLinkPolicy.kt` — expense ↔ schedule link policy (S5, INV-5; outside `domain/installment/`, so S5 must add this exact file to the plan-code prefixes of `InstallmentPlanArchitectureGuardTest`)
+- `domain/installment/lifecycle/` — `InstallmentPlanLifecycleCoordinator` (S6a; sole writer of plan tables)
+- `data/repository/` — `InstallmentPlanReadRepositoryImpl` (read-only); `di/InstallmentModule.kt` wiring (S6a)
+- `service/installment/` — `InstallmentDueRecordingWorker` only (S7a); no coordinator, read model or port lives here
+- `data/database/` — `installment_plans` / `installment_entries` entities and DAOs (schema change in S2)
+- `ui/screens/installments/` — overview, detail, history, create/edit screens (hidden entry until final enablement)
+
+**Boundary notes**
+- Expense rows stay in Segment 9: plan code never touches `ExpenseDao`; expenses are created and flagged only through `TransactionLifecycleCoordinator` DbOnly ops (`createExpenseDbOnlyV2`, `setSpendingExclusionDbOnly`).
+- Recurring rules and occurrences stay in Segment 7; installment schedules are never written to `recurring_occurrences`, `manual_recurring_expenses` or `planned_expenses`. Reminders reuse Segment 36.
+- Cloud payload assembly (Segments 20 and 28) must not reference this segment (INV-31); the guard `installment_cloud_reachability` (Segment 39) enforces it.
+- Backup, verify and wipe coverage of the plan tables belongs to Segment 18; worker scheduling to Segment 12.
+
 ---
 
 ## Segment Quick Reference
 
-File-to-segment mapping for all 39 segments:
+File-to-segment mapping for all 40 segments:
 
 | # | Segment | Key pattern / issue |
 |---|---|---|
@@ -801,7 +824,8 @@ File-to-segment mapping for all 39 segments:
 | 36 | Bill Reminders | `domain/reminder/`, `BillReminderManager`, `BillReminderSettings`, `ReminderSettingsModule` |
 | 37 | Spending Challenges | `domain/challenge/`, `SpendingChallengeManager` |
 | 38 | Receipt Matching | `domain/receiptmatching/`, `ReceiptTransactionMatcher`, `ReceiptMatchLifecycleService` |
-| 39 | Static Guardrails & CI Verification | `scripts/ci/`, `scripts/guardrails/`, `scripts/allowlists/`, `scripts/verify_*_boundaries.py`, `tools/`, `.github/workflows/ci.yml` |
+| 39 | Static Guardrails & CI Verification | `scripts/ci/`, `scripts/guardrails/`, `scripts/allowlists/`, `scripts/verify_*_boundaries.py`, `scripts/verify_installment_cloud_reachability.py`, `tools/`, `.github/workflows/ci.yml` |
+| 40 | Installment Plans | (planned) `domain/installment/`, `service/installment/`, `ui/screens/installments/`, `InstallmentPlanLifecycleCoordinator`, `InstallmentScheduleCalculator`, `InstallmentProjectionPort`, `installment_plans`, `installment_entries` |
 
 ### Quick checks
 - Forecast issues → Segment 1
@@ -825,3 +849,4 @@ File-to-segment mapping for all 39 segments:
 - Spending challenge issues → Segment 37
 - Receipt matching issues → Segment 38
 - Architecture guard / CI boundary failures → Segment 39
+- Installment plan issues → Segment 40

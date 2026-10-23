@@ -629,3 +629,77 @@ Merged after the plan was written; scout (Sonnet, read-only). Unresolved items r
 | D-7 | RESOLVED | 20 defaults in `MerchantCategoryProvider.kt:11-32`; **no Loan/Mortgage/Bills/Debt category**; new defaults not back-filled for existing users | Gate item 5: keyword match step yields nothing → fallback/no preselection |
 | D-8 | PARTIAL | Add expense has no currency choice (home currency only); private `CurrencyPicker` in `ReceiptScanScreen.kt:1379` + inline in `ReviewScreen.kt:1749`; TLC manual-USD/FX-unavailable behaviour untraced | S11: extract picker; TLC FX behaviour first task |
 | D-9..D-20 | OPEN | Planner inputs | First task of the slice that needs them |
+
+---
+
+## S0 amendment — G2-6 convergence + S0 refresh (feature-planner, 2026-10-23; persisted by orchestrator)
+Authority: MEC Gate 2 G2-6 (pre-approved plan edits), loan gate2 IM-3/IM-4, S0 refresh in the handoff. **Where this section and the slice text above differ, this section wins.** "MEC INV-18" = the manual-entry-currency invariant (not loan INV-18).
+
+**A1. S6a**
+- Goal adds MEC INV-18 (AE-28).
+- `declareWithNewExpense` calls `createExpenseDbOnlyV2` with `userPresentRate = UserPresentRateRequirement(entryZone)`. `entryZone` comes from the caller and is never persisted or logged. This is the only place the flag is set; `declareOnExpense`, `recordDueEntries` and every other op leave it null. The file path is pinned by `ManualEntryCurrencySetterAllowListGuardTest`, so a rename needs owner approval (MEC N16).
+- On `CreateExpenseResult.ValidationFailed` with non-null `rateRefusal`, return a typed refusal (reason mapped from `RateRefusalReason`) BEFORE inserting the plan/entries, so the whole declaration aborts. It is a normal return from the `withTransaction` lambda: no throw, no rollback flag, empty post-commit batch.
+- Other non-Created results write nothing further. `DuplicateSkipped`/`InsertConflict` on the purchase map to bounded refusals.
+- Tests (`…DeclareTest.kt`):
+  - AE-28: USD 1,200.00 with an empty rate table is refused `NO_RATE` (no purchase/plan/entries); with the 15 Oct rate, all three commit together.
+  - G2-12 pin test with real in-memory Room + real TLC: after a refusal, expenses/plan/entry tables are unchanged, `transaction_events` gains exactly the AE-20 count (2 rows) with no amount/currency/merchant/date/zone, and there are zero post-commit actions.
+  - Contrast test: the AE-6 injected throw rolls back everything incl. events.
+- **Decision (recommended, adopted):** the outer transaction COMMITS TLC's refusal events. TLC writes them via best-effort (`bestEffortEvent`, TLC.kt ~:810), so only a normal return keeps them, which is what G2-12 ("events commit, no row") requires.
+- STRICT_EXTERNAL_ID replay caveat (also in the S3 re-check):
+  - A replay returns `DuplicateSkipped(existingExpenseId)` or `InsertConflict`, never `Created`, and each is mapped explicitly.
+  - `DuplicateSkipped` is adopted only if the existing row belongs to this entry; `InsertConflict` rolls back with a bounded refusal. The AE-6 retry test pins this.
+- Depends: S3, S4d, S5, S2b; MEC A2 (committed 8195250f); D-10 (answered). The OD-15 stop-and-ask is removed.
+
+**A2. S7a**
+- `recordDueEntries` never sets `userPresentRate` (always null, so the create is unflagged; MEC AE-29). **No `AUTO_RECORD_DEFERRED_FX` branch.** Any future loan-local deferral must call `RateEligibilityEvaluator` (never re-implement the rule) and goes to the owner.
+- `InstallmentRecordDueEntriesTest` adds the AE-29 null-flag test: the request handed to TLC has `userPresentRate == null`. A USD entry with an empty rate table is Created with the sentinel triple (0.0 / "" / 0.0) and exactly one MISSING_RATE diagnostic; there is no RateRefusal and no MANUAL_SAVE_BLOCKED_NO_RATE.
+- Shard `runtime-ui` confirmed (covers `service.*`, `ui.*`).
+- R15 replaced: | R15 | USD auto-record without a rate yields a sentinel row | Low (money display) | No loop is possible: auto-record is unflagged and never refused (MEC AE-29). The row is excluded from comparable-home-value totals; display via R17/S8b. AE-29 test in S7a. |
+- Follow-up (domain-modeler, before S7a): domain-spec.md ~:577 and ux-flows.md ~:484 still describe AUTO_RECORD_DEFERRED_FX ("Waiting for an exchange rate").
+
+**A3. S11** — new title: "Add expense: installments switch on the general currency control (Release 1.0 merge gate satisfied; needs MEC B2 and C)".
+- The currency control is MEC slice B2's general control in `mode = INSTALLMENT`: options ∩ {EUR, USD}; an unsupported selection becomes Unset and is restored when installments are switched off (MEC UX-Q-6). No loan-specific currency control or plan-currency row. The submit branch passes the entry zone to `declareWithNewExpense`.
+- Tests:
+  - Struck: "USD purchase+plan" and "FX-unavailable refusal keeps the form (D-8)".
+  - New: AE-1 via the new-expense path; AE-22 refusals as fixed strings; MEC AE-28 UI (JPY → Unset in installment mode; a NO_RATE refusal keeps the form with the shared `mec_` copy, e.g. `mec_block_stale` / `mec_block_unsupported`); non-installment save unchanged.
+- Depends: S10a, S6a (declares the flag), S9, S4d, MEC B2 and C. D-8 and the currency-scope decision are closed by G2-6.
+- Option-B stop-and-ask struck. New stop-and-ask: installment mode needs the general control changed beyond B2's INSTALLMENT mode.
+- D-8 (addendum table): ANSWERED (G2-6), TLC refuses only flagged creates.
+- Requested topics §1 and Human decisions item 2: SUPERSEDED by G2-6.
+- OD-14 (plan currency ≠ purchase currency) stays for S12a's existing-expense declare sheet; G2-6 removes only the Add-expense plan-currency row.
+
+**A4. S1** — D-12 contingency deleted. D-12 resolved:
+- FG-26 (`verify_guard_docs_truth.py`) checks paths only (config/guards, config/baselines, docs/ci, scripts/ci, scripts/db_guard, scripts/guardrails), in indexed docs only (LEGAL_PATHS is indexed; ENGINE_INTERACTION_MAP and CODEBASE_SEGMENTS are not). All doc edits stay in S1.
+- Trap: any `scripts/ci/...` path named in LEGAL_PATHS must exist in the same commit. Refresh `lastReviewedSha` in `docs/ci/GUARD_DOCUMENT_INDEX.yml` only if the verifier demands it.
+- The "if it moved here per D-12" doc lines in S3/S6a/S7a are dropped. R12: resolved.
+
+**A5. OD-15 not used** (D-10: `DatabaseWriteBarrier.runWrite` re-entrant :54-69; precedent ManualExpenseRepository :191-221).
+- S3 stop-and-ask becomes "if re-checking against committed A2 shows the DbOnly op does not join the outer transaction". S3 depends on S2 and D-14.
+- Human decisions item 10 and the OD-15 bullet in topic 4 are removed. R4: Low; D-10 answered; reconcile R1 remains the backstop.
+
+**A6. S5** — STOP-AND-ASK (owner, at S5 start): `domain/installment/**` and `domain/schedule/**` are in no shard of `config/validation/test-shards.json`.
+- Required config edit, no new shard:
+  - `com.yourname.expensetracker.domain.installment.*` → `domain-a-m` (between income and intelligence);
+  - `com.yourname.expensetracker.domain.schedule.*` → `domain-n-z` (between savings and sideeffect).
+- Until approved, S5/S6a-c/S7a validate with `targeted-unit-test` filters only.
+- `config/validation/test-shards.json` is added to the S5 write set.
+
+**A7. Dependency summary**: `[Release 1.0 merged: satisfied] + S10a,S9,S4d + MEC B2 + MEC C → S11`.
+
+Owner decisions from this amendment: only the A6 test-shards.json edit (at S5). Everything else falls under G2-6 / IM-3 / IM-4.
+
+**A8. Carry-forwards from the S1 privacy-security-guardian review (2026-10-23; binding on later slices)**
+- **S2b:** IM-9 default = every `redactsRawText` mode (and ANONYMIZED_EXPORT) blanks plan `displayName` and `lenderLabel`. This is an owner confirmation at the S2b stop-and-ask, because today ExportAnonymizer strips expense merchant/notes in NO mode (D-5), so "mirror expense free text" would strip nothing. ExportAnonymizer lives in data/privacy (on the cloud-guard surface), so S2b references plan tables by SQL table/column strings, never plan entity types.
+- **S8a:** any new cloud-bound assembler file must be on the `installment_cloud_reachability` surface (exact file or a matching name pattern), with a negative fixture. Known cloud inputs outside the surface today: WarrantyTrackerRepository → CloudWarrantyExtractionService; AiChatRepositoryImpl history; DashboardDataProvider / FinancialWeatherRepository, which build the briefing input shared with Home. None is an S8b reader; re-check at S8a.
+- **S8a AE-23 strengthened (differential):** the same fixture with and without plans must produce an identical `DashboardBriefingInput` and prompt, AND an identical TransactionInsight input. Cover the DailyBriefingWorker path too. Derived sums (totalCommitted, totalLikely, discretionaryBudget, headline/summary) must not change. A literal-string check alone is insufficient. The shared Home/briefing provider makes the S8a stop-and-ask likely.
+
+**A9. Carry-forwards from the S1 architecture-guardian review (2026-10-23; binding on later slices)**
+- **S2b (Medium):** InstallmentPlanArchitectureGuardTest rule PLAN_TABLE_RAW_SQL_WRITE (~:166-193) exempts only the coordinator and `data/database/dao/`. Infrastructure writers need exact-path exemptions covering the raw-SQL rule only, each with a self-check; no package-wide grants:
+  - `data/privacy/ExportAnonymizer.kt` (A8 IM-9 `UPDATE installment_plans SET displayName…`);
+  - `data/rescue/FinancialRescueCoordinator.kt` (`INSERT OR REPLACE INTO <table>`);
+  - `data/database/AppDatabase.kt` / `DatabaseMigrations.kt` (only for future rebuild/backfill migrations; S2's CREATE TABLE/ALTER is not matched);
+  - `DatabaseBackupRepositoryImpl.kt` only if restore fixups touch plan tables.
+- **S2:** add a self-check that the S2 DDL (`CREATE TABLE/INDEX installment_*`, `ALTER TABLE expenses ADD COLUMN`) is not flagged.
+- **S2/S2b/S6c (Low):** LEGAL_PATHS "ALL plan/entry writes" and "ONLY writer of spendingExclusionReason" must name the infrastructure exceptions (migrations, rescue copy, export anonymizer, wipe) and get db_ownership_policy entries. If plans carry `categoryId`, a CategoryDao-style reassign would be a second writer and must be fenced.
+- **S5 (Low):** `domain/schedule/ExpenseScheduleLinkPolicy.kt` sits outside `domain/installment/`, so add that exact file to `PLAN_CODE_PREFIXES` (~:627-631) in the arch guard test. Segment 40 now lists it.
+- **Info:** `stripCommentsKeepStrings` doesn't handle nested quotes inside string templates (`"${f("a//b")}"`); it affects the raw-SQL rules only. Optional hardening.

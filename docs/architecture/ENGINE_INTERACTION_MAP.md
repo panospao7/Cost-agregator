@@ -33,6 +33,7 @@
 | **ReceiptMatchLifecycleService** | 3 (Receipt matching) only | 🟢 LOW |
 | **RecurringRuleLifecycleCoordinator** | 4 (Recurring lifecycle), 2 (Transaction reconcile) | 🟡 HIGH |
 | **RecurringLifecycleEventWriter** | 4 (Recurring), 7 (Backup audit) | 🟢 LOW |
+| **InstallmentProjectionPort** (planned — loan-installments S6a port, S8b wiring; not in code yet) | Read-only projection of future SCHEDULED installment entries (sibling `InstallmentUpcomingProjection`; RECURRING_RULE contract unchanged). Wired readers: `CashFlowCalculator` (dated outflows), `ForecastInputAssembler` (projected entries; installment-linked history excluded from pattern baselines), `FinancialStressForecastEngine` (known bounded outflows), the recurring-sibling merge point at the Home upcoming items (`RecurringPlanProjectionService` itself unchanged); reminder reader: `BillReminderManager` / `BillReminderWorker` (per-entry delivery dedupe key). Owner of plan state and writes: `InstallmentPlanLifecycleCoordinator` (see LEGAL_PATHS "Installment Plan Mutations"). MUST NOT be reachable from any cloud payload assembly (briefing, insight, assistant inputs): guard `installment_cloud_reachability`. Any cash-flow/forecast output feeding a cloud payload is computed without this projection. A currency-mixed projection is converted by the engine or reported partial, never summed as home currency and never shown as 0 | 🟡 HIGH |
 | **BillReminderWorker** | 4 (Reminder dispatch), BillReminderSettings runtime check | 🟢 LOW |
 | **WorkerExecutionGuard** | ALL workers (all 10 CoroutineWorkers run through it, incl. `NotificationIntakeWorker` + snooze/dismiss reminder action workers), 7 (Backup restore gating) | 🟡 HIGH |
 | **WorkerRegistry** | 12 (Startup scheduling), 7 (Backup resume via spec lookup) | 🟢 LOW |
@@ -140,6 +141,19 @@ BillReminderWorker.doWork()
   ├── RecurringLifecycleCoordinator.getDispatchableClaimedReminder()
   ├── BillReminderWorker.sendNotification() → NotificationSendResult (private sealed interface)
   └── BillReminderSettingsRepository (runtime enabled/quiet hours check)
+```
+
+### InstallmentProjectionPort changes affect (planned — loan-installments S6a/S8b/S7b; not in code yet):
+```
+InstallmentProjectionPort (read-only; implemented over InstallmentPlanReadModel)
+  ├── CashFlowCalculator (future SCHEDULED entries become dated outflows)
+  ├── ForecastInputAssembler (projected entries; installment-linked expenses excluded from baselines)
+  ├── FinancialStressForecastEngine (known bounded outflows)
+  ├── Home upcoming items merge point (sibling of RecurringPlanProjectionService; its contract unchanged)
+  ├── BillReminderManager / BillReminderWorker (installment due reminders, existing settings)
+  └── NOT: any cloud payload assembly (HybridDashboardBriefingService inputs, DashboardBriefingInputBuilder,
+      TransactionInsightInputBuilder, FinancialQueryInterpretationInputBuilder) — INV-31, enforced by the
+      registered guard installment_cloud_reachability; payload inputs are computed without the projection
 ```
 
 ### WorkerExecutionGuard changes affect:

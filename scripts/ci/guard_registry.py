@@ -753,6 +753,47 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
         },
     },
 
+    # Loan-installments S1 (INV-31) — NEW blocking guard, no allowlist and no
+    # baseline.  The existing cloud_payload guard (G-CLOUD-01) proves request
+    # body provenance only; it has no dependency model, so cloud reachability
+    # of installment plan code is a separate guard.  Passes vacuously until
+    # plan code exists.  Legal-path anchor: docs/architecture/LEGAL_PATHS.md
+    # ("Installment Plan Mutations", "Privacy / Cloud AI").
+    "installment_cloud_reachability": {
+        "script": "scripts/verify_installment_cloud_reachability.py",
+        "sourceScope": "production-kotlin-filtered",
+        "tests": "scripts/test_verify_installment_cloud_reachability.py",
+        "mode": "blocking",
+        "baseline": None,
+        "allowlist": None,
+        "policies": None,
+        "description": "Installment plan cloud reachability (G-INSTALLMENT-CLOUD-01..03, "
+                       "INV-31) — fails closed when any file in the cloud AI payload "
+                       "surface (data/ai, domain/ai, domain/privacy, data/privacy, "
+                       "AI/privacy DI modules, cloud payload and briefing/insight/"
+                       "assistant input builders) imports a plan package "
+                       "(domain.installment, service.installment, ui.screens."
+                       "installments), references one by qualified name, or "
+                       "uses any identifier containing 'installment' "
+                       "(case-insensitive); also fails closed when a surface "
+                       "directory or exact-file entry matches no scanned file",
+        "execution": {
+            "engine": "python-direct",
+            "entrypoint": "scripts/verify_installment_cloud_reachability.py",
+            "arguments": ("--fail-on-violation",),
+            "mode": "blocking",
+            "ruleIds": (
+                "G-INSTALLMENT-CLOUD-01", "G-INSTALLMENT-CLOUD-02",
+                "G-INSTALLMENT-CLOUD-03",
+            ),
+            "requiredInputs": (),
+            "timeoutProfile": "standard",
+            "outputContract": "stdout-human;exit:0=pass,1=violation,2=infra",
+            "testManifest": ("scripts/test_verify_installment_cloud_reachability.py",),
+            "documentationAnchor": "docs/architecture/LEGAL_PATHS.md",
+        },
+    },
+
     # ── Declared-external enforcement entries (PR-GR-10A Slice 3) ───────────────
     # REGISTERED_EXTERNAL_ENGINE dispositions: genuinely non-Python / non-suite
     # proof surfaces.  They are registry-declared (owner, command, scope,
