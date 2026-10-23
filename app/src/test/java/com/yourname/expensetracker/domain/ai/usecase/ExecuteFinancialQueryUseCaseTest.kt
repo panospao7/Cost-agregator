@@ -11,6 +11,7 @@ import com.yourname.expensetracker.domain.ai.model.AssistantUnsupportedReason
 import com.yourname.expensetracker.domain.ai.model.ExpenseQueryFilters
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryIntent
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryResult
+import com.yourname.expensetracker.domain.ai.model.PeriodGranularity
 import com.yourname.expensetracker.domain.ai.model.QueryComparison
 import com.yourname.expensetracker.domain.ai.model.QueryGrouping
 import com.yourname.expensetracker.domain.ai.model.QueryMetric
@@ -26,12 +27,16 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.flowOf
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import kotlinx.coroutines.test.runTest
+import java.time.ZoneId
+import java.time.ZonedDateTime
+import java.util.TimeZone
 import kotlin.time.Duration.Companion.seconds
 
 class ExecuteFinancialQueryUseCaseTest {
@@ -421,6 +426,154 @@ class ExecuteFinancialQueryUseCaseTest {
         result as FinancialQueryResult.Breakdown
         assertEquals("10.00 EUR + 5.00 USD", result.rows.first().valueText)
         assertNull(result.rows.first().amount)
+    }
+
+    // ---- ai-fixes C3: calendar-aware previous period (INV-C11, INV-C12, AE-C12, AE-C18) ----------
+    //
+    // The use case resolves the previous period in ZoneId.systemDefault(); the JVM default zone is
+    // pinned to Europe/Athens (October 2026 is a 745 h month) and restored afterwards.
+
+    private var originalZone: TimeZone? = null
+    private val athens: ZoneId = ZoneId.of("Europe/Athens")
+
+    @Before
+    fun pinDefaultZoneToAthens() {
+        originalZone = TimeZone.getDefault()
+        TimeZone.setDefault(TimeZone.getTimeZone("Europe/Athens"))
+    }
+
+    @After
+    fun restoreDefaultZone() {
+        originalZone?.let { TimeZone.setDefault(it) }
+    }
+
+    private fun athensMs(year: Int, month: Int, day: Int): Long =
+        ZonedDateTime.of(year, month, day, 0, 0, 0, 0, athens).toInstant().toEpochMilli()
+
+    private fun stubRange(start: Long, end: Long, rows: List<ExpenseWithCategory>) {
+        coEvery {
+            expenseRepository.getAssistantExpensesFiltered(
+                startDate = start,
+                endDate = end,
+                transactionTypes = emptySet(),
+                categoryIds = emptySet(),
+                merchantNames = emptySet(),
+                ownershipFilter = OwnershipFilter.ALL,
+                minAmount = null,
+                maxAmount = null,
+                sortOrder = any()
+            )
+        } returns rows
+    }
+
+    private fun octoberComparisonIntent(granularity: PeriodGranularity?) = FinancialQueryIntent(
+        rawQuery = "compare food with previous month",
+        normalizedQuery = "compare food with previous month",
+        filters = ExpenseQueryFilters(
+            period = PeriodRange(athensMs(2026, 10, 1), athensMs(2026, 11, 1)),
+            periodGranularity = granularity
+        ),
+        metric = QueryMetric.TOTAL,
+        comparison = QueryComparison.PREVIOUS_EQUIVALENT_PERIOD
+    )
+
+    @Test
+    fun `AE-C12 comparison on a full October MONTH period uses exactly September 1 to October 1 as previous`() = runTest(timeout = 30.seconds) {
+        val oct1 = athensMs(2026, 10, 1)
+        val nov1 = athensMs(2026, 11, 1)
+        val sep1 = athensMs(2026, 9, 1)
+        stubRange(oct1, nov1, listOf(expenseWithCategory(id = 1L, amount = 30.0, currency = "EUR")))
+        stubRange(sep1, oct1, listOf(expenseWithCategory(id = 2L, amount = 20.0, currency = "EUR")))
+
+        val result = useCase(octoberComparisonIntent(PeriodGranularity.MONTH))
+
+        assertTrue(result is FinancialQueryResult.Summary)
+        result as FinancialQueryResult.Summary
+        assertEquals("30.00 EUR", result.primaryText)
+        assertEquals("Previous period: 20.00 EUR", result.supportingText)
+        // The previous range is exactly [Sep 1, Oct 1): it ends where the base starts (no gap, no overlap).
+        coVerify(exactly = 1) {
+            expenseRepository.getAssistantExpensesFiltered(
+                startDate = sep1,
+                endDate = oct1,
+                transactionTypes = emptySet(),
+                categoryIds = emptySet(),
+                merchantNames = emptySet(),
+                ownershipFilter = OwnershipFilter.ALL,
+                minAmount = null,
+                maxAmount = null,
+                sortOrder = any()
+            )
+        }
+        coVerify(exactly = 1) {
+            expenseRepository.getAssistantExpensesFiltered(
+                startDate = oct1,
+                endDate = nov1,
+                transactionTypes = emptySet(),
+                categoryIds = emptySet(),
+                merchantNames = emptySet(),
+                ownershipFilter = OwnershipFilter.ALL,
+                minAmount = null,
+                maxAmount = null,
+                sortOrder = any()
+            )
+        }
+    }
+
+    @Test
+    fun `AE-C12 previous range is not the 31 day duration shifted back from October`() = runTest(timeout = 30.seconds) {
+        val oct1 = athensMs(2026, 10, 1)
+        val nov1 = athensMs(2026, 11, 1)
+        val sep1 = athensMs(2026, 9, 1)
+        // Failing boundary: the old duration rule would query [Oct 1 - 745 h, Oct 1) = [Aug 30 23:00 EEST, Oct 1),
+        // because October 2026 is 745 h long (DST fall-back), not 31 * 24 h.
+        val durationStart = oct1 - (nov1 - oct1)
+        stubRange(oct1, nov1, listOf(expenseWithCategory(id = 1L, amount = 30.0, currency = "EUR")))
+        stubRange(sep1, oct1, listOf(expenseWithCategory(id = 2L, amount = 20.0, currency = "EUR")))
+
+        useCase(octoberComparisonIntent(PeriodGranularity.MONTH))
+
+        coVerify(exactly = 0) {
+            expenseRepository.getAssistantExpensesFiltered(
+                startDate = durationStart,
+                endDate = oct1,
+                transactionTypes = any(),
+                categoryIds = any(),
+                merchantNames = any(),
+                ownershipFilter = any(),
+                minAmount = any(),
+                maxAmount = any(),
+                sortOrder = any()
+            )
+        }
+    }
+
+    @Test
+    fun `AE-C18 comparison on an October range with null granularity is classified as a full month`() = runTest(timeout = 30.seconds) {
+        val oct1 = athensMs(2026, 10, 1)
+        val nov1 = athensMs(2026, 11, 1)
+        val sep1 = athensMs(2026, 9, 1)
+        stubRange(oct1, nov1, listOf(expenseWithCategory(id = 1L, amount = 30.0, currency = "EUR")))
+        stubRange(sep1, oct1, listOf(expenseWithCategory(id = 2L, amount = 20.0, currency = "EUR")))
+
+        val result = useCase(octoberComparisonIntent(granularity = null))
+
+        assertTrue(result is FinancialQueryResult.Summary)
+        result as FinancialQueryResult.Summary
+        assertEquals("Previous period: 20.00 EUR", result.supportingText)
+        coVerify(exactly = 1) {
+            expenseRepository.getAssistantExpensesFiltered(
+                startDate = sep1,
+                endDate = oct1,
+                transactionTypes = emptySet(),
+                categoryIds = emptySet(),
+                merchantNames = emptySet(),
+                ownershipFilter = OwnershipFilter.ALL,
+                minAmount = null,
+                maxAmount = null,
+                sortOrder = any()
+            )
+        }
     }
 
     private fun expenseWithCategory(

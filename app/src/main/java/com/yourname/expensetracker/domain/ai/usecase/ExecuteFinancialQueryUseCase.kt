@@ -343,7 +343,12 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         val currentCurrencyTotals = currentExpenses.toCurrencyTotals()
 
         val supporting = if (intent.comparison == QueryComparison.PREVIOUS_EQUIVALENT_PERIOD) {
-            val previous = previousEquivalentPeriod(period)
+            val previousPeriod = AssistantPeriodResolver.previousEquivalent(
+                startMs = period.start,
+                endMs = period.end,
+                granularity = intent.filters.periodGranularity
+            )
+            val previous = PeriodRange(previousPeriod.startMs, previousPeriod.endMs)
             val (prevExpenses, _) = assistantFilteredExpensesCurrencyAware(intent, previous)
             "Previous period: ${formatCurrencyTotals(prevExpenses.toCurrencyTotals())}"
         } else {
@@ -492,11 +497,6 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         intent.filters.categoryIds.isNotEmpty() -> UiText.from("Matching category transactions")
         intent.filters.merchants.isNotEmpty() -> UiText.from("Matching merchant transactions")
         else -> UiText.from("Matching transactions")
-    }
-
-    private fun previousEquivalentPeriod(period: PeriodRange): PeriodRange {
-        val duration = period.end - period.start
-        return PeriodRange(period.start - duration, period.start)
     }
 
     private fun formatSingleExpenseAmount(expense: Expense): String =

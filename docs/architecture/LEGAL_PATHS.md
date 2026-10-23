@@ -1523,6 +1523,8 @@ chat rows via AiChatRepository.appendMessage, which checks the write barrier):
              DefaultCloudPayloadPolicy.prepareText → audit
   → ExecuteFinancialQueryUseCase (read-only)
 
+Assistant period ranges and comparison cue only via AssistantPeriodResolver.
+
 FORBIDDEN:
   ❌ Constructing FinancialQueryInterpretationInput outside FinancialQueryInterpretationInputBuilder
   ❌ ASSISTANT/SYSTEM turns, app-computed answers or message payloadJson in any

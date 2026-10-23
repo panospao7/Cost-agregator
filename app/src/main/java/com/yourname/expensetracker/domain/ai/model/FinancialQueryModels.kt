@@ -43,6 +43,26 @@ enum class QueryOwnershipScope {
 }
 
 /**
+ * Calendar unit a resolved assistant period belongs to. `null` on
+ * [ExpenseQueryFilters.periodGranularity] means custom or unknown (for example an
+ * explicit model-supplied start/end).
+ */
+enum class PeriodGranularity {
+    DAY,
+    WEEK,
+    MONTH,
+    QUARTER,
+    YEAR
+}
+
+/** Period options offered by a period clarification (resolved by the assistant period resolver). */
+enum class PeriodChoice {
+    THIS_MONTH,
+    THIS_WEEK,
+    LAST_MONTH
+}
+
+/**
  * Filter parameters for financial queries.
  *
  * ## SRH-7: Currency-aware search filters (planned)
@@ -74,6 +94,11 @@ enum class QueryOwnershipScope {
  */
 data class ExpenseQueryFilters(
     val period: PeriodRange? = null,
+    /**
+     * Calendar unit of [period] when it was resolved by the assistant period resolver;
+     * `null` for custom or unknown periods (for example explicit model start/end).
+     */
+    val periodGranularity: PeriodGranularity? = null,
     val merchants: Set<String> = emptySet(),
     val categoryIds: Set<Long> = emptySet(),
     val transactionTypes: Set<DomainTransactionType> = emptySet(),

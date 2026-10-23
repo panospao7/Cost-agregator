@@ -268,3 +268,37 @@ Follow-ups:
 - CancellationSafety KNOWN_VIOLATIONS :81 (OnDeviceQueryInterpretationService, MIT-034) may now be removable; the GenAiException catch is still present. Removal = baseline shrink; propose at CX/Z.
 - Cloud PROVIDER_RESPONSE_INVALID pairs with UNKNOWN_ERROR for empty candidates (faithful to old codes).
 Next: C3 (AssistantPeriodResolver, periodGranularity, calendar previous period; T2).
+
+## C3 (2026-10-23) — implemented
+Source:
+- New AssistantPeriodResolver (object; plain AssistantPeriod values; no PeriodRange import; no clock reads; explicit zone param).
+- PeriodGranularity + PeriodChoice + ExpenseQueryFilters.periodGranularity.
+- Interpret: resolvePeriod deleted; one cue function; bare-period branches merged; "previous" dropped from rich cues.
+- OnDevice: keyword parser → resolver; schema adds LAST_WEEK/QUARTER/YEAR; the schema line reaches the cloud prompt (keywords only).
+- Execute: private previousEquivalentPeriod deleted.
+- Docs: Segment 20 + LEGAL_PATHS one-liner.
+Deviations:
+(1) The comparison-target connector allows intervening words (`compar(e|ed|ing|ison)\b[^.?!]*?\b(with|to)`), because spec INV-C9's literal pattern does not match its own AE-C12 example. Spec text to reconcile (domain-modeler, at Z).
+(2) The resolver does its own java.time arithmetic (TimePeriodUtils hard-codes the system zone).
+(3) PeriodChoice lives in FinancialQueryModels (C4 adds the Clarification types beside it).
+(4) Cue matching is word-based (INV-C10).
+Behaviour changes as specified: "last week/quarter/year" = the previous full unit; "previous month" is a bare period.
+ExecuteFinancialQueryUseCaseTest :90-131 expected unchanged (CUSTOM [100,200) → [0,100)).
+Tests: pass 1 (AssistantPeriodResolverTest) running; pass 2 (Interpret/Execute/OnDevice additions) next.
+
+## C3 DONE (2026-10-23)
+- Tests:
+  - AssistantPeriodResolverTest: AE-C11..C19, DST (745 h October, 25 h/23 h days), month-end clamp, cue set, keywords, choices, connector false-positive/positive, unaligned-granularity → CUSTOM.
+  - Interpret/Execute/OnDevice integration tests: JVM default zone pinned to Europe/Athens and restored in @After; forks are separate JVMs (maxParallelForks), classes serial.
+- Validation:
+  - targeted vr-20261023-090840-0a09267b PASS, time_boundaries vr-20261023-092030-2cb8a41f PASS, cloud_payload vr-20261023-092048-88540b8e PASS, static-guards vr-20261023-092106-f5156823 PASS;
+  - after the review fixes: targeted vr-20261023-101337-66a4bc36 PASS, time_boundaries vr-20261023-101926-4125ec7f PASS.
+- Review (T2 cheap review, reviewer-strict on Sonnet): ACCEPT-WITH-MINORS. Applied:
+  - the resolver FULL branch requires both bounds aligned (unaligned start with explicit granularity → CUSTOM);
+  - test comment slips corrected;
+  - a trivially-true assertNotEquals removed;
+  - connector false-positive/positive tests.
+- Deviation (1) (looser connector) accepted by the reviewer; spec INV-C9 text to be reconciled at Z (domain-modeler).
+- Carried to C4: clarification completion must set periodGranularity from resolveChoice(...).granularity whenever it replaces period.
+- Optional cleanup: containsRichIntentCue still lists "compare"/"vs" substrings (dead after the exact-phrase check).
+- Next: C4 (clarification completion, live pending state, disabled stale options; T2; RS gate).

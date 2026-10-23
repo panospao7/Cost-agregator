@@ -14,7 +14,6 @@ import com.yourname.expensetracker.domain.ai.model.QueryOwnershipScope
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.QueryInterpretationService
 import com.yourname.expensetracker.domain.model.PeriodRange
-import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import kotlinx.coroutines.flow.first
 import timber.log.Timber
 import java.util.Locale
@@ -94,8 +93,14 @@ class InterpretFinancialQueryUseCase @Inject constructor(
         val normalized = rawQuery.trim().lowercase(Locale.getDefault())
         val filters = intent.filters
 
-        // --- Fill period if provider left it null ---
-        val enrichedPeriod = filters.period ?: resolvePeriod(normalized, nowMs)
+        // --- Fill period (and its granularity) if provider left it null ---
+        val resolvedPeriod = if (filters.period == null) {
+            AssistantPeriodResolver.resolveText(normalized, nowMs).period
+        } else {
+            null
+        }
+        val enrichedPeriod = filters.period ?: resolvedPeriod?.toPeriodRange()
+        val enrichedGranularity = if (resolvedPeriod != null) resolvedPeriod.granularity else filters.periodGranularity
 
         // --- Fill categoryIds if provider left them empty ---
         val enrichedCategoryIds = if (filters.categoryIds.isEmpty()) {
@@ -131,7 +136,7 @@ class InterpretFinancialQueryUseCase @Inject constructor(
 
         // --- Fill comparison if provider returned NONE and local cues suggest comparison ---
         val enrichedComparison = if (intent.comparison == QueryComparison.NONE) {
-            if (normalized.contains("compare") || normalized.contains("vs") || normalized.contains("previous")) {
+            if (AssistantPeriodResolver.isComparisonRequested(normalized)) {
                 QueryComparison.PREVIOUS_EQUIVALENT_PERIOD
             } else {
                 QueryComparison.NONE
@@ -146,6 +151,7 @@ class InterpretFinancialQueryUseCase @Inject constructor(
 
         val enrichedFilters = filters.copy(
             period = enrichedPeriod,
+            periodGranularity = enrichedGranularity,
             categoryIds = enrichedCategoryIds,
             transactionTypes = enrichedTypes,
             ownership = enrichedOwnership,
@@ -178,34 +184,20 @@ class InterpretFinancialQueryUseCase @Inject constructor(
             )
         }
 
-        when {
-            isBarePeriodOnlyQuery(normalized, "this month", "current month") -> return FinancialQueryInterpretationResult.Structured(
+        val isBarePeriod = isBarePeriodOnlyQuery(normalized, "this month", "current month") ||
+            isBarePeriodOnlyQuery(normalized, "last month", "previous month") ||
+            isBarePeriodOnlyQuery(normalized, "this week", "current week")
+        if (isBarePeriod) {
+            // Bare period-only queries resolve through the single assistant period lexicon.
+            val barePeriod = AssistantPeriodResolver.resolveText(normalized, now).period
+            return FinancialQueryInterpretationResult.Structured(
                 FinancialQueryIntent(
                     rawQuery = rawQuery,
                     normalizedQuery = normalized,
-                    filters = ExpenseQueryFilters(period = PeriodRange(TimePeriodUtils.getStartOfMonth(now), TimePeriodUtils.getEndOfMonth(now))),
-                    metric = QueryMetric.TOTAL,
-                    grouping = QueryGrouping.NONE,
-                    comparison = QueryComparison.NONE
-                )
-            )
-            isBarePeriodOnlyQuery(normalized, "last month", "previous month") -> return FinancialQueryInterpretationResult.Structured(
-                FinancialQueryIntent(
-                    rawQuery = rawQuery,
-                    normalizedQuery = normalized,
-                    // S11-018: Use TimePeriodUtils instead of Calendar.getInstance()
-                    filters = ExpenseQueryFilters(period = TimePeriodUtils.getMonthRange(now, -1).let { (s, e) -> PeriodRange(s, e) }),
-                    metric = QueryMetric.TOTAL,
-                    grouping = QueryGrouping.NONE,
-                    comparison = QueryComparison.NONE
-                )
-            )
-            isBarePeriodOnlyQuery(normalized, "this week", "current week") -> return FinancialQueryInterpretationResult.Structured(
-                FinancialQueryIntent(
-                    rawQuery = rawQuery,
-                    normalizedQuery = normalized,
-                    // S11-018: Use TimePeriodUtils.getWeekRange instead of Calendar.getInstance()
-                    filters = ExpenseQueryFilters(period = TimePeriodUtils.getWeekRange(now, 0).let { (s, e) -> PeriodRange(s, e) }),
+                    filters = ExpenseQueryFilters(
+                        period = barePeriod.toPeriodRange(),
+                        periodGranularity = barePeriod.granularity
+                    ),
                     metric = QueryMetric.TOTAL,
                     grouping = QueryGrouping.NONE,
                     comparison = QueryComparison.NONE
@@ -226,11 +218,11 @@ class InterpretFinancialQueryUseCase @Inject constructor(
             else -> null
         }
 
-        val period = resolvePeriod(normalized, now)
+        val textPeriod = AssistantPeriodResolver.resolveText(normalized, now)
         val ownership = resolveOwnership(normalized)
         val metric = resolveMetric(normalized)
         val grouping = resolveGrouping(normalized, metric)
-        val comparison = if (normalized.contains("compare") || normalized.contains("vs") || normalized.contains("previous")) {
+        val comparison = if (AssistantPeriodResolver.isComparisonRequested(normalized)) {
             QueryComparison.PREVIOUS_EQUIVALENT_PERIOD
         } else {
             QueryComparison.NONE
@@ -240,7 +232,8 @@ class InterpretFinancialQueryUseCase @Inject constructor(
             rawQuery = rawQuery,
             normalizedQuery = normalized,
             filters = ExpenseQueryFilters(
-                period = period,
+                period = textPeriod.period.toPeriodRange(),
+                periodGranularity = textPeriod.period.granularity,
                 categoryIds = matchedCategory?.id?.let(::setOf) ?: emptySet(),
                 transactionTypes = matchedType?.let(::setOf) ?: emptySet(),
                 ownership = ownership
@@ -300,18 +293,8 @@ class InterpretFinancialQueryUseCase @Inject constructor(
         else -> QueryOwnershipScope.ALL
     }
 
-    private fun resolvePeriod(query: String, now: Long): PeriodRange? {
-        val pair = when {
-            query.contains("today") -> TimePeriodUtils.getStartOfDay(now) to now
-            query.contains("this week") || query.contains("week") -> TimePeriodUtils.getWeekRange(now, 0).let { (start, end) -> start to end }
-            query.contains("this month") || query.contains("month") -> TimePeriodUtils.getMonthRange(now, 0)
-            query.contains("last month") || query.contains("previous month") -> TimePeriodUtils.getMonthRange(now, -1)
-            query.contains("this quarter") || query.contains("quarter") -> TimePeriodUtils.getStartOfQuarter(now) to now
-            query.contains("this year") || query.contains("year") -> TimePeriodUtils.getStartOfYear(now) to now
-            else -> TimePeriodUtils.getMonthRange(now, 0)
-        }
-        return PeriodRange(start = pair.first, end = pair.second)
-    }
+    /** Wraps the resolver's plain values into the (allowlisted-here) [PeriodRange]. */
+    private fun AssistantPeriod.toPeriodRange(): PeriodRange = PeriodRange(start = startMs, end = endMs)
 
     /**
      * Validates and clamps an amount bound returned by the AI provider.
@@ -375,8 +358,7 @@ class InterpretFinancialQueryUseCase @Inject constructor(
             "mine",
             "not mine",
             "compare",
-            "vs",
-            "previous"
+            "vs"
         )
         return keywords.any(query::contains)
     }

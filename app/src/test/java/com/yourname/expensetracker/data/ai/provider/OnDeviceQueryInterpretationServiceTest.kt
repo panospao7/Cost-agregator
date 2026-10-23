@@ -1,7 +1,9 @@
 package com.yourname.expensetracker.data.ai.provider
 
+import com.yourname.expensetracker.domain.ai.model.ExpenseQueryFilters
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationInput
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationResult
+import com.yourname.expensetracker.domain.ai.model.PeriodGranularity
 import com.yourname.expensetracker.domain.ai.model.QueryGrouping
 import com.yourname.expensetracker.domain.ai.model.QueryMetric
 import com.yourname.expensetracker.domain.ai.model.AssistantUnsupportedReason
@@ -13,6 +15,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import timber.log.Timber
+import java.time.ZoneId
+import java.time.ZonedDateTime
+import java.util.TimeZone
 import kotlin.coroutines.cancellation.CancellationException
 
 class OnDeviceQueryInterpretationServiceTest {
@@ -365,5 +370,146 @@ class OnDeviceQueryInterpretationServiceTest {
         val filters = (result as FinancialQueryInterpretationResult.Structured).intent.filters
         assertEquals(0.0, filters.minAmount!!, 0.0)
         assertTrue(logs.none { it.second.contains("7654") })
+    }
+
+    // ---- ai-fixes C3: period keywords via AssistantPeriodResolver (INV-C8, AE-C11) --------------
+    //
+    // The parser resolves keywords in ZoneId.systemDefault(); the JVM default zone is pinned to
+    // Europe/Athens and restored afterwards. NOW = Fri 2026-10-16 10:00 EEST.
+
+    private var originalZone: TimeZone? = null
+    private val athens: ZoneId = ZoneId.of("Europe/Athens")
+
+    @Before
+    fun pinDefaultZoneToAthens() {
+        originalZone = TimeZone.getDefault()
+        TimeZone.setDefault(TimeZone.getTimeZone("Europe/Athens"))
+    }
+
+    @After
+    fun restoreDefaultZone() {
+        originalZone?.let { TimeZone.setDefault(it) }
+    }
+
+    private fun athensMs(year: Int, month: Int, day: Int, hour: Int = 0, minute: Int = 0): Long =
+        ZonedDateTime.of(year, month, day, hour, minute, 0, 0, athens).toInstant().toEpochMilli()
+
+    private fun inputAtNow() = sampleInput.copy(currentTimeMs = athensMs(2026, 10, 16, 10, 0))
+
+    private fun parseFilters(intentJsonBody: String): ExpenseQueryFilters {
+        val result = service.parseResponse(
+            inputAtNow(),
+            """{"kind":"structured","intent":{"metric":"TOTAL",$intentJsonBody}}"""
+        )
+        assertTrue("expected Structured but was $result", result is FinancialQueryInterpretationResult.Structured)
+        return (result as FinancialQueryInterpretationResult.Structured).intent.filters
+    }
+
+    @Test(timeout = 10_000)
+    fun `AE-C11 model keyword LAST_WEEK resolves the previous Monday to Monday week`() {
+        val filters = parseFilters(""""periodKeyword":"LAST_WEEK"""")
+
+        assertEquals(athensMs(2026, 10, 5), filters.period?.start)
+        assertEquals(athensMs(2026, 10, 12), filters.period?.end)
+        assertEquals(PeriodGranularity.WEEK, filters.periodGranularity)
+    }
+
+    @Test(timeout = 10_000)
+    fun `AE-C11 model keyword LAST_QUARTER resolves the previous calendar quarter`() {
+        val filters = parseFilters(""""periodKeyword":"LAST_QUARTER"""")
+
+        assertEquals(athensMs(2026, 7, 1), filters.period?.start)
+        assertEquals(athensMs(2026, 10, 1), filters.period?.end)
+        assertEquals(PeriodGranularity.QUARTER, filters.periodGranularity)
+    }
+
+    @Test(timeout = 10_000)
+    fun `AE-C11 model keyword LAST_YEAR resolves the previous calendar year`() {
+        val filters = parseFilters(""""periodKeyword":"LAST_YEAR"""")
+
+        assertEquals(athensMs(2025, 1, 1), filters.period?.start)
+        assertEquals(athensMs(2026, 1, 1), filters.period?.end)
+        assertEquals(PeriodGranularity.YEAR, filters.periodGranularity)
+    }
+
+    @Test(timeout = 10_000)
+    fun `AE-C11 model keyword LAST_MONTH keeps resolving the previous full month with MONTH granularity`() {
+        val filters = parseFilters(""""periodKeyword":"LAST_MONTH"""")
+
+        assertEquals(athensMs(2026, 9, 1), filters.period?.start)
+        assertEquals(athensMs(2026, 10, 1), filters.period?.end)
+        assertEquals(PeriodGranularity.MONTH, filters.periodGranularity)
+    }
+
+    @Test(timeout = 10_000)
+    fun `INV-C8 model keyword THIS_MONTH control is the current full month with MONTH granularity`() {
+        val filters = parseFilters(""""periodKeyword":"THIS_MONTH"""")
+
+        assertEquals(athensMs(2026, 10, 1), filters.period?.start)
+        assertEquals(athensMs(2026, 11, 1), filters.period?.end)
+        assertEquals(PeriodGranularity.MONTH, filters.periodGranularity)
+    }
+
+    @Test(timeout = 10_000)
+    fun `INV-C8 model keyword is case insensitive`() {
+        val filters = parseFilters(""""periodKeyword":"last_week"""")
+
+        assertEquals(athensMs(2026, 10, 5), filters.period?.start)
+        assertEquals(athensMs(2026, 10, 12), filters.period?.end)
+        assertEquals(PeriodGranularity.WEEK, filters.periodGranularity)
+    }
+
+    @Test(timeout = 10_000)
+    fun `INV-C8 unknown model keyword yields no period and no granularity`() {
+        val filters = parseFilters(""""periodKeyword":"LAST_DECADE"""")
+
+        assertNull(filters.period)
+        assertNull(filters.periodGranularity)
+    }
+
+    @Test(timeout = 10_000)
+    fun `INV-C8 explicit model startMs and endMs gives null granularity`() {
+        val filters = parseFilters(""""period":{"startMs":123,"endMs":456}""")
+
+        assertEquals(123L, filters.period?.start)
+        assertEquals(456L, filters.period?.end)
+        assertNull(filters.periodGranularity)
+    }
+
+    @Test(timeout = 10_000)
+    fun `INV-C8 explicit range wins over a keyword and the granularity stays null`() {
+        val filters = parseFilters(""""periodKeyword":"LAST_MONTH","period":{"startMs":123,"endMs":456}""")
+
+        assertEquals(123L, filters.period?.start)
+        assertEquals(456L, filters.period?.end)
+        assertNull(filters.periodGranularity)
+    }
+
+    @Test(timeout = 10_000)
+    fun `INV-C8 invalid explicit range with end not after start falls back to the keyword`() {
+        val filters = parseFilters(""""periodKeyword":"THIS_MONTH","period":{"startMs":456,"endMs":123}""")
+
+        assertEquals(athensMs(2026, 10, 1), filters.period?.start)
+        assertEquals(athensMs(2026, 11, 1), filters.period?.end)
+        assertEquals(PeriodGranularity.MONTH, filters.periodGranularity)
+    }
+
+    @Test(timeout = 10_000)
+    fun `INV-C8 buildPrompt schema periodKeyword line lists all nine keywords`() {
+        val prompt = service.buildPrompt(sampleInput)
+
+        val schemaLine = prompt.lines().single { it.contains("\"periodKeyword\":") }
+        val allKeywords = listOf(
+            "TODAY", "THIS_WEEK", "LAST_WEEK", "THIS_MONTH", "LAST_MONTH",
+            "THIS_QUARTER", "LAST_QUARTER", "THIS_YEAR", "LAST_YEAR"
+        )
+        allKeywords.forEach { keyword ->
+            assertTrue("schema line must contain $keyword", schemaLine.contains(keyword))
+        }
+        // The enumerated value of "periodKeyword" is exactly the nine keywords plus null.
+        val enumeration = Regex("\"periodKeyword\":\"([^\"]*)\"").find(schemaLine)!!.groupValues[1].split("|")
+        assertEquals(allKeywords.toSet(), enumeration.filter { it != "null" }.toSet())
+        assertEquals(allKeywords.size, enumeration.filter { it != "null" }.size)
+        assertTrue(enumeration.contains("null"))
     }
 }

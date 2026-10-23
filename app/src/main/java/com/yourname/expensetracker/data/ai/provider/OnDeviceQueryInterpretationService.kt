@@ -11,6 +11,7 @@ import com.yourname.expensetracker.domain.ai.model.ExpenseQueryFilters
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryIntent
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationInput
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationResult
+import com.yourname.expensetracker.domain.ai.model.PeriodGranularity
 import com.yourname.expensetracker.domain.ai.model.QueryComparison
 import com.yourname.expensetracker.domain.ai.model.QueryGrouping
 import com.yourname.expensetracker.domain.ai.model.QueryMetric
@@ -18,6 +19,7 @@ import com.yourname.expensetracker.domain.ai.model.QueryOwnershipScope
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.PeriodRange
 import com.yourname.expensetracker.domain.ai.service.QueryInterpretationService
+import com.yourname.expensetracker.domain.ai.usecase.AssistantPeriodResolver
 import com.yourname.expensetracker.domain.config.AppConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withTimeoutOrNull
@@ -108,7 +110,7 @@ class OnDeviceQueryInterpretationService @Inject constructor() : QueryInterpreta
             appendLine(history)
             appendLine()
             appendLine("JSON schema:")
-            appendLine("""{"kind":"structured|clarification|unsupported","intent":{"metric":"LIST|TOTAL|COUNT|AVERAGE|MAX|MIN","grouping":"NONE|CATEGORY|MERCHANT|DAY|WEEK|MONTH","comparison":"NONE|PREVIOUS_EQUIVALENT_PERIOD","answerMode":"INLINE_ANSWER|NAVIGATE|BOTH","ownership":"ALL|MINE|NOT_MINE|SHARED|TRANSFER","categoryNames":["name-or-alias"],"merchantNames":["name-or-alias"],"transactionTypes":["PURCHASE|WITHDRAWAL|TRANSFER|DEPOSIT"],"periodKeyword":"TODAY|THIS_WEEK|THIS_MONTH|LAST_MONTH|THIS_QUARTER|THIS_YEAR|null","period":{"startMs":0,"endMs":0}},"clarification":{"prompt":"text","options":["a","b"]}}""")
+            appendLine("""{"kind":"structured|clarification|unsupported","intent":{"metric":"LIST|TOTAL|COUNT|AVERAGE|MAX|MIN","grouping":"NONE|CATEGORY|MERCHANT|DAY|WEEK|MONTH","comparison":"NONE|PREVIOUS_EQUIVALENT_PERIOD","answerMode":"INLINE_ANSWER|NAVIGATE|BOTH","ownership":"ALL|MINE|NOT_MINE|SHARED|TRANSFER","categoryNames":["name-or-alias"],"merchantNames":["name-or-alias"],"transactionTypes":["PURCHASE|WITHDRAWAL|TRANSFER|DEPOSIT"],"periodKeyword":"TODAY|THIS_WEEK|LAST_WEEK|THIS_MONTH|LAST_MONTH|THIS_QUARTER|LAST_QUARTER|THIS_YEAR|LAST_YEAR|null","period":{"startMs":0,"endMs":0}},"clarification":{"prompt":"text","options":["a","b"]}}""")
             appendLine()
             appendLine("Rules:")
             appendLine("- categoryNames and merchantNames MUST be arrays, even for a single value.")
@@ -181,6 +183,8 @@ class OnDeviceQueryInterpretationService @Inject constructor() : QueryInterpreta
 
         // --- Period resolution ---
         val resolvedPeriod = resolvePeriod(intent, input.currentTimeMs)
+        val periodRange = resolvedPeriod?.first
+        val periodGranularity = resolvedPeriod?.second
 
         // Validate and clamp AI-returned amount bounds
         val rawMinAmount = intent.optDoubleOrNull("minAmount")
@@ -193,7 +197,8 @@ class OnDeviceQueryInterpretationService @Inject constructor() : QueryInterpreta
                 rawQuery = input.rawQuery,
                 normalizedQuery = normalizedQuery,
                 filters = ExpenseQueryFilters(
-                    period = resolvedPeriod,
+                    period = periodRange,
+                    periodGranularity = periodGranularity,
                     merchants = resolvedMerchants,
                     categoryIds = resolvedCategoryIds,
                     transactionTypes = resolvedTypes,
@@ -273,12 +278,16 @@ class OnDeviceQueryInterpretationService @Inject constructor() : QueryInterpreta
         }
     }
 
-    private fun resolvePeriod(intent: JSONObject, nowMs: Long): PeriodRange? {
+    /**
+     * Returns the period plus its granularity. An explicit model start/end is custom
+     * (granularity `null`); a keyword is resolved by [AssistantPeriodResolver].
+     */
+    private fun resolvePeriod(intent: JSONObject, nowMs: Long): Pair<PeriodRange, PeriodGranularity?>? {
         intent.optJSONObject("period")?.let { periodObject ->
             val startMs = periodObject.optLongOrNull("startMs")
             val endMs = periodObject.optLongOrNull("endMs")
             if (startMs != null && endMs != null && endMs > startMs) {
-                return PeriodRange(startMs, endMs)
+                return PeriodRange(startMs, endMs) to null
             }
         }
 
@@ -289,40 +298,9 @@ class OnDeviceQueryInterpretationService @Inject constructor() : QueryInterpreta
                 .trim()
                 .takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
 
-        return periodKeyword?.let { resolvePeriodFromKeyword(it, nowMs) }
-    }
-
-    /**
-     * Resolves a period keyword emitted by the on-device model into a concrete [PeriodRange].
-     */
-    private fun resolvePeriodFromKeyword(keyword: String, nowMs: Long): PeriodRange? {
-        return when (keyword.uppercase(Locale.ROOT)) {
-            "TODAY" -> {
-                val dayStart = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(nowMs)
-                PeriodRange(dayStart, nowMs)
-            }
-            "THIS_WEEK" -> {
-                val (start, end) = com.yourname.expensetracker.domain.util.TimePeriodUtils.getWeekRange(nowMs, 0)
-                PeriodRange(start, end)
-            }
-            "THIS_MONTH" -> {
-                val (start, end) = com.yourname.expensetracker.domain.util.TimePeriodUtils.getMonthRange(nowMs, 0)
-                PeriodRange(start, end)
-            }
-            "LAST_MONTH" -> {
-                val (start, end) = com.yourname.expensetracker.domain.util.TimePeriodUtils.getMonthRange(nowMs, -1)
-                PeriodRange(start, end)
-            }
-            "THIS_QUARTER" -> {
-                val start = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfQuarter(nowMs)
-                PeriodRange(start, nowMs)
-            }
-            "THIS_YEAR" -> {
-                val start = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfYear(nowMs)
-                PeriodRange(start, nowMs)
-            }
-            else -> null
-        }
+        return periodKeyword
+            ?.let { AssistantPeriodResolver.resolveKeyword(it, nowMs) }
+            ?.let { PeriodRange(it.startMs, it.endMs) to it.granularity }
     }
 
     /**

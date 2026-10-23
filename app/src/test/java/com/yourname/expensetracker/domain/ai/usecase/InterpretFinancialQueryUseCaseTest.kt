@@ -7,10 +7,13 @@ import com.yourname.expensetracker.domain.ai.model.AssistantUnsupportedReason
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationResult
 import com.yourname.expensetracker.domain.ai.model.ExpenseQueryFilters
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryIntent
+import com.yourname.expensetracker.domain.ai.model.PeriodGranularity
+import com.yourname.expensetracker.domain.ai.model.QueryComparison
 import com.yourname.expensetracker.domain.ai.model.QueryGrouping
 import com.yourname.expensetracker.domain.ai.model.QueryMetric
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.QueryInterpretationService
+import com.yourname.expensetracker.domain.model.PeriodRange
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -21,10 +24,14 @@ import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import timber.log.Timber
+import java.time.ZoneId
+import java.time.ZonedDateTime
+import java.util.TimeZone
 import kotlin.time.Duration.Companion.seconds
 
 class InterpretFinancialQueryUseCaseTest {
@@ -380,5 +387,250 @@ class InterpretFinancialQueryUseCaseTest {
         assertEquals(null, filters.maxAmount)
         assertTrue(logs.none { it.second.contains("7654") || it.second.contains("7,654") })
         assertTrue(logs.none { it.second.contains("NaN") })
+    }
+
+    // ---- ai-fixes C3: calendar period vocabulary (INV-C8..C10, AE-C11, C13, C14, C19) -----------
+    //
+    // The use case resolves periods in ZoneId.systemDefault(); the JVM default zone is pinned to
+    // Europe/Athens for these tests and restored afterwards. NOW = Fri 2026-10-16 10:00 EEST.
+
+    private var originalZone: TimeZone? = null
+    private val athens: ZoneId = ZoneId.of("Europe/Athens")
+
+    @Before
+    fun pinDefaultZoneToAthens() {
+        originalZone = TimeZone.getDefault()
+        TimeZone.setDefault(TimeZone.getTimeZone("Europe/Athens"))
+    }
+
+    @After
+    fun restoreDefaultZone() {
+        originalZone?.let { TimeZone.setDefault(it) }
+    }
+
+    private fun athensMs(year: Int, month: Int, day: Int, hour: Int = 0, minute: Int = 0): Long =
+        ZonedDateTime.of(year, month, day, hour, minute, 0, 0, athens).toInstant().toEpochMilli()
+
+    private fun nowOct16(): Long = athensMs(2026, 10, 16, 10, 0)
+
+    private fun stubInputAtNow(rawQuery: String): com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationInput {
+        val built = com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationInput(
+            rawQuery = rawQuery,
+            currentTimeMs = nowOct16()
+        )
+        coEvery { inputBuilder.build(any(), any(), any()) } returns built
+        return built
+    }
+
+    private val foodCategory = Category(id = 1L, name = "Food", icon = "F", color = "#FF0000")
+
+    /** Runs [query] through the local fallback (provider unsupported) and returns the structured intent. */
+    private suspend fun interpretViaFallback(
+        query: String,
+        categories: List<Category> = emptyList()
+    ): FinancialQueryIntent {
+        every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
+        val built = stubInputAtNow(query)
+        coEvery { categoryRepository.getAll() } returns categories
+        coEvery { queryInterpretationService.interpret(built) } returns
+            FinancialQueryInterpretationResult.Unsupported(AssistantUnsupportedReason.PROVIDER_UNAVAILABLE)
+
+        val result = useCase(query)
+
+        assertTrue("expected Structured but was $result", result is FinancialQueryInterpretationResult.Structured)
+        return (result as FinancialQueryInterpretationResult.Structured).intent
+    }
+
+    /** Runs [query] with a provider Structured result so that the enrich path fills the gaps. */
+    private suspend fun interpretViaEnrich(
+        query: String,
+        providerFilters: ExpenseQueryFilters = ExpenseQueryFilters(),
+        providerComparison: QueryComparison = QueryComparison.NONE,
+        categories: List<Category> = emptyList()
+    ): FinancialQueryIntent {
+        every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
+        val built = stubInputAtNow(query)
+        coEvery { categoryRepository.getAll() } returns categories
+        coEvery { queryInterpretationService.interpret(built) } returns
+            FinancialQueryInterpretationResult.Structured(
+                FinancialQueryIntent(
+                    rawQuery = query,
+                    normalizedQuery = query,
+                    filters = providerFilters,
+                    metric = QueryMetric.TOTAL,
+                    comparison = providerComparison
+                )
+            )
+
+        val result = useCase(query)
+
+        assertTrue("expected Structured but was $result", result is FinancialQueryInterpretationResult.Structured)
+        return (result as FinancialQueryInterpretationResult.Structured).intent
+    }
+
+    private fun assertPeriod(
+        filters: ExpenseQueryFilters,
+        expectedStart: Long,
+        expectedEnd: Long,
+        expectedGranularity: PeriodGranularity?
+    ) {
+        val period = filters.period
+        assertNotNull("period must be resolved", period)
+        assertEquals("period start", expectedStart, period!!.start)
+        assertEquals("period end", expectedEnd, period.end)
+        assertEquals("period granularity", expectedGranularity, filters.periodGranularity)
+    }
+
+    @Test
+    fun `AE-C11 food last month resolves previous calendar month with MONTH granularity and no comparison`() = runTest(timeout = 30.seconds) {
+        val intent = interpretViaFallback("food last month", listOf(foodCategory))
+
+        assertEquals(setOf(1L), intent.filters.categoryIds)
+        assertPeriod(intent.filters, athensMs(2026, 9, 1), athensMs(2026, 10, 1), PeriodGranularity.MONTH)
+        assertEquals(QueryComparison.NONE, intent.comparison)
+    }
+
+    @Test
+    fun `AE-C11 last week last quarter and last year resolve previous full calendar units`() = runTest(timeout = 30.seconds) {
+        val week = interpretViaFallback("last week")
+        assertPeriod(week.filters, athensMs(2026, 10, 5), athensMs(2026, 10, 12), PeriodGranularity.WEEK)
+        assertEquals(QueryComparison.NONE, week.comparison)
+
+        val quarter = interpretViaFallback("last quarter")
+        assertPeriod(quarter.filters, athensMs(2026, 7, 1), athensMs(2026, 10, 1), PeriodGranularity.QUARTER)
+        assertEquals(QueryComparison.NONE, quarter.comparison)
+
+        val year = interpretViaFallback("last year")
+        assertPeriod(year.filters, athensMs(2025, 1, 1), athensMs(2026, 1, 1), PeriodGranularity.YEAR)
+        assertEquals(QueryComparison.NONE, year.comparison)
+    }
+
+    @Test
+    fun `AE-C11 spending previous month is September with no comparison`() = runTest(timeout = 30.seconds) {
+        val intent = interpretViaFallback("spending previous month")
+
+        assertPeriod(intent.filters, athensMs(2026, 9, 1), athensMs(2026, 10, 1), PeriodGranularity.MONTH)
+        assertEquals(QueryComparison.NONE, intent.comparison)
+    }
+
+    @Test
+    fun `AE-C11 bare last month shares the vocabulary and stays a non comparison`() = runTest(timeout = 30.seconds) {
+        val intent = interpretViaFallback("last month")
+
+        assertPeriod(intent.filters, athensMs(2026, 9, 1), athensMs(2026, 10, 1), PeriodGranularity.MONTH)
+        assertEquals(QueryComparison.NONE, intent.comparison)
+    }
+
+    @Test
+    fun `AE-C11 control this month stays the current full month with MONTH granularity`() = runTest(timeout = 30.seconds) {
+        val intent = interpretViaFallback("food this month", listOf(foodCategory))
+
+        assertPeriod(intent.filters, athensMs(2026, 10, 1), athensMs(2026, 11, 1), PeriodGranularity.MONTH)
+        assertEquals(QueryComparison.NONE, intent.comparison)
+    }
+
+    @Test
+    fun `AE-C13 compare last month with previous month has base September and a comparison`() = runTest(timeout = 30.seconds) {
+        val intent = interpretViaFallback("compare last month with previous month")
+
+        // "previous month" after the connector is the comparison target, not the base period.
+        assertPeriod(intent.filters, athensMs(2026, 9, 1), athensMs(2026, 10, 1), PeriodGranularity.MONTH)
+        assertEquals(QueryComparison.PREVIOUS_EQUIVALENT_PERIOD, intent.comparison)
+        // The calendar-aware previous period of that base is August.
+        val previous = AssistantPeriodResolver.previousEquivalent(
+            startMs = intent.filters.period!!.start,
+            endMs = intent.filters.period!!.end,
+            granularity = intent.filters.periodGranularity
+        )
+        assertEquals(athensMs(2026, 8, 1), previous.startMs)
+        assertEquals(athensMs(2026, 9, 1), previous.endMs)
+    }
+
+    @Test
+    fun `AE-C14 food this month vs last month has base October keeps Food and requests comparison`() = runTest(timeout = 30.seconds) {
+        val intent = interpretViaFallback("food this month vs last month", listOf(foodCategory))
+
+        assertPeriod(intent.filters, athensMs(2026, 10, 1), athensMs(2026, 11, 1), PeriodGranularity.MONTH)
+        assertEquals(setOf(1L), intent.filters.categoryIds)
+        assertEquals(QueryComparison.PREVIOUS_EQUIVALENT_PERIOD, intent.comparison)
+    }
+
+    @Test
+    fun `AE-C19 food previous month is not a comparison`() = runTest(timeout = 30.seconds) {
+        val intent = interpretViaFallback("food previous month", listOf(foodCategory))
+
+        assertEquals(QueryComparison.NONE, intent.comparison)
+        assertPeriod(intent.filters, athensMs(2026, 9, 1), athensMs(2026, 10, 1), PeriodGranularity.MONTH)
+        assertEquals(setOf(1L), intent.filters.categoryIds)
+    }
+
+    @Test
+    fun `AE-C19 food this month compared to last month is a comparison on base October`() = runTest(timeout = 30.seconds) {
+        val intent = interpretViaFallback("food this month compared to last month", listOf(foodCategory))
+
+        assertEquals(QueryComparison.PREVIOUS_EQUIVALENT_PERIOD, intent.comparison)
+        assertPeriod(intent.filters, athensMs(2026, 10, 1), athensMs(2026, 11, 1), PeriodGranularity.MONTH)
+    }
+
+    @Test
+    fun `AE-C19 enrich food previous month leaves comparison NONE`() = runTest(timeout = 30.seconds) {
+        val intent = interpretViaEnrich("food previous month", categories = listOf(foodCategory))
+
+        assertEquals(QueryComparison.NONE, intent.comparison)
+        assertPeriod(intent.filters, athensMs(2026, 9, 1), athensMs(2026, 10, 1), PeriodGranularity.MONTH)
+    }
+
+    @Test
+    fun `AE-C13 enrich fills base September and the comparison cue for compare last month with previous month`() = runTest(timeout = 30.seconds) {
+        val intent = interpretViaEnrich("compare last month with previous month")
+
+        assertPeriod(intent.filters, athensMs(2026, 9, 1), athensMs(2026, 10, 1), PeriodGranularity.MONTH)
+        assertEquals(QueryComparison.PREVIOUS_EQUIVALENT_PERIOD, intent.comparison)
+    }
+
+    @Test
+    fun `AE-C14 enrich fills October base and comparison for food this month vs last month`() = runTest(timeout = 30.seconds) {
+        val intent = interpretViaEnrich("food this month vs last month", categories = listOf(foodCategory))
+
+        assertPeriod(intent.filters, athensMs(2026, 10, 1), athensMs(2026, 11, 1), PeriodGranularity.MONTH)
+        assertEquals(setOf(1L), intent.filters.categoryIds)
+        assertEquals(QueryComparison.PREVIOUS_EQUIVALENT_PERIOD, intent.comparison)
+    }
+
+    @Test
+    fun `INV-C8 enrich fills a null provider period together with its granularity`() = runTest(timeout = 30.seconds) {
+        val intent = interpretViaEnrich("spending last quarter")
+
+        assertPeriod(intent.filters, athensMs(2026, 7, 1), athensMs(2026, 10, 1), PeriodGranularity.QUARTER)
+    }
+
+    @Test
+    fun `INV-C8 enrich keeps a provider explicit range and its null granularity`() = runTest(timeout = 30.seconds) {
+        // Boundary: the query text says "last month" but the provider range wins; granularity stays null (custom).
+        val intent = interpretViaEnrich(
+            query = "food last month",
+            providerFilters = ExpenseQueryFilters(period = PeriodRange(100L, 200L)),
+            categories = listOf(foodCategory)
+        )
+
+        assertEquals(100L, intent.filters.period!!.start)
+        assertEquals(200L, intent.filters.period!!.end)
+        assertNull(intent.filters.periodGranularity)
+    }
+
+    @Test
+    fun `INV-C8 enrich keeps a provider range together with the provider granularity`() = runTest(timeout = 30.seconds) {
+        val providerStart = athensMs(2026, 8, 1)
+        val providerEnd = athensMs(2026, 9, 1)
+        val intent = interpretViaEnrich(
+            query = "food this month",
+            providerFilters = ExpenseQueryFilters(
+                period = PeriodRange(providerStart, providerEnd),
+                periodGranularity = PeriodGranularity.MONTH
+            ),
+            categories = listOf(foodCategory)
+        )
+
+        assertPeriod(intent.filters, providerStart, providerEnd, PeriodGranularity.MONTH)
     }
 }
