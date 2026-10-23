@@ -10,6 +10,7 @@ import com.yourname.expensetracker.domain.budget.BudgetCalculator
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.budget.BudgetStatus
+import com.yourname.expensetracker.domain.notification.presentation.NotificationKind
 import com.yourname.expensetracker.domain.service.NotificationService
 import io.mockk.*
 import kotlinx.coroutines.flow.flowOf
@@ -28,7 +29,7 @@ class BudgetAlertPipelineTest : AnalyticsEngineTestBase() {
         super.setUp()
         budgetRepo = mockk(relaxed = true)
         notificationService = mockk(relaxed = true)
-        every { notificationService.sendBudgetAlert(any(), any(), any()) } returns
+        coEvery { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) } returns
             NotificationService.DeliveryResult.DELIVERED
         budgetCalculator = BudgetCalculator(timeProvider)
         budgetMonitor = BudgetMonitor(budgetRepo, timeProvider, notificationService, testDispatcher, diagnosticEventWriter = mockk(relaxed = true), writeBarrier = mockk(relaxed = true), diagnosticSink = mockk(relaxed = true))
@@ -50,8 +51,8 @@ class BudgetAlertPipelineTest : AnalyticsEngineTestBase() {
         budgetMonitor.checkBudgets()
         testDispatcher.scheduler.advanceUntilIdle()
 
-        verify(exactly = 1) {
-            notificationService.sendBudgetAlert(1, "Budget Warning", any())
+        coVerify(exactly = 1) {
+            notificationService.sendBudgetAlertForKind(NotificationKind.BUDGET, 1, "Budget Warning", any())
         }
         coVerify(exactly = 1) { budgetRepo.updateWarningNotification(1L, fixedNow) }
     }
@@ -72,8 +73,8 @@ class BudgetAlertPipelineTest : AnalyticsEngineTestBase() {
         budgetMonitor.checkBudgets()
         testDispatcher.scheduler.advanceUntilIdle()
 
-        verify(exactly = 1) {
-            notificationService.sendBudgetAlert(2, "Budget Exceeded!", any())
+        coVerify(exactly = 1) {
+            notificationService.sendBudgetAlertForKind(NotificationKind.BUDGET, 2, "Budget Exceeded!", any())
         }
         coVerify(exactly = 1) { budgetRepo.updateExceededNotification(2L, fixedNow) }
     }
@@ -94,10 +95,50 @@ class BudgetAlertPipelineTest : AnalyticsEngineTestBase() {
         budgetMonitor.checkBudgets()
         testDispatcher.scheduler.advanceUntilIdle()
 
-        verify(exactly = 1) {
-            notificationService.sendBudgetAlert(3, "Budget Exceeded!", any())
+        coVerify(exactly = 1) {
+            notificationService.sendBudgetAlertForKind(NotificationKind.BUDGET, 3, "Budget Exceeded!", any())
         }
         coVerify(exactly = 1) { budgetRepo.updateExceededNotification(3L, fixedNow) }
+    }
+
+    // S6 / INV-12 / AE-11: the platform refusing the post (PERMISSION_DENIED) is never a delivery, so
+    // no cooldown is written for any threshold and the same alert stays eligible.
+    @Test
+    fun `PERMISSION_DENIED from the notification service writes no cooldown for warning critical or exceeded`() = runTest {
+        coEvery { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) } returns
+            NotificationService.DeliveryResult.PERMISSION_DENIED
+        val statuses = listOf(
+            createBudgetStatus(
+                budgetId = 4L, amount = 500.0, spent = 400.0, percentUsed = 0.80f,
+                warningThreshold = 0.75f, criticalThreshold = 0.90f
+            ),
+            createBudgetStatus(
+                budgetId = 5L, amount = 500.0, spent = 475.0, percentUsed = 0.95f,
+                warningThreshold = 0.75f, criticalThreshold = 0.90f
+            ),
+            createBudgetStatus(
+                budgetId = 6L, amount = 500.0, spent = 550.0, percentUsed = 1.10f,
+                warningThreshold = 0.75f, criticalThreshold = 0.90f
+            )
+        )
+        every { budgetRepo.getBudgetStatuses() } returns flowOf(statuses)
+
+        budgetMonitor.checkBudgets()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        coVerify(exactly = 1) {
+            notificationService.sendBudgetAlertForKind(NotificationKind.BUDGET, 4, "Budget Warning", any())
+        }
+        coVerify(exactly = 1) {
+            notificationService.sendBudgetAlertForKind(NotificationKind.BUDGET, 5, "Critical Budget Warning", any())
+        }
+        coVerify(exactly = 1) {
+            notificationService.sendBudgetAlertForKind(NotificationKind.BUDGET, 6, "Budget Exceeded!", any())
+        }
+        coVerify(exactly = 3) { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) }
+        coVerify(exactly = 0) { budgetRepo.updateWarningNotification(any(), any()) }
+        coVerify(exactly = 0) { budgetRepo.updateCriticalNotification(any(), any()) }
+        coVerify(exactly = 0) { budgetRepo.updateExceededNotification(any(), any()) }
     }
 
     @Test
@@ -108,7 +149,7 @@ class BudgetAlertPipelineTest : AnalyticsEngineTestBase() {
         testDispatcher.scheduler.advanceUntilIdle()
 
         verify(exactly = 0) { budgetRepo.getBudgetStatuses() }
-        verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 0) { notificationService.sendBudgetAlertForKind(any(), any(), any(), any()) }
         coVerify(exactly = 0) { budgetRepo.updateWarningNotification(any(), any()) }
         coVerify(exactly = 0) { budgetRepo.updateCriticalNotification(any(), any()) }
         coVerify(exactly = 0) { budgetRepo.updateExceededNotification(any(), any()) }

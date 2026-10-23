@@ -186,3 +186,23 @@ Validation (S5-end batch):
 - All PASS.
 Review: reviewer-strict (covering arch + privacy for the S5b half) ACCEPT-WITH-MINORS; both minors fixed. S5 "Done when" met.
 Next: wave D {S6 ∥ S7 ∥ S11} (S8 after S5b, now satisfied). C7 folds into S6; S7 adds the receipt PERMISSION_DENIED branch.
+
+## S6 DONE (2026-10-23)
+Source:
+- BudgetMonitor (sendNotification now suspend → sendBudgetAlertForKind BUDGET), AnomalyAlertOrchestrator (postAnomalyAlertForKind ANOMALY, constant result logging) and DeliverProactiveBriefingNotificationUseCase (sendAiBriefingReadyForKind BRIEFING) are on the kind-aware path. Ids unchanged (TECH-12 a).
+- PERMISSION_DENIED:
+  - budget = NOT_DELIVERED (no cooldown write, SKIPPED diagnostic; the loop continues for other budgets, where previously a SecurityException aborted the cycle; intended per TECH-9);
+  - anomaly = row stays inserted (insert-then-post), constant Timber.e without a throwable;
+  - briefing = no lastDelivered, nothing recorded.
+- C7 + C7b: merchant/amount/deviation removed from anomaly logs (:200-207 and :261).
+Tests: 4 suites retargeted (no intent change; relaxed-mock vacuity removed) + parity/kind/C7/cancellation tests.
+Validation:
+- targeted vr-20261023-121721-5cf643d9, cancellation vr-20261023-122625-8317bee1, pii_logging vr-20261023-122643-b3971204, domain-a-m vr-20261023-122659-85dcf773, integration-golden vr-20261023-122800-448ac234;
+- after C7b: targeted vr-20261023-125554-d160b4f7, pii_logging vr-20261023-125842-640e26ea.
+- All PASS.
+Reviews: reviewer-strict (lead), privacy-security-guardian and architecture-guardian all ACCEPT-WITH-MINORS.
+Residuals/follow-ups:
+- DailyBriefingWorker counts a PERMISSION_DENIED briefing as notificationsSent (only if permission is revoked mid-run). Closed by the cross-lane B3a merge requirement on Cost-agregator/build/release-lead-notes/lanes-board.md.
+- Anomaly debug logs with expense ids (:83/:112/:119/:124/:154/:160/:169/:192/:218 with throwable/:241): debug-only; follow-up for a later log-hygiene pass.
+- WarrantyExpirationWorker / ReceiptMatchingWorker legacy calls → S7.
+Next: S7 (warranty + receipt workers onto kind-aware methods; explicit receipt PERMISSION_DENIED → RECEIPT_MATCH_NOTIFICATION_SUPPRESSED_PERMISSION_REVOKED), then S11, then S8.

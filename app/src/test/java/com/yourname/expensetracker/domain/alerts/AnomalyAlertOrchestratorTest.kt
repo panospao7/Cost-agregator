@@ -17,11 +17,14 @@ import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.notification.presentation.NotificationKind
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
+import com.yourname.expensetracker.domain.util.NotificationId
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.service.NotificationService
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.coVerifyOrder
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
@@ -33,9 +36,13 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.fail
+import org.junit.After
 import org.junit.Before
 import org.junit.Test
+import timber.log.Timber
 import kotlin.coroutines.cancellation.CancellationException
 
 class AnomalyAlertOrchestratorTest {
@@ -48,7 +55,28 @@ class AnomalyAlertOrchestratorTest {
     private val currencySettingsRepository = mockk<CurrencySettingsRepository>()
     private val timeProvider = FakeTimeProvider(FIXED_NOW)
 
+    /** One captured Timber call: priority, already-formatted message and the throwable (if any). */
+    private data class LogEntry(val priority: Int, val message: String, val throwable: Throwable?)
+
+    private class CapturingTree : Timber.Tree() {
+        val entries = mutableListOf<LogEntry>()
+
+        override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+            entries += LogEntry(priority, message, t)
+        }
+    }
+
+    private val capturingTree = CapturingTree()
+
     private lateinit var orchestrator: AnomalyAlertOrchestrator
+
+    @After
+    fun tearDownLogCapture() {
+        // Timber.uproot throws for a tree that was never planted, so guard on membership.
+        if (Timber.forest().contains(capturingTree)) {
+            Timber.uproot(capturingTree)
+        }
+    }
 
     @Before
     fun setup() {
@@ -92,6 +120,10 @@ class AnomalyAlertOrchestratorTest {
             timeProvider = timeProvider
         )
 
+        // Explicit result: a relaxed mock would otherwise return an arbitrary enum constant.
+        coEvery {
+            notificationService.postAnomalyAlertForKind(any(), any(), any(), any(), any())
+        } returns NotificationService.DeliveryResult.DELIVERED
         every { currencySettingsRepository.homeCurrency() } returns kotlinx.coroutines.flow.flowOf("EUR")
         coEvery { currencySettingsRepository.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
         coEvery { analyticsCurrencyNormalizer.normalizeSnapshots(any(), any()) } answers {
@@ -143,7 +175,7 @@ class AnomalyAlertOrchestratorTest {
         assertEquals("Current expense should be included once", 1, passedIds.count { it == 100L })
 
         coVerify(exactly = 0) { anomalyAlertDao.insert(any()) }
-        verify(exactly = 0) { notificationService.postAnomalyAlert(any(), any(), any(), any()) }
+        coVerify(exactly = 0) { notificationService.postAnomalyAlertForKind(any(), any(), any(), any(), any()) }
     }
 
     @Test
@@ -165,8 +197,9 @@ class AnomalyAlertOrchestratorTest {
         orchestrator.checkAndAlert(expense)
 
         coVerify(exactly = 1) { anomalyAlertDao.insert(capture(alertSlot)) }
-        verify(exactly = 1) {
-            notificationService.postAnomalyAlert(
+        coVerify(exactly = 1) {
+            notificationService.postAnomalyAlertForKind(
+                NotificationKind.ANOMALY,
                 any(),
                 "Unusual Charge Detected",
                 capture(messageSlot),
@@ -194,7 +227,7 @@ class AnomalyAlertOrchestratorTest {
 
         coVerify(exactly = 0) { anomalyAlertDao.getLastAlertForCategory(any(), any()) }
         coVerify(exactly = 0) { anomalyAlertDao.insert(any()) }
-        verify(exactly = 0) { notificationService.postAnomalyAlert(any(), any(), any(), any()) }
+        coVerify(exactly = 0) { notificationService.postAnomalyAlertForKind(any(), any(), any(), any(), any()) }
     }
 
     @Test
@@ -211,7 +244,7 @@ class AnomalyAlertOrchestratorTest {
         orchestrator.checkAndAlert(expense)
 
         coVerify(exactly = 0) { anomalyAlertDao.insert(any()) }
-        verify(exactly = 0) { notificationService.postAnomalyAlert(any(), any(), any(), any()) }
+        coVerify(exactly = 0) { notificationService.postAnomalyAlertForKind(any(), any(), any(), any(), any()) }
     }
 
     @Test
@@ -227,7 +260,7 @@ class AnomalyAlertOrchestratorTest {
 
         coVerify(exactly = 0) { anomalyAlertDao.getLastAlertForMerchant(any(), any()) }
         coVerify(exactly = 0) { anomalyAlertDao.insert(any()) }
-        verify(exactly = 0) { notificationService.postAnomalyAlert(any(), any(), any(), any()) }
+        coVerify(exactly = 0) { notificationService.postAnomalyAlertForKind(any(), any(), any(), any(), any()) }
     }
 
     @Test
@@ -262,7 +295,9 @@ class AnomalyAlertOrchestratorTest {
         coVerify(exactly = 1) { expenseDao.getExpensesByCategory(eq(8L), any(), any()) }
         coVerify(exactly = 1) { anomalyAlertDao.getLastAlertForExpense(450L) }
         coVerify(exactly = 1) { anomalyAlertDao.insert(any()) }
-        verify(exactly = 1) { notificationService.postAnomalyAlert(any(), any(), any(), 450L) }
+        coVerify(exactly = 1) {
+            notificationService.postAnomalyAlertForKind(NotificationKind.ANOMALY, any(), any(), any(), 450L)
+        }
     }
 
     @Test
@@ -280,7 +315,7 @@ class AnomalyAlertOrchestratorTest {
         orchestrator.checkAndAlert(expense)
 
         coVerify(exactly = 0) { anomalyAlertDao.insert(any()) }
-        verify(exactly = 0) { notificationService.postAnomalyAlert(any(), any(), any(), any()) }
+        coVerify(exactly = 0) { notificationService.postAnomalyAlertForKind(any(), any(), any(), any(), any()) }
     }
 
     @Test
@@ -294,7 +329,7 @@ class AnomalyAlertOrchestratorTest {
 
         verify(exactly = 1) { anomalyDetector.detect(any(), any(), any(), any()) }
         coVerify(exactly = 0) { anomalyAlertDao.insert(any()) }
-        verify(exactly = 0) { notificationService.postAnomalyAlert(any(), any(), any(), any()) }
+        coVerify(exactly = 0) { notificationService.postAnomalyAlertForKind(any(), any(), any(), any(), any()) }
     }
 
     @Test
@@ -472,6 +507,180 @@ class AnomalyAlertOrchestratorTest {
         private const val FIXED_NOW = 1_730_000_000_000L
     }
 
+    // ------------------------------------------------------------------------
+    // S6 (INV-12, AE-13, AE-11, C7): kind/id declaration, PERMISSION_DENIED parity, log privacy
+    // ------------------------------------------------------------------------
+
+    /** Stubs everything so [expense] is a HIGH-confidence anomaly that passes every cooldown check. */
+    private fun arrangeAlertable(expense: ExpenseWithCategory, insertedId: Long = 9100L) {
+        val categoryId = expense.expense.categoryId!!
+        val merchant = expense.expense.merchant
+        val categoryName = expense.category!!.name
+        coEvery { expenseDao.getExpensesByCategory(eq(categoryId), any(), any()) } returns emptyList()
+        every { anomalyDetector.detect(any(), any(), any(), any()) } returns
+            listOf(anomalyFor(expense.expense, deviation = 6.2f, method = AnomalyMethod.IQR))
+        coEvery { anomalyAlertDao.getLastAlertForExpense(expense.expense.id) } returns null
+        coEvery { anomalyAlertDao.getLastAlertForMerchant(merchant, any()) } returns null
+        coEvery { anomalyAlertDao.getLastAlertForCategory(categoryName, any()) } returns null
+        coEvery { anomalyAlertDao.getLooksNormalCountForMerchant(merchant) } returns 0
+        coEvery { anomalyAlertDao.insert(any()) } returns insertedId
+    }
+
+    @Test
+    fun `INV-12 AE-13 anomaly alert declares kind ANOMALY with id equal to NotificationId forGeneral of the expense`() = runTest {
+        for (expenseId in listOf(910L, 911L)) {
+            val expense = expenseWithCategory(id = expenseId, merchant = "Kind Shop $expenseId", categoryId = 20L + expenseId, categoryName = "Kind $expenseId")
+            arrangeAlertable(expense)
+
+            orchestrator.checkAndAlert(expense)
+
+            val expectedValue = NotificationId.forGeneral(expenseId).value
+            coVerify(exactly = 1) {
+                notificationService.postAnomalyAlertForKind(
+                    NotificationKind.ANOMALY,
+                    match { it.value == expectedValue },
+                    "Unusual Charge Detected",
+                    any(),
+                    expenseId
+                )
+            }
+        }
+        coVerify(exactly = 2) { notificationService.postAnomalyAlertForKind(any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `INV-12 AE-11 PERMISSION_DENIED inserts the alert exactly once before the post and no exception escapes`() = runTest {
+        val expense = expenseWithCategory(id = 920L, merchant = "Denied Shop", categoryId = 21L, categoryName = "Denied")
+        arrangeAlertable(expense)
+        coEvery {
+            notificationService.postAnomalyAlertForKind(any(), any(), any(), any(), any())
+        } returns NotificationService.DeliveryResult.PERMISSION_DENIED
+
+        orchestrator.checkAndAlert(expense)
+
+        coVerify(exactly = 1) { anomalyAlertDao.insert(any()) }
+        coVerify(exactly = 1) {
+            notificationService.postAnomalyAlertForKind(NotificationKind.ANOMALY, any(), any(), any(), 920L)
+        }
+        coVerifyOrder {
+            anomalyAlertDao.insert(any())
+            notificationService.postAnomalyAlertForKind(NotificationKind.ANOMALY, any(), any(), any(), 920L)
+        }
+        // The in-flight guard is released: the same expense is processed again, not skipped.
+        orchestrator.checkAndAlert(expense)
+        coVerify(exactly = 2) {
+            notificationService.postAnomalyAlertForKind(NotificationKind.ANOMALY, any(), any(), any(), 920L)
+        }
+    }
+
+    @Test
+    fun `INV-12 AE-11 PERMISSION_DENIED has the same persistence effects as NOT_DELIVERED and DELIVERED`() = runTest {
+        val results = listOf(
+            NotificationService.DeliveryResult.DELIVERED,
+            NotificationService.DeliveryResult.NOT_DELIVERED,
+            NotificationService.DeliveryResult.PERMISSION_DENIED
+        )
+        assertEquals("row count guard", 3, results.size)
+        for ((index, result) in results.withIndex()) {
+            val expenseId = 930L + index
+            val expense = expenseWithCategory(id = expenseId, merchant = "Parity Shop $index", categoryId = 30L + index, categoryName = "Parity $index")
+            arrangeAlertable(expense)
+            coEvery {
+                notificationService.postAnomalyAlertForKind(any(), any(), any(), any(), eq(expenseId))
+            } returns result
+
+            orchestrator.checkAndAlert(expense)
+
+            coVerify(exactly = 1) { anomalyAlertDao.insert(match { it.expenseId == expenseId }) }
+            coVerify(exactly = 1) {
+                notificationService.postAnomalyAlertForKind(NotificationKind.ANOMALY, any(), any(), any(), expenseId)
+            }
+        }
+    }
+
+    @Test
+    fun `INV-12 CancellationException from postAnomalyAlertForKind propagates after the insert and clears in-flight state`() = runTest {
+        val expense = expenseWithCategory(id = 940L, merchant = "Cancel Post Shop", categoryId = 40L, categoryName = "CancelPost")
+        arrangeAlertable(expense)
+        coEvery {
+            notificationService.postAnomalyAlertForKind(any(), any(), any(), any(), any())
+        } throws CancellationException("post cancelled")
+
+        try {
+            orchestrator.checkAndAlert(expense)
+            fail("Expected CancellationException from the post to propagate")
+        } catch (e: CancellationException) {
+            // expected - cancellation must never be logged and swallowed
+        }
+
+        coVerify(exactly = 1) { anomalyAlertDao.insert(any()) }
+        coVerify(exactly = 1) {
+            notificationService.postAnomalyAlertForKind(NotificationKind.ANOMALY, any(), any(), any(), 940L)
+        }
+
+        // In-flight state was released: a retry for the same expense is processed, not skipped.
+        coEvery {
+            notificationService.postAnomalyAlertForKind(any(), any(), any(), any(), any())
+        } returns NotificationService.DeliveryResult.DELIVERED
+        orchestrator.checkAndAlert(expense)
+        coVerify(exactly = 2) {
+            notificationService.postAnomalyAlertForKind(NotificationKind.ANOMALY, any(), any(), any(), 940L)
+        }
+    }
+
+    @Test
+    fun `C7 anomaly alert logs never contain the merchant or the amount for any delivery result`() = runTest {
+        Timber.plant(capturingTree)
+        val results = listOf(
+            NotificationService.DeliveryResult.DELIVERED,
+            NotificationService.DeliveryResult.NOT_DELIVERED,
+            NotificationService.DeliveryResult.PERMISSION_DENIED
+        )
+        assertEquals("row count guard", 3, results.size)
+
+        for ((index, result) in results.withIndex()) {
+            capturingTree.entries.clear()
+            val expenseId = 950L + index
+            val expense = expenseWithCategory(
+                id = expenseId,
+                merchant = "Lidl SENTINEL",
+                categoryId = 50L,
+                categoryName = "Groceries",
+                amount = 123.45
+            )
+            arrangeAlertable(expense)
+            coEvery {
+                notificationService.postAnomalyAlertForKind(any(), any(), any(), any(), eq(expenseId))
+            } returns result
+
+            orchestrator.checkAndAlert(expense)
+
+            // The path really ran to the post (otherwise the log assertions below would be vacuous).
+            coVerify(exactly = 1) {
+                notificationService.postAnomalyAlertForKind(NotificationKind.ANOMALY, any(), any(), any(), expenseId)
+            }
+            assertTrue("$result: the flow must log something so the privacy check is not vacuous", capturingTree.entries.isNotEmpty())
+            for (entry in capturingTree.entries) {
+                val rendered = entry.message + " " + (entry.throwable?.message ?: "")
+                for (forbidden in listOf("Lidl", "SENTINEL", "123.45", "123,45", "€123")) {
+                    assertFalse(
+                        "$result: log must not contain '$forbidden' but was: ${entry.message}",
+                        rendered.contains(forbidden)
+                    )
+                }
+            }
+            if (result == NotificationService.DeliveryResult.PERMISSION_DENIED) {
+                assertTrue(
+                    "PERMISSION_DENIED keeps an error-level diagnostic",
+                    capturingTree.entries.any { it.priority == android.util.Log.ERROR }
+                )
+                for (entry in capturingTree.entries) {
+                    assertNull("PERMISSION_DENIED must not log a throwable: ${entry.message}", entry.throwable)
+                }
+            }
+        }
+    }
+
     @Test
     fun `checkAndAlert propagates CancellationException instead of logging and swallowing`() = runTest {
         val expense = expenseWithCategory(id = 800L, merchant = "Cancel Shop", categoryId = 5L, categoryName = "Test")
@@ -489,7 +698,7 @@ class AnomalyAlertOrchestratorTest {
 
         // Verify no alert was persisted or sent
         coVerify(exactly = 0) { anomalyAlertDao.insert(any()) }
-        verify(exactly = 0) { notificationService.postAnomalyAlert(any(), any(), any(), any()) }
+        coVerify(exactly = 0) { notificationService.postAnomalyAlertForKind(any(), any(), any(), any(), any()) }
     }
 
     // AE-19 (INV-19, INV-20): a CancellationException from the home-currency read propagates,
@@ -519,7 +728,7 @@ class AnomalyAlertOrchestratorTest {
         coVerify(exactly = 0) { analyticsCurrencyNormalizer.normalizeSnapshots(any(), any()) }
         verify(exactly = 0) { anomalyDetector.detect(any(), any(), any(), any()) }
         coVerify(exactly = 0) { anomalyAlertDao.insert(any()) }
-        verify(exactly = 0) { notificationService.postAnomalyAlert(any(), any(), any(), any()) }
+        coVerify(exactly = 0) { notificationService.postAnomalyAlertForKind(any(), any(), any(), any(), any()) }
 
         // In-flight state was cleared: a retry for the same expense id is processed, not skipped.
         every { currencySettingsRepository.homeCurrency() } returns kotlinx.coroutines.flow.flowOf("EUR")
@@ -528,7 +737,9 @@ class AnomalyAlertOrchestratorTest {
 
         verify(exactly = 1) { anomalyDetector.detect(any(), any(), any(), any()) }
         coVerify(exactly = 1) { anomalyAlertDao.insert(any()) }
-        verify(exactly = 1) { notificationService.postAnomalyAlert(any(), any(), any(), 820L) }
+        coVerify(exactly = 1) {
+            notificationService.postAnomalyAlertForKind(NotificationKind.ANOMALY, any(), any(), any(), 820L)
+        }
     }
 
     // AE-19 (INV-19): any non-cancellation failure keeps today's fallback to the expense currency.
@@ -546,6 +757,6 @@ class AnomalyAlertOrchestratorTest {
         coVerify(exactly = 1) { analyticsCurrencyNormalizer.normalizeSnapshots(any(), eq("USD")) }
         verify(exactly = 1) { anomalyDetector.detect(any(), any(), any(), eq("USD")) }
         coVerify(exactly = 0) { anomalyAlertDao.insert(any()) }
-        verify(exactly = 0) { notificationService.postAnomalyAlert(any(), any(), any(), any()) }
+        coVerify(exactly = 0) { notificationService.postAnomalyAlertForKind(any(), any(), any(), any(), any()) }
     }
 }

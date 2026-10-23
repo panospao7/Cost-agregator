@@ -7,6 +7,7 @@ import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiEngagementRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
+import com.yourname.expensetracker.domain.notification.presentation.NotificationKind
 import com.yourname.expensetracker.domain.service.NotificationService
 import kotlinx.coroutines.flow.first
 import javax.inject.Inject
@@ -41,7 +42,10 @@ class DeliverProactiveBriefingNotificationUseCase @Inject constructor(
         if (artifact.updatedAt < startedAt) return
 
         val summary = artifact.summaryText?.trim()?.takeIf { it.isNotBlank() } ?: return
-        val deliveryResult = notificationService.sendAiBriefingReadyWithResult(
+        // S6 (INV-4, INV-12): declare the BRIEFING kind. Only DELIVERED records lastDelivered
+        // (PERMISSION_DENIED, TECH-9, is never a delivery); targetKey and the id are unchanged.
+        val deliveryResult = notificationService.sendAiBriefingReadyForKind(
+            kind = NotificationKind.BRIEFING,
             notificationId = notificationId,
             title = BRIEFING_NOTIFICATION_TITLE,
             message = summary.take(180),
