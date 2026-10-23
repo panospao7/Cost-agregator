@@ -1,7 +1,7 @@
 # Feature plan: manual-entry-currency (increment 1; 1b framed only)
 
 Author: feature-planner (stage 6, read-only). Persisted by the orchestrator. Date 2026-10-16.
-Status: AWAITING OWNER PLAN APPROVAL (Gate 3). No `app/` edits until S0 passes.
+Status: PLAN APPROVED 2026-10-16 (Gate 3; header corrected 2026-10-21 by orchestrator, see handoff). No `app/` edits until S0 passes.
 
 - Risk tier: **T3 every slice** (money; TLC + result contracts; receipt lifecycle; loan plan) (G2-19).
 - Basis: `docs/features/manual-entry-currency/impact-map.md` (trusted), `gate2-decisions.md` (G2-1..G2-19 DECIDED = Recommended; G2-20 NOT sent), `domain-spec.md` (INV-1..23, AE-1..38, OD-1..5, RF-1..7), `ux-flows.md` §2–§15, handoff N1/N2; format per `workflows/active/nl-quick-add-plan.md`.

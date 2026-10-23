@@ -55,7 +55,7 @@ One composable, one list, one policy (`CurrencySelectionPolicy`, INV-10/11). Rep
 ## 3. Preview line (INV-15, INV-3)
 Single text line directly under the amount row (never inside the amount field's `supportingText`, which stays for amount errors).
 - **Hidden** for home currency, `Unset`, edit mode, home loading, and while the amount is invalid.
-- **Eligible + valid amount:** "≈ €18.52 · ECB rate of 15 Oct" (`CurrencyFormatter.formatMoney(amount x rate, home)`, same function as the list; home-currency decimals, e.g. a JPY-home user sees no decimals in the preview). "ECB" wording only when `sourceLabel = ECB`; otherwise "rate of 15 Oct". The date is the ECB `LocalDate`, rendered without any time zone; include the year when it is not the current year ("7 Oct 2025").
+- **Eligible + valid amount:** "≈ €18.52 · ECB rate of 15 Oct" (`CurrencyFormatter.formatMoney(roundSnapshot(amount x rate, home), home)`: the value the save stores as `baseAmount`, formatted by the same function as the list; home-currency decimals, e.g. a JPY-home user sees no decimals in the preview. RF-10, 2026-10-23). If `roundSnapshot` is `Unavailable`, no amount is shown (spec §12). What Save does then is OPEN (spec OD-6). "ECB" wording only when `sourceLabel = ECB`; otherwise "rate of 15 Oct". The date is the ECB `LocalDate`, rendered without any time zone; include the year when it is not the current year ("7 Oct 2025").
 - **Eligible + amount empty:** rate date only ("ECB rate of 15 Oct"). Never "0" or a placeholder amount.
 - **Evaluating:** "Checking exchange rate…" shown only if evaluation exceeds ~250 ms (local read, normally instant; avoids flicker). Latest inputs win (7.4).
 - **Re-evaluates on:** currency, date, amount (figure only), home change, refresh completion (INV-3 triggers). Typing is never logged.
@@ -130,7 +130,7 @@ Mapping checks. **Spec states with no UI:** `Eligible.path` (DIRECT vs VIA) and 
 
 ## 11. Money display
 - Every amount carries its currency: control (symbol + code), amount field symbol, preview "€18.52" via `CurrencyFormatter.formatMoney`. The amount in the original currency and the converted amount are never summed or shown as one number; no mixed totals on these screens.
-- "≈" marks the preview as the app's rounding to home decimals (same function as the stored snapshot / list, INV-15; AE-38). Interim (money-correctness not landed) it is display rounding only; acceptance = preview text equals list text.
+- "≈" marks the preview as the app's rounding to home decimals (same function as the stored snapshot / list, INV-15; AE-38). Since money-correctness 1b (RF-10, 2026-10-23) the previewed figure is `roundSnapshot(amount x rate, home)`, the same value stored as `baseAmount`. The interim "display rounding only" rule has ended. Acceptance: the preview amount equals the stored snapshot, and the preview text equals the list text.
 - Whole-unit currencies (JPY, KRW, ISK) show no decimals in field and caps. Large symbols ambiguous across currencies ($, kr) always appear with the code in the control.
 
 ## 12. Destructive or irreversible actions

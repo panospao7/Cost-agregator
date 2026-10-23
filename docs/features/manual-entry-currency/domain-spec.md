@@ -1,5 +1,25 @@
 # Domain spec: manual-entry-currency — increment 1 (+ frame for 1b)
 
+> **RF-10 applied 2026-10-23** (domain-modeler, docs only). money-correctness 1b is on `feature/manual-entry-currency`, so the interim
+> statements written for "before money-correctness" are replaced by its shipped behaviour (MEC plan "Amendment 2026-10-16";
+> handoff "Notice from money-correctness Z"). Re-verified [V] on this branch: TLC conversion block `:605-674` (no-rate/rounding-unavailable
+> sentinel `:654-666`, `MISSING_RATE` emitter `:337-367`, `convertedSnapshot` `:385-400`, identity `:668-673`); `SnapshotRounding.kt:45`;
+> `CurrencyFractionDigits.kt:17-22`; `SourceCurrencyAllocation.kt:28`; `CurrencyFormatter.kt:90-106`. Changed:
+> - Unflagged no-rate rows: sentinel triple `baseAmount=0.0`, `baseCurrency=""`, `exchangeRateUsed=0.0` plus exactly one bounded
+>   `MISSING_RATE` diagnostic (metadata `{operation, reason}`), not `baseCurrency="EUR"` and no `Timber.w`: header scope line, F18, INV-9,
+>   §5 "Unflagged callers", §9 D-8 bullet, §12 rows, §14 bullet, RF-5, AE-21, AE-29.
+> - Digits/rounding owner: money-correctness `CurrencyFractionDigits.of` (digits) + `roundSnapshot` (rounding); MEC
+>   `CurrencyAmountPolicy.fractionDigits` delegates, no second accessor: F14, §1.5 field row, §2 owners (digits row split + new
+>   "Snapshot rounding" row), INV-12, §6 "Single digits source".
+> - Snapshot/preview interim ended: stored `baseAmount` and the preview both = `roundSnapshot(amount × Eligible.rate, home)`; preview
+>   formatted with `CurrencyFormatter.formatMoney` and equal to the stored snapshot: §1.6, §1.7, INV-7, INV-8 (pointer), INV-15, §5 flagged
+>   branch (+ placement line ref), §6 "Rounding", §12 rounding row, AE-1, AE-21 (CSV case), AE-38.
+> - Same fixes in this folder: `ux-flows.md` §3 preview line and §11 "≈" line; `impact-map.md` §1(a) `CurrencyAmountPolicy` and TLC rows,
+>   §9 money-correctness bullet, §10 RF-5. `gate2-decisions.md`, `brief.md`, `critique.md`, `no-rate-verification.md` are dated records, left as written.
+> - New **OD-6 (DECIDED 2026-10-23, fail closed)**: behaviour when `CurrencyFractionDigits.of` returns null — see OD-6 row.
+> - Not changed: every other decision, INV/AE numbering and count, and other TLC line references (F9, F12, …), which predate
+>   money-correctness and are re-verified at S0 (D-1).
+
 Author: domain-modeler (stage 3). Date 2026-10-16. Docs only, post-1.0. Money feature, **T3** (reviewer-strict).
 Inputs: `brief.md` v2 (approved), `critique.md` (binding fact corrections), `no-rate-verification.md`,
 `workflows/active/manual-entry-currency-handoff.md` §Human decisions (binding), `docs/architecture/LEGAL_PATHS.md`
@@ -12,7 +32,8 @@ Scope: increment 1 = currency control on user-present saves (manual add, single-
 one "rate for this date" rule enforced at the existing coordinator create path, per-currency decimals and cap,
 foreign recurring hidden, BGN/RUB not offered. Increment 1b (ECB history download) is framed only (section 10).
 Out of scope (owned by `money-correctness-1.0.x`): unconverted marker for background sources, sort/filter rule,
-single snapshot rounding rule, the no-rate `Timber.w` at TLC.
+single snapshot rounding rule, the unflagged no-rate handling at TLC (the former `Timber.w` is now one bounded `MISSING_RATE`
+diagnostic; landed in money-correctness 1b, RF-10).
 
 ---
 
@@ -33,11 +54,11 @@ single snapshot rounding rule, the no-rate `Timber.w` at TLC.
 | F11 | `CreateExpenseResult` = Created / DuplicateSkipped / ValidationFailed(errors) / InsertConflict(reasonCode) / Error. Precedent for bounded codes: `InsertConflictCodes`. | [V] `CreateExpenseResult.kt:3-46` |
 | F12 | Receipt save: `ReceiptScanViewModel` builds the request (`source=RECEIPT_SCAN`, `isManualEntry=true`) and is the **only** caller of `createExpenseAndLinkReceipt` (both review save and quick-save confirm). The coordinator maps `ValidationFailed` to a plain `Result.failure` without throwing, so the transaction commits with no link and no `ReceiptEvent`. The VM shows "UNKNOWN_ERROR" for it. Payload-free typed precedent: `DuplicateTransactionException`. | [V] `ReceiptScanViewModel.kt:941-978, 1253-1319`; `ReceiptLifecycleCoordinator.kt:1583-1668` |
 | F13 | `addManualExpense` has one caller (AddExpense VM). The VM rejects future dates (> end of local today), caps raw > 1,000,000, and **rounds HALF_UP to 2 dp** before saving. No `SavedStateHandle` in the add-expense package. | [V] `AddExpenseViewModel.kt:291-309, 367-370, 377`; grep |
-| F14 | The digits source already used by the formatter and the allocator is `java.util.Currency.defaultFractionDigits`. NumberFormat rounds HALF_EVEN by default; the allocator uses HALF_EVEN. | [V] `CurrencyFormatter.kt:90-106`; `SourceCurrencyAllocation.kt:29-35` |
+| F14 | The platform digits value (`java.util.Currency.defaultFractionDigits`) is the only digits source in use. Since money-correctness 1b it has a single accessor, `CurrencyFractionDigits.of(CurrencyCode): Int?` (`domain/core/money`; null for an unknown code or undefined digits, never guesses), used by `roundSnapshot` and the allocator. The display formatter reads the same JDK value directly and, for a code the JDK rejects, falls back to 2 digits for display. NumberFormat rounds HALF_EVEN by default; the allocator and `roundSnapshot` use HALF_EVEN. (RF-10, re-verified 2026-10-23) | [V] `CurrencyFractionDigits.kt:17-22`; `SnapshotRounding.kt:45-54`; `SourceCurrencyAllocation.kt:28-30`; `CurrencyFormatter.kt:90-106` |
 | F15 | Parser: a single comma with ≤ 2 digits after it is a decimal; comma groups of 3 are thousands; a dot-only string passes through, so `"1.500"` → 1.5. | [V] `AmountUtils.kt:80-145` |
 | F16 | The date picker rebuilds the instant with `ZoneId.systemDefault()` and keeps the time of day. | [V] `AddExpenseSheet.kt:841-855` |
 | F17 | Loan: v1 plan currencies are {EUR, USD} (B-1). `declareWithNewExpense` creates the purchase through TLC `createExpenseDbOnlyV2` inside the plan transaction. The loan spec Q9 assumes TLC *refuses* creation when no rate exists (`AUTO_RECORD_DEFERRED_FX`). | [V] loan `domain-spec.md:73, 426, 570-577`; plan `:452-467, 630` |
-| F18 | Fact: TLC does **not** refuse unflagged creates on a missing rate. It saves with defaults and calls `Timber.w`. This answers loan D-8 ("untraced"). | [V] TLC `:554-578` |
+| F18 | Fact: TLC does **not** refuse unflagged creates on a missing rate. Since money-correctness 1b it saves the sentinel triple `baseAmount=0.0`, `baseCurrency=""`, `exchangeRateUsed=0.0` and emits exactly one bounded `MISSING_RATE` diagnostic (metadata `{operation, reason}`; reason `MISSING_RATE`, or `SNAPSHOT_ROUNDING_UNAVAILABLE` when rounding is unavailable). No `Timber.w` with currency or amount remains. This answers loan D-8 ("untraced"): not refused; traced by that diagnostic. (RF-10, re-verified 2026-10-23) | [V] TLC `:630-667`, `:337-367`, `:385-400`, `:2502-2505` |
 
 ---
 
@@ -93,21 +114,21 @@ errors = listOf(code) with code ∈ RateRefusalCodes:
 ### 1.5 `CurrencyAmountSpec` and `AmountCheck` (decides D4)
 | Field | Type | Source |
 |---|---|---|
-| fractionDigits | Int ≥ 0 | `java.util.Currency.getInstance(code).defaultFractionDigits`, read through **one** accessor in `CurrencyAmountPolicy` (INV-12) |
+| fractionDigits | Int ≥ 0, or unavailable (null) | money-correctness `CurrencyFractionDigits.of(code)` (`domain/core/money`, the **single** accessor over the JDK `defaultFractionDigits`). `CurrencyAmountPolicy.fractionDigits` delegates to it and is not a second accessor (INV-12). Null: `DigitsUnavailable` (OD-6, fail closed) |
 | maxAmount | exact decimal, major units | the static per-currency table in `CurrencyAmountPolicy` (INV-14, OD-1) |
 
-`AmountCheck = Ok | NotPositive | PrecisionExceeded(allowedDigits) | AboveCap(cap)`. Checks run on the parsed value (`BigDecimal.valueOf(parsed).stripTrailingZeros().scale() ≤ fractionDigits`), never on a rounded value.
+`AmountCheck = Ok | NotPositive | PrecisionExceeded(allowedDigits) | AboveCap(cap) | DigitsUnavailable` (`DigitsUnavailable` when digits are null, OD-6; checked after NotPositive). Checks run on the parsed value (`BigDecimal.valueOf(parsed).stripTrailingZeros().scale() ≤ fractionDigits`), never on a rounded value.
 
 Digits for the catalog (ISO 4217, as returned by the platform; tests must pin all 28): 0 for **JPY, KRW, ISK**; 2 for all others, **including HUF** (ISO says 2, though in practice amounts are whole forints. Allowing 2 decimals never forces rounding).
 
 ### 1.6 `ConvertedPreview`
-`(amountInHome: Double = parsedAmount × Eligible.rate, unrounded; home: CurrencyCode; rateDate: LocalDate; sourceLabel)`.
-It is rendered by the **same** function the list uses for the converted amount (INV-15). It doesn't exist for `Home`. When not eligible, no amount is shown (never 0).
+`(amountInHome: Double = Rounded.amount of roundSnapshot(parsedAmount × Eligible.rate, home); home: CurrencyCode; rateDate: LocalDate; sourceLabel)`.
+`roundSnapshot` is money-correctness's single snapshot rounding (`SnapshotRounding.kt:45`), so `amountInHome` is the value the flagged save stores as `baseAmount` (INV-7). It is rendered by the **same** function the list uses for the converted amount (INV-15). It doesn't exist for `Home`. When not eligible, or when `roundSnapshot` returns `Unavailable` (then there is no `amountInHome`), no amount is shown (never 0; §12; save side OD-6).
 
 ### 1.7 Existing persisted fields written by a flagged create (no change)
 `Expense.amount` = the original amount, exact to the currency's digits. `currency` = the selection. `date` = the instant.
-`baseCurrency` = resolved home (≠ ""). `exchangeRateUsed` = `Eligible.rate` (1.0 for Home).
-`baseAmount` = `amount × rate`: unrounded until money-correctness lands, then its snapshot rounding. The rate date isn't persisted (no column; "Later").
+`baseCurrency` = resolved home (≠ ""). `exchangeRateUsed` = `Eligible.rate`, stored unrounded (1.0 for Home).
+`baseAmount` = `roundSnapshot(amount × Eligible.rate, home)` (HALF_EVEN at the home digits, `BigDecimal.valueOf`, never below one minor unit; money-correctness INV-16/17). Home: `baseAmount = amount`, identity, not rounded (TLC `:668-673`). The rate date isn't persisted (no column; "Later").
 
 ---
 
@@ -117,7 +138,8 @@ It is rendered by the **same** function the list uses for the converted amount (
 |---|---|---|---|
 | Rate eligibility | `RateEligibilityEvaluator` (new, `A/domain/currency`, read-only, pure over stored rates) | TLC create path under the flag | AddExpense VM preview, ReceiptScan VM preview, installment section |
 | Selectable set and proposal resolution | `CurrencySelectionPolicy` (new, `A/domain/currency`) | Evaluator (`Unsupported`) → TLC | the three VMs |
-| Digits and cap | `CurrencyAmountPolicy` (new, `A/domain/currency` or `domain/core/money`) | `TransactionValidator` (cap for all creates per OD-1; precision only when flagged) | VM inline validation |
+| Digits and cap | Digits: money-correctness `CurrencyFractionDigits.of` (`domain/core/money`), delegated by `CurrencyAmountPolicy.fractionDigits` (RF-10). Cap: `CurrencyAmountPolicy` (new, `A/domain/currency` or `domain/core/money`) | `TransactionValidator` (cap for all creates per OD-1; precision only when flagged) | VM inline validation |
+| Snapshot rounding | money-correctness `roundSnapshot` (`domain/core/money/SnapshotRounding.kt`; RF-10) | TLC (flagged and unflagged snapshot) | preview use case (INV-15) |
 | Foreign → no recurrence | `ManualExpenseRepository` | same | AddExpense VM hides the toggle |
 | Receipt untouched on refusal | `ReceiptLifecycleCoordinator.createExpenseAndLinkReceipt` | same | ReceiptScan VM |
 | Declaration aborted on refusal | installment plan coordinator `declareWithNewExpense` | same | AddExpense VM (installment mode) |
@@ -161,15 +183,15 @@ Decisions:
 | INV-4 | `localDate` is derived from `request.userPresentRate.entryZone`. TLC never substitutes `ZoneId.systemDefault()`. | TLC |
 | INV-5 | Only a non-null `userPresentRate` triggers INV-6..8 and the flagged precision check. `isManualEntry` and `source` never do. Exactly three setters exist (section 1.2). Background, import, notification, email, bank, group, pending-review approval, batch-receipt (OD-5) and installment auto-record requests never set it. | TLC (reader); setter allow-list guard |
 | INV-6 | A flagged create whose evaluation is not `Home`/`Eligible`, or whose home can't be resolved, returns `ValidationFailed(errors=[code], rateRefusal)`. It inserts no expense, calls no `insertAtomic`, runs no dedup, and returns an empty post-commit batch: no side effects, receipt link, recurring rule, plan or AI recommendation. The only rows written are the pre-existing `CREATE_ATTEMPTED` and one `CREATE_VALIDATION_FAILED` whose reason and metadata contain only the bounded code. | TLC |
-| INV-7 | A successful flagged foreign create stores `exchangeRateUsed == Eligible.rate` and `baseAmount == amount × Eligible.rate` (or money-correctness's snapshot rounding of it). Eligibility and snapshot come from **one** rate read in the same create call. Flagged creates never use the instant-based `convertAsOf`. | TLC |
-| INV-8 | Every row created by a flagged request has `baseCurrency ==` resolved home (≠ ""), `baseAmount > 0` and `exchangeRateUsed > 0`. Flagged saves never produce an unconverted row. If home resolution fails, the save is refused with `HOME_CURRENCY_UNRESOLVED`. | TLC |
-| INV-9 | Requests with `userPresentRate == null` behave exactly as today: instant-based any-age conversion, defaults when there's no rate, no precision check, same events, same dedup. The one exception is the per-currency cap, if OD-1 = A. | TLC (regression suite) |
+| INV-7 | A successful flagged foreign create stores `exchangeRateUsed == Eligible.rate` (unrounded) and `baseAmount ==` the `Rounded.amount` of money-correctness `roundSnapshot(amount × Eligible.rate, home)`. Eligibility and snapshot come from **one** rate read in the same create call. Flagged creates never use the instant-based `convertAsOf`. (`roundSnapshot` → `Unavailable`: refuse, OD-6.) | TLC |
+| INV-8 | Every row created by a flagged request has `baseCurrency ==` resolved home (≠ ""), `baseAmount > 0` and `exchangeRateUsed > 0`. Flagged saves never produce an unconverted row (never the money-correctness sentinel triple). If home resolution fails, the save is refused with `HOME_CURRENCY_UNRESOLVED`. (Eligible but home digits unavailable: refused, never the sentinel, OD-6.) | TLC |
+| INV-9 | Requests with `userPresentRate == null` keep money-correctness's shipped behaviour, unchanged by this feature: instant-based any-age conversion with `baseAmount = roundSnapshot(convertedAmount, home)` and the unrounded rate; when there's no rate (or rounding is unavailable), the sentinel triple `baseAmount=0.0`, `baseCurrency=""`, `exchangeRateUsed=0.0` plus exactly one bounded `MISSING_RATE` diagnostic (metadata `{operation, reason}`); no precision check, same events, same dedup. The one exception is the per-currency cap, if OD-1 = A. | TLC (regression suite) |
 | INV-10 | `selectable(home) = {c ∈ activeCatalog : c ∉ NO_RATE_SOURCE} ∪ {home}`, independent of rate availability. Legacy rows in any catalog currency keep converting (`fromCode` uses the full catalog, unchanged). | `CurrencySelectionPolicy` |
 | INV-11 | A proposed currency (OCR, an installment default, later nl-quick-add) that isn't selectable becomes `Unset`. It is never silently replaced. `Unset` can't be saved. | `CurrencySelectionPolicy` |
-| INV-12 | `fractionDigits(c)` has one accessor, backed by `java.util.Currency.defaultFractionDigits`. Validator, preview and formatter all resolve digits from that platform source (the formatter and allocator already do, F14). | `CurrencyAmountPolicy` |
+| INV-12 | Digits have one accessor: money-correctness `CurrencyFractionDigits.of(CurrencyCode): Int?` (JDK `defaultFractionDigits`). `CurrencyAmountPolicy.fractionDigits` delegates to it. MEC creates no second digits accessor and no rounding helper; the only snapshot rounding is money-correctness `roundSnapshot` (HALF_EVEN), used by the TLC snapshot and the preview. Validator, preview and snapshot all resolve digits through `of`. The display formatter reads the same platform value (F14). `of` returns null for an unknown code or undefined digits; MEC behaviour on null is fail closed (OD-6): never assume 2 digits. | money-correctness `CurrencyFractionDigits.of` (digits) + `roundSnapshot` (rounding); `CurrencyAmountPolicy` delegates |
 | INV-13 | An amount (and `myShareAmount` when present, [U]: assumed to be in the expense currency) with more fractional digits than `fractionDigits(c)` is **rejected, never rounded or truncated**. That means inline in the VM, and in `TransactionValidator` when flagged (`AMOUNT_PRECISION_EXCEEDED`). Nothing between the input text and TLC rounds the original amount (VM `:367-370` HALF_UP normalization removed). Switching currency re-validates the unchanged text. | `CurrencyAmountPolicy` (definition); `TransactionValidator` (flagged enforcement) |
 | INV-14 | `cap(c)` is defined once in `CurrencyAmountPolicy` and doesn't depend on rate availability. `TransactionValidator` (`AMOUNT_EXCEEDS_MAX`) and VM inline validation consume it. The raw 1,000,000 guards at VM `:297` and `ManualExpenseRepository.kt:114` are removed (delegated). Non-catalog codes keep 1,000,000. | `CurrencyAmountPolicy` |
-| INV-15 | The preview shows `parsedAmount × Eligible.rate`, rendered with the same rounding and format function as the list's converted amount. Interim: `CurrencyFormatter.formatMoney` on the unrounded product. After money-correctness: its snapshot rounding, then the formatter. The rate date shown is `Eligible.rateDate`, rendered as a `LocalDate` (never via an instant in the device zone, and never `lastUpdated`). No preview for `Home`; no amount when not eligible. | Evaluator output + shared formatter |
+| INV-15 | The preview amount is `roundSnapshot(parsedAmount × Eligible.rate, home)`, rendered with `CurrencyFormatter.formatMoney(…, home)`, the same format function as the list's converted amount. Because the product uses the same operands and order as the snapshot and the same `roundSnapshot`, the previewed amount equals the stored `baseAmount` (INV-7) when no rate write happens between preview and save. The rate date shown is `Eligible.rateDate`, rendered as a `LocalDate` (never via an instant in the device zone, and never `lastUpdated`). No preview for `Home`; no amount when not eligible or when `roundSnapshot` returns `Unavailable`. (The interim "unrounded product" rule ended with money-correctness 1b, RF-10.) | Evaluator output + money-correctness `roundSnapshot` + shared formatter |
 | INV-16 | No recurring rule is created from a manual save whose currency ≠ resolved home. The repository rejects that combination with a bounded error before calling TLC. | `ManualExpenseRepository` |
 | INV-17 | A refused receipt save leaves the `ScannedReceipt` row, its file, match status, links and `ReceiptEvent`s unchanged. It returns a payload-free `RateNotEligibleException`. The review screen stays open with the user's edited fields. | `ReceiptLifecycleCoordinator` |
 | INV-18 | A `declareWithNewExpense` refusal aborts the whole declaration (no purchase, plan, entries or `INSTALLMENT_PURCHASE` flag) and surfaces the same `RateRefusal` and text. Installment auto-record never sets the flag. | installment plan coordinator |
@@ -185,7 +207,7 @@ Count: **23**.
 
 ## 5. Coordinator refusal (decides D1 placement, races)
 
-**Placement.** After validation (step 2, which includes the per-currency cap and, when flagged, the precision check) and provenance (2b), at the conversion-snapshot step (`:529-585`), **before dedup (step 4) and before any insert**. Reasons:
+**Placement.** After validation (step 2, which includes the per-currency cap and, when flagged, the precision check) and provenance (2b), at the conversion-snapshot step (`:529-585` at authoring; `:605-674` after money-correctness 1b, [V] 2026-10-23), **before dedup (step 4) and before any insert**. Reasons:
 1. It needs the resolved home currency, which the snapshot step resolves.
 2. The eligibility read *is* the snapshot read, so there's no time-of-check/time-of-use gap (INV-7).
 3. It matches how existing validation failures are handled.
@@ -193,7 +215,7 @@ Count: **23**.
 Flagged branch at the snapshot step:
 - Home `Failed` → refuse with `HOME_CURRENCY_UNRESOLVED`. This is new fail-closed behaviour for manual saves when DataStore fails. Today those save with the `""` sentinel. That's acceptable because the user is present and can retry.
 - `currency == home` → identity snapshot (as today).
-- Otherwise call the evaluator. `Eligible` → snapshot from it. Anything else → refuse.
+- Otherwise call the evaluator. `Eligible` → snapshot from it: `exchangeRateUsed = Eligible.rate` (unrounded), `baseAmount = roundSnapshot(amount × Eligible.rate, home)` (INV-7; `Unavailable` → refuse, OD-6). Anything else → refuse. The flagged branch never falls through to the unflagged sentinel/`MISSING_RATE` handling.
 
 **Events and diagnostics.** `CREATE_ATTEMPTED` was already written at step 1 (pre-existing for every create; its `reason` content is routed as RF-1). The refusal writes `CREATE_VALIDATION_FAILED` through the existing best-effort path with `errors=[code]`. That's a durable, bounded audit trail without a new `LifecycleEventType`. It also emits one bounded `MANUAL_SAVE_BLOCKED_NO_RATE` diagnostic through the existing controlled-diagnostic sink (the one behind `emitHomeCurrencyUnavailableDiagnosticBestEffort`, [U] exact API). The counter counts coordinator refusals only. Preview states where Save is disabled aren't counted.
 
@@ -209,15 +231,15 @@ So only the two audit events commit. If an implementer chooses to roll back inst
 - If no rate write happens between preview and save, preview == stored snapshot, because both evaluate identical inputs.
 - The preview must re-evaluate when currency, date, home or zone change, and when a rate refresh completes.
 
-**Unflagged callers** are unchanged (INV-9, AE-21). Their no-rate rows keep today's defaults until money-correctness lands.
+**Unflagged callers** are unchanged by this feature (INV-9, AE-21, AE-29). They keep money-correctness's shipped behaviour: converted rows store `roundSnapshot(convertedAmount, home)` with the unrounded rate; no-rate (or rounding-unavailable) rows store the sentinel triple `baseAmount=0.0`, `baseCurrency=""`, `exchangeRateUsed=0.0` plus exactly one bounded `MISSING_RATE` diagnostic (metadata `{operation, reason}`) [V] TLC `:630-667`, `:337-367`.
 
 ---
 
 ## 6. Decimals, rounding, cap (decides D4, D5)
 
-- **Single digits source** = the platform ISO table via one accessor (INV-12). An explicit table on `SupportedCurrency` was rejected because the formatter and allocator would become a second source unless they were also changed (global display blast radius). Risk: JVM unit tests use JDK currency data, while the device uses ICU. Tests pin all 28 values, and one instrumented check is recommended ([U] for minSdk ICU data).
+- **Single digits source** = the platform ISO table via money-correctness's single accessor `CurrencyFractionDigits.of` (`domain/core/money`; money-correctness G2-1, MEC plan "Amendment 2026-10-16"). `CurrencyAmountPolicy.fractionDigits` delegates to it; MEC adds no second accessor (INV-12). The allocator and `roundSnapshot` already use `of`; the display formatter reads the same JDK value (F14). When `of` returns null (unknown code or undefined digits), MEC fails closed (OD-6). An explicit table on `SupportedCurrency` was rejected because the formatter and allocator would become a second source unless they were also changed (global display blast radius). Risk: JVM unit tests use JDK currency data, while the device uses ICU. Tests pin all 28 values, and one instrumented check is recommended ([U] for minSdk ICU data).
 - **Rejection, not rounding** (INV-13). The parser is currency-agnostic and runs after R16. The precision check runs on the parsed value. Interaction with R16 and F15: for JPY, `"1,500"` → 1500 (accepted), `"1500,50"` → 1500.5 (rejected), `"1.500"` → 1.5 (rejected; the user retypes). The parser never guesses using the currency.
-- **Rounding (D5).** Preview and snapshot use the same product `amount × rate` (same Double operands and order), so the unrounded values match bit for bit. Interim (money-correctness not landed): the stored `baseAmount` stays unrounded (today's behaviour, critique §3.4). The preview formats it with `CurrencyFormatter.formatMoney(home)` (NumberFormat HALF_EVEN at the home currency's digits), the same call the list uses, so preview text == list text (AE-38; the list's exact call site is [U] for the impact-mapper). After money-correctness: the preview calls its snapshot rounding function. This feature never rounds manual rows on its own.
+- **Rounding (D5).** Preview and snapshot use the same product `amount × rate` (same Double operands and order), so the unrounded products match bit for bit. Both pass it through money-correctness `roundSnapshot(product, home)` (HALF_EVEN at the home digits from `CurrencyFractionDigits.of`, applied to `BigDecimal.valueOf(product)`; a positive value never rounds to 0, it becomes one minor unit). The stored `baseAmount` is `Rounded.amount`; `exchangeRateUsed` stays the unrounded `Eligible.rate`. The preview formats `Rounded.amount` with `CurrencyFormatter.formatMoney(…, home)`, the same call the list uses, so the preview amount == the stored snapshot (INV-7) and preview text == list text (AE-38; the list's exact call site is [U] for the impact-mapper). `roundSnapshot` → `Unavailable`: no preview amount; save side refused (OD-6). This feature adds no rounding of its own and never rounds the original amount (INV-13). (Interim "unrounded snapshot" rule ended with money-correctness 1b, RF-10.)
 - **Cap (OD-1).** Recommended static table (a typo guard, not a business limit). Values are powers of ten chosen so the cap is roughly between €100k and €1.2M at approximate 2026 reference rates. The reference rates are documentation only and are never used at runtime:
 
 | cap | currencies |
@@ -270,7 +292,7 @@ Process death in review: existing restoration behaviour [U]. If the review is re
 
 - **One control, one rule.** The general currency control replaces S11's EUR/USD segmented control. While "Pay in installments" is on, `mode = INSTALLMENT`, so options are restricted to {EUR, USD} ∩ selectable. If the current selection isn't in that set, it becomes `Unset` (no silent switch).
 - `declareWithNewExpense` passes `userPresentRate(entryZone)` on the purchase request, so the same evaluator, the same TLC refusal, and the same refusal text apply. S11's D-8 "FX unavailable → keep form" **is** this refusal (INV-18).
-- **D-8 answered:** TLC does not refuse unflagged manual USD creates; it saves with defaults (F18). S11 therefore can't produce its FX refusal without this spec's flag. That makes it a sequencing decision (OD-4).
+- **D-8 answered:** TLC does not refuse unflagged manual USD creates; with no rate it saves the money-correctness sentinel triple (`baseCurrency=""`) plus one `MISSING_RATE` diagnostic (F18). S11 therefore can't produce its FX refusal without this spec's flag. That makes it a sequencing decision (OD-4).
 - Installment auto-record (background) stays unflagged. The loan spec Q9 premise that TLC refuses creation when no rate exists (`AUTO_RECORD_DEFERRED_FX`) doesn't hold, so that branch is unreachable through TLC (RF-3, for the loan planner).
 - Repeat and Installments stay mutually exclusive (S11). Foreign Repeat is hidden in any case.
 
@@ -301,9 +323,9 @@ A manual 20.00 USD entry and a later card notification for 18.52 EUR (same purch
 | Case | Rule |
 |---|---|
 | Mixed currencies in totals | Unchanged. Headers hide mixed sums; analytics uses MoneyAggregate (LEGAL_PATHS Money). |
-| Missing or stale FX | `None`/`Stale` → refusal for flagged saves; unflagged unchanged. |
-| Unavailable vs zero | No preview amount when unavailable; flagged rows never have `baseAmount` 0 (INV-8). |
-| Rounding conservation | No splits here. The snapshot stays unrounded until money-correctness. Preview == list by the shared function (INV-15). |
+| Missing or stale FX | `None`/`Stale` → refusal for flagged saves; unflagged unchanged (money-correctness: no rate → sentinel triple + one `MISSING_RATE`; any-age rate → converted). |
+| Unavailable vs zero | No preview amount when unavailable (including `roundSnapshot` → `Unavailable`); flagged rows never have `baseAmount` 0 (INV-8). Unflagged no-rate rows carry `baseAmount=0.0` only as part of the sentinel triple with `baseCurrency=""` (unavailable, not zero; money-correctness). |
+| Rounding conservation | No splits here. The snapshot is `roundSnapshot(amount × rate, home)` (money-correctness, HALF_EVEN, one-minor-unit floor); the preview uses the same function on the same product, so preview == stored snapshot (INV-7, INV-15) and preview text == list text (AE-38). The original amount is never rounded (INV-13). |
 | Time zones | Calendar date in `entryZone`; rate date rendered as a LocalDate (AE-6, 7, 11, 34). |
 | DST | Ages are calendar days, so 23/25-hour days don't matter (AE-10). |
 | ECB holidays | The largest TARGET gap (Easter Thu → Tue, Christmas/New Year) is ≤ 5 days, inside the 7-day window (AE-9). |
@@ -331,7 +353,7 @@ A manual 20.00 USD entry and a later card notification for 18.52 EUR (same purch
 
 - Stored: nothing new. Exported: nothing new. Logged: nothing containing amount, currency, merchant, date, rate or zone (INV-19).
 - Bounded codes: `RATE_NOT_ELIGIBLE_{NONE,STALE,UNSUPPORTED,HOME_UNRESOLVED}`, `AMOUNT_PRECISION_EXCEEDED`, existing `AMOUNT_EXCEEDS_MAX`; counter `MANUAL_SAVE_BLOCKED_NO_RATE` with sub-reason and source enum.
-- The flagged path never reaches the no-rate `Timber.w` (TLC `:573-577`, routed to money-correctness), because the refusal comes first.
+- The flagged path never reaches the unflagged no-rate branch (sentinel triple + `MISSING_RATE`, TLC `:654-666`; it replaced the former `Timber.w` at `:573-577` in money-correctness 1b), because the refusal comes first. A flagged refusal emits only `MANUAL_SAVE_BLOCKED_NO_RATE`.
 - No network at preview or save. Refresh is user-started and gated on R23 (INV-20).
 - Pre-existing, routed (RF-1): the `CREATE_ATTEMPTED` `reason` stores merchant + amount + currency for every create, including refused attempts. Whether `transaction_events` is exported or backed up is [U].
 
@@ -343,7 +365,7 @@ Defaults: home EUR. Zone `Europe/Athens` (UTC+3 until 26 Oct 2025, then UTC+2). 
 ECB fixtures (EUR→X): USD 1.0800, GBP 0.8700, JPY 162.50, KRW 1500.00. Stored pair X→EUR = 1/value. Rows use `validDate = date.atStartOfDay(UTC)`, `source="ecb"`.
 "Flagged" = `userPresentRate(Europe/Athens)`. "Refused(R)" = `ValidationFailed([code], RateRefusal(R, …))`, no expense row, empty post-commit batch.
 
-- **AE-1 Normal (ex 1; INV-2, 7, 15).** Given a rate for 15 Oct. When a manual USD 20.00 entry is dated Wed 15 Oct 12:00. Then `Eligible(age 0, DIRECT, ECB)`; the preview reads "≈ €18.52 · ECB rate of 15 Oct". On save: `currency=USD`, `amount=20.0`, `exchangeRateUsed=1/1.08`, `baseAmount=20×(1/1.08)` (unrounded interim), `baseCurrency=EUR`.
+- **AE-1 Normal (ex 1; INV-2, 7, 15).** Given a rate for 15 Oct. When a manual USD 20.00 entry is dated Wed 15 Oct 12:00. Then `Eligible(age 0, DIRECT, ECB)`; the preview reads "≈ €18.52 · ECB rate of 15 Oct". On save: `currency=USD`, `amount=20.0`, `exchangeRateUsed=1/1.08` (unrounded), `baseAmount=roundSnapshot(20×(1/1.08), EUR)` = 18.52, `baseCurrency=EUR`.
 - **AE-2 Weekend (ex 2).** Given the latest rate is Fri 10 Oct. When USD 20.00 is dated Sun 12 Oct. Then `Eligible(age 2)` and the label reads "ECB rate of 10 Oct".
 - **AE-3 No rate (ex 3; INV-6).** Given an empty rate table. When USD 20.00 is saved for 15 Oct. Then Refused(NO_RATE). Expense count unchanged. No dedup query, no post-commit actions. Events: `CREATE_ATTEMPTED` + `CREATE_VALIDATION_FAILED(["RATE_NOT_ELIGIBLE_NONE"])`. Form kept.
 - **AE-4 Stale 8 days (ex 4).** Given rates {7 Oct}. When USD is dated 15 Oct. Then Refused(STALE_RATE, latestRateDate 7 Oct). Given rates {7 Oct, 16 Oct} (refreshed after 16:00 CET on 16 Oct). When the 15 Oct entry is saved. Then still STALE(7 Oct). When it's re-dated 16 Oct. Then `Eligible(age 0)`.
@@ -363,7 +385,7 @@ ECB fixtures (EUR→X): USD 1.0800, GBP 0.8700, JPY 162.50, KRW 1500.00. Stored 
 - **AE-18 Caps (OD-1 = A).** KRW 1,500,000 → allowed (≈ €1,000); KRW 1,000,000,001 → `AMOUNT_EXCEEDS_MAX`; EUR 1,000,000.01 → `AMOUNT_EXCEEDS_MAX` (unchanged); USD 1,000,000.00 → allowed. A rate being present or absent never changes the cap result.
 - **AE-19 Precision at TLC.** Flagged JPY 1500.5 → `ValidationFailed(["AMOUNT_PRECISION_EXCEEDED"])`, no row. An unflagged notification JPY 1500.5 → created as today.
 - **AE-20 Blocked writes nothing.** Given a refused save (any reason). Then: `expenses`, `scanned_receipts`, receipt links, recurring rules and installment tables are unchanged; there are exactly two new `transaction_events` rows, with no amount, currency, merchant or date in the refusal event; zero post-commit actions; one `MANUAL_SAVE_BLOCKED_NO_RATE` increment.
-- **AE-21 Unflagged unchanged (INV-9).** A notification USD 20.00 with an empty table → row with `baseAmount=0.0`, `baseCurrency="EUR"`, `exchangeRateUsed=0.0` (today's defaults). A CSV import USD dated 15 Oct with the only rate 40 days older → converted with that rate (any age), as today.
+- **AE-21 Unflagged unchanged (INV-9; money-correctness behaviour).** A notification USD 20.00 with an empty table → row created (not refused) with the sentinel triple `baseAmount=0.0`, `baseCurrency=""`, `exchangeRateUsed=0.0`, plus exactly one bounded `MISSING_RATE` diagnostic with metadata `{operation="createExpense", reason="MISSING_RATE"}` and nothing else (no amount, currency, merchant or date); no `RATE_NOT_ELIGIBLE_*` event and no `MANUAL_SAVE_BLOCKED_NO_RATE`. A CSV import USD 20.00 dated 15 Oct with the only rate (USD 1.0800) dated 5 Sep (40 days older) → converted with that rate (any age): `exchangeRateUsed=1/1.08` (unrounded), `baseAmount=roundSnapshot(20×(1/1.08), EUR)` = 18.52, `baseCurrency=EUR`; no `MISSING_RATE`.
 - **AE-22 Races.** Preview `Eligible(15 Oct)`, then the rate table is cleared before Save → Refused(NO_RATE). Preview `Eligible(14 Oct)`, then a refresh stores 15 Oct before Save → the snapshot uses the 15 Oct rate and the preview re-evaluates. With no rate write in between → stored `exchangeRateUsed` == the previewed rate.
 - **AE-23 Receipt review eligible (ex 7a).** OCR proposes USD 42.00 and the user confirms. With the 15 Oct rate the preview shows "≈ €38.89 · ECB rate of 15 Oct". Save → expense created and linked (one transaction).
 - **AE-24 Receipt review refused (ex 7b; INV-17).** Same receipt, empty rate table. Save → `RateNotEligibleException(NO_RATE)`. The receipt row, file, `matchStatus`, links and `ReceiptEvent`s are unchanged. The screen stays in review with merchant, amount, currency and date intact. The user changes the currency to EUR and saves → created and linked.
@@ -371,7 +393,7 @@ ECB fixtures (EUR→X): USD 1.0800, GBP 0.8700, JPY 162.50, KRW 1500.00. Stored 
 - **AE-26 Recurring (ex 8; INV-16).** USD is selected, so Repeat is hidden. If Repeat was on and the user switches to USD, the recurrence is cleared (UX presents this). A direct repository call with USD + monthly → bounded error, no expense, no rule. EUR + monthly → unchanged.
 - **AE-27 BGN/RUB (ex 9).** The options list excludes BGN, RUB and HRK for a EUR-home user. A legacy 2024 BGN row still converts in analytics. A BGN-home user: a BGN expense saves as `Home`; an EUR expense dated 15 Oct 2026, with only 2025 pairs stored → `Stale`, Refused(STALE_RATE).
 - **AE-28 Installment declare (INV-18).** In installment mode a JPY selection becomes `Unset`. USD 1,200.00 with an empty table → Refused(NO_RATE): no purchase, plan or entries. With the 15 Oct rate → purchase (converted), plan and entries commit together.
-- **AE-29 Installment auto-record.** The background run creates a USD installment expense with no rate → created with today's defaults (unflagged). Never refused by this rule.
+- **AE-29 Installment auto-record.** The background run creates a USD installment expense with no rate (`userPresentRate == null`) → unflagged create: row created with the sentinel triple `baseAmount=0.0`, `baseCurrency=""`, `exchangeRateUsed=0.0` plus exactly one bounded `MISSING_RATE` diagnostic (money-correctness behaviour). Never refused by this rule; no `RateRefusal`, no `MANUAL_SAVE_BLOCKED_NO_RATE`.
 - **AE-30 Logs.** Across AE-1..AE-28, captured Timber output, diagnostics and the refusal events contain no amount, currency code, merchant, date, rate or zone.
 - **AE-31 Duplicates (D10).** A manual USD 20.00 at "Cafe X" on 15 Oct, then a notification for EUR 18.52 at "Cafe X" on 15 Oct → both rows exist (currency differs, rule unchanged). A second manual USD 20.00 at "Cafe X" on 15 Oct (eligible) → existing duplicate handling.
 - **AE-32 Process death.** Killed mid-entry → no row; reopening shows a fresh form with home selected. Killed after commit → one row; re-entering the same data → existing dedup.
@@ -380,7 +402,7 @@ ECB fixtures (EUR→X): USD 1.0800, GBP 0.8700, JPY 162.50, KRW 1500.00. Stored 
 - **AE-35 Setter allow-list (INV-5).** A static check shows `userPresentRate` is set only in `ManualExpenseRepository`, `ReceiptScanViewModel` and `declareWithNewExpense`.
 - **AE-36 Edit mode (INV-23).** Editing a USD row's amount → currency shown read-only; the existing update path applies (no age limit), and USD precision is applied.
 - **AE-37 Future date.** For a receipt dated tomorrow (if existing validators allow it) with today's rate → `Eligible(age 1)`. For a date +30 days → `Stale`. A manual future date → rejected by the existing VM rule (unchanged).
-- **AE-38 Preview text == list text (interim).** Given AE-1. The preview text "€18.52" equals the list's converted-amount text for the saved row, because both use `CurrencyFormatter.formatMoney(18.518518…, "EUR")`.
+- **AE-38 Preview == stored snapshot; preview text == list text (INV-7, INV-15).** Given AE-1. The preview amount is `roundSnapshot(20.0 × (1/1.08), EUR)` = 18.52, equal to the stored `baseAmount` 18.52. The preview text `CurrencyFormatter.formatMoney(18.52, "EUR")` = "€18.52" equals the list's converted-amount text for the saved row (list call site [U]).
 
 ---
 
@@ -393,6 +415,7 @@ ECB fixtures (EUR→X): USD 1.0800, GBP 0.8700, JPY 162.50, KRW 1500.00. Stored 
 | OD-3 | Divergence between the flagged snapshot (local-date bound, ≤ 7 days) and analytics read-time conversion (instant bound, any age, F3) | Accept in inc 1 and route alignment of analytics, unflagged TLC and Transactions to a calendar-date basis to `money-correctness-1.0.x` | Change analytics now (brief non-goal: "no analytics change") |
 | OD-4 | Loan S11 sequencing: S11 needs a refusal that TLC doesn't have (F18) | Land this feature's domain core first (evaluator, selection/amount policies, request flag, TLC refusal, `ValidationFailed.rateRefusal`; no UI) as a prerequisite slice, so S11 uses it from day one. The later control merge is then UI-only | S11 builds its own interim pre-check (a duplicate rule, removed at convergence), or S11 waits for this feature |
 | OD-5 | Is batch receipt review (`RECEIPT_BATCH_REVIEW`) "user-confirmed"? | Unflagged in inc 1 (treated like pending-review approval) | Flag it, which needs per-item refusal UX in batch |
+| OD-6 | **DECIDED 2026-10-23 (orchestrator under the owner's standing instruction; owner may override): FAIL CLOSED.** When money-correctness `CurrencyFractionDigits.of(code)` returns null (and so `roundSnapshot` returns `Unavailable(DIGITS_UNAVAILABLE)`): (a) `CurrencyAmountPolicy.check` returns `DigitsUnavailable` (never assumes 2), so the flagged precision step refuses with a bounded amount-validation code; (b) VM inline validation shows the amount as invalid; edit-mode legacy rows in an unknown code keep the unflagged path (no new rule); (c) a flagged `Eligible` create whose home digits are unavailable is refused (bounded refusal; never the unflagged sentinel, INV-8); (d) preview shows no amount and Save is disabled for the flagged path. Normal UI paths offer only catalog codes, so this is defensive. | Orchestrator (owner override possible) | Implemented in A1 (`AmountCheck.DigitsUnavailable`, `UserPresentRatePreviewResult.AmountUnavailable`); A2 maps the refusal |
 
 ---
 
@@ -402,7 +425,7 @@ ECB fixtures (EUR→X): USD 1.0800, GBP 0.8700, JPY 162.50, KRW 1500.00. Stored 
 - **RF-2 (date, pre-existing, [U]):** `AddExpenseSheet.kt:847-849` converts `datePickerState.selectedDateMillis` (Material3 = UTC midnight, [U]) with `ZoneId.systemDefault()`. West of UTC this may shift the picked date back one day, which affects every manual entry and this feature's local-date rule. A debugger should confirm, then route to the release/1.0.x track.
 - **RF-3 (loan):** loan `domain-spec.md:575-577` `AUTO_RECORD_DEFERRED_FX` assumes TLC refuses on a missing rate. It doesn't (F18). The loan planner decides.
 - **RF-4 (impact-mapper):** other raw 1,000,000 copies: `AppConfig.MAX_TRANSACTION_AMOUNT`, `AmountUtils.isValidAmount` default and doc, `AppParserRegistry.kt:69`. Inventory their consumers. They're out of scope unless OD-1 extends.
-- **RF-5:** TLC `:573-577` `Timber.w` (already routed to money-correctness).
+- **RF-5:** TLC `:573-577` `Timber.w` (routed to money-correctness). **Resolved in money-correctness 1b** (RF-10, [V] 2026-10-23): the log is gone; the unflagged no-rate branch emits one bounded `MISSING_RATE` diagnostic (TLC `:654-666`, `:337-367`).
 - **RF-6 (receipt slice):** construction of the `receipt.parsedDate` instant (zone). Must match `entryZone` semantics.
 - [U] remaining: on-device ICU digits at minSdk; the Transactions list's exact converted-amount formatting call; the controlled-diagnostic API name; `myShareAmount` currency semantics; edit-mode currency handling today; receipt review restoration after process death; backup-restored rate rows with a non-ECB `source`.
 

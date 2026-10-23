@@ -1,7 +1,7 @@
 # Slice plan: loan-installments
 
 Author: feature-planner (stage 6, attempt 2, docs-only). Persisted verbatim by feature-orchestrator, 2026-10-16.
-Status: APPROVED by owner 2026-10-16 (all recommendations). Implementation post-1.0 only. S0 discovery answers: `docs/features/loan-installments/discovery-s0.md` (scout).
+Status: APPROVED by owner 2026-10-16 (all recommendations). Guard/worker approvals (S2/S3, S7a) confirmed by owner 2026-10-22 (build/release-lead-notes/owner-approvals-20261022.md). Implementation post-1.0 only. S0 discovery answers: `docs/features/loan-installments/discovery-s0.md` (scout).
 
 ---
 
@@ -45,7 +45,7 @@ D-1..D-8 are being resolved by the parallel scout. D-9..D-20 are extra planner i
 | D-8 | Add-expense currency. Does TLC `createExpenseDbOnlyV2` accept a currency and compute home-currency `baseAmount` for manual USD entries? What happens when FX is unavailable? Where do `AddExpenseUiState` and the save path live? | Currency decision, S11 |
 | D-9 | FG-ID mapping of `check_raw_money_aggregates` / `verify_raw_money_aggregates`, and how its allowlist keys entries (file+line, query hash, count). Does adopting the predicate re-key entries or grow them? | S4a–S4d |
 | D-10 | TLC DbOnly composition. Can the plan coordinator open `writeBarrier.runWrite { database.withTransaction { … } }` and call `createExpenseDbOnlyV2` plus a new DbOnly op inside it (barrier re-entrancy, post-commit batch return)? This decides OD-15. | S3, S6a |
-| D-11 | Classify all 44 `ExpenseDao` `SUM(`, plus AVG/COUNT-as-spending, into: spending aggregate / dedupe BLOCKING or RESOLVER / non-spending (balance, reconciliation, income, raw). For each, record how it handles isNotMine (WHERE filter vs `CASE … myShareAmount` expression). Do the same per-query check for `GroupExpenseDao`, `BudgetAdjustmentDao`, `SplitItemAssignmentDao` and the 3 `SUM(` in TLC. List Kotlin readers that sum raw `.amount` instead of `effectiveAmount` (savings engines, spec Q13). | S4a–S4d |
+| D-11 | Classify all 44 `ExpenseDao` `SUM(`, plus AVG/COUNT-as-spending, into: spending aggregate / dedupe BLOCKING or RESOLVER / non-spending (balance, reconciliation, income, raw). For each, record how it handles isNotMine (WHERE filter vs `CASE … myShareAmount` expression). Do the same per-query check for `GroupExpenseDao`, `BudgetAdjustmentDao`, `SplitItemAssignmentDao` and the 3 `SUM(` in TLC. (W0 re-run 2026-10-21: TLC has 0 raw `SUM(`, so the stale "3" is corrected here.) List Kotlin readers that sum raw `.amount` instead of `effectiveAmount` (savings engines, spec Q13). | S4a–S4d |
 | D-12 | Does the FG-26 doc-traceability guard require symbols named in `LEGAL_PATHS.md` / `ENGINE_INTERACTION_MAP.md` to exist in source? | S1 (docs placement) |
 | D-13 | After the Release-1.0 merge: Room version (does release bump past 151?), and diffs touching this plan's write sets (`ExpenseDao`, TLC, `BackupVerifier`, `DatabaseMigrations`, `AppDatabase`, `NavigationDestination`, `FeatureConfig`, `MainActivity`, export files, `BillReminderManager`). | All slices |
 | D-14 | How `ExpenseSource` and `TransactionUpdateKind` are persisted (name string vs ordinal), and how unknown values behave in `Converters.kt`, JSON/CSV importers and backup restore. | S3 |
@@ -607,7 +607,7 @@ Recommendation: A. It satisfies "add a currency picker to Add expense, minimal s
 - Cross-currency conversion of plan totals (needs RateBasis).
 
 Out-of-scope observations for the orchestrator, not fixed here:
-- `BackupVerifier.kt:522` ignores `sourceType`.
+- `BackupVerifier.kt:522` ignores `sourceType`. (W0 re-run 2026-10-21: this reference is stale. No `sourceType` appears in BackupVerifier; the orphan checks sit at ~:517-530 and cover receipt_expense_links, recurring_occurrences and budget_forecasts only. S2b must add any plan-table checks.)
 - Whether recurring upcoming-payment event metadata reaches any export is unverified.
 
 Files referenced: `C:\Users\panos\Desktop\Cost-agregator\docs\features\loan-installments\gate2-decisions.md`, `C:\Users\panos\Desktop\Cost-agregator\docs\features\loan-installments\domain-spec.md`, `C:\Users\panos\Desktop\Cost-agregator\docs\features\loan-installments\impact-map.md`, `C:\Users\panos\Desktop\Cost-agregator\docs\features\loan-installments\ux-flows.md`, `C:\Users\panos\Desktop\Cost-agregator\workflows\active\loan-installments-handoff.md`, `C:\Users\panos\Desktop\Cost-agregator\scripts\validation-runner.ps1`, `C:\Users\panos\Desktop\Cost-agregator\config\validation\test-shards.json`.

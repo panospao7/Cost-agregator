@@ -11,7 +11,8 @@
 
 | Engine | Pipelines Affected | Risk Level |
 |--------|-------------------|------------|
-| **CurrencyConverter** | 5 (Dashboard), 6 (Budget/Forecast/Cashflow), 12 (Export), Groups, Investment, Tax | 🔴 CRITICAL |
+| **CurrencyConverter** | 5 (Dashboard), 6 (Budget/Forecast/Cashflow), 12 (Export), Groups, Investment, Tax, `RateEligibilityEvaluator` (user-present rate eligibility, via `convertOutcome`) | 🔴 CRITICAL |
+| **RateEligibilityEvaluator** (`domain/currency`) | Read-only rule owner for "does a stored rate qualify for a user-present save" (calendar date in an injected entry zone, age <= 7 days, older leg for via-EUR). Reads rates only through `CurrencyConverter.convertOutcome(TRANSACTION_DATE)`; no clock, network or logging. Follows the `CurrencyConverter` CRITICAL row: a converter or `ExchangeRateStore` lookup change affects its result. Siblings: `CurrencyAmountPolicy`, `CurrencySelectionPolicy`, `UserPresentRatePreview`. manual-entry-currency A1: no production consumer yet (A2 adds the coordinator consumer) | 🟡 HIGH |
 | **MerchantNormalizer** | 1 (Notification dedupe), 2 (Transaction dedupe), 3 (Receipt matching), 4 (Recurring matching), 11 (Email), Analytics | 🔴 CRITICAL |
 | **CategorizationEngine** | 1 (Auto-categorize), 3 (Receipt items), 11 (Email), Budget (category totals) | 🟡 HIGH |
 | **ReceiptParser** | 3 (OCR), 11 (Email providers), 10 (Bank statement) | 🟡 HIGH |
@@ -76,9 +77,12 @@ CurrencyConverter.convert() / convertAsOf()
   ├── FinancialStressForecastEngine (starting balance)
   ├── BudgetForecastingEngine (limit conversion)
   ├── ExpenseExportMapper (conversion audit fields)
-  └── TransactionLifecycleCoordinator (create-time snapshot; update re-snapshots against current H;
-        converted amount rounded via roundSnapshot, rate stored unrounded, no-rate/rounding-Unavailable
-        stores sentinel 0.0/""/0.0 + one best-effort MISSING_RATE)
+  ├── TransactionLifecycleCoordinator (create-time snapshot; update re-snapshots against current H;
+  │     converted amount rounded via roundSnapshot, rate stored unrounded, no-rate/rounding-Unavailable
+  │     stores sentinel 0.0/""/0.0 + one best-effort MISSING_RATE)
+  └── RateEligibilityEvaluator.evaluate() (convertOutcome, TRANSACTION_DATE basis; read-only;
+        manual-entry-currency A1, no production consumer yet)
+        └── UserPresentRatePreview (advisory preview; same roundSnapshot as the stored snapshot)
 ```
 
 ### MerchantNormalizer changes affect:

@@ -653,6 +653,23 @@ FORBIDDEN (SNAPSHOT rounding):
   ❌ A second snapshot rounding rule (any other code rounding a stored base/home snapshot amount)
   ❌ A second minor-unit digits accessor in domain/core/money
 
+ELIGIBLE RATE for user-present save (manual-entry-currency A1; read-only, no production consumer until A2):
+  → RateEligibilityEvaluator (domain/currency): calendar date in the injected entry zone, age <= 7 days
+    (inclusive), older leg for via-EUR; RateEligibility = Home | Eligible | Stale | None | Unsupported;
+    reads rates only through CurrencyConverter.convertOutcome(TRANSACTION_DATE); no wall clock, no
+    network, no logging
+  → Selectable currencies / proposal resolution: CurrencySelectionPolicy (domain/currency)
+  → Advisory preview: UserPresentRatePreview (domain/currency), converted amount =
+    roundSnapshot(parsed x Eligible.rate, home)
+
+AMOUNT digits/cap for user-entered amounts → CurrencyAmountPolicy (domain/currency):
+  → fractionDigits delegates to CurrencyFractionDigits.of (null = unavailable, fail closed);
+    cap = static per-currency table; check(parsed, code) never rounds
+
+FORBIDDEN (ELIGIBLE RATE / AMOUNT):
+  ❌ Re-implementing rate-age/date eligibility outside RateEligibilityEvaluator
+  ❌ A second digits accessor or amount rounding in CurrencyAmountPolicy or its callers
+
 HOME CURRENCY SWITCH (Currency Management screen):
   → home write = CurrencySettingsRepository.setHomeCurrency only via CurrencyManagementViewModel.confirm()
     after request(code) produced HomeSwitchUi.PendingConfirm (both entry points call request, never write)

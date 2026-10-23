@@ -384,6 +384,10 @@ Owns currency normalization, exchange-rate handling, multi-currency calculations
 - `domain/core/money/CurrencyFractionDigits.kt` — Single accessor for a currency's minor-unit digits (null when unknown or negative); delegated to by `SourceCurrencyAllocation` and `roundSnapshot`
 - `domain/core/money/SnapshotRounding.kt` — Sole snapshot rounding rule `roundSnapshot(value, home)` (HALF_EVEN, one-minor-unit floor) with sealed `Rounded` / `Unavailable(reason)`
 - `domain/currency/ReadHomeCurrencyState.kt` — Typed read-time home currency (`Loading` / `Available` / `Unavailable(ReadHomeFailure)`), source of H for the CV rule; bounded failure codes only
+- `domain/currency/CurrencyAmountPolicy.kt` — Per-currency amount rules for user-entered amounts (manual-entry-currency A1, no production consumer yet): `fractionDigits` delegates to `CurrencyFractionDigits.of` (null = unavailable, fail closed), static `cap` table, `check(parsed, code)` -> `AmountCheck` (`Ok` / `NotPositive` / `PrecisionExceeded` / `AboveCap` / `DigitsUnavailable`); never rounds
+- `domain/currency/CurrencySelectionPolicy.kt` — Selectable currencies for a new user-present entry (`activeCatalog` - `NO_RATE_SOURCE{BGN, RUB}` + home; `INSTALLMENT` = EUR/USD only) and `resolveProposal` -> `CurrencySelection` (`Selected` / `Unset`); `SupportedCurrency.isActive` untouched
+- `domain/currency/RateEligibilityEvaluator.kt` — Sole decision point for whether a stored rate qualifies for a user-present save (`RateEligibility`: `Home` / `Eligible` / `Stale` / `None` / `Unsupported`); calendar date in an injected entry zone, age <= 7 days, older leg for via-EUR; read-only over `CurrencyConverter.convertOutcome`, no clock, no network, no logging
+- `domain/currency/UserPresentRatePreview.kt` — Read-only use case for entry view models: eligibility plus `roundSnapshot(parsed x rate, home)` preview (`UserPresentRatePreviewResult`); no formatting, no logging
 
 **Representative files — legacy + new**
 - `domain/currency/CurrencyConverter.kt` — Currency conversion engine
