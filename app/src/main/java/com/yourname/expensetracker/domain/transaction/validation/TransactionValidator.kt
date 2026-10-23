@@ -1,8 +1,12 @@
 package com.yourname.expensetracker.domain.transaction.validation
 
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.currency.AmountCheck
+import com.yourname.expensetracker.domain.currency.CurrencyAmountPolicy
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
+import com.yourname.expensetracker.domain.transaction.RateRefusalCodes
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
@@ -26,7 +30,8 @@ class TransactionValidator @Inject constructor(
             isSharedExpense = request.isSharedExpense,
             latitude = request.latitude,
             longitude = request.longitude,
-            source = request.source
+            source = request.source,
+            flaggedUserPresent = request.userPresentRate != null
         )
     }
 
@@ -71,7 +76,8 @@ class TransactionValidator @Inject constructor(
         isSharedExpense: Boolean,
         latitude: Double?,
         longitude: Double?,
-        source: ExpenseSource = ExpenseSource.UNKNOWN
+        source: ExpenseSource = ExpenseSource.UNKNOWN,
+        flaggedUserPresent: Boolean = false
     ): List<TransactionValidationError> {
         val errors = mutableListOf<TransactionValidationError>()
         val now = timeProvider.now()
@@ -84,12 +90,37 @@ class TransactionValidator @Inject constructor(
             )
         }
 
-        if (amount > 1_000_000) {
+        // MEC INV-14 (G2-3): the cap is the per-currency CurrencyAmountPolicy cap (non-catalog
+        // and unparsable codes keep 1,000,000), independent of rate availability. Caps are exact
+        // in a Double, so the comparison is the same as the former raw `amount > 1_000_000`
+        // for every code in the 1,000,000 group.
+        val currencyCode = CurrencyCode.parse(currency)
+        val capLimit = (currencyCode?.let { CurrencyAmountPolicy.cap(it) } ?: CurrencyAmountPolicy.DEFAULT_CAP).toDouble()
+        if (amount > capLimit) {
             errors += TransactionValidationError(
                 code = "AMOUNT_EXCEEDS_MAX",
                 field = "amount",
-                message = "Amount exceeds maximum (1,000,000)"
+                message = "Amount exceeds maximum"
             )
+        }
+
+        // MEC INV-13: only user-present (flagged) creates reject excess precision; the original
+        // amount is never rounded or truncated. Unflagged sources are unchanged.
+        if (flaggedUserPresent && currencyCode != null && amount.isFinite() && amount > 0) {
+            when (CurrencyAmountPolicy.check(amount, currencyCode)) {
+                is AmountCheck.PrecisionExceeded -> errors += TransactionValidationError(
+                    code = RateRefusalCodes.AMOUNT_PRECISION_EXCEEDED,
+                    field = "amount",
+                    message = RateRefusalCodes.AMOUNT_PRECISION_EXCEEDED
+                )
+                AmountCheck.DigitsUnavailable -> errors += TransactionValidationError(
+                    code = RateRefusalCodes.AMOUNT_DIGITS_UNAVAILABLE,
+                    field = "amount",
+                    message = RateRefusalCodes.AMOUNT_DIGITS_UNAVAILABLE
+                )
+                // Cap is reported once above; Ok / NotPositive are handled elsewhere.
+                AmountCheck.Ok, AmountCheck.NotPositive, is AmountCheck.AboveCap -> Unit
+            }
         }
 
         if (merchant.isBlank()) {

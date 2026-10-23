@@ -18,6 +18,8 @@ import com.yourname.expensetracker.domain.core.money.roundSnapshot
 import com.yourname.expensetracker.domain.currency.ConversionResult
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.RateEligibility
+import com.yourname.expensetracker.domain.currency.RateEligibilityEvaluator
 import com.yourname.expensetracker.domain.diagnostics.AppPipeline
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
@@ -50,7 +52,11 @@ import com.yourname.expensetracker.domain.transaction.DeduplicationMode
 import com.yourname.expensetracker.domain.transaction.InsertConflictCodes
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.transaction.LifecycleEventType
+import com.yourname.expensetracker.domain.transaction.RateRefusal
+import com.yourname.expensetracker.domain.transaction.RateRefusalCodes
+import com.yourname.expensetracker.domain.transaction.RateRefusalReason
 import com.yourname.expensetracker.domain.transaction.SideEffectMode
+import com.yourname.expensetracker.domain.transaction.UserPresentRateRequirement
 import com.yourname.expensetracker.domain.transaction.validation.TransactionValidationError
 import com.yourname.expensetracker.domain.transaction.validation.TransactionValidationException
 import com.yourname.expensetracker.domain.transaction.validation.TransactionValidator
@@ -96,7 +102,10 @@ class TransactionLifecycleCoordinator @Inject constructor(
     private val currencySettingsRepository: CurrencySettingsRepository,
     private val sourceLinkWriter: SourceLinkWriter,
     private val transactionValidator: TransactionValidator,
-    private val diagnosticEventWriter: DiagnosticEventWriter
+    private val diagnosticEventWriter: DiagnosticEventWriter,
+    // MEC INV-1: the single eligibility decision point. Built from the existing converter by
+    // default so direct constructions keep compiling; Dagger injects the @Inject class.
+    private val rateEligibilityEvaluator: RateEligibilityEvaluator = RateEligibilityEvaluator(currencyConverter)
 ) {
     // ---- Write-barrier guard ----
 
@@ -399,6 +408,161 @@ class TransactionLifecycleCoordinator @Inject constructor(
         }
     }
 
+    /** MEC INV-7/8: outcome of the flagged (user-present) snapshot step. */
+    private sealed class UserPresentSnapshot {
+        data class Stored(
+            val baseAmount: Double,
+            val baseCurrency: String,
+            val exchangeRateUsed: Double
+        ) : UserPresentSnapshot()
+
+        data class Refused(val refusal: RateRefusal) : UserPresentSnapshot()
+    }
+
+    /**
+     * MEC INV-6/7/8: the flagged snapshot. Exactly one [RateEligibilityEvaluator.evaluate] read
+     * decides eligibility and supplies the rate, so there is no check/use gap; `convertAsOf` is
+     * never used. Never returns the unflagged sentinel triple: every non-storable outcome is a
+     * refusal. Store exceptions become a `NO_RATE` refusal (fail closed); CancellationException
+     * is rethrown.
+     */
+    private suspend fun userPresentSnapshot(
+        expense: Expense,
+        homeCurrency: String?,
+        requirement: UserPresentRateRequirement
+    ): UserPresentSnapshot {
+        val home = homeCurrency?.let { CurrencyCode.parse(it) }
+            ?: return UserPresentSnapshot.Refused(RateRefusal(RateRefusalReason.HOME_CURRENCY_UNRESOLVED))
+        // Home currency: identity snapshot as on the unflagged path; the rate table is not read.
+        if (expense.currency == homeCurrency) {
+            return UserPresentSnapshot.Stored(
+                baseAmount = expense.amount,
+                baseCurrency = homeCurrency,
+                exchangeRateUsed = 1.0
+            )
+        }
+        val currency = CurrencyCode.parse(expense.currency)
+            ?: return UserPresentSnapshot.Refused(RateRefusal(RateRefusalReason.UNSUPPORTED_CURRENCY))
+        val eligibility = try {
+            rateEligibilityEvaluator.evaluate(
+                currency = currency,
+                home = home,
+                expenseAtMillis = expense.date,
+                entryZone = requirement.entryZone
+            )
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            return UserPresentSnapshot.Refused(RateRefusal(RateRefusalReason.NO_RATE))
+        }
+        return when (eligibility) {
+            RateEligibility.Home -> UserPresentSnapshot.Stored(
+                baseAmount = expense.amount,
+                baseCurrency = homeCurrency,
+                exchangeRateUsed = 1.0
+            )
+            is RateEligibility.Eligible -> {
+                // Same operands and order as UserPresentRatePreview: amount * rate, then the
+                // single snapshot rounding at the home digits. The rate is stored unrounded.
+                when (val rounded = roundSnapshot(expense.amount * eligibility.rate, home)) {
+                    is SnapshotRounding.Rounded -> UserPresentSnapshot.Stored(
+                        baseAmount = rounded.amount,
+                        baseCurrency = homeCurrency,
+                        exchangeRateUsed = eligibility.rate
+                    )
+                    // OD-6: rounding unavailable (home digits unusable) -> fail-closed refusal.
+                    is SnapshotRounding.Unavailable -> UserPresentSnapshot.Refused(
+                        RateRefusal(RateRefusalReason.HOME_CURRENCY_UNRESOLVED)
+                    )
+                }
+            }
+            is RateEligibility.Stale -> UserPresentSnapshot.Refused(
+                RateRefusal(RateRefusalReason.STALE_RATE, eligibility.latestRateDate)
+            )
+            RateEligibility.None -> UserPresentSnapshot.Refused(RateRefusal(RateRefusalReason.NO_RATE))
+            is RateEligibility.Unsupported -> UserPresentSnapshot.Refused(
+                RateRefusal(RateRefusalReason.UNSUPPORTED_CURRENCY)
+            )
+        }
+    }
+
+    /** Bounded diagnostic sub-reason for [DiagnosticReasonCode.MANUAL_SAVE_BLOCKED_NO_RATE]. */
+    private fun manualSaveBlockedSubReason(reason: RateRefusalReason): String = when (reason) {
+        RateRefusalReason.NO_RATE -> "none"
+        RateRefusalReason.STALE_RATE -> "stale"
+        RateRefusalReason.UNSUPPORTED_CURRENCY -> "unsupported"
+        RateRefusalReason.HOME_CURRENCY_UNRESOLVED -> "home_unresolved"
+    }
+
+    /**
+     * MEC INV-19: exactly one bounded best-effort diagnostic per coordinator refusal. Metadata is
+     * `{operation, reason}` with [reason] one of none|stale|unsupported|home_unresolved; origin is
+     * [DiagnosticEvent.sourceType] = the request source enum name. No amount, currency, merchant,
+     * date, rate or zone. Preserves caller cancellation.
+     */
+    private suspend fun emitManualSaveBlockedDiagnosticBestEffort(
+        request: CreateExpenseRequest,
+        correlationId: String,
+        refusalReason: RateRefusalReason
+    ): Boolean {
+        return try {
+            diagnosticEventWriter.emit(
+                DiagnosticEvent(
+                    pipeline = AppPipeline.TRANSACTION,
+                    stage = "createExpense",
+                    outcome = EventOutcome.BLOCKED,
+                    severity = EventSeverity.WARNING,
+                    reasonCode = DiagnosticReasonCode.MANUAL_SAVE_BLOCKED_NO_RATE,
+                    entityType = "Expense",
+                    entityId = null,
+                    sourceType = request.source.name,
+                    correlationId = correlationId,
+                    metadata = SafeEventMetadata.builder()
+                        .put("operation", "createExpense")
+                        .put("reason", manualSaveBlockedSubReason(refusalReason))
+                        .build(),
+                    isTerminal = false
+                )
+            )
+            true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.w("Failed to emit manual-save-blocked diagnostic")
+            false
+        }
+    }
+
+    /**
+     * MEC INV-6: pure builder of the audit event for a flagged create refused at the snapshot
+     * step (`CREATE_VALIDATION_FAILED`, bounded code in reason and metadata; the dedupe key is
+     * omitted because it embeds amount and merchant). Performs no DAO access: the best-effort
+     * insert is done by [createExpenseMutation] itself, the DB-ownership-authorized method.
+     * No new [LifecycleEventType].
+     */
+    private fun buildUserPresentRefusalEvent(
+        request: CreateExpenseRequest,
+        code: String,
+        now: Long,
+        correlationId: String,
+        sourceLinkPayloads: List<SourceLinkPayload>
+    ): TransactionEvent = TransactionEvent(
+        expenseId = null,
+        eventType = LifecycleEventType.CREATE_VALIDATION_FAILED.name,
+        source = request.source.name,
+        actor = null,
+        occurredAt = now,
+        dedupeKey = null,
+        duplicateExpenseId = null,
+        beforeSnapshot = null,
+        afterSnapshot = null,
+        metadata = SourceLinkEventMetadataBuilder.validationFailedMetadata(
+            errors = listOf(code),
+            payloads = sourceLinkPayloads
+        ),
+        reason = "Validation failed: $code",
+        correlationId = correlationId
+    )
+
     /**
      * Best-effort event write that preserves caller cancellation (U-001).
      *
@@ -470,7 +634,9 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     beforeSnapshot = null,
                     afterSnapshot = null,
                     metadata = SourceLinkEventMetadataBuilder.createAttemptMetadata(sourceLinkPayloads),
-                    reason = "Attempting create for ${request.merchant} ${request.amount} ${request.currency}",
+                    // MEC RF-1 (INV-19): bounded text only; merchant, amount and currency are
+                    // not written to the event reason (no readers parse it; `source` is a column).
+                    reason = CREATE_ATTEMPTED_REASON,
                     correlationId = correlationId
                 )
             )
@@ -616,7 +782,40 @@ class TransactionLifecycleCoordinator @Inject constructor(
             is HomeCurrencyResolution.FirstRunDefault -> resolution.currency.code
             is HomeCurrencyResolution.Failed -> null
         }
-        if (homeCurrency == null) {
+        // MEC INV-5/6/7/8/9: ONLY a non-null userPresentRate takes this additive branch. It never
+        // falls through to the unflagged sentinel / MISSING_RATE handling below, which is
+        // unchanged (the chain after this branch is byte-identical to the pre-MEC code).
+        val userPresentRequirement = request.userPresentRate
+        if (userPresentRequirement != null) {
+            when (val flagged = userPresentSnapshot(expense, homeCurrency, userPresentRequirement)) {
+                is UserPresentSnapshot.Stored -> {
+                    expense = expense.copy(
+                        baseAmount = flagged.baseAmount,
+                        baseCurrency = flagged.baseCurrency,
+                        exchangeRateUsed = flagged.exchangeRateUsed
+                    )
+                }
+                is UserPresentSnapshot.Refused -> {
+                    // MEC INV-6: audit event + one bounded diagnostic only. No expense row, no
+                    // dedup, no insert, empty post-commit batch.
+                    val refusal = flagged.refusal
+                    val refusalCode = RateRefusalCodes.codeFor(refusal.reason)
+                    val refusalEvent = buildUserPresentRefusalEvent(
+                        request = request,
+                        code = refusalCode,
+                        now = now,
+                        correlationId = correlationId,
+                        sourceLinkPayloads = sourceLinkPayloads
+                    )
+                    bestEffortEvent { transactionEventDao.insert(refusalEvent) }
+                    emitManualSaveBlockedDiagnosticBestEffort(request, correlationId, refusal.reason)
+                    return Pair(
+                        CreateExpenseResult.ValidationFailed(listOf(refusalCode), refusal),
+                        PostCommitActionBatch.empty(correlationId)
+                    )
+                }
+            }
+        } else if (homeCurrency == null) {
             expense = expense.copy(
                 baseAmount = 0.0,
                 baseCurrency = "",
@@ -2874,6 +3073,9 @@ class TransactionLifecycleCoordinator @Inject constructor(
     }
 
 }
+
+/** MEC RF-1: constant, payload-free `reason` of every CREATE_ATTEMPTED event. */
+private const val CREATE_ATTEMPTED_REASON = "Create attempted"
 
 /**
  * Exception thrown when an update would create a duplicate expense.

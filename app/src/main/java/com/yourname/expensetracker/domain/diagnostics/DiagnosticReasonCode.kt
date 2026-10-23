@@ -77,5 +77,10 @@ enum class DiagnosticReasonCode {
 
     // RP-17 17-E: connection was disconnected when a token write was attempted
     // (conditional update affected zero rows).
-    CONNECTION_DISCONNECTED
+    CONNECTION_DISCONNECTED,
+
+    // MEC A2 (INV-19): a user-present manual-entry create was refused by the
+    // coordinator because no eligible rate / unresolved home. Sub-reason lives in
+    // metadata `reason` (none|stale|unsupported|home_unresolved); origin in sourceType.
+    MANUAL_SAVE_BLOCKED_NO_RATE
 }

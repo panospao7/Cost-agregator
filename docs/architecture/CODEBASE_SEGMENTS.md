@@ -238,7 +238,8 @@ Owns the base expense CRUD surface, shared core expense models, and the **transa
 - `domain/transaction/LifecycleEventType.kt` — Enum: CREATED, UPDATED, DELETED, etc.
 - `domain/transaction/DeduplicationMode.kt` — Enum: STANDARD, STRICT_EXTERNAL_ID, BULK_IMPORT, etc.
 - `domain/transaction/CreateExpenseRequest.kt` — Source-neutral creation request (40+ fields)
-- `domain/transaction/CreateExpenseResult.kt` — Sealed result (Created, DuplicateSkipped, etc.)
+- `domain/transaction/CreateExpenseResult.kt` — Sealed result (Created, DuplicateSkipped, etc.); `ValidationFailed.rateRefusal` carries a typed `RateRefusal` for user-present refusals
+- `domain/transaction/RateRefusal.kt` — `RateRefusal`, `RateRefusalReason`, `RateRefusalCodes` (manual-entry-currency A2); `CreateExpenseRequest.userPresentRate` / `UserPresentRateRequirement` is the flag for the eligible-rate rule (setters guarded by `ManualEntryCurrencySetterAllowListGuardTest`)
 - `domain/transaction/ExpenseUpdates.kt` — Patch-style update model
 - `domain/transaction/SideEffectMode.kt` — Enum: IMMEDIATE, DEFER
 - `domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt` — **Single entry point for ALL expense CUD**

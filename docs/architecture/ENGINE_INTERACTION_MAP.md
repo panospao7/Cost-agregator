@@ -81,7 +81,11 @@ CurrencyConverter.convert() / convertAsOf()
   │     converted amount rounded via roundSnapshot, rate stored unrounded, no-rate/rounding-Unavailable
   │     stores sentinel 0.0/""/0.0 + one best-effort MISSING_RATE)
   └── RateEligibilityEvaluator.evaluate() (convertOutcome, TRANSACTION_DATE basis; read-only;
-        manual-entry-currency A1, no production consumer yet)
+        manual-entry-currency A1; A2: sole consumer in production is TransactionLifecycleCoordinator's
+        flagged branch, taken only for CreateExpenseRequest.userPresentRate != null — ONE evaluate()
+        read supplies eligibility and rate, snapshot = roundSnapshot(amount x Eligible.rate, home);
+        refusal = ValidationFailed(rateRefusal) + CREATE_VALIDATION_FAILED + MANUAL_SAVE_BLOCKED_NO_RATE,
+        never the sentinel; unflagged callers unchanged; no production setter until B1)
         └── UserPresentRatePreview (advisory preview; same roundSnapshot as the stored snapshot)
 ```
 

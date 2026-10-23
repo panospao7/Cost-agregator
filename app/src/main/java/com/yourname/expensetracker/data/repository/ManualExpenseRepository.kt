@@ -12,6 +12,10 @@ import com.yourname.expensetracker.di.ApplicationScope
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.GenerateTransactionInsightUseCase
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.currency.CurrencyAmountPolicy
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.engine.DashboardFollowThroughEngine
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
@@ -55,7 +59,8 @@ class ManualExpenseRepository @Inject constructor(
     private val transactionLifecycleCoordinator: TransactionLifecycleCoordinator,
     private val postCommitActionRunner: PostCommitActionRunner,
     private val recurringExpenseRepository: RecurringExpenseRepository,
-    @ApplicationScope private val applicationScope: CoroutineScope
+    @ApplicationScope private val applicationScope: CoroutineScope,
+    private val currencySettingsRepository: CurrencySettingsRepository
 ) {
     /**
      * Recommendation generation is intentionally app-scoped.
@@ -71,6 +76,19 @@ class ManualExpenseRepository @Inject constructor(
         private const val DEFAULT_RECOMMENDATION_USER_ID = "default_user"
         private const val RECOMMENDATION_JOB_TIMEOUT_MS = 3_000L
         private const val MAX_CONCURRENT_RECOMMENDATION_JOBS = 2
+
+        /** MEC INV-16: bounded `Result.Error.message` constant; never payload-derived. */
+        const val RECURRING_FOREIGN_CURRENCY_ERROR_CODE = "RECURRING_FOREIGN_CURRENCY_NOT_SUPPORTED"
+    }
+
+    /** True only when home resolved and [currency] differs from it. */
+    private suspend fun isForeignToResolvedHome(currency: String): Boolean {
+        val home = when (val resolution = currencySettingsRepository.resolveHomeCurrency()) {
+            is HomeCurrencyResolution.Resolved -> resolution.currency.code
+            is HomeCurrencyResolution.FirstRunDefault -> resolution.currency.code
+            is HomeCurrencyResolution.Failed -> return false
+        }
+        return currency != home
     }
 
     /**
@@ -111,8 +129,19 @@ class ManualExpenseRepository @Inject constructor(
         if (amount <= 0) {
             return Result.Error(message = context.getString(R.string.debug_error_amount_greater_than_zero))
         }
-        if (amount > 1000000.0) {
+        // MEC INV-14 (G2-3): per-currency cap owned by CurrencyAmountPolicy (non-catalog and
+        // unparsable codes keep 1,000,000); independent of rate availability.
+        val amountCap = CurrencyCode.parse(currency)
+            ?.let { CurrencyAmountPolicy.cap(it) }
+            ?: CurrencyAmountPolicy.DEFAULT_CAP
+        if (amount > amountCap.toDouble()) {
             return Result.Error(message = context.getString(R.string.debug_error_amount_exceeds_limit))
+        }
+        // MEC INV-16: no recurring rule from a save whose currency differs from the resolved
+        // home currency. Bounded error before the coordinator; no expense, no rule. An
+        // unresolved home is not rejected here (the coordinator's flagged branch fails closed).
+        if (recurrenceFrequency != null && isForeignToResolvedHome(currency)) {
+            return Result.Error(message = RECURRING_FOREIGN_CURRENCY_ERROR_CODE)
         }
 
         // ── Pre-processing (business logic that stays here for now) ──────────

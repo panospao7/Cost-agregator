@@ -49,6 +49,33 @@ ENFORCEMENT:
 ```
 
 ```
+USER-PRESENT RATE REQUIREMENT (manual-entry-currency A2; INV-5..9, 19):
+  Only a non-null CreateExpenseRequest.userPresentRate (UserPresentRateRequirement(entryZone))
+  makes TransactionLifecycleCoordinator apply the eligible-rate rule at the create snapshot step:
+    → after validation and provenance, BEFORE dedup and any insert
+    → home Failed → refusal HOME_CURRENCY_UNRESOLVED; currency == home → identity snapshot;
+      otherwise ONE RateEligibilityEvaluator.evaluate() read decides and supplies the rate:
+      Eligible → exchangeRateUsed = Eligible.rate (unrounded), baseAmount = roundSnapshot(amount x rate, home);
+      anything else (or rounding/digits unavailable) → CreateExpenseResult.ValidationFailed(errors = [RateRefusalCodes
+      code], rateRefusal = RateRefusal) — no expense, no dedup, no insertAtomic, empty post-commit batch
+    → a refusal writes only CREATE_ATTEMPTED + one CREATE_VALIDATION_FAILED (bounded code, no dedupe key)
+      and one DiagnosticReasonCode.MANUAL_SAVE_BLOCKED_NO_RATE (metadata reason none|stale|unsupported|
+      home_unresolved; origin = request.source name); no new LifecycleEventType
+    → the flagged branch never uses convertAsOf and never falls through to the unflagged
+      sentinel/MISSING_RATE handling; requests with userPresentRate == null are unchanged (any-age conversion)
+    → AMOUNT_PRECISION_EXCEEDED (TransactionValidator) is enforced only for flagged requests
+  Setters (fixed allow-list, never grows): ManualExpenseRepository, ReceiptScanViewModel, and the
+  installment plan coordinator's declare-with-new-expense request; enforced by
+  ManualEntryCurrencySetterAllowListGuardTest. No production setter exists until manual-entry-currency B1.
+
+FORBIDDEN:
+  ❌ Setting CreateExpenseRequest.userPresentRate outside the three allow-listed files
+  ❌ Using isManualEntry or source as the trigger for the eligible-rate rule
+  ❌ Re-evaluating or re-reading rates for a flagged snapshot after the evaluator call (no check/use gap)
+  ❌ Putting merchant, amount or currency in CREATE_ATTEMPTED / refusal event text or the refusal diagnostic
+```
+
+```
 UPDATE expense:
   → TransactionLifecycleCoordinator.updateCategory/updateMerchant/updateType/etc.
   → TransactionEvent with LifecycleEventType.UPDATED
