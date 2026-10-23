@@ -5,6 +5,7 @@ import android.database.sqlite.SQLiteDatabase
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.transaction.SpendingExclusionReason
 import com.yourname.expensetracker.domain.util.TimeProvider
 import org.json.JSONArray
 import org.json.JSONObject
@@ -41,6 +42,12 @@ class FinancialRescueCoordinator(
         private const val TABLE_GROUP_MEMBERS = "group_members"
         private const val TABLE_GROUP_EXPENSES = "group_expenses"
         private const val TABLE_SPLIT_ASSIGNMENTS = "split_item_assignments"
+
+        // Loan installments (schema 152). Parents first: entries reference plans by FK.
+        private const val TABLE_INSTALLMENT_PLANS = "installment_plans"
+        private const val TABLE_INSTALLMENT_ENTRIES = "installment_entries"
+        private val INSTALLMENT_TABLES_IN_IMPORT_ORDER =
+            listOf(TABLE_INSTALLMENT_PLANS, TABLE_INSTALLMENT_ENTRIES)
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -127,6 +134,7 @@ class FinancialRescueCoordinator(
             val groupMembers = readGroupMembers(db)
             val groupExpenses = readGroupExpenses(db)
             val splitAssignments = readSplitItemAssignments(db)
+            val installmentTables = readInstallmentTables(db)
 
             return FinancialRescueSnapshot(
                 oldUserVersion = oldUserVersion,
@@ -135,7 +143,8 @@ class FinancialRescueCoordinator(
                 expenseGroups = expenseGroups,
                 groupMembers = groupMembers,
                 groupExpenses = groupExpenses,
-                splitAssignments = splitAssignments
+                splitAssignments = splitAssignments,
+                installmentTables = installmentTables
             )
         } finally {
             db.close()
@@ -201,7 +210,10 @@ class FinancialRescueCoordinator(
                         sharedWithName = stringOrNull(cursor, cols.getOrDefault("sharedWithName", -1)),
                         mySharePercentage = intOrNull(cursor, cols.getOrDefault("mySharePercentage", -1)),
                         myShareAmount = doubleOrNull(cursor, cols.getOrDefault("myShareAmount", -1)),
-                        splitVisualization = stringOrNull(cursor, cols.getOrDefault("splitVisualization", -1))
+                        splitVisualization = stringOrNull(cursor, cols.getOrDefault("splitVisualization", -1)),
+                        spendingExclusionReason = sanitizeSpendingExclusionReason(
+                            stringOrNull(cursor, cols.getOrDefault("spendingExclusionReason", -1))
+                        )
                     )
                 )
             }
@@ -284,6 +296,35 @@ class FinancialRescueCoordinator(
         return result
     }
 
+    /**
+     * Reads the loan installment plan and entry tables column-by-column. Tables absent from an
+     * older database are skipped. Plans precede entries so the import can satisfy the FK.
+     */
+    fun readInstallmentTables(db: SQLiteDatabase): List<RescueRawTable> =
+        INSTALLMENT_TABLES_IN_IMPORT_ORDER.mapNotNull { readRawTable(db, it) }
+
+    private fun readRawTable(db: SQLiteDatabase, table: String): RescueRawTable? {
+        if (!hasTable(db, table)) return null
+        val rows = mutableListOf<List<Any?>>()
+        var names: List<String> = emptyList()
+        db.rawQuery("SELECT * FROM `$table`", null).use { cursor ->
+            names = cursor.columnNames.toList()
+            while (cursor.moveToNext()) {
+                rows.add(
+                    names.indices.map { i ->
+                        when (cursor.getType(i)) {
+                            android.database.Cursor.FIELD_TYPE_INTEGER -> cursor.getLong(i)
+                            android.database.Cursor.FIELD_TYPE_FLOAT -> cursor.getDouble(i)
+                            android.database.Cursor.FIELD_TYPE_STRING -> cursor.getString(i)
+                            else -> null
+                        }
+                    }
+                )
+            }
+        }
+        return RescueRawTable(table = table, columns = names, rows = rows)
+    }
+
     fun readSplitItemAssignments(db: SQLiteDatabase): List<RescueSplitItemAssignment> {
         if (!hasTable(db, TABLE_SPLIT_ASSIGNMENTS)) return emptyList()
         val cols = columns(db, TABLE_SPLIT_ASSIGNMENTS)
@@ -342,6 +383,8 @@ class FinancialRescueCoordinator(
                 val actualMemberIds = importGroupMembers(supportDb, snapshot.groupMembers)
                 importGroupExpenses(supportDb, snapshot.groupExpenses, validGroupIds, actualMemberIds, validExpenseIds)
                 importSplitItemAssignments(supportDb, snapshot.splitAssignments, validExpenseIds)
+                importInstallmentTables(supportDb, snapshot.installmentTables)
+                clearOrphanInstallmentPurchaseFlags(supportDb)
 
                 supportDb.setTransactionSuccessful()
                 log("Import transaction committed successfully")
@@ -390,7 +433,10 @@ class FinancialRescueCoordinator(
             "myShareAmount", "splitVisualization",
             // Rules from spec:
             "rawNotificationId", "dedupeKey",
-            "baseAmount", "baseCurrency", "exchangeRateUsed"
+            "baseAmount", "baseCurrency", "exchangeRateUsed",
+            // A10: the installment purchase/reversed flag travels with the plan tables
+            // (importInstallmentTables). Dropping it alone would double count the purchase.
+            "spendingExclusionReason"
         )
         val availableCols = baseCols.filter { it in cols }
         val placeholders = availableCols.joinToString(", ") { "?" }
@@ -429,11 +475,84 @@ class FinancialRescueCoordinator(
                     "baseAmount" -> baseFields.baseAmount
                     "baseCurrency" -> baseFields.baseCurrency
                     "exchangeRateUsed" -> baseFields.exchangeRateUsed
+                    "spendingExclusionReason" -> exp.spendingExclusionReason
                     else -> null
                 })
             }
             db.execSQL(sql, values.toTypedArray())
         }
+    }
+
+    /**
+     * Copies the loan installment plan and entry rows verbatim (same ids, same values) for every
+     * column the fresh table also has. Entries whose plan was not imported are skipped so the
+     * entry-to-plan FK cannot fail the whole rescue. Only counts are logged, never row values.
+     *
+     * Rows are written through the typed insert API (REPLACE conflict policy), not raw SQL. A
+     * failed insert (-1) aborts the surrounding import transaction with a bounded reason code.
+     */
+    private fun importInstallmentTables(db: SupportSQLiteDatabase, tables: List<RescueRawTable>) {
+        if (tables.isEmpty()) return
+        val importedPlanIds = mutableSetOf<Long>()
+        for (tableName in INSTALLMENT_TABLES_IN_IMPORT_ORDER) {
+            val source = tables.firstOrNull { it.table == tableName } ?: continue
+            if (source.rows.isEmpty()) continue
+            val freshCols = readSupportColumnNames(db, tableName)
+            val usable = source.columns.withIndex().filter { it.value in freshCols }
+            if (usable.isEmpty()) continue
+            val planIdIndex = source.columns.indexOf("planId")
+            var imported = 0
+            for (row in source.rows) {
+                if (tableName == TABLE_INSTALLMENT_ENTRIES) {
+                    val planId = if (planIdIndex >= 0) row[planIdIndex] as? Long else null
+                    if (planId == null || planId !in importedPlanIds) continue
+                }
+                val values = android.content.ContentValues()
+                for (column in usable) putRescueValue(values, column.value, row[column.index])
+                check(db.insert(tableName, SQLiteDatabase.CONFLICT_REPLACE, values) != -1L) {
+                    "RESCUE_INSTALLMENT_INSERT_FAILED"
+                }
+                imported++
+            }
+            if (tableName == TABLE_INSTALLMENT_PLANS) {
+                // Surviving plan ids (what the fresh table actually holds), not the attempted ones.
+                importedPlanIds.clear()
+                db.query("SELECT id FROM `$TABLE_INSTALLMENT_PLANS`").use { cursor ->
+                    while (cursor.moveToNext()) importedPlanIds += cursor.getLong(0)
+                }
+            }
+            log("Imported $imported rows into $tableName")
+        }
+    }
+
+    private fun putRescueValue(values: android.content.ContentValues, column: String, value: Any?) {
+        when (value) {
+            is Long -> values.put(column, value)
+            is Double -> values.put(column, value)
+            is String -> values.put(column, value)
+            else -> values.putNull(column)
+        }
+    }
+
+    /**
+     * Clears INSTALLMENT_PURCHASE flags on expenses that no imported plan references as its
+     * purchase expense (the rescue-time mirror of "deletePlanById clears the purchase flag").
+     * Runs even when no installment tables were captured. INSTALLMENT_REVERSED orphans are
+     * deliberately kept: clearing them would count a refunded purchase as spending again, and
+     * that trade-off is a pending owner decision. Only the cleared count is logged.
+     */
+    private fun clearOrphanInstallmentPurchaseFlags(db: SupportSQLiteDatabase) {
+        val values = android.content.ContentValues()
+        values.putNull("spendingExclusionReason")
+        val cleared = db.update(
+            TABLE_EXPENSES,
+            SQLiteDatabase.CONFLICT_NONE,
+            values,
+            "spendingExclusionReason = ? AND id NOT IN " +
+                "(SELECT purchaseExpenseId FROM `$TABLE_INSTALLMENT_PLANS` WHERE purchaseExpenseId IS NOT NULL)",
+            arrayOf<Any?>(SpendingExclusionReason.INSTALLMENT_PURCHASE.name)
+        )
+        log("Cleared $cleared orphan installment purchase flags")
     }
 
     private fun importExpenseGroups(db: SupportSQLiteDatabase, groups: List<RescueExpenseGroup>) {
@@ -906,6 +1025,13 @@ class FinancialRescueCoordinator(
             "INCOMING", "OUTGOING" -> upper
             else -> null
         }
+    }
+
+    /** Keeps only a bounded SpendingExclusionReason name; anything else becomes null (full spending). */
+    private fun sanitizeSpendingExclusionReason(value: String?): String? {
+        val trimmed = value?.trim() ?: return null
+        return com.yourname.expensetracker.domain.transaction.SpendingExclusionReason.values()
+            .firstOrNull { it.name == trimmed }?.name
     }
 
     private fun sanitizeSplitType(value: String): String {

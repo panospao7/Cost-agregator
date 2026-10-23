@@ -733,7 +733,7 @@ class DatabaseBackupRepositoryImplTest {
         )
 
         // createCostBackup will likely fail later due to missing tables in BackupVerifier
-        // (which expects 57 tables), but the write barrier double-check happens early in
+        // (which expects every tracked table), but the write barrier double-check happens early in
         // the flow — right after WAL checkpoint, before snapshot creation.
         runCatching {
             repository.createCostBackup(
@@ -800,7 +800,7 @@ class DatabaseBackupRepositoryImplTest {
             )
         }
 
-        // The backup may fail later at verification (57 tables expected), but it should
+        // The backup may fail later at verification (every tracked table expected), but it should
         // not fail at the write barrier check — i.e. barrier check passes.
         if (result.isFailure) {
             assertTrue(
@@ -2991,7 +2991,7 @@ class DatabaseBackupRepositoryImplTest {
     }
 
     /**
-     * Creates a database containing every table tracked by [BackupVerifier] (57 tables),
+     * Creates a database containing every table tracked by [BackupVerifier] (61 tables, see TABLE_TIERS),
      * so the strict backup pipeline (`collectTableCountsStrict` + `BackupVerifier.verify`)
      * passes and `createCostBackup` reaches `CostbackupBundle.create`.
      */
@@ -3005,6 +3005,11 @@ class DatabaseBackupRepositoryImplTest {
                     "receipt_expense_links" -> ", expenseId INTEGER"
                     "recurring_occurrences" -> ", sourceId INTEGER"
                     "budget_forecasts" -> ", budgetId INTEGER"
+                    // Columns read by the loan installment orphan checks (BackupVerifier) and the
+                    // plan label sanitizer (ExportAnonymizer).
+                    "expenses" -> ", spendingExclusionReason TEXT"
+                    "installment_plans" -> ", purchaseExpenseId INTEGER, displayName TEXT, lenderLabel TEXT"
+                    "installment_entries" -> ", planId INTEGER, linkedExpenseId INTEGER, status TEXT"
                     else -> ""
                 }
                 db.execSQL("CREATE TABLE IF NOT EXISTS \"$tableName\" (id INTEGER PRIMARY KEY$referenceColumn)")

@@ -39,7 +39,24 @@ data class RescueExpense(
     val sharedWithName: String?,
     val mySharePercentage: Int?,
     val myShareAmount: Double?,
-    val splitVisualization: String?
+    val splitVisualization: String?,
+    /**
+     * Bounded SpendingExclusionReason name (loan installments, schema 152) or null. It is rescued
+     * together with the plan tables ([FinancialRescueSnapshot.installmentTables]) so a flagged
+     * purchase is never turned back into full spending next to its installment payments.
+     */
+    val spendingExclusionReason: String? = null
+)
+
+/**
+ * Column-name driven copy of one table whose columns are discovered at runtime (the loan
+ * installment tables). Values are limited to null, Long, Double and String; BLOB values are dropped.
+ * Not a Room entity.
+ */
+data class RescueRawTable(
+    val table: String,
+    val columns: List<String>,
+    val rows: List<List<Any?>>
 )
 
 /**
@@ -121,5 +138,7 @@ data class FinancialRescueSnapshot(
     val expenseGroups: List<RescueExpenseGroup>,
     val groupMembers: List<RescueGroupMember>,
     val groupExpenses: List<RescueGroupExpense>,
-    val splitAssignments: List<RescueSplitItemAssignment>
+    val splitAssignments: List<RescueSplitItemAssignment>,
+    /** installment_plans then installment_entries, when present in the old database. */
+    val installmentTables: List<RescueRawTable> = emptyList()
 )

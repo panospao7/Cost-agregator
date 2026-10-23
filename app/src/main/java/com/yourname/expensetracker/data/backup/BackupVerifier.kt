@@ -538,7 +538,24 @@ object BackupVerifier {
             "SELECT COUNT(*) FROM recurring_occurrences WHERE sourceId NOT IN (SELECT id FROM manual_recurring_expenses)"
                 to "Orphan recurring_occurrences referencing non-existent recurring expenses",
             "SELECT COUNT(*) FROM budget_forecasts WHERE budgetId NOT IN (SELECT id FROM budgets)"
-                to "Orphan budget_forecasts referencing non-existent budgets"
+                to "Orphan budget_forecasts referencing non-existent budgets",
+            // Loan installments (INV-30, domain-spec 11.3). Fixed count-only messages: no plan
+            // names, amounts or dates ever reach the error text (INV-31).
+            "SELECT COUNT(*) FROM installment_entries WHERE planId NOT IN (SELECT id FROM installment_plans)"
+                to "Orphan installment_entries referencing non-existent plans",
+            "SELECT COUNT(*) FROM installment_entries WHERE linkedExpenseId IS NOT NULL " +
+                "AND linkedExpenseId NOT IN (SELECT id FROM expenses)"
+                to "Orphan installment_entries linked to non-existent expenses",
+            "SELECT COUNT(*) FROM installment_plans WHERE purchaseExpenseId IS NOT NULL " +
+                "AND purchaseExpenseId NOT IN (SELECT id FROM expenses)"
+                to "Orphan installment_plans referencing non-existent purchase expenses",
+            "SELECT COUNT(*) FROM expenses WHERE spendingExclusionReason = 'INSTALLMENT_PURCHASE' " +
+                "AND id NOT IN (SELECT purchaseExpenseId FROM installment_plans WHERE purchaseExpenseId IS NOT NULL)"
+                to "Expenses flagged as installment purchase that no plan references",
+            "SELECT COUNT(*) FROM expenses WHERE spendingExclusionReason = 'INSTALLMENT_REVERSED' " +
+                "AND id NOT IN (SELECT linkedExpenseId FROM installment_entries " +
+                "WHERE status = 'REVERSED' AND linkedExpenseId IS NOT NULL)"
+                to "Expenses flagged as installment reversed that no reversed entry references"
         )
         for ((sql, description) in checks) {
             try {
@@ -613,7 +630,7 @@ object BackupVerifier {
     }
 
     /**
-     * Returns the set of all 57 table names for ArchUnit/grep assertions.
+     * Returns the set of all tracked table names (61, see TABLE_TIERS) for ArchUnit/grep assertions.
      */
     fun allTableNames(): Set<String> = TABLE_TIERS.keys
 
