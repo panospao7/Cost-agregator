@@ -346,3 +346,11 @@ Review: reviewer-strict ACCEPT-WITH-MINORS (3 minors: drilldown fixed, date test
 Notes: es/el lack domain_ai_largest_purchase (pre-existing; MAX title in English) → Z follow-up.
 RELEASE-NOTE LINE (staged for Z, plan §8): "Assistant: 'last week', 'last month', 'last quarter' and 'last year' now mean the previous calendar period (previously the current one was used, e.g. 'food last month' showed this month). Comparisons now use the previous calendar week/month/quarter/year instead of a same-length window. Choosing an option in a clarification keeps your original filters. Smallest-purchase questions are now answered."
 Next: CX (Part C exit checkpoint, validation only): shards domain-a-m, data, runtime-ui, architecture-contracts; registered-guard cloud_payload, pii_logging, time_boundaries, cancellation; static-guards; lint.
+
+## CX DONE — Part C exit checkpoint (2026-10-23, on c2105caf)
+- shards: domain-a-m vr-20261023-130816-5e410fe3, data vr-20261023-130917-aeb1ccfc, runtime-ui vr-20261023-131303-30369432, architecture-contracts vr-20261023-131434-14e98da0;
+- registered-guard: cloud_payload vr-20261023-131522-9e7bd4f4, pii_logging vr-20261023-131540-7554c223, time_boundaries vr-20261023-131558-5a0567b0, cancellation vr-20261023-131616-80a7176a;
+- static-guards vr-20261023-131634-1d50bc67;
+- lint vr-20261023-133137-32cf280d.
+- ALL PASS. Part C (C1..C5) complete. No N-items fired across Part C; the only test change beyond additions/retargets is the PC-7 deletion (C1).
+Next: B2a (TRANSACTION_INSIGHT capability, tables only, no caller; T3; AG + PSG + RS).
