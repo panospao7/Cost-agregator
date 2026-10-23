@@ -104,4 +104,5 @@ private fun AiCapability.runtimeLabel(): String = when (this) {
     AiCapability.REVIEW_PRIORITIZATION -> "review prioritization"
     AiCapability.SEMANTIC_DEDUPE -> "semantic duplicate detection"
     AiCapability.RECEIPT_ITEM_CATEGORIZATION -> "receipt item categorization"
+    AiCapability.TRANSACTION_INSIGHT -> "transaction insights"
 }

@@ -749,4 +749,5 @@ private fun AiCapability.label(): String = when (this) {
     AiCapability.REVIEW_PRIORITIZATION -> stringResource(R.string.ai_capability_review_prioritization)
     AiCapability.SEMANTIC_DEDUPE -> stringResource(R.string.ai_capability_semantic_dedupe)
     AiCapability.RECEIPT_ITEM_CATEGORIZATION -> stringResource(R.string.ai_capability_receipt_item_cat)
+    AiCapability.TRANSACTION_INSIGHT -> stringResource(R.string.ai_capability_transaction_insight)
 }

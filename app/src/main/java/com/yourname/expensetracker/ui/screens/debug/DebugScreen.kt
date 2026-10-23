@@ -849,6 +849,7 @@ private fun AiCapability.supportsCloudFallback(): Boolean = when (this) {
     AiCapability.NOTIFICATION_PARSE -> false // On-device only
     AiCapability.REVIEW_PRIORITIZATION -> false // On-device only
     AiCapability.SEMANTIC_DEDUPE -> false // On-device only
+    AiCapability.TRANSACTION_INSIGHT -> false // On-device only (INV-16)
 }
 
 private fun AiCapability.debugRuntimeLabel(): String = when (this) {
@@ -864,6 +865,7 @@ private fun AiCapability.debugRuntimeLabel(): String = when (this) {
     AiCapability.REVIEW_PRIORITIZATION -> "review prioritization"
     AiCapability.SEMANTIC_DEDUPE -> "semantic duplicate detection"
     AiCapability.RECEIPT_ITEM_CATEGORIZATION -> "receipt item categorization"
+    AiCapability.TRANSACTION_INSIGHT -> "transaction insights"
 }
 
 @Composable

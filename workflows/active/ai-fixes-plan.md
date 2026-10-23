@@ -107,7 +107,8 @@ Order: S0 → A → B1a → B1b → B1c → B2a → B2b/B2c → B2d → B2e → 
 ### B2b — Insight key + DataMigration + InstallProvenance (T3)
 - INV-23, INV-22 (new field). AE-33..38 (extended).
 - Source: `AiModels.kt` `transactionInsightEnabled=false`; `AiSettingsRepositoryImpl.kt` key `ai_transaction_insight_enabled`, `produceMigrations` on `preferencesDataStore(name="ai_settings")` (:24-27) with one never-throwing `DataMigration` per spec §4 (no startup coroutine), `update()` writes key (:79-103); NEW `InstallProvenance` port + impl (NEW_INSTALL/UPGRADE/UNKNOWN; own-package `PackageManager` install/update times only; no new permission, no `QUERY_ALL_PACKAGES`, no network; failure → UNKNOWN); migration extracted into testable internal class taking `InstallProvenance` (DI binding only if injected).
-- Tests: `AiSettingsRepositoryImplTest` AE-33..37 + migration-before-first-edit; NEW `InstallProvenanceTest`.
+- Orchestrator amendment (B2a review, spec §1.6 / INV-15): also `domain/ai/policy/AiPolicyImpl.kt` and `domain/ai/policy/DefaultAiCapabilityRouter.kt` — switch the `TRANSACTION_INSIGHT` arms (`shouldAllowOnDevice`, `isCapabilityEnabled`) from `settings.aiEnabled` to `settings.transactionInsightEnabled`.
+- Tests: `AiSettingsRepositoryImplTest` AE-33..37 + migration-before-first-edit; NEW `InstallProvenanceTest`; amendment tests in `AiPolicyTest` and `DefaultAiCapabilityRouterTest` (insight off → DISABLED / `shouldAllowOnDevice` false; briefing off with insight on → not DISABLED).
 - Docs: `CODEBASE_SEGMENTS.md` Segment 20; `hilt-bindings-map.md` if binding.
 - Legal path: `produceMigrations` sole resolver; explicit values never overwritten.
 - Gates: PSG, AG, RS. Validation: `targeted-unit-test` `"*AiSettingsRepositoryImplTest*"`, `"*InstallProvenance*"`.

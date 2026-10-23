@@ -447,4 +447,6 @@
     <string name="assistant_clarification_presentation_transaction_list">Lista de transacciones</string>
     <!-- Assistant MIN result title. Best-effort translation, pending native review. -->
     <string name="domain_ai_smallest_purchase">Compra más pequeña</string>
+    <!-- AI capability label (transaction insight). Best-effort translation, pending native review. -->
+    <string name="ai_capability_transaction_insight">Análisis de transacción</string>
 </resources>

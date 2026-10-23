@@ -133,4 +133,29 @@ class GetAiRuntimeStatusUseCaseTest {
             result.capabilities.first().onDeviceMessage
         )
     }
+
+    @Test
+    fun `runtime label for TRANSACTION_INSIGHT is transaction insights given a mocked router fallback decision`() = runTest {
+        every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, allowCloudAi = true))
+        coEvery { aiEnvironmentMonitor.getOnDeviceModelStatus(AiCapability.TRANSACTION_INSIGHT) } returns OnDeviceModelStatus.NOT_INSTALLED
+        coEvery { aiCapabilityRouter.decide(AiCapability.TRANSACTION_INSIGHT, any(), any()) } returns AiRouteDecision(
+            AiRoute.DETERMINISTIC_FALLBACK,
+            "On-device model is not installed on this device."
+        )
+        every { aiEnvironmentMonitor.isNetworkAvailable() } returns true
+        every { aiEnvironmentMonitor.isWifiConnected() } returns true
+        every { timeProvider.now() } returns 2222L
+
+        val result = useCase(listOf(AiCapability.TRANSACTION_INSIGHT))
+
+        val row = result.capabilities.single()
+        assertEquals(AiCapability.TRANSACTION_INSIGHT, row.capability)
+        assertEquals(AiRoute.DETERMINISTIC_FALLBACK, row.route)
+        assertNull(row.providerName)
+        assertEquals("Install required", row.actionLabel)
+        assertEquals(
+            "On-device transaction insights is available but the model is not installed yet.",
+            row.onDeviceMessage
+        )
+    }
 }

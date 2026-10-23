@@ -136,6 +136,72 @@ class AiPolicyTest {
         }
     }
 
+    // ── TRANSACTION_INSIGHT (ai-fixes B2a, INV-16, AE-27) ─────────────────────
+
+    @Test
+    fun `canUseCloudFor TRANSACTION_INSIGHT is false for every combination of cloud-relevant settings`() {
+        val booleans = listOf(false, true)
+        var checked = 0
+        for (aiEnabled in booleans) for (allowCloudAi in booleans) for (allowOnDeviceAi in booleans) {
+            for (briefing in booleans) for (review in booleans) for (redact in booleans) {
+                val settings = AiSettings(
+                    aiEnabled = aiEnabled,
+                    allowCloudAi = allowCloudAi,
+                    allowOnDeviceAi = allowOnDeviceAi,
+                    dashboardBriefingEnabled = briefing,
+                    reviewExplanationEnabled = review,
+                    redactBeforeCloud = redact
+                )
+                assertEquals(
+                    "canUseCloudFor(TRANSACTION_INSIGHT) for $settings",
+                    false,
+                    policy.canUseCloudFor(settings, AiCapability.TRANSACTION_INSIGHT)
+                )
+                checked++
+            }
+        }
+        assertEquals("combination count guard", 64, checked)
+    }
+
+    @Test
+    fun `shouldAllowOnDevice TRANSACTION_INSIGHT requires aiEnabled and allowOnDeviceAi`() {
+        val rows = listOf(
+            CapabilityRow(
+                "ai off",
+                AiSettings(aiEnabled = false, allowOnDeviceAi = true),
+                AiCapability.TRANSACTION_INSIGHT,
+                false
+            ),
+            CapabilityRow(
+                "on-device off",
+                AiSettings(aiEnabled = true, allowOnDeviceAi = false),
+                AiCapability.TRANSACTION_INSIGHT,
+                false
+            ),
+            CapabilityRow(
+                "ai and on-device on",
+                AiSettings(aiEnabled = true, allowOnDeviceAi = true),
+                AiCapability.TRANSACTION_INSIGHT,
+                true
+            ),
+            CapabilityRow(
+                "independent of dashboard briefing toggle",
+                AiSettings(aiEnabled = true, allowOnDeviceAi = true, dashboardBriefingEnabled = false),
+                AiCapability.TRANSACTION_INSIGHT,
+                true
+            )
+        )
+        assertEquals("TRANSACTION_INSIGHT shouldAllowOnDevice table size guard", 4, rows.size)
+
+        rows.forEach { row ->
+            assertEquals(
+                "[${row.name}] shouldAllowOnDevice(${row.capability})",
+                row.expected,
+                policy.shouldAllowOnDevice(row.settings, row.capability)
+            )
+        }
+    }
+
     // ── shouldRedact ──────────────────────────────────────────────────────────
 
     @Test

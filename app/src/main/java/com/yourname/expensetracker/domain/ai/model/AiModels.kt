@@ -18,7 +18,11 @@ enum class AiCapability {
     NOTIFICATION_PARSE,
     REVIEW_PRIORITIZATION,
     SEMANTIC_DEDUPE,
-    RECEIPT_ITEM_CATEGORIZATION // NEW: AI categorization of individual receipt items
+    RECEIPT_ITEM_CATEGORIZATION, // NEW: AI categorization of individual receipt items
+
+    // Persisted by name (Converters). Append-only: never remove or reorder entries above.
+    // On-device only; never cloud-eligible (INV-16).
+    TRANSACTION_INSIGHT
 }
 
 enum class AiMode {

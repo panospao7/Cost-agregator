@@ -354,3 +354,28 @@ Next: CX (Part C exit checkpoint, validation only): shards domain-a-m, data, run
 - lint vr-20261023-133137-32cf280d.
 - ALL PASS. Part C (C1..C5) complete. No N-items fired across Part C; the only test change beyond additions/retargets is the PC-7 deletion (C1).
 Next: B2a (TRANSACTION_INSIGHT capability, tables only, no caller; T3; AG + PSG + RS).
+
+## B2a (2026-10-23) — implemented (NOT validated; awaiting compile + targeted-unit-test)
+- INV-15 (tables), INV-16 (policy), AE-27. Schema NONE (enum stored by name via Converters; unknown still -> DASHBOARD_BRIEFING).
+- Source: AiModels.kt (TRANSACTION_INSIGHT appended LAST); AiPolicyImpl.kt (canUseCloudFor=false; shouldAllowOnDevice=aiEnabled, allowOnDeviceAi gate already upstream); DefaultAiCapabilityRouter.kt (isCapabilityEnabled=aiEnabled until B2b adds transactionInsightEnabled; displayName; cloud provider/model "unsupported"; on-device model ON_DEVICE_BRIEFING_MODEL; added to ON_DEVICE_IMPLEMENTED_CAPABILITIES; NOT in CLOUD_FIRST_CAPABILITIES); GetAiRuntimeStatusUseCase.kt (runtimeLabel); AiSettingsScreen.kt (label via new string); DebugScreen.kt (supportsCloudFallback=false, debugRuntimeLabel); res values/es/el `ai_capability_transaction_insight` (es/el best-effort, owner review).
+- Docs: LEGAL_PATHS.md Privacy/Cloud AI "on-device-only capabilities: TRANSACTION_INSIGHT".
+- Tests (additive only): DefaultAiCapabilityRouterTest (AE-27 matrix + AVAILABLE + onDevice-disallowed + DISABLED), AiPolicyTest (64-combo canUseCloudFor=false, shouldAllowOnDevice table), GetAiRuntimeStatusUseCaseTest (label/fallback row), ConvertersTest (round-trip, append-only order pin, unknown fallback).
+- Enum-iteration sites: DebugViewModel `AiCapability.entries` (debug runtime list now includes TRANSACTION_INSIGHT, debug-only screen); AiPolicyTest/DebugViewModelTest `entries` (dynamic, no pin change). AiSettingsViewModel runtime list is an explicit 7-item list (TRANSACTION_INSIGHT not user-visible). No cloud-consent loops over the enum.
+- Carry-forward for B2b (BINDING, spec §1.6 / INV-15): B2b MUST switch the TRANSACTION_INSIGHT arms in AiPolicyImpl.shouldAllowOnDevice and DefaultAiCapabilityRouter.isCapabilityEnabled to settings.transactionInsightEnabled (spec §1.6), with tests: insight off → DISABLED / shouldAllowOnDevice false; briefing off with insight on → not DISABLED. (The use case also gates INSIGHT_DISABLED, AE-32.)
+Next: B2b / B2c.
+
+### B2a review fixes (2026-10-23, reviewer-strict + privacy-security-guardian: ACCEPT-WITH-MINORS; NOT validated)
+1. Spec §1.6 carry-forward made binding (above); AiPolicyImpl.kt and DefaultAiCapabilityRouter.kt (+ tests) added to B2b source list in ai-fixes-plan.md as an orchestrator amendment; router and AiPolicyImpl TRANSACTION_INSIGHT comments reworded as interim (comment-only).
+2. LEGAL_PATHS.md Privacy/Cloud AI: separate "On-device-only capabilities" block (NOTIFICATION_PARSE, REVIEW_PRIORITIZATION, SEMANTIC_DEDUPE, TRANSACTION_INSIGHT) replaces the single-capability arrow step.
+3. DefaultAiCapabilityRouterTest: PrivacyGate mock held in a field; new INV-15 independence test (dashboardBriefingEnabled=false → ON_DEVICE); AE-27 positive control (DASHBOARD_BRIEFING, CLOUD mode → CLOUD); TRANSACTION_INSIGHT decisions assert zero privacyGate.check and zero secureKeyStorage.hasKey calls.
+4. GetAiRuntimeStatusUseCaseTest: TRANSACTION_INSIGHT test renamed to a label test (router mocked).
+5. es ai_capability_transaction_insight made singular ("Análisis de transacción").
+
+## B2a DONE (2026-10-23)
+- Reviews: reviewer-strict ACCEPT-WITH-MINORS; privacy-security-guardian ACCEPT-WITH-MINORS (no cloud path for TRANSACTION_INSIGHT); architecture-guardian ACCEPT-WITH-MINORS (3rd attempt; two died on API timeouts). Minors applied (see "B2a review fixes"); AG finding 1 (LEGAL_PATHS wording: the guarantee is canUseCloud → AiPolicy.canUseCloudFor == false, CLOUD_FIRST exclusion is additional) applied by the orchestrator as a docs-only edit after validation.
+- Validation (pre-fix): targeted vr-20261023-150728-7be7e1bb PASS, lint vr-20261023-151900-5e27b51b PASS, static-guards vr-20261023-152304-8663b951 PASS. Post-fix: targeted vr-20261023-160100-1e8e9f4f PASS, static-guards vr-20261023-160534-775a9fae PASS. (Final LEGAL_PATHS wording edit is docs-only.)
+- Follow-ups (pre-existing, not B2a): (a) the per-capability toggle table exists twice (DefaultAiCapabilityRouter.isCapabilityEnabled and AiPolicyImpl.shouldAllowOnDevice) — make the router delegate to AiPolicy; (b) DebugScreen.supportsCloudFallback re-encodes cloud eligibility and already disagrees with policy on LOCATION_SUMMARY — derive from AiPolicy/router.
+- Ordering checks: AE-32 INSIGHT_DISABLED must be delivered by the slice that adds the insight use case; when the first caller of TRANSACTION_INSIGHT (B2d/B2e) is accepted, grep app/src/main for "TRANSACTION_INSIGHT -> settings.aiEnabled" must return 0 (B2b amendment landed first).
+- Release-note caution (PSG): until B2d rewires GenerateTransactionInsightUseCase, per-expense insights still route as DASHBOARD_BRIEFING (cloud-capable); do not claim "insights are on-device" for a build with B2a but not B2d.
+- Owner review: es/el strings ai_capability_transaction_insight ("Análisis de transacción" / "Ανάλυση συναλλαγής").
+Next: B2b (insight key + DataMigration + InstallProvenance; includes the binding §1.6 router/policy switch) and B2c (AppForegroundState port).

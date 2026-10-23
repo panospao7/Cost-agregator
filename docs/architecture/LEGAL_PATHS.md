@@ -411,6 +411,15 @@ CLOUD AI call:
     reference it, enforced by SourceScanningArchitectureGuardTest)
   → Audit via CompositePrivacyGate final decision
 
+On-device-only capabilities (NOTIFICATION_PARSE, REVIEW_PRIORITIZATION, SEMANTIC_DEDUPE,
+TRANSACTION_INSIGHT):
+  → AiPolicyImpl.canUseCloudFor is false for every settings combination
+  → the router reaches CLOUD only via DefaultAiCapabilityRouter.canUseCloud →
+    AiPolicy.canUseCloudFor, which is false for these, so it never returns CLOUD for them
+    (additionally, none is in CLOUD_FIRST_CAPABILITIES)
+  → TRANSACTION_INSIGHT has no PrivacyCapability / CloudPayloadPurpose / EffectiveCloudAiPolicy
+    row (ai-fixes B2a)
+
 RAW DATA storage:
   → Check RawStorageMode (STORE_RAW / STORE_REDACTED / STORE_METADATA_ONLY / DO_NOT_STORE)
   → RawContentSanitizer applies per-mode sanitization for every source:
