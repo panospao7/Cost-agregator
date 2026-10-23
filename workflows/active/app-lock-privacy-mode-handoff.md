@@ -255,3 +255,56 @@ Next: S8.
 - Release-note wording (APP-4): "links from web browsers no longer open the app" — not "links can't open the app" (other installed apps can still send VIEW; validation is the boundary).
 - Pre-existing, outside S11 (log hygiene follow-up): MainActivity.kt ~:839 Timber.e(error, "...expenseId=%s") logs the full exception plus an expense id.
 Next: S8 (BillReminderWorker applies the decision; builder owner 2).
+
+## S8 (2026-10-23) — implemented (validation pending)
+Source (`service/reminder/BillReminderWorker.kt` only):
+- Constructor gains `presentationResolver: NotificationPresentationResolver` and `presentationApplier: NotificationPresentationApplier` (appended after `timeProvider`; Hilt assisted injection, both are @Singleton).
+- The decision is resolved inside the guard lambda, per reminder, after claim and revalidation and immediately before the post: `presentationResolver.resolve(NotificationKind.BILL, Build.VERSION.SDK_INT)`. It is passed into the non-suspend `sendNotification(..., decision)`. No `runBlocking`. A CancellationException from the bounded read propagates through the existing rethrow-first catch (nothing posted, claim untouched, no log).
+- `sendNotification` builds channel, small icon, priority and auto-cancel itself, then calls `presentationApplier.apply(...)`, which sets title/text, the generic public version, PRIVATE visibility, the action policy and the BILL marker. No marker code in the worker. Still no content intent, same as before.
+- Actions: `NotificationActionSpec(R.drawable.ic_snooze, R.string.notif_action_snooze, ...)` and `(R.drawable.ic_dismiss, R.string.action_dismiss, ...)`. Resources already existed (en/es/el), so no strings were added.
+- INV-10 comes from the applier policy (`NotificationContentPolicy`: BILL API 31+ = AUTH_REQUIRED for every user, API 30 and below = UNCHANGED; NONE is handled by the applier and is reachable once S14 changes the policy). No parallel mechanism.
+- `CHANNEL_ID` is now `internal const` ("bill_reminders", value unchanged); `SMALL_ICON` private const added so the icon is declared once.
+
+Parity table (unchanged on purpose):
+- claim, revalidate (`getDispatchableClaimedReminder`, cancel `not_dispatchable_after_claim`), send, `markReminderSent`, `addNotificationsSent` only when Sent and marked, diagnostic emit, `Failed` handling (permission_denied -> `cancelClaimedReminderDelivery("notification_permission_revoked")`, others -> `markReminderFailed`), `addRowsSkipped` counts.
+- `SecurityException` mapping and `Exception` mapping around `notify`; no new catch (FG-11); `WorkerGuardRequest` unchanged; `android.util.Log` class names only.
+- Notification id `NotificationId.forBill`, no tag, channel id/name/description/importance, Snooze/Dismiss intents, extras, request codes (`id`, `id xor 0x40000000`), flags, receivers, action workers, RecurringLifecycleCoordinator path.
+Intended visible changes: PRIVATE visibility plus a generic public version (all API levels); DISCREET text when the setting is on or unreadable; AUTH_REQUIRED actions on API 31+ for every user (APP-4 release note must ship with the first release that contains S8).
+
+Tests:
+- `BillReminderWorkerTest`, `BillReminderWorkerTimeProviderTest`: constructor only. A mocked resolver returns a FULL / UNCHANGED BILL decision and a real applier is passed, so all existing assertions are unchanged (no test deleted or weakened).
+- New `BillReminderWorkerNotificationPresentationTest` (abstract contract + SDK 26/28/29/30/31/34 subclasses; real manager, resolver, applier, texts; scripted settings repository from `PresentationFixtures`): FULL control, DISCREET constants with merchant/amount/currency absent from every string incl. the public version and action titles, generic public version, BILL marker on the private notification only (not a text extra), id/tag/channel, action titles from resources, PendingIntent receivers/extras/request codes/flags, AUTH_REQUIRED on 31+ (unchanged titles on <=30), AE-11 bill-site order and counters, one read per post, AE-9 cancellation (nothing posted, no outcome, no warn log), Unreadable(IO_ERROR) and read-throws -> DISCREET (no exception text in logs), SecurityException mapping still cancels the claim.
+
+Intended visible changes (feed the APP-4 release note, which ships with the first release containing S8):
+- Action titles are now localised: el "Αναβολή" / "Απόρριψη", es "Posponer" / "Descartar" (en unchanged: "Snooze" / "Dismiss").
+- The FULL title "Bill due" and the FULL body stay hardcoded English. Pre-existing, outside S8; follow-up.
+- PRIVATE visibility plus a generic public version on all API levels.
+- AUTH_REQUIRED actions on API 31+ for every user.
+
+Architecture rulings (architecture-guardian, ACCEPT-WITH-MINORS):
+- `service/reminder` -> `data.service` applier injection is accepted. No domain port: the applier's API is `NotificationCompat.Builder`, so a port would only re-export it.
+- The S9 classifier may import ONLY the `internal const val CHANNEL_ID` from `BillReminderWorker` (const-inlined at compile time; no other member). The S9 architecture gate must check this. Precedent is `domain/workers/WorkerRegistry.kt:16`, not `RecommendationRepository`.
+
+Review verdicts: reviewer-strict, architecture-guardian, privacy-security-guardian all ACCEPT-WITH-MINORS. The minors were applied to the test file after these validations (no production change): SDK 29 subclass (AE-12), AE-9 also pins `cancelClaimedReminderDelivery` never called (row stays CLAIMED), two new tests pin that resolve sits after claim and after revalidation (0 settings reads, nothing posted), AE-7 traceability (the former "AE-7" lifecycle test is now AE-11 bill site; the unreadable-store test is AE-7 and verifies NOTIF_POLICY_SETTINGS_UNREADABLE(IO_ERROR) through a captured emitter).
+
+Validation (all PASS, pre-fix; the test-only minors need a re-run of `*BillReminderWorker*`):
+- targeted-unit-test vr-20261023-170515-589aa108
+- runtime-ui vr-20261023-171447-b4b97b58
+- worker vr-20261023-174114-035eb356
+- cancellation vr-20261023-174132-3df850c1
+- pii_logging vr-20261023-174150-55dde3b4
+
+Carry-forwards:
+- S13 docs: `import-graph.json` BillReminderWorker dependencies, and LEGAL_PATHS "DISPATCH reminder" gains the resolve -> applier step.
+- S14: on API 26-30 an unreadable settings store must suppress Snooze/Dismiss (spec 4.4; applier mode NONE). No S8 test pins the current <=30 behaviour (actions unchanged), so S14 changes it without a failing S8 test; S14 must add the pin.
+
+Suggested validation:
+- `targeted-unit-test` `*BillReminderWorker*`, `*WorkerGuardArchitectureGuardTest*`, `*SourceScanningArchitectureGuardTest*`, `*NotificationPresentationApplier*`;
+- shard `runtime-ui`;
+- `registered-guard` `worker`, `cancellation`, `pii_logging`.
+Gates: reviewer-strict (lead), privacy-security-guardian, architecture-guardian.
+Next: S9 (needs the CHANNEL_ID import ruling).
+
+## S8 DONE (2026-10-23)
+- Post-fix validation: targeted *BillReminderWorker* (SDK 26/28/29/30/31/34 matrix) vr-20261023-174351-c574eee3 PASS. Pre-fix runs (runtime-ui, worker, cancellation, pii_logging) listed above; review fixes were test/doc-only.
+Next: S9 (discreet re-post sweep + write use case; remove legacy kind-less methods). The S9 architecture gate must check the classifier imports only BillReminderWorker.CHANNEL_ID.

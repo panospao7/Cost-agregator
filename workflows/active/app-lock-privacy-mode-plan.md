@@ -512,12 +512,12 @@ Context: budget alerts post with the raw `budget.id.toInt()` (`BudgetMonitor.kt:
 - **Write set (source):** `M/service/reminder/BillReminderWorker.kt` only.
   - Inject the resolver and the applier. The applier stamps the marker; no marker code lives in the worker.
   - Move the literals `"Snooze"`/`"Dismiss"` (`:259-260`) to the S5 resources.
-  - Expose `CHANNEL_ID` (`:295`) as `internal const`, value unchanged, for the S9 classifier. Architecture-guardian confirms the `data/service → service/reminder` import; there is one precedent, `data/repository/RecommendationRepository.kt`. If it is refused, the constant moves to a shared holder, which needs an orchestrator-approved write-set extension and an R21 re-check.
+  - Expose `CHANNEL_ID` (`:295`) as `internal const`, value unchanged, for the S9 classifier. Architecture-guardian confirms the `data/service → service/reminder` import; the precedent is `domain/workers/WorkerRegistry.kt:16` (orchestrator correction; not `RecommendationRepository`), and the S9 classifier may import only the `internal const val CHANNEL_ID`. If it is refused, the constant moves to a shared holder, which needs an orchestrator-approved write-set extension and an R21 re-check.
   - Keep the claim → revalidate → send → mark/fail/cancel order, `addNotificationsSent` only after Sent and marked, and the `SecurityException` mapping (`:266`).
 - **Write set (tests):**
   - `T/service/reminder/BillReminderWorkerTest.kt` (constructor only)
   - `T/service/reminder/BillReminderWorkerTimeProviderTest.kt` (constructor only)
-  - `T/service/reminder/BillReminderWorkerNotificationPresentationTest.kt` (new; SDK 26/28/30/31/34; includes the BILL marker, its absence from the public version, and the unchanged id and channel)
+  - `T/service/reminder/BillReminderWorkerNotificationPresentationTest.kt` (new; SDK 26/28/29/30/31/34 (orchestrator correction: AE-12 needs 29); includes the BILL marker, its absence from the public version, and the unchanged id and channel)
 - **Legal path preserved:** the recurring reminder lifecycle via `RecurringLifecycleCoordinator`. The Snooze/Dismiss receivers, the action workers and the action PendingIntents are untouched.
 - **Depends on:** S5. Release: **R21 landed (hard; same file and test).**
 - **Guards:** FG-11 (`BillReminderWorker.broadCatch`; no new catch; `WorkerGuardRequest` unchanged), FG-10, FG-07/FG-16 (`android.util.Log`: class names only).
