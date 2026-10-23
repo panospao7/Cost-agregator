@@ -31,6 +31,13 @@ The owner approved the slice plan (`workflows/active/loan-installments-plan.md`:
   - (d) The payoff-date lower bound also takes `PAID_BEFORE_TRACKING` due dates into account.
 - Everything else is unchanged: INV-1…INV-31 except those listed above, the schema impact (additive) and AE-1…AE-25.
 
+## Amendment log (2026-10-23, S5 review)
+
+[amended S5-R, 2026-10-23] These edits align the spec with decisions made in the S5 review
+(`workflows/active/loan-installments-handoff.md`, "S5 review fixes"). Changed: sections 3.1, 3.2, 5.4 R4, 7.0, 7.5 and
+11.1, and INV-14, INV-20, INV-33. There are no new invariants and no schema impact. The Delete source set is
+OWNER CONFIRMATION PENDING (section 7.5). Each change carries the tag `[amended S5-R, 2026-10-23]`.
+
 Source facts re-checked for this spec (beyond those cited in the brief/critique):
 - `Expense.effectiveAmount` / `normalizedEffectiveAmount` (`data/database/entity/Expense.kt:163-185`) zero
   `isNotMine`; there is no other "does not count" dimension today.
@@ -177,16 +184,23 @@ and declaration is atomic.
 | ACTIVE | CANCELLED | Stop | user | SCHEDULED → CANCELLED(`PLAN_STOPPED`). PAID entries stay counted. Purchase stays at 0 |
 | ACTIVE, COMPLETED | REFUNDED | Refund/return ("reverse everything") | user | SCHEDULED → CANCELLED(`PLAN_REFUNDED`). PAID → REVERSED and their expenses flagged `INSTALLMENT_REVERSED`. Purchase stays at 0 |
 | ACTIVE | PAID_OFF | Pay off early (amount, date) | user | SCHEDULED → CANCELLED(`PAID_OFF_EARLY`). One PAYOFF entry created PAID, linked to an expense |
-| ACTIVE, CANCELLED (no PAID/REVERSED entries; PAID_BEFORE_TRACKING entries don't block) | deleted | Delete (undo declaration) | user | entries (PAID_BEFORE_TRACKING included) and plan removed. Purchase flag cleared, so the purchase counts in full again on its own date |
+| ACTIVE, CANCELLED (no PAID/REVERSED entries; PAID_BEFORE_TRACKING entries don't block) | deleted | Delete (undo declaration) | user | entries (PAID_BEFORE_TRACKING included) and plan removed. Purchase flag cleared, so the purchase counts in full again on its own date. Only these two source states (section 7.5, OWNER CONFIRMATION PENDING) [amended S5-R, 2026-10-23] |
 
 Illegal: any transition out of CANCELLED, REFUNDED or PAID_OFF other than the delete row above. Deleting a plan that
 has PAID/REVERSED entries (`PLAN_HAS_PAYMENTS`). PAID_OFF from COMPLETED (nothing left). Any transition on a plan
 whose purchase has been deleted while kind is still PURCHASE_ATTACHED (reconcile detaches it first).
+[amended S5-R, 2026-10-23] Delete checks payments first: a plan with any PAID or REVERSED entry is refused
+`PLAN_HAS_PAYMENTS` from every status. Without payments, Delete from COMPLETED, REFUNDED or PAID_OFF is refused
+`ILLEGAL_TRANSITION` (section 7.5).
 
 Retry, cancellation and process death (applies to every row):
 - Each transition is one DB transaction inside the write barrier, with compare-and-set on the current status.
   Repeating a transition when the plan is already in the target state returns `AlreadyInState`, which counts as
   success. A different current state returns `IllegalTransition(code)`.
+- [amended S5-R, 2026-10-23] Entry-level retries depend on the plan status too (section 3.2): a retried "mark paid
+  before tracking" on an entry that is already PAID_BEFORE_TRACKING is `AlreadyInState` in an ACTIVE or COMPLETED
+  plan (so a retry after the mark completed the plan succeeds), and `ILLEGAL_TRANSITION` in a CANCELLED, REFUNDED
+  or PAID_OFF plan.
 - A coroutine cancellation rolls back the transaction. `CancellationException` is always rethrown.
 - If the process dies inside the transaction, nothing is persisted. If it dies after commit but before post-commit
   side effects (budget recheck, reminder suppression), the integrity reconcile (section 5.4) and read-time
@@ -201,11 +215,11 @@ Derived display for SCHEDULED: `UPCOMING` (due > today), `DUE` (due = today), `O
 | From | To | Trigger | Who | Precondition |
 |---|---|---|---|---|
 | SCHEDULED | PAID | auto-record (catch-up) | worker/foreground → plan coordinator | plan ACTIVE, mode AUTO_RECORD, `declaredOnDate` ≤ due ≤ today, `autoRecordConsumed = false`, no candidate charge (INV-13) |
-| SCHEDULED | PAID | confirm ("mark paid", creates expense) | user | plan ACTIVE |
-| SCHEDULED | PAID | link an existing expense | user | plan ACTIVE. Link policy passes (INV-5, INV-16) |
+| SCHEDULED | PAID | confirm ("mark paid", creates expense) | user | plan ACTIVE. `dueDate` ≤ today (local civil date, section 10). If today is unknown, the confirm is refused `ILLEGAL_TRANSITION` (fail closed; INV-14) [amended S5-R, 2026-10-23] |
+| SCHEDULED | PAID | link an existing expense | user | plan ACTIVE. Link policy passes (INV-5, INV-16). No due-date gate: linking an existing expense to a not-yet-due entry stays allowed [amended S5-R, 2026-10-23] |
 | PAID | SCHEDULED | unlink, or linked expense deleted / currency changed / type changed to non-expense | user, or reconcile (side effect of a TLC update/delete) | plan ACTIVE or COMPLETED (a COMPLETED plan reopens) |
-| PAID | CANCELLED(`EXPENSE_REMOVED`) | same triggers as above | reconcile | plan CANCELLED or PAID_OFF (stays terminal) |
-| SCHEDULED | SKIPPED | skip (bounded reason) | user | unlinked. A skip on an auto-recorded entry means deleting that expense through the normal expense delete first |
+| PAID | CANCELLED(`EXPENSE_REMOVED`) | linked expense deleted, currency changed or type changed to non-expense. `EXPENSE_REMOVED` is the one reason for all three causes; there are no separate currency or type codes. A user unlink is not offered here (it needs plan ACTIVE or COMPLETED) [amended S5-R, 2026-10-23] | reconcile | plan CANCELLED or PAID_OFF (stays terminal) |
+| SCHEDULED | SKIPPED | skip (bounded reason: exactly one of `USER_SKIP_LENDER_HOLIDAY`, `USER_SKIP_WAIVED`, `USER_SKIP_OTHER`; OQ-20, owner-approved) [amended S5-R, 2026-10-23] | user | plan ACTIVE, unlinked. A skip on an auto-recorded entry means deleting that expense through the normal expense delete first. A missing reason or any other reason is refused `ILLEGAL_TRANSITION`. A retry on an already SKIPPED entry is `AlreadyInState` whatever reason it carries [amended S5-R, 2026-10-23] |
 | SKIPPED | SCHEDULED | unskip | user | plan ACTIVE or COMPLETED |
 | SCHEDULED | SCHEDULED (amount/date changed) | adjust | user | audit fields set (INV-19) |
 | SCHEDULED | CANCELLED | stop / refund / payoff / shorten | user via plan op | |
@@ -244,6 +258,16 @@ does a compare-and-set `WHERE status='PAID_BEFORE_TRACKING'`. Selected entries t
 count as `AlreadyInState`. If the claimed row count is lower than the number of remaining selected entries, the
 transaction rolls back. INV-21 completion and the COMPLETED → ACTIVE reopen happen in the same transaction. A
 cancellation or process death rolls back everything.
+
+[amended S5-R, 2026-10-23] Retry over plan status, for mark and revert:
+- A CANCELLED, REFUNDED or PAID_OFF plan is refused `ILLEGAL_TRANSITION` first, even when the entry is already in
+  the target state.
+- Mark: an entry already PAID_BEFORE_TRACKING is `AlreadyInState` in an ACTIVE or COMPLETED plan. This covers a
+  retry after the mark itself completed the plan (INV-21). An actual move SCHEDULED → PAID_BEFORE_TRACKING still
+  requires plan ACTIVE.
+- Bulk mark: in a COMPLETED plan, if every selected entry is already PAID_BEFORE_TRACKING the request succeeds with
+  nothing to write. If any selected entry still needs a move, the whole request is refused `ILLEGAL_TRANSITION`.
+- Revert: an entry already SCHEDULED is `AlreadyInState` in an ACTIVE or COMPLETED plan.
 
 ## 4. Invariants
 
@@ -317,15 +341,19 @@ name, OD-1). "TLC" means `TransactionLifecycleCoordinator`. AE-n refers to secti
   suggested link. Owner: plan coordinator. (AE-17)
 - **INV-14 Future entries never count.** No expense is ever created for an entry with `dueDate` > today. Future
   entries are commitments shown only in projections. Owner: plan coordinator. (AE-10)
+  [amended S5-R, 2026-10-23] This covers CONFIRM: it requires `dueDate` ≤ today (local civil date). If today is
+  unknown, CONFIRM is refused `ILLEGAL_TRANSITION` (fail closed). LINK creates no expense, so linking an existing
+  expense to a not-yet-due entry stays allowed.
 - **INV-15 Projection bounds.** Projections (cash flow, forecast, stress forecast, recurring plan projection,
   reminders) include only SCHEDULED entries of ACTIVE plans with `dueDate` ≥ today. Terminal plans and entries
   after the last SCHEDULED one project nothing. PAID_BEFORE_TRACKING entries are never projected or reminded.
   Owner: plan read model / projection port. (AE-11, AE-26) [amended AMD-1]
 - **INV-19 Paid entries are immutable from the plan side.** Plan edits touch only SCHEDULED entries. A PAID entry's
   amount comes from its linked expense. Owner: plan coordinator. (AE-21)
-- **INV-20 Terminal plans.** CANCELLED, REFUNDED and PAID_OFF plans accept no transitions except delete when they
-  have no PAID/REVERSED entries. PAID_BEFORE_TRACKING entries are not payments for this rule. Only COMPLETED may
-  reopen (to ACTIVE). Owner: plan coordinator. (AE-7, AE-11, AE-27, AE-28) [amended AMD-1]
+- **INV-20 Terminal plans.** CANCELLED, REFUNDED and PAID_OFF plans accept no transitions, except that a CANCELLED
+  plan with no PAID/REVERSED entries may be deleted. REFUNDED and PAID_OFF plans can't be deleted (section 7.5,
+  OWNER CONFIRMATION PENDING) [amended S5-R, 2026-10-23]. PAID_BEFORE_TRACKING entries are not payments for this
+  rule. Only COMPLETED may reopen (to ACTIVE). Owner: plan coordinator. (AE-7, AE-11, AE-27, AE-28) [amended AMD-1]
 - **INV-21 Automatic completion.** An ACTIVE plan with zero SCHEDULED entries becomes COMPLETED in the same
   transaction as the change that removed the last one. PAID_BEFORE_TRACKING counts as non-SCHEDULED, and this
   includes a declaration whose k leaves no SCHEDULED entry. Owner: plan coordinator. (AE-11, AE-27) [amended
@@ -365,7 +393,8 @@ name, OD-1). "TLC" means `TransactionLifecycleCoordinator`. AE-n refers to secti
   (AE-26, AE-27, AE-28, AE-29)
 - **INV-33 Plan category source (AMD-3).**
   - PURCHASE_ATTACHED: `categoryId` = the purchase's `categoryId`, copied exactly at declaration. Null stays null,
-    and there is no fallback or default.
+    and there is no fallback or default. [amended S5-R, 2026-10-23] The category may be null, and an E3 edit may set
+    it to null. A non-null pick must exist (`CATEGORY_NOT_FOUND`).
   - STANDALONE: `categoryId` is required. It must reference an existing spending category the user picked. It is
     checked inside the create transaction (`CATEGORY_REQUIRED` when none is given, `CATEGORY_NOT_FOUND` when it no
     longer exists). An E3 edit may change it to another existing spending category, never to null.
@@ -470,7 +499,8 @@ From brief Q1(b). Each reader consumes the read-only projection port. None reads
 - R3: a REVERSED entry whose expense is not flagged `INSTALLMENT_REVERSED` → re-flag. An expense flagged
   `INSTALLMENT_REVERSED` with no REVERSED entry → clear.
 - R4: a PAID entry whose linked expense currency ≠ plan currency, or whose type is no longer an expense → unlink
-  (same as R2, reason `LINKED_EXPENSE_CURRENCY_CHANGED` / `LINKED_EXPENSE_TYPE_CHANGED`).
+  (same as R2, reason `EXPENSE_REMOVED` for the CANCELLED target; there are no separate currency or type codes)
+  [amended S5-R, 2026-10-23].
 - R5: a PURCHASE_ATTACHED plan whose purchase expense no longer exists → detach (kind → STANDALONE,
   `purchaseExpenseId` → null). Financing cost becomes unavailable.
 - R6: an ACTIVE plan with zero SCHEDULED entries → COMPLETED (INV-21 repair).
@@ -616,7 +646,8 @@ installment expenses are recategorised individually like any expense.
 
 ### 7.0 Declaration preconditions (refusals use bounded codes)
 
-The purchase must exist (checked inside the transaction) and must meet all of the following:
+The purchase must exist (checked inside the transaction by the plan coordinator → otherwise `PURCHASE_NOT_FOUND`
+[amended S5-R, 2026-10-23]) and must meet all of the following:
 - transactionType is a spending type (not income, transfer or refund) → otherwise `NOT_A_SPENDING_EXPENSE`;
 - `isNotMine = false` → otherwise `NOT_MINE`;
 - `isSharedExpense = false` → otherwise `SHARED_NOT_SUPPORTED` (OD-9);
@@ -624,10 +655,15 @@ The purchase must exist (checked inside the transaction) and must meet all of th
 - `spendingExclusionReason = null` and not already a plan purchase → otherwise `ALREADY_DECLARED`;
 - not linked to a recurring occurrence or an installment entry → otherwise `LINKED_ELSEWHERE` (INV-5).
 
-Plan inputs must satisfy all of the following:
+Plan inputs must satisfy all of the following. They are checked in this order and the first failing rule wins
+[amended S5-R, 2026-10-23]:
 - N ∈ [2, 480] → otherwise `INVALID_COUNT`;
-- amounts > 0 → otherwise `INVALID_AMOUNT`;
+- amounts > 0 → otherwise `INVALID_AMOUNT`. An amount that is not finite, rounds to 0 minor units, or has
+  |amount| ≥ 10^9 major units is also `INVALID_AMOUNT` [amended S5-R, 2026-10-23];
 - currency ∈ {EUR, USD} → otherwise `UNSUPPORTED_CURRENCY`;
+- every date in 1970-01-01..2200-12-31 → otherwise `INVALID_DATE`. This covers the input dates (`firstDueDate`,
+  `declaredOnDate`, the purchase civil date when there is one) and every generated due date, including the last
+  one [amended S5-R, 2026-10-23];
 - `firstDueDate` ≥ purchase civil date → otherwise `FIRST_DUE_BEFORE_PURCHASE`;
 - for EQUAL_SPLIT, `totalMinor ≥ N`, so each entry is ≥ 0.01 → otherwise `AMOUNT_TOO_SMALL_FOR_COUNT`;
 - payments already made k ∈ [0, P], where P = the number of REGULAR entries with `dueDate < declaredOnDate` (= today)
@@ -685,13 +721,21 @@ edits the plan, or deletes it (7.5, only without payments) and declares again.
 
 ### 7.5 Delete (undo declaration)
 
-- Allowed only when the plan has no PAID or REVERSED entries (ACTIVE, or CANCELLED without payments). Effect:
+- Allowed only when the plan has no PAID or REVERSED entries and is ACTIVE or CANCELLED. Payments are checked first
+  (`PLAN_HAS_PAYMENTS` from every status). Without payments, COMPLETED, REFUNDED and PAID_OFF are refused
+  `ILLEGAL_TRANSITION` [amended S5-R, 2026-10-23]. Effect:
   entries and plan are removed and the purchase flag is cleared, so the purchase counts in full again on its
   original date. A standalone plan just disappears. PAID_BEFORE_TRACKING entries don't block Delete and are removed
   with the plan (INV-32).
 - With payments: refused (`PLAN_HAS_PAYMENTS`). The user picks Stop, Refund or Pay off. Alternatively, the user
   first deletes or unlinks the installment expenses on standard paths, which reopens the entries, and then deletes.
 - Never deletes expenses (INV-23).
+- **OWNER CONFIRMATION PENDING** [amended S5-R, 2026-10-23]. The S5 code follows the fail-closed reading of this
+  section (ACTIVE or CANCELLED only). The earlier INV-20 wording allowed REFUNDED and PAID_OFF without payments too.
+  - REFUNDED is excluded because Delete clears the purchase flag. A refunded purchase (the money came back) would
+    then count in full again on its original date.
+  - COMPLETED is excluded too. It is not in the list above, and the fail-closed reading doesn't add it.
+  - If the owner wants a wider set, the plan delete row in INV-20, section 3.1 and this section change together.
 
 ### 7.6 Changes to linked expenses made outside the plan
 
@@ -817,11 +861,13 @@ Virtual counting is rejected (Q3), so the question becomes **which fulfilment mo
 ### 11.1 History (B-3)
 
 - History lists plans in COMPLETED, CANCELLED, REFUNDED and PAID_OFF, showing: displayName, currency, start
-  (= first entry due date, PAID_BEFORE_TRACKING entries included), end (= terminal date, or for COMPLETED the
-  latest due date among PAID and PAID_BEFORE_TRACKING entries), final status, total counted (Σ PAID linked expense
-  amounts + payoff; 0 for REFUNDED; PAID_BEFORE_TRACKING adds 0), counts of paid/skipped/cancelled/reversed, the
-  count of PAID_BEFORE_TRACKING entries shown as "k paid before tracking" (only when k > 0), and financing cost
-  (section 9) or "unavailable" (INV-17). [amended AMD-1, AMD-2]
+  (= first REGULAR entry due date, PAID_BEFORE_TRACKING entries included; a PAYOFF entry never sets the start
+  [amended S5-R, 2026-10-23]), end (= terminal date, or for COMPLETED the latest due date among PAID and
+  PAID_BEFORE_TRACKING entries; a COMPLETED plan with no PAID or PAID_BEFORE_TRACKING entry ends at the date it
+  reached COMPLETED, or null if that date is unknown [amended S5-R, 2026-10-23]), final status, total counted
+  (Σ PAID linked expense amounts + payoff; 0 for REFUNDED; PAID_BEFORE_TRACKING adds 0), counts of
+  paid/skipped/cancelled/reversed, the count of PAID_BEFORE_TRACKING entries shown as "k paid before tracking"
+  (only when k > 0), and financing cost (section 9) or "unavailable" (INV-17). [amended AMD-1, AMD-2]
 - The active overview and plan detail show PAID_BEFORE_TRACKING the same way ("n paid · k paid before tracking ·
   m left"). It is separate from paid-so-far (which excludes it) and from remaining scheduled payments (SCHEDULED
   only).

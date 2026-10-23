@@ -789,8 +789,13 @@ class InstallmentPlanArchitectureGuardTest {
 
         const val DAO_PACKAGE_PREFIX = "$ROOT/data/database/dao/"
 
+        /**
+         * Entries are directory prefixes plus one exact file: the schedule exclusivity policy sits outside
+         * the installment package (S5, A9) and is plan code, but the rest of domain/schedule is not.
+         */
         val PLAN_CODE_PREFIXES = listOf(
             "$ROOT/domain/installment/",
+            "$ROOT/domain/schedule/ExpenseScheduleLinkPolicy.kt",
             "$ROOT/service/installment/",
             "$ROOT/ui/screens/installments/"
         )
