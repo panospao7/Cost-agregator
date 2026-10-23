@@ -471,10 +471,10 @@ Context: budget alerts post with the raw `budget.id.toInt()` (`BudgetMonitor.kt:
 - **Assumes TECH-2 (a).**
 - **Write set (source):**
   - `M/service/warranty/WarrantyExpirationWorker.kt` (`:218` → WARRANTY)
-    - `deliverReminder` keeps its parameter list `(Warranty, Int, Long, String, String)`, its name and its DAO call order.
+    - `deliverReminder` keeps its parameter list `(WorkerRunContext, Warranty, Int, Long, String, String)`, its name and its DAO call order. (Orchestrator correction, S7 review: the earlier text omitted the leading `WorkerRunContext` parameter.)
     - Therefore there is **no `db_ownership_policy.yml` amendment (APP-2 not needed)**.
   - `M/service/receiptmatching/ReceiptMatchingWorker.kt` (`:108` → RECEIPT_MATCH)
-    - `notificationPermissionChecker.areNotificationsEnabled()`, the `SecurityException` catch and `requiresNotificationPermission = false` all stay.
+    - `notificationPermissionChecker.areNotificationsEnabled()` and `requiresNotificationPermission = false` stay. For the `SecurityException` catch and the explicit `PERMISSION_DENIED` branch, see the S5a carry-forward (explicit `PERMISSION_DENIED` branch to `RECEIPT_MATCH_NOTIFICATION_SUPPRESSED_PERMISSION_REVOKED`); the defensive catch is kept. (Orchestrator correction, S7 review: replaces the earlier "the `SecurityException` catch ... all stay" wording.)
 - **Write set (tests):**
   - `T/service/warranty/WarrantyExpirationWorkerTest.kt` (modify)
   - `T/service/receiptmatching/ReceiptMatchingWorkerTest.kt` (modify, never delete)

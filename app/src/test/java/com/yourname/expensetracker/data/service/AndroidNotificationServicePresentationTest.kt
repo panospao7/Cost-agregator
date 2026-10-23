@@ -136,6 +136,34 @@ object PresentationFixtures {
         override fun toString(): String = label
     }
 
+    /** Every string reachable from the notification: ticker, every extra key and value (flattened), and the public version. */
+    fun everyString(n: Notification): List<String> {
+        val out = mutableListOf<String>()
+        n.tickerText?.let { out += it.toString() }
+        flattenInto(out, n.extras)
+        n.actions?.forEach {
+            out += it.title.toString()
+            flattenInto(out, it.extras)
+        }
+        n.publicVersion?.let { out += everyString(it) }
+        return out
+    }
+
+    @Suppress("DEPRECATION")
+    private fun flattenInto(out: MutableList<String>, value: Any?) {
+        when (value) {
+            null -> Unit
+            is Bundle -> value.keySet().forEach { key ->
+                out += key
+                flattenInto(out, value.get(key))
+            }
+            is CharSequence -> out += value.toString()
+            is Array<*> -> value.forEach { flattenInto(out, it) }
+            is Iterable<*> -> value.forEach { flattenInto(out, it) }
+            else -> out += value.toString()
+        }
+    }
+
     const val BRIEFING_KEY = "dashboard_home:2026-10-23"
 
     /** The briefing tap data as the Uri builder must emit it: the key's ':' is percent-encoded. A literal, not derived. */
@@ -314,33 +342,8 @@ abstract class AndroidNotificationServicePresentationContract {
     private fun Notification.titleText(): String? = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
     private fun Notification.contentText(): String? = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
 
-    /** Every string reachable from the notification: ticker, every extra key and value (flattened), and the public version. */
-    private fun everyString(n: Notification): List<String> {
-        val out = mutableListOf<String>()
-        n.tickerText?.let { out += it.toString() }
-        flattenInto(out, n.extras)
-        n.actions?.forEach {
-            out += it.title.toString()
-            flattenInto(out, it.extras)
-        }
-        n.publicVersion?.let { out += everyString(it) }
-        return out
-    }
-
-    @Suppress("DEPRECATION")
-    private fun flattenInto(out: MutableList<String>, value: Any?) {
-        when (value) {
-            null -> Unit
-            is Bundle -> value.keySet().forEach { key ->
-                out += key
-                flattenInto(out, value.get(key))
-            }
-            is CharSequence -> out += value.toString()
-            is Array<*> -> value.forEach { flattenInto(out, it) }
-            is Iterable<*> -> value.forEach { flattenInto(out, it) }
-            else -> out += value.toString()
-        }
-    }
+    /** Every string reachable from the notification; shared with the worker tests through [PresentationFixtures]. */
+    private fun everyString(n: Notification): List<String> = PresentationFixtures.everyString(n)
 
     private fun assertNoSentinel(n: Notification, label: String) {
         val all = everyString(n)

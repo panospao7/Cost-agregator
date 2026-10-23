@@ -206,3 +206,35 @@ Residuals/follow-ups:
 - Anomaly debug logs with expense ids (:83/:112/:119/:124/:154/:160/:169/:192/:218 with throwable/:241): debug-only; follow-up for a later log-hygiene pass.
 - WarrantyExpirationWorker / ReceiptMatchingWorker legacy calls → S7.
 Next: S7 (warranty + receipt workers onto kind-aware methods; explicit receipt PERMISSION_DENIED → RECEIPT_MATCH_NOTIFICATION_SUPPRESSED_PERMISSION_REVOKED), then S11, then S8.
+
+## S7 (2026-10-23) — implemented (validation pending)
+Source:
+- WarrantyExpirationWorker.deliverReminder: sendBudgetAlert → sendBudgetAlertForKind(WARRANTY, ...). Signature, name, DAO call order and checkpoints unchanged (no db_ownership_policy.yml change). PERMISSION_DENIED falls to the existing markFailed("notification_not_delivered") branch (retryable, no addNotificationsSent).
+- ReceiptMatchingWorker: postBudgetAlert → postBudgetAlertForKind(RECEIPT_MATCH, NotificationId.forReceipt, ...). The result is now an exhaustive `when` (the NOT_DELIVERED branch became explicit after review): DELIVERED → addNotificationsSent; PERMISSION_DENIED (new, carry-forward) → constant Timber.w + recordNotificationSuppressed(RECEIPT_MATCH_NOTIFICATION_SUPPRESSED_PERMISSION_REVOKED, errorClass = constant "SecurityException"), no addRowsSkipped; NOT_DELIVERED → addRowsSkipped + NOT_DELIVERED suppression (unchanged). areNotificationsEnabled() pre-check, requiresNotificationPermission = false and the defensive SecurityException / Exception catches kept; no new catch.
+Tests (modified, never deleted):
+- WarrantyExpirationWorkerTest: every legacy sendBudgetAlert stub/verify retargeted to coEvery/coVerify sendBudgetAlertForKind(any x4); new AE-5/AE-13/AE-11 tests (kind WARRANTY, id and texts, never BUDGET/legacy, PERMISSION_DENIED → FAILED, DELIVERED/NOT_DELIVERED counters).
+- ReceiptMatchingWorkerTest: every postBudgetAlert stub/verify retargeted to postBudgetAlertForKind(any x4); new AE-13/AE-11/AE-111 tests, including a real AndroidNotificationService with a throwing NotificationManager (parity with a PERMISSION_DENIED result) and a real-manager DISCREET test (sentinel absent, channel budget_alerts, id forReceipt, tap home + CLEAR_TASK).
+Validation requested: targeted *WarrantyExpirationWorker*, *ReceiptMatchingWorker*, *SourceScanningArchitectureGuardTest*, *WorkerGuardArchitectureGuardTest*; shards runtime-ui, architecture-contracts; registered guards worker, db_access, cancellation, pii_logging.
+
+Intended TECH-9 behaviour change (warranty, owner decision C6):
+- Before S7 a platform SecurityException escaped deliverReminder: the run failed, the guard recorded WORKER_NOTIFICATION_PERMISSION_DENIED, and the delivery row stayed CLAIMED until stale-claim recovery (1 hour).
+- Now the service maps it to PERMISSION_DENIED, deliverReminder does markFailed("notification_not_delivered") (row FAILED, re-claimable), the loop continues and the run succeeds. No addNotificationsSent.
+- The guard's pre-check (requiresNotificationPermission) still reports NOTIFICATION_PERMISSION_DENIED on the next run when notifications are disabled.
+
+S7 review verdicts (2026-10-23): reviewer-strict part 1 and part 2 ACCEPT / ACCEPT-WITH-MINORS; architecture-guardian ACCEPT-WITH-MINORS; privacy-security-guardian ACCEPT-WITH-MINORS. No blockers.
+Review minors applied (uncommitted, validation pending):
+- ReceiptMatchingWorker: the `else ->` branch of the DeliveryResult `when` is now an explicit NOT_DELIVERED branch (no else), so a new enum value forces a compile-time decision. Behaviour unchanged.
+- WarrantyExpirationWorker: class and deliverReminder KDoc now state PERMISSION_DENIED → markFailed, same as NOT_DELIVERED (TECH-9). The warranty check stays an if (DELIVERED vs everything else) by design.
+- PresentationFixtures (AndroidNotificationServicePresentationTest.kt) now owns the recursive everyString / flattenInto; the presentation contract delegates to it and ReceiptMatchingWorkerTest and WarrantyExpirationWorkerTest import it (the earlier receipt scan only read top-level extras).
+- ReceiptMatchingWorkerTest: DISCREET test strengthened through a shared assertion (title/text equal notif_discreet_receipt_match_*, differ from the BUDGET constants, "Receipt from" absent, explicit MainActivity component, FLAG_IMMUTABLE, generic public pair); new variant with an unreadable settings store (IO_ERROR) → DISCREET; the throwing-NotificationManager parity test now asserts the sentinel merchant is absent from ShadowLog and a planted Timber tree.
+- WarrantyExpirationWorkerTest: new real-service DISCREET test (product/store names and "7 days" absent, WARRANTY discreet constants, budget_alerts and id unchanged); new real-service SecurityException test (row FAILED "notification_not_delivered", no addNotificationsSent for it, run continues to the next reminder); new cancellation test at the sendBudgetAlertForKind suspension point (propagates, row stays CLAIMED, no outcome write).
+- Plan S7 text corrected (orchestrator corrections): deliverReminder signature is (WorkerRunContext, Warranty, Int, Long, String, String); the "SecurityException catch ... all stay" wording now points to the carry-forward explicit PERMISSION_DENIED branch (defensive catch kept).
+Re-validation requested after the minors: same targeted set as above plus *AndroidNotificationServicePresentation* (PresentationFixtures moved code).
+Next: S11, then S8.
+
+## S7 DONE (2026-10-23)
+- Validation (initial): targeted vr-20261023-145426-5ecc5484, guards worker vr-20261023-150145-9b28c320 / db_access vr-20261023-150203-651c62e4 / cancellation vr-20261023-150437-20b972d7 / pii_logging vr-20261023-150455-f5e2df90, shards runtime-ui vr-20261023-150510-2ae9521d / architecture-contracts vr-20261023-150642-15d538ac — all PASS.
+- After review fixes: targeted (incl. *AndroidNotificationServicePresentation*) vr-20261023-162037-4c9e291a, worker vr-20261023-163112-975c7883, cancellation vr-20261023-163130-90943d04, pii_logging vr-20261023-163148-1519d4fa — all PASS. (Source delta after the first run: explicit NOT_DELIVERED branch + KDoc only, so db_access and the shards were not rerun.)
+- Reviews: reviewer-strict ACCEPT-WITH-MINORS (warranty part) + ACCEPT (receipt part; whole-slice attempts died twice on API timeouts, so it was split), architecture-guardian ACCEPT-WITH-MINORS, privacy-security-guardian ACCEPT-WITH-MINORS. Minors applied. Optional nit not taken: helper to dedupe the PERMISSION_REVOKED mapping between the new branch and the defensive catch.
+- Pre-existing follow-ups (log hygiene): ReceiptMatchingWorker Timber.w(e, …) at ~:151/:162/:254 log full exceptions (debug-only trees).
+Next: S11 (manifest: remove BROWSABLE, OD-3a), then S8 (bill reminder worker applies the decision).
