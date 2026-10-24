@@ -519,3 +519,8 @@ Next: S4c (analytics/trends/merchant/location, 13 queries per A12.2).
 - Validation: db_access vr-20261024-030839-d4f543ea, targeted vr-20261024-073259-6224a801, data vr-20261024-075927-52b5c748, integration-golden vr-20261024-082428-7ae00ade — all PASS (two results logged by the orchestrator after the queue driver died; result.json files verified).
 - Wording correction (both reviewers): besides the 13 token swaps, the edit tool dropped two trailing spaces — getMerchantTotalsBetween (`WHERE ${SPENDING_TYPE_SQL} `) and getRecurringCandidates (`HAVING transactionCount >= 2 `). SQLite-neutral; accepted and recorded (S4b precedent) rather than re-edited after validation. The test's pre-edit copies keep the base trailing spaces via `${SP}` and are byte-identical to fe0a62cc. So the S4c section's "token-level / HAVING untouched / no deviations" claims hold up to these two whitespace trims.
 Next: MEC lane stale pin fix (DbGuardPolicyFixtureTest "exactly 430" → 432, found by the ai-fixes final review) + architecture-contracts shard; then S4d (needs owner O1/O2/O3).
+
+## MEC stale policy pin fixed (2026-10-24)
+- DbGuardPolicyFixtureTest "exactly 430" → 432 (S3 added setSpendingExclusionDbOnly's two exact identities; the python pin moved in S3, the Kotlin pin was missed). Found by the ai-fixes final review (merge note 11).
+- Validation: targeted *DbGuardPolicyFixtureTest* vr-20261024-084335-a1f2f9ce PASS; shard architecture-contracts vr-20261024-084536-487a2c08 PASS.
+- Next: S4d (blocked on owner O1/O2/O3).

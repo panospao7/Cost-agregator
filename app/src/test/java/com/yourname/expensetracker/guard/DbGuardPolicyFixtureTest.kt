@@ -25,7 +25,7 @@ import java.io.File
  *   BOTH sections (a cross-section duplicate fails closed), and no
  *   duplicate/wildcard/raw/write tuples.
      * - **Ownership policy:** The active `db_ownership_policy.yml` is the
-     *   activated v2 document (`schemaVersion: 2`, 430 entries — one entry per
+     *   activated v2 document (`schemaVersion: 2`, 432 entries — one entry per
      *   canonical mutation key, with `ownerFqcn` / `daoAccessor` / `barrierMode`
      *   fields). The fixture parser accepts the v2 document header and entry
      *   schema and maps v2 fields onto the shared [ParsedEntry] model; legacy
@@ -1068,7 +1068,7 @@ class DbGuardPolicyFixtureTest {
     // ══════════════════════════════════════════════════════════════════
 
     @Test
-    fun `manifest — ownership policy has exactly 430 entries`() {
+    fun `manifest — ownership policy has exactly 432 entries`() {
         // Release 1.0 G3 S4 (owner pre-approved shrink): the two direct transactionEventDao.insert
         // identities (NotificationRepository, ReviewQueueRepository) were removed: 429 -> 427.
         // Release 1.0 R21 S1 adds one approved exact identity
@@ -1077,8 +1077,10 @@ class DbGuardPolicyFixtureTest {
         // Release 1.0 R21 review adds two approved exact identities
         // (RecurringLifecycleCoordinator.updateOccurrenceStatus / plannedExpenseDao.updateStatus
         // and reminderDeliveryDao.suppressOpenDeliveriesForOccurrence): 428 -> 430.
+        // Loan-installments S3 adds two exact identities (TransactionLifecycleCoordinator.setSpendingExclusionDbOnly:
+        // expenseDao.updateSpendingExclusionReason + transactionEventDao.insert): 430 -> 432.
         val entries = parseEntries(ownershipPolicyFile)
-        assertEquals("Ownership policy must have exactly 430 entries", 430, entries.size)
+        assertEquals("Ownership policy must have exactly 432 entries", 432, entries.size)
     }
 
     @Test
