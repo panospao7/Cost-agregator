@@ -72,6 +72,10 @@ interface NotificationService {
      * rebuilding or posting one notification skips only that notification, counts it as failed and records
      * `NOTIF_REPOST_FAILED` (class name only); the rest are still re-posted. `CancellationException`
      * propagates. Callers invoke it only after a committed write that turned discreet on (INV-46).
+     *
+     * Consecutive re-posts are paced (a pause before every re-post) to stay under the platform enqueue rate.
+     * The count of re-posts is NOT a confirmation that the update is shown: the platform can still drop an
+     * update silently, for example after posts by other code during the sweep.
      */
     suspend fun repostActiveAsDiscreet(): RepostResult
 
@@ -79,6 +83,9 @@ interface NotificationService {
      * Bounded outcome of [repostActiveAsDiscreet]: counts only. [failed] counts each notification that could
      * not be re-posted, and counts a failure of the active-notifications query itself as 1 (with
      * [reposted] 0 and one `NOTIF_REPOST_FAILED`).
+     *
+     * [reposted] (and the `COUNT` of `NOTIF_REPOSTED_DISCREET`) counts `notify()` calls accepted without
+     * throwing, NOT updates shown: the platform may drop a rate-limited update without any error.
      */
     data class RepostResult(val reposted: Int, val failed: Int) {
         companion object {

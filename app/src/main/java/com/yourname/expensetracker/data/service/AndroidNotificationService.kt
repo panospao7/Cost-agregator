@@ -24,17 +24,49 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
+
+/**
+ * Suspends the discreet re-post sweep between two consecutive notify calls so the sweep stays under the
+ * platform enqueue rate. A fun interface so unit tests can record the spacing and run without waiting.
+ * The production pacer is [AndroidNotificationService.DELAY_PACER]; [pause] is cancellable.
+ */
+internal fun interface SweepPacer {
+    suspend fun pause(millis: Long)
+}
 
 @Singleton
-class AndroidNotificationService @Inject constructor(
-    @ApplicationContext private val context: Context,
+class AndroidNotificationService internal constructor(
+    private val context: Context,
     private val presentationResolver: NotificationPresentationResolver,
     private val presentationApplier: NotificationPresentationApplier,
-    private val privacyDiagnostics: PrivacyDiagnosticsEmitter
+    private val privacyDiagnostics: PrivacyDiagnosticsEmitter,
+    private val sweepPacer: SweepPacer
 ) : NotificationService {
+
+    // Hilt entry point: the pacer is not part of the graph, so the injected constructor fixes the real delay.
+    @Inject
+    constructor(
+        @ApplicationContext context: Context,
+        presentationResolver: NotificationPresentationResolver,
+        presentationApplier: NotificationPresentationApplier,
+        privacyDiagnostics: PrivacyDiagnosticsEmitter
+    ) : this(context, presentationResolver, presentationApplier, privacyDiagnostics, DELAY_PACER)
 
     companion object {
         private const val TAG = "AndroidNotificationService"
+
+        /** Production pacer: a plain cancellable coroutine delay. */
+        internal val DELAY_PACER = SweepPacer { millis -> delay(millis) }
+
+        /**
+         * Fixed gap between two consecutive re-posts of the discreet sweep. The platform silently drops
+         * updates to already-posted notifications once a package exceeds its enqueue rate (default
+         * 5 per second, notify does not throw), which would leave a FULL notification in place. 300 ms keeps
+         * the sweep at about 3.3 posts per second; with one foreign post landing just before a re-post the
+         * worst case is about 4.2 per second, a margin under the limit.
+         */
+        internal const val SWEEP_REPOST_SPACING_MS = 300L
 
         // The three channel ids are read by NotificationKindClassifier (S9b); one literal each.
         internal const val BUDGET_CHANNEL_ID = "budget_alerts"
@@ -214,6 +246,21 @@ class AndroidNotificationService @Inject constructor(
     // only the id, tag, channel, content intent, action PendingIntents (action policy re-applied) and the
     // post time. Titles come from resources per kind. It copies no text, extra or style. The marker is
     // read only to classify, and the rebuilt notification gets a fresh marker from the applier.
+    //
+    // Pacing: the platform drops (without throwing) updates to already-posted notifications once the package
+    // exceeds its enqueue rate (max_notification_enqueue_rate, default 5 per second). A dropped re-post would
+    // leave the FULL content on screen, a fail-open privacy gap, so consecutive notify calls are spaced by
+    // SWEEP_REPOST_SPACING_MS, including BEFORE the first re-post, so a post from any source just before the
+    // sweep cannot push the first update over the rate. Total added time is bounded by
+    // re-posts x SWEEP_REPOST_SPACING_MS. The pause is cancellable and CancellationException propagates; the
+    // NonCancellable scope comes from the caller (AppLockPrivacySettingsViewModel runs the trigger inside
+    // appScope.launch { withContext(NonCancellable) { ... } }), not from DiscreetRepostTrigger. Any other caller
+    // of the trigger (for example the lock-enable path, S18) must do the same. Skipped notifications cost no
+    // pause.
+    // Residual risk: posts by other code DURING the sweep are not paced here. Any budget, anomaly or bill post
+    // within 300 ms before a sweep update can still make the platform drop that update; the exposed window is
+    // about N x 300 ms for N re-posts. BillReminderWorker posts directly through NotificationManager, so this
+    // service cannot track it. A dropped update leaves the FULL content until it is replaced or dismissed.
 
     override suspend fun repostActiveAsDiscreet(): NotificationService.RepostResult {
         val active: Array<StatusBarNotification> = try {
@@ -239,6 +286,7 @@ class AndroidNotificationService @Inject constructor(
                     rawMarker = NotificationKindMarker.read(original.notification)
                 ) ?: continue
 
+                sweepPacer.pause(SWEEP_REPOST_SPACING_MS)
                 notificationManager.notify(original.tag, original.id, rebuildDiscreet(original, kind))
                 reposted++
             } catch (e: CancellationException) {

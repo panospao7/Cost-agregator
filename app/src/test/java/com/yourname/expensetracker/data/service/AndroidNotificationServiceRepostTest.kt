@@ -98,7 +98,7 @@ class AndroidNotificationServiceRepostTest {
     private fun realManager(): NotificationManager =
         appContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
-    private fun serviceWith(manager: NotificationManager): AndroidNotificationService {
+    private fun serviceWith(manager: NotificationManager, pacer: SweepPacer? = null): AndroidNotificationService {
         val context = object : ContextWrapper(appContext) {
             override fun getSystemService(name: String): Any? =
                 if (name == Context.NOTIFICATION_SERVICE) manager else super.getSystemService(name)
@@ -107,7 +107,12 @@ class AndroidNotificationServiceRepostTest {
             AppLockSettingsLoadState.Loaded(AppLockPrivacySettings(discreetNotifications = true))
         }
         val resolver = NotificationPresentationResolver(repo, mockk<PrivacyDiagnosticsEmitter>(relaxed = true), scope)
-        return AndroidNotificationService(context, resolver, NotificationPresentationApplier(appContext, texts), emitter)
+        val applier = NotificationPresentationApplier(appContext, texts)
+        return if (pacer == null) {
+            AndroidNotificationService(context, resolver, applier, emitter)
+        } else {
+            AndroidNotificationService(context, resolver, applier, emitter, pacer)
+        }
     }
 
     private fun service(): AndroidNotificationService = serviceWith(realManager())
@@ -347,6 +352,71 @@ class AndroidNotificationServiceRepostTest {
 
         assertThrows(CancellationException::class.java) { runBlocking { service.repostActiveAsDiscreet() } }
         assertTrue(emitted.isEmpty())
+    }
+
+    // --- pacing (platform enqueue rate) -----------------------------------------------------------
+
+    @Test
+    fun `seven active notifications are re-posted with a 300 ms pause before every re-post including the first`() {
+        val ids = listOf(7, 8, 9, 10, 11, 12, 13)
+        ids.forEach { postOriginal(it, BUDGET, marker = null) }
+        val pauses = mutableListOf<Long>()
+        val manager = mockk<NotificationManager>(relaxed = true)
+        every { manager.activeNotifications } returns realManager().activeNotifications
+        val notifiedAtPauseCount = mutableListOf<Int>()
+        every { manager.notify(any<String>(), any(), any()) } answers { notifiedAtPauseCount += pauses.size }
+
+        val result = sweep(serviceWith(manager, SweepPacer { pauses += it }))
+
+        assertEquals(NotificationService.RepostResult(reposted = 7, failed = 0), result)
+        assertEquals(List(7) { AndroidNotificationService.SWEEP_REPOST_SPACING_MS }, pauses)
+        assertEquals(300L, AndroidNotificationService.SWEEP_REPOST_SPACING_MS)
+        // Every re-post, the first included, is preceded by exactly one more pause.
+        assertEquals(listOf(1, 2, 3, 4, 5, 6, 7), notifiedAtPauseCount)
+    }
+
+    @Test
+    fun `a skipped notification costs no pause`() {
+        postOriginal(7, BUDGET, marker = null)
+        postOriginal(99, FGS, marker = null) // not a sweep kind: classified null, skipped
+        val pauses = mutableListOf<Long>()
+
+        val result = sweep(serviceWith(realManager(), SweepPacer { pauses += it }))
+
+        assertEquals(NotificationService.RepostResult(reposted = 1, failed = 0), result)
+        assertEquals("one pause for the one re-post, none for the skipped notification", listOf(300L), pauses)
+    }
+
+    @Test
+    fun `a sweep with only skipped notifications pauses never`() {
+        postOriginal(99, FGS, marker = null) // not a sweep kind: classified null, skipped
+        postOriginal(9, BUDGET, marker = null) { builder -> builder.setGroup("ranker_group").setGroupSummary(true) }
+        val pauses = mutableListOf<Long>()
+
+        val result = sweep(serviceWith(realManager(), SweepPacer { pauses += it }))
+
+        assertEquals(NotificationService.RepostResult.NONE, result)
+        assertTrue(pauses.isEmpty())
+    }
+
+    @Test
+    fun `a cancellation while pacing propagates, stops the sweep and records nothing`() {
+        listOf(7, 8, 9, 10, 11, 12, 13).forEach { postOriginal(it, BUDGET, marker = null) }
+        val manager = mockk<NotificationManager>(relaxed = true)
+        every { manager.activeNotifications } returns realManager().activeNotifications
+        var pauseCalls = 0
+        val pacer = SweepPacer {
+            pauseCalls++
+            if (pauseCalls == 2) throw CancellationException("cancelled while pacing")
+        }
+        val service = serviceWith(manager, pacer)
+
+        assertThrows(CancellationException::class.java) { runBlocking { service.repostActiveAsDiscreet() } }
+
+        assertEquals(2, pauseCalls)
+        // The pause precedes each notify: the first re-post ran, the second was cancelled during its pause.
+        verify(exactly = 1) { manager.notify(any<String>(), any(), any()) }
+        assertTrue("no failure and no completed count is recorded", emitted.isEmpty())
     }
 
     // --- AE-112 ----------------------------------------------------------------------------------
