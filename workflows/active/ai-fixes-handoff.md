@@ -556,3 +556,17 @@ Merge notes (feature/app-lock-privacy-mode):
 - Existing (not B3a) log-hygiene candidates: DailyBriefingWorker ~:138 Timber.w(e, …) on timeout; ~:155 `${result.error}` in a log message; delivered notification shows summary.take(180) (lock-screen review, app-lock lane covers presentation at merge).
 - Z refresh: CODEBASE_INVENTORY.md:667 still says requiresNotificationPermission for WarrantyExpirationWorker (snapshot).
 Next: B3b (proactive copy + notifications-blocked caption) — include the INV-25 disclosure; then Z.
+
+## B3b (2026-10-24) — implemented
+- Status: implemented by feature-implementer; NOT validated, NOT reviewed yet. Next: cheap reviewer, then `targeted-unit-test "*AiSettingsViewModelTest*"` and `lint`, then Z.
+- Source: `AiSettingsViewModel.kt` (new ctor param `NotificationPermissionChecker` from `domain.workers`, already Hilt-bound in `WorkerModule`; `AiSettingsUiState.notificationsBlocked`, re-read only at the existing refresh point `refreshRuntimeStatus()`, which the settings-collect in `init` and the Refresh button both call; read failure -> not blocked, class name only logged; no permission request, no polling). `AiSettingsScreen.kt` (`ai_proactive_desc` under the proactive row, `ai_proactive_notifications_blocked` caption when blocked; no button, no deep link).
+- Strings (values, values-es, values-el; es/el best effort, owner review): new `ai_proactive_desc` (UX 2.4 text + INV-25 disclosure that the briefing is generated in the background via cloud AI whenever Enable AI, Dashboard briefing and Allow cloud AI are on, regardless of this toggle), new `ai_proactive_notifications_blocked`. CHANGED existing text: `ai_toggle_proactive` "Proactive AI briefings" -> "Notify me when my daily briefing is ready" (UX 2.4; es/el had no entry, added). es/el refer to the English toggle labels (Enable AI, Dashboard briefing, Allow cloud AI) because those toggles are not translated in es/el.
+- Tests: `AiSettingsViewModelTest` (ctor updated with a mockk checker defaulting to enabled; 6 new tests: default unblocked, blocked surfaces, re-read both directions, settings emission re-read, checker throws -> not blocked, only `areNotificationsEnabled` touched via `confirmVerified`).
+- Residual: state is not re-read on return from system settings until the user taps Refresh or a setting changes (by design: no new polling/lifecycle hook). Caption is shown whenever blocked, regardless of the proactive toggle. If an architecture guard forbids ui ViewModels importing `domain.workers`, adjust at validation (not expected: domain interface).
+
+## B3b DONE (2026-10-24)
+- Review: cheap review + PSG copy honesty ACCEPT-WITH-MINORS (INV-25 disclosure honest in en/es/el; caption is state-read only).
+- Validation: targeted (*AiSettingsViewModelTest*, *ArchitectureGuardTest*) vr-20261024-002009-2e8d72ac PASS; lint vr-20261024-002426-d4fa7e56 PASS.
+- Carry to Z: (1) update ux-flows.md §2.4 to the shipped ai_proactive_desc (deliberate 4th sentence = INV-25 disclosure; conditional so truthful for on-device-only users); (2) static-guards at the bundle gate (first UI → domain.workers import); (3) translation review: es/el prose names the English toggle labels (Enable AI / Dashboard briefing / Allow cloud AI) — drifts if those get translated; (4) UX nuance: blocked caption refreshes only at existing refresh points (not on resume).
+- Owner-visible: ai_toggle_proactive renamed "Notify me when my daily briefing is ready" (UX §2.4).
+Next: Z (closeout + bundle acceptance gate; reviewer-strict in a fresh session).

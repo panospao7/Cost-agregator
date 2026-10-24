@@ -20,6 +20,7 @@ import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.GetAiRuntimeStatusUseCase
 import com.yourname.expensetracker.domain.ai.usecase.SyncProactiveBriefingWorkUseCase
+import com.yourname.expensetracker.domain.workers.NotificationPermissionChecker
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -46,7 +47,12 @@ data class AiSettingsUiState(
     /** S11-007: non-null when a settings write failed (INV-2: string resource, never exception text) */
     val settingsWriteError: UiText? = null,
     /** S11-002: non-null (reason string resource) when cloud AI is blocked by privacy/environment */
-    val effectiveCloudBlocked: UiText? = null
+    val effectiveCloudBlocked: UiText? = null,
+    /**
+     * ai-fixes B3b (G2-10 / UX-Q-3): true only when the OS reports notifications are disabled for the app.
+     * State read only; the settings screen never requests the permission or deep links to system settings.
+     */
+    val notificationsBlocked: Boolean = false
 )
 
 @HiltViewModel
@@ -58,7 +64,9 @@ class AiSettingsViewModel @Inject constructor(
     private val secureKeyStorage: SecureKeyStorage,
     private val privacyGate: PrivacyGate,
     /** S11-003: Injected tester — no OkHttp construction in ViewModel */
-    private val connectionTester: com.yourname.expensetracker.domain.ai.service.CloudProviderConnectionTester
+    private val connectionTester: com.yourname.expensetracker.domain.ai.service.CloudProviderConnectionTester,
+    /** ai-fixes B3b: read-only notification-enabled state; no permission request API is used here. */
+    private val notificationPermissionChecker: NotificationPermissionChecker
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(AiSettingsUiState())
@@ -92,7 +100,11 @@ class AiSettingsViewModel @Inject constructor(
         runtimeRefreshJob?.cancel()
         runtimeRefreshJob = viewModelScope.launch {
             try {
-                _uiState.value = _uiState.value.copy(isRefreshingRuntime = true)
+                // B3b: re-read the OS notification state at this (existing) refresh point only.
+                _uiState.value = _uiState.value.copy(
+                    isRefreshingRuntime = true,
+                    notificationsBlocked = readNotificationsBlocked()
+                )
                 val summary = getAiRuntimeStatusUseCase(
                     capabilities = listOf(
                         AiCapability.QUERY_INTERPRETATION,
@@ -141,6 +153,18 @@ class AiSettingsViewModel @Inject constructor(
                 }
             }
         }
+    }
+
+    /**
+     * Fail-quiet read: if the platform check throws, report "not blocked" so the caption never
+     * makes a claim we could not verify. Cancellation propagates.
+     */
+    private fun readNotificationsBlocked(): Boolean = try {
+        !notificationPermissionChecker.areNotificationsEnabled()
+    } catch (e: Exception) {
+        if (e is CancellationException) throw e
+        Timber.w("Notification state read failed (%s)", DiagnosticThrowableSummary.className(e))
+        false
     }
 
     fun updateApiKeyInput(value: String) {

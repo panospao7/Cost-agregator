@@ -317,6 +317,21 @@ fun AiSettingsScreen(
                         settings.proactiveBriefingsEnabled,
                         viewModel::setProactiveBriefingsEnabled
                     )
+                    // B3b (UX 2.4, INV-24/25): the toggle controls only the notification; the briefing
+                    // itself is generated in the background whenever the arming predicate holds.
+                    Text(
+                        text = stringResource(R.string.ai_proactive_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    // G2-10 / UX-Q-3: caption only. No permission request, no settings deep link, no button.
+                    if (uiState.notificationsBlocked) {
+                        Text(
+                            text = stringResource(R.string.ai_proactive_notifications_blocked),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     ToggleRow(
                         stringResource(R.string.ai_toggle_quick_save),
                         settings.receiptQuickSaveEnabled,

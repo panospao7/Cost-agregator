@@ -2046,7 +2046,9 @@
     <string name="ai_toggle_store_history">Store conversation history</string>
     <string name="ai_section_experimental">Phase 4A Experimental</string>
     <string name="ai_section_experimental_desc">Turn on the first guarded automation features. These stay opt-in and keep final confirmation or read-only behavior.</string>
-    <string name="ai_toggle_proactive">Proactive AI briefings</string>
+    <string name="ai_toggle_proactive">Notify me when my daily briefing is ready</string>
+    <string name="ai_proactive_desc">Turning this off does not hide your briefing. It still appears on Home. This only controls the notification. While Enable AI, Dashboard briefing and Allow cloud AI are all on, the daily briefing is generated in the background using cloud AI, whether or not this is on.</string>
+    <string name="ai_proactive_notifications_blocked">Notifications are blocked for this app in system settings, so no alert will be shown. Your briefing still appears on Home.</string>
     <string name="ai_toggle_quick_save">Receipt quick save</string>
     <string name="ai_toggle_quick_approve">Review quick approve</string>
     <string name="ai_experimental_desc">Receipt quick save and review quick approve stay behind confirmation and still use the existing validation and approval paths.</string>

@@ -17,12 +17,15 @@ import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.GetAiRuntimeStatusUseCase
 import com.yourname.expensetracker.domain.ai.usecase.SyncProactiveBriefingWorkUseCase
 import com.yourname.expensetracker.data.security.SecureKeyStorage
+import com.yourname.expensetracker.domain.workers.NotificationPermissionChecker
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.confirmVerified
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
+import io.mockk.verify
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -47,6 +50,7 @@ class AiSettingsViewModelTest : ViewModelTestUtils() {
     private lateinit var settingsFlow: MutableStateFlow<AiSettings>
     private lateinit var viewModel: AiSettingsViewModel
     private val connectionTester = mockk<CloudProviderConnectionTester>()
+    private lateinit var notificationPermissionChecker: NotificationPermissionChecker
 
     @Before
     override fun setup() {
@@ -56,6 +60,8 @@ class AiSettingsViewModelTest : ViewModelTestUtils() {
         aiRuntimeDiagnostics = mockk(relaxed = true)
         syncProactiveBriefingWorkUseCase = mockk(relaxed = true)
         secureKeyStorage = mockk(relaxed = true)
+        notificationPermissionChecker = mockk()
+        every { notificationPermissionChecker.areNotificationsEnabled() } returns true
         settingsFlow = MutableStateFlow(AiSettings(aiEnabled = true, allowOnDeviceAi = true))
 
         every { aiSettingsRepository.settings() } returns settingsFlow
@@ -74,7 +80,8 @@ class AiSettingsViewModelTest : ViewModelTestUtils() {
             syncProactiveBriefingWorkUseCase = syncProactiveBriefingWorkUseCase,
             secureKeyStorage = secureKeyStorage,
             privacyGate = mockk(relaxed = true),
-            connectionTester = connectionTester
+            connectionTester = connectionTester,
+            notificationPermissionChecker = notificationPermissionChecker
         )
     }
 
@@ -597,6 +604,74 @@ class AiSettingsViewModelTest : ViewModelTestUtils() {
         viewModel.removeApiKey()
         assertEquals(UiText.StringResource(R.string.ai_key_removed), viewModel.uiState.value.connectionTestMessage)
         assertNull(viewModel.uiState.value.apiKeyValidationMessage)
+    }
+
+    // ai-fixes B3b (G2-10 / UX-Q-3): state read only; surfaced at the existing refresh points.
+    @Test
+    fun `notificationsBlocked is false when the checker reports notifications enabled`() = runTest(testDispatcher) {
+        advanceUntilIdle()
+
+        assertFalse(viewModel.uiState.value.notificationsBlocked)
+    }
+
+    @Test
+    fun `notificationsBlocked surfaces when the checker returns false`() = runTest(testDispatcher) {
+        every { notificationPermissionChecker.areNotificationsEnabled() } returns false
+
+        viewModel.refreshRuntimeStatus()
+        advanceUntilIdle()
+
+        assertTrue(viewModel.uiState.value.notificationsBlocked)
+    }
+
+    @Test
+    fun `refresh re-reads notification state in both directions`() = runTest(testDispatcher) {
+        advanceUntilIdle()
+        assertFalse(viewModel.uiState.value.notificationsBlocked)
+
+        every { notificationPermissionChecker.areNotificationsEnabled() } returns false
+        viewModel.refreshRuntimeStatus()
+        advanceUntilIdle()
+        assertTrue(viewModel.uiState.value.notificationsBlocked)
+
+        every { notificationPermissionChecker.areNotificationsEnabled() } returns true
+        viewModel.refreshRuntimeStatus()
+        advanceUntilIdle()
+        assertFalse(viewModel.uiState.value.notificationsBlocked)
+    }
+
+    @Test
+    fun `settings emission re-reads notification state through the existing refresh point`() = runTest(testDispatcher) {
+        advanceUntilIdle()
+        every { notificationPermissionChecker.areNotificationsEnabled() } returns false
+
+        settingsFlow.value = settingsFlow.value.copy(proactiveBriefingsEnabled = true)
+        advanceUntilIdle()
+
+        assertTrue(viewModel.uiState.value.notificationsBlocked)
+    }
+
+    @Test
+    fun `notification state read failure reports not blocked and does not break refresh`() = runTest(testDispatcher) {
+        every { notificationPermissionChecker.areNotificationsEnabled() } throws IllegalStateException(rawPath)
+
+        viewModel.refreshRuntimeStatus()
+        advanceUntilIdle()
+
+        assertFalse(viewModel.uiState.value.notificationsBlocked)
+        assertEquals(1234L, viewModel.uiState.value.runtimeSummary.lastRefreshedAt)
+        assertFalse(viewModel.uiState.value.isRefreshingRuntime)
+    }
+
+    @Test
+    fun `notification state is read only through areNotificationsEnabled`() = runTest(testDispatcher) {
+        every { notificationPermissionChecker.areNotificationsEnabled() } returns false
+
+        viewModel.refreshRuntimeStatus()
+        advanceUntilIdle()
+
+        verify(atLeast = 1) { notificationPermissionChecker.areNotificationsEnabled() }
+        confirmVerified(notificationPermissionChecker)
     }
 
     private fun offlineSummary(networkAvailable: Boolean, wifiConnected: Boolean) = AiRuntimeStatusSummary(

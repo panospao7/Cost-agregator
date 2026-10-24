@@ -181,6 +181,10 @@
     <string name="currency_home_switch_loading">Έλεγχος του κύριου νομίσματος…</string>
     <string name="currency_home_switch_unavailable">Δεν είναι δυνατή η ανάγνωση του κύριου νομίσματος αυτή τη στιγμή. Μπορείτε να επιλέξετε νέο· θα σας ζητηθεί πρώτα επιβεβαίωση.</string>
     <string name="currency_home_switch_error_write_failed">Δεν ήταν δυνατή η αλλαγή του κύριου νομίσματος. Δοκιμάστε ξανά.</string>
+    <!-- ai-fixes B3b. Best-effort translation, pending owner review. -->
+    <string name="ai_toggle_proactive">Ειδοποίησέ με όταν είναι έτοιμη η ημερήσια ενημέρωσή μου</string>
+    <string name="ai_proactive_desc">Η απενεργοποίηση δεν κρύβει την ενημέρωσή σας. Εμφανίζεται κανονικά στην Αρχική. Ελέγχει μόνο την ειδοποίηση. Όσο είναι ενεργά το Enable AI, το Dashboard briefing και το Allow cloud AI, η ημερήσια ενημέρωση δημιουργείται στο παρασκήνιο με cloud AI, είτε αυτή η επιλογή είναι ενεργή είτε όχι.</string>
+    <string name="ai_proactive_notifications_blocked">Οι ειδοποιήσεις είναι αποκλεισμένες για αυτή την εφαρμογή στις ρυθμίσεις συστήματος, επομένως δεν θα εμφανιστεί ειδοποίηση. Η ενημέρωσή σας εμφανίζεται κανονικά στην Αρχική.</string>
     <string name="ai_warranty_local_note">Οι περίοδοι εγγύησης διαβάζονται στη συσκευή σας από το κείμενο της απόδειξης. Δεν χρησιμοποιείται AI ή cloud για τις εγγυήσεις.</string>
     <!-- Assistant unsupported reasons. Best-effort translation, pending owner review. -->
     <string name="assistant_unsupported_interpretation_disabled">Ο βοηθός είναι απενεργοποιημένος στις ρυθμίσεις AI.</string>
