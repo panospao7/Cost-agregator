@@ -60,7 +60,9 @@ class ExpenseDaoSpendingPredicateFixture private constructor(
         isNotMine: Boolean = false,
         isShared: Boolean = false,
         sharePct: Int? = null,
-        shareAmount: Double? = null
+        shareAmount: Double? = null,
+        latitude: Double? = null,
+        longitude: Double? = null
     ): Long {
         val id = dao.insert(
             Expense(
@@ -74,7 +76,9 @@ class ExpenseDaoSpendingPredicateFixture private constructor(
                 isNotMine = isNotMine,
                 isSharedExpense = isShared,
                 mySharePercentage = sharePct,
-                myShareAmount = shareAmount
+                myShareAmount = shareAmount,
+                latitude = latitude,
+                longitude = longitude
             )
         )
         assertTrue(id > 0L)

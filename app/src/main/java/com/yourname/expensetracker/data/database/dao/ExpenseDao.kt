@@ -1427,7 +1427,7 @@ AND LENGTH(:merchantKey) >= 8
         FROM expenses 
         WHERE ${SPENDING_TYPE_SQL} 
         AND date >= :startMs AND date < :endMs
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         ORDER BY 1 ASC
     """)
     suspend fun getAmountsForPercentileCalc(startMs: Long, endMs: Long): List<Double>
@@ -1834,9 +1834,9 @@ AND LENGTH(:merchantKey) >= 8
         SELECT merchantKey as merchantKey, MIN(merchant) as merchant,
                SUM(${EFFECTIVE_AMOUNT_SQL}) as total, COUNT(*) as cnt 
         FROM expenses 
-        WHERE ${SPENDING_TYPE_SQL} 
+        WHERE ${SPENDING_TYPE_SQL}
         AND date >= :startDate AND date < :endDate
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         AND merchantKey IS NOT NULL
         GROUP BY merchantKey
         ORDER BY total DESC
@@ -1920,7 +1920,7 @@ AND LENGTH(:merchantKey) >= 8
         WHERE ${SPENDING_TYPE_SQL} 
         AND date >= :startMs AND date < :endMs
         AND categoryId IS NOT NULL
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         GROUP BY categoryId
         ORDER BY total DESC
     """)
@@ -1941,7 +1941,7 @@ AND LENGTH(:merchantKey) >= 8
                MAX(date) as lastDate
         FROM expenses 
         WHERE ${SPENDING_TYPE_SQL}
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         AND merchantKey IS NOT NULL
         GROUP BY merchantKey
         HAVING transactionCount >= 2
@@ -1964,7 +1964,7 @@ AND LENGTH(:merchantKey) >= 8
                MAX(date) as lastDate
         FROM expenses 
         WHERE ${SPENDING_TYPE_SQL}
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         AND merchantKey IS NOT NULL
         GROUP BY merchantKey
         ORDER BY totalAmount DESC
@@ -1987,7 +1987,7 @@ AND LENGTH(:merchantKey) >= 8
         FROM expenses 
         WHERE ${SPENDING_TYPE_SQL} 
         AND date >= :startMs AND date < :endMs
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         AND merchantKey IS NOT NULL
         GROUP BY merchantKey
         ORDER BY totalAmount DESC
@@ -2001,7 +2001,7 @@ AND LENGTH(:merchantKey) >= 8
         SELECT * FROM expenses 
         WHERE ${SPENDING_TYPE_SQL} 
         AND date >= :startMs AND date < :endMs
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         ORDER BY ${EFFECTIVE_AMOUNT_SQL} DESC
         LIMIT 1
     """)
@@ -2014,7 +2014,7 @@ AND LENGTH(:merchantKey) >= 8
         WHERE ${SPENDING_TYPE_SQL} 
         AND date >= :startMs AND date < :endMs
         AND merchantKey = :merchantKey
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         ORDER BY ${EFFECTIVE_AMOUNT_SQL} DESC
         LIMIT 1
     """)
@@ -2045,7 +2045,7 @@ AND LENGTH(:merchantKey) >= 8
         FROM expenses 
         WHERE ${SPENDING_TYPE_SQL} 
         AND date >= :startMs AND date < :endMs
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         GROUP BY dayEpoch
         ORDER BY dayEpoch ASC
     """)
@@ -2067,10 +2067,10 @@ AND LENGTH(:merchantKey) >= 8
                MAX(date) as lastDate
         FROM expenses 
         WHERE ${SPENDING_TYPE_SQL}
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         AND merchantKey IS NOT NULL
         GROUP BY merchantKey
-        HAVING transactionCount >= 2 
+        HAVING transactionCount >= 2
         AND (maxAmount - minAmount) < (averageAmount * 0.15)
         ORDER BY transactionCount DESC
     """)
@@ -2087,7 +2087,7 @@ AND LENGTH(:merchantKey) >= 8
         FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
         AND date >= :startMs AND date < :endMs
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         GROUP BY dayOfWeek
         ORDER BY dayOfWeek ASC
     """)
@@ -2255,7 +2255,7 @@ AND LENGTH(:merchantKey) >= 8
         WHERE latitude IS NOT NULL
           AND longitude IS NOT NULL
           AND ${SPENDING_TYPE_SQL}
-          AND isNotMine = 0
+          AND ${SpendingInclusionSql.SPENDING_PREDICATE}
           AND merchantKey IS NOT NULL
         GROUP BY merchantKey
         ORDER BY total DESC
@@ -2279,7 +2279,7 @@ AND LENGTH(:merchantKey) >= 8
         WHERE latitude IS NOT NULL
           AND longitude IS NOT NULL
           AND ${SPENDING_TYPE_SQL}
-          AND isNotMine = 0
+          AND ${SpendingInclusionSql.SPENDING_PREDICATE}
           AND merchantKey IS NOT NULL
         GROUP BY merchantKey, UPPER(COALESCE(currency, 'EUR'))
         ORDER BY total DESC
