@@ -11,6 +11,7 @@ import androidx.room.Update
 import androidx.sqlite.db.SupportSQLiteQuery
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.database.query.SpendingInclusionSql
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategoryName
 import com.yourname.expensetracker.domain.location.MerchantLocationGrid
@@ -1316,7 +1317,7 @@ AND LENGTH(:merchantKey) >= 8
         WHERE ${SPENDING_TYPE_SQL}
         AND categoryId = :categoryId
         AND date >= :startMs AND date < :endMs
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         """)
     suspend fun getCategorySpentInPeriod(categoryId: Long, startMs: Long, endMs: Long): Double
 
@@ -1328,7 +1329,7 @@ AND LENGTH(:merchantKey) >= 8
         WHERE ${SPENDING_TYPE_SQL}
         AND categoryId = :categoryId
         AND date >= :startMs AND date < :endMs
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         """)
     fun getCategorySpentInPeriodFlow(categoryId: Long, startMs: Long, endMs: Long): Flow<Double>
 
@@ -1344,7 +1345,7 @@ AND LENGTH(:merchantKey) >= 8
         WHERE ${SPENDING_TYPE_SQL}
           AND categoryId IN (:categoryIds)
           AND date >= :startMs AND date < :endMs
-          AND isNotMine = 0
+          AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         GROUP BY categoryId
     """)
     suspend fun getCategorySpentTotalsInPeriod(
@@ -1562,7 +1563,7 @@ AND LENGTH(:merchantKey) >= 8
     @Query("""
         SELECT COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) FROM expenses
         WHERE date >= :startDate AND date < :endDate
-          AND isNotMine = 0
+          AND ${SpendingInclusionSql.SPENDING_PREDICATE}
           AND ((:categoryId IS NULL AND categoryId IS NULL) OR categoryId = :categoryId)
     """)
     suspend fun getEffectiveSpentBetweenForCategory(
@@ -1587,7 +1588,7 @@ AND LENGTH(:merchantKey) >= 8
         FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
           AND date >= :startDate AND date < :endDate
-          AND isNotMine = 0
+          AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         GROUP BY UPPER(currency)
         ORDER BY total DESC
     """)
@@ -1638,7 +1639,7 @@ AND LENGTH(:merchantKey) >= 8
         FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
           AND date >= :startDate AND date < :endDate
-          AND isNotMine = 0
+          AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         GROUP BY categoryId, UPPER(currency)
         ORDER BY total DESC
     """)
@@ -1659,7 +1660,7 @@ AND LENGTH(:merchantKey) >= 8
         FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
           AND date >= :startDate AND date < :endDate
-          AND isNotMine = 0
+          AND ${SpendingInclusionSql.SPENDING_PREDICATE}
           AND merchantKey IS NOT NULL
         GROUP BY merchantKey, UPPER(currency)
         ORDER BY total DESC
@@ -1679,7 +1680,7 @@ AND LENGTH(:merchantKey) >= 8
         FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
           AND date >= :startDate AND date < :endDate
-          AND isNotMine = 0
+          AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         GROUP BY monthKey, UPPER(currency)
         ORDER BY monthKey ASC, total DESC
     """)
@@ -1701,7 +1702,7 @@ AND LENGTH(:merchantKey) >= 8
                COUNT(*) AS txCount
         FROM expenses
         WHERE date >= :startDate AND date < :endDate
-          AND isNotMine = 0
+          AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         GROUP BY UPPER(currency)
         ORDER BY total DESC
     """)
@@ -1719,7 +1720,7 @@ AND LENGTH(:merchantKey) >= 8
                COUNT(*) AS txCount
         FROM expenses
         WHERE date >= :startDate AND date < :endDate
-          AND isNotMine = 0
+          AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         GROUP BY categoryId, UPPER(currency)
         ORDER BY total DESC
     """)
@@ -1740,7 +1741,7 @@ AND LENGTH(:merchantKey) >= 8
                COUNT(*) AS txCount
         FROM expenses
         WHERE date >= :startDate AND date < :endDate
-          AND isNotMine = 0
+          AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         GROUP BY merchant, UPPER(currency)
         ORDER BY total DESC
     """)
@@ -1757,7 +1758,7 @@ AND LENGTH(:merchantKey) >= 8
                COUNT(*) AS txCount
         FROM expenses
         WHERE date >= :startDate AND date < :endDate
-          AND isNotMine = 0
+          AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         GROUP BY monthKey, UPPER(currency)
         ORDER BY monthKey ASC, total DESC
     """)
@@ -1777,7 +1778,7 @@ AND LENGTH(:merchantKey) >= 8
                COUNT(*) AS txCount
         FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
-          AND isNotMine = 0
+          AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         GROUP BY monthKey
         ORDER BY monthKey ASC
     """)
@@ -1798,7 +1799,7 @@ AND LENGTH(:merchantKey) >= 8
         FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
           AND date >= :startDate AND date < :endDate
-          AND isNotMine = 0
+          AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         GROUP BY monthKey
         ORDER BY monthKey ASC
     """)
@@ -1820,7 +1821,7 @@ AND LENGTH(:merchantKey) >= 8
         WHERE ${SPENDING_TYPE_SQL}
           AND categoryId = :categoryId
           AND date >= :startDate AND date < :endDate
-          AND isNotMine = 0
+          AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         GROUP BY monthKey
         ORDER BY monthKey ASC
     """)
