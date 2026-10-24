@@ -582,24 +582,24 @@ Still open before acceptance: owner review of release-note.md and es/el strings 
 
 ### Bundle acceptance gate checklist (validation-runner, serial; poll the run ID; RUNNING is not failure; missing/stale/errored is never PASS)
 Run order per plan "Final bundle acceptance gate" with the Part C insertions (plan addendum §7). Fill one run ID + result per line. `unit-tests` is last. `migration-tests` not required. Request the runner via the orchestrator; no other agent runs validation.
-- [ ] 1. `unit-test-shard -Shard architecture-contracts` — run ID: ______ result: ______
-- [ ] 2. `unit-test-shard -Shard data` — run ID: ______ result: ______
-- [ ] 3. `unit-test-shard -Shard domain-a-m` — run ID: ______ result: ______
-- [ ] 4. `unit-test-shard -Shard domain-n-z` — run ID: ______ result: ______
-- [ ] 5. `unit-test-shard -Shard runtime-ui` — run ID: ______ result: ______
-- [ ] 6. `unit-test-shard -Shard integration-golden` — run ID: ______ result: ______
-- [ ] 7. `registered-guard -GuardId db_access` — run ID: ______ result: ______
-- [ ] 7 (cont.) `registered-guard -GuardId db_artifact_sync` (after db_access) — run ID: ______ result: ______
-- [ ] 7a. `registered-guard -GuardId cloud_payload` — run ID: ______ result: ______
-- [ ] 7b. `registered-guard -GuardId pii_logging` — run ID: ______ result: ______
-- [ ] 7c. `registered-guard -GuardId time_boundaries` — run ID: ______ result: ______
-- [ ] 7d. `registered-guard -GuardId cancellation` — run ID: ______ result: ______
-- [ ] 8. `static-guards` (covers the first ui -> domain.workers import from B3b and the cancellation baseline ratchet 92 -> 90) — run ID: ______ result: ______
-- [ ] 9. `lint` — run ID: ______ result: ______
-- [ ] 10. WarrantyDaoTest — PLAN CORRECTION (S0): it is a JVM Robolectric test, not androidTest, so use `targeted-unit-test` filter `*WarrantyDaoTest*`, not `connected-test-class` on AVD `wave5-api35` (it also runs inside the `data` shard) — run ID: ______ result: ______
-- [ ] 11. `app-check` — run ID: ______ result: ______
-- [ ] 12. `unit-tests` (last) — run ID: ______ result: ______
-- [ ] Then: fresh-session `reviewer-strict` final acceptance covering A, B and C (separate from discovery; planner does not declare acceptance) — session/verdict: ______
+- [x] 1. `unit-test-shard -Shard architecture-contracts` — run ID: vr-20261024-011948-ce5475c5 result: PASS
+- [x] 2. `unit-test-shard -Shard data` — run ID: vr-20261024-012034-ee1f01cf result: PASS
+- [x] 3. `unit-test-shard -Shard domain-a-m` — run ID: vr-20261024-012351-17d3516a result: PASS
+- [x] 4. `unit-test-shard -Shard domain-n-z` — run ID: vr-20261024-012437-e22c9938 result: PASS
+- [x] 5. `unit-test-shard -Shard runtime-ui` — run ID: vr-20261024-012608-bd5b98b4 result: PASS
+- [x] 6. `unit-test-shard -Shard integration-golden` — run ID: vr-20261024-012724-d7b2b351 result: PASS
+- [x] 7. `registered-guard -GuardId db_access` — run ID: vr-20261024-012812-4923dffd result: PASS
+- [x] 7 (cont.) `registered-guard -GuardId db_artifact_sync` (after db_access) — run ID: vr-20261024-013045-499c8bf5 result: PASS
+- [x] 7a. `registered-guard -GuardId cloud_payload` — run ID: vr-20261024-013103-5ba82218 result: PASS
+- [x] 7b. `registered-guard -GuardId pii_logging` — run ID: vr-20261024-013121-5d03f697 result: PASS
+- [x] 7c. `registered-guard -GuardId time_boundaries` — run ID: vr-20261024-013139-ee653b57 result: PASS
+- [x] 7d. `registered-guard -GuardId cancellation` — run ID: vr-20261024-013157-ca4086ae result: PASS
+- [x] 8. `static-guards` (covers the first ui -> domain.workers import from B3b and the cancellation baseline ratchet 92 -> 90) — run ID: vr-20261024-013233-a65f7de7 result: PASS
+- [x] 9. `lint` — run ID: vr-20261024-014721-27fc4db0 result: PASS
+- [x] 10. WarrantyDaoTest — PLAN CORRECTION (S0): it is a JVM Robolectric test, not androidTest, so use `targeted-unit-test` filter `*WarrantyDaoTest*`, not `connected-test-class` on AVD `wave5-api35` (it also runs inside the `data` shard) — run ID: vr-20261024-014737-6e81fe5e (targeted *WarrantyDaoTest*) result: PASS
+- [x] 11. `app-check` — run ID: vr-20261024-014808-1c2fa4cb result: PASS
+- [x] 12. `unit-tests` (last) — run ID: vr-20261024-020741-ff99c4e1 result: PASS (UP-TO-DATE: the suite executed inside app-check vr-20261024-014808-1c2fa4cb on the same clean revision — 815 suites / 8150 tests, 0 failures/errors/skipped)
+- [x] Then: fresh-session `reviewer-strict` final acceptance (split into 3 parts after a single whole-feature attempt hit its turn limit without a report): Part 1 privacy/cloud ACCEPT-WITH-CONDITIONS (release-note warranty wording fixed; INV-25 disclosure must ship; gate recorded); Part 2 lifecycle/workers/data ACCEPT-WITH-CONDITIONS (gate recorded; ISSUE-1 latent createWarrantyForReview/promoteReviewDraft -> follow-up F-AI-1); Part 3 guards/tests/evidence/merge ACCEPT-WITH-CONDITIONS (gate recorded; merge notes 9-12 added; owner acks O-AI-1/O-AI-2 requested). All gate runs: git_revision 8ae619e6, clean-tree fingerprint, strictly serial.
 Gate notes: tree must be clean/committed before the run (a handoff edit mid-run produced STALE_RESULT at S0 vr-20261022-211416); bundle requires B1a+B1b shipped together (B1a ISSUE-3); `guard_docs_truth` (FG-26) should be re-run if any named symbol in docs changes after this Z edit.
 
 ### MERGE NOTES
@@ -614,3 +614,14 @@ vs `feature/manual-entry-currency` (and other lanes touching db policy):
 7. Hilt module count: ai-fixes adds `AppForegroundModule` (33 -> 34 in `hilt-bindings-map.md` :3/:503 and `ARCHITECTURE.md` :39/:896). If MEC (or any lane) also adds a module, re-count `@Module` files after the merge instead of summing. Also re-check `CODEBASE_INVENTORY.md` (top Drift Sync sections stack: keep both) and `CODEBASE_SEGMENTS.md` Segments 12 and 20.
 8. Hot files to re-resolve by hand: `SourceScanningArchitectureGuardTest.kt`, `LEGAL_PATHS.md` (Privacy/Cloud AI, Assistant, Workers blocks; anchors shift), `ENGINE_INTERACTION_MAP.md`, `res/values*/strings.xml` (es/el), `AiModels.kt`/`AiSettingsRepositoryImpl.kt` (transactionInsightEnabled, last field), `ExpenseDao`-adjacent assistant code (`ExecuteFinancialQueryUseCase`: MAX/MIN convertAsOf gap is money-correctness RF-C3).
 - Z spec reconciliation (domain-modeler, 2026-10-24): domain-spec-part-c §1.3 METRIC_NOT_SUPPORTED row (defensive-only), INV-C9 connector (shipped pattern), INV-C17 (exhaustive when, retargeted test); domain-spec OD-2 vs INV-25 clarification. B1a ISSUE-4 already reconciled at B1a. Comparison-cue gap ("comparing") logged in ai-evolution-handoff follow-ups.
+
+9. (final acceptance Part 3, ISSUE-1) vs MEC: `ManualExpenseRepository.kt` conflicts. MEC adds a required ctor param `currencySettingsRepository: CurrencySettingsRepository` (+13 lines); ai-fixes removes the private RECOMMENDATION_JOB_TIMEOUT_MS and changes the recommendation job. Keep B2d's `outcome.artifactOrNull`, `AppConfig.Ai.RECOMMENDATION_JOB_TIMEOUT_MS` (5 s) and the CE-first catch with class-only logging, plus the MEC param. Fix `ManualExpenseRepositoryRecommendationTest` :113 (constructs ManualExpenseRepository without the new param) with an explicit currency stub.
+10. (ISSUE-2) Hilt module count: `hilt-bindings-map.md` :3 is byte-identical "all 34" on both ai-fixes (AppForegroundModule) and app-lock (AppLockModule), so git keeps 34 silently. Correct merged value is 35 (33 + AppLockModule + AppForegroundModule): hilt-bindings-map :3 + Stats line, ARCHITECTURE.md :39 and :896.
+11. (ISSUE-3) Correction to note 6: MEC moved `scripts/test_verify_db_access_boundaries.py` 430 -> 432 (not 431 -> 432) and did NOT touch `DbGuardPolicyFixtureTest` (still "exactly 430" on the MEC tip while its policy has 432: stale pin on the MEC lane, to be fixed there). Merged expected count: 433 (re-derive from the merged policy).
+12. (ISSUE-4) app-lock removes `sendAiBriefingReadyWithResult`, `sendAiBriefingReady`, `sendBudgetAlert` (suspend `*ForKind` replacements): ai-fixes tests `DeliverProactiveBriefingNotificationUseCaseTest.kt` (~14 refs) and `WarrantyExpirationWorkerTest.kt` (~17 refs) must be retargeted to coEvery/coVerify on `*ForKind`, keeping the zero-post assertions.
+
+### Final acceptance follow-ups and owner acknowledgements (2026-10-24)
+- F-AI-1 (Part 2 ISSUE-1, latent, no production caller): `AutoCreateWarrantyFromReceiptUseCase.createWarrantyForReview` -> `promoteReviewDraft` always sets ACTIVE/needsReview=false via updateWarranty, without the confirm path's fresh in-transaction read, CONFIRMED event or past-end rule (could revive an expired-unconfirmed row). Follow-up: delegate to `WarrantyTrackerRepository.confirmWarranty` semantics (never EXPIRED -> ACTIVE) + a LEGAL_PATHS FORBIDDEN line + a source-scan check rejecting production callers (or delete it and its 2 tests, which needs owner sign-off, FG-19). Not done post-gate so the gate evidence stays valid.
+- O-AI-1 (owner ack, Part 3 ISSUE-5): sixth deleted test `WarrantyTrackerRepositoryTest` :911 "discard audit is skipped when write barrier denies and result is unchanged" only exercised the deleted cloud-discard path (B1a ISSUE-2); it was not on the owner's G2-6 list.
+- O-AI-2 (owner ack, Part 3 ISSUE-6): B1a used the R21 minimal policy path instead of the plan's R7 Pattern E signature regeneration; the tracked candidate file still lists the dead `toWarrantyEntityOrNull` row and lacks both `confirmWarranty` rows. Guards intact (db_access, db_artifact_sync PASS). Follow-up truth-sync using the saved b1a-regen-set; owner decides whether it must precede the MEC merge.
+- Part 1 notes: consider repeating the INV-25 sentence next to "Allow cloud AI" (owner/UX choice); guard (a) exempts all of di/AiModule.kt; guard (b) scans only the use-case file; residual Timber(e) logs listed in ai-evolution-handoff.
