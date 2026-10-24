@@ -74,7 +74,7 @@ BackupRestore             (BackupRestoreScreen)
 Management Screens:
 - AiSettings                 (AiSettingsScreen)
 - CategoryManagement         (CategoryScreen)
-- PrivacySettings           (PrivacySettingsScreen)   ← also reachable from the Features menu via FeatureConfig id "privacy" (24th menu entry; reuses backup-restore strings)
+- PrivacySettings           (PrivacySettingsScreen)   ← also reachable from the Features menu via FeatureConfig id "privacy" (24th menu entry; reuses backup-restore strings). Contains the "App lock & privacy" section (`AppLockPrivacySection` + `AppLockPrivacySettingsViewModel`; discreet-notifications row and review card, app-lock 1a)
 
 Debug / Support Screens:
 - DebugScreen                (DebugScreen)
@@ -113,7 +113,7 @@ expensetracker://analytics             → Analytics tab (optional period param)
 expensetracker://map                   → Map tab (optional location param)
 ```
 
-**Security policy** (`ui/navigation/DeepLinkParser.kt`): links parse into `DeepLinkDecision` — `Allow` (home, dashboard, plan, analytics, map, activity without expenseId) or `RequireConfirmation` (activity with expenseId, review, add). Unknown/malformed links are silently `Reject`ed. **Caveat:** `DeepLinkParser` is unit-tested but **not wired into production** — `MainActivity.handleIntent` still parses deep links inline and navigates directly (see `NAVIGATION_ARCHITECTURE.md`).
+**Security policy** (`ui/navigation/DeepLinkParser.kt`, object `DeepLinkPolicy`): every link is validated by `DeepLinkPolicy` (closed host set, one allowed parameter per host, extras dropped, 2048-char cap) and acted on only by `ui/navigation/DeepLinkApplier`, both wired through `MainActivity.handleIntent`. Rejected links land on Home (a non-VIEW action is ignored). The manifest filter is not `BROWSABLE`: links from web browsers no longer open the app. See `NAVIGATION_ARCHITECTURE.md` and `LEGAL_PATHS.md` "Deep Links".
 
 ---
 
@@ -271,7 +271,7 @@ navigation.navigateBack()  // Pop back stack or return to previous tab
 ### Pattern 5: Deep Link Navigation
 ```
 Intent with URI: expensetracker://home?briefingKey=value
-Handled in MainActivity.handleIntent()
+Handled in MainActivity.handleIntent() → DeepLinkPolicy.evaluate() → DeepLinkApplier.apply()
 ```
 
 ---

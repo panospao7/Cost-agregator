@@ -2,7 +2,7 @@
 
 Canonical guide for segment ownership and AI analysis.
 
-**Last updated:** 2026-10-13 (schema/savings delta verified against source). Database schema version: v151 (`data/database/AppDatabase.kt`).
+**Last updated:** 2026-10-24 (app-lock-privacy-mode 1a: Segment 11 and Segment 28 file lists); earlier 2026-10-13 (schema/savings delta verified against source). Database schema version: v151 (`data/database/AppDatabase.kt`).
 
 ## Rules
 - One segment list, one ascending order, one owning section per segment.
@@ -277,8 +277,21 @@ Owns the dashboard home composition and all totals aggregation logic.
 Owns notification delivery plumbing for budget and app alerts.
 
 **Representative files**
-- `domain/service/NotificationService.kt`
-- `data/service/AndroidNotificationService.kt`
+- `domain/service/NotificationService.kt` — kind-aware methods only (`*ForKind`, INV-12), `repostActiveAsDiscreet()`, `DeliveryResult.PERMISSION_DENIED`
+- `data/service/AndroidNotificationService.kt` — builder owner 1 (`postForKind` + `rebuildDiscreet` sweep); 4 constructor params incl. `PrivacyDiagnosticsEmitter`
+
+**Notification presentation (app-lock-privacy-mode 1a; legal path: LEGAL_PATHS "Notification Presentation")**
+- `domain/notification/presentation/NotificationKind.kt` — closed six-kind registry + literal `stableToken`
+- `domain/notification/presentation/NotificationPresentationDecision.kt` — decision model (mode, visibility, public version, action policy, fallback reason)
+- `domain/notification/presentation/NotificationContentPolicy.kt` — pure policy; `decide` / `decideFailClosed` / `decideDiscreet` (single owner of FULL vs DISCREET and the action policy)
+- `domain/notification/presentation/NotificationPresentationResolver.kt` — `@Singleton`, bounded (500 ms) fail-closed settings read before each post
+- `data/service/NotificationPresentationApplier.kt` — `@Singleton`, the one place a decision is applied to a builder; stamps the kind marker
+- `data/service/NotificationPresentationTexts.kt` — kind → discreet / public-version string resources
+- `data/service/NotificationKindMarker.kt` — hidden kind marker (extras key + `stableToken`), private version only
+- `data/service/NotificationKindClassifier.kt` — sweep classifier: marker first, channel / id-range fallback, group-summary skipped by the caller; imports only the const `BillReminderWorker.CHANNEL_ID`
+- `res/values{,-es,-el}/strings_notification_presentation.xml`
+- Builder owner 2: `service/reminder/BillReminderWorker.kt` (Segment 36) resolves the BILL decision and calls the applier.
+- Writer side of the sweep (`DiscreetRepostTrigger`, `UpdateDiscreetNotificationsUseCase`) is owned by Segment 28 (settings write path); Segment 11 owns only the sweep executor (`repostActiveAsDiscreet`).
 
 ## SEGMENT 12: Startup & Background Runtime
 
@@ -576,6 +589,18 @@ Owns encrypted key storage and security/network bindings.
 - `domain/privacy/PrivacyBlocked.kt` — Sealed interface standardizing privacy-denied states: CloudAiDisabled, ReceiptImageUploadDisabled, ExternalGeocodingDisabled, NotificationCaptureDisabled, RawExportDisabled, DeviceGpsDisabled, BackgroundLocationDisabled, BankStatementAiDisabled, EncryptedBackupDisabled, OverpassDisabled, DebugDataPersistenceDisabled, Custom
 - `domain/privacy/PrivacyDecision.kt` — Sealed interface: `Allowed`, `NotApplicable`, `Denied(reason)`, `FailClosed(reason)`; `blocksExecution()` returns true for both Denied and FailClosed; `reason()` for all variants; 30+ callers use for fail-closed propagation
 - `ui/components/PrivacyBlockedCard.kt` — Reusable Compose card for privacy-blocked state with lock icon, "Feature disabled" title, and specific PrivacyBlocked reason
+
+**App lock & privacy mode, increment 1a (legal paths: LEGAL_PATHS "App Lock Settings Write Path" and "Deep Links")**
+- `domain/privacy/applock/AppLockSettingsRepository.kt` (+ `AppLockPrivacySettings.kt`, `AppLockSettingsLoadState.kt`, `EffectivePrivacyValues.kt`) — contract of the only reader/writer of device-local app-lock settings (INV-1)
+- `data/privacy/applock/AppLockSettingsRepositoryImpl.kt` + `di/AppLockModule.kt` — own DataStore, CORRUPTED sentinel, fail-closed effective values
+- `domain/privacy/applock/PrivacyDiagnosticsEmitter.kt` — typed, bounded `PrivacyDiagnosticCode` emitter (per-code limiter)
+- `domain/privacy/applock/DiscreetRepostTrigger.kt` — post-commit false → true edge detector; calls `NotificationService.repostActiveAsDiscreet()` (reused by S18)
+- `domain/privacy/applock/UpdateDiscreetNotificationsUseCase.kt` — per-field discreet write → trigger
+- `domain/privacy/deeplink/DeepLinkRequest.kt` — validated deep-link value types (`DeepLinkHost`, `DeepLinkParameter`, `DeepLinkLimits`)
+- `ui/navigation/DeepLinkParser.kt` — hosts `DeepLinkPolicy` (pure validation, the only `expensetracker://` parser); `ui/navigation/DeepLinkApplier.kt` — the only code that acts on a link; `domain/ai/usecase/MarkDashboardBriefingOpenedUseCase.kt` — the single link-reachable write (INV-16); `domain/analytics/TimePeriodTokens.kt` — shared period allowlist. (No segment owned `ui/navigation` before; the deep-link validation boundary is recorded here because it is a privacy boundary.)
+- `ui/screens/privacysettings/AppLockPrivacySettingsViewModel.kt` + `AppLockPrivacySection.kt` — "App lock & privacy" section (discreet row, review card); inserted once into `PrivacySettingsScreen.kt`; `PrivacySettingsViewModel` untouched
+- `ui/screens/privacysettings/AppLockSettingsWriteSerializer.kt` — INTERIM `@Singleton` write serialiser; retired at S18 (moves to the domain owner before any new writer)
+- `res/values{,-es,-el}/strings_privacy_section.xml`
 
 ## SEGMENT 29: Debug & Diagnostics
 

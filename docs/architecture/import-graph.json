@@ -478,7 +478,22 @@
     "BillReminderWorker": {
       "type": "worker",
       "package": "com.yourname.expensetracker.service.reminder",
-      "depends_on": ["RecurringLifecycleCoordinator", "WorkerExecutionGuard", "BillReminderSettingsRepository", "TimeProvider"]
+      "depends_on": ["RecurringLifecycleCoordinator", "WorkerExecutionGuard", "BillReminderSettingsRepository", "TimeProvider", "NotificationPresentationResolver", "NotificationPresentationApplier"]
+    },
+    "NotificationKindClassifier": {
+      "type": "service",
+      "package": "com.yourname.expensetracker.data.service",
+      "depends_on": []
+    },
+    "NotificationPresentationResolver": {
+      "type": "domain",
+      "package": "com.yourname.expensetracker.domain.notification.presentation",
+      "depends_on": ["AppLockSettingsRepository", "PrivacyDiagnosticsEmitter"]
+    },
+    "NotificationPresentationApplier": {
+      "type": "service",
+      "package": "com.yourname.expensetracker.data.service",
+      "depends_on": ["NotificationPresentationTexts"]
     },
     "ReceiptMatchingWorker": {
       "type": "worker",
@@ -1167,6 +1182,9 @@
     { "from": "BillReminderWorker", "to": "RestoreMaintenanceMode", "type": "guard" },
     { "from": "BillReminderWorker", "to": "WorkerExecutionGuard", "type": "guarded-execution" },
     { "from": "BillReminderWorker", "to": "BillReminderSettingsRepository", "type": "depends-on" },
+    { "from": "BillReminderWorker", "to": "NotificationPresentationResolver", "type": "depends-on" },
+    { "from": "BillReminderWorker", "to": "NotificationPresentationApplier", "type": "depends-on" },
+    { "from": "NotificationKindClassifier", "to": "BillReminderWorker", "type": "const-only", "note": "internal const val CHANNEL_ID only (S8 ruling)" },
     { "from": "ReceiptMatchingWorker", "to": "ReceiptRepository", "type": "depends-on" },
     { "from": "ReceiptMatchingWorker", "to": "ExpenseRepository", "type": "depends-on" },
     { "from": "ReceiptMatchingWorker", "to": "RestoreMaintenanceMode", "type": "guard" },

@@ -472,3 +472,42 @@ Next: S12 follow-up (Rejected → SAVE_FAILED notice), then S13 (docs/inventory 
 - Validation pending: targeted `*AppLockPrivacySettingsViewModel*`.
 Next: S13 (docs/inventory + final 1a acceptance prep), then G1a.
 - Validation: targeted *AppLockPrivacySettingsViewModel*,*AppLockPrivacySection* vr-20261023-225040-6db7e0dd PASS. Committed.
+
+## S13 (2026-10-24) — implemented
+Docs only (no source, test, guard, baseline or allowlist change). No validation run (plan: architecture-guardian + a cheap docs-accuracy reviewer; FG-26). Every claim was checked against current source first.
+
+Docs touched (all under the worktree C:\Users\panos\Desktop\Cost-agregator-al):
+- `docs/architecture/LEGAL_PATHS.md`: NEW sections NOTIFICATION PRESENTATION, DEEP LINKS and APP LOCK SETTINGS WRITE PATH; DISPATCH reminder gains the resolve -> applier step; Anomaly Alerting `NotificationService.send()` corrected to `postAnomalyAlertForKind(ANOMALY, ...)` (in-section only); last-updated line.
+- `docs/architecture/CODEBASE_SEGMENTS.md`: Segment 11 (policy, resolver, applier, texts, marker, classifier, kind registry, strings; sweep executor) and Segment 28 (settings store/impl/module, emitter, trigger, use case, deep-link types, DeepLinkPolicy/Applier in ui/navigation, briefing-opened use case, privacysettings UI files, interim serializer retired at S18, strings). Placement decision: trigger + use case = Segment 28 (settings write path); no segment owned `ui/navigation` before, so the deep-link boundary is recorded under Segment 28 with its paths.
+- `docs/architecture/NAVIGATION_ARCHITECTURE.md`: components table, tests table, invariant 6, Deep Link Security section rewritten (policy, applier, no BROWSABLE, 1b gate).
+- `docs/architecture/UI_REFERENCE_INDEX.md`: deep-link hosts policy paragraph, pattern 5, PrivacySettings entry.
+- `docs/architecture/COMPREHENSIVE_UI_MAP.md`: manifest snippet (BROWSABLE removed, DEFAULT added), section 8.5 deep-link handling/parameters, Privacy Settings screen "App lock & privacy" section.
+- `docs/architecture/CODEBASE_INVENTORY.md`: 2026-10-24 drift-sync block (new files), ViewModels, navigation infrastructure, domain packages, DI (AppLockModule), manifest line.
+- `docs/architecture/hilt-bindings-map.md`: ServiceModule `AndroidNotificationService` 4 params; NEW `AppLockModule` section with the auto-provided app-lock/presentation singletons (`@Singleton AppLockSettingsWriteSerializer`, the ViewModel's `@ApplicationScope` use, BillReminderWorker extra params); header and stats.
+- `docs/architecture/ENGINE_INTERACTION_MAP.md`: matrix rows (BillReminderWorker updated; NotificationService/AndroidNotificationService; applier/policy/resolver; classifier/marker; post-commit re-post with NOTIF_REPOSTED_DISCREET(COUNT) / NOTIF_REPOST_FAILED(EXCEPTION_CLASS); DeepLinkPolicy/Applier), impact chains, safe/dangerous lists.
+- `docs/architecture/import-graph.json` and `docs/architecture/DEPENDENCY_MAP.md`: BillReminderWorker dependencies (resolver, applier), const-only edge NotificationKindClassifier -> BillReminderWorker.CHANNEL_ID, and removal of a stale "BillReminderWorker -> NotificationService" line (the worker uses no NotificationService).
+- `pr-e-actual-release-verification-plan.md` section 6.4: status note (what 1a meets, the confirmation screen NOT implemented, evidence owed at G1a).
+- NEW `docs/features/app-lock-privacy-mode/release-note-1a.md` (owner review pending; ai-fixes B3a paragraph dropped; lock-screen wording corrected from "Expense Tracker" to the real generic pair "Reminder" / "Open the app to see details.").
+- Checked, no change needed: ARCHITECTURE.md, COMPLETE-BACKEND-MAP.md, BACKEND-MAP-INDEX.md, BACKEND-DEPENDENCIES.md (file names only, no stale signatures).
+
+Carry-forwards closed:
+- S11: COMPREHENSIVE_UI_MAP manifest snippet (BROWSABLE out, DEFAULT in); DEEP LINKS section in LEGAL_PATHS.
+- S8: import-graph BillReminderWorker dependencies; LEGAL_PATHS DISPATCH reminder resolve -> applier.
+- S9a: LEGAL_PATHS stale `send()`; notification-posting legal-path entry (kind-aware only, applier = shared owner, two builder owners); ENGINE_INTERACTION_MAP NotificationService/applier rows; SEGMENTS/INVENTORY listings.
+- S9b: sweep and classifier rules (marker first, channel/id-range fallback, group-summary skip, per-notification catch with CE rethrown, no isSweepChannel); APP LOCK write path to trigger to sweep; Segment placement decided; ENGINE re-post row with diagnostics; const-only edge in import-graph + DEPENDENCY_MAP; hilt map 4 params; INVENTORY new files.
+- S12: SEGMENTS placement of the three UI files (serializer interim, retired at S18); hilt map serializer + ViewModel `@ApplicationScope`; LEGAL_PATHS write path with both 1a writers under the serializer in `@ApplicationScope` + `NonCancellable`; review-save path and ViewModel-owned diagnostics (interim, S18); noted that 1a review-save does not call DiscreetRepostTrigger.
+- Plan list: NAVIGATION_ARCHITECTURE, UI_REFERENCE_INDEX, pr-e section 6.4, release-note-1a.
+
+NOT closed / still open (not docs work):
+- S9b recommended follow-up: one data/service holder for BILL channel id + shape + action templates (removes the classifier -> worker edge and the BILL_SHAPE/BILL_ACTION_TEMPLATES duplication). The docs describe the current duplication and the parity test.
+- S18 BINDING: move write serialisation out of ui, take over review-save diagnostics, decide the review-save false -> true edge.
+- G1a evidence: merged release manifest (no BROWSABLE), AE-16, malformed `am start`; documented as owed in pr-e 6.4 and the release note.
+- es/el copy owner spot-check; release note owner review (APP-4).
+- Docs-accuracy reviewer + architecture-guardian gates for S13 not yet run.
+- Merge note: feature/ai-fixes separately set the hilt-bindings-map.md header to 34 with `AppForegroundModule`. At merge, hilt-bindings-map.md :3 and the stats line (~:526) become 35 (33 + `AppLockModule` + `AppForegroundModule`).
+- For G1a reviewer-strict: check whether `PrivacyDiagnosticsEmitter.emit` can throw inside the sweep's per-notification catch (`emitRepostFailed`); an emit throw there could escape the per-notification handling.
+Next: S13 gates, then G1a.
+
+## S13 DONE (2026-10-24)
+- Review: architecture-guardian (+ docs accuracy) ACCEPT-WITH-MINORS; fixes applied (import-graph dangling nodes, release-note lock-screen wording, deep-link path wording, LEGAL_PATHS SWEEP_FAILED clause, hilt count note). Validation: guard_docs_truth vr-20261023-234156-7e4539fb PASS (docs-only slice; later edits docs-only; import-graph.json JSON-validated by the orchestrator).
+Next: G1a (increment 1a gate): unit-tests → static-guards → app-check → assemble-release → release-artifact-evidence, plus device checks on approved AVDs (wave5-api35, release-api26): AE-14, AE-16, API 31+ auth-required Snooze/Dismiss on a locked device, AE-12 (API 26), AE-15/AE-102. Merged-manifest evidence (aapt2 dump) for INV-20; malformed `am start` no-crash.

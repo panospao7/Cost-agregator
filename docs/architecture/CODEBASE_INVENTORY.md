@@ -10,6 +10,16 @@
 
 Snapshot summary only: this inventory tracks the current UI, domain, data, and DI surfaces without freezing volatile counts.
 
+### Drift Sync (2026-10-24 / app-lock-privacy-mode increment 1a, branch feature/app-lock-privacy-mode)
+
+New production files (verified against source). No Room change (settings are a device-local DataStore, not in `.costbackup`).
+
+- **Settings store and diagnostics (`domain/privacy/applock/`, `data/privacy/applock/`):** `AppLockSettingsRepository` (+ `AppLockPrivacySettings`, `AppLockSettingsLoadState`, `EffectivePrivacyValues`), `AppLockSettingsRepositoryImpl`, `PrivacyDiagnosticsEmitter` (typed `PrivacyDiagnosticCode` / `PrivacyDiagnosticKey` / `PrivacyDiagnosticMetadata`), `DiscreetRepostTrigger`, `UpdateDiscreetNotificationsUseCase`; DI: `di/AppLockModule.kt`.
+- **Notification presentation:** `domain/notification/presentation/` — `NotificationKind`, `NotificationPresentationDecision`, `NotificationContentPolicy`, `NotificationPresentationResolver`; `data/service/` — `NotificationPresentationApplier`, `NotificationPresentationTexts`, `NotificationKindMarker`, `NotificationKindClassifier`; `res/values{,-es,-el}/strings_notification_presentation.xml`. `NotificationService` is kind-aware only (`*ForKind`) and gains `repostActiveAsDiscreet()`; `AndroidNotificationService` takes 4 constructor params.
+- **Deep links:** `domain/privacy/deeplink/DeepLinkRequest.kt` (`DeepLinkHost`, `DeepLinkParameter`, `DeepLinkLimits`, `DeepLinkRequest`), `ui/navigation/DeepLinkApplier.kt`, `domain/ai/usecase/MarkDashboardBriefingOpenedUseCase.kt`, `domain/analytics/TimePeriodTokens.kt`; `ui/navigation/DeepLinkParser.kt` now hosts `DeepLinkPolicy` (the allow/confirm/reject classifier is gone). Manifest: the `expensetracker` VIEW filter no longer declares `BROWSABLE`.
+- **Settings UI (`ui/screens/privacysettings/`):** `AppLockPrivacySettingsViewModel`, `AppLockPrivacySection`, `AppLockSettingsWriteSerializer` (interim `@Singleton`, retired at S18); `PrivacySettingsScreen` gains one `item { AppLockPrivacySection() }`. Strings: `res/values{,-es,-el}/strings_privacy_section.xml` (es/el best effort, owner review pending).
+- `BillReminderWorker` takes `NotificationPresentationResolver` + `NotificationPresentationApplier` (appended after `timeProvider`) and exposes `internal const CHANNEL_ID`.
+
 ### Drift Sync (2026-10-22 / money-correctness 1a + 1b, branch feature/money-correctness)
 
 Re-verified against production source: 70 DAO files, 41 ViewModel files, 31 `*Worker*`-named files (the 2026-10-02 count of 29 was already stale; money-correctness adds none), DB **v151** unchanged (no schema change, no migration).
@@ -183,7 +193,7 @@ Assistant is an overlay/entry surface, not a bottom tab.
 - Category: CategoryViewModel
 - Debug: DebugViewModel, CategorizationDebugViewModel, SourceLinkDebugViewModel
 - Settings: SourceLinkBackfillViewModel
-- Privacy: PrivacySettingsViewModel
+- Privacy: PrivacySettingsViewModel, AppLockPrivacySettingsViewModel (section VM, app-lock 1a)
 - Backup: BackupRestoreViewModel
 
 ---
@@ -241,7 +251,8 @@ Assistant is an overlay/entry surface, not a bottom tab.
 - **NavigationController.kt:** State management for navigation
 - **NavigationDestination.kt:** Sealed class with all routes + token serialization
 - **FeatureConfig.kt:** Feature menu configuration
-- **DeepLinkParser.kt:** Deep link parsing with security classification (Allow/RequireConfirmation/Reject)
+- **DeepLinkParser.kt:** hosts `DeepLinkPolicy`, the pure validator of every `expensetracker:` link (Accepted / Rejected / NotADeepLink)
+- **DeepLinkApplier.kt:** the only code that acts on a validated link (navigation, briefing-opened write, bounded `DL_*` diagnostics)
 - **DestinationPersistencePolicy.kt:** Classifies destinations as FULL/DEGRADED/EPHEMERAL
 - **MainActivity.kt:** Navigation host and activity setup
 
@@ -363,7 +374,7 @@ Assistant is an overlay/entry surface, not a bottom tab.
 - ComputeDashboardWidgetsUseCase, DashboardDataProvider
 
 ### Additional Domain Packages
-- **privacy/** - Privacy settings & data portability (includes PrivacyBlocked sealed interface)
+- **privacy/** - Privacy settings & data portability (includes PrivacyBlocked sealed interface); `privacy/applock/` (app-lock settings contract, diagnostics emitter, discreet write use case + re-post trigger); `privacy/deeplink/` (validated deep-link types)
 - **transaction/** - Transaction parsing & validation
 - **core/money/** - Money, currency, amount utilities (incl. MoneyAggregateBuilder)
 - **core/time/** - Time providers & period utilities
@@ -371,7 +382,7 @@ Assistant is an overlay/entry surface, not a bottom tab.
 - **recurring/** - Recurring expense lifecycle
 - **alerts/** - Anomaly & alert domain models
 - **bank/** - Bank connection domain
-- **notification/** - Raw notification fingerprinting & dedup
+- **notification/** - Raw notification fingerprinting & dedup; `notification/presentation/` (kind registry, content policy, resolver for app-posted notifications)
 - **common/** - Shared utilities (hashing)
 - **workers/** - Worker specification and scheduling
 - **business/** - Business expense reporting
@@ -563,6 +574,7 @@ One DAO per entity (mostly 1-to-1 mapping)
 - **BackupRepositoryModule** - Backup/restore
 - **SecurityModule** - Encryption & security
 - **PrivacyModule** - Privacy settings bindings
+- **AppLockModule** - Binds `AppLockSettingsRepository` → `AppLockSettingsRepositoryImpl` (app-lock 1a)
 - **LocationResolverPortsModule** - Location abstractions
 - **EmptyStateModule** - Empty-state wiring
 - **EmptyStatePresentationModule** - Empty-state presentation wiring (lives in `ui/components/emptystate/`)
@@ -582,7 +594,7 @@ One DAO per entity (mostly 1-to-1 mapping)
 - **DataSyncFgsTimeoutGuard** (`service/`) - Android 15 dataSync FGS timeout budget guard; stores an elapsed-realtime timestamp, cleared on boot by BootReceiver
 
 ### Activities (2)
-- **MainActivity** (`ui/`) - Launcher activity; deep-link host (`expensetracker://`)
+- **MainActivity** (`ui/`) - Launcher activity; deep-link host (`expensetracker://`, VIEW + DEFAULT, no BROWSABLE)
 - **RescueActivity** (`data/rescue/`) - Manually triggered database recovery (ADB-launched; exported only in rescue builds)
 
 ### Receivers (4)

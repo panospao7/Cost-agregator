@@ -1,6 +1,6 @@
 # Navigation Architecture
 
-*Last updated: 2026-09-21*
+*Last updated: 2026-10-24 (deep-link section and components: app-lock-privacy-mode 1a); rest verified 2026-09-21*
 
 ## Overview
 
@@ -13,7 +13,8 @@ The app uses a **custom destination-driven navigation** model (not Jetpack Navig
 | `NavigationDestination` | `ui/navigation/NavigationDestination.kt` | Sealed class defining all routes (40 destination types) |
 | `NavigationController` | `ui/navigation/NavigationController.kt` | State machine: back stack, tab switching, token serialization, navigation events/results |
 | `FeatureConfig` | `ui/navigation/FeatureConfig.kt` | Menu-accessible feature registry (`allFeatures`, 24 entries) |
-| `DeepLinkParser` | `ui/navigation/DeepLinkParser.kt` | Deep-link URI → `DeepLinkDecision` (Allow / RequireConfirmation / Reject); unit-tested, not yet wired into MainActivity |
+| `DeepLinkPolicy` | `ui/navigation/DeepLinkParser.kt` (file name kept) | Pure validation of every `expensetracker:` intent → `DeepLinkPolicyResult` (Accepted / Rejected / NotADeepLink); the only parser of the scheme. Wired into `MainActivity.handleIntent` |
+| `DeepLinkApplier` | `ui/navigation/DeepLinkApplier.kt` | The only code that acts on a validated link (navigation via `MainViewModel`, the single briefing-opened write, read-only expense lookup, bounded `DL_*` diagnostics) |
 | `DestinationPersistencePolicy` | `ui/navigation/DestinationPersistencePolicy.kt` | FULL / DEGRADED / EPHEMERAL restore classification per route |
 | `FeatureIntegration` | `ui/integration/FeatureIntegration.kt` | Quick action entry points on screens |
 | `MainViewModel` | `ui/MainViewModel.kt` | Emits `MainNavigationRequest` (Tab / Transactions / Destination); Activity collects and applies them |
@@ -80,7 +81,8 @@ Every destination has a `toSaveToken()` / `destinationFromSaveToken()` pair for 
 | `NavigationControllerBehaviorTest` | Back stack, tab switching, feature navigation, edge cases |
 | `FeatureConfigNavigationContractTest` | Route inventory integrity, serialization, no duplicates |
 | `NavigationRouteContractTest` | Token round-trip for all destinations |
-| `DeepLinkParserTest` | Deep link parsing, security classification, parameter preservation |
+| `DeepLinkPolicyTest`, `DeepLinkParserTest` | Deep-link validation (hosts, parameters, structural limits, rejection reasons) |
+| `DeepLinkApplierTest`, `DeepLinkDiagnosticsSentinelTest` | Applier behaviour per host/rejection; no raw URI / host / briefingKey in diagnostics |
 | `DestinationPersistencePolicyTest` | Degraded/ephemeral/full persistence documented |
 
 ## Invariants
@@ -90,7 +92,7 @@ Every destination has a `toSaveToken()` / `destinationFromSaveToken()` pair for 
 3. Main tabs are never in `FeatureConfig.allFeatures`.
 4. Tab switch always clears the back stack.
 5. `navigateBack()` from Home always returns `false`.
-6. `DeepLinkParser` classifies sensitive deep-link routes as `RequireConfirmation`, but **MainActivity does not yet enforce this gate** — it navigates directly (PRV-16 TODO documents the missing auth/confirmation step).
+6. Every `expensetracker:` intent (notification taps included) is untrusted: it is validated only by `DeepLinkPolicy` and acted on only by `DeepLinkApplier`. In increment 1a there is no lock, so accepted links apply immediately; the held-link gate behind authentication (PRV-16) arrives with increment 1b.
 7. Debug destination is gated by `BuildConfig.DEBUG` at render time.
 8. Unused FAB components are deleted (SmartFAB is canonical).
 
@@ -98,23 +100,23 @@ Every destination has a `toSaveToken()` / `destinationFromSaveToken()` pair for 
 
 Scheme: `expensetracker://`
 
-| Host | Decision (per `DeepLinkParser`) | Reason |
+| Host | Allowed parameter (all others dropped and counted) | Applier action |
 |------|----------|--------|
-| `home`, `dashboard` | Allow | No sensitive data |
-| `activity` (no ID) | Allow | Just opens list |
-| `activity?expenseId=X` | RequireConfirmation | Exposes specific transaction |
-| `review` | RequireConfirmation | Shows pending financial data |
-| `add` | RequireConfirmation | Can create financial records |
-| `analytics` | Allow | Aggregate data only |
-| `map` | Allow | Aggregate data only |
-| `plan` | Allow | Budget overview |
-| Unknown | Reject | Safety default |
+| `home`, `dashboard` | `briefingKey` = `dashboard_home:` + real `yyyy-MM-dd` | Home; marks the briefing opened only if the key equals the last delivered key |
+| `activity` | `expenseId` = 1..Long.MAX_VALUE | Transactions filtered to that expense's day (read-only lookup); not found / read blocked → `Transactions(initialExpenseId = X)`; no valid id → Transactions list |
+| `review` | none | Review tab |
+| `plan` | none | Budget tab |
+| `add` | none | Opens an empty Add Expense sheet (never prefilled) |
+| `analytics` | `period` from the shared `TimePeriodTokens` allowlist | Analytics tab |
+| `map` | `location` (trimmed, 1..100 chars, no control characters) | Spending map |
+| bank hosts | n/a | Rejected (`BANK_HOST`) → Home |
+| any other host | n/a | Rejected (`UNKNOWN_HOST`) → Home |
 
-Implementation status (verified 2026-09-21):
+Implementation status (read from source 2026-10-24, app-lock-privacy-mode 1a, S3/S10/S11; device evidence is owed at G1a):
 
-- `DeepLinkParser.kt` returns `DeepLinkDecision` (Allow / RequireConfirmation / Reject) and is covered by `DeepLinkParserTest`, but it is **not called from production code** today.
-- `MainActivity.handleIntent` (invoked from both `onCreate` and `onNewIntent`) performs its own inline parsing of the same 8 hosts and navigates immediately — there is currently no confirmation dialog for sensitive routes (see PRV-16 TODO in `MainActivity`).
-- Deep links are consumed one-shot: after handling, `intent.data` is cleared so a recreated Activity does not re-apply the same link.
-- `activity?expenseId=X`: if the expense exists, Transactions opens filtered to that expense's day (`MainViewModel.navigateToTransactions` with a date-range `TransactionFilter`); otherwise it falls back to `Transactions(initialExpenseId = X)` for highlighting.
-- `home?briefingKey=Y` records the opened briefing key via `AiEngagementRepository` (dedup for dashboard briefings).
-- Unknown hosts log a warning and fall back to Home (the Activity-side equivalent of `Reject`).
+- `MainActivity.handleIntent` (from both `onCreate` and `onNewIntent`) calls `DeepLinkPolicy.evaluate(action, dataString)`; `NotADeepLink` returns false, anything else launches `DeepLinkApplier.apply(result, mainViewModel)` and returns true. It never parses or logs the link.
+- Rejections: a non-VIEW action (`ACTION`) is ignored with no navigation; `MALFORMED` (over 2048 chars, fragment, userinfo, port, a path other than empty or "/", non-ASCII authority), `UNKNOWN_HOST` and `BANK_HOST` fall back to Home. Diagnostics are bounded `DL_*` codes launched on the application scope (never awaited, so they cannot delay navigation); no raw URI, host string or parameter value is recorded.
+- Deep links are consumed one-shot: when `handleIntent` returns true, `intent.data` is cleared so a recreated Activity does not re-apply the same link.
+- `home?briefingKey=Y`: the key is written as `lastOpenedDashboardBriefingKey` (via `MarkDashboardBriefingOpenedUseCase`) only when it equals the persisted last delivered key, read at apply time. A link from another app or a web page cannot change which briefing is shown (INV-16).
+- The manifest VIEW filter for the scheme has `DEFAULT` and no `BROWSABLE` category, so web-browser links no longer open the app (INV-20, OD-3a). The manifest is not the security boundary: the exported launcher activity accepts any URI, so `DeepLinkPolicy` validates everything, notification taps included.
+- Increment 1b adds the held-link gate behind authentication (PRV-16).

@@ -1,6 +1,6 @@
 # Engine Interaction Map
 
-> **Last updated:** 2026-10-13 (schema/savings delta verified against code: DB v151; prior guarded-worker/guard verification retained)
+> **Last updated:** 2026-10-24 (app-lock-privacy-mode 1a: notification presentation, re-post and deep-link rows added; BillReminderWorker row updated). Earlier: 2026-10-13 (schema/savings delta verified against code: DB v151; prior guarded-worker/guard verification retained)
 >
 > **Purpose:** Before fixing any engine, check this map to know which pipelines will be affected.  
 > **Rule:** Any engine change requires verifying ALL affected pipelines still work.
@@ -32,7 +32,12 @@
 | **ReceiptMatchLifecycleService** | 3 (Receipt matching) only | 🟢 LOW |
 | **RecurringRuleLifecycleCoordinator** | 4 (Recurring lifecycle), 2 (Transaction reconcile) | 🟡 HIGH |
 | **RecurringLifecycleEventWriter** | 4 (Recurring), 7 (Backup audit) | 🟢 LOW |
-| **BillReminderWorker** | 4 (Reminder dispatch), BillReminderSettings runtime check | 🟢 LOW |
+| **BillReminderWorker** | 4 (Reminder dispatch), BillReminderSettings runtime check; builder owner 2 of the notification presentation (resolves the BILL decision, calls `NotificationPresentationApplier`); `internal const CHANNEL_ID` is imported (const-inlined) by `NotificationKindClassifier` | 🟡 HIGH |
+| **NotificationService / AndroidNotificationService** (`domain/service`, `data/service`) | Kind-aware posts only (`*ForKind`, INV-12) from BudgetMonitor (BUDGET), AnomalyAlertOrchestrator (ANOMALY), DeliverProactiveBriefingNotificationUseCase (BRIEFING), WarrantyExpirationWorker (WARRANTY), ReceiptMatchingWorker (RECEIPT_MATCH); builder owner 1 (`postForKind` + `rebuildDiscreet` sweep). `DeliveryResult.PERMISSION_DENIED` is returned for a platform `SecurityException`; every caller must handle it explicitly. 4 constructor params (context, resolver, applier, `PrivacyDiagnosticsEmitter`) | 🟡 HIGH |
+| **NotificationPresentationApplier / NotificationContentPolicy / NotificationPresentationResolver** | Every app notification of the six kinds (5 service callers + BillReminderWorker + the re-post sweep). Applier = the one place a decision becomes builder state (PRIVATE, generic public version, FULL/DISCREET text, BigText, action policy, kind marker). Policy = pure single owner of FULL/DISCREET and the action policy (BILL AUTH_REQUIRED on API 31+). Resolver = bounded 500 ms fail-closed read of `AppLockSettingsRepository`. Texts: `strings_notification_presentation.xml` (en/es/el) | 🟡 HIGH |
+| **NotificationKindClassifier / NotificationKindMarker** | Re-post sweep only: marker first, channel / id-range fallback, other channels (incl. capture) skipped; marker value = `NotificationKind.stableToken` (renaming a constant must not change it) | 🟡 HIGH |
+| **Post-commit discreet re-post** (`UpdateDiscreetNotificationsUseCase` → `DiscreetRepostTrigger` → `NotificationService.repostActiveAsDiscreet()`) | Runs only after a committed discreet write on the false → true edge; never on a failed / rejected write, never when turned off. Diagnostics: `NOTIF_REPOSTED_DISCREET(COUNT)` (at least one re-posted), `NOTIF_REPOST_FAILED(EXCEPTION_CLASS)` (per-notification failure, query failure, or a sweep failure caught at the trigger boundary). A sweep failure never fails the committed write. Called from `AppLockPrivacySettingsViewModel` in `@ApplicationScope` under `NonCancellable` + `AppLockSettingsWriteSerializer` (interim, S18) | 🟡 HIGH |
+| **DeepLinkPolicy / DeepLinkApplier** (`ui/navigation`) | MainActivity deep-link intake (`handleIntent`, `onCreate` + `onNewIntent`), every notification tap (explicit MainActivity + ACTION_VIEW), `MarkDashboardBriefingOpenedUseCase` (the only link-reachable write), read-only `ExpenseRepository.getExpenseById`. Policy is pure; the applier alone navigates | 🟡 HIGH |
 | **WorkerExecutionGuard** | ALL workers (all 10 CoroutineWorkers run through it, incl. `NotificationIntakeWorker` + snooze/dismiss reminder action workers), 7 (Backup restore gating) | 🟡 HIGH |
 | **WorkerRegistry** | 12 (Startup scheduling), 7 (Backup resume via spec lookup) | 🟢 LOW |
 | **SharedExpenseManager** | Groups, shared expenses (domain facade over `SharedExpenseDataPort` → `SharedExpenseDataPortAdapter` → `GroupTransactionCoordinator`; the GroupLifecycleCoordinator wrapper was removed, GR-14u36) | 🟡 HIGH |
@@ -130,8 +135,38 @@ RecurringRuleLifecycleCoordinator.createRule() / updateRule() / deactivateRule()
 ```
 BillReminderWorker.doWork()
   ├── RecurringLifecycleCoordinator.getDispatchableClaimedReminder()
-  ├── BillReminderWorker.sendNotification() → NotificationSendResult (private sealed interface)
+  ├── NotificationPresentationResolver.resolve(BILL, SDK_INT)   (per reminder, after claim + revalidation)
+  ├── BillReminderWorker.sendNotification(…, decision) → NotificationSendResult (private sealed interface)
+  │     └── NotificationPresentationApplier.apply(…)  (title/text, PRIVATE, public version, actions, BILL marker)
   └── BillReminderSettingsRepository (runtime enabled/quiet hours check)
+
+Also affected by BillReminderWorker.CHANNEL_ID / BILL shape / Snooze+Dismiss action templates:
+  NotificationKindClassifier (const-only import) and AndroidNotificationService.rebuildDiscreet
+  (BILL_SHAPE, BILL_ACTION_TEMPLATES are duplicated there; BillNotificationSweepParityTest pins the two)
+```
+
+### NotificationPresentationApplier / NotificationContentPolicy changes affect:
+```
+AndroidNotificationService.postForKind
+  ├── BudgetMonitor (BUDGET), AnomalyAlertOrchestrator (ANOMALY), DeliverProactiveBriefingNotificationUseCase (BRIEFING)
+  ├── WarrantyExpirationWorker (WARRANTY), ReceiptMatchingWorker (RECEIPT_MATCH)
+  └── DeliveryResult.PERMISSION_DENIED handling in every caller
+AndroidNotificationService.rebuildDiscreet (re-post sweep, via NotificationContentPolicy.decideDiscreet)
+BillReminderWorker.sendNotification
+NotificationKindMarker (stamped by the applier, read by NotificationKindClassifier)
+```
+
+### Post-commit discreet re-post chain:
+```
+AppLockPrivacySettingsViewModel.setDiscreetNotifications  (@ApplicationScope, NonCancellable, AppLockSettingsWriteSerializer)
+  └── UpdateDiscreetNotificationsUseCase
+        ├── AppLockSettingsRepository.getLoadState()          (before value)
+        ├── AppLockSettingsRepository.setDiscreetNotifications()
+        └── on Committed → DiscreetRepostTrigger.onCommittedWrite(before, after)
+              └── false → true only → NotificationService.repostActiveAsDiscreet()
+                    ├── NotificationKindClassifier.classify() + NotificationKindMarker.read()
+                    ├── NotificationContentPolicy.decideDiscreet() → NotificationPresentationApplier
+                    └── NOTIF_REPOSTED_DISCREET(COUNT) / NOTIF_REPOST_FAILED(EXCEPTION_CLASS)
 ```
 
 ### WorkerExecutionGuard changes affect:
@@ -215,7 +250,7 @@ PrivacyGate.check(capability, context)
 - TaxEstimator — isolated tax reports
 - LocationBackfill — isolated enrichment
 - ReceiptMatchLifecycleService — isolated receipt matching domain
-- BillReminderWorker — isolated reminder dispatch
+- BillReminderWorker — reminder dispatch (no longer fully isolated since app-lock 1a: shares the notification presentation applier and its CHANNEL_ID/shape with the sweep)
 - DailyBucketEngine — isolated daily bucket computation
 - BudgetVsActualEngine — isolated budget comparison
 - RecurringLifecycleEventWriter — isolated event writing
@@ -240,6 +275,8 @@ PrivacyGate.check(capability, context)
 - TotalsAggregationEngine — verify dashboard totals consumers
 - MoneyNormalizationEngine — verify all money conversion/bucket-policy consumers in `domain/core/money/`
 - SubscriptionManagerEngine — verify subscriptions, price history, usage, candidates, negotiation outcome writes
+- NotificationPresentationApplier / NotificationContentPolicy / AndroidNotificationService — verify all six notification kinds (FULL and DISCREET), BillReminderWorker, the re-post sweep, the kind marker and the PERMISSION_DENIED handling of every caller
+- DeepLinkPolicy / DeepLinkApplier — verify MainActivity intake, notification tap intents, the manifest filter and the DL_* diagnostics
 
 ### VERY DANGEROUS to change (foundational):
 - MoneyAggregate model — verify every consumer of financial totals

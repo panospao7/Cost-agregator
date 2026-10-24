@@ -1,7 +1,7 @@
 # Hilt Module Bindings Map
 
-> Complete interface → implementation binding map for all 33 Hilt @Module files (+ 1 @EntryPoint).
-> **Last updated:** 2026-10-01 (verified against source; DB schema v149).
+> Complete interface → implementation binding map for all 34 Hilt @Module files (+ 1 @EntryPoint).
+> **Last updated:** 2026-10-24 (app-lock-privacy-mode 1a delta added: `AppLockModule` and the auto-provided app-lock/notification-presentation singletons; the rest was verified 2026-10-01 against DB schema v149 and is not re-verified here).
 >
 > **Note:** `SubscriptionModule.kt` was deleted in 2026-05-09 refactoring — `SubscriptionManagerEngine`
 > is auto-provided by its `@Singleton @Inject constructor`. Replaced in count by `WorkerModule.kt`.
@@ -115,6 +115,9 @@ Note: `WorkerRunLogger` → `WorkerRunLoggerImpl` is bound by `DiagnosticsModule
 Provides:
   Gson                                        → GsonBuilder().setLenient().create()
   NotificationService                         → AndroidNotificationService
+                                                (@Inject constructor, 4 params since app-lock 1a:
+                                                @ApplicationContext Context, NotificationPresentationResolver,
+                                                NotificationPresentationApplier, PrivacyDiagnosticsEmitter)
   PostedAlertCanceller                        → AndroidPostedAlertCanceller
   GeocodingService                            → CompositeGeocodingService
   NearbyPoiService                            → OverpassNearbyService
@@ -361,6 +364,40 @@ Provides:
   PrivacyAuditLogger                          → PrivacyAuditLoggerImpl
 ```
 
+### `AppLockModule` — `di/AppLockModule.kt` (app-lock-privacy-mode 1a, S1)
+```
+Binds (@Singleton):
+  AppLockSettingsRepository                   → AppLockSettingsRepositoryImpl
+                                                (own DataStore, device-local, never Room or .costbackup;
+                                                public ctor takes @ApplicationContext Context)
+
+Auto-provided (no module entry; @Inject constructors) — app-lock 1a:
+  @Singleton PrivacyDiagnosticsEmitter                 (NotificationDiagnosticEmitter, MonotonicTimeProvider)
+  @Singleton NotificationPresentationResolver          (AppLockSettingsRepository, PrivacyDiagnosticsEmitter,
+                                                        @ApplicationScope CoroutineScope)
+  @Singleton NotificationPresentationApplier           (@ApplicationContext Context, NotificationPresentationTexts)
+  @Singleton NotificationPresentationTexts             (resource-backed discreet / public-version texts)
+  DiscreetRepostTrigger                                (NotificationService, PrivacyDiagnosticsEmitter)
+  UpdateDiscreetNotificationsUseCase                   (AppLockSettingsRepository, DiscreetRepostTrigger,
+                                                        PrivacyDiagnosticsEmitter)
+  MarkDashboardBriefingOpenedUseCase                   (AiEngagementRepository)
+  DeepLinkApplier                                      (ExpenseRepository, MarkDashboardBriefingOpenedUseCase,
+                                                        PrivacyDiagnosticsEmitter, BankFeatureAvailability,
+                                                        AiRuntimeDiagnostics, @ApplicationScope CoroutineScope;
+                                                        field-injected into MainActivity)
+  @Singleton AppLockSettingsWriteSerializer            (no deps; ui/screens/privacysettings; INTERIM process-wide
+                                                        Mutex serialising settings writes; retired at S18 when it
+                                                        moves to the domain owner)
+  @HiltViewModel AppLockPrivacySettingsViewModel       (AppLockSettingsRepository, UpdateDiscreetNotificationsUseCase,
+                                                        PrivacyDiagnosticsEmitter, AppLockSettingsWriteSerializer,
+                                                        @ApplicationScope CoroutineScope)
+  BillReminderWorker (@HiltWorker assisted) additionally takes NotificationPresentationResolver and
+                                                        NotificationPresentationApplier (appended after timeProvider)
+```
+`AppLockPrivacySettingsViewModel` uses `@ApplicationScope` (IO dispatcher, SupervisorJob) deliberately: every
+settings write (per-field discreet toggle and review-save) is launched there under
+`withContext(NonCancellable)` so a committed ON still runs its re-post sweep after the screen is left.
+
 ### `BackupRepositoryModule` — `di/BackupRepositoryModule.kt`
 ```
 Binds:
@@ -486,4 +523,4 @@ BackupRepositoryModule ──► Backup/Restore
 ```
 
 ---
-**Stats:** 33 Hilt @Module files · 65+ repositories · 68 DAOs (64 DaoModule + 3 AiModule + 1 unbound) · 70 entities · DB v149 (DatabaseSchemaPolicy.CURRENT_VERSION)
+**Stats:** 34 Hilt @Module files (33 counted 2026-10-01 + `AppLockModule`; re-counted 2026-10-24: 34) · 65+ repositories · 68 DAOs (64 DaoModule + 3 AiModule + 1 unbound) · 70 entities · DB v149 (DatabaseSchemaPolicy.CURRENT_VERSION)
