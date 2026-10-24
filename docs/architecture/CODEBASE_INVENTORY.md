@@ -10,6 +10,16 @@
 
 Snapshot summary only: this inventory tracks the current UI, domain, data, and DI surfaces without freezing volatile counts.
 
+### Drift Sync (2026-10-24 / ai-fixes Parts A, B, C, branch feature/ai-fixes)
+
+Hand-maintained, like every section here (D-10: no generator script exists; none was run for this refresh). DB **v151** unchanged (no schema change, no migration; one new DataStore key). Hilt `@Module` files: 34 (`AppForegroundModule` added; see `hilt-bindings-map.md`). Counts of DAOs/ViewModels/workers are unchanged by ai-fixes.
+
+- **Assistant (Part C)** — `domain/ai/model/AssistantUnsupportedReason` (7 bounded codes; `Unsupported(reason, diagnostic)`), `ui/components/ai/AssistantUnsupportedReasonText` (code to localized text) and `ui/components/ai/AssistantClarificationChoiceText` (choice label mapping); `domain/ai/usecase/AssistantPeriodResolver` (pure calendar-period arithmetic, explicit zone, `PeriodGranularity`/`PeriodChoice`); `domain/ai/usecase/CompleteFinancialQueryClarificationUseCase` (pure completion of a pending intent, filters kept). `ExecuteFinancialQueryUseCase` gains a MIN executor and an exhaustive metric `when`; the interpretation input carries `priorUserQueries` (USER turns only, last 4) and the assistant redaction decision comes from `EffectiveCloudAiPolicyResolver`.
+- **Warranty (B1)** — `WarrantyTrackerRepository.confirmWarranty(id)` is the single confirm path; `domain/usecase/warranty/WarrantyReviewState` derives counts/filters/ordering; the cloud warranty path is gone from the repository (service retained but referenced only from `di/AiModule`); `warrantyExtractionEnabled` default is off and its settings row is replaced by a local-only caption.
+- **Transaction insight (B2)** — `AiCapability.TRANSACTION_INSIGHT` (appended last; on-device only, never cloud); `AiSettings.transactionInsightEnabled` with a one-time `data/repository/AiInsightSettingsMigration` (DataStore `DataMigration`) fed by the `domain/ai/service/InstallProvenance` port (`InstallOrigin`) and `data/repository/PackageInstallProvenance`; `domain/ai/service/AppForegroundState` port with `startup/ProcessAppForegroundState` (registered once in `AppStartupCoordinator.registerLifecycleObserver`) and `di/AppForegroundModule`; `GenerateTransactionInsightUseCase` rewritten on-device and returns `domain/ai/usecase/TransactionInsightOutcome` (`Generated` | `Skipped(reason)`).
+- **Workers (B3)** — `DailyBriefingWorker` and `WarrantyExpirationWorker` no longer declare `requiresNotificationPermission`; each checks `NotificationPermissionChecker` locally before posting. `DeliverProactiveBriefingNotificationUseCase` returns `domain/ai/usecase/BriefingDeliveryOutcome`. `SyncProactiveBriefingWorkUseCase` arms iff `aiEnabled` and briefing and (cloud allowed or proactive).
+- **AI settings UI (B2e/B3b)** — transaction-insight row, relabelled proactive toggle (`ai_toggle_proactive`) with `ai_proactive_desc` and the notifications-blocked caption.
+
 ### Drift Sync (2026-10-22 / money-correctness 1a + 1b, branch feature/money-correctness)
 
 Re-verified against production source: 70 DAO files, 41 ViewModel files, 31 `*Worker*`-named files (the 2026-10-02 count of 29 was already stale; money-correctness adds none), DB **v151** unchanged (no schema change, no migration).
@@ -260,6 +270,7 @@ Assistant is an overlay/entry surface, not a bottom tab.
 - AiEngagementRepository, AiEnvironmentMonitor, AiSettingsRepository
 - AiModels: AiServiceResult, FinancialQueryModels, AssistantHistorySettings (OFF/REDACTED/RAW)
 - AiWorkScheduler, CategorizationAssistService, DashboardBriefingService
+- AppForegroundState (port), InstallProvenance + InstallOrigin (port)
 - DedupeJudgeService, NotificationFallbackParser, QueryInterpretationService
 - ReceiptAssistService, ReceiptItemCategorizationService
 - ReviewExplanationService, ReviewPriorityScorer, SemanticDuplicateDetector
@@ -273,6 +284,9 @@ Assistant is an overlay/entry surface, not a bottom tab.
 - MapFinancialQueryToNavigationUseCase, PrioritizeReviewItemsUseCase
 - SuggestCategoryFallbackUseCase, SuggestReceiptExtractionUseCase
 - SyncProactiveBriefingWorkUseCase
+- CompleteFinancialQueryClarificationUseCase, AssistantPeriodResolver
+- TransactionInsightOutcome, BriefingDeliveryOutcome (typed outcomes of GenerateTransactionInsightUseCase / DeliverProactiveBriefingNotificationUseCase)
+- WarrantyReviewState (`domain/usecase/warranty/`)
 - AiArtifactFreshness, TransactionInsightInputBuilder
 - ValidateBankStatementTransactionsUseCase
 - Plus 7 InputBuilder classes
@@ -285,6 +299,7 @@ Assistant is an overlay/entry surface, not a bottom tab.
 - ReviewPriorityModels, SemanticDuplicateModels, DefaultAiCapabilityRouter
 - AiRuntimeStatusModels
 - ExtractedAmountFilter, FinancialQueryDataQuality
+- AssistantUnsupportedReason (`domain/ai/model/`); UI text mappings AssistantUnsupportedReasonText, AssistantClarificationChoiceText (`ui/components/ai/`)
 
 ### Analytics
 - AdvancedAnalyticsEngine, AdvancedAnalyticsDashboard, AdvancedAnalyticsModels
@@ -400,7 +415,7 @@ Actual repository inventory (interfaces and implementations); counts shift as im
 - AiArtifactRepositoryImpl
 - AiChatRepositoryImpl
 - AiEngagementRepositoryImpl
-- AiSettingsRepositoryImpl
+- AiSettingsRepositoryImpl (single-source defaults; DataStore migration `AiInsightSettingsMigration` + `PackageInstallProvenance` in the same package)
 
 ### Specialized
 - AccountingExportRepository
@@ -539,6 +554,7 @@ One DAO per entity (mostly 1-to-1 mapping)
 
 ### Feature Modules
 - **AiModule** - AI/ML services
+- **AppForegroundModule** - binds `AppForegroundState` to `ProcessAppForegroundState` (same singleton as the registered lifecycle observer)
 - **DashboardContractsModule** - Dashboard wiring
 - **DashboardAnomalyModule** - Dashboard anomaly bindings
 - **CashFlowModule** - Cash flow calculations
@@ -646,6 +662,7 @@ One DAO per entity (mostly 1-to-1 mapping)
  2. **AppStartupDelegate** - Startup entry-point bootstrap
  3. **AppStartupCoordinator** - Startup orchestration + lifecycle hooks
  4. **AppBackgroundLifecycleObserver** - Background lifecycle observer
+ 4a. **ProcessAppForegroundState** (`startup/`) - `@Singleton` process-lifecycle observer implementing the `AppForegroundState` port (default not-foreground = fail-safe skip); registered once in `AppStartupCoordinator.registerLifecycleObserver`, bound by `di/AppForegroundModule`
 
 ### Main Services
  5. **NotificationCaptureService** - Notification listener
@@ -661,10 +678,10 @@ One DAO per entity (mostly 1-to-1 mapping)
  13. **RecommendationStateManager** - Reactive StateFlow, max 5 limit, user-specific
 
 ### Workers (all 7 paused during restore via RestoreMaintenanceMode; all use WorkerSpecScheduler for centralized scheduling)
-  14. **DailyBriefingWorker** - Proactive briefing delivery (privacy-gated, midnight one-shot reschedule chain)
+  14. **DailyBriefingWorker** - Briefing generation + proactive delivery (privacy-gated; requiresNotificationPermission=false, local `NotificationPermissionChecker` check before posting, `BriefingDeliveryOutcome`; midnight one-shot reschedule chain)
   15. **LocationBackfillWorker** - Location enrichment backfill (overwrite guard, RetryableWorkerException)
   16. **MerchantKeyBackfillWorker** - Merchant key backfill (one-shot, RetryableWorkerException, REPLACE policy)
-  17. **WarrantyExpirationWorker** - Warranty expiry tracking (requiresNotificationPermission, room-backed delivery)
+  17. **WarrantyExpirationWorker** - Warranty expiry tracking (requiresNotificationPermission=false; reconciliation always runs, reminders gated by a local `NotificationPermissionChecker` check; room-backed delivery)
   18. **ReceiptMatchingWorker** - Receipt matching background work (atomic claim-for-auto-match)
   19. **BillReminderWorker** - Bill reminder delivery (disabled by default, runtime settings check)
   20. **DataRetentionWorker** - Privacy data purging (RetentionRegistry-based)

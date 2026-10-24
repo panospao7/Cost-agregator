@@ -570,3 +570,47 @@ Next: B3b (proactive copy + notifications-blocked caption) — include the INV-2
 - Carry to Z: (1) update ux-flows.md §2.4 to the shipped ai_proactive_desc (deliberate 4th sentence = INV-25 disclosure; conditional so truthful for on-device-only users); (2) static-guards at the bundle gate (first UI → domain.workers import); (3) translation review: es/el prose names the English toggle labels (Enable AI / Dashboard briefing / Allow cloud AI) — drifts if those get translated; (4) UX nuance: blocked caption refreshes only at existing refresh points (not on resume).
 - Owner-visible: ai_toggle_proactive renamed "Notify me when my daily briefing is ready" (UX §2.4).
 Next: Z (closeout + bundle acceptance gate; reviewer-strict in a fresh session).
+
+## Z (2026-10-24) — closeout docs
+Docs only, no `app/` edits, nothing compiled or run (no builds, tests, guards, generator). Worktree C:\Users\panos\Desktop\Cost-agregator-af, branch feature/ai-fixes, HEAD 71faed1c at start.
+Done:
+- `docs/architecture/CODEBASE_INVENTORY.md`: new "Drift Sync (2026-10-24 / ai-fixes)" section + entries for AssistantUnsupportedReason(+Text), AssistantClarificationChoiceText, AssistantPeriodResolver, CompleteFinancialQueryClarificationUseCase, InstallProvenance/InstallOrigin, PackageInstallProvenance, AiInsightSettingsMigration, AppForegroundState/ProcessAppForegroundState/AppForegroundModule, TransactionInsightOutcome, BriefingDeliveryOutcome, WarrantyReviewState; WarrantyExpirationWorker (was :667) and DailyBriefingWorker rows no longer say requiresNotificationPermission. D-10: the inventory is hand-maintained (no generator script exists; dated Drift Sync sections), so it was edited by hand. Pre-existing stale counts elsewhere in the file (DB header, worker count "all 7") left as is.
+- `docs/features/ai-fixes/ux-flows.md` §2.4: shipped `ai_proactive_desc` (deliberate 4th sentence = INV-25 disclosure), relabelled toggle, blocked caption refresh points.
+- `docs/features/ai-fixes/release-note.md` (new): draft lines incl. plan §8 text; OWNER REVIEW PENDING; not yet folded into `docs/releases/CHANGELOG.md [Unreleased]` (D-22).
+- `workflows/active/ai-evolution-handoff.md`: section "ai-fixes follow-ups and deferred items" with one-line reasons.
+Still open before acceptance: owner review of release-note.md and es/el strings (list in ai-evolution-handoff.md); domain-modeler spec reconciliation (INV-C9 connector, domain-spec-part-c ~:50/~:200, spec §4 rule 6 already amended); owner decision on GenAI error carrier.
+
+### Bundle acceptance gate checklist (validation-runner, serial; poll the run ID; RUNNING is not failure; missing/stale/errored is never PASS)
+Run order per plan "Final bundle acceptance gate" with the Part C insertions (plan addendum §7). Fill one run ID + result per line. `unit-tests` is last. `migration-tests` not required. Request the runner via the orchestrator; no other agent runs validation.
+- [ ] 1. `unit-test-shard -Shard architecture-contracts` — run ID: ______ result: ______
+- [ ] 2. `unit-test-shard -Shard data` — run ID: ______ result: ______
+- [ ] 3. `unit-test-shard -Shard domain-a-m` — run ID: ______ result: ______
+- [ ] 4. `unit-test-shard -Shard domain-n-z` — run ID: ______ result: ______
+- [ ] 5. `unit-test-shard -Shard runtime-ui` — run ID: ______ result: ______
+- [ ] 6. `unit-test-shard -Shard integration-golden` — run ID: ______ result: ______
+- [ ] 7. `registered-guard -GuardId db_access` — run ID: ______ result: ______
+- [ ] 7 (cont.) `registered-guard -GuardId db_artifact_sync` (after db_access) — run ID: ______ result: ______
+- [ ] 7a. `registered-guard -GuardId cloud_payload` — run ID: ______ result: ______
+- [ ] 7b. `registered-guard -GuardId pii_logging` — run ID: ______ result: ______
+- [ ] 7c. `registered-guard -GuardId time_boundaries` — run ID: ______ result: ______
+- [ ] 7d. `registered-guard -GuardId cancellation` — run ID: ______ result: ______
+- [ ] 8. `static-guards` (covers the first ui -> domain.workers import from B3b and the cancellation baseline ratchet 92 -> 90) — run ID: ______ result: ______
+- [ ] 9. `lint` — run ID: ______ result: ______
+- [ ] 10. WarrantyDaoTest — PLAN CORRECTION (S0): it is a JVM Robolectric test, not androidTest, so use `targeted-unit-test` filter `*WarrantyDaoTest*`, not `connected-test-class` on AVD `wave5-api35` (it also runs inside the `data` shard) — run ID: ______ result: ______
+- [ ] 11. `app-check` — run ID: ______ result: ______
+- [ ] 12. `unit-tests` (last) — run ID: ______ result: ______
+- [ ] Then: fresh-session `reviewer-strict` final acceptance covering A, B and C (separate from discovery; planner does not declare acceptance) — session/verdict: ______
+Gate notes: tree must be clean/committed before the run (a handoff edit mid-run produced STALE_RESULT at S0 vr-20261022-211416); bundle requires B1a+B1b shipped together (B1a ISSUE-3); `guard_docs_truth` (FG-26) should be re-run if any named symbol in docs changes after this Z edit.
+
+### MERGE NOTES
+vs `feature/app-lock-privacy-mode` (CROSS-LANE; board: C:\Users\panos\Desktop\Cost-agregator\build\release-lead-notes\lanes-board.md):
+1. `DeliverProactiveBriefingNotificationUseCase`: the posting call must become `sendAiBriefingReadyForKind(BRIEFING, …)` (3-value `DeliveryResult`). The outcome mapping is an exhaustive `when` with no else, so the merge fails to compile until `DeliveryResult.PERMISSION_DENIED -> BriefingDeliveryOutcome.NOTIFICATION_PERMISSION_DENIED` (non-delivery) is added; the enum KDoc already covers both meanings.
+2. Move the two app-lock S6 briefing use-case tests onto the outcome. `DailyBriefingWorker` already calls `addNotificationsSent()` only on DELIVERED (closes the S6 residual) and handles a use-case-level NOTIFICATION_PERMISSION_DENIED (diagnostic, count 0). If app-lock changed `DailyBriefingWorker` to touch NotificationService directly, re-check.
+3. `WarrantyExpirationWorker`: keep app-lock's `sendBudgetAlertForKind(WARRANTY, …)` call form AND this slice's local `notificationPermissionChecker.areNotificationsEnabled()` check with `requiresNotificationPermission=false`. Drop app-lock's outer CancellationException/Exception wrapper (removed here; the guard owns classification). The local check precedes seeding, so a denied run never creates or fails a delivery row; app-lock's PERMISSION_DENIED -> markFailed fires only on a revoke race.
+4. Retarget app-lock's WarrantyExpirationWorker KDoc and any tests stubbing guard `Skipped(NOTIFICATION_PERMISSION_DENIED)` (permission is no longer a guard gate for this worker). Re-add the new ctor params (`NotificationPermissionChecker`, `DiagnosticEventWriter`) to app-lock test fakes. `DailyBriefingWorker` gained a last ctor param `NotificationPermissionChecker`.
+5. Guards: `SourceScanningArchitectureGuardTest` `optionalNotificationWorkers` now lists ReceiptMatchingWorker, DailyBriefingWorker, WarrantyExpirationWorker; re-resolve textual conflicts in that list and the broad-catch allowlist (the expired WarrantyExpirationWorker entry is removed; also removed from `CancellationSafetyArchitectureGuardTest` and `scripts/allowlists/worker_allowlist.yml` broadCatch). Lock-screen presentation of `summary.take(180)` is the app-lock lane's review.
+vs `feature/manual-entry-currency` (and other lanes touching db policy):
+6. `db_ownership_policy.yml`: ai-fixes B1a removes `toWarrantyEntityOrNull` and adds 2 `confirmWarranty(Long)` rows, pinning the exact policy row count 430 -> 431 in `DbGuardPolicyFixtureTest.kt` and `scripts/test_verify_db_access_boundaries.py` (x2). MEC also moves the same pin (expected 431 -> 432 on its side). Do NOT hand-merge the numbers: after merging both policy files, re-derive the count from the merged `db_ownership_policy.yml` and set all three pins to it, keeping provenance comments from both. If either branch regenerated signatures, run the sanctioned route (R7 Pattern E, generator last on a tree with only that change uncommitted, then `registered-guard db_artifact_sync`); ai-fixes did NOT regenerate (R21 minimal path), so the candidate/accounting trail is unchanged.
+7. Hilt module count: ai-fixes adds `AppForegroundModule` (33 -> 34 in `hilt-bindings-map.md` :3/:503 and `ARCHITECTURE.md` :39/:896). If MEC (or any lane) also adds a module, re-count `@Module` files after the merge instead of summing. Also re-check `CODEBASE_INVENTORY.md` (top Drift Sync sections stack: keep both) and `CODEBASE_SEGMENTS.md` Segments 12 and 20.
+8. Hot files to re-resolve by hand: `SourceScanningArchitectureGuardTest.kt`, `LEGAL_PATHS.md` (Privacy/Cloud AI, Assistant, Workers blocks; anchors shift), `ENGINE_INTERACTION_MAP.md`, `res/values*/strings.xml` (es/el), `AiModels.kt`/`AiSettingsRepositoryImpl.kt` (transactionInsightEnabled, last field), `ExpenseDao`-adjacent assistant code (`ExecuteFinancialQueryUseCase`: MAX/MIN convertAsOf gap is money-correctness RF-C3).
+- Z spec reconciliation (domain-modeler, 2026-10-24): domain-spec-part-c §1.3 METRIC_NOT_SUPPORTED row (defensive-only), INV-C9 connector (shipped pattern), INV-C17 (exhaustive when, retargeted test); domain-spec OD-2 vs INV-25 clarification. B1a ISSUE-4 already reconciled at B1a. Comparison-cue gap ("comparing") logged in ai-evolution-handoff follow-ups.

@@ -272,6 +272,7 @@ Format: statement → **Owner** (the single component that holds the rule) → e
 - **INV-28 On-device users are not newly armed.** For `allowCloudAi = false`, ai-fixes adds no new arming and no new generation path. The only difference: a run that was already armed (proactive on) is no longer skipped for notification permission, and any on-device attempt follows the untouched fallback path. **Owner:** INV-25 predicate. AE-45, AE-46.
 
 ### Conditional on OD-2 = A (recommended)
+[reconciled Z, 2026-10-24] Naming: OD-2 is the warranty expiry-reconciliation decision (INV-29, AE-51). It was decided as A at Gate 2 (2026-10-16), so INV-29 applies. It shipped in slice B3a together with the briefing work, but the B3a briefing arming change is INV-25, not OD-2.
 - **INV-29 Expiry reconciliation does not depend on notification permission.**
   - `WarrantyExpirationWorker` uses `requiresNotificationPermission = false` and runs `reconcileExpiredItems` on every run.
   - Reminder posting is guarded locally by `notificationPermissionChecker.areNotificationsEnabled()`.
