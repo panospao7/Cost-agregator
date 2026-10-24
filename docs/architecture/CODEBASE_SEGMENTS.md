@@ -299,7 +299,7 @@ Owns startup wiring, service lifecycle recovery, and background runtime jobs.
 - `domain/workers/WorkerExecutionGuard.kt` — Structured guarded execution with restore check, `RetryableWorkerException` retry contract, and notification-permission gate
 - `domain/workers/WorkerRegistry.kt` — Single-source-of-truth registry for all 7 workers (specName + schedule lambda); replaces hardcoded lists in RestoreMaintenanceMode/AppStartupCoordinator
 - `domain/workers/RetryableWorkerException.kt` — Typed retry signal; guard catch precedence: CancellationException → RetryableWorkerException (Retry) → classifyTransient → otherwise permanent Failed
-- `domain/workers/NotificationPermissionChecker.kt` — Guard-enforced notification-permission gate for WarrantyExpirationWorker
+- `domain/workers/NotificationPermissionChecker.kt` — Notification-permission check: guard-enforced for BillReminderWorker; called directly by the optional-notification workers (ReceiptMatchingWorker, DailyBriefingWorker, WarrantyExpirationWorker — ai-fixes B3a)
 - `domain/workers/PrivacyRuntimeWorkerPolicy.kt` — Maps privacy toggles to gated workers; PrivacySettingsRepositoryImpl.applyPrivacyChange() is policy-driven
 - `domain/workers/WorkerDrainController.kt` — Worker drain lifecycle controller
 - `domain/workers/WorkerLease.kt` / `WorkerLeaseRegistry.kt` / `WorkerLeaseRegistryImpl.kt` — Worker lease acquisition for exclusive execution

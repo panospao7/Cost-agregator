@@ -307,7 +307,10 @@ class AiSettingsViewModel @Inject constructor(
         transform = { it.copy(aiEnabled = enabled) },
         syncProactiveBriefings = true
     )
-    fun setAllowCloudAi(enabled: Boolean) = update(transform = { it.copy(allowCloudAi = enabled) })
+    fun setAllowCloudAi(enabled: Boolean) = update(
+        transform = { it.copy(allowCloudAi = enabled) },
+        syncProactiveBriefings = true
+    )
     fun setAllowOnDeviceAi(enabled: Boolean) = update(transform = { it.copy(allowOnDeviceAi = enabled) })
     fun setAssistantEnabled(enabled: Boolean) = update(transform = { it.copy(assistantEnabled = enabled) })
     fun setQueryInterpretationEnabled(enabled: Boolean) = update(transform = { it.copy(queryInterpretationEnabled = enabled) })

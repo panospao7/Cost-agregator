@@ -583,7 +583,20 @@ EVERY worker:
   → WorkerRunLogger records RUNNING → SUCCESS/FAILED/SKIPPED/RETRY
   → Checkpoint before long loops (ensureActive / writeBarrier.checkWritesAllowed)
   → Guard enforces requiresNotificationPermission via NotificationPermissionChecker
-       (durable skip: NOTIFICATION_PERMISSION_DENIED)
+       (durable skip: NOTIFICATION_PERMISSION_DENIED) for workers whose whole purpose is
+       a notification
+  → Optional-notification pattern (PR12K-3; ReceiptMatchingWorker, DailyBriefingWorker,
+       WarrantyExpirationWorker): requiresNotificationPermission = false, and the worker
+       checks notificationPermissionChecker.areNotificationsEnabled() locally immediately
+       before posting. Core work (receipt matching, briefing generation + persistence,
+       warranty expiry reconciliation via reconcileExpiredItems) never depends on
+       notification permission. When denied: no post, no notification count, run still
+       SUCCESS. DailyBriefingWorker and WarrantyExpirationWorker additionally record a
+       bounded NOTIFICATION_PERMISSION_DENIED skip diagnostic (DailyBriefingWorker only when
+       DeliverProactiveBriefingNotificationUseCase reports that outcome, i.e. after its
+       settings, dedupe and artifact checks).
+       (ai-fixes INV-24, INV-27, INV-29; enforced by SourceScanningArchitectureGuardTest
+       notification_posting_workers_require_permission_flag)
   → PrivacyRuntimeWorkerPolicy checks per-worker privacy consent
 
 RETRY CONTRACT:

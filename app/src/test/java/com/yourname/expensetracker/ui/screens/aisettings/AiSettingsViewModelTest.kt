@@ -124,6 +124,42 @@ class AiSettingsViewModelTest : ViewModelTestUtils() {
         }
     }
 
+    // ai-fixes B3a / INV-25: allowCloudAi is now an input of the briefing arming predicate.
+    @Test
+    fun `setAllowCloudAi syncs proactive briefing work with the updated settings`() = runTest(testDispatcher) {
+        viewModel.setAllowCloudAi(true)
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { aiSettingsRepository.update(any()) }
+        coVerify(exactly = 1) {
+            syncProactiveBriefingWorkUseCase(match { it.allowCloudAi })
+        }
+    }
+
+    @Test
+    fun `setAllowCloudAi false syncs proactive briefing work with cloud off`() = runTest(testDispatcher) {
+        viewModel.setAllowCloudAi(false)
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) {
+            syncProactiveBriefingWorkUseCase(match { !it.allowCloudAi })
+        }
+    }
+
+    @Test
+    fun `setAllowCloudAi write failure does not sync proactive briefing work`() = runTest(testDispatcher) {
+        coEvery { aiSettingsRepository.update(any()) } throws IOException(rawPath)
+
+        viewModel.setAllowCloudAi(true)
+        advanceUntilIdle()
+
+        assertEquals(
+            UiText.StringResource(R.string.ai_error_settings_save_failed),
+            viewModel.uiState.value.settingsWriteError
+        )
+        coVerify(exactly = 0) { syncProactiveBriefingWorkUseCase(any()) }
+    }
+
     @Test
     fun `refreshRuntimeStatus updates runtime summary`() = runTest(testDispatcher) {
         val summary = AiRuntimeStatusSummary(

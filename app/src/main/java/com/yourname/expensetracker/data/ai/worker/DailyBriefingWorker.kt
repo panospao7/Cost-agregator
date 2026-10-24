@@ -9,13 +9,18 @@ import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiWorkScheduler
+import com.yourname.expensetracker.domain.ai.usecase.BriefingDeliveryOutcome
 import com.yourname.expensetracker.domain.ai.usecase.DeliverProactiveBriefingNotificationUseCase
 import com.yourname.expensetracker.domain.ai.usecase.GenerateDashboardBriefingUseCase
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.diagnostics.AppPipeline
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
+import com.yourname.expensetracker.domain.diagnostics.EventOutcome
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.workers.BlockedPolicy
+import com.yourname.expensetracker.domain.workers.NotificationPermissionChecker
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
 import com.yourname.expensetracker.domain.workers.WorkerGuardResult
@@ -63,7 +68,8 @@ class DailyBriefingWorker @AssistedInject constructor(
     private val aiArtifactRepository: AiArtifactRepository,
     private val aiWorkScheduler: AiWorkScheduler,
     private val executionGuard: WorkerExecutionGuard,
-    private val diagnosticEventWriter: DiagnosticEventWriter
+    private val diagnosticEventWriter: DiagnosticEventWriter,
+    private val notificationPermissionChecker: NotificationPermissionChecker
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
@@ -73,7 +79,7 @@ class DailyBriefingWorker @AssistedInject constructor(
             WorkerGuardRequest(
                 workerName = "ai_daily_briefing",
                 requiredCapabilities = listOf(PrivacyCapability.CLOUD_AI_DAILY_BRIEFING),
-                requiresNotificationPermission = true,
+                requiresNotificationPermission = false,
                 allowDuringBackupExport = false,
                 blockedPolicy = BlockedPolicy.SKIP_SUCCESS,
                 workId = id.toString(),
@@ -106,18 +112,27 @@ class DailyBriefingWorker @AssistedInject constructor(
                         .getProcessedDataFlow(analyticsRepository)
                         .first()
                     generateDashboardBriefingUseCase(processedData, startedAt)
-                    deliverProactiveBriefingNotificationUseCase(
+                    // INV-24: generation and persistence above never depend on notification
+                    // permission. The permission check gates posting only, immediately
+                    // before delivery (PR12K-3 optional-notification pattern); the use case
+                    // applies it after its settings, dedupe and artifact checks.
+                    val notificationsAllowed = notificationPermissionChecker.areNotificationsEnabled()
+                    val outcome = deliverProactiveBriefingNotificationUseCase(
                         dateKey = dateKey,
                         startedAt = startedAt,
-                        notificationId = notificationId
+                        notificationId = notificationId,
+                        notificationsAllowed = notificationsAllowed
                     )
-                    // P9-S4 (NEW-03): record the proactive briefing delivery so the run
-                    // surfaces a non-zero notificationsSent in BackgroundJobRun. This is
-                    // best-effort at the worker boundary: the delivery use case completed
-                    // without throwing or timing out. (The use case may still internally
-                    // no-op on settings/dedupe; surfacing that would require a delivery
-                    // return value, which is out of scope for this counts-only slice.)
-                    ctx.addNotificationsSent()
+                    // INV-27: count only an actual delivery. The permission-denied diagnostic
+                    // is recorded only when the use case reports that outcome; the run stays SUCCESS.
+                    when (outcome) {
+                        BriefingDeliveryOutcome.DELIVERED -> ctx.addNotificationsSent()
+                        BriefingDeliveryOutcome.NOTIFICATION_PERMISSION_DENIED -> recordNotificationPermissionDenied()
+                        BriefingDeliveryOutcome.SKIPPED_SETTINGS_OFF,
+                        BriefingDeliveryOutcome.SKIPPED_DUPLICATE,
+                        BriefingDeliveryOutcome.SKIPPED_NO_FRESH_ARTIFACT,
+                        BriefingDeliveryOutcome.NOT_DELIVERED -> Unit
+                    }
                 }
             } catch (e: TimeoutCancellationException) {
                 Timber.w(e, "DailyBriefingWorker: pipeline timed out after ${BRIEFING_PIPELINE_TIMEOUT_MS}ms — retrying")
@@ -143,6 +158,23 @@ class DailyBriefingWorker @AssistedInject constructor(
         }
 
         return guardResult.toWorkerResult()
+    }
+
+    /**
+     * INV-27: durable, bounded diagnostic for a delivery that was not attempted because
+     * notification permission is missing. Carries only the reason code; no text or keys.
+     * The diagnostic writer owns write-failure fallback and rethrows cancellation.
+     */
+    private suspend fun recordNotificationPermissionDenied() {
+        diagnosticEventWriter.emit(
+            DiagnosticEvent(
+                pipeline = AppPipeline.WORKER,
+                stage = "briefing_delivery",
+                outcome = EventOutcome.SKIPPED,
+                reasonCode = DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED,
+                entityType = "DailyBriefingWorker"
+            )
+        )
     }
 
     /**

@@ -405,7 +405,14 @@ class SourceScanningArchitectureGuardTest {
 
         // PR12K-3: ReceiptMatchingWorker treats notifications as optional side effects.
         // It must NOT require global permission, but MUST locally check before posting.
-        val optionalNotificationWorkers = setOf("ReceiptMatchingWorker.kt")
+        // ai-fixes B3a (INV-24, INV-29): DailyBriefingWorker and WarrantyExpirationWorker
+        // follow the same pattern so generation and expiry reconciliation never depend on
+        // notification permission; only posting is gated locally.
+        val optionalNotificationWorkers = setOf(
+            "ReceiptMatchingWorker.kt",
+            "DailyBriefingWorker.kt",
+            "WarrantyExpirationWorker.kt"
+        )
 
         val requiredViolations = notificationWorkers.filter { file ->
             if (file.name in optionalNotificationWorkers) return@filter false
@@ -572,14 +579,6 @@ class SourceScanningArchitectureGuardTest {
             ),
             ArchitectureAllowlistEntry(
                 fileName = "BillReminderWorker.kt",
-                rule = "BROAD_CATCH_NO_CANCELLATION_RETHROW",
-                owner = "WorkerArchitecture",
-                reason = "Legacy worker — CancellationException rethrow to be added",
-                issue = "PR12K-6",
-                expires = LocalDate.of(2026, 9, 30)
-            ),
-            ArchitectureAllowlistEntry(
-                fileName = "WarrantyExpirationWorker.kt",
                 rule = "BROAD_CATCH_NO_CANCELLATION_RETHROW",
                 owner = "WorkerArchitecture",
                 reason = "Legacy worker — CancellationException rethrow to be added",

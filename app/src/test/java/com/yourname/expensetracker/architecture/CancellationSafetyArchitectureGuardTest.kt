@@ -120,7 +120,6 @@ class CancellationSafetyArchitectureGuardTest {
             ArchitectureAllowlistEntry("ReviewQueueRepository.kt", "FALSE_POSITIVE_CE_RETHROW", category = "INFRASTRUCTURE", owner = "Infrastructure", "False positive — broad catch preceded by CE catch", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("ReceiptOcrService.kt", "FALSE_POSITIVE_CE_RETHROW", category = "INFRASTRUCTURE", owner = "Infrastructure", "False positive — broad catch preceded by CE catch", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("ReceiptMatchingWorker.kt", "FALSE_POSITIVE_CE_RETHROW", category = "INFRASTRUCTURE", owner = "Infrastructure", "False positive — broad catch preceded by CE catch", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("WarrantyExpirationWorker.kt", "FALSE_POSITIVE_CE_RETHROW", category = "INFRASTRUCTURE", owner = "Infrastructure", "False positive — broad catch preceded by CE catch", "MIT-034", LocalDate.of(2026, 12, 31)),
             // U-001 (RP-01) fixed the coordinator's conversion/event-write sites;
             // the file-level exclusion is removed so the (now executable-evidence)
             // guard enforces it directly. Re-add ONLY with owner/reason/issue/expiry

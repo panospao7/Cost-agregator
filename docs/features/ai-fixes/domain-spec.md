@@ -111,6 +111,8 @@ Routing matrix row (every exhaustive `when` must be updated: `DefaultAiCapabilit
 ### 1.10 BriefingDeliveryOutcome (new closed enum, returned by DeliverProactiveBriefingNotificationUseCase)
 `DELIVERED`, `SKIPPED_SETTINGS_OFF` (ai, briefing or proactive off), `SKIPPED_DUPLICATE` (already delivered or opened), `SKIPPED_NO_FRESH_ARTIFACT`, `NOT_DELIVERED` (platform refused).
 
+[amended B3a, 2026-10-24] Sixth value `NOTIFICATION_PERMISSION_DENIED`: notification permission blocked delivery. The use case takes the caller's local permission check as `notificationsAllowed: Boolean` and evaluates it only AFTER the settings, dedupe and fresh-artifact checks, so a denied permission never masks a skip with another cause. Merge mapping with the app-lock `NotificationService.DeliveryResult`: `DELIVERED` -> `DELIVERED`; `NOT_DELIVERED` -> `NOT_DELIVERED`; `PERMISSION_DENIED` (post refused by a SecurityException) -> `NOTIFICATION_PERMISSION_DENIED`. The worker records the bounded `NOTIFICATION_PERMISSION_DENIED` diagnostic only for this outcome.
+
 The worker-side permission skip is recorded as `NOTIFICATION_PERMISSION_DENIED` (an existing `DiagnosticReasonCode`).
 
 ### 1.11 New AppConfig.Ai constants (single source; replaces the duplicated private constants)
