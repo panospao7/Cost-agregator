@@ -314,7 +314,7 @@ interface ExpenseDao {
         ReplaceWith("MultiCurrencyRepository", "com.yourname.expensetracker.data.repository.MultiCurrencyRepository"),
         level = DeprecationLevel.ERROR
     )
-    @Query("SELECT SUM(${EFFECTIVE_AMOUNT_SQL}) FROM expenses WHERE ${SPENDING_TYPE_SQL} AND isNotMine = 0")
+    @Query("SELECT SUM(${EFFECTIVE_AMOUNT_SQL}) FROM expenses WHERE ${SPENDING_TYPE_SQL} AND ${SpendingInclusionSql.SPENDING_PREDICATE}")
     fun getTotalSpentFlow(): Flow<Double?>
 
     /**
@@ -1542,7 +1542,7 @@ AND LENGTH(:merchantKey) >= 8
         SELECT SUM(${EFFECTIVE_AMOUNT_SQL}) FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
         AND date >= :startDate AND date < :endDate
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         """)
     suspend fun getTotalSpentBetween(startDate: Long, endDate: Long): Double?
 
@@ -1852,13 +1852,13 @@ AND LENGTH(:merchantKey) >= 8
         WHERE ${SPENDING_TYPE_SQL} 
         AND date >= :startDate AND date < :endDate
         AND categoryId IS NOT NULL
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         GROUP BY categoryId
         ORDER BY total DESC
     """)
     suspend fun getCategoryTotalsBetween(startDate: Long, endDate: Long): List<CategoryTotal>
 
-    @Query("SELECT COUNT(*) FROM expenses WHERE ${SPENDING_TYPE_SQL} AND isNotMine = 0")
+    @Query("SELECT COUNT(*) FROM expenses WHERE ${SPENDING_TYPE_SQL} AND ${SpendingInclusionSql.SPENDING_PREDICATE}")
     suspend fun getPurchaseCount(): Int
 
     @Query("SELECT MIN(date) FROM expenses WHERE isNotMine = 0")
@@ -1877,7 +1877,7 @@ AND LENGTH(:merchantKey) >= 8
         FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
           AND date >= :startMs AND date < :endMs
-          AND isNotMine = 0
+          AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         GROUP BY dayEpoch
         ORDER BY dayEpoch ASC
         """
@@ -1897,7 +1897,7 @@ AND LENGTH(:merchantKey) >= 8
         SELECT COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) FROM expenses 
         WHERE ${SPENDING_TYPE_SQL} 
         AND date >= :startMs AND date < :endMs
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
     """)
     suspend fun getTotalForPeriod(startMs: Long, endMs: Long): Double
 
@@ -2402,7 +2402,7 @@ AND LENGTH(:merchantKey) >= 8
         FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
         AND date >= :startMs AND date < :endMs
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         GROUP BY weekKey
         ORDER BY weekKey ASC
     """)
@@ -2420,7 +2420,7 @@ AND LENGTH(:merchantKey) >= 8
         FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
         AND date >= :startMs AND date < :endMs
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         GROUP BY monthKey
         ORDER BY monthKey ASC
     """)
@@ -2438,7 +2438,7 @@ AND LENGTH(:merchantKey) >= 8
         FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
         AND date >= :startMs AND date < :endMs
-        AND isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE}
         GROUP BY dayEpoch
         ORDER BY dayEpoch ASC
     """)
@@ -2453,7 +2453,7 @@ AND LENGTH(:merchantKey) >= 8
             FROM expenses
             WHERE ${SPENDING_TYPE_SQL}
             AND date >= :startMs AND date < :endMs
-            AND isNotMine = 0
+            AND ${SpendingInclusionSql.SPENDING_PREDICATE}
             GROUP BY strftime('%Y-%m-%d', date/1000, 'unixepoch', 'localtime')
         )
     """)
@@ -2470,7 +2470,7 @@ AND LENGTH(:merchantKey) >= 8
         LEFT JOIN categories c ON e.categoryId = c.id
         WHERE ${SPENDING_TYPE_E_SQL}
         AND e.date >= :startMs AND e.date < :endMs
-        AND e.isNotMine = 0
+        AND ${SpendingInclusionSql.SPENDING_PREDICATE_E}
         GROUP BY c.id
         ORDER BY total DESC
         LIMIT 10

@@ -49,6 +49,7 @@ class ExpenseDaoSpendingPredicateFixture private constructor(
     }
 
     /** Inserts one expense row (test seeding of plain rows; flags are never set here). */
+    @OptIn(RestrictedExpenseDaoMutation::class)
     suspend fun insert(
         amount: Double,
         date: Long,
