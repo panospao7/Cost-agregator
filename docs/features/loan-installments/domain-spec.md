@@ -648,7 +648,8 @@ installment expenses are recategorised individually like any expense.
 
 The purchase must exist (checked inside the transaction by the plan coordinator → otherwise `PURCHASE_NOT_FOUND`
 [amended S5-R, 2026-10-23]) and must meet all of the following:
-- transactionType is a spending type (not income, transfer or refund) → otherwise `NOT_A_SPENDING_EXPENSE`;
+- transactionType is a spending type, meaning `PURCHASE` only (the canonical `ExpenseDao.SPENDING_TYPE`; income,
+  transfer, refund and every other type are refused) → otherwise `NOT_A_SPENDING_EXPENSE`;
 - `isNotMine = false` → otherwise `NOT_MINE`;
 - `isSharedExpense = false` → otherwise `SHARED_NOT_SUPPORTED` (OD-9);
 - no split template or visualisation → otherwise `SPLIT_NOT_SUPPORTED` (OD-9);

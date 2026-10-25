@@ -5617,12 +5617,15 @@ def test_checked_in_structural_only_manifest_contract_via_production_apis():
     (TransactionLifecycleCoordinator.setSpendingExclusionDbOnly /
     expenseDao.updateSpendingExclusionReason + transactionEventDao.insert),
     yielding 432.
+    Loan-installments S6a adds 13 approved exact identities (the sole plan
+    lifecycle coordinator InstallmentPlanLifecycleCoordinator, one row per
+    enclosing method and InstallmentPlanDao write), yielding 445.
     Re-derive this pin after every policy promotion.
     """
     from scripts.db_guard.source_roots import load_source_root_manifest
 
     entries = load_db_ownership_policy()
-    assert len(entries) == 432
+    assert len(entries) == 445
     sweep_path = (
         "app/src/main/java/com/yourname/expensetracker/data/repository/"
         "SavingsSweepAcceptanceCoordinator.kt"
@@ -6100,9 +6103,11 @@ def test_current_db_gate_activated_policy_real_config_pipeline(tmp_path, monkeyp
     # plannedExpenseDao.updateStatus + reminderDeliveryDao.
     # suppressOpenDeliveriesForOccurrence), yielding 430;
     # loan-installments S3 adds two approved exact identities
-    # (TransactionLifecycleCoordinator.setSpendingExclusionDbOnly), yielding 432.
+    # (TransactionLifecycleCoordinator.setSpendingExclusionDbOnly), yielding 432;
+    # loan-installments S6a adds 13 approved exact identities
+    # (InstallmentPlanLifecycleCoordinator x InstallmentPlanDao writes), yielding 445.
     # Re-derived per the checked-in-manifest contract pin above.
-    assert len(entries) == 432
+    assert len(entries) == 445
 
     # The structural gate really ran (post-activation it is no longer
     # short-circuited by a loader block) and stayed clean.

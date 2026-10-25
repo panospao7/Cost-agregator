@@ -14,6 +14,7 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.query.SpendingInclusionSql
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategoryName
+import com.yourname.expensetracker.data.database.model.SpendingExclusionFlagRow
 import com.yourname.expensetracker.domain.location.MerchantLocationGrid
 import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
 import kotlinx.coroutines.flow.Flow
@@ -413,6 +414,14 @@ suspend fun updateDedupeKey(expenseId: Long, dedupeKey: String)
     @RestrictedExpenseDaoMutation
     @Query("UPDATE expenses SET spendingExclusionReason = :reason WHERE id = :expenseId")
     suspend fun updateSpendingExclusionReason(expenseId: Long, reason: String?)
+
+    /**
+     * Read-only scan of every expense that carries a spending-exclusion flag (id and stored flag
+     * name only). Used by the installment reconcile to find orphan installment flags (R1, R3).
+     * No write, no payload text.
+     */
+    @Query("SELECT id, spendingExclusionReason FROM expenses WHERE spendingExclusionReason IS NOT NULL")
+    suspend fun getSpendingExclusionFlagRows(): List<SpendingExclusionFlagRow>
 
     @RestrictedExpenseDaoMutation
     @Query("UPDATE expenses SET ownerName = :name WHERE id = :expenseId")

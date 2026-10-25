@@ -1667,6 +1667,35 @@ OPERATIONS (all on InstallmentPlanLifecycleCoordinator):
   onExpenseChanged / onExpenseDeleted
                               → TransactionSideEffectPlanner / Dispatcher hook (see "Lifecycle Events")
   reconcile()                 → start of each recordDueEntries run and after restore (rules R1..R6)
+                                 + orphan-flag clear (second halves of R1/R3): an expense flagged
+                                 INSTALLMENT_PURCHASE / INSTALLMENT_REVERSED that no plan purchase and no entry
+                                 link references; one writeTxn per orphan, references and flag re-checked inside
+                                 it, then TLC setSpendingExclusionDbOnly(id, null); counted in the report
+
+READS (plan coordinator, S6a):
+  expense / category / recurring-link facts → InstallmentExpenseFactsReader (domain port) → 
+                                 InstallmentExpenseFactsReaderImpl (data/repository, READ-ONLY: ExpenseDao.getById,
+                                 ExpenseDao.getSpendingExclusionFlagRows, RecurringOccurrenceDao.getByLinkedExpenseId,
+                                 CategoryDao.getById), called inside the coordinator transaction.
+                                 Plan code never references the expense or recurring stores directly; the port
+                                 has no write method. Spending type = PURCHASE only.
+
+READS (overview, detail, history, suggestions, projections; S6a part 2b, all read-only):
+  screens / view models      → InstallmentPlanReadRepository (domain) → InstallmentPlanReadRepositoryImpl
+                                 (data/repository): InstallmentPlanDao read methods (incl. observeAllPlans /
+                                 observeAllEntries) + InstallmentExpenseFactsReader (findExpenseMoney,
+                                 findExpenseMoneyBetween, findExpenseFacts; READ-ONLY impl also reads
+                                 ExpenseDao.getExpensesBetweenUncapped for the range) → pure
+                                 InstallmentPlanReadModel / InstallmentPlanMath. Suggestions = INV-13 candidate
+                                 rule with mode-aware windows: AUTO_RECORD [due-3d, due], CONFIRM
+                                 [due-5d, due+10d]. InstallmentCandidateRule.autoRecordWindowStartEpochDay /
+                                 autoRecordWindowEndEpochDay are the single source the S7a auto-record step reuses.
+                                 The relations of a link candidate come from one pure builder
+                                 (InstallmentLinkRelations.forExistingExpense), shared with the coordinator link op.
+  cash flow / forecast / reminders (S7b, S8b) → InstallmentProjectionPort (domain) →
+                                 InstallmentProjectionPortImpl (data/repository): InstallmentPlanDao reads only;
+                                 pure InstallmentProjectionRule = SCHEDULED entries of ACTIVE plans, due >= today
+                                 (INV-15). No ExpenseDao access, no writes.
 
 FORBIDDEN:
   ❌ Plan/entry DAO insert, update or delete outside InstallmentPlanLifecycleCoordinator

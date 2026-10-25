@@ -5,6 +5,7 @@ import androidx.room.Insert
 import androidx.room.Query
 import com.yourname.expensetracker.data.database.entity.InstallmentEntry
 import com.yourname.expensetracker.data.database.entity.InstallmentPlan
+import kotlinx.coroutines.flow.Flow
 
 /**
  * Loan installments (schema 152): one DAO for `installment_plans` and
@@ -54,7 +55,15 @@ interface InstallmentPlanDao {
     @Query("SELECT * FROM installment_plans WHERE status = :status ORDER BY createdAt ASC, id ASC")
     suspend fun getPlansByStatus(status: String): List<InstallmentPlan>
 
+    /** Observed by the read repository; re-emits when any plan row changes. Read-only. */
+    @Query("SELECT * FROM installment_plans ORDER BY createdAt ASC, id ASC")
+    fun observeAllPlans(): Flow<List<InstallmentPlan>>
+
     // ── Entry reads ──────────────────────────────────────────────
+
+    /** Observed by the read repository; re-emits when any entry row changes. Read-only. */
+    @Query("SELECT * FROM installment_entries ORDER BY planId ASC, dueDate ASC, seq ASC, id ASC")
+    fun observeAllEntries(): Flow<List<InstallmentEntry>>
 
     @Query("SELECT * FROM installment_entries WHERE id = :entryId LIMIT 1")
     suspend fun getEntryById(entryId: Long): InstallmentEntry?
@@ -185,6 +194,77 @@ interface InstallmentPlanDao {
         entryId: Long,
         expectedExpenseId: Long,
         statusReason: String?,
+        now: Long
+    ): Int
+
+    /**
+     * Manual adjust of one entry (spec 7.4 E1), compare-and-set on `status = 'SCHEDULED'` AND
+     * `linkedExpenseId IS NULL`. The first adjust keeps the pre-edit amount in
+     * `originalScheduledAmount` (audit); later adjusts leave it as is. [adjustReason] is a
+     * bounded code. Status is untouched. Returns affected rows (1 = applied, 0 = not an
+     * unlinked SCHEDULED entry).
+     */
+    @Query("""
+        UPDATE installment_entries
+        SET originalScheduledAmount = COALESCE(originalScheduledAmount, scheduledAmount),
+            scheduledAmount = :newAmount,
+            dueDate = :newDueDate,
+            adjustReason = :adjustReason,
+            adjustedAt = :now
+        WHERE id = :entryId
+          AND status = 'SCHEDULED'
+          AND linkedExpenseId IS NULL
+    """)
+    suspend fun updateEntryScheduleIfScheduled(
+        entryId: Long,
+        newAmount: Double,
+        newDueDate: Long,
+        adjustReason: String,
+        now: Long
+    ): Int
+
+    /**
+     * REVERSED -> CANCELLED when the refunded expense is gone (reconcile R2): clears the link
+     * so no cancelled entry keeps a dangling expense id. Compare-and-set on status REVERSED AND
+     * `linkedExpenseId = [expectedExpenseId]`. [statusReason] is a bounded code.
+     * Returns affected rows (1 = applied, 0 = not REVERSED or linked to a different expense).
+     */
+    @Query("""
+        UPDATE installment_entries
+        SET status = 'CANCELLED',
+            statusReason = :statusReason,
+            linkedExpenseId = NULL,
+            linkOrigin = NULL,
+            statusChangedAt = :now
+        WHERE id = :entryId
+          AND status = 'REVERSED'
+          AND linkedExpenseId = :expectedExpenseId
+    """)
+    suspend fun updateReversedEntryToCancelledIfLinkedTo(
+        entryId: Long,
+        expectedExpenseId: Long,
+        statusReason: String?,
+        now: Long
+    ): Int
+
+    /**
+     * Detach a plan whose purchase expense no longer exists (reconcile R5): kind becomes
+     * STANDALONE and `purchaseExpenseId` becomes NULL. Compare-and-set on kind PURCHASE_ATTACHED
+     * AND `purchaseExpenseId = [expectedPurchaseExpenseId]`. Status is untouched.
+     * Returns affected rows (1 = detached, 0 = already detached or a different purchase).
+     */
+    @Query("""
+        UPDATE installment_plans
+        SET kind = 'STANDALONE',
+            purchaseExpenseId = NULL,
+            updatedAt = :now
+        WHERE id = :planId
+          AND kind = 'PURCHASE_ATTACHED'
+          AND purchaseExpenseId = :expectedPurchaseExpenseId
+    """)
+    suspend fun updatePlanDetachedFromPurchaseIfLinkedTo(
+        planId: Long,
+        expectedPurchaseExpenseId: Long,
         now: Long
     ): Int
 }

@@ -778,8 +778,311 @@ class InstallmentPlanArchitectureGuardTest {
         assertClean("string literal", spendingExclusionCalls(benignOutsider, "val s = \"setSpendingExclusionDbOnly(1)\""))
     }
 
+    // ---------------------------------------------------------------- S6a read-side seam (F6)
+
+    /**
+     * F6 / check 6. The three data-layer read implementations (exact paths) never call a DAO write.
+     * Any receiver whose name or declared type ends in Dao is a DAO receiver (canonical name, typed
+     * alias, accessor chain, local alias, safe call, line break before the dot); the verbs are
+     * [MUTATION_VERB_PREFIXES]. Reads (get*, observe*) are allowed.
+     */
+    private fun readSeamDaoWrites(rel: String, raw: String): List<Hit> {
+        if (rel !in READ_ONLY_IMPL_PATHS) return emptyList()
+        val code = code(raw)
+        val receivers = mutableListOf("""\w*dao\w*(?:\s*\(\s*\))?""")
+        Regex("""\b([A-Za-z_]\w*)\s*:\s*(?:\w+\.)*\w*Dao\b""")
+            .findAll(code).forEach { receivers += Regex.escape(it.groupValues[1]) }
+        Regex("""\b(?:val|var)\s+([A-Za-z_]\w*)\s*=\s*[\w.?]*?\w*dao\s*\(\s*\)""", RegexOption.IGNORE_CASE)
+            .findAll(code).forEach { receivers += Regex.escape(it.groupValues[1]) }
+        val call = Regex(
+            """(?<!\w)(?:${receivers.joinToString("|")})\s*\??\.\s*(?:${MUTATION_VERB_PREFIXES.joinToString("|")})\w*\s*\(""",
+            RegexOption.IGNORE_CASE
+        )
+        return lineHits("READ_SEAM_DAO_WRITE_CALL", call, code)
+    }
+
+    /** F6 / check 7. The read implementations use no transaction, barrier, TLC or raw-query machinery. */
+    private fun readSeamWriteMachinery(rel: String, raw: String): List<Hit> {
+        if (rel !in READ_ONLY_IMPL_PATHS) return emptyList()
+        return lineHits(
+            "READ_SEAM_WRITE_MACHINERY",
+            Regex(
+                """\b(?:TransactionLifecycleCoordinator|\w*writeBarrier\w*|withTransaction|runInTransaction|writeTxn|RawQuery)\b""",
+                RegexOption.IGNORE_CASE
+            ),
+            code(raw)
+        )
+    }
+
+    /**
+     * F6 / check 8. The plan read repository and the projection port read the plan DAO and the facts
+     * port only; they never reference the expense, recurring-occurrence or category DAOs.
+     */
+    private fun readImplExpenseStoreReferences(rel: String, raw: String): List<Hit> {
+        if (rel != READ_REPOSITORY_IMPL_PATH && rel != PROJECTION_PORT_IMPL_PATH) return emptyList()
+        return lineHits(
+            "READ_IMPL_EXPENSE_STORE_REFERENCE",
+            Regex("""(?:Expense|RecurringOccurrence|Category)Dao""", RegexOption.IGNORE_CASE),
+            code(raw)
+        )
+    }
+
+    /** F6 / check 9. The domain port files and every readmodel file reference no *Dao type. */
+    private fun domainPortDaoReferences(rel: String, raw: String): List<Hit> {
+        if (rel !in DOMAIN_PORT_PATHS && !rel.startsWith(READMODEL_PREFIX)) return emptyList()
+        return lineHits("DOMAIN_PORT_DAO_REFERENCE", Regex("""\b\w*dao\b""", RegexOption.IGNORE_CASE), code(raw))
+    }
+
+    @Test
+    fun `F6 read side implementations contain no DAO write verbs`() {
+        assertNoViolations(
+            "DAO write verb in a read-side implementation (F6, INV-25)",
+            this::readSeamDaoWrites
+        )
+    }
+
+    @Test
+    fun `F6 read side implementations use no transaction barrier TLC or raw query machinery`() {
+        assertNoViolations(
+            "write machinery in a read-side implementation (F6, INV-24)",
+            this::readSeamWriteMachinery
+        )
+    }
+
+    @Test
+    fun `F6 plan read repository and projection port do not reference the expense recurring or category DAOs`() {
+        assertNoViolations(
+            "expense-store DAO referenced from a plan read implementation (F6, INV-24, INV-25)",
+            this::readImplExpenseStoreReferences
+        )
+    }
+
+    @Test
+    fun `F6 domain port and readmodel files reference no Dao type`() {
+        assertNoViolations(
+            "Dao type referenced from a domain port or readmodel file (F6)",
+            this::domainPortDaoReferences
+        )
+    }
+
+    @Test
+    fun `F6 every pinned path exists exactly once so the pins are not vacuous`() {
+        val files = requireScan()
+        for (path in READ_ONLY_IMPL_PATHS + DOMAIN_PORT_PATHS) {
+            assertEquals("pinned file must exist exactly once: $path", 1, files.count { it.rel == path })
+        }
+        val readmodel = files.filter { it.rel.startsWith(READMODEL_PREFIX) }.map { it.rel.substringAfterLast('/') }
+        assertTrue("readmodel must contain InstallmentPlanMath.kt, saw $readmodel", "InstallmentPlanMath.kt" in readmodel)
+        assertTrue("readmodel must contain InstallmentPlanReadModel.kt, saw $readmodel", "InstallmentPlanReadModel.kt" in readmodel)
+    }
+
+    @Test
+    fun `F6 the coordinator and TLC exemption paths are bound to the real classes`() {
+        val files = requireScan()
+        val coordinatorDecl = Regex("""\bclass\s+InstallmentPlanLifecycleCoordinator\b""")
+        val tlcDecl = Regex("""\bclass\s+TransactionLifecycleCoordinator\b""")
+        assertEquals(
+            "exactly one file declares the plan coordinator and it is the pinned path",
+            listOf(COORDINATOR_PATH),
+            files.filter { it.raw.contains("InstallmentPlanLifecycleCoordinator") && coordinatorDecl.containsMatchIn(code(it.raw)) }
+                .map { it.rel }
+        )
+        assertEquals(
+            "exactly one file declares the TLC and it is the pinned path",
+            listOf(TLC_PATH),
+            files.filter { it.raw.contains("TransactionLifecycleCoordinator") && tlcDecl.containsMatchIn(code(it.raw)) }
+                .map { it.rel }
+        )
+    }
+
+    @Test
+    fun `self-check F6 read side DAO write detector flags planted writes and ignores reads comments and unpinned paths`() {
+        val violating = listOf(
+            "typed constructor property" to
+                "class R(private val expenseDao: ExpenseDao) { suspend fun f() { expenseDao.insert(e) } }",
+            "arbitrary name with Dao type" to
+                "class R(private val d: CategoryDao) { suspend fun f() { d.updateName(1L) } }",
+            "accessor chain" to
+                "suspend fun f() { database.recurringOccurrenceDao().deleteById(1L) }",
+            "local alias" to
+                "suspend fun f() { val d = db.expenseDao()\nd.clearFlag(1L) }",
+            "safe call" to
+                "class R(private val planDao: InstallmentPlanDao?) { suspend fun f() { planDao?.markPaid(1L) } }",
+            "claim verb on canonical name" to
+                "suspend fun f() { installmentPlanDao.claimEntryForExpense(1L, 2L, \"AUTO\", false, 0L) }",
+            "release verb on typed alias" to
+                "class R(private val dao: InstallmentPlanDao) { suspend fun f() { dao.releaseEntryLink(1L, 2L, null, 0L) } }",
+            "line break before the dot" to
+                "suspend fun f() { expenseDao\n    .setSpendingExclusionReason(1L, null) }"
+        )
+        for (path in READ_ONLY_IMPL_PATHS) {
+            for ((label, snippet) in violating) {
+                assertFlagged("$path :: $label", readSeamDaoWrites(path, snippet), "READ_SEAM_DAO_WRITE_CALL")
+            }
+        }
+        val reads = listOf(
+            "expense read" to "suspend fun f() = expenseDao.getById(1L)",
+            "range read" to "suspend fun f() = expenseDao.getExpensesBetweenUncapped(1L, 2L)",
+            "plan read" to "suspend fun f() = planDao.getEntriesForPlan(1L)",
+            "flow read" to "fun f() = planDao.observeAllPlans()",
+            "occurrence read" to "suspend fun f() = recurringOccurrenceDao.getByLinkedExpenseId(1L)",
+            "line comment" to "// expenseDao.insert(e)\nfun f() {}",
+            "block comment" to "/* database.expenseDao().deleteById(1L) */ fun f() {}",
+            "string mention" to "val s = \"expenseDao.insert(e)\""
+        )
+        for (path in READ_ONLY_IMPL_PATHS) {
+            for ((label, snippet) in reads) {
+                assertClean("$path :: $label", readSeamDaoWrites(path, snippet))
+            }
+        }
+        val writeSnippet = "class R(private val expenseDao: ExpenseDao) { suspend fun f() { expenseDao.insert(e) } }"
+        assertClean("unpinned data path is not this rule's concern", readSeamDaoWrites("$ROOT/data/repository/ExpenseRepository.kt", writeSnippet))
+        assertClean(
+            "same basename in another directory is not a pinned path",
+            readSeamDaoWrites("$ROOT/data/other/InstallmentExpenseFactsReaderImpl.kt", writeSnippet)
+        )
+    }
+
+    @Test
+    fun `self-check F6 write machinery detector flags planted tokens and ignores comments and unpinned paths`() {
+        val violating = listOf(
+            "class R(private val tlc: TransactionLifecycleCoordinator)",
+            "class R(private val writeBarrier: DbWriteBarrier)",
+            "suspend fun f() = database.withTransaction { 1 }",
+            "@RawQuery suspend fun x(q: SupportSQLiteQuery): List<Long>",
+            "import androidx.room.RawQuery",
+            "suspend fun f() { db.runInTransaction { } }",
+            "suspend fun f() = writeTxn(\"x\") { 1 }"
+        )
+        for (path in READ_ONLY_IMPL_PATHS) {
+            for (snippet in violating) {
+                assertFlagged("$path :: $snippet", readSeamWriteMachinery(path, snippet), "READ_SEAM_WRITE_MACHINERY")
+            }
+            assertClean("$path :: line comment", readSeamWriteMachinery(path, "// no TransactionLifecycleCoordinator here\nfun f() {}"))
+            assertClean("$path :: block comment", readSeamWriteMachinery(path, "/* withTransaction RawQuery */ fun f() {}"))
+            assertClean("$path :: string", readSeamWriteMachinery(path, "val s = \"writeBarrier withTransaction\""))
+            assertClean("$path :: plain read", readSeamWriteMachinery(path, "suspend fun f() = expenseDao.getById(1L)"))
+        }
+        assertClean(
+            "unpinned path may use a transaction",
+            readSeamWriteMachinery("$ROOT/data/repository/ExpenseRepository.kt", "suspend fun f() = database.withTransaction { 1 }")
+        )
+    }
+
+    @Test
+    fun `self-check F6 plan read implementations flag expense recurring and category DAO references`() {
+        val violating = listOf(
+            "class R(private val expenseDao: ExpenseDao)",
+            "class R(private val d: RecurringOccurrenceDao)",
+            "class R(private val categoryDao: CategoryDao)",
+            "suspend fun f() = database.expenseDao().getById(1L)"
+        )
+        for (path in listOf(READ_REPOSITORY_IMPL_PATH, PROJECTION_PORT_IMPL_PATH)) {
+            for (snippet in violating) {
+                assertFlagged("$path :: $snippet", readImplExpenseStoreReferences(path, snippet), "READ_IMPL_EXPENSE_STORE_REFERENCE")
+            }
+            assertClean("$path :: plan DAO", readImplExpenseStoreReferences(path, "class R(private val planDao: InstallmentPlanDao)"))
+            assertClean("$path :: comment", readImplExpenseStoreReferences(path, "// never ExpenseDao\nfun f() {}"))
+            assertClean("$path :: string", readImplExpenseStoreReferences(path, "val s = \"CategoryDao\""))
+        }
+        assertClean(
+            "the facts reader implementation is the one place allowed to read those DAOs",
+            readImplExpenseStoreReferences(FACTS_READER_IMPL_PATH, "class R(private val expenseDao: ExpenseDao)")
+        )
+    }
+
+    @Test
+    fun `self-check F6 domain ports flag any Dao type and ignore comments strings and unpinned paths`() {
+        val pinned = DOMAIN_PORT_PATHS + listOf(
+            "${READMODEL_PREFIX}InstallmentPlanMath.kt",
+            "${READMODEL_PREFIX}SomeFutureReadModelFile.kt"
+        )
+        val violating = listOf(
+            "import com.yourname.expensetracker.data.database.dao.ExpenseDao",
+            "class P(private val planDao: InstallmentPlanDao)",
+            "class P(private val d: RecurringOccurrenceDao)",
+            "suspend fun f() = database.installmentPlanDao().getAllPlans()"
+        )
+        for (path in pinned) {
+            for (snippet in violating) {
+                assertFlagged("$path :: $snippet", domainPortDaoReferences(path, snippet), "DOMAIN_PORT_DAO_REFERENCE")
+            }
+            assertClean("$path :: line comment", domainPortDaoReferences(path, "// reads via a Dao in the data layer\nfun f() {}"))
+            assertClean("$path :: block comment", domainPortDaoReferences(path, "/* ExpenseDao */ fun f() {}"))
+            assertClean("$path :: string", domainPortDaoReferences(path, "val s = \"InstallmentPlanDao\""))
+            assertClean("$path :: pure types", domainPortDaoReferences(path, "interface P { suspend fun f(): List<Long> }"))
+        }
+        assertClean(
+            "the plan coordinator is not a port and may use the plan DAO",
+            domainPortDaoReferences(COORDINATOR_PATH, "class C(private val planDao: InstallmentPlanDao)")
+        )
+        assertClean(
+            "data layer implementations are not domain ports",
+            domainPortDaoReferences(READ_REPOSITORY_IMPL_PATH, "class R(private val planDao: InstallmentPlanDao)")
+        )
+    }
+
+    // ---------------------------------------------------------------- S6a coordinator never reads expense money
+
+    /**
+     * The coordinator decides on expense facts only (domain spec 7.0); the money reads of the facts reader
+     * (`findExpenseMoney`, `findExpenseMoneyBetween`) belong to the read model. Matches any call, callable
+     * reference or member access of a `findExpenseMoney*` name in the pinned coordinator file.
+     */
+    private fun coordinatorMoneyReads(rel: String, raw: String): List<Hit> {
+        if (rel != COORDINATOR_PATH) return emptyList()
+        return lineHits("COORDINATOR_EXPENSE_MONEY_READ", Regex("""\bfindExpenseMoney\w*"""), code(raw))
+    }
+
+    @Test
+    fun `S6a the plan coordinator never references findExpenseMoney or findExpenseMoneyBetween`() {
+        assertNoViolations(
+            "plan coordinator reads expense money; only the read model may (facts reader contract)",
+            this::coordinatorMoneyReads
+        )
+    }
+
+    @Test
+    fun `self-check S6a coordinator money read detector flags planted references and ignores comments strings and other files`() {
+        val violating = listOf(
+            "suspend fun f() = factsReader.findExpenseMoney(1L)",
+            "suspend fun f() = factsReader.findExpenseMoneyBetween(1L, 2L)",
+            "val ref = factsReader::findExpenseMoney",
+            "suspend fun f() = factsReader\n    .findExpenseMoney (1L)"
+        )
+        for (snippet in violating) {
+            assertFlagged(snippet, coordinatorMoneyReads(COORDINATOR_PATH, snippet), "COORDINATOR_EXPENSE_MONEY_READ")
+        }
+        assertClean("line comment", coordinatorMoneyReads(COORDINATOR_PATH, "// never findExpenseMoney(1L)\nfun f() {}"))
+        assertClean("block comment", coordinatorMoneyReads(COORDINATOR_PATH, "/* findExpenseMoneyBetween */ fun f() {}"))
+        assertClean("string literal", coordinatorMoneyReads(COORDINATOR_PATH, "val s = \"findExpenseMoney\""))
+        assertClean("facts reads are legal", coordinatorMoneyReads(COORDINATOR_PATH, "suspend fun f() = factsReader.findExpenseFacts(1L)"))
+        assertClean(
+            "the read repository may read money",
+            coordinatorMoneyReads(READ_REPOSITORY_IMPL_PATH, "suspend fun f() = factsReader.findExpenseMoney(1L)")
+        )
+    }
+
     private companion object {
         const val ROOT = "com/yourname/expensetracker"
+
+        const val FACTS_READER_IMPL_PATH = "$ROOT/data/repository/InstallmentExpenseFactsReaderImpl.kt"
+
+        const val READ_REPOSITORY_IMPL_PATH = "$ROOT/data/repository/InstallmentPlanReadRepositoryImpl.kt"
+
+        const val PROJECTION_PORT_IMPL_PATH = "$ROOT/data/repository/InstallmentProjectionPortImpl.kt"
+
+        /** Exact paths of the three read-only data-layer implementations (never basenames). */
+        val READ_ONLY_IMPL_PATHS = listOf(FACTS_READER_IMPL_PATH, READ_REPOSITORY_IMPL_PATH, PROJECTION_PORT_IMPL_PATH)
+
+        const val READMODEL_PREFIX = "$ROOT/domain/installment/readmodel/"
+
+        /** Exact paths of the domain ports; the readmodel directory is covered by [READMODEL_PREFIX]. */
+        val DOMAIN_PORT_PATHS = listOf(
+            "$ROOT/domain/installment/lifecycle/InstallmentExpenseFactsReader.kt",
+            "$ROOT/domain/installment/InstallmentPlanReadRepository.kt",
+            "$ROOT/domain/installment/projection/InstallmentProjectionPort.kt"
+        )
 
         const val COORDINATOR_PATH =
             "$ROOT/domain/installment/lifecycle/InstallmentPlanLifecycleCoordinator.kt"
