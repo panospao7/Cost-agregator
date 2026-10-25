@@ -9,6 +9,8 @@ import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingField
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsLoadState
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsRepository
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsWriteResult
+import com.yourname.expensetracker.domain.privacy.applock.DiscreetRepostTrigger
+import com.yourname.expensetracker.domain.privacy.applock.EffectivePrivacyValues
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticCode
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticKey
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticMetadata
@@ -84,6 +86,9 @@ sealed interface AppLockPrivacySectionState {
  * settings repository (INV-1). The section never holds an optimistic value: [uiState] is derived from
  * the repository's committed load state (INV-46).
  *
+ * A committed review-save also runs the discreet sweep trigger (before value "was off"), so a review that
+ * saves discreet on re-posts the shade in place like the per-field path.
+ *
  * Write discipline (S9b carry-forwards):
  * - Serialised: every write runs under the singleton [AppLockSettingsWriteSerializer], so two taps, or a
  *   write started by a previous instance of this ViewModel, can never interleave their before-read, write
@@ -99,6 +104,7 @@ class AppLockPrivacySettingsViewModel @Inject constructor(
     private val updateDiscreetNotifications: UpdateDiscreetNotificationsUseCase,
     private val privacyDiagnostics: PrivacyDiagnosticsEmitter,
     private val writeSerializer: AppLockSettingsWriteSerializer,
+    private val discreetRepostTrigger: DiscreetRepostTrigger,
     @ApplicationScope private val appScope: CoroutineScope
 ) : ViewModel() {
 
@@ -255,6 +261,7 @@ class AppLockPrivacySettingsViewModel @Inject constructor(
                 reviewCommitted.value = true
                 notice.value = AppLockPrivacySectionNotice.REVIEW_SAVED
                 emitSafely { privacyDiagnostics.emit(PrivacyDiagnosticCode.LOCK_SETTINGS_REVIEW_SAVED) }
+                sweepAfterCommittedReview(result.settings)
             }
             is AppLockSettingsWriteResult.Failed -> {
                 notice.value = AppLockPrivacySectionNotice.SAVE_FAILED
@@ -268,6 +275,27 @@ class AppLockPrivacySettingsViewModel @Inject constructor(
                 recordPersistFailed(AppLockSettingField.REVIEW_SAVE)
                 resubscribeOnMain()
             }
+        }
+    }
+
+    /**
+     * A committed review-save can set discreet on, and the review path has no trustworthy before value
+     * (the store was unreadable), so the before value is "was off": a committed on sweeps, a committed
+     * off does not. Runs inside the same serialised, uninterruptible block as the write. The trigger
+     * records its own failures; a failure here never turns the committed save into a reported failure.
+     */
+    private suspend fun sweepAfterCommittedReview(committed: AppLockPrivacySettings) {
+        try {
+            discreetRepostTrigger.onCommittedWrite(
+                wasEffectiveDiscreet = false,
+                isEffectiveDiscreet = EffectivePrivacyValues.effectiveDiscreet(
+                    AppLockSettingsLoadState.Loaded(committed)
+                )
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.w("Review-save sweep trigger failed: class=%s", DiagnosticThrowableSummary.className(e))
         }
     }
 

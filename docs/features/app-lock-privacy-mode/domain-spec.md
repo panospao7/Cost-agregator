@@ -532,8 +532,9 @@ Re-post rules (AMD-7, closes G-7):
 - **Silent:** the re-post alerts only once. It makes no sound, vibration or light and shows no heads-up. The original
   post time is kept where the platform exposes it, so shade order does not change.
 - **Active only:** the sweep queries active notifications once and re-posts only those. A notification the user
-  dismisses between the query and its re-post may reappear once in discreet form. This is an accepted residual: it is
-  bounded and content-free.
+  dismisses between the query and its re-post may reappear once in discreet form. The window is bounded by
+  N x 300 ms (the re-post pacing, `SWEEP_REPOST_SPACING_MS`), about 15 s at 50 notifications. This is an accepted
+  residual: it is bounded and content-free, though it may alert on a high-importance channel.
 - **Not a delivery:** no `notificationsSent`, `DeliveryResult`, claim/mark or cooldown change.
 - **Failure:** a missing permission or a `SecurityException` skips that notification and records
   `NOTIF_REPOST_FAILED` (exception class name only). There is no retry loop. `CancellationException` propagates.

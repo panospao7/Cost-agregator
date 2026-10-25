@@ -559,3 +559,51 @@ Device evidence so far (orchestrator, 2026-10-24, emulator-5554 = wave5-api35, S
 - Earlier API 35 run vr-20261024-082529-92f78c4f FAILED 2/10 (inv10 FULL-mode mode-blind scan = test bug; ae112 sweep updates dropped by the platform enqueue rate = product fail-open → pacing fix above).
 - Both runs predate the commit of this section; the fingerprinted tree was the committed source.
 - Still manual (owner phone, optional): true lock-screen rendering and tapping Snooze while locked.
+
+## G1a review fixes (2026-10-24)
+Base: worktree Cost-agregator-al, branch feature/app-lock-privacy-mode, HEAD c1d8e7c6. Implemented, validation pending (rerun after this pass).
+
+Review verdicts (G1a)
+- reviewer-strict Part A (notifications): ACCEPT-WITH-CONDITIONS.
+- reviewer-strict Part B (settings, links, UI): ACCEPT-WITH-CONDITIONS.
+- architecture-guardian: ACCEPT-WITH-MINORS.
+- privacy-security-guardian: ACCEPT-WITH-MINORS.
+
+Validation on c1d8e7c6 (before this pass; superseded by the rerun after it)
+- app-check vr-20261024-092838-8e88db9e PASS.
+- static-guards vr-20261024-091350-33ce89c4 PASS.
+
+Fixed
+- C1: `AppLockPrivacySettingsViewModel` now injects `DiscreetRepostTrigger`. A COMMITTED review-save runs `onCommittedWrite(wasEffectiveDiscreet = false, isEffectiveDiscreet = effective(committed settings))` inside the same appScope / NonCancellable / `AppLockSettingsWriteSerializer` block, after the review-saved notice and diagnostic. Rejected, failed and thrown saves never reach the trigger. A non-cancellation failure of the trigger call is logged by class name only and never turns the committed save into a failure. VM tests added: discreet on gives one `(false, true)` call; discreet off still calls the trigger with `(false, false)` (the edge detector, not the VM, decides NOT_TRIGGERED, so no sweep); refused / failed / thrown saves never call it.
+- C2: `NavigationController` logs `event.destination::class.simpleName` only (the data-class `toString` carried link parameters such as initialLocationQuery / initialExpenseId; INV-18, AE-21). No existing test covers this log; none added.
+- D1: release-note-1a refreshed (device checks done vs owed; residuals a, b, c; switch busy during the sweep; no instant-update promise).
+- D2: domain-spec 4.6 "Active only" bullet now bounds the dismissed-in-window residual by N x 300 ms.
+- D3: plan carry-forwards (binding) for G1b post-sweep verification and S18 (trigger under NonCancellable; serializer and review-save diagnostics move to the domain owner).
+- D4: LEGAL_PATHS RE-POST sweep (pacing, residuals, G1b carry-forward, both triggers, two new FORBIDDEN lines), ENGINE_INTERACTION_MAP (pacing, review-save trigger chain), CODEBASE_SEGMENTS and hilt-bindings-map (`@Inject` secondary ctor with 4 params; internal primary adds `SweepPacer`), import-graph.json and DEPENDENCY_MAP (`AndroidNotificationService` to `MainActivity`, approved TECH-6).
+
+Dispositions
+- AE-112 evidence is the SIMULATED marker-less path. Gap: the legacy implicit content intent is not exercised. The AE-32 explicit-component property does not hold for swept legacy notifications until they are replaced.
+- Handoff precision: the AE-112 originals are posted back to back; only the sweep UPDATES are subject to the platform rate drop.
+- ReceiptMatchingWorker `PERMISSION_DENIED` records `RECEIPT_MATCH_NOTIFICATION_SUPPRESSED_PERMISSION_REVOKED` (constant errorClass "SecurityException") without `addRowsSkipped`. Read against TECH-9 ("receipt -> existing PERMISSION_REVOKED") and the legacy `SecurityException` catch, which also omits `addRowsSkipped`: it matches.
+- Pre-existing, not part of this release (follow-ups): `WarrantyExpirationWorker.kt:155` `Timber.e(e, ...)` (throwable in a log); no `dataExtractionRules` (D2D backup/transfer; relates to OD-19/C5).
+- Switch-busy UX accepted: the discreet switch stays disabled for the duration of the sweep (seconds with a full shade); documented in release-note-1a.
+
+Tests the test-author may still add: none required beyond the three VM tests above.
+Validation to request: targeted `AppLockPrivacySettingsViewModelTest` plus the notification/sweep filters, then static-guards and app-check on the final tree.
+
+### STOP POINT (2026-10-24, owner asked to stop after running tasks)
+- The G1a review fix pass (C1 review-save sweep, C2 NavigationController log, D1–D5 docs) is in the worktree, UNCOMMITTED and NOT validated.
+- Held gate jobs (orchestrator queue): unit-tests, assemble-release, release-artifact-evidence on c1d8e7c6 — obsolete; re-enqueue on the fixed tree instead.
+- NEXT ACTION (serial, validation-runner only): targeted "*AppLockPrivacySettingsViewModel*,*AndroidNotificationService*,*DiscreetRepostTrigger*,*UpdateDiscreetNotifications*,*NavigationController*,*DeepLink*" → static-guards (import-graph.json / DEPENDENCY_MAP edits are guard-relevant; check guard_docs_truth) → app-check → unit-tests → assemble-release → release-artifact-evidence → connected-test-class NotificationPresentationDeviceTest on wave5-api35 and release-api26 (API 26 needs -AllowOverlap -OverlapReasonCode REQUIRED_FINAL_GATE). If green: commit + push, then a fresh-session final reviewer (Opus max) over bcd8e921..HEAD. Owner: APP-4 wording, OD-4a ship confirmation, whether G1b post-sweep verification must precede the 1a release.
+
+### G1a runner gate on the review-fix tree (2026-10-25) — all PASS
+- targeted (*AppLockPrivacySettingsViewModel*, *AndroidNotificationService*, *DiscreetRepostTrigger*, *UpdateDiscreetNotifications*, *NavigationController*, *DeepLink*) vr-20261025-181709-44725d2b
+- static-guards vr-20261025-182714-da9715cd
+- app-check vr-20261025-184519-5a8c6268
+- unit-tests vr-20261025-191611-d281d801
+- assemble-release vr-20261025-191627-d86091f9
+- release-artifact-evidence vr-20261025-192147-4632f361
+- NotificationPresentationDeviceTest API 35 (wave5-api35) vr-20261025-192203-7a4f5f8a 11/11; API 26 (release-api26) vr-20261025-192651-e97805c8 11/11 (-AllowOverlap -OverlapReasonCode REQUIRED_FINAL_GATE, shared serial).
+- All runs on the same worktree fingerprint (the uncommitted review-fix tree = this commit's content minus this section).
+- Earlier device evidence still valid for unchanged surfaces: AE-16 / INV-20 aapt2 dump / FG-22 malformed links (see "G1a device test").
+- Next: fresh-session final reviewer over bcd8e921..HEAD; owner APP-4 wording + OD-4a ship confirmation (+ whether G1b post-sweep verification must precede the 1a release).

@@ -278,7 +278,7 @@ Owns notification delivery plumbing for budget and app alerts.
 
 **Representative files**
 - `domain/service/NotificationService.kt` — kind-aware methods only (`*ForKind`, INV-12), `repostActiveAsDiscreet()`, `DeliveryResult.PERMISSION_DENIED`
-- `data/service/AndroidNotificationService.kt` — builder owner 1 (`postForKind` + `rebuildDiscreet` sweep); 4 constructor params incl. `PrivacyDiagnosticsEmitter`
+- `data/service/AndroidNotificationService.kt` — builder owner 1 (`postForKind` + `rebuildDiscreet` sweep); `@Inject` secondary ctor with 4 params incl. `PrivacyDiagnosticsEmitter`; internal primary ctor adds `SweepPacer` (paced discreet sweep, 300 ms before every re-post)
 
 **Notification presentation (app-lock-privacy-mode 1a; legal path: LEGAL_PATHS "Notification Presentation")**
 - `domain/notification/presentation/NotificationKind.kt` — closed six-kind registry + literal `stableToken`

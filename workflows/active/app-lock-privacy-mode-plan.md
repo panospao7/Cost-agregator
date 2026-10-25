@@ -1108,6 +1108,7 @@ Context: budget alerts post with the raw `budget.id.toInt()` (`BudgetMonitor.kt:
     - R3: re-lock with system screens (SAF, camera, share sheet, permission dialogs)
     - R14: RESOLVING flash
 - If APP-3 is denied, 1b stays PARTIAL. The minimum is API 30 + API 31.
+- **Binding carry-forward (G1a review fixes, 2026-10-24):** G1b includes the post-sweep verification described in "Orchestrator carry-forwards from the G1a reviews" at the end of this plan. G1b is not accepted without it.
 - **Reviews:** as at G1a.
 
 ---
@@ -1466,3 +1467,13 @@ Notes for the orchestrator:
 - **Ordering (S5a reviewer-strict):** S8 depends on **S5b** (not just S5): BillReminderWorker is the first caller passing actions, so the resource-only action-title fix must land first. Whichever slice lands it flips the KNOWN GAP test (NotificationPresentationApplierTest ~:379) to assert absence. Wave D = {S6 ∥ S7 ∥ S11} after S5b, S8 after S5b.
 - **S5 validation:** shards `data` and `domain-n-z` run once at the S5 end (after S5b), together with S5b's targeted tests.
 - **S5b test hygiene:** wrap the public top-level test fixtures in AndroidNotificationServicePresentationTest.kt (ScriptedSettingsRepository, PostCase, POST_CASES, SENTINEL_*, BRIEFING_KEY, EXPENSE_ID) in one fixtures object to avoid package collisions.
+
+## Orchestrator carry-forwards from the G1a reviews (2026-10-24; binding on G1b and S18)
+- **G1b (post-sweep verification, BINDING):** the re-post sweep is paced (`SWEEP_REPOST_SPACING_MS` = 300 ms), but the platform can still drop an update that races a foreign post (for example BillReminderWorker's direct post, or several budget alerts back to back), leaving FULL content. G1b closes this:
+  - the applier writes a content-free presentation-mode token ("D" for discreet, "F" for full) into the notification extras next to `NotificationKindMarker.EXTRA_KEY`;
+  - after the sweep, settle for at least 500 ms to 1 s, then re-read the active notifications;
+  - re-post once, paced, any sweep kind whose token is still "F";
+  - record one bounded, COUNT-only diagnostic (for example `NOTIF_REPOST_UNCONFIRMED`) through the diagnostics registry; no content, ids, paths or text;
+  - verification never blocks cleanup and never loops; `CancellationException` propagates.
+- **S18 (BINDING):** the lock-enable caller must run `DiscreetRepostTrigger.onCommittedWrite` under `withContext(NonCancellable)`, inside the shared write serializer. The serializer (`AppLockSettingsWriteSerializer`) and the review-save diagnostics move to the domain owner, and `AppLockPrivacySettingsViewModel.kt` is edited before AppLockController writes settings (already recorded in the S12 amendment above).
+- **Done in G1a fixes:** a committed review-save now runs the same trigger (before value "was off") in the same serialised, NonCancellable block; the navigation log no longer prints destination parameters.

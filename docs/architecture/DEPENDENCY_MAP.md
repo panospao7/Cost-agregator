@@ -459,6 +459,10 @@ BillReminderWorker                         [service/reminder/BillReminderWorker.
   └──► exposes `internal const CHANNEL_ID`, imported const-only (compiler-inlined) by
        data/service/NotificationKindClassifier — the only permitted member import (S8 ruling)
 
+AndroidNotificationService                 [data/service/AndroidNotificationService.kt]
+  └──► ui/MainActivity (explicit component `Intent(context, MainActivity::class.java)` for
+       notification taps; data/service → ui edge approved under TECH-6, architecture-guardian G1a)
+
 TransactionLifecycleCoordinator
    └──► RecurringLifecycleCoordinator.linkExpenseToOccurrence()  — auto-link hook
    └──► RecurringLifecycleCoordinator.unlinkExpenseFromOccurrence(expenseId) — direct

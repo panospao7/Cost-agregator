@@ -115,9 +115,10 @@ Note: `WorkerRunLogger` → `WorkerRunLoggerImpl` is bound by `DiagnosticsModule
 Provides:
   Gson                                        → GsonBuilder().setLenient().create()
   NotificationService                         → AndroidNotificationService
-                                                (@Inject constructor, 4 params since app-lock 1a:
+                                                (@Inject secondary ctor with 4 params since app-lock 1a:
                                                 @ApplicationContext Context, NotificationPresentationResolver,
-                                                NotificationPresentationApplier, PrivacyDiagnosticsEmitter)
+                                                NotificationPresentationApplier, PrivacyDiagnosticsEmitter;
+                                                the internal primary ctor adds SweepPacer)
   PostedAlertCanceller                        → AndroidPostedAlertCanceller
   GeocodingService                            → CompositeGeocodingService
   NearbyPoiService                            → OverpassNearbyService

@@ -165,8 +165,13 @@ AppLockPrivacySettingsViewModel.setDiscreetNotifications  (@ApplicationScope, No
         └── on Committed → DiscreetRepostTrigger.onCommittedWrite(before, after)
               └── false → true only → NotificationService.repostActiveAsDiscreet()
                     ├── NotificationKindClassifier.classify() + NotificationKindMarker.read()
+                    ├── SweepPacer.pause(SWEEP_REPOST_SPACING_MS = 300) before every re-post (cancellable; skipped ones not paused)
                     ├── NotificationContentPolicy.decideDiscreet() → NotificationPresentationApplier
                     └── NOTIF_REPOSTED_DISCREET(COUNT) / NOTIF_REPOST_FAILED(EXCEPTION_CLASS)
+
+AppLockPrivacySettingsViewModel.saveReview  (same scope / NonCancellable / serializer)
+  └── AppLockSettingsRepository.reviewSave() → on Committed → DiscreetRepostTrigger.onCommittedWrite(false, after)
+        └── same sweep as above (a committed review-save with discreet on sweeps; refused / failed never does)
 ```
 
 ### WorkerExecutionGuard changes affect:

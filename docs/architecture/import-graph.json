@@ -1185,6 +1185,7 @@
     { "from": "BillReminderWorker", "to": "NotificationPresentationResolver", "type": "depends-on" },
     { "from": "BillReminderWorker", "to": "NotificationPresentationApplier", "type": "depends-on" },
     { "from": "NotificationKindClassifier", "to": "BillReminderWorker", "type": "const-only", "note": "internal const val CHANNEL_ID only (S8 ruling)" },
+    { "from": "AndroidNotificationService", "to": "MainActivity", "type": "explicit-component", "note": "data/service -> ui.MainActivity: Intent(context, MainActivity::class.java) for notification taps (TECH-6, approved)" },
     { "from": "ReceiptMatchingWorker", "to": "ReceiptRepository", "type": "depends-on" },
     { "from": "ReceiptMatchingWorker", "to": "ExpenseRepository", "type": "depends-on" },
     { "from": "ReceiptMatchingWorker", "to": "RestoreMaintenanceMode", "type": "guard" },

@@ -17,8 +17,10 @@ Corrections made while adapting, checked against source on 2026-10-24:
   "Reminder" notice; details appear after you unlock. For no details anywhere, turn on Discreet notifications.
 - New setting: Privacy settings, "App lock & privacy", "Discreet notifications". When it is on, budget, bill,
   warranty, receipt, unusual-charge and briefing notifications show only a generic title and text (for example
-  "Bill due" or "Budget alert"), even after you unlock. Turning it on also updates the notifications already in
-  your notification shade, quietly and without a new sound.
+  "Bill due" or "Budget alert"), even after you unlock. Turning it on also starts updating the notifications
+  already in your notification shade, one after another, quietly and without a new sound. With many notifications
+  this takes a few seconds, and the switch stays unavailable until it finishes. A notification that you dismiss
+  or that arrives while this is happening may not be updated; new notifications are always discreet.
 - If the app cannot read this setting, it behaves as if discreet notifications were on, and the Privacy settings
   screen says so. If the saved setting is damaged, the screen asks you to review and save your choice.
 
@@ -40,8 +42,16 @@ Corrections made while adapting, checked against source on 2026-10-24:
   app". Other installed apps can still send a VIEW intent; validation is the boundary, not the manifest.
 - The bill reminder title "Bill due" and its body remain English only in normal (non-discreet) mode. Pre-existing;
   tracked as a follow-up, not part of this release.
-- Known accepted residual (spec 4.6): a notification the user dismisses in the instant before the "turn on"
-  re-post can come back as a new notification and may make a sound on a high-importance channel. The content
-  is discreet.
-- Device checks owed at G1a, none yet run: AE-14, AE-16, API 31+ Snooze/Dismiss on a locked device, AE-12 (API 26),
-  AE-15/AE-102, AE-112/AE-121 upgrade check, FG-22 malformed-link run, AE-32.
+- Known accepted residuals (spec 4.6), all closed or narrowed by G1b post-sweep verification where noted:
+  - (a) A post by other app code within about 300 ms of a sweep update (including several budget alerts back to
+    back) can still make the platform drop that update silently, leaving FULL content on that notification.
+    The G1b post-sweep verification closes this.
+  - (b) A notification the user dismisses during the sweep window (up to N x 300 ms, about 15 s at 50
+    notifications) is re-posted as a fresh notification. The content is discreet, but it may make a sound on a
+    high-importance channel.
+  - (c) Turning discreet on keeps the switch disabled for the duration of the sweep (seconds with a full shade).
+  - User-facing copy must not promise that every notification updates instantly.
+- Device checks at G1a. Done: AE-16 (browser link is unresolvable by the app), FG-22 (10 malformed links, no
+  crash), NotificationPresentationDeviceTest 11/11 on API 35 and API 26, covering AE-14, AE-15, AE-102, AE-112
+  (simulated marker-less path), AE-32 and INV-10 (auth required). Owed or optional: real lock-screen rendering,
+  tapping Snooze/Dismiss on a locked API 31+ phone, and a real pre-1a to 1a upgrade smoke.

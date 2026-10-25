@@ -1530,9 +1530,24 @@ RE-POST sweep (turning discreet on, see APP LOCK SETTINGS WRITE PATH):
         from the original it reuses only id, tag, channel, content intent, action PendingIntents
         (BILL only, mapped by position onto resource-titled templates) and the post time;
         setOnlyAlertOnce(true); copies no text, extra, style, group, sort key or large icon
+  → PACING: before EVERY re-post (including the first) SweepPacer.pause(SWEEP_REPOST_SPACING_MS = 300)
+    runs, so the platform's per-app post rate limit does not silently drop sweep updates. The pause
+    is cancellable (CancellationException propagates). Skipped notifications (group summary, null kind,
+    failed classify) are not paused. The window is N x 300 ms (about 15 s at 50 notifications).
   → NOTIF_REPOSTED_DISCREET(COUNT) when at least one was re-posted
-  Accepted residual (spec 4.6): a notification dismissed between the query and its re-post comes
-  back as a new post and can alert on a HIGH-importance channel.
+  Accepted residuals (spec 4.6):
+    • a notification dismissed between the query and its re-post (up to N x 300 ms) comes back as a
+      new post and can alert on a HIGH-importance channel; the content is discreet
+    • a post by other code within about 300 ms of a sweep update, including BillReminderWorker's
+      direct post and back-to-back budget alerts, can still make the platform drop that update
+      silently, leaving FULL content
+    • reposted / NOTIF_REPOSTED_DISCREET count accepted notify() calls, not displayed updates
+  G1b carry-forward (binding, plan "Orchestrator carry-forwards from the G1a reviews"): post-sweep
+  verification via a content-free presentation-mode token (D / F) next to NotificationKindMarker.EXTRA_KEY,
+  a settle of at least 500 ms, one paced re-post of still-FULL sweep kinds, one COUNT-only diagnostic
+  (NOTIF_REPOST_UNCONFIRMED); it never blocks cleanup.
+  Triggers: per-field discreet write (UpdateDiscreetNotificationsUseCase) and a committed review-save
+  (AppLockPrivacySettingsViewModel, before value "was off"); both go through DiscreetRepostTrigger.
 
 FORBIDDEN:
   ❌ Any kind-less notification method on NotificationService (INV-12)
@@ -1547,6 +1562,8 @@ FORBIDDEN:
      may import ONLY the const-inlined `internal const val CHANNEL_ID` (S8 architecture ruling;
      follow-up: move the BILL channel/shape/action templates into one data/service holder)
   ❌ Running the sweep on a failed or rejected write, or when discreet turns off (see below)
+  ❌ Calling DiscreetRepostTrigger without NonCancellable (a committed ON must not miss its sweep)
+  ❌ Re-posting in the sweep without the SweepPacer pause, or a non-cancellable pause
   ❌ Swallowing CancellationException anywhere in resolve / post / sweep
 ```
 
@@ -1681,5 +1698,6 @@ FORBIDDEN:
      miss its sweep when the screen is left)
   ❌ Optimistic UI state not derived from the committed load state
   ❌ A second diagnostics owner for review-save in 1a (the ViewModel is the interim owner until S18)
+  ❌ Calling DiscreetRepostTrigger without NonCancellable and the serializer (review-save included)
   ❌ Raw settings text, paths or stack traces in diagnostics (bounded codes + FIELD enum only)
 ```

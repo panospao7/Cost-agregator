@@ -8,6 +8,7 @@ import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsReposit
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsWriteResult
 import com.yourname.expensetracker.domain.privacy.applock.AppLockWriteRejection
 import com.yourname.expensetracker.domain.privacy.applock.DiscreetRepostOutcome
+import com.yourname.expensetracker.domain.privacy.applock.DiscreetRepostTrigger
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticCode
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticKey
 import com.yourname.expensetracker.domain.privacy.applock.PrivacyDiagnosticMetadata
@@ -74,6 +75,9 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
 
     private val useCase = mockk<UpdateDiscreetNotificationsUseCase>()
     private val emitter = mockk<PrivacyDiagnosticsEmitter>(relaxed = true)
+    private val repostTrigger = mockk<DiscreetRepostTrigger> {
+        coEvery { onCommittedWrite(any(), any()) } returns DiscreetRepostOutcome.NOT_TRIGGERED
+    }
 
     private fun MockKMatcherScope.fieldIs(field: AppLockSettingField): PrivacyDiagnosticMetadata =
         match { it.entries[PrivacyDiagnosticKey.FIELD] == field }
@@ -83,7 +87,7 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
     private fun viewModel(
         repository: FakeRepository,
         serializer: AppLockSettingsWriteSerializer = AppLockSettingsWriteSerializer()
-    ) = AppLockPrivacySettingsViewModel(repository, useCase, emitter, serializer, appScope())
+    ) = AppLockPrivacySettingsViewModel(repository, useCase, emitter, serializer, repostTrigger, appScope())
 
     @Test
     fun `state is Loading until the first read arrives and never Ready or Off`() = runTest(testDispatcher) {
@@ -315,6 +319,64 @@ class AppLockPrivacySettingsViewModelTest : ViewModelTestUtils() {
             coVerify { emitter.emit(PrivacyDiagnosticCode.LOCK_SETTINGS_REVIEW_SAVED) }
             coVerify(exactly = 0) { useCase(any()) }
         }
+
+    @Test
+    fun `committed review save with discreet on triggers the sweep exactly once as was-off to on`() =
+        runTest(testDispatcher) {
+            val repository = FakeRepository(AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED))
+            val viewModel = viewModel(repository)
+            advanceUntilIdle()
+
+            viewModel.setReviewDiscreetChoice(true)
+            viewModel.saveReview()
+            advanceUntilIdle()
+
+            assertEquals(listOf(on), repository.reviewSaves)
+            coVerify(exactly = 1) { repostTrigger.onCommittedWrite(false, true) }
+            coVerify(exactly = 1) { repostTrigger.onCommittedWrite(any(), any()) }
+        }
+
+    @Test
+    fun `committed review save with discreet off still calls the trigger which does not sweep`() =
+        runTest(testDispatcher) {
+            val repository = FakeRepository(AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED))
+            val viewModel = viewModel(repository)
+            advanceUntilIdle()
+
+            viewModel.setReviewDiscreetChoice(false)
+            viewModel.saveReview()
+            advanceUntilIdle()
+
+            // The edge detector owns the decision: false to false is NOT_TRIGGERED, never a sweep.
+            coVerify(exactly = 1) { repostTrigger.onCommittedWrite(false, false) }
+            coVerify(exactly = 0) { repostTrigger.onCommittedWrite(any(), true) }
+        }
+
+    @Test
+    fun `refused or failed review save never reaches the sweep trigger`() = runTest(testDispatcher) {
+        val rejected = FakeRepository(AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED))
+        rejected.reviewSaveResult = AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.UNREADABLE)
+        val rejectedViewModel = viewModel(rejected)
+        advanceUntilIdle()
+        rejectedViewModel.saveReview()
+        advanceUntilIdle()
+
+        val failed = FakeRepository(AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED))
+        failed.reviewSaveResult = AppLockSettingsWriteResult.Failed(AppLockSettingField.REVIEW_SAVE)
+        val failedViewModel = viewModel(failed)
+        advanceUntilIdle()
+        failedViewModel.saveReview()
+        advanceUntilIdle()
+
+        val thrown = FakeRepository(AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED))
+        thrown.reviewSaveThrows = IllegalStateException("boom")
+        val thrownViewModel = viewModel(thrown)
+        advanceUntilIdle()
+        thrownViewModel.saveReview()
+        advanceUntilIdle()
+
+        coVerify(exactly = 0) { repostTrigger.onCommittedWrite(any(), any()) }
+    }
 
     @Test
     fun `review save failure keeps the card and the sentinel and shows an error (AE-89)`() =
