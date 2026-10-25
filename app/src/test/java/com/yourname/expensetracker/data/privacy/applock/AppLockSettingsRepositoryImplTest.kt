@@ -11,6 +11,7 @@ import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingField
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsLoadState
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsWriteResult
 import com.yourname.expensetracker.domain.privacy.applock.AppLockWriteRejection
+import com.yourname.expensetracker.domain.privacy.applock.AutoLockTimeout
 import com.yourname.expensetracker.domain.privacy.applock.SettingsUnreadableCause
 import java.io.File
 import java.io.IOException
@@ -351,7 +352,13 @@ class AppLockSettingsRepositoryImplTest {
         val stored = real.data.first().asMap().mapKeys { it.key.name }
         assertEquals(
             "review-save must replace the whole store with a complete record and marker NORMAL",
-            mapOf("_app_lock_load_state" to "NORMAL", "discreet_notifications" to false),
+            mapOf(
+                "_app_lock_load_state" to "NORMAL",
+                "discreet_notifications" to false,
+                "app_lock_enabled" to false,
+                "auto_lock_timeout" to "M1",
+                "secure_screen" to false
+            ),
             stored
         )
         assertEquals(
@@ -404,6 +411,260 @@ class AppLockSettingsRepositoryImplTest {
             AppLockSettingsLoadState.Loaded(AppLockPrivacySettings(discreetNotifications = true)),
             repository.getLoadState()
         )
+    }
+
+    // ---------------------------------------------------------------------------------
+    // 1b fields (S14): INV-2 invalid-value rules, INV-44 complete review record
+    // ---------------------------------------------------------------------------------
+
+    private val lockKey = booleanPreferencesKey("app_lock_enabled")
+    private val timeoutKey = stringPreferencesKey("auto_lock_timeout")
+    private val secureKey = booleanPreferencesKey("secure_screen")
+
+    @Test
+    fun absent_1b_keys_with_other_keys_present_take_their_defaults_without_resetting_the_store() = runBlocking {
+        // A 1a-era store (discreet only) opened by a 1b build must keep its value and default the rest.
+        real.edit {
+            it[markerKey] = "NORMAL"
+            it[discreetKey] = true
+        }
+
+        assertEquals(
+            AppLockSettingsLoadState.Loaded(
+                AppLockPrivacySettings(
+                    discreetNotifications = true,
+                    appLockEnabled = false,
+                    autoLockTimeout = AutoLockTimeout.M1,
+                    secureScreen = false
+                )
+            ),
+            repository.getLoadState()
+        )
+    }
+
+    @Test
+    fun a_lone_real_key_without_a_marker_is_loaded_with_only_that_field_set_never_first_run() = runBlocking {
+        // Each of the four real keys alone (no marker), set to a non-default value: Loaded, the other
+        // fields at their defaults. Never FirstRunDefault.
+        val cases = listOf(
+            Pair<(androidx.datastore.preferences.core.MutablePreferences) -> Unit, AppLockPrivacySettings>(
+                { it[discreetKey] = true },
+                AppLockPrivacySettings(discreetNotifications = true)
+            ),
+            Pair<(androidx.datastore.preferences.core.MutablePreferences) -> Unit, AppLockPrivacySettings>(
+                { it[lockKey] = true },
+                AppLockPrivacySettings(appLockEnabled = true)
+            ),
+            Pair<(androidx.datastore.preferences.core.MutablePreferences) -> Unit, AppLockPrivacySettings>(
+                { it[timeoutKey] = "M15" },
+                AppLockPrivacySettings(autoLockTimeout = AutoLockTimeout.M15)
+            ),
+            Pair<(androidx.datastore.preferences.core.MutablePreferences) -> Unit, AppLockPrivacySettings>(
+                { it[secureKey] = true },
+                AppLockPrivacySettings(secureScreen = true)
+            )
+        )
+
+        cases.forEachIndexed { index, (write, expected) ->
+            real.edit { prefs ->
+                prefs.clear()
+                write(prefs)
+            }
+
+            assertEquals(
+                "case $index",
+                AppLockSettingsLoadState.Loaded(expected),
+                repository.getLoadState()
+            )
+        }
+    }
+
+    @Test
+    fun valid_1b_values_are_read_back() = runBlocking {
+        real.edit {
+            it[markerKey] = "NORMAL"
+            it[lockKey] = true
+            it[timeoutKey] = "M15"
+            it[secureKey] = true
+        }
+
+        assertEquals(
+            AppLockSettingsLoadState.Loaded(
+                AppLockPrivacySettings(
+                    discreetNotifications = false,
+                    appLockEnabled = true,
+                    autoLockTimeout = AutoLockTimeout.M15,
+                    secureScreen = true
+                )
+            ),
+            repository.getLoadState()
+        )
+    }
+
+    @Test
+    fun invalid_lock_flag_makes_the_whole_state_unreadable_invalid_value_with_a_marker() = runBlocking {
+        real.edit {
+            it[markerKey] = "NORMAL"
+            it[stringPreferencesKey("app_lock_enabled")] = "yes"
+            it[discreetKey] = false
+        }
+
+        assertEquals(
+            AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.INVALID_VALUE),
+            repository.getLoadState()
+        )
+    }
+
+    @Test
+    fun invalid_lock_flag_without_a_marker_is_unreadable_never_first_run() = runBlocking {
+        real.edit { it[stringPreferencesKey("app_lock_enabled")] = "yes" }
+
+        assertEquals(
+            AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.INVALID_VALUE),
+            repository.getLoadState()
+        )
+    }
+
+    @Test
+    fun corrupted_sentinel_wins_over_an_invalid_lock_flag() = runBlocking {
+        real.edit {
+            it[markerKey] = "CORRUPTED"
+            it[stringPreferencesKey("app_lock_enabled")] = "yes"
+        }
+
+        assertEquals(
+            AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED),
+            repository.getLoadState()
+        )
+    }
+
+    @Test
+    fun unknown_timeout_token_maps_to_immediate_and_is_loaded() = runBlocking {
+        for (token in listOf("M2", "m1", "", "60000")) {
+            real.edit {
+                it.clear()
+                it[markerKey] = "NORMAL"
+                it[timeoutKey] = token
+            }
+
+            assertEquals(
+                "token=$token",
+                AppLockSettingsLoadState.Loaded(AppLockPrivacySettings(autoLockTimeout = AutoLockTimeout.IMMEDIATE)),
+                repository.getLoadState()
+            )
+        }
+    }
+
+    @Test
+    fun non_string_timeout_value_maps_to_immediate() = runBlocking {
+        real.edit {
+            it[markerKey] = "NORMAL"
+            it[booleanPreferencesKey("auto_lock_timeout")] = true
+        }
+
+        assertEquals(
+            AppLockSettingsLoadState.Loaded(AppLockPrivacySettings(autoLockTimeout = AutoLockTimeout.IMMEDIATE)),
+            repository.getLoadState()
+        )
+    }
+
+    @Test
+    fun invalid_secure_screen_value_maps_to_true_and_is_loaded() = runBlocking {
+        real.edit {
+            it[markerKey] = "NORMAL"
+            it[stringPreferencesKey("secure_screen")] = "maybe"
+        }
+
+        assertEquals(
+            AppLockSettingsLoadState.Loaded(AppLockPrivacySettings(secureScreen = true)),
+            repository.getLoadState()
+        )
+    }
+
+    @Test
+    fun setDiscreet_is_rejected_while_the_lock_flag_is_invalid_and_writes_nothing() = runBlocking {
+        real.edit {
+            it[markerKey] = "NORMAL"
+            it[stringPreferencesKey("app_lock_enabled")] = "yes"
+        }
+        val before = real.data.first().asMap()
+
+        val result = repository.setDiscreetNotifications(true)
+
+        assertEquals(AppLockSettingsWriteResult.Rejected(AppLockWriteRejection.UNREADABLE), result)
+        assertEquals(before, real.data.first().asMap())
+    }
+
+    @Test
+    fun setDiscreet_keeps_the_stored_1b_values() = runBlocking {
+        val record = AppLockPrivacySettings(
+            discreetNotifications = false,
+            appLockEnabled = true,
+            autoLockTimeout = AutoLockTimeout.S30,
+            secureScreen = true
+        )
+        repository.reviewSave(record)
+
+        val result = repository.setDiscreetNotifications(true)
+
+        assertEquals(AppLockSettingsWriteResult.Committed(record.copy(discreetNotifications = true)), result)
+    }
+
+    @Test
+    fun reviewSave_writes_a_complete_1b_record_and_reads_it_back() = runBlocking {
+        val record = AppLockPrivacySettings(
+            discreetNotifications = true,
+            appLockEnabled = true,
+            autoLockTimeout = AutoLockTimeout.IMMEDIATE,
+            secureScreen = true
+        )
+
+        val result = repository.reviewSave(record)
+
+        assertEquals(AppLockSettingsWriteResult.Committed(record), result)
+        assertEquals(
+            mapOf(
+                "_app_lock_load_state" to "NORMAL",
+                "discreet_notifications" to true,
+                "app_lock_enabled" to true,
+                "auto_lock_timeout" to "IMMEDIATE",
+                "secure_screen" to true
+            ),
+            real.data.first().asMap().mapKeys { it.key.name }
+        )
+        assertEquals(AppLockSettingsLoadState.Loaded(record), repository.getLoadState())
+    }
+
+    @Test
+    fun reviewSave_repairs_an_invalid_lock_flag_state() = runBlocking {
+        real.edit {
+            it[markerKey] = "NORMAL"
+            it[stringPreferencesKey("app_lock_enabled")] = "yes"
+        }
+
+        val result = repository.reviewSave(AppLockPrivacySettings(appLockEnabled = true))
+
+        assertEquals(
+            AppLockSettingsWriteResult.Committed(AppLockPrivacySettings(appLockEnabled = true)),
+            result
+        )
+        assertEquals(
+            AppLockSettingsLoadState.Loaded(AppLockPrivacySettings(appLockEnabled = true)),
+            repository.getLoadState()
+        )
+    }
+
+    @Test
+    fun reviewSave_write_failure_keeps_a_committed_1b_record() = runBlocking {
+        val committed = AppLockPrivacySettings(appLockEnabled = true, autoLockTimeout = AutoLockTimeout.M5)
+        repository.reviewSave(committed)
+        faulty.failWrite = IOException("disk full")
+
+        val result = repository.reviewSave(AppLockPrivacySettings())
+
+        assertEquals(AppLockSettingsWriteResult.Failed(AppLockSettingField.REVIEW_SAVE), result)
+        faulty.failWrite = null
+        assertEquals(AppLockSettingsLoadState.Loaded(committed), repository.getLoadState())
     }
 
     /** Wraps a real store so reads and/or writes can be made to fail on demand. */

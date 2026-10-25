@@ -133,7 +133,7 @@ class NotificationContentPolicyTest {
     }
 
     @Test
-    fun `fail closed bill decision keeps the api level action policy`() {
+    fun `fail closed bill decision is auth required on api 31 and drops the actions on api 30 and below`() {
         for (reason in NotificationFallbackReason.entries) {
             for (sdk in listOf(31, 34)) {
                 assertEquals(
@@ -143,11 +143,107 @@ class NotificationContentPolicyTest {
             }
             for (sdk in listOf(26, 30)) {
                 assertEquals(
-                    NotificationActionPolicy.UNCHANGED,
+                    NotificationActionPolicy.NONE,
                     NotificationContentPolicy.decideFailClosed(NotificationKind.BILL, sdk, reason).actionPolicy
                 )
             }
         }
+    }
+
+    // --- 1b lock terms (S14): INV-6 / OD-2a, INV-10, AE-54, AE-64, AE-65 ----------------------------
+
+    private fun lockOn(discreet: Boolean = false) =
+        AppLockSettingsLoadState.Loaded(
+            AppLockPrivacySettings(discreetNotifications = discreet, appLockEnabled = true)
+        )
+
+    @Test
+    fun `AE-65 lock on with discreet off gives DISCREET without fallback for every kind and sdk`() {
+        for (kind in NotificationKind.entries) for (sdk in sdkLevels) {
+            val decision = NotificationContentPolicy.decide(kind, lockOn(discreet = false), sdk)
+            assertEquals(NotificationPresentationMode.DISCREET, decision.mode)
+            assertFalse(decision.usesCallerText)
+            assertFalse(decision.expandedStyleAllowed)
+            assertNull(decision.fallbackReason)
+        }
+    }
+
+    @Test
+    fun `lock term holds on api 26 to 29 where the lock can only be inert`() {
+        for (sdk in listOf(26, 28, 29)) {
+            assertEquals(
+                NotificationPresentationMode.DISCREET,
+                NotificationContentPolicy.decide(NotificationKind.BILL, lockOn(), sdk).mode
+            )
+        }
+    }
+
+    @Test
+    fun `lock off with discreet off stays FULL (the lock term does not leak)`() {
+        val state = AppLockSettingsLoadState.Loaded(
+            AppLockPrivacySettings(discreetNotifications = false, appLockEnabled = false, secureScreen = true)
+        )
+        for (kind in NotificationKind.entries) for (sdk in sdkLevels) {
+            assertEquals(NotificationPresentationMode.FULL, NotificationContentPolicy.decide(kind, state, sdk).mode)
+        }
+    }
+
+    @Test
+    fun `AE-64 bill actions follow the api and lock rows`() {
+        // API 31+: auth required for every state.
+        for (sdk in listOf(31, 34)) for (state in listOf(full, lockOn(), null)) {
+            assertEquals(
+                NotificationActionPolicy.AUTH_REQUIRED,
+                NotificationContentPolicy.decide(NotificationKind.BILL, state, sdk).actionPolicy
+            )
+        }
+        // API 30 and below: lock on, unreadable of any cause, or a timed-out read drop the actions.
+        val dropped = listOf(lockOn(), lockOn(discreet = true), null) +
+            SettingsUnreadableCause.entries.map { AppLockSettingsLoadState.Unreadable(it) }
+        for (sdk in listOf(26, 28, 29, 30)) for (state in dropped) {
+            assertEquals(
+                "state=$state sdk=$sdk",
+                NotificationActionPolicy.NONE,
+                NotificationContentPolicy.decide(NotificationKind.BILL, state, sdk).actionPolicy
+            )
+        }
+        // API 30 and below, lock off and readable: unchanged, including with discreet on.
+        for (sdk in listOf(26, 28, 29, 30)) for (state in listOf(full, discreetOn, firstRun)) {
+            assertEquals(
+                NotificationActionPolicy.UNCHANGED,
+                NotificationContentPolicy.decide(NotificationKind.BILL, state, sdk).actionPolicy
+            )
+        }
+    }
+
+    @Test
+    fun `the lock never changes the action policy of non bill kinds`() {
+        for (kind in NotificationKind.entries.filter { it != NotificationKind.BILL }) for (sdk in sdkLevels) {
+            for (state in listOf(lockOn(), null, AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED))) {
+                assertEquals(
+                    NotificationActionPolicy.UNCHANGED,
+                    NotificationContentPolicy.decide(kind, state, sdk).actionPolicy
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `decideDiscreet drops bill actions on api 30 and below only when told the lock or unreadable applies`() {
+        for (sdk in listOf(26, 30)) {
+            assertEquals(
+                NotificationActionPolicy.NONE,
+                NotificationContentPolicy.decideDiscreet(NotificationKind.BILL, sdk, actionsSuppressed = true).actionPolicy
+            )
+            assertEquals(
+                NotificationActionPolicy.UNCHANGED,
+                NotificationContentPolicy.decideDiscreet(NotificationKind.BILL, sdk).actionPolicy
+            )
+        }
+        assertEquals(
+            NotificationActionPolicy.AUTH_REQUIRED,
+            NotificationContentPolicy.decideDiscreet(NotificationKind.BILL, 31, actionsSuppressed = true).actionPolicy
+        )
     }
 
     @Test
@@ -173,8 +269,8 @@ class NotificationContentPolicyTest {
     }
 
     @Test
-    fun `bill actions are unchanged on api 30 and below in 1a`() {
-        val states = listOf(full, discreetOn, null, AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED))
+    fun `bill actions are unchanged on api 30 and below while the lock is off and the settings are readable`() {
+        val states = listOf(full, discreetOn, firstRun)
         for (sdk in listOf(26, 28, 29, 30)) for (state in states) {
             assertEquals(
                 NotificationActionPolicy.UNCHANGED,

@@ -17,6 +17,7 @@ import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsLoadSta
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsRepository
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsWriteResult
 import com.yourname.expensetracker.domain.privacy.applock.AppLockWriteRejection
+import com.yourname.expensetracker.domain.privacy.applock.AutoLockTimeout
 import com.yourname.expensetracker.domain.privacy.applock.SettingsUnreadableCause
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.IOException
@@ -69,6 +70,9 @@ class AppLockSettingsRepositoryImpl @VisibleForTesting internal constructor(
 
     private object Keys {
         val DISCREET_NOTIFICATIONS = booleanPreferencesKey("discreet_notifications")
+        val APP_LOCK_ENABLED = booleanPreferencesKey("app_lock_enabled")
+        val AUTO_LOCK_TIMEOUT = stringPreferencesKey("auto_lock_timeout")
+        val SECURE_SCREEN = booleanPreferencesKey("secure_screen")
     }
 
     override fun observeLoadState(): Flow<AppLockSettingsLoadState> =
@@ -117,6 +121,9 @@ class AppLockSettingsRepositoryImpl @VisibleForTesting internal constructor(
             val after = store.edit { prefs ->
                 prefs.clear()
                 prefs[Keys.DISCREET_NOTIFICATIONS] = record.discreetNotifications
+                prefs[Keys.APP_LOCK_ENABLED] = record.appLockEnabled
+                prefs[Keys.AUTO_LOCK_TIMEOUT] = record.autoLockTimeout.token
+                prefs[Keys.SECURE_SCREEN] = record.secureScreen
                 prefs[LOAD_STATE_KEY] = LOAD_STATE_NORMAL
             }
             val committed = (after.toLoadState() as? AppLockSettingsLoadState.Loaded)?.settings ?: record
@@ -153,8 +160,10 @@ class AppLockSettingsRepositoryImpl @VisibleForTesting internal constructor(
      * Load-state precedence:
      * 1. CORRUPTED sentinel -> Unreadable(CORRUPTED)
      * 2. A marker that is not a known token (or not a string) -> Unreadable(INVALID_VALUE)
-     * 3. No marker and no real key -> FirstRunDefault (normal defaults)
-     * 4. NORMAL marker or any real key present -> Loaded; an absent field takes its default and an
+     * 3. A lock flag that is not a Boolean -> Unreadable(INVALID_VALUE), with or without a marker; a
+     *    bare invalid lock key is never a first run
+     * 4. No marker and no real key -> FirstRunDefault (normal defaults)
+     * 5. NORMAL marker or any real key present -> Loaded; an absent field takes its default and an
      *    invalid field takes its most restrictive value (spec 2.1).
      */
     private fun Preferences.toLoadState(): AppLockSettingsLoadState {
@@ -170,7 +179,17 @@ class AppLockSettingsRepositoryImpl @VisibleForTesting internal constructor(
             }
         }
         val discreetRaw = raw[Keys.DISCREET_NOTIFICATIONS]
-        if (marker == null && discreetRaw == null) {
+        val lockEnabledRaw = raw[Keys.APP_LOCK_ENABLED]
+        val timeoutRaw = raw[Keys.AUTO_LOCK_TIMEOUT]
+        val secureScreenRaw = raw[Keys.SECURE_SCREEN]
+        // An invalid lock flag cannot be mapped to a safe value: the whole state is unreadable (spec 2.1).
+        // This precedes the first-run check, so a bare invalid lock key is never read as a first run.
+        if (lockEnabledRaw != null && lockEnabledRaw !is Boolean) {
+            return AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.INVALID_VALUE)
+        }
+        if (marker == null && discreetRaw == null && lockEnabledRaw == null &&
+            timeoutRaw == null && secureScreenRaw == null
+        ) {
             return AppLockSettingsLoadState.FirstRunDefault(AppLockPrivacySettings.DEFAULTS)
         }
         val discreet = when (discreetRaw) {
@@ -179,6 +198,26 @@ class AppLockSettingsRepositoryImpl @VisibleForTesting internal constructor(
             // Invalid persisted value: most restrictive (spec 2.1).
             else -> true
         }
-        return AppLockSettingsLoadState.Loaded(AppLockPrivacySettings(discreetNotifications = discreet))
+        val lockEnabled = (lockEnabledRaw as Boolean?) ?: AppLockPrivacySettings.DEFAULT_APP_LOCK_ENABLED
+        val timeout = when (timeoutRaw) {
+            null -> AutoLockTimeout.DEFAULT
+            // An unknown token or a non-string value maps to IMMEDIATE, the most restrictive (spec 2.1).
+            is String -> AutoLockTimeout.fromToken(timeoutRaw) ?: AutoLockTimeout.FAIL_CLOSED
+            else -> AutoLockTimeout.FAIL_CLOSED
+        }
+        val secureScreen = when (secureScreenRaw) {
+            null -> AppLockPrivacySettings.DEFAULT_SECURE_SCREEN
+            is Boolean -> secureScreenRaw
+            // Invalid persisted value: most restrictive (spec 2.1).
+            else -> true
+        }
+        return AppLockSettingsLoadState.Loaded(
+            AppLockPrivacySettings(
+                discreetNotifications = discreet,
+                appLockEnabled = lockEnabled,
+                autoLockTimeout = timeout,
+                secureScreen = secureScreen
+            )
+        )
     }
 }

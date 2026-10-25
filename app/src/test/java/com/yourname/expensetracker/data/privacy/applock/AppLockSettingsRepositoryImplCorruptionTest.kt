@@ -7,6 +7,7 @@ import com.yourname.expensetracker.domain.privacy.applock.AppLockPrivacySettings
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsLoadState
 import com.yourname.expensetracker.domain.privacy.applock.AppLockSettingsWriteResult
 import com.yourname.expensetracker.domain.privacy.applock.AppLockWriteRejection
+import com.yourname.expensetracker.domain.privacy.applock.AutoLockTimeout
 import com.yourname.expensetracker.domain.privacy.applock.EffectivePrivacyValues
 import com.yourname.expensetracker.domain.privacy.applock.SettingsUnreadableCause
 import java.io.File
@@ -168,6 +169,38 @@ class AppLockSettingsRepositoryImplCorruptionTest {
             AppLockSettingsLoadState.Loaded(AppLockPrivacySettings(discreetNotifications = false)),
             coldStartFromDisk(file).getLoadState()
         )
+    }
+
+    @Test
+    fun corruption_effective_values_are_the_full_1b_fail_closed_record() = runBlocking {
+        val file = writeCorruptFile()
+
+        val state = repository.getLoadState()
+
+        assertHandlerReplacedFile(file)
+        val effective = EffectivePrivacyValues.effectiveSettings(state)
+        assertTrue(effective.appLockEnabled)
+        assertEquals(AutoLockTimeout.IMMEDIATE, effective.autoLockTimeout)
+        assertTrue(effective.secureScreen)
+        assertTrue(EffectivePrivacyValues.effectiveSecureScreen(state, resolving = false))
+        assertTrue(EffectivePrivacyValues.effectiveLockEnabled(state))
+    }
+
+    @Test
+    fun reviewSave_of_a_1b_record_after_corruption_clears_the_sentinel_and_survives_a_cold_start() = runBlocking {
+        val file = writeCorruptFile()
+        val record = AppLockPrivacySettings(
+            discreetNotifications = false,
+            appLockEnabled = true,
+            autoLockTimeout = AutoLockTimeout.M5,
+            secureScreen = true
+        )
+
+        val result = repository.reviewSave(record)
+
+        assertHandlerReplacedFile(file)
+        assertEquals(AppLockSettingsWriteResult.Committed(record), result)
+        assertEquals(AppLockSettingsLoadState.Loaded(record), coldStartFromDisk(file).getLoadState())
     }
 
     @Test

@@ -631,3 +631,41 @@ Open OWNER conditions:
 - AE-14 rendering / locked Snooze: not automatable without a UiAutomator dependency or out-of-runner instrumentation → accepted deviation (owner-approvals item 27); optional owner-phone check; candidate 1b UiAutomator test.
 - Device confirmation after the androidTest wait fix: NotificationPresentationDeviceTest API 35 vr-20261025-222558-625cee45 PASS 11/11. (API 26 last ran 11/11 on the pre-tweak test at vr-20261025-192651-e97805c8; the tweak only tightens one wait, production unchanged.)
 - G1a STATUS: ACCEPTED (final acceptance 2 parts ACCEPT-WITH-CONDITIONS; conditions fixed or owner-decided 2026-10-25). Increment 1a ready to merge on owner request. Next increment: 1b (G1b post-sweep verification binding).
+
+## S14 (2026-10-26)
+Status: implemented, NOT validated (no build/test run by the implementer). Store 1b fields and policy lock terms.
+
+Files (source):
+- domain/privacy/applock/AppLockPrivacySettings.kt: new `AutoLockTimeout` enum (IMMEDIATE 0, S30, M1, M5, M15; `token` = enum name, `millis` derived, `DEFAULT` = M1, `FAIL_CLOSED` = IMMEDIATE, `fromToken`); settings gain `appLockEnabled` (false), `autoLockTimeout` (M1), `secureScreen` (false); `FAIL_CLOSED` = all four restrictive (record F).
+- domain/privacy/applock/EffectivePrivacyValues.kt: `effectiveDiscreet` now `discreet OR appLockEnabled OR Unreadable/null`; new `effectiveLockEnabled(loadState)`; new `effectiveSecureScreen(loadState, resolving)` (settings part only: `secureScreen OR appLockEnabled OR Unreadable/null OR resolving`, no AUTHENTICATING term).
+- data/privacy/applock/AppLockSettingsRepositoryImpl.kt: keys `app_lock_enabled` (boolean), `auto_lock_timeout` (string token), `secure_screen` (boolean). Load precedence unchanged (CORRUPTED, bad marker), then a non-Boolean lock flag gives whole-state `Unreadable(INVALID_VALUE)` (also with no marker, so never a first run); first run needs no marker and none of the four real keys; absent field = default; unknown or non-string timeout = IMMEDIATE; non-Boolean secure screen = true. `reviewSave` writes all four fields explicit plus marker NORMAL in one `edit` (INV-44). `setDiscreetNotifications` unchanged (still rejected while Unreadable, including the new invalid-lock-flag state). Same DataStore `edit` single writer; IO mapping and CancellationException propagation untouched.
+- domain/notification/presentation/NotificationContentPolicy.kt: BILL on API <=30 gets `NONE` when the lock is enabled or the state is unreadable/timed out (also in `decideFailClosed`), else `UNCHANGED`; API 31+ stays `AUTH_REQUIRED`. Mode uses the new `effectiveDiscreet` (lock forces DISCREET on all APIs, so inert and API-unsupported are covered because the term reads the stored flag). `decideDiscreet(kind, sdkInt, actionsSuppressed = false)` gained a defaulted parameter.
+- domain/notification/presentation/NotificationPresentationResolver.kt: emits `NOTIF_ACTIONS_SUPPRESSED_LOCK(sdkInt)` (fire and forget, via the existing rate-limited emitter) when a BILL decision is `NONE`, in both the normal and the exception-fallback paths. `NotificationContentPolicy` stays pure and total (S4 note).
+Files (tests): AppLockSettingsRepositoryImplTest (updated complete-record map; 1b defaults, invalid values, review-save, failure), AppLockSettingsRepositoryImplCorruptionTest (F record, 1b review-save cold start), EffectivePrivacyValuesTest (1b truth tables), NotificationContentPolicyTest (AE-64/65 decision rows; the two 1a pins "unchanged on <=30" were narrowed to lock-off-and-readable, the unreadable rows now expect NONE), NotificationPresentationResolverTest (AE-64 diagnostic rows).
+
+Decisions:
+- No schema/DB impact; DataStore keys only. Old 1a files load unchanged (absent keys default).
+- Invalid lock flag = `Unreadable(INVALID_VALUE)` (persistent), per spec 2.1/2.2; recovered only by review-save.
+- Resolver, not the policy, emits the diagnostic (policy is pure; resolver already owns the emitter).
+
+STOPPED / not done (outside the S14 write set):
+- No per-field setters for `appLockEnabled`, `autoLockTimeout`, `secureScreen`, and `AppLockSettingField` has no `APP_LOCK_ENABLED` etc.: `AppLockSettingsRepository.kt` is not in S14's write set (the plan's S18 text expects `LOCK_SETTING_PERSIST_FAILED(APP_LOCK_ENABLED)`). The first slice that writes these per field (S18/S12 owner) must add the interface methods, the enum entries and the Impl bodies following `setDiscreetNotifications` (reject while Unreadable, one `edit`, marker NORMAL, `writeFailure`). Until then 1b fields are written only by `reviewSave`. Orchestrator: confirm or extend a write set.
+- Sweep action rule (INV-10 for re-posted BILL): `AndroidNotificationService.rebuildDiscreet` (not in the write set) calls `decideDiscreet(kind, SDK_INT)` with the default, so a re-posted BILL on API 30 keeps its actions even if the lock was just enabled. Carry-forward to G1b / S9 (whichever next edits that file): pass `actionsSuppressed = EffectivePrivacyValues.effectiveLockEnabled(<committed state>)`. Dormant until a lock can be enabled (S18+).
+- `BillReminderWorkerNotificationPresentationTest` (S8, not in the write set) runs the unreadable case at SDK 26 to 30 with the real policy; those posts now drop actions. Its AE-7 test asserts no actions either way (read at ~:436), but the validation run of the S8 filter should be included to confirm.
+- Binding items from the carry-forward sections: none bind S14 (the S5a items go to S5b to S11; the G1a items bind G1b and S18).
+
+Validation to request (plan S14), serially via validation-runner: targeted-unit-test `*AppLockSettingsRepository*`, `*EffectivePrivacyValues*`, `*NotificationContentPolicy*`, `*NotificationPresentationResolver*`; then shards `data` and `domain-n-z`. Suggested extra: targeted `*BillReminderWorkerNotificationPresentation*`. Gates: privacy-security-guardian (lead), architecture-guardian, reviewer-strict.
+- Orchestrator decisions on S14 stops (2026-10-26): (1) 1b per-field setters + AppLockSettingField.APP_LOCK_ENABLED belong to S18 (settings operations) — until then the 1b fields are written only by reviewSave; accepted. (2) BINDING carry-forward for S18/G1b: AndroidNotificationService.rebuildDiscreet must pass actionsSuppressed = EffectivePrivacyValues.effectiveLockEnabled(committed state) so a re-posted BILL on API ≤ 30 drops its actions once the lock is on (dormant until a lock can be enabled).
+
+### S14 review-fix pass (2026-10-26)
+Orchestrator decisions:
+- Increment 1a ships/merges from 25096c65 (the accepted G1a tip), NOT with S14. release-note-1a stays accurate for that tip.
+- S14 is NOT fully dormant: on API <= 30 the unreadable, timeout and policy-exception paths drop BILL Snooze/Dismiss now (INV-10); only the lock term is dormant. Plan S14 release state updated; release-note-1b item added (S23).
+- Policy exception => NONE on API <= 30 is an explicit decision (INV-9 fail-closed reading of INV-10).
+Review verdicts: privacy-security ACCEPT-WITH-MINORS; architecture ACCEPT-WITH-MINORS; reviewer-strict ACCEPT-WITH-CONDITIONS.
+Fixed in this pass:
+- Test (strict ISSUE-1): AppLockSettingsRepositoryImplTest lone-key-without-marker test now covers all four real keys (discreet, app_lock_enabled=true, auto_lock_timeout=M15, secure_screen=true): each alone gives Loaded with only that field set, never FirstRunDefault.
+- Source KDoc (arch minor 1): toLoadState precedence list now includes the invalid-lock-flag step.
+- Plan: S14 release state; S18/G1b carry-forwards (rebuildDiscreet actionsSuppressed, remove the decideDiscreet default and update its pinning test, lock-on SDK <= 30 row in BillNotificationSweepParityTest, NOTIF_ACTIONS_SUPPRESSED_LOCK on sweep decision, INV-45 owner, G1b device re-run on API 26 and 30); S23 write set doc lines and release-note-1b item.
+Validation still to run (validation-runner, serial): targeted-unit-test with the same filters plus `*BillNotificationSweepParity*`; then shard `domain-n-z`.
+- S14 DONE (2026-10-26): validation on the final tree — targeted vr-20261025-230038-4e5d7051, domain-n-z vr-20261025-230510-13b8936c, data vr-20261025-230641-b8a5d9dc PASS (earlier targeted vr-20261025-223346-eda773c4 / data vr-20261025-224534-834f96d5 on the pre-fix tree). Next: S15 (biometric dependency + USE_BIOMETRIC — owner-approved, owner-approvals item 9).

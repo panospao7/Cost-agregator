@@ -111,6 +111,110 @@ class NotificationPresentationResolverTest {
         assertEquals(NotificationActionPolicy.UNCHANGED, resolver.resolve(NotificationKind.BILL, 30).actionPolicy)
     }
 
+    // --- 1b lock terms (S14): AE-64, AE-65, INV-10 -------------------------------------------
+
+    private fun lockOn() =
+        AppLockSettingsLoadState.Loaded(AppLockPrivacySettings(discreetNotifications = false, appLockEnabled = true))
+
+    @Test
+    fun `AE-65 lock on with discreet off resolves DISCREET for every kind without a fallback or diagnostic`() = runTest {
+        val resolver = resolverFor(FakeRepository { lockOn() })
+
+        for (kind in NotificationKind.entries) {
+            val decision = resolver.resolve(kind, 34)
+            assertEquals(NotificationPresentationMode.DISCREET, decision.mode)
+            assertNull(decision.fallbackReason)
+        }
+        assertTrue(emitted.isEmpty())
+    }
+
+    @Test
+    fun `AE-64 bill on api 30 with the lock on drops the actions and emits the suppressed code with the sdk only`() = runTest {
+        val resolver = resolverFor(FakeRepository { lockOn() })
+
+        val decision = resolver.resolve(NotificationKind.BILL, 30)
+
+        assertEquals(NotificationActionPolicy.NONE, decision.actionPolicy)
+        assertEquals(1, emitted.size)
+        assertEquals(PrivacyDiagnosticCode.NOTIF_ACTIONS_SUPPRESSED_LOCK, emitted.single().code)
+        assertEquals(
+            mapOf<PrivacyDiagnosticKey, Any>(PrivacyDiagnosticKey.SDK_INT to 30),
+            emitted.single().metadata.entries
+        )
+    }
+
+    @Test
+    fun `AE-64 bill on api 30 with unreadable settings drops the actions and emits both codes`() = runTest {
+        val resolver = resolverFor(FakeRepository { AppLockSettingsLoadState.Unreadable(SettingsUnreadableCause.CORRUPTED) })
+
+        val decision = resolver.resolve(NotificationKind.BILL, 30)
+
+        assertEquals(NotificationActionPolicy.NONE, decision.actionPolicy)
+        assertEquals(
+            setOf(
+                PrivacyDiagnosticCode.NOTIF_POLICY_SETTINGS_UNREADABLE,
+                PrivacyDiagnosticCode.NOTIF_ACTIONS_SUPPRESSED_LOCK
+            ),
+            emitted.map { it.code }.toSet()
+        )
+    }
+
+    @Test
+    fun `AE-64 a timed out read on api 30 drops the bill actions`() = runTest {
+        val resolver = resolverFor(FakeRepository { awaitCancellation() })
+
+        val result = async { resolver.resolve(NotificationKind.BILL, 30) }
+        runCurrent()
+        advanceTimeBy(NotificationPresentationResolver.T_READ_MILLIS)
+        runCurrent()
+
+        assertEquals(NotificationActionPolicy.NONE, result.await().actionPolicy)
+        assertTrue(emitted.any { it.code == PrivacyDiagnosticCode.NOTIF_ACTIONS_SUPPRESSED_LOCK })
+    }
+
+    @Test
+    fun `AE-64 a policy exception on api 30 drops the bill actions and emits the suppressed code`() = runTest {
+        val resolver = resolverFor(FakeRepository { throw IllegalStateException("boom") })
+
+        val decision = resolver.resolve(NotificationKind.BILL, 30)
+
+        assertEquals(NotificationActionPolicy.NONE, decision.actionPolicy)
+        assertEquals(
+            setOf(
+                PrivacyDiagnosticCode.NOTIF_POLICY_FALLBACK_EXCEPTION,
+                PrivacyDiagnosticCode.NOTIF_ACTIONS_SUPPRESSED_LOCK
+            ),
+            emitted.map { it.code }.toSet()
+        )
+    }
+
+    @Test
+    fun `AE-64 api 31 keeps the actions with authentication and emits no suppressed code`() = runTest {
+        val resolver = resolverFor(FakeRepository { lockOn() })
+
+        val decision = resolver.resolve(NotificationKind.BILL, 31)
+
+        assertEquals(NotificationActionPolicy.AUTH_REQUIRED, decision.actionPolicy)
+        assertTrue(emitted.none { it.code == PrivacyDiagnosticCode.NOTIF_ACTIONS_SUPPRESSED_LOCK })
+    }
+
+    @Test
+    fun `lock off on api 30 keeps the bill actions and emits no suppressed code`() = runTest {
+        val resolver = resolverFor(FakeRepository { loaded(false) })
+
+        assertEquals(NotificationActionPolicy.UNCHANGED, resolver.resolve(NotificationKind.BILL, 30).actionPolicy)
+        assertTrue(emitted.isEmpty())
+    }
+
+    @Test
+    fun `non bill kinds never emit the suppressed code even with the lock on`() = runTest {
+        val resolver = resolverFor(FakeRepository { lockOn() })
+
+        for (kind in NotificationKind.entries.filter { it != NotificationKind.BILL }) resolver.resolve(kind, 30)
+
+        assertTrue(emitted.none { it.code == PrivacyDiagnosticCode.NOTIF_ACTIONS_SUPPRESSED_LOCK })
+    }
+
     // --- AE-7: unreadable -------------------------------------------------------------------
 
     @Test

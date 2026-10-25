@@ -739,7 +739,7 @@ Context: budget alerts post with the raw `budget.id.toInt()` (`BudgetMonitor.kt:
   - `targeted-unit-test` `*NotificationContentPolicy*`
   - `targeted-unit-test` `*NotificationPresentationResolver*`
   - shards `data`, `domain-n-z`
-- **Release state / rollback:** dormant; clean revert.
+- **Release state / rollback:** not dormant on API ≤ 30: an unreadable state, a timeout or a policy exception drops BILL Snooze/Dismiss now (INV-10, resolved as NONE; fail-closed reading of INV-9). The lock term itself is dormant (no lock can be enabled yet). Clean revert. Increment 1a ships from the accepted G1a tip (25096c65), not with S14.
 
 ### S15 — Device-auth capability, authenticator adapter and constant prompt copy (TECH-1)
 - **Goal / invariants:**
@@ -1084,11 +1084,13 @@ Context: budget alerts post with the raw `budget.id.toInt()` (`BudgetMonitor.kt:
   - `LEGAL_PATHS.md`:
     - APP LOCK section, including: open-origin prompts keep `MainScreen` composed (INV-53); purpose-bound attempts; PROMPT_HOST_LOST; the timer handoff (INV-54); the TECH-13 rule;
     - DEEP LINKS updated with the hold.
-  - `CODEBASE_SEGMENTS.md`: Segment 28 lock owners; an ownership note for the UI shell gate and prompt host (`MainActivity` has no segment today).
+    - S14 doc lines (arch minor 3): ~:1491-1494 BILL on API ≤ 30 resolves to NONE when the lock is on, the state is unreadable or it timed out; ~:1486-1490 add `NOTIF_ACTIONS_SUPPRESSED_LOCK(sdkInt)` to the diagnostics list; ~:1528 the new `decideDiscreet` signature (`actionsSuppressed` required, no default after S18); ~:1641-1697 App Lock Settings Write Path: the 1b review record (all four fields plus marker in one edit) and the invalid lock flag as a persistent `INVALID_VALUE` recoverable only by `reviewSave`.
+  - `CODEBASE_SEGMENTS.md`: Segment 28 lock owners (also ~:593-595 for the 1b fields and policy lock terms); an ownership note for the UI shell gate and prompt host (`MainActivity` has no segment today).
+  - `ENGINE_INTERACTION_MAP.md`: ~:154 and ~:169 (settings store 1b fields; policy lock term and BILL action suppression on API ≤ 30).
   - `NAVIGATION_ARCHITECTURE.md`, `UI_REFERENCE_INDEX.md`, `COMPREHENSIVE_UI_MAP.md`
   - `CODEBASE_INVENTORY.md` (dependency, permission)
   - `hilt-bindings-map.md` if stale
-  - `docs/features/app-lock-privacy-mode/release-note-1b.md` (API 30 Snooze/Dismiss loss, screenshots blocked, unavailable on older Android)
+  - `docs/features/app-lock-privacy-mode/release-note-1b.md` (API 30 Snooze/Dismiss loss, screenshots blocked, unavailable on older Android; also: on API ≤ 30, BILL Snooze/Dismiss are removed whenever the lock is on or the privacy settings cannot be read or resolved in time, including a policy exception, since S14)
 - **Depends on:** S14–S22. **Gates:** architecture-guardian.
 
 ### G1b — Increment 1b gate
@@ -1476,4 +1478,11 @@ Notes for the orchestrator:
   - record one bounded, COUNT-only diagnostic (for example `NOTIF_REPOST_UNCONFIRMED`) through the diagnostics registry; no content, ids, paths or text;
   - verification never blocks cleanup and never loops; `CancellationException` propagates.
 - **S18 (BINDING):** the lock-enable caller must run `DiscreetRepostTrigger.onCommittedWrite` under `withContext(NonCancellable)`, inside the shared write serializer. The serializer (`AppLockSettingsWriteSerializer`) and the review-save diagnostics move to the domain owner, and `AppLockPrivacySettingsViewModel.kt` is edited before AppLockController writes settings (already recorded in the S12 amendment above).
+- **S18 / G1b (BINDING, S14 review fixes, 2026-10-26):**
+  - `AndroidNotificationService.rebuildDiscreet` must pass `actionsSuppressed = EffectivePrivacyValues.effectiveLockEnabled(<committed state>)` to `decideDiscreet`, so a sweep-rebuilt BILL on API ≤ 30 drops its actions once the lock is on.
+  - Remove the default on `decideDiscreet(actionsSuppressed)` so every caller must choose; update the test that pins the default.
+  - Add a lock-on, SDK ≤ 30 row to `BillNotificationSweepParityTest`.
+  - S18 decides whether a sweep-rebuilt BILL that drops its actions emits `NOTIF_ACTIONS_SUPPRESSED_LOCK`.
+  - INV-45 owner (S18 and the review-card slice, ~:1042): the review record starts from F for every 1b field and goes through the controller's INV-45 auth/capability check. Today the 1a review card writes permissive 1b values (lock=false, M1, secure=false); this is dormant because no lock exists yet.
+  - G1b re-runs `NotificationPresentationDeviceTest` on API 26 and 30 (BILL action counts below API 31).
 - **Done in G1a fixes:** a committed review-save now runs the same trigger (before value "was off") in the same serialised, NonCancellable block; the navigation log no longer prints destination parameters.
