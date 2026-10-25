@@ -17,10 +17,11 @@ Corrections made while adapting, checked against source on 2026-10-24:
   "Reminder" notice; details appear after you unlock. For no details anywhere, turn on Discreet notifications.
 - New setting: Privacy settings, "App lock & privacy", "Discreet notifications". When it is on, budget, bill,
   warranty, receipt, unusual-charge and briefing notifications show only a generic title and text (for example
-  "Bill due" or "Budget alert"), even after you unlock. Turning it on also starts updating the notifications
-  already in your notification shade, one after another, quietly and without a new sound. With many notifications
-  this takes a few seconds, and the switch stays unavailable until it finishes. A notification that you dismiss
-  or that arrives while this is happening may not be updated; new notifications are always discreet.
+  "Bill due" or "Budget alert"), even after you unlock. Turning it on also updates the notifications already in
+  your notification shade, one notification at a time. With many notifications this takes a few seconds, and the
+  switch stays unavailable until it finishes. Rarely, a notification may keep its details; dismiss it to remove
+  them. A notification you dismiss during the update may reappear in discreet form. New notifications are always
+  discreet.
 - If the app cannot read this setting, it behaves as if discreet notifications were on, and the Privacy settings
   screen says so. If the saved setting is damaged, the screen asks you to review and save your choice.
 
@@ -50,6 +51,11 @@ Corrections made while adapting, checked against source on 2026-10-24:
     notifications) is re-posted as a fresh notification. The content is discreet, but it may make a sound on a
     high-importance channel.
   - (c) Turning discreet on keeps the switch disabled for the duration of the sweep (seconds with a full shade).
+  - (d) A FULL decision resolved just before the setting commit but posted after the sweep's single query stays
+    FULL (a millisecond window; `postForKind` and `BillReminderWorker`). G1b verification closes it.
+  - (e) Process death mid-sweep leaves the remaining notifications FULL until they are replaced.
+  - G1b verification re-posts any sweep-kind notification whose presentation token is not "D" (an absent token
+    counts), which is how (a), (d) and marker-less originals are covered.
   - User-facing copy must not promise that every notification updates instantly.
 - Device checks at G1a. Done: AE-16 (browser link is unresolvable by the app), FG-22 (10 malformed links, no
   crash), NotificationPresentationDeviceTest 11/11 on API 35 and API 26, covering AE-14, AE-15, AE-102, AE-112

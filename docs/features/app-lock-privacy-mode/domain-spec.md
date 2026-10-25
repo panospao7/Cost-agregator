@@ -535,6 +535,10 @@ Re-post rules (AMD-7, closes G-7):
   dismisses between the query and its re-post may reappear once in discreet form. The window is bounded by
   N x 300 ms (the re-post pacing, `SWEEP_REPOST_SPACING_MS`), about 15 s at 50 notifications. This is an accepted
   residual: it is bounded and content-free, though it may alert on a high-importance channel.
+- **Further accepted residuals:** (i) a FULL decision resolved just before the setting commit but posted after the
+  sweep's single query stays FULL (a millisecond window; `postForKind` and `BillReminderWorker`); (ii) process death
+  mid-sweep leaves the remaining notifications FULL until they are replaced. G1b verification re-posts any sweep-kind
+  notification whose presentation token is not "D" (an absent token counts), which covers both.
 - **Not a delivery:** no `notificationsSent`, `DeliveryResult`, claim/mark or cooldown change.
 - **Failure:** a missing permission or a `SecurityException` skips that notification and records
   `NOTIF_REPOST_FAILED` (exception class name only). There is no retry loop. `CancellationException` propagates.

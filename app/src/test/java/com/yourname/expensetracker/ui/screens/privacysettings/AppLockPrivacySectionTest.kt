@@ -4,7 +4,10 @@ import android.content.ComponentName
 import android.content.Context
 import androidx.activity.ComponentActivity
 import androidx.annotation.StringRes
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
@@ -176,6 +179,31 @@ class AppLockPrivacySectionTest {
 
         composeRule.onNodeWithTag(AppLockPrivacySectionTags.REVIEW_SAVE).performClick()
         assertEquals(1, reviewSaves)
+    }
+
+    @Test
+    fun `section title has heading semantics`() {
+        show(AppLockPrivacySectionState.Ready(discreetOn = false, isWriting = false, notice = null))
+
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.TITLE)
+            .assert(hasText(text(R.string.privacy_section_app_lock)))
+            .assert(SemanticsMatcher.keyIsDefined(SemanticsProperties.Heading))
+    }
+
+    @Test
+    fun `review card title and body are one merged focus stop and the button stays separate`() {
+        show(AppLockPrivacySectionState.NeedsReview(discreetChoice = true, isSaving = false, notice = null))
+
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.REVIEW_CARD_TEXT)
+            .assert(hasText(text(R.string.privacy_review_card_title)))
+            .assert(hasText(text(R.string.privacy_review_card_body)))
+            .assert(!hasText(text(R.string.privacy_review_card_save)))
+        // In the merged tree the title and body are not separate nodes: each text resolves to the one group.
+        composeRule.onAllNodes(hasText(text(R.string.privacy_review_card_title))).assertCountEquals(1)
+        composeRule.onAllNodes(hasText(text(R.string.privacy_review_card_body))).assertCountEquals(1)
+        composeRule.onNodeWithTag(AppLockPrivacySectionTags.REVIEW_SAVE)
+            .assertIsEnabled()
+            .assert(hasText(text(R.string.privacy_review_card_save)))
     }
 
     @Test

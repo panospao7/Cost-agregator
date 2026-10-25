@@ -1472,7 +1472,7 @@ Notes for the orchestrator:
 - **G1b (post-sweep verification, BINDING):** the re-post sweep is paced (`SWEEP_REPOST_SPACING_MS` = 300 ms), but the platform can still drop an update that races a foreign post (for example BillReminderWorker's direct post, or several budget alerts back to back), leaving FULL content. G1b closes this:
   - the applier writes a content-free presentation-mode token ("D" for discreet, "F" for full) into the notification extras next to `NotificationKindMarker.EXTRA_KEY`;
   - after the sweep, settle for at least 500 ms to 1 s, then re-read the active notifications;
-  - re-post once, paced, any sweep kind whose token is still "F";
+  - re-post once, paced, any sweep-kind notification whose token is NOT "D" (an absent token counts: it covers pre-1a and marker-less originals and the accepted residual of a FULL decision resolved just before the setting commit but posted after the sweep's query); keep the token off the public version;
   - record one bounded, COUNT-only diagnostic (for example `NOTIF_REPOST_UNCONFIRMED`) through the diagnostics registry; no content, ids, paths or text;
   - verification never blocks cleanup and never loops; `CancellationException` propagates.
 - **S18 (BINDING):** the lock-enable caller must run `DiscreetRepostTrigger.onCommittedWrite` under `withContext(NonCancellable)`, inside the shared write serializer. The serializer (`AppLockSettingsWriteSerializer`) and the review-save diagnostics move to the domain owner, and `AppLockPrivacySettingsViewModel.kt` is edited before AppLockController writes settings (already recorded in the S12 amendment above).

@@ -661,8 +661,10 @@ class NotificationPresentationDeviceTest {
             assertNoSentinel(n, label)
             if (case.expectedData != null) assertExplicitTap(case, sbn, label) else assertNull(label, n.contentIntent)
         }
-        awaitOwn("sweep BILL actions") { list -> list.single { it.id == cases.last().id }.notification.actions?.size == 2 }
-        val billActions = after.single { it.id == cases.last().id }.notification.actions
+        val afterActions = awaitOwn("sweep BILL actions") { list ->
+            list.single { it.id == cases.last().id }.notification.actions?.size == 2
+        }
+        val billActions = afterActions.single { it.id == cases.last().id }.notification.actions
         assertEquals(ctx.getString(R.string.notif_action_snooze), billActions[0].title.toString())
         assertEquals(ctx.getString(R.string.action_dismiss), billActions[1].title.toString())
         if (Build.VERSION.SDK_INT >= 31) {

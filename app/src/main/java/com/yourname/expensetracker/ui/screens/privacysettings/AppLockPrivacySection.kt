@@ -24,6 +24,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -41,7 +42,9 @@ object AppLockPrivacySectionTags {
     const val DISCREET_ROW = "app_lock_privacy_discreet_row"
     const val DISCREET_CHECKING = "app_lock_privacy_discreet_checking"
     const val RETRY = "app_lock_privacy_retry"
+    const val TITLE = "app_lock_privacy_title"
     const val REVIEW_CARD = "app_lock_privacy_review_card"
+    const val REVIEW_CARD_TEXT = "app_lock_privacy_review_card_text"
     const val REVIEW_DISCREET_ROW = "app_lock_privacy_review_discreet_row"
     const val REVIEW_SAVE = "app_lock_privacy_review_save"
     const val NOTICE = "app_lock_privacy_notice"
@@ -98,7 +101,10 @@ internal fun AppLockPrivacySectionContent(
             text = stringResource(R.string.privacy_section_app_lock),
             style = MaterialTheme.typography.titleSmall,
             color = SemanticColors.PrimaryIndigo,
-            modifier = Modifier.padding(top = 12.dp, bottom = 4.dp)
+            modifier = Modifier
+                .padding(top = 12.dp, bottom = 4.dp)
+                .testTag(AppLockPrivacySectionTags.TITLE)
+                .semantics { heading() }
         )
         when (state) {
             AppLockPrivacySectionState.Loading -> CheckingRow()
@@ -240,16 +246,24 @@ private fun ReviewCard(onReviewSave: () -> Unit, enabled: Boolean) {
         )
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(
-                text = stringResource(R.string.privacy_review_card_title),
-                style = MaterialTheme.typography.titleSmall,
-                color = SemanticColors.TextPrimary
-            )
-            Text(
-                text = stringResource(R.string.privacy_review_card_body),
-                style = MaterialTheme.typography.bodySmall,
-                color = SemanticColors.TextSecondary
-            )
+            // Title and body are one accessibility focus stop; the save button stays separate.
+            Column(
+                modifier = Modifier
+                    .testTag(AppLockPrivacySectionTags.REVIEW_CARD_TEXT)
+                    .semantics(mergeDescendants = true) {},
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    text = stringResource(R.string.privacy_review_card_title),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = SemanticColors.TextPrimary
+                )
+                Text(
+                    text = stringResource(R.string.privacy_review_card_body),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SemanticColors.TextSecondary
+                )
+            }
             TextButton(
                 onClick = onReviewSave,
                 enabled = enabled,

@@ -391,7 +391,7 @@ Auto-provided (no module entry; @Inject constructors) — app-lock 1a:
                                                         moves to the domain owner)
   @HiltViewModel AppLockPrivacySettingsViewModel       (AppLockSettingsRepository, UpdateDiscreetNotificationsUseCase,
                                                         PrivacyDiagnosticsEmitter, AppLockSettingsWriteSerializer,
-                                                        @ApplicationScope CoroutineScope)
+                                                        DiscreetRepostTrigger, @ApplicationScope CoroutineScope)
   BillReminderWorker (@HiltWorker assisted) additionally takes NotificationPresentationResolver and
                                                         NotificationPresentationApplier (appended after timeProvider)
 ```

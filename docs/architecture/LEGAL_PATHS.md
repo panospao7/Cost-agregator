@@ -1542,10 +1542,14 @@ RE-POST sweep (turning discreet on, see APP LOCK SETTINGS WRITE PATH):
       direct post and back-to-back budget alerts, can still make the platform drop that update
       silently, leaving FULL content
     • reposted / NOTIF_REPOSTED_DISCREET count accepted notify() calls, not displayed updates
+    • a FULL decision resolved just before the setting commit but posted after the sweep's single query
+      stays FULL (millisecond window; postForKind / BillReminderWorker)
+    • process death mid-sweep leaves the remaining notifications FULL until they are replaced
   G1b carry-forward (binding, plan "Orchestrator carry-forwards from the G1a reviews"): post-sweep
   verification via a content-free presentation-mode token (D / F) next to NotificationKindMarker.EXTRA_KEY,
-  a settle of at least 500 ms, one paced re-post of still-FULL sweep kinds, one COUNT-only diagnostic
-  (NOTIF_REPOST_UNCONFIRMED); it never blocks cleanup.
+  a settle of at least 500 ms, one paced re-post of every sweep-kind notification whose token is NOT "D"
+  (an absent token counts: pre-1a / marker-less originals and the residuals above), one COUNT-only
+  diagnostic (NOTIF_REPOST_UNCONFIRMED); the token stays off the public version; it never blocks cleanup.
   Triggers: per-field discreet write (UpdateDiscreetNotificationsUseCase) and a committed review-save
   (AppLockPrivacySettingsViewModel, before value "was off"); both go through DiscreetRepostTrigger.
 
@@ -1680,8 +1684,8 @@ WRITE 2 — review-save (1a; replaces a CORRUPTED / INVALID_VALUE store):
       Committed → LOCK_SETTINGS_REVIEW_SAVED; Failed / Rejected / unexpected exception →
       LOCK_SETTING_PERSIST_FAILED(FIELD=REVIEW_SAVE); every emit is wrapped so a diagnostics failure
       cannot turn a committed save into a reported failure
-  → 1a review-save does NOT call DiscreetRepostTrigger (it starts from Unreadable = effective on, so
-    there is no false → true edge); S18 must decide this explicitly (seam ii)
+  → on Committed → DiscreetRepostTrigger.onCommittedWrite(false, after), inside the same serializer /
+    NonCancellable block; Failed, Rejected or thrown saves never reach it
 
 SERIALISATION (INTERIM): AppLockSettingsWriteSerializer (@Singleton, ui/screens/privacysettings, a
 process-wide Mutex) so a write started by an earlier ViewModel instance still excludes the next
