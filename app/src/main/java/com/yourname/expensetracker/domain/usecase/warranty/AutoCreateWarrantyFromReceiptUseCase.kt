@@ -61,6 +61,7 @@ class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
         private const val HIGH_CONFIDENCE_THRESHOLD = 0.70
         private const val MINIMUM_CONFIDENCE_THRESHOLD = 0.40
         private const val RETURN_WINDOW_PERSIST_FAILED = "RETURN_WINDOW_PERSIST_FAILED"
+        private const val REVIEW_CONFIRM_FAILED = "REVIEW_CONFIRM_FAILED"
         private const val TAG = "AutoCreateWarranty"
     }
 
@@ -335,40 +336,55 @@ class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
         data: WarrantyExtractionData,
         autoDetect: Boolean
     ): WarrantyCreationResult {
-        val now = timeProvider.now()
-        val purchaseDate = data.purchaseDate ?: existingWarranty.purchaseDate
-        val durationMonths = data.warrantyDurationMonths ?: existingWarranty.warrantyDurationMonths
-        val warrantyEndDate = data.warrantyEndDate ?: calculateWarrantyEndDate(purchaseDate, durationMonths)
+        // F-AI-1: ONE atomic repository operation (fresh in-transaction read -> content-only edit ->
+        // confirm on the same row). The edit lambda runs against the freshly read row, so a concurrent
+        // expiry sweep or claim is never undone; status, the review flag and claimedAt are never
+        // supplied from here. Leaving review is owned solely by WarrantyTrackerRepository.confirmWarranty
+        // (past-end rule, CONFIRMED event); an EXPIRED row is never moved back to ACTIVE.
+        val promoteResult = warrantyTrackerRepository.promoteReviewDraft(existingWarranty.id) { fresh ->
+            val purchaseDate = data.purchaseDate ?: fresh.purchaseDate
+            val durationMonths = data.warrantyDurationMonths ?: fresh.warrantyDurationMonths
+            val warrantyEndDate = data.warrantyEndDate ?: calculateWarrantyEndDate(purchaseDate, durationMonths)
+            fresh.copy(
+                productName = data.productName?.takeIf { it.isNotBlank() } ?: fresh.productName,
+                merchantName = data.merchantName?.takeIf { it.isNotBlank() } ?: fresh.merchantName,
+                purchaseDate = purchaseDate,
+                warrantyDurationMonths = durationMonths,
+                warrantyEndDate = warrantyEndDate,
+                warrantyType = mapWarrantyType(data.warrantyType),
+                supportPhone = data.supportPhone ?: fresh.supportPhone,
+                supportEmail = data.supportEmail ?: fresh.supportEmail,
+                notes = if (autoDetect) "Auto-detected from receipt" else fresh.notes,
+                autoDetected = autoDetect,
+                extractionConfidence = data.confidence,
+                extractionSource = "ocr"
+            )
+        }
+        val confirmed = when (promoteResult) {
+            is WarrantyTrackerRepository.ConfirmWarrantyResult.Confirmed -> true
+            WarrantyTrackerRepository.ConfirmWarrantyResult.AlreadyConfirmed -> false
+            WarrantyTrackerRepository.ConfirmWarrantyResult.NotFound ->
+                return WarrantyCreationResult.Failure(REVIEW_CONFIRM_FAILED)
+        }
 
-        val updatedWarranty = existingWarranty.copy(
-            productName = data.productName?.takeIf { it.isNotBlank() } ?: existingWarranty.productName,
-            merchantName = data.merchantName?.takeIf { it.isNotBlank() } ?: existingWarranty.merchantName,
-            purchaseDate = purchaseDate,
-            warrantyDurationMonths = durationMonths,
-            warrantyEndDate = warrantyEndDate,
-            warrantyType = mapWarrantyType(data.warrantyType),
-            supportPhone = data.supportPhone ?: existingWarranty.supportPhone,
-            supportEmail = data.supportEmail ?: existingWarranty.supportEmail,
-            notes = if (autoDetect) "Auto-detected from receipt" else existingWarranty.notes,
-            status = WarrantyStatus.ACTIVE,
-            updatedAt = now,
-            autoDetected = autoDetect,
-            extractionConfidence = data.confidence,
-            extractionSource = "ocr",
-            needsReview = false
-        )
-
-        warrantyTrackerRepository.updateWarranty(updatedWarranty)
-        if (existingWarranty.receiptId != null) {
-            if (!persistReturnWindow(existingWarranty.receiptId, updatedWarranty)) {
+        val receiptId = existingWarranty.receiptId
+        if (receiptId != null) {
+            // Re-read so the return window is derived from the persisted (edited) content rather than
+            // the pre-edit copy held by this caller.
+            val current = warrantyTrackerRepository.getWarrantyByReceiptId(receiptId) ?: existingWarranty
+            if (!persistReturnWindow(receiptId, current)) {
                 return WarrantyCreationResult.Failure(RETURN_WINDOW_PERSIST_FAILED)
             }
         }
         Timber.tag(TAG).i(
             "Promoted review draft ${existingWarranty.id} for receipt ${existingWarranty.receiptId} " +
-                "(confidence=${data.confidence}%)"
+                "(confidence=${data.confidence}%, confirmed=$confirmed)"
         )
-        return WarrantyCreationResult.Success(existingWarranty.id, data.confidence)
+        return if (confirmed) {
+            WarrantyCreationResult.Success(existingWarranty.id, data.confidence)
+        } else {
+            WarrantyCreationResult.AlreadyExists(existingWarranty.id)
+        }
     }
 
     private suspend fun persistReturnWindow(receiptId: Long, warranty: Warranty): Boolean {

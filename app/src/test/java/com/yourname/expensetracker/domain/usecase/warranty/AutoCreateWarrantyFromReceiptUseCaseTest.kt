@@ -10,6 +10,7 @@ import com.yourname.expensetracker.domain.receipt.WarrantyExtractionData
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.coVerifyOrder
 import io.mockk.mockk
 import io.mockk.slot
 import kotlinx.coroutines.CancellationException
@@ -163,8 +164,9 @@ class AutoCreateWarrantyFromReceiptUseCaseTest {
             needsReview = true
         )
         coEvery { warrantyTrackerRepository.getWarrantyByReceiptId(receiptId) } returns draft
-        val promoted = slot<Warranty>()
-        coEvery { warrantyTrackerRepository.updateWarranty(capture(promoted)) } returns Unit
+        val editSlot = slot<(Warranty) -> Warranty>()
+        coEvery { warrantyTrackerRepository.promoteReviewDraft(92L, capture(editSlot)) } returns
+            WarrantyTrackerRepository.ConfirmWarrantyResult.Confirmed(92L, WarrantyStatus.ACTIVE)
         coEvery { warrantyTrackerRepository.upsertReturnWindowForReceipt(receiptId, any()) } returns null
 
         val result = useCase.createWarrantyForReview(
@@ -182,9 +184,12 @@ class AutoCreateWarrantyFromReceiptUseCaseTest {
         assertTrue(result is WarrantyCreationResult.Success)
         // Stored warranty ends are exclusive: Jan 31 plus one calendar month is covered through
         // Feb 29, so the stored boundary is Mar 1 at 00:00 local.
-        val exclusiveEnd = Instant.ofEpochMilli(promoted.captured.warrantyEndDate).atZone(zone)
+        // The edit lambda runs against the repository's freshly read row (a distinct object here).
+        val freshRow = draft.copy()
+        val edited = editSlot.captured.invoke(freshRow)
+        val exclusiveEnd = Instant.ofEpochMilli(edited.warrantyEndDate).atZone(zone)
         assertEquals(LocalDate.of(2024, 3, 1), exclusiveEnd.toLocalDate())
-        assertEquals(LocalDate.of(2024, 2, 29), Instant.ofEpochMilli(promoted.captured.warrantyEndDate - 1L).atZone(zone).toLocalDate())
+        assertEquals(LocalDate.of(2024, 2, 29), Instant.ofEpochMilli(edited.warrantyEndDate - 1L).atZone(zone).toLocalDate())
     }
 
     @Test
@@ -445,15 +450,271 @@ class AutoCreateWarrantyFromReceiptUseCaseTest {
             """.trimIndent()
         )
 
+        val editSlot = slot<(Warranty) -> Warranty>()
         coEvery { warrantyTrackerRepository.getWarrantyByReceiptId(receiptId) } returns existingDraft
-        coEvery { warrantyTrackerRepository.updateWarranty(any()) } returns Unit
+        coEvery { warrantyTrackerRepository.promoteReviewDraft(91L, capture(editSlot)) } returns
+            WarrantyTrackerRepository.ConfirmWarrantyResult.Confirmed(91L, WarrantyStatus.ACTIVE)
         coEvery { warrantyTrackerRepository.upsertReturnWindowForReceipt(receiptId, any()) } returns null
 
         val result = useCase.createWarrantyForReview(receiptId, confirmedData)
 
         assertTrue(result is WarrantyCreationResult.Success)
         assertEquals(91L, (result as WarrantyCreationResult.Success).warrantyId)
-        coVerify(exactly = 1) { warrantyTrackerRepository.updateWarranty(match { it.id == 91L && !it.needsReview && it.status == WarrantyStatus.ACTIVE }) }
+        // F-AI-1: ONE atomic repository operation owns edit + leaving review; the use case never
+        // calls updateWarranty / confirmWarranty directly.
+        coVerify(exactly = 1) { warrantyTrackerRepository.promoteReviewDraft(91L, any()) }
+        coVerify(exactly = 0) { warrantyTrackerRepository.updateWarranty(any()) }
+        coVerify(exactly = 0) { warrantyTrackerRepository.confirmWarranty(any()) }
+        coVerify(exactly = 0) { warrantyTrackerRepository.addWarrantyIgnoreConflicts(any()) }
+        coVerify(exactly = 1) { warrantyTrackerRepository.upsertReturnWindowForReceipt(receiptId, any()) }
+        // The lambda never supplies status / needsReview / claimedAt: they come from the fresh row.
+        val freshRow = existingDraft.copy()
+        val edited = editSlot.captured.invoke(freshRow)
+        assertEquals(WarrantyStatus.PENDING_REVIEW, edited.status)
+        assertEquals(true, edited.needsReview)
+        assertEquals(freshRow.claimedAt, edited.claimedAt)
+        assertEquals(91L, edited.id)
+    }
+
+    @Test
+    fun `createWarrantyForReview edit lambda takes content fallbacks from the fresh row not the first read`() = runTest {
+        val receiptId = 2004L
+        val firstRead = Warranty(
+            id = 95L,
+            receiptId = receiptId,
+            productName = "Stale Product",
+            merchantName = "Stale Merchant",
+            purchaseDate = FIXED_NOW - 9_000L,
+            warrantyDurationMonths = 6,
+            warrantyEndDate = FIXED_NOW + 9_000L,
+            supportPhone = "+00 stale-phone",
+            supportEmail = "stale@example.test",
+            notes = "stale notes",
+            status = WarrantyStatus.PENDING_REVIEW,
+            needsReview = true
+        )
+        val freshDay = LocalDate.of(2025, 3, 10).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val fresh = Warranty(
+            id = 95L,
+            receiptId = receiptId,
+            productName = "Fresh Product",
+            merchantName = "Fresh Merchant",
+            purchaseDate = freshDay,
+            warrantyDurationMonths = 24,
+            warrantyEndDate = freshDay + 1_000L,
+            supportPhone = "+00 fresh-phone",
+            supportEmail = "fresh@example.test",
+            notes = "fresh notes",
+            status = WarrantyStatus.PENDING_REVIEW,
+            needsReview = true
+        )
+        val editSlot = slot<(Warranty) -> Warranty>()
+        coEvery { warrantyTrackerRepository.getWarrantyByReceiptId(receiptId) } returns firstRead
+        coEvery { warrantyTrackerRepository.promoteReviewDraft(95L, capture(editSlot)) } returns
+            WarrantyTrackerRepository.ConfirmWarrantyResult.Confirmed(95L, WarrantyStatus.ACTIVE)
+        coEvery { warrantyTrackerRepository.upsertReturnWindowForReceipt(receiptId, any()) } returns null
+
+        // No extracted content at all: every content field must fall back.
+        val result = useCase.createWarrantyForReview(
+            receiptId,
+            WarrantyExtractionData(
+                productName = null,
+                merchantName = "   ",
+                purchaseDate = null,
+                warrantyDurationMonths = null,
+                warrantyEndDate = null,
+                supportPhone = null,
+                supportEmail = null,
+                confidence = 0.9
+            )
+        )
+
+        assertTrue(result is WarrantyCreationResult.Success)
+        val edited = editSlot.captured.invoke(fresh)
+        assertEquals("Fresh Product", edited.productName)
+        assertEquals("Fresh Merchant", edited.merchantName)
+        assertEquals(freshDay, edited.purchaseDate)
+        assertEquals(24, edited.warrantyDurationMonths)
+        assertEquals("+00 fresh-phone", edited.supportPhone)
+        assertEquals("fresh@example.test", edited.supportEmail)
+        // End date is recomputed from the FRESH purchase date and duration (24 months), not the
+        // first read's 6 months: it lands roughly two years after the fresh purchase date.
+        assertTrue(edited.warrantyEndDate > freshDay + 700L * 86_400_000L)
+        assertTrue(edited.warrantyEndDate < freshDay + 760L * 86_400_000L)
+        assertEquals(true, edited.autoDetected)
+        assertEquals("ocr", edited.extractionSource)
+        assertEquals(0.9, edited.extractionConfidence, 0.0)
+        assertEquals(WarrantyStatus.PENDING_REVIEW, edited.status)
+        assertEquals(true, edited.needsReview)
+    }
+
+    @Test
+    fun `createWarrantyForReview edit lambda prefers extracted content over the fresh row`() = runTest {
+        val receiptId = 2005L
+        val firstRead = Warranty(
+            id = 96L,
+            receiptId = receiptId,
+            productName = "Stale Product",
+            merchantName = "Stale Merchant",
+            purchaseDate = FIXED_NOW - 9_000L,
+            warrantyDurationMonths = 6,
+            warrantyEndDate = FIXED_NOW + 9_000L,
+            status = WarrantyStatus.PENDING_REVIEW,
+            needsReview = true
+        )
+        val fresh = firstRead.copy(productName = "Fresh Product", merchantName = "Fresh Merchant", supportPhone = "+00 fresh-phone")
+        val purchase = FIXED_NOW - 86_400_000L
+        val editSlot = slot<(Warranty) -> Warranty>()
+        coEvery { warrantyTrackerRepository.getWarrantyByReceiptId(receiptId) } returns firstRead
+        coEvery { warrantyTrackerRepository.promoteReviewDraft(96L, capture(editSlot)) } returns
+            WarrantyTrackerRepository.ConfirmWarrantyResult.Confirmed(96L, WarrantyStatus.ACTIVE)
+        coEvery { warrantyTrackerRepository.upsertReturnWindowForReceipt(receiptId, any()) } returns null
+
+        useCase.createWarrantyForReview(
+            receiptId,
+            WarrantyExtractionData(
+                productName = "Extracted Product",
+                merchantName = "Extracted Merchant",
+                purchaseDate = purchase,
+                warrantyDurationMonths = 12,
+                warrantyEndDate = purchase + 5_000L,
+                supportPhone = "+00 extracted-phone",
+                confidence = 0.8
+            )
+        )
+
+        val edited = editSlot.captured.invoke(fresh)
+        assertEquals("Extracted Product", edited.productName)
+        assertEquals("Extracted Merchant", edited.merchantName)
+        assertEquals(purchase, edited.purchaseDate)
+        assertEquals(12, edited.warrantyDurationMonths)
+        assertEquals(purchase + 5_000L, edited.warrantyEndDate)
+        assertEquals("+00 extracted-phone", edited.supportPhone)
+    }
+
+    @Test
+    fun `createWarrantyForReview keeps an expired unconfirmed draft expired via confirmWarranty and never writes ACTIVE`() = runTest {
+        // F-AI-1: confirmWarranty owns the past-end rule (never EXPIRED -> ACTIVE); the use case only
+        // reports the repository outcome and never writes a promoted status itself.
+        val receiptId = 2002L
+        val expiredDraft = Warranty(
+            id = 93L,
+            receiptId = receiptId,
+            productName = "Old Kettle",
+            merchantName = "Corner Shop",
+            purchaseDate = FIXED_NOW - 400L * 86_400_000L,
+            warrantyDurationMonths = 12,
+            warrantyEndDate = FIXED_NOW - 35L * 86_400_000L,
+            status = WarrantyStatus.EXPIRED,
+            needsReview = true
+        )
+        val editSlot = slot<(Warranty) -> Warranty>()
+        coEvery { warrantyTrackerRepository.getWarrantyByReceiptId(receiptId) } returns expiredDraft
+        coEvery { warrantyTrackerRepository.promoteReviewDraft(93L, capture(editSlot)) } returns
+            WarrantyTrackerRepository.ConfirmWarrantyResult.Confirmed(93L, WarrantyStatus.EXPIRED)
+        coEvery { warrantyTrackerRepository.upsertReturnWindowForReceipt(receiptId, any()) } returns null
+
+        val result = useCase.createWarrantyForReview(
+            receiptId,
+            WarrantyExtractionData(
+                productName = "Old Kettle",
+                merchantName = "Corner Shop",
+                purchaseDate = expiredDraft.purchaseDate,
+                warrantyDurationMonths = 12,
+                warrantyEndDate = expiredDraft.warrantyEndDate,
+                confidence = 0.9
+            )
+        )
+
+        assertTrue(result is WarrantyCreationResult.Success)
+        // The edit lambda never promotes: status / needsReview come from the fresh row untouched.
+        val edited = editSlot.captured.invoke(expiredDraft.copy())
+        assertEquals(WarrantyStatus.EXPIRED, edited.status)
+        assertEquals(true, edited.needsReview)
+        coVerify(exactly = 1) { warrantyTrackerRepository.promoteReviewDraft(93L, any()) }
+        coVerify(exactly = 0) { warrantyTrackerRepository.updateWarranty(any()) }
+        coVerify(exactly = 0) { warrantyTrackerRepository.confirmWarranty(any()) }
+    }
+
+    @Test
+    fun `createWarrantyForReview reports a failure and no return window when confirmWarranty finds no row`() = runTest {
+        val receiptId = 2003L
+        val draft = Warranty(
+            id = 94L,
+            receiptId = receiptId,
+            productName = "Lamp",
+            merchantName = "Shop",
+            purchaseDate = FIXED_NOW - 1_000L,
+            warrantyDurationMonths = 12,
+            warrantyEndDate = FIXED_NOW + 10_000L,
+            status = WarrantyStatus.PENDING_REVIEW,
+            needsReview = true
+        )
+        coEvery { warrantyTrackerRepository.getWarrantyByReceiptId(receiptId) } returns draft
+        coEvery { warrantyTrackerRepository.promoteReviewDraft(94L, any()) } returns
+            WarrantyTrackerRepository.ConfirmWarrantyResult.NotFound
+
+        val result = useCase.createWarrantyForReview(
+            receiptId,
+            WarrantyExtractionData(
+                productName = "Lamp",
+                merchantName = "Shop",
+                purchaseDate = null,
+                warrantyDurationMonths = null,
+                warrantyEndDate = null,
+                confidence = 0.9
+            )
+        )
+
+        assertTrue(result is WarrantyCreationResult.Failure)
+        assertEquals("REVIEW_CONFIRM_FAILED", (result as WarrantyCreationResult.Failure).error)
+        coVerify(exactly = 0) { warrantyTrackerRepository.upsertReturnWindowForReceipt(any(), any()) }
+        coVerify(exactly = 0) { warrantyTrackerRepository.updateWarranty(any()) }
+        coVerify(exactly = 0) { warrantyTrackerRepository.confirmWarranty(any()) }
+    }
+
+    @Test
+    fun `createWarrantyForReview maps AlreadyConfirmed to AlreadyExists and still upserts the return window from the re-read row`() = runTest {
+        val receiptId = 2006L
+        val firstRead = Warranty(
+            id = 97L,
+            receiptId = receiptId,
+            productName = "Router",
+            merchantName = "Net Shop",
+            purchaseDate = FIXED_NOW - 1_000L,
+            warrantyDurationMonths = 12,
+            warrantyEndDate = FIXED_NOW + 10_000L,
+            status = WarrantyStatus.PENDING_REVIEW,
+            needsReview = true
+        )
+        // What is persisted after a concurrent claim: a distinct object from the first read.
+        val reRead = firstRead.copy(status = WarrantyStatus.CLAIMED, needsReview = false, claimedAt = FIXED_NOW - 500L)
+        val windowRow = slot<Warranty>()
+        coEvery { warrantyTrackerRepository.getWarrantyByReceiptId(receiptId) } returnsMany listOf(firstRead, reRead)
+        coEvery { warrantyTrackerRepository.promoteReviewDraft(97L, any()) } returns
+            WarrantyTrackerRepository.ConfirmWarrantyResult.AlreadyConfirmed
+        coEvery { warrantyTrackerRepository.upsertReturnWindowForReceipt(receiptId, capture(windowRow)) } returns null
+
+        val result = useCase.createWarrantyForReview(
+            receiptId,
+            WarrantyExtractionData(
+                productName = "Router",
+                merchantName = "Net Shop",
+                purchaseDate = firstRead.purchaseDate,
+                warrantyDurationMonths = 12,
+                warrantyEndDate = firstRead.warrantyEndDate,
+                confidence = 0.9
+            )
+        )
+
+        assertTrue(result is WarrantyCreationResult.AlreadyExists)
+        assertEquals(97L, (result as WarrantyCreationResult.AlreadyExists).existingWarrantyId)
+        coVerify(exactly = 1) { warrantyTrackerRepository.upsertReturnWindowForReceipt(receiptId, any()) }
+        assertSame(reRead, windowRow.captured)
+        assertTrue(windowRow.captured !== firstRead)
+        coVerify(exactly = 1) { warrantyTrackerRepository.promoteReviewDraft(97L, any()) }
+        coVerify(exactly = 0) { warrantyTrackerRepository.updateWarranty(any()) }
+        coVerify(exactly = 0) { warrantyTrackerRepository.confirmWarranty(any()) }
         coVerify(exactly = 0) { warrantyTrackerRepository.addWarrantyIgnoreConflicts(any()) }
     }
 

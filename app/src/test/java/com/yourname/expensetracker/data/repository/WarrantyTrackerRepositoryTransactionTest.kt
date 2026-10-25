@@ -262,6 +262,26 @@ class WarrantyTrackerRepositoryTransactionTest {
     }
 
     @Test
+    fun confirmWarranty_expiredUnconfirmed_staysExpiredClearsReviewAndWritesConfirmedEvent() = runTest {
+        // F-AI-1: the semantics the receipt-review promotion now delegates to. Never EXPIRED -> ACTIVE.
+        val id = repository.addWarranty(
+            pendingWarranty(endDate = now - 3 * dayMs).copy(status = WarrantyStatus.EXPIRED)
+        )
+
+        val result = repository.confirmWarranty(id)
+
+        assertEquals(
+            WarrantyTrackerRepository.ConfirmWarrantyResult.Confirmed(id, WarrantyStatus.EXPIRED),
+            result
+        )
+        val stored = database.warrantyDao().getWarrantyById(id)!!
+        assertEquals(WarrantyStatus.EXPIRED, stored.status)
+        assertEquals(false, stored.needsReview)
+        val eventTypes = database.warrantyLifecycleEventDao().getByWarrantyId(id).map { it.eventType }
+        assertTrue(eventTypes.contains(WarrantyLifecycleEventTypes.CONFIRMED))
+    }
+
+    @Test
     fun confirmWarranty_eventWriteFailure_throwsAndRollsBackReviewClear() = runTest {
         val id = repository.addWarranty(pendingWarranty(endDate = now + 5 * dayMs))
         eventDao.failInserts = true
@@ -272,6 +292,248 @@ class WarrantyTrackerRepositoryTransactionTest {
         val stored = database.warrantyDao().getWarrantyById(id)!!
         assertEquals("status change must be rolled back", WarrantyStatus.PENDING_REVIEW, stored.status)
         assertEquals("review flag must be rolled back", true, stored.needsReview)
+    }
+
+    // ------------------------------------------------------ promoteReviewDraft (ai-fixes F-AI-1)
+
+    private suspend fun eventTypesOf(id: Long): List<String> =
+        database.warrantyLifecycleEventDao().getByWarrantyId(id).map { it.eventType }
+
+    private suspend fun confirmedEventCount(id: Long): Int =
+        eventTypesOf(id).count { it == WarrantyLifecycleEventTypes.CONFIRMED }
+
+    @Test
+    fun promoteReviewDraft_pendingFutureEnd_appliesContentActivatesAndWritesOneConfirmedEvent() = runTest {
+        val id = repository.addWarranty(pendingWarranty(endDate = now + 5 * dayMs))
+        var invocations = 0
+
+        val result = repository.promoteReviewDraft(id) { fresh ->
+            invocations++
+            fresh.copy(
+                productName = "Edited Product",
+                merchantName = "Edited Merchant",
+                warrantyDurationMonths = 24,
+                warrantyEndDate = now + 9 * dayMs,
+                supportPhone = "+00 000 0000",
+                supportEmail = "support@example.test",
+                notes = "edited notes",
+                extractionConfidence = 0.91,
+                extractionSource = "ocr"
+            )
+        }
+
+        assertEquals(
+            WarrantyTrackerRepository.ConfirmWarrantyResult.Confirmed(id, WarrantyStatus.ACTIVE),
+            result
+        )
+        assertEquals(1, invocations)
+        val stored = database.warrantyDao().getWarrantyById(id)!!
+        assertEquals("Edited Product", stored.productName)
+        assertEquals("Edited Merchant", stored.merchantName)
+        assertEquals(24, stored.warrantyDurationMonths)
+        assertEquals(now + 9 * dayMs, stored.warrantyEndDate)
+        assertEquals("+00 000 0000", stored.supportPhone)
+        assertEquals("support@example.test", stored.supportEmail)
+        assertEquals("edited notes", stored.notes)
+        assertEquals(0.91, stored.extractionConfidence, 0.0)
+        assertEquals("ocr", stored.extractionSource)
+        assertEquals(WarrantyStatus.ACTIVE, stored.status)
+        assertEquals(false, stored.needsReview)
+        assertEquals("exactly one CONFIRMED event", 1, confirmedEventCount(id))
+    }
+
+    @Test
+    fun promoteReviewDraft_editResultStatusReviewFlagAndClaimedAtAreIgnored() = runTest {
+        val id = repository.addWarranty(pendingWarranty(endDate = now + 5 * dayMs))
+
+        val result = repository.promoteReviewDraft(id) { fresh ->
+            fresh.copy(
+                productName = "Edited Product",
+                status = WarrantyStatus.CLAIMED,
+                needsReview = false,
+                claimedAt = now - 1L
+            )
+        }
+
+        assertEquals(
+            WarrantyTrackerRepository.ConfirmWarrantyResult.Confirmed(id, WarrantyStatus.ACTIVE),
+            result
+        )
+        val stored = database.warrantyDao().getWarrantyById(id)!!
+        assertEquals("Edited Product", stored.productName)
+        assertEquals("status comes from confirm rules, not the edit lambda", WarrantyStatus.ACTIVE, stored.status)
+        assertEquals(null, stored.claimedAt)
+    }
+
+    @Test
+    fun promoteReviewDraft_editMovesEndDateIntoThePast_confirmsExpiredWithOneConfirmedEvent() = runTest {
+        val id = repository.addWarranty(pendingWarranty(endDate = now + 5 * dayMs))
+
+        val result = repository.promoteReviewDraft(id) { fresh ->
+            fresh.copy(warrantyEndDate = now - dayMs)
+        }
+
+        assertEquals(
+            WarrantyTrackerRepository.ConfirmWarrantyResult.Confirmed(id, WarrantyStatus.EXPIRED),
+            result
+        )
+        val stored = database.warrantyDao().getWarrantyById(id)!!
+        assertEquals(now - dayMs, stored.warrantyEndDate)
+        assertEquals(WarrantyStatus.EXPIRED, stored.status)
+        assertEquals(false, stored.needsReview)
+        assertEquals(1, confirmedEventCount(id))
+    }
+
+    @Test
+    fun promoteReviewDraft_pendingRowAlreadyPastEnd_confirmsExpiredNotActive() = runTest {
+        val id = repository.addWarranty(pendingWarranty(endDate = now - 3 * dayMs))
+
+        val result = repository.promoteReviewDraft(id) { fresh -> fresh.copy(productName = "Edited Product") }
+
+        assertEquals(
+            WarrantyTrackerRepository.ConfirmWarrantyResult.Confirmed(id, WarrantyStatus.EXPIRED),
+            result
+        )
+        assertEquals(WarrantyStatus.EXPIRED, database.warrantyDao().getWarrantyById(id)!!.status)
+        assertEquals(1, confirmedEventCount(id))
+    }
+
+    @Test
+    fun promoteReviewDraft_expiredUnconfirmedRow_appliesContentButIsNeverRevivedToActive() = runTest {
+        // isNoLongerInReview is false for EXPIRED + needsReview=true (still awaiting review), so the
+        // content is applied and confirm keeps the row EXPIRED even if the edit pushes the end date
+        // into the future.
+        val id = repository.addWarranty(
+            pendingWarranty(endDate = now - 3 * dayMs).copy(status = WarrantyStatus.EXPIRED)
+        )
+        var invocations = 0
+
+        val result = repository.promoteReviewDraft(id) { fresh ->
+            invocations++
+            fresh.copy(productName = "Corrected Product", warrantyEndDate = now + 30 * dayMs)
+        }
+
+        assertEquals(
+            WarrantyTrackerRepository.ConfirmWarrantyResult.Confirmed(id, WarrantyStatus.EXPIRED),
+            result
+        )
+        assertEquals(1, invocations)
+        val stored = database.warrantyDao().getWarrantyById(id)!!
+        assertEquals("Corrected Product", stored.productName)
+        assertEquals(WarrantyStatus.EXPIRED, stored.status)
+        assertEquals(false, stored.needsReview)
+        assertEquals(1, confirmedEventCount(id))
+    }
+
+    @Test
+    fun promoteReviewDraft_claimedRow_returnsAlreadyConfirmedWithNoWriteNoEventAndNoEdit() = runTest {
+        val id = repository.addWarranty(
+            pendingWarranty(endDate = now + 5 * dayMs)
+                .copy(status = WarrantyStatus.CLAIMED, needsReview = true, claimedAt = now - dayMs)
+        )
+        val before = database.warrantyDao().getWarrantyById(id)!!
+        val eventsBefore = eventTypesOf(id)
+        var invocations = 0
+
+        val result = repository.promoteReviewDraft(id) { fresh ->
+            invocations++
+            fresh.copy(productName = "Overwrite Attempt")
+        }
+
+        assertEquals(WarrantyTrackerRepository.ConfirmWarrantyResult.AlreadyConfirmed, result)
+        assertEquals("edit lambda must not be invoked", 0, invocations)
+        assertEquals("no content or status change", before, database.warrantyDao().getWarrantyById(id))
+        assertEquals("no new event", eventsBefore, eventTypesOf(id))
+        assertEquals(0, confirmedEventCount(id))
+    }
+
+    @Test
+    fun promoteReviewDraft_transferredRow_returnsAlreadyConfirmedWithNoWriteNoEventAndNoEdit() = runTest {
+        val id = repository.addWarranty(
+            pendingWarranty(endDate = now + 5 * dayMs)
+                .copy(status = WarrantyStatus.TRANSFERRED, needsReview = true)
+        )
+        val before = database.warrantyDao().getWarrantyById(id)!!
+        val eventsBefore = eventTypesOf(id)
+        var invocations = 0
+
+        val result = repository.promoteReviewDraft(id) { fresh ->
+            invocations++
+            fresh.copy(productName = "Overwrite Attempt")
+        }
+
+        assertEquals(WarrantyTrackerRepository.ConfirmWarrantyResult.AlreadyConfirmed, result)
+        assertEquals(0, invocations)
+        assertEquals(before, database.warrantyDao().getWarrantyById(id))
+        assertEquals(eventsBefore, eventTypesOf(id))
+    }
+
+    @Test
+    fun promoteReviewDraft_alreadyConfirmedRow_returnsAlreadyConfirmedWithNoWriteNoEventAndNoEdit() = runTest {
+        val id = repository.addWarranty(pendingWarranty(endDate = now + 5 * dayMs))
+        assertEquals(
+            WarrantyTrackerRepository.ConfirmWarrantyResult.Confirmed(id, WarrantyStatus.ACTIVE),
+            repository.confirmWarranty(id)
+        )
+        val before = database.warrantyDao().getWarrantyById(id)!!
+        val eventsBefore = eventTypesOf(id)
+        var invocations = 0
+
+        val result = repository.promoteReviewDraft(id) { fresh ->
+            invocations++
+            fresh.copy(productName = "Overwrite Attempt")
+        }
+
+        assertEquals(WarrantyTrackerRepository.ConfirmWarrantyResult.AlreadyConfirmed, result)
+        assertEquals(0, invocations)
+        assertEquals("user-confirmed content must not be overwritten", before, database.warrantyDao().getWarrantyById(id))
+        assertEquals("no second CONFIRMED event", eventsBefore, eventTypesOf(id))
+        assertEquals(1, confirmedEventCount(id))
+    }
+
+    @Test
+    fun promoteReviewDraft_secondCallAfterPromotion_isIdempotentAndWritesNoSecondConfirmedEvent() = runTest {
+        val id = repository.addWarranty(pendingWarranty(endDate = now + 5 * dayMs))
+        repository.promoteReviewDraft(id) { fresh -> fresh.copy(productName = "First Edit") }
+
+        val second = repository.promoteReviewDraft(id) { fresh -> fresh.copy(productName = "Second Edit") }
+
+        assertEquals(WarrantyTrackerRepository.ConfirmWarrantyResult.AlreadyConfirmed, second)
+        assertEquals("First Edit", database.warrantyDao().getWarrantyById(id)!!.productName)
+        assertEquals(1, confirmedEventCount(id))
+    }
+
+    @Test
+    fun promoteReviewDraft_missingId_returnsNotFoundWithNoWriteAndNoEdit() = runTest {
+        var invocations = 0
+
+        val result = repository.promoteReviewDraft(9_999L) { fresh ->
+            invocations++
+            fresh
+        }
+
+        assertEquals(WarrantyTrackerRepository.ConfirmWarrantyResult.NotFound, result)
+        assertEquals(0, invocations)
+        assertEquals(0, warrantyCount())
+        assertEquals(emptyList<WarrantyLifecycleEvent>(), database.warrantyLifecycleEventDao().getByWarrantyId(9_999L))
+    }
+
+    @Test
+    fun promoteReviewDraft_confirmedEventWriteFailure_throwsAndRollsBackContentEditAndReviewClear() = runTest {
+        val id = repository.addWarranty(pendingWarranty(endDate = now + 5 * dayMs))
+        val before = database.warrantyDao().getWarrantyById(id)!!
+        eventDao.failInserts = true
+
+        val thrown = runCatching {
+            repository.promoteReviewDraft(id) { fresh -> fresh.copy(productName = "Edited Product") }
+        }
+
+        assertTrue("promote must fail", thrown.exceptionOrNull() is IllegalStateException)
+        assertEquals(
+            "content edit and review clear are one atomic unit",
+            before,
+            database.warrantyDao().getWarrantyById(id)
+        )
     }
 
     // ------------------------------------------------- reconcileExpiredItems (ai-fixes B1a)

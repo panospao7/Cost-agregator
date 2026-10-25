@@ -725,7 +725,29 @@ class WarrantyTrackerRepositoryTest {
     }
 
     @Test
-    fun `confirmWarranty propagates a failed CONFIRMED event write instead of reporting success`() = runTest(timeout = 60.seconds) {
+    fun `promoteReviewDraft fails closed under maintenance mode and does not read write or invoke the edit`() = runTest(timeout = 60.seconds) {
+        val barrier = mockk<DatabaseWriteBarrier>(relaxed = true)
+        val op = "WarrantyTrackerRepository.promoteReviewDraft"
+        every { barrier.checkWritesAllowed(op) } throws blockedException(op)
+        val blockedRepository = repositoryWith(barrier, mockk(relaxed = true))
+        var invocations = 0
+
+        val thrown = runCatching {
+            blockedRepository.promoteReviewDraft(3L) { fresh ->
+                invocations++
+                fresh
+            }
+        }
+
+        assertTrue(thrown.exceptionOrNull() is DatabaseAccessBlockedException)
+        assertEquals(0, invocations)
+        coVerify(exactly = 0) { warrantyDao.getWarrantyById(any()) }
+        coVerify(exactly = 0) { warrantyDao.updateWarranty(any()) }
+        coVerify(exactly = 0) { warrantyLifecycleEventDao.insert(any()) }
+    }
+
+    @Test
+    fun `confirmWarranty propagates a failed CONFIRMED event write instead of reporting success`()= runTest(timeout = 60.seconds) {
         // R29: fail closed inside the transaction.
         val now = timeProvider.now()
         coEvery { warrantyDao.getWarrantyById(3L) } returns

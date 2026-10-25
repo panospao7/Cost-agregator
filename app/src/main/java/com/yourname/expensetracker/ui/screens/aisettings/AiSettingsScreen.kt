@@ -43,6 +43,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
@@ -125,7 +126,7 @@ fun AiSettingsScreen(
                     description = stringResource(R.string.ai_section_general_desc)
                 ) {
                     ToggleRow(stringResource(R.string.ai_toggle_enable), settings.aiEnabled, viewModel::setAiEnabled)
-                    ToggleRow(stringResource(R.string.ai_toggle_cloud), settings.allowCloudAi, viewModel::setAllowCloudAi)
+                    CloudAiToggleWithDisclosure(settings.allowCloudAi, viewModel::setAllowCloudAi)
                     // S11-002: Show effective cloud policy status
                     uiState.effectiveCloudBlocked?.let { reason ->
                         Text(
@@ -581,6 +582,26 @@ private fun SettingsSection(
         )
         content()
     }
+}
+
+internal const val CLOUD_AI_DISCLOSURE_TAG = "ai_cloud_briefing_disclosure"
+
+/**
+ * ai-fixes INV-25 (Z2): the "Allow cloud AI" toggle with the background-briefing disclosure
+ * shown directly under it, so the consequence is visible where the user grants consent.
+ */
+@Composable
+internal fun CloudAiToggleWithDisclosure(
+    allowCloudAi: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    ToggleRow(stringResource(R.string.ai_toggle_cloud), allowCloudAi, onCheckedChange)
+    Text(
+        text = stringResource(R.string.ai_cloud_briefing_disclosure),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.testTag(CLOUD_AI_DISCLOSURE_TAG)
+    )
 }
 
 @Composable

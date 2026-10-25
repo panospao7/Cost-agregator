@@ -288,11 +288,7 @@ class WarrantyTrackerRepository @Inject constructor(
             val current = warrantyDao.getWarrantyById(warrantyId)
             if (current == null) {
                 ConfirmWarrantyResult.NotFound
-            } else if (
-                current.status == WarrantyStatus.CLAIMED ||
-                current.status == WarrantyStatus.TRANSFERRED ||
-                (!current.needsReview && current.status != WarrantyStatus.PENDING_REVIEW)
-            ) {
+            } else if (isNoLongerInReview(current)) {
                 ConfirmWarrantyResult.AlreadyConfirmed
             } else {
                 val now = timeProvider.now()
@@ -318,7 +314,73 @@ class WarrantyTrackerRepository @Inject constructor(
         }
     }
 
-    suspend fun getActiveWarrantyCount(): Int = warrantyDao.getActiveWarrantyCount(timeProvider.now())
+    /**
+     * ai-fixes F-AI-1: edit the content of a review draft and leave review as ONE atomic operation.
+     *
+     * One transaction (behind the write barrier): fresh read by id -> [edit] -> update of CONTENT
+     * fields only -> [confirmWarranty] on that same row (nested call joins this transaction, so the
+     * past-end rule, the CONFIRMED event and the idempotency rules are not duplicated here).
+     *
+     * [edit] receives the freshly read row and returns the desired content. Only these fields of its
+     * result are applied: product, merchant, purchase date, duration, end date, type, support
+     * phone/email, notes, autoDetected, extractionConfidence, extractionSource. `status`,
+     * `needsReview`, `claimedAt` and every other field always come from the fresh row, so a
+     * concurrent expiry sweep or claim between the caller's read and this call is never undone.
+     * [edit] must be pure and non-suspending (it runs inside the Room transaction).
+     *
+     * Content is applied only while the row is still in review, so a concurrent claim, confirm or
+     * user edit is never overwritten.
+     *
+     * - Row missing -> [ConfirmWarrantyResult.NotFound] (no write, no event).
+     * - Row no longer in review (same predicate as [confirmWarranty], [isNoLongerInReview]) ->
+     *   [ConfirmWarrantyResult.AlreadyConfirmed] with NO write and NO event; [edit] is not invoked.
+     * - Otherwise the content is applied and the [confirmWarranty] result is returned (Confirmed).
+     */
+    suspend fun promoteReviewDraft(
+        warrantyId: Long,
+        edit: (Warranty) -> Warranty
+    ): ConfirmWarrantyResult {
+        writeBarrier.checkWritesAllowed("WarrantyTrackerRepository.promoteReviewDraft")
+        return database.withTransaction {
+            val fresh = warrantyDao.getWarrantyById(warrantyId)
+            if (fresh == null) {
+                ConfirmWarrantyResult.NotFound
+            } else if (isNoLongerInReview(fresh)) {
+                ConfirmWarrantyResult.AlreadyConfirmed
+            } else {
+                val edited = edit(fresh)
+                warrantyDao.updateWarranty(
+                    fresh.copy(
+                        productName = edited.productName,
+                        merchantName = edited.merchantName,
+                        purchaseDate = edited.purchaseDate,
+                        warrantyDurationMonths = edited.warrantyDurationMonths,
+                        warrantyEndDate = edited.warrantyEndDate,
+                        warrantyType = edited.warrantyType,
+                        supportPhone = edited.supportPhone,
+                        supportEmail = edited.supportEmail,
+                        notes = edited.notes,
+                        autoDetected = edited.autoDetected,
+                        extractionConfidence = edited.extractionConfidence,
+                        extractionSource = edited.extractionSource,
+                        updatedAt = timeProvider.now()
+                    )
+                )
+                confirmWarranty(warrantyId)
+            }
+        }
+    }
+
+    /**
+     * Single review-exit predicate shared by [confirmWarranty] and [promoteReviewDraft]:
+     * CLAIMED / TRANSFERRED, or `needsReview == false` while not PENDING_REVIEW.
+     */
+    private fun isNoLongerInReview(warranty: Warranty): Boolean =
+        warranty.status == WarrantyStatus.CLAIMED ||
+            warranty.status == WarrantyStatus.TRANSFERRED ||
+            (!warranty.needsReview && warranty.status != WarrantyStatus.PENDING_REVIEW)
+
+    suspend fun getActiveWarrantyCount(): Int =warrantyDao.getActiveWarrantyCount(timeProvider.now())
     
     @Deprecated(
         message = "Use getTotalProtectedValueAggregate() for multi-currency safety",

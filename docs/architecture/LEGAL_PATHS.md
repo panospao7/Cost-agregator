@@ -1203,6 +1203,7 @@ CONFIRM / EXPIRE (review lifecycle):
   → Reminders consider status='ACTIVE' only (PENDING_REVIEW / EXPIRED never get reminders)
 
 FORBIDDEN:
+  ❌ Warranty promotion out of review (needsReview=false / status ACTIVE / PENDING_REVIEW→ACTIVE) by any path other than WarrantyTrackerRepository (confirmWarranty, or promoteReviewDraft which applies a content-only edit to a fresh in-transaction read and then runs confirmWarranty in the same transaction) (F-AI-1; AutoCreateWarrantyFromReceiptUseCase calls promoteReviewDraft only; WarrantyPromotionBypassGuardTest enforces that no function outside WarrantyTrackerRepository.kt pairs an updateWarranty call with a promotion write; DAO writes are covered by the db_access ownership guards)
   ❌ Creating warranty without confidence assessment
   ❌ Auto-creating an ACTIVE warranty below 70% confidence threshold
   ❌ Creating duplicate warranties for same receipt

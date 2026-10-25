@@ -1990,6 +1990,7 @@
     <string name="ai_section_general_desc">Control whether AI is active at all and which providers may be used.</string>
     <string name="ai_toggle_enable">Enable AI</string>
     <string name="ai_toggle_cloud">Allow cloud AI</string>
+    <string name="ai_cloud_briefing_disclosure">While Enable AI, Dashboard briefing and Allow cloud AI are all on, the daily briefing is generated in the background using cloud AI.</string>
     <string name="ai_toggle_on_device">Allow on-device AI</string>
     <string name="ai_section_preferred_mode">Preferred Mode</string>
     <string name="ai_section_preferred_mode_desc">Choose how the app should prefer local and cloud AI when both are available.</string>

@@ -432,6 +432,7 @@
     <string name="currency_home_switch_error_write_failed">No se pudo cambiar tu moneda principal. Inténtalo de nuevo.</string>
     <!-- ai-fixes B3b. Best-effort translation, pending native review. -->
     <string name="ai_toggle_proactive">Avisarme cuando mi resumen diario esté listo</string>
+    <string name="ai_cloud_briefing_disclosure">Mientras Enable AI, Dashboard briefing y Allow cloud AI estén activados, el resumen diario se genera en segundo plano con IA en la nube.</string>
     <string name="ai_proactive_desc">Desactivar esto no oculta tu resumen. Sigue apareciendo en Inicio. Solo controla la notificación. Mientras Enable AI, Dashboard briefing y Allow cloud AI estén activados, el resumen diario se genera en segundo plano con IA en la nube, tengas esto activado o no.</string>
     <string name="ai_proactive_notifications_blocked">Las notificaciones están bloqueadas para esta app en los ajustes del sistema, así que no se mostrará ningún aviso. Tu resumen sigue apareciendo en Inicio.</string>
     <string name="ai_warranty_local_note">Los periodos de garantía se leen en tu dispositivo a partir del texto del recibo. No se usa IA ni la nube para las garantías.</string>

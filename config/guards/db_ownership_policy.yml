@@ -3324,6 +3324,24 @@ entries:
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
   kind: function
+  method: promoteReviewDraft
+  receiver: null
+  parameterTypes:
+  - Long
+  - (com.yourname.expensetracker.data.database.entity.Warranty) -> com.yourname.expensetracker.data.database.entity.Warranty
+  daoAccessor: warrantyDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.WarrantyDao
+  operation: updateWarranty
+  barrierMode: helper
+  reason: 'ai-fixes F-AI-1 EXACT_POLICY: content-only edit (never status/needsReview/claimedAt)
+    applied to the row freshly read by id inside the promoteReviewDraft transaction, behind
+    the write barrier, immediately followed by confirmWarranty on the same row in the
+    same transaction (sole review-clearing writer stays confirmWarranty)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
+  kind: function
   method: reconcileExpiredItems
   receiver: null
   parameterTypes:
