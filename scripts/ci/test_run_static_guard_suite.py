@@ -1725,6 +1725,19 @@ LEGACY_GUARD_MANIFEST_FIXTURE: List[Tuple[str, List[str], str]] = [
         ["python3", "scripts/verify_installment_cloud_reachability.py", "--fail-on-violation"],
         "blocking",
     ),
+    # ── Loan-installments S4d addition (NOT verbatim pre-migration) ───────────
+    # spending_predicate_usage is a NEW blocking direct guard (INV-1/INV-8,
+    # plan A12.6).  It sits last in SUITE_GUARD_ORDER (after
+    # installment_cloud_reachability) so the derived leg sequence matches.
+    # Semantics pinned from its registry execution section: engine
+    # python-direct, entrypoint scripts/verify_spending_predicate_usage.py,
+    # arguments ("--fail-on-violation",), mode blocking, no baseline, no
+    # allowlist.
+    (
+        "spending_predicate_usage",
+        ["python3", "scripts/verify_spending_predicate_usage.py", "--fail-on-violation"],
+        "blocking",
+    ),
     # CL-22 deliberately expands this infrastructure leg beyond the historical
     # migration fixture; registry-derived guard commands stay unchanged.
     (
@@ -1780,10 +1793,14 @@ LEGACY_GUARD_TIME_BUDGETS_FIXTURE = {
 # Loan-installments S1 budget addition: the installment_cloud_reachability leg
 # is pinned inline in LEGACY_GUARD_MANIFEST_FIXTURE (last guard, after
 # migration_matrix) with its standard-profile 300s budget.
+# Loan-installments S4d budget addition: the spending_predicate_usage leg is
+# pinned inline the same way (last guard, after installment_cloud_reachability)
+# with its standard-profile 300s budget.
 POST_SLICE2_SUITE_BUDGET_ADDITIONS: Dict[str, float] = {
     "raw_money_aggregates": 300.0,
     "guard_docs_truth": 300.0,
     "installment_cloud_reachability": 300.0,
+    "spending_predicate_usage": 300.0,
 }
 
 

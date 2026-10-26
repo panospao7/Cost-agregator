@@ -165,7 +165,8 @@ def test_matrix_has_no_implicit_scope_cells():
 
 def test_expected_migration_split_is_pinned():
     # Pin the Slice 3 split explicitly (loan-installments S1 added the 17th
-    # migrated guard, installment_cloud_reachability): 17 guards migrated to the neutral
+    # migrated guard, installment_cloud_reachability; loan-installments S4d added the
+    # 18th, spending_predicate_usage): 18 guards migrated to the neutral
     # module in Slices 1-2, the DB guard deferred on its compatibility seam,
     # and every non-production scope N/A.  A change here must be a conscious
     # matrix update, never silent drift.
@@ -193,8 +194,8 @@ def test_expected_migration_split_is_pinned():
         "lint_baseline_policy",
         "release_artifact",
     ]
-    assert len(migrated) == 17
-    assert len(statuses) == len(GUARD_REGISTRY) == 26
+    assert len(migrated) == 18
+    assert len(statuses) == len(GUARD_REGISTRY) == 27
 
 
 if __name__ == "__main__":

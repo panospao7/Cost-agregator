@@ -268,6 +268,14 @@ Scope: production-kotlin-filtered
 Owner: @panospao7 (doc anchor: docs/architecture/LEGAL_PATHS.md)
 <!-- GUARD_STATUS:END installment_cloud_reachability -->
 
+<!-- GUARD_STATUS:BEGIN spending_predicate_usage -->
+Status: IMPLEMENTED_UNVERIFIED
+Reason: no qualifying exact-SHA evidence record in docs/ci/GUARD_EVIDENCE_INDEX.yml covers this guard
+Canonical command reference: GUARD_COMMANDS.generated.md#spending_predicate_usage
+Scope: production-kotlin-filtered
+Owner: @panospao7 (doc anchor: docs/architecture/LEGAL_PATHS.md)
+<!-- GUARD_STATUS:END spending_predicate_usage -->
+
 <!-- GUARD_STATUS:BEGIN currency_guardrails_ps -->
 Status: IMPLEMENTED_UNVERIFIED
 Reason: no qualifying exact-SHA evidence record in docs/ci/GUARD_EVIDENCE_INDEX.yml covers this guard

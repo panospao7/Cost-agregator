@@ -749,6 +749,7 @@ Owns the repo-level static architecture guard suite, boundary verification scrip
 - `scripts/guardrails/dao-access-check.kts` + `dao-approved-files.txt` — DAO access guardrail with approved-file allowlist
 - `scripts/verify_*_boundaries.py` — Standalone boundary verifiers (privacy, DB access, money, time, UI→DAO, worker, receipt link, cloud payload, cancellation, import lifecycle, source provenance, event writers, migration matrix, DI release, PII logging)
 - `scripts/verify_installment_cloud_reachability.py` — Registered guard `installment_cloud_reachability` (G-INSTALLMENT-CLOUD-01..03): installment plan code must not be referenced from the cloud AI payload surface (no allowlist, no baseline); owning segment of the plan code is Segment 40
+- `scripts/verify_spending_predicate_usage.py` — Registered guard `spending_predicate_usage` (G-SPENDING-PREDICATE-01..03): every aggregate `@Query` over `expenses` in `data/database/dao/*.kt` references a qualified `SpendingInclusionSql` constant or carries a `// spending-exempt: <REASON>` marker; DEDUPE_* queries never reference it (INV-8); no allowlist, no baseline
 - `scripts/allowlists/*.yml` — Per-guard allowlists
 - `tools/lifecycle-bypass-guard.groovy` — Gradle-side lifecycle bypass guard
 - `docs/ci/guard-policy.md`, `docs/ci/guard-framework.md` — Guard policy and framework documentation
@@ -827,7 +828,7 @@ File-to-segment mapping for all 40 segments:
 | 36 | Bill Reminders | `domain/reminder/`, `BillReminderManager`, `BillReminderSettings`, `ReminderSettingsModule` |
 | 37 | Spending Challenges | `domain/challenge/`, `SpendingChallengeManager` |
 | 38 | Receipt Matching | `domain/receiptmatching/`, `ReceiptTransactionMatcher`, `ReceiptMatchLifecycleService` |
-| 39 | Static Guardrails & CI Verification | `scripts/ci/`, `scripts/guardrails/`, `scripts/allowlists/`, `scripts/verify_*_boundaries.py`, `scripts/verify_installment_cloud_reachability.py`, `tools/`, `.github/workflows/ci.yml` |
+| 39 | Static Guardrails & CI Verification | `scripts/ci/`, `scripts/guardrails/`, `scripts/allowlists/`, `scripts/verify_*_boundaries.py`, `scripts/verify_installment_cloud_reachability.py`, `scripts/verify_spending_predicate_usage.py`, `tools/`, `.github/workflows/ci.yml` |
 | 40 | Installment Plans | `installment_plans`, `installment_entries`, `InstallmentPlan`, `InstallmentEntry`, `InstallmentPlanDao` (exist, S2; sole writer `InstallmentPlanLifecycleCoordinator`, S6a); `domain/installment/`; (planned) `service/installment/`, `ui/screens/installments/`, `InstallmentScheduleCalculator`, `InstallmentProjectionPort` |
 
 ### Quick checks

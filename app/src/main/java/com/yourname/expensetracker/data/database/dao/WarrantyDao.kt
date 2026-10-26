@@ -80,6 +80,7 @@ interface WarrantyDao {
         message = "Use getTotalProtectedValueByCurrency() for multi-currency safety",
         level = DeprecationLevel.WARNING
     )
+    // spending-exempt: ASSET_VALUE
     @Query(
         """
         SELECT SUM(COALESCE(
@@ -98,6 +99,7 @@ interface WarrantyDao {
     )
     suspend fun getTotalProtectedValue(currentTime: Long): Double?
 
+    // spending-exempt: ASSET_VALUE
     @Query("""
         SELECT UPPER(COALESCE(e.currency, 'EUR')) AS currency,
                SUM(COALESCE(CASE 

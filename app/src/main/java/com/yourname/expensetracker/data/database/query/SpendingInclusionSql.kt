@@ -33,14 +33,16 @@ object SpendingInclusionSql {
      * Canonical effective-amount expression for queries that zero rows via CASE instead of
      * filtering: a flagged row yields 0.0, every other row yields exactly the existing
      * [ExpenseDao.EFFECTIVE_AMOUNT_SQL] value (not-mine zeroing, shared share, full amount).
-     * Mirrors `Expense.effectiveAmount`.
+     * Mirrors `Expense.effectiveAmount`. Built with `+` (not an in-literal template) so the db_access
+     * room_inventory resolver can expand the cross-file constant (it does not expand templates inside a
+     * const literal); the compiled value is identical.
      */
     const val EFFECTIVE_AMOUNT: String =
         "CASE WHEN spendingExclusionReason IS NOT NULL THEN 0.0 " +
-            "ELSE (${ExpenseDao.EFFECTIVE_AMOUNT_SQL}) END"
+            "ELSE (" + ExpenseDao.EFFECTIVE_AMOUNT_SQL + ") END"
 
     /** Same expression with the `e.` table alias prefix. */
     const val EFFECTIVE_AMOUNT_E: String =
         "CASE WHEN e.spendingExclusionReason IS NOT NULL THEN 0.0 " +
-            "ELSE (${ExpenseDao.EFFECTIVE_AMOUNT_E_SQL}) END"
+            "ELSE (" + ExpenseDao.EFFECTIVE_AMOUNT_E_SQL + ") END"
 }

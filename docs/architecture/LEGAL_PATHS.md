@@ -1722,7 +1722,15 @@ ENFORCEMENT:
     only the plan coordinator calls TLC setSpendingExclusionDbOnly; the TLC's own DAO setter call inside
     that op is the implementation, not a second caller
   • config/guards/db_ownership_policy.yml entries for the plan DAOs and the new TLC op (S2/S3)
-  • Canonical spending-predicate guard and parity tests (S3/S4)
+  • Registered static guard spending_predicate_usage (S4d; scripts/verify_spending_predicate_usage.py,
+    rules G-SPENDING-PREDICATE-01..03; no allowlist, no baseline): every aggregate @Query over the
+    expenses table in a production data/database/dao file references a qualified
+    SpendingInclusionSql.{SPENDING_PREDICATE, SPENDING_PREDICATE_E, EFFECTIVE_AMOUNT, EFFECTIVE_AMOUNT_E}
+    or carries a "// spending-exempt: <REASON>" line comment above the @Query (REASON in
+    DEDUPE_BLOCKING, DEDUPE_RESOLVER, NON_SPENDING_INCOME, ROW_COUNT, NON_MONEY, SUGGESTION,
+    ASSET_VALUE); a marked query must not reference SpendingInclusionSql, and a DEDUPE_* marked query
+    must never reference it (INV-8). An empty DAO surface exits 2. "--report" lists every classified query
+  • Spending-predicate parity tests (S3/S4)
 ```
 
 ---

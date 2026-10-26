@@ -794,6 +794,47 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
         },
     },
 
+    # Loan-installments S4d (INV-1, INV-8, plan A12.6) — NEW blocking guard, no
+    # allowlist and no baseline.  Every aggregate @Query over the expenses table
+    # in a production data/database/dao file must either reference a qualified
+    # SpendingInclusionSql constant or carry a bounded `// spending-exempt:
+    # <REASON>` marker; dedupe-marked queries must not reference it.
+    # Legal-path anchor: docs/architecture/LEGAL_PATHS.md ("Installment Plan
+    # Mutations", ENFORCEMENT).
+    "spending_predicate_usage": {
+        "script": "scripts/verify_spending_predicate_usage.py",
+        "sourceScope": "production-kotlin-filtered",
+        "tests": "scripts/test_verify_spending_predicate_usage.py",
+        "mode": "blocking",
+        "baseline": None,
+        "allowlist": None,
+        "policies": None,
+        "description": "Spending predicate usage in DAO aggregate queries "
+                       "(G-SPENDING-PREDICATE-01..03, INV-1/INV-8) — fails closed "
+                       "when a @Query in a production data/database/dao file "
+                       "aggregates (SUM/AVG/TOTAL/COUNT/MIN/MAX) over the expenses "
+                       "table without a qualified SpendingInclusionSql reference "
+                       "or a '// spending-exempt: <REASON>' marker; also fails on "
+                       "an unknown reason, an orphan marker, a marker combined with "
+                       "a SpendingInclusionSql reference, and a DEDUPE_* marked "
+                       "query that references it; an empty DAO surface exits 2",
+        "execution": {
+            "engine": "python-direct",
+            "entrypoint": "scripts/verify_spending_predicate_usage.py",
+            "arguments": ("--fail-on-violation",),
+            "mode": "blocking",
+            "ruleIds": (
+                "G-SPENDING-PREDICATE-01", "G-SPENDING-PREDICATE-02",
+                "G-SPENDING-PREDICATE-03",
+            ),
+            "requiredInputs": (),
+            "timeoutProfile": "standard",
+            "outputContract": "stdout-human;exit:0=pass,1=violation,2=infra",
+            "testManifest": ("scripts/test_verify_spending_predicate_usage.py",),
+            "documentationAnchor": "docs/architecture/LEGAL_PATHS.md",
+        },
+    },
+
     # ── Declared-external enforcement entries (PR-GR-10A Slice 3) ───────────────
     # REGISTERED_EXTERNAL_ENGINE dispositions: genuinely non-Python / non-suite
     # proof surfaces.  They are registry-declared (owner, command, scope,
