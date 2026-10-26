@@ -1567,3 +1567,5 @@ Notes for the orchestrator:
   - T34 `promptBackgroundAt` is an `InFlightAttempt` field, read and written under `stateLock`.
   - The P6 foreground flag is set before the early return.
   - Decide whether ENABLE with `NotAvailable` is a T26-style `LOCK_UNAVAILABLE_CAPABILITY` refusal.
+
+- (2026-10-26, S16 ii-b) SUPERSEDED: the "internal" attempt-start API for ENABLE/CONFIRM_CHANGE (S16 scope boundary, ~:814 and :872) became the public `startOpenOriginAttempt(OpenOriginPrompt, OpenOriginSuccessHandler)` (decision 1). It is guarded by a source-scan pin: no main file other than AppLockController.kt references it until S18 adds exactly its own file.

@@ -25,8 +25,10 @@ import java.lang.reflect.Modifier
  * way production does: `resolve()` over a fake repository on the test scheduler, and the controller-owned
  * callback handed to a fake [DeviceAuthenticator].
  *
- * Still for part (ii-b): a skipped T34, an ENABLE or CONFIRM_CHANGE success applied across purposes (no such
- * attempt can be started yet), and the isolation test (INV-36, subject to TECH-10).
+ * Part (ii-b) adds the open-origin entries: a purpose started from the wrong origin or while any prompt is
+ * in flight, a cross-purpose outcome, and the pinned public surface. The skipped-T34 entry is covered in
+ * `AppLockControllerPromptOutcomeTest` (it needs the prompt machinery). The isolation test (INV-36) stays
+ * subject to TECH-10.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class AppLockControllerIllegalTransitionTest {
@@ -226,7 +228,7 @@ class AppLockControllerIllegalTransitionTest {
         assertFalse(AuthPurpose.UNLOCK.isOpenOrigin)
         assertTrue(AuthPurpose.ENABLE.isOpenOrigin)
         assertTrue(AuthPurpose.CONFIRM_CHANGE.isOpenOrigin)
-        // Every attempt the controller can start before part (ii-b) is an UNLOCK attempt.
+        // The Unlock tap only ever starts an UNLOCK attempt.
         val controller = AppLockControllerHarness(AppLockTestSettings.enabled()).resolvedController()
         val started = controller.onUnlockTapped() as UnlockTapResult.Started
         assertEquals(
@@ -257,6 +259,106 @@ class AppLockControllerIllegalTransitionTest {
 
         assertEquals(AppLockState.Inert(InertReason.NO_CREDENTIAL), controller.state.value)
         assertTrue(h.authenticator.calls.isEmpty())
+    }
+
+    // --- AMD-22 (part ii-b): the open-origin purposes are entered only from their origin --------------------------
+
+    @Test
+    fun `AMD-22 ENABLE starts only from DISABLED and CONFIRM_CHANGE only from UNLOCKED, every other state is refused with no change`() {
+        val states: List<Pair<String, () -> Pair<AppLockControllerHarness, AppLockController>>> = listOf(
+            "RESOLVING" to { AppLockControllerHarness(AppLockTestSettings.enabled()).let { it to it.newController() } },
+            "LOCKED" to { lockedControllerFor(LockCause.COLD_START) },
+            "AUTHENTICATING(UNLOCK)" to {
+                lockedControllerFor(LockCause.COLD_START).also { (h, controller) -> h.tap(controller) }
+            },
+            "INERT" to {
+                AppLockControllerHarness(AppLockTestSettings.enabled(), DeviceAuthCapability.NO_CREDENTIAL)
+                    .let { it to it.resolvedController() }
+            },
+            "DISABLED" to { disabledControllerFor() },
+            "UNLOCKED" to { unlockedControllerFor() }
+        )
+
+        for (prompt in OpenOriginPrompt.entries) {
+            for ((name, make) in states) {
+                val legal = (name == "DISABLED" && prompt.purpose == AuthPurpose.ENABLE) ||
+                    (name == "UNLOCKED" && prompt.purpose == AuthPurpose.CONFIRM_CHANGE)
+                if (legal) continue // the legal starts are covered in AppLockControllerPromptOutcomeTest
+                val (h, controller) = make()
+                val handler = RecordingSuccessHandler()
+                val stateBefore = controller.state.value
+                val idBefore = controller.inFlightAttemptId
+                val callsBefore = h.authenticator.calls.size
+                val emittedBefore = h.emitted.toList()
+
+                val result = controller.startOpenOriginAttempt(prompt, handler)
+                h.settle()
+
+                val expected = if (name == "AUTHENTICATING(UNLOCK)") {
+                    OpenOriginStartResult.AlreadyInFlight
+                } else {
+                    OpenOriginStartResult.NotInOrigin
+                }
+                assertEquals("$prompt from $name", expected, result)
+                assertEquals("$prompt from $name", stateBefore, controller.state.value)
+                assertEquals("$prompt from $name", idBefore, controller.inFlightAttemptId)
+                assertEquals("$prompt from $name: nothing launched", callsBefore, h.authenticator.calls.size)
+                assertEquals("$prompt from $name: no diagnostic", emittedBefore, h.emitted)
+                assertTrue("$prompt from $name", handler.delivered.isEmpty())
+            }
+        }
+    }
+
+    @Test
+    fun `INV-54 at most one prompt is in flight across all purposes`() {
+        val (h, controller) = disabledControllerFor()
+        val enable = h.startOpenOrigin(controller, OpenOriginPrompt.ENABLE, RecordingSuccessHandler())
+
+        for (prompt in OpenOriginPrompt.entries) {
+            assertEquals("$prompt", OpenOriginStartResult.AlreadyInFlight, controller.startOpenOriginAttempt(prompt, RecordingSuccessHandler()))
+        }
+        assertEquals(UnlockTapResult.AlreadyInFlight, controller.onUnlockTapped())
+        h.settle()
+
+        assertEquals(AppLockState.Authenticating(enable, AuthPurpose.ENABLE), controller.state.value)
+        assertEquals(listOf(enable), h.authenticator.calls.map { it.attemptId })
+
+        val (h2, unlocked) = unlockedControllerFor()
+        val confirm = h2.startOpenOrigin(unlocked, OpenOriginPrompt.DISABLE, RecordingSuccessHandler())
+        assertEquals(OpenOriginStartResult.AlreadyInFlight, unlocked.startOpenOriginAttempt(OpenOriginPrompt.CHANGE, RecordingSuccessHandler()))
+        assertEquals(OpenOriginStartResult.AlreadyInFlight, unlocked.startOpenOriginAttempt(OpenOriginPrompt.ENABLE, RecordingSuccessHandler()))
+        h2.settle()
+        assertEquals(AppLockState.Authenticating(confirm, AuthPurpose.CONFIRM_CHANGE), unlocked.state.value)
+        assertEquals(1, h2.authenticator.calls.count { it.attemptId == confirm })
+    }
+
+    @Test
+    fun `AMD-22 an outcome never crosses purposes - a late CONFIRM_CHANGE success cannot unlock LOCKED or answer an UNLOCK attempt`() {
+        val (h, controller) = unlockedControllerFor(AutoLockTimeout.IMMEDIATE)
+        val handler = RecordingSuccessHandler()
+        val confirm = h.startOpenOrigin(controller, OpenOriginPrompt.CHANGE, handler)
+        val confirmCall = h.authenticator.calls.last()
+        controller.onPromptHostLost(confirm) // abandoned: back on UNLOCKED, nothing applied
+        h.settle()
+        assertEquals(AppLockState.Unlocked, controller.state.value)
+        controller.onAppBackgrounded()
+        controller.onAppForegrounded()
+        assertEquals(AppLockState.Locked(LockCause.TIMEOUT), controller.state.value)
+
+        // The abandoned CONFIRM_CHANGE callback cannot unlock LOCKED, and cannot answer an UNLOCK attempt.
+        h.authenticator.deliver(DeviceAuthOutcome.Succeeded, confirmCall)
+        assertEquals(AppLockState.Locked(LockCause.TIMEOUT), controller.state.value)
+        val unlock = h.tap(controller)
+        assertTrue(unlock > confirm)
+        h.authenticator.deliver(DeviceAuthOutcome.Succeeded, confirmCall)
+        h.authenticator.deliverWithId(confirm, DeviceAuthOutcome.Succeeded)
+        assertEquals(AppLockState.Authenticating(unlock, AuthPurpose.UNLOCK), controller.state.value)
+        assertTrue(handler.delivered.isEmpty())
+
+        // An UNLOCK success unlocks and never reaches an open-origin handler.
+        h.authenticator.deliver(DeviceAuthOutcome.Succeeded)
+        assertEquals(AppLockState.Unlocked, controller.state.value)
+        assertTrue(handler.delivered.isEmpty())
     }
 
     // --- T6b: when a late read may and may not lift the lock --------------------------------------------------
@@ -399,8 +501,12 @@ class AppLockControllerIllegalTransitionTest {
 
     @Test
     fun `no public method takes an operational state, a worker, a receiver or an Android type`() {
+        // The attempt id, and (part (ii-b), exact additions) the two bounded domain types of the open-origin
+        // start API: the closed prompt selector and the success handler of the owning settings operation.
         val allowedParameterTypes = setOf(
-            Long::class.javaPrimitiveType
+            Long::class.javaPrimitiveType,
+            OpenOriginPrompt::class.java,
+            OpenOriginSuccessHandler::class.java
         )
         // Only compiler-generated accessors (`access$...`, first parameter = the controller) are not API.
         // Any other synthetic method on the controller is unexpected and fails the test below.
@@ -433,7 +539,8 @@ class AppLockControllerIllegalTransitionTest {
                 "onAppForegrounded",
                 "onLockQuery",
                 "onUnlockTapped",
-                "onPromptHostLost"
+                "onPromptHostLost",
+                "startOpenOriginAttempt" // part (ii-b): the one exact addition, bound by S18
             ),
             production
         )
@@ -455,7 +562,7 @@ class AppLockControllerIllegalTransitionTest {
 
     @Test
     fun `no production file other than the controller touches the controller's internal inspection members`() {
-        // pendingBackgroundAtMillis and inFlightAttemptId stay internal for tests (R1: if anything stays
+        // pendingBackgroundAtMillis, promptBackgroundAtMillis and inFlightAttemptId stay internal for tests (R1: if anything stays
         // internal, a main file other than the controller must not reference it). Kotlin `internal` is not
         // enforced by lint here, so this scan is the enforcement.
         // Main is mandatory (fail closed if it cannot be found); the debug and release source sets are scanned
@@ -464,10 +571,14 @@ class AppLockControllerIllegalTransitionTest {
         val forbidden = listOf(
             "pendingBackgroundAtMillis",
             "inFlightAttemptId",
+            "promptBackgroundAtMillis",
             "onSettingsResolved",
             "onResolveTimeout",
             "onLateSettingsResolved",
-            "onAuthSucceeded"
+            "onAuthSucceeded",
+            // Part (ii-b), exact addition (F3): the open-origin start API has no caller yet. S18 adds exactly its
+            // own file as the one caller, and extends this pin to allow that single file and nothing else.
+            "startOpenOriginAttempt"
         )
         val offenders = roots.flatMap { root ->
             root.walkTopDown()

@@ -1004,3 +1004,174 @@ Remaining at the candidate level (not run here): `static-guards` for the S16 can
   - architecture-guardian ACCEPT-WITH-CONDITIONS, fixed
   - reviewer-strict ACCEPT-WITH-CONDITIONS: test findings 1–2 fixed. For finding 3 a test cannot distinguish a swallowed CancellationException there; the FG-10 cancellation guard (PASS) enforces the rethrow, and this is recorded.
 - Controller still DORMANT. Next: S16 part (ii-b): ENABLE/CONFIRM_CHANGE purposes, T32–T34, AuthPromptCopy selection, test-file moves. Then static-guards at the S16 candidate.
+
+## S16 part (ii-b) — implemented
+Status (2026-10-26, implementer): implemented, NOT validated (no build, test or guard run). Dormant: nothing in production calls the controller. No schema/DB impact. No new Hilt module and no new binding. No new user-visible string: the S15 prompt copy already has `enable`, `disable` and `change` titles (values, values-es, values-el), so no es/el review item arises. Legal path: the APP LOCK path (domain port-only controller; no Room, no barrier).
+M = app/src/main/java/com/yourname/expensetracker, T = app/src/test/java/com/yourname/expensetracker/domain/privacy/applock.
+
+Files (source):
+- M/domain/privacy/applock/AppLockController.kt:
+  - `startOpenOriginAttempt(prompt: OpenOriginPrompt, onSuccess: OpenOriginSuccessHandler): OpenOriginStartResult` (public, see decision 1).
+  - `Closing.OpenOriginSuccess` and `Closing.EnableRefused(cause)`, with their own success check inside `closeAttempt`.
+  - `InFlightAttempt.promptBackgroundAt` and `successHandler`.
+  - The foreground flag `appInForeground`.
+  - `handOffPromptBackground` (T34), `deliverOpenOriginSuccess` (T33 hand-off) and an `internal val promptBackgroundAtMillis` inspection getter.
+  - `claimCapabilityCheckFailed` generalised to `claimCapabilityCause(cause)`; the claimed set is unchanged.
+  - New public types in the same file: `OpenOriginStartResult` and `fun interface OpenOriginSuccessHandler`.
+- M/domain/privacy/applock/AppLockState.kt: new enum `OpenOriginPrompt(purpose, copy)` { ENABLE -> (ENABLE, ENABLE), DISABLE -> (CONFIRM_CHANGE, DISABLE), CHANGE -> (CONFIRM_CHANGE, CHANGE) }. A KDoc sentence on `AuthPurpose` changed.
+- M/domain/privacy/applock/PrivacyDiagnosticsEmitter.kt: comment only (the cause of `LOCK_UNAVAILABLE_CAPABILITY` may also be an ENABLE refusal cause). No new entry, no new allowed key.
+
+Files (tests):
+- NEW T/AppLockControllerTimerTest.kt: the timer and pending-background tests MOVED out of `AppLockControllerResolutionTest` with every assertion unchanged (T13 to T15, AE-40, AE-41, AE-43, AE-58, AE-90, the pending-background consumption tests, `no background is pending after a re-lock and unlock`).
+- T/AppLockControllerAuthOutcomeTest.kt: `T7 and T8 a tap starts one attempt...` and `attempt ids are strictly increasing...` MOVED in, unchanged.
+- T/AppLockControllerResolutionTest.kt: now only resolution, spec 10 once-per-process, isolation (INV-37), AE-61 and AE-63. No test is duplicated and none was deleted: the moved ones exist exactly once, in the new file.
+- T/AppLockControllerPromptOutcomeTest.kt: the "ii-b" section (start API, T33 hand-off, T34 for every non-success end, NotAvailable, AE-116 in all three callback orders at 59.999 s / 60.000 s on the monotonic clock only, T32, P6, AE-117 timer part, T35 and AE-118 for every purpose, the F5 watchdog test on coroutine time).
+- T/AppLockControllerIllegalTransitionTest.kt: exact additions to the pins (decision 1) and three new spec 3.3 entries (wrong origin or any prompt in flight, one prompt across purposes, cross-purpose outcome).
+- T/AppLockControllerTestFixtures.kt: `RecordingSuccessHandler`, `AppLockControllerHarness.startOpenOrigin`, `unlockedControllerFor`, `disabledControllerFor`.
+
+Transitions implemented:
+- Start (S18 binds it): ENABLE from exactly `DISABLED`, CONFIRM_CHANGE (DISABLE or CHANGE copy) from exactly `UNLOCKED`.
+  - `AUTHENTICATING(any purpose)` or any open attempt gives `AlreadyInFlight`.
+  - Every other state, including `INERT`, `RESOLVING`, `LOCKED` and the wrong open state, gives `NotInOrigin`.
+  - Both refusals change nothing and launch nothing.
+  - Otherwise: a strictly increasing id (shared with UNLOCK), the attempt is open and `AUTHENTICATING(id, purpose)` is published, then the same orchestrator and watchdog as UNLOCK (P1, P5). The copy comes from the closed `OpenOriginPrompt` selector, so no caller can pass free text.
+- T32: `onAppBackgrounded` during `AUTHENTICATING(ENABLE | CONFIRM_CHANGE)` sets the attempt's `promptBackgroundAt` once, under `stateLock`. Later backgrounds do not move it. Foreground and `LOCK_QUERY` evaluate nothing while a prompt is in flight, so no time accrues while a prompt is shown. A background during `AUTHENTICATING(UNLOCK)` records nothing (unchanged).
+- P6: `appInForeground` is set in `onAppForegrounded` before its early return and cleared in `onAppBackgrounded` before its early return. It starts false.
+- T33 (success hand-off, S16 part only): a matching `Succeeded` for an ENABLE or CONFIRM_CHANGE attempt closes with the separate `Closing.OpenOriginSuccess`. The F4-style check is against `Authenticating(id, thatPurpose)` and an open-origin purpose. The UNLOCK-only `Closing.Success` check is unchanged. The state returns to the origin (`DISABLED` / `UNLOCKED`); `lastBackgroundedAt` is cleared (spec 3.4: an auth success that ends in an open state clears it); the attempt's `promptBackgroundAt` is discarded with the attempt; `onSuccess.onSucceeded(attemptId, purpose)` is called once, after the monitor is released and the state is published. Nothing is applied, no setting is written, nothing unlocks, and no diagnostic is claimed.
+- T9 / T10 / T34: cancel, lockout, error buckets, the launch that never happened and the watchdog return to the origin with `LOCK_AUTH_*` per spec 10 (the same once-per-process claims as UNLOCK). For CONFIRM_CHANGE with `promptBackgroundAt` set, `lastBackgroundedAt := promptBackgroundAt` in the same critical section as the close. If the app is in the foreground, T14/T15/T16 are evaluated at once, in that same critical section, so a lock is published as `LOCKED(TIMEOUT)` and never as `UNLOCKED` first. In the background the evaluation waits for the next `APP_FOREGROUNDED` or `LOCK_QUERY`. With origin `DISABLED` the prompt background is dropped.
+- T35: `onPromptHostLost(id)` already closed any purpose. It now carries the T34 hand-off for CONFIRM_CHANGE. A late callback is stale (id and identity check), also after a re-lock.
+- NotAvailable:
+  - UNLOCK: unchanged (T11).
+  - ENABLE: if the re-check is not AVAILABLE, a T26-style refusal (`Closing.EnableRefused`). Back to `DISABLED`, `LOCK_UNAVAILABLE_CAPABILITY` with `CAUSE` = the re-check's `DeviceAuthCapability` (CHECK_FAILED maps to UNKNOWN). Claimed once per process per cause through the existing `claimedCapabilityCauses`, shared with the Unlock-tap claim and with S18's T26. A re-check that says AVAILABLE gives `LOCK_AUTH_ERROR(OTHER)`.
+  - CONFIRM_CHANGE: `LOCK_AUTH_ERROR(OTHER)` and back to `UNLOCKED`; there is no INERT row (spec T34), so T16 applies at the next foreground.
+- Cross-purpose: a success whose purpose does not match the state, or whose id or attempt object is stale, changes nothing. An abandoned ENABLE or CONFIRM_CHANGE callback cannot unlock `LOCKED` or answer an UNLOCK attempt; an UNLOCK success never reaches an open-origin handler.
+
+AEs covered (controller level): AE-116 (10-minute foreground prompt accrues nothing; Home then the system cancel at 59.999 s / 60.000 s; the cancel before the background, while backgrounded, and after the foreground), AE-118 (host loss for ENABLE, DISABLE and CHANGE; late success stale, also after a re-lock; rotation keeps the attempt; the control is enabled again), the timer part of AE-117 (success before and after the foreground discards the prompt background; the apply itself is S18), AE-42/AE-44/AE-45/AE-46/AE-47/AE-50 unchanged from ii-a. The held-link part of AE-118 is S17.
+
+Decisions where the spec is ambiguous (fail-closed reading); please confirm:
+1. Public API, not internal. S18 (another main file) must call the start API, so an `internal` + source-scan pin that forbids other main files would block the intended caller, and `internal` is not enforced by lint here (R1). The pins are therefore updated by exact additions only (P7):
+   - the public method set gains exactly `startOpenOriginAttempt`;
+   - the "no public method takes ..." allow-list gains exactly the two bounded domain types `OpenOriginPrompt` and `OpenOriginSuccessHandler`;
+   - the internal-member source scan gains the new test-only getter `promptBackgroundAtMillis`.
+   No pin was loosened. The constructor pin (seven ports) is unchanged.
+2. The T33 hand-off is a per-attempt handler passed at start (`OpenOriginSuccessHandler`), not a controller-wide registry and not an eighth constructor port. That needs no Hilt binding and no mutable global, and the handler can capture its request (for example the new timeout). It is invoked once, only for a matching success, after the attempt is closed and the state is already back on the origin; S18 then performs the durable write and moves the state (T17 to `UNLOCKED`) through a controller method it adds. Between the hand-off and that call the state is the origin; S18 must keep its own request in flight (disabled switch) in that gap. A throwing handler is logged by class name and ignored.
+3. T33's timer clause is implemented in S16 for the only case that exists in Increment 1: every ENABLE or CONFIRM_CHANGE prompt uses the UNLOCK authenticators (unlock-equivalent), so the success discards `promptBackgroundAt` and clears `lastBackgroundedAt` immediately. The "not unlock-equivalent: hand the background to the timer" branch (AE-120, Increment 2) has no case yet and is left for S25/Inc 2. The plan puts "plus the unlock-equivalent discard" in S18; leaving it out would have left a stale pending background after a success, so it is done here. S18 must not repeat it.
+4. T34 with an already pending `lastBackgroundedAt` keeps the earlier of the two (the spec assigns `promptBackgroundAt`). The two cannot differ in practice, since a prompt only starts from the foreground, but if they ever did this can only lock sooner.
+5. The foreground flag starts false: with no foreground seen a T34 evaluation is deferred to the next `APP_FOREGROUNDED` or `LOCK_QUERY` and never lost, whereas a wrongly true flag could consume time away. S20 must deliver `APP_FOREGROUNDED` at every real foreground including the first ON_START (carry-forward). `LOCK_QUERY` does not set the flag (a deep link can arrive while stopped).
+6. T34 also runs for a launch that never happened (`NotLaunched`) and for the watchdog: spec 3.3 forbids an open-origin prompt that ends without success returning to `UNLOCKED` without the timer evaluating a recorded background, whatever the reason it ended.
+7. ENABLE `NotAvailable` is a refusal (the plan's "preferably" reading), with the capability enum name as `CAUSE` for every non-AVAILABLE cause, including `NO_CREDENTIAL` and `UNSUPPORTED_API`. The spec gives those two their own codes (`LOCK_UNAVAILABLE_NOT_SECURE`, `LOCK_UNAVAILABLE_API`) at the T26 request-time check, and the emitter has no entries for them yet. S18 must decide the T26 mapping; the per-cause claim set is shared either way. A CHECK_FAILED re-check refuses as UNKNOWN (enabling never proceeds on an unknown capability).
+8. The start API does not check capability or API level: that is T26 and the caller's request-time check (S18). It also does not check the settings load state (T27 and the others are S18).
+9. F5 as decided in the ii-a review: the watchdog applies to every purpose. AE-116's 10-minute prompt is tested on the monotonic clock only (no coroutine time); a separate test advances coroutine time past `PROMPT_WATCHDOG_MILLIS` for ENABLE, DISABLE and CHANGE and shows fail-closed abandonment (change not applied, late success stale).
+
+Carry-forwards: S18 (bind `startOpenOriginAttempt`; do the durable write inside the handler's request; T17 and T18 state moves; T26 request-time refusal and codes; keep a request-in-flight guard between hand-off and the state move; claim T26 causes in `claimedCapabilityCauses`); S20 (deliver `APP_FOREGROUNDED` at every real foreground, `onPromptHostLost` only for real host loss, adopt the open attempt after rotation as already recorded); S23 (spec note for decisions 3, 4 and 7; hilt-bindings-map is unaffected).
+
+Validation to request (validation-runner, serial):
+- `compile`
+- `targeted-unit-test` `*AppLockController*,*PrivacyDiagnosticsEmitter*`
+- shard `domain-n-z`
+- `registered-guard` `cancellation` (a new catch that rethrows in `deliverOpenOriginSuccess`), `time_boundaries`, `known_good_state`
+- then `static-guards` at the S16 candidate
+Likeliest compile findings: the `Triple` / `Pair` list typing in the new tests, `return@transition` in the Unit lambdas of `onAppBackgrounded` and `startOpenOriginAttempt`, and the `when (closing)` expression with the two new branches assigned to a captured `var`. Likeliest test findings: the timing in `homeAndReturn` (the cancel callback is delivered through the fake authenticator) and the synthetic-method pin (no default parameter or non-inline lambda was added to the controller).
+Gates: privacy-security-guardian (lead), architecture-guardian, reviewer-strict.
+
+### S16 part (ii-b) — privacy-review fixes
+Status (2026-10-26, implementer): implemented, NOT validated (no build, test or guard run). Resumed after an API-error abort of the first fix pass. Still DORMANT, no schema/DB impact, no new string, no new binding.
+M = app/src/main/java/com/yourname/expensetracker/domain/privacy/applock, T = app/src/test/java/com/yourname/expensetracker/domain/privacy/applock.
+
+Fixes (the first pass left no usable edit in the controller; all of the main-file edits below were made in the resume pass):
+- F1 (M/AppLockController.kt:860 `handOffPromptBackground`): no early return when `promptBackgroundAt == null`. `merged = listOfNotNull(promptBackgroundAt, lastBackgroundedAtMillis).minOrNull() ?: return null`, `lastBackgroundedAtMillis = merged`, then the same foreground/capability check and the evaluation in the same critical section. Test: T/AppLockControllerPromptOutcomeTest.kt:1312 (background, +60 s, start CHANGE, foreground, cancel gives LOCKED(TIMEOUT); +59.999 s gives UNLOCKED).
+- F2 (M/AppLockController.kt:697 `routeNotAvailable`): ENABLE emits `LOCK_UNAVAILABLE_CAPABILITY` only for HW_UNAVAILABLE and UNKNOWN (CHECK_FAILED is reported as UNKNOWN). NO_CREDENTIAL, UNSUPPORTED_API and AVAILABLE give `Closing.Error(OTHER)`, staying DISABLED with nothing written; `TODO(S18)` at :706 for `LOCK_UNAVAILABLE_NOT_SECURE` / `LOCK_UNAVAILABLE_API`. The once-per-cause claim set is re-keyed by (code, cause): `claimedCodeCauses` (:289, replaces `claimedCapabilityCauses`), used by `claimCapabilityCause` (:1047). Tests updated, none loosened: T/AppLockControllerPromptOutcomeTest.kt:894 (HW_UNAVAILABLE / UNKNOWN), :932 (new, NO_CREDENTIAL / UNSUPPORTED_API), :991 (reflection on `claimedCodeCauses`), T/AppLockControllerAuthOutcomeTest.kt:486 (reflection on `claimedCodeCauses`, the Unlock-tap leg).
+- F3 (T/AppLockControllerIllegalTransitionTest.kt, source-scan pin `no production file other than the controller touches the controller's internal inspection members`): `startOpenOriginAttempt` added to the forbidden list (exact addition). No main, debug or release file other than AppLockController.kt references it. Commented: S18 adds exactly its own file as the one caller and extends the pin to that single file.
+- F4 (M/AppLockController.kt:731, `closeAttempt` CONFIRM_CHANGE capability read): any Throwable from the read is caught, the close continues with capability = null, and the same throwable is rethrown unchanged after the close (also when the attempt was already closed). CancellationException is therefore rethrown too, but only after the attempt is closed, so it never stays open. Test: T/AppLockControllerPromptOutcomeTest.kt:1339 (an Error and a CancellationException; the attempt closes, the error surfaces, a late success is stale, a new attempt starts). Fixture: `FakeCapabilityProvider.failure` added in T/AppLockControllerTestFixtures.kt.
+- F5 (M/AppLockController.kt:769, defensive stale-success branch): when the state is still AUTHENTICATING and returns to the origin, `handOffPromptBackground(attempt, null)` runs (merge only; no capability was read for a success close, so the evaluation waits for the next foreground). Test: T/AppLockControllerPromptOutcomeTest.kt:1377 (forces the mismatch by reflection on `current`).
+- F6 (T/AppLockControllerPromptOutcomeTest.kt:991): the ENABLE test renamed to `ENABLE refusals under a failed capability check claim UNKNOWN once per process, keyed by code and cause`. The real Unlock-tap leg already exists in T/AppLockControllerAuthOutcomeTest.kt (`F1 the tap-time capability claim is per cause...`, now asserting the (code, cause) pair).
+- F7 (M/AppLockController.kt:72 KDoc of `OpenOriginSuccessHandler`): CancellationException is rethrown, S18 must never throw it from the handler; the handler runs outside the monitor and may call back into the controller. Test: T/AppLockControllerPromptOutcomeTest.kt:1403 (the handler starts a new attempt, queries from another thread with a 5 s join, and backgrounds; no deadlock, the handler saw UNLOCKED with no open attempt, the final state is the new attempt's AUTHENTICATING).
+
+Decisions 1 to 9 of S16 part (ii-b) above: accepted by the privacy lead (decision 7 is superseded in its detail by F2: NO_CREDENTIAL and UNSUPPORTED_API are a bounded OTHER error, not a capability refusal, until S18 adds their codes).
+
+Carry-forwards:
+- S18:
+  - re-check T17/T18 under the monitor;
+  - the durable write goes off the main thread;
+  - keep the request guard between the hand-off and the state move;
+  - never throw CancellationException from the handler;
+  - T26 claims per (code, cause) through `claimedCodeCauses`, and S18 adds `LOCK_UNAVAILABLE_NOT_SECURE` / `LOCK_UNAVAILABLE_API` for NO_CREDENTIAL / UNSUPPORTED_API.
+- S20:
+  - `APP_FOREGROUNDED` at every real foreground, including the first;
+  - `onPromptHostLost` only for real host loss.
+- S23:
+  - spec notes for decisions 3, 4 and 7;
+  - F8: a success while backgrounded clears the pending background (the G1b device check).
+
+Validation to request (validation-runner, serial): `compile`; `targeted-unit-test` `*AppLockController*,*PrivacyDiagnosticsEmitter*`; shard `domain-n-z`; `registered-guard` `cancellation`, `time_boundaries`, `known_good_state`; then `static-guards` at the S16 candidate.
+Likeliest findings: the local `class CapabilityBoom : Error` inside the F4 test, the lambda-captured vars of the F7 test, the reflection on the private `current` field (F5 test) and `claimedCodeCauses` (the field is a `Set<Pair<...>>`, compared with `setOf(code to cause)`).
+
+### S16 part (ii-b) — architecture review (ACCEPT-WITH-CONDITIONS) and fixes (2026-10-26)
+- Validation on the post-privacy-fix tree (serial, all PASS):
+  - targeted vr-20261026-134327-f8b307fb
+  - cancellation vr-20261026-134816-9469d50f
+  - known_good_state vr-20261026-134834-556415ca
+  - domain-n-z vr-20261026-135136-88e206c0
+  - static-guards vr-20261026-135309-71b86c76
+- Fixes (code; applied in a resumed pass after an API-error abort):
+  - (1) The closeAttempt capability read uses the guard-recognised `catch (e: Throwable) { closeWith(..., null); throw e }` shape.
+  - (2) The routeNotAvailable re-check is guarded the same way.
+  - (3) The stale-success branch locks (COLD_START) if an open-origin attempt faces Authenticating(_, UNLOCK).
+  - (4) Test: a handler that throws CancellationException rethrows the same instance.
+- Superseded text:
+  - "claimed set is unchanged" (~:1019) and the `claimedCapabilityCauses` names (~:1045, :1066) are superseded by privacy fix F2 (`claimedCodeCauses`, keyed by (code, cause)).
+- BINDING carry-forwards:
+  - S17:
+    - onLockQuery returns AUTHENTICATING without evaluating. Hold the link during an open-origin prompt and never decide to apply it from that state.
+    - Release the link only after the T34 hand-off and evaluation, or after T33 AND S18's apply completes or fails. Never release it when the close publishes the origin state.
+    - HeldDeepLink must not call startOpenOriginAttempt.
+    - The apply-now/hold decision is made under the monitor.
+  - S18:
+    - Bind startOpenOriginAttempt from exactly one main file, and extend the F3 pin to that file only.
+    - The handler belongs to an application-scoped operation: no ViewModel, Activity or Compose capture. It is non-blocking, does the durable write off main, and never throws CancellationException.
+    - Re-check T17/T18 under the monitor before moving state. Define the gap where a T14 lock or a settings re-read lands between hand-off and state move (AE-114).
+    - Do not repeat the unlock-equivalent discard.
+    - T26 request-time check before start. Add LOCK_UNAVAILABLE_NOT_SECURE and LOCK_UNAVAILABLE_API (emitter entries and pins) via claimedCodeCauses, and resolve the TODO(S18).
+  - S20:
+    - APP_FOREGROUNDED at every real foreground, including the first ON_START; APP_BACKGROUNDED at every real stop; a rotation sends neither.
+    - onPromptHostLost only for real host loss.
+    - G1b: check whether the device-credential UI stops the host or the process (T32, then an IMMEDIATE lock via T34).
+    - The adapter keeps clearing its callback on cancel and terminal, and tolerates a handler that calls back in.
+
+### S16 part (ii-b) — final gate (reviewer-strict ACCEPT-WITH-CONDITIONS) and fixes
+All in `AppLockController.kt`; line numbers are after the fixes.
+- ISSUE-1 (closeWith, :774-:808): the state/attempt mismatch check was success-only.
+  - It now runs before the `when (closing)`, for every closing, against `Authenticating(attempt.attemptId, attempt.purpose)`. A purpose mismatch (Success on a non-UNLOCK attempt, OpenOriginSuccess on an UNLOCK attempt) also counts.
+  - On a mismatch: inFlight is cleared, the jobs are cancelled, no handler is called, no outcome code is claimed, and the app never unlocks.
+  - A stranded `Authenticating` state with purpose UNLOCK, or a purpose other than the attempt's, becomes `Locked(COLD_START)`. The same purpose with another id returns to the attempt's origin, with the T34 hand-off. Any other state is left as it is.
+  - The KDoc now says "the last fail-closed check" truthfully.
+  - Behaviour change: an UNLOCK attempt with a stranded `Authenticating(other id, UNLOCK)` now goes to `COLD_START`, not to `Locked(originLockCause)`. Unreachable through the public API.
+  - Test: "ISSUE-1 a cancel of an attempt whose state is AUTHENTICATING(UNLOCK) of another id ..." (PromptOutcomeTest; DISABLE, CHANGE, ENABLE).
+- ISSUE-2 (closeAttempt catch, :754; stale branch, :799-:803): the guarded capability-read catch passed `null`, so T34 waited. It now passes `DeviceAuthCapability.CHECK_FAILED`, and the stale branch uses `capability ?: CHECK_FAILED`.
+  - `CHECK_FAILED` maps to no inert reason (`toInertReason`, R3), so it can never yield INERT.
+  - The throwable is still rethrown after the close.
+  - A T34 lock that really happens in a stale close records its own `LOCK_SHOWN_TIMEOUT`. The stale outcome claims no code.
+  - Test: "ISSUE-2 a capability read that throws during a CHANGE cancel in the foreground past the timeout still locks, then rethrows".
+  - Not changed: `routeNotAvailable`'s re-check catch (:704) still passes `null` (waits for the next foreground). Its F4 test pins that. S18 may align it.
+- ISSUE-3 (closeAttempt, :745; launchPrompt, :593-:598): `if (!isOpen(attempt)) return false` (read under stateLock) now comes before the capability read. In `launchPrompt` a throwable from the close is attached to the original `CancellationException` with `addSuppressed`, and the original is rethrown.
+- ISSUE-4 (PendingDiagnostic KDoc, :209-:214): the `LOCK_UNAVAILABLE_CAPABILITY` cause is `HW_UNAVAILABLE` or `UNKNOWN`.
+- S18 questions:
+  - (a) Call `onLockQuery()` before `startOpenOriginAttempt` if S20 cannot guarantee that `APP_FOREGROUNDED` runs before the first tap.
+  - (b) T27 lists INERT as a review-save origin, but the start API refuses INERT. S18 decides INV-45.
+- Test-coverage note: the "rotation" tests are plain success tests by contract (a rotation sends no lifecycle event). G1b covers real rotation.
+- Condition 1: re-run `static-guards` on the final tree. Also request `compile`, `targeted-unit-test` `*AppLockController*`, `cancellation`, `known_good_state`, and shard `domain-n-z`.
+
+### S16 part (ii-b) — accepted (2026-10-26)
+- Final tree (serial, all PASS):
+  - targeted vr-20261026-155724-cfa3aa00
+  - cancellation vr-20261026-160213-b9ca974f
+  - known_good_state vr-20261026-160231-bcdff955
+  - domain-n-z vr-20261026-160532-1b72a5a1
+  - static-guards vr-20261026-160706-8f3ce006
+- Gates (ii-b):
+  - privacy-security-guardian (lead) ACCEPT-WITH-CONDITIONS, fixed
+  - architecture-guardian ACCEPT-WITH-CONDITIONS, fixed
+  - reviewer-strict ACCEPT-WITH-CONDITIONS, ISSUE-1..4 fixed
+  - review iteration limit reached; accepted on validation
+- S16 COMPLETE (parts i, ii-a, ii-b). The controller is still DORMANT until S20 wiring.
+- Next: S17 (held deep links).

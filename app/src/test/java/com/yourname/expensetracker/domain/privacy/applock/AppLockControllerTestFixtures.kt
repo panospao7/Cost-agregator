@@ -40,8 +40,12 @@ internal class FakeCapabilityProvider(var capability: DeviceAuthCapability = Dev
     var evaluations = 0
         private set
 
+    /** When set, `current` throws it after counting the evaluation (a failing binder read, S16 F4). */
+    var failure: Throwable? = null
+
     override fun current(): DeviceAuthCapability {
         evaluations++
+        failure?.let { throw it }
         return capability
     }
 }
@@ -314,6 +318,60 @@ internal class AppLockControllerHarness(
         authenticator.deliver(DeviceAuthOutcome.Succeeded)
         assertEquals(AppLockState.Unlocked, controller.state.value)
     }
+
+    /**
+     * Starts an open-origin attempt through the S18-facing API, lets the prompt launch, and returns the attempt id.
+     * The no-op change of S16 is the [handler]: it only records that a success was handed over.
+     */
+    fun startOpenOrigin(
+        controller: AppLockController,
+        prompt: OpenOriginPrompt,
+        handler: RecordingSuccessHandler
+    ): Long {
+        val result = controller.startOpenOriginAttempt(prompt, handler)
+        assertTrue("expected an attempt, got $result", result is OpenOriginStartResult.Started)
+        settle()
+        return (result as OpenOriginStartResult.Started).attemptId
+    }
+}
+
+/** The stand-in for the S18 apply: it records each success it was handed and applies nothing. */
+internal class RecordingSuccessHandler : OpenOriginSuccessHandler {
+    val delivered = mutableListOf<Pair<Long, AuthPurpose>>()
+
+    /** When set, thrown from the hand-off (a failing S18 handler must not affect the controller). */
+    var failure: Exception? = null
+
+    override fun onSucceeded(attemptId: Long, purpose: AuthPurpose) {
+        delivered += attemptId to purpose
+        failure?.let { throw it }
+    }
+}
+
+/**
+ * A harness and a resolved controller in `UNLOCKED` (lock on, [timeout]), ready for a CONFIRM_CHANGE attempt.
+ * The app is reported in the foreground, as S20 would after its first ON_START.
+ */
+internal fun unlockedControllerFor(
+    timeout: AutoLockTimeout = AutoLockTimeout.M1
+): Pair<AppLockControllerHarness, AppLockController> {
+    val h = AppLockControllerHarness(AppLockTestSettings.enabled(timeout))
+    val controller = h.resolvedController()
+    h.unlock(controller)
+    controller.onAppForegrounded()
+    assertEquals(AppLockState.Unlocked, controller.state.value)
+    return h to controller
+}
+
+/** A harness and a resolved controller in `DISABLED` (lock off), ready for an ENABLE attempt. */
+internal fun disabledControllerFor(
+    capability: DeviceAuthCapability = DeviceAuthCapability.AVAILABLE
+): Pair<AppLockControllerHarness, AppLockController> {
+    val h = AppLockControllerHarness(AppLockTestSettings.DISABLED, capability)
+    val controller = h.resolvedController()
+    controller.onAppForegrounded()
+    assertEquals(AppLockState.Disabled, controller.state.value)
+    return h to controller
 }
 
 /**

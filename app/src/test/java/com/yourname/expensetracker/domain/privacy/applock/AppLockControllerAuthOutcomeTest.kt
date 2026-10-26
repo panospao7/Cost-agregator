@@ -28,6 +28,48 @@ class AppLockControllerAuthOutcomeTest {
     private fun AppLockControllerHarness.authCodesEmitted(): List<PrivacyDiagnosticCode> =
         emitted.filter { it in authCodes }
 
+    // --- T7 / T8: unlock (moved from AppLockControllerResolutionTest in part (ii-b), assertions unchanged) ---
+
+    @Test
+    fun `T7 and T8 a tap starts one attempt and only its matching success unlocks`() {
+        val h = AppLockControllerHarness(AppLockTestSettings.enabled())
+        val controller = h.resolvedController()
+
+        val started = controller.onUnlockTapped() as UnlockTapResult.Started
+        h.settle()
+
+        assertEquals(AppLockState.Authenticating(started.attemptId, AuthPurpose.UNLOCK), controller.state.value)
+        assertEquals(started.attemptId, controller.inFlightAttemptId)
+        assertEquals(listOf(started.attemptId), h.authenticator.calls.map { it.attemptId })
+        h.authenticator.deliver(DeviceAuthOutcome.Succeeded)
+        assertEquals(AppLockState.Unlocked, controller.state.value)
+        assertNull(controller.inFlightAttemptId)
+        assertEquals(
+            listOf(PrivacyDiagnosticCode.LOCK_SHOWN_COLD_START, PrivacyDiagnosticCode.LOCK_UNLOCKED),
+            h.emitted
+        )
+    }
+
+    @Test
+    fun `attempt ids are strictly increasing across unlocks in one process`() {
+        val h = AppLockControllerHarness(AppLockTestSettings.enabled(AutoLockTimeout.IMMEDIATE))
+        val controller = h.resolvedController()
+        val ids = mutableListOf<Long>()
+        repeat(3) {
+            val started = controller.onUnlockTapped() as UnlockTapResult.Started
+            ids += started.attemptId
+            h.settle()
+            h.authenticator.deliver(DeviceAuthOutcome.Succeeded)
+            assertEquals(AppLockState.Unlocked, controller.state.value)
+            controller.onAppBackgrounded()
+            controller.onAppForegrounded()
+            assertTrue(controller.state.value is AppLockState.Locked)
+        }
+
+        assertEquals(ids.sorted(), ids)
+        assertEquals(ids.size, ids.toSet().size)
+    }
+
     // --- Every exit from AUTHENTICATING(UNLOCK) --------------------------------------------------------
 
     @Test
@@ -439,9 +481,12 @@ class AppLockControllerAuthOutcomeTest {
             // emitted and emittedMetadata are captured in parallel; the cancel also emits LOCK_AUTH_CANCELLED.
             h.emittedMetadata[h.emitted.indexOf(PrivacyDiagnosticCode.LOCK_UNAVAILABLE_CAPABILITY)].entries
         )
-        // The claim is recorded against the cause, never against the whole code. S18 (T26) has no public
-        // entry point yet, so a second cause cannot be driven; this pins the state that lets it emit once.
-        assertEquals(setOf<Any>(DeviceAuthCapability.UNKNOWN), privateSet(controller, "claimedCapabilityCauses"))
+        // The claim is recorded against the (code, cause) pair, never against the whole code. S18 (T26) claims
+        // through the same set; this pins the state that lets a second cause emit once.
+        assertEquals(
+            setOf<Any>(PrivacyDiagnosticCode.LOCK_UNAVAILABLE_CAPABILITY to DeviceAuthCapability.UNKNOWN),
+            privateSet(controller, "claimedCodeCauses")
+        )
         assertFalse(
             PrivacyDiagnosticCode.LOCK_UNAVAILABLE_CAPABILITY in
                 privateSet(controller, "claimedDiagnosticCodes")

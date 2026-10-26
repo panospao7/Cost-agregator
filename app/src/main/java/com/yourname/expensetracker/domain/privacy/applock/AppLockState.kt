@@ -31,8 +31,8 @@ enum class AppLockOrigin {
  * an attempt can only be entered from, and only return to, one kind of state (spec 3.3).
  *
  * [ENABLE] and [CONFIRM_CHANGE] are the open-origin prompts: they render as their origin and never
- * remove the open composition (INV-53). Until part (ii-b) of S16 the controller only starts [UNLOCK]
- * attempts; the other two are started by the settings operations (S18).
+ * remove the open composition (INV-53). The controller starts [UNLOCK] attempts itself (Unlock tap) and
+ * the other two through its open-origin start API, which the settings operations (S18) bind.
  */
 enum class AuthPurpose(val origin: AppLockOrigin) {
     UNLOCK(AppLockOrigin.LOCKED),
@@ -41,6 +41,23 @@ enum class AuthPurpose(val origin: AppLockOrigin) {
 
     /** True for the prompts that start from an open state (`ENABLE`, `CONFIRM_CHANGE`; AMD-22). */
     val isOpenOrigin: Boolean get() = this != UNLOCK
+}
+
+/**
+ * The closed selector for an open-origin prompt (INV-53, INV-54). It fixes the [AuthPurpose] (and so the
+ * origin the attempt may start from and return to) and the constant [AuthPromptCopy] together, so a caller
+ * can neither pair a purpose with the wrong text nor pass free text. `UNLOCK` is not in this set: the
+ * Unlock tap is the controller's own entry.
+ */
+enum class OpenOriginPrompt(val purpose: AuthPurpose, val copy: AuthPromptCopy) {
+    /** Turning the lock on, from `DISABLED` (T17). */
+    ENABLE(AuthPurpose.ENABLE, AuthPromptCopy.ENABLE),
+
+    /** Turning the lock off, from `UNLOCKED` (T18). */
+    DISABLE(AuthPurpose.CONFIRM_CHANGE, AuthPromptCopy.DISABLE),
+
+    /** Confirming another change from `UNLOCKED`, such as a weakening write or a review-save (T27, T31). */
+    CHANGE(AuthPurpose.CONFIRM_CHANGE, AuthPromptCopy.CHANGE)
 }
 
 /**

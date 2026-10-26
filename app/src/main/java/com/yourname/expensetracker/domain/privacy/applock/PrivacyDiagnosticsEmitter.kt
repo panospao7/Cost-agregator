@@ -198,7 +198,8 @@ enum class PrivacyDiagnosticCode(
     ),
 
     // App-lock controller (S16 part (ii-a), owner-approvals item 32): a failed capability check at an Unlock
-    // tap (spec 10 LOCK_UNAVAILABLE_CAPABILITY). CAUSE carries the bounded capability enum name (UNKNOWN).
+    // tap (spec 10 LOCK_UNAVAILABLE_CAPABILITY), and (S16 part (ii-b)) an ENABLE prompt whose NotAvailable
+    // re-check refuses. CAUSE carries the bounded DeviceAuthCapability enum name, never text.
     LOCK_UNAVAILABLE_CAPABILITY(
         DiagnosticReasonCode.LOCK_UNAVAILABLE_CAPABILITY, EventOutcome.SKIPPED, EventSeverity.WARNING,
         setOf(PrivacyDiagnosticKey.CAUSE)
