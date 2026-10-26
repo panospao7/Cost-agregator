@@ -393,6 +393,17 @@ name, OD-1). "TLC" means `TransactionLifecycleCoordinator`. AE-n refers to secti
   detection (DETECTED_PATTERN) and from forecast history baselines when the plan's future entries are projected
   explicitly. Owner: `ForecastInputAssembler` for forecast inputs; the recurring pattern detector for detection
   (two distinct rules, one owner each). (AE-11)
+  - **Amendment (S8a final gate, 2026-10-27; plan A15).** The forecast-baseline exclusion and the projected entries
+    live ONLY on a separate, installment-aware entry point (a separate file) feeding the UI flow. They are never
+    added to `assemble()` as called by `FinancialWeatherRepository`, because that path fills the shared
+    `FinancialWeather` scalars that `DashboardBriefingInputBuilder` copies into the cloud briefing (INV-31).
+    Home keeps INV-29 without double counting: the UI-side installment-aware weather REPLACES the baseline view
+    for Home only (downstream of `getProcessedDataFlow`, in the HomeViewModel/UI layer); the cloud path keeps the
+    installment-free one. The two views are never summed.
+    Verification (S8b differential): expense rows, link state and spending-predicate state are held constant;
+    only the projection-port output varies (empty vs non-empty). Spending aggregates follow ordinary aggregate
+    semantics (a PURCHASE_ATTACHED flag and the S6c-3 recurring exclusion legitimately change them), so they are
+    not part of the differential.
 - **INV-32 Paid before tracking (AMD-1, OQ-18).** An entry may be `PAID_BEFORE_TRACKING` only if kind = REGULAR
   and `dueDate < declaredOnDate` (strict, evaluated on the entry's current `dueDate` at the transition). It is set
   in one of two ways:
@@ -1383,3 +1394,8 @@ The table is kept for traceability. "Recommended" is now the decided option.
   Nothing destructive.
 - **Open decisions:** none. OD-1…OD-15 are DECIDED. OD-15 is conditional on D-10.
 - **Acceptance examples:** AE-1…AE-31 (AE-26…AE-30 are new; AE-31 is new [Amended 2026-10-26 (A2)]).
+
+
+### Amendment 2026-10-27 (S8a privacy review; owner-approvals item 40(b))
+- INV-31 scope: INV-31 covers PLAN-ENTITY fields (displayName, lenderLabel, n/N, schedule, remaining, status, planUuid) and projected installments. A RECORDED installment expense is an ordinary expense. Its merchant (copied from the plan displayName at record time) follows the ordinary merchant / redactBeforeCloud cloud policy of §11.5. No plan-only field is stored on the expense (INV-28).
+- S8b binding: the FinancialWeather path that feeds the cloud briefing stays installment-free by construction. Projections reach Home through a separate flow and are merged only at the UI. Plan projections are never expressed as an existing UpcomingItem variant.

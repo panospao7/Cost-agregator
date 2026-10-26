@@ -395,10 +395,10 @@ D-1..D-8 are being resolved by the parallel scout. D-9..D-20 are extra planner i
 - **Stop-and-ask:** if the briefing consumes the same `CashFlowCalculator` / forecast output object as the UI, so it cannot be separated without restructuring. Then those payloads stay out of v1 and the owner must be told.
 
 ### S8b — Projection wiring (cash flow, forecast, stress, recurring sibling projection)
-- **Goal / invariants:** INV-15, INV-29 (forecast side), INV-16 (USD entries use the engine's existing multi-currency handling; if a rate is unavailable the item is marked partial or omitted, never 0 and never summed as EUR).
+- **Goal / invariants:** INV-15, INV-29 (forecast side; SUPERSEDED by A15: the forecast-baseline exclusion lives only on a separate installment-aware entry point, never on `assemble()` as called by FinancialWeatherRepository), INV-16 (USD entries use the engine's existing multi-currency handling; if a rate is unavailable the item is marked partial or omitted, never 0 and never summed as EUR).
 - **Write set (source):**
   - `M:domain/cashflow/CashFlowCalculator.kt`
-  - `M:domain/forecasting/ForecastInputAssembler.kt` (projected entries + exclude installment-linked history from baselines)
+  - `M:domain/forecasting/ForecastInputAssembler.kt` (projected entries + exclude installment-linked history from baselines) - SUPERSEDED by A15: do NOT modify `assemble()`; use a separate installment-aware entry point in a separate file feeding the UI flow only.
   - `M:domain/forecasting/FinancialStressForecastEngine.kt`
   - New `M:domain/installment/projection/InstallmentUpcomingProjection.kt`: sibling of `M:domain/recurring/RecurringPlanProjectionService.kt`, which stays unchanged, per the OQ-25 recommendation.
   - The single Home upcoming merge point (per D-15).
@@ -1012,3 +1012,17 @@ Rules and gates:
 - D-1: "7 workers" should read 8.
 - The ux-flows FX lines were updated on 2026-10-26.
 - The stale "7" comment at AppStartupCoordinator ~:721 is deliberately left alone, so S7a does not touch the startup file.
+
+### A15 — S8b binding from the S8a privacy review (2026-10-27; owner-approvals item 40)
+- Option A by construction:
+  - FinancialWeatherRepository → ForecastInputAssembler.assemble → SynthesisEngine/NarrativeGenerator stays installment-free, including the INV-29 baseline exclusion on that path.
+  - Projections are a separate flow merged at the UI / D-15 merge point only.
+  - Plan projections are never an existing UpcomingItem variant.
+- The S8b differential must run end to end: a fake projection port → real weather path → briefing use case / worker → CloudDashboardBriefingService text. It must be identical with and without plans.
+- If the split is too large: option B (the briefing stays out of v1), with explicit owner sign-off (stop-and-ask).
+- S8a final gate (reviewer-strict ACCEPT-WITH-CONDITIONS) entry conditions for S8b:
+  - Merge point (ISSUE-2): the merge point must be downstream of `getProcessedDataFlow` (HomeViewModel/UI layer); never in DashboardDataProvider, DashboardData, ProcessedDashboardData or FinancialWeather.
+  - Guard strengthening (ISSUE-2): S8b proposes adding FinancialWeatherRepository.kt, ForecastInputAssembler.kt, SynthesisEngine.kt, NarrativeGenerator.kt and DashboardDataProvider.kt as exact-file entries on the installment_cloud_reachability surface, with a negative fixture. This is a GUARD STRENGTHENING and needs owner approval at S8b start (stop-and-ask).
+  - Home without double counting (ISSUE-1): the UI-side installment-aware weather replaces the baseline view for Home only; the cloud path keeps the installment-free one. Home never sums both views.
+  - Differential definition (ISSUE-3): the differential holds expense rows, link state and spending-predicate state constant; only the projection-port output varies (empty vs non-empty). Spending aggregates follow ordinary aggregate semantics (a PURCHASE_ATTACHED flag and S6c-3 recurring exclusion legitimately change them, so they are not part of the differential).
+  - Test labels (ISSUE-4): tests 1, 2 and 5 of DashboardBriefingInstallmentExclusionTest are PLACEHOLDERS that S8b replaces with the end-to-end differential.

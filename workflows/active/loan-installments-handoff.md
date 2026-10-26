@@ -1240,3 +1240,89 @@ architecture-guardian, privacy-security (diagnostics are bounded reason codes an
   - owner-approved S6c follow-ups (owner-approvals item 37);
   - guard strengthening (owner-approvals item 36(a)).
 - Next per plan: S7b / S8 (check the plan dependency graph).
+
+## S8a — implemented (2026-10-27; uncommitted; nothing compiled, run or validated)
+Resumed after an API-error abort: the first implementer had already edited DashboardBriefingInputBuilder.kt and created the test. The resumed run inspected both, kept them (checked every constructor and import against source), and finished the rest. No new source file, no guard / baseline / allowlist / config edit, no schema change.
+
+### Files (all in C:\Users\panos\Desktop\Cost-agregator-mec)
+- M app/src/main/java/com/yourname/expensetracker/domain/ai/usecase/DashboardBriefingInputBuilder.kt
+  - Upcoming items now go through a private explicit allow-list `UpcomingItem.toCloudInputOrNull()`: Recurring, Occurrence and Planned are mapped, `else -> null`.
+  - `mapNotNull` runs BEFORE `.take(5)`, so an excluded item is dropped whole (no field copied) and the cap fills from allowed items only.
+  - Any future `UpcomingItem` variant (the S8b projection item, which carries displayName) is excluded by default and has to be opted in here. Hard-wired, never a setting. The per-variant currency mapping is unchanged.
+- M app/src/main/java/com/yourname/expensetracker/domain/ai/usecase/TransactionInsightInputBuilder.kt: comment only, on the already hard-wired `upcomingItems = emptyList()`.
+- New test app/src/test/java/com/yourname/expensetracker/domain/ai/usecase/DashboardBriefingInstallmentExclusionTest.kt (5 tests).
+- Both main files are already on the installment_cloud_reachability surface (domain/ai/ prefix and the `*InputBuilder` name pattern). The seam adds no `installment` identifier to executable code, so the guard needs no change.
+
+### What can reach the cloud today (D-4, re-checked at S8a)
+- DASHBOARD_BRIEFING: DashboardDataProvider.getProcessedDataFlow produces ProcessedDashboardData. HomeViewModel (UI) and DailyBriefingWorker both consume it, and the worker calls GenerateDashboardBriefingUseCase. That use case calls DashboardBriefingInputBuilder.build, which is the ONLY cloud-side reader of it. It reads:
+  - weather.upcomingItems (Recurring / Occurrence / Planned today, from FinancialWeatherRepository.buildUpcomingItems);
+  - weather headline, summary, totalCommitted, totalLikely and discretionaryBudget;
+  - budget statuses, category breakdown, pendingCount and the summary total.
+  - recurringPatterns, plannedExpenses and goals on DashboardData are NOT read.
+- TransactionInsight: GenerateTransactionInsightUseCase calls TransactionInsightInputBuilder.build(Expense, shouldRedact). The input is built from one Expense and `upcomingItems` is hard-wired empty. No plan path.
+- FinancialWeatherRepository has no installment reference today, so no plan data reaches any cloud payload today. The seam blocks what S8b would add.
+- The shared object was NOT separated. The exclusion sits on the cloud consumer side (the builder), so DashboardDataProvider and FinancialWeather (shared with the UI) are untouched and the S8a stop-and-ask was not triggered.
+
+### OPEN ITEM for S8b (stop-and-ask for S8b, not hit in S8a)
+- The seam drops projected ITEMS. It cannot drop projected AMOUNTS that S8b folds into the SHARED FinancialWeather totals (totalCommitted, totalLikely, discretionaryBudget, headline, summary). The builder copies those scalars.
+- When S8b wires installment projection into the forecast, either:
+  - the projection is kept out of those fields and carried separately, for example a UI-only field on FinancialWeather; or
+  - the owner is told the briefing payload stays out of v1.
+- That is a change to the object shared with the UI and needs an explicit decision. The AE-23 differential test (identical DashboardBriefingInput and prompt with and without plans) is the regression harness S8b must keep green. Today it is satisfied only because no wiring exists.
+
+### AEs / tests
+- AE-23 payload part:
+  - DashboardBriefingInput and both prompts (redact on and off) contain no lender label, plan uuid, projected minor amount or text, or the word "installment".
+  - A with/without-plans differential gives an identical input and identical prompts, with the sums, headline and summary unchanged.
+  - The TransactionInsight input is identical with and without plans, has empty upcomingItems, and its prompt is clean.
+- The cap is applied after the allow-list mapping (8 allowed items give 5).
+- Sealed-variant tripwire: `UpcomingItem::class.sealedSubclasses` must equal {Recurring, Occurrence, Planned}. Adding a variant fails the test until its author adds an explicit exclusion test and reviews the allow-list. A hostile variant cannot be built in the test because sealed subclasses must live in the same package.
+- Limit: "with plans" is vacuous until S8b, because no wiring injects projected items. This is stated in the test KDoc.
+
+### Validation to request (serial)
+1. targeted `*DashboardBriefing*,*GenerateTransactionInsight*,*ProcessedDashboard*`
+2. registered-guard installment_cloud_reachability; registered-guard cloud_payload
+3. static-guards
+### Gates
+privacy-security-guardian (mandatory), reviewer-strict YES.
+
+### S8a — privacy review (privacy-security-guardian ACCEPT-WITH-CONDITIONS) and validation (2026-10-27)
+- Validation (serial, all PASS):
+  - targeted vr-20261026-225411-efeff4a6
+  - installment_cloud_reachability vr-20261026-225945-deecae48
+  - cloud_payload vr-20261026-230003-c6b778f5
+  - static-guards vr-20261026-230021-0370c5e9
+- The seam is correct and fail-closed for any new UpcomingItem variant (allow-list, dropped whole before the cap).
+- C1 doc conditions:
+  - F2 BINDING S8b: plan projections must NEVER be expressed as an existing UpcomingItem variant (Planned/Occurrence/Recurring). The allow-list checks type, not provenance.
+  - F3 BINDING S8b (HIGH): the scalar path is concrete.
+    - FinancialWeatherRepository runs ForecastInputAssembler.assemble → SynthesisEngine.synthesize → NarrativeGenerator.generate, which fills headline/summary and totalCommitted/totalLikely/discretionaryBudget.
+    - DashboardBriefingInputBuilder copies all of these into the cloud payload.
+    - Changing assemble() (in the S8b write set), including the INV-29 baseline exclusion, would therefore feed the cloud briefing.
+    - Decision: owner-approvals item 40(a). The FinancialWeather path stays hard-wired installment-free; projections go through a separate flow merged at the UI only; otherwise option B with owner sign-off.
+  - F5:
+    - tests 1, 2 and 5 of DashboardBriefingInstallmentExclusionTest are PLACEHOLDERS until S8b injects projections;
+    - the plan-A8 "cover the DailyBriefingWorker path" requirement is DEFERRED to S8b;
+    - S8b must rewrite the differential end to end: real FinancialWeatherRepository (real ForecastInputAssembler + SynthesisEngine) with a fake projection port returning a projected entry → GenerateDashboardBriefingUseCase / DailyBriefingWorker → CloudDashboardBriefingService prepared text.
+- C2: INV-31 vs §11.5 clarified (owner-approvals item 40(b)). See the spec amendment.
+- FYI (owner-approvals 40(c)): unsalted SHA-256 merchant pseudonyms on some cloud paths. Pre-existing; separate ticket.
+
+### S8a — final gate (reviewer-strict ACCEPT-WITH-CONDITIONS) and fixes (2026-10-27; uncommitted; test and docs only; nothing compiled, run or validated after these fixes)
+- Validation run IDs (all PASS, before these fixes):
+  - targeted vr-20261026-225411-efeff4a6
+  - installment_cloud_reachability vr-20261026-225945-deecae48
+  - cloud_payload vr-20261026-230003-c6b778f5
+  - static-guards vr-20261026-230021-0370c5e9
+- ISSUE-1 (S8b entry condition): plan S8b "Goal: INV-29 (forecast side)" and the ForecastInputAssembler write-set line are marked SUPERSEDED by A15. Domain-spec INV-29 amended: the forecast-baseline exclusion and projected entries live ONLY on a separate installment-aware entry point (separate file) feeding the UI flow, never on `assemble()` as called by FinancialWeatherRepository. Home keeps INV-29 without double counting: the UI-side installment-aware weather replaces the baseline view for Home only; the cloud path keeps the installment-free one.
+- ISSUE-2 (S8b entry condition, appended to A15): the merge point is downstream of `getProcessedDataFlow` (HomeViewModel/UI layer), never in DashboardDataProvider, DashboardData, ProcessedDashboardData or FinancialWeather. S8b's proposal to add FinancialWeatherRepository.kt, ForecastInputAssembler.kt, SynthesisEngine.kt, NarrativeGenerator.kt and DashboardDataProvider.kt as exact-file entries on the installment_cloud_reachability surface (with a negative fixture) is a GUARD STRENGTHENING and needs owner approval at S8b start (stop-and-ask).
+- ISSUE-3 (appended to A15 and the spec amendment): the differential holds expense rows, link state and spending-predicate state constant; only the projection-port output varies. Spending aggregates follow ordinary aggregate semantics (PURCHASE_ATTACHED and S6c-3 recurring exclusion legitimately change them), so they are not part of the differential.
+- ISSUE-4 (test labels): in DashboardBriefingInstallmentExclusionTest, tests 1, 2 and 5 are marked PLACEHOLDER until S8b (A15/F5); class KDoc changed from "keep green" to "replace"; the fake `check(projectedPlanEntries().isNotEmpty())` / `assertTrue` precondition asserts were removed, and the unused projectedPlanEntries() helper and its two imports were deleted.
+- ISSUE-5 (cap-order test): added `unmapped variants ahead of five allowed items are dropped whole before the cap`. Three `mockk<UpcomingItem>()` stand-ins with plan-like description, amount and date sit at positions 1-3 ahead of five Planned items; it asserts five allowed items remain and that no stubbed fact appears in the input, the prompt (redact on and off), or the payload text. The existing "cap is applied after the allow-list mapping" test is kept. UNVERIFIED: mocking the sealed UpcomingItem was not run (jvmTarget 11, MockK 1.13.8). If the targeted run shows the mock cannot be created, fall back: rename it to "upcoming items cap at five" and note in KDoc that drop-before-cap ordering is enforced by code review and the tripwire only.
+- Re-validation to request (serial): targeted `*DashboardBriefingInstallmentExclusion*`. No production, guard or config change, so the guard runs above are not invalidated.
+- (2026-10-27) ISSUE-5 fallback applied. The mock test failed (vr-20261026-233938-2511073f): MockK instantiates a real sealed subclass (it called getOccurrence), so an unmapped UpcomingItem cannot be planted. The test was removed and the cap test renamed "upcoming items cap at five". Its KDoc states that drop-before-cap ordering is enforced by code review plus the variant tripwire only. Test-only change.
+- S8a accepted (2026-10-27).
+  - Final targeted run vr-20261026-234410-c132f55c PASS. The edits since the guard runs are test and docs only.
+  - Gates: privacy-security-guardian ACCEPT-WITH-CONDITIONS; reviewer-strict ACCEPT-WITH-CONDITIONS. Conditions met or recorded as S8b entry conditions in A15 and the spec amendment.
+  - Committed.
+  - Next loan slices: S7b (reminders) or S9 (export).
+  - S8b entry conditions: A15, plus owner approval for the cloud-reachability guard strengthening.
